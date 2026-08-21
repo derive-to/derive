@@ -238,7 +238,7 @@ variants.
   `bg-destructive/10 text-destructive`, hover `/15` — confirm destructive intent via
   dialog, never a loud red fill); `destructive-ghost` (row-action delete in lists and
   menus: destructive ink at rest, the soft wash on hover only); `success` / `warning`
-  (the destructive soft-fill grammar in the status hues — approve / request-changes;
+  (the destructive soft-fill grammar in the status hues;
   status is never the accent); `link`. Two workhorse heights: `default` h-9 and `sm` h-8
   (+ icon sizes); `xs` h-7 (dense meta rows) and `lg` h-10 (auth CTAs) are the sanctioned
   edges — never hand-roll a fifth height. `loading` disables the button and leads with a
@@ -452,7 +452,7 @@ variants.
   **star** (glanceable ink state), then a single sectioned **⋯** (view modes → organize →
   activity → manage; Collections opens as a dialog from it) — then the terminal
   **Comments** toggle hugging the panel it opens. Everything that used to crowd the row
-  (Present / Insights / History / Proposals / Edit / Lock / Report / Collections) now
+  (Present / Insights / History / Edit / Lock / Report / Collections) now
   lives behind the ⋯ — the render is the hero, the chrome recedes.
 - **Live cursors** — peers' cursors are a slim arrow tinted by their **identity**: a stable,
   distinct tint from the shared identity palette (`colorForName`, the same palette avatar
@@ -473,7 +473,7 @@ variants.
 
 ## Voice
 
-Buttons are verbs: Open, Pin, Approve, Delete, Upgrade. Empty states have a one-line voice
+Buttons are verbs: Open, Pin, Send back, Delete, Upgrade. Empty states have a one-line voice
 headline (Geist) + one plain next action, never a bare "No artifacts yet." Errors go
 through toasts (never `alert()`); destructive confirms via the shared `ConfirmDialog`
 (never `window.confirm()`). Busy buttons keep their verb ("Saving…", never a bare "…").

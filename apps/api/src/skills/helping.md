@@ -143,9 +143,8 @@ on that same screen. Derive can also send direct messages. Each person controls 
   publish.
 - **Version:** every publish keeps the last one. Nothing is overwritten, and any version can be
   restored.
-- **Proposal:** a change waiting for approval instead of going live. What a Viewer's edit
-  becomes, and what anyone can choose deliberately.
-- **Review:** asking a person to look at a version, answered inline.
+- **Review:** asking a person to look at a version. They answer in comments and send the
+  work back with a note; a note that reads "good to go" is the go-signal.
 - **Thread:** a comment anchored to a passage. Open until somebody resolves it.
 - **Collection:** a folder of documents. A document can be in several.
 - **Tag:** a workspace-wide label for finding things across collections.

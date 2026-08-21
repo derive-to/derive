@@ -81,14 +81,10 @@ Also <!channel> please look, and <https://evil.example|Derive Support>.`
 const run = async () => {
   console.log(`posting probes to ${CHANNEL}\n`)
 
-  // 1 — the unfurl card for a feed-visible artifact, with proposal buttons. No image: the
+  // 1 — the unfurl card for a feed-visible artifact. No image: the
   // probe's fake OG URL would render a broken block, and the image path is exercised live by
   // pasting a real workspace doc.
-  await post(
-    "unfurl card (with Approve / Request changes)",
-    unfurlBlocks(info(), null, true, "a_1", "p_1"),
-    "P1 unfurl card",
-  )
+  await post("unfurl card", unfurlBlocks(info(), null), "P1 unfurl card")
 
   // 2 — the locked card. Must show NO title and no counts.
   await post(
@@ -100,13 +96,7 @@ const run = async () => {
   // 3 — a hostile title in the unfurl card. `<!channel>` must NOT notify anyone.
   await post(
     "unfurl card with a hostile title (must not ping)",
-    unfurlBlocks(
-      info({ title: "<!channel> <@U000> & <https://evil.example|Support>" }),
-      null,
-      false,
-      "a_2",
-      null,
-    ),
+    unfurlBlocks(info({ title: "<!channel> <@U000> & <https://evil.example|Support>" }), null),
     "P3 hostile title",
   )
 

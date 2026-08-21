@@ -162,7 +162,7 @@ export const slackRoutes = (ctx: AppContext) => {
     // because everything worth logging happens after it.
     //
     // Link previews were dead in production for a day on exactly this: link_shared arrived, the
-    // synchronous prefix ran, and nothing downstream ever executed. Proposal decisions, the
+    // synchronous prefix ran, and nothing downstream ever executed. Review send-backs, the
     // interactivity repaint and the deferred /derive search shared the fault; the response_url
     // ones only appeared to work because their fetch is dispatched before the first await.
     //

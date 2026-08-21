@@ -37,8 +37,8 @@ derive publish dist/ --title "Launch page" --spa
 
 ## Continue work at the same URL
 
-Use comments and later versions when they help. Formal approval is available for work that
-needs a named decision; it is not required for every artifact.
+Use comments and later versions when they help. A review round is there for work that
+needs a named look; it is not required for every artifact.
 
 ```bash
 derive status                 # review state and open threads

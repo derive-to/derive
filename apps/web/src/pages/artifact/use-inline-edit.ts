@@ -153,8 +153,7 @@ export function useInlineEdit(p: {
 
   // Every way out of the mode funnels through here.
   //   "restore" — revert unsaved text and re-arm the read grammar (Done, Escape,
-  //               discard-and-leave, and a filed PROPOSAL: nothing is live until
-  //               approval, so the page must not keep the suggestion painted).
+  //               discard-and-leave).
   //   "settle"  — keep the text, drop the editing chrome. Right after a PUBLISH the
   //               text on screen IS what was saved; restoring would flash the old
   //               wording for the beat before the version swap reloads the frame.

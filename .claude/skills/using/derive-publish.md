@@ -19,7 +19,6 @@ publish(
   visibility? "unlisted" | "public" | "link" | "org" | "password" | "private",
               // default for agent publishes: "unlisted" (hidden from the library,
               // one link away for workspace members — the draft state)
-  for_review? boolean,     // file a proposal instead of going live
   request_review? boolean  // open a review round for your human (the /derive loop)
 )
 ```
@@ -28,11 +27,11 @@ Returns: `{ short_id, url, current_version, opened_in_tab?, review_requested? }`
 `opened_in_tab` says whether an open Derive tab caught the push (false ⇒ open the
 url for the user if they should see it now).
 
-Whether a `publish` goes live or files a proposal is decided by your role (Creator/Admin
-publish live; a commenter role files a proposal), with `for_review:true` to force review.
+Every `publish` goes live as a new kept version. It needs publish standing (editor or
+owner); a lower role suggests the change in a comment for someone who can publish.
 
 **Keep the `short_id`.** It's the artifact's permanent identity. Every future version,
-comment, and proposal references it.
+comment, and review round references it.
 
 ### Visibility
 

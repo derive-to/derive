@@ -279,8 +279,8 @@ const main = async () => {
     }
   }
 
-  // 15. Brandprint dissolve: a MANAGE grant scaffolds the profile + files a proposal on the URI.
-  console.log("\n[brandprint] manage grant scaffolds + proposes")
+  // 15. Brandprint: a MANAGE grant scaffolds the profile and publishes to the URI.
+  console.log("\n[brandprint] manage grant scaffolds + publishes")
   const bp = await call("publish", { short_id: "derive://brandprint/profile", content: "<h1>Brand</h1>" })
   ok(!bp.isError, "publish to derive://brandprint/profile (manage grant) did not error")
 

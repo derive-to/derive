@@ -112,6 +112,6 @@ Reach for one when the same instruction should run again without anyone remember
 ## When review is requested
 
 When `catch_up` returns `review.state === 'sent_back'`, read the open threads and the note.
-If the note says it's good, stop: that is the approval. Otherwise revise and publish with
+If the note says it's good, stop: that is the go-signal. Otherwise revise and publish with
 `request_review:true` to send the new version back. Include fixed thread ids in `addresses`
 on that publish; the publish resolves those threads.
