@@ -18,7 +18,7 @@ import { as, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
  *
  * The one thing faked is the model: a script standing in for the coding agent, so the test is
  * deterministic and free. Everything around it — the spawn, the child's ENVIRONMENT, the token,
- * the HTTP claim, the write through the autonomy gate — is the production path.
+ * the HTTP claim, the published write — is the production path.
  *
  * This exists because of a specific near-miss. The child's environment is built by allowlist
  * (see substrate-node.ts), and the first version of that allowlist omitted AGENT_BIN/CLAUDE_BIN
@@ -81,17 +81,6 @@ describe("hosted run on the node substrate — a real child process", () => {
     process.env.RUNNER_PROVIDER = "claude-code"
     process.env.RUNNER_CWD = cwd
     process.env.RUNNER_TIMEOUT_MS = "45000"
-
-    // Opt the workspace into live publishing. Without this the autonomy gate correctly demotes
-    // every agent write to a proposal (agentAutoEnabled defaults to FALSE — an unattended agent
-    // does not publish over your documents until somebody says so), and the artifact would stay
-    // at version 1 with a proposal filed beside it. Asserting the published path is the stronger
-    // proof that the loop closed, so this test asks for it explicitly.
-    await app.request("/v1/workspace/settings", {
-      method: "PATCH",
-      headers: { "content-type": "application/json", ...as(owner.email) },
-      body: JSON.stringify({ agentAutoEnabled: true }),
-    })
 
     // A plan, because resolveModelEnv fails closed — a run resolves its initiator's plan or
     // does not start. Same one-time step a person does before their first automation.

@@ -542,7 +542,7 @@ export function registerReadTool(tc: ToolContext): void {
         if (seg === "profile") {
           if (!(bpProfile?.state === "live" && profileArt))
             return err(
-              "This workspace has no live brand profile yet. Read derive://brandprint/reference and derive://brandprint/template, build the profile, then publish it to derive://brandprint/profile (an Admin's first publish there scaffolds the fact; it lands as a proposal a human approves).",
+              "This workspace has no live brand profile yet. Read derive://brandprint/reference and derive://brandprint/template, build the profile, then publish it to derive://brandprint/profile (an Admin's first publish there scaffolds it; publishing opens a review round for the person).",
             )
           const pv = await ctx.meta.getVersion(profileArt.id, profileArt.current_version)
           const body = pv ? await ctx.sourceText(pv) : null

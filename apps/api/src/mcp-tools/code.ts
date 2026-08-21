@@ -17,11 +17,12 @@ import { err, json } from "../mcp-util"
  * comes back — the intermediate reads stay in the sandbox instead of crossing the context window.
  *
  * EVERY registered tool is available, deliberately. There is no read-only subset and no special
- * policy for writes, because Derive already HAS a policy for that: the autonomy gate decides
- * publish-versus-propose from the target's mode and the workspace's flags (see decideWrite), and
- * a run that consumed untrusted content is demoted by taint regardless. A second, tool-specific
- * rule would contradict the first, and the annoying kind of surprise is a tool that follows
- * different rules than the tool it wraps. `publish` called from here IS `publish`.
+ * policy for writes, because Derive already HAS a policy for that: a write publishes as a kept,
+ * restorable version through the same authorization the wrapped tool enforces — locks, roles,
+ * the workspace's agent-write switch — and the publish fan-out tells the people watching. A
+ * second, tool-specific rule would contradict the first, and the annoying kind of surprise is a
+ * tool that follows different rules than the tool it wraps. `publish` called from here IS
+ * `publish`.
  *
  * The permissions are the CALLER'S. The sandbox never holds a credential; it posts a tool name
  * to the host, which runs that tool through the same handler and the same grant checks an

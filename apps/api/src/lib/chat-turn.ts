@@ -173,16 +173,11 @@ export const runChatTurn = async (
       if (!used.includes(name)) used.push(name)
       return input.tools.execute(name, args)
     },
-    // The gate cannot fire: proseContract never yields a revision, so decideWrite is never
-    // consulted and `land` is unreachable. Stated with the safest values rather than omitted,
-    // so a future contract change fails closed (a proposal) instead of publishing.
-    gate: {
-      autonomy: "suggest",
-      flags: { agentKillswitch: false, agentAutoEnabled: false, credentialed: false },
-    },
+    // `land` is unreachable: proseContract never yields a revision, so there is nothing to
+    // land — this lane's writes ride its TOOLS (chat-tools' publish), which carry their own
+    // checks. Loud rather than silent, so a future contract change cannot quietly hand this
+    // lane a second write path nobody designed.
     land: async () => {
-      // Unreachable by construction. Loud rather than silent: reaching here would mean a
-      // contract change quietly gave this lane a write path nobody designed.
       throw new Error("chat turn has no landing port: writes ride the tools")
     },
   })

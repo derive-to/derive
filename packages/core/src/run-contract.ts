@@ -10,8 +10,8 @@ import type { DocEdit } from "./doc-text"
  * being a routing decision and becomes a behaviour change.
  *
  * The CLI cannot import this module at runtime (it is a dependency-free published package), so
- * it keeps a hand-copy — exactly like decideWrite. packages/cli/test/contract-parity.test.js
- * holds that copy to this one. This module is the definition; that test is the enforcement.
+ * it keeps a hand-copy. packages/cli/test/contract-parity.test.js holds that copy to this one.
+ * This module is the definition; that test is the enforcement.
  */
 
 /** A parsed, validated revision: the complete new source of an artifact plus its metadata. */
@@ -20,7 +20,8 @@ export interface Revision {
   content: string
   /** Sets the content type; defaults to index.html when the model omits or mangles it. */
   filename: string
-  /** The model's stated confidence in [0,1], or null when unstated. Null never auto-publishes. */
+  /** The model's stated confidence in [0,1], or null when unstated. Informational — shown to
+   *  people next to what was written, never used to gate the write. */
   confidence: number | null
   /** A one-line version note, capped. */
   message?: string
@@ -58,8 +59,9 @@ block is discarded and nothing is written.
 }
 </revision>
 
-Return the WHOLE artifact source, not a diff. Derive decides how the write lands — publish,
-propose, or record — from the automation's settings and your confidence; that is never your call.`
+Return the WHOLE artifact source, not a diff. Your revision publishes as a new version of the
+artifact — every version is kept and restorable, and the people who watch it are notified. State
+your honest confidence; it is shown to people, never used to decide anything.`
 
 /**
  * The EDITS contract — the same job as REVISION_CONTRACT, sized for a document that cannot be
@@ -211,8 +213,8 @@ const normalizeRevision = (r: Record<string, unknown>, content: string): Revisio
       ? r.filename.trim().slice(0, 120)
       : "index.html",
   // Clamped, not rejected: a model that says 1.5 means "very sure", and failing the run over
-  // it would throw away completed work. Anything non-numeric reads as UNSTATED (null), which
-  // the autonomy gate treats as never-auto-publish.
+  // it would throw away completed work. Anything non-numeric reads as UNSTATED (null) — the
+  // value is informational either way, shown to people rather than gating anything.
   confidence: typeof r.confidence === "number" ? Math.max(0, Math.min(1, r.confidence)) : null,
   message:
     typeof r.message === "string" && r.message.trim() ? r.message.trim().slice(0, 200) : undefined,
@@ -306,8 +308,9 @@ Someone ASKED you this and is waiting for the reply. Two things can happen, and 
 </revision>
 
 Put the WHOLE source in "content", never a diff, and inline everything a page needs (CSS, JS,
-SVG) — it renders in a sandbox that cannot fetch. Derive decides how the write lands — publish,
-propose, or record — from the settings and your confidence; that is never your call.
+SVG) — it renders in a sandbox that cannot fetch. Your "content" publishes as an artifact —
+every version is kept and restorable. State your honest confidence; it is shown to people,
+never used to decide anything.
 
 Set "escalate" to true, with a short "escalation_reason", when this needs a person — and still
 give your best answer in prose. You may send the block with no "content" at all, purely to carry

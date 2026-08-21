@@ -40,9 +40,9 @@ describe("run contract: parseRevision", () => {
   })
 
   it("clamps an out-of-range confidence and nulls a non-numeric one", () => {
-    // The null case is the one that matters: the autonomy gate treats null as
-    // never-auto-publish, so a copy that coerced the string "0.9" to 0.9 would let an unstated
-    // confidence live-publish. Clamping, by contrast, keeps completed work rather than failing
+    // The null case matters because the value is SHOWN to people: a string "0.9" must read
+    // as unstated on every substrate alike, or two readers of the same reply display two
+    // different answers. Clamping, by contrast, keeps completed work rather than failing
     // a run over a model saying 1.5 when it meant "very sure".
     expect(parseRevision(block({ content: "x", confidence: 1.5 })).revision?.confidence).toBe(1)
     expect(parseRevision(block({ content: "x", confidence: -2 })).revision?.confidence).toBe(0)

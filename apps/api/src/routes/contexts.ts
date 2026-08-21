@@ -23,6 +23,7 @@ import type { Context } from "hono"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
 import { isAbandoned } from "../lib/abandoned-turn"
+import { agentWritesOff } from "../lib/agent-writes"
 import { resolveActorBrandprint } from "../lib/brandprint"
 import {
   brokerFor,
@@ -30,7 +31,6 @@ import {
   connectionBindError,
   mcpAuthFor,
   parseConnectionIds,
-  spendableConnections,
   toolsForRun,
 } from "../lib/broker"
 import { overBudget } from "../lib/budget"
@@ -307,9 +307,11 @@ export const contextRoutes = (ctx: AppContext) => {
       org: s.org_id,
       user: { id: me.id, name: me.name ?? me.username ?? null },
       seatRole: seat.role,
-      // Read fresh for THIS turn: an operator who flips the killswitch mid-conversation stops
-      // the next write, not merely the next session.
-      flags: { agentKillswitch: settings?.agentKillswitch ?? false },
+      // Read fresh for THIS turn: an operator who switches agent writes off mid-conversation
+      // stops the next write, not merely the next session. Fail CLOSED when the settings
+      // could not be read — a switch an error can defeat is not a switch (the stance every
+      // reader of it takes; see lib/dispatch.ts).
+      flags: { agentWrites: settings ? settings.agentWrites : false },
     }
     // A GUIDED CONTEXT-BUILDER SESSION rides this exact lane — same claim, same stream, same
     // reply writer — with two differences: the two-tool draft/create surface
@@ -554,12 +556,11 @@ export const contextRoutes = (ctx: AppContext) => {
         )
         return
       }
-      // WRITING needs propose at minimum. `read` alone is not enough: the turn's proposal path
-      // calls the store directly rather than going through /v1/artifacts/:id/proposals, so the
-      // route's `propose` check does not apply here and has to be made explicitly. Without it,
-      // any signed-in user could file unlimited proposals onto any PUBLIC artifact in a
-      // chat-enabled workspace, at the operator's model cost.
-      if (!roleAllows(role, "propose")) {
+      // WRITING needs comment at minimum. `read` alone is not enough: a blocked turn
+      // surfaces its draft in the conversation, and a live one publishes — either way this
+      // lane spends the operator's model key on producing a change, so a caller who cannot
+      // even comment on the document has no standing to ask for one.
+      if (!roleAllows(role, "comment")) {
         await reply(
           "You can read this document but not suggest changes to it, so I have not written anything.",
           "failed",
@@ -575,12 +576,19 @@ export const contextRoutes = (ctx: AppContext) => {
         )
         return
       }
-      // The write mode is re-derived too — a demoted editor must fall back to proposing rather
-      // than keep the `publish` they held when the session opened.
-      const effective: typeof subject =
-        subject.mode === "publish" && roleAllows(role, "publish")
-          ? subject
-          : { kind: "artifact", id: subject.id }
+      // WRITE STANDING, resolved fresh per turn like the role above — a demoted editor, a
+      // just-locked document or a flipped workspace switch must bind the NEXT turn, not the
+      // next session. Plain standing in priority order; the turn still runs either way, and
+      // a blocked write surfaces its draft in the reply instead of landing. An unreadable
+      // settings row reads as switched OFF — fail closed, like every reader of the switch.
+      const writeBlock =
+        !flags || flags.agentWrites === false
+          ? ("switch" as const)
+          : artifact.locked
+            ? ("locked" as const)
+            : roleAllows(role, "publish")
+              ? undefined
+              : ("role" as const)
       // See the workspace lane: metered INSIDE the stream wrapper, or TTFT is never recorded.
       const railMeter = meterModel(railModel.callModel)
       const res = await withinTurnBudget(
@@ -603,7 +611,7 @@ export const contextRoutes = (ctx: AppContext) => {
           },
           {
             session: s,
-            subject: effective,
+            subject,
             artifact,
             transcript: await meta.listSessionMessages(s.id),
             // READ-ONLY reach for the document rail: the conversation can look something up in
@@ -624,14 +632,7 @@ export const contextRoutes = (ctx: AppContext) => {
                 : null
               return t ? { tools: t, skills: t.skills } : {}
             })(),
-            // REAL workspace flags, not hardcoded ones. Hardcoding these made chat ignore the
-            // killswitch entirely and granted the `auto` opt-in that a workspace has to enable
-            // deliberately (it defaults OFF) — so an operator who flipped the killswitch after a
-            // bad run would have found chat still live-publishing.
-            flags: {
-              agentKillswitch: flags?.agentKillswitch ?? false,
-              agentAutoEnabled: flags?.agentAutoEnabled ?? false,
-            },
+            ...(writeBlock ? { writeBlock } : {}),
             onBehalf: { id: me.id, name: me.name ?? me.username ?? me.email ?? "someone" },
           },
         ),
@@ -808,7 +809,7 @@ export const contextRoutes = (ctx: AppContext) => {
       outcome: z
         .string()
         .optional()
-        .describe("How the turn ended: answered, published, proposed, or failed."),
+        .describe("How the turn ended: answered, published, commented, or failed."),
       cost_micro_usd: z
         .number()
         .nullable()
@@ -868,11 +869,10 @@ export const contextRoutes = (ctx: AppContext) => {
         .object({
           kind: z.literal("artifact"),
           id: z.string(),
-          mode: z.enum(["publish", "propose"]).optional(),
         })
         .nullable()
         .describe(
-          "What this session is about, when it names one: an artifact, plus how a write to it lands. Null for a plain ask.",
+          "What this session is about, when it names one: an artifact. Null for a plain ask.",
         ),
       result_artifact_id: z
         .string()
@@ -899,23 +899,18 @@ export const contextRoutes = (ctx: AppContext) => {
   // context reaches the same things however it was triggered. The broker rides along
   // because the proxy needs it to execute a non-direct tool; nothing bound means no
   // broker is built at all.
-  // `credentialed` rides along because it is a DIFFERENT question from "what tools": a
-  // connection with no base_url yields no tools yet is still a credential this context may
-  // spend, so the write gate must count spendable connections (see spendableConnections).
   const contextTools = async (x: ContextRecord) => {
     const ids = parseConnectionIds(x.connection_ids)
-    if (ids.length === 0) return { broker: null, route: null, tools: [], credentialed: false }
+    if (ids.length === 0) return { broker: null, route: null, tools: [] }
     const broker = await brokerFor(meta, x.org_id, null, deps.encryptionKey, deps.allowEchoStub)
     // The router rides along with the broker for the same reason the broker does: the proxy has
     // to EXECUTE through whatever listed the tool, or an `mcp:` tool would be listed by the MCP
     // broker and run by the plan's. It also carries the per-ref bearer.
     const route = refRouter(broker, mcpAuthFor(meta, x.org_id, deps.encryptionKey))
-    const spendable = await spendableConnections(meta, x.org_id, ids)
     return {
       broker,
       route,
       tools: await toolsForRun(meta, broker, x.org_id, ids, route, deps.encryptionKey),
-      credentialed: spendable.length > 0,
     }
   }
 
@@ -954,7 +949,6 @@ export const contextRoutes = (ctx: AppContext) => {
     subject: parseSubject(s.subject_ref) as {
       kind: "artifact"
       id: string
-      mode?: "publish" | "propose"
     } | null,
     result_artifact_id: s.result_artifact_id,
   })
@@ -1645,9 +1639,9 @@ export const contextRoutes = (ctx: AppContext) => {
           // on (context_id, dedupe_key) is the race backstop; this is the fast join.
           dedupe_key: z.string().trim().min(1).max(200).optional(),
           // WHAT this session is about. Accepts the same shapes automation targets do —
-          // a bare short_id, or {kind:"artifact", id, mode} — because it is the same
-          // Selector type, normalized by the same function. Absent = a plain ask, which
-          // is every session that existed before this field.
+          // a bare short_id, or {kind:"artifact", id} — because it is the same Selector
+          // type, normalized by the same function. Absent = a plain ask, which is every
+          // session that existed before this field.
           subject: z.unknown().optional(),
         }),
       )
@@ -1678,11 +1672,6 @@ export const contextRoutes = (ctx: AppContext) => {
           !(await authorize(c, "read", target))
         )
           return bail(fail(c, 404, "not found"))
-        // Publishing to it is a stronger grant than reading it, checked separately so a
-        // reader cannot request `mode:"publish"` and have the gate be the only thing
-        // standing between them and a live write.
-        if (subject.mode === "publish" && !(await authorize(c, "publish", target)))
-          return bail(fail(c, 403, "you cannot publish to that artifact"))
       }
       // Return an in-flight session's current state as this ask's result (the join) —
       // same shape/status as a fresh open, so a caller need not special-case it.
@@ -1871,9 +1860,6 @@ export const contextRoutes = (ctx: AppContext) => {
         z.object({
           short_id: z.string(),
           body_md: z.string().trim().min(1).max(20_000),
-          // How an edit lands. Checked against real publish rights below — a reader asking
-          // for `publish` gets 403 rather than having the gate be the only thing in the way.
-          mode: z.enum(["publish", "propose"]).optional(),
         }),
       )
       if (b instanceof Response) return bail(b)
@@ -1920,9 +1906,6 @@ export const contextRoutes = (ctx: AppContext) => {
           ? !!actor.orgRole
           : !!(await meta.getMembership(art.org_id, me.id).catch(() => null))
       if (!isMember) return bail(fail(c, 404, "not found"))
-      const wantsPublish = b.mode === "publish"
-      if (wantsPublish && !(await authorize(c, "publish", art)))
-        return bail(fail(c, 403, "you cannot publish to that artifact"))
       // A CONTEXTLESS session needs the relaxed `context_session` shape (nullable context_id /
       // context_version). Postgres and self-host SQLite get it automatically; D1's schema is
       // applied out of band, so a database that predates the relaxation and has not run
@@ -1945,11 +1928,7 @@ export const contextRoutes = (ctx: AppContext) => {
             context_version: null,
             org_id: art.org_id,
             asker_id: me.id,
-            subject_ref: JSON.stringify({
-              kind: "artifact",
-              id: art.short_id,
-              ...(wantsPublish ? { mode: "publish" } : {}),
-            }),
+            subject_ref: JSON.stringify({ kind: "artifact", id: art.short_id }),
           },
           {
             id: newId("sm"),
@@ -2711,6 +2690,11 @@ export const contextRoutes = (ctx: AppContext) => {
       // sequential runner claims exactly what it will work on now (default 1), so a
       // crash strands one session, not a batch.
       const limit = Math.min(20, Math.max(1, Number(c.req.query("limit")) || 10))
+      // THE AGENT-WRITE SWITCH stops hosted execution at the door: with agents switched off
+      // (or the switch unreadable), nothing is claimed — no lease, no model spend, no draft
+      // to lose — and the ask stays pending until the switch comes back on (or the give-up
+      // horizon fails it).
+      if (await agentWritesOff(meta, x.org_id)) return c.json({ sessions: [], tools: [] })
       const working = await meta.countWorkingSessions(x.id)
       const room = Math.max(0, (x.max_concurrency ?? 1) - working)
       const sessions =
@@ -2730,20 +2714,9 @@ export const contextRoutes = (ctx: AppContext) => {
       // The same list the hosted claim returns. A context's reach must not depend on
       // which kind of executor picked its session up.
       const reach = await contextTools(x)
-      const settings = await meta.getOrgSettings(x.org_id)
       return c.json({
         sessions: out,
         tools: reach.tools.map((t) => ({ def: t.def, ref: t.ref })),
-        // The gate's inputs, which this endpoint did NOT send before — so a polling runner had
-        // nothing to gate on while the hosted claim did, and the same ask could land live on one
-        // executor and as a review on the other. Sending them makes the lanes symmetrical in
-        // what they KNOW. Note the CLI's ask path does not consult them yet (serveSession
-        // publishes directly); that half is tracked separately, and this is its prerequisite.
-        flags: {
-          agentKillswitch: settings.agentKillswitch,
-          agentAutoEnabled: settings.agentAutoEnabled,
-          credentialed: reach.credentialed,
-        },
       })
     },
   )
@@ -2764,6 +2737,9 @@ export const contextRoutes = (ctx: AppContext) => {
     // No context ⇒ no owning agent ⇒ 404 (a contextless chat session is served in-process).
     const x = s?.context_id ? await meta.getContext(s.context_id) : null
     if (!s || !x || x.agent_id !== agent.id) return fail(c, 404, "not found")
+    // THE AGENT-WRITE SWITCH, same door as the polling queue: with agents switched off the
+    // session is not claimed — no lease, no spend — and stays open for when they come back.
+    if (await agentWritesOff(meta, x.org_id)) return c.json({ session: null })
     // The HOSTED lease comes from the run lifecycle clock, NOT from leaseFor(context).
     //
     // A polling runner holds a standing token that never expires, so a short lease there is
@@ -2787,13 +2763,6 @@ export const contextRoutes = (ctx: AppContext) => {
     // executor exits clean rather than double-answering.
     if (!claimed) return c.json({ session: null })
     const manifest = await meta.getArtifactById(x.manifest_artifact_id)
-    // The autonomy gate's inputs, resolved server-side and FRESH at claim time — exactly as the
-    // runs claim resolves them, so a flipped killswitch is seen on the very next ask. An executor
-    // with no flags to gate on would have to either ignore the switch or invent a policy of its
-    // own, and both are worse than one more read here.
-    const settings = await meta.getOrgSettings(x.org_id)
-    // Resolved ONCE: the same read answers what the executor may call and whether the write
-    // gate must demote this ask. Two reads could disagree.
     const reach = await contextTools(x)
     return c.json({
       session: {
@@ -2801,13 +2770,6 @@ export const contextRoutes = (ctx: AppContext) => {
         messages: (await meta.listSessionMessagesFor([claimed.id])).map(messageJson),
       },
       context: { id: x.id, name: x.name, manifest_short_id: manifest?.short_id ?? null },
-      flags: {
-        agentKillswitch: settings.agentKillswitch,
-        agentAutoEnabled: settings.agentAutoEnabled,
-        // Same rung as the run lane: an ask that can spend a credential files its page for
-        // review instead of publishing it live (@derive/core decideWrite, rung 3).
-        credentialed: reach.credentialed,
-      },
       // Projected def + ref only, as the run claim is: RunTool's routing fields, and the
       // connection behind them, stay server-side.
       tools: reach.tools.map((t) => ({ def: t.def, ref: t.ref })),

@@ -1461,7 +1461,7 @@ export function Artifact() {
                   working={chat.working}
                   streaming={chat.streaming}
                   notice={chat.error ?? undefined}
-                  onSend={(b) => chat.send(b, effectiveCanPublish)}
+                  onSend={(b) => chat.send(b)}
                   onPoll={chat.poll}
                 />
               }

@@ -274,6 +274,51 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect((await meta.getVersion(rec.id, 1))?.source).toBe("mcp")
   })
 
+  it("the agentWrites switch refuses a live publish — the brake reaches every grant", async () => {
+    // The switch is not only the claim gate: a standing MCP connection can publish with no
+    // claim in sight, so the live path itself refuses. The draft is steered into the reply
+    // for a person to apply — work surfaces, it never lands.
+    const { app, token, meta } = appWithGrant(dir, "wswitch", "openid derive:read derive:publish", {
+      encryptionKey: "wswitch-signing-secret",
+    })
+    // Resolve the grant's workspace from a real publish rather than assuming its id.
+    const probe = JSON.parse(
+      toolText(await call(app, token, "publish", { title: "Probe", content: "<h1>p</h1>" })),
+    )
+    const org = (await meta.getByShortId(probe.short_id))?.org_id ?? "default"
+    await meta.setOrgSettings(org, { ...(await meta.getOrgSettings(org)), agentWrites: false })
+    const refused = toolText(
+      await call(app, token, "publish", { title: "Nope", content: "<h1>n</h1>" }),
+    )
+    expect(refused).toMatch(/agent writes switched off/i)
+    expect(refused).toMatch(/reply/i)
+    // `stage target:'doc'` mints a publish URL — a document write with a fuse — so the
+    // switch refuses the mint too. Otherwise the publish tool's own size guidance would
+    // steer a refused agent straight to a working bypass.
+    const staged = toolText(await call(app, token, "stage", { target: "doc" }))
+    expect(staged).toMatch(/agent writes switched off/i)
+    // A URL minted BEFORE the flip must not spend after it: the token route re-checks.
+    await meta.setOrgSettings(org, { ...(await meta.getOrgSettings(org)), agentWrites: true })
+    const minted = JSON.parse(toolText(await call(app, token, "stage", { target: "doc" }))) as {
+      upload_url: string
+    }
+    await meta.setOrgSettings(org, { ...(await meta.getOrgSettings(org)), agentWrites: false })
+    const form = new FormData()
+    form.append("file", new Blob(["<h1>sneak</h1>"]), "f.html")
+    form.append("title", "Sneak")
+    const spend = await app.request(new URL(minted.upload_url).pathname, {
+      method: "POST",
+      body: form,
+    })
+    expect(spend.status).toBe(403)
+    expect(await spend.text()).toMatch(/agent writes switched off/i)
+    await meta.setOrgSettings(org, { ...(await meta.getOrgSettings(org)), agentWrites: true })
+    const ok = JSON.parse(
+      toolText(await call(app, token, "publish", { title: "Yep", content: "<h1>y</h1>" })),
+    )
+    expect(ok.short_id).toBeTruthy()
+  })
+
   it("stamps version.source='mcp' on tool publishes (the onboarding signal)", async () => {
     const { app, token, meta } = appWithGrant(dir, "srcstamp", "openid derive:read derive:publish")
     const created = JSON.parse(
@@ -1416,7 +1461,7 @@ describe("remote MCP endpoint (/mcp)", () => {
     const refText =
       (ref.parsed?.result as { contents?: { text: string }[] } | undefined)?.contents?.[0]?.text ??
       ""
-    expect(refText).toContain("for_review")
+    expect(refText).toContain("opens a review")
     expect(refText).toContain("brandprint-tokens")
   })
 
@@ -1500,7 +1545,7 @@ describe("remote MCP endpoint (/mcp)", () => {
     const ref = JSON.parse(
       toolText(await call(app, token, "read", { short_id: "derive://brandprint/reference" })),
     )
-    expect(ref.content).toContain("for_review")
+    expect(ref.content).toContain("opens a review")
     expect(ref.content).toContain("brandprint-tokens")
     const tpl = JSON.parse(
       toolText(await call(app, token, "read", { short_id: "derive://brandprint/template" })),
@@ -1578,8 +1623,8 @@ describe("remote MCP endpoint (/mcp)", () => {
       "openid derive:read derive:publish derive:manage",
     )
     // setup_brandprint is folded into publish: an Admin's first publish to the
-    // profile URI scaffolds the fact. The profile is always filed for_review (its
-    // reveal is human-approved), so the response is a PROPOSAL, never a live publish.
+    // profile URI scaffolds the fact. The profile publishes LIVE like any document,
+    // and a review round always opens — the person's reveal is the note, not a gate.
     const out = JSON.parse(
       toolText(
         await call(app, token, "publish", {
@@ -1588,9 +1633,8 @@ describe("remote MCP endpoint (/mcp)", () => {
         }),
       ),
     )
-    expect(out.proposed).toBe(true)
-    expect(out.published).toBe(false)
-    expect(out.proposal_id).toBeTruthy()
+    expect(out.published).toBe(true)
+    expect(out.review_requested).toBe(true)
 
     // The scaffold persisted the pointer + placeholder into a Brandprint collection.
     const ws = JSON.parse(toolText(await call(app, token, "list_workspaces")))
@@ -1609,39 +1653,21 @@ describe("remote MCP endpoint (/mcp)", () => {
       toolText(
         await call(app, token, "publish", {
           short_id: "derive://brandprint/profile",
-          content: "<h1>revised proposal</h1>",
+          content: "<h1>revised profile</h1>",
         }),
       ),
     )
-    expect(again.proposed).toBe(true)
+    expect(again.published).toBe(true)
     const settings2 = await meta.getOrgSettings(org)
     expect(settings2.brandprint?.profileId).toBe(profId)
     expect(settings2.brandprint?.collectionId).toBe(collectionId)
 
-    // While it's only a placeholder (v1), reading the profile URI reports no live profile.
-    expect(
-      toolText(await call(app, token, "read", { short_id: "derive://brandprint/profile" })),
-    ).toContain("no live brand profile")
-
-    // The agent builds the profile: a v2 against the placeholder flips it live.
-    const form = new FormData()
-    form.append(
-      "file",
-      new Blob([new TextEncoder().encode("<h1>Derive brand profile</h1>")]),
-      "index.html",
-    )
-    const rep = await app.request(`/v1/artifacts/${profId}/versions`, {
-      method: "POST",
-      body: form,
-      headers: { authorization: `Bearer ${token}` },
-    })
-    expect(rep.status).toBe(201)
-
-    // read derive://brandprint/profile now returns the live content.
+    // The publish landed as a real version past the v1 placeholder, so the profile is
+    // live immediately — reading the URI returns the published content.
     const live = JSON.parse(
       toolText(await call(app, token, "read", { short_id: "derive://brandprint/profile" })),
     )
-    expect(live.content).toContain("Derive brand profile")
+    expect(live.content).toContain("revised profile")
   })
 
   it("publish to derive://brandprint/profile requires an Admin/Owner role to scaffold", async () => {
@@ -4348,7 +4374,7 @@ describe("automate record — local work lands in the same ledger", () => {
           action: "record",
           automation_id: created.id,
           wrote: ["qa1rep0rt"],
-          outcome: "proposed",
+          outcome: "published",
           note: "browser suite, 12/12 pass",
         }),
       ),
@@ -4363,7 +4389,7 @@ describe("automate record — local work lands in the same ledger", () => {
     expect(run?.automation_id).toBe(created.id)
     expect(run?.meta).toContain("qa1rep0rt")
     expect(run?.meta).toContain('"lane":"local"')
-    expect(run?.meta).toContain("proposed")
+    expect(run?.meta).toContain("published")
   })
 
   it("a foreign automation id records unattributed rather than losing the work", async () => {

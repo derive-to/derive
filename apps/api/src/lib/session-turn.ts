@@ -6,8 +6,8 @@
 // the message is watching. See the design doc (derive.to 8205agbp).
 //
 // What it DOES share with the unattended lane is every decision that must not drift: the run
-// contract (what to ask for, how to read it), the autonomy gate (how a write lands), the nudge
-// policy and the cost accounting. Those are lib/turn-core.ts, which the loop substrate runs too.
+// contract (what to ask for, how to read it), the nudge policy and the cost accounting. Those
+// are lib/turn-core.ts, which the loop substrate runs too.
 // This file is what is genuinely attended about an attended turn: the document comes from the
 // store rather than a claim, and the write goes to the store rather than over HTTP.
 
@@ -34,24 +34,26 @@ import {
   documentName,
   type LandingPort,
   runTurn,
+  suggestionText,
   type TurnOutcome,
 } from "./turn-core"
 
 export interface TurnDeps extends AfterPublishDeps {
   callModel: AgentLoopInput["callModel"]
   /** The billing gate — threaded through exactly like `meta`/`blobs` arrive, so the one
-   *  branch that actually lands a live publish (landInProcess) can refuse it. Proposals
-   *  stay free: only the live-publish branch checks this. */
+   *  branch that actually lands a live publish (landInProcess) can refuse it. A blocked
+   *  or raced turn writes nothing, so only the live-publish branch checks this. */
   billingBlocked: (orgId: string) => Promise<{ code: string; message: string } | null>
 }
 
 /** What a turn did, for the transcript and the ledger. `reply` is always present —
- *  even a failed turn owes the person who is sitting there an answer. */
+ *  even a failed turn owes the person who is sitting there an answer. `commented`
+ *  means the drafted change was surfaced in the reply and the document not touched. */
 export interface TurnResult {
   reply: string
-  outcome: "published" | "proposed" | "answered" | "failed"
-  /** The version number written, or the proposal id filed. Null when nothing landed. */
-  wrote: { kind: "version"; n: number } | { kind: "proposal"; id: string } | null
+  outcome: "published" | "commented" | "answered" | "failed"
+  /** The version number written. Null when nothing landed on the document. */
+  wrote: { kind: "version"; n: number } | null
   costMicroUsd: number | null
 }
 
@@ -60,16 +62,23 @@ type TurnInput = {
   subject: Extract<Selector, { kind: "artifact" }>
   artifact: ArtifactRecord
   transcript: SessionMessageRecord[]
-  flags: { agentKillswitch: boolean; agentAutoEnabled: boolean }
+  /**
+   * Why this turn may NOT write the document, when it may not — resolved fresh by the route,
+   * per turn. Absent means the write publishes live, like any other write. This is plain
+   * standing, not a policy machine: the workspace switch is off, the document is locked, or
+   * the asker's own role cannot publish here. Either way the model still drafts, and the
+   * draft surfaces in the reply rather than being dropped.
+   */
+  writeBlock?: "switch" | "locked" | "role"
   /**
    * READ-ONLY tools, so a conversation about this document can reach the rest of the workspace
    * ("what did the roadmap say about this?") without leaving the rail.
    *
    * Deliberately read-only, and that is the whole design of this lane: the DOCUMENT's write goes
-   * through the revision contract and the landing port below, which is what handles publish-vs-
-   * propose, the mid-turn race demotion and the post-publish fan-out. Handing this turn a
-   * `publish` tool as well would give one document two write paths that decide differently —
-   * the exact drift turn-core exists to prevent. Reach is additive; writing is not.
+   * through the revision contract and the landing port below, which is what handles the mid-turn
+   * race, the write-standing check and the post-publish fan-out. Handing this turn a `publish`
+   * tool as well would give one document two write paths that decide differently — the exact
+   * drift turn-core exists to prevent. Reach is additive; writing is not.
    *
    * Absent (undefined) ⇒ no tools, exactly as this lane ran before.
    */
@@ -130,7 +139,7 @@ const apologyFor = (failure: NonNullable<TurnOutcome["failure"]>): string => {
 }
 
 /**
- * Run one turn against `artifact`, writing through the gate. Never throws: a turn that
+ * Run one turn against `artifact`, landing any write it produces. Never throws: a turn that
  * fails still returns a reply, because the transcript is what the person is looking at
  * and an empty conversation is a worse failure than an honest error message.
  */
@@ -183,13 +192,6 @@ ${documentContext(src.text, documentName(input.artifact.short_id, input.artifact
     // and the ceiling becomes the shared one every other tool-using lane runs on (which also
     // brings the announced last turn and the tool-output budget with it).
     maxTurns: input.tools?.tools.length ? DEFAULT_MAX_TURNS : NUDGE_LIMIT + 1,
-    gate: {
-      // `mode` rides on the subject selector, so the person's edit-vs-suggest preference is the
-      // same field that says what the session is about — one field, and the two can never
-      // disagree.
-      autonomy: input.subject.mode === "publish" ? "auto" : "suggest",
-      flags: { ...input.flags, credentialed: false },
-    },
     land: landInProcess(deps, input, src.version),
   })
 
@@ -206,26 +208,39 @@ ${documentContext(src.text, documentName(input.artifact.short_id, input.artifact
       costMicroUsd: toMicroUsd(out.costUsd),
     }
   }
-  // `shadow` is unreachable: autonomy here is only ever `auto` or `suggest` (derived from the
-  // subject's mode), and decideWrite returns `shadow` only for autonomy `shadow`. Filing nothing
-  // at all makes no sense when someone is waiting for a reply, so it is unreachable rather than
-  // unhandled — and if it ever became reachable, an honest "nothing happened" beats a lie.
-  if (out.outcome === "shadow")
-    return {
-      reply: "I did not write anything.",
-      outcome: "failed",
-      wrote: null,
-      costMicroUsd: toMicroUsd(out.costUsd),
-    }
   return {
     reply: out.reply || "(no reply)",
     outcome: out.outcome,
-    // The in-process port only ever files a version or a proposal; `artifact` is the loop's
-    // create-a-new-one landing, which chat has no route to (it is always ABOUT a document).
-    wrote: out.wrote?.kind === "artifact" ? null : (out.wrote ?? null),
+    // The in-process port only ever writes a version; every other WroteRef kind belongs
+    // to the loop's create-a-new-one landing, which chat has no route to (it is always
+    // ABOUT a document).
+    wrote: out.wrote?.kind === "version" ? out.wrote : null,
     costMicroUsd: toMicroUsd(out.costUsd),
   }
 }
+
+/** The blocked write's reply: the drafted change, surfaced where the person already is. The
+ *  lead names the actual reason, because "I did not change it" without one reads as a bug. */
+const suggestionReply = (revision: Revision, why: "raced" | "switch" | "locked" | "role"): string =>
+  suggestionText(revision, {
+    lead: {
+      raced:
+        "Someone published a new version while I was working, so I did not write over it. Here is what I drafted:",
+      switch:
+        "This workspace has agent writes switched off, so I have not changed the document. Here is the change I drafted:",
+      locked: "This document is locked, so I have not changed it. Here is the change I drafted:",
+      role: "You can comment on this document but not publish to it, so I have not changed it. Here is the change I suggest:",
+    }[why],
+    tooBig: {
+      raced:
+        "The full draft is too large to paste here — ask again and I will redo it against the new version.",
+      switch:
+        "The full draft is too large to paste here. Switch agent writes back on and ask again, and I will apply it.",
+      locked:
+        "The full draft is too large to paste here. Unlock the document and ask again, and I will apply it.",
+      role: "The full draft is too large to paste here. Someone who can publish to this document can ask for the same change.",
+    }[why],
+  })
 
 /**
  * The ATTENDED landing: straight into the store, because this IS the API and the person is
@@ -234,9 +249,8 @@ ${documentContext(src.text, documentName(input.artifact.short_id, input.artifact
  */
 const landInProcess =
   (deps: TurnDeps, input: TurnInput, baseVersion: number): LandingPort =>
-  async (decision, revision: Revision) => {
+  async (revision: Revision) => {
     const bytes = new TextEncoder().encode(revision.content)
-    const blobKey = await deps.blobs.put(bytes)
     // KEEP THE DOCUMENT'S OWN FORMAT. Deriving this from the model's filename silently converted
     // a Markdown doc to HTML the moment the model omitted or mangled the name — parseRevision
     // falls back to `index.html`, which is right when CREATING an artifact and wrong when editing
@@ -248,42 +262,32 @@ const landInProcess =
       (revision.filename.endsWith(".md") ? "text/markdown" : "text/html")
     const author = input.onBehalf?.name ?? "Derive"
 
-    // A human published while the model was thinking. Demote rather than clobber: their write
-    // is the one that was reviewed by a person, and the turn's answer becomes a proposal against
-    // what they wrote. The check is cheap and re-reads the artifact deliberately.
+    // A human published while the model was thinking. Surface rather than clobber: their write
+    // is the one a person just made, and this turn's revision was drafted against a version
+    // that is no longer current. The check is cheap and re-reads the artifact deliberately.
     const fresh = await deps.meta.getArtifactById(input.artifact.id)
     const raced = !!fresh && fresh.current_version !== baseVersion
 
-    if (decision === "proposal" || raced) {
-      const proposal = await deps.meta.createProposal({
-        id: newId("p"),
-        artifact_id: input.artifact.id,
-        blob_key: blobKey,
-        content_type: contentType,
-        kind: input.artifact.kind,
-        message: revision.message ?? null,
-        author,
-        author_id: input.onBehalf?.id ?? null,
-        on_behalf_of: input.onBehalf?.id ?? null,
-        base_version: baseVersion,
-      })
+    if (input.writeBlock || raced) {
+      // Nothing is written. The drafted change surfaces in the reply — the person is
+      // right here, and the transcript is the record — so the suggestion is never lost
+      // and the document is never touched. A standing block outranks the race in the
+      // wording: "ask again" is only honest advice when asking again could land.
       return {
-        outcome: "proposed",
-        wrote: { kind: "proposal", id: proposal.id },
-        note: raced
-          ? `${revision.message || "Done."}\n\n(Someone published while I was working, so I filed this as a proposal instead of editing.)`
-          : revision.message || "Done — filed as a proposal.",
+        outcome: "commented",
+        wrote: null,
+        note: suggestionReply(revision, input.writeBlock ?? "raced"),
       }
     }
 
-    // This is the one branch that actually lands a live publish (the branch above files a
-    // proposal instead, which stays free) — gated here, after the org is known and before
-    // any bytes are recorded as a version. A refused write throws, same as landOverHttp's
-    // failed-request idiom (lib/substrate-loop.ts): the turn reports it as a failed write
-    // rather than a settled one.
+    // This is the branch that lands the live publish (the branch above writes nothing, which
+    // stays free) — gated here, after the org is known and before any bytes are recorded as a
+    // version. A refused write throws, same as landOverHttp's failed-request idiom
+    // (lib/substrate-loop.ts): the turn reports it as a failed write rather than a settled one.
     const blocked = await deps.billingBlocked(input.artifact.org_id)
     if (blocked) throw new BillingBlockedError(blocked.message)
 
+    const blobKey = await deps.blobs.put(bytes)
     const version = await deps.meta.addVersion(input.artifact.id, {
       id: newId("v"),
       blob_key: blobKey,

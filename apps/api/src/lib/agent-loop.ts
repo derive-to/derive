@@ -20,9 +20,8 @@ import { type AskFields, addCostUsd, NUDGE_LIMIT, type Revision } from "@derive/
  * Every one of those contracts lives in @derive/core, so the container executor and this loop
  * ask for the same output in the same words.
  *
- * The loop does NOT decide how a write lands. It returns what the model produced; the caller
- * runs decideWrite with the workspace flags, exactly as the container path
- * does.
+ * The loop does NOT land the write. It returns what the model produced; the caller's landing
+ * port writes it, exactly as the container path does.
  */
 
 /** One tool the model may call, as the run's least-privilege list already describes it. */

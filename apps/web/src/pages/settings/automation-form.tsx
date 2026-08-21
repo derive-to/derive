@@ -37,23 +37,17 @@ import {
   targetPickerQuery,
 } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
-import { EVENT_KINDS, SCHEDULE_PRESETS, stampMode } from "./automation-format"
+import { EVENT_KINDS, SCHEDULE_PRESETS } from "./automation-format"
 
 // The automation form, shared by the Settings manager (create + edit) and the per-artifact
 // Automate dialog. Targets are first-class: one "Add target" search over documents and
 // collections, plus free tags — a doc is revised, a collection receives new editions, a tag
-// stamps (and archives) whatever the run writes. Write mode rides ON the targets (never a
-// field of its own): the mode select stamps `mode:"publish"` onto every target at submit;
-// propose is the default and stays unstored. Pass `automation` to edit in place (PATCH).
+// stamps (and archives) whatever the run writes. A run's write publishes as a new version of
+// its target, like every other write. Pass `automation` to edit in place (PATCH).
 
-/** A chosen target plus a display label. Modes are stripped on load and re-applied at submit
- *  from the single mode select; titles resolve lazily (see below). */
+/** A chosen target plus a display label. Titles resolve lazily (see below). */
 type Target = { ref: AutomationRef; label: string }
 
-const stripMode = (r: AutomationRef): AutomationRef => {
-  const { mode: _mode, ...rest } = r
-  return rest as AutomationRef
-}
 const keyOf = (r: AutomationRef): string =>
   r.kind === "tag" ? `tag:${r.tag}` : `${r.kind}:${r.id}`
 const seedLabel = (r: AutomationRef): string => (r.kind === "tag" ? `#${r.tag}` : r.id)
@@ -108,12 +102,9 @@ export function AutomationForm({
   const [kind, setKind] = useState<AutomationTrigger["kind"]>(automation?.trigger.kind ?? "manual")
   const [cron, setCron] = useState<string>(automation?.trigger.cron ?? SCHEDULE_PRESETS[0].cron)
   const [on, setOn] = useState<string>(automation?.trigger.on ?? EVENT_KINDS[0].id)
-  const [mode, setMode] = useState<"propose" | "publish">(
-    automation?.refs.some((r) => r.mode === "publish") ? "publish" : "propose",
-  )
   const [targets, setTargets] = useState<Target[]>(() => {
     const seed = automation?.refs ?? refs?.map((id) => ({ kind: "artifact" as const, id }))
-    return (seed ?? []).map((r) => ({ ref: stripMode(r), label: seedLabel(r) }))
+    return (seed ?? []).map((r) => ({ ref: r, label: seedLabel(r) }))
   })
   const [pickerOpen, setPickerOpen] = useState(false)
   const [sourcesOpen, setSourcesOpen] = useState(false)
@@ -184,11 +175,7 @@ export function AutomationForm({
 
   const buildTrigger = (): AutomationTrigger =>
     kind === "schedule" ? { kind, cron, tz } : kind === "event" ? { kind, on } : { kind }
-  const buildRefs = (): AutomationRef[] =>
-    stampMode(
-      targets.map((t) => t.ref),
-      mode,
-    )
+  const buildRefs = (): AutomationRef[] => targets.map((t) => t.ref)
 
   const save = useApiMutation({
     mutationFn: () => {
@@ -541,20 +528,6 @@ export function AutomationForm({
           </Popover>
         </div>
       </Field>
-
-      {targets.length > 0 && (
-        <Field label="When it writes">
-          <Select value={mode} onValueChange={(v) => setMode(v as "propose" | "publish")}>
-            <SelectTrigger data-testid="automation-mode" aria-label="Write mode" className="w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="propose">Propose for review</SelectItem>
-              <SelectItem value="publish">Publish live</SelectItem>
-            </SelectContent>
-          </Select>
-        </Field>
-      )}
 
       <Field label="Trigger">
         <Tabs value={kind} onValueChange={(v) => setKind(v as AutomationTrigger["kind"])}>

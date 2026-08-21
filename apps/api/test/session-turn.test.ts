@@ -19,7 +19,7 @@ import { runSessionTurn, type TurnDeps } from "../src/lib/session-turn"
 //
 // Tested against a real store and a real blob store with only the MODEL faked, because the
 // interesting behavior is what the turn does with what the model said: whether it writes at
-// all, whether the gate demotes it, and what happens when a human publishes underneath it.
+// all, what a blocked write surfaces, and what happens when a human publishes underneath it.
 // A mocked store would test the mock.
 
 const setup = async (opts?: { source?: string }) => {
@@ -107,7 +107,6 @@ const transcript = (text: string): SessionMessageRecord[] => [
 const revision = (content = "# New", confidence: number | null = 0.95) =>
   `<revision>${JSON.stringify({ content, filename: "doc.md", confidence, message: "shortened it" })}</revision>`
 
-const FLAGS = { agentKillswitch: false, agentAutoEnabled: true }
 const ED = { id: "u-ed", name: "Ed" }
 
 describe("a turn that is not an edit", () => {
@@ -121,7 +120,6 @@ describe("a turn that is not an edit", () => {
       subject: { kind: "artifact", id: "doc1" },
       artifact,
       transcript: transcript("how long is this doc?"),
-      flags: FLAGS,
       onBehalf: ED,
     })
     expect(res.outcome).toBe("answered")
@@ -132,14 +130,13 @@ describe("a turn that is not an edit", () => {
 })
 
 describe("a turn that edits", () => {
-  it("publishes a VERSION when the subject says publish", async () => {
+  it("publishes a VERSION — an agent's edit lands like a person's", async () => {
     const { meta, blobs, artifact } = await setup()
     const res = await runSessionTurn(deps(meta, blobs, revision()), {
       session: session(),
-      subject: { kind: "artifact", id: "doc1", mode: "publish" },
+      subject: { kind: "artifact", id: "doc1" },
       artifact,
       transcript: transcript("make it shorter"),
-      flags: FLAGS,
       onBehalf: ED,
     })
     expect(res.outcome).toBe("published")
@@ -150,54 +147,64 @@ describe("a turn that edits", () => {
     )
   })
 
-  it("files a PROPOSAL when the subject does not say publish", async () => {
-    // Propose is the default on a selector, so the quiet path is the safe one.
+  it("an UNSTATED confidence still publishes — the value is shown, never a gate", async () => {
     const { meta, blobs, artifact } = await setup()
-    const res = await runSessionTurn(deps(meta, blobs, revision()), {
+    const res = await runSessionTurn(deps(meta, blobs, revision("# New", null)), {
       session: session(),
       subject: { kind: "artifact", id: "doc1" },
       artifact,
       transcript: transcript("make it shorter"),
-      flags: FLAGS,
       onBehalf: ED,
     })
-    expect(res.outcome).toBe("proposed")
-    expect((await meta.getArtifactById("a1"))?.current_version).toBe(1)
-    expect((await meta.listProposals("a1")).length).toBe(1)
-  })
-
-  it("the KILLSWITCH demotes a publish to a proposal", async () => {
-    const { meta, blobs, artifact } = await setup()
-    const res = await runSessionTurn(deps(meta, blobs, revision()), {
-      session: session(),
-      subject: { kind: "artifact", id: "doc1", mode: "publish" },
-      artifact,
-      transcript: transcript("make it shorter"),
-      flags: { agentKillswitch: true, agentAutoEnabled: true },
-      onBehalf: ED,
-    })
-    expect(res.outcome).toBe("proposed")
-  })
-
-  it("an UNSTATED confidence never publishes live", async () => {
-    const { meta, blobs, artifact } = await setup()
-    const res = await runSessionTurn(deps(meta, blobs, revision("# New", null)), {
-      session: session(),
-      subject: { kind: "artifact", id: "doc1", mode: "publish" },
-      artifact,
-      transcript: transcript("make it shorter"),
-      flags: FLAGS,
-      onBehalf: ED,
-    })
-    expect(res.outcome).toBe("proposed")
+    expect(res.outcome).toBe("published")
+    expect((await meta.getArtifactById("a1"))?.current_version).toBe(2)
   })
 })
 
+describe("a blocked write surfaces its draft instead of landing", () => {
+  const cases = [
+    {
+      block: "switch" as const,
+      names: /agent writes switched off/,
+      why: "the workspace turned agent writes off — zero live versions, the draft surfaces",
+    },
+    {
+      block: "locked" as const,
+      names: /locked/,
+      why: "the document is locked — the agent path is not a side door around the lock",
+    },
+    {
+      block: "role" as const,
+      names: /can comment on this document but not publish/,
+      why: "the asker cannot publish here — no agent gets more power than its person",
+    },
+  ]
+  for (const c of cases) {
+    it(c.why, async () => {
+      const { meta, blobs, artifact } = await setup()
+      const res = await runSessionTurn(deps(meta, blobs, revision()), {
+        session: session(),
+        subject: { kind: "artifact", id: "doc1" },
+        artifact,
+        transcript: transcript("make it shorter"),
+        writeBlock: c.block,
+        onBehalf: ED,
+      })
+      expect(res.outcome).toBe("commented")
+      expect(res.wrote).toBeNull()
+      // The draft is never lost: it rides the reply, with the real reason named.
+      expect(res.reply).toContain("# New")
+      expect(res.reply).toMatch(c.names)
+      expect((await meta.getArtifactById("a1"))?.current_version).toBe(1)
+    })
+  }
+})
+
 describe("a human publishes while the model is thinking", () => {
-  it("DEMOTES to a proposal instead of clobbering their version", async () => {
+  it("SURFACES the draft instead of clobbering their version", async () => {
     // The optimistic-concurrency case. The turn read v1; a person published v2 mid-flight.
-    // Their write was reviewed by a human and the model's was not, so the model's answer
-    // becomes a proposal against what they wrote rather than overwriting it.
+    // Their write is the one a person just made, so the model's answer surfaces as a
+    // suggestion in the reply rather than overwriting it.
     const { meta, blobs, artifact } = await setup()
     const racing: TurnDeps = {
       ...deps(meta, blobs, revision()),
@@ -219,14 +226,13 @@ describe("a human publishes while the model is thinking", () => {
     }
     const res = await runSessionTurn(racing, {
       session: session(),
-      subject: { kind: "artifact", id: "doc1", mode: "publish" },
+      subject: { kind: "artifact", id: "doc1" },
       artifact,
       transcript: transcript("make it shorter"),
-      flags: FLAGS,
       onBehalf: ED,
     })
-    expect(res.outcome).toBe("proposed")
-    expect(res.reply).toContain("published while I was working")
+    expect(res.outcome).toBe("commented")
+    expect(res.reply).toContain("published a new version while I was working")
     // The human's version is still current — the turn did NOT overwrite it.
     const now = await meta.getArtifactById("a1")
     expect(now?.current_version).toBe(2)
@@ -249,7 +255,6 @@ describe("failures still answer the person sitting there", () => {
         subject: { kind: "artifact", id: "doc1" },
         artifact,
         transcript: transcript("make it shorter"),
-        flags: FLAGS,
         onBehalf: ED,
       },
     )
@@ -262,11 +267,11 @@ describe("failures still answer the person sitting there", () => {
 
 describe("the stored subject", () => {
   it("round-trips through the column, and a corrupt one degrades to a plain ask", async () => {
+    // Extra keys on a stored subject are dropped — the subject is just an address.
     expect(parseSubject(JSON.stringify({ kind: "artifact", id: "doc1", mode: "publish" }))).toEqual(
       {
         kind: "artifact",
         id: "doc1",
-        mode: "publish",
       },
     )
     // A bare short_id is the ergonomic shorthand everywhere a selector is accepted.
@@ -288,10 +293,9 @@ describe("an edit never changes the document's format", () => {
     const html = `<revision>${JSON.stringify({ content: "# Still markdown", filename: "index.html", confidence: 0.95, message: "m" })}</revision>`
     const res = await runSessionTurn(deps(meta, blobs, html), {
       session: session(),
-      subject: { kind: "artifact", id: "doc1", mode: "publish" },
+      subject: { kind: "artifact", id: "doc1" },
       artifact,
       transcript: transcript("make it shorter"),
-      flags: FLAGS,
       onBehalf: ED,
     })
     expect(res.outcome).toBe("published")
@@ -312,10 +316,9 @@ describe("a reply cut off mid-flight", () => {
       }),
       {
         session: session(),
-        subject: { kind: "artifact", id: "doc1", mode: "publish" },
+        subject: { kind: "artifact", id: "doc1" },
         artifact,
         transcript: transcript("add a glossary"),
-        flags: FLAGS,
         onBehalf: ED,
       },
     )
@@ -346,10 +349,9 @@ describe("a document too large for a whole-document reply uses EDITS", () => {
       ),
       {
         session: session(),
-        subject: { kind: "artifact", id: "doc1", mode: "publish" },
+        subject: { kind: "artifact", id: "doc1" },
         artifact,
         transcript: transcript("add a second risk"),
-        flags: FLAGS,
         onBehalf: ED,
       },
     )
@@ -376,10 +378,9 @@ describe("a document too large for a whole-document reply uses EDITS", () => {
       ),
       {
         session: session(),
-        subject: { kind: "artifact", id: "doc1", mode: "publish" },
+        subject: { kind: "artifact", id: "doc1" },
         artifact,
         transcript: transcript("two changes"),
-        flags: FLAGS,
         onBehalf: ED,
       },
     )
@@ -412,10 +413,9 @@ describe("a document too large for a whole-document reply uses EDITS", () => {
     }
     const res = await runSessionTurn(flaky, {
       session: session(),
-      subject: { kind: "artifact", id: "doc1", mode: "publish" },
+      subject: { kind: "artifact", id: "doc1" },
       artifact,
       transcript: transcript("add a risk"),
-      flags: FLAGS,
       onBehalf: ED,
     })
     expect(call).toBe(2)
@@ -426,10 +426,9 @@ describe("a document too large for a whole-document reply uses EDITS", () => {
     const { meta, blobs, artifact } = await setup({ source: big })
     const res = await runSessionTurn(deps(meta, blobs, "It is about 400 paragraphs long."), {
       session: session(),
-      subject: { kind: "artifact", id: "doc1", mode: "publish" },
+      subject: { kind: "artifact", id: "doc1" },
       artifact,
       transcript: transcript("how long is it?"),
-      flags: FLAGS,
       onBehalf: ED,
     })
     expect(res.outcome).toBe("answered")
@@ -459,7 +458,6 @@ describe("what filename attended chat SHOWS the model", () => {
       subject: { kind: "artifact", id: "doc1" },
       artifact,
       transcript: transcript("tighten the intro"),
-      flags: FLAGS,
       onBehalf: ED,
     })
     expect(system).toContain("its filename is doc1.md")

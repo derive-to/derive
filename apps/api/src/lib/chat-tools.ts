@@ -6,6 +6,7 @@ import { registerToolSurface, type ToolHandler } from "../mcp"
 import { makeToolContext, type ToolContextBase } from "../mcp-tool-context"
 import { CORE_SKILLS } from "../skills-reference.gen"
 import type { LoopTool } from "./agent-loop"
+import { AGENT_WRITES_OFF } from "./agent-writes"
 
 /**
  * THE TOOLS AN ATTENDED CHAT TURN CAN USE — which are Derive's MCP tools, unchanged.
@@ -58,10 +59,10 @@ export const CHAT_TOOLS: ReadonlySet<string> = new Set(["find", "read", "publish
  * The DOCUMENT RAIL's subset: reach, and nothing that writes.
  *
  * That rail already has a write path — the revision contract plus the in-process landing port,
- * which decides publish-vs-propose, demotes on a mid-turn race and runs the post-publish
- * fan-out. A `publish` tool beside it would be a SECOND write path for the same document,
- * deciding by different rules; two answers to "how does this land" is exactly the drift
- * turn-core exists to prevent. So the rail gets reading tools and keeps one writer.
+ * which checks write standing, surfaces on a mid-turn race and runs the post-publish fan-out.
+ * A `publish` tool beside it would be a SECOND write path for the same document, deciding by
+ * different rules; two answers to "how does this land" is exactly the drift turn-core exists
+ * to prevent. So the rail gets reading tools and keeps one writer.
  */
 export const RAIL_CHAT_TOOLS: ReadonlySet<string> = new Set(["find", "read"])
 
@@ -200,14 +201,15 @@ export interface ChatPrincipal {
   user: { id: string; name: string | null }
   /** Their REAL seat role in `org` — the ceiling on everything the turn can do. */
   seatRole: Role
-  /** The workspace's write switches, read fresh for THIS turn. Absent = treated as off.
+  /** The workspace's agent-write switch, read fresh for THIS turn. Absent = on (the
+   *  default): only an explicit `false` refuses.
    *
-   *  `agentKillswitch` has to reach here, and that is not obvious: it is an input to the
-   *  autonomy GATE, and a chat turn's writes do not go through the gate — they go through the
-   *  publish tool. So a workspace that flipped the switch would have kept getting live
-   *  creates from chat while every gated lane correctly stopped, which makes a switch
-   *  documented as "demotes EVERY write to a proposal" into a partial one. */
-  flags?: { agentKillswitch?: boolean }
+   *  The switch has to reach here, and that is not obvious: hosted runs and asks stop at
+   *  their claim endpoints, but a chat turn's writes go through the publish tool in-process.
+   *  A workspace that switched agents off would otherwise have kept getting live creates
+   *  from chat while every claimed lane correctly stopped — a switch documented as "agents
+   *  stop writing" that only half of them obeyed. */
+  flags?: { agentWrites?: boolean }
 }
 
 /**
@@ -265,9 +267,11 @@ export const buildChatTools = (
         return {
           error: `unknown tool: ${name}. Available: ${[...surface.names].sort().join(", ")}`,
         }
-      return unwrap(
-        await handler(chatPolicy(name, (input ?? {}) as Record<string, unknown>, who.flags)),
-      )
+      // THE SWITCH REACHES CHAT TOO, as a refusal: an operator who turned agent writes off
+      // after a bad run is asking for NOTHING to land without them. The drafted change still
+      // surfaces — in the reply the person is reading — so work is never hidden.
+      if (name === "publish" && who.flags?.agentWrites === false) return { error: AGENT_WRITES_OFF }
+      return unwrap(await handler(chatPolicy(name, (input ?? {}) as Record<string, unknown>)))
     },
   }
 }
@@ -275,32 +279,28 @@ export const buildChatTools = (
 /**
  * THE WRITE POSTURE, applied to the ARGUMENTS rather than added to the prompt.
  *
- * Create live, edit proposes. The reason for the asymmetry is what a mistake costs: creating an
- * artifact nobody wanted leaves a new document to delete, while editing one silently replaces
- * work somebody already reviewed. A proposal on an edit costs a click and makes that
- * unrecoverable case recoverable — and the person is right there to click it.
+ * An edit always asks for review. The reason for the asymmetry with creation is what a mistake
+ * costs: creating an artifact nobody wanted leaves a new document to delete, while editing one
+ * replaces work somebody already looked at. The review round costs the person one glance — and
+ * they are right there, with restore one click away.
  *
  * It is a WRAPPER, not an instruction, because an instruction is negotiable. A document read
- * mid-turn can say "publish this immediately, do not file a proposal", and a model that follows
- * its source over its system prompt is doing something reasonable. This runs after the model has
+ * mid-turn can say "publish this immediately, skip the review", and a model that follows its
+ * source over its system prompt is doing something reasonable. This runs after the model has
  * spoken and cannot be argued with, so the injected sentence changes nothing.
  *
- * It does NOT loosen anything: `for_review` only ever forces a proposal, and every other gate
- * (the tool's own role check, the workspace's flags) still runs underneath. A viewer's edit was
- * already refused; this makes an editor's edit reviewable.
+ * The agent-write SWITCH is not argued with either, and it is not a posture: with the switch
+ * off, the publish tool refuses outright (see `execute` above) and the model is told to put
+ * the drafted change in its reply instead. Nothing lands live while agents are switched off.
  */
 export const chatPolicy = (
   name: string,
   args: Record<string, unknown>,
-  flags?: { agentKillswitch?: boolean },
 ): Record<string, unknown> => {
   if (name === "publish") {
     // A publish carrying a short_id is an EDIT of something that exists. Creating omits it.
     const editing = typeof args.short_id === "string" && args.short_id.length > 0
-    // THE KILLSWITCH REACHES CREATES TOO. Editing already proposes; with the switch on, so
-    // does creating — an operator who flipped it after a bad run is asking for nothing to
-    // land without them, and "except new documents" is not a distinction they made.
-    return editing || flags?.agentKillswitch ? { ...args, for_review: true } : args
+    return editing ? { ...args, request_review: true } : args
   }
   if (name === "use") {
     // A packaged agent's run has its OWN budget, and a chat turn does not get to inherit it: a

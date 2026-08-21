@@ -58,8 +58,8 @@ export const parseBrandprint = (json: string | null | undefined): Brandprint | u
  *  can't drift into two different definitions of the job. */
 const profileBuildSteps = (profileShortId: string): string =>
   `read derive://brandprint/reference and derive://brandprint/template plus the source docs` +
-  ` (the other derive://brandprint/* resources), then publish the profile with` +
-  ` for_review: true to artifact ${profileShortId}`
+  ` (the other derive://brandprint/* resources), then publish the profile to artifact` +
+  ` ${profileShortId} (a review round opens for the person automatically)`
 
 /**
  * The pointer appended to the MCP server `instructions`. Progressive disclosure: the
@@ -116,8 +116,8 @@ export const reworkInstruction = (profileLive: boolean): string =>
  */
 export const buildProfileInstruction = (profileShortId: string): string =>
   `Build this workspace's brand profile: ${profileBuildSteps(profileShortId)}.` +
-  " Build it as ONE self-contained HTML file following the reference. It must land as a" +
-  " proposal a human approves; never publish it live."
+  " Build it as ONE self-contained HTML file following the reference. Publishing it opens" +
+  " a review round for the person — tell them it is ready and wait for their note."
 
 /** How many inbox rows a request-queue read pulls at a time. The queue is a working
  *  set, not an archive — an agent that lets it grow past this has stopped acking. */

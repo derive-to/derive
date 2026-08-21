@@ -151,35 +151,21 @@ describe.skipIf(!live)(
         http.join("\n"),
       ).toBe(true)
 
-      // THE WRITE LANDS AS A PROPOSAL, AND THAT IS CORRECT. The autonomy gate's third rung
-      // files rather than publishes whenever a run had a spendable connection, above any
-      // per-target `mode: "publish"` — a run that reads outside data acts on a human's say-so.
-      // Asserting the document CHANGED would be asserting that safety rung away; asserting the
-      // proposal exists and carries the live bytes is the same end-to-end claim without it.
-      const proposals = await app.request(`/v1/artifacts/${art.short_id}/proposals`, {
-        headers: as(owner.email),
-      })
-      expect(proposals.status).toBe(200)
-      const listed = (await proposals.json()) as {
-        proposals: { id: string; preview_url: string }[]
-      }
-      expect(listed.proposals, "the run filed nothing").toHaveLength(1)
-
+      // THE WRITE PUBLISHES LIVE — a source-bound run's revision is a kept, restorable
+      // version of its target, like every other agent write (docs/decisions/0001).
+      // Asserting the pulled bytes IN the live document is the end-to-end claim: the pull
+      // reached a real server, and the write landed where readers read.
       const content = await app.request(`/v1/artifacts/${art.short_id}/content`, {
         headers: as(owner.email),
       })
       const published = await content.text()
-      expect(published, "a credentialed run must not live-publish").toContain("Nothing yet.")
+      expect(published, "the run wrote nothing").not.toContain("Nothing yet.")
 
-      // A distinctive fragment of the ACTUAL tool result, in the ACTUAL filed bytes. A length
-      // check here would have passed on an empty proposal list.
+      // A distinctive fragment of the ACTUAL tool result, in the ACTUAL published bytes. A
+      // version-count check here would have passed on a write of anything at all.
       const fragment = toolResult.replace(/[\\"<>]/g, "").slice(140, 190)
       expect(fragment.length, "no tool text to match on").toBeGreaterThan(30)
-      // The list is metadata; the BYTES live behind the proposal's own preview URL, which is
-      // also exactly what a reviewer opens.
-      const preview = new URL(listed.proposals[0]?.preview_url ?? "")
-      const filed = await (await app.request(preview.pathname, { headers: as(owner.email) })).text()
-      expect(filed.replace(/[\\"<>]/g, "")).toContain(fragment)
+      expect(published.replace(/[\\"<>]/g, "")).toContain(fragment)
     }, 120_000)
   },
 )

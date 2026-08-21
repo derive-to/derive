@@ -275,7 +275,8 @@ export const reworkRoutes = (ctx: AppContext) => {
         meta.listAgents(artifact.org_id),
       ])
       // Only the workspace's brand-profile artifact can be generated into — the
-      // canned brief tells the agent to publish for_review to exactly this short id.
+      // canned brief tells the agent to publish to exactly this short id (the round
+      // that opens on publish is the person's reveal).
       if (settings.brandprint?.profileId !== artifact.short_id)
         return bail(fail(c, 400, "this artifact is not the workspace's brand profile"))
       const agent = pickAgent(c, agents, agentId)

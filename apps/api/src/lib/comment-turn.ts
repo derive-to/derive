@@ -6,8 +6,10 @@
 // is the transcript and the record.
 //
 // The document is the ground (the same `documentContract` the rail's chat uses), the thread is
-// the conversation, and the settle is a comment. Everything else — the model call, the tool
-// loop, the nudge, the gate — is turn-core's, exactly as it is for every other lane.
+// the conversation, and the settle is a comment. This lane NEVER writes the document — a
+// drafted change becomes part of the reply — so there is no landing decision to make here.
+// Everything else — the model call, the tool loop, the nudge — is turn-core's, exactly as it
+// is for every other lane.
 
 import {
   type ArtifactRecord,
@@ -18,7 +20,6 @@ import {
   NUDGE_LIMIT,
   newId,
   type Revision,
-  roleAllows,
   toMicroUsd,
 } from "@derive/core"
 import type { Backplane } from "../bus"
@@ -29,11 +30,18 @@ import { type CommentActionDeps, commentCreatedAction } from "./comment-actions"
 import { DERIVE_AUTHOR_ID, quoteOf } from "./comments"
 import type { ResolvedChatModel } from "./model-catalog"
 import type { ModelSource } from "./model-library"
-import { asTurns, documentBlock, documentContract, documentName, runTurn } from "./turn-core"
+import {
+  asTurns,
+  documentBlock,
+  documentContract,
+  documentName,
+  runTurn,
+  suggestionText,
+} from "./turn-core"
 
 /** Exactly what this lane needs: the comment fan-out's deps (its settle IS a comment) plus a
- *  model. Deliberately NOT AfterPublishDeps — this turn only ever files a proposal, so it never
- *  reaches the post-publish path, and claiming those deps would be a lie about what it does. */
+ *  model. Deliberately NOT AfterPublishDeps — this turn never publishes, so it never reaches
+ *  the post-publish path, and claiming those deps would be a lie about what it does. */
 export interface CommentTurnDeps extends CommentActionDeps {
   model: ResolvedChatModel
 }
@@ -46,12 +54,16 @@ export interface CommentTurnInput {
   thread: CommentRecord[]
   /** The human who mentioned Derive: the turn acts for them and writes are attributed to them. */
   asker: { id: string; name: string }
-  /** Their effective role on this artifact, re-derived by the caller for THIS turn. */
-  canWrite: boolean
-  flags: { agentKillswitch: boolean; agentAutoEnabled: boolean }
 }
 
-/** Who wrote each line, so a multi-party thread reads as a conversation rather than one voice. */
+/** A drafted revision, surfaced as the thread reply. */
+const suggestionComment = (revision: Revision): string =>
+  suggestionText(revision, {
+    lead: "Here is the change I suggest:",
+    tooBig:
+      "The change I drafted is too large to paste into this thread. Open the document's chat rail and ask there, and I can apply it.",
+  })
+
 /**
  * Serve one comment mention. Never throws: this runs detached from the request that created the
  * comment, and a failure has to land where the person is looking (the thread) rather than
@@ -114,11 +126,8 @@ export const runCommentTurn = async (
 ${quote ? `This thread is anchored to a quoted span of the document:\n"""\n${quote}\n"""\n` : ""}
 Answer the question asked, in the thread, in prose. Be brief — this is a comment, not a report,
 and the people reading it are looking at the document already. If the thread asks you to CHANGE
-the document, reply with the revision block described below; ${
-    input.canWrite
-      ? "it will be filed as a proposal for a human to approve."
-      : "you may not write to this document, so explain rather than attempting a revision."
-  }
+the document, reply with the revision block described below; it will be posted into this thread
+as a suggested change for a person to apply — the document itself is not edited from a comment.
 
 If you need a human answer before you can continue, begin the reply with the exact marker
 "[awaiting-input]" followed by your single, concrete question. Use that marker only when you
@@ -141,40 +150,16 @@ ${documentBlock(source, documentName(artifact.short_id, artifact.current_content
     callModel: deps.model.callModel as AgentLoopInput["callModel"],
     // No tools on this lane yet: the document IS the ground, and the thread is about it.
     maxTurns: NUDGE_LIMIT + 1,
-    gate: {
-      // SUGGEST ALWAYS. A comment mention never live-publishes, whatever the workspace's
-      // autonomy opt-in says: the person asked a question in a thread, and a document that
-      // rewrote itself out of a conversation nobody was watching for a write is the surprise
-      // this lane must never produce. The proposal is one click from the same thread.
-      autonomy: "suggest",
-      flags: { ...input.flags, credentialed: false },
-    },
-    land: async (_decision, revision: Revision) => {
-      if (!input.canWrite) throw new Error("asker cannot propose to this artifact")
-      const blob = new TextEncoder().encode(revision.content)
-      const blobKey = await deps.blobs.put(blob)
-      const proposal = await meta.createProposal({
-        id: newId("p"),
-        artifact_id: artifact.id,
-        blob_key: blobKey,
-        // The DOCUMENT's format, never the model's filename — the same rule the attended lane
-        // learned the hard way (a Markdown doc silently became HTML).
-        content_type:
-          artifact.current_content_type ??
-          (revision.filename.endsWith(".md") ? "text/markdown" : "text/html"),
-        kind: artifact.kind,
-        message: revision.message ?? null,
-        author: "Derive",
-        author_id: DERIVE_AUTHOR_ID,
-        on_behalf_of: asker.id,
-        base_version: artifact.current_version,
-      })
-      return {
-        outcome: "proposed",
-        wrote: { kind: "proposal", id: proposal.id },
-        note: `${revision.message || "Done."}\n\nI filed that as a proposal for review rather than editing the document from a comment.`,
-      }
-    },
+    // A COMMENT MENTION NEVER WRITES THE DOCUMENT, whatever the model drafted: the person
+    // asked a question in a thread, and a document that rewrote itself out of a conversation
+    // nobody was watching for a write is the surprise this lane must never produce. The
+    // drafted change becomes the thread reply (posted by the shared `reply` below) instead —
+    // this landing IS the lane's settle.
+    land: async (revision: Revision) => ({
+      outcome: "commented",
+      wrote: null,
+      note: suggestionComment(revision),
+    }),
   })
 
   if (out.failure) {
@@ -201,11 +186,6 @@ ${documentBlock(source, documentName(artifact.short_id, artifact.current_content
   })
   await reply(out.reply || "(no reply)")
 }
-
-/** Whether an asker may have a revision filed on their behalf here. Kept beside the turn so the
- *  branch and the land port cannot disagree about it. */
-export const askerCanPropose = (role: string | null | undefined): boolean =>
-  !!role && roleAllows(role as Parameters<typeof roleAllows>[0], "propose")
 
 /**
  * THE COMMENT LANE'S ARRIVAL: every gate a chat arrival walks, then the turn.
@@ -256,7 +236,7 @@ export const answerDeriveMention =
     // Silence (logged), not a message: unlike Slack, nobody is waiting on a reply that never
     // existed — the comment they wrote posted fine.
     if (!gate.ok) return quiet(gate.reason)
-    const { settings, seatRole, model } = gate
+    const { model } = gate
 
     // The whole thread, oldest first — the conversation this answer joins.
     const thread = await meta
@@ -278,11 +258,6 @@ export const answerDeriveMention =
         comment,
         thread: thread.length ? thread : [comment],
         asker,
-        canWrite: askerCanPropose(seatRole),
-        flags: {
-          agentKillswitch: settings.agentKillswitch,
-          agentAutoEnabled: settings.agentAutoEnabled,
-        },
       },
     )
   }

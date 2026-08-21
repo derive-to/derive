@@ -124,9 +124,6 @@ function AutomationRow({
     onSuccess: () => onDone(),
   })
   const summary = targetSummary(automation.refs)
-  const mode = automation.refs.some((r) => r.mode === "publish")
-    ? "Publishes live"
-    : "Proposes for review"
   return (
     <ListRow
       data-testid={`automation-row-${automation.id}`}
@@ -147,7 +144,7 @@ function AutomationRow({
           <ExecutorBadge seenAt={automation.executor_seen_at ?? null} />
         </span>
       }
-      meta={summary ? `${mode} · ${summary}` : mode}
+      meta={summary || undefined}
       actions={
         <>
           {canRun && automation.enabled && (
@@ -297,7 +294,7 @@ function RunTimeline({ timeline }: { timeline?: Run["timeline"] }) {
 }
 
 /** What the run actually wrote, from meta.writes[] — each write linked to its artifact,
- *  the verb (created/proposed/revised) shown. Parsing lives in runWrites (unit-tested);
+ *  the verb (created/revised) shown. Parsing lives in runWrites (unit-tested);
  *  absent or empty writes render nothing (asks and failed runs). */
 function RunWrites({ meta }: { meta: string | null }) {
   const writes = runWrites(meta)

@@ -1103,13 +1103,9 @@
             "type": "boolean",
             "description": "BETA: automations on a document. Off by default — the Automate entry point is hidden and the create/run/fire routes refuse, so a workspace opts in deliberately."
           },
-          "agentKillswitch": {
+          "agentWrites": {
             "type": "boolean",
-            "description": "When true, every hosted agent write demotes to a proposal, instantly."
-          },
-          "agentAutoEnabled": {
-            "type": "boolean",
-            "description": "Opt-in for autonomy 'auto' to live-publish (always with a review round)."
+            "description": "The one agent-write switch, on by default. Off: hosted runs and asks are not materialized, dispatched, or claimed, chat's publish tool refuses (the draft surfaces in the reply), and any agent-credentialed publish is refused at the API."
           },
           "defaultAgentId": {
             "type": "string",
@@ -1145,8 +1141,7 @@
           "chatBeta",
           "chatSources",
           "automateBeta",
-          "agentKillswitch",
-          "agentAutoEnabled"
+          "agentWrites"
         ]
       },
       "Workspaces": {
@@ -2954,20 +2949,13 @@
               },
               "id": {
                 "type": "string"
-              },
-              "mode": {
-                "type": "string",
-                "enum": [
-                  "publish",
-                  "propose"
-                ]
               }
             },
             "required": [
               "kind",
               "id"
             ],
-            "description": "What this session is about, when it names one: an artifact, plus how a write to it lands. Null for a plain ask."
+            "description": "What this session is about, when it names one: an artifact. Null for a plain ask."
           },
           "result_artifact_id": {
             "type": "string",
@@ -3109,7 +3097,7 @@
           },
           "outcome": {
             "type": "string",
-            "description": "How the turn ended: answered, published, proposed, or failed."
+            "description": "How the turn ended: answered, published, commented, or failed."
           },
           "cost_micro_usd": {
             "type": "number",
@@ -8341,6 +8329,23 @@
             "in": "path"
           }
         ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "note": {
+                    "type": "string",
+                    "maxLength": 10000,
+                    "description": "The human's note to the agent — answers, asks, or the go-signal (\"good to go\"). Carried on the round and surfaced in the agent's catch_up."
+                  }
+                }
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "The round, now sent_back.",

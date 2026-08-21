@@ -198,12 +198,15 @@ export function registerCatchUpTool(tc: ToolContext): void {
             note: myRound.note,
           }
         : null
+      // The round's NOTE rides the summary, not just the JSON: it is where the human says
+      // "keep going" or "good to go", and a model reading only the summary must see it.
+      const noteBit = review?.note ? ` Their note: "${review.note}"` : ""
       const reviewBit = review
         ? review.state === "pending"
           ? ` Review requested on v${review.version} — waiting for the human.`
           : review.state === "sent_back"
-            ? ` The human sent back their review of v${review.version} — read the open threads, revise, and re-request.`
-            : ` The human approved v${review.version} — you're clear to proceed.`
+            ? ` The human sent back their review of v${review.version} — read the open threads and their note, then revise and re-request, or stop if the note says it's good.${noteBit}`
+            : ` The human approved v${review.version} — you're clear to proceed.${noteBit}`
         : ""
       const summary =
         since >= to

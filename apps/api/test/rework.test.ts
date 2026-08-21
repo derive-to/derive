@@ -267,7 +267,8 @@ describe("generate-profile: gating and firing", () => {
     expect(mentions[0]?.artifact).toBe(prof)
     expect(mentions[0]?.body).toContain("@Reviser")
     expect(mentions[0]?.body).toContain("derive://brandprint/reference")
-    expect(mentions[0]?.body).toContain(`for_review: true to artifact ${prof}`)
+    expect(mentions[0]?.body).toContain(`to artifact ${prof}`)
+    expect(mentions[0]?.body).toContain("review round")
 
     // The queue already holds this ask — a second fire must not stack a duplicate.
     const again = await generate(app, prof)

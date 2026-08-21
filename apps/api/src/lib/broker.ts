@@ -30,8 +30,8 @@ export interface SourceQuiet {
    *  Both lanes render this to a model and, on a failure, to the ledger a person reads. The
    *  wording lived in two places — apps/api's loop and packages/cli's runner — kept in step by a
    *  comment saying they matched, which is not a mechanism. The CLI is deliberately
-   *  dependency-free (it cannot import @derive/core; `decideWrite` is ported into it for the same
-   *  reason), so a shared module was never available to them. Sending the sentence with the
+   *  dependency-free (it cannot import @derive/core, which is why it hand-copies the run
+   *  contract), so a shared module was never available to them. Sending the sentence with the
    *  reason costs nothing and leaves exactly one copy, here, next to the code that decides it. */
   why: string
 }
@@ -67,10 +67,10 @@ export interface RunTool {
  * the same live-membership recheck a minted API token gets at spend time; workspace
  * connections are the org's and survive.
  *
- * Separate from `toolsForRun` on purpose. "Can this run spend a credential?" and "what HTTP
- * tools does it get?" are DIFFERENT questions, and conflating them fails open: a connection
- * with no base_url yields no tools (see below) yet is still a real credential the run may be
- * handed. The write gate's `credentialed` rung must count THESE, never the tool list.
+ * Separate from `toolsForRun` on purpose. "What may this run spend?" and "what HTTP tools
+ * does it get?" are DIFFERENT questions: a connection with no base_url yields no tools (see
+ * below) yet is still a real credential the run may be handed — it is spent by DELIVERY into
+ * the run rather than by an HTTP call.
  */
 export const spendableConnections = async (
   meta: MetaStore,
@@ -118,8 +118,8 @@ export const toolsForRun = async (
   // anything that escapes it, so one without a base_url has nothing to call: base_url is
   // optional now (nobody types a host — such a connection is spent by DELIVERY into a run
   // that writes its own code), and advertising `x.get`/`x.post` for it would hand the model
-  // two tools that throw on every call. Expose none instead — but note it is still SPENDABLE,
-  // which is why the gate counts spendableConnections and not this list.
+  // two tools that throw on every call. Expose none instead — it is still SPENDABLE, which is
+  // why spendableConnections exists apart from this list.
   const usable = spendable.filter((cn) => !isDirect(cn.kind) || !!cn.base_url)
   // Per-CONNECTION routing through ONE router: an `mcp:` ref reaches the MCP broker whatever the
   // workspace's broker plan is (it needs no vendor account at all), everything else keeps the

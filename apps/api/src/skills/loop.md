@@ -90,8 +90,8 @@ before building a `create` that will be refused.
     to read it again.
   - `instruction` is re-run verbatim, with no chat history behind it. Name the artifact it acts
     on inside the instruction; a run cannot infer "the report we discussed".
-  - `refs` says what it acts on: artifact short ids, `{kind:"artifact",id,mode:"publish"|"propose"}`
-    to choose whether that target is written directly or proposed, or `{kind:"tag",tag}` for a set.
+  - `refs` says what it acts on: artifact short ids, `{kind:"artifact",id}`, or
+    `{kind:"tag",tag}` for a set. A run's write publishes as a new version of its target.
   - `context_id` binds the run to a context, and that context's agent acts. Omit it and Derive
     mints a managed agent for the automation.
   - `provider` picks the executing coding agent (`claude-code` by default, or `codex`).

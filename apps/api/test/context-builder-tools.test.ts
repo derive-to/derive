@@ -123,20 +123,20 @@ describe("builder tool surface", () => {
     expect(await instructionArtifacts(made.meta)).toEqual([])
   })
 
-  it("under the killswitch nothing lands, and the draft still works", async () => {
+  it("with agent writes off nothing lands, and the draft still works", async () => {
     const made = makeAuthedApp("builder-tools-kill", [owner])
     await made.app.request("/v1/me", { headers: as(owner.email) })
     const surface = buildContextBuilderTools(made.ctx, {
       org: "default",
       user: { id: owner.id, name: owner.name },
       seatRole: "owner",
-      flags: { agentKillswitch: true },
+      flags: { agentWrites: false },
     })
     expect(await surface.execute("draft_manifest", draft)).toMatchObject({ ok: true })
 
     const out = (await surface.execute("create_context_from_draft", {})) as { error?: string }
     expect(out.error).toMatch(/paused/i)
-    expect(out.error).not.toMatch(/manifest|short id|killswitch/i)
+    expect(out.error).not.toMatch(/manifest|short id|killswitch|agentWrites/i)
     expect(await instructionArtifacts(made.meta)).toEqual([])
   })
 

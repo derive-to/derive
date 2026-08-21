@@ -26,6 +26,24 @@ describe("the chat tool surface", () => {
     }
   })
 
+  it("the SWITCH refuses the publish tool outright — the draft goes in the reply", async () => {
+    // The one brake, reaching chat: with agent writes off, nothing lands live from a chat
+    // turn. The refusal is data the model reads (steering it to surface the change as
+    // text), not an exception that costs the turn.
+    const { ctx } = makeAuthedApp("ct-kill", [{ id: "u1", email: "u1@x.com", name: "U" }])
+    const tools = buildChatTools(ctx, {
+      org: "default",
+      user: { id: "u1", name: "U" },
+      seatRole: "owner",
+      flags: { agentWrites: false },
+    })
+    const out = (await tools.execute("publish", { title: "New", content: "# x" })) as {
+      error?: string
+    }
+    expect(out.error).toMatch(/agent writes switched off/i)
+    expect(out.error).toMatch(/suggestion|reply/i)
+  })
+
   it("an omitted tool has no handler at all, rather than a guard that could be skipped", async () => {
     const { ctx } = makeAuthedApp("ct-omit", [{ id: "u1", email: "u1@x.com", name: "U" }])
     const tools = buildChatTools(ctx, {

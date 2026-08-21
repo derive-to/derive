@@ -2,16 +2,12 @@ import {
   ASK_CONTRACT,
   ASK_NUDGE,
   type AskFields,
-  type AutonomyFlags,
-  type AutonomyLevel,
   applyEdits,
-  decideWrite,
   docMap,
   EDITS_CONTRACT,
   EDITS_THRESHOLD_CHARS,
   EditError,
   editsNudge,
-  type GateDecision,
   isHtmlLike,
   mapJson,
   NO_EDITS_BLOCK,
@@ -37,14 +33,13 @@ import { BillingBlockedError } from "./billing"
  * ONE TURN, for every lane that runs one.
  *
  * Four paths in this repo run the same shape: call the model, hold it to a contract with one
- * nudge, run the autonomy gate over what came back, write, and record the outcome. They are
- * attended chat (in-request, in-process), an automation run on the loop substrate (claimed over
- * HTTP, settled over HTTP), an ask on the loop substrate, and the CLI runner. Written four
- * times, the four quietly stop agreeing about when a write may publish — which is the one
- * decision in this system nobody may re-implement.
+ * nudge, land what came back, and record the outcome. They are attended chat (in-request,
+ * in-process), an automation run on the loop substrate (claimed over HTTP, settled over HTTP),
+ * an ask on the loop substrate, and the CLI runner. Written four times, the four quietly stop
+ * agreeing about what a reply means — which is the one contract nobody may re-implement.
  *
- * So the middle is here, and it is genuinely the middle: the model call, the nudge, the parse
- * and decideWrite. Not the ends.
+ * So the middle is here, and it is genuinely the middle: the model call, the nudge, the parse.
+ * Not the ends.
  *
  * THE LANDING PORT is the seam, and the reason this is not just an extracted function. Attended
  * chat writes IN-PROCESS — it is the API, it has the store and the blob store in hand. The loop
@@ -272,14 +267,37 @@ export const documentName = (shortId: string, contentType: string | null | undef
 
 // ---- the landing port -----------------------------------------------------------------------
 
+/** How much drafted source a surfaced suggestion pastes — a message, not a document dump. */
+const SUGGESTION_CHARS = 6_000
+
+/** How much of the model's version note rides above it. Bounded separately because the total
+ *  must clear the comment route's 10k body cap with room to spare — an over-cap suggestion
+ *  would fail the very reply meant to keep the draft from being lost. */
+const SUGGESTION_MESSAGE_CHARS = 2_000
+
+/** A drafted revision surfaced as text — the body of every suggestion a lane pastes into
+ *  prose (the mention thread's reply, and a chat reply when the write could not land), so
+ *  the lanes cannot drift on how. Fenced with four backticks so a draft that itself contains
+ *  a code fence stays intact. The WORDING is the lane's: who is reading, and what to do when
+ *  the draft is too big to paste, genuinely differ. */
+export const suggestionText = (
+  revision: Revision,
+  wording: { lead: string; tooBig: string },
+): string => {
+  const body =
+    revision.content.length <= SUGGESTION_CHARS
+      ? `${wording.lead}\n\n\`\`\`\`\n${revision.content}\n\`\`\`\``
+      : wording.tooBig
+  return `${revision.message ? `${revision.message.slice(0, SUGGESTION_MESSAGE_CHARS)}\n\n` : ""}${body}`
+}
+
 /** What landed, named so the transcript and the ledger can both point at it. */
-export type WroteRef =
-  | { kind: "version"; n: number }
-  | { kind: "proposal"; id: string }
-  | { kind: "artifact"; shortId: string }
+export type WroteRef = { kind: "version"; n: number } | { kind: "artifact"; shortId: string }
 
 export interface Landed {
-  outcome: "published" | "proposed"
+  /** `commented`: the drafted change was surfaced (a reply, a thread comment, an
+   *  artifact comment) and the document was not written. */
+  outcome: "published" | "commented"
   wrote: WroteRef | null
   /** The reply, when the port knows something truer than the model's own note — "someone
    *  published while I was working" is a fact only the writer discovers. */
@@ -287,17 +305,15 @@ export interface Landed {
 }
 
 /**
- * WHERE a turn's answer lands. The decision is NOT the port's to make: it is computed above,
- * from the gate, so no lane can quietly disagree about when a write may publish. A port that
- * throws has failed the write, and the turn reports that rather than settling successfully —
- * a refused write recorded as a successful run is the worst shape a ledger bug takes.
- *
- * `shadow` never reaches a port: shadow files nothing at all, so there is nothing to land.
+ * WHERE a turn's revision lands. Reached only when the model actually wrote one. The port
+ * publishes — every agent write lands live, the same as a person's — except where something
+ * the port itself discovers or was told stands in the way (a mid-turn race, a lane whose
+ * asker cannot publish, the workspace switch), in which case the drafted change surfaces as
+ * `commented` instead of being silently dropped. A port that throws has failed the write, and
+ * the turn reports that rather than settling successfully — a refused write recorded as a
+ * successful run is the worst shape a ledger bug takes.
  */
-export type LandingPort = (
-  decision: Exclude<GateDecision, "shadow">,
-  revision: Revision,
-) => Promise<Landed>
+export type LandingPort = (revision: Revision) => Promise<Landed>
 
 export interface TurnInput {
   /** The FULLY COMPOSED system prompt. The caller places `contract.text` itself, because
@@ -309,15 +325,13 @@ export interface TurnInput {
   callModel: AgentLoopInput["callModel"]
   executeTool?: AgentLoopInput["executeTool"]
   maxTurns?: number
-  /** The gate's inputs. decideWrite runs HERE, above the port, in every lane. */
-  gate: { autonomy: AutonomyLevel; flags: AutonomyFlags }
   land: LandingPort
 }
 
 export type TurnFailure = LoopFailure | "write"
 
 export interface TurnOutcome {
-  outcome: "published" | "proposed" | "answered" | "shadow" | "failed"
+  outcome: "published" | "commented" | "answered" | "failed"
   /** The model's own words: its prose, or the port's note. Empty on a failure — the apology is
    *  the lane's to word, because a person in chat needs a sentence and a ledger needs a reason. */
   reply: string
@@ -340,7 +354,7 @@ export interface TurnOutcome {
   }
 }
 
-/** Run one turn: ask, nudge once, gate, land. Never throws — a lane that cannot report an
+/** Run one turn: ask, nudge once, land. Never throws — a lane that cannot report an
  *  outcome cannot settle its work, and unsettled work is worse than a failed one. */
 export const runTurn = async (input: TurnInput): Promise<TurnOutcome> => {
   const res = await runAgentLoop({
@@ -380,17 +394,8 @@ export const runTurn = async (input: TurnInput): Promise<TurnOutcome> => {
   // contract never produces this, so the lane above decides what "nothing" means.
   if (!revision) return { outcome: "answered", reply: prose, wrote: null, ...base }
 
-  // THE GATE, not the model, decides how this lands.
-  const decision = decideWrite({
-    autonomy: input.gate.autonomy,
-    confidence: revision.confidence,
-    flags: input.gate.flags,
-  })
-  if (decision === "shadow")
-    return { outcome: "shadow", reply: prose || revision.message || "", wrote: null, ...base }
-
   try {
-    const landed = await input.land(decision, revision)
+    const landed = await input.land(revision)
     return {
       outcome: landed.outcome,
       // The port's note wins (only the writer discovers "someone published while I was

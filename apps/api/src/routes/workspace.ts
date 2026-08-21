@@ -53,7 +53,7 @@ const withTimeline = (r: RunRecord) => {
       retries,
       /** What went wrong last time, for a run that is retrying or gave up. */
       last_error: runMetaString(meta, "last_error") ?? runMetaString(meta, "why"),
-      /** How the work landed: published | proposed | shadow | answered | cancelled | lost. */
+      /** How the work landed: published | answered | cancelled | lost. */
       outcome: runMetaString(meta, "outcome"),
       /** The artifacts this run wrote, in order. */
       writes: Array.isArray(meta.writes) ? meta.writes : [],
@@ -712,8 +712,7 @@ export const workspaceRoutes = (ctx: AppContext) => {
             // Connection ids chat may reach. Admin-set, empty by default — see OrgSettings.
             chatSources: z.array(z.string()),
             automateBeta: z.boolean(),
-            agentKillswitch: z.boolean(),
-            agentAutoEnabled: z.boolean(),
+            agentWrites: z.boolean(),
             defaultAgentId: z.string().nullable(),
             brandprint: BrandprintSchema.nullable(),
           })

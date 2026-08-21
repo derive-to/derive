@@ -1,4 +1,4 @@
-import { type AutonomyFlags, isHtmlLike, MAX_ARTIFACT_CHARS, toMicroUsd } from "@derive/core"
+import { isHtmlLike, MAX_ARTIFACT_CHARS, toMicroUsd } from "@derive/core"
 import { log } from "../log"
 import type { AgentLoopInput, LoopTool } from "./agent-loop"
 import type { Substrate } from "./dispatch"
@@ -39,7 +39,7 @@ import {
  *     existing tests rather than only here.
  *
  * TWO LANES, ONE TURN. A run is an automation firing; a session is somebody asking. The middle of
- * both — call the model, nudge once, gate, write — is lib/turn-core.ts, shared with attended chat.
+ * both — call the model, nudge once, write — is lib/turn-core.ts, shared with attended chat.
  * What differs is three things, and they stay explicit here rather than being unified into
  * something that fits neither: how the work ARRIVES, how it SETTLES, and whether the answer
  * STREAMS.
@@ -126,7 +126,7 @@ export interface LoopSubstrateOptions {
 interface ClaimedRun {
   id: string
   instruction: string
-  targets?: { kind: string; id?: string; tag?: string; mode?: string }[]
+  targets?: { kind: string; id?: string; tag?: string }[]
   tools?: { def: LoopTool; ref: string }[]
   /** Bound sources that contributed NOTHING, and why. The claim has always sent this and this
    *  executor dropped it on the floor — so a run whose source was unreachable, or whose tool list
@@ -136,7 +136,6 @@ interface ClaimedRun {
    *  entirely. The CLI runner has read this since it existed; this lane now does too. */
   sources_quiet?: { connection_id: string; toolkit: string; reason: string; why?: string }[]
   payloads?: unknown[]
-  flags?: AutonomyFlags
   meta?: string | null
 }
 
@@ -145,16 +144,6 @@ interface ClaimedSession {
   session: { id: string; messages?: AskMessage[] } | null
   context?: { id: string; name: string; manifest_short_id: string | null }
   tools?: { def: LoopTool; ref: string }[]
-  flags?: AutonomyFlags
-}
-
-// The fallback when a claim carried no flags at all. Safe by construction rather than by
-// luck: agentAutoEnabled false already forces a proposal, so an executor talking to a server
-// that sent nothing cannot live-publish regardless of the credentialed rung.
-const NO_FLAGS: AutonomyFlags = {
-  agentKillswitch: false,
-  agentAutoEnabled: false,
-  credentialed: false,
 }
 
 /** A manifest becomes the system prompt, so it is bounded by what a system prompt can be rather
@@ -379,7 +368,7 @@ const landOverHttp =
     targetId: string | undefined,
     targetContentType?: string | null,
   ): LandingPort =>
-  async (decision, revision) => {
+  async (revision) => {
     const form = new FormData()
     // KEEP THE DOCUMENT'S OWN FORMAT, as the attended lane does (lib/session-turn.ts).
     //
@@ -413,28 +402,17 @@ const landOverHttp =
       if (!res.ok)
         throw new Error(`${path} failed (${res.status}): ${(await res.text()).slice(0, 200)}`)
     }
-    if (targetId && decision === "proposal") {
-      await write(`/v1/artifacts/${targetId}/proposals`)
-      return { outcome: "proposed", wrote: { kind: "artifact", shortId: targetId } }
-    }
     if (targetId) {
       await write(`/v1/artifacts/${targetId}/versions`)
       return { outcome: "published", wrote: { kind: "artifact", shortId: targetId } }
     }
     form.set("title", firstLine(revision.content) || "Untitled")
     form.set("request_review", "true")
-    if (decision !== "live_publish_with_review") {
-      form.set("workspace_access", "none")
-      form.set("link_role", "none")
-    }
     const created = await json<{ short_id: string }>("/v1/artifacts", {
       method: "POST",
       body: form,
     })
-    return {
-      outcome: decision === "proposal" ? "proposed" : "published",
-      wrote: { kind: "artifact", shortId: created.short_id },
-    }
+    return { outcome: "published", wrote: { kind: "artifact", shortId: created.short_id } }
   }
 
 export const loopSubstrate = (opts: LoopSubstrateOptions): Substrate => ({
@@ -532,11 +510,6 @@ const serveOneRun = async (
     callModel: model.callModel,
     executeTool: toolProxy(client, `/v1/agent/runs/${runId}/tool`),
     maxTurns: opts.maxTurns,
-    gate: {
-      // Consent is per target and never the model's to give.
-      autonomy: target?.mode === "publish" ? "auto" : "suggest",
-      flags: run.flags ?? NO_FLAGS,
-    },
     land: landOverHttp(client, targetId, targetDoc?.contentType),
   })
   spentUsd = out.costUsd
@@ -561,10 +534,6 @@ const serveOneRun = async (
     })
     return
   }
-  if (out.outcome === "shadow") {
-    await finish({ status: "succeeded", meta: { outcome: "shadow", writes: [] } })
-    return
-  }
   if (out.outcome === "answered") {
     // Unreachable through the revision contract, which never accepts a reply with no block. If it
     // ever becomes reachable, an automation that answered instead of writing produced nothing,
@@ -578,7 +547,7 @@ const serveOneRun = async (
   await finish({
     status: "succeeded",
     meta: {
-      outcome: out.outcome === "proposed" ? "proposed" : "published",
+      outcome: "published",
       artifact_short_id: out.wrote?.kind === "artifact" ? out.wrote.shortId : null,
     },
   })
@@ -639,13 +608,6 @@ const serveOneSession = async (
     callModel: model.callModel,
     executeTool: toolProxy(client, `/v1/agent/sessions/${session.id}/tool`),
     maxTurns: opts.maxTurns,
-    gate: {
-      // Somebody ASKED for this, which is the consent a run gets from its target's mode. The
-      // workspace flags still bind: a killswitched workspace files the page privately for review
-      // rather than putting it in front of everyone.
-      autonomy: "auto",
-      flags: claimed.flags ?? NO_FLAGS,
-    },
     land: landOverHttp(client, undefined),
   })
 
@@ -673,8 +635,6 @@ const settleAsk = async (
         `executor has no filesystem to read it from, so it was not published. Inline the page's ` +
         `full HTML in "content" instead.`,
     )
-  if (out.outcome === "shadow")
-    caveats.push("Nothing was written: this workspace has hosted writes switched off.")
   const shortId = out.wrote?.kind === "artifact" ? out.wrote.shortId : null
   await call(`/v1/sessions/${sessionId}/messages`, {
     method: "POST",

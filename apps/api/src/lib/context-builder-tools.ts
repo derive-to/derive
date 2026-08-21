@@ -97,7 +97,7 @@ export const buildContextBuilderTools = (
 
   const createContext = async (): Promise<unknown> => {
     if (!roleAllows(who.seatRole, "publish")) return { error: CANNOT_CREATE }
-    if (who.flags?.agentKillswitch) return { error: PAUSED }
+    if (who.flags?.agentWrites === false) return { error: PAUSED }
     if (!draft) return { error: "call draft_manifest first" }
 
     if (!publishedArtifactId) {

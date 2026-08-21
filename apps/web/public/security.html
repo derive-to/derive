@@ -49,7 +49,7 @@
 <link rel="icon" href="/brand/favicon.png" type="image/png">
 <script>
 /* theme boot: set the class before first paint (the choice lives in localStorage) */
-(function(){
+(()=> {
   var m = null; try { m = localStorage.getItem('derive-theme'); } catch (e) {}
   if (m !== 'light' && m !== 'system') m = 'dark';
   var light = m === 'light' || (m === 'system' && matchMedia('(prefers-color-scheme: light)').matches);

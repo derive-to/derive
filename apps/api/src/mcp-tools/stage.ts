@@ -1,5 +1,6 @@
 import { type Action, capRole, roleAllows } from "@derive/core"
 import { z } from "zod"
+import { AGENT_WRITES_OFF, agentWritesOff } from "../lib/agent-writes"
 import {
   API_TOKEN_ACCESS,
   API_TOKEN_TTL_MS,
@@ -239,6 +240,11 @@ export function registerStageTool(tc: ToolContext): void {
         // Creating is a workspace-level right.
         return err("Your role in this workspace can't publish (publishing required).")
       }
+      // THE AGENT-WRITE SWITCH binds the mint: a publish URL is a document write with a
+      // 15-minute fuse, and this tool is only ever reached through an agent credential.
+      // The spend side re-checks (the token can outlive a flip), but refusing here is the
+      // clear message.
+      if (await agentWritesOff(ctx.meta, org)) return err(AGENT_WRITES_OFF)
       const expiresAt = Date.now() + PUBLISH_TOKEN_TTL_MS
       const targetName = short_id ?? PUBLISH_TARGET_CREATE
       const tok = await signPublishToken(secret, org, ownerId, targetName, expiresAt)

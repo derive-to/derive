@@ -237,20 +237,19 @@ describe("context connections (the ask lane gets hands)", () => {
     expect(call.status).toBe(403)
   })
 
-  it("a claim that carries tools says so in flags.credentialed, so the gate can demote it", async () => {
-    // The invariant every plan doc claimed and no code enforced: a run that can spend a
-    // credential proposes, never live-publishes. The gate is pure and does no I/O, so the
-    // claim has to TELL it. Resolved server-side at claim time next to the tool list itself,
-    // so the two can't disagree.
-    const conn = await makeConnection({
-      toolkit: "spend",
+  it("a delivery-only connection yields no tools, and the claim carries no policy", async () => {
+    // A base_url-less secret contributes NO tools — it is spent by DELIVERY into a run that
+    // writes its own code, so advertising get/post for it would hand the model two tools
+    // that throw. And the claim carries no write policy for the executor to interpret:
+    // every write publishes, and the workspace's agentWrites switch is enforced HERE,
+    // server-side, by not claiming at all.
+    const deliveryOnly = await makeConnection({
+      toolkit: "keyonly",
       kind: "secret",
-      secret: "fixture-credentialed-flag",
-      base_url: "https://api.spend.test",
+      secret: "fixture-no-host-but-real",
       scope: "workspace",
     })
-    const armed = await makeContext("Armed", [conn.id])
-    const bare = await makeContext("Unarmed")
+    const quiet = await makeContext("ToolessButArmed", [deliveryOnly.id])
     const claimFor = async (ctxId: string) => {
       const ask = await app.request(
         `/v1/contexts/${ctxId}/sessions`,
@@ -264,23 +263,9 @@ describe("context connections (the ask lane gets hands)", () => {
         )
       ).json()
     }
-    expect((await claimFor(armed.id)).flags).toMatchObject({ credentialed: true })
-    expect((await claimFor(bare.id)).flags).toMatchObject({ credentialed: false })
-
-    // The fail-open case worth pinning: a base_url-less secret contributes NO tools (above),
-    // so deriving the flag from the tool list would report "not credentialed" for a context
-    // holding a real key — exactly the connection delivery is for. Counted from spendable
-    // CONNECTIONS instead, so no-tools-but-has-credentials still demotes the write.
-    const deliveryOnly = await makeConnection({
-      toolkit: "keyonly",
-      kind: "secret",
-      secret: "fixture-no-host-but-real",
-      scope: "workspace",
-    })
-    const quiet = await makeContext("ToolessButArmed", [deliveryOnly.id])
     const claim = await claimFor(quiet.id)
     expect(claim.tools).toEqual([])
-    expect(claim.flags).toMatchObject({ credentialed: true })
+    expect(claim.flags).toBeUndefined()
   })
 
   it("a session token reaches only its OWN session's tools", async () => {

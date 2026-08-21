@@ -55,12 +55,11 @@ export const OrgSettings = z
       .describe(
         "BETA: automations on a document. Off by default — the Automate entry point is hidden and the create/run/fire routes refuse, so a workspace opts in deliberately.",
       ),
-    agentKillswitch: z
+    agentWrites: z
       .boolean()
-      .describe("When true, every hosted agent write demotes to a proposal, instantly."),
-    agentAutoEnabled: z
-      .boolean()
-      .describe("Opt-in for autonomy 'auto' to live-publish (always with a review round)."),
+      .describe(
+        "The one agent-write switch, on by default. Off: hosted runs and asks are not materialized, dispatched, or claimed, chat's publish tool refuses (the draft surfaces in the reply), and any agent-credentialed publish is refused at the API.",
+      ),
     defaultAgentId: z
       .string()
       .optional()
