@@ -120,10 +120,8 @@ function FilterItem({
   )
 }
 
-// A fixed-feed nav row: navigates to a top-level ROUTE (a named feed like /favorites
-// or /following, or the /people directory) rather than a library filter. The path IS
-// the destination — the FilterItem counterpart for feeds that earned their own route
-// (docs/decisions/0002).
+// A fixed-route nav row. Unlike FilterItem, these destinations are separate product
+// surfaces rather than ways to narrow the library.
 function NavItem({
   icon,
   label,
@@ -135,7 +133,7 @@ function NavItem({
   icon: IconName
   label: string
   count?: number
-  to: "/following" | "/contexts" | "/templates" | "/chat" | "/archived"
+  to: "/following" | "/contexts" | "/templates" | "/chat"
   active: boolean
   testId?: string
 }) {
@@ -379,7 +377,6 @@ export function NavRail() {
   const onTemplates = loc.pathname.startsWith("/templates")
   const onSettings = loc.pathname.startsWith("/settings")
   const onChat = loc.pathname.startsWith("/chat")
-  const onArchived = loc.pathname === "/archived"
   // Chat is on by default, so the row hides only once settings have RESOLVED and said otherwise
   // — `undefined` (still loading, or the read failed) keeps the row rather than blinking it out
   // and back on every cold boot. It rides the boot batch the rail already waits for, so this
@@ -536,9 +533,8 @@ export function NavRail() {
     <Sidebar collapsible="icon" variant="inset">
       <RailHeader showSearch />
       <SidebarContent>
-        {/* TIER 1 — primary navigation: the whole library at a glance, plus the
-            people directory. The rail's home base; it carries no section label
-            because it IS the top of the rail. */}
+        {/* TIER 1 — primary navigation. The rail's home base carries no section
+            label because it is the top of the rail. */}
         <SidebarGroup>
           <SidebarGroupContent>
             <SidebarMenu>
@@ -587,8 +583,8 @@ export function NavRail() {
         {/* Starred — the shelves you pinned, and the rail's ONLY collection list. Every
             collection used to be enumerated here, which grew until the navigation was a
             file browser; they live in the library's Collections view now, and this is
-            the handful you chose. Absent entirely until you star something, so a new
-            workspace opens on two nav rows rather than an empty heading. */}
+            the handful you chose. Absent entirely until you star something, so an
+            empty heading never consumes space. */}
         {starredCollections.length > 0 && (
           <SidebarGroup>
             <SidebarGroupLabel data-testid="sidebar-starred">Starred</SidebarGroupLabel>
@@ -598,21 +594,13 @@ export function NavRail() {
           </SidebarGroup>
         )}
 
-        {/* Tools — a running sync, notifications, Settings. Pinned to the foot of
+        {/* Tools — a running sync, notifications, and Settings. Pinned to the foot of
             the scroll (mt-auto); the whitespace above sets them apart, no divider. */}
         <SidebarGroup className="mt-auto">
           <SidebarGroupContent>
             <SidebarMenu>
               <SyncChip />
               <NotificationBell />
-              <NavItem
-                icon="archive"
-                label="Archived"
-                count={summary?.archived}
-                to="/archived"
-                active={onArchived}
-                testId="nav-archived"
-              />
               <SidebarMenuItem>
                 <SidebarMenuButton asChild isActive={onSettings} tooltip="Settings">
                   <Link

@@ -8,22 +8,22 @@ import {
 import { cn } from "@/lib/utils"
 import type { LibrarySearch } from "./types"
 
-export type LibraryFilter = NonNullable<LibrarySearch["filter"]> | "all"
+export type LibraryFilter = NonNullable<LibrarySearch["filter"]> | "all" | "archived"
 
-// Four ways to narrow the home library, in ONE control. Favorites and "Shared with you"
-// were rail rows and "Created by me" was a tab, all pointing at the same list — four
-// permanent slots spent on states most people are never in. A menu costs one, and unlike
-// the routes it composes with where you already are: `Mine` inside a collection means your
-// documents in that collection.
+// Ways to narrow the library live in one control. Favorites and "Shared with you" were
+// rail rows, "Created by me" was a tab, and Archived was a permanent sidebar destination.
+// None is a separate product surface. The active-artifact facets compose with the current
+// collection; Archived opens its own server-backed shelf through the same control.
 //
 // Deliberately a menu and not a segmented control: the default is the answer almost every
-// time, so the other three should cost a click to reach and nothing to ignore.
+// time, so the alternatives should cost a click to reach and nothing to ignore.
 const OPTIONS: { value: LibraryFilter; label: string; hint: string }[] = [
   { value: "all", label: "All artifacts", hint: "Everything you can see here" },
   { value: "needs-you", label: "Needs you", hint: "Open threads you're in" },
   { value: "mine", label: "Mine", hint: "Artifacts you created" },
   { value: "shared", label: "Shared with me", hint: "Shared with you directly" },
   { value: "starred", label: "Starred", hint: "Artifacts you starred" },
+  { value: "archived", label: "Archived", hint: "Put away without deleting" },
 ]
 
 const filterLabel = (f: LibraryFilter): string =>
