@@ -2450,7 +2450,7 @@
           "resolved_by_name": {
             "type": "string",
             "nullable": true,
-            "description": "The human who settled the round; null while pending or for legacy history."
+            "description": "The human who settled the round; null while pending, or when the store has no name for the resolver."
           },
           "created_at": {
             "type": "string"

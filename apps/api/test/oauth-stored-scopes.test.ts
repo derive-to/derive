@@ -6,23 +6,23 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { makeAuth, migrateAuth } from "../src/auth-config"
 import { sha256 } from "../src/lib/crypto"
 
-// A grant issued while a scope existed must keep refreshing after that scope is
-// retired from OAUTH_SCOPES. The refresh grant re-issues from the STORED token row
-// (better-auth's mcp plugin checks only that the stored scopes carry offline_access,
-// never the configured list), so retired strings in old rows are inert — they grant
-// nothing (no action maps to them) and they never brick the grant. NEW registrations
-// and authorizations DO validate against the configured list, which is the point of
-// retiring a scope: nobody can consent to it again.
+// OAUTH_SCOPES binds only NEW registrations and authorizations. The refresh grant
+// re-issues from the STORED token row (better-auth's mcp plugin checks only that
+// the stored scopes carry offline_access, never the configured list), so a stored
+// scope string outside the configured list is inert — no action maps to it, it
+// grants nothing, and it never bricks the grant. That contract is what lets
+// OAUTH_SCOPES be narrowed freely: shipping a shorter list cannot strand a
+// working connection, and nobody can consent to an unconfigured scope.
 
-const dir = mkdtempSync(join(tmpdir(), "derive-oauth-retired-"))
+const dir = mkdtempSync(join(tmpdir(), "derive-oauth-stored-"))
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
 
 type Auth = ReturnType<typeof makeAuth>
 type Ctx = Awaited<Auth["$context"]>
 
 const BASE = "http://derive.test"
-/** Exactly what a pre-retirement CLI login consented to. */
-const LEGACY_SCOPES = [
+/** A stored grant's scope shape: the last two are outside OAUTH_SCOPES. */
+const STORED_SCOPES = [
   "openid",
   "offline_access",
   "derive:read",
@@ -41,7 +41,7 @@ const tokenReq = (auth: Auth, body: Record<string, string>) =>
     }),
   )
 
-describe("retired scopes: a legacy grant keeps refreshing", () => {
+describe("stored scopes vs OAUTH_SCOPES", () => {
   let auth: Auth
   let ctx: Ctx
   let clientId: string
@@ -53,7 +53,7 @@ describe("retired scopes: a legacy grant keeps refreshing", () => {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          client_name: "LegacyClient",
+          client_name: "StoredClient",
           redirect_uris: ["http://localhost/cb"],
           grant_types: ["authorization_code", "refresh_token"],
           response_types: ["code"],
@@ -65,7 +65,7 @@ describe("retired scopes: a legacy grant keeps refreshing", () => {
 
   let db: Database.Database
   beforeAll(async () => {
-    db = new Database(join(dir, "retired.db"))
+    db = new Database(join(dir, "stored.db"))
     db.pragma("journal_mode = WAL")
     db.pragma("busy_timeout = 5000")
     auth = makeAuth(db, BASE, "test-secret-0123456789-abcdefghijklmnopqrstuv")
@@ -78,8 +78,8 @@ describe("retired scopes: a legacy grant keeps refreshing", () => {
     const u = (await ctx.adapter.create({
       model: "user",
       data: {
-        email: "legacy@derive.test",
-        name: "Legacy",
+        email: "stored@derive.test",
+        name: "Stored",
         emailVerified: true,
         createdAt: now,
         updatedAt: now,
@@ -88,11 +88,10 @@ describe("retired scopes: a legacy grant keeps refreshing", () => {
     userId = u.id
   })
 
-  it("refreshes a token whose stored scopes include retired strings", async () => {
-    // A real legacy grant's CLIENT registered pre-retirement, so its row lists the old
-    // scope string — that is what the refresh grant validates the token against (the
-    // configured OAUTH_SCOPES bind only NEW registrations/authorizations). Recreate that
-    // state on the row.
+  it("refreshes a token whose stored scopes include unconfigured strings", async () => {
+    // The refresh grant validates the token against the CLIENT row's own scope
+    // string, never the configured OAUTH_SCOPES (those bind only NEW
+    // registrations/authorizations). Put the wider string on the row.
     const table = (
       db
         .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'oauth%'")
@@ -106,10 +105,10 @@ describe("retired scopes: a legacy grant keeps refreshing", () => {
     const idCol = cols.includes("clientId") ? "clientId" : "client_id"
     if (!scopeCol) throw new Error(`no scope column in ${table}: ${cols.join(",")}`)
     db.prepare(`UPDATE ${table} SET ${scopeCol} = ? WHERE ${idCol} = ?`).run(
-      LEGACY_SCOPES.join(" "),
+      STORED_SCOPES.join(" "),
       clientId,
     )
-    const RT = "rt_legacy_aaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    const RT = "rt_stored_aaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     await ctx.adapter.create({
       model: "oauthRefreshToken",
       data: {
@@ -117,7 +116,7 @@ describe("retired scopes: a legacy grant keeps refreshing", () => {
         clientId,
         userId,
         referenceId: userId,
-        scopes: LEGACY_SCOPES,
+        scopes: STORED_SCOPES,
         expiresAt: new Date(Date.now() + 30 * 86_400_000),
         createdAt: new Date(),
         revoked: null,
@@ -130,14 +129,14 @@ describe("retired scopes: a legacy grant keeps refreshing", () => {
       refresh_token: RT,
       client_id: clientId,
     })
-    expect(res.status, "a legacy grant must refresh, not brick").toBe(200)
+    expect(res.status, "a stored grant must refresh, not brick").toBe(200)
     const body = (await res.json()) as { access_token?: string; refresh_token?: string }
     expect(body.access_token).toBeTruthy()
     expect(body.refresh_token).toBeTruthy()
   })
 
-  it("a NEW registration asking for a retired scope is refused — nobody consents to it again", async () => {
-    const reg = await register(LEGACY_SCOPES.join(" "))
+  it("a NEW registration asking for an unconfigured scope is refused", async () => {
+    const reg = await register(STORED_SCOPES.join(" "))
     expect(reg.status).toBe(400)
   })
 })

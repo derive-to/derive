@@ -9,11 +9,10 @@ import { cn } from "@/lib/utils"
  * The sidebar review card — the human side of the /derive loop. When an agent has
  * requested a review, this sits atop the comments sidebar: what version, how it's
  * going, and the ONE gesture the loop asks of you — **Send back** (return your
- * answers). There is deliberately no Approve button: the loop is a live dialogue,
- * and "looks good, go" is just something you SAY — in the note here or in the
- * terminal — never a second decision to make each round. Answering questions is
- * just replying to the anchored threads below. Once settled it shows the last
- * outcome quietly, so the card never nags.
+ * answers). The loop is a live dialogue: "looks good, go" is something you SAY —
+ * in the note here or in the terminal — never a second decision to make each
+ * round. Answering questions is just replying to the anchored threads below.
+ * Once settled it shows the last outcome quietly, so the card never nags.
  */
 export function ReviewCard({
   shortId,

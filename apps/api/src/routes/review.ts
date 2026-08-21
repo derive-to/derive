@@ -30,7 +30,9 @@ export const reviewRoutes = (ctx: AppContext) => {
       resolved_by_name: z
         .string()
         .nullable()
-        .describe("The human who settled the round; null while pending or for legacy history."),
+        .describe(
+          "The human who settled the round; null while pending, or when the store has no name for the resolver.",
+        ),
       created_at: z.string(),
       resolved_at: z.string().nullable().describe("When it was sent back; null while pending."),
     })

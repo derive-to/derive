@@ -7514,7 +7514,7 @@ export interface components {
             state: "pending" | "sent_back";
             /** @description Free-text note attached to the round; null if none. */
             note: string | null;
-            /** @description The human who settled the round; null while pending or for legacy history. */
+            /** @description The human who settled the round; null while pending, or when the store has no name for the resolver. */
             resolved_by_name: string | null;
             created_at: string;
             /** @description When it was sent back; null while pending. */
