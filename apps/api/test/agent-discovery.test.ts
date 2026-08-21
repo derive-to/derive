@@ -1,5 +1,20 @@
+import { join } from "node:path"
+import { FsBlobStore } from "@derive/storage/fs"
 import { describe, expect, it } from "vitest"
-import { anonApp } from "./helpers"
+import { createApp } from "../src/app"
+import { anonApp, dir, meta } from "./helpers"
+
+type Page = () => Promise<string | null>
+// The hosted shape: worker-style deps with the four marketing providers bound.
+const hostedApp = (page: Page) =>
+  createApp({
+    meta,
+    blobs: new FsBlobStore(join(dir, "blobs-agent-discovery")),
+    baseUrl: "http://derive.test",
+    token: "tok",
+    shellFetch: async () => "<!doctype html><div id=root></div>",
+    marketing: { home: page, pricing: page, privacy: page, examples: page },
+  })
 
 // Agent discovery (routes/agent-discovery.ts): the machine-readable front door for
 // agents that have NOT connected the MCP. Both endpoints are public and read-only —
@@ -84,5 +99,26 @@ describe("GET /.well-known/agent.json", () => {
     for (const key of ["examples", "llms_txt", "llms_full_txt"])
       expect(m.endpoints[key], `${key} must be absent without the hosted surface`).toBeUndefined()
     expect(m.endpoints.skill).toBe("https://example.test/skill.md")
+  })
+
+  // On the edge the providers are always bound (worker.ts points them at asset URLs) and
+  // only resolve null when the build shipped no page, so the gate has to probe, not test
+  // for presence. Both shapes, through the same app.
+  it("advertises the hosted endpoints only when the examples page resolves", async () => {
+    const url = "https://example.test/.well-known/agent.json"
+    const shipped = (await (
+      await hostedApp(async () => "<!doctype html>EXAMPLES").request(url)
+    ).json()) as {
+      endpoints: Record<string, string>
+    }
+    expect(shipped.endpoints.examples).toBe("https://example.test/examples")
+    expect(shipped.endpoints.llms_txt).toBe("https://example.test/llms.txt")
+
+    const bare = (await (await hostedApp(async () => null).request(url)).json()) as {
+      endpoints: Record<string, string>
+    }
+    expect(bare.endpoints.examples).toBeUndefined()
+    expect(bare.endpoints.llms_txt).toBeUndefined()
+    expect(bare.endpoints.skill).toBe("https://example.test/skill.md")
   })
 })
