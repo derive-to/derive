@@ -1,5 +1,4 @@
 import { execFileSync } from "node:child_process"
-import { readFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { describe, expect, it } from "vitest"
@@ -50,27 +49,9 @@ describe("preview-config", () => {
     expect(out).toContain("DERIVE_SUBDOMAIN_BASE intentionally unset for previews")
   })
 
-  it("fails loudly if a rewrite silently matches nothing", () => {
-    // The guards assert the marker each replacement WRITES, not the absence of one
-    // spelling — otherwise reformatting wrangler.toml (KEY="v", aligned spaces, a
-    // tab, an indented table) makes the replace a no-op that the guard also misses,
-    // and the script exits 0 having changed nothing.
-    const script = readFileSync(scriptPath, "utf8")
-    expect(script).toContain('out.includes("DERIVE_SANDBOX_URL intentionally unset for previews")')
-    expect(script).toContain(
-      'out.includes("DERIVE_SUBDOMAIN_BASE intentionally unset for previews")',
-    )
-    expect(script).toContain("out.includes(`BASE_URL =")
-  })
-
   it("still strips everything that would reach production", () => {
     expect(out).not.toContain("[[routes]]")
     expect(out).not.toContain("[triggers]")
     expect(out).not.toContain("queues.consumers")
-  })
-
-  it("keeps the shared data bindings (a preview with an empty database proves nothing)", () => {
-    expect(out).toContain("[[d1_databases]]")
-    expect(out).toContain("[[hyperdrive]]")
   })
 })

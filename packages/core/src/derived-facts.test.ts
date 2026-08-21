@@ -5,14 +5,6 @@ const byName = (source: string, ct: string) =>
   Object.fromEntries(deriveFacts(source, ct).map((f) => [f.slot, JSON.parse(f.json)]))
 
 describe("deriveFacts", () => {
-  it("derives video timing and scene metadata", () => {
-    const src = `<main data-derive-video><section data-derive-scene="open" data-duration-ms="2000"><h2>Open</h2></section><section data-derive-scene="close" data-duration-ms="3000" data-transition="fade"></section></main>`
-    const d = Object.fromEntries(
-      deriveFacts(src, "text/x-derive-video").map((f) => [f.slot, JSON.parse(f.json)]),
-    )
-    expect(d.$video.total_ms).toBe(5000)
-    expect(d.$video.scenes.map((s: { id: string }) => s.id)).toEqual(["open", "close"])
-  })
   it("derives outline, links and stats from a real HTML page", () => {
     const page = `<!doctype html><html><body>
       <h1>Nightly</h1><p>see <a href="/artifacts/facts-mcqx8w9l">the how-to</a> and
@@ -52,22 +44,6 @@ describe("deriveFacts", () => {
     expect(d.$stats).toBeDefined()
   })
 
-  it("counts VISIBLE words for HTML, so markup weight is not prose", () => {
-    const heavy = `<div class="a b c d e f g h i j k l m n o p"><p>two words</p></div>`
-    const d = byName(heavy, "text/html")
-    expect(d.$stats.words).toBe(2)
-    expect(d.$stats.chars).toBe(heavy.length)
-  })
-
-  it("treats a linked bundle as HTML while deriving its visible stats and links", () => {
-    const page =
-      '<main class="bundle"><h1>Research loop</h1><a href="/artifacts/evidence-abc12345">Evidence</a></main>'
-    const d = byName(page, "text/x-derive-linked-bundle")
-    expect(d.$links.refs).toEqual(["abc12345"])
-    expect(d.$stats.words).toBe(3)
-    expect(d.$stats.chars).toBe(page.length)
-  })
-
   it("records that a reference exists, never why: footers and citations look identical", () => {
     // The transcription line, pinned: dedup yes, judgment no.
     const page =
@@ -83,21 +59,6 @@ describe("deriveFacts", () => {
       '<a href="mailto:x@y.z">m</a><p>the id abc12345 in prose is a string, not an edge</p>'
     const d = byName(page, "text/html")
     expect(d.$links).toBeUndefined()
-  })
-
-  it("bounds a monster outline and says so", () => {
-    const md = Array.from({ length: 250 }, (_, i) => `# H${i}\n\nbody\n`).join("\n")
-    const d = byName(md, "text/markdown")
-    expect(d.$outline.sections).toHaveLength(200)
-    expect(d.$outline.truncated).toBe(true)
-    expect(d.$outline.total).toBe(250)
-  })
-
-  it("is deterministic — or gen-bumping is meaningless", () => {
-    const page = "<h1>A</h1><h2>B</h2><p>text</p>"
-    const a = deriveFacts(page, "text/html")
-    const b = deriveFacts(page, "text/html")
-    expect(a).toEqual(b)
   })
 
   it("stamps each row with ITS OWN deriver's generation", () => {

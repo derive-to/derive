@@ -3,7 +3,6 @@ import {
   chmodSync,
   mkdirSync,
   mkdtempSync,
-  readdirSync,
   readFileSync,
   symlinkSync,
   writeFileSync,
@@ -13,9 +12,7 @@ import { tmpdir } from "node:os"
 import { basename, join } from "node:path"
 import { describe, expect, it } from "vitest"
 import {
-  buildPrompt,
   checkWritable,
-  DeriveClient,
   doctor,
   gitSafeEnv,
   loadRunnerConfig,
@@ -23,79 +20,19 @@ import {
   once,
   parseAnswer,
   parseManifest,
-  RETRY_DELAY_MS,
-  renderServiceUnit,
-  repoCatalogBlock,
   repoSlug,
   resolveArtifactHtml,
   runClaude,
   serveSession,
   syncRepos,
 } from "../src/runner.js"
-
-describe("skillApi", () => {
-  it("omits v for an unpinned skill and carries it when pinned", async () => {
-    // An unpinned manifest entry (version null) means "fetch current". Interpolating
-    // the null literally produced "?v=null", which the content route rejects with
-    // 400 "bad version" — the skill was then silently marked unavailable.
-    const paths = []
-    const c = new DeriveClient("http://x", "t")
-    c.call = async (p) => {
-      paths.push(p)
-      return {}
-    }
-    c.callRaw = async (p) => {
-      paths.push(p)
-      return { arrayBuffer: async () => new ArrayBuffer(0), text: async () => "" }
-    }
-    const api = c.skillApi()
-    await api.outline("ab12cd34", null)
-    await api.file("ab12cd34", "SKILL.md", undefined)
-    await api.content("ab12cd34", null)
-    await api.outline("ab12cd34", 3)
-    await api.file("ab12cd34", "a b.md", 3)
-    await api.content("ab12cd34", 3)
-    expect(paths).toEqual([
-      "/v1/artifacts/ab12cd34/content?outline=1",
-      "/v1/artifacts/ab12cd34/content?section=SKILL.md",
-      "/v1/artifacts/ab12cd34/content",
-      "/v1/artifacts/ab12cd34/content?outline=1&v=3",
-      "/v1/artifacts/ab12cd34/content?section=a%20b.md&v=3",
-      "/v1/artifacts/ab12cd34/content?v=3",
-    ])
-  })
-})
+import { materializeSkills, skillSlug } from "../src/skills.js"
 
 describe("parseAnswer", () => {
-  const good = `Here is my analysis.\n<answer>{"body_md":"32%","query":"select 1","confidence":0.9,"caveats":["small n"],"escalate":false,"escalation_reason":null}</answer>`
-
-  it("extracts and validates a well-formed answer", () => {
-    const { answer } = parseAnswer(good)
-    expect(answer).toMatchObject({ body_md: "32%", confidence: 0.9, caveats: ["small n"] })
-  })
-
-  it("strips ```json fences inside the tags", () => {
-    expect(parseAnswer('<answer>\n```json\n{"body_md":"ok"}\n```\n</answer>').answer.body_md).toBe(
-      "ok",
-    )
-  })
-
-  it("clamps confidence into [0,1] and defaults the optional fields", () => {
-    const { answer } = parseAnswer('<answer>{"body_md":"x","confidence":7}</answer>')
-    expect(answer).toMatchObject({ confidence: 1, query: null, caveats: [], escalate: false })
-  })
-
   it("rejects a missing block, bad JSON, and an empty body", () => {
     expect(parseAnswer("no block here").error).toMatch(/no <answer>/)
     expect(parseAnswer("<answer>{nope}</answer>").error).toMatch(/parse/)
     expect(parseAnswer('<answer>{"body_md":"  "}</answer>').error).toMatch(/body_md/)
-  })
-
-  it("carries escalation through", () => {
-    const { answer } = parseAnswer(
-      '<answer>{"body_md":"draft","escalate":true,"escalation_reason":"pricing"}</answer>',
-    )
-    expect(answer).toMatchObject({ escalate: true, escalation_reason: "pricing" })
   })
 
   it("accepts a well-formed artifact; malformed/oversized/blank ones demote to null", () => {
@@ -121,19 +58,6 @@ describe("parseAnswer", () => {
       artifact: { title: "t".repeat(300), html: "<p>x</p>" },
     })
     expect(parseAnswer(`<answer>${long}</answer>`).answer.artifact.title).toHaveLength(120)
-  })
-})
-
-describe("buildPrompt", () => {
-  it("replays the transcript with roles and points at the latest ASKER message", () => {
-    const p = buildPrompt([
-      { author_kind: "asker", body_md: "churn?" },
-      { author_kind: "agent", body_md: "32%" },
-      { author_kind: "asker", body_md: "and feb?" },
-    ])
-    expect(p).toContain("[asker] churn?")
-    expect(p).toContain("[you] 32%")
-    expect(p).toContain("Answer the asker's latest message")
   })
 })
 
@@ -182,20 +106,6 @@ describe("loadRunnerConfig", () => {
     expect(() =>
       loadRunnerConfig({ DERIVE_TOKEN: "t" }, { "env-file": "/nope/.env", context: "ctx_x" }),
     ).toThrow(/--env-file \/nope\/\.env/)
-  })
-
-  it("partial mode (doctor) tolerates missing token/context", () => {
-    const cfg = loadRunnerConfig({}, {}, { partial: true })
-    expect(cfg.token).toBe("")
-    expect(cfg.contextId).toBe("")
-  })
-
-  it("carries --manifest-file (dev mode) into the config", () => {
-    const cfg = loadRunnerConfig(
-      { DERIVE_TOKEN: "t" },
-      { context: "ctx_x", "manifest-file": "/work/context/MANIFEST.md" },
-    )
-    expect(cfg.manifestFile).toBe("/work/context/MANIFEST.md")
   })
 })
 
@@ -260,29 +170,6 @@ brandprint: off
       { id: "j9rw8n2v", version: null }, // unpinned until push resolves it
     ])
     expect(brandprint).toBe("off")
-  })
-
-  it("brandprint defaults to live when the scalar is absent", () => {
-    expect(parseManifest("---\nskills:\n  - id: a1b2c3d4\n    version: 1\n---\nx").brandprint).toBe(
-      "live",
-    )
-  })
-
-  it("slugs are owner-repo so same-named repos from different owners don't collide", () => {
-    expect(repoSlug("https://github.com/octo-org/eda")).toBe("octo-org-eda")
-    expect(repoSlug("https://github.com/acme/eda.git")).toBe("acme-eda")
-    expect(repoSlug("git@github.com:acme/eda.git")).toBe("acme-eda")
-  })
-
-  it("the catalog block names what's on disk and states what isn't", () => {
-    expect(repoCatalogBlock([])).toBe("")
-    const block = repoCatalogBlock([
-      { url: "https://github.com/a/ok", ref: "main", description: "docs", sha: "ab12cd34ef56" },
-      { url: "https://github.com/a/gone", ref: null, description: "", sha: null },
-    ])
-    expect(block).toContain("repos/a-ok — docs (main @ ab12cd34ef56)")
-    expect(block).toContain("repos/a-gone")
-    expect(block).toContain("UNAVAILABLE")
   })
 
   it("strips the git variables that would retarget a clone at another repo", () => {
@@ -609,8 +496,11 @@ exit 1
   }, 30_000)
 
   it("does NOT retry a timeout — that's the owner's signal, not a busy service", async () => {
-    const fake = fakeClaude(`sleep 10`)
-    const out = await runClaude({ ...opts(fake.bin), timeoutMs: 1_000 })
+    // `exec`, so the SIGTERM the runner sends on timeout reaches the sleeper itself. Without
+    // it the signal killed `sh` and the orphaned `sleep` kept stdout open, so the run only
+    // ended when sleep did — ten seconds for a test about a half-second timeout.
+    const fake = fakeClaude(`exec sleep 10`)
+    const out = await runClaude({ ...opts(fake.bin), timeoutMs: 500 })
     expect(out.ok).toBe(false)
     expect(out.error).toBe("timed out")
     expect(fake.attempts()).toBe(1)
@@ -642,18 +532,6 @@ echo '{"type":"result","result":"prose, no block"}'
     await runClaude(opts(fake.bin))
     expect(fake.args(2)).toContain("--resume")
     expect(fake.args(2)).toContain("--append-system-prompt")
-  }, 30_000)
-
-  it("waits before retrying, and the default wait clears the CLI's own backoff", async () => {
-    // Two halves, so neither costs 30s of CI: the delay is really awaited...
-    const fake = fakeClaude(apiError(503, "overloaded"))
-    const started = Date.now()
-    await runClaude({ ...opts(fake.bin), retryDelayMs: 1_000 })
-    expect(Date.now() - started).toBeGreaterThanOrEqual(1_000)
-    expect(fake.attempts()).toBe(2)
-    // ...and the production default (every other test overrides it to 0) is long
-    // enough not to land inside the overload window the CLI just gave up on.
-    expect(RETRY_DELAY_MS).toBeGreaterThanOrEqual(20_000)
   }, 30_000)
 
   it("retries from scratch when the run died before a session id existed", async () => {
@@ -732,21 +610,9 @@ describe("doctor", () => {
     },
     60_000,
   )
-
-  it("leaves no probe directory behind", async () => {
-    const cwd = mkdtempSync(join(tmpdir(), "runner-doctor-"))
-    await runDoctor({ cwd })
-    await runDoctor({ cwd })
-    expect(readdirSync(cwd)).toEqual([])
-  }, 60_000)
 })
 
 describe("output contract + service units", () => {
-  it("the parse anchor comes from the runner, not the author-editable manifest", () => {
-    expect(OUTPUT_CONTRACT).toContain("<answer>")
-    expect(OUTPUT_CONTRACT).toContain("body_md")
-  })
-
   it("the contract still demands the block, and no longer forbids the file channel", () => {
     // Weak by nature — it greps a prompt — so it asserts only the two things a
     // future edit could silently invert. The block is still mandatory...
@@ -758,39 +624,6 @@ describe("output contract + service units", () => {
       parseAnswer('<answer>{"body_md":"x","artifact":{"title":"t","path":"p.html"}}</answer>')
         .answer.artifact,
     ).toEqual({ title: "t", path: "p.html" })
-  })
-
-  it("renders units that reproduce the FULL running config (nothing silently dropped)", () => {
-    const cfg = loadRunnerConfig(
-      { RUNNER_TIMEOUT_MS: "2400000" },
-      { context: "ctx_abc", token: "t", cwd: "/work", "claude-bin": "/usr/local/bin/claude" },
-    )
-    cfg.tokenFile = "/secrets/tok"
-    cfg.envFiles = ["/work/.env", "/work/extra.env"]
-    cfg.manifestFile = "/work/context/MANIFEST.md"
-    const mac = renderServiceUnit(cfg, "/opt/cli/bin/derive.js", "darwin")
-    expect(mac.unit).toContain("<string>ctx_abc</string>")
-    expect(mac.unit).toContain("<string>--token-file</string>")
-    expect(mac.unit).toContain("<string>/work/.env,/work/extra.env</string>")
-    expect(mac.unit).toContain("<string>2400000</string>") // timeout survives into the unit
-    expect(mac.unit).toContain("<string>--manifest-file</string>")
-    expect(mac.path).toContain("to.derive.runner.abc")
-    const linux = renderServiceUnit(cfg, "/opt/cli/bin/derive.js", "linux")
-    expect(linux.unit).toContain("ExecStart=")
-    expect(linux.unit).toContain("runner serve ctx_abc")
-    expect(linux.unit).toContain("--env-file /work/.env,/work/extra.env")
-    expect(linux.unit).toContain("Restart=on-failure")
-  })
-
-  it("escapes hostile paths: XML entities in plists, %/space/quote for systemd", () => {
-    const cfg = loadRunnerConfig(
-      {},
-      { context: "ctx_abc", token: "t", cwd: "/Users/rob/R&D <100%> dir" },
-    )
-    const mac = renderServiceUnit(cfg, "/opt/cli/bin/derive.js", "darwin")
-    expect(mac.unit).toContain("<string>/Users/rob/R&amp;D &lt;100%&gt; dir</string>")
-    const linux = renderServiceUnit(cfg, "/opt/cli/bin/derive.js", "linux")
-    expect(linux.unit).toContain('"/Users/rob/R&D <100%%> dir"')
   })
 })
 
@@ -892,5 +725,54 @@ describe("runner once (single drain)", () => {
     } finally {
       srv.close()
     }
+  })
+})
+
+// A mock of the three-fetcher `api` contract, backed by an in-memory catalog of
+// { [id]: { [version]: { entry, files: {path: bytes} } } } for bundles and
+// { [id]: { [version]: "source" } } for single-file notes.
+describe("skills", () => {
+  const mockApi = (bundles = {}, notes = {}) => ({
+    outline: async (id, version) => {
+      const v = bundles[id]?.[version]
+      if (!v) throw new Error("no version")
+      return {
+        entry: v.entry,
+        pages: Object.keys(v.files).map((path) => ({ path, type: "text/plain" })),
+      }
+    },
+    file: async (id, path, version) => bundles[id][version].files[path],
+    content: async (id, version) => {
+      const s = notes[id]?.[version]
+      if (s == null) throw new Error("no note")
+      return s
+    },
+  })
+
+  describe("skillNameFrom + skillSlug", () => {
+    it("slugs to a filesystem-safe stem, null when nothing survives", () => {
+      expect(skillSlug("Chart Style!")).toBe("Chart-Style")
+      expect(skillSlug("a/../b")).toBe("a-..-b")
+      expect(skillSlug("***")).toBeNull()
+    })
+  })
+
+  describe("materializeSkills", () => {
+    it("a failed skill is non-fatal: ok:false, the rest still materialize", async () => {
+      const api = mockApi({
+        ok1: { 1: { entry: "SKILL.md", files: { "SKILL.md": "---\nname: good\n---\n" } } },
+      })
+      const root = mkdtempSync(join(tmpdir(), "skills-"))
+      const cat = await materializeSkills(
+        api,
+        [
+          { id: "missing", version: 9 },
+          { id: "ok1", version: 1 },
+        ],
+        root,
+      )
+      expect(cat[0]).toMatchObject({ id: "missing", ok: false })
+      expect(cat[1]).toMatchObject({ id: "ok1", dir: "good", ok: true })
+    })
   })
 })

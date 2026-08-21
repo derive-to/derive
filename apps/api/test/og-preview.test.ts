@@ -6,10 +6,12 @@
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import type { NewRenderJob } from "@derive/core"
 import { SqliteMetaStore } from "@derive/db/sqlite"
 import { FsBlobStore } from "@derive/storage/fs"
 import { afterAll, describe, expect, it } from "vitest"
 import { createApp } from "../src/app"
+import type { AppDeps } from "../src/context"
 import { OG_TOKEN_TTL_MS, signOgToken, verifyOgToken } from "../src/lib/og-token"
 import { signPreviewToken, verifyPreviewToken } from "../src/lib/preview-token"
 
@@ -127,20 +129,6 @@ const publish = async (
 }
 
 describe("/v1/og/:ref — PNG preview serving", () => {
-  it("returns SVG when there is no preview yet", async () => {
-    const { app } = makeApp("og-no-preview")
-    const { short_id } = await publish(app, "<h1>Hi</h1>", {
-      visibility: "public",
-      title: "No Preview",
-    })
-
-    const res = await app.request(`/v1/og/${short_id}`)
-    expect(res.status).toBe(200)
-    expect(res.headers.get("content-type")).toContain("image/svg+xml")
-    const body = await res.text()
-    expect(body).toContain("<svg")
-  })
-
   it("returns PNG bytes when preview_status is ready", async () => {
     const { app, meta, blobs } = makeApp("og-with-preview")
     const { short_id, current_version } = await publish(app, "<h1>Ready</h1>", {
@@ -445,23 +433,124 @@ describe("/v1/og/:ref — the header Slack requires on a preview image", () => {
     expect(res.headers.get("content-type")).toBe("image/png")
     expect(res.headers.get("access-control-allow-origin")).toBe("https://app.slack.com")
   })
+})
 
-  it("is on the SVG fallback too — that is what an unrendered doc's card points at", async () => {
-    const { app } = makeApp("og-cors-svg")
-    const { short_id } = await publish(app, "<h1>Hi</h1>", { visibility: "public", title: "S" })
-    const res = await app.request(`/v1/og/${short_id}`)
-    expect(res.headers.get("content-type")).toContain("image/svg+xml")
-    expect(res.headers.get("access-control-allow-origin")).toBe("https://app.slack.com")
+// ---------------------------------------------------------------------------
+// The trigger side of previews: publishing enqueues a render job (for the internal
+// artifact id) only when renderPreviews is on. Spies on meta.enqueueRenderJob, the only
+// storage sink enqueueRender uses, so no renderer is needed.
+describe("the preview render trigger — gated by renderPreviews", () => {
+  /**
+   * Task 5: preview trigger — enqueue a render job on version.published,
+   * gated by renderPreviews.
+   *
+   * We spy on meta.enqueueRenderJob directly (the only storage sink
+   * enqueueRender uses), so the test is self-contained — no renderer needed.
+   */
+
+  const dir = mkdtempSync(join(tmpdir(), "derive-preview-trigger-"))
+
+  afterAll(() => {
+    rmSync(dir, { recursive: true, force: true })
   })
 
-  it("is a constant, not an echo — so the response stays cacheable on one key", async () => {
-    // Echoing the caller's Origin would make the bytes vary by requester and force a Vary that
-    // defeats the shared caching this endpoint depends on.
-    const { app } = makeApp("og-cors-constant")
-    const { short_id } = await publish(app, "<h1>Hi</h1>", { visibility: "public", title: "S" })
-    const res = await app.request(`/v1/og/${short_id}`, {
-      headers: { origin: "https://evil.example" },
+  const TOKEN = "tok"
+  const TOKEN_HEADER = { authorization: `Bearer ${TOKEN}` }
+  const HUMAN = {
+    id: "u_preview_owner",
+    createdAt: "2020-01-01T00:00:00.000Z",
+    email: "owner@derive.test",
+    name: "Owner",
+  }
+
+  /** Build an app + a spy counter, optionally with renderPreviews on/off. */
+  const makeApp = (name: string, renderPreviews: boolean) => {
+    const dbPath = join(dir, `${name}.db`)
+    const meta = new SqliteMetaStore(dbPath)
+
+    const enqueuedJobs: NewRenderJob[] = []
+    const pokeCalls: number[] = []
+
+    // Wrap meta so we can spy on enqueueRenderJob
+    const spyMeta = new Proxy(meta, {
+      get(target, prop, receiver) {
+        if (prop === "enqueueRenderJob") {
+          return async (job: NewRenderJob) => {
+            enqueuedJobs.push(job)
+            return target.enqueueRenderJob(job)
+          }
+        }
+        return Reflect.get(target, prop, receiver)
+      },
     })
-    expect(res.headers.get("access-control-allow-origin")).toBe("https://app.slack.com")
+
+    const extraDeps: Partial<AppDeps> = renderPreviews
+      ? {
+          renderPreviews: true,
+          pokePreviews: () => {
+            pokeCalls.push(Date.now())
+          },
+        }
+      : {}
+
+    const app = createApp({
+      meta: spyMeta,
+      blobs: new FsBlobStore(join(dir, `blobs-${name}`)),
+      baseUrl: "http://derive.test",
+      token: TOKEN,
+      defaultOrgId: "default",
+      auth: {
+        handler: async () => new Response(null, { status: 404 }),
+        api: {
+          getSession: async ({ headers }: { headers: Headers }) =>
+            headers.get("x-test-user") === HUMAN.email ? { user: HUMAN } : null,
+        },
+      } as unknown as AppDeps["auth"],
+      ...extraDeps,
+    })
+
+    return { app, meta, enqueuedJobs, pokeCalls }
+  }
+
+  /** Publish a new artifact and return the response + parsed JSON. */
+  const publishArtifact = async (app: ReturnType<typeof createApp>, content = "<h1>hi</h1>") => {
+    const form = new FormData()
+    form.append("file", new Blob([new TextEncoder().encode(content)]), "f.html")
+    const res = await app.request("/v1/artifacts", {
+      method: "POST",
+      body: form,
+      headers: TOKEN_HEADER,
+    })
+    return res
+  }
+
+  it("enqueues ONE render job when renderPreviews is true", async () => {
+    const { app, enqueuedJobs } = makeApp("trigger-on", true)
+
+    const res = await publishArtifact(app)
+    expect(res.status).toBe(201)
+    const body = (await res.json()) as { short_id: string; current_version: number }
+
+    // Give the fire-and-forget promise a tick to settle
+    await new Promise((r) => setTimeout(r, 20))
+
+    expect(enqueuedJobs).toHaveLength(1)
+    // artifact_id is the internal UUID (not short_id); just verify it's a string
+    const job0 = enqueuedJobs[0]
+    if (!job0) throw new Error("expected enqueuedJobs[0]")
+    expect(typeof job0.artifact_id).toBe("string")
+    expect(job0.artifact_id).toMatch(/^a_/)
+    expect(job0.version_n).toBe(body.current_version)
+  })
+
+  it("does NOT enqueue any render jobs when renderPreviews is false/omitted", async () => {
+    const { app, enqueuedJobs } = makeApp("trigger-off", false)
+
+    const res = await publishArtifact(app)
+    expect(res.status).toBe(201)
+
+    await new Promise((r) => setTimeout(r, 20))
+
+    expect(enqueuedJobs).toHaveLength(0)
   })
 })

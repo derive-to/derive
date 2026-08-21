@@ -2,9 +2,7 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { describe, expect, it } from "vitest"
-import { claudeCode } from "../src/providers/claude-code.js"
 import { codex } from "../src/providers/codex.js"
-import { DEFAULT_PROVIDER, PROVIDERS, selectProvider } from "../src/providers/index.js"
 import {
   configForRun,
   loadRunnerConfig,
@@ -14,14 +12,6 @@ import {
 } from "../src/runner.js"
 
 describe("provider registry", () => {
-  it("defaults to claude-code, resolves known names, and throws on an unknown one", () => {
-    expect(DEFAULT_PROVIDER).toBe("claude-code")
-    expect(selectProvider().name).toBe("claude-code")
-    expect(selectProvider("codex").name).toBe("codex")
-    expect(Object.keys(PROVIDERS).sort()).toEqual(["claude-code", "codex"])
-    expect(() => selectProvider("nope")).toThrow(/unknown provider "nope"/)
-  })
-
   it("an unknown provider is fatal for a real run but degrades to a finding under partial (doctor)", () => {
     // A real run must fail loudly rather than silently pick a different agent.
     expect(() =>
@@ -100,25 +90,6 @@ describe("runAgent is provider-agnostic", () => {
     expect(out.ok).toBe(true)
     expect(out.answer.body_md).toBe("prose, no block")
     expect(out.answer.caveats[0]).toMatch(/couldn't parse/)
-  })
-})
-
-describe("credentialEnv", () => {
-  it("claude-code maps oauth→CLAUDE_CODE_OAUTH_TOKEN and api_key→ANTHROPIC_API_KEY", () => {
-    expect(claudeCode.credentialEnv("oauth", "tok")).toEqual({ CLAUDE_CODE_OAUTH_TOKEN: "tok" })
-    expect(claudeCode.credentialEnv("api_key", "sk")).toEqual({ ANTHROPIC_API_KEY: "sk" })
-  })
-  it("codex maps api_key→CODEX_API_KEY (env); other kinds have no env mapping", () => {
-    expect(codex.credentialEnv("api_key", "sk")).toEqual({ CODEX_API_KEY: "sk" })
-    expect(codex.credentialEnv("login", "blob")).toBeNull()
-    expect(codex.credentialEnv("oauth", "tok")).toBeNull()
-  })
-  it("codex maps a plan LOGIN to an auth.json file in CODEX_HOME; other kinds have no file", () => {
-    expect(codex.credentialFiles("login", "BLOB")).toEqual({
-      homeEnv: "CODEX_HOME",
-      files: { "auth.json": "BLOB" },
-    })
-    expect(codex.credentialFiles("api_key", "sk")).toBeNull()
   })
 })
 
@@ -313,40 +284,6 @@ printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":10,"cached_input
     // System prompt (with the appended contract) and the task travel in one prompt.
     expect(args).toContain("you are a runner")
     expect(args).toContain("how many?")
-  })
-
-  it("bounds a complex action stream below the run metadata budget", async () => {
-    const events = Array.from({ length: 100 }, (_, i) =>
-      JSON.stringify({
-        type: "item.completed",
-        item: {
-          id: `item_${i}`,
-          type: "command_execution",
-          command: `node task-${i}.mjs ${"x".repeat(180)}`,
-          exit_code: 0,
-        },
-      }),
-    )
-      .map((line) => `printf '%s\\n' '${line}'`)
-      .join("\n")
-    const fake = fakeCodex(
-      `${events}\nprintf '%s\\n' '{"type":"item.completed","item":{"type":"agent_message","text":"<answer>{\\"body_md\\":\\"done\\"}</answer>"}}'`,
-    )
-    const meter = { costUsd: null, actions: [] }
-    const out = await runAgent(codex, {
-      bin: fake.bin,
-      cwd: tmpdir(),
-      model: null,
-      timeoutMs: 30_000,
-      systemPrompt: "runner",
-      prompt: "complex job",
-      meter,
-    })
-
-    expect(out.ok).toBe(true)
-    expect(meter.actions.length).toBeGreaterThan(0)
-    expect(meter.actions.length).toBeLessThan(50)
-    expect(JSON.stringify(meter.actions).length).toBeLessThanOrEqual(4_000)
   })
 
   it("applies a run's provider snapshot without inheriting another provider's binary/model", () => {

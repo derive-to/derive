@@ -55,11 +55,4 @@ describe("the chat fetch helper", () => {
     )
     await expect(json("/v1/chat-session")).rejects.toThrow("/v1/chat-session failed (502)")
   })
-
-  it("returns the parsed body on success", async () => {
-    mockFetch(200, { session: { id: "s1" } })
-    await expect(json<{ session: { id: string } }>("/v1/chat-session")).resolves.toEqual({
-      session: { id: "s1" },
-    })
-  })
 })

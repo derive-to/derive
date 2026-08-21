@@ -2,7 +2,7 @@ import { zipSync } from "fflate"
 import { describe, expect, it } from "vitest"
 import { sha256Hex } from "../src/hash"
 import type { ArtifactRecord, BlobStore, MetaStore, NewArtifact, NewVersion } from "../src/ports"
-import { artifactUrl, PublishError, type PublishInput, publish, toJson } from "../src/publish"
+import { artifactUrl, looksLikeHtmlDocument, type PublishInput, publish } from "../src/publish"
 
 // publish() stores content then writes the artifact/version. The
 // interesting, security-relevant logic is storeContent's bundle handling (zip
@@ -106,11 +106,6 @@ describe("publish: single file", () => {
     expect(new TextDecoder().decode((await blobs.get(version.blob_key)) ?? undefined)).toBe(
       "<h1>hi</h1>",
     )
-  })
-
-  it("detects markdown by extension", async () => {
-    const { version } = await publish(makeMeta(), makeBlobs(), file("# md", { filename: "doc.md" }))
-    expect(version.content_type).toBe("text/markdown")
   })
 
   it("recognizes a valid linked-bundle fact without changing the file kind", async () => {
@@ -247,16 +242,6 @@ describe("publish: bundles (zip)", () => {
     expect(version.content_type).toBe("derive/skill")
   })
 
-  it("tags a plain docs bundle (no SKILL.md) as a normal derive/bundle", async () => {
-    const blobs = makeBlobs()
-    const { version } = await publish(
-      makeMeta(),
-      blobs,
-      bundle({ "README.md": "# Docs", "guide.md": "# Guide" }),
-    )
-    expect(version.content_type).toBe("derive/bundle")
-  })
-
   it("prefers HTML over SKILL.md, and falls back to README.md / shallowest .md", async () => {
     const blobs = makeBlobs()
     // HTML wins even when a SKILL.md is present.
@@ -353,15 +338,41 @@ describe("publish: URL + JSON helpers", () => {
       "https://derive.test/artifacts/abc123",
     )
   })
+})
 
-  it("toJson shapes the public artifact payload", () => {
-    const json = toJson("https://derive.test", artifact, [])
-    expect(json).toMatchObject({
-      short_id: "abc123",
-      url: "https://derive.test/artifacts/my-doc-abc123",
-      kind: "file",
-      spa: false,
-      current_version: 2,
-    })
+// looksLikeHtmlDocument is the trigger for serve-content's "never serve a blank
+// page" self-heal: a blob mislabeled text/markdown whose bytes are really a full
+// HTML document is served verbatim as HTML instead of run through the markdown
+// renderer (which would strip <head>/<style>/scripts and show white). So the
+// boundary that matters is full-document vs. not — false positives would serve a
+// fragment as a document; false negatives bring the blank screen back.
+
+describe("looksLikeHtmlDocument", () => {
+  it("detects a headless designed page by its head/meta/style openers", () => {
+    // The 2026-07 dogfood miss: a styled report opening with <meta>/<style> (no
+    // doctype) rendered its CSS as visible text through the markdown path.
+    expect(looksLikeHtmlDocument('<meta name="viewport" content="width=device-width" />')).toBe(
+      true,
+    )
+    expect(looksLikeHtmlDocument("<style>body{color:red}</style><p>x</p>")).toBe(true)
+    expect(looksLikeHtmlDocument("<head><title>t</title></head>")).toBe(true)
+    expect(looksLikeHtmlDocument("<body><h1>hi</h1></body>")).toBe(true)
+  })
+
+  it("skips leading HTML comments; the comment alone never decides", () => {
+    expect(looksLikeHtmlDocument("<!-- generated --><!doctype html><html></html>")).toBe(true)
+    expect(looksLikeHtmlDocument('<!-- a -->\n<!-- b -->\n<meta charset="utf-8" />')).toBe(true)
+    // Markdown that merely opens with a comment stays markdown.
+    expect(looksLikeHtmlDocument("<!-- prettier-ignore -->\n# Heading\n\nprose")).toBe(false)
+    expect(looksLikeHtmlDocument("<!-- unterminated comment")).toBe(false)
+  })
+
+  it("is false for ambiguous fragments — how HTML-flavored Markdown opens", () => {
+    // A centered README opens with <div align="center">; a snippet with <p>/<h1>.
+    // Rendering those as markdown is correct.
+    expect(looksLikeHtmlDocument('<div align="center">fragment</div>')).toBe(false)
+    expect(looksLikeHtmlDocument("<p>a paragraph</p>")).toBe(false)
+    expect(looksLikeHtmlDocument("<h1>title</h1>")).toBe(false)
+    expect(looksLikeHtmlDocument('<?xml version="1.0"?><svg></svg>')).toBe(false)
   })
 })

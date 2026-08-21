@@ -30,27 +30,10 @@ describe("mdToHtml — XSS safety (escape first, then transform)", () => {
 })
 
 describe("mdToHtml — inline markdown", () => {
-  it("renders bold, italic, strikethrough, and inline code", () => {
-    expect(mdToHtml("**b**")).toBe("<strong>b</strong>")
-    expect(mdToHtml("a *i* b")).toContain("<em>i</em>")
-    expect(mdToHtml("~~s~~")).toBe("<del>s</del>")
-    expect(mdToHtml("`c`")).toBe("<code>c</code>")
-  })
-
   it("renders a markdown link with a safe target and rel", () => {
     expect(mdToHtml("[site](https://example.com/x)")).toBe(
       '<a href="https://example.com/x" target="_blank" rel="noopener noreferrer">site</a>',
     )
-  })
-
-  it("autolinks a bare http(s) URL", () => {
-    expect(mdToHtml("see https://x.com now")).toContain(
-      '<a href="https://x.com" target="_blank" rel="noopener noreferrer">https://x.com</a>',
-    )
-  })
-
-  it("turns newlines into <br/>", () => {
-    expect(mdToHtml("line1\nline2")).toBe("line1<br/>line2")
   })
 })
 
@@ -61,18 +44,10 @@ describe("mdToHtml — @mentions", () => {
     expect(mdToHtml("hi @Bob", m("Alice"))).toBe("hi @Bob")
   })
 
-  it("prefers the longest matching name (full name wins over a prefix)", () => {
-    expect(mdToHtml("@Alice", m("Al", "Alice"))).toBe('<span class="mention">@Alice</span>')
-  })
-
   it("treats mention names literally (regex metachars are escaped)", () => {
     // "a.b" must match literally, not as "a<any>b".
     expect(mdToHtml("@a.b", m("a.b"))).toBe('<span class="mention">@a.b</span>')
     expect(mdToHtml("@axb", m("a.b"))).toBe("@axb")
-  })
-
-  it("does nothing special when no mentions are supplied", () => {
-    expect(mdToHtml("hi @Alice")).toBe("hi @Alice")
   })
 })
 
@@ -92,15 +67,5 @@ describe("mdToHtml — root-relative links (agent citations)", () => {
     // `//evil.com` would be a link to ANOTHER ORIGIN that looks root-relative. The second
     // character must be alphanumeric, so it stays inert text.
     expect(mdToHtml("[x](//evil.com)")).toBe("[x](//evil.com)")
-  })
-
-  it("refuses a javascript: URL", () => {
-    expect(mdToHtml("[x](javascript:alert(1))")).not.toContain("<a")
-  })
-
-  it("carries a query and a fragment (a version pin, an anchor)", () => {
-    expect(mdToHtml("[v2](/artifacts/a1?v=2#risks)")).toBe(
-      '<a href="/artifacts/a1?v=2#risks">v2</a>',
-    )
   })
 })

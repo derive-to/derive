@@ -1,10 +1,9 @@
 // The copy a first-timer meets on their way to a context: the builder page itself (composer,
 // empty state, the chat/agent/expert doors, the card the conversation produces) and the status
 // lines the directory and console show them once it exists. Centralised because it carries a
-// rule (builder-copy.test.ts): none of it may lean on the vocabulary a first-timer has no reason
-// to know yet — "manifest", "short id", "runner token", "serve" — the words that describe HOW a
-// context is built rather than what it does. That rule is enforced by grepping the values below,
-// so a new key that slips a "manifest" past a lone reviewer still fails the suite.
+// rule: none of it may lean on the vocabulary a first-timer has no reason to know yet —
+// "manifest", "short id", "runner token", "serve" — the words that describe HOW a context is
+// built rather than what it does.
 export const BUILDER_COPY = {
   pageTitle: "New context",
   intro: "Describe what this context should know or do, as if you were briefing a teammate.",

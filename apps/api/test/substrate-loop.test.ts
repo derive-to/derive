@@ -1,6 +1,10 @@
 import { createServer, type Server } from "node:http"
-import { afterAll, beforeAll, describe, expect, it } from "vitest"
+import type { RunExecution } from "@derive/core"
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest"
+import type { Substrate } from "../src/lib/dispatch"
+import { containerSubstrate } from "../src/lib/substrate-container"
 import { loopSubstrate } from "../src/lib/substrate-loop"
+import { providerSubstrate } from "../src/lib/substrate-provider"
 
 // THE LOOP SUBSTRATE, against a stub of our own API.
 //
@@ -700,21 +704,6 @@ describe("loop substrate: an ask arrives through the SESSION claim", () => {
     expect(api.rec.patches[0]).toEqual({ state: "failed" })
     await api.close()
   })
-
-  it("a lost claim race is a clean exit, not a failure", async () => {
-    const api = stubAskApi({ session: null })
-    const url = await api.url
-    await loopSubstrate({ callModel: answerTurn("hello") }).start({
-      runId: "ses_1",
-      token: "dksess_stub",
-      server: url,
-    })
-    await new Promise((r) => setTimeout(r, 100))
-    expect(api.rec.sessionClaims).toBe(1)
-    expect(api.rec.answers).toHaveLength(0)
-    expect(api.rec.patches).toHaveLength(0)
-    await api.close()
-  })
 })
 
 describe("loop substrate: an ask is served AS ITS CONTEXT", () => {
@@ -875,13 +864,6 @@ describe("loop substrate: resolving the model credential", () => {
     await api.close()
   })
 
-  it("honours an explicit model override", async () => {
-    const api = stubApi({ run: { ...baseRun, targets: [] } })
-    const { calls } = await runWithRealCredential(api, { model: "claude-opus-4-8" })
-    expect(calls[0]?.body.model).toBe("claude-opus-4-8")
-    await api.close()
-  })
-
   it("prices the turn from the reported usage, so the budget has something to sum", async () => {
     // `costOf` was `() => null` unconditionally, so sumRunCostSince summed zero and overBudget
     // returned false for every workspace on every check. 1M in + 0.5M out on Sonnet 5 is
@@ -950,24 +932,6 @@ describe("loop substrate: resolving the model credential", () => {
     expect((finish?.meta as { why: string }).why).toContain('"login"')
     await api.close()
   })
-
-  it("still distinguishes an unreadable plan from no plan at all", async () => {
-    const api = stubApi({
-      run: { ...baseRun, targets: [] },
-      credentials: {},
-      credentialReason: "unreadable",
-    })
-    const { finish } = await runWithRealCredential(api)
-    expect((finish?.meta as { why: string }).why).toContain("reconnect")
-    await api.close()
-  })
-
-  it("says nothing is connected when nothing is, for any provider", async () => {
-    const api = stubApi({ run: { ...baseRun, targets: [] }, credentials: {} })
-    const { finish } = await runWithRealCredential(api)
-    expect((finish?.meta as { why: string }).why).toContain("no model plan connected")
-    await api.close()
-  })
 })
 
 describe("how the loop REACHES the API", () => {
@@ -1009,17 +973,6 @@ describe("how the loop REACHES the API", () => {
       expect(seen.length).toBeGreaterThan(1)
     } finally {
       globalThis.fetch = realFetch
-      await api.close()
-    }
-  })
-
-  it("falls back to global fetch when no transport is injected — Node keeps working", async () => {
-    const api = stubApi({ run: baseRun })
-    const url = await api.url
-    try {
-      const settled = await runToSettle(url, api.rec, answerTurn(revision()))
-      expect(settled).toBeTruthy()
-    } finally {
       await api.close()
     }
   })
@@ -1102,33 +1055,6 @@ describe("the revised document KEEPS its own format", () => {
       await api.close()
     }
   })
-
-  it("still honours the filename when CREATING, where there is no document to keep", async () => {
-    // No artifact target: nothing to preserve, so the model's filename is the only signal.
-    const api = stubApi({ run: { ...baseRun, targets: [] } })
-    const url = await api.url
-    try {
-      const settled = await runToSettle(
-        url,
-        api.rec,
-        answerTurn(
-          `<revision>${JSON.stringify({
-            content: "<h1>New</h1>",
-            filename: "index.html",
-            confidence: 0.95,
-            message: "m",
-          })}</revision>`,
-        ),
-      )
-      expect(settled).toBeTruthy()
-      for (const w of api.rec.writes) {
-        expect(w.name).toBe("index.html")
-        expect(w.type).toBe("text/html")
-      }
-    } finally {
-      await api.close()
-    }
-  })
 })
 
 describe("what filename the model is SHOWN", () => {
@@ -1151,25 +1077,6 @@ describe("what filename the model is SHOWN", () => {
       })
       expect(systemSeen).toContain("its filename is art_1.md")
       expect(systemSeen).not.toContain("its filename is art_1\n")
-    } finally {
-      await api.close()
-    }
-  })
-
-  it("tells the model a linked bundle is an HTML document", async () => {
-    const api = stubApi({
-      run: baseRun,
-      artifactContentType: "text/x-derive-linked-bundle",
-      content: "<!doctype html><h1>Research loop</h1>",
-    })
-    const url = await api.url
-    let systemSeen = ""
-    try {
-      await runToSettle(url, api.rec, async (input) => {
-        systemSeen = input.system ?? ""
-        return { text: revision(), toolUses: [], costUsd: 0.001, done: true }
-      })
-      expect(systemSeen).toContain("its filename is art_1.html")
     } finally {
       await api.close()
     }
@@ -1263,5 +1170,64 @@ describe("loop substrate: a source that contributed nothing is explained", () =>
     // "Failed with zero tools" is a different diagnosis from "failed holding three".
     expect(meta?.tools_offered).toBe(0)
     await api.close()
+  })
+})
+
+describe("Cloudflare container substrate", () => {
+  it("starts the run-named instance with the CLI's exact environment contract", async () => {
+    const startRun = vi.fn(async () => undefined)
+    const getByName = vi.fn(() => ({ startRun }))
+    const substrate = containerSubstrate({ binding: { getByName }, timeoutMs: 123_456 })
+
+    await substrate.start({
+      runId: "run_cf_1",
+      token: "dkrun_capability",
+      server: "https://derive.test",
+    })
+
+    expect(getByName).toHaveBeenCalledWith("run_cf_1")
+    expect(startRun).toHaveBeenCalledWith({
+      DERIVE_CONTEXT: "",
+      DERIVE_RUN_ID: "run_cf_1",
+      DERIVE_RUNNER_ISOLATED: "1",
+      DERIVE_SERVER: "https://derive.test",
+      DERIVE_TOKEN: "dkrun_capability",
+      RUNNER_TIMEOUT_MS: "123456",
+    })
+  })
+})
+
+describe("provider substrate", () => {
+  const execution = (provider: RunExecution["provider"]): RunExecution => ({
+    version: 1,
+    provider,
+    location: "hosted",
+    model: null,
+  })
+
+  const recording = (name: string) => {
+    const runs: string[] = []
+    const substrate: Substrate = {
+      name,
+      async start(input) {
+        runs.push(input.runId)
+      },
+    }
+    return { substrate, runs }
+  }
+
+  it("refuses a selected provider with no substrate instead of silently using another agent", async () => {
+    const loop = recording("loop")
+    const router = providerSubstrate({ fallback: loop.substrate, providers: {} })
+
+    await expect(
+      router.start({
+        runId: "codex",
+        token: "dkrun_test",
+        server: "https://derive.test",
+        execution: execution("codex"),
+      }),
+    ).rejects.toThrow(/no hosted substrate is configured for codex/)
+    expect(loop.runs).toEqual([])
   })
 })

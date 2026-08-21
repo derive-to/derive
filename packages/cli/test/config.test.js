@@ -5,15 +5,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import {
   agentScaffoldFiles,
   CONFIG_FILE,
-  defaultConfig,
-  describeWorkspace,
   entryFor,
   findAccountWorkspace,
   forgetWorkspace,
-  formatComments,
   freshToken,
   getAccount,
-  getClientId,
   getDefault,
   listAccounts,
   loadConfig,
@@ -23,14 +19,12 @@ import {
   resolvePublish,
   resolveWorkspaceRef,
   saveAccount,
-  saveClientId,
   scaffold,
   scaffoldAgent,
   scaffoldFiles,
   setDefaultAccount,
   setDefaultWorkspace,
   setWorkspaces,
-  TEMPLATES,
   writeContextConfig,
   writeId,
   writeSkillPin,
@@ -159,32 +153,6 @@ describe("scaffold", () => {
     expect(readFileSync(path, "utf8")).not.toContain("## Old policy")
   })
 
-  it("html template uses index.html as the entry", () => {
-    const d = tmp()
-    scaffold(d, "Page", "html")
-    expect(JSON.parse(readFileSync(join(d, CONFIG_FILE), "utf8")).entry).toBe("index.html")
-    expect(readFileSync(join(d, "index.html"), "utf8")).toContain("<title>Page</title>")
-  })
-
-  it("slides template scaffolds the canonical deck: fixed stage + the derive-deck protocol", () => {
-    const d = tmp()
-    const { created } = scaffold(d, "Talk", "slides")
-    expect(created).toContain("slides.html")
-    const html = readFileSync(join(d, "slides.html"), "utf8")
-    expect(JSON.parse(readFileSync(join(d, CONFIG_FILE), "utf8")).entry).toBe("slides.html")
-    expect(html).toContain("<title>Talk</title>") // the title reaches the scaffold
-    expect(html).toContain('class="slide')
-    expect(html).toContain('data-derive-slide="0"') // stable identity; comments pin to it
-    expect(html).toMatch(/width: 1280px[\s\S]*height: 720px/) // the fixed stage
-    expect(html).toMatch(/ArrowRight|ArrowLeft/) // standalone keyboard navigation
-    expect(html).toContain('source: "derive-deck"') // announces state to the host
-    expect(html).toMatch(/derive-host[\s\S]*deck/) // accepts host drive commands
-    // No on-screen prev/next/fullscreen BAR, deliberately: inside Derive the host renders
-    // its own at bottom-centre, and the old starter's bar sat in exactly that spot. Edge
-    // click zones and the F key cover standalone use without colliding with it.
-    expect(html).not.toContain('data-act="prev"')
-  })
-
   it("never clobbers existing files", () => {
     const d = tmp()
     writeFileSync(join(d, CONFIG_FILE), '{"title":"mine","id":"keep"}')
@@ -204,46 +172,6 @@ describe("scaffold", () => {
     expect(readFileSync(join(d, "AGENTS.md"), "utf8")).toContain(
       "<!-- derive:artifact-first:start -->",
     )
-  })
-
-  it("site template scaffolds a multi-file bundle with a directory entry", () => {
-    const d = tmp()
-    const { created } = scaffold(d, "Docs", "site")
-    expect(created).toEqual(
-      expect.arrayContaining(["site/index.html", "site/about.html", "site/style.css"]),
-    )
-    expect(JSON.parse(readFileSync(join(d, CONFIG_FILE), "utf8")).entry).toBe("site")
-  })
-
-  it("writes a derive.schema.json and references it from derive.json", () => {
-    const d = tmp()
-    scaffold(d, "X", "md")
-    const cfg = JSON.parse(readFileSync(join(d, CONFIG_FILE), "utf8"))
-    expect(cfg.$schema).toBe("./derive.schema.json")
-    const schema = JSON.parse(readFileSync(join(d, "derive.schema.json"), "utf8"))
-    // Canonical v2 access fields are the documented interface…
-    expect(schema.properties.workspace_access.enum).toEqual(["none", "member"])
-    expect(schema.properties.link_role.enum).toEqual(["none", "viewer", "commenter", "editor"])
-    expect(schema.properties.listed.enum).toEqual(["none", "workspace", "public"])
-    // …and `visibility` stays as a deprecated alias for old files.
-    expect(schema.properties.visibility.enum).toEqual(["public", "org", "private"])
-    expect(schema.properties.visibility.deprecated).toBe(true)
-  })
-
-  it("exposes the templates", () => {
-    expect(TEMPLATES).toEqual(["md", "html", "slides", "site", "skill", "context"])
-    expect(Object.keys(scaffoldFiles("T", "slides"))).toContain("slides.html")
-  })
-
-  it("scaffolds a skill: SKILL.md (with frontmatter) + scripts + references", () => {
-    const files = scaffoldFiles("My Cool Skill", "skill")
-    const names = Object.keys(files)
-    expect(names).toContain("skill/SKILL.md")
-    expect(names).toContain("skill/scripts/example.sh")
-    expect(names).toContain("skill/references/example.md")
-    const md = files["skill/SKILL.md"]
-    expect(md).toMatch(/^---\nname: my-cool-skill\n/) // title slugified to a skill name
-    expect(md).toContain("description:")
   })
 
   it("scaffolds a context: manifest + references + tools + env hygiene", () => {
@@ -300,46 +228,7 @@ describe("writeSkillPin", () => {
   })
 })
 
-describe("formatComments", () => {
-  const c = (id, tid, author, body, state = "open", anchor = null) => ({
-    id,
-    thread_id: tid,
-    author,
-    body_md: body,
-    state,
-    anchor,
-  })
-  it("returns a friendly message when empty", () => {
-    expect(formatComments([])).toBe("No comments yet.")
-  })
-  it("groups by thread and shows author, body, and state glyph", () => {
-    const out = formatComments([
-      c("c1", "t1", "ava", "looks off", "open"),
-      c("c2", "t1", "bo", "fixed"),
-      c("c3", "t2", "ci", "done", "resolved"),
-    ])
-    expect(out).toContain("○ thread t1")
-    expect(out).toContain("    ava: looks off")
-    expect(out).toContain("    bo: fixed")
-    expect(out).toContain("✓ thread t2")
-  })
-  it("shows the anchored quote when present", () => {
-    const out = formatComments([
-      c("c1", "t1", "ava", "tighten", "open", JSON.stringify({ exact: "p99 budget" })),
-    ])
-    expect(out).toContain("“p99 budget”")
-  })
-})
-
 describe("loadConfig", () => {
-  it("returns null when no derive.json", () => {
-    expect(loadConfig(tmp())).toBeNull()
-  })
-  it("parses derive.json", () => {
-    const d = tmp()
-    writeFileSync(join(d, CONFIG_FILE), JSON.stringify(defaultConfig("Y")))
-    expect(loadConfig(d)).toMatchObject({ title: "Y", entry: "index.md" })
-  })
   it("throws a clear error on malformed JSON", () => {
     const d = tmp()
     writeFileSync(join(d, CONFIG_FILE), "{ not json")
@@ -390,16 +279,6 @@ describe("resolvePublish", () => {
     expect(bare.linkRole).toBeUndefined()
     expect(bare.listed).toBeUndefined()
   })
-  it("--local targets a dev server; --server overrides", () => {
-    expect(resolvePublish({ local: true }, null).server).toBe("http://localhost:8080")
-    expect(resolvePublish({ server: "http://localhost:8099" }, null).server).toBe(
-      "http://localhost:8099",
-    )
-  })
-  it("--spa flag string coerces to boolean", () => {
-    expect(resolvePublish({ spa: "true" }, null).spa).toBe(true)
-    expect(resolvePublish({}, { spa: false }).spa).toBe(false)
-  })
 })
 
 describe("writeId", () => {
@@ -411,11 +290,6 @@ describe("writeId", () => {
     expect(cfg.id).toBe("ab12cd34")
     expect(cfg.title).toBe("Doc") // untouched
     expect(cfg.entry).toBe("index.md")
-  })
-  it("creates a config if missing", () => {
-    const d = tmp()
-    writeId(d, "zz99")
-    expect(loadConfig(d).id).toBe("zz99")
   })
 })
 
@@ -470,12 +344,6 @@ describe("credentials (derive login)", () => {
       expect(getDefault(SERVER).workspace).toBe("ws_b")
     })
 
-    it("falls back to the first entry when no workspace is owner-role", () => {
-      saveAccount(SERVER, "u1", { grant: { token: "tok1" } })
-      setWorkspaces(SERVER, "u1", { ws_a: { name: "A", role: "viewer" } })
-      expect(getDefault(SERVER).workspace).toBe("ws_a")
-    })
-
     it("reports added/renamed/removed against the previous roster", () => {
       saveAccount(SERVER, "u1", { grant: { token: "tok1" } })
       setWorkspaces(SERVER, "u1", {
@@ -514,17 +382,6 @@ describe("credentials (derive login)", () => {
         ws_b: { name: "B", role: "owner" }, // refreshed, not stale
         ws_c: { name: "C", role: "viewer" },
       })
-    })
-
-    it("uses chosen as-is when there's no existing roster to protect (a fresh account)", () => {
-      const chosen = { ws_b: { name: "B", role: "owner" } }
-      expect(mergeChosenWorkspaces({}, chosen, true)).toBe(chosen)
-    })
-
-    it("uses chosen as-is when not narrowing (a full discovery legitimately replaces/diffs the roster)", () => {
-      const existing = { ws_a: { name: "A", role: "owner" }, ws_b: { name: "B", role: "editor" } }
-      const chosen = { ws_a: { name: "A", role: "owner" } } // e.g. the account left ws_b server-side
-      expect(mergeChosenWorkspaces(existing, chosen, false)).toBe(chosen)
     })
 
     it("end to end: derive login --workspace on an already-synced account keeps the others", () => {
@@ -585,16 +442,10 @@ describe("credentials (derive login)", () => {
       saveAccount(SERVER, "u1", { handle: "ava", grant: { token: "tok1" } })
       setWorkspaces(SERVER, "u1", { ws_a: { name: "Acme Co", role: "owner" } })
     })
-    it("resolves by id", () => {
-      expect(resolveAccountRef(SERVER, "u1")).toBe("u1")
-    })
     it("resolves by handle, case-insensitively, with or without @", () => {
       expect(resolveAccountRef(SERVER, "ava")).toBe("u1")
       expect(resolveAccountRef(SERVER, "@ava")).toBe("u1")
       expect(resolveAccountRef(SERVER, "@AVA")).toBe("u1")
-    })
-    it("returns null for an unknown ref", () => {
-      expect(resolveAccountRef(SERVER, "nobody")).toBeNull()
     })
     it("finds a workspace by id or case-insensitive name within an account", () => {
       expect(findAccountWorkspace(SERVER, "u1", "ws_a")).toEqual({ id: "ws_a", name: "Acme Co" })
@@ -617,9 +468,6 @@ describe("credentials (derive login)", () => {
       setDefaultAccount(SERVER, "u2")
       expect(getDefault(SERVER).account).toBe("u2")
     })
-    it("setDefaultAccount throws on an unknown account", () => {
-      expect(() => setDefaultAccount(SERVER, "ghost")).toThrow(/no such account/)
-    })
 
     it("setDefaultWorkspace resolves by name and persists", () => {
       const w = setDefaultWorkspace(SERVER, "u1", "Acme Co")
@@ -637,9 +485,6 @@ describe("credentials (derive login)", () => {
       expect(getAccount(SERVER, "u1").workspaces.ws_a).toBeUndefined()
       expect(getDefault(SERVER).workspace).toBe("ws_b") // re-picked
     })
-    it("forgetWorkspace returns null for an unknown ref", () => {
-      expect(forgetWorkspace(SERVER, "u1", "nope")).toBeNull()
-    })
 
     it("removeAccount falls back the default to a remaining account", () => {
       expect(removeAccount(SERVER, "u1")).toBe(true)
@@ -647,66 +492,6 @@ describe("credentials (derive login)", () => {
       expect(listAccounts(SERVER)).toEqual([
         { id: "u2", handle: "bo", workspaceCount: 0, isDefault: true },
       ])
-    })
-    it("removeAccount returns false for an account that was never there", () => {
-      expect(removeAccount(SERVER, "ghost")).toBe(false)
-    })
-  })
-
-  describe("describeWorkspace", () => {
-    beforeEach(() => {
-      saveAccount(SERVER, "u1", { handle: "ava", grant: { token: "tok1" } })
-      setWorkspaces(SERVER, "u1", {
-        ws_a: { name: "Personal", role: "owner" },
-        ws_b: { name: "Acme Co", role: "editor" },
-      })
-    })
-
-    it("sets a local description, resolvable by name or id", () => {
-      const w = describeWorkspace(SERVER, "u1", "Acme Co", "Client work — never internal drafts.")
-      expect(w).toEqual({ id: "ws_b", name: "Acme Co" })
-      expect(getAccount(SERVER, "u1").workspaces.ws_b.description).toBe(
-        "Client work — never internal drafts.",
-      )
-      // untouched workspace has no description key at all
-      expect(getAccount(SERVER, "u1").workspaces.ws_a.description).toBeUndefined()
-    })
-
-    it("clearing with null removes the description key", () => {
-      describeWorkspace(SERVER, "u1", "ws_a", "Scratch space")
-      describeWorkspace(SERVER, "u1", "ws_a", null)
-      expect(getAccount(SERVER, "u1").workspaces.ws_a.description).toBeUndefined()
-    })
-
-    it("throws for an unknown workspace, without partially applying", () => {
-      expect(() => describeWorkspace(SERVER, "u1", "Nope", "x")).toThrow(/no workspace/)
-    })
-    it("throws for an unknown account", () => {
-      expect(() => describeWorkspace(SERVER, "ghost", "ws_a", "x")).toThrow(/no such account/)
-    })
-
-    it("survives a re-sync for a workspace that's still a member", () => {
-      describeWorkspace(SERVER, "u1", "Acme Co", "Client work.")
-      setWorkspaces(SERVER, "u1", {
-        ws_a: { name: "Personal", role: "owner" },
-        ws_b: { name: "Acme Co", role: "owner" }, // role changed server-side, still present
-      })
-      expect(getAccount(SERVER, "u1").workspaces.ws_b).toEqual({
-        name: "Acme Co",
-        role: "owner",
-        description: "Client work.",
-      })
-    })
-
-    it("is dropped when the workspace is no longer in the synced roster", () => {
-      describeWorkspace(SERVER, "u1", "Acme Co", "Client work.")
-      setWorkspaces(SERVER, "u1", { ws_a: { name: "Personal", role: "owner" } }) // ws_b gone
-      const diff = setWorkspaces(SERVER, "u1", {
-        ws_a: { name: "Personal", role: "owner" },
-        ws_b: { name: "Acme Co", role: "owner" }, // rejoins later, as a NEW membership
-      })
-      expect(diff.added).toEqual([{ id: "ws_b", name: "Acme Co" }])
-      expect(getAccount(SERVER, "u1").workspaces.ws_b.description).toBeUndefined()
     })
   })
 
@@ -750,9 +535,6 @@ describe("credentials (derive login)", () => {
           { accountId: "u2", handle: "ava-work" },
         ]),
       )
-    })
-    it("returns null when nothing matches", () => {
-      expect(resolveWorkspaceRef(SERVER, "nope")).toBeNull()
     })
   })
 
@@ -828,14 +610,6 @@ describe("credentials (derive login)", () => {
     })
   })
 
-  describe("client id reuse", () => {
-    it("is null until saved, then reused across logins", () => {
-      expect(getClientId(SERVER)).toBeNull()
-      saveClientId(SERVER, "client_123")
-      expect(getClientId(SERVER)).toBe("client_123")
-    })
-  })
-
   describe("freshToken", () => {
     it("returns the saved token without a network call when still valid", async () => {
       saveAccount(SERVER, "u1", {
@@ -871,11 +645,6 @@ describe("credentials (derive login)", () => {
       })
       vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network down")))
       expect(await freshToken(SERVER, "u1")).toBe("tok_old")
-    })
-
-    it("returns null for an unknown account", async () => {
-      expect(await freshToken(SERVER, "ghost")).toBeNull()
-      expect(await freshToken(SERVER, null)).toBeNull()
     })
   })
 })

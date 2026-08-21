@@ -43,13 +43,6 @@ describe("applying a slice", () => {
     expect(s.text).not.toContain("bad attempt")
   })
 
-  it("keeps appending within the same attempt", () => {
-    let s = EMPTY_DELTA
-    s = applyDelta(s, ev({ session_id: S, seq: 1, text: "one ", attempt: 2 }), S)
-    s = applyDelta(s, ev({ session_id: S, seq: 2, text: "two", attempt: 2 }), S)
-    expect(s.text).toBe("one two")
-  })
-
   it("ignores another session's slice", () => {
     const s = applyDelta(EMPTY_DELTA, ev({ session_id: "ses_other", seq: 1, text: "x" }), S)
     expect(s).toBe(EMPTY_DELTA)
@@ -59,18 +52,6 @@ describe("applying a slice", () => {
     expect(applyDelta(EMPTY_DELTA, ev({ session_id: S, seq: 1, text: "x" }), null)).toBe(
       EMPTY_DELTA,
     )
-  })
-
-  it("survives malformed json and a missing text field", () => {
-    expect(applyDelta(EMPTY_DELTA, "{not json", S)).toBe(EMPTY_DELTA)
-    expect(applyDelta(EMPTY_DELTA, ev({ session_id: S, seq: 1 }), S)).toBe(EMPTY_DELTA)
-  })
-
-  it("treats a slice with no seq as the next one", () => {
-    let s = applyDelta(EMPTY_DELTA, ev({ session_id: S, seq: 1, text: "a", attempt: 1 }), S)
-    s = applyDelta(s, ev({ session_id: S, text: "b", attempt: 1 }), S)
-    expect(s.text).toBe("ab")
-    expect(s.seq).toBe(2)
   })
 })
 

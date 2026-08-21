@@ -15,7 +15,7 @@
 // the browser choosing to reuse a preload, which is the failure mode that made
 // <link rel=prefetch> worthless for the artifact viewer (it re-downloaded every byte).
 //
-// WHEN AN ENTRY EXISTS (the head script's rules, mirrored by boot-fetch.test.ts):
+// WHEN AN ENTRY EXISTS (the head script's rules):
 //
 //   auth hint | path            | search | /v1/bootstrap | the home list
 //   ----------|-----------------|--------|---------------|---------------
@@ -64,8 +64,8 @@ export function takeBootResponse(url: string, init?: RequestInit): Promise<Respo
 }
 
 /** Drop whatever the app never claimed. An unconsumed entry means the head script's URL
- *  and the api client's URL disagree (boot-fetch.test.ts is there to catch that before
- *  it ships); releasing the Response keeps a mismatch from also being a leak. */
+ *  and the api client's URL disagree; releasing the Response keeps a mismatch from also
+ *  being a leak. */
 export function releaseUnclaimedBootResponses(): void {
   if (typeof window === "undefined") return
   window.__deriveBoot = undefined

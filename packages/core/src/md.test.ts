@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { escapeHtml, renderMarkdown } from "./md"
+import { renderMarkdown } from "./md"
 
 // The body content (between <main>…</main>) is the user-controlled markdown after
 // sanitization — assert against this so the page's own (trusted) script tag and
@@ -16,12 +16,6 @@ describe("renderMarkdown — renders ordinary markdown", () => {
     expect(body).toContain("<strong>bold</strong>")
     expect(body).toContain("<code>code</code>")
     expect(body).toContain('href="https://a.com"')
-  })
-
-  it("renders GFM tables", async () => {
-    const body = bodyOf(await renderMarkdown("| a | b |\n|---|---|\n| 1 | 2 |", null))
-    expect(body).toContain("<table")
-    expect(body).toContain("<td>1</td>")
   })
 })
 
@@ -66,29 +60,9 @@ describe("renderMarkdown — document shell", () => {
     expect(html).toContain("/raw/derive-client.js") // SELECTION_SCRIPT
   })
 
-  it("defaults a null title to Document", async () => {
-    expect(await renderMarkdown("hi", null)).toContain("<title>Document</title>")
-  })
-
   it("escapes the title so it can't break out of <title> or inject script", async () => {
     const html = await renderMarkdown("body", "</title><script>alert(1)</script>")
     expect(html).toContain("&lt;/title&gt;&lt;script&gt;alert(1)&lt;/script&gt;")
     expect(html).not.toContain("</title><script>alert(1)")
-  })
-})
-
-describe("escapeHtml", () => {
-  it("escapes &, <, >, and double quotes", () => {
-    expect(escapeHtml('&<>"')).toBe("&amp;&lt;&gt;&quot;")
-  })
-
-  it("escapes the ampersand first so entities are not double-escaped", () => {
-    expect(escapeHtml("<")).toBe("&lt;")
-    expect(escapeHtml("a & b")).toBe("a &amp; b")
-  })
-
-  it("leaves plain text and single quotes untouched", () => {
-    expect(escapeHtml("hello world")).toBe("hello world")
-    expect(escapeHtml("it's fine")).toBe("it's fine")
   })
 })

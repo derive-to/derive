@@ -91,18 +91,4 @@ describe("authorize self-heals a client_id that no longer resolves", () => {
     // Untouched: still the client we registered, not silently swapped.
     expect(location.searchParams.get("client_id") ?? clientId).toBe(clientId)
   })
-
-  it("a request missing client_id entirely is left to the normal error path (nothing to heal)", async () => {
-    const { app } = await freshApp("missing")
-
-    const res = await app.request(
-      `/api/auth/oauth2/authorize?response_type=code&redirect_uri=${encodeURIComponent(REDIRECT)}`,
-      { redirect: "manual" },
-    )
-
-    // No client_id at all means there's no redirect_uri/client pair worth healing —
-    // our middleware's guard requires clientId truthy, so this falls straight through
-    // to the oauth-provider's own (non-heal-able) rejection.
-    expect(res.status).toBe(400)
-  })
 })

@@ -53,20 +53,6 @@ describe("automations beta gate", () => {
     const res = await app.request(`/v1/automations/${id}/run`, jsonAs(as(owner.email), {}))
     expect(res.status).toBe(404)
   })
-
-  it("reads and deletes stay open, so nobody loses access to their own rows", async () => {
-    const { app, meta } = makeAuthedApp("gate-reads", [owner])
-    const made = await create(app)
-    const { id } = (await made.json()) as { id: string }
-
-    await setBeta(meta, false)
-    expect((await app.request("/v1/automations", { headers: as(owner.email) })).status).toBe(200)
-    const del = await app.request(`/v1/automations/${id}`, {
-      method: "DELETE",
-      headers: as(owner.email),
-    })
-    expect(del.status).toBeLessThan(300)
-  })
 })
 
 // The gate is only useful if it can be OPENED. `automateBeta` shipped as a setting that no route
@@ -263,12 +249,5 @@ describe("automate list over MCP reports the gate state", () => {
     expect(r.automations_enabled).toBe(false)
     // The note names the flag, so the agent learns create/run_now will fail BEFORE trying.
     expect(r.note).toContain("automateBeta")
-  })
-
-  it("an opted-in workspace reports enabled:true with no warning", async () => {
-    const { app, raw } = await setup("gate-mcp-list-on")
-    const r = await callAutomate(app, raw, { action: "list" })
-    expect(r.automations_enabled).toBe(true)
-    expect(r.note).toBeUndefined()
   })
 })

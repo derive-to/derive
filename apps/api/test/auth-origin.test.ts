@@ -4,7 +4,7 @@ import { join } from "node:path"
 import { SqliteMetaStore } from "@derive/db/sqlite"
 import { FsBlobStore } from "@derive/storage/fs"
 import Database from "better-sqlite3"
-import { afterAll, describe, expect, it } from "vitest"
+import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { createApp } from "../src/app"
 import { makeAuth, migrateAuth } from "../src/auth-config"
 
@@ -48,16 +48,16 @@ const signUp = (servedAt: string, origin: string, email: string) =>
     body: JSON.stringify({ email, password: "password12345", name: "Tester" }),
   })
 
+beforeAll(async () => {
+  await migrateAuth(auth)
+})
+
 afterAll(() => {
   db.close()
   rmSync(dir, { recursive: true, force: true })
 })
 
 describe("auth: same-origin trust (self-host port/proxy mismatch)", () => {
-  it("migrates the Better Auth tables", async () => {
-    await migrateAuth(auth)
-  })
-
   it("accepts a same-origin sign-up whose Origin matches the served origin, not BASE_URL", async () => {
     // Served at :8081, Origin :8081 (same-origin) — != BASE_URL :8080. Without the
     // same-origin trust this 403s; with it, the request is trusted.
@@ -69,10 +69,5 @@ describe("auth: same-origin trust (self-host port/proxy mismatch)", () => {
     // Served at :8081, Origin evil.example (cross-site) — must 403.
     const res = await signUp("http://localhost:8081", "http://evil.example", "evil@derive.test")
     expect(res.status).toBe(403)
-  })
-
-  it("accepts a sign-up whose Origin matches BASE_URL exactly", async () => {
-    const res = await signUp("http://localhost:8080", "http://localhost:8080", "base@derive.test")
-    expect(res.status).toBe(200)
   })
 })

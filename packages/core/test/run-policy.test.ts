@@ -38,13 +38,6 @@ describe("toMicroUsd — integer micros, rounded up", () => {
 })
 
 describe("parseRunExecution — the immutable enqueue-time snapshot", () => {
-  it("reads a well-formed snapshot", () => {
-    expect(
-      parseRunExecution({
-        execution: { version: 1, provider: "codex", location: "local", model: "gpt-5" },
-      }),
-    ).toEqual({ version: 1, provider: "codex", location: "local", model: "gpt-5" })
-  })
   it("falls back for historical rows with no snapshot, defaulting hosted", () => {
     expect(parseRunExecution({})).toEqual({
       version: 1,

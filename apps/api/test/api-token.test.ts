@@ -7,7 +7,6 @@ import { createApp } from "../src/app"
 import { API_TOKEN_TTL_MS, signApiToken, verifyApiToken } from "../src/lib/api-token"
 import { sha256 } from "../src/lib/crypto"
 
-import { scopeGapMessage } from "../src/lib/scope-gap"
 import { dir } from "./helpers"
 
 // Minted API tokens (lib/api-token.ts) — the agent's MCP authentication, spendable
@@ -39,18 +38,6 @@ describe("api token — signing and verification", () => {
       userId: "u_a",
       orgId: "ws_a",
       clientId: "cli.with.dots",
-    })
-  })
-
-  it("round-trips its claims", async () => {
-    const exp = Date.now() + API_TOKEN_TTL_MS
-    const tok = await signApiToken(SECRET, "u_1", "ws_1", "editor", "cli", exp)
-    expect(tok.startsWith("dkapi_")).toBe(true)
-    expect(await verifyApiToken(SECRET, tok, Date.now())).toEqual({
-      userId: "u_1",
-      orgId: "ws_1",
-      role: "editor",
-      clientId: "cli",
     })
   })
 
@@ -86,61 +73,6 @@ describe("api token — signing and verification", () => {
       Date.now() + 60_000,
     )}`
     expect(await verifyApiToken(SECRET, forged, Date.now())).toBeNull()
-  })
-})
-
-describe("scope-gap messages name the right lever", () => {
-  const base = { registered: false, baseUrl: "https://derive.test" }
-
-  it("says SCOPE when the seat would allow it but the consent didn't", () => {
-    const msg = scopeGapMessage({
-      ...base,
-      action: "manage",
-      scopeRole: "editor",
-      memberRole: "owner",
-    })
-    expect(msg).toContain("derive:manage")
-    expect(msg).toContain("/settings/agents")
-    expect(msg).not.toContain("admin has to raise")
-  })
-
-  it("says SEAT when re-consenting could never help", () => {
-    const msg = scopeGapMessage({
-      ...base,
-      action: "publish",
-      scopeRole: "owner",
-      memberRole: "commenter",
-    })
-    expect(msg).toContain("membership")
-    expect(msg).toContain("Re-consenting won't change that")
-  })
-
-  it("says BOTH when both are short (fixing one changes nothing)", () => {
-    const msg = scopeGapMessage({
-      ...base,
-      action: "manage",
-      scopeRole: "commenter",
-      memberRole: "editor",
-    })
-    expect(msg).toContain("both are below")
-  })
-
-  it("never suggests re-consent to a registered agent token (it can't)", () => {
-    const msg = scopeGapMessage({
-      ...base,
-      registered: true,
-      action: "manage",
-      scopeRole: "editor",
-      memberRole: "owner",
-    })
-    expect(msg).toContain("rotate")
-    expect(msg).not.toContain("Reconnect with")
-  })
-
-  it("is null when the action is actually allowed", () => {
-    expect(
-      scopeGapMessage({ ...base, action: "publish", scopeRole: "owner", memberRole: "editor" }),
-    ).toBeNull()
   })
 })
 

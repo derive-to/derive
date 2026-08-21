@@ -4,7 +4,7 @@ import { join } from "node:path"
 import type { MetaStore } from "@derive/core"
 import { afterAll, describe, expect, it } from "vitest"
 import { FakeBilling, subscriptionRow } from "./fake-billing"
-import { as, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
+import { app, as, jsonAs, makeAuthedApp, meta, publishAs, type TestUser, upload } from "./helpers"
 import { appWithGrant, call, toolIsError, toolText } from "./mcp-helpers"
 
 const u = (n: number): TestUser => ({ id: `u${n}`, email: `u${n}@x.test`, name: `U${n}` })
@@ -150,6 +150,49 @@ describe("billing gate", () => {
     })
     expect(res.status).toBe(402)
     expect((await res.json()).code).toBe("billing_lapsed")
+  })
+})
+
+// White-label (GTM step 08): one workspace flag hides the Made-with-Derive marks
+// on the shared surfaces and unlocks the bare embed. Free workspaces keep the
+// badge everywhere — including when they ask for ?chrome=none.
+describe("the white-label workspace flag", () => {
+  const idOf = async (res: Response): Promise<string> => (await res.json()).short_id
+
+  it("defaults off: detail carries badge true, embed carries the plaque", async () => {
+    const short = await idOf(await upload("w.md", "# Hi", { visibility: "public", title: "W" }))
+    const detail = await (await app.request(`/v1/artifacts/${short}`)).json()
+    expect(detail.badge).toBe(true)
+
+    const shell = await (await app.request(`/v1/embed/${short}`)).text()
+    expect(shell).toContain("Made on Derive")
+  })
+
+  it("ignores ?chrome=none for a workspace without white-label", async () => {
+    const short = await idOf(await upload("wc.md", "# Hi", { visibility: "public", title: "WC" }))
+    const shell = await (await app.request(`/v1/embed/${short}?chrome=none`)).text()
+    // The bare frame is the paid affordance; free embeds keep the plaque.
+    expect(shell).toContain("Made on Derive")
+  })
+
+  it("white-label on: badge false, plaque gone, chrome=none honored", async () => {
+    const short = await idOf(await upload("wl.md", "# Hi", { visibility: "public", title: "WL" }))
+    const cur = await meta.getOrgSettings("default")
+    await meta.setOrgSettings("default", { ...cur, whiteLabel: true })
+    try {
+      const detail = await (await app.request(`/v1/artifacts/${short}`)).json()
+      expect(detail.badge).toBe(false)
+
+      const shell = await (await app.request(`/v1/embed/${short}`)).text()
+      expect(shell).not.toContain("Made on Derive")
+      expect(shell).toContain("<iframe") // still the framed shell, just unbranded
+
+      const bare = await (await app.request(`/v1/embed/${short}?chrome=none`)).text()
+      expect(bare).not.toContain("Made on Derive")
+      expect(bare).not.toContain('class="c"') // bareShell: no frame chrome at all
+    } finally {
+      await meta.setOrgSettings("default", { ...cur, whiteLabel: false })
+    }
   })
 })
 

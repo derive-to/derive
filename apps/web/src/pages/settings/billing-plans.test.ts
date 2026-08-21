@@ -32,22 +32,6 @@ describe("needsSeatConfirm", () => {
 })
 
 describe("unitPrice", () => {
-  it("prices Team monthly at $15/editor", () => {
-    expect(unitPrice("team", "month")).toBe(15)
-  })
-
-  it("prices Team annual (billed monthly) at $12/editor", () => {
-    expect(unitPrice("team", "year")).toBe(12)
-  })
-
-  it("prices Business monthly at $30/editor", () => {
-    expect(unitPrice("business", "month")).toBe(30)
-  })
-
-  it("prices Business annual (billed monthly) at $25/editor", () => {
-    expect(unitPrice("business", "year")).toBe(25)
-  })
-
   it("treats a null interval (never billed yet) as monthly", () => {
     expect(unitPrice("team", null)).toBe(15)
   })

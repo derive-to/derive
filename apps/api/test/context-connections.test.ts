@@ -237,37 +237,6 @@ describe("context connections (the ask lane gets hands)", () => {
     expect(call.status).toBe(403)
   })
 
-  it("a delivery-only connection yields no tools, and the claim carries no policy", async () => {
-    // A base_url-less secret contributes NO tools — it is spent by DELIVERY into a run that
-    // writes its own code, so advertising get/post for it would hand the model two tools
-    // that throw. And the claim carries no write policy for the executor to interpret:
-    // every write publishes, and the workspace's agentWrites switch is enforced HERE,
-    // server-side, by not claiming at all.
-    const deliveryOnly = await makeConnection({
-      toolkit: "keyonly",
-      kind: "secret",
-      secret: "fixture-no-host-but-real",
-      scope: "workspace",
-    })
-    const quiet = await makeContext("ToolessButArmed", [deliveryOnly.id])
-    const claimFor = async (ctxId: string) => {
-      const ask = await app.request(
-        `/v1/contexts/${ctxId}/sessions`,
-        jsonAs(as(owner.email), { body_md: "?" }),
-      )
-      const { session } = (await ask.json()) as { session: { id: string } }
-      return await (
-        await app.request(
-          "/v1/agent/sessions/claim",
-          jsonAs(bearer(await tokenFor(session.id)), {}),
-        )
-      ).json()
-    }
-    const claim = await claimFor(quiet.id)
-    expect(claim.tools).toEqual([])
-    expect(claim.flags).toBeUndefined()
-  })
-
   it("a session token reaches only its OWN session's tools", async () => {
     const conn = await makeConnection({ toolkit: "stripe" })
     const mine = await makeContext("Mine", [conn.id])

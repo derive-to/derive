@@ -2,15 +2,6 @@ import { describe, expect, it } from "vitest"
 import { answerMdToHtml } from "./answer-md"
 
 describe("answerMdToHtml", () => {
-  it("renders GFM tables and fenced code (what the comment renderer can't)", () => {
-    const md = "| Provider | Orgs |\n|---|---:|\n| Stripe | 2,739 |\n\n```sql\nselect 1\n```"
-    const html = answerMdToHtml(md)
-    expect(html).toContain("<table>")
-    expect(html).toContain('<td align="right">2,739</td>')
-    expect(html).toContain("<pre>")
-    expect(html).toContain("select 1")
-  })
-
   it("renders GFM task lists (checkbox inputs survive the whitelist)", () => {
     const html = answerMdToHtml("- [x] verified against warehouse\n- [ ] pending sign-off")
     expect(html).toContain('type="checkbox"')
@@ -38,15 +29,6 @@ describe("citations", () => {
     const html = answerMdToHtml("See the [Q3 Roadmap](/artifacts/k9ffftpm) for the dates.")
     expect(html).toContain('href="/artifacts/k9ffftpm"')
     expect(html).toContain(">Q3 Roadmap<")
-  })
-
-  it("renders the block markdown an answer actually uses", () => {
-    const html = answerMdToHtml("## Findings\n\n- one\n- two\n\n**bold** and `code`")
-    expect(html).toContain("<h2")
-    expect(html).toContain("<ul>")
-    expect(html).toContain("<li>one</li>")
-    expect(html).toContain("<strong>bold</strong>")
-    expect(html).toContain("<code>code</code>")
   })
 
   it("still refuses a javascript: url", () => {

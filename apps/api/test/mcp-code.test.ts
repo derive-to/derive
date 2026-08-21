@@ -156,24 +156,6 @@ describe("derive_code: composing real tools", () => {
     expect(out.text).toContain("starting")
   })
 
-  it("cannot call itself", async () => {
-    // Recursion the timeout would eventually stop, expensively and confusingly.
-    const token = await agentToken()
-    const out = await mcp(app, token, "derive_code", {
-      code: `return typeof tools.derive_code`,
-    })
-    expect(out.parsed?.result).toBe("undefined")
-  })
-
-  it("an unknown tool reads as a VALUE the model can correct, not a crash", async () => {
-    const token = await agentToken()
-    const out = await mcp(app, token, "derive_code", {
-      code: `return await call_tool("no_such_tool", {})`,
-    })
-    expect(out.isError).toBe(false)
-    expect(JSON.stringify(out.parsed?.result)).toContain("unknown tool")
-  })
-
   it("runs with the CALLER's permissions — no more than the session already had", async () => {
     // The security claim, asserted. The sandbox holds no credential: it posts a name, and the
     // host runs that tool through the same handler and the same grant checks a direct call hits.

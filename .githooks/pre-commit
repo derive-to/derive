@@ -1,11 +1,11 @@
 #!/bin/sh
-# Pre-commit: `pnpm run ci`, which is CI's first check step verbatim — biome plus
-# every custom guardrail, including knip. It delegates rather than listing the
-# checks again, because a hook that keeps its own shorter list drifts from the
-# pipeline and then reports green on work CI rejects. ~8s.
+# Pre-commit: `pnpm run ci` — biome plus every custom guardrail, including knip, run
+# concurrently by scripts/guardrails.mjs. It delegates rather than listing the checks
+# again, because a hook that keeps its own shorter list drifts from the pipeline and
+# then reports green on work CI rejects. About 5s.
 #
-# The slow half (typecheck + the coverage ratchet) runs in pre-push, where a
-# minute is affordable; together the two hooks cover CI's whole `check` job.
+# Typecheck and tests run in pre-push (see .githooks/pre-push), scoped to the
+# packages the branch touched.
 #
 # Enabled automatically via the package.json "prepare" script
 # (git config core.hooksPath .githooks) on `pnpm install`.

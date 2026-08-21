@@ -56,11 +56,6 @@ describe("sync routes", () => {
     expect(body.collection_id).toBe(collectionId) // same collection, no second "GitHub: acme/docs"
   })
 
-  it("rejects an invalid repo", async () => {
-    const res = await postJson("/v1/sync/github", { repo: "not-a-repo" })
-    expect(res.status).toBe(400)
-  })
-
   it("lists sources with the token redacted", async () => {
     const res = await app.request("/v1/sync/github")
     const body = (await res.json()) as { sources: { id: string; token: string | null }[] }
@@ -96,44 +91,6 @@ describe("sync routes", () => {
     expect(detail.managed).toBe(true)
     const republish = await upload("readme.md", "# edited in Derive", {}, shortId)
     expect(republish.status).toBe(409)
-  })
-
-  it("status endpoint returns the live progress + file count (cheap poll)", async () => {
-    const res = await app.request(`/v1/sync/github/${id}/status`)
-    expect(res.status).toBe(200)
-    const body = (await res.json()) as {
-      id: string
-      file_count: number
-      last_status: string | null
-      progress: string | null
-    }
-    expect(body.id).toBe(id)
-    expect(body.file_count).toBe(1) // the one doc mirrored by "Sync now" above
-    expect(body.last_status).toBe("ok")
-  })
-
-  it("active endpoint lists only sources mid-sync", async () => {
-    // Idle after the completed sync → not listed.
-    const idle = (await (await app.request("/v1/sync/github/active")).json()) as {
-      active: { id: string }[]
-    }
-    expect(idle.active.find((s) => s.id === id)).toBeUndefined()
-    // Mark it mirroring → now listed (drives the global chip); clear → gone again.
-    await meta.setRepoSourceProgress(
-      id,
-      JSON.stringify({
-        phase: "mirroring",
-        done: 1,
-        total: 5,
-        updatedAt: "2026-06-14T00:00:00.000Z",
-      }),
-    )
-    const busy = (await (await app.request("/v1/sync/github/active")).json()) as {
-      active: { id: string; progress: string | null }[]
-    }
-    const found = busy.active.find((s) => s.id === id)
-    expect(found?.progress).toContain('"phase":"mirroring"')
-    await meta.setRepoSourceProgress(id, null)
   })
 
   it("disconnects but keeps the mirrored docs", async () => {

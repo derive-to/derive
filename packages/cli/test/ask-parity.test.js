@@ -16,7 +16,7 @@ import { parseAnswer } from "../src/runner.js"
 //
 // The CLI keeps a hand-copy because it is a dependency-free published package and cannot import
 // the TS core at runtime — the same reason the revision contract is duplicated.
-// The table below is the spec; packages/core/src/run-contract.test.ts holds core's implementation
+// The table below is the spec; packages/core/test/run-contract.test.ts holds core's implementation
 // to the SAME table, so changing the reading means changing both and forgetting either fails.
 
 /** The spec, as (name, block fields, expected reading). Deliberately the cases where a

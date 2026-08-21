@@ -1,10 +1,7 @@
 import { describe, expect, it } from "vitest"
-import { cardForWire } from "../src/lib/context-builder-card"
-import {
-  buildContextBuilderTools,
-  latestBuilderCard,
-  type StoredBuilderCard,
-} from "../src/lib/context-builder-tools"
+import type { ModelTurn } from "../src/lib/agent-loop"
+import { buildContextBuilderTools, type StoredBuilderCard } from "../src/lib/context-builder-tools"
+import { catalogOf } from "../src/lib/model-catalog"
 import { as, makeAuthedApp } from "./helpers"
 
 const owner = { id: "u-b", email: "b@x.com", name: "B" }
@@ -197,50 +194,142 @@ describe("builder tool surface", () => {
     const out = (await next.execute("create_context_from_draft", {})) as { context_id: string }
     expect((await made.meta.getContext(out.context_id))?.name).toBe("Pricing Helper")
   })
+})
 
-  it("reads the NEWEST card off a transcript, and ignores one with nothing to build from", () => {
-    const row = (id: string, meta: unknown, kind: "agent" | "asker" = "agent") =>
-      ({
-        id,
-        session_id: "ses_1",
-        author_kind: kind,
-        author_id: "u-b",
-        body_md: "…",
-        meta: meta === null ? null : JSON.stringify(meta),
-        created_at: new Date().toISOString(),
-      }) as Parameters<typeof latestBuilderCard>[0][number]
+// The builder end to end: a chat session opened with purpose "context_builder" drives the
+// same tool surface through the real agent loop, so the card the model writes is stored
+// whole but read back stripped, and a confirmation on a later turn creates from the exact
+// approved draft.
+describe("builder session", () => {
+  const owner = { id: "u-ow", email: "ow@x.com", name: "Ow" }
+  const MANIFEST = "# Pricing Helper\n\nAnswer from the pricing page only."
+  const draftArgs = {
+    name: "Pricing Helper",
+    description: "Answers pricing questions",
+    kind: "knowledge",
+    knows: ["Pricing page"],
+    answers: "Short",
+    wont: ["Legal advice"],
+    manifest_md: MANIFEST,
+    source_short_ids: [],
+  }
 
-    const carded = (name: string) => ({ card: { draft: { ...draft, name } } })
-    expect(
-      latestBuilderCard([
-        row("1", carded("First")),
-        row("2", null),
-        row("3", carded("Second")),
-        // An ASKER row can never carry a card, and a stripped one is not a draft: neither may
-        // win over the real newest.
-        row("4", carded("Impostor"), "asker"),
-        row("5", { card: { draft: { ...draft, manifest_md: undefined } } }),
-        // Meta that is not JSON at all: a hand-edited row must not take the turn down with it.
-        { ...row("6", null), meta: "{not json" },
-      ])?.draft.name,
-    ).toBe("Second")
-    expect(latestBuilderCard([])).toBeNull()
+  type Made = ReturnType<typeof makeAuthedApp>
+
+  const scripted = () => {
+    let call = 0
+    return async (): Promise<ModelTurn> => {
+      call++
+      if (call === 1)
+        return {
+          text: "",
+          costUsd: null,
+          done: false,
+          toolUses: [{ id: "t1", name: "draft_manifest", input: draftArgs }],
+        }
+      return { text: "Here's the plan — look right?", toolUses: [], costUsd: null, done: true }
+    }
+  }
+
+  const setup = async (name: string, model: () => Promise<ModelTurn>): Promise<Made> => {
+    const made = makeAuthedApp(name, [owner], undefined, {
+      deps: {
+        callModel: model,
+        models: catalogOf([{ id: "model-a", label: "A", isDefault: true, build: () => model }]),
+      },
+    })
+    await made.app.request("/v1/me", { headers: as(owner.email) })
+    await made.meta.setOrgSettings("default", {
+      ...(await made.meta.getOrgSettings("default")),
+      chatBeta: true,
+    })
+    return made
+  }
+
+  const openBuilder = (app: Made["app"], email: string, body = "A helper for pricing docs") =>
+    app.request("/v1/chat-session", {
+      method: "POST",
+      headers: { ...as(email), "content-type": "application/json" },
+      body: JSON.stringify({ workspace: "default", body_md: body, purpose: "context_builder" }),
+    })
+
+  const waitForAgents = async (meta: Made["meta"], sessionId: string, count: number) => {
+    let agents = (await meta.listSessionMessages(sessionId)).filter(
+      (message) => message.author_kind === "agent",
+    )
+    for (let i = 0; i < 100 && agents.length < count; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      agents = (await meta.listSessionMessages(sessionId)).filter(
+        (message) => message.author_kind === "agent",
+      )
+    }
+    return agents
+  }
+
+  it("stores the complete draft but exposes only the public card", async () => {
+    const { app, meta } = await setup("builder-ses", scripted())
+    const response = await openBuilder(app, owner.email)
+    expect(response.status).toBe(201)
+    const { session } = (await response.json()) as { session: { id: string } }
+    const [agent] = await waitForAgents(meta, session.id, 1)
+
+    const stored = JSON.parse(agent?.meta ?? "{}")
+    expect(stored.card?.draft).toMatchObject({ name: "Pricing Helper", manifest_md: MANIFEST })
+
+    const read = await app.request(`/v1/sessions/${session.id}`, { headers: as(owner.email) })
+    const payload = await read.text()
+    expect(payload).toContain("Pricing Helper")
+    expect(payload).not.toContain("Answer from the pricing page only")
+    expect(payload).not.toContain("published_artifact_id")
   })
 
-  it("the wire view drops the manifest source and the internal pointer", () => {
-    const stored: StoredBuilderCard = {
-      draft,
-      published_artifact_id: "art_1",
-      created: { context_id: "ctx_1", name: "Pricing Helper" },
+  it("creates on a later turn from the exact approved draft", async () => {
+    let call = 0
+    const model = async (): Promise<ModelTurn> => {
+      call++
+      if (call === 1)
+        return {
+          text: "",
+          costUsd: null,
+          done: false,
+          toolUses: [{ id: "t1", name: "draft_manifest", input: draftArgs }],
+        }
+      if (call === 3)
+        return {
+          text: "",
+          costUsd: null,
+          done: false,
+          toolUses: [{ id: "t2", name: "create_context_from_draft", input: {} }],
+        }
+      return { text: "Done — it is ready.", toolUses: [], costUsd: null, done: true }
     }
-    const wire = cardForWire(stored) as Record<string, unknown>
-    expect(wire.published_artifact_id).toBeUndefined()
-    expect((wire.draft as Record<string, unknown>).manifest_md).toBeUndefined()
-    // Everything a person sees survives, unchanged.
-    expect(wire.draft).toMatchObject({ name: "Pricing Helper", knows: draft.knows })
-    expect(wire.created).toEqual({ context_id: "ctx_1", name: "Pricing Helper" })
-    // Unexpected shapes fail closed rather than leaking unknown stored fields.
-    expect(cardForWire(null)).toBeNull()
-    expect(cardForWire({ draft: "nonsense" })).toBeNull()
+    const { app, meta, ctx } = await setup("builder-ses-two-turn", model)
+    const opened = await openBuilder(app, owner.email)
+    const { session } = (await opened.json()) as { session: { id: string } }
+    expect(await waitForAgents(meta, session.id, 1)).toHaveLength(1)
+
+    const followed = await app.request(`/v1/sessions/${session.id}/messages`, {
+      method: "POST",
+      headers: { ...as(owner.email), "content-type": "application/json" },
+      body: JSON.stringify({ body_md: "Yes, create it" }),
+    })
+    expect(followed.status).toBe(201)
+    const agents = await waitForAgents(meta, session.id, 2)
+    const card = JSON.parse(agents[1]?.meta ?? "{}").card as {
+      created: { context_id: string }
+      published_artifact_id: string
+    }
+    expect(await meta.getContext(card.created.context_id)).toMatchObject({
+      name: "Pricing Helper",
+    })
+
+    const artifact = await meta.getArtifactById(card.published_artifact_id)
+    const version = artifact ? await meta.getVersion(artifact.id, artifact.current_version) : null
+    expect(version ? await ctx.sourceText(version) : null).toBe(
+      '<!-- This document is the instruction set for the "Pricing Helper" context in Derive.\n' +
+        "     Agents read it to learn what the context knows and how it should answer.\n" +
+        "     Edit it like any document; the context uses the newest version. -->\n\n" +
+        MANIFEST,
+    )
   })
 })

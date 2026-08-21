@@ -44,11 +44,36 @@ describe("Slack deferred work uses the context the worker actually provides", ()
     const w = src("worker.ts")
     expect(w).toContain("edgeCtx.run(ctx, () => ready.fetch(req))")
   })
+})
 
-  // ctx.background is the shared, correct mechanism — the comment mirror's only reason for
-  // never having had this bug.
-  it("context.background resolves the ExecutionContext from that same store", () => {
-    const c = src("context.ts")
-    expect(c).toMatch(/const background[\s\S]{0,400}edgeCtx\.getStore\(\)[\s\S]{0,200}waitUntil/)
+// The two runtimes must wire the slack_ingest sender the same way.
+//
+// They did not. `makeSlackIngestSender` takes an optional `answerDeriveMention`, which is what
+// answers an @Derive mention typed INSIDE a mirrored Slack thread. node.ts passed it; the
+// Durable Object that drains the outbox on the hosted tier did not — so that answer worked on
+// self-host and silently did nothing in production. Nothing failed, nothing logged: the comment
+// was ingested and the mention simply went unanswered.
+//
+// Asserted against the source because there is no seam to observe it through. Both call sites
+// construct their deps from their own runtime's bindings, and a test that stubbed those would be
+// asserting the stub. What can be checked is that neither entry point drops the argument.
+describe("both runtimes wire the Slack ingest sender the same", () => {
+  it("the edge Durable Object passes a mention answerer", () => {
+    const s = src("webhook-do.ts")
+    expect(s).toMatch(/slack_ingest:\s*makeSlackIngestSender\([\s\S]{0,400}mentionAnswerer/)
+  })
+
+  it("the Node worker passes one too", () => {
+    expect(src("node.ts")).toMatch(
+      /slack_ingest:\s*makeSlackIngestSender\([\s\S]{0,400}answerDeriveMention/,
+    )
+  })
+
+  // The answerer needs a model, a blob store and a base URL. A deploy missing any of them must
+  // pass NOTHING rather than a half-built one — "nothing answers" is honest; a turn that throws
+  // inside the outbox is a dead-lettered delivery.
+  it("the edge degrades to undefined when the deploy has no model", () => {
+    const s = src("webhook-do.ts")
+    expect(s).toMatch(/if \(!models \|\| !env\.BUCKET \|\| !env\.BASE_URL\) return undefined/)
   })
 })

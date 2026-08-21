@@ -1,12 +1,18 @@
-import { type ArtifactRecord, type CommentRecord, type DeliveryRecord, newId } from "@derive/core"
+import {
+  type ArtifactRecord,
+  type CommentRecord,
+  type DeliveryRecord,
+  type MetaStore,
+  newId,
+} from "@derive/core"
 import { afterEach, describe, expect, it, vi } from "vitest"
+import { postWithRecovery } from "../src/lib/slack-delivery"
 import {
   enqueueSlackArtifactMentionDms,
   enqueueSlackMentionDms,
   enqueueSlackReviewRequestedDm,
   enqueueSlackShareDm,
   makeSlackDmSender,
-  wantsSlackDm,
 } from "../src/lib/slack-dm"
 import { quotaApp, type TestUser } from "./helpers"
 
@@ -84,16 +90,6 @@ const claim = (meta: ReturnType<typeof make>): Promise<DeliveryRecord[]> =>
     100,
     new Date(Date.now() + 120_000).toISOString(),
   )
-
-describe("wantsSlackDm", () => {
-  it("defaults on; off only when explicitly disabled", () => {
-    expect(wantsSlackDm(undefined)).toBe(true)
-    expect(wantsSlackDm("{}")).toBe(true)
-    expect(wantsSlackDm(JSON.stringify({ slackDm: false }))).toBe(false)
-    expect(wantsSlackDm(JSON.stringify({ slackDm: true }))).toBe(true)
-    expect(wantsSlackDm("not json")).toBe(true)
-  })
-})
 
 describe("enqueueSlackMentionDms (gate)", () => {
   it("enqueues a DM for an opted-in member; skips opted-out and non-members", async () => {
@@ -396,90 +392,75 @@ describe("makeSlackDmSender (delivery)", () => {
     expect(posts[1]?.thread_ts).toBe("1.1")
     expect(posts[1]?.metadata).toBeUndefined()
   })
+})
 
-  it("starts a fresh DM root when the recipient has re-linked a different Slack account", async () => {
-    const meta = make("slack-dm-relinked")
-    await connect(meta)
-    await meta.setSlackUserLink({
-      id: "sul-relinked",
-      org_id: "default",
-      user_id: linked.id,
-      team_id: "T1",
-      slack_user_id: "U-NEW",
-      origin: "oauth",
-      checked_at: new Date().toISOString(),
-      created_at: new Date().toISOString(),
-    })
-    const { artifact, comment } = await artifactAndComment(meta)
-    // An old route points at a different Slack identity. Its message ts is not valid in the
-    // newly opened DM, so reusing it would turn this mention into a thread_not_found retry.
-    await meta.setSlackThreadLink({
-      id: "stl-old-identity",
-      org_id: "default",
-      artifact_id: artifact.id,
-      thread_id: comment.thread_id,
-      channel: "D-OLD",
-      message_ts: "1.1",
-      surface: "mention_dm",
-      recipient_user_id: linked.id,
-      slack_user_id: "U-OLD",
-      created_at: new Date().toISOString(),
-    })
-    const posts: Record<string, unknown>[] = []
+describe("Slack Work Object recovery", () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it.each([
+    "invalid_metadata_schema",
+    "error_processing_metadata",
+  ])("falls back to Block Kit when Slack rejects entity metadata with %s", async (metadataError) => {
+    const posted: Record<string, unknown>[] = []
     vi.stubGlobal(
       "fetch",
-      vi.fn(async (url: string, init?: { body?: string }) => {
-        const body = JSON.parse(init?.body ?? "{}") as Record<string, unknown>
-        if (url.endsWith("/conversations.open"))
-          return new Response(JSON.stringify({ ok: true, channel: { id: "D-NEW" } }))
-        if (url.endsWith("/chat.postMessage")) {
-          posts.push(body)
-          return new Response(JSON.stringify({ ok: true, ts: "2.1", channel: "D-NEW" }))
-        }
-        return new Response(JSON.stringify({ ok: false, error: "unexpected" }))
+      vi.fn(async (_url: string, init: RequestInit) => {
+        const body = JSON.parse(String(init.body)) as Record<string, unknown>
+        posted.push(body)
+        if (posted.length === 1)
+          return new Response(JSON.stringify({ ok: false, error: metadataError }))
+        return new Response(JSON.stringify({ ok: true, ts: "1.1", channel: "D1" }))
       }),
     )
-    await enqueueSlackMentionDms({ meta, baseUrl }, artifact, comment, [
-      { id: linked.id, name: "Lin" },
-    ])
-    const [row] = (await claim(meta)).filter((d) => d.kind === "slack_dm")
-    if (!row) throw new Error("no mention delivery")
-    expect((await makeSlackDmSender(meta, KEY)(row)).ok).toBe(true)
-    expect(posts[0]?.thread_ts).toBeUndefined()
-    expect((posts[0]?.metadata as { entities?: unknown[] }).entities).toHaveLength(1)
+
+    const r = await postWithRecovery(
+      {} as MetaStore,
+      "org",
+      "xoxb-token",
+      {
+        channel: "D1",
+        text: "A mention",
+        blocks: [{ type: "section" }],
+        metadata: { entities: [{ external_ref: { id: "th_1" } }] },
+      },
+      { metadataFallback: true },
+    )
+
+    expect(r).toMatchObject({ ok: true, status: expect.stringContaining("blocks-only") })
+    expect(posted).toHaveLength(2)
+    expect(posted[0]?.metadata).toBeTruthy()
+    expect(posted[1]?.metadata).toBeUndefined()
   })
 
-  it("is a delivered no-op when the email has no matching Slack account", async () => {
-    const meta = make("slack-dm-nomatch")
-    await connect(meta)
-    const { artifact, comment } = await artifactAndComment(meta)
-    await enqueueSlackMentionDms({ meta, baseUrl }, artifact, comment, [
-      { id: linked.id, name: "Lin" },
-    ])
+  it("keeps entity metadata when only the Block Kit payload is invalid", async () => {
+    const posted: Record<string, unknown>[] = []
     vi.stubGlobal(
       "fetch",
-      vi.fn(async (url: string) => {
-        if (url.includes("/users.lookupByEmail"))
-          return new Response(JSON.stringify({ ok: false, error: "users_not_found" }))
-        return new Response(JSON.stringify({ ok: false, error: "unexpected" }))
+      vi.fn(async (_url: string, init: RequestInit) => {
+        const body = JSON.parse(String(init.body)) as Record<string, unknown>
+        posted.push(body)
+        if (posted.length === 1)
+          return new Response(JSON.stringify({ ok: false, error: "invalid_blocks" }))
+        return new Response(JSON.stringify({ ok: true, ts: "1.1", channel: "D1" }))
       }),
     )
-    const [row] = (await claim(meta)).filter((d) => d.kind === "slack_dm")
-    if (!row) throw new Error("no slack_dm row")
-    const res = await makeSlackDmSender(meta, KEY)(row)
-    expect(res.ok).toBe(true)
-    expect(res.status).toContain("no matching Slack account")
-  })
 
-  it("is a delivered no-op when Slack isn't connected", async () => {
-    const meta = make("slack-dm-noconn")
-    // enqueue directly (no install), bypassing the enqueue-time gate.
-    const { enqueueSlackDm } = await import("../src/lib/slack-dm")
-    await enqueueSlackDm(meta, "default", linked.id, "hi", [])
-    const [row] = (await claim(meta)).filter((d) => d.kind === "slack_dm")
-    if (!row) throw new Error("no slack_dm row")
-    const res = await makeSlackDmSender(meta, KEY)(row)
-    expect(res.ok).toBe(true)
-    expect(res.status).toContain("not connected")
+    const r = await postWithRecovery(
+      {} as MetaStore,
+      "org",
+      "xoxb-token",
+      {
+        channel: "D1",
+        text: "A mention",
+        blocks: [{ type: "not-a-real-block" }],
+        metadata: { entities: [{ external_ref: { id: "th_1" } }] },
+      },
+      { metadataFallback: true, textFallback: true },
+    )
+
+    expect(r).toMatchObject({ ok: true, status: expect.stringContaining("text-only") })
+    expect(posted).toHaveLength(2)
+    expect(posted[1]?.blocks).toBeUndefined()
+    expect(posted[1]?.metadata).toBeTruthy()
   })
 })

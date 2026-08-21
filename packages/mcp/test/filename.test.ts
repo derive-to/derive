@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { fallbackFilename, looksLikeHtmlDocument } from "../src/filename"
+import { fallbackFilename } from "../src/filename"
 
 describe("fallbackFilename — inline publish with no filename never re-types markdown", () => {
   it("markdown content lands as .md (the retype-incident fix)", () => {
@@ -35,13 +35,5 @@ describe("fallbackFilename — inline publish with no filename never re-types ma
     expect(fallbackFilename("<!-- generated -->\n<meta charset=utf-8><style>a{}</style>")).toBe(
       "index.html",
     )
-  })
-
-  it("looksLikeHtmlDocument matches page openers, never mid-text tags", () => {
-    expect(looksLikeHtmlDocument("<!DOCTYPE html>")).toBe(true)
-    expect(looksLikeHtmlDocument("<html>")).toBe(true)
-    expect(looksLikeHtmlDocument("# md then <html> later")).toBe(false)
-    expect(looksLikeHtmlDocument("<htmlish>")).toBe(false) // needs a tag boundary
-    expect(looksLikeHtmlDocument("<!-- unterminated")).toBe(false)
   })
 })

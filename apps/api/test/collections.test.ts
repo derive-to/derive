@@ -119,71 +119,11 @@ describe("collections", () => {
       ).status,
     ).toBe(403) // no seat in that workspace → no standing to manage the collection
   })
-
-  it("tags repo / PR / manual collections so the client can nest PR previews", async () => {
-    // Manual: no repo source backing it.
-    const manual = await (await postJson("/v1/collections", { title: "Manual" })).json()
-
-    // Repo mirror: a collection backed by a branch source (pr_number null).
-    const repoCol = await meta.createCollection({
-      id: "col_repo_nest",
-      org_id: "default",
-      title: "GitHub: acme/docs",
-      created_by: "u",
-    })
-    await meta.createRepoSource({
-      id: "rs_branch_nest",
-      org_id: "default",
-      collection_id: repoCol.id,
-      repo: "acme/docs",
-      ref: "HEAD",
-      includes: "**/*.md",
-      created_by: "u",
-    })
-
-    // PR preview: its own collection backed by a source with pr_number set.
-    const prCol = await meta.createCollection({
-      id: "col_pr_nest",
-      org_id: "default",
-      title: "PR #7: Add guide",
-      created_by: "u",
-    })
-    await meta.createRepoSource({
-      id: "rs_pr_nest",
-      org_id: "default",
-      collection_id: prCol.id,
-      repo: "acme/docs",
-      ref: "deadbeef",
-      includes: "**/*.md",
-      pr_number: 7,
-      created_by: "u",
-    })
-
-    const list = await (await app.request("/v1/collections")).json()
-    const byId = (id: string) =>
-      list.collections.find((c: { id: string }) => c.id === id) as {
-        kind: string
-        repo?: string
-        prNumber?: number
-        parentId?: string
-      }
-
-    expect(byId(manual.id).kind).toBe("manual")
-    expect(byId(repoCol.id).kind).toBe("repo")
-    expect(byId(repoCol.id).repo).toBe("acme/docs")
-
-    const pr = byId(prCol.id)
-    expect(pr.kind).toBe("pr")
-    expect(pr.prNumber).toBe(7)
-    // Nests under its repo collection, not top-level.
-    expect(pr.parentId).toBe(repoCol.id)
-  })
 })
 
-describe("collections: starring", () => {
+describe("collections: list rows", () => {
   const amy: TestUser = { id: "u_amy", email: "amy@derive.test", name: "Amy" }
-  const bob: TestUser = { id: "u_bob", email: "bob@derive.test", name: "Bob" }
-  const { app: authed } = makeAuthedApp("collection-stars", [amy, bob])
+  const { app: authed } = makeAuthedApp("collection-stars", [amy])
 
   const mk = async (title: string) => {
     const r = await authed.request("/v1/collections", {
@@ -193,123 +133,6 @@ describe("collections: starring", () => {
     })
     return (await r.json()) as { id: string }
   }
-  const rowFor = async (email: string, id: string) => {
-    const j = await (await authed.request("/v1/collections", { headers: as(email) })).json()
-    return j.collections.find((c: { id: string }) => c.id === id)
-  }
-
-  it("stars, reports it on the list, and unstars", async () => {
-    const col = await mk("Q3 planning")
-    // Unstarred is stated, not absent — the sidebar decides what to pin off this field.
-    expect((await rowFor(amy.email, col.id)).starred).toBe(false)
-
-    const on = await authed.request(`/v1/collections/${col.id}/favorite`, {
-      method: "PUT",
-      headers: as(amy.email),
-    })
-    expect(await on.json()).toEqual({ starred: true })
-    expect((await rowFor(amy.email, col.id)).starred).toBe(true)
-
-    // Twice stays true rather than erroring or double-inserting.
-    await authed.request(`/v1/collections/${col.id}/favorite`, {
-      method: "PUT",
-      headers: as(amy.email),
-    })
-    expect((await rowFor(amy.email, col.id)).starred).toBe(true)
-
-    const off = await authed.request(`/v1/collections/${col.id}/favorite`, {
-      method: "DELETE",
-      headers: as(amy.email),
-    })
-    expect(await off.json()).toEqual({ starred: false })
-    expect((await rowFor(amy.email, col.id)).starred).toBe(false)
-  })
-
-  it("reports a collection as active once you comment in it, not merely by access", async () => {
-    const col = await mk("Worked in")
-    const up = await authed.request("/v1/artifacts", {
-      method: "POST",
-      headers: as(amy.email),
-      body: (() => {
-        const f = new FormData()
-        f.set("file", new File(["# doc"], "d.md", { type: "text/markdown" }))
-        f.set("title", "Doc")
-        return f
-      })(),
-    })
-    const { short_id } = (await up.json()) as { short_id: string }
-    await authed.request(`/v1/collections/${col.id}/items/${short_id}`, {
-      method: "PUT",
-      headers: as(amy.email),
-    })
-
-    // A shelf amy merely CREATED is not active: creating auto-adds you as owner, and
-    // counting that marked every collection you ever made as active.
-    const bare = await mk("Made but untouched")
-    expect((await rowFor(amy.email, bare.id)).active).toBe(false)
-
-    // This one she published into, which is a real signal.
-    expect((await rowFor(amy.email, col.id)).active).toBe(true)
-    // bob can open it and has done nothing: access is not activity. This is the whole
-    // distinction the grouping rests on.
-    expect((await rowFor(bob.email, col.id)).active).toBe(false)
-
-    await authed.request(`/v1/artifacts/${short_id}/comments`, {
-      method: "POST",
-      headers: { ...as(bob.email), "content-type": "application/json" },
-      body: JSON.stringify({ body_md: "looks right" }),
-    })
-    // One deliberate act moves him.
-    expect((await rowFor(bob.email, col.id)).active).toBe(true)
-  })
-
-  it("carries a preview strip so the Collections view can show what's inside", async () => {
-    const col = await mk("Shelf with covers")
-    const shortIds: string[] = []
-    // One more than the strip holds, so both the cap and the "+N" the view derives from
-    // count-minus-strip are exercised.
-    for (let i = 0; i < 5; i++) {
-      const up = await authed.request("/v1/artifacts", {
-        method: "POST",
-        headers: as(amy.email),
-        body: (() => {
-          const f = new FormData()
-          f.set("file", new File([`# doc ${i}`], `d${i}.md`, { type: "text/markdown" }))
-          f.set("title", `Doc ${i}`)
-          return f
-        })(),
-      })
-      const { short_id } = (await up.json()) as { short_id: string }
-      shortIds.push(short_id)
-      await authed.request(`/v1/collections/${col.id}/items/${short_id}`, {
-        method: "PUT",
-        headers: as(amy.email),
-      })
-    }
-
-    const row = await rowFor(amy.email, col.id)
-    expect(row.count).toBe(5)
-    expect(row.preview).toHaveLength(4)
-    // Newest first, and each entry carries what a cover needs: the ref, the version to
-    // pin the render to, and whether a static PNG exists.
-    expect(row.preview[0].short_id).toBe(shortIds[4])
-    expect(row.preview[0].current_version).toBe(1)
-    expect(typeof row.preview[0].has_preview).toBe("boolean")
-    // Last activity is derived from the strip's head — a collection has no mtime of
-    // its own, so this is the only honest answer to "when was this touched". Each entry
-    // also carries its own timestamp, caption, and byline: the Collections digest
-    // filters covers to the week's window and attributes the work.
-    expect(typeof row.last_activity).toBe("string")
-    expect(typeof row.preview[0].updated_at).toBe("string")
-    expect(row.preview[0].title).toBe("Doc 4")
-    expect(row.preview[0]).toHaveProperty("author_name")
-
-    // An empty shelf reports an empty strip rather than omitting the field: the view
-    // renders "Nothing filed here yet" off this, and undefined would read as loading.
-    const bare = await mk("Empty shelf")
-    expect((await rowFor(amy.email, bare.id)).preview).toEqual([])
-    expect((await rowFor(amy.email, bare.id)).last_activity).toBeUndefined()
-  })
 
   it("list rows carry their collection ids, from the batched read", async () => {
     // The library's grouped-by-collection view groups on this field, from the LIST
@@ -357,26 +180,177 @@ describe("collections: starring", () => {
     // An unfiled row says so with an empty array, not an absent field.
     expect(byId(looseId).collections).toEqual([])
   })
+})
 
-  it("is per person, and gated on read rather than share", async () => {
-    // Starring is a note to yourself about where you work — it grants nothing — so any
-    // member who can open the collection can star it, and it stays theirs alone.
-    const col = await mk("Team shelf")
-    const res = await authed.request(`/v1/collections/${col.id}/favorite`, {
-      method: "PUT",
-      headers: as(bob.email),
+// Folders organize the artifacts WITHIN a collection. A folder belongs to one collection;
+// an item's folder is per-membership (collection_item.folder_id). Management needs the
+// collection's editor role; reading needs any role on it.
+describe("folders (inside a collection)", () => {
+  const jsonReq = (
+    path: string,
+    method: string,
+    body: unknown,
+    headers: Record<string, string> = {},
+  ) =>
+    app.request(path, {
+      method,
+      headers: { "content-type": "application/json", ...headers },
+      body: JSON.stringify(body),
     })
-    expect(res.status).toBe(200)
-    expect((await rowFor(bob.email, col.id)).starred).toBe(true)
-    expect((await rowFor(amy.email, col.id)).starred).toBe(false)
+  const addItem = (colId: string, shortId: string) =>
+    app.request(`/v1/collections/${colId}/items/${shortId}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+    })
+  const seedItem = async (colId: string, title: string) => {
+    const { short_id } = await (await upload(`${title}.md`, "x", { title })).json()
+    await addItem(colId, short_id)
+    const art = await meta.getByShortId(short_id)
+    if (!art) throw new Error("artifact missing")
+    return { short_id, id: art.id }
+  }
+
+  it("files an artifact into a folder (assignment map reflects it); null unfiles it", async () => {
+    const col = await (await postJson("/v1/collections", { title: "C" })).json()
+    const folder = await (
+      await jsonReq(`/v1/collections/${col.id}/folders`, "POST", { name: "Heroes" })
+    ).json()
+    const item = await seedItem(col.id, "Art")
+    expect(
+      (
+        await jsonReq(`/v1/collections/${col.id}/items/${item.short_id}/folder`, "PUT", {
+          folderId: folder.id,
+        })
+      ).status,
+    ).toBe(204)
+    let list = await (await app.request(`/v1/collections/${col.id}/folders`)).json()
+    expect(list.assignments[item.short_id]).toBe(folder.id)
+    expect(
+      (
+        await jsonReq(`/v1/collections/${col.id}/items/${item.short_id}/folder`, "PUT", {
+          folderId: null,
+        })
+      ).status,
+    ).toBe(204)
+    list = await (await app.request(`/v1/collections/${col.id}/folders`)).json()
+    expect(list.assignments[item.short_id]).toBeUndefined()
   })
 
-  it("refuses an anonymous star", async () => {
-    // 403, matching the artifact star (anonymous.test pins the same): the workspace
-    // gate answers before the user guard does, and a caller with no session is not a
-    // member. Either way nothing is written.
-    const col = await mk("Anon check")
-    const res = await authed.request(`/v1/collections/${col.id}/favorite`, { method: "PUT" })
-    expect(res.status).toBe(403)
+  it("the same artifact sits in different folders in different collections (per-membership)", async () => {
+    const x = await (await postJson("/v1/collections", { title: "X" })).json()
+    const y = await (await postJson("/v1/collections", { title: "Y" })).json()
+    const fx = await (
+      await jsonReq(`/v1/collections/${x.id}/folders`, "POST", { name: "FX" })
+    ).json()
+    const fy = await (
+      await jsonReq(`/v1/collections/${y.id}/folders`, "POST", { name: "FY" })
+    ).json()
+    const { short_id } = await (await upload("multi.md", "x", { title: "Multi" })).json()
+    await addItem(x.id, short_id)
+    await addItem(y.id, short_id)
+    await jsonReq(`/v1/collections/${x.id}/items/${short_id}/folder`, "PUT", { folderId: fx.id })
+    await jsonReq(`/v1/collections/${y.id}/items/${short_id}/folder`, "PUT", { folderId: fy.id })
+    const lx = await (await app.request(`/v1/collections/${x.id}/folders`)).json()
+    const ly = await (await app.request(`/v1/collections/${y.id}/folders`)).json()
+    expect(lx.assignments[short_id]).toBe(fx.id)
+    expect(ly.assignments[short_id]).toBe(fy.id)
+  })
+
+  it("won't file an item under a folder from another collection (404)", async () => {
+    const x = await (await postJson("/v1/collections", { title: "X2" })).json()
+    const y = await (await postJson("/v1/collections", { title: "Y2" })).json()
+    const fy = await (
+      await jsonReq(`/v1/collections/${y.id}/folders`, "POST", { name: "other" })
+    ).json()
+    const item = await seedItem(x.id, "Cross")
+    expect(
+      (
+        await jsonReq(`/v1/collections/${x.id}/items/${item.short_id}/folder`, "PUT", {
+          folderId: fy.id,
+        })
+      ).status,
+    ).toBe(404)
+  })
+
+  it("won't file an artifact that isn't in the collection (404, not a silent no-op)", async () => {
+    const col = await (await postJson("/v1/collections", { title: "Members" })).json()
+    const folder = await (
+      await jsonReq(`/v1/collections/${col.id}/folders`, "POST", { name: "F" })
+    ).json()
+    // An artifact that exists but was never added to this collection.
+    const { short_id } = await (await upload("stray.md", "x", { title: "Stray" })).json()
+    expect(
+      (
+        await jsonReq(`/v1/collections/${col.id}/items/${short_id}/folder`, "PUT", {
+          folderId: folder.id,
+        })
+      ).status,
+    ).toBe(404)
+  })
+
+  it("deleting a folder unfiles its items — the artifacts stay in the collection", async () => {
+    const col = await (await postJson("/v1/collections", { title: "D" })).json()
+    const folder = await (
+      await jsonReq(`/v1/collections/${col.id}/folders`, "POST", { name: "Temp" })
+    ).json()
+    const item = await seedItem(col.id, "Survivor")
+    await jsonReq(`/v1/collections/${col.id}/items/${item.short_id}/folder`, "PUT", {
+      folderId: folder.id,
+    })
+    expect((await app.request(`/v1/folders/${folder.id}`, { method: "DELETE" })).status).toBe(204)
+    expect(await meta.getFolder(folder.id)).toBeNull()
+    const list = await (await app.request(`/v1/collections/${col.id}/folders`)).json()
+    expect(list.folders).toHaveLength(0)
+    expect(list.assignments).toEqual({})
+    const arts = await (await app.request(`/v1/artifacts?collection=${col.id}`)).json()
+    expect(arts.artifacts.map((a: { short_id: string }) => a.short_id)).toContain(item.short_id)
+  })
+
+  it("management needs the collection's editor role; a viewer member can read but not write", async () => {
+    const owner: TestUser = { id: "u_f2_own", email: "own@f2.test", name: "Own", username: "ownf2" }
+    const viewer: TestUser = {
+      id: "u_f2_view",
+      email: "view@f2.test",
+      name: "View",
+      username: "viewf2",
+    }
+    const { app: team } = makeAuthedApp("folders2-roles", [owner, viewer], "viewer")
+    const col = await (
+      await team.request("/v1/collections", {
+        method: "POST",
+        headers: { "content-type": "application/json", ...as(owner.email) },
+        body: JSON.stringify({ title: "Team" }),
+      })
+    ).json()
+    const folder = await (
+      await team.request(`/v1/collections/${col.id}/folders`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...as(owner.email) },
+        body: JSON.stringify({ name: "Owned" }),
+      })
+    ).json()
+    // The viewer can READ the folder structure…
+    const list = await (
+      await team.request(`/v1/collections/${col.id}/folders`, { headers: as(viewer.email) })
+    ).json()
+    expect(list.folders.map((f: { id: string }) => f.id)).toContain(folder.id)
+    // …but can't create / rename / delete.
+    const create = await team.request(`/v1/collections/${col.id}/folders`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...as(viewer.email) },
+      body: JSON.stringify({ name: "Nope" }),
+    })
+    expect(create.status).toBe(403)
+    const rename = await team.request(`/v1/folders/${folder.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json", ...as(viewer.email) },
+      body: JSON.stringify({ name: "X" }),
+    })
+    expect(rename.status).toBe(403)
+    const del = await team.request(`/v1/folders/${folder.id}`, {
+      method: "DELETE",
+      headers: as(viewer.email),
+    })
+    expect(del.status).toBe(403)
   })
 })

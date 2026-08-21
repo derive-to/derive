@@ -89,11 +89,6 @@ describe("model credentials", () => {
     const res = await lend(other.email, agent.id, true)
     expect([401, 403]).toContain(res.status)
   })
-
-  it("the agent surface requires an agent bearer", async () => {
-    const anon = await app.request("/v1/agent/model-credential?provider=codex")
-    expect([401, 403]).toContain(anon.status)
-  })
 })
 
 // The workspace POOL (a sentinel-user credential row) is the org's shared plan, billed only
@@ -546,15 +541,6 @@ describe("model credentials: refresh persistence (PUT)", () => {
     // The stored value is now T2, so quoting T1's hash is a stale write.
     const res = await put({ token: '{"tokens":{"v":3}}', source: "pool", prev_sha256: sha256(T1) })
     expect(res.status).toBe(409)
-  })
-
-  it("a garbage (non-JSON) blob is rejected even with a valid CAS — 400", async () => {
-    const res = await put({
-      token: "not json",
-      source: "pool",
-      prev_sha256: sha256('{"tokens":{"v":2}}'),
-    })
-    expect(res.status).toBe(400)
   })
 
   it("refuses to clobber a non-login (api_key) row — 409", async () => {

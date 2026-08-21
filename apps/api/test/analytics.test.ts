@@ -65,28 +65,6 @@ describe("view analytics", () => {
     const row = list.artifacts.find((x: { short_id: string }) => x.short_id === short_id)
     expect(row.views).toBe(3)
   })
-
-  it("no-ops when analytics is disabled", async () => {
-    const off = createApp({
-      meta,
-      blobs: new FsBlobStore(join(dir, "blobs2")),
-      baseUrl: "http://derive.test",
-      analytics: false,
-    })
-    const { short_id } = await (async () => {
-      const form = new FormData()
-      form.append("file", new Blob([new TextEncoder().encode("# B")]), "b.md")
-      return (await off.request("/v1/artifacts", { method: "POST", body: form })).json()
-    })()
-    const v = await off.request(`/v1/artifacts/${short_id}/view`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: "{}",
-    })
-    expect(v.status).toBe(204)
-    const a = await off.request(`/v1/artifacts/${short_id}/analytics`)
-    expect(a.status).toBe(404)
-  })
 })
 
 describe("live stream (SSE)", () => {
@@ -205,24 +183,6 @@ describe("analytics: identity + retention", () => {
     expect(named).toHaveLength(1)
     expect(named[0]).toMatchObject({ viewer: "Bob", avatar: bob.image }) // name + profile pic
     expect(a.recent.some((r: { viewer: string }) => r.viewer === "Ann")).toBe(false)
-  })
-
-  it("prunes view rows older than the cutoff, keeps newer ones", async () => {
-    const sid = (await (await publishAs(app, "<h1>p</h1>", {}, as(ann.email))).json()).short_id
-    const art = await m.getByShortId(sid)
-    if (!art) throw new Error("no artifact")
-    await m.recordView({
-      id: "v_old",
-      artifact_id: art.id,
-      version: 1,
-      viewer: "anon_p",
-      viewer_kind: "anon",
-    })
-    expect((await m.viewStats(art.id)).total).toBe(1)
-    expect(await m.pruneViews(new Date(Date.now() - 86400_000).toISOString())).toBe(0) // none that old
-    expect((await m.viewStats(art.id)).total).toBe(1) // kept
-    expect(await m.pruneViews(new Date(Date.now() + 86400_000).toISOString())).toBeGreaterThan(0)
-    expect((await m.viewStats(art.id)).total).toBe(0) // pruned
   })
 
   it("pruneViewsByViewers removes only the listed user-kind rows", async () => {

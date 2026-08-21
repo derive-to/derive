@@ -10,7 +10,7 @@ import { as, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
  *
  * OFF BY DEFAULT — `LIVE_MCP=1 npx vitest run test/live-hosted-source.test.ts`.
  *
- * hosted-mcp-source.test.ts already drives this chain end to end, but against a server written in
+ * mcp-source.test.ts already drives this chain end to end, but against a server written in
  * this file, which agrees with our assumptions by construction. The live run is what catches the
  * things it cannot: DeepWiki answers over SSE and holds the stream open (that alone stalled every
  * call for 20 seconds until it was fixed), its tool names and schemas are its own, and its results

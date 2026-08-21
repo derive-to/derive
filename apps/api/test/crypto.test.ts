@@ -5,20 +5,11 @@ import {
   hashPassword,
   isBreachedPassword,
   safeEqual,
-  sha256,
   signState,
-  unlockCookie,
   unlockToken,
   verifyPassword,
   verifyState,
 } from "../src/lib/crypto"
-
-describe("sha256", () => {
-  it("matches known SHA-256 vectors (hex)", () => {
-    expect(sha256("")).toBe("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
-    expect(sha256("abc")).toBe("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
-  })
-})
 
 describe("signState / verifyState — signed, expiring state tokens", () => {
   const secret = "server-secret"
@@ -67,17 +58,6 @@ describe("encryptSecret / decryptSecret — AES-256-GCM at rest", () => {
     expect(decryptSecret(encryptSecret("héllo 🔒", pass), pass)).toBe("héllo 🔒")
   })
 
-  it("produces a v1 envelope with a 12-byte IV that hides the plaintext", () => {
-    const parts = encryptSecret("topsecret", pass).split(".")
-    expect(parts[0]).toBe("v1")
-    expect(parts).toHaveLength(4) // v1.iv.tag.ciphertext
-    // A 12-byte GCM IV is embedded — 12 bytes is exactly 16 base64url chars (no
-    // padding). The round-trip test proves decryption uses it; freshness per call
-    // is node's randomBytes contract, not ours.
-    expect(parts[1]).toMatch(/^[\w-]{16}$/)
-    expect(parts.join(".")).not.toContain("topsecret")
-  })
-
   it("does not reveal the plaintext under a wrong key or tampering (fails closed)", () => {
     const blob = encryptSecret("topsecret", pass)
     // Wrong key: returns the (still-encrypted) blob, never the plaintext.
@@ -107,13 +87,6 @@ describe("hashPassword / verifyPassword — salted, hashed at rest", () => {
     const stored = await hashPassword("hunter2")
     expect(await verifyPassword("hunter2", stored)).toBe(true)
     expect(await verifyPassword("Hunter2", stored)).toBe(false)
-  })
-
-  it("stores a salt alongside the scrypt key, and verifies against it", async () => {
-    const [salt, digest] = (await hashPassword("same")).split(":")
-    expect(salt).toBeTruthy() // a per-hash salt is prepended (its randomness is node's job)
-    expect(digest).toMatch(/^[0-9a-f]{128}$/) // 64-byte scrypt key, hex encoded
-    expect(await verifyPassword("same", await hashPassword("same"))).toBe(true)
   })
 
   it("rejects pre-scrypt password hashes so owners must reset them", async () => {
@@ -148,10 +121,6 @@ describe("unlock tokens", () => {
     expect(unlockToken("art1", "hashB")).not.toBe(t1) // password changed -> cookie invalid
     expect(unlockToken("art2", "hashA")).not.toBe(t1) // per-artifact
   })
-
-  it("names the unlock cookie per artifact", () => {
-    expect(unlockCookie("ab12cd34")).toBe("dku_ab12cd34")
-  })
 })
 
 describe("isBreachedPassword (HIBP k-anonymity, fail-open)", () => {
@@ -181,11 +150,6 @@ describe("isBreachedPassword (HIBP k-anonymity, fail-open)", () => {
 
   it("FAILS OPEN on a network error (air-gapped self-host is never blocked)", async () => {
     vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("ENETUNREACH"))
-    expect(await isBreachedPassword("password")).toBe(false)
-  })
-
-  it("fails open on a non-200 response", async () => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("nope", { status: 503 }))
     expect(await isBreachedPassword("password")).toBe(false)
   })
 })

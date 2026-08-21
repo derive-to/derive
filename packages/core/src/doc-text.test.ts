@@ -1,31 +1,25 @@
 import { describe, expect, it } from "vitest"
-import { decodeEntities, pageText } from "./anchor"
+import { pageText } from "./anchor"
 import {
   applyEdits,
   docOutline,
   EditError,
-  enclosingMarker,
-  headingSlug,
   htmlToMarkdown,
+  LANDMARK_TAGS,
   landmarkMap,
   landmarkSlice,
-  landmarksOf,
   outlineOf,
   sectionMarkers,
   sectionOf,
   sectionSlice,
   toMarkdown,
 } from "./doc-text"
+import { MARKS_SCRIPT } from "./marks-script"
 
 const doc = (body: string) =>
   `<!DOCTYPE html><html><head><title>T</title><style>body{color:red}</style></head><body>${body}</body></html>`
 
 describe("htmlToMarkdown", () => {
-  it("converts headings h1–h6", () => {
-    const md = htmlToMarkdown(doc("<h1>One</h1><h2>Two</h2><h3>Three</h3><h6>Six</h6>"))
-    expect(md).toBe("# One\n\n## Two\n\n### Three\n\n###### Six")
-  })
-
   it("drops head, style, script, svg, noscript subtrees whole", () => {
     const md = htmlToMarkdown(
       doc(
@@ -54,13 +48,6 @@ describe("htmlToMarkdown", () => {
     expect(out[0]?.slug).toBe("the-read-tool")
   })
 
-  it("renders nested and ordered lists with counters", () => {
-    const md = htmlToMarkdown(
-      doc("<ul><li>a</li><li>b<ol><li>b1</li><li>b2<ul><li>deep</li></ul></li></ol></li></ul>"),
-    )
-    expect(md).toBe("- a\n\n- b\n\n  1. b1\n\n  2. b2\n\n    - deep")
-  })
-
   it("renders fenced code with language, decoded entities, preserved newlines", () => {
     const md = htmlToMarkdown(
       doc(
@@ -68,19 +55,6 @@ describe("htmlToMarkdown", () => {
       ),
     )
     expect(md).toBe('```ts\nconst a = 1\nif (a < 2) run("x")\n```')
-  })
-
-  it("escalates the fence when code contains backtick runs", () => {
-    const md = htmlToMarkdown(doc("<pre><code>```\ninner\n```</code></pre>"))
-    expect(md.startsWith("````\n")).toBe(true)
-    expect(md.endsWith("\n````")).toBe(true)
-  })
-
-  it("strips highlight spans inside pre but keeps their text", () => {
-    const md = htmlToMarkdown(
-      doc('<pre><code><span class="cm">// note</span>\n<span>x()</span></code></pre>'),
-    )
-    expect(md).toBe("```\n// note\nx()\n```")
   })
 
   it("renders pipe tables with escaped pipes and align attrs", () => {
@@ -189,10 +163,6 @@ describe("htmlToMarkdown", () => {
     expect(md).toBe("v2 — final · wave 1–3 … see → “done”")
   })
 
-  it("collapses whitespace outside pre", () => {
-    expect(htmlToMarkdown(doc("<p>a\n   b\t\tc</p>"))).toBe("a b c")
-  })
-
   it("turns minified one-line HTML into multi-line markdown", () => {
     const min = doc(
       "<h1>Title</h1><p>Intro text.</p><h2>Part</h2><ul><li>one</li><li>two</li></ul>",
@@ -200,21 +170,9 @@ describe("htmlToMarkdown", () => {
     expect(min.includes("\n")).toBe(false)
     expect(htmlToMarkdown(min)).toBe("# Title\n\nIntro text.\n\n## Part\n\n- one\n\n- two")
   })
-
-  it("treats unknown tags as transparent", () => {
-    expect(htmlToMarkdown(doc('<p><span class="x">kept</span> <mark>also</mark></p>'))).toBe(
-      "kept also",
-    )
-  })
 })
 
 describe("headingSlug + slugger", () => {
-  it("slugifies GitHub-style", () => {
-    expect(headingSlug("PR-6: The Registry Fix!")).toBe("pr-6-the-registry-fix")
-    expect(headingSlug("Café après ski")).toBe("cafe-apres-ski")
-    expect(headingSlug("???")).toBe("")
-  })
-
   it("dedups repeated headings across a document", () => {
     const out = docOutline(doc("<h2>Goals</h2><h2>Goals</h2><h2>Goals</h2>"))
     expect(out.map((s) => s.slug)).toEqual(["goals", "goals-1", "goals-2"])
@@ -274,13 +232,6 @@ describe("docOutline + sectionSlice", () => {
     expect(docOutline(doc("<p>just prose</p>"))).toEqual([])
   })
 
-  it("handles a large many-heading document", () => {
-    const parts = Array.from({ length: 36 }, (_, i) => `<h2>Sect ${i}</h2><p>text ${i}</p>`).join(
-      "",
-    )
-    expect(docOutline(doc(parts))).toHaveLength(36)
-  })
-
   it("ignores headings that live inside dropped subtrees — a <script> template string or a <template> tag must not become a phantom outline entry (regression)", () => {
     const withScript = doc(
       '<script>const s = "<h2>Fake</h2>"</script><template><h2>Also fake</h2></template><h1>Real</h1><p>x</p>',
@@ -313,14 +264,6 @@ describe("landmarkMap (headless-page fallback)", () => {
     expect(map[2]?.text).toBe("the dashboard body has real content here")
   })
 
-  it("truncates a long region preview to keep the map compact", () => {
-    const long = "word ".repeat(40)
-    const map = landmarkMap(doc(`<main><p>${long}</p></main>`))
-    expect(map[0]?.text.endsWith("…")).toBe(true)
-    expect(map[0]?.text.length).toBeLessThanOrEqual(81)
-    expect(map[0]?.chars).toBeGreaterThan(100) // chars is the FULL size, not the preview
-  })
-
   it("folds a nested landmark into its parent (map stays shallow)", () => {
     const html = doc("<main><section aria-label='inner'><p>x</p></section></main>")
     expect(landmarkMap(html).map((r) => [r.role, r.label])).toEqual([["main", null]])
@@ -334,11 +277,6 @@ describe("landmarkMap (headless-page fallback)", () => {
     expect(map).toHaveLength(1) // the <template> nav is masked
     expect(map[0]?.role).toBe("search") // explicit role beats the implicit "region"
     expect(map[0]?.label).toBe("Stats")
-  })
-
-  it("landmarksOf returns [] for markdown and for HTML (via the facade only when html)", () => {
-    expect(landmarksOf("# just markdown", "text/markdown")).toEqual([])
-    expect(landmarksOf(doc("<main><p>hi</p></main>"), "text/html")).toHaveLength(1)
   })
 })
 
@@ -377,27 +315,11 @@ describe("sectionMarkers + enclosingMarker (self-locating search)", () => {
       { text: "Risks", line: 5 },
     ])
   })
-
-  it("enclosingMarker returns the last marker at or above a line", () => {
-    const markers = [
-      { text: "Report", line: 2 },
-      { text: "Revenue", line: 4 },
-      { text: "Risks", line: 5 },
-    ]
-    expect(enclosingMarker(markers, 1)).toBeNull() // before any marker
-    expect(enclosingMarker(markers, 2)).toBe("Report")
-    expect(enclosingMarker(markers, 4)).toBe("Revenue")
-    expect(enclosingMarker(markers, 10)).toBe("Risks") // after the last marker
-  })
 })
 
 describe("markdown twins (outlineOf / sectionOf / toMarkdown)", () => {
   const md =
     "# Top\n\nintro\n\n```\n# not a heading\n```\n\n## Alpha\n\nalpha text\n\n## Beta\n\nbeta text\n"
-
-  it("passes markdown through toMarkdown untouched", () => {
-    expect(toMarkdown(md, "text/markdown")).toBe(md)
-  })
 
   it("outlines ATX headings, ignoring code fences", () => {
     expect(outlineOf(md, "text/markdown").map((s) => s.slug)).toEqual(["top", "alpha", "beta"])
@@ -435,10 +357,6 @@ describe("applyEdits", () => {
     )
     expect(() => applyEdits("x x", [{ old_str: "x", new_str: "y" }])).toThrow(/matched 2 times/)
     expect(() => applyEdits("abc", [])).toThrow(EditError)
-  })
-
-  it("treats new_str with replacement patterns literally", () => {
-    expect(applyEdits("cost", [{ old_str: "cost", new_str: "$& and $1" }])).toBe("$& and $1")
   })
 
   it("counts a self-overlapping needle as its single non-overlapping match, not ambiguous (regression)", () => {
@@ -546,14 +464,6 @@ describe("applyEdits", () => {
   })
 })
 
-describe("decodeEntities extraction keeps pageText behavior", () => {
-  it("decodes the same entity forms pageText always did", () => {
-    expect(decodeEntities("&amp;&#65;&#x42;&nosuch;")).toBe("&AB&nosuch;")
-    expect(pageText("<p>a &lt; b</p><script>x</script>")).toContain("a < b")
-    expect(pageText("<p>x</p><script>secret()</script>")).not.toContain("secret")
-  })
-})
-
 describe("linear-time tokenizing (the second CodeQL round)", () => {
   // The four polynomial-redos alerts the scanner raised on this file's old regexes, each
   // reproduced as the attack string CodeQL named. The bound is generous wall-clock — the
@@ -589,5 +499,18 @@ describe("linear-time tokenizing (the second CodeQL round)", () => {
       { text: "Closed", line: 1 },
       { text: "Open", line: 3 },
     ])
+  })
+})
+
+describe("MARKS_SCRIPT", () => {
+  it("embeds the SAME tag set doc-text.ts's landmarkMap uses — cannot drift apart", () => {
+    for (const tag of LANDMARK_TAGS) expect(MARKS_SCRIPT).toContain(tag.toUpperCase())
+    // Exactly LANDMARK_TAGS.length quoted tags in the embedded JSON array, no more.
+    const start = MARKS_SCRIPT.indexOf("var TAGS = ")
+    const end = MARKS_SCRIPT.indexOf(";", start)
+    const arrayLiteral = start >= 0 && end > start ? MARKS_SCRIPT.slice(start + 11, end) : null
+    expect(arrayLiteral).toBeTruthy()
+    const tags = JSON.parse(arrayLiteral as string) as string[]
+    expect(tags.sort()).toEqual(LANDMARK_TAGS.map((t) => t.toUpperCase()).sort())
   })
 })

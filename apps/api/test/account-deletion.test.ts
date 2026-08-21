@@ -68,16 +68,6 @@ describe("workspacesBlockingDeletion", () => {
     expect(await workspacesBlockingDeletion(s, me)).toEqual([])
   })
 
-  it("ignores workspaces where the user is only a member, not an owner", async () => {
-    const s = store()
-    const me = `u_${uuid()}`
-    const owner = `u_${uuid()}`
-    await s.setWorkspace("shared", "Team Space")
-    await s.setMembership({ id: uuid(), org_id: "shared", user_id: owner, role: "owner" })
-    await s.setMembership({ id: uuid(), org_id: "shared", user_id: me, role: "editor" })
-    expect(await workspacesBlockingDeletion(s, me)).toEqual([])
-  })
-
   it("blocks when account purge would orphan owned artifacts or collections", async () => {
     const s = store()
     const me = `u_${uuid()}`

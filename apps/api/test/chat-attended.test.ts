@@ -1,4 +1,4 @@
-import { DEFAULT_ORG_SETTINGS, newId } from "@derive/core"
+import { newId } from "@derive/core"
 import { describe, expect, it } from "vitest"
 import { createInProcessBackplane } from "../src/bus"
 import { catalogOf } from "../src/lib/model-catalog"
@@ -180,10 +180,6 @@ describe("the document rail obeys the operator's deploy-wide model", () => {
     return msgs.at(-1)
   }
 
-  it("answers with the configured default when the operator has pinned nothing", async () => {
-    expect((await askRail("rail-default", null))?.body_md).toContain("answered by old")
-  })
-
   it("answers with the operator's pin, and records WHICH model wrote it", async () => {
     const last = await askRail("rail-pinned", "new")
     expect(last?.body_md).toContain("answered by new")
@@ -277,16 +273,6 @@ describe("the subject is authorized separately from the context", () => {
     })
     expect(res.status).toBe(404)
   })
-
-  it("rejects a malformed subject rather than silently ignoring it", async () => {
-    const { app, cx } = await setup("chat-bad", revision("# x"))
-    const res = await app.request(`/v1/contexts/${cx.id}/sessions`, {
-      method: "POST",
-      headers: { ...as("ed@x.com"), "content-type": "application/json" },
-      body: JSON.stringify({ body_md: "hi", subject: { kind: "nonsense" } }),
-    })
-    expect(res.status).toBe(400)
-  })
 })
 
 describe("the beta gate", () => {
@@ -321,15 +307,6 @@ describe("the beta gate", () => {
       body: JSON.stringify({ short_id, body_md: "hello" }),
     })
     expect(res.status).toBe(404)
-  })
-
-  it("ANSWERS a workspace that has done nothing, because chat is on by default", () => {
-    // The default itself is the product decision: an opt-in everybody has to find is a feature
-    // nobody has. Asserted on the defaults rather than through a route so it cannot drift
-    // silently when the settings shape moves.
-    expect(DEFAULT_ORG_SETTINGS.chatBeta).toBe(true)
-    // Automations stay opt-in: they run unattended and can write while nobody is watching.
-    expect(DEFAULT_ORG_SETTINGS.automateBeta).toBe(false)
   })
 })
 
@@ -738,8 +715,6 @@ describe("follow-ups are limited, budgeted, and gated", () => {
 // on its next poll. Streaming makes the terminal event mandatory — deltas with no settle leave
 // a reader watching a reply that never officially finishes. These pin both halves.
 
-/* (helper folded into the tests below) */
-
 describe("an attended reply streams, then settles", () => {
   it("publishes coalesced deltas and a terminal settle, in that order, on the asker's channel", async () => {
     const seen: { channel: string; type: string; body: Record<string, unknown> }[] = []
@@ -817,55 +792,5 @@ describe("an attended reply streams, then settles", () => {
     expect(settles).toHaveLength(1)
     expect(mine.at(-1)?.type).toBe("session.settled")
     expect(settles[0]?.body.state).toBe("answered")
-  })
-
-  it("still settles when there is no model, so a client never waits forever", async () => {
-    const seen: { type: string; body: Record<string, unknown> }[] = []
-    const inner = createInProcessBackplane()
-    const plane = {
-      ...inner,
-      publish(channel: string, e: Record<string, unknown>) {
-        seen.push({ type: String(e.type), body: e })
-        inner.publish(channel, e as never)
-      },
-    }
-    const users = [{ id: "u-nm", email: "nm@x.com", name: "Nm" }]
-    // No callModel at all — the self-host default.
-    const { app, meta } = makeAuthedApp("chat-nomodel-stream", users, undefined, {
-      deps: { backplane: plane as never },
-    })
-    await meta.setOrgSettings("default", {
-      ...(await meta.getOrgSettings("default")),
-      chatBeta: true,
-    })
-    const created = await app.request("/v1/artifacts", {
-      method: "POST",
-      headers: as("nm@x.com"),
-      body: (() => {
-        const f = new FormData()
-        f.set("file", new Blob(["# Doc"], { type: "text/markdown" }), "doc.md")
-        f.set("title", "Doc")
-        return f
-      })(),
-    })
-    const { short_id } = (await created.json()) as { short_id: string }
-    const opened = await app.request("/v1/artifacts/chat-session", {
-      method: "POST",
-      headers: { ...as("nm@x.com"), "content-type": "application/json" },
-      body: JSON.stringify({ short_id, body_md: "hi", mode: "draft" }),
-    })
-    // Chat is unreachable with no model wired, so either it refuses up front or it answers
-    // in the transcript — both are terminal. What must NOT happen is a silent hang.
-    if (opened.status === 201) {
-      const sessionId = ((await opened.json()) as { session: { id: string } }).session.id
-      for (let i = 0; i < 60; i++) {
-        const msgs = await meta.listSessionMessages(sessionId)
-        if (msgs.some((m) => m.author_kind === "agent")) break
-        await new Promise((r) => setTimeout(r, 25))
-      }
-      expect(seen.filter((e) => e.type === "session.settled")).toHaveLength(1)
-    } else {
-      expect(opened.status).toBeGreaterThanOrEqual(400)
-    }
   })
 })

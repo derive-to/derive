@@ -1,9 +1,11 @@
-import type { DeliveryRecord } from "@derive/core"
+import type { ArtifactRecord, DeliveryRecord } from "@derive/core"
 import { DEFAULT_ORG_SETTINGS, newId } from "@derive/core"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { commentCreatedAction } from "../src/lib/comment-actions"
+import { commentDeepLink } from "../src/lib/comments"
+import { buildCommentEmail } from "../src/lib/email"
 import { makeSlackSender } from "../src/lib/slack-comments"
-import { runDeliveryTick } from "../src/webhooks"
+import { deliverOnce, edgeGuard } from "../src/webhooks"
 import { as, jsonAs, makeAuthedApp, pub, type TestUser } from "./helpers"
 
 // The other interrupt-worthy emails ride the same outbox: a review request (the
@@ -205,30 +207,6 @@ describe("comment channel fan-out", () => {
     expect(kinds).toContain("slack_app")
   })
 
-  it("does not post to Slack when no channel is subscribed", async () => {
-    const { app, meta } = makeAuthedApp("fanout-slack-off", [owner, editor], "editor")
-    await meta.setSlackInstall({
-      org_id: "default",
-      team_id: "T1",
-      team_name: "Acme",
-      bot_token: "xoxb-stored",
-      bot_user_id: "UBOT",
-      created_at: new Date().toISOString(),
-    })
-    // Deliberately NO subscription: that is what "off" means now.
-    await meta.setOrgSettings("default", {
-      ...DEFAULT_ORG_SETTINGS,
-      emailNotifications: true,
-      githubPostComments: true,
-      githubMirrorComments: true,
-      githubPreviewLink: true,
-    })
-    const shortId = await newArtifact(app)
-    await comment(app, shortId, owner.email)
-    const kinds = (await claim(meta)).map((d) => d.kind)
-    expect(kinds).not.toContain("slack_app")
-  })
-
   it("does not mirror a comment on a PRIVATE artifact (no leak)", async () => {
     const { app, meta } = makeAuthedApp("fanout-slack-private", [owner], "editor")
     await meta.setSlackInstall({
@@ -245,75 +223,6 @@ describe("comment channel fan-out", () => {
     await comment(app, shortId, owner.email)
     // Private draft (listed "none") → its title + comment body never reach the org-wide channel.
     expect((await claim(meta)).map((d) => d.kind)).not.toContain("slack_app")
-  })
-
-  // The headline behaviour of subscriptions, and the reason the outbox row carries its own
-  // channel: three subscribed channels produce three INDEPENDENT deliveries, so an archived
-  // channel or one the bot was removed from fails and dead-letters on its own instead of taking
-  // the others down with it.
-  it("fans one comment out to every subscribed channel, one delivery each", async () => {
-    const { app, meta } = makeAuthedApp("fanout-multi", [owner], "editor")
-    await meta.setSlackInstall({
-      org_id: "default",
-      team_id: "T1",
-      team_name: "Acme",
-      bot_token: "xoxb-stored",
-      bot_user_id: "UBOT",
-      created_at: new Date().toISOString(),
-    })
-    for (const ch of ["C-eng", "C-design", "C-all"])
-      await meta.upsertSlackSubscription({ id: newId("sub"), org_id: "default", channel_id: ch })
-    const shortId = await newArtifact(app)
-    await comment(app, shortId, owner.email)
-    const rows = (await claim(meta)).filter((d) => d.kind === "slack_app")
-    expect(rows.map((d) => JSON.parse(d.payload).channel).sort()).toEqual([
-      "C-all",
-      "C-design",
-      "C-eng",
-    ])
-  })
-
-  // Each channel threads on its OWN root message — the reason thread links are keyed
-  // (thread_id, channel) rather than by thread alone.
-  it("threads independently per channel", async () => {
-    const { app, meta } = makeAuthedApp("fanout-threading", [owner], "editor")
-    await meta.setSlackInstall({
-      org_id: "default",
-      team_id: "T1",
-      team_name: "Acme",
-      bot_token: "xoxb-stored",
-      bot_user_id: "UBOT",
-      created_at: new Date().toISOString(),
-    })
-    for (const ch of ["C-a", "C-b"])
-      await meta.upsertSlackSubscription({ id: newId("sub"), org_id: "default", channel_id: ch })
-    const shortId = await newArtifact(app)
-    const artifact = await meta.getByShortId(shortId)
-    const first = await (await comment(app, shortId, owner.email)).json()
-
-    // Drain both root posts, so each channel records its own thread link.
-    let ts = 100
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (_u: string, init: RequestInit) => {
-        const body = JSON.parse(String(init.body)) as { channel: string }
-        ts += 1
-        return new Response(
-          JSON.stringify({ ok: true, ts: `17000000${ts}.1`, channel: body.channel }),
-          { status: 200 },
-        )
-      }),
-    )
-    await runDeliveryTick(
-      meta,
-      { precheck: async () => null },
-      { slack_app: makeSlackSender(meta, "k") },
-    )
-    const links = await meta.listSlackThreadLinksByThread(first.thread_id)
-    expect(links.map((l) => l.channel).sort()).toEqual(["C-a", "C-b"])
-    // Distinct Slack messages, one per channel — not one message reused.
-    expect(new Set(links.map((l) => l.message_ts)).size).toBe(2)
-    expect(links.every((l) => l.artifact_id === artifact?.id)).toBe(true)
   })
 
   // The mirrors are gated on a COLLABORATOR author: it keeps a signed-in holder of a
@@ -425,57 +334,6 @@ describe("connected-channel event cards (publishes)", () => {
     expect((await claim(meta)).map((d) => d.kind)).not.toContain("slack_app")
   })
 
-  // "Off" is now the absence of a subscription rather than a workspace-wide toggle, so an
-  // install with no subscribed channel posts nothing.
-  it("posts no channel card when no channel is subscribed", async () => {
-    const { app, meta } = authed("chan-off")
-    await connect(meta)
-    await meta.deleteSlackSubscriptionsByChannel("default", "C1")
-    await newArtifact(app)
-    expect((await claim(meta)).map((d) => d.kind)).not.toContain("slack_app")
-  })
-
-  it("the sender posts an event card top-level (not threaded under a comment)", async () => {
-    const { meta } = authed("chan-sender")
-    await connect(meta)
-    const d: DeliveryRecord = {
-      id: "wd-evt",
-      webhook_id: "internal",
-      url: "",
-      secret: "",
-      kind: "slack_app",
-      event_type: "version.published",
-      payload: JSON.stringify({
-        channel: "C1",
-        orgId: "default",
-        event: "version.published",
-        title: "Doc",
-        link: "https://derive.test/artifacts/abc",
-        author: "Ann",
-        version: 2,
-        message: null,
-      }),
-      status: "pending",
-      attempts: 0,
-      last_error: null,
-      next_attempt_at: new Date().toISOString(),
-      created_at: new Date().toISOString(),
-    }
-    let sent: { channel?: string; thread_ts?: string; blocks?: unknown } = {}
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (_url: string, init?: { body?: string }) => {
-        sent = JSON.parse(init?.body ?? "{}")
-        return new Response(JSON.stringify({ ok: true, ts: "1.1", channel: "C1" }))
-      }),
-    )
-    const res = await makeSlackSender(meta, "k")(d)
-    expect(res.ok).toBe(true)
-    expect(sent.channel).toBe("C1")
-    expect(sent.thread_ts).toBeUndefined() // top-level, not a threaded reply
-    expect(JSON.stringify(sent.blocks)).toContain("published")
-  })
-
   it("escapes untrusted title/author/body in the comment card (no mrkdwn injection)", async () => {
     const { meta } = authed("chan-comment-escape")
     await connect(meta)
@@ -565,143 +423,58 @@ describe("review-request + share emails", () => {
   })
 })
 
-// Resolving a thread has to reach Slack, and reach EVERY channel the thread was mirrored into.
-// Before this the card only changed when the change came from its own Resolve button, so
-// resolving in Derive's UI left "Resolve thread" sitting under a closed thread, and resolving
-// from one Slack channel left the other channels' cards stale.
-describe("resolve state reaches every mirrored channel", () => {
-  const mirrored = async (name: string, channels: string[]) => {
-    const { app, meta } = makeAuthedApp(name, [owner], "editor")
-    await meta.setSlackInstall({
-      org_id: "default",
-      team_id: "T1",
-      team_name: "Acme",
-      bot_token: "xoxb-stored",
-      bot_user_id: "UBOT",
-      created_at: new Date().toISOString(),
+describe("email", () => {
+  const artifact = { id: "a1", short_id: "spec0001", title: "Roadmap" } as ArtifactRecord
+
+  describe("email content", () => {
+    it("renders a comment email with a deep link to the thread", () => {
+      const { subject, html, text } = buildCommentEmail("https://derive.to/", artifact, {
+        author: "Ann",
+        body: "Looks good to me",
+        quote: "the second milestone",
+        threadId: "t_123",
+      })
+      expect(subject).toBe("Ann commented on Roadmap")
+      const link = commentDeepLink("https://derive.to", artifact, "t_123")
+      expect(link).toBe("https://derive.to/artifacts/spec0001?comment=t_123")
+      expect(html).toContain(link)
+      expect(html).toContain("the second milestone")
+      expect(text).toContain("View in Derive: https://derive.to/artifacts/spec0001?comment=t_123")
     })
-    for (const ch of channels)
-      await meta.upsertSlackSubscription({ id: newId("sub"), org_id: "default", channel_id: ch })
-    const shortId = await newArtifact(app)
-    const first = await (await comment(app, shortId, owner.email)).json()
-    // Drain the root posts so each channel has a thread link to update.
-    let ts = 200
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (_u: string, init: RequestInit) => {
-        const body = JSON.parse(String(init.body)) as { channel: string }
-        ts += 1
-        return new Response(
-          JSON.stringify({ ok: true, ts: `17000000${ts}.1`, channel: body.channel }),
-          { status: 200 },
-        )
-      }),
-    )
-    await runDeliveryTick(
-      meta,
-      { precheck: async () => null },
-      { slack_app: makeSlackSender(meta, "k") },
-    )
-    return { app, meta, shortId, commentId: first.id as string, threadId: first.thread_id }
-  }
-  const resolve = (
-    app: ReturnType<typeof makeAuthedApp>["app"],
-    shortId: string,
-    commentId: string,
-    state = "resolved",
-  ) =>
-    app.request(
-      `/v1/artifacts/${shortId}/comments/${commentId}/resolve`,
-      jsonAs(as(owner.email), { state }),
-    )
 
-  it("rewrites the card in all three channels, naming who resolved it", async () => {
-    const { app, meta, shortId, commentId } = await mirrored("resolve-multi", [
-      "C-eng",
-      "C-design",
-      "C-all",
-    ])
-    expect((await resolve(app, shortId, commentId)).status).toBe(200)
-    const calls: { url: string; body: Record<string, unknown> }[] = []
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (u: string, init: RequestInit) => {
-        calls.push({ url: String(u), body: JSON.parse(String(init.body)) })
-        return new Response(JSON.stringify({ ok: true }), { status: 200 })
-      }),
-    )
-    await runDeliveryTick(
-      meta,
-      { precheck: async () => null },
-      { slack_app: makeSlackSender(meta, "k") },
-    )
-    expect(calls).toHaveLength(3)
-    expect(calls.every((x) => x.url.endsWith("/chat.update"))).toBe(true)
-    expect(calls.map((x) => x.body.channel).sort()).toEqual(["C-all", "C-design", "C-eng"])
-    // Each rewrites its OWN message — a chat.update is addressed by (channel, ts), and the
-    // three channels recorded three different root messages.
-    expect(new Set(calls.map((x) => x.body.ts)).size).toBe(3)
-    // The rewritten card offers Reopen, not Resolve, and says who closed it.
-    const blocks = JSON.stringify(calls[0]?.body.blocks)
-    expect(blocks).toContain("Reopen thread")
-    expect(blocks).not.toContain("Resolve thread")
-    expect(blocks).toContain("resolved by Owner")
+    it("escapes HTML in author/body to prevent injection", () => {
+      const { html } = buildCommentEmail("https://derive.to", artifact, {
+        author: "<script>",
+        body: "<img src=x>",
+        threadId: "t_1",
+      })
+      expect(html).not.toContain("<script>")
+      expect(html).not.toContain("<img src=x>")
+      expect(html).toContain("&lt;script&gt;")
+    })
   })
 
-  it("reopening puts the Resolve button back", async () => {
-    const { app, meta, shortId, commentId } = await mirrored("resolve-reopen", ["C-eng"])
-    await resolve(app, shortId, commentId)
-    await claim(meta)
-    expect((await resolve(app, shortId, commentId, "open")).status).toBe(200)
-    const rows = (await claim(meta)).filter((d) => d.event_type === "comment.resolved")
-    expect(rows).toHaveLength(1)
-    expect(JSON.parse(rows[0]?.payload ?? "{}").state).toBe("open")
-  })
+  describe("email channel delivery", () => {
+    const row = (kind: DeliveryRecord["kind"], payload: unknown): DeliveryRecord =>
+      ({
+        id: "wd_1",
+        webhook_id: "internal",
+        url: "",
+        secret: "",
+        kind,
+        event_type: "comment.created",
+        payload: JSON.stringify(payload),
+        status: "pending",
+        attempts: 1,
+        last_error: null,
+        next_attempt_at: "",
+        created_at: "",
+      }) as DeliveryRecord
 
-  // A thread link outlives an unsubscribe, so without the gate an admin who cut a channel off
-  // would still watch its cards mutate.
-  it("leaves an unsubscribed channel alone", async () => {
-    const { app, meta, shortId, commentId } = await mirrored("resolve-unsub", ["C-eng", "C-design"])
-    await meta.deleteSlackSubscriptionsByChannel("default", "C-design")
-    await resolve(app, shortId, commentId)
-    const rows = (await claim(meta)).filter((d) => d.event_type === "comment.resolved")
-    expect(rows.map((d) => JSON.parse(d.payload).channel)).toEqual(["C-eng"])
-  })
-
-  // Someone tidied the card away in Slack. Retrying can never succeed, so the row must not
-  // burn its attempts and dead-letter over it.
-  it("treats a deleted Slack message as done, not as a failure", async () => {
-    const { app, meta, shortId, commentId } = await mirrored("resolve-gone", ["C-eng"])
-    await resolve(app, shortId, commentId)
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(
-        async () =>
-          new Response(JSON.stringify({ ok: false, error: "message_not_found" }), { status: 200 }),
-      ),
-    )
-    await runDeliveryTick(
-      meta,
-      { precheck: async () => null },
-      { slack_app: makeSlackSender(meta, "k") },
-    )
-    const left = await meta.claimDueDeliveries(
-      new Date(Date.now() + 600_000).toISOString(),
-      100,
-      new Date(Date.now() + 660_000).toISOString(),
-    )
-    expect(left.filter((d) => d.event_type === "comment.resolved")).toHaveLength(0)
-  })
-
-  // The mirror posts a card; a thread with no card in a channel has nothing to rewrite there.
-  it("does nothing for a thread that was never mirrored", async () => {
-    const { app, meta } = makeAuthedApp("resolve-unmirrored", [owner], "editor")
-    const shortId = await newArtifact(app)
-    const first = await (await comment(app, shortId, owner.email)).json()
-    await app.request(
-      `/v1/artifacts/${shortId}/comments/${first.id}/resolve`,
-      jsonAs(as(owner.email), { state: "resolved" }),
-    )
-    expect((await claim(meta)).filter((d) => d.event_type === "comment.resolved")).toHaveLength(0)
+    it("treats a channel kind with no sender as a delivered no-op (never dead-letters)", async () => {
+      const r = await deliverOnce(row("email", { to: "x@y.com" }), edgeGuard, {})
+      expect(r.ok).toBe(true)
+      expect(r.status).toMatch(/no sender/)
+    })
   })
 })

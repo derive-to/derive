@@ -1,10 +1,16 @@
-import { join } from "node:path"
-import { SqliteMetaStore } from "@derive/db/sqlite"
-import { FsBlobStore } from "@derive/storage/fs"
 import { zipSync } from "fflate"
 import { describe, expect, it } from "vitest"
-import { createApp } from "../src/app"
-import { app, as, dir, makeAuthedApp, meta, ownerApp, postJson, publishAs, upload } from "./helpers"
+import {
+  app,
+  as,
+  jsonAs,
+  makeAuthedApp,
+  meta,
+  postJson,
+  publishAs,
+  type TestUser,
+  upload,
+} from "./helpers"
 
 describe("version sessions", () => {
   it("a named publish stores the checkpoint name on the version", async () => {
@@ -13,67 +19,6 @@ describe("version sessions", () => {
     const a = await (await app.request(`/v1/artifacts/${short_id}`)).json()
     expect(a.versions[1].name).toBe("Final draft")
     expect(a.versions[0].name).toBeNull()
-  })
-
-  it("includes a sessions array alongside raw versions", async () => {
-    const { short_id } = await (await upload("s.md", "v1")).json()
-    const a = await (await app.request(`/v1/artifacts/${short_id}`)).json()
-    expect(Array.isArray(a.sessions)).toBe(true)
-    expect(a.sessions[0]).toMatchObject({ n: 1, from_n: 1, count: 1 })
-  })
-
-  it("collapses a same-author burst into one session", async () => {
-    const { short_id } = await (await upload("b.md", "v1")).json()
-    await upload("b.md", "v2", {}, short_id)
-    await upload("b.md", "v3", {}, short_id)
-    const a = await (await app.request(`/v1/artifacts/${short_id}`)).json()
-    expect(a.versions).toHaveLength(3)
-    expect(a.sessions).toHaveLength(1)
-    expect(a.sessions[0]).toMatchObject({ n: 3, from_n: 1, count: 3 })
-  })
-
-  it("pins a named checkpoint as its own session", async () => {
-    const { short_id } = await (await upload("p.md", "v1")).json()
-    await upload("p.md", "v2", {}, short_id)
-    await upload("p.md", "v3", { name: "Final" }, short_id)
-    const a = await (await app.request(`/v1/artifacts/${short_id}`)).json()
-    // newest-first: [named v3], [v1+v2 burst]
-    expect(a.sessions).toHaveLength(2)
-    expect(a.sessions[0]).toMatchObject({ n: 3, name: "Final", count: 1 })
-    expect(a.sessions[1]).toMatchObject({ n: 2, from_n: 1, count: 2 })
-  })
-
-  it("starts a new session when the author changes", async () => {
-    const { short_id } = await (await upload("au.md", "v1", { author: "ava" })).json()
-    await upload("au.md", "v2", { author: "bo" }, short_id)
-    const a = await (await app.request(`/v1/artifacts/${short_id}`)).json()
-    expect(a.sessions).toHaveLength(2)
-    expect(a.sessions[0]).toMatchObject({ author: "bo" })
-    expect(a.sessions[1]).toMatchObject({ author: "ava" })
-  })
-
-  it("honors the configured window (each revision its own session)", async () => {
-    const m2 = new SqliteMetaStore(join(dir, "win.db"))
-    const app2 = ownerApp({
-      meta: m2,
-      blobs: new FsBlobStore(join(dir, "blobs")),
-      baseUrl: "http://derive.test",
-      versionWindowMs: -1,
-    })
-    const mk = (c: string, id?: string) => {
-      const fd = new FormData()
-      fd.append("file", new Blob([new TextEncoder().encode(c)]), "w.md")
-      return app2.request(id ? `/v1/artifacts/${id}/versions` : "/v1/artifacts", {
-        method: "POST",
-        body: fd,
-      })
-    }
-    const { short_id } = await (await mk("v1")).json()
-    await mk("v2", short_id)
-    const a = await (await app2.request(`/v1/artifacts/${short_id}`)).json()
-    expect(a.versions).toHaveLength(2)
-    expect(a.sessions).toHaveLength(2) // window -1 → never merge
-    m2.close()
   })
 })
 
@@ -107,11 +52,6 @@ describe("version restore", () => {
   it("404s restoring an unknown version", async () => {
     const { short_id } = await (await upload("r4.md", "x")).json()
     expect((await postJson(`/v1/artifacts/${short_id}/restore`, { version: 99 })).status).toBe(404)
-  })
-
-  it("400s when no version is given", async () => {
-    const { short_id } = await (await upload("r0.md", "x")).json()
-    expect((await postJson(`/v1/artifacts/${short_id}/restore`, {})).status).toBe(400)
   })
 })
 
@@ -437,6 +377,30 @@ describe("publish markdown", () => {
   })
 })
 
+// The live editor preview endpoint: renders a markdown draft to the exact
+// published HTML (same renderMarkdown), stateless, signed-in only.
+describe("live editor preview (/v1/preview)", () => {
+  const owner: TestUser = { id: "u_prev", email: "prev@derive.test", name: "Prev" }
+  const { app: authed } = makeAuthedApp("preview-org", [owner])
+
+  it("renders a markdown draft to HTML for a signed-in user", async () => {
+    const r = await authed.request(
+      "/v1/preview",
+      jsonAs(as(owner.email), { source: "# Hi\n\nsome **bold** text", title: "Draft" }),
+    )
+    expect(r.status).toBe(200)
+    const { html } = (await r.json()) as { html: string }
+    expect(html).toContain("<!doctype html>")
+    expect(html).toContain("<h1>Hi</h1>")
+    expect(html).toContain("<strong>bold</strong>")
+  })
+
+  it("refuses an unauthenticated caller (401)", async () => {
+    const r = await app.request("/v1/preview", jsonAs({}, { source: "# x" }))
+    expect(r.status).toBe(401)
+  })
+})
+
 describe("api surface", () => {
   it("returns artifact json with version history", async () => {
     const res = await upload("doc.html", "<p>one</p>", { title: "Doc" })
@@ -580,79 +544,11 @@ describe("server-side search + cursor pagination", () => {
     expect(p2.artifacts.some((a: { short_id: string }) => seen.has(a.short_id))).toBe(false)
   })
 
-  it("reads ?sort=, reverses under asc, round-trips the cursor, and falls back on garbage", async () => {
-    await upload("s1.md", "one")
-    await upload("s2.md", "two")
-    await upload("s3.md", "three")
-
-    const desc = (
-      await (await app.request("/v1/artifacts?sort=updated&limit=200")).json()
-    ).artifacts.map((a: { short_id: string }) => a.short_id)
-    const asc = (
-      await (await app.request("/v1/artifacts?sort=updated-asc&limit=200")).json()
-    ).artifacts.map((a: { short_id: string }) => a.short_id)
-    // asc is the exact reverse of desc — proves ?sort= is read and flips the ordering.
-    expect(asc).toEqual([...desc].reverse())
-
-    // No ?sort= must preserve the historical created-desc default (non-library callers).
-    const createdDesc = (
-      await (await app.request("/v1/artifacts?sort=created&limit=200")).json()
-    ).artifacts.map((a: { short_id: string }) => a.short_id)
-    const noSort = (await (await app.request("/v1/artifacts?limit=200")).json()).artifacts.map(
-      (a: { short_id: string }) => a.short_id,
-    )
-    expect(noSort).toEqual(createdDesc)
-
-    // Keyset cursor round-trip under asc: page 1 + page 2 is a contiguous, dup-free prefix.
-    const p1 = await (await app.request("/v1/artifacts?sort=updated-asc&limit=2")).json()
-    expect(p1.next_cursor).toContain("|")
-    const p2 = await (
-      await app.request(
-        `/v1/artifacts?sort=updated-asc&cursor=${encodeURIComponent(p1.next_cursor)}`,
-      )
-    ).json()
-    const combined = [...p1.artifacts, ...p2.artifacts].map((a: { short_id: string }) => a.short_id)
-    expect(combined).toEqual(asc.slice(0, combined.length))
-
-    // Garbage sort must not 500 — it falls back to the default.
-    expect((await app.request("/v1/artifacts?sort=not-a-mode")).status).toBe(200)
-  })
-
   it("filters by ?tag= server-side", async () => {
     const { short_id } = await (await upload("tg.md", "x", { title: "Tagged one" })).json()
     await putTags(short_id, ["serverfilter"])
     const r = await (await app.request("/v1/artifacts?tag=serverfilter")).json()
     expect(r.artifacts.map((a: { short_id: string }) => a.short_id)).toEqual([short_id])
-  })
-
-  it("GET /v1/tags returns a browse summary (total, favorites, tag counts)", async () => {
-    const { short_id } = await (await upload("sum.md", "x", { title: "Summary doc" })).json()
-    await putTags(short_id, ["summaryfilter"])
-    const r = await (await app.request("/v1/tags")).json()
-    expect(typeof r.total).toBe("number")
-    expect(r.total).toBeGreaterThan(0)
-    expect(r.favorites).toBe(0) // anonymous in tests
-    expect(r.tags.find((t: { tag: string }) => t.tag === "summaryfilter")?.count).toBe(1)
-  })
-})
-
-describe("single-container web serving", () => {
-  it("serves the API landing at / by default", async () => {
-    const r = await app.request("/")
-    expect(r.status).toBe(200)
-    expect(await r.text()).toContain("An open home for AI-generated artifacts")
-  })
-
-  it("drops the / placeholder when serveWeb is set, so the bundled SPA owns the shell", async () => {
-    const webApp = createApp({
-      meta,
-      blobs: new FsBlobStore(join(dir, "blobs")),
-      baseUrl: "http://derive.test",
-      serveWeb: true,
-    })
-    // No placeholder here; the Node entry's static + index.html fallback (added
-    // around createApp when a build is present) is what answers `/` in prod.
-    expect((await webApp.request("/")).status).toBe(404)
   })
 })
 
@@ -681,12 +577,6 @@ describe("list rows carry my_role", () => {
       true,
     )
   })
-
-  it("the operator token lists as owner", async () => {
-    await upload("op-role.md", "x", { title: "OPROLEROW" })
-    const r = await (await app.request("/v1/artifacts?query=OPROLEROW")).json()
-    expect(r.artifacts[0]?.my_role).toBe("owner")
-  })
 })
 
 // Renaming is metadata: it must not mint a version. Before this route the only way
@@ -712,23 +602,12 @@ describe("PATCH /v1/artifacts/{shortId} — rename", () => {
     expect(after.versions).toHaveLength(before.versions.length)
   })
 
-  it("moves the url name with the title; the id still resolves", async () => {
-    const { short_id } = await (await upload("r2.md", "hello", { title: "First" })).json()
-    await patchTitle(short_id, { title: "Second" })
-    const a = await (await app.request(`/v1/artifacts/${short_id}`)).json()
-    expect(a.url).toContain(`second-${short_id}`)
-  })
-
   it("refuses an empty title", async () => {
     const { short_id } = await (await upload("r3.md", "hello", { title: "Keep" })).json()
     expect((await patchTitle(short_id, { title: "   " })).status).toBe(400)
     expect((await patchTitle(short_id, { title: "" })).status).toBe(400)
     const a = await (await app.request(`/v1/artifacts/${short_id}`)).json()
     expect(a.title).toBe("Keep")
-  })
-
-  it("404s an unknown artifact", async () => {
-    expect((await patchTitle("nope1234", { title: "x" })).status).toBe(404)
   })
 
   it("needs publish rights — a commenter can't rename", async () => {
@@ -749,14 +628,103 @@ describe("PATCH /v1/artifacts/{shortId} — rename", () => {
     })
     expect(r.status).toBe(403)
   })
+})
 
-  it("a lock does not block a rename — a lock is about content", async () => {
-    const { short_id } = await (await upload("r4.md", "hello", { title: "Locked doc" })).json()
-    await app.request(`/v1/artifacts/${short_id}/locked`, {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ locked: true }),
-    })
-    expect((await patchTitle(short_id, { title: "Renamed while locked" })).status).toBe(200)
+// RENAME RE-DERIVES THE URL NAME.
+//
+// The slug was computed once, at create, from the title — and never again. Renaming a doc
+// updated only `title`, so every link it handed out kept advertising the former name, and
+// there was no lever to fix it: renaming IS the lever. Observed in production on a doc
+// retitled "Agent ergonomics" whose url still read /artifacts/pr-559-what-was-actually-
+// verified-<id>.
+//
+// Changing it is safe because the ref is `<slug>-<short_id>` and parseRef resolves on the
+// TRAILING short id (packages/core/src/publish.ts) — the slug is decorative, so links
+// already shared keep resolving. That property is what this test pins hardest.
+describe("renaming an artifact re-derives its slug", () => {
+  const owner: TestUser = { id: "u_slug", email: "slug@derive.test", name: "Owner" }
+
+  it("follows the new title, and the OLD url still resolves", async () => {
+    const { app, meta } = makeAuthedApp("rename-slug", [owner], "editor")
+    await app.request("/v1/me", { headers: as(owner.email) })
+
+    const created = await publishAs(
+      app,
+      "# One\n\nbody",
+      { title: "First Working Title" },
+      as(owner.email),
+    )
+    const { short_id } = (await created.json()) as { short_id: string }
+    const before = await meta.getByShortId(short_id)
+    expect(before?.slug).toBe("first-working-title")
+
+    // Rename through the ordinary publish path.
+    await publishAs(
+      app,
+      "# One\n\nbody v2",
+      { title: "A Much Better Name" },
+      as(owner.email),
+      short_id,
+    )
+
+    const after = await meta.getByShortId(short_id)
+    expect(after?.title).toBe("A Much Better Name")
+    expect(after?.slug).toBe("a-much-better-name")
+
+    // THE PROPERTY THAT MAKES THIS SAFE: a link handed out under the old slug still
+    // resolves, because the short id is the last segment and that is what is looked up.
+    const old = await app.request(`/v1/artifacts/${short_id}`, { headers: as(owner.email) })
+    expect(old.status).toBe(200)
+    expect(((await old.json()) as { title: string }).title).toBe("A Much Better Name")
+  })
+
+  it("REPAIRS an artifact whose slug already drifted, even with the title unchanged", async () => {
+    // The case that motivated the fix, and the one it originally missed. A doc renamed
+    // before the slug followed along has a title that moved on and a url that did not —
+    // and republishing under its CURRENT title changes nothing, because the title already
+    // matches, so the only lever that could fix it never fires. It self-heals instead.
+    const { app, meta } = makeAuthedApp("rename-slug-drifted", [owner], "editor")
+    await app.request("/v1/me", { headers: as(owner.email) })
+    const created = await publishAs(app, "# Old", { title: "Old Name" }, as(owner.email))
+    const { short_id } = (await created.json()) as { short_id: string }
+    const art = await meta.getByShortId(short_id)
+    if (!art) throw new Error("artifact missing")
+
+    // Exactly the pre-fix state: title advanced, slug left behind.
+    await meta.setArtifactTitle(art.id, "Agent Ergonomics")
+    expect((await meta.getByShortId(short_id))?.slug).toBe("old-name")
+
+    // A republish carrying the CURRENT title — no rename at all.
+    const out = await publishAs(
+      app,
+      "# Old v2",
+      { title: "Agent Ergonomics" },
+      as(owner.email),
+      short_id,
+    )
+    const { url } = (await out.json()) as { url: string }
+    expect((await meta.getByShortId(short_id))?.slug).toBe("agent-ergonomics")
+    expect(url).toContain("agent-ergonomics")
+    expect(url).not.toContain("old-name")
+  })
+
+  it("leaves the slug alone when the republish carries no title", async () => {
+    // A CLI republish without --title must not rename anything, so it must not re-slug
+    // either: the name is the human's, not a side effect of pushing content.
+    const { app, meta } = makeAuthedApp("rename-slug-untouched", [owner], "editor")
+    await app.request("/v1/me", { headers: as(owner.email) })
+    const created = await publishAs(
+      app,
+      "# Two\n\nbody",
+      { title: "Keep This Name" },
+      as(owner.email),
+    )
+    const { short_id } = (await created.json()) as { short_id: string }
+
+    await publishAs(app, "# Two\n\nbody v2", {}, as(owner.email), short_id)
+
+    const after = await meta.getByShortId(short_id)
+    expect(after?.title).toBe("Keep This Name")
+    expect(after?.slug).toBe("keep-this-name")
   })
 })

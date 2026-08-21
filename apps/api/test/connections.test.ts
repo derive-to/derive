@@ -200,25 +200,6 @@ describe("connections (Sources — per-user connected accounts)", () => {
     expect(list).not.toContain("secret_enc")
   })
 
-  it("a secret connection needs no base_url — the host is ours to know, not yours to type", async () => {
-    // Credentials are delivered to runs, so nothing confines a pasted key to a host and there
-    // is no boundary for a base_url to express. A recognized vendor's host is ours to know; an
-    // unrecognized key gets a free-text note instead. So the field is optional, and a
-    // connection without one is perfectly valid — it just can't produce tools for the
-    // machineless lane (pinned in context-connections.test.ts).
-    const res = await app.request(
-      "/v1/connections",
-      jsonAs(as(owner.email), {
-        toolkit: "own-api",
-        kind: "secret",
-        secret: "sk_no_host_needed_1234",
-        scope: "workspace",
-      }),
-    )
-    expect(res.status).toBe(201)
-    expect(await res.json()).toMatchObject({ kind: "secret", base_url: null, status: "active" })
-  })
-
   it("a secret connection refuses http bases and missing fields", async () => {
     const noFields = await app.request(
       "/v1/connections",

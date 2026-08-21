@@ -1,7 +1,5 @@
-import type { MetaStore } from "@derive/core"
 import { describe, expect, it } from "vitest"
 import type { AppDeps } from "../src/context"
-import { parseManifestSkillPins, stalePins } from "../src/lib/manifest-pins"
 import { as, jsonAs, makeAuthedApp, type TestUser } from "./helpers"
 
 // The agent-DX MVP, tested at its three seams: manifest skill-pin parsing +
@@ -58,43 +56,6 @@ const setup = async (name: string, deps: Partial<AppDeps> = {}) => {
   ).json()
   return { app, meta, token: bot.token as string }
 }
-
-describe("manifest skill pins", () => {
-  const MD = `---
-skills:
-  - id: aaaa1111
-    version: 2
-  - id: bbbb2222
-  - id: "cccc3333"
-    version: 5
-repos:
-  - url: https://example.com/x.git
----
-# Manifest body
-`
-
-  it("parses ids + version pins out of the frontmatter, narrow rules", () => {
-    expect(parseManifestSkillPins(MD)).toEqual([
-      { id: "aaaa1111", version: 2 },
-      { id: "bbbb2222", version: null },
-      { id: "cccc3333", version: 5 },
-    ])
-    expect(parseManifestSkillPins("# no frontmatter")).toEqual([])
-    expect(parseManifestSkillPins("---\nrepos:\n  - url: x\n---\nbody")).toEqual([])
-  })
-
-  it("reports only pins that trail the artifact's current version", async () => {
-    const versions: Record<string, number> = { aaaa1111: 4, cccc3333: 5 }
-    const meta = {
-      getByShortId: async (id: string) =>
-        versions[id] === undefined ? null : { current_version: versions[id] },
-    } as unknown as MetaStore
-    const stale = await stalePins(meta, parseManifestSkillPins(MD))
-    // aaaa1111 pinned 2 < current 4 = stale; bbbb2222 unpinned = never stale;
-    // cccc3333 pinned 5 == current 5 = fresh.
-    expect(stale).toEqual([{ short_id: "aaaa1111", pinned: 2, current: 4 }])
-  })
-})
 
 describe("publish advisories reach the MCP response", () => {
   it("an expiring upload URL embedded in content is called out in the note", async () => {

@@ -4,7 +4,7 @@ import { join } from "node:path"
 import { SqliteMetaStore } from "@derive/db/sqlite"
 import { FsBlobStore } from "@derive/storage/fs"
 import Database from "better-sqlite3"
-import { afterAll, describe, expect, it } from "vitest"
+import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { createApp } from "../src/app"
 import { makeAuth, migrateAuth } from "../src/auth-config"
 
@@ -83,18 +83,19 @@ describe("a second deployment on the same database", () => {
   const email = "shared@derive.test"
   const password = "initialPassw0rd"
 
-  it("production creates the user and the encrypted jwks row", async () => {
+  // Production's side of the contract: the migration, the account, and the encrypted jwks row a
+  // second deployment inherits.
+  beforeAll(async () => {
     const prod = makeAuth(db, BASE, PROD_SECRET)
     await migrateAuth(prod)
-    expect(
-      (await post(appWith(PROD_SECRET), "/api/auth/sign-up/email", { email, password, name: "S" }))
-        .status,
-    ).toBe(200)
+    const signUp = await post(appWith(PROD_SECRET), "/api/auth/sign-up/email", {
+      email,
+      password,
+      name: "S",
+    })
+    if (signUp.status !== 200) throw new Error(`sign-up failed: ${signUp.status}`)
     // Force the row to exist — this is what a second deployment inherits.
     await prod.api.getJwks()
-    expect((db.prepare("select count(*) as n from jwks").get() as { n: number }).n).toBeGreaterThan(
-      0,
-    )
   })
 
   it("SAME secret: signs in and reads the session — a preview works", async () => {

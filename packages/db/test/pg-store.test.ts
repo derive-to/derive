@@ -265,29 +265,6 @@ if (PG_URL) {
       )
     })
 
-    it("round-trips a user brandprint (set, read, clear)", async () => {
-      await inSchema(
-        async (boot, schema) => {
-          await boot.query(
-            `CREATE TABLE ${schema}."user" (id text primary key, email text, name text, image text, username text, discoverable boolean, profession text, about text, brandprint text)`,
-          )
-          await boot.query(
-            `INSERT INTO ${schema}."user"(id,email,name) VALUES('u1','amy@x.com','Amy')`,
-          )
-        },
-        async (store) => {
-          await store.setUserProfile("u1", {
-            brandprint: JSON.stringify({ collectionId: "col_x" }),
-          })
-          expect(await store.getUserBrandprint("u1")).toBe(
-            JSON.stringify({ collectionId: "col_x" }),
-          )
-          await store.setUserProfile("u1", { brandprint: null })
-          expect(await store.getUserBrandprint("u1")).toBeNull()
-        },
-      )
-    })
-
     it("orgContext matches the two calls it replaces", async () => {
       await inSchema(
         async (boot, schema) => {

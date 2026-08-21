@@ -121,31 +121,4 @@ describe("move an artifact to a different workspace", () => {
     )
     expect(blocked.status).toBe(409)
   })
-
-  it("detaches an org-scoped webhook that targeted it, falling back to org-wide", async () => {
-    const a = await (await publishAs(app, "<h1>doc4</h1>", {}, as(ana.email))).json()
-    const art = await meta.getByShortId(a.short_id)
-    if (!art) throw new Error("missing artifact")
-    const hook = await meta.createWebhook({
-      id: "wh_move_test",
-      org_id: "default",
-      artifact_id: art.id,
-      url: "https://example.com/hook",
-      secret: "s",
-      kind: "generic",
-      events: "*",
-    })
-    expect(hook.artifact_id).toBe(art.id)
-
-    await meta.setWorkspace("acme3", "Acme 3")
-    await meta.setMembership({ id: "m_ana_acme3", org_id: "acme3", user_id: ana.id, role: "owner" })
-    const moved = await app.request(
-      `/v1/artifacts/${a.short_id}/move`,
-      jsonAs(as(ana.email), { targetOrgId: "acme3" }),
-    )
-    expect(moved.status).toBe(200)
-
-    const after = await meta.getWebhook(hook.id, "default")
-    expect(after?.artifact_id).toBeNull()
-  })
 })

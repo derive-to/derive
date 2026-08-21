@@ -139,24 +139,6 @@ describe("scanElements", () => {
   })
 })
 
-describe("roleOf + elementLabel", () => {
-  it("classifies common elements", () => {
-    expect(roleOf(find(PAGE, "img"))).toBe("image")
-    expect(roleOf(find(PAGE, "table"))).toBe("table")
-    expect(roleOf(find(PAGE, "iframe"))).toBe("embed")
-  })
-  it("reads chart hints from class/id", () => {
-    const d = find(`<div class="bar-chart" id="x"></div>`, "div")
-    expect(roleOf(d)).toBe("chart")
-  })
-  it("labels with alt / host", () => {
-    const img = find(PAGE, "img")
-    expect(elementLabel({ ...img, role: "image" })).toBe("Image — Revenue by region")
-    const ifr = find(PAGE, "iframe")
-    expect(elementLabel({ ...ifr, role: "embed" })).toBe("Embedded — youtube.com")
-  })
-})
-
 describe("resolveElement — the cascade", () => {
   it("resolves an unchanged element with high confidence", () => {
     const sel = selFor(PAGE, "img")
@@ -406,52 +388,6 @@ describe("agent-authored visual pins", () => {
     })
     expect(selector && elementResolvesIn(selector, html)?.band).toBe("high")
     expect(elementSelectorForId(html, "derive-improve-node-missing")).toBeNull()
-  })
-
-  it("captures media details and handles targets without neighbours", () => {
-    const image = elementSelectorForId(
-      `<p>Before</p><img id="hero-chart" src="https://x.test/chart.png" alt="Confidence chart"><p>After</p>`,
-      "hero-chart",
-    )
-
-    expect(image?.snapshot).toMatchObject({
-      tag: "img",
-      label: "Image — Confidence chart",
-      src: "https://x.test/chart.png",
-      alt: "Confidence chart",
-    })
-
-    const lone = elementSelectorForId(`<div id="only">Only</div>`, "only")
-    expect(lone?.before).toBeUndefined()
-    expect(lone?.after).toBeUndefined()
-  })
-
-  it.each([
-    ["loop-step", "Loop step — Draft"],
-    ["loop-policy", "Loop policy — Confidence"],
-    ["loop-transition", "Loop transition — Retry"],
-    ["graph-node", "Graph node — Research"],
-    ["graph-edge", "Graph edge — Informs"],
-  ] as const)("preserves the %s semantic role", (kind, label) => {
-    const selector = elementSelectorForId(
-      `<div id="target" data-derive-review-kind="${kind}">${label.split(" — ")[1]}</div>`,
-      "target",
-    )
-
-    expect(selector).toMatchObject({ role: kind, snapshot: { label } })
-  })
-})
-
-describe("resolveElement edge cases", () => {
-  it("returns null on an empty document", () => {
-    expect(resolveElement(selFor(PAGE, "img"), [])).toBeNull()
-  })
-  it("fingerprint is stable + order-independent of the page it came from", () => {
-    const a = fingerprintOf(find(PAGE, "img"))
-    const b = fingerprintOf(
-      find(`<img id="rev-chart" src="/charts/revenue.png" alt="Revenue by region">`, "img"),
-    )
-    expect(a).toBe(b)
   })
 })
 

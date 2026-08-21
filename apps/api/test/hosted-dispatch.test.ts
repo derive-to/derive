@@ -3,15 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest"
 import { dispatchPass, dispatchRunNow, type Substrate } from "../src/lib/dispatch"
 import { SESSION_MAX_AGE_MS } from "../src/lib/run-lifecycle"
 import { signRunToken, verifyRunToken } from "../src/lib/run-token"
-import {
-  as,
-  bearer,
-  connectPoolPlan,
-  jsonAs,
-  makeAuthedApp,
-  publishAs,
-  type TestUser,
-} from "./helpers"
+import { as, bearer, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
 // HOSTED DISPATCH, tested with NO container, NO wrangler, and NO network. The substrate is the
 // only platform-specific piece, so a fake one lets the whole correctness story — materialize,
@@ -92,23 +84,6 @@ describe("hosted dispatch — the platform-agnostic core", () => {
     // Dispatch does NOT claim — the executor does. So the run is still queued, and that is
     // exactly why a duplicate boot is harmless (the loser's claim finds nothing).
     expect((await meta.getRun(run.id))?.status).toBe("queued")
-  })
-
-  it("hands the immutable Codex choice to the substrate", async () => {
-    await connectPoolPlan(meta, "default", "codex")
-    const auto = await mkAutomation({
-      trigger: { kind: "manual" },
-      instruction: "Use the selected coding agent.",
-      provider: "codex",
-    })
-    const run = await runNow(auto.id)
-    const { substrate, started } = fakeSubstrate()
-
-    expect((await dispatchPass(deps(substrate))).started).toBe(1)
-    expect(started[0]).toMatchObject({
-      runId: run.id,
-      execution: { version: 1, provider: "codex", location: "hosted", model: null },
-    })
   })
 
   it("a run already claimed by an executor is not dispatched again", async () => {
@@ -339,37 +314,6 @@ describe("run retries", () => {
     const final = await meta.getRun(run.id)
     expect(final?.status).toBe("failed")
   })
-
-  it("the activity view explains a run's state without anyone reading logs", async () => {
-    const auto = await mkAutomation({ trigger: { kind: "manual" }, instruction: "Explain me." })
-    const run = await runNow(auto.id)
-    const agentId = (await meta.getRun(run.id))?.agent_id ?? ""
-    await failRun(run.id, agentId, auto.agent_token, {
-      outcome: "failed",
-      why: "timed out",
-      retryable: true,
-    })
-
-    const res = await app.request("/v1/workspace/runs", { headers: as(owner.email) })
-    const { runs } = (await res.json()) as {
-      runs: {
-        id: string
-        timeline: {
-          phase: string
-          retries: number
-          last_error: string | null
-          waiting_until: string | null
-        }
-      }[]
-    }
-    const row = runs.find((r) => r.id === run.id)
-    // Queued again, one attempt spent, WHY it failed, and when it will next be tried — the
-    // four things an operator asks when an automation "isn't doing anything".
-    expect(row?.timeline.phase).toBe("queued")
-    expect(row?.timeline.retries).toBe(1)
-    expect(row?.timeline.last_error).toContain("timed out")
-    expect(row?.timeline.waiting_until).toBeTruthy()
-  })
 })
 
 describe("the workspace master switch", () => {
@@ -562,19 +506,6 @@ describe("the dispatch queue is a latency nudge, never the source of truth", () 
     const now = new Date().toISOString()
     expect(await meta.claimRunById(run.id, agentId, now)).toBeTruthy()
     expect(await meta.claimRunById(run.id, agentId, now)).toBeNull()
-  })
-
-  it("a nudge for an already-settled run does nothing (a late message costs nothing)", async () => {
-    const auto = await mkAutomation({ trigger: { kind: "manual" }, instruction: "Too late." })
-    const run = await runNow(auto.id)
-    const agentId = (await meta.getRun(run.id))?.agent_id ?? ""
-    const now = new Date().toISOString()
-    await meta.claimRunById(run.id, agentId, now)
-    await meta.finishRun(run.id, agentId, { status: "succeeded", finishedAt: now })
-
-    const { substrate, started } = fakeSubstrate()
-    expect(await dispatchRunNow(deps(substrate), run.id)).toBe(false)
-    expect(started).toHaveLength(0)
   })
 })
 

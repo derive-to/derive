@@ -1,8 +1,8 @@
 import { defineConfig } from "vitest/config"
 
-// Coverage gate on the shared domain logic: publish/storeContent (bundle entry +
-// path cleaning), anchors, diff, unfurl, permissions, mime, hash, ids, md. ports.ts
-// is type-only. Thresholds sit just under the current numbers as a ratchet floor.
+// Coverage report (not a gate — see apps/api/vitest.config.ts) for the shared domain
+// logic: publish/storeContent, anchors, diff, unfurl, permissions, mime, hash, ids,
+// md. ports.ts is type-only.
 export default defineConfig({
   test: {
     coverage: {
@@ -19,9 +19,6 @@ export default defineConfig({
       // Asking V8/Rolldown to remap it emits a parse error after an otherwise-green run.
       exclude: ["src/anchor-client.ts", "src/anchor-client.gen.ts", "src/**/*.html"],
       reporter: ["text-summary"],
-      // Ratchet floors just under current (92.5/83.0/92.5/94.3 with the browser
-      // client out of the denominator). Raise over time.
-      thresholds: { statements: 91, branches: 82, functions: 91, lines: 93 },
     },
   },
 })

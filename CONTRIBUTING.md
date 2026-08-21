@@ -57,10 +57,11 @@ Every change must pass the same deterministic gate as CI before it is pushed:
 pnpm verify
 ```
 
-That command runs `pnpm run ci`, `pnpm typecheck`, and `pnpm test:coverage` in the
-same order as CI's `check` job. Do not substitute `pnpm test`: it skips the coverage
-ratchet and can pass when the required gate fails. Run the three constituent commands
-individually while iterating if that makes failures easier to isolate.
+That command runs `pnpm run ci` (Biome plus every custom guardrail, concurrently, via
+[scripts/guardrails.mjs](scripts/guardrails.mjs)), `pnpm typecheck`, and `pnpm test`, in
+the same order as CI. Run the three individually while iterating; `pnpm lint:<name>`
+runs a single guardrail. The pre-push hook runs `pnpm verify:affected`, which scopes
+typecheck and tests to the packages the branch changed and their dependents.
 
 Quick fixes:
 
@@ -182,12 +183,10 @@ shipping. If something below surprises you, that's the guardrail doing its job:
   files + dependencies only (not every unused export, to leave the design-system surface
   alone).
 
-The custom checks (`lint:tokens`, `lint:frontend`, `lint:testids`, `lint:api`, `lint:schema`,
-`lint:hyperdrive`, `lint:boundaries`, `lint:env`, `lint:deadcode`) and Biome all run inside
-`pnpm run ci`, so the one gate command covers them; `pnpm typecheck` and `pnpm test:coverage`
-(which includes the authz-coverage test and each package's coverage ratchet) complete it.
-`pnpm verify` runs all three in the same order as CI's `check` job. Prefer it over running
-a subset, since `pnpm test` alone skips the ratchet and can pass where CI fails.
+The custom checks and Biome all run inside `pnpm run ci`
+([scripts/guardrails.mjs](scripts/guardrails.mjs) is the list, and runs them concurrently),
+so the one gate command covers them; `pnpm typecheck` and `pnpm test` (which includes the
+authz-coverage test) complete it. `pnpm verify` runs all three in the same order as CI.
 
 ## Database migrations
 
@@ -255,12 +254,33 @@ provider.
 
 ## Tests
 
-API behavior is covered by `apps/api/test/*` (vitest against `app.request()`, no
-network). New routes get tests; bug fixes get a regression test. Hit a real
-SQLite store rather than mocking the DB layer.
+Most of this suite is written by agents, and an agent will add a test file for every
+function it touches unless it is told what the bar is. This is the bar.
+
+**A test earns its place when it pins a contract whose silent breakage would be** a
+security hole, a cross-tenant leak, data loss, a money error, or a broken core flow
+(publish → version → read → comment → review, on the HTTP or MCP surface), or when it
+reproduces a bug that actually shipped. It goes through the surface a user or agent
+uses (`app.request()`, the MCP tool, the CLI) against the real embedded store, and it
+asserts the outcome, not the mechanism.
+
+**A test does not earn its place by** restating a small pure function, checking copy
+strings, walking every branch of a config parser, verifying that a mock was called, or
+moving a coverage number. If you are writing one of those, delete it and make the
+nearest surface-level test assert one more thing instead.
+
+**Where it goes: the file that already owns the feature, not a new file.** In
+`apps/api`, every file that imports `test/helpers.ts` boots the whole app (~2s), so file
+count is what makes the suite slow, not case count. One file per feature area
+(`slack`, `mcp`, `oauth`, `billing`, …) with `describe` blocks inside it. A pure
+helper's test, if it is genuinely needed, goes in `packages/core` next to the code.
+
+Coverage is reported, not gated: `pnpm test:coverage` prints a number and nothing
+fails on it. The per-package ratchet it replaced made every deletion of a weak test a
+red build, which rewarded volume over contracts.
 
 ```bash
-pnpm test       # the suite on embedded SQLite (zero-config), the first CI job
+pnpm test       # the suite on embedded SQLite (zero-config), CI's `tests` lane
 pnpm test:pg    # the SAME suite on a real Postgres (ephemeral Docker container)
 ```
 

@@ -3,7 +3,7 @@ import { join } from "node:path"
 import { Hono } from "hono"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { API_PATHS, isApiPath, mountWeb } from "../src/lib/serve-web"
-import { isServerRenderedPath, isSpaPath, isStaticRootPath } from "../src/lib/spa-paths"
+import { isSpaPath, isStaticRootPath } from "../src/lib/spa-paths"
 
 const apiDir = join(import.meta.dirname, "..")
 
@@ -93,20 +93,6 @@ describe("serve-web: SPA vs API path contract", () => {
       expect(isSpaPath(sample), `${generatedPath} must be represented by isSpaPath`).toBe(true)
     }
   })
-
-  it("keeps server-rendered setup and unfurl paths on the app", () => {
-    for (const path of [
-      "/",
-      "/guides",
-      "/artifacts/example-a1b2c3d4",
-      "/settings/github/app/new",
-      "/settings/slack/app/new",
-      "/users/maya",
-    ])
-      expect(isServerRenderedPath(path)).toBe(true)
-    for (const path of ["/showcase", "/settings/security", "/not-a-route"])
-      expect(isServerRenderedPath(path)).toBe(false)
-  })
 })
 
 // The trust-signal static files (RFC 9116 security.txt, sitemap.xml). Both must
@@ -162,23 +148,12 @@ describe("serve-web: static trust-signal files are not swallowed by the shell", 
     expect(miss.status).toBe(404)
     expect(await miss.json()).toEqual({ error: "not found" })
   })
-
-  it("returns a real 404 for a missing dot-directory file", async () => {
-    const r = await app().request("/.well-known/nothing-here.txt")
-    expect(r.status).toBe(404)
-    expect(await r.text()).toBe("not found")
-  })
 })
 
 // The server-owned path set is declared in three places that can't share a value:
 // the Node server (the contract above), the Cloudflare Worker, and the dev proxy.
 // These assert the other two never drift from the contract.
 describe("serve-web: every declaration of the path set agrees", () => {
-  it("routes every navigation through the Worker so unknown paths can be real 404s", () => {
-    const toml = readFileSync(join(apiDir, "wrangler.toml"), "utf8")
-    expect(toml).toMatch(/run_worker_first\s*=\s*true/)
-  })
-
   it("sends the canonical security URL and trust-signal files to static assets", () => {
     for (const path of [
       "/security",

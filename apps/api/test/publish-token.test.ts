@@ -7,7 +7,6 @@ import { FsBlobStore } from "@derive/storage/fs"
 import Database from "better-sqlite3"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { createApp } from "../src/app"
-import { zipBundleFiles } from "../src/lib/bundle"
 import { signCapabilityToken } from "../src/lib/capability-token"
 import {
   PUBLISH_TARGET_CREATE,
@@ -27,20 +26,6 @@ describe("publish token", () => {
       userId: "u_1",
       target: "*",
     })
-  })
-
-  it("round-trips a revise token (target = short_id)", async () => {
-    const tok = await signPublishToken(secret, "ws_a", "u_1", "lp5e8s04", 10_000)
-    expect(await verifyPublishToken(secret, tok, 5_000)).toEqual({
-      orgId: "ws_a",
-      userId: "u_1",
-      target: "lp5e8s04",
-    })
-  })
-
-  it("returns null after expiry", async () => {
-    const tok = await signPublishToken(secret, "ws_a", "u_1", "*", 10_000)
-    expect(await verifyPublishToken(secret, tok, 20_000)).toBeNull()
   })
 
   it("returns null when tampered or signed with another secret", async () => {
@@ -149,20 +134,6 @@ describe("POST /v1/artifacts/t/:token (create)", () => {
     const v = await meta.getVersion(art.id, 1)
     expect(v?.author).toBe("Pub User")
     expect(art.org_id).toBe("default")
-  })
-
-  it("publishes a zip as a multi-page bundle", async () => {
-    const tok = await createTok()
-    const zip = await zipBundleFiles({
-      "index.html": "<!doctype html><h1>Site</h1><a href=about.html>about</a>",
-      "about.html": "<!doctype html><h1>About</h1>",
-    })
-    const res = await postFile(`/v1/artifacts/t/${tok}`, zip, "site.zip", "application/zip", {
-      title: "Prototype",
-    })
-    expect(res.status).toBe(201)
-    const body = await res.json()
-    expect(body.kind).toBe("bundle")
   })
 
   it("a create token cannot be used on the revise route (target mismatch)", async () => {

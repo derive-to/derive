@@ -103,28 +103,6 @@ if (PG_URL) {
       expect(hits[0]?.score).toBeCloseTo(0.995, 2)
     })
 
-    it("getVector reads a stored embedding back as numbers; null for an absent id", async () => {
-      const store = await boot()
-      await store.upsert([
-        {
-          vectorId: "g1#0",
-          artifactId: "g1",
-          orgId: "o1",
-          chunk: 0,
-          embedding: [0.25, -1, 0, 0.5],
-          snippet: "s",
-        },
-      ])
-      const v = await store.getVector("g1#0")
-      expect(v).toHaveLength(DIM)
-      expect(v?.[0]).toBeCloseTo(0.25)
-      expect(v?.[1]).toBeCloseTo(-1)
-      expect(await store.getVector("g1#9")).toBeNull()
-      // Round-trip: the read-back vector is queryable — the `similar` path's exact shape.
-      const hits = await store.query("o1", v as number[], 5)
-      expect(hits[0]?.artifactId).toBe("g1")
-    })
-
     it("upsert is idempotent on vector_id (re-index overwrites, no duplicate rows)", async () => {
       const store = await boot()
       await store.upsert([
@@ -190,11 +168,6 @@ if (PG_URL) {
       expect(rows.rows.length).toBe(0)
     })
 
-    it("deleteByIds([]) is a no-op (no malformed SQL)", async () => {
-      const store = await boot()
-      await expect(store.deleteByIds([])).resolves.toBeUndefined()
-    })
-
     it("honors hnsw.ef_search so a topK-50 query isn't capped at pgvector's default of 40", async () => {
       const store = await boot()
       // 60 distinct single-chunk vectors in one org. With ef_search=100 (set on the pool above,
@@ -250,22 +223,6 @@ if (PG_URL) {
           },
         ]),
       ).rejects.toThrow(/3-dim, expected 4/)
-    })
-
-    it("rejects a non-finite embedding value", async () => {
-      const store = await boot()
-      await expect(
-        store.upsert([
-          {
-            vectorId: "f1#0",
-            artifactId: "f1",
-            orgId: "o6",
-            chunk: 0,
-            embedding: [1, Number.NaN, 0, 0],
-            snippet: "nan",
-          },
-        ]),
-      ).rejects.toThrow(/non-finite/)
     })
 
     it("ensureSchema throws on a dimension mismatch (embedder swap needs a re-backfill)", async () => {

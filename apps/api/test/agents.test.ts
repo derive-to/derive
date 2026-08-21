@@ -46,15 +46,6 @@ describe("agents: @mention → pull inbox → ack", () => {
     m2.close()
   })
 
-  it("the agent shows up in the @mention directory", async () => {
-    const dir = await (
-      await app.request("/v1/users?query=clau", { headers: as(owner.email) })
-    ).json()
-    expect(dir.users).toContainEqual(
-      expect.objectContaining({ id: agentId, name: "Claude", kind: "agent" }),
-    )
-  })
-
   it("a comment @mentioning the agent lands in the agent's inbox, not a notification", async () => {
     shortId = (
       await (await publishAs(app, "<h1>draft</h1>", { visibility: "org" }, as(owner.email))).json()

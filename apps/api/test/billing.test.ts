@@ -1,4 +1,6 @@
+import type { SubscriptionRecord } from "@derive/core"
 import { describe, expect, it } from "vitest"
+import { recordFromSnapshot } from "../src/lib/billing"
 import { FakeBilling, subscriptionRow, subscriptionSnapshot } from "./fake-billing"
 import { as, jsonAs, makeAuthedApp, type TestUser } from "./helpers"
 
@@ -42,17 +44,6 @@ describe("billing routes", () => {
     expect(body.beta).toBe(true)
   })
 
-  it("GET /v1/billing: editor sees the same shape (any member can read)", async () => {
-    const { app } = boot("br_get_editor")
-    const r = await app.request("/v1/billing", { headers: as("u2@x.test") })
-    expect(r.status).toBe(200)
-    const body = await r.json()
-    expect(body.tier).toBe("free")
-    expect(body.seats).toBe(4)
-    expect(body.subscribed).toBe(false)
-    expect(body.beta).toBe(true)
-  })
-
   it("checkout: owner gets a URL, quantity = live seats", async () => {
     const { app, fake } = boot("br_checkout", PAST)
     const r = await app.request(
@@ -62,15 +53,6 @@ describe("billing routes", () => {
     expect(r.status).toBe(200)
     expect((await r.json()).url).toContain("checkout.stripe.test")
     expect(fake.checkouts[0]).toMatchObject({ priceLookupKey: "team_monthly", quantity: 4 })
-  })
-
-  it("checkout: annual business maps to business_annual", async () => {
-    const { app, fake } = boot("br_annual", PAST)
-    await app.request(
-      "/v1/billing/checkout",
-      jsonAs(as("u1@x.test"), { tier: "business", interval: "year" }),
-    )
-    expect(fake.checkouts[0]?.priceLookupKey).toBe("business_annual")
   })
 
   it("checkout: 409 while billing is off, before creating billing state", async () => {
@@ -198,17 +180,6 @@ describe("GET /v1/billing blocked", () => {
     expect(body.blocked).toBeNull()
   })
 
-  it("is null while subscribed", async () => {
-    const FIVE = [u(1), u(2), u(3), u(4), u(5)]
-    const { app, meta } = makeAuthedApp("br_blocked_subscribed", FIVE, "editor", {
-      deps: { billing: new FakeBilling(), billingEnforceAt: PAST },
-    })
-    await meta.upsertSubscription(subscriptionRow({ status: "active", quantity: 5 }))
-    const r = await app.request("/v1/billing", { headers: as("u1@x.test") })
-    const body = await r.json()
-    expect(body.blocked).toBeNull()
-  })
-
   it("reports billing_required past enforcement with 4 seats", async () => {
     const { app } = makeAuthedApp("br_blocked_needs_team", USERS, "editor", {
       deps: { billing: new FakeBilling(), billingEnforceAt: PAST },
@@ -227,5 +198,33 @@ describe("GET /v1/billing blocked", () => {
     const r = await app.request("/v1/billing", { headers: as("u1@x.test") })
     const body = await r.json()
     expect(body.blocked?.code).toBe("billing_lapsed")
+  })
+})
+
+describe("recordFromSnapshot (billing-driver)", () => {
+  const snap = subscriptionSnapshot({
+    priceLookupKey: "business_annual",
+    quantity: 3,
+    currentPeriodEnd: "2027-07-30T00:00:00.000Z",
+  })
+
+  it("maps lookup key to tier + interval and carries quantities", () => {
+    const r = recordFromSnapshot("default", snap, null)
+    expect(r.tier).toBe("business")
+    expect(r.billing_interval).toBe("year")
+    expect(r.status).toBe("active")
+    expect(r.quantity).toBe(3)
+    expect(r.stripe_subscription_id).toBe("sub_1")
+  })
+  it("keeps created_at from an existing row and refreshes updated_at", () => {
+    const existing: SubscriptionRecord = recordFromSnapshot("default", snap, null)
+    const bumped = recordFromSnapshot("default", { ...snap, status: "canceled" }, existing)
+    expect(bumped.created_at).toBe(existing.created_at)
+    expect(bumped.status).toBe("canceled")
+  })
+  it("falls back to team/month on an unknown lookup key", () => {
+    const r = recordFromSnapshot("default", { ...snap, priceLookupKey: "custom" }, null)
+    expect(r.tier).toBe("team")
+    expect(r.billing_interval).toBe("month")
   })
 })

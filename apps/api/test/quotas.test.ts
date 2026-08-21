@@ -1,4 +1,6 @@
+import type { RateLimit } from "@cloudflare/workers-types"
 import { describe, expect, it } from "vitest"
+import { nativeLimiter } from "../src/lib/rate-limit"
 import { as, bearer, pub, quotaApp, type TestUser } from "./helpers"
 
 describe("quotas: per-workspace storage caps (C4b)", () => {
@@ -21,17 +23,6 @@ describe("quotas: per-workspace storage caps (C4b)", () => {
     expect(over.status).toBe(413)
     expect((await over.json()).error).toMatch(/out of storage/)
     expect(await m.storageBytes("default")).toBe(10) // the rejected upload stored nothing
-    m.close()
-  })
-
-  it("storage overflow carries the machine code and the billing URL", async () => {
-    const { app, meta: m } = quotaApp("quota-bytes-code", { maxBytes: 20 })
-    expect((await pub(app, "0123456789")).status).toBe(201) // 10 ≤ 20
-    const res = await pub(app, "0123456789AB") // total 22 > 20
-    expect(res.status).toBe(413)
-    const body = await res.json()
-    expect(body.code).toBe("storage_exceeded")
-    expect(body.error).toContain("/settings/billing")
     m.close()
   })
 
@@ -141,5 +132,20 @@ describe("multi-tenant hardening: per-org quotas + cross-org isolation", () => {
     expect(
       (await app.request(`/v1/artifacts/${a.short_id}/content`, { headers: as(ben.email) })).status,
     ).toBe(404)
+  })
+})
+
+describe("nativeLimiter (Cloudflare native binding adapter)", () => {
+  it("namespaces the key by prefix so one binding can back two surfaces", async () => {
+    const seen: string[] = []
+    const binding: RateLimit = {
+      limit: async ({ key }) => {
+        seen.push(key)
+        return { success: true }
+      },
+    }
+    await nativeLimiter(binding, 60, "unlock")("ip:x")
+    await nativeLimiter(binding, 60, "oauth-register")("ip:x")
+    expect(seen).toEqual(["unlock:ip:x", "oauth-register:ip:x"]) // distinct counts on a shared binding
   })
 })

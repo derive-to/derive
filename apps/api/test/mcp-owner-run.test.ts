@@ -246,22 +246,6 @@ describe.skipIf(process.env.DERIVE_TEST_DB === "pg")("MCP owner-run + create_con
     expect(agentTurns.some((m) => m.author_id === created.agent_id)).toBe(false)
   })
 
-  it("a give on an unserved queue steers the owner to owner-run, not to waiting", async () => {
-    const { app } = ownerApp("own-steer")
-    await setupContext(app)
-    // No runner has ever polled: the owner who queued the work is told they can
-    // serve it themselves (a registered agent or non-owner keeps the wait text —
-    // covered in mcp-contexts' offline-note test).
-    const opened = await call(app, "tok_full", "use", {
-      context: "QA",
-      instruction: "Run the smoke suite.",
-      wait: 0,
-    })
-    expect(opened.state).toBe("open")
-    expect(opened.note).toContain("serve it yourself")
-    expect(opened.note).toContain('use({context: "QA"})')
-  })
-
   it("non-owner grants fall through to the give path unchanged", async () => {
     const { app } = ownerApp("own-fallthrough")
     await setupContext(app)

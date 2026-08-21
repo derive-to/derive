@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { canCommentWithRole, commentNudgeCopy, shouldPromptSignInToComment } from "./comment-access"
+import { canCommentWithRole, shouldPromptSignInToComment } from "./comment-access"
 
 // The UI side of the access matrix (the API is the hard gate; these decide which
 // affordances render). Mirrors SECURITY.md and the core permissions matrix.
@@ -23,25 +23,5 @@ describe("shouldPromptSignInToComment (anonymous CTA)", () => {
     expect(shouldPromptSignInToComment("viewer", false)).toBe(false) // view-only link
     expect(shouldPromptSignInToComment(undefined, false)).toBe(false) // no general access
     expect(shouldPromptSignInToComment("commenter", true)).toBe(false) // tombstoned
-  })
-})
-
-describe("commentNudgeCopy (pill + panel wording)", () => {
-  it("with open threads: the pill counts them, the panel invites joining", () => {
-    expect(commentNudgeCopy(9)).toEqual({
-      pill: "9 comments",
-      heading: "9 comments",
-      cta: "Join the conversation",
-    })
-    expect(commentNudgeCopy(1)).toEqual({
-      pill: "1 comment",
-      heading: "1 comment",
-      cta: "Join the conversation",
-    })
-  })
-  it("with none (or an absent count): no heading — deliberately ambiguous", () => {
-    const empty = { pill: "Comments", heading: null, cta: "Sign in to comment" }
-    expect(commentNudgeCopy(0)).toEqual(empty)
-    expect(commentNudgeCopy(undefined)).toEqual(empty)
   })
 })

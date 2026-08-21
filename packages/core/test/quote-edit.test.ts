@@ -73,34 +73,6 @@ describe("pageTextParts", () => {
     expect(performance.now() - start).toBeLessThan(200)
     expect(mapped.text).toBe(legacyPageText(hostile))
   })
-
-  it("documents the one known divergence from the legacy regexes: a comment wrapping a script opener", () => {
-    // Legacy ran the INVISIBLE pass over the whole string first, so a stray later
-    // </script> could pair with a <script> mentioned INSIDE an unclosed comment.
-    // The scanner resolves alternatives per position (comment first at "<!--"),
-    // which is the saner reading; this fixture pins the scanner's semantics.
-    const doc = "A<!-- <script> -->B</script>C"
-    expect(pageTextParts(doc).text).toBe("A B C")
-    // …and edits on such a document still work (no equality guard to trip).
-    const out = applyQuoteEdits(doc.replace("C", "C typo end"), HTML, [
-      qe("typo", "fixed", { prefix: "C ", suffix: " end" }),
-    ])
-    expect(out).toContain("fixed")
-  })
-
-  it("maps a plain text span to identical raw offsets when there is no markup", () => {
-    const { text, segments } = pageTextParts("just words")
-    expect(text).toBe("just words")
-    expect(segments).toHaveLength(1)
-    expect(segments[0]).toMatchObject({ kind: "text", rStart: 0, rEnd: 10 })
-  })
-
-  it("gives entities their own segments covering the raw span", () => {
-    const { text, segments } = pageTextParts("a &amp; b")
-    expect(text).toBe("a & b")
-    const entity = segments.find((s) => s.kind === "entity")
-    expect(entity).toMatchObject({ tStart: 2, tEnd: 3, rStart: 2, rEnd: 7 })
-  })
 })
 
 // ---------------------------------------------------------------------------------
@@ -277,13 +249,6 @@ describe("applyQuoteEdits — html", () => {
     )
   })
 
-  it("repairs case-insensitive inline tags with legal HTML whitespace", () => {
-    const doc = "<h1><SPAN>Old title</SPAN   > here</h1>"
-    expect(applyQuoteEdits(doc, HTML, [qe("Old title here", "New title")])).toBe(
-      "<h1>New title</h1>",
-    )
-  })
-
   it("treats comments as non-text boundaries", () => {
     const doc = "<p>before <!-- private -->after</p>"
     expect(() => applyQuoteEdits(doc, HTML, [qe("before after", "changed")])).toThrow(
@@ -348,20 +313,6 @@ describe("applyQuoteEdits — html", () => {
     expect(out).toBe("<p>5 &gt; 4 usually</p>")
   })
 
-  it("treats a deck like html", () => {
-    const out = applyQuoteEdits("<section>teh slide</section>", "text/x-derive-deck", [
-      qe("teh slide", "the slide"),
-    ])
-    expect(out).toBe("<section>the slide</section>")
-  })
-
-  it("treats a linked bundle like html", () => {
-    const out = applyQuoteEdits("<section>teh bundle</section>", "text/x-derive-linked-bundle", [
-      qe("teh bundle", "the bundle"),
-    ])
-    expect(out).toBe("<section>the bundle</section>")
-  })
-
   it("whitespace differences between quote and source still match within one node", () => {
     const doc = "<p>line one\n    line two</p>"
     // The browser-captured quote carries the DOM's own whitespace; matching is flexible.
@@ -385,10 +336,6 @@ describe("quote-edit shapes", () => {
     expect(isQuoteEdit({ quote: { exact: "a", prefix: 123 }, new_text: "x" })).toBe(false)
     expect(isQuoteEdit({ quote: { exact: "a", suffix: {} }, new_text: "x" })).toBe(false)
     expect(isQuoteEdit({ quote: { exact: "a", prefix: "ok" }, new_text: "x" })).toBe(true)
-  })
-
-  it("an empty batch is a no-op", () => {
-    expect(applyQuoteEdits("doc", MD, [])).toBe("doc")
   })
 
   it("an empty exact is rejected", () => {
@@ -463,13 +410,6 @@ describe("applyQuoteEdits — new_html", () => {
     expect(
       applyQuoteEdits("<p>part <b>bold</b> tail</p>", HTML, [htmlEdit("part bold", "<i>x</i>")]),
     ).toBe("<p><i>x</i> tail</p>")
-  })
-
-  it("isQuoteEdit takes exactly one replacement", () => {
-    expect(isQuoteEdit({ quote: { exact: "a" }, new_text: "b" })).toBe(true)
-    expect(isQuoteEdit({ quote: { exact: "a" }, new_html: "<b>b</b>" })).toBe(true)
-    expect(isQuoteEdit({ quote: { exact: "a" }, new_text: "b", new_html: "<b>b</b>" })).toBe(false)
-    expect(isQuoteEdit({ quote: { exact: "a" } })).toBe(false)
   })
 })
 

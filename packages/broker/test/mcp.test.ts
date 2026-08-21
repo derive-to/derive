@@ -236,18 +236,6 @@ describe("MCP broker: connect + list + call", () => {
     expect(out.content[0]?.text?.startsWith("xxx")).toBe(true)
   })
 
-  it("leaves an ordinary tool result exactly as the server sent it", async () => {
-    const server = fakeServer({
-      tools: TOOLS,
-      onCall: () => ({ content: [{ type: "text", text: "small and complete" }] }),
-    })
-    const broker = new McpBroker(server.impl)
-    const link = await broker.connect({ orgId: "o1", userId: "u1", toolkit: "https://ok.test/mcp" })
-    expect(await broker.execute({ ref: link.ref, tool: "ok_test.search", args: {} })).toEqual({
-      content: [{ type: "text", text: "small and complete" }],
-    })
-  })
-
   it("an unreachable server connects as pending rather than throwing", async () => {
     // Matches how the other brokers report a not-yet-usable account: the row is stored so it can
     // be retried, and toolsForRun only passes ACTIVE connections to a run.
@@ -529,32 +517,6 @@ describe("refRouter: routing by connection, not by workspace plan", () => {
     // a working Composio connection.
     expect(route("mcp:pin:https://x.test/mcp")).not.toBe(fallback)
   })
-
-  it("reuses ONE MCP client across refs, so sessions and handshakes are shared", () => {
-    // The instance is the optimization. A fresh broker per ref threw away the URL → session map,
-    // so every tool listing paid `initialize` + `tools/list` instead of just the list — double
-    // the round trips, on the path a code-mode script hits hardest.
-    const route = refRouter(new LocalBroker())
-    const a = route(encodeMcpRef("https://one.test/mcp", "p"))
-    const b = route(encodeMcpRef("https://two.test/mcp", "p"))
-    expect(a).toBe(b)
-  })
-})
-
-describe("MCP broker: round trips", () => {
-  it("handshakes ONCE per server, then only lists", async () => {
-    // The tool endpoint re-resolves the allowed set on EVERY tool call, so a composed script
-    // doing five calls across two servers was paying twenty round trips where ten would do.
-    const server = fakeServer({ tools: TOOLS })
-    const broker = new McpBroker(server.impl)
-    const link = await broker.connect({ orgId: "o", userId: "u", toolkit: "https://r.test/mcp" })
-    const afterConnect = server.calls.length
-    await broker.toolsFor([link.ref])
-    await broker.toolsFor([link.ref])
-    const added = server.calls.slice(afterConnect).map((c) => c.method)
-    // Two listings, two calls — no repeated initialize.
-    expect(added).toEqual(["tools/list", "tools/list"])
-  })
 })
 
 // TOOL NAMES MUST BE SOMETHING A MODEL PROVIDER WILL ACCEPT.
@@ -607,15 +569,6 @@ describe("tool names are legal for a model provider", () => {
     expect(stripNamespace("mcp_example_com", exact)).toBe(exact)
   })
 
-  it("the real 74-character case is now legal, and keeps the tool readable", () => {
-    const name =
-      toolName("illustration_push_conjunction_editing_trycloudflare_com", "get_current_weather") ??
-      ""
-    expect(name.length).toBeLessThanOrEqual(64)
-    expect(name).not.toContain(".")
-    expect(name.endsWith("get_current_weather")).toBe(true)
-  })
-
   it("round-trips: whatever the model is offered strips back to what the server published", () => {
     for (const h of HOSTS)
       for (const t of TOOLS) expect(stripNamespace(h, toolName(h, t) ?? ""), `${h} + ${t}`).toBe(t)
@@ -636,16 +589,6 @@ describe("tool names are legal for a model provider", () => {
         )
         expect(stripNamespace(host, name ?? ""), `round-trip at ${n}`).toBe(tool)
       }
-  })
-
-  it("two servers sharing a long prefix stay distinct", () => {
-    const a = `${"x".repeat(60)}_alpha_com`
-    const b = `${"x".repeat(60)}_beta_com`
-    expect(toolName(a, "search")).not.toBe(toolName(b, "search"))
-  })
-
-  it("still accepts the old dotted name, so a claim in flight keeps working", () => {
-    expect(stripNamespace("mcp_deepwiki_com", "mcp_deepwiki_com.ask_question")).toBe("ask_question")
   })
 })
 

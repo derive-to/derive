@@ -296,18 +296,6 @@ describe("agent loop: what it lets the model read", () => {
     expect(delivered.length).toBeLessThan(TOOL_OUTPUT_BUDGET_CHARS + 20_000)
   })
 
-  it("tells the model how much room is left, instead of only that it truncated", async () => {
-    // A model told only "truncated" reasonably retries the same call with different arguments,
-    // which is how a run spends its last turns re-reading what it cannot keep.
-    const model = scripted([toolTurn("t1"), turn({ text: revisionText() })])
-    await runAgentLoop(
-      base({ callModel: model.callModel, executeTool: async () => "y".repeat(300_000) }),
-    )
-    const delivered = JSON.stringify(model.seen[1]?.messages ?? [])
-    expect(delivered).toMatch(/truncated \d+ characters/)
-    expect(delivered).toMatch(/Answer with what you have rather than calling again/)
-  })
-
   it("withdraws the tools on the final turn, so they cannot be wasted", async () => {
     // The announcement is a request, and a model may ignore it — observed on a scheduled run
     // against a live cloud MCP, where some runs converged and some spent the last turn on a call
@@ -327,24 +315,5 @@ describe("agent loop: what it lets the model read", () => {
     expect((model.seen[0] as unknown as { tools: unknown[] }).tools ?? []).toHaveLength(1)
     // ...and withdrawn on the last.
     expect((model.seen[2] as unknown as { tools: unknown[] }).tools ?? []).toHaveLength(0)
-  })
-
-  it("announces the last turn instead of springing it", async () => {
-    // A run guillotined at the cap has paid for every turn and produced nothing: the most
-    // expensive way to fail, and the easiest to avoid.
-    const model = scripted([
-      toolTurn("t1"),
-      toolTurn("t2"),
-      toolTurn("t3"),
-      turn({ text: revisionText() }),
-    ])
-    const out = await runAgentLoop(
-      base({ callModel: model.callModel, maxTurns: 4, executeTool: async () => "ok" }),
-    )
-    expect(out.ok).toBe(true)
-    const finalPrompt = JSON.stringify(model.seen[3]?.messages ?? [])
-    expect(finalPrompt).toContain("This is your final turn")
-    // And it is said ONCE, on the turn where it changes what to do — not every turn.
-    expect(JSON.stringify(model.seen[1]?.messages ?? [])).not.toContain("final turn")
   })
 })

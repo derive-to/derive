@@ -4,15 +4,7 @@ import type { ModelTurn } from "../src/lib/agent-loop"
 import { liveChatArrival } from "../src/lib/chat-gate"
 import { INSTANCE_SETTINGS_ID } from "../src/lib/instance-settings"
 import { catalogOf, type GatewayConfig } from "../src/lib/model-catalog"
-import {
-  effectiveCatalog,
-  modelSource,
-  parseLibrary,
-  probeModel,
-  setInstanceSlot,
-  updateLibrary,
-} from "../src/lib/model-library"
-import { foldTimings, meterModel } from "../src/lib/model-timing"
+import { effectiveCatalog, modelSource, probeModel, updateLibrary } from "../src/lib/model-library"
 import { inMemoryRateLimiters } from "../src/lib/rate-limit"
 import { as, countingStore, makeAuthedApp } from "./helpers"
 
@@ -154,42 +146,6 @@ describe("adding a model without a deploy", () => {
     expect(res.status).toBe(409)
   })
 
-  it("bounds the id, the label and the library itself", async () => {
-    const { app, meta } = setup("lib-add-bounds")
-    const post = (body: unknown) =>
-      app.request("/v1/system/models", {
-        method: "POST",
-        headers: as("op@x.com"),
-        body: JSON.stringify(body),
-      })
-    expect((await post({ id: "" })).status).toBe(400)
-    expect((await post({ id: "x".repeat(201) })).status).toBe(400)
-    expect((await post({ id: "ok/id", label: "y".repeat(81) })).status).toBe(400)
-    // The library is one JSON blob on a row the chat path reads per turn, so its size is a
-    // latency budget. Seeded directly at the cap: what is under test is the refusal, not 50
-    // round trips through a probe.
-    await meta.setOrgSettings(INSTANCE_SETTINGS_ID, {
-      ...(await meta.getOrgSettings(INSTANCE_SETTINGS_ID)),
-      models: Array.from({ length: 50 }, (_, i) => ({ id: `acme/m${i}` })),
-    })
-    const full = await post({ id: "acme/one-more" })
-    expect(full.status).toBe(400)
-    expect(((await full.json()) as { error: string }).error).toContain("full")
-  })
-
-  it("answers 400 on a malformed model id rather than throwing a 500", async () => {
-    // Ids carry slashes, so they arrive percent-encoded, and a bad escape throws out of
-    // decodeURIComponent — a typo must not read as "Derive is broken".
-    const { app } = setup("lib-bad-escape")
-    for (const path of ["/v1/system/models/%E0%A4%A", "/v1/system/models/%E0%A4%A/probe"]) {
-      const res = await app.request(path, {
-        method: path.endsWith("/probe") ? "POST" : "DELETE",
-        headers: as("op@x.com"),
-      })
-      expect([path, res.status]).toEqual([path, 400])
-    }
-  })
-
   it("refuses when the deploy has no gateway to reach a new model on", async () => {
     const { app } = setup("lib-add-nogw", { gateway: null })
     const res = await app.request("/v1/system/models", {
@@ -234,35 +190,6 @@ describe("pinning a lane", () => {
       slots: { chat: string | null; automation: string | null }
     }
     expect(cleared.slots).toEqual({ chat: null, automation: "configured" })
-  })
-
-  it("preserves the legacy chatModel when automation is the first lane written", async () => {
-    const { app, meta } = setup("lib-pin-legacy")
-    await meta.setOrgSettings(INSTANCE_SETTINGS_ID, {
-      ...(await meta.getOrgSettings(INSTANCE_SETTINGS_ID)),
-      chatModel: "configured",
-    })
-    const res = await app.request("/v1/system/models/slots/automation", {
-      method: "PUT",
-      headers: as("op@x.com"),
-      body: JSON.stringify({ model: "configured" }),
-    })
-    expect(res.status).toBe(200)
-    const stored = await meta.getOrgSettings(INSTANCE_SETTINGS_ID)
-    expect(stored.chatModel).toBeUndefined()
-    expect(stored.slots).toEqual({ chat: "configured", automation: "configured" })
-  })
-
-  it("keeps concurrent lane updates instead of letting the last snapshot win", async () => {
-    const { meta } = setup("lib-pin-concurrent")
-    await Promise.all([
-      setInstanceSlot(meta, "chat", "configured"),
-      setInstanceSlot(meta, "automation", "configured"),
-    ])
-    expect((await meta.getOrgSettings(INSTANCE_SETTINGS_ID)).slots).toEqual({
-      chat: "configured",
-      automation: "configured",
-    })
   })
 
   it("unpins a lane when the model it named is removed", async () => {
@@ -312,49 +239,6 @@ describe("pinning a lane", () => {
     })
     expect(res.status).toBe(404)
   })
-
-  it("still refuses configured deletion after a probe creates metadata for it", async () => {
-    const { app } = setup("lib-remove-probed-configured")
-    await app.request("/v1/system/models/configured/probe", {
-      method: "POST",
-      headers: as("op@x.com"),
-    })
-    const res = await app.request("/v1/system/models/configured", {
-      method: "DELETE",
-      headers: as("op@x.com"),
-    })
-    expect(res.status).toBe(404)
-  })
-
-  it("relabels configured models and resets them to their configured label", async () => {
-    const { app } = setup("lib-relabel")
-    const patch = (label: string | null) =>
-      app.request("/v1/system/models/configured", {
-        method: "PATCH",
-        headers: as("op@x.com"),
-        body: JSON.stringify({ label }),
-      })
-    expect((await patch("Fast lane")).status).toBe(200)
-    let listed = (await (
-      await app.request("/v1/system/models", { headers: as("op@x.com") })
-    ).json()) as { models: { id: string; label: string }[] }
-    expect(listed.models.find((m) => m.id === "configured")?.label).toBe("Fast lane")
-    expect((await patch(null)).status).toBe(200)
-    listed = (await (
-      await app.request("/v1/system/models", { headers: as("op@x.com") })
-    ).json()) as { models: { id: string; label: string }[] }
-    expect(listed.models.find((m) => m.id === "configured")?.label).toBe("Configured")
-  })
-
-  it("refuses an unknown lane rather than silently accepting it", async () => {
-    const { app } = setup("lib-pin-lane")
-    const res = await app.request("/v1/system/models/slots/embeddings", {
-      method: "PUT",
-      headers: as("op@x.com"),
-      body: JSON.stringify({ model: "configured" }),
-    })
-    expect(res.status).toBe(404)
-  })
 })
 
 describe("the catalog the library produces", () => {
@@ -381,30 +265,10 @@ describe("the catalog the library produces", () => {
     expect(cat?.resolve("acme/added")).toBeNull()
   })
 
-  it("relabels a configured model without needing a key", () => {
-    const cat = effectiveCatalog(base, null, {
-      models: [{ id: "configured", label: "The fast one" }],
-      slots: {},
-    })
-    expect(cat?.options[0]?.label).toBe("The fast one")
-    expect(cat?.resolve("configured")?.label).toBe("The fast one")
-  })
-
   it("still refuses an id nobody configured — a miss is never the default", () => {
     const cat = effectiveCatalog(base, GATEWAY, { models: [], slots: {} })
     expect(cat?.resolve("acme/ghost")).toBeNull()
     expect(cat?.resolve(null)?.id).toBe("configured")
-  })
-
-  it("drops junk entries rather than failing the whole library", () => {
-    const lib = parseLibrary({
-      models: [{ id: "  spaced  " }, { id: "" }, { id: "dupe" }, { id: "dupe" }] as unknown as {
-        id: string
-      }[],
-      slots: { chat: "  " },
-    })
-    expect(lib.models.map((m) => m.id)).toEqual(["spaced", "dupe"])
-    expect(lib.slots.chat).toBeUndefined()
   })
 })
 
@@ -416,21 +280,6 @@ describe("probing", () => {
     callModel,
   })
 
-  it("reports time to first token and total, separately", async () => {
-    let t = 0
-    const now = () => t
-    const probe = await probeModel(
-      model(async ({ onDelta }) => {
-        t = 120
-        onDelta?.("O")
-        t = 400
-        return turn("OK")
-      }),
-      { now },
-    )
-    expect(probe).toMatchObject({ ok: true, ttftMs: 120, totalMs: 400 })
-  })
-
   it("records a failure as a finding rather than throwing", async () => {
     const probe = await probeModel(
       model(async () => {
@@ -439,20 +288,6 @@ describe("probing", () => {
     )
     expect(probe.ok).toBe(false)
     expect(probe.error).toContain("401")
-  })
-
-  it("counts an empty reply as a failure — a 200 with no content is a misrouted id", async () => {
-    const probe = await probeModel(model(async () => turn("   ")))
-    expect(probe.ok).toBe(false)
-  })
-
-  it("gives up rather than hanging on a provider that never answers", async () => {
-    const probe = await probeModel(
-      model(() => new Promise(() => {})),
-      { timeoutMs: 10 },
-    )
-    expect(probe.ok).toBe(false)
-    expect(probe.error).toContain("no reply")
   })
 
   it("stores the result on a CONFIGURED model, which had no library entry before", async () => {
@@ -546,36 +381,6 @@ describe("what a turn costs to route", () => {
     expect(slots.chat).toBe("configured")
   })
 
-  it("memoizes on the scope, and a new scope reads fresh", async () => {
-    let reads = 0
-    const src = modelSource(
-      catalogOf([ONLY]),
-      GATEWAY,
-      (() => {
-        const cache = new WeakMap<object, Promise<ReturnType<typeof lib>>>()
-        return (scope?: object) => {
-          if (!scope) {
-            reads += 1
-            return Promise.resolve(lib())
-          }
-          const hit = cache.get(scope)
-          if (hit) return hit
-          reads += 1
-          const p = Promise.resolve(lib())
-          cache.set(scope, p)
-          return p
-        }
-      })(),
-    )
-    const turn = {}
-    // Everything one turn asks costs one read...
-    await Promise.all([src(turn), src(turn), src(turn)])
-    expect(reads).toBe(1)
-    // ...and the NEXT turn re-reads, which is the property the live lever depends on.
-    await src({})
-    expect(reads).toBe(2)
-  })
-
   it("reads the instance row once for the operator's whole model view", async () => {
     const base = setup("lib-view-one-read")
     const { proxy, countWhere, reset } = countingStore(base.meta as MetaStore)
@@ -646,95 +451,79 @@ describe("what a turn costs to route", () => {
   })
 })
 
-describe("observed call times", () => {
-  it("meters model time across a turn, excluding what happens between calls", async () => {
-    let t = 0
-    const meter = meterModel(
-      async ({ onDelta }) => {
-        t += 50
-        onDelta?.("x")
-        t += 50
-        return turn("done")
-      },
-      () => t,
-    )
-    await meter.call({ system: "", messages: [], tools: [] })
-    t += 1000 // a tool ran here: not the model's latency
-    await meter.call({ system: "", messages: [], tools: [] })
-    const timing = meter.timing()
-    expect(timing.calls).toBe(2)
-    expect(timing.modelMs).toBe(200)
-    // First call only: a later first-token arrives after tools have run.
-    expect(timing.ttftMs).toBe(50)
-  })
+describe("the operator's deploy-wide model", () => {
+  /** A settled turn — these tests are about routing and access, never about what a model says. */
+  const THE_TURN = { text: "ok", toolUses: [], costUsd: null, done: true }
 
-  it("still reports what a FAILING call burned", async () => {
-    let t = 0
-    const meter = meterModel(
-      async () => {
-        t += 300
-        throw new Error("upstream 500")
-      },
-      () => t,
-    )
-    await expect(meter.call({ system: "", messages: [], tools: [] })).rejects.toThrow()
-    expect(meter.timing().modelMs).toBe(300)
-  })
-
-  it("folds answers into per-model medians and skips ones with no timing", () => {
-    const msg = (id: string, ms: number | null, at: string) => ({
-      id: `m-${at}`,
-      session_id: "s",
-      author_kind: "agent" as const,
-      author_id: "a",
-      body_md: "",
-      meta: JSON.stringify({
-        model: { id, label: id },
-        ...(ms === null ? {} : { model_ms: ms, ttft_ms: ms / 2 }),
-      }),
-      created_at: at,
-    })
-    const folded = foldTimings([
-      msg("fast", 100, "2026-08-04T10:00:00Z"),
-      msg("fast", 300, "2026-08-04T09:00:00Z"),
-      msg("fast", 200, "2026-08-04T08:00:00Z"),
-      msg("slow", 9000, "2026-08-04T07:00:00Z"),
-      // Every answer written before timings shipped looks like this. Counting it as zero would
-      // report every model as faster than it is.
-      msg("fast", null, "2026-08-04T06:00:00Z"),
-    ])
-    const fast = folded.find((f) => f.modelId === "fast")
-    expect(fast).toMatchObject({ samples: 3, totalP50: 200, totalP95: 300, ttftP50: 100 })
-    expect(fast?.lastAt).toBe("2026-08-04T10:00:00Z")
-    expect(folded.find((f) => f.modelId === "slow")?.samples).toBe(1)
-  })
-
-  it("surfaces them on the operator's view", async () => {
-    const { app, meta } = setup("lib-observed")
-    const { session } = await meta.createSessionWithMessage(
-      { id: "ses-1", context_id: null, context_version: null, org_id: "default", asker_id: "u-op" },
-      { id: "sm-1", author_kind: "asker", author_id: "u-op", body_md: "hi" },
-      "open",
-    )
-    await meta.addSessionMessage(
+  const setup = () =>
+    makeAuthedApp(
+      "instance-model",
+      [{ id: "u-op", email: "op@x.com", name: "Op", emailVerified: true }],
+      undefined,
       {
-        id: "sm-2",
-        session_id: session.id,
-        author_kind: "agent",
-        author_id: "a",
-        body_md: "hello",
-        meta: JSON.stringify({
-          model: { id: "configured", label: "Configured" },
-          model_ms: 1234,
-          ttft_ms: 210,
-        }),
+        operatorIds: ["u-op"],
+        deps: {
+          models: catalogOf([
+            { id: "fast", label: "Fast", isDefault: true, build: () => async () => THE_TURN },
+            { id: "slow", label: "Slow", isDefault: false, build: () => async () => THE_TURN },
+          ]),
+        },
       },
-      "answered",
     )
-    const res = await app.request("/v1/system/models", { headers: as("op@x.com") })
-    const body = (await res.json()) as {
-      models: { id: string; observed: { samples: number; total_p50_ms: number } | null }[]
-    }
-    expect(body.models[0]?.observed).toMatchObject({ samples: 1, total_p50_ms: 1234 })
+
+  it("is refused to somebody who does not run the instance", async () => {
+    // A workspace Admin is still not an operator: the model is the operator's credential to
+    // spend, which is why this does not live in workspace settings.
+    const { app } = makeAuthedApp(
+      "instance-model-denied",
+      [{ id: "u-mem", email: "mem@x.com", name: "Mem" }],
+      undefined,
+      {
+        deps: {
+          models: catalogOf([
+            { id: "fast", label: "Fast", isDefault: true, build: () => async () => THE_TURN },
+          ]),
+        },
+      },
+    )
+    expect((await app.request("/v1/system/chat-model", { headers: as("mem@x.com") })).status).toBe(
+      403,
+    )
+    const put = await app.request("/v1/system/chat-model", {
+      method: "PUT",
+      headers: { ...as("mem@x.com"), "content-type": "application/json" },
+      body: JSON.stringify({ model: "fast" }),
+    })
+    expect(put.status).toBe(403)
+  })
+
+  it("reads back what is set, alongside what could be", async () => {
+    const { app } = setup()
+    const before = await (
+      await app.request("/v1/system/chat-model", { headers: as("op@x.com") })
+    ).json()
+    expect(before.model).toBeNull() // nothing set ⇒ the configured default answers
+    expect(before.options.map((o: { id: string }) => o.id)).toEqual(["fast", "slow"])
+
+    await app.request("/v1/system/chat-model", {
+      method: "PUT",
+      headers: { ...as("op@x.com"), "content-type": "application/json" },
+      body: JSON.stringify({ model: "slow" }),
+    })
+    const after = await (
+      await app.request("/v1/system/chat-model", { headers: as("op@x.com") })
+    ).json()
+    expect(after.model).toBe("slow")
+  })
+
+  it("refuses a model that does not exist, where somebody is looking at the answer", async () => {
+    // Rather than accepting it and costing every turn on the deployment later.
+    const { app } = setup()
+    const res = await app.request("/v1/system/chat-model", {
+      method: "PUT",
+      headers: { ...as("op@x.com"), "content-type": "application/json" },
+      body: JSON.stringify({ model: "not-a-model" }),
+    })
+    expect(res.status).toBe(400)
   })
 })

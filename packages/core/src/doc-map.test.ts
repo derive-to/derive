@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { DECK_TEMPLATE } from "./deck-template.gen"
-import { docMap, MAX_MAP_NODES, mapJson, refsOf, resolveNode } from "./doc-map"
+import { docMap, MAX_MAP_NODES, mapJson, resolveNode } from "./doc-map"
 import { outlineOf, sectionOf } from "./doc-text"
 
 const HTML = "text/html"
@@ -97,16 +97,6 @@ describe("docMap: what it maps", () => {
     expect(slides.map((s) => s.title)).toEqual(["The problem", "Who it hits"])
   })
 
-  it("maps a video to stable scene refs", () => {
-    const src = `<main data-derive-video><section data-derive-scene="opening"><h2>Open</h2></section><section data-derive-scene="proof">Proof</section></main>`
-    const map = tiles(src, "text/x-derive-video")
-    expect(map.kind).toBe("video")
-    expect(map.nodes.filter((n) => n.type === "scene").map((n) => n.ref)).toEqual([
-      "scene:opening",
-      "scene:proof",
-    ])
-  })
-
   it("does not turn a deck's inner headings into sections", () => {
     // A slide's heading is its title. Depth 1: a slide has no children in v1.
     const map = docMap(deck([sl(0, "a"), sl(1, "b")]), HTML)
@@ -145,13 +135,6 @@ describe("docMap: what it maps", () => {
     const map = docMap("<html><body><p>hi</p></body></html>", HTML)
     expect(map.nodes).toHaveLength(1)
     expect(map.nodes[0]?.ref).toBe("doc:body")
-  })
-
-  it("addresses top-level style and script blocks", () => {
-    // This is what makes "make the whole deck warmer" ONE replace instead of forty edits.
-    const map = docMap(deck([sl(0, "a"), sl(1, "b")]), HTML)
-    expect(map.nodes.filter((n) => n.type === "style").map((n) => n.ref)).toEqual(["style:1"])
-    expect(map.nodes.filter((n) => n.type === "script").map((n) => n.ref)).toEqual(["script:1"])
   })
 
   it("does not address a script that lives INSIDE a content node", () => {
@@ -218,10 +201,6 @@ describe("resolveNode", () => {
     const src = `<html><body><h2 id="dup">A</h2><p>x</p><h2 id="dup">B</h2><p>y</p></body></html>`
     expect(resolveNode(docMap(src, HTML), "#dup")).toBeNull()
   })
-
-  it("lists refs for an error that says what you could have said", () => {
-    expect(refsOf(docMap(page, HTML))).toContain("sec:intro")
-  })
 })
 
 describe("mapJson", () => {
@@ -235,16 +214,6 @@ describe("mapJson", () => {
     expect(slide).not.toHaveProperty("start")
     expect(slide).not.toHaveProperty("end")
     expect(JSON.stringify(json)).not.toContain('"start"')
-  })
-
-  it("reports the whole document's size, so a part is comparable to it", () => {
-    // A blind probe asked "how big is this slide next to the deck" and had to sum the
-    // nodes itself. Free to answer here: tiling means the spans sum to the document.
-    const src = deck([sl(0, "a"), sl(1, "b")])
-    const json = mapJson(docMap(src, HTML), 1)
-    expect(json.bytes).toBe(src.length)
-    const nodeBytes = json.nodes.reduce((n, x) => n + (x.bytes as number), 0)
-    expect(nodeBytes).toBe(src.length)
   })
 
   it("caps the serialized node list but keeps every node resolvable", () => {

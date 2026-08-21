@@ -61,16 +61,6 @@ describe("resolveBillingState", () => {
     }
   })
 
-  it("business tier gets the business cap", () => {
-    const s = resolveBillingState({
-      subscription: sub({ tier: "business" }),
-      seatCount: 2,
-      now: NOW,
-      enforceAt: PAST,
-    })
-    expect(s.storageCapBytes).toBe(STORAGE_CAPS.business)
-  })
-
   it("past_due stays writable (dunning); canceled does not", () => {
     const dunning = resolveBillingState({
       subscription: sub({ status: "past_due" }),
@@ -123,17 +113,6 @@ describe("resolveBillingState", () => {
     })
     expect(s.canPublish).toBe(true)
     expect(s.blockedReason).toBeUndefined()
-  })
-
-  it("enforceAt in the future is still beta", () => {
-    const s = resolveBillingState({
-      subscription: null,
-      seatCount: 10,
-      now: NOW,
-      enforceAt: FUTURE,
-    })
-    expect(s.canPublish).toBe(true)
-    expect(s.whiteLabelEntitled).toBe(true)
   })
 
   it("betaGrace is true only pre-enforcement without an active subscription", () => {

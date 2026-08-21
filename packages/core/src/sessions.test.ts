@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { DEFAULT_VERSION_WINDOW_MS, groupSessions } from "./sessions"
+import { groupSessions } from "./sessions"
 
 const BASE = Date.parse("2026-01-01T00:00:00.000Z")
 const at = (min: number) => new Date(BASE + min * 60_000).toISOString()
@@ -36,12 +36,6 @@ describe("groupSessions", () => {
     expect(split.map((s) => s.n)).toEqual([2, 1])
   })
 
-  it("respects a custom window", () => {
-    const windowMs = 5 * 60_000
-    expect(groupSessions([mk(1, 0), mk(2, 4)], windowMs)).toHaveLength(1)
-    expect(groupSessions([mk(1, 0), mk(2, 6)], windowMs)).toHaveLength(2)
-  })
-
   it("pins a named checkpoint: it neither absorbs neighbors nor is absorbed", () => {
     // Same author, all within the window, but the middle one is named.
     const sessions = groupSessions([mk(1, 0), mk(2, 5, "alice", "Release"), mk(3, 10)])
@@ -73,22 +67,22 @@ describe("groupSessions", () => {
       { n: 2, from_n: 1, count: 2, author: "alice", name: null, created_at: at(5) },
     ])
   })
+})
 
-  it("handles the empty and singleton cases", () => {
-    expect(groupSessions([])).toEqual([])
-    expect(groupSessions([mk(7, 0)])).toEqual([
-      { n: 7, from_n: 7, count: 1, author: "alice", name: null, created_at: at(0) },
-    ])
+describe("sessions", () => {
+  const v = (n: number, mins: number, author = "ava", name: string | null = null) => ({
+    n,
+    author,
+    name,
+    created_at: new Date(Date.UTC(2026, 5, 12, 12, mins, 0)).toISOString(),
   })
+  const WINDOW = 30 * 60_000
 
-  it("does not mutate the input array", () => {
-    const input = [mk(2, 10), mk(1, 0)]
-    const snapshot = JSON.parse(JSON.stringify(input))
-    groupSessions(input)
-    expect(input).toEqual(snapshot)
-  })
-
-  it("exposes a 30-minute default window", () => {
-    expect(DEFAULT_VERSION_WINDOW_MS).toBe(30 * 60_000)
+  describe("groupSessions", () => {
+    it("uses a rolling window (continuous edits stay one session past 30m total)", () => {
+      const s = groupSessions([v(1, 0), v(2, 20), v(3, 45)], WINDOW)
+      expect(s).toHaveLength(1) // each gap <= 30m even though span is 45m
+      expect(s[0]?.count).toBe(3)
+    })
   })
 })

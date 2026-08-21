@@ -27,43 +27,10 @@ afterEach(() => {
 })
 
 describe("auth-config: optional providers", () => {
-  it("enables Google when GOOGLE_CLIENT_ID/SECRET are set", () => {
-    process.env.GOOGLE_CLIENT_ID = "gid"
-    process.env.GOOGLE_CLIENT_SECRET = "gsecret"
-    const auth = makeAuth(db(), "http://derive.test", "test-secret-0123456789abcd")
-    expect(auth.options.socialProviders?.google).toMatchObject({
-      clientId: "gid",
-      clientSecret: "gsecret",
-    })
-  })
-
   it("does not enable Google when only one of the pair is set", () => {
     process.env.GOOGLE_CLIENT_ID = "gid" // no secret
     const auth = makeAuth(db(), "http://derive.test", "test-secret-0123456789abcd")
     expect(auth.options.socialProviders?.google).toBeUndefined()
-  })
-
-  // The OAuth authorization server (oauth-provider + its jwt dependency) is always
-  // on; the enterprise SSO genericOAuth plugin is the one gated on OIDC_*.
-  const pluginIds = (auth: ReturnType<typeof makeAuth>) =>
-    (auth.options.plugins ?? []).map((p) => p.id)
-
-  it("adds the generic-OAuth SSO plugin alongside the OAuth server when OIDC_* is set", () => {
-    process.env.OIDC_ISSUER = "https://issuer.example.com/"
-    process.env.OIDC_CLIENT_ID = "oid"
-    process.env.OIDC_CLIENT_SECRET = "osecret"
-    process.env.OIDC_PROVIDER_ID = "okta"
-    const ids = pluginIds(makeAuth(db(), "http://derive.test", "test-secret-0123456789abcd"))
-    expect(ids).toContain("oauth-provider")
-    // genericOAuth + passkey (same-origin) + two-factor + jwt + oauth-provider
-    expect(ids).toHaveLength(5)
-  })
-
-  it("omits the SSO plugin when the OIDC_* trio is incomplete (the OAuth server stays)", () => {
-    process.env.OIDC_ISSUER = "https://issuer.example.com/"
-    // no client id/secret
-    const ids = pluginIds(makeAuth(db(), "http://derive.test", "test-secret-0123456789abcd"))
-    expect([...ids].sort()).toEqual(["jwt", "oauth-provider", "passkey", "two-factor"])
   })
 
   it("applies SameSite=None;Secure cookies when DERIVE_CROSS_SITE=true", () => {

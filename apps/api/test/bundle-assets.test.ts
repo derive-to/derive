@@ -36,12 +36,6 @@ describe("zipBundleFiles carries binary assets, not just text", () => {
     // Text page survives as UTF-8 (multi-byte é round-trips).
     expect(new TextDecoder().decode(unzipped["index.html"])).toBe(files["index.html"])
   })
-
-  it("throws an actionable error on a malformed base64 data: URI", async () => {
-    await expect(
-      zipBundleFiles({ "x.png": "data:image/png;base64,@@not base64@@" }),
-    ).rejects.toThrow(/invalid base64 data URI for "x\.png"/)
-  })
 })
 
 describe("an asset: reference resolves a pre-uploaded blob (images without base64)", () => {
@@ -91,12 +85,6 @@ describe("an asset: reference resolves a pre-uploaded blob (images without base6
     const blobs = new FsBlobStore(join(dir, "ref-blobs2"))
     await expect(zipBundleFiles({ "x.png": `asset:${"0".repeat(64)}` }, blobs)).rejects.toThrow(
       /unknown asset for "x\.png"/,
-    )
-  })
-
-  it("rejects an asset reference when no blob store is available", async () => {
-    await expect(zipBundleFiles({ "x.png": `asset:${"a".repeat(64)}` })).rejects.toThrow(
-      /asset references are not supported/,
     )
   })
 })

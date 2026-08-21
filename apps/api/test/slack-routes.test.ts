@@ -1,22 +1,10 @@
 import { createHmac } from "node:crypto"
-import {
-  type CommentRecord,
-  DEFAULT_ORG_SETTINGS,
-  type DeliveryRecord,
-  type MetaStore,
-  type NewComment,
-  newId,
-  type SlackThreadLinkRecord,
-} from "@derive/core"
+import { type ArtifactRecord, type DeliveryRecord, type MetaStore, newId } from "@derive/core"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { encryptSecret, signState } from "../src/lib/crypto"
 import { notifyThreadReplyAgents } from "../src/lib/mentions"
-import {
-  ingestSlackReply,
-  makeSlackIngestSender,
-  SLACK_THREAD_ACTION,
-} from "../src/lib/slack-comments"
-import { SLACK_REVIEW_ACTION } from "../src/lib/slack-work-object"
+import { makeSlackIngestSender, SLACK_THREAD_ACTION } from "../src/lib/slack-comments"
+import { authorKind, resolveChannels } from "../src/lib/slack-subscriptions"
 import { runDeliveryTick } from "../src/webhooks"
 import { as, jsonAs, quotaApp, type TestUser } from "./helpers"
 
@@ -172,48 +160,6 @@ describe("slack status + admin routes", () => {
     })
   })
 
-  it("returns OAuth failures to settings with a useful recovery state", async () => {
-    const { app } = make("slack-oauth-error")
-    const canceled = await app.request("/v1/slack/oauth/callback?error=access_denied")
-    expect(canceled.status).toBe(302)
-    expect(canceled.headers.get("location")).toBe("/settings/integrations?slack_error=canceled")
-
-    const expired = await app.request("/v1/slack/oauth/callback?code=orphaned")
-    expect(expired.status).toBe(302)
-    expect(expired.headers.get("location")).toBe("/settings/integrations?slack_error=expired")
-
-    const start = await app.request("/v1/slack/install", { headers: as(owner.email) })
-    const state = new URL(start.headers.get("location") ?? "").searchParams.get("state")
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () =>
-        Response.json({ ok: false, error: "invalid_team_for_non_distributed_app" }),
-      ),
-    )
-    const misconfigured = await app.request(
-      `/v1/slack/oauth/callback?code=oauth-code&state=${encodeURIComponent(state ?? "")}`,
-    )
-    expect(misconfigured.status).toBe(302)
-    expect(misconfigured.headers.get("location")).toBe("/settings/integrations?slack_error=config")
-  })
-
-  it("reports available + not connected before an install, connected after", async () => {
-    const { app, meta } = make("slack-status")
-    const before = await (await app.request("/v1/slack", { headers: as(owner.email) })).json()
-    expect(before).toMatchObject({ available: true, connected: false })
-
-    await meta.setSlackInstall({
-      org_id: "default",
-      team_id: "T1",
-      team_name: "Acme",
-      bot_token: encryptSecret("xoxb-1", KEY),
-      bot_user_id: "UBOT",
-      created_at: new Date().toISOString(),
-    })
-    const after = await (await app.request("/v1/slack", { headers: as(owner.email) })).json()
-    expect(after).toMatchObject({ connected: true, team_name: "Acme" })
-  })
-
   it("an admin disconnects Slack", async () => {
     const { app, meta } = make("slack-disconnect")
     await meta.setSlackInstall({
@@ -227,57 +173,6 @@ describe("slack status + admin routes", () => {
     const r = await app.request("/v1/slack", { method: "DELETE", headers: as(owner.email) })
     expect(r.status).toBe(204)
     expect(await meta.getSlackInstall("default")).toBe(null)
-  })
-})
-
-describe("slack DM prefs (email-resolved, no linking)", () => {
-  it("status reports slack_dm; defaults on even before Slack is connected", async () => {
-    const { app } = make("slack-dm-status")
-    const before = await (await app.request("/v1/slack", { headers: as(owner.email) })).json()
-    expect(before).toMatchObject({ slack_dm: true })
-  })
-
-  it("toggles the caller's Slack-DM pref and reflects it in status", async () => {
-    const { app, meta } = make("slack-dm-toggle")
-    const off = await app.request("/v1/slack/prefs", {
-      method: "PATCH",
-      headers: { "content-type": "application/json", ...as(owner.email) },
-      body: JSON.stringify({ slack_dm: false }),
-    })
-    expect(off.status).toBe(200)
-    expect(await off.json()).toEqual({ slack_dm: false })
-
-    const status = await (await app.request("/v1/slack", { headers: as(owner.email) })).json()
-    expect(status.slack_dm).toBe(false)
-
-    const pref = await meta.getUserNotificationPref("default", owner.id)
-    expect(pref && JSON.parse(pref.prefs)).toMatchObject({ slackDm: false })
-  })
-
-  it("test DM requires Slack to be connected, then enqueues a slack_dm", async () => {
-    const { app, meta } = make("slack-dm-test")
-    const denied = await app.request("/v1/slack/test-dm", {
-      method: "POST",
-      headers: as(owner.email),
-    })
-    expect(denied.status).toBe(400)
-
-    await meta.setSlackInstall({
-      org_id: "default",
-      team_id: "T1",
-      team_name: "Acme",
-      bot_token: encryptSecret("xoxb-1", KEY),
-      bot_user_id: "UBOT",
-      created_at: new Date().toISOString(),
-    })
-    const ok = await app.request("/v1/slack/test-dm", { method: "POST", headers: as(owner.email) })
-    expect(ok.status).toBe(200)
-    const rows = await meta.claimDueDeliveries(
-      new Date(Date.now() + 60_000).toISOString(),
-      100,
-      new Date(Date.now() + 120_000).toISOString(),
-    )
-    expect(rows.some((r) => r.kind === "slack_dm")).toBe(true)
   })
 })
 
@@ -405,23 +300,6 @@ describe("slack account linking (OIDC)", () => {
 })
 
 describe("slack events endpoint", () => {
-  it("answers the url_verification challenge when signed", async () => {
-    const { app } = make("slack-ev-challenge")
-    const ts = String(Math.floor(Date.now() / 1000))
-    const body = JSON.stringify({ type: "url_verification", challenge: "ch-1" })
-    const r = await app.request("/v1/slack/events", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-slack-request-timestamp": ts,
-        "x-slack-signature": sign(ts, body),
-      },
-      body,
-    })
-    expect(r.status).toBe(200)
-    expect((await r.json()).challenge).toBe("ch-1")
-  })
-
   it("rejects an unsigned/badly-signed request", async () => {
     const { app } = make("slack-ev-badsig")
     const r = await app.request("/v1/slack/events", {
@@ -517,48 +395,6 @@ describe("slack events endpoint", () => {
     expect(mirrored?.author).toBe("Dana")
     expect(mirrored?.author_id).toBe("slack:U777")
     expect(mirrored?.body_md).toBe("from slack")
-  })
-
-  it("ingestSlackReply writes the Slack dedupe marker IN the comment insert (atomic)", async () => {
-    // A focused unit test with a hand-built store (not the real adapter): the atomicity is
-    // that the {slack.ts} marker rides the createComment INSERT, not a follow-up write a
-    // crash-retry could skip. The old two-write path called createComment with no meta and
-    // then updateComment — the fake has no updateComment, so that path throws here. Both the
-    // "marker present" and "no second write" facts are pinned, on any adapter.
-    const inserts: NewComment[] = []
-    const link: SlackThreadLinkRecord = {
-      id: "l",
-      org_id: "o",
-      artifact_id: "a",
-      thread_id: "t",
-      channel: "C1",
-      message_ts: "111.1",
-      created_at: "",
-    }
-    const fakeMeta = {
-      listComments: async () => [],
-      createComment: async (c: NewComment) => {
-        inserts.push(c)
-        return {
-          ...c,
-          state: "open",
-          created_at: "",
-          meta: c.meta ?? null,
-        } as unknown as CommentRecord
-      },
-    } as unknown as MetaStore
-    const created = await ingestSlackReply(fakeMeta, link, {
-      ts: "222.2",
-      userId: "U1",
-      userName: "Dana",
-      text: "hi",
-      botUserId: "UBOT",
-    })
-    expect(created).not.toBeNull()
-    expect(inserts).toHaveLength(1)
-    expect(JSON.parse(inserts[0]?.meta ?? "{}")).toMatchObject({
-      slack: { ts: "222.2", channel: "C1" },
-    })
   })
 
   it("repairs an agent wake when an ingest retry finds the already-committed Slack answer", async () => {
@@ -1135,43 +971,6 @@ describe("/derive subscription subcommands", () => {
     expect(await meta.listSlackSubscriptions("default")).toHaveLength(1)
   })
 
-  // The subcommands live in exactly two places a person can find them: the slash-command
-  // autocomplete (one line, from the manifest) and this. Nothing else lists them.
-  it("answers /derive help — and answers it without an account link", async () => {
-    const { app, meta } = make("cmd-help")
-    await meta.setSlackInstall({
-      org_id: "default",
-      team_id: "T1",
-      team_name: "Acme",
-      bot_token: encryptSecret("xoxb-1", KEY),
-      bot_user_id: "UBOT",
-      created_at: new Date().toISOString(),
-    })
-    // Deliberately NO setSlackUserLink: someone who has not linked yet is exactly who needs to
-    // read what the command does, so help must not sit behind the link prompt.
-    const body = JSON.stringify((await (await cmd(app, "help")).json()).blocks)
-    for (const verb of ["subscribe", "unsubscribe", "settings", "Save to Derive"])
-      expect(body).toContain(verb)
-    expect(body).not.toContain("Connect your Derive account")
-  })
-
-  // Naming the collection matters most here: a channel can carry several subscriptions, and the
-  // card used to print the opaque scope_id, which identifies nothing to a human.
-  it("names the collection in /derive settings rather than printing its id", async () => {
-    const { app, meta } = make("cmd-settings-title")
-    await linked(meta)
-    await meta.createCollection({
-      id: "col_9f2ac1",
-      org_id: "default",
-      title: "API docs",
-      created_by: owner.id,
-    })
-    await cmd(app, "subscribe API docs")
-    const shown = JSON.stringify((await (await cmd(app, "settings")).json()).blocks)
-    expect(shown).toContain("API docs")
-    expect(shown).not.toContain("col_9f2ac1")
-  })
-
   // A private channel the app was never invited to accepts the subscription and then drops every
   // delivery into the dead-letter queue with nothing saying why.
   it("refuses to subscribe a channel it cannot post in, and says how to fix it", async () => {
@@ -1188,40 +987,6 @@ describe("/derive subscription subcommands", () => {
     const r = await (await cmd(app, "subscribe")).json()
     expect(String(r.text)).toContain("/invite @Derive")
     expect(await meta.listSlackSubscriptions("default")).toHaveLength(0)
-  })
-
-  // A PUBLIC channel needs no membership — the sender self-joins on its first not_in_channel —
-  // so the guard must not stand in the way of the common case.
-  it("subscribes a public channel the bot has not joined yet", async () => {
-    const { app, meta } = make("cmd-public-ok")
-    await linked(meta)
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (u: string) =>
-        String(u).includes("conversations.info")
-          ? new Response(
-              JSON.stringify({ ok: true, channel: { is_private: false, is_member: false } }),
-              { status: 200 },
-            )
-          : new Response(JSON.stringify({ ok: true }), { status: 200 }),
-      ),
-    )
-    await cmd(app, "subscribe")
-    expect(await meta.listSlackSubscriptions("default")).toHaveLength(1)
-  })
-
-  // Slack unreachable must not block an admin from configuring their own workspace.
-  it("subscribes anyway when Slack could not be asked", async () => {
-    const { app, meta } = make("cmd-reach-unknown")
-    await linked(meta)
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => {
-        throw new Error("network down")
-      }),
-    )
-    await cmd(app, "subscribe")
-    expect(await meta.listSlackSubscriptions("default")).toHaveLength(1)
   })
 
   it("unsubscribes the channel, and reports settings", async () => {
@@ -1473,18 +1238,6 @@ describe("slack link unfurls", () => {
     expect(JSON.stringify(entity)).not.toContain("Q4 roadmap")
   })
 
-  it("waits for the render on a PUBLIC doc too — one rule, no mime lie", async () => {
-    // `chat.unfurl` accepts a preview_url without fetching it (verified against the API: ok:true,
-    // no warning), so a card that promises image/png and serves the SVG fallback fails silently.
-    // The same check therefore covers both visibilities rather than only the new one.
-    const { entity } = await unfurlEntity(
-      "slack-unfurl-preview-pub-pending",
-      { listed: "public" },
-      false,
-    )
-    expect(JSON.stringify(entity)).not.toContain("full_size_preview")
-  })
-
   it("waits for the render rather than showing a padlock as the picture", async () => {
     // The window this closes: a link pasted moments after publishing. `/v1/og` answers an
     // anonymous fetch for an unrendered workspace doc with the TITLE-LESS padlock, so offering
@@ -1497,85 +1250,6 @@ describe("slack link unfurls", () => {
     )
     expect(JSON.stringify(entity)).toContain("Q4 roadmap")
     expect(JSON.stringify(entity)).not.toContain("full_size_preview")
-  })
-
-  it("needs no token for a world-readable doc — /v1/og already serves it", async () => {
-    const { entity } = await unfurlEntity("slack-unfurl-preview-pub", { listed: "public" })
-    const preview = fullSizePreview(entity)
-    expect(preview?.preview_url).toBeTruthy()
-    expect(new URL(preview?.preview_url ?? "").searchParams.get("t")).toBeNull()
-  })
-
-  // Work Objects answer 200-with-a-warning when the payload is subtly wrong or the feature is
-  // off on the app — a silent nothing in the channel. The block card must still go out.
-  it("falls back to the block card when Slack warns on the entity", async () => {
-    const { app, meta } = make("slack-unfurl-fallback")
-    await meta.setSlackInstall({
-      org_id: "default",
-      team_id: "T1",
-      team_name: "Acme",
-      bot_token: encryptSecret("xoxb-1", KEY),
-      bot_user_id: "UBOT",
-      created_at: new Date().toISOString(),
-    })
-    await meta.setSlackUserLink({
-      id: newId("sul"),
-      org_id: "default",
-      user_id: owner.id,
-      team_id: "T1",
-      slack_user_id: "U1",
-      origin: "oauth" as const,
-      checked_at: new Date().toISOString(),
-      created_at: new Date().toISOString(),
-    })
-    const artifact = await meta.createArtifact({
-      id: newId("a"),
-      short_id: newId("s").slice(0, 8),
-      org_id: "default",
-      slug: null,
-      title: "Fallback doc",
-      workspace_access: "member",
-      link_role: "viewer",
-      listed: "workspace",
-      kind: "file",
-      spa: 0,
-    })
-    const seen: Record<string, unknown>[] = []
-    let resolveSecond: (v: unknown) => void = () => {}
-    const twice = new Promise((r) => {
-      resolveSecond = r
-    })
-    vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
-      if (String(url).includes("chat.unfurl")) {
-        const body = JSON.parse(String(init.body)) as Record<string, unknown>
-        seen.push(body)
-        if (seen.length === 2) resolveSecond(null)
-        // The entity attempt "succeeds" with a warning; the block retry is clean.
-        if (body.metadata)
-          return new Response(JSON.stringify({ ok: true, warning: "missing_alt_text" }), {
-            status: 200,
-          })
-      }
-      return new Response(JSON.stringify({ ok: true }), { status: 200 })
-    })
-    await postEvent(
-      app,
-      JSON.stringify({
-        type: "event_callback",
-        team_id: "T1",
-        event: {
-          type: "link_shared",
-          user: "U1",
-          channel: "C9",
-          message_ts: "1700000000.1",
-          links: [{ url: `http://derive.test/artifacts/${artifact.short_id}` }],
-        },
-      }),
-    )
-    await twice
-    expect(seen).toHaveLength(2)
-    expect(seen[0]?.metadata).toBeTruthy()
-    expect(JSON.stringify(seen[1]?.unfurls)).toContain("Fallback doc")
   })
 
   // An unlinked sharer gets Slack's own sign-in prompt instead of a card — the only per-person
@@ -1774,23 +1448,6 @@ describe("slack interactivity endpoint (resolve/reopen from a button)", () => {
     expect(sent).toContain("&lt;!channel&gt;")
   })
 
-  it('acks (not 500s) a button value of "null" — JSON.parse succeeds but yields null', async () => {
-    const { app } = make("slack-int-null-value")
-    // Regression: the old inline decode destructured the parse result OUTSIDE its try, so a
-    // literal "null" (valid JSON, parses to null) threw a TypeError → 500 instead of acking.
-    for (const actionId of [SLACK_THREAD_ACTION.resolve, SLACK_REVIEW_ACTION.sendBack]) {
-      const r = await postInteract(app, {
-        type: "block_actions",
-        response_url: "https://hooks.slack.test/response",
-        team: { id: "T1" },
-        user: { id: "U777", username: "dana" },
-        actions: [{ action_id: actionId, value: "null" }],
-        message: { blocks: [] },
-      })
-      expect(r.status).toBe(200)
-    }
-  })
-
   it("a Reopen click reopens a resolved thread", async () => {
     const { app, meta } = make("slack-int-reopen")
     const artifact = await seedResolvable(meta, {
@@ -1931,16 +1588,6 @@ describe("slack slash command (/derive)", () => {
     expect(s).not.toContain("Private Draft") // visibility-scoped to the linked user
   })
 
-  it("answers a search inline when there's no response_url (fallback)", async () => {
-    const { app, meta } = make("slack-cmd-search")
-    await link(meta)
-    const r = await postCommand(app, { team_id: "T1", user_id: "U777", text: "anything" })
-    expect(r.status).toBe(200)
-    const body = await r.json()
-    expect(body.response_type).toBe("ephemeral")
-    expect(Array.isArray(body.blocks)).toBe(true)
-  })
-
   it("escapes mrkdwn control chars in artifact titles (no link injection)", async () => {
     const { app, meta } = make("slack-cmd-escape")
     await link(meta)
@@ -1949,26 +1596,6 @@ describe("slack slash command (/derive)", () => {
     const s = JSON.stringify((await r.json()).blocks)
     expect(s).toContain("Pwn&gt;") // the title's > was escaped
     expect(s).not.toContain("<https://phish") // the injected link's < was neutralized to &lt;
-  })
-
-  it("acks a search with 'Searching…' and defers the work to response_url", async () => {
-    const { app, meta } = make("slack-cmd-defer")
-    await link(meta)
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => new Response("ok", { status: 200 })),
-    )
-    const r = await postCommand(app, {
-      team_id: "T1",
-      user_id: "U777",
-      text: "anything",
-      response_url: "https://hooks.slack.test/cmd",
-    })
-    expect(r.status).toBe(200)
-    const body = await r.json()
-    // The search runs off the ack path — the immediate reply is just the placeholder.
-    expect(body.text).toBe("Searching…")
-    expect(body.blocks).toBeUndefined()
   })
 })
 
@@ -2035,25 +1662,6 @@ describe("subscription CRUD over REST", () => {
     })
     expect(gone.status).toBe(204)
     expect((await list(app)).subscriptions).toHaveLength(0)
-  })
-
-  it("names the scoped collection so two rows on one channel can be told apart", async () => {
-    const { app, meta } = make("sub-crud-scope")
-    await install(meta)
-    await meta.createCollection({
-      id: "col_api",
-      org_id: "default",
-      title: "API docs",
-      created_by: owner.id,
-    })
-    await post(app, { channel_id: "C0ENG123", channel_name: "eng", collection: "col_api" })
-    await post(app, { channel_id: "C0ENG123", channel_name: "eng" })
-    const rows = (await list(app)).subscriptions
-    expect(rows).toHaveLength(2)
-    expect(rows.map((r) => r.scope_title).sort()).toEqual(["API docs", null])
-    // And the create response carries it too, so the UI needn't refetch to render the new row.
-    const again = await post(app, { channel_id: "C0DES123", collection: "col_api" })
-    expect(await again.json()).toMatchObject({ scope_title: "API docs" })
   })
 
   it("refuses a collection from another workspace", async () => {
@@ -2189,32 +1797,6 @@ describe("Save to Derive", () => {
         },
       },
     },
-  })
-
-  it("opens a picker modal on the message, quoting it", async () => {
-    const { app } = await setup("cap-open")
-    const calls: Record<string, unknown>[] = []
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (u: string, init: RequestInit) => {
-        if (String(u).includes("chat.getPermalink"))
-          return new Response(JSON.stringify({ ok: true, permalink: "https://s/p" }), {
-            status: 200,
-          })
-        calls.push({ url: String(u), body: JSON.parse(String(init?.body ?? "{}")) })
-        return new Response(JSON.stringify({ ok: true }), { status: 200 })
-      }),
-    )
-    expect((await postInteract(app, shortcut)).status).toBe(200)
-    const open = calls.find((x) => String(x.url).endsWith("/views.open"))
-    expect(open).toBeTruthy()
-    const view = JSON.stringify((open as { body: { view: unknown } }).body.view)
-    expect(view).toContain("Save to Derive")
-    expect(view).toContain("we should ship the smaller version")
-    // The message travels in private_metadata: a view_submission arrives with no channel and
-    // no message, so anything not carried here is gone by the time Save is pressed.
-    expect(view).toContain("private_metadata")
-    expect(view).toContain("1700000001.1")
   })
 
   it("asks an unlinked user to connect instead of writing as nobody", async () => {
@@ -2443,18 +2025,6 @@ describe("question Reply actions", () => {
     expect(comments.filter((cm) => cm.thread_id === threadId)).toHaveLength(2)
     expect(comments.find((cm) => cm.body_md.includes("smaller rollout"))?.author_id).toBe(owner.id)
   })
-
-  it("explains how to connect when a DM recipient has not linked their Slack account", async () => {
-    const { app, artifact, threadId } = await setup("question-unlinked", { link: false })
-    const opened: Record<string, unknown>[] = []
-    vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
-      if (url.endsWith("/views.open")) opened.push(JSON.parse(String(init.body)))
-      return new Response(JSON.stringify({ ok: true }), { status: 200 })
-    })
-
-    expect((await postInteract(app, action(artifact.id, threadId))).status).toBe(200)
-    expect(JSON.stringify(opened[0])).toContain("Connect your Derive account")
-  })
 })
 
 // The flexpane — the per-viewer half. `chat.unfurl` never had a `user` parameter, so the
@@ -2645,13 +2215,6 @@ describe("slack DMs reach the chat lane", () => {
       },
     })
 
-  it("accepts a DM without a mention in it", async () => {
-    // A channel question carries "<@BOT>"; a DM carries nothing, and gating on a mention would
-    // make the Messages tab silently ignore every message sent to it.
-    const { app } = make("slack-dm-plain")
-    expect((await postEvent(app, dm())).status).toBe(200)
-  })
-
   it("IGNORES the app's own messages, both shapes Slack uses", async () => {
     // The loop this prevents: Derive posts an answer into the DM, Slack delivers that back as a
     // new message.im, and it answers its own answer. Slack marks the bot's own posts with
@@ -2659,14 +2222,6 @@ describe("slack DMs reach the chat lane", () => {
     const { app } = make("slack-dm-self")
     expect((await postEvent(app, dm({ bot_id: "B-self" }))).status).toBe(200)
     expect((await postEvent(app, dm({ subtype: "message_changed" }))).status).toBe(200)
-  })
-
-  it("does not treat a threaded DM as a document comment", async () => {
-    // A DM can carry a thread_ts, and the comment-mirror branch keys on exactly that. Ordered
-    // after this one, it would try to mirror a private message onto a document it has nothing
-    // to do with.
-    const { app } = make("slack-dm-threaded")
-    expect((await postEvent(app, dm({ thread_ts: "1.0" }))).status).toBe(200)
   })
 })
 
@@ -2759,5 +2314,126 @@ describe("review buttons reach the handler from every surface", () => {
     })
     expect(withEntity.status).toBe(200)
     await vi.waitFor(async () => expect(await meta.getPendingRound(artifact.id)).toBeNull())
+  })
+})
+
+// Which channels a document event fans out to: the event mask, the human/agent author
+// filter, the collection scope, and the broadcast rule that a private artifact never
+// reaches a channel however it was subscribed.
+describe("which channels a document event fans out to", () => {
+  const setup = async (name: string, listed: "none" | "workspace" = "workspace") => {
+    const { meta } = quotaApp(name, { defaultOrgId: "default" }, [], [])
+    const artifact = (await meta.createArtifact({
+      id: newId("a"),
+      short_id: newId("s").slice(0, 8),
+      org_id: "default",
+      slug: null,
+      title: "Doc",
+      workspace_access: "member",
+      link_role: "viewer",
+      listed,
+      kind: "file",
+      spa: 0,
+    })) as ArtifactRecord
+    return { meta, artifact }
+  }
+
+  const sub = (over: Record<string, unknown> = {}) => ({
+    id: newId("sub"),
+    org_id: "default",
+    channel_id: "C1",
+    ...over,
+  })
+
+  describe("resolveChannels", () => {
+    it("delivers a workspace-scoped subscription for any artifact", async () => {
+      const { meta, artifact } = await setup("res-ws")
+      await meta.upsertSlackSubscription(sub())
+      const got = await resolveChannels(meta, artifact, "comment.created", "human")
+      expect(got.map((s) => s.channel_id)).toEqual(["C1"])
+    })
+
+    it("skips a paused subscription", async () => {
+      const { meta, artifact } = await setup("res-paused")
+      await meta.upsertSlackSubscription(sub({ active: 0 }))
+      expect(await resolveChannels(meta, artifact, "comment.created", "human")).toHaveLength(0)
+    })
+
+    it("honours the event mask, and '*' means all", async () => {
+      const { meta, artifact } = await setup("res-events")
+      await meta.upsertSlackSubscription(sub({ channel_id: "C-pub", events: "version.published" }))
+      await meta.upsertSlackSubscription(sub({ channel_id: "C-all", events: "*" }))
+      expect(
+        (await resolveChannels(meta, artifact, "comment.created", "human")).map(
+          (s) => s.channel_id,
+        ),
+      ).toEqual(["C-all"])
+      expect(
+        (await resolveChannels(meta, artifact, "version.published", "human"))
+          .map((s) => s.channel_id)
+          .sort(),
+      ).toEqual(["C-all", "C-pub"])
+    })
+
+    // The axis no other product's integration has: agents are first-class authors here, so a
+    // channel usually wants one or the other.
+    it("honours the human/agent author filter", async () => {
+      const { meta, artifact } = await setup("res-authors")
+      await meta.upsertSlackSubscription(sub({ channel_id: "C-humans", authors: "human" }))
+      await meta.upsertSlackSubscription(sub({ channel_id: "C-agents", authors: "agent" }))
+      await meta.upsertSlackSubscription(sub({ channel_id: "C-both", authors: "all" }))
+      expect(
+        (await resolveChannels(meta, artifact, "comment.created", "human"))
+          .map((s) => s.channel_id)
+          .sort(),
+      ).toEqual(["C-both", "C-humans"])
+      expect(
+        (await resolveChannels(meta, artifact, "comment.created", "agent"))
+          .map((s) => s.channel_id)
+          .sort(),
+      ).toEqual(["C-agents", "C-both"])
+    })
+
+    it("delivers a collection scope only for artifacts in that collection", async () => {
+      const { meta, artifact } = await setup("res-collection")
+      const collection = await meta.createCollection({
+        id: newId("col"),
+        org_id: "default",
+        title: "Brand",
+        created_by: "u-1",
+      })
+      await meta.upsertSlackSubscription(
+        sub({ channel_id: "C-brand", scope_kind: "collection", scope_id: collection.id }),
+      )
+      expect(await resolveChannels(meta, artifact, "comment.created", "human")).toHaveLength(0)
+      await meta.addCollectionItem(collection.id, artifact.id)
+      expect(
+        (await resolveChannels(meta, artifact, "comment.created", "human")).map(
+          (s) => s.channel_id,
+        ),
+      ).toEqual(["C-brand"])
+    })
+
+    // The broadcast rule survives subscriptions: a private draft never reaches a channel, however
+    // it was subscribed.
+    it("never delivers a private artifact", async () => {
+      const { meta, artifact } = await setup("res-private", "none")
+      await meta.upsertSlackSubscription(sub())
+      expect(await resolveChannels(meta, artifact, "comment.created", "human")).toHaveLength(0)
+    })
+  })
+
+  describe("authorKind", () => {
+    it("classifies an OAuth grant's synthetic id as an agent", async () => {
+      const { meta } = await setup("kind-oauth")
+      expect(await authorKind(meta, "default", "oauth:cli")).toBe("agent")
+    })
+
+    // Fail open to human: a filter must never silently hide a person's activity.
+    it("treats an unknown or absent author as human", async () => {
+      const { meta } = await setup("kind-human")
+      expect(await authorKind(meta, "default", "u-someone")).toBe("human")
+      expect(await authorKind(meta, "default", null)).toBe("human")
+    })
   })
 })

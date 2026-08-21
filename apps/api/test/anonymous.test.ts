@@ -1,15 +1,13 @@
-import { describe, expect, it } from "vitest"
-import { as, json, makeAuthedApp, publishAs, type TestUser } from "./helpers"
+import { beforeAll, describe, expect, it } from "vitest"
+import { anonApp, as, json, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
 // An anonymous visitor (no session, no token) can view a public artifact and send
 // the ephemeral "I'm here" signals — a presence heartbeat and a live cursor. Nothing
 // else: no comments, members, analytics, sharing, or any write. There is
 // no "open" mode that would elevate them.
-// Authenticated users keep normal role-based access — a viewer still sees comments.
 describe("anonymous lockdown (secure instance)", () => {
   const owner: TestUser = { id: "u_own", email: "own@derive.test", name: "Owner One" }
-  const viewer: TestUser = { id: "u_vee", email: "vee@derive.test", name: "Vee" }
-  const { app } = makeAuthedApp("anon-lock", [owner, viewer], "viewer")
+  const { app } = makeAuthedApp("anon-lock", [owner])
 
   it("attributes a publish to the signed-in user, never a client field or 'anonymous'", async () => {
     const res = await publishAs(
@@ -58,22 +56,6 @@ describe("anonymous lockdown (secure instance)", () => {
     ).toBe(403)
     expect((await publishAs(app, "<h1>v2</h1>", {}, {}, short_id)).status).toBe(403)
   })
-
-  it("an authenticated viewer still sees comments (Google-Docs style)", async () => {
-    const { short_id } = await (
-      await publishAs(app, "<h1>pub</h1>", { visibility: "public" }, as(owner.email))
-    ).json()
-    // owner leaves a comment, then the viewer lists comments
-    await app.request(`/v1/artifacts/${short_id}/comments`, {
-      ...json({ body_md: "internal note" }),
-      headers: { "content-type": "application/json", ...as(owner.email) },
-    })
-    const list = await app.request(`/v1/artifacts/${short_id}/comments`, {
-      headers: as(viewer.email),
-    })
-    expect(list.status).toBe(200)
-    expect((await list.json()).comments.length).toBe(1)
-  })
 })
 
 // The structural guarantee: NO anonymous caller can ever mutate anything. This
@@ -91,11 +73,10 @@ describe("anonymous can never write — global lockdown sweep", () => {
     body: JSON.stringify(body),
   })
 
-  it("seeds a public artifact (as the owner) to probe against", async () => {
+  beforeAll(async () => {
     shortId = (
       await (await publishAs(app, "<h1>pub</h1>", { visibility: "public" }, as(owner.email))).json()
     ).short_id
-    expect(shortId).toBeTruthy()
   })
 
   it("allows ONLY read + the ephemeral viewing signals for an anonymous caller", async () => {
@@ -143,5 +124,27 @@ describe("anonymous can never write — global lockdown sweep", () => {
     ).short_id
     expect((await app.request(`/v1/artifacts/${priv}`)).status).toBe(404)
     expect((await app.request(`/v1/artifacts/${priv}/content`)).status).toBe(404)
+  })
+})
+
+// The Core Web Vitals collector: the SPA beacons real field metrics here. It's
+// anonymous by design (any visitor's browser reports), so these run against the
+// no-auth app to prove the anon-write lockdown lets the beacon through.
+describe("POST /v1/vitals", () => {
+  it("accepts a beacon from an anonymous visitor (204, no body)", async () => {
+    const r = await anonApp.request(
+      "/v1/vitals",
+      json({ name: "LCP", value: 1234.5, rating: "good", id: "v1-abc", path: "/artifacts/xyz" }),
+    )
+    expect(r.status).toBe(204)
+    expect(await r.text()).toBe("")
+  })
+
+  it("rejects an unknown metric name (400)", async () => {
+    const r = await anonApp.request(
+      "/v1/vitals",
+      json({ name: "BOGUS", value: 1, rating: "good", id: "x", path: "/" }),
+    )
+    expect(r.status).toBe(400)
   })
 })

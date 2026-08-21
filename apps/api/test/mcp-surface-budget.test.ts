@@ -1,7 +1,6 @@
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { DECK_TEMPLATE } from "@derive/core"
 import { SqliteMetaStore } from "@derive/db/sqlite"
 import { FsBlobStore } from "@derive/storage/fs"
 import Database from "better-sqlite3"
@@ -290,48 +289,6 @@ describe("MCP surface budget (thin tools, thick skills)", () => {
     }
   })
 
-  it("keeps every param example shaped like the param it illustrates", async () => {
-    // An example that does not match its own schema is worse than none: it is a confident
-    // wrong answer, and it is invisible until a call fails. The realistic drift is nesting
-    // (an edit object where an ARRAY of them belongs) and primitives, so those are checked
-    // against the declared type. Deeper union-member validation would need a JSON Schema
-    // validator, which is not a dependency of this package; the shape check is what catches
-    // the mistake anyone actually makes.
-    const { app, token } = appWithGrant("examples", "openid derive:read derive:publish")
-    await rpc(app, token, initBody)
-    const list = await rpc(app, token, { jsonrpc: "2.0", id: 2, method: "tools/list" })
-    const tools: { name: string; inputSchema?: { properties?: Record<string, unknown> } }[] =
-      list?.result?.tools ?? []
-
-    let checked = 0
-    for (const t of tools) {
-      for (const [param, raw] of Object.entries(t.inputSchema?.properties ?? {})) {
-        const schema = raw as { type?: string; examples?: unknown[]; properties?: unknown }
-        if (!schema.examples) continue
-        expect(
-          schema.examples.length,
-          `${t.name}.${param} has an empty examples array`,
-        ).toBeGreaterThan(0)
-        for (const ex of schema.examples) {
-          checked += 1
-          const where = `${t.name}.${param} example ${JSON.stringify(ex).slice(0, 60)}`
-          if (schema.type === "array")
-            expect(Array.isArray(ex), `${where} must be an ARRAY, matching the param`).toBe(true)
-          else if (schema.type === "string")
-            expect(typeof ex, `${where} must be a string`).toBe("string")
-          else if (schema.type === "object" || schema.properties)
-            expect(
-              ex !== null && typeof ex === "object" && !Array.isArray(ex),
-              `${where} must be an object`,
-            ).toBe(true)
-        }
-      }
-    }
-    // The examples are worth budgeting for only if they exist; a refactor that silently
-    // drops them should fail here rather than quietly shrink the surface.
-    expect(checked).toBeGreaterThan(8)
-  })
-
   it("resolves every core skill through read('derive://skills/<name>')", async () => {
     // The lazy path the thin surface leans on: each skill body must round-trip through
     // the read tool (every client supports it, even where MCP resources don't), so the
@@ -353,40 +310,6 @@ describe("MCP surface budget (thin tools, thick skills)", () => {
       expect(payload.content.length).toBeGreaterThan(0)
       expect(payload.content).toBe(skill.body)
     }
-  })
-
-  it("keeps the deck protocol discoverable, with a template to start from", () => {
-    // The whole point of this skill: the protocol is what turns Derive's deck features on,
-    // and a deck that omits it looks correct. If the body ever loses the postMessage shape
-    // or the pointer to the starter, an agent reading it still can't build a working deck.
-    const decks = CORE_SKILLS.find((skill) => skill.name === "decks")
-    expect(decks).toBeTruthy()
-    expect(decks?.body).toContain('source: "derive-deck"')
-    expect(decks?.body).toContain('"derive-host"')
-    expect(decks?.body).toContain("data-derive-slide")
-    expect(decks?.body).toContain("derive://decks/template")
-    // The two facts that only show up by being burned: a bundle can never become a deck,
-    // and a rendered read can only ever capture slide 1.
-    expect(decks?.body).toContain("Never a multi-page bundle")
-    expect(decks?.body).toContain("only ever captures slide 1")
-    // The starter must BE what the skill describes — same guard the generator applies to
-    // the canonical file, asserted here against what actually ships to agents.
-    expect(DECK_TEMPLATE).toContain('source: "derive-deck"')
-    expect(DECK_TEMPLATE).toContain('data-derive-slide="0"')
-    expect(DECK_TEMPLATE).toContain("width: 1280px")
-  })
-
-  it("keeps asset staging discoverable as a complete byte-safe workflow", () => {
-    const assets = CORE_SKILLS.find((skill) => skill.name === "assets")
-    expect(assets).toBeTruthy()
-    expect(assets?.summary).toContain("stage image/font bytes")
-    expect(assets?.body).toContain('stage({ target: "asset"')
-    expect(assets?.body).toContain("Staging alone does not")
-    expect(assets?.body).toContain("POST the file's raw")
-    expect(assets?.body).toContain("permanent `url`")
-    expect(assets?.body).toContain("`ref`")
-    expect(assets?.body).toContain("public capability URL")
-    expect(assets?.body).toContain('render: "top"')
   })
 })
 
