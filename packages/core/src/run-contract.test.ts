@@ -114,7 +114,7 @@ describe("an ask is the revision contract, minus the obligation to write", () =>
     expect(p.reply?.revision?.confidence).toBe(1)
   })
 
-  it("a STRING confidence reads as unstated, so it can never auto-publish", () => {
+  it("a STRING confidence reads as unstated — never coerced to a number", () => {
     expect(
       parseAsk(block({ content: "x", confidence: "0.9" })).reply?.revision?.confidence,
     ).toBeNull()

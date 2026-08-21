@@ -51,7 +51,11 @@ const materializeFor = async (
     if (known !== undefined) return known
     const on = await meta
       .getOrgSettings(orgId)
-      .then((s) => s?.automateBeta === true)
+      // `agentWrites` binds the clock exactly like the beta flag: a workspace that switched
+      // agents off must not accumulate a queued run per cron window while paused — the runs
+      // could not be claimed anyway, and flipping the switch back on must resume with the
+      // CURRENT window, not a burst of stale ones.
+      .then((s) => s?.automateBeta === true && s?.agentWrites === true)
       .catch(() => false)
     optedIn.set(orgId, on)
     return on

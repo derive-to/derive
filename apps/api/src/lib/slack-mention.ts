@@ -459,7 +459,7 @@ export const handleSlackMention = async (
       org: install.org_id,
       user: { id: asker.id, name: asker.name },
       seatRole: actingRole,
-      flags: { agentKillswitch: settings.agentKillswitch },
+      flags: { agentWrites: settings.agentWrites },
     })
     const res = await runChatTurn(
       { model },

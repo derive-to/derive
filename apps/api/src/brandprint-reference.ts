@@ -73,10 +73,10 @@ beats invention.
 
 ## Publishing
 
-Publish the finished page with the MCP \`publish\` tool, passing \`for_review: true\`
-and the artifact short_id you were given (the workspace's "Brand profile" artifact).
-It must land as a PROPOSAL — a human reviews and approves it before agents are steered
-by it. Do not create a new artifact and do not publish it live.
+Publish the finished page with the MCP \`publish\` tool to the artifact short_id you
+were given (the workspace's "Brand profile" artifact). Publishing it opens a review
+round for the person automatically — tell them it is ready and wait for their note.
+Do not create a new artifact.
 `
 
 export const BRANDPRINT_TEMPLATE = `<!doctype html>

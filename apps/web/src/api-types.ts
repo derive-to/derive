@@ -4510,7 +4510,14 @@ export interface paths {
                 };
                 cookie?: never;
             };
-            requestBody?: never;
+            requestBody?: {
+                content: {
+                    "application/json": {
+                        /** @description The human's note to the agent — answers, asks, or the go-signal ("good to go"). Carried on the round and surfaced in the agent's catch_up. */
+                        note?: string;
+                    };
+                };
+            };
             responses: {
                 /** @description The round, now sent_back. */
                 200: {
@@ -7311,10 +7318,8 @@ export interface components {
             chatSources: string[];
             /** @description BETA: automations on a document. Off by default — the Automate entry point is hidden and the create/run/fire routes refuse, so a workspace opts in deliberately. */
             automateBeta: boolean;
-            /** @description When true, every hosted agent write demotes to a proposal, instantly. */
-            agentKillswitch: boolean;
-            /** @description Opt-in for autonomy 'auto' to live-publish (always with a review round). */
-            agentAutoEnabled: boolean;
+            /** @description The one agent-write switch, on by default. Off: hosted runs and asks are not materialized, dispatched, or claimed, chat's publish tool refuses (the draft surfaces in the reply), and any agent-credentialed publish is refused at the API. */
+            agentWrites: boolean;
             /** @description The workspace's default agent: the fallback actor for users with no connected agent. Absent = none. */
             defaultAgentId?: string;
             /** @description The workspace's Brandprint (conventions collection + brand-profile artifact); absent until set. */
@@ -7941,13 +7946,11 @@ export interface components {
             created_at: string;
             /** @description Last state/message change; equals created_at when never updated. */
             updated_at: string;
-            /** @description What this session is about, when it names one: an artifact, plus how a write to it lands. Null for a plain ask. */
+            /** @description What this session is about, when it names one: an artifact. Null for a plain ask. */
             subject: {
                 /** @enum {string} */
                 kind: "artifact";
                 id: string;
-                /** @enum {string} */
-                mode?: "publish" | "propose";
             } | null;
             /** @description The artifact this session's answer bound as its result, if any. */
             result_artifact_id: string | null;
@@ -7995,7 +7998,7 @@ export interface components {
                 id: string;
                 label: string;
             };
-            /** @description How the turn ended: answered, published, proposed, or failed. */
+            /** @description How the turn ended: answered, published, commented, or failed. */
             outcome?: string;
             /** @description Reported spend for the turn in millionths of a USD; null when unreported. */
             cost_micro_usd?: number | null;

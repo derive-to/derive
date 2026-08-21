@@ -2573,8 +2573,9 @@ export interface NewAutomation {
 }
 
 /** How a run's work landed — the semantic outcome, kept in the run's meta blob (not a
- *  column). Mirrors the autonomy-gate decisions plus the ask-answer terminal. */
-export type RunOutcome = "answered" | "published" | "proposed" | "shadow" | "escalated"
+ *  column). A run writes (`published`) or answers; `escalated` is the ask lane's
+ *  hand-to-a-human terminal. */
+export type RunOutcome = "answered" | "published" | "escalated"
 
 /** A run's execution state. queued = pending work in the queue; a terminal state = history
  *  in the ledger. The same table serves both. */
@@ -3494,12 +3495,14 @@ export interface OrgSettings {
    *  nobody is watching. Off means the entry point does not render and the create/run/fire lanes
    *  refuse, so a workspace cannot queue work that will never be executed. */
   automateBeta: boolean
-  /** The agent-write killswitch, read fresh per run by the autonomy gate: when true,
-   *  every hosted agent write demotes to a proposal, instantly. */
-  agentKillswitch: boolean
-  /** Workspace opt-in for autonomy level `auto` to live-publish (always with a review
-   *  round). Off = auto behaves as suggest. */
-  agentAutoEnabled: boolean
+  /** THE one agent-write switch, read fresh per turn/claim/publish. On (the default),
+   *  agent writes publish live like a person's — versioned, with the publish fan-out,
+   *  and a review round when one was asked for. Off, agents stop writing everywhere an
+   *  agent credential can write: hosted runs and asks are neither materialized,
+   *  dispatched, nor claimed (no model spend), chat's publish tool refuses and steers
+   *  the drafted change into the reply, and an agent-credentialed publish — MCP or
+   *  HTTP — is refused at the API. Every reader fails CLOSED on a settings error. */
+  agentWrites: boolean
   /** The workspace's default agent (a registered agent id): the fallback actor for
    *  users with no connected agent (the concierge, workspace-owned living docs).
    *  Absent = none. */
@@ -3617,8 +3620,8 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   defaultListed: "none",
   whiteLabel: false,
   // Hosting on by default: it does nothing until an agent is flagged hosted, and
-  // the run-time safety lives in the autonomy gate (killswitch defaults off but
-  // every write still lands as a proposal until a workspace opts into auto).
+  // the run-time safety is the loop itself — every write is a kept version with the
+  // publish fan-out, restore is one click, and `agentWrites` is the brake.
   hostedAgentsEnabled: true,
   // Chat is ON by default now: it left beta, and an opt-in that everybody has to find is a
   // feature nobody uses. Explicitly setting it FALSE still turns it off, so a workspace that
@@ -3631,8 +3634,9 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   // Unset: the deploy's configured default answers, exactly as it did before this existed.
   chatModel: undefined,
   automateBeta: false,
-  agentKillswitch: false,
-  agentAutoEnabled: false,
+  // ON by default: an agent product whose agents cannot write out of the box undercuts
+  // the model. The switch exists for the day a workspace wants them stopped.
+  agentWrites: true,
 }
 
 /** A connected Slack workspace (one per Derive workspace). `bot_token` is the OAuth bot

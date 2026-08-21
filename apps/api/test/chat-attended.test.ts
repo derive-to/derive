@@ -31,10 +31,6 @@ const setup = async (name: string, reply: string) => {
   await meta.setOrgSettings("default", {
     ...(await meta.getOrgSettings("default")),
     chatBeta: true,
-    // Live publishing needs the workspace's OWN autonomy opt-in, which defaults off. The
-    // suite sets it explicitly so the publish path is tested deliberately rather than by
-    // accident — and the test below proves what happens without it.
-    agentAutoEnabled: true,
   })
 
   // The document being chatted about.
@@ -209,7 +205,7 @@ describe("chatting with a document", () => {
       app,
       meta,
       cx.id,
-      { kind: "artifact", id: artifact.short_id, mode: "publish" },
+      { kind: "artifact", id: artifact.short_id },
       "make it shorter",
     )
     // The session carries the subject back, so a surface knows what it is looking at.
@@ -229,7 +225,7 @@ describe("chatting with a document", () => {
     const opened = await app.request("/v1/artifacts/chat-session", {
       method: "POST",
       headers: { ...as("ed@x.com"), "content-type": "application/json" },
-      body: JSON.stringify({ short_id: artifact.short_id, body_md: "hello", mode: "publish" }),
+      body: JSON.stringify({ short_id: artifact.short_id, body_md: "hello" }),
     })
     expect(opened.status).toBe(201)
     const { session } = (await opened.json()) as { session: { id: string } }
@@ -337,7 +333,7 @@ describe("the beta gate", () => {
   })
 })
 
-describe("chat obeys the workspace's autonomy settings", () => {
+describe("chat obeys the workspace's agent-write switch", () => {
   const withSettings = async (name: string, settings: Record<string, unknown>) => {
     const users = [{ id: "u-ed", email: "ed@x.com", name: "Ed" }]
     const { app, meta } = makeAuthedApp(name, users, undefined, {
@@ -366,41 +362,32 @@ describe("chat obeys the workspace's autonomy settings", () => {
       })(),
     })
     const { short_id } = (await made.json()) as { short_id: string }
-    await app.request("/v1/artifacts/chat-session", {
+    const opened = await app.request("/v1/artifacts/chat-session", {
       method: "POST",
       headers: { ...as("ed@x.com"), "content-type": "application/json" },
-      body: JSON.stringify({ short_id, body_md: "make it shorter", mode: "publish" }),
+      body: JSON.stringify({ short_id, body_md: "make it shorter" }),
     })
+    const { session } = (await opened.json()) as { session: { id: string } }
+    // A blocked write lands nothing — the draft rides the reply. Poll for either
+    // terminal: a version landing (the failure this test guards against) or the
+    // agent's reply carrying the draft (the expected outcome).
     for (let i = 0; i < 100; i++) {
       const a = await meta.getByShortId(short_id)
       if ((a?.current_version ?? 0) > 1) break
-      if ((await meta.listProposals(a?.id ?? "")).length) break
+      const msgs = await meta.listSessionMessages(session.id)
+      if (msgs.some((m) => m.author_kind !== "asker" && m.body_md.includes("# New"))) break
       await new Promise((r) => setTimeout(r, 20))
     }
     const art = await meta.getByShortId(short_id)
-    return {
-      version: art?.current_version,
-      proposals: (await meta.listProposals(art?.id ?? "")).length,
-    }
+    return { version: art?.current_version }
   }
 
-  it("does NOT live-publish when the workspace has not opted into auto", async () => {
-    // The default. mode:"publish" is the USER's consent for this document; agentAutoEnabled is
-    // the WORKSPACE's consent for agents to write live at all. Both are required.
-    const r = await withSettings("chat-auto-off", { agentAutoEnabled: false })
+  it("does NOT write when the workspace switched agent writes off", async () => {
+    // The one brake. An operator who turns agents off after a bad run must stop chat too —
+    // hosted lanes stop at their claims, but chat writes in-process, so the switch reaches
+    // the rail's landing directly. Nothing lands live; the draft rides the reply.
+    const r = await withSettings("chat-switch-off", { agentWrites: false })
     expect(r.version).toBe(1)
-    expect(r.proposals).toBe(1)
-  })
-
-  it("obeys the KILLSWITCH even with auto on", async () => {
-    // An operator who flips the killswitch after a bad run must stop chat too — hardcoding
-    // these flags meant chat sailed straight past it.
-    const r = await withSettings("chat-killswitch", {
-      agentAutoEnabled: true,
-      agentKillswitch: true,
-    })
-    expect(r.version).toBe(1)
-    expect(r.proposals).toBe(1)
   })
 })
 
@@ -426,7 +413,6 @@ describe("access is re-checked on every turn, not just at session open", () => {
     await meta.setOrgSettings("default", {
       ...(await meta.getOrgSettings("default")),
       chatBeta: true,
-      agentAutoEnabled: true,
     })
     const made = await app.request("/v1/artifacts", {
       method: "POST",
@@ -549,7 +535,6 @@ describe("chat requires membership, not merely read access", () => {
     await meta.setOrgSettings("default", {
       ...(await meta.getOrgSettings("default")),
       chatBeta: true,
-      agentAutoEnabled: true,
     })
     const made = await app.request("/v1/artifacts", {
       method: "POST",
@@ -650,7 +635,6 @@ describe("follow-ups are limited, budgeted, and gated", () => {
     await meta.setOrgSettings("default", {
       ...(await meta.getOrgSettings("default")),
       chatBeta: true,
-      agentAutoEnabled: true,
     })
     const made = await app.request("/v1/artifacts", {
       method: "POST",
@@ -805,7 +789,7 @@ describe("an attended reply streams, then settles", () => {
     const opened = await app.request("/v1/artifacts/chat-session", {
       method: "POST",
       headers: { ...as("st@x.com"), "content-type": "application/json" },
-      body: JSON.stringify({ short_id, body_md: "hi", mode: "propose" }),
+      body: JSON.stringify({ short_id, body_md: "hi", mode: "draft" }),
     })
     expect(opened.status).toBe(201)
     const sessionId = ((await opened.json()) as { session: { id: string } }).session.id
@@ -868,7 +852,7 @@ describe("an attended reply streams, then settles", () => {
     const opened = await app.request("/v1/artifacts/chat-session", {
       method: "POST",
       headers: { ...as("nm@x.com"), "content-type": "application/json" },
-      body: JSON.stringify({ short_id, body_md: "hi", mode: "propose" }),
+      body: JSON.stringify({ short_id, body_md: "hi", mode: "draft" }),
     })
     // Chat is unreachable with no model wired, so either it refuses up front or it answers
     // in the transcript — both are terminal. What must NOT happen is a silent hang.

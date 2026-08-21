@@ -114,7 +114,7 @@ describe("brandprintInstructions", () => {
   it("pending profile is factual and user-conditioned, never solicits", () => {
     const s = brandprintInstructions(2, { state: "pending", shortId: "abc123" })
     expect(s).toContain("If the user asks")
-    expect(s).toContain("for_review")
+    expect(s).toContain("review round opens")
     expect(s).toContain("abc123")
     expect(s).toContain("derive://brandprint/reference")
     expect(s.toLowerCase()).not.toContain("offer")
@@ -138,12 +138,12 @@ describe("reworkInstruction", () => {
 })
 
 describe("buildProfileInstruction", () => {
-  it("names the reference, the template, the sources, and the review-gated target", () => {
+  it("names the reference, the template, the sources, and the review-notified target", () => {
     const s = buildProfileInstruction("czwrd32q")
     expect(s).toContain("derive://brandprint/reference")
     expect(s).toContain("derive://brandprint/template")
     expect(s).toContain("derive://brandprint/*")
-    expect(s).toContain("for_review: true")
+    expect(s).toContain("review round")
     expect(s).toContain("artifact czwrd32q")
   })
 })

@@ -121,8 +121,7 @@ HTTP instead. All three branch on the TOKEN, which is what lets one substrate se
 `dkrun_` token takes the automation lane (claim a run, return a revision, `/finish`), a `dksess_`
 token takes the ask lane (claim the one session that token names, answer it, then
 `POST /v1/sessions/:id/messages`). The middle of both turns — call the model, nudge once on a
-contract miss, run the autonomy gate, write — is `apps/api/src/lib/turn-core.ts`, shared with
-attended chat. Only work arrival and settling differ, and they stay separate on purpose.
+contract miss, write — is `apps/api/src/lib/turn-core.ts`, shared with attended chat. Only work arrival and settling differ, and they stay separate on purpose.
 
 ### How a run gets started (two paths, one guarantee)
 

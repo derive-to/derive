@@ -24,7 +24,8 @@ describe("workspace integration settings", () => {
       defaultListed: "none",
       // Branding stays on until a workspace white-labels (the Team affordance).
       whiteLabel: false,
-      // Hosted-agent controls: hosting available, no autonomy until opted in.
+      // Hosted-agent controls: hosting available, and writes on by default — the
+      // agentWrites switch below is the deliberate brake.
       hostedAgentsEnabled: true,
       // Chat ships BETA and OFF: a workspace opts in deliberately. This line failing is the
       // signal that someone flipped the default, which is the whole point of asserting it.
@@ -32,8 +33,7 @@ describe("workspace integration settings", () => {
       chatSources: [],
       // Automations ship the same way, and the same reasoning applies to this line.
       automateBeta: false,
-      agentKillswitch: false,
-      agentAutoEnabled: false,
+      agentWrites: true,
     })
   })
 

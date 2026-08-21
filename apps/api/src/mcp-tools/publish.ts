@@ -25,6 +25,7 @@ import { z } from "zod"
 import { PROFILE_PLACEHOLDER_HTML } from "../brandprint-reference"
 import { markAddressed } from "../lib/addressed"
 import { afterPublish } from "../lib/after-publish"
+import { AGENT_WRITES_OFF, agentWritesOff } from "../lib/agent-writes"
 import { cleanPath, mergeBundleZip, zipBundleFiles } from "../lib/bundle"
 import {
   collectRender,
@@ -39,10 +40,9 @@ import {
   materializeSlideOps,
   preservingFilename,
 } from "../lib/edits"
-import { buildReviewEmail } from "../lib/email"
 import { MAX_UPLOAD_BYTES } from "../lib/http"
 import { badChoice, choiceDescription } from "../lib/open-choice"
-import { enqueueSlackReviewRequestedDm } from "../lib/slack-dm"
+import { agentPushFanout, openReviewRound } from "../lib/review-request"
 import { normalizeTags } from "../lib/tags"
 import { canReadTemplateLibrary } from "../lib/template-library-access"
 import type { ToolContext } from "../mcp-tool-context"
@@ -56,9 +56,7 @@ import {
   manifestOf,
   text,
   toBase64,
-  withTimeout,
 } from "../mcp-util"
-import { enqueueChannelDelivery } from "../webhooks"
 
 export function registerPublishTool(tc: ToolContext): void {
   // NOTE: the surface deliberately does NOT vary by scope. Hiding publish's live-only access
@@ -80,7 +78,13 @@ export function registerPublishTool(tc: ToolContext): void {
     inGrant,
     resolveWs,
     wsArg,
+    clientId,
   } = tc
+  // The ATTENDED surfaces run this same tool in-process with the asker as `actingFor`. For
+  // them the person behind the write is sitting in the conversation — a review round is the
+  // record, not an interrupt — where a detached executor's whole point is interrupting the
+  // human it acts for.
+  const attended = clientId === "chat"
 
   // Resolve derive://brandprint/profile to the workspace's brand-profile artifact,
   // scaffolding it (conventions collection + "Brand profile" placeholder + settings
@@ -89,7 +93,7 @@ export function registerPublishTool(tc: ToolContext): void {
   // the scaffold's WRITES fire ONLY when the caller holds `manage` (Owner/Admin); a
   // non-manage caller for whom nothing is set up yet gets an actionable error naming an
   // Admin, and NO write happens. Reusing an already-set-up profile needs no manage (a
-  // normal for_review revision). Body copied verbatim from setup_brandprint.
+  // normal revision). Body copied verbatim from setup_brandprint.
   const resolveBrandprintProfileTarget = async (
     targetOrg: string,
     role: Role,
@@ -110,13 +114,12 @@ export function registerPublishTool(tc: ToolContext): void {
     if (!roleAllows(role, "manage"))
       return {
         error:
-          "This workspace has no Brandprint profile yet, and only an Admin/Owner can set one up. Ask an Admin to publish to derive://brandprint/profile once (that scaffolds it); after that anyone with publish rights can propose revisions.",
+          "This workspace has no Brandprint profile yet, and only an Admin/Owner can set one up. Ask an Admin to publish to derive://brandprint/profile once (that scaffolds it); after that anyone with publish rights can revise it.",
       }
     // The scaffold below is a real live write (a collection create + a placeholder
-    // publish) — unlike the profile's own reveal/revision, which always routes to a
-    // human-approved proposal (see `profileForReview` in the caller) and so stays free
-    // of this gate. A billing-blocked workspace must refuse the scaffold exactly like
-    // any other live publish, and BEFORE any of it writes.
+    // publish). The profile's own revision is a live write too now, gated at the shared
+    // billing check on the publish path; this earlier check exists so a billing-blocked
+    // workspace refuses the scaffold BEFORE any of it writes.
     const blocked = await ctx.billingBlocked(targetOrg)
     if (blocked) return { error: blocked.message }
     // Reuse an in-tenant collection pointer; otherwise create the conventions collection
@@ -423,9 +426,11 @@ export function registerPublishTool(tc: ToolContext): void {
       }
       let content = contentIn
       const BP = "derive://brandprint/"
-      // The brand profile is never published LIVE — its reveal/revision is always a
-      // human-approved proposal. Also its exemption from the total-inline cap below (it has
-      // no out-of-band path to its URI). Computed from the RAW target, before resolution.
+      // The brand profile publishes LIVE like any document, but ALWAYS opens a review
+      // round: it steers every agent in the workspace, so the person is told the moment
+      // it changes (and restore is one click). Also its exemption from the total-inline
+      // cap below (it has no out-of-band path to its URI). Computed from the RAW target,
+      // before resolution.
       const isProfileTarget = short_id === `${BP}profile`
 
       // GUARDRAILS — reject inline payloads that belong out-of-band, BEFORE any write or
@@ -456,8 +461,11 @@ export function registerPublishTool(tc: ToolContext): void {
       // Resolve a derive:// target — publish accepts the same URI strings `read` does. The
       // only WRITEABLE one is the brand profile; the static build guide and core skills are
       // read-only, and any other derive:// string is rejected rather than silently treated
-      // as a short_id. The profile's reveal is always a proposal (profileForReview).
-      let profileForReview = false
+      // as a short_id. A profile publish always opens a review round (profileAskReview),
+      // addressed to the human behind the grant — or the token's registrant when no human
+      // is on the call — so the reveal is never silent.
+      let profileAskReview = false
+      let profileReviewer: string | null = null
       if (short_id?.startsWith("derive://")) {
         if (isProfileTarget) {
           const t = await resolveWs(workspace)
@@ -467,10 +475,17 @@ export function registerPublishTool(tc: ToolContext): void {
             return err(
               "Publishing the brand profile needs a signed-in user to attribute it to. Connect with an OAuth agent grant rather than a static agent token.",
             )
+          // THE AGENT-WRITE SWITCH, checked before the profile SCAFFOLD can write: on an
+          // un-scaffolded workspace this resolution creates the conventions collection, the
+          // placeholder, and the settings pointer — five writes that must not land while
+          // agents are switched off. (The main gate below covers the publish itself; this
+          // one covers the resolution's own writes.)
+          if (await agentWritesOff(ctx.meta, t.org)) return err(AGENT_WRITES_OFF)
           const resolved = await resolveBrandprintProfileTarget(t.org, t.role, uid)
           if ("error" in resolved) return err(resolved.error)
           short_id = resolved.profileShortId
-          profileForReview = true
+          profileAskReview = true
+          profileReviewer = uid
         } else if (short_id.startsWith(BP)) {
           const seg = short_id.slice(BP.length)
           if (seg === "reference" || seg === "template")
@@ -511,6 +526,31 @@ export function registerPublishTool(tc: ToolContext): void {
         if ("error" in t) return text(t.error)
         targetOrg = t.org
         actRole = t.role
+      }
+
+      // THE AGENT-WRITE SWITCH binds every write this tool makes — a live publish, a
+      // proposal, whichever grant is calling (a standing MCP connection, an agent bearer,
+      // the code sandbox) — so "agents stop writing" is true wherever an agent-credentialed
+      // write can start. Checked as soon as the target workspace is known, before anything
+      // lands a row; one settings read serves the switch and the brand-profile pointer
+      // below, and a failed read refuses (null settings), like every reader of the switch.
+      const orgSettings = await ctx.meta.getOrgSettings(targetOrg).catch(() => null)
+      if (!orgSettings?.agentWrites) return err(AGENT_WRITES_OFF)
+
+      // The profile's forced round holds HOWEVER the profile is addressed. The URI branch
+      // above set profileAskReview for `derive://brandprint/profile`; a publish straight to
+      // the profile artifact's short_id must not be the silent side door, so the target is
+      // re-checked against the workspace's stored pointer.
+      if (existing && !profileAskReview) {
+        if (orgSettings.brandprint?.profileId === existing.short_id) {
+          const uid = actingFor?.id ?? ownerId
+          if (!uid)
+            return err(
+              "Publishing the brand profile needs a signed-in user to attribute it to. Connect with an OAuth agent grant rather than a static agent token.",
+            )
+          profileAskReview = true
+          profileReviewer = uid
+        }
       }
 
       // Creation lineage uses the same access rules as reading the starting
@@ -614,13 +654,22 @@ export function registerPublishTool(tc: ToolContext): void {
           )
         if (existing.kind === "file" && isBundle)
           return text(`"${short_id}" is a single-file artifact — pass \`content\`, not \`files\`.`)
+        // The SAME two republish gates the HTTP route enforces (routes/artifacts.ts) — the
+        // agent path must never be the one that walks around them.
+        if (await ctx.meta.isManagedArtifact(existing.org_id, existing.id))
+          return err(
+            `"${short_id}" is managed by GitHub sync — edit this file in the repo instead.`,
+          )
+        if (existing.locked)
+          return err(
+            `"${short_id}" is locked — leave your suggested change as a comment, or ask an editor to unlock it.`,
+          )
       }
 
       // Direct publish is gated on the agent's role (Creator/Admin). A commenter-level
-      // grant — or anyone asking for_review, or a publish to the brand profile (whose
-      // reveal is always human-approved) — is routed to a human-reviewed proposal, so a
+      // grant — or anyone asking for_review — is routed to a human-reviewed proposal, so a
       // low-privilege agent still can't push live content.
-      const review = for_review === true || profileForReview || !roleAllows(actRole, "publish")
+      const review = for_review === true || !roleAllows(actRole, "publish")
       if (review) {
         if (!roleAllows(actRole, "propose"))
           return text(
@@ -674,9 +723,9 @@ export function registerPublishTool(tc: ToolContext): void {
         }
       }
 
-      // Live publish path. Gated on billing here, not up with the `edits` storage check
-      // above — that check also runs for the propose branch (which stays free), so the
-      // billing gate has to sit strictly after the review/propose split.
+      // Gated on billing here, not up with the `edits` storage check above — that check
+      // also runs for the propose branch (which stays free), so the billing gate has to
+      // sit strictly after the review/propose split.
       const blocked = await ctx.billingBlocked(targetOrg)
       if (blocked) return err(blocked.message)
       if (merge) {
@@ -803,102 +852,50 @@ export function registerPublishTool(tc: ToolContext): void {
         // (normalized, deduped, capped); an empty array clears; omitted leaves them be, so
         // a republish that doesn't mention tags keeps the artifact's existing set.
         if (tags !== undefined) await ctx.meta.setArtifactTags(artifact.id, normalizeTags(tags))
-        // The /derive loop: ask the human to review this live version.
+        // The /derive loop: ask the human to review this live version. A brand-profile
+        // publish always asks — that round is what makes the profile's reveal a human
+        // moment rather than a silent rewrite of every agent's instructions. The whole
+        // reviewer fan-out (round, bus, card, email, Slack DM) is the shared helper the
+        // HTTP route runs, so the two surfaces cannot drift on it.
         let review_round: string | null = null
-        if (request_review && actingFor) {
-          const round = await ctx.meta.createReviewRound({
-            id: newId("rr"),
-            artifact_id: artifact.id,
-            version: version.n,
-            requested_by: agent.id,
-            requested_for: actingFor.id,
-          })
-          review_round = round.id
-          ctx.bus.publish(artifact.id, { type: "review.requested", round_id: round.id })
-          await ctx.notify(artifact, "review.requested", {
-            version: version.n,
-            requested_by: agent.name,
-          })
-          // The review request is the one event that earns an email: the loop is
-          // blocked on the human, who may have no tab open (same policy as the
-          // HTTP publish path). `settings` is only pre-loaded on a create, so a
-          // republish (where most review rounds happen) fetches the gate here.
-          if ((settings ?? (await ctx.meta.getOrgSettings(targetOrg))).emailNotifications) {
-            const [r] = await ctx.meta.getUsers([actingFor.id])
-            if (r?.email)
-              await enqueueChannelDelivery(ctx.meta, "email", "review.requested", {
-                to: r.email,
-                toName: r.name ?? undefined,
-                ...buildReviewEmail(ctx.deps.baseUrl, artifact, {
-                  requestedBy: agent.name,
-                  version: version.n,
-                }),
-              })
-          }
-          // Same interrupt, mirrored to Slack (independent of the email gate above —
-          // gated on the reviewer's own Slack-DM preference instead).
-          await enqueueSlackReviewRequestedDm(
-            { meta: ctx.meta, baseUrl: ctx.deps.baseUrl },
+        const reviewFor = actingFor?.id ?? (profileAskReview ? profileReviewer : null)
+        if ((request_review || profileAskReview) && reviewFor) {
+          review_round = await openReviewRound(
+            { meta: ctx.meta, bus: ctx.bus, baseUrl: ctx.deps.baseUrl, notify: ctx.notify },
             artifact,
-            { requestedBy: agent.name, version: version.n },
-            actingFor.id,
+            {
+              reviewer: reviewFor,
+              requestedById: agent.id,
+              requestedByName: agent.name,
+              version: version.n,
+              notifyExtras: { author: agent.name, actor_id: agent.id },
+              // A detached executor's request interrupts the human it acts for — that is
+              // the point. An attended surface's request is the person's own conversational
+              // edit: the round is the record, and emailing them about it would be noise.
+              selfId: attended ? reviewFor : null,
+            },
           )
         }
         const url = artifactUrl(ctx.deps.baseUrl, artifact)
-        // Bell entry for the human behind the grant, so a push reaches them even
-        // with no tab open (the on-the-go path). One row per push that warrants
-        // one: a review ask beats a plain "published" (never both).
-        if (actingFor && (review_round || !short_id)) {
-          const row = {
-            id: newId("n"),
-            user_id: actingFor.id,
-            actor: agent.name,
-            kind: review_round ? ("review" as const) : ("publish" as const),
-            artifact_id: artifact.id,
-            artifact_short_id: artifact.short_id,
-            artifact_title: artifact.title,
-            thread_id: "",
-            comment_id: "",
-            preview: review_round
-              ? `requested your review of v${version.n}`
-              : (artifact.title ?? "published something new"),
-          }
-          await ctx.meta.createNotification(row)
-          ctx.bus.publish(`u:${actingFor.id}`, {
-            type: "notification",
-            notification: { ...row, read: 0, created_at: new Date().toISOString() },
-          })
-        }
-        // Auto-open: tell the granting user's open tabs an agent just pushed. The
-        // delivery receipt (how many live streams caught it) becomes
-        // `opened_in_tab`, so the agent knows whether to open the URL locally.
+        // Bell + auto-open for the human behind the grant — the shared fan-out the HTTP
+        // route runs. The delivery receipt becomes `opened_in_tab`, so the agent knows
+        // whether to open the URL locally. An attended surface pushes only for a CREATE
+        // (auto-opening the new page is the point); its edits happen in front of the
+        // person, whose tab live-reloads — a bell about their own edit is noise.
         let openedInTab = false
-        if (actingFor) {
-          const channel = `u:${actingFor.id}`
-          // Same service flag as the /v1 publish path: a context-bound agent's
-          // push is routinely someone ELSE's ask — the client toasts instead of
-          // auto-opening the owner's tab.
-          const contexts = await ctx.meta.listContexts(artifact.org_id)
-          const service = contexts.some((x) => x.agent_id === agent.id)
-          const pushed = {
-            type: "artifact.pushed" as const,
-            event_id: newId("ev"),
-            short_id: artifact.short_id,
-            artifact_id: artifact.id,
-            title: artifact.title,
-            version: version.n,
-            kind: short_id ? "revised" : "created",
-            url,
-            agent: agent.name,
-            review_requested: !!review_round,
-            service,
-          }
-          if (ctx.bus.publishWithReceipt) {
-            openedInTab =
-              (await withTimeout(ctx.bus.publishWithReceipt(channel, pushed), 1500, 0)) > 0
-          } else {
-            ctx.bus.publish(channel, pushed)
-          }
+        if (actingFor && (!attended || !short_id)) {
+          openedInTab = await agentPushFanout(
+            { meta: ctx.meta, bus: ctx.bus, baseUrl: ctx.deps.baseUrl },
+            artifact,
+            {
+              user: actingFor.id,
+              agentId: agent.id,
+              agentName: agent.name,
+              version: version.n,
+              reviewRound: !!review_round,
+              isNew: !short_id,
+            },
+          )
         }
         // Each bundle page (including any bound images) is directly fetchable once
         // live — surfacing the URLs here is the fix for an agent that can't find

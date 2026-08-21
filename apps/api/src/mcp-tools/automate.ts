@@ -99,18 +99,14 @@ export function registerAutomateTool(tc: ToolContext): void {
           .array(
             z.union([
               z.string(),
-              z.object({
-                kind: z.literal("artifact"),
-                id: z.string(),
-                mode: z.enum(["publish", "propose"]).optional(),
-              }),
+              z.object({ kind: z.literal("artifact"), id: z.string() }),
               z.object({ kind: z.literal("tag"), tag: z.string() }),
             ]),
           )
           .max(100)
           .optional()
           .describe(
-            'create: what the run acts on — short ids, {kind:"artifact",id,mode:"publish"|"propose"}, or {kind:"tag",tag}. Duplicates are dropped.',
+            'create: what the run acts on — short ids, {kind:"artifact",id}, or {kind:"tag",tag}. A run\'s write publishes as a new version of its target (kept, restorable, with the publish fan-out). Duplicates are dropped.',
           ),
         context_id: z
           .string()
@@ -138,7 +134,7 @@ export function registerAutomateTool(tc: ToolContext): void {
           .optional()
           .describe("record: short_ids this run published."),
         outcome: z
-          .enum(["published", "proposed", "answered", "shadow", "failed"])
+          .enum(["published", "answered", "failed"])
           .optional()
           .describe("record: how it ended. Only 'failed' marks the run failed."),
         note: z

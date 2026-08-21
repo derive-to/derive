@@ -5,7 +5,6 @@ import {
   runOutcome,
   runStatusLabel,
   runWrites,
-  stampMode,
   targetSummary,
   triggerLabel,
 } from "./automation-format"
@@ -62,28 +61,6 @@ describe("run helpers", () => {
   })
 })
 
-describe("stampMode", () => {
-  const targets: AutomationRef[] = [
-    { kind: "artifact", id: "a1" },
-    { kind: "collection", id: "c1" },
-    { kind: "tag", tag: "weekly" },
-  ]
-  it("publish stamps mode on every target; the artifact/collection/tag kinds are preserved", () => {
-    expect(stampMode(targets, "publish")).toEqual([
-      { kind: "artifact", id: "a1", mode: "publish" },
-      { kind: "collection", id: "c1", mode: "publish" },
-      { kind: "tag", tag: "weekly", mode: "publish" },
-    ])
-  })
-  it("propose is the default — targets stay bare (the canonical minimal form)", () => {
-    expect(stampMode(targets, "propose")).toEqual(targets)
-    expect(stampMode(targets, "propose").every((r) => !("mode" in r))).toBe(true)
-  })
-  it("empty targets → empty", () => {
-    expect(stampMode([], "publish")).toEqual([])
-  })
-})
-
 describe("targetSummary", () => {
   it("counts by kind and pluralizes; empty when there are no targets", () => {
     expect(targetSummary([])).toBe("")
@@ -105,25 +82,21 @@ describe("targetSummary", () => {
 })
 
 describe("runWrites", () => {
-  it("maps each write to its verb: created, proposed (from decision), or revised", () => {
+  it("maps each write to its verb: created or revised", () => {
     const meta = JSON.stringify({
       writes: [
-        { short_id: "d1", decision: "live_publish_with_review", created: false },
-        { short_id: "d2", decision: "proposal", created: false },
-        { short_id: "d3", decision: "proposal", created: true },
+        { short_id: "d1", created: false },
+        { short_id: "d3", created: true },
       ],
     })
     expect(runWrites(meta)).toEqual([
       { shortId: "d1", verb: "revised" },
-      { shortId: "d2", verb: "proposed" },
       { shortId: "d3", verb: "created" },
     ])
   })
-  it("drops writes with no artifact (shadow), and tolerates every junk shape", () => {
+  it("drops writes with no artifact, and tolerates every junk shape", () => {
     expect(
-      runWrites(
-        JSON.stringify({ writes: [{ short_id: null }, { short_id: "" }, { decision: "x" }] }),
-      ),
+      runWrites(JSON.stringify({ writes: [{ short_id: null }, { short_id: "" }, { junk: "x" }] })),
     ).toEqual([])
     expect(runWrites(null)).toEqual([])
     expect(runWrites("not json")).toEqual([])

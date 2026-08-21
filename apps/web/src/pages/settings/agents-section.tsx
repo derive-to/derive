@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
 import { Bot } from "lucide-react"
 import { useState } from "react"
-import { type Agent, api, type Role } from "@/api"
+import { type Agent, api, type OrgSettings, type Role } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { ListRow } from "@/components/shared/list-row"
 import { LoadError } from "@/components/shared/load-error"
@@ -22,8 +22,13 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
-import { agentsQuery, modelCredentialsQuery } from "@/lib/queries"
-import { useApiMutation } from "@/lib/use-api-mutation"
+import {
+  agentsQuery,
+  modelCredentialsQuery,
+  workspaceQuery,
+  workspaceSettingsQuery,
+} from "@/lib/queries"
+import { snapshot, useApiMutation } from "@/lib/use-api-mutation"
 import { AddForm } from "./add-form"
 import { ModelPlanManager } from "./model-plan-manager"
 import { SettingsListSkeleton } from "./settings-list-skeleton"
@@ -42,6 +47,8 @@ export function AgentsSection({ meId }: { meId: string }) {
       title="Workspace agents"
       description="Register an agent so teammates can @mention it and send it work. Choose what it can do."
     >
+      <AgentWritesRow />
+
       <NewAgent onCreated={reload} />
 
       {isPending ? (
@@ -96,6 +103,46 @@ export function AgentsSection({ meId }: { meId: string }) {
         </SettingsGroup>
       </div>
     </SettingsSection>
+  )
+}
+
+/** The one workspace-wide agent brake, on by default. On: an agent's change publishes like a
+ *  person's — a kept, restorable version, with the publish fan-out. Off: hosted runs and asks
+ *  stop being claimed, and chat's publish tool refuses (the draft surfaces in the reply). */
+function AgentWritesRow() {
+  const qc = useQueryClient()
+  const { data: settings } = useQuery(workspaceSettingsQuery())
+  // The PATCH is admin-only; mirror that gate so a non-admin sees the state
+  // without a switch that 403s on flip.
+  const { data: ws } = useQuery(workspaceQuery())
+  const isAdmin = ws?.role === "owner"
+  const update = useApiMutation({
+    mutationFn: (patch: Partial<OrgSettings>) => api.updateWorkspaceSettings(patch),
+    optimistic: (patch, client) => {
+      const qk = workspaceSettingsQuery().queryKey
+      const rollback = snapshot(client, qk)
+      client.setQueryData(qk, (prev) => (prev ? { ...prev, ...patch } : prev))
+      return rollback
+    },
+    onSuccess: (s) => qc.setQueryData(workspaceSettingsQuery().queryKey, s),
+  })
+  if (!settings) return null
+  return (
+    <SettingsGroup>
+      <SettingRow
+        htmlFor="toggle-agent-writes"
+        label="Agents can write"
+        description="On, an agent's change publishes like a person's — versioned, restorable, and announced. Off, agents stop writing: runs pause, and chat puts its drafted change in the reply instead."
+      >
+        <Switch
+          id="toggle-agent-writes"
+          data-testid="toggle-agent-writes"
+          checked={settings.agentWrites}
+          disabled={!isAdmin}
+          onCheckedChange={(next) => update.mutate({ agentWrites: next })}
+        />
+      </SettingRow>
+    </SettingsGroup>
   )
 }
 

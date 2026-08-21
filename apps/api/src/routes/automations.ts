@@ -14,6 +14,7 @@ import {
 import { z } from "@hono/zod-openapi"
 import { type Context, Hono } from "hono"
 import type { AppContext } from "../context"
+import { agentWritesOff } from "../lib/agent-writes"
 import {
   automationProvider,
   executionForRun,
@@ -28,7 +29,6 @@ import {
   mcpAuthFor,
   parseConnectionIds,
   type SourceQuiet,
-  spendableConnections,
   toolsForRun,
 } from "../lib/broker"
 import { overBudget } from "../lib/budget"
@@ -77,13 +77,13 @@ const META = z.record(z.string(), z.unknown()).refine((m) => JSON.stringify(m).l
   message: "meta too large",
 })
 // A ref is a selector: a bare artifact short id (the shorthand) or a typed pointer at a
-// collection or tag. Same discriminated-union pattern as the trigger.
-const MODE = z.enum(["publish", "propose"]).optional()
+// collection or tag. Same discriminated-union pattern as the trigger. Zod strips unknown
+// keys, so a ref carrying extra fields is not rejected — a ref is just an address.
 const REF = z.union([
   z.string().min(1).max(512),
-  z.object({ kind: z.literal("artifact"), id: z.string().min(1).max(512), mode: MODE }),
-  z.object({ kind: z.literal("collection"), id: z.string().min(1).max(512), mode: MODE }),
-  z.object({ kind: z.literal("tag"), tag: z.string().min(1).max(128), mode: MODE }),
+  z.object({ kind: z.literal("artifact"), id: z.string().min(1).max(512) }),
+  z.object({ kind: z.literal("collection"), id: z.string().min(1).max(512) }),
+  z.object({ kind: z.literal("tag"), tag: z.string().min(1).max(128) }),
 ])
 const REFS = z.array(REF).max(100)
 const TRIGGER = z.object({
@@ -320,7 +320,7 @@ export const automationRoutes = (ctx: AppContext) => {
     }
   })
 
-  // Edit in place: instruction, trigger, refs (write modes ride IN them), the agent,
+  // Edit in place: instruction, trigger, refs, the agent,
   // and enabled (pause/resume). Same manage gate as create; org-scoped update so a
   // shared short id can never cross tenants. Pausing composes with the existing
   // guards: run-now 400s and stale queued runs cancel at claim.
@@ -475,7 +475,8 @@ export const automationRoutes = (ctx: AppContext) => {
     const presented = (c.req.header("authorization") ?? "").replace(/^Bearer\s+/i, "")
     if (!safeEqual(trigger.secret_hash, sha256(presented))) return fail(c, 401, "invalid secret")
     // Same enabled-gate as run-now: a disabled automation takes no new runs from ANY trigger.
-    // (The killswitch stays enforced downstream at claim, exactly as for the other triggers.)
+    // (The agentWrites switch stays enforced downstream at claim, exactly as for the other
+    // triggers.)
     if (a.enabled !== 1) return fail(c, 400, "automation is disabled")
     // Budget guard at enqueue (invariant 2): a fire bills to the workspace pool (no user).
     if (await overBudget(meta, a.org_id, null)) return fail(c, 429, "monthly run budget reached")
@@ -542,6 +543,10 @@ export const automationRoutes = (ctx: AppContext) => {
     // (a polling runner) materializes its due schedule runs first — the poll IS the tick —
     // then claims the oldest due batch.
     if (isSessionBearer(c)) return fail(c, 403, "a session token cannot claim runs")
+    // THE AGENT-WRITE SWITCH stops the run lane at the door, read fresh per claim: with
+    // agents switched off (or the switch unreadable) nothing is claimed — no lease, no
+    // model spend — and due runs simply wait for the switch to come back on.
+    if (await agentWritesOff(meta, agent.org_id)) return c.json({ runs: [] })
     const scope = agentRunScope(c)
     let claimed: Awaited<ReturnType<typeof meta.claimDueRuns>>
     if (scope) {
@@ -560,13 +565,6 @@ export const automationRoutes = (ctx: AppContext) => {
     // never a per-id loop (the no-N+1 rule).
     const ids = [...new Set(claimed.map((r) => r.automation_id).filter((x): x is string => !!x))]
     const byId = new Map((await meta.getAutomationsByIds(ids)).map((a) => [a.id, a]))
-    // Resolve the gate inputs server-side, FRESH at claim time (so a flipped killswitch is
-    // seen on the next claim): flags from org settings; write mode rides per-target in refs.
-    // The executor gets everything it needs to run each run in one call — no extra round-trips.
-    const s = await meta.getOrgSettings(agent.org_id)
-    // The workspace half; `credentialed` is per-run and is added below, next to the tool list
-    // it is derived from, so the two can never disagree about whether this run has hands.
-    const flags = { agentKillswitch: s.agentKillswitch, agentAutoEnabled: s.agentAutoEnabled }
     // Defense-in-depth: a run whose automation vanished (the delete race), was disabled after
     // enqueue, or carries no instruction must never reach the executor — it would burn a model
     // call on an empty task. Finish it as failed/cancelled here and hand back only real work.
@@ -624,13 +622,6 @@ export const automationRoutes = (ctx: AppContext) => {
                 quiet,
               )
             : []
-        // Counted from the CONNECTIONS this run may spend, not from `tools` — a connection with
-        // no base_url yields no HTTP tools but is still a real credential (it is spent by
-        // delivery into the run). Deriving this from the tool list would report "not
-        // credentialed" for exactly those, i.e. fail open in the case the rung exists for.
-        const spendable = connIds.length
-          ? await spendableConnections(meta, agent.org_id, connIds)
-          : []
         return {
           id: r.id,
           reason: r.reason,
@@ -655,9 +646,7 @@ export const automationRoutes = (ctx: AppContext) => {
           execution,
           instruction: a.instruction,
           // Canonical selectors: artifact = revise it, collection = file new work there,
-          // tag = the platform stamps it on every write. Each target's `mode` says how the
-          // write lands (publish live vs propose, default propose) — the executor maps it
-          // per write; it never re-derives semantics.
+          // tag = the platform stamps it on every write.
           targets: parseRefs(a.refs),
           // The run's source tools (name/description/params + broker ref), least-privilege.
           // Projected field by field on purpose: RunTool also carries routing detail the
@@ -670,12 +659,6 @@ export const automationRoutes = (ctx: AppContext) => {
           // them, so a webhook-triggered run executed as though a clock had started it. Empty
           // for schedule and manual runs.
           payloads: parseRunMeta(r.meta).payloads ?? [],
-          // A run that can spend a credential files a proposal instead of publishing live
-          // (@derive/core decideWrite, rung 3). Resolved live rather than read off the
-          // automation's stored id list, which can name a connection that no longer resolves
-          // (revoked, or its owner offboarded): credentials it actually gets, not ones it was
-          // promised.
-          flags: { ...flags, credentialed: spendable.length > 0 },
         }
       }),
     )

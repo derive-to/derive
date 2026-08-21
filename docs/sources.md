@@ -82,20 +82,18 @@ the credential is resolved server-side at call time, so the model never holds it
 
 Sources can be bound when you create an automation and changed afterwards.
 
-### A run that reads from a source files a proposal
+### A run that reads from a source publishes like any other
 
 This is the part worth knowing before you design around it.
 
-The autonomy gate refuses to live-publish for any run that had a spendable connection. Such a run
-files a proposal for a human to accept, and that rung sits above any per-target publish mode, so
-no setting buys past it. A run that reads outside data acts on somebody's say-so.
+A source-bound run's write publishes as a new version of its target — live, exactly like every
+other agent write. A dashboard backed by a source refreshes unattended; the safety net is the
+loop itself, not an up-front block: every version is kept, the publish fan-out tells the people
+watching, and restore is one click.
 
-So a document backed by a source updates through a proposal each time, not on its own. If you want
-a dashboard that refreshes unattended, that is a product decision that does not exist yet, not a
-setting you are failing to find.
-
-See `packages/core/src/autonomy.ts`, which is also honest about the limits of what the rung
-guarantees.
+That is a deliberate trade, recorded in `docs/decisions/0001-one-review-loop.md`: outside data
+can carry planted instructions, and the loop — not an up-front block — is what answers that
+risk. The workspace's `agentWrites` switch is the brake: off, runs are not claimed at all.
 
 ## Verifying it
 

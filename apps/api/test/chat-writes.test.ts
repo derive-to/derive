@@ -13,39 +13,29 @@ import { as, makeAuthedApp, publishAs } from "./helpers"
 // turn just read, and this cannot.
 
 describe("the chat write posture", () => {
-  it("creates live and edits as a proposal", () => {
-    // No short_id ⇒ a create. Nothing is being replaced, so nothing needs reviewing first.
-    expect(chatPolicy("publish", { title: "New", content: "x" })).not.toHaveProperty("for_review")
-    // A short_id ⇒ an EDIT of work somebody already has. That lands as a proposal.
+  it("creates live and edits with a review round asked", () => {
+    // No short_id ⇒ a create. Nothing is being replaced, so nothing needs a look first.
+    expect(chatPolicy("publish", { title: "New", content: "x" })).not.toHaveProperty(
+      "request_review",
+    )
+    // A short_id ⇒ an EDIT of work somebody already has. It publishes live and asks the
+    // person to look — the note is one glance, and restore is one click.
     expect(chatPolicy("publish", { short_id: "ab12cd34", content: "x" })).toMatchObject({
-      for_review: true,
+      request_review: true,
     })
   })
 
   it("cannot be talked out of it — the posture is not in the prompt", () => {
-    // The shape a prompt injection produces: the model asks, explicitly, to publish live.
+    // The shape a prompt injection produces: the model asks, explicitly, to skip the review.
     expect(
-      chatPolicy("publish", { short_id: "ab12cd34", content: "x", for_review: false }),
-    ).toMatchObject({ for_review: true })
+      chatPolicy("publish", { short_id: "ab12cd34", content: "x", request_review: false }),
+    ).toMatchObject({ request_review: true })
   })
 
-  it("only ever tightens: it never turns a proposal into a live publish", () => {
-    expect(chatPolicy("publish", { title: "New", for_review: true })).toMatchObject({
-      for_review: true,
+  it("only ever tightens: it never drops a review the model asked for", () => {
+    expect(chatPolicy("publish", { title: "New", request_review: true })).toMatchObject({
+      request_review: true,
     })
-  })
-
-  it("honours the KILLSWITCH on creates, not only on edits", () => {
-    // The switch is documented as "demotes EVERY write to a proposal, instantly", and it is an
-    // input to the autonomy GATE — which a chat write never reaches, because it goes through
-    // the publish tool. Without this it stopped every gated lane and left chat creating live.
-    expect(chatPolicy("publish", { title: "New" }, { agentKillswitch: true })).toMatchObject({
-      for_review: true,
-    })
-    // ...and with it off, creating stays live.
-    expect(chatPolicy("publish", { title: "New" }, { agentKillswitch: false })).not.toHaveProperty(
-      "for_review",
-    )
   })
 
   it("caps how long a chat turn waits on a packaged agent", () => {
@@ -135,7 +125,7 @@ describe("writing through the real publish tool", () => {
     expect(versions[0]?.author_id).toBe("u-w")
   })
 
-  it("an EDIT files a proposal instead of a version", async () => {
+  it("an EDIT publishes live and opens a review round", async () => {
     const users = [{ id: "u-w", email: "w@x.com", name: "Writer" }]
     const { app, ctx, meta } = makeAuthedApp("chat-edit", users)
     const doc = (await (
@@ -148,7 +138,14 @@ describe("writing through the real publish tool", () => {
     })
     await tools.execute("publish", { short_id: doc.short_id, content: "# Rewritten" })
     const art = await meta.getByShortId(doc.short_id)
-    expect(art?.current_version).toBe(1) // untouched
-    expect(await meta.listProposals(art?.id ?? "")).toHaveLength(1)
+    // The edit lands as a version — and the posture asked the person to look at it.
+    expect(art?.current_version).toBe(2)
+    const round = await meta.getPendingRound(art?.id ?? "")
+    expect(round?.version).toBe(2)
+    // The round is the RECORD of the person's own conversational edit, never an interrupt
+    // at them: no review email is enqueued for the asker about their own ask.
+    const far = new Date(Date.now() + 10_000_000).toISOString()
+    const due = await meta.claimDueDeliveries(far, 50, far)
+    expect(due.filter((d) => d.kind === "email" && d.event_type === "review.requested")).toEqual([])
   })
 })

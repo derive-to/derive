@@ -15,7 +15,7 @@ import { parseAnswer } from "../src/runner.js"
 // from one substrate and nobody from the other, and nothing would report an error.
 //
 // The CLI keeps a hand-copy because it is a dependency-free published package and cannot import
-// the TS core at runtime — the same reason decideWrite and the revision contract are duplicated.
+// the TS core at runtime — the same reason the revision contract is duplicated.
 // The table below is the spec; packages/core/src/run-contract.test.ts holds core's implementation
 // to the SAME table, so changing the reading means changing both and forgetting either fails.
 

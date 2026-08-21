@@ -1,7 +1,6 @@
 import { createServer, type Server } from "node:http"
 import type { AddressInfo } from "node:net"
 import { LocalBroker } from "@derive/broker"
-import { decideWrite } from "@derive/core"
 import { afterAll, describe, expect, it } from "vitest"
 import {
   callTool,
@@ -181,34 +180,16 @@ describe("MCP as a source: connect, list, call", () => {
     ])
   })
 
-  it("a run bound to an MCP source can never live-publish", async () => {
-    // The invariant that makes connecting a source safe at all, pinned here because it currently
-    // holds by CONSEQUENCE (an MCP connection is spendable, and `decideWrite` demotes any
-    // credentialed run) rather than by anything naming MCP. If a later change decides MCP is not
-    // "really" a credential — it holds no vendor account, after all — this is what fails.
-    //
-    // Why it matters more for MCP than for the other kinds: a source is precisely a channel for
-    // content nobody here wrote, and tool RESULTS are not covered by the pin. A perfectly
-    // honest, correctly-pinned tool can still return a hostile issue body. So the run reads
-    // attacker-influenceable text, and the only thing between that and a live publish is this.
+  it("an MCP connection counts as spendable — the least-privilege resolver's input", async () => {
+    // An MCP connection holds no vendor account, but it is still a real credential to the
+    // delivery machinery: it is spent by binding it to a run. So it must be counted where
+    // credentials are counted — spendableConnections feeds toolsForRun's least-privilege
+    // resolution — and "no vendor account" must never read as "nothing to spend".
     const mcp = await startServer([{ name: "read", description: "Read a doc." }])
     servers.push(mcp.server)
     const created = await connect({ toolkit: "gated", mcp_url: mcp.url })
     const spendable = await spendableConnections(meta, "default", [created.body.id as string])
     expect(spendable).toHaveLength(1)
-
-    // Best case for a live publish: no killswitch, auto autonomy, opted in, full confidence.
-    const gate = {
-      autonomy: "auto" as const,
-      confidence: 1,
-      flags: { agentKillswitch: false, agentAutoEnabled: true, credentialed: spendable.length > 0 },
-    }
-    expect(decideWrite(gate)).toBe("proposal")
-    // ...and the same run without the source WOULD have published live, so the assertion above
-    // is testing the credential and not some other rung.
-    expect(decideWrite({ ...gate, flags: { ...gate.flags, credentialed: false } })).toBe(
-      "live_publish_with_review",
-    )
   })
 
   it("two members on the SAME server never spend each other's credential", async () => {

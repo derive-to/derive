@@ -16,8 +16,8 @@ process.env.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY ?? "sk-ant-test-e2
 
 // Agentic pull, end to end on the LIVE stack: an automation BOUND to a mock (LocalBroker) source,
 // run-now, the runner claims it, the model pulls through the source shim (→ the tool endpoint →
-// the broker, credentials staying server-side), and the runner writes the pulled data back as a
-// new artifact version through the autonomy gate. The one thing faked is the model's reasoning.
+// the broker, credentials staying server-side), and the runner publishes the pulled data back as
+// a new artifact version. The one thing faked is the model's reasoning.
 
 const owner: TestUser = { id: "u_pull_e2e", email: "pulle2e@derive.test", name: "Owner" }
 const { app } = makeAuthedApp("agentic-pull-e2e", [owner], "commenter", {
@@ -91,23 +91,12 @@ process.stdout.write(JSON.stringify({ type: "result", result: "<revision>" + JSO
 }
 
 describe("agentic pull — a scheduled/triggered artifact pulls from a mock source and updates", () => {
-  it("run-now → the runner pulls through the bound source and PROPOSES; approving lands it", async () => {
-    // This asserted a live v2 until the credentialed rung landed. A run bound to a connection
-    // can spend a real credential and reads outside data, so the gate demotes it to a proposal
-    // no matter how confident the model is or how opted-in the workspace is — the invariant the
-    // connections plan calls "taint", which nothing enforced until now.
-    //
-    // The pull is still proven end to end, and more thoroughly than before: the work lands as a
-    // proposal, a human approves it, and the pulled payload appears in the version that
-    // results. Everything below the approve line is the old assertion set, moved one step later.
-
-    // Opt the workspace into live agent publishing (still with a review round). The rung above
-    // now outranks this — which is the point.
-    await app.request("/v1/workspace/settings", {
-      method: "PATCH",
-      headers: { "content-type": "application/json", ...as(owner.email) },
-      body: JSON.stringify({ agentAutoEnabled: true }),
-    })
+  it("run-now → the runner pulls through the bound source and PUBLISHES the refresh", async () => {
+    // A run bound to a connection reads outside data and its write publishes LIVE — a kept,
+    // restorable version of its target, like every other agent write. Outside data can carry
+    // planted instructions; the guard is the loop itself, not an up-front block (see
+    // docs/decisions/0001-one-review-loop.md). The pull is proven end to end: the pulled
+    // payload lands IN the live document.
 
     // Connect a mock source (LocalBroker auto-authorizes) and publish the artifact to keep fresh.
     const conn = (await (await post("/v1/connections", { toolkit: "stripe" })).json()) as {
@@ -118,14 +107,14 @@ describe("agentic pull — a scheduled/triggered artifact pulls from a mock sour
       "# Revenue Snapshot\n\nMRR: unknown\nUpdated: never",
     )
 
-    // An automation bound to that source, targeting the doc for a LIVE update. Omitting agentId
-    // auto-mints a managed editor agent; its token (returned once) is what the runner claims with.
+    // An automation bound to that source, targeting the doc. Omitting agentId auto-mints a
+    // managed editor agent; its token (returned once) is what the runner claims with.
     const auto = (await (
       await post("/v1/automations", {
         trigger: { kind: "manual" },
         instruction: `Pull the current MRR from the source and refresh ${doc.short_id}.`,
         refs: [
-          { kind: "artifact", id: doc.short_id, mode: "publish" },
+          { kind: "artifact", id: doc.short_id },
           { kind: "tag", tag: "revenue" },
         ],
         connectionIds: [conn.id],
@@ -162,58 +151,28 @@ describe("agentic pull — a scheduled/triggered artifact pulls from a mock sour
       timeoutMs: 30_000,
     })
 
-    // NOT published: the live doc is untouched, and the work is waiting for a human instead.
+    // PUBLISHED: the live document moved to v2 and carries the pulled payload — proof the
+    // pull round-tripped through the broker (the LocalBroker echo) end to end.
     const after = await detail(doc.short_id)
-    expect(after.current_version).toBe(1)
-    expect(after.open_proposals).toBe(1)
-    expect(await content(doc.short_id)).toContain("MRR: unknown")
-
-    // The ledger says the same: a succeeded run whose outcome was a proposal, not a publish.
-    const ledger = (await (
-      await app.request("/v1/workspace/runs", { headers: as(owner.email) })
-    ).json()) as { runs: { status: string; meta: string | null }[] }
-    const run = ledger.runs.find((r) => r.meta?.includes("proposed"))
-    expect(run?.status).toBe("succeeded")
-    expect(ledger.runs.some((r) => r.meta?.includes('"outcome":"published"'))).toBe(false)
-
-    // A human approves it — and only now does the pulled data go live, as v2 with the tag.
-    const { proposals } = (await (
-      await app.request(`/v1/artifacts/${doc.short_id}/proposals?state=open`, {
-        headers: as(owner.email),
-      })
-    ).json()) as { proposals: { id: string }[] }
-    expect(proposals).toHaveLength(1)
-    const approved = await app.request(
-      `/v1/artifacts/${doc.short_id}/proposals/${proposals[0]?.id}/approve`,
-      {
-        method: "POST",
-        headers: { "content-type": "application/json", ...as(owner.email) },
-        body: "{}",
-      },
-    )
-    expect(approved.status).toBe(200)
-    expect((await approved.json()).published).toBe(2)
-
-    const live = await detail(doc.short_id)
-    expect(live.current_version).toBe(2)
-    // KNOWN GAP, pre-existing and NOT introduced here: the runner sends `add_tags` on the
-    // proposal form (revisionForm), but only the publish route reads that field
-    // (artifacts.ts:787) — the proposals route drops it, so an approved proposal loses the
-    // automation's tag stamps. Every demoted write has always lost them: killswitch on,
-    // propose-mode targets, low confidence. This change makes it VISIBLE rather than causing
-    // it, since a source-bound run now always proposes. Asserted as-is so that fixing it trips
-    // this line and lands the assertion back on `toContain`, instead of passing unnoticed.
-    expect(live.tags).not.toContain("revenue")
+    expect(after.current_version).toBe(2)
     const body = await content(doc.short_id)
     expect(body).toContain("MRR: fresh")
-    // Proof the pull actually round-tripped through the broker (the LocalBroker echo).
     expect(body).toContain("stripe.read")
     expect(body).toContain('"provider":"local"')
 
+    // The ledger says the same: a succeeded run that published.
+    const ledger = (await (
+      await app.request("/v1/workspace/runs", { headers: as(owner.email) })
+    ).json()) as { runs: { status: string; meta: string | null }[] }
+    const run = ledger.runs.find((r) => r.meta?.includes('"outcome":"published"'))
+    expect(run?.status).toBe("succeeded")
+
+    // The tag target was stamped by the platform on the write (add_tags), not by the model.
+    const tagged = (await detail(doc.short_id)) as { tags?: string[] }
+    expect(tagged.tags ?? []).toContain("revenue")
+
     // eslint-disable-next-line no-console
-    console.log(
-      `\n[e2e] pulled → proposed → approved ${doc.short_id} v${live.current_version}:\n${body}\n`,
-    )
+    console.log(`\n[e2e] pulled and published v2 of ${doc.short_id}\n`)
   })
 })
 
@@ -238,7 +197,7 @@ describe("scenario 2 — the QA context: an automation that runs WITH its method
       await post("/v1/automations", {
         trigger: { kind: "manual" },
         instruction: `Run the QA checks and update ${report.short_id}.`,
-        refs: [{ kind: "artifact", id: report.short_id, mode: "publish" }],
+        refs: [{ kind: "artifact", id: report.short_id }],
         contextId: ctx.id,
       })
     ).json()) as { id: string; context_id: string; agent_token?: string }

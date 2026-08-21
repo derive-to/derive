@@ -402,6 +402,34 @@ describe("the workspace master switch", () => {
     const after = await dispatchPass(deps(substrate))
     expect(after.started).toBeGreaterThanOrEqual(1)
   })
+
+  it("agentWrites=false stops dispatch the same way — no executor boots for a paused workspace", async () => {
+    // The claim endpoints refuse a paused workspace, so dispatching anyway would boot an
+    // executor per tick whose claim returns nothing — pure churn. The switch binds where
+    // runs start, exactly like the hosting master switch, and deferring (not failing)
+    // means flipping it back on resumes the queued work.
+    const auto = await mkAutomation({ trigger: { kind: "manual" }, instruction: "Paused." })
+    const run = await runNow(auto.id)
+    await app.request("/v1/workspace/settings", {
+      method: "PATCH",
+      headers: { "content-type": "application/json", ...as(owner.email) },
+      body: JSON.stringify({ agentWrites: false }),
+    })
+    const { substrate, started } = fakeSubstrate()
+    const res = await dispatchPass(deps(substrate))
+    expect(res.started).toBe(0)
+    expect(started).toHaveLength(0)
+    expect(await dispatchRunNow(deps(substrate), run.id)).toBe(false)
+    expect((await meta.getRun(run.id))?.status).toBe("queued")
+
+    await app.request("/v1/workspace/settings", {
+      method: "PATCH",
+      headers: { "content-type": "application/json", ...as(owner.email) },
+      body: JSON.stringify({ agentWrites: true }),
+    })
+    const after = await dispatchPass(deps(substrate))
+    expect(after.started).toBeGreaterThanOrEqual(1)
+  })
 })
 
 describe("the operator hosted-execution rollout boundary", () => {

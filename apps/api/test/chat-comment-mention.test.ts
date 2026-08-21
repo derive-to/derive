@@ -31,9 +31,6 @@ const setup = async (name: string, reply: string, opts?: { chatBeta?: boolean })
   await meta.setOrgSettings("default", {
     ...(await meta.getOrgSettings("default")),
     chatBeta: opts?.chatBeta ?? true,
-    // ON, deliberately: the comment lane must still refuse to publish live even when the
-    // workspace has opted into autonomy everywhere else.
-    agentAutoEnabled: true,
   })
   const doc = (await (
     await publishAs(
@@ -86,16 +83,15 @@ describe("@derive in a comment thread", () => {
     expect(answer?.thread_id).toBe(all[0]?.thread_id)
   })
 
-  it("files a PROPOSAL rather than publishing, even with the workspace's autonomy opt-in on", async () => {
-    const { app, meta, doc } = await setup("cm-propose", revision("# Pricing\n\nAnnual seats."))
+  it("SURFACES the change in the thread rather than publishing — mentions never write", async () => {
+    const { app, meta, doc } = await setup("cm-suggest", revision("# Pricing\n\nAnnual seats."))
     const before = (await meta.getByShortId(doc.short_id))?.current_version
-    const { all, created } = await mention(app, meta, doc.short_id, "@derive tighten this", DERIVE)
+    const { all } = await mention(app, meta, doc.short_id, "@derive tighten this", DERIVE)
+    // The document is never written from a comment — the drafted change IS the reply.
     expect((await meta.getByShortId(doc.short_id))?.current_version).toBe(before)
-    const proposals = await meta.listProposals(created.artifact_id)
-    expect(proposals).toHaveLength(1)
-    expect(proposals[0]?.author).toBe("Derive")
-    // ...and the thread says so, rather than leaving a silent proposal nobody knows about.
-    expect(all.at(-1)?.body_md ?? "").toMatch(/proposal/i)
+    const answer = all.at(-1)
+    expect(answer?.author).toBe("Derive")
+    expect(answer?.body_md ?? "").toContain("# Pricing")
   })
 
   it("does not answer a comment that mentions nobody", async () => {

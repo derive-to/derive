@@ -81,18 +81,18 @@ describe("automations + runs", () => {
       { kind: "collection", id: "col_1" },
       { kind: "tag", tag: "weekly-health" },
     ])
-    // Write mode rides ON the target: only the explicit publish opt-in is stored;
-    // mode:"propose" is the default and normalizes away (canonical minimal form).
+    // Unknown keys on a ref are DROPPED on normalize, whatever a stored config or a
+    // client sends — a ref is just an address.
     const moded = await (
       await createAutomation(agent.id, {
         refs: [
           { kind: "artifact", id: "art_pub", mode: "publish" },
-          { kind: "artifact", id: "art_prop", mode: "propose" },
+          { kind: "artifact", id: "art_prop", mode: "draft" },
         ],
       })
     ).json()
     expect(moded.refs).toEqual([
-      { kind: "artifact", id: "art_pub", mode: "publish" },
+      { kind: "artifact", id: "art_pub" },
       { kind: "artifact", id: "art_prop" },
     ])
     // The claim payload hands the executor the SAME canonical targets.
@@ -139,13 +139,11 @@ describe("automations + runs", () => {
     ).json()
     const mine = claimed.runs.find((r: { id: string }) => r.id === runId)
     expect(mine).toBeTruthy()
-    // The claim hands the executor everything it needs: the instruction + resolved gate inputs.
-    // Automation runs propose by default; write mode will ride per-target in refs.
+    // The claim hands the executor everything it needs: the instruction, targets, tools.
     expect(mine.instruction).toBe("keep the roadmap current")
     // The wallet key rides the claim: Run-now stamps the clicker as the initiator, so
     // the executor bills THEIR plan (a schedule/event enqueue leaves it null).
     expect(mine.initiated_by).toBe("u_auto_own")
-    expect(mine.flags).toMatchObject({ agentKillswitch: expect.any(Boolean) })
     // Claimed once: a second poll gets nothing.
     const again = await (
       await app.request("/v1/agent/runs/claim", { headers: bearer(agent.token) })
@@ -326,6 +324,38 @@ describe("automations + runs", () => {
     ).toHaveLength(0)
   })
 
+  it("the agentWrites switch stops the claim at the door — runs wait, un-leased", async () => {
+    // The one brake, enforced server-side where it cannot be bypassed by an executor: with
+    // agents switched off, the claim returns nothing — no lease, no model spend, no draft to
+    // lose. The run stays queued and fires when the switch comes back on.
+    const agent = await mintAgent()
+    const created = await (await createAutomation(agent.id)).json()
+    const runRes = await app.request(`/v1/automations/${created.id}/run`, {
+      method: "POST",
+      headers: as(owner.email),
+    })
+    const { id: runId } = (await runRes.json()) as { id: string }
+
+    await meta.setOrgSettings("default", {
+      ...(await meta.getOrgSettings("default")),
+      agentWrites: false,
+    })
+    const paused = await (
+      await app.request("/v1/agent/runs/claim", { headers: bearer(agent.token) })
+    ).json()
+    expect(paused.runs).toEqual([])
+
+    // Flip it back: the SAME run is claimable — nothing was failed or dropped.
+    await meta.setOrgSettings("default", {
+      ...(await meta.getOrgSettings("default")),
+      agentWrites: true,
+    })
+    const resumed = await (
+      await app.request("/v1/agent/runs/claim", { headers: bearer(agent.token) })
+    ).json()
+    expect(resumed.runs.some((r: { id: string }) => r.id === runId)).toBe(true)
+  })
+
   it("PATCH edits in place: instruction, refs (normalized), pause/resume; org + role scoped", async () => {
     const agent = await mintAgent()
     const created = await (await createAutomation(agent.id)).json()
@@ -334,14 +364,14 @@ describe("automations + runs", () => {
       await app.request(`/v1/automations/${created.id}`, {
         ...jsonAs(as(owner.email), {
           instruction: "keep the CHANGELOG current",
-          refs: [{ kind: "artifact", id: "art_x", mode: "publish" }, "art_y"],
+          refs: [{ kind: "artifact", id: "art_x" }, "art_y"],
         }),
         method: "PATCH",
       })
     ).json()
     expect(edited.instruction).toBe("keep the CHANGELOG current")
     expect(edited.refs).toEqual([
-      { kind: "artifact", id: "art_x", mode: "publish" },
+      { kind: "artifact", id: "art_x" },
       { kind: "artifact", id: "art_y" },
     ])
     // Untouched fields survive a partial patch.

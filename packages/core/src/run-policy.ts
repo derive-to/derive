@@ -8,8 +8,8 @@
  * would retry a different number of times, or report a different cost, depending on where it ran.
  *
  * The CLI cannot import this at runtime (dependency-free published package), so it hand-copies
- * the constants and packages/cli/test/gate-parity.test.js holds it to them — the same arrangement
- * as decideWrite, the run contract, and the agent surface.
+ * the constants and packages/cli/test/run-policy-parity.test.js holds it to them — the same
+ * arrangement as the run contract and the agent surface.
  */
 
 /**

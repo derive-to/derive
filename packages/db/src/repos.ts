@@ -495,12 +495,25 @@ export const parseOrgSettings = (raw: string | null): OrgSettings => {
     defaultUnlistedRole: _retiredA,
     defaultAgentVisibility: _retiredB,
     defaultLinkAudience: _retiredC,
+    agentKillswitch,
+    agentAutoEnabled: _retiredE,
     ...rest
   } = parsed as Partial<OrgSettings> & {
     defaultUnlistedRole?: unknown
     defaultAgentVisibility?: unknown
     defaultLinkAudience?: unknown
+    agentKillswitch?: unknown
+    agentAutoEnabled?: unknown
   }
+  // An ENGAGED emergency stop survives the retirement of its key: a stored blob that
+  // pinned the old killswitch on, and says nothing newer, reads as writes-off. Nothing
+  // may release a stop an operator set except the operator flipping the switch.
+  const agentWrites =
+    typeof rest.agentWrites === "boolean"
+      ? rest.agentWrites
+      : agentKillswitch === true
+        ? false
+        : DEFAULT_ORG_SETTINGS.agentWrites
   const wa = rest.defaultWorkspaceAccess as string | undefined
   const defaultWorkspaceAccess: OrgSettings["defaultWorkspaceAccess"] =
     wa === "none" || wa === "member" ? wa : DEFAULT_ORG_SETTINGS.defaultWorkspaceAccess
@@ -515,6 +528,7 @@ export const parseOrgSettings = (raw: string | null): OrgSettings => {
   return {
     ...DEFAULT_ORG_SETTINGS,
     ...rest,
+    agentWrites,
     defaultWorkspaceAccess,
     defaultLinkRole,
     defaultListed,

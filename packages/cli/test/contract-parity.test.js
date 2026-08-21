@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest"
+import { REVISION_CONTRACT as CORE_REVISION_CONTRACT } from "../../core/src/run-contract"
 import { parseRevision, REVISION_CONTRACT } from "../src/runner.js"
 
 // CONTRACT PARITY — the CLI's revision contract must match @derive/core's run-contract.ts.
@@ -9,8 +10,11 @@ import { parseRevision, REVISION_CONTRACT } from "../src/runner.js"
 // routing between them on cost becomes a behaviour change rather than a routing decision.
 //
 // The CLI keeps a hand-copy because it is a dependency-free published package and cannot import
-// the TS core at runtime — the same reason decideWrite is duplicated. core's run-contract.ts is
-// the definition; this file is the enforcement.
+// the TS core at RUNTIME. This test can (vitest transforms the sibling package's source), so the
+// comparison below is against core's actual string — never a copy pasted in here, because a
+// copy-to-copy comparison can be "fixed" on the wrong side and enforce the drift it exists to
+// prevent. A relative import, not a workspace dependency: the runner image npm-installs this
+// package's manifest verbatim, and npm has no workspace protocol.
 //
 // The cases below are the ones where a re-implementation actually drifts. Not "does it parse
 // valid JSON" — every copy does that — but the forgiving branches, which are easy to write
@@ -20,29 +24,6 @@ describe("revision contract: parity with @derive/core", () => {
   const block = (obj) => `Some preamble.\n<revision>${JSON.stringify(obj)}</revision>`
 
   it("the contract TEXT is byte-identical to core's", () => {
-    // Copied verbatim from packages/core/src/run-contract.ts. A reworded contract on one
-    // substrate is a different prompt, and therefore a different distribution of replies —
-    // which is exactly the drift that makes two substrates incomparable.
-    const CORE_REVISION_CONTRACT = `
-
-## Output format — REQUIRED
-
-You are running an AUTOMATION: you maintain a Derive artifact on a trigger, you are not answering a
-person. Do what the instruction asks — if source tools are listed, pull from them — then end your
-FINAL message with a single <revision> block of JSON and NOTHING after it. A reply without the
-block is discarded and nothing is written.
-
-<revision>
-{
-  "content": "the COMPLETE new source of the artifact",
-  "filename": "index.html or notes.md — sets the content type",
-  "confidence": 0.0,
-  "message": "a one-line version note"
-}
-</revision>
-
-Return the WHOLE artifact source, not a diff. Derive decides how the write lands — publish,
-propose, or record — from the automation's settings and your confidence; that is never your call.`
     expect(REVISION_CONTRACT).toBe(CORE_REVISION_CONTRACT)
   })
 
@@ -76,9 +57,9 @@ propose, or record — from the automation's settings and your confidence; that 
 
   it("clamps an out-of-range confidence and nulls a non-numeric one", () => {
     // Clamped, not rejected: a model saying 1.5 means "very sure", and failing the run would
-    // throw away completed work. But a STRING confidence must read as UNSTATED (null), because
-    // null is what the autonomy gate treats as never-auto-publish — a copy that coerced "0.9"
-    // to 0.9 would let an unstated confidence publish live.
+    // throw away completed work. A STRING confidence must read as UNSTATED (null) on both
+    // substrates alike — the value is shown to people, and a copy that coerced "0.9" while
+    // the other read null would display two different answers for one reply.
     expect(parseRevision(block({ content: "x", confidence: 1.5 })).revision?.confidence).toBe(1)
     expect(parseRevision(block({ content: "x", confidence: -2 })).revision?.confidence).toBe(0)
     expect(

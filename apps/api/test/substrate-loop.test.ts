@@ -127,7 +127,7 @@ const stubApi = (opts: {
           rec.finishes.push(JSON.parse(body || "{}"))
           return send(200, { ok: true })
         }
-        // Artifact writes: proposals, versions, create.
+        // Artifact writes: versions and creates.
         // Pull the file part's Content-Type straight out of the multipart body.
         const part = /name="file"; filename="([^"]*)"[\s\S]*?Content-Type:\s*([^\r\n]+)/i.exec(body)
         rec.writes.push({
@@ -176,7 +176,6 @@ const baseRun = {
   id: "run_1",
   instruction: "Refresh the roadmap",
   targets: [{ kind: "artifact", id: "art_1" }],
-  flags: { agentKillswitch: false, agentAutoEnabled: true },
 }
 
 describe("loop substrate: the happy path", () => {
@@ -199,7 +198,7 @@ describe("loop substrate: the happy path", () => {
     expect(fin?.status).toBe("succeeded")
     // 0.004 USD → 4000 micro-USD, rounded up. Reported on the SETTLE, not merely computed.
     expect(fin?.cost_micro_usd).toBe(4000)
-    expect(api.rec.writes.some((w) => w.path.includes("/proposals"))).toBe(true)
+    expect(api.rec.writes.some((w) => w.path.includes("/versions"))).toBe(true)
   })
 })
 
@@ -320,27 +319,12 @@ describe("loop substrate: the run SEES the document it is revising", () => {
   })
 })
 
-describe("loop substrate: the gate decides the write", () => {
-  it("a target with no publish mode PROPOSES, even when the workspace allows auto", async () => {
-    // Consent is per target. Absent an explicit publish mode the run may not live-publish, no
-    // matter how the workspace is configured — the model never gets to choose.
+describe("loop substrate: one write behavior", () => {
+  it("a run's write publishes a VERSION of its target — never anything quieter", async () => {
+    // The whole write policy: an agent's write lands live, a kept and restorable version with
+    // the publish fan-out. The one brake (the workspace's agentWrites switch) is enforced
+    // server-side at the CLAIM, so a run this substrate holds is one it may write.
     const api = stubApi({ run: baseRun })
-    const url = await api.url
-    const fin = await runToSettle(url, api.rec, async () => ({
-      text: revision(),
-      toolUses: [],
-      costUsd: null,
-      done: true,
-    }))
-    expect(fin?.meta).toMatchObject({ outcome: "proposed" })
-    expect(api.rec.writes[0]?.path).toContain("/proposals")
-    await api.close()
-  })
-
-  it("mode=publish on an opted-in workspace writes a VERSION", async () => {
-    const api = stubApi({
-      run: { ...baseRun, targets: [{ kind: "artifact", id: "art_1", mode: "publish" }] },
-    })
     const url = await api.url
     const fin = await runToSettle(url, api.rec, async () => ({
       text: revision(),
@@ -350,25 +334,7 @@ describe("loop substrate: the gate decides the write", () => {
     }))
     expect(fin?.meta).toMatchObject({ outcome: "published" })
     expect(api.rec.writes[0]?.path).toContain("/versions")
-    await api.close()
-  })
-
-  it("the killswitch demotes to a proposal", async () => {
-    const api = stubApi({
-      run: {
-        ...baseRun,
-        flags: { agentKillswitch: true, agentAutoEnabled: true },
-        targets: [{ kind: "artifact", id: "art_1", mode: "publish" }],
-      },
-    })
-    const url = await api.url
-    const fin = await runToSettle(url, api.rec, async () => ({
-      text: revision(),
-      toolUses: [],
-      costUsd: null,
-      done: true,
-    }))
-    expect(fin?.meta).toMatchObject({ outcome: "proposed" })
+    expect(api.rec.writes.some((w) => w.path.includes("/comments"))).toBe(false)
     await api.close()
   })
 })
@@ -496,7 +462,6 @@ const SESSION = {
 const stubAskApi = (opts: {
   session?: unknown
   manifest?: string
-  flags?: { agentKillswitch: boolean; agentAutoEnabled: boolean }
   tools?: { def: { name: string; description: string; params: Record<string, unknown> } }[]
 }) => {
   const rec: AskRecorded = {
@@ -534,7 +499,6 @@ const stubAskApi = (opts: {
               name: "Analytics",
               manifest_short_id: opts.manifest === undefined ? null : "man_1",
             },
-            flags: opts.flags ?? { agentKillswitch: false, agentAutoEnabled: false },
             tools: opts.tools ?? [],
           })
         }
@@ -656,7 +620,7 @@ describe("loop substrate: an ask arrives through the SESSION claim", () => {
   })
 
   it("publishes a page the answer produced and links it under the answer", async () => {
-    const api = stubAskApi({ flags: { agentKillswitch: false, agentAutoEnabled: true } })
+    const api = stubAskApi({})
     const url = await api.url
     const ans = await askToSettle(
       url,
@@ -678,10 +642,12 @@ describe("loop substrate: an ask arrives through the SESSION claim", () => {
     await api.close()
   })
 
-  it("the KILLSWITCH files the page privately instead of putting it in front of everyone", async () => {
-    // The gate binds the ask lane exactly as it binds a run. The flags come from the CLAIM, fresh
-    // server-side, so a switch flipped a second ago is honoured on this very ask.
-    const api = stubAskApi({ flags: { agentKillswitch: true, agentAutoEnabled: true } })
+  it("the page lands like any created artifact — no access fields, a round asked for", async () => {
+    // The create carries no access overrides: the workspace's own defaults decide
+    // visibility, and the review round is what puts the page in front of its asker. The
+    // agentWrites switch binds this lane at the claim, server-side — an ask this substrate
+    // holds is one it may write.
+    const api = stubAskApi({})
     const url = await api.url
     await askToSettle(
       url,
@@ -694,7 +660,8 @@ describe("loop substrate: an ask arrives through the SESSION claim", () => {
         })}</revision>`,
       ),
     )
-    expect(api.rec.creates[0]?.body).toContain("workspace_access")
+    expect(api.rec.creates[0]?.body).not.toContain("workspace_access")
+    expect(api.rec.creates[0]?.body).toContain("request_review")
     await api.close()
   })
 
@@ -1093,7 +1060,9 @@ describe("the revised document KEEPS its own format", () => {
       // The target was served as text/markdown, so the revision must be written as markdown.
       // The FILENAME is the assertion that matters — publish.ts reads the extension and ignores
       // the part's MIME type, so checking only `type` would pass with the bug still present.
-      for (const w of api.rec.writes) {
+      const files = api.rec.writes.filter((w) => w.name !== null)
+      expect(files.length).toBeGreaterThan(0)
+      for (const w of files) {
         expect(w.name).toMatch(/\.md$/i)
         expect(w.type).toBe("text/markdown")
       }
@@ -1123,7 +1092,9 @@ describe("the revised document KEEPS its own format", () => {
         ),
       )
       expect(settled).toBeTruthy()
-      for (const w of api.rec.writes) {
+      const files = api.rec.writes.filter((w) => w.name !== null)
+      expect(files.length).toBeGreaterThan(0)
+      for (const w of files) {
         expect(w.name).toMatch(/\.html$/i)
         expect(w.type).toBe("text/x-derive-linked-bundle")
       }
@@ -1234,8 +1205,9 @@ describe("what the run READS to learn the document's format", () => {
       expect(api.rec.reads.length).toBe(1)
       // ...never asked for the record...
       expect(api.rec.recordReads).toEqual([])
-      // ...and still preserved the format.
-      for (const w of api.rec.writes) expect(w.name).toMatch(/\.md$/i)
+      // ...and still preserved the format (on the writes that carried a file).
+      for (const w of api.rec.writes.filter((x) => x.name !== null))
+        expect(w.name).toMatch(/\.md$/i)
     } finally {
       await api.close()
     }

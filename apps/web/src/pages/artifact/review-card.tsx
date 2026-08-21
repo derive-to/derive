@@ -29,6 +29,7 @@ export function ReviewCard({
     pending: null,
     last: null,
   })
+  const [note, setNote] = useState("")
 
   const refresh = useCallback(async () => {
     try {
@@ -46,9 +47,14 @@ export function ReviewCard({
 
   // Send-back through the governed primitive: pending drives the button, and a failure
   // surfaces via the global safety net instead of the silent try/finally this once had.
+  // The NOTE rides along — it is where "keep going" and "good to go" both live, so the
+  // agent's catch_up can read the answer instead of inferring it.
   const send = useApiMutation({
-    mutationFn: () => api.sendBackReview(shortId),
-    onSuccess: () => refresh(),
+    mutationFn: () => api.sendBackReview(shortId, note.trim() || undefined),
+    onSuccess: () => {
+      setNote("")
+      void refresh()
+    },
   })
 
   const pending = state.pending
@@ -83,9 +89,18 @@ export function ReviewCard({
         <span className="ml-auto font-mono text-2xs text-muted-foreground">v{pending.version}</span>
       </div>
       <p className="text-xs text-muted-foreground">
-        Reply to the comments, then send the work back. Say "good to go" when you are finished. You
-        do not need to resolve each thread.
+        Reply to the comments, then send the work back. The note below is your answer — "good to go"
+        ships it. You do not need to resolve each thread.
       </p>
+      <textarea
+        value={note}
+        onChange={(e) => setNote(e.target.value)}
+        disabled={send.isPending}
+        rows={2}
+        placeholder='Answers, asks, or "good to go — ship it"'
+        className="w-full resize-none rounded-md border border-border bg-background px-2 py-1.5 text-xs placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+        data-testid="review-send-note"
+      />
       <div className="flex items-center">
         <Button
           size="sm"

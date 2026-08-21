@@ -294,8 +294,8 @@ export class DeriveClient {
     return (await this.callRaw(`/v1/artifacts/${shortId}/content`)).text()
   }
 
-  // A multipart write as this agent, through the SAME endpoints a session's chart uses. The gate
-  // decision (in serveRun) picks which one; each just posts the revision form.
+  // A multipart write as this agent, through the SAME endpoints a session's chart uses. serveRun
+  // picks which one; each just posts the revision form.
   async _postForm(path, form) {
     const res = await fetch(`${this.server}${path}`, {
       method: "POST",
@@ -313,19 +313,11 @@ export class DeriveClient {
       revisionForm(rev, { request_review: "true" }),
     )
   }
-  /** Proposed revision: a proposal a human approves. */
-  proposeRevision(shortId, rev) {
-    return this._postForm(`/v1/artifacts/${shortId}/proposals`, revisionForm(rev))
-  }
-  /** Create a new artifact (no target). A proposal becomes a PRIVATE draft + review round. */
-  createRevision(rev, { title, privateDraft }) {
+  /** Create a new artifact (no target) — landing unlisted, with a review round. */
+  createRevision(rev, { title }) {
     return this._postForm(
       "/v1/artifacts",
-      revisionForm(rev, {
-        title: title || "Untitled",
-        request_review: "true",
-        ...(privateDraft ? { workspace_access: "none", link_role: "none" } : {}),
-      }),
+      revisionForm(rev, { title: title || "Untitled", request_review: "true" }),
     )
   }
 }
@@ -720,25 +712,10 @@ export const RETRY_DELAY_MS = 30_000
 // ---- automation lane: runs (a scheduled/triggered artifact update) ------------
 // A run is an automation firing, not an ask. The model maintains an artifact on a trigger: it
 // pulls from the run's source tools (via the shim in serveRun) and returns the FULL new artifact
-// source in a <revision> block. The runner then writes it through the gate.
-
-// The write gate, ported from @derive/core's decideWrite. The CLI stays dependency-free (it can't
-// import the TS core at runtime), so this is a faithful copy. The MODEL never chooses the write
-// mode — this does, from the target's consent (mode), the workspace flags, and confidence.
-export const DEFAULT_CONFIDENCE_FLOOR = 0.8
-export function decideWrite({ autonomy, confidence, flags, confidenceFloor }) {
-  const floor = confidenceFloor ?? DEFAULT_CONFIDENCE_FLOOR
-  if (flags.agentKillswitch) return "proposal"
-  if (autonomy === "shadow") return "shadow"
-  // A run that resolved a bound connection can spend a real credential, so it files for a
-  // human rather than publishing — below shadow, above every consent rung. Kept in lockstep
-  // with core's copy by packages/cli/test/gate-parity.test.js.
-  if (flags.credentialed) return "proposal"
-  if (autonomy === "suggest") return "proposal"
-  if (!flags.agentAutoEnabled) return "proposal"
-  if (confidence === null || confidence === undefined || confidence < floor) return "proposal"
-  return "live_publish_with_review"
-}
+// source in a <revision> block. The runner then publishes it — every agent write lands live, a
+// kept and restorable version with the publish fan-out. The workspace's agent-write switch is
+// enforced server-side: at the claim, and again at the write, so a switch flipped mid-run
+// refuses the publish (a retryable failure — the run requeues for when writes are back on).
 
 /** The run output contract — a full artifact revision, not an answer. Appended after the manifest
  *  like OUTPUT_CONTRACT so a manifest edit can't break the parse. */
@@ -760,8 +737,9 @@ block is discarded and nothing is written.
 }
 </revision>
 
-Return the WHOLE artifact source, not a diff. Derive decides how the write lands — publish,
-propose, or record — from the automation's settings and your confidence; that is never your call.`
+Return the WHOLE artifact source, not a diff. Your revision publishes as a new version of the
+artifact — every version is kept and restorable, and the people who watch it are notified. State
+your honest confidence; it is shown to people, never used to decide anything.`
 
 const REVISION_NUDGE = `Your previous reply was NOT accepted — it did not end with the required <revision> block, so nothing was written. Reply now with ONLY that block and nothing else: <revision>{"content":"<the full new artifact source>","filename":"index.html","confidence":…,"message":"…"}</revision>.`
 
@@ -1317,14 +1295,6 @@ function buildRunPrompt(run, before) {
   return lines.join("\n\n")
 }
 
-/** The ledger outcome for a write decision (mirrors the hosted lane's outcomeOf). */
-const outcomeFor = (decision) =>
-  decision === "live_publish_with_review"
-    ? "published"
-    : decision === "proposal"
-      ? "proposed"
-      : "shadow"
-
 /** Apply the run's enqueue-time provider snapshot to a generic runner process. */
 export function configForRun(cfg, run, env = process.env) {
   const execution = run?.execution
@@ -1352,8 +1322,8 @@ export function configForRun(cfg, run, env = process.env) {
 }
 
 /** Execute one claimed run: resolve the initiator's model plan, build the prompt (instruction +
- *  target + tools), run the model with the run contract + tool shim, parse the <revision>, run the
- *  write gate, write through the matching endpoint, and finish the run. Soft failures (no revision,
+ *  target + tools), run the model with the run contract + tool shim, parse the <revision>,
+ *  publish it through the matching endpoint, and finish the run. Soft failures (no revision,
  *  a write error) finish the run `failed` server-side and return — never thrown — so one bad run
  *  can't stall the drain, exactly like a failed session. */
 export async function serveRun(client, run, manifest, cfg) {
@@ -1437,7 +1407,8 @@ export async function serveRun(client, run, manifest, cfg) {
   // when the run has sources. NOTE: these ride the model's OWN environment, so the model does
   // hold this token — the shim is a convenience, not a confidentiality boundary (runAgent's
   // header comment says the same about cwd). Anything the token authorizes, an injected model
-  // can call directly, which is why the write gate is defense-in-depth and not a guarantee.
+  // can call directly; the safety story is the loop itself — versioned writes, the publish
+  // fan-out, one-click restore, and the workspace switch enforced server-side at the claim.
   const shimEnv = hasTools
     ? { DERIVE_SERVER: cfg.server, DERIVE_TOKEN: cfg.token, DERIVE_RUN_ID: run.id }
     : {}
@@ -1472,15 +1443,7 @@ export async function serveRun(client, run, manifest, cfg) {
     return
   }
 
-  // The write MODE is the target's consent (publish/propose; default propose) — never the model's
-  // call. The gate then maps mode + workspace flags + confidence to the actual decision.
   const rev = result.revision
-  const mode = target?.mode
-  const decision = decideWrite({
-    autonomy: mode ? (mode === "publish" ? "auto" : "suggest") : "suggest",
-    confidence: rev.confidence,
-    flags: run.flags ?? {},
-  })
   const revInput = {
     content: rev.content,
     filename: rev.filename,
@@ -1490,24 +1453,16 @@ export async function serveRun(client, run, manifest, cfg) {
 
   let write = null
   try {
-    if (decision === "shadow") {
-      // Killswitch / shadow: recorded, nothing filed.
-    } else if (target) {
-      const res =
-        decision === "live_publish_with_review"
-          ? await client.publishVersion(target.id, revInput)
-          : await client.proposeRevision(target.id, revInput)
-      // The artifact is the one we were TOLD to revise — never re-read from the response. The
-      // two write endpoints answer with different shapes (a proposal returns its own id and no
-      // short_id), so trusting the response dropped the artifact from the ledger on the propose
-      // path, and with it the link the activity view renders. We already know the target.
-      write = { short_id: target.id, decision, created: false, proposal_id: res.id ?? undefined }
+    if (target) {
+      await client.publishVersion(target.id, revInput)
+      // The artifact is the one we were TOLD to revise — never re-read from the response.
+      // We already know the target, and the ledger link the activity view renders is to it.
+      write = { short_id: target.id, created: false }
     } else {
       const res = await client.createRevision(revInput, {
         title: firstLine(rev.content) || "Untitled",
-        privateDraft: decision !== "live_publish_with_review",
       })
-      write = { short_id: res.short_id, decision, created: true }
+      write = { short_id: res.short_id, created: true }
     }
   } catch (err) {
     // A failed WRITE is worth retrying: the expensive part (the model run) already succeeded,
@@ -1518,17 +1473,16 @@ export async function serveRun(client, run, manifest, cfg) {
     return
   }
 
-  const outcome = outcomeFor(decision)
   await finish({
     status: "succeeded",
     meta: {
-      outcome,
+      outcome: "published",
       writes: write ? [write] : [],
       artifact_short_id: write?.short_id ?? null,
       ...receipt(),
     },
   })
-  console.log(`[runner] run ${run.id} ${outcome}${write ? ` (${write.short_id})` : ""}`)
+  console.log(`[runner] run ${run.id} published${write ? ` (${write.short_id})` : ""}`)
 }
 
 // The system prompt for a run with no context manifest (the hosted dispatch path — an

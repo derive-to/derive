@@ -80,7 +80,6 @@ import {
   materializeSlideOps,
   parseBaseVersion,
 } from "../lib/edits"
-import { buildReviewEmail } from "../lib/email"
 import {
   bail,
   DEFAULT_WORKSPACE_NAME,
@@ -98,6 +97,7 @@ import {
   workspaceAccessOf,
 } from "../lib/http"
 import { PUBLISH_TARGET_CREATE, verifyPublishToken } from "../lib/publish-token"
+import { agentPushFanout, openReviewRound } from "../lib/review-request"
 import {
   deleteArtifactAndUnindex,
   indexArtifactVersion,
@@ -109,11 +109,9 @@ import {
   toSearchHits,
   workspaceSearchReport,
 } from "../lib/search"
-import { enqueueSlackReviewRequestedDm } from "../lib/slack-dm"
 import { normalizeTags, parseTagsField } from "../lib/tags"
 import { log } from "../log"
 import { Artifact } from "../schemas"
-import { enqueueChannelDelivery } from "../webhooks"
 
 // Bundle asset types the /content route serves with their real Content-Type. Not
 // image/svg+xml: an SVG is a scriptable document when a browser navigates to it
@@ -614,10 +612,10 @@ export const artifactRoutes = (ctx: AppContext) => {
       // Edit it in the repo instead.
       if (await meta.isManagedArtifact(existing.org_id, existing.id))
         return fail(c, 409, "managed by GitHub sync — edit this file in the repo")
-      // Locked: even an editor can't publish directly — changes go through review.
-      // The web client routes editors to "propose" when locked, so this is the
-      // backstop (and the answer for API/CLI callers).
-      if (existing.locked) return fail(c, 409, "artifact is locked — propose a change for review")
+      // Locked: even an editor can't publish directly. The lock is a freeze — comment
+      // with the suggested change, or unlock to publish.
+      if (existing.locked)
+        return fail(c, 409, "artifact is locked — unlock it to publish, or leave a comment")
     } else if (!tokenAuth && !(await workspaceCan(c, "publish"))) {
       return fail(c, 403, "forbidden")
     }
@@ -766,6 +764,38 @@ export const artifactRoutes = (ctx: AppContext) => {
       const human = tokenAuth ? tokenUser : await actingHuman(c)
       const onBehalf = tokenAuth ? (tokenUser?.id ?? null) : await privateOwnerId(c)
       const agentPrincipal = tokenAuth ? null : await agentFor(c)
+      // THE AGENT-WRITE SWITCH binds every agent-credentialed publish, not only the hosted
+      // claims: a workspace that switched agents off must not take a live write from a
+      // standing agent bearer, and not from a staged publish URL either — the mint refuses
+      // too, but a token can outlive a flip, so the spend re-checks. A person's own publish
+      // (session, or an anonymous draft) is untouched — the switch is about agents, and
+      // fails CLOSED on a read error. The settings row is kept for the brand-profile check
+      // further down.
+      const agentCredentialed = !!agentPrincipal || (!!tokenAuth && !tokenAuth.draft)
+      const agentSettings = agentCredentialed
+        ? await meta.getOrgSettings(org).catch(() => null)
+        : null
+      if (agentCredentialed && !agentSettings?.agentWrites)
+        return fail(
+          c,
+          403,
+          "this workspace has agent writes switched off — leave the change as a comment for a person to apply",
+        )
+      // The brand profile's forced review round (below) needs a human to attribute it to.
+      // An OWNERLESS agent bearer targeting the profile is refused before the write —
+      // matching the MCP surface — rather than publishing the one document that steers
+      // every agent with no round behind it.
+      if (
+        agentCredentialed &&
+        !onBehalf &&
+        existing &&
+        agentSettings?.brandprint?.profileId === existing.short_id
+      )
+        return fail(
+          c,
+          403,
+          "publishing the brand profile needs a user to attribute its review to — use a grant bound to a user",
+        )
       // Access is set-on-create: a republish never re-stamps it (publish() only adds a
       // version). On a NEW artifact each field resolves independently — explicit request
       // field > legacy `visibility` mapping > the workspace default (factory default is
@@ -924,114 +954,60 @@ export const artifactRoutes = (ctx: AppContext) => {
           (await meta.listMemberships(org)).find((m) => m.role === "owner")?.user_id ??
           null
         if (reviewer) {
-          const round = await meta.createReviewRound({
-            id: newId("rr"),
-            artifact_id: artifact.id,
+          await openReviewRound({ meta, bus, baseUrl: deps.baseUrl, notify }, artifact, {
+            reviewer,
+            requestedById: actor?.id ?? "agent",
+            requestedByName: actor?.name ?? "An agent",
             version: version.n,
-            requested_by: actor?.id ?? "agent",
-            requested_for: reviewer,
             note: str(body["review_note"]) ?? null,
-          })
-          roundCreated = true
-          bus.publish(artifact.id, { type: "review.requested", round_id: round.id })
-          await notify(artifact, "review.requested", {
-            version: version.n,
-            requested_by: actor?.name ?? "An agent",
             // `author` is what the channel card renders, and `actor_id` is what its human/agent
             // filter keys on — enqueueSlackChannelEvent reads both. Without them a review
             // request reaching a channel would be attributed to "someone" and counted as human.
-            author: actor?.name ?? "An agent",
-            actor_id: agentPrincipal?.id ?? actor?.id ?? null,
+            notifyExtras: {
+              author: actor?.name ?? "An agent",
+              actor_id: agentPrincipal?.id ?? actor?.id ?? null,
+            },
+            selfId: actor?.id ?? null,
           })
-          // The review request is the one event that earns an email: the loop is
-          // blocked on the reviewer, who may have no tab open. Never for your own
-          // request on yourself (a human publishing with request_review).
-          if (reviewer !== actor?.id) {
-            if ((await meta.getOrgSettings(org)).emailNotifications) {
-              const [r] = await meta.getUsers([reviewer])
-              if (r?.email)
-                await enqueueChannelDelivery(meta, "email", "review.requested", {
-                  to: r.email,
-                  toName: r.name ?? undefined,
-                  ...buildReviewEmail(deps.baseUrl, artifact, {
-                    requestedBy: actor?.name ?? "An agent",
-                    version: version.n,
-                    note: str(body["review_note"]) ?? null,
-                  }),
-                })
-            }
-            // Same interrupt, mirrored to Slack (independent of the email gate above —
-            // gated on the reviewer's own Slack-DM preference instead).
-            await enqueueSlackReviewRequestedDm(
-              { meta, baseUrl: deps.baseUrl },
-              artifact,
-              {
-                requestedBy: actor?.name ?? "An agent",
-                version: version.n,
-                note: str(body["review_note"]) ?? null,
-              },
-              reviewer,
-            )
-          }
+          roundCreated = true
         }
+      }
+      // THE BRAND PROFILE: an agent-credentialed write to it ALWAYS opens a round, asked for
+      // or not — it steers every agent in the workspace, so its reveal is never silent. The
+      // same invariant the MCP publish tool enforces, held here so this route is not the
+      // side door around it. An attended person's own edit is itself the human moment and
+      // opens nothing.
+      if (
+        !roundCreated &&
+        agentPrincipal &&
+        onBehalf &&
+        agentSettings?.brandprint?.profileId === artifact.short_id
+      ) {
+        await openReviewRound({ meta, bus, baseUrl: deps.baseUrl, notify }, artifact, {
+          reviewer: onBehalf,
+          requestedById: agentPrincipal.id,
+          requestedByName: agentPrincipal.name,
+          version: version.n,
+          notifyExtras: { author: agentPrincipal.name, actor_id: agentPrincipal.id },
+          selfId: null,
+        })
+        roundCreated = true
       }
       // The MCP loop over HTTP: an AGENT-credentialed publish (a registered
       // dk_agt_ token or an OAuth bearer — the CLI and stdio-shim paths) reaches
-      // its human exactly like the /mcp path does: one bell row per push (a
-      // review ask beats a plain publish), then artifact.pushed on their user
-      // channel so an open tab auto-opens. A signed-in human's own save gets
-      // none of this — they're already looking at it.
+      // its human exactly like the /mcp path does — the shared bell + auto-open
+      // fan-out. A signed-in human's own save gets none of this — they're
+      // already looking at it.
       let openedInTab: boolean | null = null
       if (agentPrincipal && onBehalf) {
-        if (roundCreated || !shortId) {
-          const row = {
-            id: newId("n"),
-            user_id: onBehalf,
-            actor: agentPrincipal.name,
-            kind: roundCreated ? ("review" as const) : ("publish" as const),
-            artifact_id: artifact.id,
-            artifact_short_id: artifact.short_id,
-            artifact_title: artifact.title,
-            thread_id: "",
-            comment_id: "",
-            preview: roundCreated
-              ? `requested your review of v${version.n}`
-              : (artifact.title ?? "published something new"),
-          }
-          await meta.createNotification(row)
-          bus.publish(`u:${onBehalf}`, {
-            type: "notification",
-            notification: { ...row, read: 0, created_at: new Date().toISOString() },
-          })
-        }
-        // A context-bound agent is an askable service: its publishes are routinely
-        // OTHER people's asks riding this owner's grant, so the push must not
-        // commandeer the owner's browser. Flag it — the client downgrades
-        // auto-open to a toast (the bell row above still lands).
-        const contexts = await meta.listContexts(artifact.org_id)
-        const service = contexts.some((x) => x.agent_id === agentPrincipal.id)
-        const pushed = {
-          type: "artifact.pushed" as const,
-          event_id: newId("ev"),
-          short_id: artifact.short_id,
-          artifact_id: artifact.id,
-          title: artifact.title,
+        openedInTab = await agentPushFanout({ meta, bus, baseUrl: deps.baseUrl }, artifact, {
+          user: onBehalf,
+          agentId: agentPrincipal.id,
+          agentName: agentPrincipal.name,
           version: version.n,
-          kind: shortId ? "revised" : "created",
-          url: artifactUrl(deps.baseUrl, artifact),
-          agent: agentPrincipal.name,
-          review_requested: roundCreated,
-          service,
-        }
-        if (bus.publishWithReceipt) {
-          openedInTab = await Promise.race([
-            bus.publishWithReceipt(`u:${onBehalf}`, pushed).then((n) => n > 0),
-            new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 1500)),
-          ])
-        } else {
-          bus.publish(`u:${onBehalf}`, pushed)
-          openedInTab = false
-        }
+          reviewRound: roundCreated,
+          isNew: !shortId,
+        })
       }
       const versions = await meta.listVersions(artifact.id)
       // Advisories over what was just stored (missing viewport meta, oversized

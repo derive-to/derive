@@ -2,14 +2,6 @@ import type { AutomationRef, AutomationTrigger, Run } from "@/api"
 
 // Pure formatting for the Automations UI — kept out of the component so it's unit-tested.
 
-/** Stamp the write mode onto every target: publishing is explicit per-target consent, so
- *  `publish` sets mode on each ref and `propose` (the default) leaves them bare — the
- *  canonical minimal form the server also stores. The single form-level mode maps to all
- *  targets uniformly; per-target modes are a future refinement. */
-export function stampMode(refs: AutomationRef[], mode: "publish" | "propose"): AutomationRef[] {
-  return refs.map((r) => (mode === "publish" ? { ...r, mode: "publish" } : r))
-}
-
 /** A compact human summary of an automation's targets for the row subtitle, e.g.
  *  "1 artifact, 1 tag" or "2 collections". Empty string when there are no targets. */
 export function targetSummary(refs: AutomationRef[]): string {
@@ -24,15 +16,15 @@ export function targetSummary(refs: AutomationRef[]): string {
 }
 
 /** One write a run performed, ready for the ledger row: the artifact it touched and the
- *  verb (created / proposed / revised). */
+ *  verb — a run either created it or revised it. */
 export interface RunWrite {
   shortId: string
-  verb: "created" | "proposed" | "revised"
+  verb: "created" | "revised"
 }
 
 /** Parse meta.writes[] into linked, labelled writes — what the activity row renders. Only
  *  writes that produced an artifact (a short id) are shown; a malformed or writes-less meta
- *  (asks, failed runs, older rows) yields []. */
+ *  (asks, failed runs) yields []. */
 export function runWrites(meta: string | null): RunWrite[] {
   if (!meta) return []
   let raw: unknown
@@ -44,12 +36,9 @@ export function runWrites(meta: string | null): RunWrite[] {
   const writes = (raw as { writes?: unknown })?.writes
   if (!Array.isArray(writes)) return []
   const out: RunWrite[] = []
-  for (const w of writes as { short_id?: unknown; decision?: unknown; created?: unknown }[]) {
+  for (const w of writes as { short_id?: unknown; created?: unknown }[]) {
     if (typeof w?.short_id !== "string" || w.short_id === "") continue
-    out.push({
-      shortId: w.short_id,
-      verb: w.created ? "created" : w.decision === "proposal" ? "proposed" : "revised",
-    })
+    out.push({ shortId: w.short_id, verb: w.created ? "created" : "revised" })
   }
   return out
 }

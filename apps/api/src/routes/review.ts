@@ -55,7 +55,25 @@ export const reviewRoutes = (ctx: AppContext) => {
       path: "/v1/artifacts/{shortId}/review/send-back",
       tags: ["Review"],
       summary: "Send back a review with the human's answers.",
-      request: { params: z.object({ shortId: z.string() }) },
+      request: {
+        params: z.object({ shortId: z.string() }),
+        body: {
+          required: false,
+          content: {
+            "application/json": {
+              schema: z.object({
+                note: z
+                  .string()
+                  .max(10_000)
+                  .optional()
+                  .describe(
+                    "The human's note to the agent — answers, asks, or the go-signal (\"good to go\"). Carried on the round and surfaced in the agent's catch_up.",
+                  ),
+              }),
+            },
+          },
+        },
+      },
       responses: {
         200: {
           description: "The round, now sent_back.",
@@ -74,7 +92,9 @@ export const reviewRoutes = (ctx: AppContext) => {
       if (!round) return bail(fail(c, 409, "no review pending on this artifact"))
       const updated = await meta.resolveReviewRound(round.id, {
         state: "sent_back",
-        note: str(body.note) ?? null,
+        // Bounded to the declared cap however the body arrived — the note is interpolated
+        // into the agent's catch_up prompt, and an unbounded field there is a cost hole.
+        note: str(body.note)?.slice(0, 10_000) ?? null,
         resolved_by: human.id,
         resolved_by_name: human.name,
       })
