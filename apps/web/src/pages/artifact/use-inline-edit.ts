@@ -76,8 +76,8 @@ const BLOCKED_COPY: Record<string, string> = {
  *
  *  - 409 (a publish raced ours): refetch the head; edits stay in the frame, saving
  *    again re-resolves them against the new version.
- *  - 400 (a quote didn't resolve — formatted markdown spans, markup-crossing
- *    selections): surface the server's precise reason, offer the source editor.
+ *  - 400 (a quote didn't resolve, or a selection crossed document structure):
+ *    surface the server's precise reason and preserve the painted edit for retry.
  *
  * The session is bounded by the FRAME's lifetime: `onFrameGone` (wired to the
  * page's iframe onLoad) force-exits with a warning, because a reloaded frame boots
