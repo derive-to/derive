@@ -277,6 +277,20 @@ describe("applyQuoteEdits — html", () => {
     )
   })
 
+  it("repairs case-insensitive inline tags with legal HTML whitespace", () => {
+    const doc = "<h1><SPAN>Old title</SPAN   > here</h1>"
+    expect(applyQuoteEdits(doc, HTML, [qe("Old title here", "New title")])).toBe(
+      "<h1>New title</h1>",
+    )
+  })
+
+  it("treats comments as non-text boundaries", () => {
+    const doc = "<p>before <!-- private -->after</p>"
+    expect(() => applyQuoteEdits(doc, HTML, [qe("before after", "changed")])).toThrow(
+      /non-text HTML boundary/,
+    )
+  })
+
   it("preserves links and handles international text across formatting seams", () => {
     const whole = '<p><a href="/docs">مرحبا 🌍</a> world</p>'
     expect(applyQuoteEdits(whole, HTML, [qe("مرحبا 🌍 world", "hello world")])).toBe(
