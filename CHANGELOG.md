@@ -14,6 +14,43 @@ for the recommended install and verification flow.
 
 ## [Unreleased]
 
+### Removed
+- **Proposals and the approval step.** The two review ceremonies are gone: ask-first
+  candidate versions awaiting an editor's decision, and the `approved` round state with
+  its served-version pointer. Review is one loop: every write publishes live as a kept,
+  restorable version; a review round is `pending` until the reviewer **Sends back**
+  their answers; and the note on that send-back is the whole decision — a note that
+  reads "good to go" is the go-signal. Gone with them: the
+  `/v1/artifacts/:id/proposals` routes and proposal storage, the `addressed` comment
+  state (threads are `open`/`resolved`/`outdated`), the `for_review` publish parameter
+  (`request_review` is the one ask), the approve endpoint, the Slack Approve buttons,
+  the `derive:propose` and `derive:review` OAuth scopes (existing grants keep
+  refreshing — the strings grant nothing), and approved-version pinning for skill
+  delivery — every read serves `current_version`. Existing databases run
+  `deploy/drop-proposals.sql` then `deploy/drop-approved-version.sql` once after
+  deploying; each normalizes persisted state before dropping the storage. The decision
+  record is `docs/decisions/0001-one-review-loop.md`.
+- `@derive-to/mcp` 0.6.0 — the stdio server matches the server: `publish` drops
+  `for_review`, the client drops `propose`, and a review round reports
+  `pending`/`sent_back`.
+- `@derive-to/cli` 0.5.0 — `derive approve` is gone; `derive send-back --note "…"` is
+  the human verb. Skill fetching reads current versions.
+
+### Changed
+- **Agent writes publish live, and the write policy is one switch.** An agent's write
+  lands exactly like a person's: a new version with the full publish fan-out (bell,
+  email, Slack, the open tab live-reloads). Asking for a look is `request_review` on
+  the publish, and the round, the email, and the Slack DM all carry the requester's
+  note. The five-dimensional write-policy machine (killswitch, workspace auto opt-in,
+  per-target publish/draft mode, model-confidence floor, outside-data rule) collapsed
+  to one workspace setting, `agentWrites`, on by default: off, agents stop writing
+  everywhere an agent credential can write — runs are neither materialized,
+  dispatched, nor claimed; chat's publish refuses with the drafted change surfaced in
+  the reply; agent-credentialed publishes are refused at the API on every surface;
+  staged upload URLs refuse at mint and at spend. A workspace whose legacy killswitch
+  was engaged upgrades to writes-off. An agent's write to the workspace brand profile
+  always opens a review round — its reveal is never silent.
+
 ### Added
 - **Reversible artifact archiving.** Artifacts can leave the active library without being
   deleted, appear in a dedicated archive, and be restored later.
@@ -95,16 +132,15 @@ for the recommended install and verification flow.
 - **Inline text editing.** An **Edit** button on the artifact workbench turns the
   rendered document itself into the editor: click any text, type, hit Save — a
   typo fix no longer needs the raw source or an agent round-trip. Works on phones
-  too (the save bar floats above the comments sheet). Editors publish
-  a new version directly; commenters (and locked artifacts) get **Suggest edits**,
-  which files the same change as a proposal for review. Under the hood each
+  too (the save bar floats above the comments sheet). Editing needs publish
+  standing; a commenter suggests the change in a comment instead. Under the hood each
   changed run travels as a **quote-scoped edit** (`{ quote: { exact, prefix,
   suffix }, new_text }`) — the write-side twin of the comment anchor — resolved
   server-side against the stored source with a strict matcher (context match, else
   a globally unique exact, else refuse), so an edit can never land on the wrong
   occurrence. For HTML artifacts the resolved span maps back to raw bytes through
   an offset-tracking projection that refuses to cross markup or split an entity;
-  replacements are escaped. The `edits` field on `POST /versions`, `/proposals`,
+  replacements are escaped. The `edits` field on `POST /versions`
   and the MCP `publish` tool accepts the new shape as an alternative to
   `{old_str, new_str}` (one shape per batch — the two resolve against different
   baselines, so mixing is refused rather than silently reordered), with the same

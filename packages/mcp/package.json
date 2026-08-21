@@ -1,6 +1,6 @@
 {
   "name": "@derive-to/mcp",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "type": "module",
   "description": "Stdio MCP server for Derive — find, read, comment on, and publish durable artifacts from compatible agents.",
   "mcpName": "to.derive/derive",
