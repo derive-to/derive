@@ -240,6 +240,14 @@ export const parseLineRange = (
   return { from, to: Math.min(to, total) }
 }
 
+/** On the world link only the current version is readable, unless the owner opened the history. */
+export const versionOpenToWorld = (a: ArtifactRecord, n: number): boolean =>
+  n === a.current_version || !!a.public_history
+export const historyNotPublic = (shortId: string, a: ArtifactRecord) =>
+  err(
+    `"${shortId}" is readable here only at its current version (${a.current_version}); its history is not public.`,
+  )
+
 export const summarizeArtifact = (a: ArtifactRecord) => ({
   short_id: a.short_id,
   title: a.title,

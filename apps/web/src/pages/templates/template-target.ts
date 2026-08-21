@@ -7,14 +7,12 @@ const artifactCategory = (artifact: Pick<Artifact, "current_content_type">): str
 
 export const targetFromArtifact = (
   artifact: Pick<Artifact, "short_id" | "title" | "current_content_type">,
-  opts?: { publicUrl?: string },
 ): AgentTemplateTarget => ({
   uri: artifact.short_id,
   title: artifact.title || "Untitled artifact",
   description: "A new, agent-authored result grounded in this artifact.",
   kind: "artifact",
   category: artifactCategory(artifact),
-  ...(opts?.publicUrl ? { publicUrl: opts.publicUrl } : {}),
 })
 
 export const targetFromLibraryEntry = (

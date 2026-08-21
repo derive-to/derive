@@ -8,9 +8,6 @@ export type AgentTemplateTarget = {
   outcome?: string
   sections?: ReadonlyArray<string>
   inputs?: ReadonlyArray<{ name: string; description: string; required?: boolean }>
-  /** A public artifact from another workspace. The agent's grant may not reach it by
-   *  short id, so the handoff references the page URL and records no lineage. */
-  publicUrl?: string
 }
 
 export type AgentHandoffWorkspace = { id: string; name: string }
@@ -47,24 +44,17 @@ Use the template as a reference, then make the decisions this brief needs:
 4. Publish the adapted manifest as a new artifact with \`derived_from: "${target.uri}"\`, then use automate with create_context once the setup is clear.
 5. Return the new shareable Derive URL and briefly explain the important adaptations.`
 
-  const viaUrl = !!target.publicUrl
-  const inspect = viaUrl
-    ? "Fetch the exact reference URL (it serves markdown to agents) before creating anything; it is outside this workspace, so Derive's read tool may not reach it."
-    : "Use Derive's read tool to inspect the exact reference before creating anything."
-  const publish = viaUrl
-    ? "Leave the original unchanged and publish a new artifact. Do not set derived_from: lineage to an artifact outside this workspace is not recorded yet."
-    : `Leave the original unchanged and publish a new artifact with \`derived_from: "${target.uri}"\` so Derive records the exact reference.`
-  return `Use this Derive ${viaUrl ? "public artifact" : "template"} as a strong reference and make a new artifact for me.
+  return `Use this Derive template as a strong reference and make a new artifact for me.
 
 Template: ${target.title}
-Exact reference: ${target.publicUrl ?? target.uri}
+Exact reference: ${target.uri}
 ${destination}What I need:
 ${request}
 
 Use the template as a reference, then make the decisions this brief needs:
-1. ${confirmWorkspace} ${inspect}
+1. ${confirmWorkspace} Use Derive's read tool to inspect the exact reference before creating anything.
 2. Keep the useful structure, visual language, interactions, and narrative rhythm. Adapt the content and other decisions to my brief. Use find when workspace evidence would improve the result.
-3. ${publish}
+3. Leave the original unchanged and publish a new artifact with \`derived_from: "${target.uri}"\` so Derive records the exact reference.
 4. Render and visually inspect the finished result before reporting success. Revise it if the rendered result is weak.
 5. Return the new shareable Derive URL and briefly explain the important adaptations.`
 }

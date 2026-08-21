@@ -1,7 +1,12 @@
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import type { BlobStore, MetaStore, SearchIndex } from "@derive/core"
+import {
+  type BlobStore,
+  type MetaStore,
+  publish as publishVersion,
+  type SearchIndex,
+} from "@derive/core"
 import { SqliteMetaStore } from "@derive/db/sqlite"
 import { FsBlobStore } from "@derive/storage/fs"
 import Database from "better-sqlite3"
@@ -1220,6 +1225,165 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(col?.count).toBe(2)
     const inspect = JSON.parse(toolText(await call(app, token, "organize", { short_ids: [a] })))
     expect(inspect.artifacts[0].collections).toContain(col.id)
+  })
+
+  it("reaches a public artifact outside the grant at viewer: read and lineage only", async () => {
+    const { app, token, meta, blobs } = appWithGrant(
+      dir,
+      "public-reach",
+      "openid derive:read derive:comment derive:publish",
+      // Previews on, so the render rung below reaches the self-heal it must not trigger.
+      { renderPreviews: true },
+    )
+    const home = JSON.parse(toolText(await call(app, token, "list_workspaces"))) as {
+      workspaces: { id: string; default: boolean }[]
+    }
+    const homeWorkspace = home.workspaces.find((w) => w.default)?.id
+    if (!homeWorkspace) throw new Error("the grant has no default workspace")
+    // A workspace the granting user does not belong to, with one public and one private
+    // artifact. Silent breakage here is a cross-tenant leak, so it goes through the tools.
+    await meta.setWorkspace("ws_far", "Far workspace")
+    const farBody = (title: string, usd: number) =>
+      `<!doctype html><html><body><h1>${title}</h1><p>from far away</p>` +
+      `<script type="application/derive-facts" data-fact="usd">{"usd":${usd}}</script></body></html>`
+    const far = async (title: string, linkRole: "viewer" | "none", listed: "public" | "none") =>
+      (
+        await publishVersion(meta, blobs, {
+          bytes: new TextEncoder().encode(farBody(title, 1)),
+          filename: "doc.html",
+          isBundle: false,
+          title,
+          author: "Far owner",
+          authorId: "u_far",
+          orgId: "ws_far",
+          workspaceAccess: "member",
+          linkRole,
+          listed,
+        })
+      ).artifact
+    const open = await far("Far public template", "viewer", "public")
+    const linkOnly = await far("Far link-only", "viewer", "none")
+    const closed = await far("Far private", "none", "none")
+    await meta.setArtifactTags(open.id, ["template"])
+    // Facts rows as the publish chain would store them (the core publish helper alone
+    // does not extract them), one per version, so the series has a history to clamp.
+    const usdFact = (n: number) => [
+      { id: `vd_far_usd_${n}`, slot: "usd", json: `{"usd":${n}}`, size_bytes: 9, gen: 0 },
+    ]
+    await meta.setVersionData(open.id, 1, usdFact(1))
+    // A password on the world link suspends it, for anonymous readers and here alike.
+    const locked = await meta.createArtifact({
+      id: "a_far_locked",
+      short_id: "farlockd",
+      org_id: "ws_far",
+      slug: "locked",
+      title: "Far locked",
+      workspace_access: "member",
+      link_role: "viewer",
+      listed: "public",
+      password_hash: "not-a-real-hash",
+      kind: "file",
+      spa: 0,
+    })
+
+    // The world link is what reaches it: public or link-only read; private and locked do not.
+    expect(toolText(await call(app, token, "read", { short_id: open.short_id }))).toContain(
+      "from far away",
+    )
+    expect(toolText(await call(app, token, "read", { short_id: linkOnly.short_id }))).toContain(
+      "from far away",
+    )
+    for (const unreachable of [closed.short_id, locked.short_id])
+      expect(toolText(await call(app, token, "read", { short_id: unreachable }))).toMatch(
+        /No artifact/,
+      )
+    // The shelf lists it as public, and grep within it works.
+    const shelf = JSON.parse(toolText(await call(app, token, "find", { templates: true }))) as {
+      results: { uri: string; source: string }[]
+    }
+    expect(shelf.results).toContainEqual(
+      expect.objectContaining({ uri: open.short_id, source: "public" }),
+    )
+    expect(
+      toolText(await call(app, token, "find", { short_id: open.short_id, query: "far away" })),
+    ).toContain("far away")
+
+    // Lineage: the copy lands in the caller's own workspace, pointing at the far source.
+    const adopted = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          title: "Ours, from far",
+          content: "# Ours\n\nadapted",
+          derived_from: open.short_id,
+        }),
+      ),
+    ) as { short_id: string }
+    const adoptedRow = await meta.getByShortId(adopted.short_id)
+    expect(adoptedRow?.derived_from).toBe(open.id)
+    expect(adoptedRow?.org_id).not.toBe("ws_far")
+
+    // Read-only. The write and collaboration tools never opt into the public branch, so
+    // to them the artifact does not exist: no revision, no comment, no review state.
+    expect(
+      toolText(
+        await call(app, token, "publish", { short_id: open.short_id, content: "# Overwrite" }),
+      ),
+    ).toMatch(/No artifact/)
+    expect((await meta.getByShortId(open.short_id))?.current_version).toBe(1)
+    expect(
+      toolText(await call(app, token, "comment", { short_id: open.short_id, body: "hi" })),
+    ).toMatch(/No artifact/)
+    expect(toolText(await call(app, token, "catch_up", { short_id: open.short_id }))).toMatch(
+      /No artifact/,
+    )
+    await publishVersion(
+      meta,
+      blobs,
+      {
+        bytes: new TextEncoder().encode(farBody("Far public template, revised", 2)),
+        filename: "doc.html",
+        isBundle: false,
+        author: "Far owner",
+        authorId: "u_far",
+        orgId: "ws_far",
+      },
+      open.short_id,
+    )
+    await meta.setVersionData(open.id, 2, usdFact(2))
+    expect(
+      toolText(await call(app, token, "read", { short_id: open.short_id, version: 1 })),
+    ).toMatch(/history is not public/)
+    expect(toolText(await call(app, token, "read", { short_id: open.short_id }))).toContain(
+      "revised",
+    )
+    // The facts series is clamped to the current version, like the raw series route.
+    const series = JSON.parse(
+      toolText(
+        await call(app, token, "read", { short_id: open.short_id, data: "usd", versions: "all" }),
+      ),
+    ) as { series: { n: number; data: { usd: number } }[] }
+    expect(series.series.map((row) => row.n)).toEqual([2])
+    // Nothing is persisted on the far tenant's behalf: a derived slot is served from what
+    // is stored, never computed and written by an outsider's read.
+    await call(app, token, "read", { short_id: open.short_id, data: "$stats" })
+    expect(await meta.getVersionData(open.id, 2, "$stats")).toHaveLength(0)
+    // And a failed render stays failed, with the renderer's own error kept to itself.
+    await meta.setVersionPreview(open.id, 2, {
+      preview_status: "failed",
+      preview_error: "chromium OOM at an internal bucket",
+    })
+    const failed = toolText(
+      await call(app, token, "read", { short_id: open.short_id, render: "top" }),
+    )
+    expect(failed).toMatch(/failed/)
+    expect(failed).not.toContain("internal bucket")
+    expect((await meta.getVersion(open.id, 2))?.preview_status).toBe("failed")
+    // Naming the caller's own workspace (as the Templates handoff does) still reaches it.
+    expect(
+      toolText(
+        await call(app, token, "read", { short_id: open.short_id, workspace: homeWorkspace }),
+      ),
+    ).toContain("revised")
   })
 
   it("organize never folds a roaming artifact into the default workspace's collection", async () => {

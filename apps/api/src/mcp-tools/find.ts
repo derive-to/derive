@@ -21,7 +21,16 @@ import { listTemplateArtifacts } from "../lib/template-artifacts"
 import { visibleArtifactIds } from "../lib/visibility"
 import { log } from "../log"
 import type { ToolContext } from "../mcp-tool-context"
-import { err, json, runnerOnline, safeJson, summarizeArtifact, text } from "../mcp-util"
+import {
+  err,
+  historyNotPublic,
+  json,
+  runnerOnline,
+  safeJson,
+  summarizeArtifact,
+  text,
+  versionOpenToWorld,
+} from "../mcp-util"
 
 // FIND — one tool over BROWSE (list_artifacts) + GREP/SEARCH (search) + the askable
 // CONTEXTS (list_contexts), discriminated by argument. The mode is decided by what's
@@ -298,8 +307,7 @@ export function registerFindTool(tc: ToolContext): void {
           truncated,
           next:
             (truncated ? "Refine query to narrow the shelf. " : "") +
-            "Read a result's uri (its short_id), publish a new artifact with derived_from set to it, and inspect the render. " +
-            "If read refuses a row (a workspace outside this grant), its url still serves the page as markdown; the person can start from it there with Make a copy.",
+            "Read a result's uri (its short_id), publish a new artifact with derived_from set to it, and inspect the render. A public row from another workspace reads at its current version.",
         })
       }
       // Claimed BEFORE mode 1, which owns `short_id` and would answer a `links_to` call with
@@ -322,13 +330,14 @@ export function registerFindTool(tc: ToolContext): void {
         const ctxLines = Math.min(Math.max(context ?? 0, 0), 5)
         const cap = Math.min(Math.max(max_matches ?? 40, 1), 200)
         const where = scope ?? "source"
-        const r = await reach(short_id, workspace)
+        const r = await reach(short_id, workspace, { public: true })
         if (r && "error" in r) return err(r.error)
         if (!r) return notFound(short_id)
         const a = r.a
         const n = version ?? a.current_version
         if (n < 1 || n > a.current_version)
           return err(`No version ${n} for "${short_id}" — it has versions 1..${a.current_version}.`)
+        if (r.public && !versionOpenToWorld(a, n)) return historyNotPublic(short_id, a)
         const v = await ctx.meta.getVersion(a.id, n)
         if (!v) return err(`Version ${n} of "${short_id}" is unavailable.`)
         const { groups, total, note } = await searchArtifactVersion(

@@ -571,7 +571,9 @@ export function registerPublishTool(tc: ToolContext): void {
         if (!readable) return err(`No template starter "${derived_from}" you can reach.`)
         derivedFromId = entry.source_artifact_id
       } else if (derived_from) {
-        const source = await reach(derived_from, workspace)
+        // Lineage needs read reach only, so a public template in another workspace
+        // qualifies; the copy itself lands in the target workspace at the caller's role.
+        const source = await reach(derived_from, workspace, { public: true })
         if (!source || "error" in source)
           return err(
             source && "error" in source

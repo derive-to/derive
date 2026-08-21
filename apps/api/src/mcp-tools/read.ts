@@ -48,6 +48,7 @@ import {
   err,
   FULL_DOC_MAX,
   formatLabel,
+  historyNotPublic,
   IMAGE_INLINE_MAX,
   json,
   manifestOf,
@@ -61,6 +62,7 @@ import {
   skillsCatalog,
   sleep,
   toBase64,
+  versionOpenToWorld,
 } from "../mcp-util"
 import { CORE_SKILLS } from "../skills-reference.gen"
 
@@ -542,7 +544,8 @@ export function registerReadTool(tc: ToolContext): void {
         }
         docId = seg
       }
-      const r = await reach(docId, workspace)
+      // Opted into the world link: a public artifact outside the grant reads at viewer.
+      const r = await reach(docId, workspace, { public: true })
       if (r && "error" in r) return err(r.error)
       // A bare name that matches no artifact may still name a CONTEXT — tried only here,
       // after the artifact lookup, so a context named like a doc can never shadow it.
@@ -555,6 +558,7 @@ export function registerReadTool(tc: ToolContext): void {
       const n = version ?? a.current_version
       if (n < 1 || n > a.current_version)
         return err(`No version ${n} for "${short_id}" — it has versions 1..${a.current_version}.`)
+      if (r.public && !versionOpenToWorld(a, n)) return historyNotPublic(short_id, a)
       const v = await ctx.meta.getVersion(a.id, n)
       if (!v) return err(`Version ${n} of "${short_id}" is unavailable.`)
       const url = artifactUrl(ctx.deps.baseUrl, a)
@@ -590,11 +594,14 @@ export function registerReadTool(tc: ToolContext): void {
         // ran and switched off since, and "this instance renders nothing" would then discard
         // a true fact about the page (a font that never loaded, a layout that timed out) in
         // favour of a fact about the deployment. Both are said, in that order.
+        // The renderer's error text is the instance's own; a reader without a seat gets
+        // the fact of the failure only.
+        const why = !r.public && variant.error ? ` (${variant.error})` : ""
         if (!ctx.deps.renderPreviews && !(variant.status === "ready" && variant.key))
           return err(
             rendersOff(
               variant.status === "failed"
-                ? `The render:${render} of "${short_id}" v${n} failed (${variant.error ?? "transient error"}), and a fresh one`
+                ? `The render:${render} of "${short_id}" v${n} failed${why}, and a fresh one`
                 : `The render:${render} of "${short_id}" v${n}`,
               url,
             ),
@@ -611,8 +618,10 @@ export function registerReadTool(tc: ToolContext): void {
         // an older one would flip `failed` to `pending` PERMANENTLY: nothing ever renders
         // it, and the heal can't fire again because it only triggers on `failed`. That
         // trades an honest error message for "not ready yet, try again shortly" forever.
-        // An old version keeps its failure, which is the truthful answer.
-        if (variant.status === "failed" && n === a.current_version) {
+        // An old version keeps its failure, which is the truthful answer. The world link
+        // never re-queues: a reader with no seat serves only what has rendered, as the
+        // anonymous embed does.
+        if (variant.status === "failed" && n === a.current_version && !r.public) {
           // Use the shared notifier rather than enqueueing directly: on Workers it also
           // pokes the PreviewRenderer DO, so this read's wait loop can observe the repair
           // instead of depending on a later cron tick.
@@ -627,7 +636,12 @@ export function registerReadTool(tc: ToolContext): void {
         // ready nor failed and the caller passed `wait`, block up to that many seconds
         // (max 30), re-reading the version, before returning the not-ready message — a
         // bounded retry loop so the agent gets the render in one call after a fresh push.
-        if (wait && !(variant.status === "ready" && variant.key) && variant.status !== "failed") {
+        if (
+          wait &&
+          !r.public &&
+          !(variant.status === "ready" && variant.key) &&
+          variant.status !== "failed"
+        ) {
           const deadline = Date.now() + Math.min(Math.max(wait, 0), 30) * 1000
           while (
             Date.now() < deadline &&
@@ -671,20 +685,22 @@ export function registerReadTool(tc: ToolContext): void {
         }
         if (variant.status === "failed")
           return err(
-            `The render:${render} of "${short_id}" v${n} failed${requeued ? " again on a re-queued attempt" : ""}${variant.error ? ` (${variant.error})` : ""} — the page may still be fine; open ${url} to check. ` +
+            `The render:${render} of "${short_id}" v${n} failed${requeued ? " again on a re-queued attempt" : ""}${why} — the page may still be fine; open ${url} to check. ` +
               // Only the current version re-renders: the worker discards a job for a
               // superseded one, so promising a retry here would be advice that silently
               // does nothing. Say what actually works instead.
-              (n === a.current_version
-                ? "Reading again re-queues a fresh render."
-                : `This is an old version, and only v${a.current_version} re-renders — read it without \`version\` to retry.`),
+              (r.public
+                ? "It is not re-rendered for a reader without a seat in its workspace."
+                : n === a.current_version
+                  ? "Reading again re-queues a fresh render."
+                  : `This is an old version, and only v${a.current_version} re-renders — read it without \`version\` to retry.`),
           )
         if (requeued)
           return err(
-            `The render:${render} of "${short_id}" v${n} had failed (${variant.error ?? "transient error"}) — a fresh render was just re-queued. Call read again with \`wait\` (seconds, max 30) to collect it.`,
+            `The render:${render} of "${short_id}" v${n} had failed${why} — a fresh render was just re-queued. Call read again with \`wait\` (seconds, max 30) to collect it.`,
           )
         return err(
-          `The render:${render} of "${short_id}" v${n} isn't ready yet — screenshots are computed a few seconds after publish. Try again shortly, or pass \`wait\` (seconds, max 30) to block for it.`,
+          `The render:${render} of "${short_id}" v${n} isn't ready yet — screenshots are computed a few seconds after publish. Try again shortly${r.public ? "" : ", or pass `wait` (seconds, max 30) to block for it"}.`,
         )
       }
       // The data rung: a version's structured facts, queried instead of re-parsed. A
@@ -707,6 +723,8 @@ export function registerReadTool(tc: ToolContext): void {
             return err(
               `Bad \`versions\` "${versions}" for "${short_id}" (it has 1..${a.current_version}) — use "1-30", "12", "20-", or "all".`,
             )
+          // The same clamp the raw series route applies to anonymous readers.
+          if (r.public && !a.public_history) range.from = range.to = a.current_version
           const rows = await ctx.meta.getVersionDataSeries(
             a.id,
             data,
@@ -770,9 +788,14 @@ export function registerReadTool(tc: ToolContext): void {
         // the corpus's $links) recomputes from the version's own bytes: one blob, one
         // pass, value returned now, rows persisted off the response. Series reads and the
         // raw routes serve stored rows only — a 200-version series must never become 200
-        // blob reads in one request, and anonymous traffic must not command compute.
+        // blob reads in one request, and anonymous traffic must not command compute. The
+        // world link over MCP is anonymous traffic: stored rows only, nothing persisted.
         let lazyFilled = false
-        if (isDerivedFactName(data) && (!rows[0] || rows[0].gen !== derivedGen(data))) {
+        if (
+          !r.public &&
+          isDerivedFactName(data) &&
+          (!rows[0] || rows[0].gen !== derivedGen(data))
+        ) {
           const fresh = await lazyDeriveVersion(ctx, a.id, v, n)
           if (fresh) {
             rows = fresh.filter((r) => r.slot === data)
@@ -781,6 +804,10 @@ export function registerReadTool(tc: ToolContext): void {
         }
         const row = rows[0]
         if (!row) {
+          if (r.public && isDerivedFactName(data))
+            return err(
+              `"${short_id}" v${n} has no stored "${data}". Derived facts are computed for readers with a seat in its workspace; the world link serves only what is stored.`,
+            )
           const all = await ctx.meta.getVersionData(a.id, n)
           return err(
             absenceNote(

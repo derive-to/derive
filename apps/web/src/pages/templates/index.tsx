@@ -107,13 +107,7 @@ export function Templates() {
               template={template}
               copying={copyMut.isPendingFor(template.short_id)}
               onCopy={() => copyMut.mutate(template.short_id)}
-              onAsk={() =>
-                setAgentTarget(
-                  targetFromArtifact(template, {
-                    publicUrl: template.shelf === "public" ? template.url : undefined,
-                  }),
-                )
-              }
+              onAsk={() => setAgentTarget(targetFromArtifact(template))}
             />
           ))}
         </CardGrid>
