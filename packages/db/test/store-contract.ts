@@ -463,6 +463,42 @@ export function runStoreContract(
       await store.setArtifactArchived(archivedId, null)
     })
 
+    it("filters listArtifacts by tag in the query, and still applies the viewer gate", async () => {
+      const tagged = await store.createArtifact(newArtifact({ title: "Tagged starter" }))
+      const plain = await store.createArtifact(newArtifact({ title: "Plain" }))
+      await store.setArtifactTags(tagged.id, ["template"])
+      const byTag = (await store.listArtifacts({ orgId: ORG, tag: "Template" })).map((x) => x.id)
+      expect(byTag).toContain(tagged.id)
+      expect(byTag).not.toContain(plain.id)
+
+      // The tag filter composes with the listing gate: an unlisted, members-only row is
+      // invisible to a viewer who is not an explicit member, tag or no tag. (The gate was
+      // an `else` hanging off the filter above it, so a new filter used to switch it off.)
+      const hidden = await store.createArtifact(
+        newArtifact({
+          title: "Hidden starter",
+          listed: "none",
+          workspace_access: "none",
+          link_role: "none",
+        }),
+      )
+      await store.setArtifactTags(hidden.id, ["template"])
+      const forStranger = (
+        await store.listArtifacts({ orgId: ORG, tag: "template", viewerId: "stranger" })
+      ).map((x) => x.id)
+      expect(forStranger).toContain(tagged.id)
+      expect(forStranger).not.toContain(hidden.id)
+      // A trusted read (no viewer) sees it; a public-only read does not.
+      expect(
+        (await store.listArtifacts({ orgId: ORG, tag: "template" })).map((x) => x.id),
+      ).toContain(hidden.id)
+      expect(
+        (await store.listArtifacts({ orgId: ORG, tag: "template", publicOnly: true })).map(
+          (x) => x.id,
+        ),
+      ).not.toContain(hidden.id)
+    })
+
     it("filters listArtifacts by artifact title, tag, or collection title and by id set", async () => {
       const a = await store.createArtifact(newArtifact({ title: "Quarterly Report XYZ" }))
       expect((await store.listArtifacts({ q: "quarterly report xyz" })).map((x) => x.id)).toContain(

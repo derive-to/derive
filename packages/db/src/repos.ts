@@ -239,12 +239,25 @@ export function artifactListConditions(
   // Typed listings (a workspace's skills) filter on the denormalized content type
   // here rather than paging the library and filtering in memory.
   if (opts?.contentType) conds.push(eq(art.current_content_type, opts.contentType))
+  // A tag-defined listing (the template shelf) filters in the query, one bound parameter
+  // whatever the tag's population, so it composes with sort/limit and the gates below.
+  // The table is named literally — sqlite, D1, and pg all call it artifact_tag.
+  if (opts?.tag)
+    conds.push(sql`EXISTS (
+        SELECT 1 FROM artifact_tag tg
+        WHERE tg.artifact_id = ${art.id} AND tg.tag = ${opts.tag.trim().toLowerCase()}
+      )`)
   // A listing surfaces feed-listed rows (`workspace`/`public`) to members, plus any
   // row the viewer is an explicit member of (their own drafts, shares, collections)
   // — an UNlisted row (listed='none') never appears in a feed by access alone. The
   // subquery names the table literally — sqlite, D1, and pg all call it
   // artifact_member, and this function serves all three.
-  else if (opts?.viewerId) {
+  //
+  // Its own `if`, on purpose: this gate was an `else` hanging off whichever filter
+  // happened to sit above it, so adding a filter there (contentType, then tag) silently
+  // switched the gate off for that kind of listing. A public-only read already gates on
+  // `listed = 'public'`; every other viewer-scoped read gets the member rule.
+  if (!opts?.publicOnly && opts?.viewerId) {
     const isMember = sql`EXISTS (
         SELECT 1 FROM artifact_member am
         WHERE am.artifact_id = ${art.id} AND am.user_id = ${opts.viewerId}

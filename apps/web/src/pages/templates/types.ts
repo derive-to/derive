@@ -1,14 +1,16 @@
-import type { components } from "@/api-types"
+export type { TemplateArtifact } from "@/api"
 
-export type BuiltInTemplate = components["schemas"]["BuiltInTemplate"]
-export type TemplateCategory = BuiltInTemplate["category"]
+/**
+ * Authored libraries stay reachable by deep link (`?tab=libraries`) but get no tab
+ * while nobody has created one. Flip this when the shelf earns a second surface.
+ */
+export const TEMPLATE_LIBRARIES_ENABLED = false
 
-export type TemplateTab = "artifacts" | "contexts" | "libraries"
+export type TemplateTab = "artifacts" | "libraries"
 
 export type TemplatesSearch = {
   tab?: TemplateTab
   query?: string
-  category?: TemplateCategory
   derive?: boolean
   source?: string
   library?: string

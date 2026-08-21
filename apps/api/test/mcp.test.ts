@@ -1004,13 +1004,17 @@ describe("remote MCP endpoint (/mcp)", () => {
       title: "Decision memo",
       kind: "template",
     })
+    // The shelf is artifacts tagged `template`: tag the source and find lists it by short_id,
+    // ahead of the authored library entry. Built-ins are no longer a find result.
+    await call(app, token, "organize", { short_ids: [artifact.short_id], add: ["template"] })
     const found = JSON.parse(toolText(await call(app, token, "find", { templates: true }))) as {
-      results: { uri: string }[]
+      results: { uri: string; source: string }[]
     }
     expect(found.results.map((result) => result.uri)).toContain(
       "derive://template-libraries/tlb_mcp/tpl_mcp",
     )
-    expect(found.results.some((result) => result.uri.startsWith("derive://templates/"))).toBe(true)
+    expect(found.results[0]).toMatchObject({ uri: artifact.short_id, source: "workspace" })
+    expect(found.results.some((result) => result.uri.startsWith("derive://templates/"))).toBe(false)
     expect(
       toolText(
         await call(app, token, "publish", {

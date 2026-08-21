@@ -37,6 +37,12 @@ for the recommended install and verification flow.
   the human verb. Skill fetching reads current versions.
 
 ### Fixed
+- **A filtered listing skipped the listing gate.** In the shared list query, the rule that
+  keeps an unlisted (`listed: none`), members-only artifact out of a viewer's listing was
+  an `else` hanging off whichever filter sat above it, so a typed listing (`find
+  skills:true`, and now a tag-defined shelf) listed rows the viewer could not open. The
+  gate is its own condition now; a store-contract case and a same-workspace HTTP case
+  pin it.
 - `@derive-to/templates` 0.1.0 — published, standalone. `@derive-to/mcp` 0.6.0 went to
   the registry depending on this package before it existed there, which made 0.6.0
   uninstallable (the same class of failure as mcp 0.4.0's raw `workspace:*` protocol).
@@ -45,6 +51,15 @@ for the recommended install and verification flow.
   dependencies reach outside the published set.
 
 ### Changed
+- **Templates are artifacts.** The Templates page, `GET /v1/templates`, and `find
+  templates:true` now list artifacts carrying the `template` tag: the active workspace's
+  own first (`shelf: "workspace"`), then public ones from any workspace
+  (`shelf: "public"`), each a real render with its author. Starting from one is the
+  ordinary copy ("Make a copy", `POST /v1/artifacts/{shortId}/use`) or the agent handoff
+  by short id. The 30 built-in definitions in `@derive-to/templates` no longer feed
+  these surfaces; `/v1/templates` returns artifact rows (the `BuiltInTemplate` schema
+  is gone from the OpenAPI document), the Contexts tab is gone, and the Libraries tab
+  is hidden behind a flag while `?tab=libraries` keeps working.
 - **Agent writes publish live, and the write policy is one switch.** An agent's write
   lands exactly like a person's: a new version with the full publish fan-out (bell,
   email, Slack, the open tab live-reloads). Asking for a look is `request_review` on

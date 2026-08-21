@@ -1,6 +1,6 @@
 import { TEMPLATE_ENTRY_FORMATS, TEMPLATE_ENTRY_KINDS, TEMPLATE_LIBRARY_SCOPES } from "@derive/core"
-import { BUILT_INS_LIBRARY_ID, TEMPLATE_CATALOG_VERSION } from "@derive-to/templates"
 import { z } from "@hono/zod-openapi"
+import { Artifact } from "../schemas"
 
 const TemplateLibraryScopeSchema = z.enum(TEMPLATE_LIBRARY_SCOPES)
 const TemplateEntryKindSchema = z.enum(TEMPLATE_ENTRY_KINDS)
@@ -19,25 +19,17 @@ const TemplateInputSchema = z.object({
   required: z.boolean().optional(),
 })
 
-export const BuiltInTemplateSchema = z
-  .object({
-    id: z.string(),
-    kind: TemplateEntryKindSchema,
-    category: z.enum(["Deck", "Doc", "Report", "Site", "Agent"]),
-    format: TemplateEntryFormatSchema,
-    title: z.string(),
-    defaultTitle: z.string(),
-    description: z.string(),
-    outcome: z.string(),
-    sections: z.array(z.string()),
-    inputs: z.array(TemplateInputSchema),
-    tags: z.array(z.string()),
-    featured: z.boolean().optional(),
-    starterPrompts: z.array(z.string()).optional(),
-    libraryId: z.literal(BUILT_INS_LIBRARY_ID),
-    catalogVersion: z.literal(TEMPLATE_CATALOG_VERSION),
-  })
-  .openapi("BuiltInTemplate")
+/**
+ * One row of the template shelf: an ordinary artifact (the list row every library card
+ * already renders) plus which shelf it sits on. A template is not its own kind.
+ */
+export const TemplateArtifactSchema = Artifact.extend({
+  shelf: z
+    .enum(["workspace", "public"])
+    .describe(
+      "workspace = tagged `template` in the caller's active workspace; public = tagged and open to the world, from any workspace. A public row names no workspace: the shelf exposes nothing the artifact's own public page does not.",
+    ),
+}).openapi("TemplateArtifact")
 
 export const TemplateLibraryEntrySchema = z
   .object({

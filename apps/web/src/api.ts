@@ -410,7 +410,7 @@ export type SessionState = Session["state"]
 /** A shareable catalog of immutable starters. Generated from the Templates API contract. */
 export type TemplateLibrary = components["schemas"]["TemplateLibrary"]
 export type TemplateLibraryEntry = components["schemas"]["TemplateLibraryEntry"]
-export type BuiltInTemplate = components["schemas"]["BuiltInTemplate"]
+export type TemplateArtifact = components["schemas"]["TemplateArtifact"]
 export type TemplateLibraryScope = TemplateLibrary["scope"]
 /** A live viewer of an artifact (presence). Identified by a handle-style `name`
  *  (never email — presence is broadcast to anonymous co-viewers); `role` is their
@@ -1457,7 +1457,9 @@ export const api = {
 
   // Template libraries are explicit distribution boundaries for version-pinned
   // starters. MCP reads the same records as resources and keeps using publish.
-  listBuiltInTemplates: (): Promise<{ templates: BuiltInTemplate[] }> =>
+  // The template shelf: artifacts tagged `template`, the active workspace's first, then
+  // the world's public ones. Starting from one is the ordinary copy (`deriveArtifact`).
+  listTemplates: (): Promise<{ templates: TemplateArtifact[] }> =>
     f("/v1/templates", { credentials: "include" }).then(j),
   listTemplateLibraries: (
     params: { cursor?: string; limit?: number; scope?: TemplateLibraryScope; q?: string } = {},

@@ -1,32 +1,29 @@
 import { expect, publishArtifact, test } from "../fixtures"
 
-// Templates must be a complete creation route, not merely a catalog screen. This
-// covers the two distinct output contracts: ordinary shareable artifacts and
-// portable Context manifests that bind authority only after publication.
-test("Quick Create hands a Template to the agent without opening source", async ({ owner }) => {
+// Templates are artifacts on a shelf. Quick Create lands on that shelf, and a tagged
+// artifact is offered there with the two ways to start from it: a copy, or a handoff
+// to the person's own agent. Neither opens source.
+test("Quick Create lands on the shelf, where a tagged artifact offers a copy and an agent handoff", async ({
+  owner,
+}) => {
+  const shortId = await publishArtifact(
+    owner,
+    "memo.md",
+    "# Decision memo\n\nthe call",
+    "text/markdown",
+  )
+  const tagged = await owner.request.put(`/v1/artifacts/${shortId}/tags`, {
+    data: { tags: ["template"] },
+  })
+  expect(tagged.ok(), await tagged.text()).toBeTruthy()
+
   await owner.goto("/")
   await owner.getByTestId("library-new").click()
   await owner.getByTestId("library-new-template").click()
   await expect(owner).toHaveURL(/\/templates/)
-  await owner.getByTestId("template-use-decision-memo").click()
-  await expect(owner.getByRole("heading", { name: "Use Decision memo" })).toBeVisible()
+  await expect(owner.getByTestId(`template-copy-${shortId}`)).toContainText("Make a copy")
+  await owner.getByTestId(`template-ask-${shortId}`).click()
   await expect(owner.getByTestId("template-agent-brief")).toBeVisible()
-  await expect(owner.getByTestId("artifact-source-editor")).toHaveCount(0)
-})
-
-test("a Context Template prepares an agentic handoff", async ({ owner }) => {
-  await owner.context().grantPermissions(["clipboard-read", "clipboard-write"])
-  await owner.goto("/templates?tab=contexts")
-  await owner.getByTestId("template-use-weekly-research-context").click()
-  await expect(owner.getByRole("heading", { name: "Use Weekly research brief" })).toBeVisible()
-  await expect(owner.getByTestId("template-agent-copy")).toContainText("Copy as prompt")
-  await owner
-    .getByTestId("template-agent-brief")
-    .fill("Research the template ecosystem using approved sources every Monday.")
-  await owner.getByTestId("template-agent-copy").click()
-  expect(await owner.evaluate(() => navigator.clipboard.readText())).toContain(
-    "automate with create_context",
-  )
   await expect(owner.getByTestId("artifact-source-editor")).toHaveCount(0)
 })
 

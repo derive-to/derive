@@ -1,29 +1,20 @@
 import type { Artifact, TemplateLibraryEntry } from "@/api"
 import type { AgentTemplateTarget } from "./agent-handoff"
 import { artifactTemplateFormat } from "./artifact-template-format"
-import type { BuiltInTemplate } from "./types"
 
-const artifactCategory = (artifact: Artifact): string =>
+const artifactCategory = (artifact: Pick<Artifact, "current_content_type">): string =>
   artifactTemplateFormat(artifact.current_content_type)?.category ?? "Artifact"
 
-export const targetFromBuiltIn = (template: BuiltInTemplate): AgentTemplateTarget => ({
-  uri: `derive://templates/${template.id}`,
-  title: template.title,
-  description: template.description,
-  kind: template.kind,
-  category: template.category,
-  format: template.format,
-  outcome: template.outcome,
-  sections: template.sections,
-  inputs: template.inputs,
-})
-
-export const targetFromArtifact = (artifact: Artifact): AgentTemplateTarget => ({
+export const targetFromArtifact = (
+  artifact: Pick<Artifact, "short_id" | "title" | "current_content_type">,
+  opts?: { publicUrl?: string },
+): AgentTemplateTarget => ({
   uri: artifact.short_id,
   title: artifact.title || "Untitled artifact",
   description: "A new, agent-authored result grounded in this artifact.",
   kind: "artifact",
   category: artifactCategory(artifact),
+  ...(opts?.publicUrl ? { publicUrl: opts.publicUrl } : {}),
 })
 
 export const targetFromLibraryEntry = (

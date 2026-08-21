@@ -1,14 +1,16 @@
-import { newId, parseRef, type TemplateLibraryRecord } from "@derive/core"
-import { listTemplates, unsafeHtmlTemplateBindings } from "@derive-to/templates"
+import { newId, parseRef, type TemplateLibraryRecord, toJson } from "@derive/core"
+import { unsafeHtmlTemplateBindings } from "@derive-to/templates"
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
+import { authorProfile, bylinesFrom, handlesFrom } from "../lib/author"
 import { bail, fail, readJson } from "../lib/http"
 import { likelySecrets } from "../lib/secret-scan"
+import { listTemplateArtifacts } from "../lib/template-artifacts"
 import {
-  BuiltInTemplateSchema,
   CreateTemplateLibraryEntrySchema,
   CreateTemplateLibrarySchema,
+  TemplateArtifactSchema,
   TemplateLibraryEntrySchema,
   TemplateLibraryListQuerySchema,
   TemplateLibrarySchema,
@@ -28,8 +30,19 @@ import { createTemplateLibraryService } from "../lib/template-library-service"
  * in one place instead of silently broadening artifact access.
  */
 export const templateLibraryRoutes = (ctx: AppContext) => {
-  const { activeWorkspace, authorize, limited, meta, publishLimiter, sourceText, workspaceCan } =
-    ctx
+  const {
+    activeWorkspace,
+    agentFor,
+    authorize,
+    currentUser,
+    deps,
+    isToken,
+    limited,
+    meta,
+    publishLimiter,
+    sourceText,
+    workspaceCan,
+  } = ctx
   const app = new OpenAPIHono<BlankEnv>()
 
   const {
@@ -44,34 +57,76 @@ export const templateLibraryRoutes = (ctx: AppContext) => {
     renewManagedMutation,
   } = createTemplateLibraryService(ctx)
 
+  // The template shelf. A template is an ordinary artifact tagged `template`; the shelf
+  // is two visibility-filtered reads (lib/template-artifacts.ts), decorated with the same
+  // batched enrichment the library list uses, so a card can show the real preview and
+  // author. Anyone may call it: an anonymous caller gets the public shelf only.
   app.openapi(
     createRoute({
       method: "get",
       path: "/v1/templates",
       tags: ["Templates"],
-      summary: "List the built-in template catalog.",
+      summary: "The template shelf: artifacts tagged `template`, at the caller's reach.",
+      description:
+        "The active workspace's tagged artifacts first (shelf: workspace), then the world's public ones from any workspace (shelf: public). Start from one with POST /v1/artifacts/{shortId}/use, which copies it into your workspace with lineage.",
       responses: {
         200: {
-          description: "Portable built-in template metadata; starter source remains agent-only.",
+          description:
+            "Template artifacts, workspace shelf first, each shelf newest-updated first.",
           content: {
-            "application/json": { schema: z.object({ templates: z.array(BuiltInTemplateSchema) }) },
+            "application/json": {
+              schema: z.object({
+                templates: z.array(TemplateArtifactSchema),
+                truncated: z
+                  .boolean()
+                  .describe(
+                    "More artifacts carry the tag than the shelf read (a bounded slice); the rest are not listed.",
+                  ),
+              }),
+            },
           },
         },
       },
     }),
-    (c) =>
-      c.json({
-        templates: listTemplates().map((template) => {
-          const { sections, inputs, tags, starterPrompts, ...metadata } = template
-          return {
-            ...metadata,
-            sections: [...sections],
-            inputs: inputs.map((input) => ({ ...input })),
-            tags: [...tags],
-            ...(starterPrompts ? { starterPrompts: [...starterPrompts] } : {}),
-          }
-        }),
-      }),
+    async (c) => {
+      const me = await currentUser(c)
+      const agent = me ? null : await agentFor(c)
+      const operator = isToken(c)
+      const memberKey = me?.id ?? agent?.created_by ?? agent?.id ?? null
+      const activeOrg = me || agent || operator ? await activeWorkspace(c) : null
+      const seated = !!activeOrg && (operator || (await workspaceCan(c, "read")))
+      const { rows: shelf, truncated } = await listTemplateArtifacts(meta, {
+        orgId: activeOrg,
+        viewerId: operator ? undefined : (memberKey ?? undefined),
+        publicOnly: !seated,
+      })
+      if (shelf.length === 0) return c.json({ templates: [], truncated })
+
+      const rows = shelf.map((row) => row.artifact)
+      const enrichment = await meta.listEnrichment({
+        ids: rows.map((a) => a.id),
+        ghIds: [...new Set(rows.map((a) => a.author_gh_id).filter((x): x is string => !!x))],
+        authorIds: [...new Set(rows.map((a) => a.author_id).filter((x): x is string => !!x))],
+        viewerId: me?.id ?? null,
+        memberId: null,
+        views: false,
+      })
+      const handleByGhId = handlesFrom(enrichment.handles)
+      const bylineByUserId = bylinesFrom(enrichment.bylines)
+      // A public row is the same row its own public page serves (toJson + author + tags):
+      // never the owning workspace's name, which the rest of the API withholds from
+      // non-members so a workspace can't be enumerated from outside.
+      return c.json({
+        templates: shelf.map(({ artifact: a, shelf: which }) => ({
+          ...toJson(deps.baseUrl, a, []),
+          tags: enrichment.tags[a.id] ?? [],
+          has_preview: enrichment.previews[a.id] === true,
+          author: authorProfile(a, handleByGhId, bylineByUserId),
+          shelf: which,
+        })),
+        truncated,
+      })
+    },
   )
 
   app.openapi(

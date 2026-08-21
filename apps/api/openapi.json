@@ -3068,121 +3068,27 @@
           "is_default"
         ]
       },
-      "BuiltInTemplate": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
+      "TemplateArtifact": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Artifact"
           },
-          "kind": {
-            "type": "string",
-            "enum": [
-              "artifact",
-              "context"
-            ]
-          },
-          "category": {
-            "type": "string",
-            "enum": [
-              "Deck",
-              "Doc",
-              "Report",
-              "Site",
-              "Agent"
-            ]
-          },
-          "format": {
-            "type": "string",
-            "enum": [
-              "md",
-              "html"
-            ]
-          },
-          "title": {
-            "type": "string"
-          },
-          "defaultTitle": {
-            "type": "string"
-          },
-          "description": {
-            "type": "string"
-          },
-          "outcome": {
-            "type": "string"
-          },
-          "sections": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "inputs": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "name": {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 80
-                },
-                "description": {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 240
-                },
-                "required": {
-                  "type": "boolean"
-                }
-              },
-              "required": [
-                "name",
-                "description"
-              ]
-            }
-          },
-          "tags": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "featured": {
-            "type": "boolean"
-          },
-          "starterPrompts": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "libraryId": {
-            "type": "string",
-            "enum": [
-              "derive/built-ins"
-            ]
-          },
-          "catalogVersion": {
-            "type": "number",
-            "enum": [
-              1
+          {
+            "type": "object",
+            "properties": {
+              "shelf": {
+                "type": "string",
+                "enum": [
+                  "workspace",
+                  "public"
+                ],
+                "description": "workspace = tagged `template` in the caller's active workspace; public = tagged and open to the world, from any workspace. A public row names no workspace: the shelf exposes nothing the artifact's own public page does not."
+              }
+            },
+            "required": [
+              "shelf"
             ]
           }
-        },
-        "required": [
-          "id",
-          "kind",
-          "category",
-          "format",
-          "title",
-          "defaultTitle",
-          "description",
-          "outcome",
-          "sections",
-          "inputs",
-          "tags",
-          "libraryId",
-          "catalogVersion"
         ]
       },
       "TemplateLibrary": {
@@ -9605,10 +9511,11 @@
         "tags": [
           "Templates"
         ],
-        "summary": "List the built-in template catalog.",
+        "summary": "The template shelf: artifacts tagged `template`, at the caller's reach.",
+        "description": "The active workspace's tagged artifacts first (shelf: workspace), then the world's public ones from any workspace (shelf: public). Start from one with POST /v1/artifacts/{shortId}/use, which copies it into your workspace with lineage.",
         "responses": {
           "200": {
-            "description": "Portable built-in template metadata; starter source remains agent-only.",
+            "description": "Template artifacts, workspace shelf first, each shelf newest-updated first.",
             "content": {
               "application/json": {
                 "schema": {
@@ -9617,12 +9524,17 @@
                     "templates": {
                       "type": "array",
                       "items": {
-                        "$ref": "#/components/schemas/BuiltInTemplate"
+                        "$ref": "#/components/schemas/TemplateArtifact"
                       }
+                    },
+                    "truncated": {
+                      "type": "boolean",
+                      "description": "More artifacts carry the tag than the shelf read (a bounded slice); the rest are not listed."
                     }
                   },
                   "required": [
-                    "templates"
+                    "templates",
+                    "truncated"
                   ]
                 }
               }

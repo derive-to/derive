@@ -17,12 +17,7 @@ export const Route = createFileRoute("/new")({
         replace: true,
       })
     if (source) throw redirect({ to: "/templates", search: { source }, replace: true })
-    if (start === "deck")
-      throw redirect({
-        to: "/templates",
-        search: { tab: "artifacts", category: "Deck" },
-        replace: true,
-      })
+    if (start === "deck") throw redirect({ to: "/templates", search: {}, replace: true })
   },
   validateSearch: (search: Record<string, unknown>): NewArtifactSearch => ({
     start: search.start === "deck" ? "deck" : undefined,

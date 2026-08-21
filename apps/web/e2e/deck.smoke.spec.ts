@@ -144,16 +144,29 @@ test.describe("deck", () => {
     await expect(page.getByTestId("deck-position")).toHaveCount(0)
   })
 
-  test("the library's deck template path hands the visual reference to the agent", async ({
+  test("a deck on the template shelf is handed to the agent as a reference, never opened as source", async ({
     owner: page,
   }) => {
-    // The canonical deck is an agent reference, never a source-code editor or
-    // old-school field-by-field WYSIWYG flow.
+    // A template is an artifact tagged `template`; a deck template is that deck. The
+    // handoff names it by short id, and never opens a source editor or a field form.
+    const shortId = await publishArtifact(
+      page,
+      "deck.html",
+      `<!doctype html><html><head><meta charset="utf-8"><title>Launch narrative</title></head><body>
+  <section class="slide on" data-derive-slide="0"><h1>The change</h1></section>
+  <section class="slide" data-derive-slide="1"><h1>The plan</h1></section>
+  </body></html>`,
+      "text/html",
+    )
+    const tagged = await page.request.put(`/v1/artifacts/${shortId}/tags`, {
+      data: { tags: ["template"] },
+    })
+    expect(tagged.ok(), await tagged.text()).toBeTruthy()
     await page.goto("/")
     await page.getByTestId("library-new").click()
     await page.getByTestId("library-new-template").click()
     await expect(page).toHaveURL(/\/templates/)
-    await page.getByTestId("template-use-narrative-pitch").click()
+    await page.getByTestId(`template-ask-${shortId}`).click()
     await page
       .getByTestId("template-agent-brief")
       .fill("Make a launch narrative for product leaders that earns approval for the plan.")
