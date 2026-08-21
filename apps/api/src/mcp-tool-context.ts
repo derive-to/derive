@@ -15,11 +15,13 @@ import {
   type ArtifactRecord,
   type ContextRecord,
   capRole,
+  effectiveRole,
   type Role,
 } from "@derive/core"
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { z } from "zod"
 import type { AppContext } from "./context"
+import { log } from "./log"
 import { err, json, staleAwareNumber, staleSchemaNote } from "./mcp-util"
 
 // The raw per-request values buildServer resolves and hands to makeToolContext.
@@ -48,6 +50,15 @@ export interface ToolContextBase {
 // The `workspace` argument shared by every workspace-scoped tool.
 const wsArg = z.string().optional().describe("Workspace id or name. Omit for your default.")
 
+/** An artifact `reach` resolved: where it lives, the role to act with there, and whether
+ *  that came from the world link (`public`) rather than a seat. */
+export interface Reached {
+  a: ArtifactRecord
+  org: string
+  role: Role
+  public: boolean
+}
+
 export interface ToolContext extends ToolContextBase {
   grantedWorkspaces: () => Promise<{ id: string; name: string; role: Role }[]>
   inGrant: (org: string) => boolean
@@ -58,9 +69,11 @@ export interface ToolContext extends ToolContextBase {
     /** `allowRemoved` sees PAST the takedown gate, for the one caller that acts on an
      *  artifact's shelf state rather than its content: without it, restoring is
      *  impossible, because reach refuses the very artifact you are trying to bring
-     *  back. Every other gate (workspace, membership, role) still applies. */
-    opts?: { allowRemoved?: boolean },
-  ) => Promise<{ a: ArtifactRecord; org: string; role: Role } | { error: string } | null>
+     *  back. Every other gate (workspace, membership, role) still applies.
+     *  `public` reaches an artifact no seat covers when its world link is open, at
+     *  viewer and flagged `public: true`. Content reads and lineage only. */
+    opts?: { allowRemoved?: boolean; public?: boolean },
+  ) => Promise<Reached | { error: string } | null>
   notFound: (shortId: string) => ReturnType<typeof err>
   wsArg: typeof wsArg
   /** A numeric parameter that coerces AND records a stale-schema proof (see
@@ -139,37 +152,54 @@ export function makeToolContext(base: ToolContextBase): ToolContext {
   // is found wherever it lives without the model naming the workspace.
   // `workspace_access = none` narrows further: touchable only through the
   // agent's human (or a legacy row of the agent's own) — a teammate's
-  // invite-only draft stays invisible over MCP.
+  // invite-only draft stays invisible over MCP unless its world link is open and the
+  // caller opted into `public`.
+  // `public` opts into the world link: an artifact no seat reaches (or that is not in
+  // the named `wsRef`) comes back at viewer when anyone with its URL could open it. Only
+  // content reads and lineage opt in; the collaboration tools never do, so comments,
+  // reviews, and shelf state stay behind a seat.
   // Returns the artifact plus the org + re-capped role to act with there.
   const reach = async (
     shortId: string,
     wsRef?: string,
-    opts?: { allowRemoved?: boolean },
-  ): Promise<{ a: ArtifactRecord; org: string; role: Role } | { error: string } | null> => {
+    opts?: { allowRemoved?: boolean; public?: boolean },
+  ): Promise<Reached | { error: string } | null> => {
     const a = await ctx.meta.getByShortId(shortId)
     if (!a) return null
     let org = defaultOrg
     let role = defaultRole
+    let seated = true
     if (wsRef) {
       const t = await resolveWs(wsRef)
       if ("error" in t) return t
-      if (a.org_id !== t.org) return null // named a workspace this artifact isn't in
-      org = t.org
-      role = t.role
+      if (a.org_id === t.org) {
+        org = t.org
+        role = t.role
+      } else if (opts?.public) seated = false
+      else return null // named a workspace this artifact isn't in
     } else if (a.org_id !== defaultOrg) {
       // Auto-roam to the doc's workspace only if it's within this grant and the
       // owner is a member. A doc in a workspace outside the grant reads as not found.
-      if (!ownerId || !inGrant(a.org_id)) return null
-      const m = await ctx.meta.getMembership(a.org_id, ownerId)
-      if (!m) return null
-      org = a.org_id
-      role = capRole(scopeForCap, m.role)
+      const m =
+        ownerId && inGrant(a.org_id) ? await ctx.meta.getMembership(a.org_id, ownerId) : null
+      if (m) {
+        org = a.org_id
+        role = capRole(scopeForCap, m.role)
+      } else seated = false
     }
-    if (a.workspace_access !== "member") {
+    if (seated && a.workspace_access !== "member") {
       const ok =
         (actingFor && (await ctx.meta.getArtifactMember(a.id, actingFor.id))) ||
         (await ctx.meta.getArtifactMember(a.id, agent.id))
-      if (!ok) return null
+      if (!ok) seated = false
+    }
+    if (!seated) {
+      // The anonymous rule: an open world link, not locked, not an expired draft.
+      const world = effectiveRole({ kind: "anon" }, a.workspace_access, a.link_role)
+      const expired = !!a.expires_at && a.expires_at <= new Date().toISOString()
+      if (!opts?.public || a.password_hash || world === null || expired) return null
+      org = a.org_id
+      role = "viewer"
     }
     // A taken-down artifact serves NO content, mirroring the web /raw 410: read, find,
     // comment, and publish all resolve through here, so gating it once covers every
@@ -180,7 +210,10 @@ export function makeToolContext(base: ToolContextBase): ToolContext {
     // make the artifact it needs unreachable and restoring impossible.
     if (a.removed_at && !opts?.allowRemoved)
       return { error: `"${shortId}" was taken down and is no longer available.` }
-    return { a, org, role }
+    // Marked so a cross-tenant scrape is tellable from ordinary reads.
+    if (!seated)
+      log.info("mcp.reach.public", { short_id: a.short_id, org: a.org_id, agent: agent.id })
+    return { a, org, role, public: !seated }
   }
   const notFound = (shortId: string) =>
     err(

@@ -60,6 +60,15 @@ for the recommended install and verification flow.
   dependencies reach outside the published set.
 
 ### Changed
+- **MCP reads public artifacts outside the grant, read-only.** `read`, `find`'s
+  in-artifact grep, and `publish`'s `derived_from` now reach any artifact whose world
+  link is open (public or link-only, not password-locked, not an expired draft), at
+  viewer, exactly what an anonymous holder of its URL gets: the current version only
+  unless its history is public, facts as stored (no derivation on the reader's behalf),
+  renders as they are (no re-queue), and no comments, review state, revisions, or shelf
+  changes, which still need a seat. Such reads are logged as `mcp.reach.public`.
+  An agent can start from a public template in another workspace and record the
+  lineage; the Templates page's "Ask your agent" hands over the short id for every row.
 - **Templates are artifacts.** The Templates page, `GET /v1/templates`, and `find
   templates:true` now list artifacts carrying the `template` tag: the active workspace's
   own first (`shelf: "workspace"`), then public ones from any workspace
