@@ -27,7 +27,7 @@
 //   derive reply <thread_id> <message…>    reply in a thread
 //   derive resolve|reopen <comment_id>     set a thread's state
 //   derive status [--id] [--json]          the review round state + open threads
-//   derive send-back [--id] [--note m]     (human) return your answers to the agent
+//   derive send-back [--id] [--note m]     open the page to send your answers back (a browser gesture)
 //   derive doctor [--server url] [--token t]  report which optional features are configured
 //   derive runner serve|once|doctor|install   run a context's answer daemon, or drain once (npx-able anywhere)
 //   derive context push|dev                ship a context dir as its manifest / tune it live
@@ -1274,6 +1274,16 @@ if (LOOP.includes(cmd)) {
       headers: { "content-type": "application/json", ...auth },
       body: JSON.stringify({ note: flags.note ?? "" }),
     })
+    if (res.status === 403) {
+      // Settling a round is recorded as a person's decision, and only a signed-in
+      // browser session proves a person — a CLI credential acts FOR you, so the
+      // server refuses it here. Hand the human the page where the gesture lives.
+      const url = `${r.server}/a/${r.id}`
+      console.error("Send back records a human decision, so it needs your signed-in browser.")
+      console.error(`Opening ${url} — use the Send back box in the comments sidebar.`)
+      openBrowser(url)
+      process.exit(1)
+    }
     if (!res.ok) await die(res)
     const { round } = await res.json()
     console.log(`✓ sent back to the agent (round ${round.state})`)
@@ -1449,7 +1459,7 @@ if (cmd !== "publish") {
   derive reply <thread_id> <message…>      reply in a thread
   derive resolve|reopen <comment_id>       set a thread's state
   derive status [--id X] [--json]          review-round state + open threads (the loop's poll target)
-  derive send-back [--id X] [--note m]     (human) return your answers to the waiting agent
+  derive send-back [--id X] [--note m]     open the page to send your answers back (a browser gesture)
   derive runner serve|doctor|install       run a context's answer daemon (\`derive runner\` for flags)
   derive context push|dev                  ship a context dir as its manifest / tune it on the working tree
   derive skill add <short_id>              materialize a published skill into ./.claude/skills/ (pinned)

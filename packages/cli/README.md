@@ -45,7 +45,7 @@ derive status                 # review state and open threads
 derive comments               # full comment threads
 derive reply <thread-id> "Updated the evidence and conclusion."
 derive publish --name "Revision 2"
-derive send-back --note "Good to go — ship it"
+derive send-back                # opens the page; Send back is a signed-in browser gesture
 ```
 
 The Send back note is the human's answer — a note that reads "good to go" IS the
