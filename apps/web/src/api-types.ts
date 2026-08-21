@@ -5635,7 +5635,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List the built-in template catalog. */
+        /**
+         * The template shelf: artifacts tagged `template`, at the caller's reach.
+         * @description The active workspace's tagged artifacts first (shelf: workspace), then the world's public ones from any workspace (shelf: public). Start from one with POST /v1/artifacts/{shortId}/use, which copies it into your workspace with lineage.
+         */
         get: {
             parameters: {
                 query?: never;
@@ -5645,14 +5648,16 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description Portable built-in template metadata; starter source remains agent-only. */
+                /** @description Template artifacts, workspace shelf first, each shelf newest-updated first. */
                 200: {
                     headers: {
                         [name: string]: unknown;
                     };
                     content: {
                         "application/json": {
-                            templates: components["schemas"]["BuiltInTemplate"][];
+                            templates: components["schemas"]["TemplateArtifact"][];
+                            /** @description A shelf had more rows than its cap; the newest-updated ones are listed. */
+                            truncated: boolean;
                         };
                     };
                 };
@@ -7714,31 +7719,12 @@ export interface components {
             /** @description The one a turn uses when nobody chose. */
             is_default: boolean;
         };
-        BuiltInTemplate: {
-            id: string;
-            /** @enum {string} */
-            kind: "artifact" | "context";
-            /** @enum {string} */
-            category: "Deck" | "Doc" | "Report" | "Site" | "Agent";
-            /** @enum {string} */
-            format: "md" | "html";
-            title: string;
-            defaultTitle: string;
-            description: string;
-            outcome: string;
-            sections: string[];
-            inputs: {
-                name: string;
-                description: string;
-                required?: boolean;
-            }[];
-            tags: string[];
-            featured?: boolean;
-            starterPrompts?: string[];
-            /** @enum {string} */
-            libraryId: "derive/built-ins";
-            /** @enum {number} */
-            catalogVersion: 1;
+        TemplateArtifact: components["schemas"]["Artifact"] & {
+            /**
+             * @description workspace = tagged `template` in the caller's active workspace; public = tagged and open to the world, from another workspace. A public row carries nothing its own public page does not.
+             * @enum {string}
+             */
+            shelf: "workspace" | "public";
         };
         TemplateLibrary: {
             id: string;

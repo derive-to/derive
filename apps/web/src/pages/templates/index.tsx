@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query"
 import { useNavigate, useSearch } from "@tanstack/react-router"
 import { useDeferredValue, useEffect, useState } from "react"
-import { api } from "@/api"
+import { api, type TemplateArtifact } from "@/api"
 import { Icon } from "@/components/icons"
 import { CardGrid } from "@/components/shared/card-grid"
 import { EmptyState } from "@/components/shared/empty-state"
@@ -10,55 +10,57 @@ import { PageHeader } from "@/components/shared/page-header"
 import { PageShell } from "@/components/shared/page-shell"
 import { SearchField } from "@/components/shared/search-field"
 import { StatusPanel } from "@/components/shared/status-panel"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { useApiMutation } from "@/lib/use-api-mutation"
 import { useDocumentTitle } from "@/lib/use-document-title"
+import { refFor } from "@/pages/artifact/parse-ref"
 import { AgentTemplateDialog, type AgentTemplateTarget } from "./agent-template-dialog"
-import { getTemplate, templateMatches } from "./catalog"
 import { DeriveSource } from "./derive-source"
 import { LibraryShelf } from "./library-shelf"
-import { TemplateCard } from "./template-card"
-import { targetFromArtifact, targetFromBuiltIn, targetFromLibraryEntry } from "./template-target"
-import type { TemplateTab } from "./types"
+import { TemplateArtifactCard } from "./template-artifact-card"
+import { targetFromArtifact, targetFromLibraryEntry } from "./template-target"
+import { TEMPLATE_LIBRARIES_ENABLED, type TemplateTab } from "./types"
 
-const TAB_COPY: Record<TemplateTab, string> = {
-  artifacts: "Choose a template, describe what you need, and copy the prompt into your agent.",
-  contexts: "Start from a reusable agent setup and adapt it to your workspace.",
-  libraries: "Use templates your workspace or other teams have shared.",
+const templateMatches = (template: TemplateArtifact, query: string): boolean => {
+  const needle = query.trim().toLowerCase()
+  if (!needle) return true
+  return [template.title ?? "", ...(template.tags ?? [])].join(" ").toLowerCase().includes(needle)
 }
 
+/**
+ * The template shelf: artifacts tagged `template`, this workspace's then public ones.
+ * Starting from one is the artifact page's own "Make a copy", or the agent handoff.
+ */
 export function Templates() {
   useDocumentTitle("Templates")
   const search = useSearch({ from: "/templates" })
   const nav = useNavigate({ from: "/templates" })
-  const tab = search.tab ?? "artifacts"
+  const librariesOpen = search.tab === "libraries"
   const query = useDeferredValue(search.query ?? "")
-  const catalogState = useQuery({
-    queryKey: ["templates", "built-ins"],
-    queryFn: api.listBuiltInTemplates,
-    staleTime: Number.POSITIVE_INFINITY,
+  const shelfState = useQuery({
+    queryKey: ["templates", "shelf"],
+    queryFn: api.listTemplates,
   })
-  const builtIns = catalogState.data?.templates ?? []
-  const artifactTemplates = builtIns.filter((template) => template.kind === "artifact")
-  const contextTemplates = builtIns.filter((template) => template.kind === "context")
-  const artifactCategories = [...new Set(artifactTemplates.map((template) => template.category))]
+  const templates = (shelfState.data?.templates ?? []).filter((template) =>
+    templateMatches(template, query),
+  )
+  const workspaceShelf = templates.filter((template) => template.shelf === "workspace")
+  const publicShelf = templates.filter((template) => template.shelf === "public")
   const [agentTarget, setAgentTarget] = useState<AgentTemplateTarget | null>(null)
-  const [requestedTemplateError, setRequestedTemplateError] = useState("")
   const [sourceArtifactError, setSourceArtifactError] = useState("")
-  const sourceArtifact = search.source
-  const requestedTemplate = search.use
+  // `?use=` carries a built-in template id (the derived-from banner of `derive://templates/`
+  // lineage, and `/new?template=`). Those starters are retired; say so.
+  const retiredBuiltIn = search.use
   useEffect(() => {
-    if (!requestedTemplate || catalogState.isPending) return
-    const template = getTemplate(builtIns, requestedTemplate)
+    if (!retiredBuiltIn) return
+    setSourceArtifactError(
+      "That built-in template is no longer available. Templates are now artifacts: start from any one on this shelf.",
+    )
     void nav({ search: (previous) => ({ ...previous, use: undefined }), replace: true })
-    if (!template) {
-      setRequestedTemplateError("That built-in template is no longer available.")
-      return
-    }
-    setRequestedTemplateError("")
-    setAgentTarget(targetFromBuiltIn(template))
-  }, [requestedTemplate, nav, catalogState.isPending, builtIns])
+  }, [retiredBuiltIn, nav])
+  // `?source=` (the library's "From an artifact") names an artifact to hand to the agent.
+  const sourceArtifact = search.source
   useEffect(() => {
     if (!sourceArtifact) return
     setSourceArtifactError("")
@@ -84,30 +86,55 @@ export function Templates() {
       active = false
     }
   }, [sourceArtifact, nav])
-  const templates = (tab === "contexts" ? contextTemplates : artifactTemplates).filter(
-    (template) =>
-      templateMatches(template, query) &&
-      (tab !== "artifacts" || !search.category || template.category === search.category),
-  )
+
+  const copyMut = useApiMutation({
+    mutationFn: (shortId: string) => api.deriveArtifact(shortId),
+    pendingKey: (shortId) => shortId,
+    invalidate: [["artifacts"], ["summary"]],
+    success: "Copied to your workspace",
+    onSuccess: (copy) =>
+      nav({
+        to: "/artifacts/$ref",
+        params: { ref: refFor({ short_id: copy.short_id, title: copy.title }) },
+      }),
+  })
+
   const setTab = (next: TemplateTab) => {
     setSourceArtifactError("")
-    nav({
-      search: {
-        tab: next,
-        derive: next === "artifacts" ? search.derive : undefined,
-        library: undefined,
-      },
-    })
+    nav({ search: { tab: next, derive: next === "artifacts" ? search.derive : undefined } })
   }
 
-  const noResults = templates.length === 0
-  const copy = TAB_COPY[tab]
+  const shelfFor = (title: string, rows: TemplateArtifact[], testId: string) =>
+    rows.length ? (
+      <section className="flex flex-col gap-3" data-testid={testId}>
+        <h2 className="font-mono text-2xs uppercase tracking-wider text-muted-foreground">
+          {title}
+        </h2>
+        <CardGrid>
+          {rows.map((template) => (
+            <TemplateArtifactCard
+              key={template.short_id}
+              template={template}
+              copying={copyMut.isPendingFor(template.short_id)}
+              onCopy={() => copyMut.mutate(template.short_id)}
+              onAsk={() =>
+                setAgentTarget(
+                  targetFromArtifact(template, {
+                    publicUrl: template.shelf === "public" ? template.url : undefined,
+                  }),
+                )
+              }
+            />
+          ))}
+        </CardGrid>
+      </section>
+    ) : null
 
   return (
     <PageShell width="wide" className="flex flex-col gap-6">
       <PageHeader
         title="Templates"
-        subtitle="Start from a built-in template, a shared library, or work you already trust."
+        subtitle="Start from an artifact someone finished. Make a copy, or hand it to your agent."
         actions={
           <>
             <Button
@@ -127,35 +154,27 @@ export function Templates() {
         }
       />
 
-      <Tabs value={tab} onValueChange={(value) => setTab(value as TemplateTab)}>
-        <TabsList variant="line" className="w-full justify-start">
-          <TabsTrigger value="artifacts" data-testid="templates-tab-artifacts">
-            Artifacts
-          </TabsTrigger>
-          <TabsTrigger value="contexts" data-testid="templates-tab-contexts">
-            Contexts
-          </TabsTrigger>
-          <TabsTrigger value="libraries" data-testid="templates-tab-libraries">
-            Libraries
-          </TabsTrigger>
-        </TabsList>
-      </Tabs>
-      <p className="max-w-2xl text-sm text-pretty text-muted-foreground">{copy}</p>
-
-      {requestedTemplateError ? (
-        <StatusPanel
-          tone="warning"
-          layout="inline"
-          title="Template unavailable"
-          description={requestedTemplateError}
-        />
-      ) : null}
+      {(TEMPLATE_LIBRARIES_ENABLED || librariesOpen) && (
+        <Tabs
+          value={librariesOpen ? "libraries" : "artifacts"}
+          onValueChange={(value) => setTab(value as TemplateTab)}
+        >
+          <TabsList variant="line" className="w-full justify-start">
+            <TabsTrigger value="artifacts" data-testid="templates-tab-artifacts">
+              Templates
+            </TabsTrigger>
+            <TabsTrigger value="libraries" data-testid="templates-tab-libraries">
+              Libraries
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
+      )}
 
       {sourceArtifactError ? (
         <StatusPanel
           tone="warning"
           layout="inline"
-          title="Source artifact unavailable"
+          title="Template unavailable"
           description={sourceArtifactError}
         />
       ) : null}
@@ -170,120 +189,71 @@ export function Templates() {
         />
       )}
 
-      {tab !== "libraries" && (
-        <div className="flex flex-col gap-3">
-          <SearchField
-            value={search.query ?? ""}
-            onValueChange={(queryValue) =>
-              nav({ search: { ...search, query: queryValue || undefined } })
-            }
-            placeholder={`Filter ${tab}`}
-            aria-label={`Filter ${tab}`}
-            testId="templates-search"
-            hotkey
-          />
-          {tab === "artifacts" && (
-            <fieldset className="flex flex-wrap gap-1.5">
-              <legend className="sr-only">Template categories</legend>
-              <Button
-                size="xs"
-                variant={!search.category ? "default" : "outline"}
-                data-testid="templates-category-all"
-                onClick={() => nav({ search: { ...search, category: undefined } })}
-              >
-                All
-              </Button>
-              {artifactCategories.map((category) => (
-                <Button
-                  key={category}
-                  size="xs"
-                  variant={search.category === category ? "default" : "outline"}
-                  data-testid={`templates-category-${category.toLowerCase()}`}
-                  onClick={() =>
-                    nav({
-                      search: {
-                        ...search,
-                        category: search.category === category ? undefined : category,
-                      },
-                    })
-                  }
-                >
-                  {category}
-                </Button>
-              ))}
-            </fieldset>
-          )}
-        </div>
-      )}
-
-      {tab === "libraries" ? (
+      {librariesOpen ? (
         <LibraryShelf
           selectedId={search.library}
           onSelect={(library) => nav({ search: { tab: "libraries", library } })}
           onUse={(entry) => setAgentTarget(targetFromLibraryEntry(entry.library_id, entry))}
         />
-      ) : catalogState.isPending ? (
-        <div className="grid min-h-64 place-items-center border-y py-12 text-center" role="status">
-          <div className="flex max-w-sm flex-col items-center gap-3 text-muted-foreground">
-            <Icon name="derive" size={24} className="animate-pulse" />
-            <p className="text-sm">Loading built-in templates…</p>
-          </div>
-        </div>
-      ) : catalogState.isError ? (
-        <LoadError
-          title="Derive couldn’t load the built-in templates."
-          description="Your libraries are still available. Retry the catalog when you’re ready."
-          testId="templates-catalog-retry"
-          onRetry={() => void catalogState.refetch()}
-        />
-      ) : noResults ? (
-        <EmptyState
-          icon={<Icon name="templates" />}
-          title="No matching shape"
-          description="Try a broader word or clear the current category."
-          action={
-            <Button
-              variant="outline"
-              size="sm"
-              data-testid="templates-clear-filters"
-              onClick={() => nav({ search: { tab } })}
-            >
-              Clear filters
-            </Button>
-          }
-        />
       ) : (
-        <CardGrid>
-          {templates.map((template) => (
-            <TemplateCard
-              key={template.id}
-              template={template}
-              onUse={() => setAgentTarget(targetFromBuiltIn(template))}
+        <>
+          <SearchField
+            value={search.query ?? ""}
+            onValueChange={(queryValue) =>
+              nav({ search: { ...search, query: queryValue || undefined } })
+            }
+            placeholder="Search templates"
+            aria-label="Search templates"
+            testId="templates-search"
+            hotkey
+          />
+          {shelfState.isPending ? (
+            <div
+              className="grid min-h-64 place-items-center border-y py-12 text-center"
+              role="status"
+            >
+              <div className="flex max-w-sm flex-col items-center gap-3 text-muted-foreground">
+                <Icon name="derive" size={24} className="animate-pulse" />
+                <p className="text-sm">Loading templates…</p>
+              </div>
+            </div>
+          ) : shelfState.isError ? (
+            <LoadError
+              title="Derive couldn’t load the templates."
+              testId="templates-shelf-retry"
+              onRetry={() => void shelfState.refetch()}
             />
-          ))}
-        </CardGrid>
+          ) : templates.length === 0 ? (
+            <EmptyState
+              icon={<Icon name="templates" />}
+              title={query ? "No matching template" : "No templates yet"}
+              description={
+                query
+                  ? "Try a broader word or clear the search."
+                  : "Tag any artifact “template” and it appears here for you; show it in the workspace library and teammates see it too. Public ones show up for everyone."
+              }
+              action={
+                query ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    data-testid="templates-clear-filters"
+                    onClick={() => nav({ search: { tab: "artifacts" } })}
+                  >
+                    Clear search
+                  </Button>
+                ) : undefined
+              }
+            />
+          ) : (
+            <>
+              {shelfFor("This workspace", workspaceShelf, "templates-shelf-workspace")}
+              {shelfFor("Public", publicShelf, "templates-shelf-public")}
+            </>
+          )}
+        </>
       )}
 
-      <section className="grid gap-4 border-t pt-6 sm:grid-cols-[1fr_auto] sm:items-center">
-        <div>
-          <div className="flex items-center gap-2">
-            <Badge variant="outline" shape="pill">
-              For agents
-            </Badge>
-            <span className="font-mono text-2xs uppercase tracking-wider text-muted-foreground">
-              Same catalog, same releases
-            </span>
-          </div>
-          <h2 className="mt-2 font-serif text-xl font-medium tracking-tight text-foreground">
-            Templates are meant to be found, not memorized.
-          </h2>
-          <p className="mt-1 max-w-2xl text-sm text-pretty text-muted-foreground">
-            Built-ins, authored libraries, and pinned starters resolve through the same catalog
-            model for the app, CLI, and MCP discovery.
-          </p>
-        </div>
-        <Icon name="derive" size={24} className="text-muted-foreground" />
-      </section>
       <AgentTemplateDialog
         target={agentTarget}
         onOpenChange={(open) => !open && setAgentTarget(null)}

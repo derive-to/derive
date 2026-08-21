@@ -1,5 +1,6 @@
 import { newId } from "@derive/core"
 import { describe, expect, it } from "vitest"
+import { TEMPLATE_SHELF_CAP } from "../src/lib/template-artifacts"
 import { as, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
 describe("template libraries: pinned reusable starters", () => {
@@ -442,5 +443,162 @@ describe("template libraries: release sequencing", () => {
     await expect(response.json()).resolves.toMatchObject({
       code: "template_library_schema_unavailable",
     })
+  })
+})
+
+/**
+ * The template shelf is artifacts carrying the `template` tag, read at the caller's
+ * reach: the active workspace's own on one shelf, the world's public ones on the other.
+ * Silent breakage here is a cross-tenant leak (a private tagged artifact from another
+ * workspace surfacing as a "public template") or a broken core flow (the Templates page
+ * and `find templates:true` showing nothing), so it goes through the HTTP and MCP
+ * surfaces against the real embedded store.
+ */
+describe("templates: the shelf is tagged artifacts at the caller's reach", () => {
+  const owner: TestUser = { id: "u_tpl_a", email: "a@templates.test", name: "A" }
+  const stranger: TestUser = { id: "u_tpl_b", email: "b@templates.test", name: "B" }
+  // Isolated: each user provisions their own workspace, so B's artifacts are another tenant's.
+  const { app } = makeAuthedApp("templates-shelf", [owner, stranger], "editor", { isolated: true })
+
+  const tag = async (shortId: string, who: TestUser, tags: string[]) => {
+    const res = await app.request(
+      `/v1/artifacts/${shortId}/tags`,
+      jsonAs(as(who.email), { tags }, "PUT"),
+    )
+    const body = await res.text()
+    expect(res.status, body).toBe(200)
+  }
+  const open = async (shortId: string, who: TestUser) => {
+    const res = await app.request(
+      `/v1/artifacts/${shortId}/access`,
+      jsonAs(as(who.email), { linkRole: "viewer", listed: "public" }, "PATCH"),
+    )
+    const body = await res.text()
+    expect(res.status, body).toBe(200)
+  }
+  const publish = async (who: TestUser, title: string) => {
+    const res = await publishAs(app, `<h1>${title}</h1>`, { title }, as(who.email))
+    const body = await res.text()
+    expect(res.status, body).toBe(201)
+    return JSON.parse(body) as { short_id: string }
+  }
+
+  it("lists the workspace's tagged artifacts, then the world's public ones, never a stranger's private one", async () => {
+    const mine = await publish(owner, "Our weekly digest")
+    const plain = await publish(owner, "Not a template")
+    const theirsPublic = await publish(stranger, "Their postmortem")
+    const theirsPrivate = await publish(stranger, "Their private tracker")
+    await tag(mine.short_id, owner, ["template"])
+    await tag(theirsPublic.short_id, stranger, ["template", "incident"])
+    await tag(theirsPrivate.short_id, stranger, ["template"])
+    await open(theirsPublic.short_id, stranger)
+
+    const res = await app.request("/v1/templates", { headers: as(owner.email) })
+    expect(res.status).toBe(200)
+    const { templates } = (await res.json()) as {
+      templates: { short_id: string; shelf: string; tags: string[]; has_preview: boolean }[]
+    }
+    const byId = Object.fromEntries(templates.map((t) => [t.short_id, t]))
+
+    expect(byId[mine.short_id]?.shelf).toBe("workspace")
+    expect(byId[theirsPublic.short_id]?.shelf).toBe("public")
+    expect(byId[theirsPublic.short_id]?.tags).toEqual(["incident", "template"])
+    expect(byId[plain.short_id]).toBeUndefined()
+    expect(byId[theirsPrivate.short_id]).toBeUndefined()
+    // Workspace shelf first.
+    expect(templates.findIndex((t) => t.short_id === mine.short_id)).toBeLessThan(
+      templates.findIndex((t) => t.short_id === theirsPublic.short_id),
+    )
+
+    // Anonymous: the public shelf only.
+    const anon = (await (await app.request("/v1/templates")).json()) as {
+      templates: { short_id: string; shelf: string }[]
+    }
+    expect(anon.templates.map((t) => t.short_id)).toEqual([theirsPublic.short_id])
+    expect(anon.templates[0]?.shelf).toBe("public")
+  })
+
+  it("caps each shelf at the newest-updated rows and says so, so a new template is never starved by older ones", async () => {
+    const many: TestUser = { id: "u_tpl_many", email: "many@templates.test", name: "Many" }
+    const { app: shelfApp } = makeAuthedApp("templates-cap", [many], "editor", { isolated: true })
+    const ids: string[] = []
+    for (let i = 0; i < TEMPLATE_SHELF_CAP + 1; i++) {
+      const res = await publishAs(
+        shelfApp,
+        `<h1>Starter ${i}</h1>`,
+        { title: `Starter ${i}` },
+        as(many.email),
+      )
+      const body = await res.text()
+      expect(res.status, body).toBe(201)
+      ids.push((JSON.parse(body) as { short_id: string }).short_id)
+    }
+    for (const id of ids) {
+      const res = await shelfApp.request(
+        `/v1/artifacts/${id}/tags`,
+        jsonAs(as(many.email), { tags: ["template"] }, "PUT"),
+      )
+      expect(res.status).toBe(200)
+    }
+    // A new version makes one of them strictly the newest-updated, past any same-millisecond tie.
+    const freshest = ids[0]
+    if (!freshest) throw new Error("no tagged artifacts were published")
+    const bumped = await publishAs(
+      shelfApp,
+      "<h1>Starter 0, revised</h1>",
+      {},
+      as(many.email),
+      freshest,
+    )
+    expect(bumped.status, await bumped.text()).toBe(201)
+    const res = await shelfApp.request("/v1/templates", { headers: as(many.email) })
+    const { templates, truncated } = (await res.json()) as {
+      templates: { short_id: string }[]
+      truncated: boolean
+    }
+    expect(templates).toHaveLength(TEMPLATE_SHELF_CAP)
+    expect(truncated).toBe(true)
+    // The newest-updated row leads the shelf; what fell past the cap is an older one.
+    expect(templates[0]?.short_id).toBe(freshest)
+  })
+
+  it("keeps a teammate's invite-only tagged artifact off the shelf, even inside the same workspace", async () => {
+    // An unlisted, members-only draft carries the tag but grants the teammate nothing; the
+    // shelf applies the same listing gate as the library list, not just the workspace filter.
+    const author: TestUser = { id: "u_tpl_gate_a", email: "gate-a@templates.test", name: "GateA" }
+    const teammate: TestUser = { id: "u_tpl_gate_b", email: "gate-b@templates.test", name: "GateB" }
+    const { app: teamApp } = makeAuthedApp("templates-gate", [author, teammate], "editor")
+    const published = await publishAs(
+      teamApp,
+      "<h1>Private starter</h1>",
+      { title: "Private starter" },
+      as(author.email),
+    )
+    const draft = JSON.parse(await published.text()) as { short_id: string }
+    const access = await teamApp.request(
+      `/v1/artifacts/${draft.short_id}/access`,
+      jsonAs(
+        as(author.email),
+        { workspaceAccess: "none", linkRole: "none", listed: "none" },
+        "PATCH",
+      ),
+    )
+    const accessBody = await access.text()
+    expect(access.status, accessBody).toBe(200)
+    const tagged = await teamApp.request(
+      `/v1/artifacts/${draft.short_id}/tags`,
+      jsonAs(as(author.email), { tags: ["template"] }, "PUT"),
+    )
+    expect(tagged.status).toBe(200)
+
+    const forTeammate = (await (
+      await teamApp.request("/v1/templates", { headers: as(teammate.email) })
+    ).json()) as { templates: { short_id: string }[] }
+    expect(forTeammate.templates.map((t) => t.short_id)).not.toContain(draft.short_id)
+    // Its author is an explicit member, so it is on the author's own shelf.
+    const forAuthor = (await (
+      await teamApp.request("/v1/templates", { headers: as(author.email) })
+    ).json()) as { templates: { short_id: string; shelf: string }[] }
+    expect(forAuthor.templates.find((t) => t.short_id === draft.short_id)?.shelf).toBe("workspace")
   })
 })

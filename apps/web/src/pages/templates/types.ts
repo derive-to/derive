@@ -1,14 +1,11 @@
-import type { components } from "@/api-types"
+/** Libraries get no tab until someone creates one; `?tab=libraries` still reaches them. */
+export const TEMPLATE_LIBRARIES_ENABLED = false
 
-export type BuiltInTemplate = components["schemas"]["BuiltInTemplate"]
-export type TemplateCategory = BuiltInTemplate["category"]
-
-export type TemplateTab = "artifacts" | "contexts" | "libraries"
+export type TemplateTab = "artifacts" | "libraries"
 
 export type TemplatesSearch = {
   tab?: TemplateTab
   query?: string
-  category?: TemplateCategory
   derive?: boolean
   source?: string
   library?: string

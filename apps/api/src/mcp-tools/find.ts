@@ -1,6 +1,7 @@
 import {
   artifactRefIn,
   artifactRefOf,
+  artifactUrl,
   derivedGen,
   isDerivedFactName,
   LINKED_BUNDLE_CONTENT_TYPE,
@@ -8,7 +9,6 @@ import {
   SKILL_CONTENT_TYPE,
   templateLibraryUri,
 } from "@derive/core"
-import { listTemplates } from "@derive-to/templates"
 import { z } from "zod"
 import {
   searchArtifactVersion,
@@ -17,6 +17,7 @@ import {
   searchWorkspace,
   toSearchHits,
 } from "../lib/search"
+import { listTemplateArtifacts } from "../lib/template-artifacts"
 import { visibleArtifactIds } from "../lib/visibility"
 import { log } from "../log"
 import type { ToolContext } from "../mcp-tool-context"
@@ -187,7 +188,7 @@ export function registerFindTool(tc: ToolContext): void {
           .boolean()
           .optional()
           .describe(
-            "Find built-in and accessible authored templates. Combine with `query` to filter; omit query to browse the template catalog.",
+            "Find reusable starts: artifacts tagged `template` (this workspace's own, then public ones) and accessible authored library entries. Combine with `query` to filter by title or tag; omit it to browse the shelf.",
           ),
         case_sensitive: z.boolean().optional(),
         in: z
@@ -250,26 +251,29 @@ export function registerFindTool(tc: ToolContext): void {
         if ("error" in t) return err(t.error)
         const cap = Math.min(Math.max(max_matches ?? 100, 1), 200)
         const needle = query?.trim().toLowerCase() ?? ""
-        const builtIns = listTemplates({ query }).map((template) => ({
+        // The same shelf GET /v1/templates serves, at the agent's reach.
+        const { rows: shelf, truncated: shelfTruncated } = await listTemplateArtifacts(ctx.meta, {
+          workspace: { orgId: t.org, viewerId: actingFor?.id ?? agent.id },
+          query: needle,
+        })
+        const shelfTags = await ctx.meta.tagsForArtifacts(shelf.map((row) => row.artifact.id))
+        const templateRows = shelf.map(({ artifact, shelf: source }) => ({
           type: "template" as const,
-          source: "built-in" as const,
-          id: template.id,
-          title: template.title,
-          description: template.description,
-          kind: template.kind,
-          category: template.category,
-          format: template.format,
-          uri: `derive://templates/${template.id}`,
+          source,
+          ...summarizeArtifact(artifact),
+          tags: shelfTags[artifact.id] ?? [],
+          uri: artifact.short_id,
+          // Readable by anyone even where this grant can't reach the row by id.
+          url: artifactUrl(ctx.deps.baseUrl, artifact),
         }))
-        const authoredCapacity = Math.max(cap - builtIns.length, 0)
-        const authoredAll = authoredCapacity
-          ? await ctx.meta.searchTemplateLibraryEntries({
-              orgId: t.org,
-              ownerId,
-              ...(needle ? { query: needle } : {}),
-              limit: authoredCapacity + 1,
-            })
-          : []
+        const authoredCapacity = Math.max(cap - templateRows.length, 0)
+        // One past capacity even at zero, so a full shelf still reports entries beyond it.
+        const authoredAll = await ctx.meta.searchTemplateLibraryEntries({
+          orgId: t.org,
+          ownerId,
+          ...(needle ? { query: needle } : {}),
+          limit: authoredCapacity + 1,
+        })
         const authoredRows = authoredAll.slice(0, authoredCapacity).map(({ library, entry }) => ({
           type: "template" as const,
           source: "library" as const,
@@ -282,18 +286,20 @@ export function registerFindTool(tc: ToolContext): void {
           library: { id: library.id, title: library.title, scope: library.scope },
           uri: templateLibraryUri(library.id, entry.id),
         }))
-        const allResults = [...builtIns, ...authoredRows]
+        const allResults = [...templateRows, ...authoredRows]
         const results = allResults.slice(0, cap)
-        const truncated = builtIns.length > cap || authoredAll.length > authoredCapacity
+        const truncated =
+          shelfTruncated || templateRows.length > cap || authoredAll.length > authoredCapacity
         return json({
           workspace: t.org,
           ...(query ? { query } : {}),
           count: results.length,
           results,
           truncated,
-          next: truncated
-            ? "Refine query to narrow the catalog, then read a result's uri. Adapt its starter, publish with lineage, and inspect the render."
-            : "Read a result's uri, adapt its starter to the person's request, publish with lineage, then inspect the render.",
+          next:
+            (truncated ? "Refine query to narrow the shelf. " : "") +
+            "Read a result's uri (its short_id), publish a new artifact with derived_from set to it, and inspect the render. " +
+            "If read refuses a row (a workspace outside this grant), its url still serves the page as markdown; the person can start from it there with Make a copy.",
         })
       }
       // Claimed BEFORE mode 1, which owns `short_id` and would answer a `links_to` call with
