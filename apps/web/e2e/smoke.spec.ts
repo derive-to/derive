@@ -203,6 +203,25 @@ test("Brandprint lives in Settings, People is its own page, and old paths on bot
   await expect(owner).toHaveURL(/\/settings\/brandprint$/)
 })
 
+test("Archived lives inside the Library filter rather than the primary rail", async ({ owner }) => {
+  await owner.goto("/")
+  await expect(owner.getByTestId("nav-archived")).toHaveCount(0)
+
+  await owner.getByTestId("library-filter").click()
+  await owner.getByTestId("library-filter-archived").click()
+  await expect(owner).toHaveURL(/\/archived$/)
+  await expect(owner.getByRole("heading", { name: /Library/ })).toBeVisible()
+  await expect(owner.getByTestId("library-filter")).toHaveAttribute(
+    "aria-label",
+    "Filter: Archived",
+  )
+  await expect(owner.getByTestId("library-view-artifacts")).toHaveAttribute("data-state", "on")
+
+  await owner.getByTestId("library-filter").click()
+  await owner.getByTestId("library-filter-all").click()
+  await expect(owner).toHaveURL(/\/$|\/\?/)
+})
+
 test("starring a collection pins it to the sidebar's Starred group", async ({ owner }) => {
   await owner.goto("/")
   const name = `Shelf ${Date.now()}`

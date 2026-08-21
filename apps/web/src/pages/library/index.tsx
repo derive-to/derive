@@ -106,6 +106,9 @@ function LibraryBody({ view }: { view: LibraryView }) {
   // one IS the `collection` filter, so the switch would be offering you the place you
   // are already standing.
   const showCollections = view === "all" && search.view === "collections" && !search.collection
+  // Archived is a lifecycle shelf within the library, not a separate destination. It keeps
+  // the library header and controls while its route preserves deep links and loader caching.
+  const onLibrarySurface = view === "all" || view === "archived"
   // Brandprint-pointed collections take artifacts through Settings, not the shelves.
   const brandprintIds = useBrandprintCollectionIds()
   const visibleCollections = collections.filter((c) => !brandprintIds.has(c.id))
@@ -506,7 +509,7 @@ function LibraryBody({ view }: { view: LibraryView }) {
           <div className="flex min-h-10 flex-wrap items-center gap-1.5">
             <h1 className="flex min-w-0 items-baseline gap-2">
               <span className="truncate font-serif text-lg font-semibold tracking-tight text-foreground">
-                {view === "all" ? "Library" : heading}
+                {onLibrarySurface ? "Library" : heading}
               </span>
               {identityCount !== undefined && (
                 <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
@@ -554,7 +557,7 @@ function LibraryBody({ view }: { view: LibraryView }) {
             {filterField}
             {/* Feeds have no view row, so Display stays up here for them; home's moves
                 down beside Filter — the two are one kind of control and sit together. */}
-            {view !== "all" && (
+            {!onLibrarySurface && (
               <DisplayMenu
                 layout={layout}
                 onLayout={setLayout}
@@ -570,11 +573,10 @@ function LibraryBody({ view }: { view: LibraryView }) {
               showPublish && <NewArtifactButton />
             )}
           </div>
-          {/* The tab row, home only: Artifacts ⇄ Collections are views of one place,
-              which is what underline tabs say. The facet menu rides the same line as a
-              quiet chip — it reads as optional because it is. A named feed IS a filter,
-              so it gets neither. */}
-          {view === "all" && !search.collection ? (
+          {/* Artifacts and Collections are views of the library. The filter menu narrows
+              the artifact view, including its archived shelf; named activity feeds remain
+              separate routes and therefore do not render these controls. */}
+          {onLibrarySurface && !search.collection ? (
             <div className="mb-5 flex items-center gap-4 border-b border-border-soft">
               <ViewSwitch
                 value={showCollections ? "collections" : "artifacts"}
@@ -583,6 +585,7 @@ function LibraryBody({ view }: { view: LibraryView }) {
                     to: "/",
                     search: {
                       ...search,
+                      filter: view === "archived" ? undefined : search.filter,
                       view: next === "collections" ? "collections" : undefined,
                     },
                   })
@@ -593,13 +596,24 @@ function LibraryBody({ view }: { view: LibraryView }) {
                 <span className="flex items-center gap-1">
                   <FilterMenu
                     needsYou={feedbackCount}
-                    value={search.filter ?? "all"}
-                    onChange={(next) =>
-                      nav({
+                    value={view === "archived" ? "archived" : (search.filter ?? "all")}
+                    onChange={(next) => {
+                      if (next === "archived") {
+                        void nav({
+                          to: "/archived",
+                          search: { query: search.query, sort: search.sort },
+                        })
+                        return
+                      }
+                      void nav({
                         to: "/",
-                        search: { ...search, filter: next === "all" ? undefined : next },
+                        search: {
+                          ...search,
+                          filter: next === "all" ? undefined : next,
+                          view: undefined,
+                        },
                       })
-                    }
+                    }}
                   />
                   <DisplayMenu
                     labeled
