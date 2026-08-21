@@ -17,6 +17,7 @@
 
 import { type PageTextSegment, pageTextParts } from "./anchor"
 import { clip, findQuoteContextUnique, findQuoteMatches } from "./anchor-shared"
+import { isHtmlLike } from "./content-types"
 import { type DocEdit, EditError } from "./doc-text"
 import type { ElementEdit } from "./element-edit"
 import { escapeHtml, sanitizeInline } from "./md"
@@ -347,8 +348,7 @@ const spanToRaw = (
  */
 export function applyQuoteEdits(src: string, contentType: string, edits: QuoteEdit[]): string {
   if (!edits.length) return src
-  const ct = (contentType || "").split(";")[0]?.trim()
-  const isHtml = ct === "text/html" || ct === "text/x-derive-deck"
+  const isHtml = isHtmlLike(contentType || "")
   let text = src
   let segments: PageTextSegment[] | null = null
   if (isHtml) {

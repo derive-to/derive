@@ -272,6 +272,56 @@ export const Artifact = z
       .describe(
         "Present for a markdown bundle (skill or docs folder): entry, file tree, identity.",
       ),
+    linked_bundle: z
+      .object({
+        schema: z.literal("derive.linked-bundle/v1"),
+        purpose: z.string(),
+        members: z.array(
+          z.object({
+            id: z.string(),
+            ref: z.string(),
+            label: z.string(),
+            role: z.string().optional(),
+            note: z.string().optional(),
+            available: z.boolean(),
+            url: z.string().optional(),
+            title: z.string().nullable().optional(),
+            content_type: z.string().nullable().optional(),
+            current_version: z.number().int().positive().optional(),
+            updated_at: z.string().nullable().optional(),
+            open_comment_count: z.number().int().nonnegative().optional(),
+          }),
+        ),
+        diagrams: z
+          .array(
+            z.object({
+              id: z.string(),
+              title: z.string(),
+              type: z.enum(["loop", "graph"]),
+              nodes: z.array(
+                z.object({
+                  id: z.string(),
+                  label: z.string(),
+                  member: z.string().optional(),
+                  state: z.enum(["pending", "active", "blocked", "done"]).optional(),
+                  basis_version: z.number().int().positive().optional(),
+                  note: z.string().optional(),
+                }),
+              ),
+              edges: z.array(
+                z.object({ from: z.string(), to: z.string(), label: z.string().optional() }),
+              ),
+              goal: z.string().optional(),
+              evaluate: z.string().optional(),
+              stop: z.string().optional(),
+            }),
+          )
+          .optional(),
+      })
+      .optional()
+      .describe(
+        "Present for an HTML artifact carrying a valid bundle-manifest fact. Members are resolved through the caller's normal read permissions; unavailable members expose no additional metadata.",
+      ),
     source_path: z
       .string()
       .nullable()

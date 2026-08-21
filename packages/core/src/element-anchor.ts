@@ -47,6 +47,11 @@ export { fnv1a, normWs } from "./anchor-shared"
 export type ElementRole =
   | "image"
   | "chart"
+  | "loop-step"
+  | "loop-policy"
+  | "loop-transition"
+  | "graph-node"
+  | "graph-edge"
   | "media"
   | "embed"
   | "table"
@@ -241,6 +246,9 @@ const KEEP_ATTRS = new Set([
   "name",
   "data-derive-slide",
   "data-derive-id",
+  "data-derive-review-id",
+  "data-derive-review-kind",
+  "data-derive-review-label",
 ])
 
 const srcOf = (d: { tag: string; attrs: Record<string, string> }): string =>
@@ -266,6 +274,15 @@ export function roleOf(d: {
   attrs: Record<string, string>
 }): ElementRole {
   const tag = d.tag
+  const reviewKind = d.attrs["data-derive-review-kind"]
+  if (
+    reviewKind === "loop-step" ||
+    reviewKind === "loop-policy" ||
+    reviewKind === "loop-transition" ||
+    reviewKind === "graph-node" ||
+    reviewKind === "graph-edge"
+  )
+    return reviewKind
   // Concrete media tags win outright — an <img> is an image even if its id says
   // "chart". The textual hint only disambiguates generic containers below.
   if (tag === "img" || tag === "picture") return "image"
@@ -287,9 +304,21 @@ export function elementLabel(d: {
   attrs: Record<string, string>
   text?: string
 }): string {
+  const reviewLabel = normWs(d.attrs["data-derive-review-label"] ?? "")
+  if (reviewLabel) return reviewLabel
   const alt = normWs(altOf(d))
   const host = hostOf(d.attrs.src || d.attrs.href || "")
   switch (d.role) {
+    case "loop-step":
+      return `Loop step — ${truncate(normWs(d.text ?? ""), 48) || "Untitled"}`
+    case "loop-policy":
+      return `Loop policy — ${truncate(normWs(d.text ?? ""), 48) || "Untitled"}`
+    case "loop-transition":
+      return `Loop transition — ${truncate(normWs(d.text ?? ""), 48) || "Untitled"}`
+    case "graph-node":
+      return `Graph node — ${truncate(normWs(d.text ?? ""), 48) || "Untitled"}`
+    case "graph-edge":
+      return `Graph edge — ${truncate(normWs(d.text ?? ""), 48) || "Untitled"}`
     case "image":
       return alt ? `Image — ${truncate(alt, 48)}` : host ? `Image — ${host}` : "Image"
     case "chart":
@@ -444,6 +473,37 @@ export function scanElements(html: string): ElementDescriptor[] {
 
   function finalize(f?: { d: ElementDescriptor; parts: string[] }) {
     if (f) f.d.text = normWs(f.parts.join(""))
+  }
+}
+
+/** Build the same durable selector the browser would capture for an authored element
+ * id. This lets non-visual clients (notably MCP agents) pin feedback to a loop/graph
+ * target without inventing screen coordinates or a parallel annotation format. */
+export function elementSelectorForId(html: string, id: string): ElementSelector | null {
+  const descriptors = scanElements(html)
+  const d = descriptors.find((candidate) => candidate.id === id)
+  if (!d) return null
+  const { before, after } = neighborText(descriptors, d.index)
+  const role = roleOf(d)
+  const label = elementLabel({ ...d, role })
+  const src = srcOf(d)
+  const alt = altOf(d)
+  return {
+    type: "ElementSelector",
+    tag: d.tag,
+    role,
+    id,
+    fingerprint: fingerprintOf(d),
+    ordinal: d.ordinal,
+    docFraction: d.srcFraction,
+    before,
+    after,
+    snapshot: {
+      tag: d.tag,
+      label,
+      ...(src ? { src } : {}),
+      ...(alt ? { alt } : {}),
+    },
   }
 }
 

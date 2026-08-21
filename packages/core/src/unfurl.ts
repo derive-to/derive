@@ -7,6 +7,7 @@ export const kindLabel = (contentType: string | null | undefined, isBundle: bool
   if (isBundle) return "Site"
   if (contentType === "text/markdown") return "Markdown"
   if (contentType === "text/x-derive-deck") return "Deck"
+  if (contentType === "text/x-derive-linked-bundle") return "Bundle"
   if (contentType === "text/x-derive-video") return "Video"
   if (contentType?.startsWith("text/html")) return "HTML"
   return "Document"

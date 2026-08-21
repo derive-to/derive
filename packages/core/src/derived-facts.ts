@@ -18,6 +18,7 @@
 
 import { isDerivedFactName, MAX_FACT_BYTES } from "@derive/facts"
 import { pageText } from "./anchor"
+import { isHtmlLike } from "./content-types"
 import { docMap, mapJson } from "./doc-map"
 import { type SectionMarker, sectionMarkers } from "./doc-text"
 import { parseRef } from "./ids"
@@ -140,7 +141,7 @@ const deriveLinks = (source: string): unknown => {
  *  a words-per-minute constant is a judgment wearing a number). `words` counts the
  *  VISIBLE text for HTML, so markup weight doesn't masquerade as prose. */
 const deriveStats = (source: string, contentType: string, markers: SectionMarker[]): unknown => {
-  const isHtml = contentType.includes("html")
+  const isHtml = isHtmlLike(contentType)
   const visible = isHtml ? pageText(source) : source
   const words = visible.split(/\s+/).filter(Boolean).length
   const sections = markers.length

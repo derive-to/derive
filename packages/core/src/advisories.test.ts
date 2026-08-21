@@ -22,6 +22,11 @@ describe("publishAdvisories", () => {
     expect(publishAdvisories("# just a doc", "text/markdown")).toHaveLength(0)
   })
 
+  it("applies ordinary HTML layout checks to a linked bundle", () => {
+    const out = publishAdvisories(HTML_NO_VIEWPORT, "text/x-derive-linked-bundle")
+    expect(out.some((note) => note.includes("viewport"))).toBe(true)
+  })
+
   it("flags slides published without the deck protocol, and names what is off", () => {
     // The one advisory here that the author cannot discover from the render: the page
     // paginates correctly and looks finished, while the deck bar, Present mode, and

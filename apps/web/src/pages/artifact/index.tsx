@@ -6,6 +6,7 @@ import { ApiError, api, workspaceDisplayName } from "@/api"
 import { useShell } from "@/components/chrome/shell-context"
 import { Icon } from "@/components/icons"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
+import { Button } from "@/components/ui/button"
 import { Kbd } from "@/components/ui/kbd"
 import { toast } from "@/components/ui/sonner"
 import { useAuth } from "@/ctx"
@@ -51,6 +52,13 @@ import { bucketThreads } from "./lib/layout"
 import { artifactLoginSearch } from "./lib/login-return"
 import { useArtifactChat } from "./lib/use-artifact-chat"
 import { takeUseIntent } from "./lib/use-intent"
+import { LinkedBundleEditor } from "./linked-bundle-editor"
+import { LinkedBundlePanel } from "./linked-bundle-panel"
+import {
+  emptyLinkedBundleReviewState,
+  LinkedBundleWorkspace,
+  linkedBundleAnchor,
+} from "./linked-bundle-workspace"
 import { parseRef, refFor } from "./parse-ref"
 import { PasswordGate } from "./password-gate"
 import { PublicViewer } from "./public-viewer"
@@ -147,7 +155,14 @@ export function Artifact() {
     error,
     dataUpdatedAt: artifactFetchedAt,
     refetch,
-  } = useQuery(artifactQuery(shortId, qc))
+  } = useQuery({
+    ...artifactQuery(shortId, qc),
+    // A linked bundle resolves current member versions in its ordinary detail
+    // response. Refresh that existing read while the workspace is open: the first
+    // pass stays trustworthy without inventing a second realtime protocol.
+    refetchInterval: (query) => (query.state.data?.linked_bundle ? 10_000 : false),
+    refetchIntervalInBackground: false,
+  })
   const isAnon = !me
   // List rows do not carry caller membership. Defer guest-only behavior until
   // the detail response resolves rather than briefly rendering the wrong controls.
@@ -216,8 +231,22 @@ export function Artifact() {
   // password prompt rather than the not-found state or a bounce to login.
   const locked = failed && error instanceof ApiError && error.status === 401
   const [editing, setEditing] = useState(false)
+  const [bundleView, setBundleView] = useState<"workspace" | "document">("workspace")
+  const [bundleEditorOpen, setBundleEditorOpen] = useState(false)
+  // Keep the reviewer's exact visual context above artifact refetches and authored
+  // bundle versions. Only navigating to another artifact resets it.
+  const [bundleReviewState, setBundleReviewState] = useState(emptyLinkedBundleReviewState)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: these controls are scoped to one artifact route.
+  useEffect(() => {
+    setBundleView("workspace")
+    setBundleEditorOpen(false)
+    setBundleReviewState(emptyLinkedBundleReviewState())
+  }, [shortId])
   // Focus/hero mode — strip the workbench chrome to just the matted render (Esc exits).
   const [focus, setFocus] = useState(false)
+  // Deliberate visual-review mode: the host asks the sandboxed artifact to turn
+  // eligible loop/graph/visual elements into one-click durable comment anchors.
+  const [visualPin, setVisualPin] = useState(false)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return
@@ -228,6 +257,10 @@ export function Artifact() {
       // re-runs the action that opened it: the discard confirm became impossible to
       // dismiss with Escape, and closing an unrelated ⋯ menu tore down edit mode.
       if (e.defaultPrevented) return
+      if (visualPin) {
+        setVisualPin(false)
+        return
+      }
       if (focus) {
         setFocus(false)
         return
@@ -238,7 +271,7 @@ export function Artifact() {
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
-  }, [focus])
+  }, [focus, visualPin])
 
   // ⌘S / ⌘Enter with focus on the host chrome. The frame forwards the same keys when
   // the caret is inside the document, but the strip advertises the shortcut and focus
@@ -435,6 +468,14 @@ export function Artifact() {
     setActiveThread,
     setPanel,
     onOpenComments: () => setRail("comments"),
+    onVisualPin: (selection) => {
+      setVisualPin(false)
+      if (!selection) return
+      setRail("comments")
+      setPanel("open")
+      setActiveThread(null)
+      setComposer({ anchor: selection.selector, docTop: selection.docTop })
+    },
     onNavigate: (ref, newTab) => {
       // Same-origin SPA route. A modified/middle click opens it un-sandboxed in a new
       // tab (the frame's own new tab would inherit the sandbox and break the app).
@@ -482,6 +523,10 @@ export function Artifact() {
       else window.open(u.href, "_blank", "noopener,noreferrer")
     },
   })
+
+  useEffect(() => {
+    post({ type: "review-mode", on: visualPin })
+  }, [post, visualPin])
 
   // A shared moment is an absolute timeline offset, so it still lands on the same
   // content after an earlier scene's duration changes. Apply once when the video runtime
@@ -644,7 +689,8 @@ export function Artifact() {
     allowElementEdits:
       art?.current_content_type?.startsWith("text/html") === true ||
       art?.current_content_type === "text/x-derive-deck" ||
-      art?.current_content_type === "text/x-derive-video",
+      art?.current_content_type === "text/x-derive-video" ||
+      art?.current_content_type === "text/x-derive-linked-bundle",
     onOpenSourceEditor: startEdit,
     onEnter: () => {
       setSel(null)
@@ -660,6 +706,9 @@ export function Artifact() {
     save: inlineEdit.save,
     start: inlineEdit.start,
   }
+  useEffect(() => {
+    if (inlineEdit.active) setVisualPin(false)
+  }, [inlineEdit.active])
 
   // Inspect is an edit-mode companion, never a passive third destination. The existing
   // Edit entry point is the only way in; when it activates an editable HTML artifact,
@@ -870,6 +919,7 @@ export function Artifact() {
   // same path because its stored source is HTML; there is no separate deck editor.
   const canInspect = canPublish && inlineEdit.allowElementEdits
   const inspectEnabled = canInspect && inlineEdit.active
+  const mapEnabled = !!art.linked_bundle && !inlineEdit.active
   const isDeckLike = !!deck || art.current_content_type === "text/x-derive-deck"
   // Commenting needs commenter+ (matches the API's `comment` gate). An outside
   // view-link holder gets no conversation surface; commenter/editor links do.
@@ -960,6 +1010,78 @@ export function Artifact() {
     />
   )
 
+  const pinBundleTarget = (target: { id: string; kind: string; label: string }) => {
+    setVisualPin(false)
+    setRail("comments")
+    setPanel("open")
+    setActiveThread(null)
+    setSel(null)
+    setComposer({ anchor: linkedBundleAnchor(target), docTop: null })
+  }
+  const reviewBundleTarget = (target: string) => {
+    setRail("comments")
+    setPanel("open")
+    const root = comments.find(
+      (comment) =>
+        comment.id === comment.thread_id &&
+        (comment.state === "open" || comment.state === "addressed") &&
+        parseAnchor(comment.anchor)?.element?.id === target,
+    )
+    if (root) setActiveThread(root.thread_id)
+  }
+  const bundleWorkspaceActive =
+    !!art.linked_bundle &&
+    bundleView === "workspace" &&
+    shown === art.current_version &&
+    view === "preview" &&
+    !editing &&
+    !inlineEdit.active
+  const primaryEl = bundleWorkspaceActive ? (
+    <LinkedBundleWorkspace
+      shortId={shortId}
+      version={art.current_version}
+      bundle={art.linked_bundle as NonNullable<typeof art.linked_bundle>}
+      comments={comments}
+      canComment={canComment}
+      canEdit={effectiveCanPublish}
+      pinning={visualPin}
+      refreshing={refreshingArtifact}
+      refreshedAt={artifactFetchedAt}
+      onTogglePinning={() => {
+        setComposer(null)
+        setSel(null)
+        setVisualPin((on) => !on)
+      }}
+      onPin={pinBundleTarget}
+      onReview={reviewBundleTarget}
+      onDocument={() => setBundleView("document")}
+      onEdit={() => setBundleEditorOpen(true)}
+      onSaved={load}
+      reviewState={bundleReviewState}
+      onReviewStateChange={setBundleReviewState}
+    />
+  ) : (
+    <>
+      {art.linked_bundle &&
+      shown === art.current_version &&
+      view === "preview" &&
+      !inlineEdit.active ? (
+        <div className="flex items-center gap-2 border-b border-border bg-muted/20 px-4 py-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            data-testid="bundle-workspace-view"
+            onClick={() => setBundleView("workspace")}
+          >
+            <Icon name="collection" size={14} /> Back to bundle workspace
+          </Button>
+          <span className="text-xs text-muted-foreground">Document view</span>
+        </div>
+      ) : null}
+      {documentEl}
+    </>
+  )
+
   // Anonymous visitor → the chrome-light public/viral viewer (the app shell has
   // dropped the rail). The render is the hero; a slim public header carries the
   // brand, the creator byline, presence, and the growth verbs. The comment/editor
@@ -974,7 +1096,7 @@ export function Artifact() {
         selfId={guestPresenceId()}
         isMobile={isMobile}
       >
-        {documentEl}
+        {primaryEl}
       </PublicViewer>
     )
 
@@ -982,6 +1104,13 @@ export function Artifact() {
 
   return (
     <ActionsCtx.Provider value={actions}>
+      <LinkedBundleEditor
+        shortId={shortId}
+        version={art.current_version}
+        open={bundleEditorOpen}
+        onOpenChange={setBundleEditorOpen}
+        onSaved={load}
+      />
       {/* Leaving with unsaved inline edits — one wording, two doors. Navigation is
           intercepted by the router blocker; Escape/Done ask through the hook. */}
       <ConfirmDialog
@@ -1138,7 +1267,7 @@ export function Artifact() {
               // to fix one. What used to make a deck unsafe to edit (its own Space
               // and arrow keys flipping slides under the caret) is handled in the
               // frame: while a caret is in a block, the page's keyboard is off.
-              showInlineEdit={canEditDoc && !inlineEdit.active}
+              showInlineEdit={canEditDoc && !inlineEdit.active && !bundleWorkspaceActive}
               inlineEditLabel={effectiveCanPublish ? "Edit" : "Suggest edits"}
               onInlineEdit={() => inlineEdit.start()}
               isDeck={isDeckLike}
@@ -1256,7 +1385,7 @@ export function Artifact() {
                 shortId={shortId}
               />
             ) : (
-              documentEl
+              primaryEl
             )}
             {inlineEdit.mention && !editing && (
               <InlineMentionMenu menu={inlineEdit.mention} onChoose={inlineEdit.chooseMention} />
@@ -1295,8 +1424,36 @@ export function Artifact() {
 
           {!focus && commentsAvailable && (
             <ArtifactComments
-              rail={rail}
+              rail={mapEnabled || rail !== "map" ? rail : "comments"}
               onRail={setRail}
+              mapEnabled={mapEnabled}
+              mapPanel={
+                art.linked_bundle ? (
+                  <LinkedBundlePanel
+                    bundle={art.linked_bundle}
+                    comments={comments}
+                    canComment={canComment}
+                    pinning={visualPin}
+                    onTogglePinning={() => {
+                      setComposer(null)
+                      setSel(null)
+                      setVisualPin((on) => !on)
+                    }}
+                    onFocus={(id) =>
+                      bundleWorkspaceActive
+                        ? reviewBundleTarget(id)
+                        : post({ type: "focus-review", id })
+                    }
+                  />
+                ) : undefined
+              }
+              visualPinAvailable={mapEnabled}
+              visualPinActive={visualPin}
+              onToggleVisualPin={() => {
+                setComposer(null)
+                setSel(null)
+                setVisualPin((on) => !on)
+              }}
               chatBeta={chatBeta}
               chatPanel={
                 <ArtifactChat

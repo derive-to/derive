@@ -53,6 +53,9 @@ export function useArtifactFrame(p: {
   setPanel: Dispatch<SetStateAction<Panel>>
   /** An in-document anchor click must also reveal the collaboration rail. */
   onOpenComments?: () => void
+  /** Visual review mode picked a semantic element (loop step, graph node/edge,
+   *  chart, image…). The page opens a composer directly on this durable anchor. */
+  onVisualPin?: (selection: NonNullable<Selection> | null) => void
   // A cross-document link inside the frame was clicked: the server resolved it to a
   // sibling artifact `ref`. The frame is sandboxed and can't navigate the host, so it
   // hands the click here for an SPA transition (or a new tab on a modified click).
@@ -100,6 +103,8 @@ export function useArtifactFrame(p: {
     onOpenExternal,
   } = p
   const frame = useRef<HTMLIFrameElement>(null)
+  const onVisualPinRef = useRef(p.onVisualPin)
+  onVisualPinRef.current = p.onVisualPin
   const presentWrap = useRef<HTMLDivElement>(null)
   const [frameReady, setFrameReady] = useState(0)
   const [sel, setSel] = useState<Selection>(null)
@@ -238,7 +243,7 @@ export function useArtifactFrame(p: {
           // pinned to the slide it was made on. Captured here at selection time.
           const cur = deckRef.current
           const selector = cur ? { ...d.selector, slide: cur.i } : d.selector
-          setSel({
+          const next: NonNullable<Selection> = {
             selector,
             top: d.rect.top,
             // Doc-absolute Y, stamped at receive: the frame posts the rect in ITS
@@ -253,7 +258,9 @@ export function useArtifactFrame(p: {
             // stale-cached client posting only top/bottom so we never get NaN.
             vLeft: fl + (d.rect.left ?? 0),
             vRight: fl + (d.rect.right ?? d.rect.left ?? 0),
-          })
+          }
+          setSel(next)
+          if (d.reviewPicked) onVisualPinRef.current?.(next)
         } else setSel(null)
       } else if (d.type === "anchors-resolved") {
         setInDoc(d.resolved ?? {})
@@ -269,6 +276,7 @@ export function useArtifactFrame(p: {
       } else if (d.type === "scroll") {
         updateGeom(d)
       } else if (d.type === "anchor-hover") setHoverThread(d.id ?? null)
+      else if (d.type === "review-mode-ended") onVisualPinRef.current?.(null)
       else if (d.type === "anchor-click") {
         onOpenComments?.()
         setActiveThread(d.id)

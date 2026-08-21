@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest"
 import type { BundleManifest } from "../src/ports"
-import { bundleDoc, isMarkdownBundle, isSkillBundle, parseFrontmatter } from "../src/skill"
+import {
+  bundleDoc,
+  isMarkdownBundle,
+  isSkillBundle,
+  parseFrontmatter,
+  workspaceSkillsInstructions,
+} from "../src/skill"
 
 const manifest = (entry: string, paths: string[]): BundleManifest => ({
   entry,
@@ -83,5 +89,14 @@ describe("bundleDoc", () => {
     expect(info.description).toBeNull()
     expect(info.entry).toBe("README.md")
     expect(info.files.map((f) => f.path)).toEqual(["README.md", "guide.md"])
+  })
+})
+
+describe("workspaceSkillsInstructions", () => {
+  it("describes empty, singular, plural, and capped catalogs", () => {
+    expect(workspaceSkillsInstructions(0)).toContain("Team skills")
+    expect(workspaceSkillsInstructions(1)).toContain("1 team skill here")
+    expect(workspaceSkillsInstructions(2)).toContain("2 team skills here")
+    expect(workspaceSkillsInstructions(100)).toContain("100+ team skills here")
   })
 })

@@ -3,6 +3,7 @@ import {
   artifactRefOf,
   derivedGen,
   isDerivedFactName,
+  LINKED_BUNDLE_CONTENT_TYPE,
   LINKS_FACT,
   SKILL_CONTENT_TYPE,
   templateLibraryUri,
@@ -72,7 +73,7 @@ export const backlinkNotes = (o: {
   const notes: string[] = []
   if (!o.count)
     notes.push(
-      `Nothing you can see links to "${o.ref}"${o.tag ? ` under tag "${o.tag}"` : ""} on its current version. This index reads the host-derived $links fact: a version published before derivation shipped carries no row until it is republished or read once, and bundles and skills carry no facts at all, so references inside their pages are never indexed. find(data:"$*") shows how many artifacts currently carry $links.`,
+      `Nothing you can see links to "${o.ref}"${o.tag ? ` under tag "${o.tag}"` : ""} on its current version. This index reads the host-derived $links fact: a version published before derivation shipped carries no row until it is republished or read once, and archive bundles and skills carry no facts, so references inside their pages are never indexed. find(data:"$*") shows how many artifacts currently carry $links.`,
     )
   if (o.truncated)
     notes.push(
@@ -534,6 +535,7 @@ export function registerFindTool(tc: ToolContext): void {
             title: r.title,
             version: r.n,
             at: r.at,
+            is_linked_bundle: r.current_content_type === LINKED_BUNDLE_CONTENT_TYPE,
             ...(r.short_id === ref ? { self: true } : {}),
           })),
           ...backlinkNotes({ ref, count: rows.length, truncated, stale: staleRows, tag }),

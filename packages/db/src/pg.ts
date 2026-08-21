@@ -1133,6 +1133,7 @@ export class PgMetaStore implements MetaStore {
         id: artifact.id,
         short_id: artifact.short_id,
         title: artifact.title,
+        current_content_type: artifact.current_content_type,
         n: versionData.n,
         json: versionData.json,
         gen: versionData.gen,

@@ -214,6 +214,33 @@ describe("the ack: comment react over MCP", () => {
   })
 })
 
+describe("MCP visual review pins", () => {
+  it("anchors an agent comment to the same durable loop target as the visual UI", async () => {
+    const { app, meta, token } = loopApp("visual-pin")
+    const target = "derive-improve-node-revise"
+    const created = await call(app, token, "publish", {
+      content: `<main><p>Before</p><div id="${target}" data-derive-review-id="${target}" data-derive-review-kind="loop-step" data-derive-review-label="Loop step — Revise">Revise the brief</div><p>After</p></main>`,
+      title: "Visual review target",
+    })
+    const result = await call(app, token, "comment", {
+      short_id: created.short_id,
+      body: "The evidence check should happen before this step.",
+      visual_target: target,
+    })
+    expect(result.anchored_to).toBe(target)
+
+    const artifact = await meta.getByShortId(created.short_id as string)
+    if (!artifact) throw new Error("artifact missing")
+    const comments = await meta.listComments(artifact.id)
+    expect(JSON.parse(comments[0]?.anchor ?? "{}")).toMatchObject({
+      type: "ElementSelector",
+      id: target,
+      role: "loop-step",
+      snapshot: { label: "Loop step — Revise" },
+    })
+  })
+})
+
 describe("HTTP publish parity (the CLI / stdio-shim path)", () => {
   it("an agent-credentialed HTTP publish pushes, bells, and reports opened_in_tab", async () => {
     const { app, meta, backplane, token } = loopApp("httppar")

@@ -1,4 +1,4 @@
-import { newId, roleAllows } from "@derive/core"
+import { elementSelectorForId, newId, roleAllows } from "@derive/core"
 import { z } from "zod"
 import { commentCreatedAction } from "../lib/comment-actions"
 import {
@@ -22,7 +22,7 @@ export function registerCommentTool(tc: ToolContext): void {
     "comment",
     {
       description:
-        "Give or resolve feedback on an artifact. `quote` anchors a NEW thread to exact rendered text; `reply_to` replies, reacts, or resolves an existing one. See derive://skills/loop.",
+        "Comment, reply, react, resolve, or reopen. Anchor new feedback with `quote` or a linked-bundle `visual_target`; use `reply_to` for an existing thread. See derive://skills/loop and /bundles.",
       // Writes (comments, reactions, thread state) but nothing here deletes: a comment
       // once posted stays, and set_state's resolve/reopen is explicitly reversible either
       // way. The Slack/webhook/email fan-out is a best-effort side notification, not the
@@ -46,6 +46,7 @@ export function registerCommentTool(tc: ToolContext): void {
           .string()
           .optional()
           .describe("Exact text in the rendered document to anchor a NEW comment to."),
+        visual_target: z.string().optional().describe("Bundle target id; omit quote."),
         react: z
           .enum(REACTIONS as [string, ...string[]])
           .optional()
@@ -69,6 +70,7 @@ export function registerCommentTool(tc: ToolContext): void {
       body,
       reply_to,
       quote,
+      visual_target,
       react,
       set_state,
       mentions: mentionRefs,
@@ -86,6 +88,7 @@ export function registerCommentTool(tc: ToolContext): void {
         return err(
           "Provide `body` (to comment), `react` (to acknowledge), or `set_state` (to resolve/reopen).",
         )
+      if (quote && visual_target) return err("Use either `quote` or `visual_target`, not both.")
       let thread = reply_to
       let commentId: string | undefined
       if (body) {
@@ -134,7 +137,17 @@ export function registerCommentTool(tc: ToolContext): void {
         }
         commentId = newId("c")
         thread = reply_to || commentId
-        const anchor = quote ? JSON.stringify({ type: "TextQuoteSelector", exact: quote }) : null
+        let anchor = quote ? JSON.stringify({ type: "TextQuoteSelector", exact: quote }) : null
+        if (visual_target) {
+          const version = await ctx.meta.getVersion(a.id, a.current_version)
+          const source = version ? await ctx.sourceText(version) : null
+          const selector = source ? elementSelectorForId(source, visual_target) : null
+          if (!selector)
+            return err(
+              `No visual review target "${visual_target}" exists in the current artifact. Read its bundle-manifest and use the authored derive-<diagram>-<node|edge|policy>-... id.`,
+            )
+          anchor = JSON.stringify(selector)
+        }
         await ctx.meta.createComment({
           id: commentId,
           artifact_id: a.id,
@@ -225,7 +238,9 @@ export function registerCommentTool(tc: ToolContext): void {
       return json({
         short_id,
         thread,
-        ...(commentId ? { comment_id: commentId, anchored_to: quote ?? null } : {}),
+        ...(commentId
+          ? { comment_id: commentId, anchored_to: visual_target ?? quote ?? null }
+          : {}),
         ...(reactedTo ? { reacted: react, reacted_to: reactedTo } : {}),
         ...(set_state ? { state: set_state } : {}),
         note: body

@@ -1,4 +1,4 @@
-import { type AutonomyFlags, MAX_ARTIFACT_CHARS, toMicroUsd } from "@derive/core"
+import { type AutonomyFlags, isHtmlLike, MAX_ARTIFACT_CHARS, toMicroUsd } from "@derive/core"
 import { log } from "../log"
 import type { AgentLoopInput, LoopTool } from "./agent-loop"
 import type { Substrate } from "./dispatch"
@@ -395,12 +395,13 @@ const landOverHttp =
     // request, and changes nothing about the artifact. Send both, and make the NAME agree with
     // the document.
     //
-    // Only markdown and html are rewritten: those are the two the extension actually decides. A
-    // deck is recognised from its body, so leaving its name alone is what keeps it a deck.
+    // Markdown and HTML-like documents are rewritten because the extension decides how publish
+    // reads their source. Decks and linked bundles are still HTML bodies, and the body/fact
+    // protocol preserves their richer subtype after the filename keeps them in the HTML lane.
     const contentType =
       targetContentType ?? (revision.filename.endsWith(".md") ? "text/markdown" : "text/html")
     const wantExt =
-      contentType === "text/markdown" ? ".md" : contentType === "text/html" ? ".html" : null
+      contentType === "text/markdown" ? ".md" : isHtmlLike(contentType) ? ".html" : null
     const filename =
       wantExt && !new RegExp(`\\${wantExt}$`, "i").test(revision.filename)
         ? `${revision.filename.replace(/\.[^./]*$/, "")}${wantExt}`
