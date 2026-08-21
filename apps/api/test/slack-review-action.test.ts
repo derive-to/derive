@@ -121,7 +121,7 @@ describe("runSlackReviewAction", () => {
   // The card may have been rendered minutes ago; the round can be settled from Derive meanwhile.
   it("says so when the round is already gone, rather than acting", async () => {
     const { meta, artifact, round } = await setup("already", { role: "owner" })
-    await meta.resolveReviewRound(round.id, { state: "sent_back", note: null })
+    await meta.resolveReviewRound(round.id, { note: null })
     const sent: string[] = []
     await run(meta, artifact, sent)
     expect(sent.join(" ")).toContain("no review pending")

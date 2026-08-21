@@ -806,7 +806,7 @@ export function registerPublishTool(tc: ToolContext): void {
               requestedById: agent.id,
               requestedByName: agent.name,
               version: version.n,
-              notifyExtras: { author: agent.name, actor_id: agent.id },
+              actorId: agent.id,
               // A detached executor's request interrupts the human it acts for — that is
               // the point. An attended surface's request is the person's own conversational
               // edit: the round is the record, and emailing them about it would be noise.

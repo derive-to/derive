@@ -1936,13 +1936,11 @@ export function runStoreContract(
       })
       const [amy, bob] = await Promise.all([
         store.resolveReviewRound(round.id, {
-          state: "sent_back",
           note: "good to go",
           resolved_by: "u_amy",
           resolved_by_name: "Amy",
         }),
         store.resolveReviewRound(round.id, {
-          state: "sent_back",
           note: "needs another pass",
           resolved_by: "u_bob",
           resolved_by_name: "Bob",
@@ -1956,7 +1954,6 @@ export function runStoreContract(
       // The loser got null back, and a late second settlement stays null.
       await expect(
         store.resolveReviewRound(round.id, {
-          state: "sent_back",
           resolved_by: "u_late",
           resolved_by_name: "Late",
         }),

@@ -89,7 +89,6 @@ export const reviewRoutes = (ctx: AppContext) => {
       const round = await pendingFor(artifact.id, human.id)
       if (!round) return bail(fail(c, 409, "no review pending on this artifact"))
       const updated = await meta.resolveReviewRound(round.id, {
-        state: "sent_back",
         // Bounded to the declared cap however the body arrived — the note is interpolated
         // into the agent's catch_up prompt, and an unbounded field there is a cost hole.
         note: str(body.note)?.slice(0, 10_000) ?? null,

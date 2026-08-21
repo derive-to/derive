@@ -38,8 +38,10 @@ export interface ReviewRequestInput {
   /** The requester's note, when the surface carries one. Rides the round, the email and
    *  the Slack DM alike — the go-signal must read the same everywhere. */
   note?: string | null
-  /** Extra fields for the channel card (`author`/`actor_id`), where the surface knows them. */
-  notifyExtras?: Record<string, unknown>
+  /** What the channel card's human/agent filter keys on: the agent principal when one is
+   *  acting, else the acting user; null when neither is known. The card's `author` is
+   *  always `requestedByName`. */
+  actorId: string | null
   /** Suppress the reviewer's email/DM when they ARE this user — nobody needs an interrupt
    *  about a request that is their own action. Attended surfaces pass the acting human's id
    *  (their click or their conversational edit); a detached executor passes null, because
@@ -65,7 +67,8 @@ export const openReviewRound = async (
   await deps.notify(artifact, "review.requested", {
     version: input.version,
     requested_by: input.requestedByName,
-    ...(input.notifyExtras ?? {}),
+    author: input.requestedByName,
+    actor_id: input.actorId,
   })
   // The review request is the one event that earns an interrupt: the loop is blocked on the
   // reviewer, who may have no tab open. Never for your own request on yourself.

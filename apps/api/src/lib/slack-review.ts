@@ -75,7 +75,6 @@ export const runSlackReviewAction = async (
   try {
     const linkedUser = (await meta.getUsers([link.user_id]))[0]
     const updated = await meta.resolveReviewRound(round.id, {
-      state: "sent_back",
       note: null,
       resolved_by: link.user_id,
       resolved_by_name:

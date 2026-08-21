@@ -956,13 +956,7 @@ export const artifactRoutes = (ctx: AppContext) => {
             requestedByName: actor?.name ?? "An agent",
             version: version.n,
             note: str(body["review_note"]) ?? null,
-            // `author` is what the channel card renders, and `actor_id` is what its human/agent
-            // filter keys on — enqueueSlackChannelEvent reads both. Without them a review
-            // request reaching a channel would be attributed to "someone" and counted as human.
-            notifyExtras: {
-              author: actor?.name ?? "An agent",
-              actor_id: agentPrincipal?.id ?? actor?.id ?? null,
-            },
+            actorId: agentPrincipal?.id ?? actor?.id ?? null,
             selfId: actor?.id ?? null,
           })
           roundCreated = true
@@ -984,7 +978,7 @@ export const artifactRoutes = (ctx: AppContext) => {
           requestedById: agentPrincipal.id,
           requestedByName: agentPrincipal.name,
           version: version.n,
-          notifyExtras: { author: agentPrincipal.name, actor_id: agentPrincipal.id },
+          actorId: agentPrincipal.id,
           selfId: null,
         })
         roundCreated = true

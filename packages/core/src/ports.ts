@@ -1448,10 +1448,11 @@ export interface ReviewStore {
   /** All rounds on an artifact, newest first (the audit trail). */
   listReviewRounds(artifactId: string): Promise<ReviewRoundRecord[]>
   /** Settle a round (`sent_back`), stamping resolved_at + note. */
+  /** Settle the pending round as sent back — the loop's one settling gesture.
+   *  Returns null when the round is not pending (someone else settled it first). */
   resolveReviewRound(
     id: string,
     fields: {
-      state: Extract<ReviewRoundState, "sent_back">
       note?: string | null
       resolved_by?: string | null
       resolved_by_name?: string | null

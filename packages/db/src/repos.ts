@@ -87,7 +87,6 @@ import type {
   ReportState,
   RepoSourceRecord,
   ReviewRoundRecord,
-  ReviewRoundState,
   Role,
   RunRecord,
   RunStatus,
@@ -3341,7 +3340,6 @@ export function makeRepos(db: SqliteDb) {
   const resolveReviewRound = async (
     id: string,
     fields: {
-      state: Extract<ReviewRoundState, "sent_back" | "approved">
       note?: string | null
       resolved_by?: string | null
       resolved_by_name?: string | null
@@ -3350,7 +3348,7 @@ export function makeRepos(db: SqliteDb) {
     const updated =
       (await db
         .update(reviewRound)
-        .set({ ...fields, resolved_at: new Date().toISOString() })
+        .set({ ...fields, state: "sent_back", resolved_at: new Date().toISOString() })
         .where(and(eq(reviewRound.id, id), eq(reviewRound.state, "pending")))
         .returning()
         .get()) ?? null

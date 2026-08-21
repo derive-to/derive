@@ -99,7 +99,6 @@ import type {
   ReportState,
   RepoSourceRecord,
   ReviewRoundRecord,
-  ReviewRoundState,
   Role,
   RunRecord,
   RunStatus,
@@ -3973,7 +3972,6 @@ export class PgMetaStore implements MetaStore {
   async resolveReviewRound(
     id: string,
     fields: {
-      state: Extract<ReviewRoundState, "sent_back" | "approved">
       note?: string | null
       resolved_by?: string | null
       resolved_by_name?: string | null
@@ -3981,7 +3979,7 @@ export class PgMetaStore implements MetaStore {
   ): Promise<ReviewRoundRecord | null> {
     const rows = await this.db
       .update(reviewRound)
-      .set({ ...fields, resolved_at: new Date().toISOString() })
+      .set({ ...fields, state: "sent_back", resolved_at: new Date().toISOString() })
       .where(and(eq(reviewRound.id, id), eq(reviewRound.state, "pending")))
       .returning()
     const updated = rows[0] ?? null
