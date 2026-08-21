@@ -563,9 +563,8 @@ describe("templates: the shelf is tagged artifacts at the caller's reach", () =>
   })
 
   it("keeps a teammate's invite-only tagged artifact off the shelf, even inside the same workspace", async () => {
-    // An unlisted, members-only draft carries the tag but grants the teammate nothing.
-    // The shelf must apply the listing gate (`listed != none` OR explicit member) exactly
-    // like the library list, not just the workspace filter.
+    // An unlisted, members-only draft carries the tag but grants the teammate nothing; the
+    // shelf applies the same listing gate as the library list, not just the workspace filter.
     const author: TestUser = { id: "u_tpl_gate_a", email: "gate-a@templates.test", name: "GateA" }
     const teammate: TestUser = { id: "u_tpl_gate_b", email: "gate-b@templates.test", name: "GateB" }
     const { app: teamApp } = makeAuthedApp("templates-gate", [author, teammate], "editor")

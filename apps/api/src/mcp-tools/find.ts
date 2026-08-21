@@ -251,11 +251,9 @@ export function registerFindTool(tc: ToolContext): void {
         if ("error" in t) return err(t.error)
         const cap = Math.min(Math.max(max_matches ?? 100, 1), 200)
         const needle = query?.trim().toLowerCase() ?? ""
-        // The shelf: artifacts tagged `template`, the workspace's own first, then the
-        // world's public ones. Same two reads as GET /v1/templates, at the agent's reach.
+        // The same shelf GET /v1/templates serves, at the agent's reach.
         const { rows: shelf, truncated: shelfTruncated } = await listTemplateArtifacts(ctx.meta, {
-          orgId: t.org,
-          viewerId: actingFor?.id ?? agent.id,
+          workspace: { orgId: t.org, viewerId: actingFor?.id ?? agent.id },
           query: needle,
         })
         const shelfTags = await ctx.meta.tagsForArtifacts(shelf.map((row) => row.artifact.id))
@@ -265,13 +263,11 @@ export function registerFindTool(tc: ToolContext): void {
           ...summarizeArtifact(artifact),
           tags: shelfTags[artifact.id] ?? [],
           uri: artifact.short_id,
-          // A public row from another workspace is outside this grant's reach over
-          // MCP, but its page is world-readable (and negotiates to markdown).
+          // Readable by anyone even where this grant can't reach the row by id.
           url: artifactUrl(ctx.deps.baseUrl, artifact),
         }))
         const authoredCapacity = Math.max(cap - templateRows.length, 0)
-        // Always one past the capacity, even at zero: that one row is how a full shelf
-        // still reports that library entries exist beyond it.
+        // One past capacity even at zero, so a full shelf still reports entries beyond it.
         const authoredAll = await ctx.meta.searchTemplateLibraryEntries({
           orgId: t.org,
           ownerId,
@@ -302,8 +298,8 @@ export function registerFindTool(tc: ToolContext): void {
           truncated,
           next:
             (truncated ? "Refine query to narrow the shelf. " : "") +
-            "Read a result's uri (its short_id), then publish a new artifact with derived_from set to it and inspect the render. " +
-            "A row from a workspace outside this grant's reach is refused by read and derived_from over MCP; its url still serves the page (it negotiates to markdown), and the person can start from it with Make a copy there.",
+            "Read a result's uri (its short_id), publish a new artifact with derived_from set to it, and inspect the render. " +
+            "If read refuses a row (a workspace outside this grant), its url still serves the page as markdown; the person can start from it there with Make a copy.",
         })
       }
       // Claimed BEFORE mode 1, which owns `short_id` and would answer a `links_to` call with

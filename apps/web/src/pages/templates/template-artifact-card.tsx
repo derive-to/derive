@@ -9,12 +9,7 @@ import { Card, CardContent, CardFooter } from "@/components/ui/card"
 import { artifactTypeLabel } from "@/lib/artifact"
 import { refFor } from "@/pages/artifact/parse-ref"
 
-/**
- * One template on the shelf: the real artifact's render, its title and author, and the
- * two ways to start from it. "Make a copy" is the filled button because it is instant
- * and needs no agent; "Ask your agent" hands the short id to whatever agent the person
- * already uses.
- */
+/** One shelf row: the artifact's render, title, and author, with the two ways to start from it. */
 export function TemplateArtifactCard({
   template: a,
   copying,
@@ -30,7 +25,7 @@ export function TemplateArtifactCard({
   const hasAuthor = !!(author?.name ?? a.author_name)
   const origin = a.shelf === "workspace" ? "This workspace" : "Public"
   return (
-    // `group` is what wakes the render on hover (Thumb keys on it, like the library card).
+    // `group`: Thumb wakes its render on the group's hover, as in the library card.
     <Card data-testid={`template-card-${a.short_id}`} className="group h-full gap-0 py-0">
       <CardContent className="flex min-w-0 flex-col gap-3 p-3">
         <div className="relative overflow-hidden rounded-lg">

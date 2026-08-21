@@ -57,10 +57,9 @@ export const templateLibraryRoutes = (ctx: AppContext) => {
     renewManagedMutation,
   } = createTemplateLibraryService(ctx)
 
-  // The template shelf. A template is an ordinary artifact tagged `template`; the shelf
-  // is two visibility-filtered reads (lib/template-artifacts.ts), decorated with the same
-  // batched enrichment the library list uses, so a card can show the real preview and
-  // author. Anyone may call it: an anonymous caller gets the public shelf only.
+  // The template shelf (lib/template-artifacts.ts), decorated with the library list's
+  // batched enrichment so a card has the preview flag and author. Open to anonymous
+  // callers, who get the public shelf only.
   app.openapi(
     createRoute({
       method: "get",
@@ -80,7 +79,7 @@ export const templateLibraryRoutes = (ctx: AppContext) => {
                 truncated: z
                   .boolean()
                   .describe(
-                    "More artifacts carry the tag than the shelf read (a bounded slice); the rest are not listed.",
+                    "A shelf had more rows than its cap; the newest-updated ones are listed.",
                   ),
               }),
             },
@@ -94,12 +93,11 @@ export const templateLibraryRoutes = (ctx: AppContext) => {
       const operator = isToken(c)
       const memberKey = me?.id ?? agent?.created_by ?? agent?.id ?? null
       const activeOrg = me || agent || operator ? await activeWorkspace(c) : null
-      const seated = !!activeOrg && (operator || (await workspaceCan(c, "read")))
-      const { rows: shelf, truncated } = await listTemplateArtifacts(meta, {
-        orgId: activeOrg,
-        viewerId: operator ? undefined : (memberKey ?? undefined),
-        publicOnly: !seated,
-      })
+      const seat =
+        activeOrg && (operator || (await workspaceCan(c, "read")))
+          ? { orgId: activeOrg, viewerId: operator ? undefined : (memberKey ?? undefined) }
+          : undefined
+      const { rows: shelf, truncated } = await listTemplateArtifacts(meta, { workspace: seat })
       if (shelf.length === 0) return c.json({ templates: [], truncated })
 
       const rows = shelf.map((row) => row.artifact)
@@ -113,9 +111,8 @@ export const templateLibraryRoutes = (ctx: AppContext) => {
       })
       const handleByGhId = handlesFrom(enrichment.handles)
       const bylineByUserId = bylinesFrom(enrichment.bylines)
-      // A public row is the same row its own public page serves (toJson + author + tags):
-      // never the owning workspace's name, which the rest of the API withholds from
-      // non-members so a workspace can't be enumerated from outside.
+      // The row its own public page serves, and nothing more: in particular not the owning
+      // workspace's name, which the API withholds from non-members everywhere else.
       return c.json({
         templates: shelf.map(({ artifact: a, shelf: which }) => ({
           ...toJson(deps.baseUrl, a, []),

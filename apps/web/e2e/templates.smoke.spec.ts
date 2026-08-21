@@ -1,8 +1,7 @@
 import type { Page } from "@playwright/test"
 import { expect, publishArtifact, test } from "./fixtures"
 
-// The template shelf is artifacts tagged `template`. Tagging is the whole "offer" step;
-// the shelf reads the tag, and starting from a template is the ordinary copy.
+// Tagging is the whole "offer" step: the shelf is artifacts tagged `template`.
 async function tagAsTemplate(page: Page, shortId: string) {
   const res = await page.request.put(`/v1/artifacts/${shortId}/tags`, {
     data: { tags: ["template"] },

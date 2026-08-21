@@ -471,9 +471,9 @@ export function runStoreContract(
       expect(byTag).toContain(tagged.id)
       expect(byTag).not.toContain(plain.id)
 
-      // The tag filter composes with the listing gate: an unlisted, members-only row is
-      // invisible to a viewer who is not an explicit member, tag or no tag. (The gate was
-      // an `else` hanging off the filter above it, so a new filter used to switch it off.)
+      // The tag filter composes with the listing gate: an unlisted, members-only row stays
+      // invisible to a non-member viewer. Regression: the gate used to be an `else` of the
+      // filter above it.
       const hidden = await store.createArtifact(
         newArtifact({
           title: "Hidden starter",

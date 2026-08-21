@@ -19,15 +19,12 @@ const TemplateInputSchema = z.object({
   required: z.boolean().optional(),
 })
 
-/**
- * One row of the template shelf: an ordinary artifact (the list row every library card
- * already renders) plus which shelf it sits on. A template is not its own kind.
- */
+/** A template shelf row: the ordinary artifact list row plus which shelf it sits on. */
 export const TemplateArtifactSchema = Artifact.extend({
   shelf: z
     .enum(["workspace", "public"])
     .describe(
-      "workspace = tagged `template` in the caller's active workspace; public = tagged and open to the world, from any workspace. A public row names no workspace: the shelf exposes nothing the artifact's own public page does not.",
+      "workspace = tagged `template` in the caller's active workspace; public = tagged and open to the world, from another workspace. A public row carries nothing its own public page does not.",
     ),
 }).openapi("TemplateArtifact")
 

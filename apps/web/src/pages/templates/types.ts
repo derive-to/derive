@@ -1,9 +1,4 @@
-export type { TemplateArtifact } from "@/api"
-
-/**
- * Authored libraries stay reachable by deep link (`?tab=libraries`) but get no tab
- * while nobody has created one. Flip this when the shelf earns a second surface.
- */
+/** Libraries get no tab until someone creates one; `?tab=libraries` still reaches them. */
 export const TEMPLATE_LIBRARIES_ENABLED = false
 
 export type TemplateTab = "artifacts" | "libraries"

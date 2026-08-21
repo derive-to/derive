@@ -5656,7 +5656,7 @@ export interface paths {
                     content: {
                         "application/json": {
                             templates: components["schemas"]["TemplateArtifact"][];
-                            /** @description More artifacts carry the tag than the shelf read (a bounded slice); the rest are not listed. */
+                            /** @description A shelf had more rows than its cap; the newest-updated ones are listed. */
                             truncated: boolean;
                         };
                     };
@@ -7721,7 +7721,7 @@ export interface components {
         };
         TemplateArtifact: components["schemas"]["Artifact"] & {
             /**
-             * @description workspace = tagged `template` in the caller's active workspace; public = tagged and open to the world, from any workspace. A public row names no workspace: the shelf exposes nothing the artifact's own public page does not.
+             * @description workspace = tagged `template` in the caller's active workspace; public = tagged and open to the world, from another workspace. A public row carries nothing its own public page does not.
              * @enum {string}
              */
             shelf: "workspace" | "public";

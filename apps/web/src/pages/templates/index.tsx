@@ -22,7 +22,6 @@ import { TemplateArtifactCard } from "./template-artifact-card"
 import { targetFromArtifact, targetFromLibraryEntry } from "./template-target"
 import { TEMPLATE_LIBRARIES_ENABLED, type TemplateTab } from "./types"
 
-/** Title, tags, and where it's from — the words a person would search a shelf by. */
 const templateMatches = (template: TemplateArtifact, query: string): boolean => {
   const needle = query.trim().toLowerCase()
   if (!needle) return true
@@ -30,9 +29,8 @@ const templateMatches = (template: TemplateArtifact, query: string): boolean => 
 }
 
 /**
- * The template shelf. A template is an ordinary artifact someone tagged `template`, so
- * every card is a real render with a real author, and starting from one is the same
- * "Make a copy" the artifact page offers. Two shelves: this workspace's, then public.
+ * The template shelf: artifacts tagged `template`, this workspace's then public ones.
+ * Starting from one is the artifact page's own "Make a copy", or the agent handoff.
  */
 export function Templates() {
   useDocumentTitle("Templates")
@@ -51,9 +49,8 @@ export function Templates() {
   const publicShelf = templates.filter((template) => template.shelf === "public")
   const [agentTarget, setAgentTarget] = useState<AgentTemplateTarget | null>(null)
   const [sourceArtifactError, setSourceArtifactError] = useState("")
-  // `?use=` only ever carried a built-in template id (the derived-from banner of an
-  // artifact with `derive://templates/` lineage, and the old `/new?template=` link).
-  // Those starters are retired: say so, rather than look the id up as an artifact.
+  // `?use=` carries a built-in template id (the derived-from banner of `derive://templates/`
+  // lineage, and `/new?template=`). Those starters are retired; say so.
   const retiredBuiltIn = search.use
   useEffect(() => {
     if (!retiredBuiltIn) return

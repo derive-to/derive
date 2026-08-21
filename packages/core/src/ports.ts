@@ -201,10 +201,9 @@ export interface ListArtifactsOpts {
   collectionSearchViewerId?: string | null
   /** Restrict to these artifact ids (tag / favorite filters resolve to ids). Empty ⇒ none. */
   ids?: string[]
-  /** Only artifacts carrying this browse tag (case-insensitive), matched in the query as
-   *  an EXISTS on the tag table. Unlike resolving the tag to `ids` first, this composes
-   *  with `sort`, `limit`, and the visibility gates in ONE read whatever the tag's
-   *  population, so a tag-defined shelf is never a slice of an unordered id list. */
+  /** Only artifacts carrying this browse tag (case-insensitive). Matched in the query, so
+   *  it composes with `sort`, `limit`, and the visibility gates in one read; resolving the
+   *  tag to `ids` first would cap the candidates, not the result. */
   tag?: string
   /** Scope to a collection by JOINing its membership rather than materializing every
    *  member id into an `IN (...)`. A large collection (hundreds of items) would blow
