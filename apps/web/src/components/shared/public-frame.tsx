@@ -8,9 +8,8 @@ import { signupSourceSearch } from "@/lib/signup-source"
 // shared profile today (the artifact viewer has its own richer PublicViewer). A slim
 // brand header (→ home) + the growth verbs, the content as the hero, and a quiet
 // "Made with Derive" footer: the same public-shell language as PublicViewer, minus the
-// artifact-specific identity/presence. Replaces the old anon nav rail — an anon never
-// sees app chrome now, just this frame around the render. `returnTo` sends Sign in
-// back here afterward.
+// artifact-specific identity/presence. An anon never sees app chrome, just this frame
+// around the render. `returnTo` sends Sign in back here afterward.
 export function PublicFrame({ returnTo, children }: { returnTo: string; children: ReactNode }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-background">

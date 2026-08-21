@@ -42,10 +42,9 @@ const url = u.toString()
 const store = await PgMetaStore.create(url, (e) => console.error("pool error:", e.message))
 console.log("app schema applied")
 
-// (The one-time pre-v2 access backfill used to run here, after the DDL. Retired
-// with the v1 `visibility`/`general_role` columns — an instance upgrading straight
-// from a pre-v2 build runs deploy/drop-v1-access.sql instead, which folds the old
-// values into the access fields before dropping them.)
+// An instance upgrading from a build that still carries the v1
+// `visibility`/`general_role` columns runs deploy/drop-v1-access.sql separately,
+// which folds those values into the access fields before dropping them.
 
 // Better Auth schema: derived from the live auth config (the single source of
 // truth), reconciled by Better Auth's own migrator. baseUrl/secret are dummies —

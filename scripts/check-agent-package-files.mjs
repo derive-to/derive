@@ -29,9 +29,9 @@ const errors = []
 
 // The published set must be closed under its own workspace dependencies: a
 // `workspace:*` dependency on a package outside this list ships a version spec
-// the registry cannot resolve (the internal @derive/* scope is never published).
-// @derive-to/mcp@0.6.0 went out depending on a package that did not exist on npm;
-// this check makes that a CI failure instead of a broken release.
+// the registry cannot resolve (the internal @derive/* scope is never published),
+// and `pnpm publish` rewrites the spec without checking that the target exists —
+// so the closure has to be asserted here, before anything is packed.
 const publishedNames = new Set(
   packages.map((pkg) => {
     const manifest = JSON.parse(readFileSync(join(root, pkg.dir, "package.json"), "utf8"))
@@ -74,4 +74,6 @@ if (errors.length) {
   process.exit(1)
 }
 
-console.log("agent-package-files: CLI and MCP tarballs include their Derive skill resources")
+console.log(
+  "agent-package-files: published tarballs carry their required files, and the set is dependency-closed",
+)
