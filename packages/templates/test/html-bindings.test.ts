@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { unsafeHtmlTemplateBindings } from "./html-bindings"
+import { unsafeHtmlTemplateBindings } from "../src/html-bindings"
 
 const inputs = [
   { name: "Project name", description: "The project", required: true },
