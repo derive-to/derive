@@ -36,6 +36,14 @@ for the recommended install and verification flow.
 - `@derive-to/cli` 0.5.0 — `derive approve` is gone; `derive send-back --note "…"` is
   the human verb. Skill fetching reads current versions.
 
+### Fixed
+- `@derive-to/templates` 0.1.0 — published, standalone. `@derive-to/mcp` 0.6.0 went to
+  the registry depending on this package before it existed there, which made 0.6.0
+  uninstallable (the same class of failure as mcp 0.4.0's raw `workspace:*` protocol).
+  The package now carries its own generated deck starter instead of depending on the
+  internal `@derive/core`, and CI fails when a published package's workspace
+  dependencies reach outside the published set.
+
 ### Changed
 - **Agent writes publish live, and the write policy is one switch.** An agent's write
   lands exactly like a person's: a new version with the full publish fan-out (bell,

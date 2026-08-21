@@ -107,11 +107,13 @@ const moduleFor = (lang) => {
   )
 }
 
-// One target per runtime surface. The CLI gets plain JS (it ships as source and
-// depends on nothing); core serves the MCP resource and browser tests.
+// One target per runtime surface. The published packages (cli, templates) get their
+// own standalone copies — they ship as source and must not depend on the internal
+// @derive/core; core serves the MCP resource and browser tests.
 const TARGETS = [
   { path: join(ROOT, "packages/core/src/deck-template.gen.ts"), lang: "ts" },
   { path: join(ROOT, "packages/cli/src/deck-template.gen.js"), lang: "js" },
+  { path: join(ROOT, "packages/templates/src/deck-template.gen.ts"), lang: "ts" },
 ]
 
 const check = process.argv.slice(2).includes("--check")

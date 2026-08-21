@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process"
+import { readFileSync } from "node:fs"
 import { join } from "node:path"
 
 const root = process.cwd()
@@ -18,9 +19,34 @@ const packages = [
     dir: "packages/mcp",
     required: ["README.md", "SKILL.md", "references/connect.md", "references/compatibility.md"],
   },
+  {
+    dir: "packages/templates",
+    required: ["README.md"],
+  },
 ]
 
 const errors = []
+
+// The published set must be closed under its own workspace dependencies: a
+// `workspace:*` dependency on a package outside this list ships a version spec
+// the registry cannot resolve (the internal @derive/* scope is never published).
+// @derive-to/mcp@0.6.0 went out depending on a package that did not exist on npm;
+// this check makes that a CI failure instead of a broken release.
+const publishedNames = new Set(
+  packages.map((pkg) => {
+    const manifest = JSON.parse(readFileSync(join(root, pkg.dir, "package.json"), "utf8"))
+    return manifest.name
+  }),
+)
+for (const pkg of packages) {
+  const manifest = JSON.parse(readFileSync(join(root, pkg.dir, "package.json"), "utf8"))
+  for (const [name, spec] of Object.entries(manifest.dependencies ?? {}))
+    if (String(spec).startsWith("workspace:") && !publishedNames.has(name))
+      errors.push(
+        `${pkg.dir}: dependency ${name} is workspace-linked but not in the published set — ` +
+          `the registry cannot resolve it. Publish it (add it to this list) or cut the dependency.`,
+      )
+}
 for (const pkg of packages) {
   const result = spawnSync(npm, ["pack", "--dry-run", "--json", "--ignore-scripts"], {
     cwd: join(root, pkg.dir),

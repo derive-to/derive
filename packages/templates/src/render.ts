@@ -1,5 +1,5 @@
-import { deckTemplateWithSlides } from "@derive/core"
 import { getTemplate } from "./catalog"
+import { deckTemplateWithSlides } from "./deck-template.gen"
 import type { BuiltInTemplate, TemplateDraft } from "./types"
 
 // A deterministic authored visual recipe. Templates own usable source while

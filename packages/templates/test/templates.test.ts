@@ -7,7 +7,7 @@ import {
   TEMPLATE_CATALOG_URI,
   TEMPLATE_CATALOG_VERSION,
   templateResource,
-} from "./index"
+} from "../src/index"
 
 const artifactTemplates = listTemplates({ kind: "artifact" })
 const contextTemplates = listTemplates({ kind: "context" })
