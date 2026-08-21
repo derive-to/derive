@@ -32,15 +32,13 @@ const errors = []
 // the registry cannot resolve (the internal @derive/* scope is never published),
 // and `pnpm publish` rewrites the spec without checking that the target exists —
 // so the closure has to be asserted here, before anything is packed.
-const publishedNames = new Set(
-  packages.map((pkg) => {
-    const manifest = JSON.parse(readFileSync(join(root, pkg.dir, "package.json"), "utf8"))
-    return manifest.name
-  }),
-)
-for (const pkg of packages) {
-  const manifest = JSON.parse(readFileSync(join(root, pkg.dir, "package.json"), "utf8"))
-  for (const [name, spec] of Object.entries(manifest.dependencies ?? {}))
+const manifests = packages.map((pkg) => ({
+  ...pkg,
+  manifest: JSON.parse(readFileSync(join(root, pkg.dir, "package.json"), "utf8")),
+}))
+const publishedNames = new Set(manifests.map((pkg) => pkg.manifest.name))
+for (const pkg of manifests) {
+  for (const [name, spec] of Object.entries(pkg.manifest.dependencies ?? {}))
     if (String(spec).startsWith("workspace:") && !publishedNames.has(name))
       errors.push(
         `${pkg.dir}: dependency ${name} is workspace-linked but not in the published set — ` +
