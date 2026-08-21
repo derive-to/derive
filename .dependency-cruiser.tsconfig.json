@@ -11,8 +11,6 @@
       "@derive/storage/*": ["packages/storage/src/*"],
       "@derive-to/mcp": ["packages/mcp/src/index.ts"],
       "@derive-to/mcp/*": ["packages/mcp/src/*"],
-      "@derive-to/templates": ["packages/templates/src/index.ts"],
-      "@derive-to/templates/*": ["packages/templates/src/*"],
       "@derive/runner": ["packages/runner/src/index.ts"],
       "@derive/runner/*": ["packages/runner/src/*"]
     }

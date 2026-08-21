@@ -67,7 +67,6 @@ import {
   VIDEO_TEMPLATE,
   workspaceSkillsInstructions,
 } from "@derive/core"
-import { catalogResource, templateResource } from "@derive-to/templates"
 import { StreamableHTTPTransport } from "@hono/mcp"
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js"
 import type { Hono } from "hono"
@@ -432,41 +431,6 @@ async function buildServer(
         },
       ],
     }),
-  )
-
-  // One small catalog plus a lazy URI template keeps the request-scoped server
-  // constant-cost. Exact starter bytes are generated only when an agent reads one.
-  const builtInCatalog = catalogResource()
-  server.registerResource(
-    "templates:catalog",
-    builtInCatalog.uri,
-    {
-      title: builtInCatalog.title,
-      description: builtInCatalog.description,
-      mimeType: builtInCatalog.mimeType,
-      annotations: { audience: ["assistant"], priority: 0.85 },
-    },
-    async (uri) => ({
-      contents: [{ uri: uri.href, mimeType: builtInCatalog.mimeType, text: builtInCatalog.text }],
-    }),
-  )
-  server.registerResource(
-    "templates:entry",
-    new ResourceTemplate("derive://templates/{id}", { list: undefined }),
-    {
-      title: "Derive built-in Template",
-      description: "One exact built-in starter with metadata and immutable provenance.",
-      mimeType: "application/json",
-      annotations: { audience: ["assistant"], priority: 0.7 },
-    },
-    async (uri, variables) => {
-      const id = variables.id
-      const resource = typeof id === "string" ? templateResource(id) : undefined
-      if (!resource) throw new Error(`No built-in template "${String(id)}".`)
-      return {
-        contents: [{ uri: uri.href, mimeType: resource.mimeType, text: resource.text }],
-      }
-    },
   )
 
   // Authored libraries keep one stable resource pointer. Discovery and access

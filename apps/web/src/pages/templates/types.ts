@@ -9,12 +9,10 @@ export type TemplatesSearch = {
   derive?: boolean
   source?: string
   library?: string
-  use?: string
 }
 
 export type NewArtifactSearch = {
   start?: "deck"
-  template?: string
   source?: string
   library?: string
   entry?: string

@@ -7,8 +7,7 @@ import type { NewArtifactSearch } from "../pages/templates/types"
 export const Route = createFileRoute("/new")({
   beforeLoad: async (args) => {
     await requireOnboarded(args)
-    const { template, library, entry, source, start } = args.search
-    if (template) throw redirect({ to: "/templates", search: { use: template }, replace: true })
+    const { library, entry, source, start } = args.search
     if (library && entry)
       throw redirect({
         to: "/template-libraries/$id",
@@ -21,7 +20,6 @@ export const Route = createFileRoute("/new")({
   },
   validateSearch: (search: Record<string, unknown>): NewArtifactSearch => ({
     start: search.start === "deck" ? "deck" : undefined,
-    template: typeof search.template === "string" ? search.template : undefined,
     source: typeof search.source === "string" ? search.source : undefined,
     library: typeof search.library === "string" ? search.library : undefined,
     entry: typeof search.entry === "string" ? search.entry : undefined,

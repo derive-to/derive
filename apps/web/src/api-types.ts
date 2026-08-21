@@ -6878,12 +6878,10 @@ export interface components {
             };
             /** @description Source path (e.g. the repo path of a synced artifact); null when none. */
             source_path?: string | null;
-            /** @description The artifact or built-in Template this one was copied from ("use as template"). Detail responses only; null when the source no longer resolves, absent when not derived. */
+            /** @description The artifact this one was copied from ("use as template"). Detail responses only; null when the source no longer resolves, absent when not derived. */
             derived_from?: {
                 short_id: string;
                 title: string | null;
-                /** @enum {string} */
-                kind?: "artifact" | "template";
             } | null;
             created_at?: string;
             /** @description Last-update timestamp; null when never updated since creation. */

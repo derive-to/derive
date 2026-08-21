@@ -28,7 +28,6 @@ import {
   VIDEO_TEMPLATE,
   validateLinkedBundle,
 } from "@derive/core"
-import { catalogResource, templateResource } from "@derive-to/templates"
 import { z } from "zod"
 import { BRANDPRINT_REFERENCE, BRANDPRINT_TEMPLATE } from "../brandprint-reference"
 import { cleanPath } from "../lib/bundle"
@@ -381,22 +380,11 @@ export function registerReadTool(tc: ToolContext): void {
           )
         return json({ uri: short_id, mimeType: "text/html", content: VIDEO_TEMPLATE })
       }
-      const BUILT_IN_TEMPLATES = "derive://templates/"
-      if (short_id.startsWith(BUILT_IN_TEMPLATES)) {
-        const resource =
-          short_id === "derive://templates/catalog"
-            ? catalogResource()
-            : templateResource(short_id.slice(BUILT_IN_TEMPLATES.length))
-        if (!resource)
-          return err(
-            `No built-in template "${short_id}". Read derive://templates/catalog to find one.`,
-          )
-        return json({
-          uri: resource.uri,
-          mimeType: resource.mimeType,
-          content: JSON.parse(resource.text),
-        })
-      }
+      // The built-in catalog is gone; a client on a cached instruction still asks for it.
+      if (short_id.startsWith("derive://templates/"))
+        return err(
+          "Built-in templates were retired. Templates are artifacts: find with templates:true lists them, and read takes a result's short_id.",
+        )
       const authoredRef = parseTemplateLibraryUri(short_id)
       if (short_id === TEMPLATE_LIBRARY_CATALOG_URI || authoredRef) {
         const canReadLibrary = async (library: Parameters<typeof canReadTemplateLibrary>[0]) => {
@@ -440,7 +428,7 @@ export function registerReadTool(tc: ToolContext): void {
             truncated: allLibraries.length > libraries.length,
             next:
               allLibraries.length > libraries.length
-                ? "Use find with templates:true to search the full catalog."
+                ? "Use find with templates:true to search every library entry."
                 : undefined,
             libraries: libraries.map((library) => ({
               id: library.id,

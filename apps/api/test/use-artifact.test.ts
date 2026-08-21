@@ -58,6 +58,8 @@ describe("signed-in use", () => {
       await app.request(`/v1/artifacts/${copy.short_id}`, { headers: as(ben.email) })
     ).json()
     expect(detail.my_role).toBe("owner")
+    // The detail resolves the lineage to the source's public identity for the banner.
+    expect(detail.derived_from).toEqual({ short_id: src.short_id, title: "Weekly deck" })
   })
 
   it("refuses a source the caller cannot read (404, existence never leaks)", async () => {

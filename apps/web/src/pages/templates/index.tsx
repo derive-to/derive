@@ -49,16 +49,6 @@ export function Templates() {
   const publicShelf = templates.filter((template) => template.shelf === "public")
   const [agentTarget, setAgentTarget] = useState<AgentTemplateTarget | null>(null)
   const [sourceArtifactError, setSourceArtifactError] = useState("")
-  // `?use=` carries a built-in template id (the derived-from banner of `derive://templates/`
-  // lineage, and `/new?template=`). Those starters are retired; say so.
-  const retiredBuiltIn = search.use
-  useEffect(() => {
-    if (!retiredBuiltIn) return
-    setSourceArtifactError(
-      "That built-in template is no longer available. Templates are now artifacts: start from any one on this shelf.",
-    )
-    void nav({ search: (previous) => ({ ...previous, use: undefined }), replace: true })
-  }, [retiredBuiltIn, nav])
   // `?source=` (the library's "From an artifact") names an artifact to hand to the agent.
   const sourceArtifact = search.source
   useEffect(() => {

@@ -1,11 +1,10 @@
-import { catalogResource, templateResource } from "@derive-to/templates"
 import { type McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js"
 import type { Variables } from "@modelcontextprotocol/sdk/shared/uriTemplate.js"
 import type { DeriveClient, TemplateLibraryEntryJson, TemplateLibraryJson } from "./client"
 
 // Kept deliberately small so the executable stdio entry and its test share the
 // registration contract. The remote server reads the same data directly from the
-// portable package; neither server owns a second catalog.
+// store; neither server owns a second catalog.
 export type TemplateResourceRegistrar = Pick<McpServer, "registerResource">
 
 const TEMPLATE_LIBRARY_CATALOG_URI = "derive://template-libraries"
@@ -19,41 +18,6 @@ const templateLibraryUri = (libraryId: string, entryId?: string): string => {
   return entryId
     ? `${TEMPLATE_LIBRARY_CATALOG_URI}/${libraryId}/${entryId}`
     : `${TEMPLATE_LIBRARY_CATALOG_URI}/${libraryId}`
-}
-
-export function registerTemplateResources(server: TemplateResourceRegistrar): void {
-  const catalog = catalogResource()
-  server.registerResource(
-    "templates:catalog",
-    catalog.uri,
-    {
-      title: catalog.title,
-      description: catalog.description,
-      mimeType: catalog.mimeType,
-      annotations: { audience: ["assistant"], priority: 0.85 },
-    },
-    async (uri: URL) => ({
-      contents: [{ uri: uri.href, mimeType: catalog.mimeType, text: catalog.text }],
-    }),
-  )
-  server.registerResource(
-    "templates:entry",
-    new ResourceTemplate("derive://templates/{id}", { list: undefined }),
-    {
-      title: "Derive built-in Template",
-      description: "One exact built-in starter with metadata and immutable provenance.",
-      mimeType: "application/json",
-      annotations: { audience: ["assistant"], priority: 0.7 },
-    },
-    async (uri, variables) => {
-      const id = pathVariable(variables, "id")
-      const resource = templateResource(id)
-      if (!resource) throw new Error(`No built-in template "${id}".`)
-      return {
-        contents: [{ uri: uri.href, mimeType: resource.mimeType, text: resource.text }],
-      }
-    },
-  )
 }
 
 const libraryEntry = (library: TemplateLibraryJson, entry: TemplateLibraryEntryJson) => ({
