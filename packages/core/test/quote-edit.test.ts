@@ -256,13 +256,54 @@ describe("applyQuoteEdits — html", () => {
   it("repairs formatting that is active at only one edge of the selection", () => {
     const startsInside = "<h1><span>Agentic Content</span> Analysis</h1>"
     expect(applyQuoteEdits(startsInside, HTML, [qe("Agentic Content Analysis", "New title")])).toBe(
-      "<h1><span></span>New title</h1>",
+      "<h1>New title</h1>",
     )
 
     const endsInside = "<p>before <b>bold after</b></p>"
     expect(applyQuoteEdits(endsInside, HTML, [qe("before bold", "changed")])).toBe(
       "<p>changed<b> after</b></p>",
     )
+  })
+
+  it("cleans nested and adjacent inline wrappers without touching outside formatting", () => {
+    const nested = "<h1><span><strong>Agentic</strong> Content</span> Analysis</h1>"
+    expect(applyQuoteEdits(nested, HTML, [qe("Agentic Content Analysis", "New title")])).toBe(
+      "<h1>New title</h1>",
+    )
+
+    const partial = "<p><b>keep selected</b> plain tail</p>"
+    expect(applyQuoteEdits(partial, HTML, [qe("selected plain", "changed")])).toBe(
+      "<p><b>keep </b>changed tail</p>",
+    )
+  })
+
+  it("preserves links and handles international text across formatting seams", () => {
+    const whole = '<p><a href="/docs">مرحبا 🌍</a> world</p>'
+    expect(applyQuoteEdits(whole, HTML, [qe("مرحبا 🌍 world", "hello world")])).toBe(
+      "<p>hello world</p>",
+    )
+
+    const partial = '<p><a href="/docs">keep مرحبا</a> world</p>'
+    expect(applyQuoteEdits(partial, HTML, [qe("مرحبا world", "hello")])).toBe(
+      '<p><a href="/docs">keep </a>hello</p>',
+    )
+  })
+
+  it("keeps mixed inline and plain-text batches atomic", () => {
+    const doc = "<h1><span>Old title</span> here</h1><p>A typoo remains.</p>"
+    const out = applyQuoteEdits(doc, HTML, [
+      qe("Old title here", "New title"),
+      qe("typoo", "typo", { prefix: "A ", suffix: " remains" }),
+    ])
+    expect(out).toBe("<h1>New title</h1><p>A typo remains.</p>")
+
+    expect(() =>
+      applyQuoteEdits(doc, HTML, [
+        qe("typoo", "typo"),
+        qe("title here A", "unsafe structural edit"),
+      ]),
+    ).toThrow(/element boundary/)
+    expect(doc).toContain("typoo")
   })
 
   it("still rejects a span across structural elements", () => {
@@ -400,7 +441,7 @@ describe("applyQuoteEdits — new_html", () => {
   it("allows formatted replacement across inline formatting", () => {
     expect(
       applyQuoteEdits("<p>part <b>bold</b> tail</p>", HTML, [htmlEdit("part bold", "<i>x</i>")]),
-    ).toBe("<p><i>x</i><b></b> tail</p>")
+    ).toBe("<p><i>x</i> tail</p>")
   })
 
   it("isQuoteEdit takes exactly one replacement", () => {

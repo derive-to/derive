@@ -10,8 +10,8 @@
 //   2. RAW offsets. For HTML the quote matches the page-text projection, so the
 //      resolved span is mapped back to raw-source offsets through the projection's
 //      own segment map (`pageTextParts` — the ONE implementation both sides read),
-//      and an edit whose span would cross markup (or split a decoded entity) is
-//      refused, never guessed.
+//      Safe inline markup is repaired around the replacement; structural boundaries
+//      and decoded-entity splits are refused, never guessed.
 //
 // Like `applyEdits`, the batch is atomic: any failure applies NOTHING.
 
@@ -39,9 +39,10 @@ export interface QuoteEdit {
    * This is the one path where a manual edit can carry tags into the source, so it
    * is sanitized to a five-tag allowlist with no attributes but `href` (see
    * `sanitizeInline`), and it changes nothing else: the span is still located by
-   * quote, still refused if it crosses markup or splits an entity, still unique or
-   * nothing. HTML artifacts only — on a markdown document, formatting is written as
-   * markdown, and passing tags would put literal HTML in someone's prose.
+   * quote, still repaired across inline markup, still refused if it crosses structure
+   * or splits an entity, still unique or nothing. HTML artifacts only — on a markdown
+   * document, formatting is written as markdown, and passing tags would put literal
+   * HTML in someone's prose.
    */
   new_html?: string
 }
@@ -133,7 +134,7 @@ const inlineBoundaryRepair = (
   rStart: number,
   rEnd: number,
   label: string,
-): { before: string; after: string } => {
+): { rStart: number; rEnd: number; before: string; after: string } => {
   const stack: OpenInlineTag[] = []
   let atStart: OpenInlineTag[] = []
   let atEnd: OpenInlineTag[] = []
@@ -189,23 +190,50 @@ const inlineBoundaryRepair = (
     atStart[common]?.at === atEnd[common]?.at
   )
     common++
-  const before = atStart
-    .slice(common)
+  const startOnly = atStart.slice(common)
+  const endOnly = atEnd.slice(common)
+
+  // If the selection begins at the first character inside a formatting wrapper,
+  // consume the opening tag too instead of leaving `<span></span>` behind. Walk
+  // inside-out so nested wrappers (`<b><i>text`) collapse cleanly as well.
+  let adjustedStart = rStart
+  let consumedStart = 0
+  for (let i = startOnly.length - 1; i >= 0; i--) {
+    const entry = startOnly[i] as OpenInlineTag
+    if (entry.at + entry.raw.length !== adjustedStart) break
+    adjustedStart = entry.at
+    consumedStart++
+  }
+
+  // Symmetrically consume closing tags immediately after the selection. The
+  // corresponding opening tags are already inside the removed span, so retaining
+  // these closers would require an empty reopened wrapper.
+  let adjustedEnd = rEnd
+  let consumedEnd = 0
+  for (let i = endOnly.length - 1; i >= 0; i--) {
+    const entry = endOnly[i] as OpenInlineTag
+    const close = new RegExp(`^<\\/\\s*${entry.name}\\s*>`, "i").exec(src.slice(adjustedEnd))
+    if (!close) break
+    adjustedEnd += close[0].length
+    consumedEnd++
+  }
+
+  const before = startOnly
+    .slice(0, startOnly.length - consumedStart)
     .reverse()
     .map((entry) => `</${entry.name}>`)
     .join("")
-  const after = atEnd
-    .slice(common)
+  const after = endOnly
+    .slice(0, endOnly.length - consumedEnd)
     .map((entry) => entry.raw)
     .join("")
-  return { before, after }
+  return { rStart: adjustedStart, rEnd: adjustedEnd, before, after }
 }
 
 /**
- * Map a [start, end) span of the projection back to raw-source offsets. Refuses a
- * span that includes a `gap` (it would cross a tag — a structural change, not a text
- * edit) or that starts/ends INSIDE an entity's decoded characters (you can't splice
- * half of a decoded character).
+ * Map a [start, end) span of the projection back to raw-source offsets. Inline gaps
+ * are repaired; structural gaps are refused. Starting or ending INSIDE an entity's
+ * decoded characters is also refused (you can't splice half a decoded character).
  */
 const spanToRaw = (
   src: string,
@@ -237,7 +265,7 @@ const spanToRaw = (
   const rStart = first.kind === "entity" ? first.rStart : first.rStart + (start - first.tStart)
   const rEnd = lastSeg.kind === "entity" ? lastSeg.rEnd : lastSeg.rStart + (end - lastSeg.tStart)
   const repair = crossesMarkup ? inlineBoundaryRepair(src, rStart, rEnd, label) : null
-  return { rStart, rEnd, before: repair?.before ?? "", after: repair?.after ?? "" }
+  return repair ?? { rStart, rEnd, before: "", after: "" }
 }
 
 /**
