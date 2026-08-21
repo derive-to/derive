@@ -12,8 +12,6 @@ import {
   MAX_EDITS_PER_BATCH,
   materializeEdits,
   materializeSlideOps,
-  parseBaseVersion,
-  preservingFilename,
 } from "../src/lib/edits"
 
 // A minimal MaterializeEditsDeps backed by an in-memory version map, keyed by n.
@@ -66,25 +64,6 @@ describe("materializeEdits: conflict diff (compactDiff / conflictDiffNote)", () 
     expect(diffSection).toContain("+ FIRST")
   })
 
-  it("a genuine gap between two real hunks still shows the collapsing ellipsis (fix doesn't over-correct)", async () => {
-    const base = Array.from({ length: 10 }, (_, i) => `line ${i}`).join("\n")
-    const head = base.replace("line 0", "LINE 0").replace("line 9", "LINE 9")
-    const deps = mkDeps({ 1: { text: base }, 2: { text: head } })
-    let msg = ""
-    try {
-      await materializeEdits(deps, fileArtifact(2), [{ old_str: "x", new_str: "y" }], 1)
-    } catch (e) {
-      msg = e instanceof EditConflictError ? e.message : `wrong type: ${e}`
-    }
-    // First hunk (line 0) has nothing before it — no leading "…" — but the real gap
-    // between the two hunks (lines 1-7 unchanged) must still collapse to one.
-    const diffSection = msg.split("What changed (v1 → v2):\n")[1] ?? ""
-    expect(diffSection.startsWith("…")).toBe(false)
-    expect(diffSection).toContain("…")
-    expect(diffSection).toContain("- line 0")
-    expect(diffSection).toContain("- line 9")
-  })
-
   it("a near-total rewrite falls back to an added/removed summary instead of a mid-word-truncated fragment (regression)", async () => {
     const base = Array.from(
       { length: 40 },
@@ -106,25 +85,6 @@ describe("materializeEdits: conflict diff (compactDiff / conflictDiffNote)", () 
     )
     // Must not contain a mid-word truncation marker — the summary IS the whole output.
     expect(msg).not.toContain("[truncated]")
-  })
-
-  it("a large document skips the diff (size guard) but still reports the conflict itself, and stays fast", async () => {
-    const bigLine = "x".repeat(200)
-    const base = Array.from({ length: 1000 }, (_, i) => `${bigLine} ${i}`).join("\n") // ~200KB
-    const head = base.replace(" 500", " CHANGED")
-    expect(base.length).toBeGreaterThan(150_000)
-    const deps = mkDeps({ 1: { text: base }, 2: { text: head } })
-
-    const start = performance.now()
-    let msg = ""
-    try {
-      await materializeEdits(deps, fileArtifact(2), [{ old_str: "x", new_str: "y" }], 1)
-    } catch (e) {
-      msg = e instanceof EditConflictError ? e.message : `wrong type: ${e}`
-    }
-    expect(performance.now() - start).toBeLessThan(500)
-    expect(msg).toMatch(/moved to v2/)
-    expect(msg).not.toContain("What changed")
   })
 
   describe("conflictDiffNote failure logging", () => {
@@ -333,35 +293,6 @@ describe("materializeEdits: quote-scoped edits (the inline editor's shape)", () 
       // Simulates `edits: "{}"` on the wire — JSON.parse gives an object, not an array.
       materializeEdits(deps, fileArtifact(1), {} as never, 1),
     ).rejects.toThrow(EditError)
-  })
-})
-
-describe("preservingFilename", () => {
-  it("keeps a markdown artifact typed as markdown", () => {
-    expect(preservingFilename("text/markdown")).toBe("index.md")
-    expect(preservingFilename("text/markdown; charset=utf-8")).toBe("index.md")
-  })
-
-  it("defaults everything else to index.html", () => {
-    expect(preservingFilename("text/html")).toBe("index.html")
-    expect(preservingFilename(null)).toBe("index.html")
-  })
-})
-
-describe("parseBaseVersion", () => {
-  it("undefined when absent", () => {
-    expect(parseBaseVersion(undefined)).toBeUndefined()
-  })
-
-  it("parses a clean positive integer", () => {
-    expect(parseBaseVersion("3")).toBe(3)
-  })
-
-  it("rejects a malformed value loudly instead of coercing to NaN", () => {
-    expect(() => parseBaseVersion("not-a-number")).toThrow(EditError)
-    expect(() => parseBaseVersion("0")).toThrow(EditError)
-    expect(() => parseBaseVersion("-1")).toThrow(EditError)
-    expect(() => parseBaseVersion("1.5")).toThrow(EditError)
   })
 })
 

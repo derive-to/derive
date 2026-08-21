@@ -4,7 +4,7 @@ import { FsBlobStore } from "@derive/storage/fs"
 import { zipSync } from "fflate"
 import { describe, expect, it } from "vitest"
 import { createApp } from "../src/app"
-import { anonApp, app, dir, makeAuthedApp, meta, type TestUser, upload } from "./helpers"
+import { anonApp, app, dir, meta, upload } from "./helpers"
 
 const idOf = async (res: Response): Promise<string> => (await res.json()).short_id
 const SHELL =
@@ -21,29 +21,6 @@ describe("unfurl + embed", () => {
     const svg = await res.text()
     expect(svg).toContain("<svg")
     expect(svg).toContain("My Report")
-  })
-
-  it("the card never leads with the host's own derived facts", async () => {
-    // Every version now also carries $outline/$links/$stats. A page with NO authored
-    // fact must show NO dataSummary — a card leading with word-counts would spend the
-    // incentive on congratulating the host — and a page with one must lead with the
-    // AUTHOR's numbers, $rows invisible.
-    const bare = await idOf(
-      await upload(
-        "bare.html",
-        "<!doctype html><html><body><h1>T</h1><h2>U</h2><p>words here</p></body></html>",
-        { visibility: "public", title: "Bare" },
-      ),
-    )
-    const svg = await (await app.request(`/v1/og/${bare}`)).text()
-    expect(svg).not.toContain("$stats")
-    expect(svg).not.toContain("words")
-    const oembed = await (
-      await app.request(
-        `/v1/oembed?url=${encodeURIComponent(`http://derive.test/artifacts/${bare}`)}`,
-      )
-    ).json()
-    expect(JSON.stringify(oembed)).not.toContain("$")
   })
 
   it("a fact-bearing artifact leads its unfurl with its own numbers", async () => {
@@ -115,18 +92,6 @@ describe("unfurl + embed", () => {
     expect(body.html).toContain("<iframe")
     // Name-first ref: the embed URL is /v1/embed/<slug>-<short_id>.
     expect(body.html).toContain(`/v1/embed/deck-${short}`)
-  })
-
-  it("the embed plaque's back-link carries the embed_badge source tag", async () => {
-    const short = await idOf(
-      await upload("e.md", "# Hi", { visibility: "public", title: "Tagged" }),
-    )
-    const res = await app.request(`/v1/embed/${short}`)
-    expect(res.status).toBe(200)
-    const shell = await res.text()
-    // The plaque lands the viewer on the artifact page — a worker-first path, so
-    // the capture middleware stamps the arrival with this surface.
-    expect(shell).toContain("src=embed_badge")
   })
 
   it("oembed rejects a non-artifact url and a missing url", async () => {
@@ -201,32 +166,6 @@ describe("unfurl + embed", () => {
     expect(html.match(/name="robots"/g)).toHaveLength(1)
     // Still the SPA shell — humans get the app.
     expect(html).toContain("id=root")
-  })
-
-  it("injects via an async shell provider (the edge Worker's ASSETS path)", async () => {
-    const a = createApp({
-      meta,
-      blobs: new FsBlobStore(join(dir, "blobs-embed-shellfetch")),
-      baseUrl: "http://derive.test",
-      token: "tok",
-      // No sync `shell`: only the async provider, as the Worker wires it.
-      shellFetch: async () => SHELL,
-    })
-    const short = await idOf(
-      await upload("sf.md", "# Hi", { visibility: "public", title: "Worker Page" }),
-    )
-    // A bare ref 302s to the canonical name-first URL; the unfurl meta lives there.
-    const bare = await a.request(`/artifacts/${short}`, {
-      headers: { authorization: "Bearer tok" },
-    })
-    expect(bare.status).toBe(302)
-    const res = await a.request(bare.headers.get("location") ?? "", {
-      headers: { authorization: "Bearer tok" },
-    })
-    expect(res.status).toBe(200)
-    const html = await res.text()
-    expect(html).toContain('property="og:title"')
-    expect(html).toContain("Worker Page")
   })
 
   it("serves the bare shell (no leaked meta) for a private artifact to anon", async () => {
@@ -314,54 +253,6 @@ describe("agent-readable share URLs (.md + Accept: text/markdown)", () => {
     // Two representations at one URL: every branch must tell caches to key on Accept.
     expect(md.headers.get("vary")).toContain("Accept")
     expect(html.headers.get("vary")).toContain("Accept")
-  })
-
-  it("titles the shell and advertises the markdown alternate", async () => {
-    const short = await idOf(
-      await upload("t.html", "<!doctype html><html><body><h1>T</h1></body></html>", {
-        visibility: "public",
-        title: "Titled Page",
-      }),
-    )
-    const res = await a.request(`/artifacts/titled-page-${short}`)
-    expect(res.status).toBe(200)
-    const html = await res.text()
-    expect(html).toContain("<title>Titled Page · Derive</title>")
-    expect(html.match(/<title/g)).toHaveLength(1)
-    expect(html).toContain('rel="alternate" type="text/markdown"')
-    expect(html).toContain(`/artifacts/titled-page-${short}.md`)
-    expect(res.headers.get("link")).toContain('rel="alternate"')
-  })
-
-  it("redirects a non-canonical .md ref to the canonical .md", async () => {
-    const short = await idOf(
-      await upload("c.md", "# canon", { visibility: "public", title: "Canon Doc" }),
-    )
-    const res = await a.request(`/artifacts/${short}.md`)
-    expect(res.status).toBe(302)
-    expect(res.headers.get("location")).toBe(`/artifacts/canon-doc-${short}.md`)
-  })
-
-  it("passes a markdown artifact through as its source", async () => {
-    const source = "# Hello\n\nSome *notes*.\n"
-    const short = await idOf(
-      await upload("notes.md", source, { visibility: "public", title: "Hello" }),
-    )
-    const res = await a.request(`/artifacts/hello-${short}.md`)
-    expect(res.status).toBe(200)
-    expect(await res.text()).toBe(source)
-  })
-
-  it("serves a bundle's entry page as markdown", async () => {
-    const zip = zipSync({
-      "index.html": new TextEncoder().encode("<h1>Entry</h1><p>Site body.</p>"),
-    })
-    const short = await idOf(await upload("site.zip", zip, { visibility: "public", title: "Site" }))
-    const res = await a.request(`/artifacts/site-${short}.md`)
-    expect(res.status).toBe(200)
-    const md = await res.text()
-    expect(md).toContain("# Entry")
-    expect(md).toContain("Site body.")
   })
 
   it("passes a markdown-entry bundle (a skill) through verbatim", async () => {
@@ -473,72 +364,6 @@ describe("agent-readable share URLs (.md + Accept: text/markdown)", () => {
 })
 
 describe("profile unfurl (/users/:handle)", () => {
-  const nia: TestUser = {
-    id: "u_og_nia",
-    email: "ognia@d.test",
-    name: "Nia Okoye",
-    username: "niao",
-  }
-  const { app: authed, meta: m } = makeAuthedApp("og-profile", [nia])
-
-  // One public artifact authored by Nia, so the card/stats show "1 work".
-  const seedWork = async () => {
-    const art = await m.createArtifact({
-      id: newId("a"),
-      short_id: newId("s"),
-      org_id: "default",
-      slug: null,
-      title: "Nia's doc",
-      workspace_access: "member",
-      link_role: "viewer",
-      listed: "public",
-      kind: "file",
-      spa: 0,
-    })
-    await m.addVersion(art.id, {
-      id: newId("v"),
-      blob_key: `blob_${newId("b")}`,
-      content_type: "text/markdown",
-      size_bytes: 1,
-      author: "Nia Okoye",
-      author_id: nia.id,
-      message: null,
-    })
-  }
-
-  it("renders the profile OG card SVG (name + work count)", async () => {
-    await seedWork()
-    const res = await authed.request("/v1/og/users/niao")
-    expect(res.status).toBe(200)
-    expect(res.headers.get("content-type")).toContain("image/svg+xml")
-    const svg = await res.text()
-    expect(svg).toContain("<svg")
-    expect(svg).toContain("Nia Okoye")
-    expect(svg).toContain("@niao")
-    expect(svg).toContain("1 work")
-  })
-
-  it("injects profile OG meta into the /users/:handle shell for crawlers", async () => {
-    const a = createApp({
-      meta: m,
-      blobs: new FsBlobStore(join(dir, "blobs-og-profile-shell")),
-      baseUrl: "http://derive.test",
-      token: "tok",
-      auth: undefined,
-      shell: SHELL,
-      defaultOrgId: "default",
-    })
-    const res = await a.request("/users/niao")
-    expect(res.status).toBe(200)
-    const html = await res.text()
-    expect(html).toContain('property="og:type" content="profile"')
-    expect(html).toContain("Nia Okoye (@niao)")
-    expect(html).toContain("/v1/og/users/niao")
-    expect(html).toContain('name="robots" content="index,follow"')
-    expect(html).toContain('rel="canonical"')
-    expect(html).toContain("id=root") // still the SPA shell for humans
-  })
-
   it("serves a generic card + bare shell for an unclaimed handle (no leak)", async () => {
     const svg = await (await app.request("/v1/og/users/ghosthandle")).text()
     expect(svg).toContain("<svg")

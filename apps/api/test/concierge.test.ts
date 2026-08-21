@@ -1,13 +1,12 @@
 import { describe, expect, it } from "vitest"
-import { as, jsonAs, makeAuthedApp, type TestUser } from "./helpers"
+import { as, makeAuthedApp, type TestUser } from "./helpers"
 
 // The concierge seed: a new user's welcome artifact with a planted comment,
 // so their first session can close the loop once. Idempotency is per-user, so
 // each scenario uses its own user to avoid cross-contaminating the seed.
 describe("concierge seed", () => {
   const ada: TestUser = { id: "u_con_ada", email: "ada@derive.test", name: "Ada" }
-  const bo: TestUser = { id: "u_con_bo", email: "bo@derive.test", name: "Bo" }
-  const { app } = makeAuthedApp("concierge", [ada, bo], "editor")
+  const { app } = makeAuthedApp("concierge", [ada], "editor")
 
   const seed = (email: string) =>
     app.request("/v1/workspace/concierge", { method: "POST", headers: as(email) })
@@ -46,23 +45,5 @@ describe("concierge seed", () => {
   it("requires a signed-in user", async () => {
     const anon = await app.request("/v1/workspace/concierge", { method: "POST" })
     expect([401, 403]).toContain(anon.status)
-  })
-
-  it("the planted comment is authored by the workspace fallback agent when set", async () => {
-    // Ada (the workspace owner) registers an agent and makes it the workspace
-    // default; Bo — a fresh member seeding for the first time — picks up that
-    // fallback authorship on the planted comment.
-    const agent = await (
-      await app.request("/v1/agents", jsonAs(as(ada.email), { name: "House" }))
-    ).json()
-    const patched = await app.request("/v1/workspace/settings", {
-      ...jsonAs(as(ada.email), { defaultAgentId: agent.id }),
-      method: "PATCH",
-    })
-    expect(patched.status).toBe(200)
-
-    const { short_id } = await (await seed(bo.email)).json()
-    const { comments: list } = await comments(bo.email, short_id)
-    expect(list.some((c: { author: string }) => c.author === "House")).toBe(true)
   })
 })

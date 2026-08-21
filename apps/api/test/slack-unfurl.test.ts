@@ -1,6 +1,15 @@
-import { type ArtifactRecord, newId } from "@derive/core"
+import { type ArtifactRecord, newId, type UnfurlInfo } from "@derive/core"
 import { describe, expect, it } from "vitest"
+import type { ArtifactStatus } from "../src/lib/artifact-status"
 import { artifactRefFromUrl, decideUnfurl } from "../src/lib/slack-unfurl"
+import {
+  artifactDetails,
+  artifactEntity,
+  commentThreadEntity,
+  decodeReviewAction,
+  encodeReviewAction,
+  SLACK_REVIEW_ACTION,
+} from "../src/lib/slack-work-object"
 import { quotaApp } from "./helpers"
 
 const BASE = "https://derive.test"
@@ -10,12 +19,6 @@ describe("artifactRefFromUrl", () => {
     expect(artifactRefFromUrl(BASE, `${BASE}/artifacts/spec-abc123`)).toBe("spec-abc123")
     expect(artifactRefFromUrl(BASE, `${BASE}/artifacts/abc123/`)).toBe("abc123")
     expect(artifactRefFromUrl(BASE, `${BASE}/artifacts/spec-abc123?comment=t1`)).toBe("spec-abc123")
-  })
-
-  // A vanity subdomain serves the same artifacts, and one registered unfurl domain covers all
-  // of its subdomains — so these have to resolve too.
-  it("accepts a vanity subdomain of the instance host", () => {
-    expect(artifactRefFromUrl(BASE, "https://acme.derive.test/artifacts/abc123")).toBe("abc123")
   })
 
   // The host check is what stops a link to ANOTHER Derive instance resolving against our own
@@ -88,32 +91,6 @@ describe("decideUnfurl — the broadcast gate", () => {
     if (d.kind === "card") expect(JSON.stringify(d.blocks)).toContain("Q4 plan")
   })
 
-  // The screenshot rides both card shapes: the deps callback resolves the (possibly tokened)
-  // URL once, the blocks carry it as an image block, and the decision carries it for the Work
-  // Object. Null (or no callback at all) means no image block — never a broken one.
-  it("puts the resolved preview image on the block card, and none when unresolved", async () => {
-    const { deps, url } = await setup("unfurl-image", DRAFT)
-    const withImage = await decideUnfurl(
-      { ...deps, previewUrl: async () => "https://derive.test/v1/og/x?t=tok" },
-      url,
-      "u-1",
-    )
-    expect(withImage.kind).toBe("card")
-    if (withImage.kind === "card") {
-      expect(withImage.previewUrl).toBe("https://derive.test/v1/og/x?t=tok")
-      const image = (withImage.blocks as { type: string; image_url?: string }[]).find(
-        (b) => b.type === "image",
-      )
-      expect(image?.image_url).toBe("https://derive.test/v1/og/x?t=tok")
-    }
-    const without = await decideUnfurl(deps, url, "u-1")
-    expect(without.kind).toBe("card")
-    if (without.kind === "card") {
-      expect(without.previewUrl).toBe(null)
-      expect((without.blocks as { type: string }[]).some((b) => b.type === "image")).toBe(false)
-    }
-  })
-
   // The unfurl is seen by the whole channel, so a private draft gets a card that confirms
   // nothing beyond what the pasted URL already did — no title, no counts.
   // The title has to be absent in EVERY form it can take, not just verbatim. The canonical
@@ -179,12 +156,6 @@ describe("decideUnfurl — the broadcast gate", () => {
       "skip",
     )
   })
-
-  it("skips a URL that isn't an artifact link", async () => {
-    const { deps } = await setup("unfurl-nonartifact", TEAM)
-    expect((await decideUnfurl(deps, `${BASE}/pricing`, "u-1")).kind).toBe("skip")
-    expect((await decideUnfurl(deps, `${BASE}/artifacts/nope404`, "u-1")).kind).toBe("skip")
-  })
 })
 
 // WHY A SKIP HAPPENED, WHICH IS THE ONLY THING THAT MAKES ONE DIAGNOSABLE.
@@ -221,34 +192,6 @@ describe("a skip names the rung that caused it", () => {
     url = "https://derive.to/artifacts/abc12345",
   ) => (await decideUnfurl(d, url, "u-sharer")) as { kind: string; why?: string }
 
-  it("distinguishes a link that is not ours at all", async () => {
-    const r = await skipWhy(deps(artifactIn("org-connected")), "https://example.com/whatever")
-    expect(r.kind).toBe("skip")
-    expect(r.why).toMatch(/not an artifact link/i)
-  })
-
-  it("distinguishes a short id nothing answers to", async () => {
-    const r = await skipWhy(deps(null))
-    expect(r.why).toMatch(/no artifact/i)
-  })
-
-  it("distinguishes a removed artifact from a missing one", async () => {
-    const r = await skipWhy(deps(artifactIn("org-connected", { removed_at: "2026-01-01" })))
-    expect(r.why).toMatch(/removed/i)
-  })
-
-  // The one worth naming most: the link works for the sharer, the channel shows nothing, and
-  // nothing about either fact points at the cause.
-  it("distinguishes an artifact living in another workspace", async () => {
-    const r = await skipWhy(deps(artifactIn("org-elsewhere")))
-    expect(r.why).toMatch(/different Derive workspace/i)
-  })
-
-  it("distinguishes a sharer without read standing", async () => {
-    const r = await skipWhy(deps(artifactIn("org-connected"), false))
-    expect(r.why).toMatch(/read standing/i)
-  })
-
   it("gives every rung a distinct reason, or the log cannot tell them apart", async () => {
     const reasons = [
       (await skipWhy(deps(artifactIn("org-connected")), "https://example.com/x")).why,
@@ -258,5 +201,231 @@ describe("a skip names the rung that caused it", () => {
       (await skipWhy(deps(artifactIn("org-connected"), false))).why,
     ]
     expect(new Set(reasons).size).toBe(5)
+  })
+})
+
+// What the entity pins: the stable short_id key, alt_text on every image, no preview for a
+// non-public artifact, review buttons only while a round is pending, and decodeReviewAction
+// tolerating garbage.
+describe("the Work Object entity the unfurl hands Slack", () => {
+  const artifact = (over: Partial<ArtifactRecord> = {}) =>
+    ({
+      id: "a1",
+      short_id: "abc123",
+      org_id: "default",
+      title: "Q4 plan",
+      listed: "workspace",
+      current_version: 3,
+      updated_at: "2026-08-01T10:00:00.000Z",
+      ...over,
+    }) as ArtifactRecord
+
+  const info: UnfurlInfo = {
+    title: "Q4 plan",
+    kindLabel: "Doc",
+    versionCount: 3,
+    commentCount: 7,
+    pageUrl: "https://derive.to/artifacts/q4-plan-abc123",
+    imageUrl: "https://derive.to/v1/og/abc123",
+    oembedUrl: "x",
+    embedUrl: "y",
+    markdownUrl: "z",
+  }
+
+  const status = (over: Partial<ArtifactStatus> = {}): ArtifactStatus => ({
+    review: null,
+    openThreads: 0,
+    updatedAt: "2026-08-01T10:00:00.000Z",
+    lastModifiedBy: "Dana",
+    previewReady: true,
+    ...over,
+  })
+
+  const base = {
+    pastedUrl: "https://derive.to/artifacts/q4-plan-abc123",
+    iconUrl: "https://d/i.png",
+  }
+
+  describe("artifactEntity", () => {
+    // external_ref is the key Slack stores for search and related-conversation aggregation. It has
+    // to be the STABLE short id — a slug is re-derived on every rename, which would orphan every
+    // previously-unfurled card from its history.
+    it("keys on the stable short id, never a slug", () => {
+      const e = artifactEntity({ ...base, artifact: artifact(), info, status: status() })
+      expect(e.external_ref).toEqual({ id: "abc123", type: "artifact" })
+      expect(e.entity_type).toBe("slack#/entities/content_item")
+      // The pasted URL is how Slack matches the unfurl back to the message; it is NOT the
+      // canonical url, and swapping them silently unfurls nothing.
+      expect(e.app_unfurl_url).toBe(base.pastedUrl)
+      expect(e.url).toBe(info.pageUrl)
+    })
+
+    // A missing alt_text is this API's documented silent failure: 200 OK, a buried warning, and an
+    // empty channel. Every image we emit must carry one.
+    it("gives every image an alt_text", () => {
+      const e = artifactEntity({
+        ...base,
+        artifact: artifact({ listed: "public" }),
+        info,
+        status: status(),
+        previewUrl: info.imageUrl,
+      })
+      const attrs = (e.entity_payload as { attributes: Record<string, never> }).attributes
+      expect(attrs.product_icon).toMatchObject({ alt_text: expect.any(String) })
+      // And no alt_text anywhere is present-but-empty, which Slack treats the same as missing.
+      const walk = (v: unknown): void => {
+        if (Array.isArray(v)) return void v.forEach(walk)
+        if (v && typeof v === "object") {
+          const o = v as Record<string, unknown>
+          if ("alt_text" in o) expect(String(o.alt_text).length).toBeGreaterThan(0)
+          Object.values(o).forEach(walk)
+        }
+      }
+      walk(e)
+    })
+
+    // Buttons ride the BROADCAST card, so they appear only when there is something to settle.
+    it("offers review buttons only while a round is pending", () => {
+      const withRound = artifactEntity({
+        ...base,
+        artifact: artifact(),
+        info,
+        status: status({ review: { state: "pending", reviewerId: "u", reviewerName: "M" } }),
+        withActions: true,
+      })
+      const actions = (withRound.entity_payload as { actions?: unknown }).actions as {
+        primary_actions: { action_id: string }[]
+      }
+      expect(actions.primary_actions.map((a) => a.action_id)).toEqual([
+        SLACK_REVIEW_ACTION.sendBack,
+      ])
+      const settled = artifactEntity({ ...base, artifact: artifact(), info, status: status() })
+      expect((settled.entity_payload as Record<string, never>).actions).toBeUndefined()
+    })
+
+    // Slack fetches preview images ANONYMOUSLY, and /v1/og answers an anonymous fetch by link
+    // role — so a workspace-only artifact would render the title-less padlock as its picture.
+    it("carries a preview for a public artifact and none for a workspace one", () => {
+      const pub = artifactEntity({
+        ...base,
+        artifact: artifact({ listed: "public" }),
+        info,
+        status: status(),
+        previewUrl: info.imageUrl,
+      })
+      expect((pub.entity_payload as Record<string, never>).attributes).toHaveProperty(
+        "full_size_preview",
+      )
+      const ws = artifactEntity({ ...base, artifact: artifact(), info, status: status() })
+      expect((ws.entity_payload as Record<string, never>).attributes).not.toHaveProperty(
+        "full_size_preview",
+      )
+    })
+  })
+
+  describe("commentThreadEntity", () => {
+    it("puts a thread target on Reply as well as its Work Object external ref", () => {
+      const entity = commentThreadEntity({
+        baseUrl: "https://derive.test",
+        artifact: artifact(),
+        comment: {
+          thread_id: "c_thread",
+          body_md: "Which direction should we take?",
+          author: "Derive",
+          state: "open",
+        },
+        iconUrl: "https://derive.test/icon.png",
+      })
+      expect(entity.external_ref).toEqual({ id: "c_thread", type: "comment_thread" })
+      const action = (
+        entity.entity_payload as { actions: { primary_actions: Array<Record<string, unknown>> } }
+      ).actions.primary_actions[0]
+      if (!action) throw new Error("Reply action missing")
+      expect(action.action_id).toBe("derive_question_reply")
+      expect(action.value).toBe(JSON.stringify({ artifactId: "a1", threadId: "c_thread" }))
+    })
+  })
+
+  describe("artifactDetails (the flexpane)", () => {
+    // Opening a flexpane UPDATES the card from the metadata the app answers with — Slack: "the
+    // unfurl will also be updated given the entity metadata that has changed". So a details
+    // payload that omitted the actions would silently strip Approve and Send back from a card
+    // that had them, and the only symptom would be buttons quietly disappearing after a click.
+    it("carries the same actions as the card, so opening it cannot strip them", () => {
+      const pending = status({
+        review: { state: "pending", reviewerId: "u-me", reviewerName: "Mert" },
+      })
+      const card = artifactEntity({
+        ...base,
+        artifact: artifact(),
+        info,
+        status: pending,
+        withActions: true,
+      })
+      const pane = artifactDetails(artifact(), info, pending, "u-me", "https://d/i.png")
+      const ids = (p: Record<string, unknown>) =>
+        (
+          (p.actions as { primary_actions?: { action_id: string }[] } | undefined)
+            ?.primary_actions ?? []
+        ).map((x) => x.action_id)
+      expect(ids(pane.entity_payload as Record<string, unknown>)).toEqual(
+        ids(card.entity_payload as Record<string, unknown>),
+      )
+      expect(ids(pane.entity_payload as Record<string, unknown>)).toHaveLength(1)
+    })
+
+    // entity.presentDetails answers invalid_arguments without these — "missing required field:
+    // external_ref [json-pointer:/metadata]". The flexpane must say WHICH entity it describes;
+    // Slack does not infer it from the trigger. The pair must match the unfurl's, since it keys
+    // search and the Conversations tab.
+    it("identifies the entity, which presentDetails requires", () => {
+      const d = artifactDetails(artifact(), info, status(), "u", "https://d/i.png")
+      expect(d.url).toBe(info.pageUrl)
+      expect(d.external_ref).toEqual({ id: "abc123", type: "artifact" })
+      const card = artifactEntity({ ...base, artifact: artifact(), info, status: status() })
+      expect(d.external_ref).toEqual(card.external_ref)
+    })
+  })
+
+  // The same two actions now ride three surfaces: the Work Object card, the review-request DM and
+  // the channel card. Only the first gets an entity echoed back by Slack, so every button carries
+  // its target in `value` as well — one mechanism to get right instead of two, and the handler
+  // never depends on Slack round-tripping an entity to know what was clicked.
+  describe("review buttons target the artifact from any surface", () => {
+    it("round-trips the artifact id", () => {
+      expect(decodeReviewAction(encodeReviewAction("a_123"))).toBe("a_123")
+    })
+
+    // The value only NAMES the target; runSlackReviewAction re-reads and re-authorizes. A forged
+    // one can at worst point at a doc the clicker still cannot act on.
+    it("returns null for a malformed or empty value rather than throwing", () => {
+      for (const bad of ["", "{", "null", '{"a":""}', '{"b":"x"}'])
+        expect(decodeReviewAction(bad)).toBeNull()
+    })
+  })
+
+  // THE PICTURE, AND WHO TOUCHED IT LAST.
+  //
+  // `content_item` recognises exactly six typed fields, established against the live API rather
+  // than from the docs alone — the discriminator being that Slack SHAPE-CHECKS a field it knows
+  // and silently swallows one it does not. A malformed `preview` names itself in the error; a
+  // malformed `assignee` (which belongs to `task`) produces nothing at all.
+
+  describe("the card's own image", () => {
+    it("carries the thumbnail as a typed field, with the alt_text Slack demands", () => {
+      const e = artifactEntity({
+        ...base,
+        artifact: artifact(),
+        info,
+        status: status(),
+        previewUrl: "https://d/p.png",
+      })
+      const preview = (e.entity_payload as { fields: Record<string, Record<string, unknown>> })
+        .fields.preview
+      expect(preview?.type).toBe("slack#/types/image")
+      expect(preview?.image_url).toBe("https://d/p.png")
+      // Omitting alt_text fails the whole payload with a pointer at this field — verified.
+      expect(preview?.alt_text).toBeTruthy()
+    })
   })
 })

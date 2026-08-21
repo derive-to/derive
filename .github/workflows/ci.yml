@@ -36,7 +36,7 @@ concurrency:
 # anything slower — it put a 112s proof behind a 109s proof that has nothing to
 # do with it. Step p50s over the latest 25 successful PR runs:
 #
-#   self-host image 112s   postgres 109s   coverage 98s   guardrails 18s
+#   self-host image 112s   postgres 109s   tests 98s   guardrails 18s
 #   web build 17s   typecheck 11s   setup 7s   d1 6s   osv 4s   workerd 3s
 #
 # The image build and the Postgres suite share no input and no output. Nothing
@@ -49,7 +49,7 @@ concurrency:
 # ~30s deserves to overlap rather than queue.
 #
 #   check     lint + typecheck + web build + supply chain      ~63s
-#   coverage  the whole suite on embedded SQLite + ratchet     ~109s
+#   tests     the whole suite on embedded SQLite                ~109s
 #   db        postgres + D1 + workerd                          ~129s
 #   images    self-host image, runner image                    ~123s
 #
@@ -112,6 +112,15 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      # The docs site is an Astro build over sources scattered across the repo (see
+      # apps/docs/docs-manifest.mjs). It used to run inside `pnpm run ci`, which put a
+      # full site build in every commit hook. It runs here instead, only when one of
+      # its sources changed — the same filter `deploy-docs` keys on, so the build can
+      # never be skipped for a change the deploy would ship.
+      - name: Build docs site
+        if: steps.filter.outputs.docs == 'true'
+        run: pnpm lint:docs-site
+
       # Bundle budget: build the web client and fail if the gzipped JS blows past
       # the budget (see scripts/check-bundle.mjs), so phosphor / radix / cmdk
       # weight can't regress silently.
@@ -155,18 +164,17 @@ jobs:
           ./gitleaks detect --no-git --source . --redact --no-banner
 
 
-  # COVERAGE — the whole suite on embedded SQLite with the ratchet. Split off
-  # `check` because at 98s it was two thirds of that lane and shares nothing with
-  # the static analysis around it. Thresholds live in each vitest.config.ts, and
-  # `deploy` needs `gate`, so a coverage regression still blocks the ship.
-  coverage:
+  # TESTS — the whole suite on embedded SQLite. Split off `check` because at ~100s
+  # it was two thirds of that lane and shares nothing with the static analysis
+  # around it. No coverage thresholds; see apps/api/vitest.config.ts.
+  tests:
     runs-on: ubicloud-standard-8
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup
 
-      - name: Test + coverage gate
-        run: pnpm test:coverage
+      - name: Test
+        run: pnpm test
 
   # RUNTIMES — everything that needs a real engine the default Node lane cannot
   # host.
@@ -273,7 +281,7 @@ jobs:
   # rule, report success.
   gate:
     if: always()
-    needs: [check, coverage, db, images]
+    needs: [check, tests, db, images]
     runs-on: ubuntu-latest
     steps:
       # `contains(needs.*.result, ...)` is GitHub's own reduction over the needs
@@ -287,12 +295,12 @@ jobs:
       - name: Fail if any lane did not pass
         if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
         run: |
-          echo "::error::a required lane did not pass — check=${{ needs.check.result }} coverage=${{ needs.coverage.result }} db=${{ needs.db.result }} images=${{ needs.images.result }}"
+          echo "::error::a required lane did not pass — check=${{ needs.check.result }} tests=${{ needs.tests.result }} db=${{ needs.db.result }} images=${{ needs.images.result }}"
           exit 1
 
       - name: Summary
         run: |
-          echo "check=${{ needs.check.result }} coverage=${{ needs.coverage.result }} db=${{ needs.db.result }} images=${{ needs.images.result }}"
+          echo "check=${{ needs.check.result }} tests=${{ needs.tests.result }} db=${{ needs.db.result }} images=${{ needs.images.result }}"
 
   # CD: ship main to the hosted tier (Workers + Hyperdrive/Neon, derive.to) once
   # both lanes pass. Schemas (D1 + Postgres) land BEFORE the worker flips, so a

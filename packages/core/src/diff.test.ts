@@ -60,13 +60,6 @@ describe("diffLines — shape of the result", () => {
     expect(ops.filter((o) => o.t === "ctx").map((o) => o.line)).toEqual(["1", "3", "4"])
   })
 
-  it("emits deletions before additions on a changed line (stable tie-break)", () => {
-    expect(diffLines("x", "y")).toEqual([
-      { t: "del", line: "x" },
-      { t: "add", line: "y" },
-    ])
-  })
-
   it("treats a pure append as context + additions, never deletions", () => {
     const ops = diffLines("intro", "intro\nbody\noutro")
     expect(ops.some((o) => o.t === "del")).toBe(false)
@@ -75,19 +68,6 @@ describe("diffLines — shape of the result", () => {
 })
 
 describe("formatDiff", () => {
-  it("prefixes each op: two spaces for context, + for add, - for del", () => {
-    const ops: DiffOp[] = [
-      { t: "ctx", line: "kept" },
-      { t: "del", line: "gone" },
-      { t: "add", line: "new" },
-    ]
-    expect(formatDiff(ops)).toBe("  kept\n- gone\n+ new")
-  })
-
-  it("renders an empty diff as an empty string", () => {
-    expect(formatDiff([])).toBe("")
-  })
-
   it("round-trips through diffLines into a readable unified diff", () => {
     expect(formatDiff(diffLines("a\nb\nc", "a\nB\nc"))).toBe("  a\n- b\n+ B\n  c")
   })

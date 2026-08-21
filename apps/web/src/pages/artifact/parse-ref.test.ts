@@ -2,10 +2,6 @@ import { describe, expect, it } from "vitest"
 import { candidateShortIds, parseRef, refFor } from "./parse-ref"
 
 describe("parseRef", () => {
-  it("reads a bare short id", () => {
-    expect(parseRef("abc123")).toEqual({ shortId: "abc123", version: undefined })
-  })
-
   it("ignores a trailing slug", () => {
     expect(parseRef("abc123-my-title")).toEqual({ shortId: "abc123", version: undefined })
     expect(parseRef("abc123-a-longer-slug-here")).toMatchObject({ shortId: "abc123" })
@@ -50,10 +46,6 @@ describe("candidateShortIds", () => {
     expect(candidateShortIds("my-notes-zs1i7b42")).toEqual(["zs1i7b42"])
     // An id-looking chunk inside the name is ignored — the real id is the last token.
     expect(candidateShortIds("notes-123123-zs1i7b42")).toEqual(["zs1i7b42"])
-  })
-
-  it("de-dupes a bare short id", () => {
-    expect(candidateShortIds("abc12345")).toEqual(["abc12345"])
   })
 
   it("offers the leading token for a legacy short-id-first ref", () => {

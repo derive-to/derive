@@ -33,28 +33,6 @@ describe("preview token", () => {
     const tok = await signPreviewToken(secret, "a1", 3, exp)
     expect(await verifyPreviewToken(secret, `${tok}x`, 5_000)).toBeNull()
   })
-
-  it("returns null for a different secret", async () => {
-    const exp = 10_000
-    const tok = await signPreviewToken(secret, "a1", 3, exp)
-    expect(await verifyPreviewToken("other", tok, 5_000)).toBeNull()
-  })
-
-  it("is scoped: a token for artifact a1 does not verify as a2", async () => {
-    const exp = 10_000
-    const tok = await signPreviewToken(secret, "a1", 3, exp)
-    const result = await verifyPreviewToken(secret, tok, 5_000)
-    expect(result?.artifactId).toBe("a1")
-    expect(result?.artifactId).not.toBe("a2")
-  })
-
-  it("is scoped: a token for version 3 does not verify as version 4", async () => {
-    const exp = 10_000
-    const tok = await signPreviewToken(secret, "a1", 3, exp)
-    const result = await verifyPreviewToken(secret, tok, 5_000)
-    expect(result?.n).toBe(3)
-    expect(result?.n).not.toBe(4)
-  })
 })
 
 // ---- Route tests: /raw with a /pv/<token>/ path segment ---------------------

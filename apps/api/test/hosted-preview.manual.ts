@@ -1,4 +1,4 @@
-// THE HOSTED PATH AGAINST A DEPLOYED DERIVE — the deployed twin of hosted-mcp-source.test.ts.
+// THE HOSTED PATH AGAINST A DEPLOYED DERIVE — the deployed twin of the hosted-source case in mcp-source.test.ts.
 //
 // That test proves the loop, the claim, the proxy and a real MCP server all work together in one
 // process. This one runs the SAME substrate against a real deployment over the public internet:

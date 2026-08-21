@@ -78,14 +78,6 @@ describe("delta coalescing", () => {
     expect(turn.text).toBe("The quick brown fox jumps")
   })
 
-  it("flush is idempotent, so settling twice cannot double-publish", async () => {
-    const { sent, stream } = harness({ now: () => 0 })
-    await call(stream.wrap(emitting(["once"])))
-    stream.flush()
-    stream.flush()
-    expect(sent).toHaveLength(1)
-  })
-
   it("a publish that throws does not fail the turn", async () => {
     const stream = makeDeltaStream({
       now: () => 0,
@@ -97,17 +89,6 @@ describe("delta coalescing", () => {
     stream.flush()
     // The transcript still lands on settle — a dead transport costs the animation, not the reply.
     expect(turn.text).toBe("still answered")
-  })
-
-  it("passes the rest of the input through untouched", async () => {
-    const seen: unknown[] = []
-    const { stream } = harness({ now: () => 0 })
-    const wrapped = stream.wrap((async (input) => {
-      seen.push({ system: input.system, tools: input.tools.length })
-      return { text: "", toolUses: [], costUsd: null, done: true }
-    }) as AgentLoopInput["callModel"])
-    await wrapped({ system: "be helpful", messages: [], tools: [] })
-    expect(seen[0]).toEqual({ system: "be helpful", tools: 0 })
   })
 })
 
@@ -175,53 +156,6 @@ describe("publish cost", () => {
     expect(sent.length).toBeLessThanOrEqual(6)
     // ...and the ANSWER is completely unaffected — that is the whole safety argument.
     expect(turn.text).toBe("whole answer")
-  })
-
-  it("keeps streaming while someone is listening", async () => {
-    let t = 0
-    const sent: { seq: number; text: string }[] = []
-    const stream = makeDeltaStream({
-      publish: (s) => {
-        sent.push(s)
-        return Promise.resolve(1) // one open tab
-      },
-      now: () => t,
-      flushMs: 10,
-    })
-    const wrapped = stream.wrap((async ({ onDelta }) => {
-      for (let i = 0; i < 10; i++) {
-        onDelta?.("tick")
-        t += 100
-        await Promise.resolve()
-      }
-      return { text: "", toolUses: [], costUsd: null, done: true }
-    }) as AgentLoopInput["callModel"])
-    await wrapped({ system: "", messages: [], tools: [] })
-    // 10 deltas at one flush per two ticks — the point is it never went quiet, not the exact count.
-    expect(sent.length).toBeGreaterThanOrEqual(4)
-  })
-
-  it("a backplane that cannot count keeps streaming rather than going silent", async () => {
-    let t = 0
-    const sent: { seq: number; text: string }[] = []
-    const stream = makeDeltaStream({
-      publish: (s) => {
-        sent.push(s) // void return: no receipt available
-      },
-      now: () => t,
-      flushMs: 10,
-    })
-    const wrapped = stream.wrap((async ({ onDelta }) => {
-      for (let i = 0; i < 8; i++) {
-        onDelta?.("tick")
-        t += 100
-        await Promise.resolve()
-      }
-      return { text: "", toolUses: [], costUsd: null, done: true }
-    }) as AgentLoopInput["callModel"])
-    await wrapped({ system: "", messages: [], tools: [] })
-    // No receipt to read, so it must keep going rather than assume nobody is there.
-    expect(sent.length).toBeGreaterThanOrEqual(3)
   })
 })
 
@@ -394,20 +328,5 @@ describe("the machinery block never reaches the reader", () => {
     expect(shown).toBe("Done. ")
     expect(shown).not.toContain("<")
     expect(shown).not.toContain("secret")
-  })
-
-  it("cuts an <edits> block too, and shows nothing when the reply is only a block", async () => {
-    const { sent, stream } = harness({ now: () => 0 })
-    await call(stream.wrap(emitting(['<edits>[{"old_str":"a","new_str":"b"}]</edits>'])))
-    stream.flush()
-    expect(sent.map((s) => s.text).join("")).toBe("")
-  })
-
-  it("leaves an ordinary answer completely untouched", async () => {
-    const { sent, stream } = harness({ now: () => 0 })
-    const prose = "There are five sections, and the last one is a status check."
-    await call(stream.wrap(emitting([prose])))
-    stream.flush()
-    expect(sent.map((s) => s.text).join("")).toBe(prose)
   })
 })

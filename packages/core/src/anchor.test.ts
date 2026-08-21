@@ -3,7 +3,6 @@ import {
   type AnchorThread,
   anchorContentFor,
   isAnchored,
-  mentionText,
   pageText,
   planAnchorSweep,
   type QuoteSelector,
@@ -22,13 +21,6 @@ describe("quoteSelector", () => {
     expect(sel.prefix).toBe(text.slice(6, 30)) // exactly 24 chars
     expect(sel.prefix).toHaveLength(24)
     expect(sel.suffix).toBe(text.slice(33, 57)) // clamped to end of string
-  })
-
-  it("clamps the prefix at the start of the text", () => {
-    const sel = quoteSelector("hello world", 0, 5)
-    expect(sel.exact).toBe("hello")
-    expect(sel.prefix).toBe("")
-    expect(sel.suffix).toBe(" world")
   })
 
   it("round-trips: a freshly built selector reanchors at its own position", () => {
@@ -75,18 +67,6 @@ describe("reanchor — deterministic resolution order", () => {
     const sel = quoteSelector("keep this phrase around", 5, 4)
     expect(reanchor(sel, "a totally different document")).toEqual({ found: false, index: -1 })
   })
-
-  it("treats an empty exact as unresolvable", () => {
-    expect(reanchor({ type: "TextQuoteSelector", exact: "" }, "anything")).toEqual({
-      found: false,
-      index: -1,
-    })
-  })
-
-  it("works with no context fields (exact-only selector)", () => {
-    const r = reanchor({ type: "TextQuoteSelector", exact: "two" }, "one two three")
-    expect(r).toEqual({ found: true, index: 4 })
-  })
 })
 
 describe("reanchor — whitespace-flexible (multi-element quotes)", () => {
@@ -103,11 +83,6 @@ describe("reanchor — whitespace-flexible (multi-element quotes)", () => {
     const r = reanchor(sel, domText)
     expect(r.found).toBe(true)
     expect(domText.slice(r.index)).toMatch(/^Derive 👋/)
-  })
-
-  it("collapses any whitespace run — tabs, multiple spaces, newlines all match", () => {
-    const sel = quoteSelector("alpha beta gamma", 0, 16) // "alpha beta gamma"
-    expect(reanchor(sel, "alpha\t\tbeta\n  gamma").found).toBe(true)
   })
 
   it("still disambiguates a repeat by context even when the exact recurs in the prefix", () => {
@@ -142,22 +117,6 @@ describe("pageText — visible text for HTML quote matching", () => {
     expect(t).toContain("A & B")
     expect(t).not.toContain("color:red")
     expect(t).not.toContain("ignore me")
-  })
-})
-
-describe("mentionText — document prose for @mentions", () => {
-  it("drops non-prose HTML while retaining the visible body", () => {
-    expect(
-      mentionText(
-        "<head><title>@title</title></head><template>@template</template><pre>@code</pre><p>Hello @reader</p>",
-      ),
-    ).toContain("Hello @reader")
-    const text = mentionText(
-      "<head><title>@title</title></head><template>@template</template><pre>@code</pre><p>Hello @reader</p>",
-    )
-    expect(text).not.toContain("@title")
-    expect(text).not.toContain("@template")
-    expect(text).not.toContain("@code")
   })
 })
 

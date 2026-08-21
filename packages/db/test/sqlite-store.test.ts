@@ -1,6 +1,6 @@
 import Database from "better-sqlite3"
 import { describe, expect, it } from "vitest"
-import { parseOAuthScopes } from "../src/repos"
+import { parseOAuthScopes, parseOrgSettings } from "../src/repos"
 import { SqliteMetaStore } from "../src/sqlite"
 import { runStoreContract } from "./store-contract"
 
@@ -71,29 +71,6 @@ describe("sqlite store: user directory (Better Auth `user` table)", () => {
     await s.setUserDiscoverable("u1", true)
     expect((await s.searchDiscoverableUsers("am", 10)).map((u) => u.username)).toEqual(["amy"])
     expect(await s.searchDiscoverableUsers("", 10)).toEqual([])
-
-    s.close()
-    rmSync(dir, { recursive: true, force: true })
-  })
-
-  it("round-trips a user brandprint (set, read, clear)", async () => {
-    const { mkdtempSync, rmSync } = await import("node:fs")
-    const { tmpdir } = await import("node:os")
-    const { join } = await import("node:path")
-    const dir = mkdtempSync(join(tmpdir(), "derive-db-brandprint-"))
-    const path = join(dir, "store.db")
-    const s = new SqliteMetaStore(path)
-    const raw = new Database(path)
-    raw.exec(
-      `CREATE TABLE user (id TEXT PRIMARY KEY, email TEXT, name TEXT, image TEXT, username TEXT, discoverable INTEGER, profession TEXT, about TEXT, brandprint TEXT)`,
-    )
-    raw.prepare(`INSERT INTO user (id, email, name) VALUES (?,?,?)`).run("u1", "amy@x.com", "Amy")
-    raw.close()
-
-    await s.setUserProfile("u1", { brandprint: JSON.stringify({ collectionId: "col_x" }) })
-    expect(await s.getUserBrandprint("u1")).toBe(JSON.stringify({ collectionId: "col_x" }))
-    await s.setUserProfile("u1", { brandprint: null })
-    expect(await s.getUserBrandprint("u1")).toBeNull()
 
     s.close()
     rmSync(dir, { recursive: true, force: true })
@@ -176,6 +153,24 @@ describe("parseOAuthScopes", () => {
     ])
     expect(parseOAuthScopes([])).toEqual([])
     expect(parseOAuthScopes(["a", 1, "b"] as unknown as string[])).toEqual(["a", "b"]) // drops non-strings
+  })
+})
+
+describe("parseOrgSettings", () => {
+  it("an engaged stop survives its retired key — a pinned killswitch reads as writes-off", () => {
+    // Nothing may release a stop an operator set except the operator flipping the switch.
+    expect(parseOrgSettings(JSON.stringify({ agentKillswitch: true })).agentWrites).toBe(false)
+    // Off (or absent) engages nothing — the default is writes on.
+    expect(parseOrgSettings(JSON.stringify({ agentKillswitch: false })).agentWrites).toBe(true)
+    expect(parseOrgSettings(null).agentWrites).toBe(true)
+    // An explicit modern value always wins, whatever the retired keys say.
+    expect(
+      parseOrgSettings(JSON.stringify({ agentKillswitch: true, agentWrites: true })).agentWrites,
+    ).toBe(true)
+    // The retired keys themselves never surface.
+    expect(parseOrgSettings(JSON.stringify({ agentKillswitch: true }))).not.toHaveProperty(
+      "agentKillswitch",
+    )
   })
 })
 

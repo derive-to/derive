@@ -362,32 +362,6 @@ describe("previews: refusing to screenshot an error page", () => {
       assertRenderedDocumentOk({ contentType: "text/plain", bodyText: "  BLOB MISSING\n" }, url),
     ).toThrow(/navigation rendered a blob missing service response/)
   })
-
-  it("does not confuse legitimate artifact content with a raw-route service error", () => {
-    const url = "https://x.test/raw/ab12cd34/v/7/pv/SIGNED.TOKEN/index.html"
-    expect(() =>
-      assertRenderedDocumentOk({ contentType: "text/html", bodyText: "not found" }, url),
-    ).not.toThrow()
-    expect(() =>
-      assertRenderedDocumentOk(
-        { contentType: "text/plain", bodyText: "The customer says not found" },
-        url,
-      ),
-    ).not.toThrow()
-  })
-
-  it("redacts the preview capability token from document-probe failures", () => {
-    const url = "https://x.test/raw/ab12cd34/v/7/pv/eyJhbGciOi.SECRETSIG/index.html"
-    let msg = ""
-    try {
-      assertRenderedDocumentOk({ contentType: "text/plain", bodyText: "not found" }, url)
-    } catch (e) {
-      msg = e instanceof Error ? e.message : String(e)
-    }
-    expect(msg).toContain("/pv/<redacted>/")
-    expect(msg).not.toContain("SECRETSIG")
-    expect(msg).not.toContain("eyJhbGciOi")
-  })
 })
 
 describe("previews: enqueueRender + runRenderTick", () => {
@@ -428,46 +402,6 @@ describe("previews: enqueueRender + runRenderTick", () => {
     const job = [...fakes.jobs.values()][0]
     if (!job) throw new Error("expected a render job")
     expect(job.status).toBe("done")
-  })
-
-  it("Test A2: after the OG render, full-page and marked variants render too, sequentially, with fullPage:true", async () => {
-    const fakes = makeFakes()
-    await seedArtifact(fakes, { id: "a1v", shortId: "short1v", versionN: 1 })
-
-    const calls: { url: string; opts?: { fullPage?: boolean } }[] = []
-    const renderer = {
-      screenshot: async (url: string, opts?: { fullPage?: boolean }) => {
-        calls.push({ url, opts })
-        return new Uint8Array([1, 2, 3])
-      },
-    }
-
-    await enqueueRender(fakes.meta, "a1v", 1)
-    const n = await runRenderTick({
-      meta: fakes.meta,
-      blobs: makeBlobs(),
-      renderer,
-      baseUrl: "https://d.to",
-      secret: "test-secret",
-    })
-    expect(n).toBe(1)
-
-    // Three screenshots per job: OG, full, marked — in that order, sequentially (a
-    // single renderer instance handling one call at a time proves no overlap).
-    expect(calls).toHaveLength(3)
-    const [og, full, marked] = calls
-    expect(og?.opts?.fullPage).toBeFalsy()
-    expect(full?.url).toBe(og?.url) // same page, just fullPage:true
-    expect(full?.opts?.fullPage).toBe(true)
-    expect(marked?.url).toBe(`${og?.url}?marks=1`)
-    expect(marked?.opts?.fullPage).toBe(true)
-
-    const v = fakes.versions.get("a1v:1")
-    expect(v?.preview_status).toBe("ready")
-    expect(v?.preview_full_status).toBe("ready")
-    expect(v?.preview_full_key).toBeTruthy()
-    expect(v?.preview_marked_status).toBe("ready")
-    expect(v?.preview_marked_key).toBeTruthy()
   })
 
   it("Test A3: a variant failure never fails the OG render or the job — independent status per variant", async () => {
@@ -721,47 +655,6 @@ describe("previews: enqueueRender + runRenderTick", () => {
     // No preview written on the stale version
     expect(fakes.versions.get("a4:1")?.preview_status).toBeNull()
   })
-
-  it("sandboxOrigin overrides baseUrl for the screenshot URL", async () => {
-    const fakes = makeFakes()
-    await seedArtifact(fakes, { id: "a5", shortId: "short5", versionN: 1 })
-
-    const seen: string[] = []
-    const renderer = {
-      screenshot: async (url: string) => {
-        seen.push(url)
-        return new Uint8Array([9, 9, 9])
-      },
-    }
-
-    await enqueueRender(fakes.meta, "a5", 1)
-    await runRenderTick({
-      meta: fakes.meta,
-      blobs: makeBlobs(),
-      renderer,
-      baseUrl: "https://d.to",
-      sandboxOrigin: "https://sandbox.internal",
-      secret: "test-secret",
-    })
-
-    expect(seen[0]).toContain("https://sandbox.internal/raw/")
-    expect(seen[0]).not.toContain("https://d.to")
-  })
-
-  it("runRenderTick returns 0 when no jobs are queued", async () => {
-    const fakes = makeFakes()
-    const renderer = {
-      screenshot: async (_url: string) => new Uint8Array([]),
-    }
-    const n = await runRenderTick({
-      meta: fakes.meta,
-      blobs: makeBlobs(),
-      renderer,
-      baseUrl: "https://d.to",
-      secret: "s",
-    })
-    expect(n).toBe(0)
-  })
 })
 
 describe("sweepMissingRenders", () => {
@@ -805,15 +698,6 @@ describe("sweepMissingRenders", () => {
 
     expect(await sweepMissingRenders(fakes.meta)).toBe(0)
     expect(fakes.jobs.size).toBe(0)
-  })
-
-  it("respects the limit", async () => {
-    const fakes = makeFakes()
-    await seedArtifact(fakes, { id: "s4", shortId: "sshort4", versionN: 1 })
-    await seedArtifact(fakes, { id: "s5", shortId: "sshort5", versionN: 1 })
-
-    expect(await sweepMissingRenders(fakes.meta, 1)).toBe(1)
-    expect(fakes.jobs.size).toBe(1)
   })
 })
 

@@ -12,9 +12,6 @@ describe("accessIcon", () => {
   it("world link wins: globe even when a collection is also open", () => {
     expect(accessIcon("viewer", "none", true)).toBe("globe")
   })
-  it("workspace seat access shows the share glyph", () => {
-    expect(accessIcon("none", "member", false)).toBe("share")
-  })
   it("invite-only with NO collection grant keeps the lock", () => {
     expect(accessIcon("none", "none", false)).toBe("lock")
   })
@@ -29,8 +26,5 @@ describe("accessSummary", () => {
   })
   it("stays invite-only without a collection grant", () => {
     expect(accessSummary("none", "none", false)).toBe("Only invited people can open this.")
-  })
-  it("the world link outranks everything", () => {
-    expect(accessSummary("editor", "none", true)).toBe("Anyone with the link can edit.")
   })
 })

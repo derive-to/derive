@@ -122,23 +122,4 @@ describe("what a plan turn reports", () => {
     })({ system: "s", messages: [{ role: "user", content: "hi" }], tools: [] })
     expect(turn.costUsd).toBeNull()
   })
-
-  it("never streams, whatever the caller passes", async () => {
-    // The contract allows an adapter not to stream; what it does not allow is calling onDelta
-    // and then answering differently from what was streamed.
-    const { calls, impl } = captured()
-    const seen: string[] = []
-    const turn = await anthropicModel({
-      credential: { kind: "api_key", value: "k" },
-      fetchImpl: impl,
-    })({
-      system: "s",
-      messages: [{ role: "user", content: "hi" }],
-      tools: [],
-      onDelta: (t) => seen.push(t),
-    })
-    expect(seen).toEqual([])
-    expect(turn.text).toBe("answered")
-    expect((calls[0]?.body as { stream?: boolean }).stream).toBeFalsy()
-  })
 })

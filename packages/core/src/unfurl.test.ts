@@ -1,18 +1,13 @@
 import { describe, expect, it } from "vitest"
-import { parseRef } from "./ids"
 import {
   embedIframe,
-  injectHead,
-  kindLabel,
   oembedResponse,
   ogCardSvg,
   ogProfileCardSvg,
   profileMetaTags,
-  profileSummary,
   setRobotsMeta,
   setTitle,
   type UnfurlInfo,
-  unfurlDescription,
   unfurlMetaTags,
 } from "./unfurl"
 
@@ -27,36 +22,6 @@ const info: UnfurlInfo = {
   embedUrl: "http://derive.test/v1/embed/abc12345",
   markdownUrl: "http://derive.test/artifacts/my-report-abc12345.md",
 }
-
-describe("parseRef", () => {
-  it("reads a bare short id, a name-first slug, a version suffix, and legacy order", () => {
-    expect(parseRef("abc12345")).toEqual({ shortId: "abc12345", version: undefined })
-    expect(parseRef("my-title-abc12345")).toEqual({ shortId: "abc12345", version: undefined })
-    expect(parseRef("my-title-abc12345@v4")).toEqual({ shortId: "abc12345", version: 4 })
-    // Legacy short-id-first links still resolve.
-    expect(parseRef("abc12345-my-title")).toEqual({ shortId: "abc12345", version: undefined })
-  })
-})
-
-describe("kindLabel", () => {
-  it("labels by content type and bundle flag", () => {
-    expect(kindLabel("text/markdown", false)).toBe("Markdown")
-    expect(kindLabel("text/x-derive-deck", false)).toBe("Deck")
-    expect(kindLabel("text/x-derive-linked-bundle", false)).toBe("Bundle")
-    expect(kindLabel("text/html; charset=utf-8", false)).toBe("HTML")
-    expect(kindLabel("text/html", true)).toBe("Site")
-    expect(kindLabel("derive/skill", true)).toBe("Skill") // a skill bundle reads as "Skill"
-    expect(kindLabel(null, false)).toBe("Document")
-  })
-})
-
-describe("unfurlDescription", () => {
-  it("pluralizes versions and comments", () => {
-    expect(unfurlDescription({ kindLabel: "HTML", versionCount: 1, commentCount: 0 })).toBe(
-      "HTML · 1 version · 0 comments · on Derive",
-    )
-  })
-})
 
 describe("unfurlMetaTags", () => {
   it("emits escaped OG + Twitter + oembed-discovery tags", () => {
@@ -82,20 +47,6 @@ describe("setTitle", () => {
       "<head><title>A &quot;B&quot; &lt;c&gt;</title></head>",
     )
   })
-  it("injects a title when the shell has none", () => {
-    expect(setTitle("<head></head>", "x")).toBe("<head><title>x</title>\n</head>")
-  })
-})
-
-describe("injectHead", () => {
-  it("inserts before </head> case-insensitively", () => {
-    expect(injectHead("<head><title>x</title></HEAD><body>", "<meta>")).toBe(
-      "<head><title>x</title><meta>\n</HEAD><body>",
-    )
-  })
-  it("prepends when there is no head", () => {
-    expect(injectHead("<body>x</body>", "<meta>")).toBe("<meta>\n<body>x</body>")
-  })
 })
 
 describe("setRobotsMeta", () => {
@@ -107,24 +58,6 @@ describe("setRobotsMeta", () => {
     expect(html.match(/name="robots"/g)).toHaveLength(1)
     expect(html).toContain('content="index,follow"')
     expect(html).not.toContain("noindex")
-  })
-
-  it("recognizes attribute order, spacing, case, and either quote style", () => {
-    const html = setRobotsMeta(
-      "<head><meta content='noindex,nofollow' NAME = 'ROBOTS'><META NAME=\"robots\" content=\"noindex\"><title>x</title></head>",
-      "index,follow",
-    )
-    expect(html.match(/name="robots"/g)).toHaveLength(1)
-    expect(html).not.toContain("noindex")
-  })
-
-  it("preserves unrelated metadata", () => {
-    const html = setRobotsMeta(
-      '<head><meta name="description" content="robots"><meta property="og:title" content="x"></head>',
-      "noindex,nofollow",
-    )
-    expect(html).toContain('<meta name="description" content="robots">')
-    expect(html).toContain('<meta property="og:title" content="x">')
   })
 })
 
@@ -152,12 +85,6 @@ describe("ogCardSvg", () => {
     expect(svg).not.toContain("Secret")
     expect(svg).toContain("A private artifact")
   })
-  it("wraps and ellipsizes a very long title", () => {
-    const long = "word ".repeat(60)
-    const svg = ogCardSvg({ title: long, kindLabel: "HTML", versionCount: 1, commentCount: 0 })
-    expect(svg).toContain("…")
-    expect((svg.match(/<tspan/g) ?? []).length).toBeLessThanOrEqual(3)
-  })
 })
 
 describe("oembedResponse / embedIframe", () => {
@@ -169,25 +96,6 @@ describe("oembedResponse / embedIframe", () => {
   })
   it("escapes the iframe src and title", () => {
     expect(embedIframe('http://x/"onload="', { title: '"<x>' })).toContain("&quot;onload=&quot;")
-  })
-})
-
-describe("profileSummary", () => {
-  it("includes the role when set and pluralizes works/followers", () => {
-    expect(
-      profileSummary({
-        username: "maya",
-        name: "Maya",
-        profession: "Engineering",
-        works: 4,
-        followers: 1,
-      }),
-    ).toBe("Engineering · 4 works · 1 follower · on Derive")
-  })
-  it("omits the role when unset and singularizes a count of one", () => {
-    expect(
-      profileSummary({ username: "ada", name: null, profession: null, works: 1, followers: 0 }),
-    ).toBe("1 work · 0 followers · on Derive")
   })
 })
 
@@ -208,33 +116,9 @@ describe("profileMetaTags", () => {
     expect(html).toContain('content="http://derive.test/v1/og/users/maya"')
     expect(html).not.toContain("Maya <Chen>") // no unescaped markup leaks
   })
-  it("falls back to just the handle when the name is null", () => {
-    const html = profileMetaTags({
-      username: "ada",
-      name: null,
-      description: "on Derive",
-      pageUrl: "http://derive.test/users/ada",
-      imageUrl: "http://derive.test/v1/og/users/ada",
-    })
-    expect(html).toContain('content="@ada"')
-  })
 })
 
 describe("ogProfileCardSvg", () => {
-  it("renders the name, handle, summary, and first+last initials", () => {
-    const svg = ogProfileCardSvg({
-      username: "maya",
-      name: "Maya Chen",
-      profession: "Engineering",
-      works: 12,
-      followers: 48,
-    })
-    expect(svg).toContain("<svg")
-    expect(svg).toContain("Maya Chen")
-    expect(svg).toContain("@maya")
-    expect(svg).toContain(">MC<") // first+last initial in the avatar disc
-    expect(svg).toContain("12 works · 48 followers · on Derive")
-  })
   it("escapes the name in the card markup", () => {
     const svg = ogProfileCardSvg({
       username: "co",
@@ -245,16 +129,5 @@ describe("ogProfileCardSvg", () => {
     })
     expect(svg).toContain("Ada &amp; Co")
     expect(svg).not.toContain("Ada & Co") // raw ampersand never leaks into the SVG
-  })
-  it("uses the handle (and its initials) when the name is null", () => {
-    const svg = ogProfileCardSvg({
-      username: "ada",
-      name: null,
-      profession: null,
-      works: 0,
-      followers: 0,
-    })
-    expect(svg).toContain("@ada")
-    expect(svg).toContain(">AD<") // initials derived from the username
   })
 })

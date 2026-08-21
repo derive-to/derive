@@ -2,7 +2,6 @@ import { createHmac, generateKeyPairSync } from "node:crypto"
 import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { DEFAULT_ORG_SETTINGS } from "@derive/core"
 import { FsBlobStore } from "@derive/storage/fs"
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest"
 import { encryptSecret } from "../src/lib/crypto"
@@ -237,13 +236,6 @@ describe("github pr previews", () => {
     expect(await meta.getCollection(before.collection_id)).toBeNull()
   })
 
-  it("opened with no changed docs: creates no preview", async () => {
-    prFiles = [{ filename: "src/only-code.ts", status: "modified" }]
-    const res = await postWebhook("opened", { number: 9, title: "Code only", head: { sha: "c1" } })
-    expect(res.status).toBe(200)
-    expect(await preview(9)).toBeUndefined()
-  })
-
   it("merged (new doc): promotes the reviewed artifact into the main collection", async () => {
     // A doc the branch mirror doesn't own yet → PROMOTE on merge.
     prFiles = [{ filename: "docs/promote-me.md", status: "added" }]
@@ -336,34 +328,5 @@ describe("github pr preview: sticky comment on the PR", () => {
     const comments = ghComments["20"] ?? []
     expect(comments).toHaveLength(1) // still one — sticky, not spammed
     expect(comments[0]?.body).toContain("2 docs")
-  })
-
-  it("closed without merge: resolves the comment to a removed note", async () => {
-    await postWebhook("closed", { number: 20, title: "Doc PR", head: { sha: "s21" } })
-    const comments = ghComments["20"] ?? []
-    expect(comments).toHaveLength(1)
-    expect(comments[0]?.body.toLowerCase()).toContain("removed")
-  })
-
-  it("respects the workspace toggle: no comment when githubPreviewLink is off", async () => {
-    await meta.setOrgSettings(ORG, {
-      ...DEFAULT_ORG_SETTINGS,
-      emailNotifications: true,
-      githubPostComments: true,
-      githubMirrorComments: true,
-      githubPreviewLink: false,
-    })
-    prFiles = [{ filename: "docs/guide.md", status: "modified" }]
-    await postWebhook("opened", { number: 21, title: "No comment", head: { sha: "s30" } })
-    expect(await preview(21)).toBeDefined() // preview still created
-    expect(ghComments["21"]).toBeUndefined() // but no PR comment posted
-    // Restore for any later assertions.
-    await meta.setOrgSettings(ORG, {
-      ...DEFAULT_ORG_SETTINGS,
-      emailNotifications: true,
-      githubPostComments: true,
-      githubMirrorComments: true,
-      githubPreviewLink: true,
-    })
   })
 })

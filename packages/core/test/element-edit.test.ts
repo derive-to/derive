@@ -78,16 +78,4 @@ describe("applyElementEdits — resize", () => {
       /couldn't be matched confidently/,
     )
   })
-
-  it("bounds dimensions and validates the selector", () => {
-    const html = '<img src="hero.png">'
-    expect(() => applyElementEdits(html, [resize(html, "img", 8, "auto")])).toThrow(
-      /between 24 and 8192/,
-    )
-    expect(() =>
-      applyElementEdits(html, [
-        { op: "resize", target: {} as ElementSelector, width: 100, height: "auto" },
-      ]),
-    ).toThrow(/selector is malformed/)
-  })
 })

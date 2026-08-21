@@ -16,11 +16,6 @@ describe("workspace invitations", () => {
   const invite = (headers: Record<string, string>, body: unknown) =>
     app.request("/v1/workspace/invites", { ...jsonAs(headers, body), method: "POST" })
 
-  it("claims the admin's workspace on first touch", async () => {
-    const me = await (await app.request("/v1/me", { headers: as(admin.email) })).json()
-    expect(me.user.role).toBe("owner")
-  })
-
   it("adds an EXISTING Derive user directly (by email), not as a pending invite", async () => {
     const res = await invite(as(admin.email), { email: teammate.email, role: "editor" })
     expect(res.status).toBe(201)

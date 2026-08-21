@@ -56,9 +56,16 @@ The main checkout at `~/derive/derive` is shared across concurrent sessions.
   reports `tail`'s status, so a rejected push looks like success. Confirm with
   `git ls-remote --heads origin <branch>` and compare SHAs.
 
-Hooks (`.githooks`, enabled by `pnpm install`): pre-commit runs `pnpm run ci`,
-pre-push runs the full `pnpm verify` (ci → typecheck → **test:coverage**). The
-coverage ratchet only runs in `verify`, so `pnpm test` passing is not the same
-as the push gate passing. Run `pnpm verify` before claiming a change is green.
-Both hooks take minutes; run pushes in the background rather than timing out and
+Hooks (`.githooks`, enabled by `pnpm install`): pre-commit runs `pnpm run ci`
+(~5s), pre-push runs `pnpm verify:affected` (ci → typecheck → tests, scoped to
+the packages the branch changed and their dependents). CI runs the full
+`pnpm verify`; run it before claiming a change is green. The API suite alone is
+about a minute, so run pushes in the background rather than timing out and
 restarting the chain from scratch.
+
+## Tests
+
+Read CONTRIBUTING.md → Tests before adding one. Add cases to the file that
+already owns the feature; never create a new test file per change. A test must
+pin a contract through the surface a user or agent uses, not restate a helper,
+check copy, or move a coverage number.

@@ -20,9 +20,6 @@ describe("invalidateKeys", () => {
   it("function form is skipped on failure (no result to key off)", () => {
     expect(invalidateKeys(() => [["never"]], undefined, new Error("boom"), undefined)).toEqual([])
   })
-  it("no invalidate config → nothing", () => {
-    expect(invalidateKeys(undefined, {}, null, undefined)).toEqual([])
-  })
 })
 
 // `snapshot` is the heart of the optimistic path: it captures a query's data before

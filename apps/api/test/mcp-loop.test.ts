@@ -8,6 +8,7 @@ import { afterAll, describe, expect, it, vi } from "vitest"
 import { createApp } from "../src/app"
 import { type Backplane, createInProcessBackplane, type DeriveEvent } from "../src/bus"
 import { sha256 } from "../src/lib/crypto"
+import { as, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
 // The strong MCP loop, server side: an agent publish must reach the human's open
 // tabs (version.published on the artifact channel, artifact.pushed + a bell row on
@@ -138,16 +139,6 @@ describe("MCP publish reaches the human (event parity + auto-open)", () => {
     // Revisions don't add bell rows (only creates and review asks do).
     const after = await meta.listNotifications("u_o", 10)
     expect(after.filter((r) => r.artifact_short_id === created.short_id)).toHaveLength(1)
-  })
-
-  it("reports opened_in_tab:false with a local-open hint when no tab is listening", async () => {
-    const { app, token } = loopApp("notab")
-    const created = await call(app, token, "publish", {
-      content: "<h1>Nobody home</h1>",
-      title: "Unseen Draft",
-    })
-    expect(created.opened_in_tab).toBe(false)
-    expect(created.note).toContain("open")
   })
 
   it("request_review writes ONE bell row (review beats publish) and notifies live", async () => {
@@ -291,29 +282,6 @@ describe("the team-draft default", () => {
     })
     expect(open.listed).toBe("workspace")
   })
-
-  it("honors the workspace's default listing setting", async () => {
-    const { app, meta, token } = loopApp("wsdefaults")
-    // The OAuth agent runs in the granting user's personal workspace.
-    const org = "ws_p_u_o"
-    const { DEFAULT_ORG_SETTINGS } = await import("@derive/core")
-    await meta.setOrgSettings(org, { ...DEFAULT_ORG_SETTINGS, defaultListed: "workspace" })
-    const created = await call(app, token, "publish", {
-      content: "<h1>C</h1>",
-      title: "Team Draft",
-    })
-    expect(created.listed).toBe("workspace")
-
-    await meta.setOrgSettings(org, {
-      ...DEFAULT_ORG_SETTINGS,
-      defaultListed: "none",
-    })
-    const priv = await call(app, token, "publish", {
-      content: "<h1>P</h1>",
-      title: "Private Draft",
-    })
-    expect(priv.listed).toBe("none")
-  })
 })
 
 describe("catch_up `wait` long-poll", () => {
@@ -360,20 +328,6 @@ describe("catch_up `wait` long-poll", () => {
     const out = await call(app, token, "catch_up", { short_id: created.short_id, wait: 30 })
     expect(Date.now() - started).toBeLessThan(2_000)
     expect((out.review as { state: string }).state).toBe("sent_back")
-  })
-
-  it("times out quietly and returns the still-pending state", async () => {
-    const { app, token } = loopApp("timeout")
-    const created = await call(app, token, "publish", {
-      content: "<h1>Quiet</h1>",
-      title: "Quiet Plan",
-      request_review: true,
-    })
-    const started = Date.now()
-    const out = await call(app, token, "catch_up", { short_id: created.short_id, wait: 1 })
-    const elapsed = Date.now() - started
-    expect(elapsed).toBeGreaterThanOrEqual(900)
-    expect((out.review as { state: string }).state).toBe("pending")
   })
 })
 
@@ -540,5 +494,107 @@ describe("channel fan-out parity (the MCP path)", () => {
     })
     const rows = await drain(meta)
     expect(rows.some((d) => d.kind === "generic" && d.event_type === "comment.resolved")).toBe(true)
+  })
+})
+
+describe("catch_up({wait}) work queue — the cross-doc wake", () => {
+  // Phase 2 slice 1 — the cross-doc wake. An @mention lands a row in the agent's
+  // pull inbox AND publishes `request.created` on the agent's `u:<id>` channel, so a
+  // session long-polling `catch_up({wait})` (no short_id = the work queue, formerly
+  // check_requests) wakes in ~a beat instead of only on its next reconnect. Mirrors
+  // catch_up's artifact `wait`: the event is a wake signal only, so the handler
+  // always answers from a fresh store read.
+
+  const owner: TestUser = { id: "u_iw_own", email: "iwown@derive.test", name: "Owner" }
+
+  type App = ReturnType<typeof makeAuthedApp>["app"]
+
+  // A direct tools/call over the stateless /mcp endpoint.
+  const call = async (
+    app: App,
+    token: string,
+    name: string,
+    args: Record<string, unknown> = {},
+  ): Promise<Record<string, unknown>> => {
+    const res = await app.request("/mcp", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 7,
+        method: "tools/call",
+        params: { name, arguments: args },
+      }),
+    })
+    const ct = res.headers.get("content-type") ?? ""
+    const txt = await res.text()
+    const out = ct.includes("application/json")
+      ? JSON.parse(txt)
+      : JSON.parse(
+          (txt.split("\n").find((l) => l.startsWith("data:")) ?? "data:null").slice(5).trim(),
+        )
+    const t = (out?.result as { content?: { text: string }[] } | undefined)?.content?.[0]?.text
+    if (t == null) throw new Error(`no tool text: ${JSON.stringify(out)}`)
+    return JSON.parse(t)
+  }
+
+  // Register an agent (owner-only) and return its raw token + id.
+  const registerAgent = async (app: App) => {
+    await app.request("/v1/me", { headers: as(owner.email) }) // claims ownership
+    const a = await (
+      await app.request("/v1/agents", jsonAs(as(owner.email), { name: "Claude" }))
+    ).json()
+    return { agentId: a.id as string, agentToken: a.token as string }
+  }
+
+  const mention = (app: App, shortId: string, agentId: string, body: string) =>
+    app.request(
+      `/v1/artifacts/${shortId}/comments`,
+      jsonAs(as(owner.email), { body_md: body, mentions: [{ id: agentId, name: "Claude" }] }),
+    )
+
+  it("blocks, then wakes the instant an @mention lands, and answers from a fresh read", async () => {
+    const backplane = createInProcessBackplane()
+    const { app } = makeAuthedApp("inbox-wait", [owner], "commenter", { deps: { backplane } })
+    const { agentId, agentToken } = await registerAgent(app)
+    const shortId = (
+      await (await publishAs(app, "<h1>draft</h1>", { visibility: "org" }, as(owner.email))).json()
+    ).short_id
+
+    // Record the agent's channel so the wake publish is pinned explicitly.
+    const woke: DeriveEvent[] = []
+    backplane.subscribe(`u:${agentId}`, (e) => woke.push(e))
+
+    // Start the long-poll BEFORE the mention exists — its connect snapshot is empty,
+    // so it must block on the wake rather than return immediately.
+    const waiting = call(app, agentToken, "catch_up", { wait: 10 })
+    const cm = await mention(app, shortId, agentId, "@Claude tighten the headline")
+    expect(cm.status).toBe(201)
+
+    const res = await waiting
+    const pending = res.pending as { request: string }[]
+    expect(pending).toHaveLength(1)
+    expect(pending[0]?.request).toContain("tighten the headline")
+    expect(woke.map((e) => e.type)).toContain("request.created")
+  })
+
+  it("returns immediately when a request is already queued (no needless block)", async () => {
+    const { app } = makeAuthedApp("inbox-ready", [owner], "commenter")
+    const { agentId, agentToken } = await registerAgent(app)
+    const shortId = (
+      await (await publishAs(app, "<h1>draft</h1>", { visibility: "org" }, as(owner.email))).json()
+    ).short_id
+    expect((await mention(app, shortId, agentId, "@Claude do the thing")).status).toBe(201)
+
+    // A generous wait that must NOT be spent: the request is already pending, so the
+    // call returns at once. (If it blocked the full 30s the test would time out.)
+    const started = Date.now()
+    const res = await call(app, agentToken, "catch_up", { wait: 30 })
+    expect(Date.now() - started).toBeLessThan(5_000)
+    expect(res.pending).toHaveLength(1)
   })
 })

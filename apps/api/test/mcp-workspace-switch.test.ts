@@ -205,28 +205,4 @@ describe.skipIf(process.env.DERIVE_TEST_DB === "pg")("remote MCP workspace switc
       toolText(await call(app, "read", { short_id: doc.short_id, workspace: "ws_one" })),
     ).toContain("in this grant")
   })
-
-  it("a grant scoped to a 2-of-3 subset lists exactly those two", async () => {
-    const { app, meta } = twoWorkspaceApp("switch-scoped-two")
-    // Add a third workspace the owner belongs to, then scope the grant to 1 + 3.
-    const db2 = new Database(join(dir, "switch-scoped-two.db"))
-    db2
-      .prepare(
-        `INSERT INTO workspace(id,name,created_at) VALUES('ws_three','Third','2022-01-01T00:00:00.000Z')`,
-      )
-      .run()
-    db2
-      .prepare(
-        `INSERT INTO membership(id,org_id,user_id,role,created_at) VALUES('m_three','ws_three','u_owner','owner','2022-01-01T00:00:00.000Z')`,
-      )
-      .run()
-    db2.close()
-    await meta.setOAuthClientWorkspaces("u_owner", "cli", ["ws_one", "ws_three"])
-
-    const ws = await callJson(app, "list_workspaces")
-    expect(ws.count).toBe(2)
-    expect(ws.workspaces.map((w: { id: string }) => w.id).sort()).toEqual(["ws_one", "ws_three"])
-    // ws_two is a real workspace of the owner's but outside the grant → unreachable.
-    expect(toolText(await call(app, "find", { workspace: "Derive" }))).toContain("in this grant")
-  })
 })

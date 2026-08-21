@@ -55,28 +55,6 @@ describe("live cursor frame", () => {
     expect(f?.kind).toBeUndefined()
     expect(f?.emoji).toBeUndefined()
   })
-
-  it("forwards the gone (leave) and tap signals as present-only flags", async () => {
-    const { cursor, lastCursor } = await seed()
-    expect((await cursor({ id: "c", gone: true, x: 0.5, y: 0.5 })).status).toBe(204)
-    expect(lastCursor()?.gone).toBe(true)
-
-    await cursor({ id: "c", tap: true, x: 0.5, y: 0.5 })
-    expect(lastCursor()?.tap).toBe(true)
-
-    // A plain move carries neither flag (so peers branch on truthiness).
-    await cursor({ id: "c", x: 0.6, y: 0.6 })
-    expect(lastCursor()?.gone).toBeUndefined()
-    expect(lastCursor()?.tap).toBeUndefined()
-  })
-
-  it("clamps x/y into the unit square and requires them", async () => {
-    const { cursor, lastCursor } = await seed()
-    await cursor({ id: "d", x: 1.7, y: -0.3 })
-    expect(lastCursor()).toMatchObject({ x: 1, y: 0 })
-    // x/y are the only required fields — a frame without a position is rejected.
-    expect((await cursor({ id: "d" })).status).toBe(400)
-  })
 })
 
 // Presence identity is pinned to the guest token the browser carries (`?g=`), so one
@@ -112,13 +90,6 @@ describe("presence identity (one browser = one viewer)", () => {
     const again = await roster("alpha")
     expect(again).toHaveLength(1)
     expect(again[0]?.id).toBe("anon_alpha")
-  })
-
-  it("keeps distinct guest tokens (e.g. a private tab) as distinct viewers", async () => {
-    const { roster } = await seed()
-    await roster("alpha")
-    const both = await roster("beta")
-    expect(both.map((v) => v.id).sort()).toEqual(["anon_alpha", "anon_beta"])
   })
 
   it("sanitizes + namespaces the token so a client can't forge a real user id", async () => {

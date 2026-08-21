@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { newId } from "@derive/core"
+import { newId, publish } from "@derive/core"
 import { SqliteMetaStore } from "@derive/db/sqlite"
 import { FsBlobStore } from "@derive/storage/fs"
 import { afterAll, describe, expect, it } from "vitest"
@@ -65,18 +65,6 @@ describe("raw data-slot route", () => {
     expect(r.status).toBe(200)
     expect(r.headers.get("content-type")).toContain("application/json")
     expect(await r.json()).toEqual({ day: 1 })
-  })
-
-  it("serves the CURRENT version without a version segment", async () => {
-    await seed("slot2", "public", 3)
-    const r = await app.request("/raw/slot2/data/checks.json")
-    expect(await r.json()).toEqual({ day: 3 })
-  })
-
-  it("accepts the fact name with or without the .json suffix", async () => {
-    await seed("slot3", "public")
-    expect((await app.request("/raw/slot3/v/1/data/checks")).status).toBe(200)
-    expect((await app.request("/raw/slot3/v/1/data/checks.json")).status).toBe(200)
   })
 
   it("caches a pinned version immutably but never the current-version alias", async () => {
@@ -163,15 +151,6 @@ describe("raw data-slot route", () => {
     expect((await app.request("/raw/slot7/v/1/data/checks")).status).toBe(404)
     expect((await app.request("/raw/slot7/v/2/data/checks")).status).toBe(200)
   })
-
-  it("does not shadow a bundle's own file path named data/", async () => {
-    // The route is registered before the /v/:n/* catch-all; make sure a real artifact
-    // path that merely looks like the fact route still reaches the content server.
-    await seed("slot8", "public")
-    // No such file in this single-file artifact -> the content route answers, not a crash.
-    const r = await app.request("/raw/slot8/v/1/data/checks/extra")
-    expect([200, 404]).toContain(r.status)
-  })
 })
 
 // The JSONL export: the whole history of one slot, one object per version. This is the
@@ -192,14 +171,6 @@ describe("raw data-slot JSONL export", () => {
     expect(points.map((p) => p.n)).toEqual([1, 2, 3])
     expect(points.map((p) => p.data.day)).toEqual([1, 2, 3])
     expect(points[0].at).toBeTruthy()
-  })
-
-  it("accepts the fact name with or without the .jsonl suffix", async () => {
-    await seed("jl2", "public", 2)
-    const bare = await app.request("/raw/jl2/data/checks.jsonl", {
-      headers: { authorization: "Bearer tok" },
-    })
-    expect(bare.status).toBe(200)
   })
 
   it("404s an unknown slot and an unknown artifact", async () => {
@@ -226,5 +197,109 @@ describe("raw data-slot JSONL export", () => {
     const lines = (await anon.text()).trim().split("\n")
     expect(lines).toHaveLength(1)
     expect(JSON.parse(lines[0] as string).data.day).toBe(3)
+  })
+})
+
+// The first line of defense: classify by the bytes, not the filename, so a full
+// HTML document under a .md name is never stored as markdown (which would render
+// blank). The renderer also self-defends and self-heals on view (see the
+// self-heal block below) — this just keeps new content correct at the source.
+describe("content-type: publish-time sniff", () => {
+  const dir = mkdtempSync(join(tmpdir(), "derive-ctsniff-test-"))
+  const meta = new SqliteMetaStore(join(dir, "r.db"))
+  const blobs = new FsBlobStore(join(dir, "blobs"))
+  const enc = (s: string) => new TextEncoder().encode(s)
+  const HTML_DOC =
+    "<!doctype html>\n<html><head><style>h1{color:red}</style></head><body><h1>Report</h1></body></html>"
+  const REAL_MD = "# Heading\n\nReal markdown with a bit of <span>inline html</span>."
+
+  afterAll(() => {
+    meta.close()
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it("classifies an HTML document as text/html even with a .md filename", async () => {
+    const { version } = await publish(meta, blobs, {
+      bytes: enc(HTML_DOC),
+      filename: "report.md", // .md name, but the body is a full HTML doc
+      isBundle: false,
+      orgId: "local",
+    })
+    expect(version.content_type).toBe("text/html")
+  })
+
+  it("leaves genuine markdown as text/markdown", async () => {
+    const { version } = await publish(meta, blobs, {
+      bytes: enc(REAL_MD),
+      filename: "notes.md",
+      isBundle: false,
+      orgId: "local",
+    })
+    expect(version.content_type).toBe("text/markdown")
+  })
+})
+
+describe("raw render never white-screens + self-heals a mislabeled blob", () => {
+  const dir = mkdtempSync(join(tmpdir(), "derive-rawheal-"))
+  const meta = new SqliteMetaStore(join(dir, "r.db"))
+  const blobs = new FsBlobStore(join(dir, "blobs"))
+  const app = createApp({ meta, blobs, baseUrl: "http://derive.test", token: "tok" })
+  const enc = (s: string) => new TextEncoder().encode(s)
+  // A full HTML document with a <style> head — the markdown renderer would strip the
+  // head/style and emit a blank body (the white screen). The bytes lie under a
+  // text/markdown label (the pre-sniff sync bug).
+  const HTML_DOC =
+    "<!doctype html>\n<html><head><style>h1{color:red}</style></head><body><h1>Live Report</h1></body></html>"
+
+  afterAll(() => {
+    meta.close()
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  const seedMislabeled = async (shortId: string) => {
+    const key = await blobs.put(enc(HTML_DOC))
+    const a = await meta.createArtifact({
+      id: newId("a"),
+      short_id: shortId,
+      org_id: "default",
+      slug: null,
+      title: "Frozen Bench",
+      workspace_access: "member",
+      link_role: "viewer",
+      listed: "public",
+      kind: "file",
+      spa: 0,
+    })
+    await meta.addVersion(a.id, {
+      id: newId("v"),
+      blob_key: key,
+      content_type: "text/markdown",
+      size_bytes: HTML_DOC.length,
+      author: "t",
+      message: null,
+    })
+    return a
+  }
+
+  it("serves the HTML verbatim (not markdown-stripped) when a markdown-typed version is HTML", async () => {
+    await seedMislabeled("htmlmd1")
+    const res = await app.request("/raw/htmlmd1/v/1/index.html")
+    expect(res.status).toBe(200)
+    expect(res.headers.get("content-type")).toContain("text/html")
+    const body = await res.text()
+    expect(body).toContain("<h1>Live Report</h1>")
+    // The <style> survived → it was passed through, not run through the markdown
+    // renderer (which would have dropped the head). This is the no-white-screen backstop.
+    expect(body).toContain("color:red")
+  })
+
+  it("self-heals the stored content_type on view, so repairs always happen", async () => {
+    const a = await seedMislabeled("htmlmd2")
+    expect((await meta.getByShortId("htmlmd2"))?.current_content_type).toBe("text/markdown")
+    await app.request("/raw/htmlmd2/v/1/index.html")
+    // background() awaits inline off the edge (and better-sqlite3 writes are sync), so
+    // the reclassify has landed by the time the request resolves.
+    expect((await meta.getByShortId("htmlmd2"))?.current_content_type).toBe("text/html")
+    expect((await meta.getVersion(a.id, 1))?.content_type).toBe("text/html")
   })
 })

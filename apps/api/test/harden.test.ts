@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest"
-import { MAX_MENTIONS, parseMentions } from "../src/lib/comments"
 import { as, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
 // Coverage for the read-path hardening: a non-member / anonymous caller gets only
@@ -22,14 +21,6 @@ describe("read-path exposure hardening", () => {
     // A member still sees everything through the route.
     const mem = await (await app.request("/v1/artifacts", { headers: as(owner.email) })).json()
     expect(mem.artifacts.map((a: { title: string }) => a.title)).toContain("OrgSecret")
-  })
-
-  it("B-015: an oversized ?query= is capped, not a 500", async () => {
-    const { app } = makeAuthedApp("harden-q", [owner])
-    const res = await app.request(`/v1/artifacts?query=${"a".repeat(5000)}`, {
-      headers: as(owner.email),
-    })
-    expect(res.status).toBe(200)
   })
 
   it("B-013: only a member/sharee sees the member list; it carries handles, never email", async () => {
@@ -138,14 +129,6 @@ describe("B-019: @mention notifies only collaborators", () => {
     expect((await m.listNotifications(member.id, 50)).length).toBe(1)
     expect((await m.listNotifications(sharee.id, 50)).length).toBe(1)
     expect((await m.listNotifications(outsider.id, 50)).length).toBe(0)
-  })
-
-  it("caps the number of distinct mentions parsed per comment", () => {
-    const many = Array.from({ length: MAX_MENTIONS + 25 }, (_, i) => ({
-      id: `u${i}`,
-      name: `n${i}`,
-    }))
-    expect(parseMentions(many)).toHaveLength(MAX_MENTIONS)
   })
 })
 

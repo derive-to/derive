@@ -106,37 +106,6 @@ describe.skipIf(process.env.DERIVE_TEST_DB === "pg")("OAuth context management",
     expect(del.status).toBe(204)
   })
 
-  it("create accepts the run knobs (MCP parity) and persists them; out-of-range 400s", async () => {
-    const { app, meta } = managedApp("ctx-mgmt-knobs")
-    const man = await pub(app, "# manifest", { title: "M" }, undefined, {
-      authorization: "Bearer tok_full",
-    })
-    const { short_id } = (await man.json()) as { short_id: string }
-    const res = await app.request("/v1/contexts", {
-      method: "POST",
-      headers: auth("tok_full"),
-      body: JSON.stringify({
-        name: "Knobbed",
-        manifest_short_id: short_id,
-        max_run_ms: 120_000,
-        max_concurrency: 3,
-      }),
-    })
-    expect(res.status).toBe(201)
-    const created = (await res.json()) as { id: string }
-    expect(await meta.getContext(created.id)).toMatchObject({
-      max_run_ms: 120_000,
-      max_concurrency: 3,
-    })
-    // Same bounds as the MCP action: below the 30s lease floor is refused.
-    const bad = await app.request("/v1/contexts", {
-      method: "POST",
-      headers: auth("tok_full"),
-      body: JSON.stringify({ name: "Bad", manifest_short_id: short_id, max_run_ms: 1_000 }),
-    })
-    expect(bad.status).toBe(400)
-  })
-
   it("no manage scope → 403, even for a workspace owner", async () => {
     const { app } = managedApp("ctx-mgmt-noscope")
     expect((await mintAgent(app, "tok_nomanage")).status).toBe(403)

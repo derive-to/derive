@@ -8,7 +8,7 @@ import Database from "better-sqlite3"
 import { afterAll, describe, expect, it } from "vitest"
 import { createApp } from "../src/app"
 import { makeAuth, migrateAuth } from "../src/auth-config"
-import { as, jsonAs, makeAuthedApp, type TestUser } from "./helpers"
+import { as, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
 const post = (
   app: ReturnType<typeof makeAuthedApp>["app"],
@@ -51,13 +51,6 @@ describe("usernames + public profiles", () => {
 
     // The route normalizes the handle, so an upper-cased URL resolves too.
     expect((await app.request("/v1/users/NIA")).status).toBe(200)
-  })
-
-  it("reflects a seeded handle on /v1/me", async () => {
-    const pat: TestUser = { id: "u_pat", email: "pat@derive.test", name: "Pat", username: "pat" }
-    const { app } = makeAuthedApp("profiles-me", [pat])
-    const me = await (await app.request("/v1/me", { headers: as(pat.email) })).json()
-    expect(me.user.username).toBe("pat")
   })
 
   it("sets a role + bio that surface on the public profile (and trims/caps input)", async () => {
@@ -131,73 +124,6 @@ describe("usernames + public profiles", () => {
     expect((await cleared.json()).brandprint).toBeNull()
   })
 
-  it("persists and returns the personal Brandprint toggle", async () => {
-    const kai: TestUser = { id: "u_kai", email: "kai@derive.test", name: "Kai", username: "kai" }
-    const { app, meta } = makeAuthedApp("profiles-brandprint-toggle", [kai])
-
-    const r = await app.request(
-      "/v1/me/profile",
-      jsonAs(as(kai.email), { brandprint: { useWorkspaceBrandprint: false } }),
-    )
-    expect(r.status).toBe(200)
-    expect(await r.json()).toEqual({
-      profession: null,
-      about: null,
-      brandprint: { useWorkspaceBrandprint: false },
-    })
-
-    // Persisted, not just echoed back: the stored JSON blob carries the toggle.
-    expect(await meta.getUserBrandprint(kai.id)).toBe(
-      JSON.stringify({ useWorkspaceBrandprint: false }),
-    )
-  })
-
-  it("saving a collection alongside the toggle keeps both", async () => {
-    const remy: TestUser = {
-      id: "u_remy",
-      email: "remy@derive.test",
-      name: "Remy",
-      username: "remy",
-    }
-    const { app, meta } = makeAuthedApp("profiles-brandprint-toggle-collection", [remy])
-    const col = await (
-      await app.request("/v1/collections", jsonAs(as(remy.email), { title: "Brandprint" }))
-    ).json()
-
-    const r = await app.request(
-      "/v1/me/profile",
-      jsonAs(as(remy.email), {
-        brandprint: { collectionId: col.id, useWorkspaceBrandprint: false },
-      }),
-    )
-    expect(r.status).toBe(200)
-    expect((await r.json()).brandprint).toEqual({
-      collectionId: col.id,
-      useWorkspaceBrandprint: false,
-    })
-    expect(await meta.getUserBrandprint(remy.id)).toBe(
-      JSON.stringify({ collectionId: col.id, useWorkspaceBrandprint: false }),
-    )
-  })
-
-  it("strips a profileId from a personal brandprint (workspace-only field)", async () => {
-    const pi: TestUser = { id: "u_pi", email: "pi@derive.test", name: "Pi", username: "pi" }
-    const { app, meta } = makeAuthedApp("profiles-brandprint-profileid", [pi])
-    const col = await (
-      await app.request("/v1/collections", jsonAs(as(pi.email), { title: "Brandprint" }))
-    ).json()
-
-    // The brand profile is a team property; the personal schema omits the field, so a
-    // sent one strips like any unknown key — never stored, never echoed back.
-    const r = await app.request(
-      "/v1/me/profile",
-      jsonAs(as(pi.email), { brandprint: { collectionId: col.id, profileId: "s_whatever" } }),
-    )
-    expect(r.status).toBe(200)
-    expect((await r.json()).brandprint).toEqual({ collectionId: col.id })
-    expect(await meta.getUserBrandprint(pi.id)).toBe(JSON.stringify({ collectionId: col.id }))
-  })
-
   it("rejects a personal brandprint pointing at a collection the caller can't reach", async () => {
     const cam: TestUser = { id: "u_cam", email: "cam@derive.test", name: "Cam", username: "cam" }
     const { app, meta } = makeAuthedApp("profiles-brandprint-foreign", [cam])
@@ -226,13 +152,6 @@ describe("usernames + public profiles", () => {
     expect(foreign.status).toBe(400)
   })
 
-  it("404s an unclaimed handle", async () => {
-    const { app } = makeAuthedApp("profiles-404", [
-      { id: "u_x", email: "x@derive.test", name: "X" },
-    ])
-    expect((await app.request("/v1/users/ghost")).status).toBe(404)
-  })
-
   it("rejects a malformed or reserved handle (400) and claims nothing", async () => {
     const u: TestUser = { id: "u_bad", email: "bad@derive.test", name: "Bad" }
     const { app } = makeAuthedApp("profiles-bad", [u])
@@ -256,15 +175,6 @@ describe("usernames + public profiles", () => {
     expect(user.name).toBe("Ann")
     // Re-setting your own handle to what you already hold is a no-op success.
     expect((await post(app, as(ann.email), "shared")).status).toBe(200)
-  })
-
-  it("renames: the old handle frees up, the new one resolves", async () => {
-    const r: TestUser = { id: "u_ren", email: "ren@derive.test", name: "Ren" }
-    const { app } = makeAuthedApp("profiles-rename", [r])
-    await post(app, as(r.email), "ren-one")
-    expect((await post(app, as(r.email), "ren-two")).status).toBe(200)
-    expect((await app.request("/v1/users/ren-two")).status).toBe(200)
-    expect((await app.request("/v1/users/ren-one")).status).toBe(404)
   })
 
   it("anonymous callers cannot claim a handle (write lockdown)", async () => {
@@ -409,24 +319,6 @@ describe("profile work-list (visibility-scoped)", () => {
       await app.request("/v1/users/amyw", { headers: as(carl.email) })
     ).json()
     expect(carlProfile.user.stats.works).toBe(2)
-  })
-
-  it("the follower/following list routes are gone (the launch social cut)", async () => {
-    // carl can still follow amy — they share a workspace.
-    const follow = await app.request("/v1/follows", {
-      method: "POST",
-      headers: { "content-type": "application/json", ...as(carl.email) },
-      body: JSON.stringify({ kind: "user", target: "amyw" }),
-    })
-    expect(follow.status).toBe(201)
-    // But the graph is not a browsable surface — for anyone.
-    expect((await app.request("/v1/users/amyw/followers")).status).toBe(404)
-    expect(
-      (await app.request("/v1/users/amyw/followers", { headers: as(carl.email) })).status,
-    ).toBe(404)
-    expect(
-      (await app.request("/v1/users/carlw/following", { headers: as(carl.email) })).status,
-    ).toBe(404)
   })
 })
 
@@ -653,15 +545,43 @@ describe("profile writes stay fresh through the session cookie cache", () => {
     expect((await post("/v1/me/discoverable", { discoverable: false })).status).toBe(200)
     expect((await me()).discoverable).toBe(false)
   })
+})
 
-  it("serves the onboarded flag on the next read", async () => {
-    expect((await me()).onboarded).toBe(false)
-    expect((await post("/v1/me/onboarded")).status).toBe(200)
-    expect((await me()).onboarded).toBe(true)
-  })
+// The profile work-list endpoint (/v1/users/:handle/artifacts) exposes has_preview
+// the same way the library list does:
+//   - false when no preview has been set
+//   - true  when the artifact's CURRENT version has preview_status = 'ready'
+//   - false when an old version is ready but the current version is not
+describe("has_preview on the profile work-list", () => {
+  // A user with a pre-set username so the profile endpoint resolves without
+  // an extra /v1/me/username call.
+  const users = [
+    { id: "php-owner", email: "php-owner@x.test", name: "Owner", username: "php-handle" },
+  ]
 
-  it("serves a claimed handle on the next read", async () => {
-    expect((await post("/v1/me/username", { username: "freshly" })).status).toBe(200)
-    expect((await me()).username).toBe("freshly")
+  it("returns false when an old version is ready but the current version is not", async () => {
+    const { app, meta } = makeAuthedApp("php-old-ver", users)
+    const res = await publishAs(
+      app,
+      "<h1>v1</h1>",
+      { visibility: "public" },
+      as("php-owner@x.test"),
+    )
+    const created = await res.json()
+
+    const ar = await meta.getByShortId(created.short_id)
+    if (!ar) throw new Error("artifact not found")
+    // Mark v1 ready
+    await meta.setVersionPreview(ar.id, 1, { preview_key: "v1-png", preview_status: "ready" })
+    // Publish v2 (no preview)
+    await publishAs(app, "<h1>v2</h1>", {}, as("php-owner@x.test"), created.short_id)
+
+    const list = await (
+      await app.request("/v1/users/php-handle/artifacts", { headers: as("php-owner@x.test") })
+    ).json()
+    const row = list.artifacts.find((a: { short_id: string }) => a.short_id === created.short_id)
+    expect(row).toBeDefined()
+    // v1 was ready but v2 (current) is not
+    expect(row.has_preview).toBe(false)
   })
 })

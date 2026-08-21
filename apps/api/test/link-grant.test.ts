@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { as, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
+import { as, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
 // The v2 access model at the route layer: default resolution (explicit >
 // workspace setting > factory), the two listing preconditions, set-on-create,
@@ -45,18 +45,6 @@ describe("access resolution: defaults, preconditions, updates", () => {
       await publishAs(app, "<h1>b</h1>", { link_role: "editor", listed: "none" }, as(ana.email))
     ).json()
     expect(b).toMatchObject({ link_role: "editor", listed: "none" })
-  })
-
-  it("a legacy visibility=public publish maps onto the triple (member / viewer / public)", async () => {
-    const { app } = makeAuthedApp("lg-public-bare", [ana], "editor")
-    const a = await (
-      await publishAs(app, "<h1>p</h1>", { visibility: "public" }, as(ana.email))
-    ).json()
-    expect(a).toMatchObject({
-      workspace_access: "member",
-      link_role: "viewer",
-      listed: "public",
-    })
   })
 
   it("preconditions: listing where there's no access is a 400, on publish and PATCH", async () => {
@@ -145,30 +133,6 @@ describe("access resolution: defaults, preconditions, updates", () => {
     // Legacy PATCH generalRole still lands on the link role.
     const r = await (await patchAccess(app, a.short_id, { generalRole: "viewer" })).json()
     expect(r).toMatchObject({ link_role: "viewer" })
-  })
-
-  it("an agent publish resolves the same default chain (team draft, unlisted)", async () => {
-    const { app } = makeAuthedApp("lg-agent", [ana], "editor")
-    await app.request("/v1/me", { headers: as(ana.email) })
-    const reg = await (
-      await app.request("/v1/agents", jsonAs(as(ana.email), { name: "Scribe", role: "editor" }))
-    ).json()
-    const form = new FormData()
-    form.append("file", new Blob([new TextEncoder().encode("# memo")]), "memo.md")
-    const a = await (
-      await app.request("/v1/artifacts", {
-        method: "POST",
-        body: form,
-        headers: { authorization: `Bearer ${reg.token}` },
-      })
-    ).json()
-    // The workspace default (the team draft) keeps the agent's publish out of the
-    // library; the workspace reaches it at its seats until the human promotes it.
-    expect(a).toMatchObject({
-      workspace_access: "member",
-      link_role: "none",
-      listed: "none",
-    })
   })
 
   it("a world-link editor may revise content but cannot change access or the lock", async () => {

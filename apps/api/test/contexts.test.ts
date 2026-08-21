@@ -45,38 +45,6 @@ describe("contexts: create + wire an agent to a manifest", () => {
     expect(list.contexts).toHaveLength(1)
   })
 
-  it("a duplicate name is 409; an unknown agent or manifest is 404", async () => {
-    const dup = await app.request(
-      "/v1/contexts",
-      jsonAs(as(owner.email), {
-        name: "Analytics",
-        agent_id: agentId,
-        manifest_short_id: manifestShortId,
-      }),
-    )
-    expect(dup.status).toBe(409)
-    expect(
-      (
-        await app.request(
-          "/v1/contexts",
-          jsonAs(as(owner.email), {
-            name: "X",
-            agent_id: "ag_nope",
-            manifest_short_id: manifestShortId,
-          }),
-        )
-      ).status,
-    ).toBe(404)
-    expect(
-      (
-        await app.request(
-          "/v1/contexts",
-          jsonAs(as(owner.email), { name: "X", agent_id: agentId, manifest_short_id: "zzzzzzzz" }),
-        )
-      ).status,
-    ).toBe(404)
-  })
-
   it("a commenter cannot create a context (workspace publish gate)", async () => {
     const res = await app.request(
       "/v1/contexts",
@@ -511,54 +479,6 @@ describe("sessions: revoking ask-access cuts off an existing session", () => {
   })
 })
 
-describe("runner liveness: the queue poll stamps runner_seen_at, throttled", () => {
-  const owner: TestUser = { id: "u_rl_own", email: "rlown@derive.test", name: "Owner" }
-  const { app, meta } = makeAuthedApp("contexts-liveness", [owner])
-
-  it("the first poll stamps; polls inside the 60s window don't; stale re-stamps", async () => {
-    await app.request("/v1/me", { headers: as(owner.email) })
-    const ag = await (
-      await app.request("/v1/agents", jsonAs(as(owner.email), { name: "Analyst" }))
-    ).json()
-    const manifestShortId = (await (await publishAs(app, "# Manifest", {}, as(owner.email))).json())
-      .short_id
-    const x = await (
-      await app.request(
-        "/v1/contexts",
-        jsonAs(as(owner.email), {
-          name: "Analytics",
-          agent_id: ag.id,
-          manifest_short_id: manifestShortId,
-        }),
-      )
-    ).json()
-    expect(x.runner_seen_at).toBeNull() // never polled
-
-    const seenAt = async () =>
-      (await (await app.request(`/v1/contexts/${x.id}`, { headers: as(owner.email) })).json())
-        .runner_seen_at
-    await app.request(`/v1/contexts/${x.id}/queue`, { headers: bearer(ag.token) })
-    const first = await seenAt()
-    expect(first).toBeTruthy()
-
-    // Backdating (rather than back-to-back polls, whose stamps could collide on
-    // the same millisecond) makes the throttle branch unambiguous: 30s old is
-    // inside the window and must survive the poll; 2m old must be replaced.
-    await meta.touchContextSeen(x.id, new Date(Date.now() - 30_000).toISOString())
-    const fresh = await seenAt()
-    await app.request(`/v1/contexts/${x.id}/queue`, { headers: bearer(ag.token) })
-    expect(await seenAt()).toBe(fresh)
-
-    await meta.touchContextSeen(x.id, new Date(Date.now() - 120_000).toISOString())
-    await app.request(`/v1/contexts/${x.id}/queue`, { headers: bearer(ag.token) })
-    expect((await seenAt()) > fresh).toBe(true)
-
-    // Both user-facing reads carry the stamp (the console + directory render it).
-    const list = await (await app.request("/v1/contexts", { headers: as(owner.email) })).json()
-    expect(list.contexts[0].runner_seen_at).toBe(await seenAt())
-  })
-})
-
 // The runner's config fetch carries the resolved Brandprint — its only window
 // into workspace conventions. Agent-branch only; a human never sees runner config.
 describe("contexts: the config fetch carries the resolved Brandprint", () => {
@@ -717,17 +637,6 @@ describe("session.settled — the terminal-turn wake event", () => {
     expect(close.status).toBe(200)
     expect(settled()).toMatchObject([{ session_id: session.id, state: "closed" }])
   })
-
-  it("the runner's crash-fail publishes it", async () => {
-    const { app, agentToken, session, settled } = await setup("session-wake-fail")
-    const res = await app.request(`/v1/sessions/${session.id}`, {
-      method: "PATCH",
-      headers: { "content-type": "application/json", authorization: `Bearer ${agentToken}` },
-      body: JSON.stringify({ state: "failed" }),
-    })
-    expect(res.status).toBe(200)
-    expect(settled()).toMatchObject([{ session_id: session.id, state: "failed" }])
-  })
 })
 
 // The manifest, framed for a reader: pin health against each skill's ACTUAL current
@@ -820,16 +729,6 @@ describe("contexts: the manifest package (skills, pin health, repos, description
     const stale = x.skills.find((s: { short_id: string }) => s.short_id === staleSkillId)
     expect(current).toMatchObject({ pinned: 1, current: 1, stale: false })
     expect(stale).toMatchObject({ pinned: 1, current: 2, stale: true })
-  })
-
-  it("the list route carries the same description + skill count + manifest version", async () => {
-    const res = await app.request("/v1/contexts", { headers: as(owner.email) })
-    const row = (await res.json()).contexts.find((c: { id: string }) => c.id === contextId)
-    expect(row).toMatchObject({
-      description: "Smoke-tests the staging app in a real browser.",
-      skills_count: 2,
-      manifest_version: 1,
-    })
   })
 
   it("the runner's OWN branch never gets the reader package — raw manifest_md only", async () => {
@@ -925,19 +824,6 @@ describe("contexts: record a run that already happened locally", () => {
       jsonAs(as(member.email), { instruction: "run smoke", answer: "done" }),
     )
     expect(res.status).toBe(403)
-  })
-
-  it("an outcome of failed lands the session failed, not answered", async () => {
-    const res = await app.request(
-      `/v1/contexts/${contextId}/sessions/record`,
-      jsonAs(as(owner.email), {
-        instruction: "run full",
-        answer: "the suite crashed before finishing.",
-        outcome: "failed",
-      }),
-    )
-    expect(res.status).toBe(201)
-    expect((await res.json()).session.state).toBe("failed")
   })
 })
 

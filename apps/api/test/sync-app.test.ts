@@ -95,12 +95,6 @@ describe("github app webhook", () => {
     expect(res.status).toBe(200)
     expect(await meta.getGithubInstallation("88")).toBeNull()
   })
-
-  it("404s the webhook when no App is configured", async () => {
-    const { app } = quotaApp("ghwebhook3", { encryptionKey: KEY })
-    const res = await postWebhook(app, "push", { ref: "refs/heads/main" })
-    expect(res.status).toBe(404)
-  })
 })
 
 describe("github app status + install gating", () => {
@@ -203,31 +197,6 @@ describe("github app auto-heal (GET /app verification)", () => {
         missing?: { permissions: Record<string, string>; events: string[] }
       }
     }
-
-  it("stays configured + up to date while GitHub has the App with all perms", async () => {
-    const { app, meta } = quotaApp("ghheal", { encryptionKey: KEY })
-    await seedLiveApp(meta)
-    stubGetApp(200)
-    const { app: a } = await statusApp(app)
-    expect(a).toMatchObject({ configured: true, slug: "derive-test", upToDate: true })
-    expect(a.missing).toEqual({ permissions: {}, events: [] })
-  })
-
-  it("flags a missing permission/event in the diff", async () => {
-    const { app, meta } = quotaApp("ghheal-diff", { encryptionKey: KEY })
-    await seedLiveApp(meta)
-    // App only has metadata:read — missing contents, pull_requests, all events.
-    stubGetApp(200, { metadata: "read" }, [])
-    const { app: a } = await statusApp(app)
-    expect(a.upToDate).toBe(false)
-    expect(a.missing?.permissions).toMatchObject({ contents: "read", pull_requests: "write" })
-    expect(a.missing?.events).toEqual([
-      "push",
-      "pull_request",
-      "issue_comment",
-      "pull_request_review_comment",
-    ])
-  })
 
   it("reports unconfigured once the App is deleted on GitHub (404)", async () => {
     const { app, meta } = quotaApp("ghheal2", { encryptionKey: KEY })

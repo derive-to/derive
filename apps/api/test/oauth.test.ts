@@ -8,6 +8,7 @@ import { afterAll, describe, expect, it } from "vitest"
 import { createApp } from "../src/app"
 import { oauthIssuerFor } from "../src/auth-config"
 import { sha256 } from "../src/lib/crypto"
+import { dir as helpersDir, meta as helpersMeta } from "./helpers"
 
 // The OAuth consent flow (Better Auth's oauth-provider) issues an opaque access
 // token, stored hashed; the API-side bridge resolves it to a SCOPED agent that acts
@@ -178,5 +179,22 @@ describe("anonymous OAuth client reaper", () => {
     ).map((r) => r.clientId)
     left.close()
     expect(ids).toEqual(["anon-consented", "anon-recent", "anon-token", "owned"])
+  })
+})
+
+// The hosted landing page for `derive login` (the native/CLI OAuth flow). It must
+// answer from the Worker with the one-time code on success and a readable failure
+// otherwise — never a blank page or a localhost bounce.
+describe("GET /oauth/cli-callback", () => {
+  const blobs = new FsBlobStore(join(helpersDir, "blobs"))
+  const app = createApp({ meta: helpersMeta, blobs, baseUrl: "http://derive.test" })
+
+  it("shows the authorization code for copy-paste back to the terminal", async () => {
+    const r = await app.request("/oauth/cli-callback?code=ABC123XYZ&state=s")
+    expect(r.status).toBe(200)
+    expect(r.headers.get("content-type")).toContain("text/html")
+    const html = await r.text()
+    expect(html).toContain("ABC123XYZ")
+    expect(html).toContain("paste it back into your terminal")
   })
 })

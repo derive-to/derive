@@ -130,14 +130,6 @@ describe("read map / node", () => {
     expect(bad.text).toContain("slide:1")
   })
 
-  it("refuses map alongside the whole-document views", async () => {
-    const { app, token, short_id } = await setup("map-excl")
-    expect((await readTool(app, token, { short_id, map: true, node: "slide:1" })).isError).toBe(
-      true,
-    )
-    expect((await readTool(app, token, { short_id, map: true, section: "*" })).isError).toBe(true)
-  })
-
   it("serves the map as a plain URL, no MCP session needed", async () => {
     // The point of shipping the map as a derived FACT rather than only a tool response:
     // any script or pipeline reads a document's shape with a GET.

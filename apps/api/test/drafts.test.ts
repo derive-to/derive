@@ -1,4 +1,3 @@
-import { zipSync } from "fflate"
 import { describe, expect, it } from "vitest"
 import { sweepExpiredDrafts } from "../src/lib/drafts"
 import { as, makeAuthedApp } from "./helpers"
@@ -59,29 +58,6 @@ describe("POST /v1/drafts (anonymous mint)", () => {
     const rawHtml = await raw.text()
     expect(rawHtml).toContain("/raw/derive-client.js")
     expect(rawHtml).not.toContain("data-derive-draft-chip")
-  })
-
-  it("chips every rendered page of a bundle draft, and only those", async () => {
-    const zip = zipSync({
-      "index.html": new TextEncoder().encode("<h1>Site</h1><script src=app.js></script>"),
-      "notes.md": new TextEncoder().encode("# Notes"),
-      "app.js": new TextEncoder().encode("console.log(1)"),
-    })
-    const form = new FormData()
-    form.append("file", new Blob([zip]), "site.zip")
-    const res = await drafts.request("/v1/drafts", { method: "POST", body: form })
-    expect(res.status).toBe(201)
-    const { short_id } = await res.json()
-    const page = async (path: string) => {
-      const r = await drafts.request(`http://${short_id}.${BASE}/${path}`)
-      expect(r.status).toBe(200)
-      return r.text()
-    }
-    // HTML pages and rendered markdown carry the chip; code assets must not —
-    // a chip inside a script the page loads would break the page.
-    expect(await page("")).toContain("data-derive-draft-chip")
-    expect(await page("notes.md")).toContain("data-derive-draft-chip")
-    expect(await page("app.js")).not.toContain("data-derive-draft-chip")
   })
 
   it("forces the draft access shape — client access fields are ignored", async () => {

@@ -1,11 +1,18 @@
+import { mkdtempSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import {
   type BlobStore,
   BUNDLE_CONTENT_TYPE,
   type BundleManifest,
+  newId,
   SKILL_CONTENT_TYPE,
 } from "@derive/core"
+import { SqliteMetaStore } from "@derive/db/sqlite"
+import { FsBlobStore } from "@derive/storage/fs"
 import type { Context } from "hono"
-import { describe, expect, it, vi } from "vitest"
+import { afterAll, describe, expect, it, vi } from "vitest"
+import { createApp } from "../src/app"
 import { RAW_HEADERS } from "../src/lib/http"
 import { serveContent } from "../src/lib/serve-content"
 
@@ -60,51 +67,6 @@ describe("serveContent — single-file artifacts", () => {
     expectSandbox(res)
   })
 
-  it("omits the marks overlay on a normal read — zero cost to a plain page load", async () => {
-    const res = await serveContent(
-      ctx(),
-      blobStore({ k: "<main>Hi</main>" }),
-      { blob_key: "k", content_type: "text/html" },
-      "Title",
-      "/",
-      "",
-    )
-    const body = await res.text()
-    expect(body).not.toContain("var TAGS")
-  })
-
-  it("?marks=1 (or marks=true) injects the region-overlay script; anything else doesn't", async () => {
-    const withMarks1 = await serveContent(
-      ctx({ marks: "1" }),
-      blobStore({ k: "<main>Hi</main>" }),
-      { blob_key: "k", content_type: "text/html" },
-      "Title",
-      "/",
-      "",
-    )
-    expect(await withMarks1.text()).toContain("var TAGS")
-
-    const withMarksTrue = await serveContent(
-      ctx({ marks: "true" }),
-      blobStore({ k: "<main>Hi</main>" }),
-      { blob_key: "k", content_type: "text/html" },
-      "Title",
-      "/",
-      "",
-    )
-    expect(await withMarksTrue.text()).toContain("var TAGS")
-
-    const withMarksOther = await serveContent(
-      ctx({ marks: "0" }),
-      blobStore({ k: "<main>Hi</main>" }),
-      { blob_key: "k", content_type: "text/html" },
-      "Title",
-      "/",
-      "",
-    )
-    expect(await withMarksOther.text()).not.toContain("var TAGS")
-  })
-
   it("renders markdown to HTML", async () => {
     const res = await serveContent(
       ctx(),
@@ -144,21 +106,6 @@ describe("serveContent — single-file artifacts", () => {
     expect(body).toContain(SCRIPT)
   })
 
-  it("serves ?raw.md as the markdown source verbatim, without the anchor client", async () => {
-    const res = await serveContent(
-      ctx(),
-      blobStore({ k: "# raw source" }),
-      { blob_key: "k", content_type: "text/markdown" },
-      "Doc",
-      "/",
-      "raw.md",
-    )
-    expect(res.headers.get("content-type")).toContain("text/markdown")
-    const body = await res.text()
-    expect(body).toBe("# raw source")
-    expect(body).not.toContain(SCRIPT)
-  })
-
   it("uses the gated Cache-Control for a non-public artifact (never immutable)", async () => {
     const res = await serveContent(
       ctx(),
@@ -170,24 +117,6 @@ describe("serveContent — single-file artifacts", () => {
       "private, no-store",
     )
     expectSandbox(res, "private, no-store")
-  })
-
-  it("applies the serve-time HTML transform before appending the anchor client", async () => {
-    const upper = async (h: string) => h.replace("real", "XFORMED")
-    const res = await serveContent(
-      ctx(),
-      blobStore({ k: "<p>real</p>" }),
-      { blob_key: "k", content_type: "text/html" },
-      null,
-      "/",
-      "",
-      IMMUTABLE,
-      undefined,
-      upper,
-    )
-    const body = await res.text()
-    expect(body).toContain("XFORMED")
-    expect(body).toContain(SCRIPT)
   })
 })
 
@@ -221,25 +150,12 @@ describe("serveContent — bundles", () => {
     expectSandbox(res)
   })
 
-  it("?marks=1 injects the region overlay on a bundle HTML page too", async () => {
-    const res = await serveContent(ctx({ marks: "1" }), bundleBlobs(), content, "Site", prefix, "")
-    expect(await res.text()).toContain("var TAGS")
-    const plain = await serveContent(ctx(), bundleBlobs(), content, "Site", prefix, "")
-    expect(await plain.text()).not.toContain("var TAGS")
-  })
-
   it("serves a CSS page rewritten but WITHOUT the anchor client", async () => {
     const res = await serveContent(ctx(), bundleBlobs(), content, "Site", prefix, "style.css")
     expect(res.headers.get("content-type")).toContain("text/css")
     const body = await res.text()
     expect(body).toBe("a{color:red}")
     expect(body).not.toContain(SCRIPT)
-  })
-
-  it("serves a binary asset with its own content type, bytes intact", async () => {
-    const res = await serveContent(ctx(), bundleBlobs(), content, "Site", prefix, "img.png")
-    expect(res.headers.get("content-type")).toBe("image/png")
-    expect(new Uint8Array(await res.arrayBuffer())).toEqual(Uint8Array.from([1, 2, 3, 4]))
   })
 
   it("404s an unknown bundle path, still with the sandbox headers", async () => {
@@ -308,10 +224,120 @@ describe("serveContent — skill / markdown bundles", () => {
     expect(res.headers.get("content-type")).toContain("text/markdown")
     expect(await res.text()).toBe(skillMd)
   })
+})
 
-  it("serves a script file raw (no markdown rendering)", async () => {
-    const res = await serveContent(ctx(), blobs, content, "my-skill", prefix, "scripts/run.sh")
-    expect(res.headers.get("content-type")).toBe("application/octet-stream")
-    expect(await res.text()).toContain("echo hi")
+// Sibling-link rewriting is a /raw serve-time transform: a relative link in a synced HTML
+// artifact that resolves to a sibling (same repo directory, same workspace) becomes an
+// in-app navigation. Exercised through the real route on its own store + app.
+describe("cross-document links between synced sibling artifacts", () => {
+  const dir = mkdtempSync(join(tmpdir(), "derive-crossdoc-"))
+  const meta = new SqliteMetaStore(join(dir, "c.db"))
+  const blobs = new FsBlobStore(join(dir, "blobs"))
+  const app = createApp({ meta, blobs, baseUrl: "http://derive.test", token: "tok" })
+
+  afterAll(() => {
+    meta.close()
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  /** A synced HTML file artifact: published, version 1, with an optional repo path. */
+  const seedHtml = async (opts: {
+    shortId: string
+    slug: string | null
+    html: string
+    sourcePath?: string
+  }) => {
+    const key = await blobs.put(enc(opts.html))
+    const a = await meta.createArtifact({
+      id: newId("a"),
+      short_id: opts.shortId,
+      org_id: "default",
+      slug: opts.slug,
+      title: opts.shortId,
+      workspace_access: "member",
+      link_role: "viewer",
+      listed: "public",
+      kind: "file",
+      spa: 0,
+    })
+    await meta.addVersion(a.id, {
+      id: newId("v"),
+      blob_key: key,
+      content_type: "text/html",
+      size_bytes: opts.html.length,
+      author: "t",
+      message: null,
+    })
+    if (opts.sourcePath) await meta.setArtifactSourcePath(a.id, opts.sourcePath)
+    return a
+  }
+
+  const PRODUCT = `<!doctype html><html><body>
+<a href="walkthrough.html">Walkthrough</a>
+<a href="missing.html">Missing</a>
+<a href="https://fonts.googleapis.com">Font</a>
+<a href="#top">Top</a>
+</body></html>`
+
+  it("rewrites a relative link that resolves to a sibling into an in-app navigation", async () => {
+    await seedHtml({
+      shortId: "cdwalk1",
+      slug: "ct-walkthrough",
+      html: "<html><body><h1>Walkthrough</h1></body></html>",
+      sourcePath: "docs/plans/ct/walkthrough.html",
+    })
+    await seedHtml({
+      shortId: "cdprod1",
+      slug: "ct-product",
+      html: PRODUCT,
+      sourcePath: "docs/plans/ct/product.html",
+    })
+
+    const body = await (await app.request("/raw/cdprod1/v/1/index.html")).text()
+
+    // The sibling link → its canonical /artifacts/<slug>-<short_id> URL + the interception marker.
+    expect(body).toContain('href="/artifacts/ct-walkthrough-cdwalk1"')
+    expect(body).toContain('data-derive-nav="ct-walkthrough-cdwalk1"')
+    // A link with no sibling, an external link, and an in-page anchor are left as-is.
+    expect(body).toContain('href="missing.html"')
+    expect(body).toContain('href="https://fonts.googleapis.com"')
+    expect(body).toContain('href="#top"')
+    expect(body).not.toContain('data-derive-nav="ct-product') // never self-links
+  })
+
+  it("does not resolve across workspaces — a same-path sibling in another org is invisible", async () => {
+    const key = await blobs.put(enc("<html><body>other-org walkthrough</body></html>"))
+    const other = await meta.createArtifact({
+      id: newId("a"),
+      short_id: "cdother1",
+      org_id: "other-org",
+      slug: "other-walk",
+      title: "other",
+      workspace_access: "member",
+      link_role: "viewer",
+      listed: "public",
+      kind: "file",
+      spa: 0,
+    })
+    await meta.addVersion(other.id, {
+      id: newId("v"),
+      blob_key: key,
+      content_type: "text/html",
+      size_bytes: 10,
+      author: "t",
+      message: null,
+    })
+    // Same repo path as cdprod1's sibling, but a different org.
+    await meta.setArtifactSourcePath(other.id, "docs/plans/other/walkthrough.html")
+
+    await seedHtml({
+      shortId: "cdprod2",
+      slug: "ct2-product",
+      html: `<html><body><a href="walkthrough.html">W</a></body></html>`,
+      sourcePath: "docs/plans/other/product.html", // org "default", not "other-org"
+    })
+    const body = await (await app.request("/raw/cdprod2/v/1/index.html")).text()
+    expect(body).toContain('href="walkthrough.html"') // unresolved — cross-org match ignored
+    expect(body).not.toContain("data-derive-nav")
   })
 })

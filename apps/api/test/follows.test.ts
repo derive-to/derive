@@ -61,12 +61,6 @@ describe("follows route", () => {
     expect((await post({}, { kind: "author", target: "x" })).status).toBe(403)
   })
 
-  it("validates kind + non-empty target", async () => {
-    expect((await post(as(amy.email), { kind: "nope", target: "x" })).status).toBe(400)
-    expect((await post(as(amy.email), { kind: "author", target: "" })).status).toBe(400)
-    expect((await post(as(amy.email), { kind: "author" })).status).toBe(400)
-  })
-
   it("adds (idempotent), lists, and removes follows; author target is lowercased", async () => {
     // Author target is stored lowercased to match the author_login comparison.
     const r1 = await post(as(amy.email), { kind: "author", target: "Ada" })

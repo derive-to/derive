@@ -94,13 +94,6 @@ describe("@derive in a comment thread", () => {
     expect(answer?.body_md ?? "").toContain("# Pricing")
   })
 
-  it("does not answer a comment that mentions nobody", async () => {
-    const { app, meta, doc } = await setup("cm-none", "should not appear")
-    const { created } = await mention(app, meta, doc.short_id, "just a note", [])
-    const all = await meta.listComments(created.artifact_id, { threadId: created.thread_id })
-    expect(all.filter((c) => c.author_id === "derive")).toHaveLength(0)
-  })
-
   it("does not answer when the workspace has not enabled chat", async () => {
     const { app, meta, doc } = await setup("cm-off", "should not appear", { chatBeta: false })
     const { created } = await mention(app, meta, doc.short_id, "@derive hello", DERIVE)

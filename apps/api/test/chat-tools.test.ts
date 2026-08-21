@@ -1,6 +1,13 @@
+import { DEFAULT_ORG_SETTINGS } from "@derive/core"
 import { describe, expect, it } from "vitest"
-import { buildChatTools, CHAT_TOOLS } from "../src/lib/chat-tools"
-import { catalogFromGateway, catalogOf } from "../src/lib/model-catalog"
+import { boundSources } from "../src/lib/chat-sources"
+import {
+  buildChatTools,
+  CHAT_TOOLS,
+  CHAT_USE_WAIT_S,
+  chatPolicy,
+  RAIL_CHAT_TOOLS,
+} from "../src/lib/chat-tools"
 import { as, makeAuthedApp, publishAs } from "./helpers"
 
 // THE CHAT PRINCIPAL. These are the tests that matter most in this feature: the chat turn runs
@@ -138,91 +145,208 @@ describe("the chat tool surface", () => {
     const out = JSON.stringify(await tools.execute("catch_up", {}))
     expect(out).toMatch(/no inbox/i)
   })
+})
 
-  it("carries the app-help skill on EVERY lane, including one with no tools at all", async () => {
-    const { ctx } = makeAuthedApp("ct-helping", [{ id: "u1", email: "u1@x.com", name: "U" }])
-    const who = { org: "default", user: { id: "u1", name: "U" }, seatRole: "owner" } as const
-    // The full chat lane, the read-only document rail, and the degenerate empty subset. `helping`
-    // answers questions about DERIVE, which no tool implies, so it must reach a turn regardless of
-    // what that turn can do — the empty case is the one that proves it is attached to the surface
-    // rather than falling out of the tool→skill map.
-    for (const only of [undefined, new Set(["find", "read"]), new Set<string>()]) {
-      const tools = buildChatTools(ctx, who, only)
-      expect(tools.skills.map((s) => s.name)).toContain("helping")
-    }
+describe("which surfaces hold call", () => {
+  // WHO GETS `call`, and who deliberately does not.
+  //
+  // The registry is shared: the chat surface and external MCP clients register from the same
+  // place. The gate there (`wanted`) is true whenever no explicit set is passed, which is
+  // exactly how an external client registers — so the ordinary registration form would hand
+  // `call` to every client holding a grant. What it reaches is the WORKSPACE's connected
+  // credentials, and an external client already holds its own.
+  //
+  // `call` is therefore opt-in: registered only when a surface NAMES it. These tests pin both
+  // halves of that, because the plumbing silently undoing the decision is the failure mode.
+
+  it("the workspace chat holds it", () => {
+    expect(CHAT_TOOLS.has("call")).toBe(true)
   })
 
-  it("still derives the rest of the index from the tools the turn actually holds", async () => {
-    const { ctx } = makeAuthedApp("ct-index", [{ id: "u1", email: "u1@x.com", name: "U" }])
-    const rail = buildChatTools(
-      ctx,
-      { org: "default", user: { id: "u1", name: "U" }, seatRole: "owner" },
-      new Set(["find", "read"]),
-    )
-    // No publish tool on the rail, so no publishing procedure in its index: pointing a turn at a
-    // skill for a tool it cannot call spends its one lazy read on nothing.
-    expect(rail.skills.map((s) => s.name)).toContain("finding")
-    expect(rail.skills.map((s) => s.name)).not.toContain("publishing")
+  it("the document rail does NOT — it is a read-only lane about one document", () => {
+    expect(RAIL_CHAT_TOOLS.has("call")).toBe(false)
+    expect([...RAIL_CHAT_TOOLS].sort()).toEqual(["find", "read"])
   })
 })
 
-describe("the model catalog", () => {
-  it("is null without a gateway, and one entry with one", () => {
-    expect(catalogFromGateway(null)).toBeNull()
-    const one = catalogFromGateway({ baseUrl: "https://x/v1", apiKey: "k", model: "acme/big" })
-    expect(one?.options).toEqual([{ id: "acme/big", label: "big", isDefault: true }])
-    // No id means "the deploy's default", which is what every caller predating the picker sends.
-    expect(one?.resolve(null)?.id).toBe("acme/big")
-    expect(one?.resolve("acme/big")?.id).toBe("acme/big")
+describe("chat source binding", () => {
+  // WHICH CONNECTIONS A CONVERSATION MAY REACH.
+  //
+  // A packaged run declares its own connections, so a Stripe-bound run sees Stripe and nothing
+  // else. A conversation declares nothing — somebody types a sentence — so this list is the
+  // missing declaration, made by whoever owns the credential rather than whoever is typing.
+
+  it("is EMPTY by default, so connecting a server never widens chat on its own", () => {
+    // The whole safety property of the feature. An admin connecting Stripe for automations
+    // must not thereby hand every chat turn in the workspace a payments API.
+    expect(DEFAULT_ORG_SETTINGS.chatSources).toEqual([])
   })
 
-  it("adds the extra names, keeps the default first, and never duplicates it", () => {
-    const cat = catalogFromGateway({
-      baseUrl: "https://x/v1",
-      apiKey: "k",
-      model: "acme/big",
-      // The default repeated, a blank, and stray whitespace — all of which an operator writes.
-      alsoModels: " acme/small , acme/big ,, acme/tiny ",
+  it("is separate from chatBeta — being able to chat is not being able to reach a source", () => {
+    expect(DEFAULT_ORG_SETTINGS.chatBeta).toBe(true)
+    expect(DEFAULT_ORG_SETTINGS.chatSources).toHaveLength(0)
+  })
+})
+
+describe("which declared sources a person reaches", () => {
+  // WHO REACHES WHICH SOURCE. The declaration says WHETHER a connection is exposed to chat at
+  // all; the connection's SCOPE says whose chat. Declaring a personal connection must not lend
+  // one person's credential to the whole team — and the borrower would never know whose account
+  // answered, which is what makes that failure worse than a refusal.
+
+  const store = (conns: { id: string; user_id: string; scope: string }[], declared: string[]) =>
+    ({
+      getOrgSettings: async () => ({ chatSources: declared }),
+      listConnections: async () =>
+        conns.map((c) => ({ ...c, toolkit: `tk-${c.id}`, kind: "mcp", org_id: "o" })),
+    }) as never
+
+  const ALICE = "u-alice"
+  const BOB = "u-bob"
+
+  it("a WORKSPACE source reaches everyone", async () => {
+    const meta = store([{ id: "c1", user_id: ALICE, scope: "workspace" }], ["c1"])
+    expect((await boundSources(meta, "o", BOB)).map((s) => s.id)).toEqual(["c1"])
+  })
+
+  it("a PERSONAL source reaches only its owner, even when declared", async () => {
+    // The leak this prevents: Alice connects her own Stripe, an admin declares it for chat,
+    // and Bob's turn spends Alice's credential.
+    const meta = store([{ id: "c1", user_id: ALICE, scope: "personal" }], ["c1"])
+    expect((await boundSources(meta, "o", ALICE)).map((s) => s.id)).toEqual(["c1"])
+    expect(await boundSources(meta, "o", BOB)).toEqual([])
+  })
+
+  it("an UNDECLARED source reaches nobody, whatever its scope or owner", async () => {
+    const meta = store([{ id: "c1", user_id: BOB, scope: "workspace" }], [])
+    expect(await boundSources(meta, "o", BOB)).toEqual([])
+  })
+
+  it("reaches nothing when there is no asker at all", async () => {
+    // Belt and braces on the membership gate: chat already refuses a non-member before this
+    // runs, but a null asker must never widen into "personal sources for everyone".
+    const meta = store([{ id: "c1", user_id: ALICE, scope: "personal" }], ["c1"])
+    expect(await boundSources(meta, "o", null)).toEqual([])
+  })
+})
+
+describe("writing from chat", () => {
+  // WRITING FROM CHAT. The posture is applied to the ARGUMENTS, after the model has spoken, which
+  // is the whole reason it holds: an instruction in a prompt can be argued with by a document the
+  // turn just read, and this cannot.
+
+  describe("the chat write posture", () => {
+    it("creates live and edits with a review round asked", () => {
+      // No short_id ⇒ a create. Nothing is being replaced, so nothing needs a look first.
+      expect(chatPolicy("publish", { title: "New", content: "x" })).not.toHaveProperty(
+        "request_review",
+      )
+      // A short_id ⇒ an EDIT of work somebody already has. It publishes live and asks the
+      // person to look — the note is one glance, and restore is one click.
+      expect(chatPolicy("publish", { short_id: "ab12cd34", content: "x" })).toMatchObject({
+        request_review: true,
+      })
     })
-    expect(cat?.options.map((o) => o.id)).toEqual(["acme/big", "acme/small", "acme/tiny"])
-    expect(cat?.options.filter((o) => o.isDefault)).toHaveLength(1)
-    expect(cat?.options[0]?.isDefault).toBe(true)
+
+    it("cannot be talked out of it — the posture is not in the prompt", () => {
+      // The shape a prompt injection produces: the model asks, explicitly, to skip the review.
+      expect(
+        chatPolicy("publish", { short_id: "ab12cd34", content: "x", request_review: false }),
+      ).toMatchObject({ request_review: true })
+    })
+
+    it("only ever tightens: it never drops a review the model asked for", () => {
+      expect(chatPolicy("publish", { title: "New", request_review: true })).toMatchObject({
+        request_review: true,
+      })
+    })
+
+    it("caps how long a chat turn waits on a packaged agent", () => {
+      // A Maker context can work for minutes and the person is sitting there, so the turn relays
+      // a pointer rather than holding the conversation open.
+      expect(chatPolicy("use", { context: "c", instruction: "go", wait: 300 })).toMatchObject({
+        wait: CHAT_USE_WAIT_S,
+      })
+      // A shorter ask is honored — the cap is a ceiling, not a floor.
+      expect(chatPolicy("use", { context: "c", wait: 2 })).toMatchObject({ wait: 2 })
+      // Absent ⇒ the cap, so a turn never blocks indefinitely by omission.
+      expect(chatPolicy("use", { context: "c" })).toMatchObject({ wait: CHAT_USE_WAIT_S })
+      // A negative is the model's mistake; clamping beats spending a turn on a tool error.
+      expect(chatPolicy("use", { context: "c", wait: -5 })).toMatchObject({ wait: 0 })
+    })
   })
 
-  it("returns null for an unknown id instead of quietly falling back", () => {
-    const cat = catalogFromGateway({ baseUrl: "https://x/v1", apiKey: "k", model: "acme/big" })
-    // The whole reason this is not a fallback: a person who picked a model and got another
-    // one's answer has been told something false about what wrote it.
-    expect(cat?.resolve("acme/gone")).toBeNull()
+  describe("which tools each chat surface holds", () => {
+    it("the rail's surface really is narrower — the write tool has no handler there", async () => {
+      const { ctx } = makeAuthedApp("rail-subset", [{ id: "u1", email: "u1@x.com", name: "U" }])
+      const rail = buildChatTools(
+        ctx,
+        { org: "default", user: { id: "u1", name: "U" }, seatRole: "owner" },
+        RAIL_CHAT_TOOLS,
+      )
+      expect(rail.tools.map((t) => t.name).sort()).toEqual(["find", "read"])
+      const out = (await rail.execute("publish", { title: "x", content: "y" })) as {
+        error?: string
+      }
+      expect(out.error).toMatch(/unknown tool/i)
+    })
   })
 
-  it("builds each model's client once, and only when it is used", () => {
-    let built = 0
-    const cat = catalogOf([
-      {
-        id: "a",
-        label: "A",
-        isDefault: true,
-        build: () => {
-          built++
-          return async () => ({ text: "", toolUses: [], costUsd: null, done: true })
-        },
-      },
-      {
-        id: "b",
-        label: "B",
-        isDefault: false,
-        build: () => {
-          built++
-          return async () => ({ text: "", toolUses: [], costUsd: null, done: true })
-        },
-      },
-    ])
-    expect(built).toBe(0) // listing costs nothing
-    cat.resolve("a")
-    cat.resolve("a")
-    expect(built).toBe(1) // built once, cached
-    cat.resolve("b")
-    expect(built).toBe(2)
+  describe("writing through the real publish tool", () => {
+    it("creates an artifact attributed to the ASKER, not to Derive", async () => {
+      const users = [{ id: "u-w", email: "w@x.com", name: "Writer" }]
+      const { app, ctx, meta } = makeAuthedApp("chat-write", users)
+      await app.request("/v1/me", { headers: as("w@x.com") })
+      const tools = buildChatTools(ctx, {
+        org: "default",
+        user: { id: "u-w", name: "Writer" },
+        seatRole: "owner",
+      })
+      // The tool answers with a JSON document as TEXT (that is what `json()` produces on this
+      // surface), so read it the way a model would rather than regexing the escaped form.
+      const raw = await tools.execute("publish", { title: "From chat", content: "# Hello" })
+      const out = JSON.parse(typeof raw === "string" ? raw : JSON.stringify(raw)) as {
+        published?: boolean
+        short_id?: string
+        version?: number
+      }
+      expect(out.published).toBe(true)
+      expect(out.version).toBe(1)
+      const shortId = out.short_id
+      expect(shortId).toBeTruthy()
+      const art = await meta.getByShortId(shortId ?? "")
+      // Live, because creating replaces nothing...
+      expect(art?.current_version).toBe(1)
+      // ...and it belongs to the person who asked for it, which is what makes chat's writes
+      // indistinguishable downstream from any other write they make.
+      const versions = await meta.listVersions(art?.id ?? "")
+      expect(versions[0]?.author_id).toBe("u-w")
+    })
+
+    it("an EDIT publishes live and opens a review round", async () => {
+      const users = [{ id: "u-w", email: "w@x.com", name: "Writer" }]
+      const { app, ctx, meta } = makeAuthedApp("chat-edit", users)
+      const doc = (await (
+        await publishAs(app, "# Original", { title: "Doc" }, as("w@x.com"))
+      ).json()) as { short_id: string }
+      const tools = buildChatTools(ctx, {
+        org: "default",
+        user: { id: "u-w", name: "Writer" },
+        seatRole: "owner",
+      })
+      await tools.execute("publish", { short_id: doc.short_id, content: "# Rewritten" })
+      const art = await meta.getByShortId(doc.short_id)
+      // The edit lands as a version — and the posture asked the person to look at it.
+      expect(art?.current_version).toBe(2)
+      const round = await meta.getPendingRound(art?.id ?? "")
+      expect(round?.version).toBe(2)
+      // The round is the RECORD of the person's own conversational edit, never an interrupt
+      // at them: no review email is enqueued for the asker about their own ask.
+      const far = new Date(Date.now() + 10_000_000).toISOString()
+      const due = await meta.claimDueDeliveries(far, 50, far)
+      expect(due.filter((d) => d.kind === "email" && d.event_type === "review.requested")).toEqual(
+        [],
+      )
+    })
   })
 })

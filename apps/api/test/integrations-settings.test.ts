@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { as, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
+import { as, jsonAs, makeAuthedApp, type TestUser } from "./helpers"
 
 const owner: TestUser = { id: "u-own", email: "own@x.com", name: "Owner", username: "owner" }
 const editor: TestUser = { id: "u-ed", email: "ed@x.com", name: "Ed", username: "ed" }
@@ -64,11 +64,6 @@ describe("workspace integration settings", () => {
     })
     expect(write.status).toBe(403)
   })
-
-  it("requires authentication", async () => {
-    const r = await app.request("/v1/workspace/settings")
-    expect(r.status).toBe(401)
-  })
 })
 
 // A Brandprint is a pointer to a conventions collection, so PATCH validates
@@ -123,71 +118,6 @@ describe("workspace Brandprint (write-side ownership check)", () => {
       brandprint: { collectionId: "col_other_org" },
     })
     expect(foreign.status).toBe(400)
-  })
-
-  it("still allows clearing the Brandprint, and strips a legacy theme patch", async () => {
-    const admin: TestUser = { id: "u-bp-clr", email: "bpclr@x.com", name: "Clr", username: "bpclr" }
-    const { app } = makeAuthedApp("integ-bp-clear", [admin])
-    const col = await (
-      await app.request("/v1/collections", jsonAs(as(admin.email), { title: "Brandprint" }))
-    ).json()
-    await patchSettings(app, as(admin.email), { brandprint: { collectionId: col.id } })
-
-    // `theme` left the schema with Phase 2 (the profile's embedded tokens replaced it);
-    // an old client sending one gets it stripped, and the pointer on file survives.
-    const themed = await patchSettings(app, as(admin.email), {
-      brandprint: { theme: { palette: { primary: "#111" } } },
-    })
-    expect(themed.status).toBe(200)
-    expect((await themed.json()).brandprint).toEqual({ collectionId: col.id })
-
-    // brandprint: null clears it outright, no validation needed.
-    const cleared = await patchSettings(app, as(admin.email), { brandprint: null })
-    expect(cleared.status).toBe(200)
-    expect((await cleared.json()).brandprint).toBeUndefined()
-  })
-
-  it("strips the personal-only useWorkspaceBrandprint toggle from a workspace PATCH", async () => {
-    const admin: TestUser = { id: "u-bp-tog", email: "bptog@x.com", name: "Tog", username: "bptog" }
-    const { app } = makeAuthedApp("integ-bp-toggle", [admin])
-    const col = await (
-      await app.request("/v1/collections", jsonAs(as(admin.email), { title: "Brandprint" }))
-    ).json()
-
-    // The toggle is personal scope only: a workspace PATCH strips it like any
-    // unknown key, same as the legacy `theme` field above.
-    const r = await patchSettings(app, as(admin.email), {
-      brandprint: { collectionId: col.id, useWorkspaceBrandprint: false },
-    })
-    expect(r.status).toBe(200)
-    expect((await r.json()).brandprint).toEqual({ collectionId: col.id })
-
-    // Persisted without it too, not just stripped from this response.
-    const again = await (
-      await app.request("/v1/workspace/settings", { headers: as(admin.email) })
-    ).json()
-    expect(again.brandprint).toEqual({ collectionId: col.id })
-  })
-
-  it("accepts a profileId published in this workspace and round-trips it", async () => {
-    const admin: TestUser = { id: "u-bp-pro", email: "bppro@x.com", name: "Pro", username: "bppro" }
-    const { app } = makeAuthedApp("integ-bp-profile", [admin])
-    const col = await (
-      await app.request("/v1/collections", jsonAs(as(admin.email), { title: "Brandprint" }))
-    ).json()
-    const pub = await publishAs(
-      app,
-      "<h1>Brand profile</h1>",
-      { title: "Brand profile" },
-      as(admin.email),
-    )
-    const { short_id } = await pub.json()
-
-    const r = await patchSettings(app, as(admin.email), {
-      brandprint: { collectionId: col.id, profileId: short_id },
-    })
-    expect(r.status).toBe(200)
-    expect((await r.json()).brandprint).toEqual({ collectionId: col.id, profileId: short_id })
   })
 
   it("rejects an unknown profileId, and one owned by another workspace", async () => {

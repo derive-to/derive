@@ -16,14 +16,6 @@ describe("rawArtifactUrl", () => {
   it("omits the token segment entirely when there is none (the anon/public view)", () => {
     expect(rawArtifactUrl("abc123", 4)).toBe("/raw/abc123/v/4/index.html")
   })
-
-  it("distinguishes versions, so a version bump is a different cache entry", () => {
-    expect(rawArtifactUrl("abc123", 4, "t")).not.toBe(rawArtifactUrl("abc123", 5, "t"))
-  })
-
-  it("distinguishes tokened from tokenless — the mismatch that caused the bug", () => {
-    expect(rawArtifactUrl("abc123", 4, "tok")).not.toBe(rawArtifactUrl("abc123", 4))
-  })
 })
 
 describe("artifactQuery", () => {

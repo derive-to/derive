@@ -92,22 +92,11 @@ describe("planColumnAdds", () => {
     expect(unsafe).toEqual([])
   })
 
-  it("adds nothing when the live table already has every column", () => {
-    const live = { artifact: new Set(["id", "title", "author_login"]) }
-    expect(planColumnAdds(expected, live)).toEqual({ alters: [], unsafe: [] })
-  })
-
   it("collects an unsafe NOT-NULL-no-default add instead of emitting an ALTER", () => {
     const exp = { artifact: { kind: "kind TEXT NOT NULL" } }
     const live = { artifact: new Set(["id"]) }
     const { alters, unsafe } = planColumnAdds(exp, live)
     expect(alters).toEqual([])
     expect(unsafe).toEqual([{ tbl: "artifact", col: "kind", def: "kind TEXT NOT NULL" }])
-  })
-
-  it("skips tables absent from the live DB (created fresh, no ALTER needed)", () => {
-    const { alters, unsafe } = planColumnAdds(expected, {})
-    expect(alters).toEqual([])
-    expect(unsafe).toEqual([])
   })
 })

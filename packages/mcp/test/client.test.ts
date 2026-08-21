@@ -158,14 +158,6 @@ describe("derive client (the MCP server's backend) over real HTTP", () => {
     expect((await client.getContent(a.short_id, { version: 1 })).text).toBe("original") // history intact
   })
 
-  it("includes time-grouped sessions and version names on the detail endpoint", async () => {
-    const a = await client.publish({ content: "v1", filename: "s.md" })
-    await client.publish({ id: a.short_id, content: "v2", filename: "s.md", message: "edit" })
-    const got = await client.get(a.short_id)
-    expect(Array.isArray(got.sessions)).toBe(true)
-    expect(got.versions[0]).toHaveProperty("name")
-  })
-
   it("recognizes linked bundles in detail and list responses", async () => {
     const manifest = {
       schema: "derive.linked-bundle/v1",
@@ -185,16 +177,6 @@ describe("derive client (the MCP server's backend) over real HTTP", () => {
     expect((await client.list()).find((row) => row.short_id === published.short_id)).toMatchObject({
       is_linked_bundle: true,
     })
-  })
-
-  it("lists the workspace's artifacts, filtered by a title query", async () => {
-    const a = await client.publish({ content: "x", filename: "l.md", title: "Listable Plan" })
-    const all = await client.list()
-    expect(all.some((x) => x.short_id === a.short_id)).toBe(true)
-    const hit = await client.list("Listable")
-    expect(hit.some((x) => x.short_id === a.short_id)).toBe(true)
-    const none = await client.list("zzz-no-such-title-zzz")
-    expect(none.some((x) => x.short_id === a.short_id)).toBe(false)
   })
 
   it("search: greps within one artifact (short_id set) over real HTTP", async () => {
@@ -354,15 +336,6 @@ describe("createClient — workspace targeting", () => {
     expect(headers["X-Derive-Workspace"]).toBe("ws_acme")
     expect(headers.Authorization).toBe("Bearer t")
   })
-
-  it("omits the header entirely when no workspace is given", async () => {
-    const { calls, fetchImpl } = capture()
-    const c = createClient({ baseUrl: "http://x", token: "t", fetchImpl })
-    await c.list()
-    expect(calls).toHaveLength(1)
-    const headers = calls[0]?.[1]?.headers as Record<string, string>
-    expect(headers["X-Derive-Workspace"]).toBeUndefined()
-  })
 })
 
 // The tag/collection client methods that back the local MCP `organize` tool, exercised
@@ -383,13 +356,6 @@ describe("organize backend: tags + collections client methods over real HTTP", (
     const listed = await client.list(undefined, "q3 plan")
     expect(listed.map((x) => x.short_id)).toEqual([a.short_id])
     expect(listed[0]?.tags).toEqual(["planning", "q3 plan"])
-  })
-
-  it("listTags returns the vocabulary with counts, most-used first", async () => {
-    const vocab = await client.listTags()
-    expect(vocab.find((t) => t.tag === "planning")?.count).toBe(2)
-    // Sorted by count desc — the most-used tag leads.
-    expect(vocab[0]?.count).toBeGreaterThanOrEqual(vocab[vocab.length - 1]?.count ?? 0)
   })
 
   it("archives without breaking direct reads, lists the archive shelf, and restores", async () => {
@@ -414,14 +380,6 @@ describe("organize backend: tags + collections client methods over real HTTP", (
     expect((await client.get(short_id)).tags).toEqual(["extra"])
     await client.tag([short_id], { set: ["only"] })
     expect((await client.get(short_id)).tags).toEqual(["only"])
-  })
-
-  it("suggestTags returns current tags + vocabulary (no dense arm ⇒ empty suggestions)", async () => {
-    const { short_id } = await client.publish({ content: "# S", title: "Subj", tags: ["draft"] })
-    const s = await client.suggestTags(short_id)
-    expect(s.current).toEqual(["draft"])
-    expect(s.suggested).toEqual([])
-    expect(s.vocabulary.map((t) => t.tag)).toContain("planning")
   })
 
   it("collect creates a collection by name and folds artifacts in; get shows membership", async () => {

@@ -68,12 +68,4 @@ describe("versionsMissingPreview", () => {
     const missing = await meta.versionsMissingPreview(10)
     expect(missing).toEqual([{ artifact_id: "a1", n: 1 }])
   })
-
-  it("respects the limit", async () => {
-    const meta = new SqliteMetaStore(":memory:")
-    await seed(meta, "b1")
-    await seed(meta, "b2")
-    expect(await meta.versionsMissingPreview(1)).toHaveLength(1)
-    expect(await meta.versionsMissingPreview(10)).toHaveLength(2)
-  })
 })

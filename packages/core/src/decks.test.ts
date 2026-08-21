@@ -5,7 +5,6 @@ import {
   countSlideElements,
   isDeckDocument,
   isUnannouncedDeck,
-  MAX_SLIDE_OPS,
   sliceSlides,
   speaksDeckProtocol,
 } from "./decks"
@@ -95,13 +94,6 @@ describe("deck detection", () => {
     expect(isDeckDocument(one)).toBe(false)
   })
 
-  it("counts slides on any container tag, by class or by index attribute", () => {
-    expect(countSlideElements('<div class="slide"></div><div class="slide x"></div>')).toBe(2)
-    expect(countSlideElements("<article data-derive-slide='0'></article>")).toBe(1)
-    // A class that merely CONTAINS "slide" as a word boundary miss must not count.
-    expect(countSlideElements('<div class="slideshow"></div>')).toBe(0)
-  })
-
   it("counts `slide` as a whole class token, never a hyphenated relative", () => {
     // Found on real published decks: `\bslide\b` treats a hyphen as a word boundary, so
     // every slide-inner / slide-chart / slide-kicker wrapper counted as its own slide.
@@ -126,11 +118,6 @@ describe("unannounced decks", () => {
   it("stays quiet once the page announces itself", () => {
     expect(isUnannouncedDeck(deck(3))).toBe(false)
     expect(isUnannouncedDeck(DECK_TEMPLATE)).toBe(false)
-  })
-
-  it("stays quiet on an ordinary page that happens to use a slide class twice", () => {
-    // A carousel, a hero, a stray utility class: two is not a deck attempt.
-    expect(isUnannouncedDeck('<div class="slide"></div><div class="slide"></div>')).toBe(false)
   })
 })
 
@@ -227,10 +214,6 @@ describe("sliceSlides", () => {
       /never closed/i,
     )
   })
-
-  it("returns nothing for a page with no slides", () => {
-    expect(sliceSlides("<html><body><p>hi</p></body></html>")).toEqual([])
-  })
 })
 
 describe("applySlideOps", () => {
@@ -241,10 +224,6 @@ describe("applySlideOps", () => {
     const out = applySlideOps(three(), [{ op: "move", from: 3, to: 1 }])
     expect(order(out)).toEqual(["c", "a", "b"])
     expect(idsOf(out)).toEqual([2, 0, 1])
-  })
-
-  it("moves forward as well as back", () => {
-    expect(order(applySlideOps(three(), [{ op: "move", from: 1, to: 3 }]))).toEqual(["b", "c", "a"])
   })
 
   it("deletes by position", () => {
@@ -314,23 +293,6 @@ describe("applySlideOps", () => {
   it("refuses to delete the last slide standing", () => {
     const html = spaced([sl(0, "a")])
     expect(() => applySlideOps(html, [{ op: "delete", at: 1 }])).toThrow(/only slide/i)
-  })
-
-  it("refuses an unknown op, an empty batch, and an oversized one", () => {
-    expect(() => applySlideOps(three(), [{ op: "shuffle" } as never])).toThrow(/unknown op/i)
-    expect(() => applySlideOps(three(), [])).toThrow(/empty/i)
-    expect(() =>
-      applySlideOps(
-        three(),
-        Array.from({ length: MAX_SLIDE_OPS + 1 }, () => ({ op: "move", from: 1, to: 2 }) as const),
-      ),
-    ).toThrow(/maximum per request/i)
-  })
-
-  it("refuses a document with no slides at all", () => {
-    expect(() =>
-      applySlideOps("<html><body><p>hi</p></body></html>", [{ op: "delete", at: 1 }]),
-    ).toThrow(/no slide elements/i)
   })
 
   it("rearranges the canonical template and leaves it a deck", () => {

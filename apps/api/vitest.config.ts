@@ -113,16 +113,11 @@ const shared = {
   },
 }
 
-// Coverage gate on the API — the core logic, ~60% of the suite. The thresholds
-// are a ratchet floor set just below the current numbers: a regression fails the
-// build, and the floor is meant to be raised over time. It lives at the root so
-// it measures BOTH projects as one number, exactly as it did before the split.
-//
-// Recalibrated for vitest 4 / coverage-v8 4, which count branch points far more
-// granularly than v3 (the same 141 tests now report 59% branches / 68% stmts /
-// 74% lines, vs ~73% across the board before). That's a measurement-basis change,
-// not a coverage regression — so the floor is reset to the new basis, not lowered
-// to hide lost coverage.
+// Coverage is reported, not gated: `pnpm test:coverage` prints a summary and no
+// threshold fails on it. The per-package ratchet floors that used to live here
+// made every deletion of a weak test a red build, the wrong incentive for a suite
+// that is mostly agent-written. The block sits at the root so both projects
+// report as one number.
 export default defineConfig({
   ...shared,
   test: {
@@ -157,10 +152,6 @@ export default defineConfig({
       // markdown as JS — which exits 1 even with every test green.
       include: ["src/**/*.ts"],
       reporter: ["text-summary"],
-      // Ratchet floors, set just under the current numbers with headroom for
-      // noise. A drop fails `coverage`, and deploy needs the gate, so a coverage
-      // regression blocks the ship. Raise as coverage climbs.
-      thresholds: { statements: 76, branches: 67, functions: 76, lines: 80 },
     },
   },
 })

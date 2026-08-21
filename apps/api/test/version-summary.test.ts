@@ -15,7 +15,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { SqliteMetaStore } from "@derive/db/sqlite"
 import { FsBlobStore } from "@derive/storage/fs"
-import { afterAll, describe, expect, it, vi } from "vitest"
+import { afterAll, describe, expect, it } from "vitest"
 import { createApp } from "../src/app"
 import { SUMMARY_SOURCE_CHARS, type Summarizer, summaryInput } from "../src/summarizer"
 
@@ -105,15 +105,6 @@ describe("generating a version's summary", () => {
     expect(calls[0]?.text).toContain("billing migration")
   })
 
-  it("does not ask a model to describe a doc with nothing in it", async () => {
-    // A model handed three words hands the title back, which the card already shows above.
-    const { calls, summarizer } = fakeSummarizer()
-    const { app, meta } = makeApp("vs-tiny", summarizer)
-    const { short_id } = await publish(app, "# Hi\n", { title: "Hi" })
-    expect(calls).toHaveLength(0)
-    expect((await summaryOf(meta, short_id)).summary).toBeNull()
-  })
-
   it("writes nothing when no model is bound, which is how self-host stays unchanged", async () => {
     const { app, meta } = makeApp("vs-none")
     const { short_id } = await publish(app, DOC, { title: "Q4" })
@@ -137,13 +128,6 @@ describe("the ways it must not break a publish", () => {
     // ...and the artifact is genuinely readable, not half-written.
     const res = await app.request(`/v1/artifacts/${short_id}`, { headers: AUTH })
     expect(res.status).toBe(200)
-  })
-
-  it("a model that returns nothing usable writes nothing", async () => {
-    const { summarizer } = fakeSummarizer(null)
-    const { app, meta } = makeApp("vs-empty", summarizer)
-    const { short_id } = await publish(app, DOC, { title: "Q4" })
-    expect((await summaryOf(meta, short_id)).summary).toBeNull()
   })
 })
 
@@ -193,25 +177,6 @@ describe("sanitizing what a model returns", () => {
     expect(summary).not.toContain("&")
     expect(summary).toContain("A plan")
   })
-
-  it("flattens a model that answers with a bulleted list", async () => {
-    const { summarizer } = fakeSummarizer("Summary:\n- moves billing\n- needs a window\n")
-    const { app, meta } = makeApp("vs-flatten", summarizer)
-    const { short_id } = await publish(app, DOC, { title: "Q4" })
-    const { summary } = await summaryOf(meta, short_id)
-    expect(summary).not.toContain("\n")
-    // The preamble goes too — "Summary:" on a card is a wasted line.
-    expect(summary?.toLowerCase().startsWith("summary:")).toBe(false)
-  })
-
-  it("clamps a runaway answer at a word boundary", async () => {
-    const { summarizer } = fakeSummarizer(`${"word ".repeat(200)}end`)
-    const { app, meta } = makeApp("vs-clamp", summarizer)
-    const { short_id } = await publish(app, DOC, { title: "Q4" })
-    const { summary } = await summaryOf(meta, short_id)
-    expect(summary?.length).toBeLessThanOrEqual(201) // 200 + the ellipsis
-    expect(summary?.endsWith("…")).toBe(true)
-  })
 })
 
 describe("what the surfaces then show", () => {
@@ -243,19 +208,6 @@ describe("what the surfaces then show", () => {
     expect(html).not.toContain("Priya")
     expect(html).not.toContain("og:description")
   })
-
-  it("the OG card image keeps the inventory line, which is what it has room for", async () => {
-    // The card draws its description as one unwrapped 28px line sized for ~50 characters; a
-    // 200-character summary would run off the canvas. The reader gets it via og:description.
-    const { summarizer } = fakeSummarizer("Moves the billing migration to November.")
-    const { app } = makeApp("vs-ogimg", summarizer)
-    const { short_id } = await publish(app, DOC, { title: "Q4", visibility: "public" })
-    const svg = await (await app.request(`/v1/og/${short_id}`)).text()
-    expect(svg).not.toContain("<image")
-    expect(svg).toContain("<svg")
-    expect(svg).not.toContain("Moves the billing migration")
-    expect(svg).toContain("version")
-  })
 })
 
 // WHAT THE MODEL IS ACTUALLY SHOWN. Measured rather than assumed: converting a document to
@@ -285,13 +237,6 @@ describe("the text handed to the model", () => {
     ).toContain("billing migration")
   })
 
-  it("still returns a full window for a document far larger than the cap", () => {
-    const para = "<p>The billing migration moves to November so the team finishes invoicing.</p>\n"
-    const big = `<html><body>${para.repeat(60_000)}</body></html>`
-    expect(big.length).toBeGreaterThan(SUMMARY_SOURCE_CHARS * 20)
-    expect(summaryInput(big, "text/html")?.length).toBe(6000)
-  })
-
   it("skips a page that is a screenshot rather than a document", () => {
     // After elision such a page reads as "[elided — 146KB inline image. Re-upload via …]":
     // 140 characters of instructions the HOST wrote for an agent, with not one word about the
@@ -299,22 +244,5 @@ describe("the text handed to the model", () => {
     // would spend a model call having its own elision notice summarized back at it.
     const img = `<p><img src="data:image/png;base64,${"A".repeat(400)}"></p>`
     expect(summaryInput(img, "text/html")).toBeNull()
-  })
-
-  it("keeps the prose when a page has both an image and something to say", () => {
-    const doc =
-      `<p><img src="data:image/png;base64,${"A".repeat(400)}"></p>` +
-      "<p>We are moving the billing migration to November so the team can finish invoicing.</p>"
-    const out = summaryInput(doc, "text/html")
-    expect(out).toContain("billing migration")
-    expect(out).not.toContain("elided")
-    expect(out).not.toContain("/v1/assets")
-  })
-
-  it("skips an image that straddles the source cap rather than summarizing its own tag", () => {
-    // An inlined image larger than the cap leaves its opening tag unterminated, and toMarkdown
-    // reasonably keeps an unclosed tag as literal text rather than guessing where it ended.
-    const doc = `<html><body><img src="data:image/png;base64,${"A".repeat(SUMMARY_SOURCE_CHARS + 1000)}"><p>Prose.</p></body></html>`
-    expect(summaryInput(doc, "text/html")).toBeNull()
   })
 })

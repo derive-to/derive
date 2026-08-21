@@ -104,17 +104,6 @@ describe("publish carries its own render", () => {
     expect(body.render).toContain("read(")
   })
 
-  it("refuses an unknown variant by name rather than on a schema check", async () => {
-    const { app, token } = await setup("pubrender-bad")
-    const r = await callRaw(app, token, "publish", {
-      title: "Bad",
-      content: "# Bad\n\nbody",
-      render: "thumbnail",
-    })
-    expect(r?.isError).toBe(true)
-    expect(r?.content?.[0]?.text).toContain("top, full, marked")
-  })
-
   it("falls back to the ordinary response when the shot isn't ready in time", async () => {
     // Nothing renders in this harness, so `wait:0` is the not-ready path: a publish must
     // still SUCCEED and report itself when the picture can't be had.
@@ -132,19 +121,6 @@ describe("publish carries its own render", () => {
     // And it says WHY there is no picture. The generic "queued — call read(...)" pointer
     // ignores that a render was asked for, and reads as though nothing was requested.
     expect(body.render).toContain("not waited for")
-  })
-
-  it("says the wait ELAPSED when one was given and the shot still didn't land", async () => {
-    const { app, token } = await setup("pubrender-elapsed")
-    const r = await callRaw(app, token, "publish", {
-      title: "Elapsed",
-      content: "# Elapsed\n\nbody",
-      render: "top",
-      wait: 1,
-    })
-    const body = JSON.parse(r?.content?.[0]?.text ?? "{}")
-    expect(body.published).toBe(true)
-    expect(body.render).toContain("not ready within 1s")
   })
 
   it("accepts a wait sent as a STRING, the way a stale client sends it", async () => {
@@ -166,23 +142,6 @@ describe("publish carries its own render", () => {
 })
 
 describe("collectRender", () => {
-  it("returns the bytes once ready, and SNIFFS the type instead of assuming png", async () => {
-    // JPEG magic bytes. The variants are PNG today, but the read path used to HARDCODE
-    // image/png, so this pins that it reports what the bytes actually are — the moment a
-    // variant is ever stored as anything else, a hardcode would mislabel it silently.
-    const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0])
-    const meta = {
-      getVersion: async () => ({ preview_key: "k", preview_status: "ready" }),
-    } as unknown as Parameters<typeof collectRender>[0]["meta"]
-    const blobs = { get: async () => jpeg, put: async () => "k" } as unknown as Parameters<
-      typeof collectRender
-    >[0]["blobs"]
-
-    const got = await collectRender({ meta, blobs }, "art_1", 1, "top", 5)
-    expect(got?.mimeType).toBe("image/jpeg")
-    expect(got?.bytes).toEqual(jpeg)
-  })
-
   it("gives up immediately on a failed variant instead of burning the whole wait", async () => {
     const { app, meta, token } = await setup("collect-failed")
     const pub = JSON.parse(

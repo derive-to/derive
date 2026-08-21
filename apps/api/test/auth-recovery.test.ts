@@ -4,7 +4,7 @@ import { join } from "node:path"
 import { SqliteMetaStore } from "@derive/db/sqlite"
 import { FsBlobStore } from "@derive/storage/fs"
 import Database from "better-sqlite3"
-import { afterAll, describe, expect, it } from "vitest"
+import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { createApp } from "../src/app"
 import { type AuthHooks, makeAuth, migrateAuth } from "../src/auth-config"
 
@@ -47,7 +47,7 @@ afterAll(() => {
 })
 
 describe("auth: password recovery end-to-end", () => {
-  it("migrates the Better Auth tables", async () => {
+  beforeAll(async () => {
     await migrateAuth(auth)
   })
 

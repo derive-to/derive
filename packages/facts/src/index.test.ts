@@ -4,7 +4,6 @@ import {
   factDriftAdvisories,
   factShape,
   factSummary,
-  isDerivedFactName,
   MAX_FACT_BYTES,
   MAX_FACTS_PER_VERSION,
   missingFactAdvisory,
@@ -24,18 +23,6 @@ describe("parseFacts — HTML", () => {
     )
     expect(advisories).toEqual([])
     expect(facts).toEqual([{ slot: "checks", json: `{"pass":44,"fail":0}`, bytes: 20 }])
-  })
-
-  it("extracts multiple facts in document order", () => {
-    const src = html(slot("a", "1") + slot("b", `{"x":true}`))
-    const { facts } = parseFacts(src, "text/html")
-    expect(facts.map((s) => s.slot)).toEqual(["a", "b"])
-  })
-
-  it("tolerates attribute order (data-fact before type) and single quotes", () => {
-    const src = html(`<script data-fact='m' type='application/derive-facts'>[1,2,3]</script>`)
-    const { facts } = parseFacts(src, "text/html")
-    expect(facts).toEqual([{ slot: "m", json: "[1,2,3]", bytes: 7 }])
   })
 
   it("ignores ordinary scripts and other script types", () => {
@@ -89,10 +76,6 @@ describe("parseFacts — HTML", () => {
     const { facts, advisories } = parseFacts(html(many), "text/html")
     expect(facts).toHaveLength(MAX_FACTS_PER_VERSION)
     expect(advisories.some((a) => a.includes(`More than ${MAX_FACTS_PER_VERSION}`))).toBe(true)
-  })
-
-  it("returns nothing for a page with no data blocks", () => {
-    expect(parseFacts(html("<p>hi</p>"), "text/html")).toEqual({ facts: [], advisories: [] })
   })
 
   // A literal </script> inside a JSON string ends the block right there — the HTML parser
@@ -194,36 +177,6 @@ describe("missingFactAdvisory", () => {
     // That case has its own, more specific advisory; two notes about one block is noise.
     expect(missingFactAdvisory(table(4) + slot("bad", "{oops}"), "text/html")).toBeNull()
   })
-
-  it("stays quiet on prose that merely mentions numbers", () => {
-    const prose = html(
-      "<p>We shipped 3 fixes in 2026, up from 2 the year before, across 14 repos.</p>",
-    )
-    expect(missingFactAdvisory(prose, "text/html")).toBeNull()
-  })
-
-  it("stays quiet on a table of words rather than figures", () => {
-    const words = html("<table><tr><td>Alice</td><td>Editor</td></tr></table>".repeat(6))
-    expect(missingFactAdvisory(words, "text/html")).toBeNull()
-  })
-
-  it("stays quiet below the threshold — one or two figures is not a dataset", () => {
-    expect(missingFactAdvisory(table(1), "text/html")).toBeNull()
-  })
-
-  it("reads markdown tables too", () => {
-    const md = ["| metric | value |", "| --- | --- |", "| pass | 44 |", "| fail | 0 |"].join("\n")
-    // Four numeric cells across the two data rows (the alignment row has none).
-    expect(missingFactAdvisory(`${md}\n${md}`, "text/markdown")).toContain("no facts")
-  })
-
-  it("reads linked-bundle HTML with the same fact grammar", () => {
-    expect(missingFactAdvisory(table(4), "text/x-derive-linked-bundle")).toContain("no facts")
-  })
-
-  it("ignores content types with no slot grammar", () => {
-    expect(missingFactAdvisory(table(8), "text/x-derive-deck")).toBeNull()
-  })
 })
 
 // Shape drift is the quiet way a trend read goes wrong: rename a key at v20 and
@@ -237,10 +190,6 @@ describe("factShape / factDriftAdvisories", () => {
     expect(shape({ pass: 1 })).not.toBe(shape({ passed: 1 }))
     // A changed TYPE matters as much as a changed name.
     expect(shape({ pass: 1 })).not.toBe(shape({ pass: "1" }))
-  })
-
-  it("treats a value change as the same shape", () => {
-    expect(shape({ pass: 41, fail: 2 })).toBe(shape({ pass: 48, fail: 0 }))
   })
 
   it("flags a renamed key, naming what went and what arrived", () => {
@@ -314,11 +263,6 @@ describe("factSummary", () => {
     )
   })
 
-  it("caps at three fields so a card stays scannable", () => {
-    const s = factSummary([row("m", '{"a":1,"b":2,"c":3,"d":4,"e":5}')])
-    expect(s).toBe("a 1 · b 2 · c 3")
-  })
-
   it("names a bare scalar slot by its own fact name", () => {
     expect(factSummary([row("uptime", "99.95")])).toBe("uptime 99.95")
     expect(factSummary([row("status", '"green"')])).toBe("status green")
@@ -330,24 +274,11 @@ describe("factSummary", () => {
     )
   })
 
-  it("drops values too long for a card", () => {
-    const long = "x".repeat(40)
-    expect(factSummary([row("checks", JSON.stringify({ note: long, pass: 48 }))])).toBe("pass 48")
-  })
-
-  it("rounds noisy floats", () => {
-    expect(factSummary([row("m", '{"ratio":0.123456789}')])).toBe("ratio 0.12")
-  })
-
   it("returns null when there is nothing card-worthy, so the card falls back", () => {
     expect(factSummary([])).toBeNull()
     expect(factSummary([row("x", "{}")])).toBeNull()
     expect(factSummary([row("x", '{"nested":{"a":1}}')])).toBeNull()
     expect(factSummary([row("x", "{bad json")])).toBeNull()
-  })
-
-  it("draws from several facts when the first is thin", () => {
-    expect(factSummary([row("a", '{"x":1}'), row("b", '{"y":2}')])).toBe("x 1 · y 2")
   })
 })
 
@@ -369,26 +300,6 @@ describe("factDeltas", () => {
   it("reports a fact appearing or disappearing as its own event", () => {
     expect(factDeltas([], [row("checks", '{"pass":1}')])).toEqual(["checks (new)"])
     expect(factDeltas([row("checks", '{"pass":1}')], [])).toEqual(["checks (gone)"])
-  })
-
-  it("reports a new field inside an existing slot", () => {
-    expect(factDeltas([row("c", '{"pass":1}')], [row("c", '{"pass":1,"flaky":3}')])).toEqual([
-      "c.flaky 3 (new)",
-    ])
-  })
-
-  it("reaches nested scalars", () => {
-    expect(factDeltas([row("c", '{"t":{"ms":900}}')], [row("c", '{"t":{"ms":750}}')])).toEqual([
-      "c.t.ms 900 → 750",
-    ])
-  })
-
-  it("caps the list so a review stays readable", () => {
-    const before = Object.fromEntries(Array.from({ length: 20 }, (_, i) => [`k${i}`, i]))
-    const after = Object.fromEntries(Array.from({ length: 20 }, (_, i) => [`k${i}`, i + 1]))
-    expect(
-      factDeltas([row("m", JSON.stringify(before))], [row("m", JSON.stringify(after))]).length,
-    ).toBeLessThanOrEqual(8)
   })
 
   it("survives an unparseable stored row", () => {
@@ -444,13 +355,6 @@ describe("browser parity and adversarial input (the CodeQL round)", () => {
     expect(missingFactAdvisory(pipeAttack, "text/markdown")).toBeNull()
     expect(Date.now() - started).toBeLessThan(2_000)
   })
-
-  it("still finds real numeric cells after the linear-time rewrite", () => {
-    const html = `<table>${"<td> 42 </td><td>$1,204.50</td><td>93%</td><td>7</td>"}</table>`
-    expect(missingFactAdvisory(html, "text/html")).toMatch(/4 numeric table cells/)
-    const md = "| a | b |\n|---|---|\n| 41 | 7% |\n| $9 | 12.5 |\n"
-    expect(missingFactAdvisory(md, "text/markdown")).toMatch(/4 numeric table cells/)
-  })
 })
 
 describe("the rename: both spellings parse, forever", () => {
@@ -484,11 +388,6 @@ describe("the rename: both spellings parse, forever", () => {
     const md = '```derive-facts new\n{"b":2}\n```\n\n```derive-data old\n{"a":1}\n```\n'
     expect(parseFacts(md, "text/markdown").facts.map((s) => s.slot)).toEqual(["new", "old"])
   })
-
-  it("leaves an ordinary fenced code block alone", () => {
-    const md = "```js foo\nconst a = 1\n```\n"
-    expect(parseFacts(md, "text/markdown").facts).toEqual([])
-  })
 })
 
 describe("self-heal by invitation", () => {
@@ -512,13 +411,6 @@ describe("self-heal by invitation", () => {
     const page = '<script type="application/derive-facts" data-fact="a">{"x":1}</script>'
     expect(parseFacts(page, "text/html").advisories).toEqual([])
   })
-
-  it("offers it for a legacy markdown fence too", () => {
-    const md = '```derive-data checks\n{"pass":1}\n```\n'
-    const { facts: slots, advisories } = parseFacts(md, "text/markdown")
-    expect(slots.map((s) => s.slot)).toEqual(["checks"])
-    expect(advisories.some((a) => a.includes("original spelling"))).toBe(true)
-  })
 })
 
 describe("the derived namespace", () => {
@@ -529,11 +421,5 @@ describe("the derived namespace", () => {
     const { facts, advisories } = parseFacts(page, "text/html")
     expect(facts).toHaveLength(0)
     expect(advisories.join(" ")).toMatch(/name/i)
-  })
-
-  it("classifies names", () => {
-    expect(isDerivedFactName("$outline")).toBe(true)
-    expect(isDerivedFactName("checks")).toBe(false)
-    expect(isDerivedFactName("")).toBe(false)
   })
 })

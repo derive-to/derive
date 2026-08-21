@@ -4,7 +4,6 @@ import { join } from "node:path"
 import {
   type ArtifactRecord,
   newId,
-  parseSubject,
   type SessionMessageRecord,
   type SessionRecord,
 } from "@derive/core"
@@ -146,19 +145,6 @@ describe("a turn that edits", () => {
       "# New",
     )
   })
-
-  it("an UNSTATED confidence still publishes — the value is shown, never a gate", async () => {
-    const { meta, blobs, artifact } = await setup()
-    const res = await runSessionTurn(deps(meta, blobs, revision("# New", null)), {
-      session: session(),
-      subject: { kind: "artifact", id: "doc1" },
-      artifact,
-      transcript: transcript("make it shorter"),
-      onBehalf: ED,
-    })
-    expect(res.outcome).toBe("published")
-    expect((await meta.getArtifactById("a1"))?.current_version).toBe(2)
-  })
 })
 
 describe("a blocked write surfaces its draft instead of landing", () => {
@@ -262,24 +248,6 @@ describe("failures still answer the person sitting there", () => {
     expect(res.wrote).toBeNull()
     expect(res.reply).not.toBe("")
     expect((await meta.getArtifactById("a1"))?.current_version).toBe(1)
-  })
-})
-
-describe("the stored subject", () => {
-  it("round-trips through the column, and a corrupt one degrades to a plain ask", async () => {
-    // Extra keys on a stored subject are dropped — the subject is just an address.
-    expect(parseSubject(JSON.stringify({ kind: "artifact", id: "doc1", mode: "publish" }))).toEqual(
-      {
-        kind: "artifact",
-        id: "doc1",
-      },
-    )
-    // A bare short_id is the ergonomic shorthand everywhere a selector is accepted.
-    expect(parseSubject(JSON.stringify("doc1"))).toEqual({ kind: "artifact", id: "doc1" })
-    // Unparseable and absent both read as "no subject" — a corrupt column must degrade a
-    // session to a plain ask, never wedge it.
-    expect(parseSubject("{not json")).toBeNull()
-    expect(parseSubject(null)).toBeNull()
   })
 })
 

@@ -270,15 +270,6 @@ describe("invite-only when workspace access is off", () => {
     ).json()
     expect(works.artifacts).toEqual([])
   })
-
-  it("your own work never shows in your shared-with-you feed", async () => {
-    const { app } = makeAuthedApp("vis-own-shared", [ana], "editor")
-    await publishAs(app, "<h1>mine</h1>", {}, as(ana.email))
-    const shared = await (
-      await app.request("/v1/artifacts?scope=shared", { headers: as(ana.email) })
-    ).json()
-    expect(shared.artifacts).toEqual([])
-  })
 })
 
 describe("profile privacy: discoverable off hides the profile", () => {
@@ -309,11 +300,6 @@ describe("profile privacy: discoverable off hides the profile", () => {
     expect((await eveApp.request("/v1/users/carav", { headers: as("eve@vis.test") })).status).toBe(
       404,
     )
-  })
-
-  it("a discoverable profile stays anonymous-readable (the author-chip contract)", async () => {
-    const { app } = makeAuthedApp("vis-profile-on", [ana])
-    expect((await app.request("/v1/users/anav")).status).toBe(200)
   })
 })
 

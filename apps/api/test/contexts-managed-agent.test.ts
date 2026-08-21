@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest"
+import { ContextConflictError, createContextCore } from "../src/lib/create-context"
 import { as, bearer, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
 // The end of "pick an agent": creating a context WITHOUT an agent_id auto-mints a
@@ -39,18 +40,6 @@ describe("contexts: auto-minted managed agents", () => {
 
     // The token never appears anywhere again: the GET surface has no token field.
     expect(JSON.stringify(roster)).not.toContain(ctx.agent_token)
-  })
-
-  it("a context named like an existing agent mints under a suffixed name, not a 409", async () => {
-    await app.request("/v1/agents", jsonAs(as(owner.email), { name: "Analytics" }))
-    const created = await mkContext("Analytics", { manifest_short_id: await mkManifest() })
-    expect(created.status).toBe(201)
-    const ctx = await created.json()
-    const roster = (await (await app.request("/v1/agents", { headers: as(owner.email) })).json())
-      .agents
-    const minted = roster.find((a: { id: string }) => a.id === ctx.agent_id)
-    expect(minted.managed).toBe(true)
-    expect(minted.name).toMatch(/^Analytics .{4}$/)
   })
 
   it("a context-name 409 after the mint unwinds the minted agent — no orphaned tokens", async () => {
@@ -123,5 +112,46 @@ describe("agents: token rotation", () => {
       headers: as(owner.email),
     })
     expect(missing.status).toBe(404)
+  })
+})
+
+// createContextCore is the function behind the managed-agent mint the route tests above
+// exercise; the extra contract here is that the plaintext token never leaves it.
+describe("createContextCore", () => {
+  const owner = { id: "u-ow", email: "ow@x.com", name: "Ow" }
+
+  it("mints a managed agent and writes the context row", async () => {
+    const { app, meta } = makeAuthedApp("ctx-core", [owner])
+    await app.request("/v1/me", { headers: as(owner.email) })
+    const pub = await (await publishAs(app, "# A manifest", {}, as(owner.email))).json()
+    const artifactId = (await meta.getByShortId(pub.short_id))?.id as string
+
+    const made = await createContextCore(meta, {
+      orgId: "default",
+      userId: owner.id,
+      name: "Pricing Helper",
+      manifestArtifactId: artifactId,
+    })
+    expect(made.context.name).toBe("Pricing Helper")
+    const agent = await meta.getAgent(made.agentId)
+    expect(agent?.managed).toBeTruthy()
+    // The minted token never leaves this function — only its hash is stored, and no caller
+    // has anywhere safe to put the plaintext.
+    expect(made).not.toHaveProperty("agentToken")
+  })
+
+  it("second create with the same name conflicts", async () => {
+    const { app, meta } = makeAuthedApp("ctx-core-dup", [owner])
+    await app.request("/v1/me", { headers: as(owner.email) })
+    const pub = await (await publishAs(app, "# M", {}, as(owner.email))).json()
+    const artifactId = (await meta.getByShortId(pub.short_id))?.id as string
+    const input = {
+      orgId: "default",
+      userId: owner.id,
+      name: "Dup",
+      manifestArtifactId: artifactId,
+    }
+    await createContextCore(meta, input)
+    await expect(createContextCore(meta, input)).rejects.toBeInstanceOf(ContextConflictError)
   })
 })

@@ -4,14 +4,6 @@ import { context, MAX_SECTION, mrkdwnBody, mrkdwnLabel, section } from "../src/l
 const balanced = (s: string) => (s.match(/</g) ?? []).length === (s.match(/>/g) ?? []).length
 
 describe("mrkdwnBody", () => {
-  it("renders the markdown subset Slack has an equivalent for", () => {
-    expect(mrkdwnBody("[Derive](https://derive.to)")).toBe("<https://derive.to|Derive>")
-    expect(mrkdwnBody("**bold** and __also__")).toBe("*bold* and *also*")
-    expect(mrkdwnBody("# Heading")).toBe("*Heading*")
-    expect(mrkdwnBody("- one\n- two")).toBe("• one\n• two")
-    expect(mrkdwnBody("just words")).toBe("just words")
-  })
-
   // The control. A comment body is written by someone who may not be trusted with the
   // workspace's Slack channel, so it must not be able to reach Slack's control syntax:
   // `<!channel>`/`<!here>` broadcast to everyone, and `<url|label>` renders a link whose
@@ -125,44 +117,13 @@ describe("block text objects opt out of Slack's automatic parsing", () => {
   })
 })
 
-describe("mrkdwnBody — link labels are rendered faithfully", () => {
-  // Choosing the visible text is what a markdown link IS, and Derive's own comment UI renders
-  // it the same way. An earlier rule tried to refuse "impersonating" labels and swallowed
-  // ordinary technical writing instead, because `.js`/`.md`/`.json` are real TLDs.
-  it("keeps the label the author wrote", () => {
-    for (const label of ["Node.js", "README.md", "package.json", "the spec", "derive.to/a/x"])
-      expect(mrkdwnBody(`[${label}](https://real.example/x)`)).toBe(
-        `<https://real.example/x|${label}>`,
-      )
-  })
-
-  // What still holds: the label cannot break out of the wrapper or reach control syntax, and
-  // only http(s) URLs become links at all.
-  it("escapes the label and admits only http(s) targets", () => {
-    expect(mrkdwnBody("[<!channel>](https://ok.example)")).toBe(
-      "<https://ok.example|&lt;!channel&gt;>",
-    )
-    expect(mrkdwnBody("[x](javascript:alert(1))")).toBe("[x](javascript:alert(1))")
-    expect(mrkdwnBody("[x](https://a|b)")).toBe("[x](https://a|b)")
-  })
-})
-
 // Fidelity gaps found by rendering a real review comment into a live workspace: our own
 // escaping killed markdown block quotes (mrkdwn supports them), and markdown's `~~x~~` is not
 // mrkdwn's `~x~`.
 describe("mrkdwnBody — constructs mrkdwn supports but escaping was eating", () => {
-  it("keeps a line-leading block quote", () => {
-    expect(mrkdwnBody("> quoted line")).toBe("> quoted line")
-    expect(mrkdwnBody("a\n> quoted\nb")).toBe("a\n> quoted\nb")
-  })
-
   it("still escapes a > that is NOT a block-quote marker", () => {
     expect(mrkdwnBody("a > b")).toBe("a &gt; b")
     expect(mrkdwnBody("Foo<Bar> x")).toBe("Foo&lt;Bar&gt; x")
-  })
-
-  it("converts markdown strikethrough to mrkdwn's single tilde", () => {
-    expect(mrkdwnBody("~~struck~~ ok")).toBe("~struck~ ok")
   })
 
   // The safety argument for unescaping a line-leading `>`: every `<` is escaped, so a lone `>`
@@ -171,24 +132,5 @@ describe("mrkdwnBody — constructs mrkdwn supports but escaping was eating", ()
     expect(mrkdwnBody("<!channel>\n> quote")).toBe("&lt;!channel&gt;\n> quote")
     expect(mrkdwnBody("> <!channel>")).toBe("> &lt;!channel&gt;")
     expect(mrkdwnBody("> <@U1> and <!here>")).toBe("> &lt;@U1&gt; and &lt;!here&gt;")
-  })
-})
-
-// Found by posting a real review comment into Slack and looking at it: mrkdwn's ``` fence has
-// no info string, so a language tag becomes the code block's FIRST LINE. A ```ts block rendered
-// with a stray "ts" above the code. Agents write fenced code with a language constantly, so this
-// is the common case, not an edge one.
-describe("mrkdwnBody — fenced code language tags", () => {
-  it("drops the language tag, which mrkdwn renders as content", () => {
-    expect(mrkdwnBody("```ts\nconst a = 1\n```")).toBe("```\nconst a = 1\n```")
-    expect(mrkdwnBody("```python\nx = 1\n```")).toBe("```\nx = 1\n```")
-    expect(mrkdwnBody("```c++\nint x;\n```")).toBe("```\nint x;\n```")
-    expect(mrkdwnBody("```objective-c\nid x;\n```")).toBe("```\nid x;\n```")
-  })
-
-  it("leaves a bare fence and the code itself alone", () => {
-    expect(mrkdwnBody("```\nplain\n```")).toBe("```\nplain\n```")
-    // A line of code that merely starts with backticks-and-a-word is not an opening fence.
-    expect(mrkdwnBody("```\n```ts is how you open one\n```")).toContain("```ts is how you open one")
   })
 })

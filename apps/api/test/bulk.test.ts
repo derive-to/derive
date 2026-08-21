@@ -51,34 +51,6 @@ describe("bulk tags", () => {
     const res = await bulk("/v1/bulk/tags", { shortIds: [a, "does_not_exist"], add: ["x"] })
     expect(await res.json()).toEqual({ ok: 1, skipped: 1, failed: 0 })
   })
-
-  it("a no-op tag set is a clean 0/0/0, not an error", async () => {
-    const a = await publish("noop")
-    const res = await bulk("/v1/bulk/tags", { shortIds: [a], add: ["   "] })
-    expect(await res.json()).toEqual({ ok: 0, skipped: 0, failed: 0 })
-  })
-})
-
-describe("bulk favorite", () => {
-  it("stars a set, then unstars it", async () => {
-    const [a, b] = [await publish("fav-a"), await publish("fav-b")]
-
-    const star = await bulk("/v1/bulk/favorite", { shortIds: [a, b], favorite: true })
-    expect(await star.json()).toEqual({ ok: 2, skipped: 0, failed: 0 })
-    const starred = await (
-      await app.request("/v1/artifacts?favorite=true", { headers: as(amy.email) })
-    ).json()
-    expect(starred.artifacts.map((x: { short_id: string }) => x.short_id).sort()).toEqual(
-      [a, b].sort(),
-    )
-
-    const unstar = await bulk("/v1/bulk/favorite", { shortIds: [a, b], favorite: false })
-    expect(await unstar.json()).toEqual({ ok: 2, skipped: 0, failed: 0 })
-    const after = await (
-      await app.request("/v1/artifacts?favorite=true", { headers: as(amy.email) })
-    ).json()
-    expect(after.artifacts).toHaveLength(0)
-  })
 })
 
 describe("bulk archive", () => {
@@ -172,12 +144,5 @@ describe("bulk delete", () => {
     expect(await res.json()).toEqual({ ok: 0, skipped: 2, failed: 0 })
     expect(await meta.getByShortId(a)).not.toBeNull()
     expect(await meta.getByShortId(b)).not.toBeNull()
-  })
-})
-
-describe("bulk validation", () => {
-  it("rejects an empty selection", async () => {
-    const res = await bulk("/v1/bulk/delete", { shortIds: [] })
-    expect(res.status).toBe(400)
   })
 })

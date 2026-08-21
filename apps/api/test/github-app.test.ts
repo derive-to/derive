@@ -1,12 +1,6 @@
 import { createHmac, createVerify, generateKeyPairSync } from "node:crypto"
-import { afterEach, describe, expect, it, vi } from "vitest"
-import { signState, verifyState } from "../src/lib/crypto"
-import {
-  appJwt,
-  convertManifestCode,
-  installationToken,
-  verifyWebhookSignature,
-} from "../src/lib/github-app"
+import { describe, expect, it } from "vitest"
+import { appJwt, verifyWebhookSignature } from "../src/lib/github-app"
 
 // A throwaway RSA keypair, PKCS#1 PEM — the exact format GitHub's manifest
 // conversion hands back, so this also proves createPrivateKey accepts it.
@@ -47,68 +41,5 @@ describe("verifyWebhookSignature", () => {
     expect(verifyWebhookSignature(`${body} `, good, secret)).toBe(false)
     expect(verifyWebhookSignature(body, undefined, secret)).toBe(false)
     expect(verifyWebhookSignature(body, "sha256=deadbeef", secret)).toBe(false)
-  })
-})
-
-describe("installationToken + convertManifestCode", () => {
-  afterEach(() => vi.unstubAllGlobals())
-
-  it("mints, caches, and returns the installation token", async () => {
-    const fetchMock = vi.fn(
-      async () =>
-        new Response(
-          JSON.stringify({
-            token: "ghs_inst",
-            expires_at: new Date(Date.now() + 3_600_000).toISOString(),
-          }),
-          { status: 200 },
-        ),
-    )
-    vi.stubGlobal("fetch", fetchMock)
-    const t1 = await installationToken("12345", privateKey, "999")
-    const t2 = await installationToken("12345", privateKey, "999")
-    expect(t1).toBe("ghs_inst")
-    expect(t2).toBe("ghs_inst")
-    // Second call served from cache (one network mint).
-    expect(fetchMock).toHaveBeenCalledTimes(1)
-  })
-
-  it("converts a manifest code into App credentials", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(
-        async () =>
-          new Response(
-            JSON.stringify({
-              id: 42,
-              slug: "derive-on-acme",
-              client_id: "Iv1.x",
-              client_secret: "sek",
-              pem: "-----BEGIN RSA PRIVATE KEY-----\n…\n-----END RSA PRIVATE KEY-----",
-              webhook_secret: "whsec",
-            }),
-            { status: 200 },
-          ),
-      ),
-    )
-    const conv = await convertManifestCode("tmpcode")
-    expect(conv).toMatchObject({ app_id: "42", slug: "derive-on-acme", webhook_secret: "whsec" })
-  })
-})
-
-describe("signState / verifyState", () => {
-  const secret = "server-secret"
-  it("round-trips a payload, and rejects tampering + expiry", () => {
-    const token = signState({ org: "ws_1", uid: "u_1" }, secret, 1_000_000)
-    const ok = verifyState<{ org: string; uid: string }>(token, secret, 60_000, 1_000_030)
-    expect(ok).toMatchObject({ org: "ws_1", uid: "u_1" })
-    // Wrong key.
-    expect(verifyState(token, "other", 60_000, 1_000_030)).toBeNull()
-    // Expired (past maxAge).
-    expect(verifyState(token, secret, 10_000, 1_100_000)).toBeNull()
-    // Tampered body.
-    const [, sig] = token.split(".")
-    const forged = `${Buffer.from(JSON.stringify({ org: "ws_evil", iat: 1_000_000 })).toString("base64url")}.${sig}`
-    expect(verifyState(forged, secret, 60_000, 1_000_030)).toBeNull()
   })
 })

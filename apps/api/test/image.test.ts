@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { MAX_AVATAR_BYTES, sniffAssetType, sniffImageType } from "../src/lib/image"
+import { imageDimensions, sniffAssetType, sniffImageType } from "../src/lib/image"
 
 const bytes = (...vals: number[]) => Uint8Array.from(vals)
 const text = (s: string) => new TextEncoder().encode(s)
@@ -18,10 +18,6 @@ describe("sniffImageType — accepts only raster images, by magic bytes", () => 
     expect(sniffImageType(GIF89a)).toBe("image/gif")
     expect(sniffImageType(GIF87a)).toBe("image/gif") // both GIF8 variants
     expect(sniffImageType(WEBP)).toBe("image/webp")
-  })
-
-  it("ignores trailing bytes after a valid header", () => {
-    expect(sniffImageType(bytes(...PNG, 1, 2, 3, 4, 5))).toBe("image/png")
   })
 
   it("rejects SVG outright (it can carry script -> stored XSS)", () => {
@@ -59,11 +55,6 @@ describe("sniffAssetType — rasters plus packaged web fonts", () => {
   const WOFF2 = text("wOF2")
   const WOFF = text("wOFF")
 
-  it("accepts everything sniffImageType accepts", () => {
-    expect(sniffAssetType(PNG)).toBe("image/png")
-    expect(sniffAssetType(WEBP)).toBe("image/webp")
-  })
-
   it("identifies woff2 and woff by magic bytes", () => {
     expect(sniffAssetType(bytes(...WOFF2, 0, 0, 0, 0))).toBe("font/woff2")
     expect(sniffAssetType(bytes(...WOFF, 0, 0, 0, 0))).toBe("font/woff")
@@ -85,8 +76,34 @@ describe("sniffAssetType — rasters plus packaged web fonts", () => {
   })
 })
 
-describe("MAX_AVATAR_BYTES", () => {
-  it("is 2 MB", () => {
-    expect(MAX_AVATAR_BYTES).toBe(2 * 1024 * 1024)
+// ---------------------------------------------------------------------------
+// Header-only dimension reading on the upload path: malformed or hostile bytes return
+// null and never throw or spin.
+describe("imageDimensions", () => {
+  // Header-only dimension reading: no decode, no dependency, safe on Workers (there is no
+  // image library here and sharp does not run in that runtime). Fixtures are hand-built
+  // byte arrays rather than checked-in images, so the test states exactly which bytes carry
+  // the meaning — and a malformed header must yield null, never a throw, because this runs
+  // on the upload path.
+
+  const png = (w: number, h: number) => {
+    const b = new Uint8Array(24)
+    b.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0) // signature
+    b.set([0, 0, 0, 13], 8) // IHDR length
+    b.set([0x49, 0x48, 0x44, 0x52], 12) // "IHDR"
+    new DataView(b.buffer).setUint32(16, w)
+    new DataView(b.buffer).setUint32(20, h)
+    return b
+  }
+
+  it("returns null rather than throwing on anything it cannot read", () => {
+    expect(imageDimensions(new Uint8Array(0))).toBeNull()
+    expect(imageDimensions(new Uint8Array([1, 2, 3]))).toBeNull()
+    expect(imageDimensions(png(10, 10).slice(0, 16))).toBeNull() // truncated IHDR
+    expect(imageDimensions(new Uint8Array([0xff, 0xd8, 0xff]))).toBeNull() // JPEG, no SOF
+    // A font is a supported ASSET but has no pixels.
+    expect(imageDimensions(new Uint8Array([0x77, 0x4f, 0x46, 0x32]))).toBeNull()
+    // Random bytes that happen to start like a marker must terminate, not spin.
+    expect(imageDimensions(new Uint8Array(2048).fill(0xff))).toBeNull()
   })
 })

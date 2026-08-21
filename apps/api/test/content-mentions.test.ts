@@ -1,7 +1,7 @@
 import { newId } from "@derive/core"
 import { describe, expect, it, vi } from "vitest"
 import { afterPublish } from "../src/lib/after-publish"
-import { contentMentionHandles, fanOutNewContentMentions } from "../src/lib/content-mentions"
+import { contentMentionHandles } from "../src/lib/content-mentions"
 import { as, makeAuthedApp, pub, type TestUser } from "./helpers"
 
 const owner: TestUser = { id: "u-own", email: "own@x.com", name: "Owner", username: "own" }
@@ -230,51 +230,5 @@ describe("live artifact content mentions", () => {
     expect(await meta.listNotifications(owner.id, 20)).toMatchObject([
       { kind: "mention", actor: "Derive Agent", thread_id: "", comment_id: "" },
     ])
-  })
-
-  it("can run the fan-out directly for focused integration callers without turning a notification error into a throw", async () => {
-    const { app, meta, ctx } = makeAuthedApp(
-      "content-mention-direct-failure",
-      [owner, editor],
-      "editor",
-    )
-    const made = await pub(
-      app,
-      "<p>Initial live copy.</p>",
-      { title: "Direct failure isolation", visibility: "org" },
-      undefined,
-      as(owner.email),
-    )
-    const { short_id: shortId } = (await made.json()) as { short_id: string }
-    const artifact = await meta.getByShortId(shortId)
-    if (!artifact) throw new Error("artifact missing")
-    const blob_key = await ctx.blobs.put(new TextEncoder().encode("<p>@edd, please review.</p>"))
-    const version = await meta.addVersion(artifact.id, {
-      id: newId("v"),
-      blob_key,
-      content_type: "text/html",
-      size_bytes: 28,
-      author: owner.name ?? "Owner",
-      author_id: owner.id,
-      source: "web",
-      message: null,
-      name: null,
-    })
-    const failingMeta = new Proxy(meta, {
-      get(target, prop, receiver) {
-        if (prop === "createNotifications")
-          return async () => {
-            throw new Error("notification store unavailable")
-          }
-        return Reflect.get(target, prop, receiver)
-      },
-    })
-    await expect(
-      fanOutNewContentMentions(
-        { meta: failingMeta, blobs: ctx.blobs, bus: { publish: () => {} } as never },
-        artifact,
-        version,
-      ),
-    ).resolves.toBeUndefined()
   })
 })

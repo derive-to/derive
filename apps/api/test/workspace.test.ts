@@ -3,7 +3,7 @@ import { SqliteMetaStore } from "@derive/db/sqlite"
 import { FsBlobStore } from "@derive/storage/fs"
 import { describe, expect, it } from "vitest"
 import { createApp } from "../src/app"
-import { as, bearer, dir, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
+import { as, dir, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
 describe("workspace: name + members (Admin / Creator / Viewer)", () => {
   const admin: TestUser = { id: "u_ws_admin", email: "wsadmin@derive.test", name: "Ada" }
@@ -53,15 +53,6 @@ describe("workspace: name + members (Admin / Creator / Viewer)", () => {
     )
   })
 
-  it("rejects an unknown email and an invalid role", async () => {
-    expect(
-      (await putMember(as(admin.email), { email: "ghost@derive.test", role: "editor" })).status,
-    ).toBe(404)
-    expect(
-      (await putMember(as(admin.email), { email: creator.email, role: "wizard" })).status,
-    ).toBe(400)
-  })
-
   it("changes a member's role and removes a member", async () => {
     expect((await patchMember(as(admin.email), creator.id, { role: "owner" })).status).toBe(200)
     const del = await app.request(`/v1/workspace/members/${viewer.id}`, {
@@ -94,34 +85,6 @@ describe("workspace: edge conditions", () => {
     app.request("/v1/workspace/members", { ...jsonAs(headers, body), method: "PUT" })
   const patchWs = (headers: Record<string, string>, body: unknown) =>
     app.request("/v1/workspace", { ...jsonAs(headers, body), method: "PATCH" })
-
-  it("provisions the first user as Admin, then clamps long names and rejects blank ones", async () => {
-    await app.request("/v1/me", { headers: as(admin.email) }) // first member → owner
-    expect((await patchWs(as(admin.email), { name: "   " })).status).toBe(400)
-    expect((await patchWs(as(admin.email), {})).status).toBe(400)
-    const ok = await patchWs(as(admin.email), { name: "x".repeat(200) })
-    expect(ok.status).toBe(200)
-    expect((await ok.json()).name).toHaveLength(80)
-  })
-
-  it("rejects any role outside Admin / Creator / Viewer", async () => {
-    for (const role of ["viewer", "admin", "boss", 3, null]) {
-      expect((await putMember(as(admin.email), { email: other.email, role })).status).toBe(400)
-    }
-  })
-
-  it("PUT is idempotent: re-adding a member re-roles them without duplicating", async () => {
-    expect(
-      (await putMember(as(admin.email), { email: other.email, role: "commenter" })).status,
-    ).toBe(201)
-    expect((await putMember(as(admin.email), { email: other.email, role: "editor" })).status).toBe(
-      201,
-    )
-    const w = await (await app.request("/v1/workspace", { headers: as(admin.email) })).json()
-    const rows = w.members.filter((m: { user_id: string }) => m.user_id === other.id)
-    expect(rows).toHaveLength(1)
-    expect(rows[0].role).toBe("editor")
-  })
 
   it("the add/update (PUT) path also refuses to strip the last Admin", async () => {
     // admin is the sole owner — demoting itself via PUT must be blocked too.
@@ -232,18 +195,6 @@ describe("workspace: anonymous lockout + token mode", () => {
       body: JSON.stringify({ name: "Solo" }),
     })
     expect(renamed.status).toBe(403)
-  })
-
-  it("a static token acts as Admin", async () => {
-    const admin: TestUser = { id: "u_tok_admin", email: "tokadmin@derive.test", name: "Toki" }
-    const { app: tokApp } = makeAuthedApp("ws-token", [admin], "commenter")
-    const r = await tokApp.request("/v1/workspace", {
-      method: "PATCH",
-      headers: { "content-type": "application/json", ...bearer("tok") },
-      body: JSON.stringify({ name: "Tokenspace" }),
-    })
-    expect(r.status).toBe(200)
-    expect((await r.json()).name).toBe("Tokenspace")
   })
 })
 

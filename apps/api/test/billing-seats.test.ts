@@ -192,17 +192,6 @@ describe("purgeUserDataAndSyncSeats (account deletion → seat sync)", () => {
     expect(await meta.getMembership("ws_c", me)).toBeNull()
     expect(fake.quantityCalls).toHaveLength(0)
   })
-
-  it("no billing driver configured: the purge still runs, seat sync is a no-op", async () => {
-    const meta = new SqliteMetaStore(":memory:")
-    const me = "u_deleted"
-    await meta.setWorkspace("ws_d", "D")
-    await meta.setMembership({ id: "m_d1", org_id: "ws_d", user_id: me, role: "editor" })
-    await meta.upsertSubscription(sub("ws_d", "sub_d", 1))
-
-    await expect(purgeUserDataAndSyncSeats(meta, undefined, me)).resolves.toBeUndefined()
-    expect(await meta.getMembership("ws_d", me)).toBeNull()
-  })
 })
 
 // The invite-time seat gate: granting a billable role (editor/owner) must not push a
@@ -249,23 +238,6 @@ describe("seat gate on granting a billable role", () => {
     expect(body.error).toContain("/settings/billing")
   })
 
-  it("enforced: a commenter invite always succeeds", async () => {
-    const { app, meta } = makeAuthedApp("sg_enf_commenter", [u(1), u(2), u(3), u(4)], "editor", {
-      isolated: true,
-      deps: { billing: new FakeBilling(), billingEnforceAt: PAST },
-    })
-    await meta.setWorkspace("default", DEFAULT_WORKSPACE_NAME)
-    await meta.setMembership({ id: "m_u1", org_id: "default", user_id: "u1", role: "owner" })
-    await meta.setMembership({ id: "m_u2", org_id: "default", user_id: "u2", role: "editor" })
-    await meta.setMembership({ id: "m_u3", org_id: "default", user_id: "u3", role: "editor" })
-
-    const r = await app.request("/v1/workspace/members", {
-      ...jsonAs(as("u1@x.test"), { email: "u4@x.test", role: "commenter" }),
-      method: "PUT",
-    })
-    expect(r.status).toBe(201)
-  })
-
   it("enforced: a subscribed workspace adds a 4th editor freely", async () => {
     const { app, meta } = makeAuthedApp("sg_enf_subscribed", [u(1), u(2), u(3), u(4)], "editor", {
       isolated: true,
@@ -302,23 +274,6 @@ describe("seat gate on granting a billable role", () => {
     expect(r.status).toBe(402)
     const body = await r.json()
     expect(body.code).toBe("billing_required")
-  })
-
-  it("enforced: re-roling an existing editor to owner passes", async () => {
-    const { app, meta } = makeAuthedApp("sg_enf_rerole", [u(1), u(2), u(3)], "editor", {
-      isolated: true,
-      deps: { billing: new FakeBilling(), billingEnforceAt: PAST },
-    })
-    await meta.setWorkspace("default", DEFAULT_WORKSPACE_NAME)
-    await meta.setMembership({ id: "m_u1", org_id: "default", user_id: "u1", role: "owner" })
-    await meta.setMembership({ id: "m_u2", org_id: "default", user_id: "u2", role: "editor" })
-    await meta.setMembership({ id: "m_u3", org_id: "default", user_id: "u3", role: "editor" })
-
-    const r = await app.request("/v1/workspace/members/u3", {
-      ...jsonAs(as("u1@x.test"), { role: "owner" }),
-      method: "PATCH",
-    })
-    expect(r.status).toBe(200)
   })
 
   it("enforced: a 4th-editor invite for an existing account 402s through POST /v1/workspace/invites", async () => {

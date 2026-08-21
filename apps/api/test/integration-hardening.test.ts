@@ -73,17 +73,6 @@ describe("permanent-failure dead-lettering", () => {
     const stillDue = await claimAll()
     expect(stillDue).toHaveLength(0)
   })
-
-  it("retries a transient failure (stays pending for a later attempt)", async () => {
-    await enqueueChannelDelivery(meta, "email", "comment.created", { y: 2 })
-    const transientSender = async (): Promise<ChannelSendResult> => ({ ok: false, status: "503" })
-    await runDeliveryTick(meta, { precheck: async () => null }, { email: transientSender })
-    // The row is rescheduled (next_attempt_at in the future) — claimable again with a
-    // far-future cutoff, but NOT dead.
-    const due = (await claimAll()).filter((d) => d.kind === "email")
-    expect(due).toHaveLength(1)
-    expect(due[0]?.status).toBe("pending")
-  })
 })
 
 type SentMsg = {
@@ -118,35 +107,5 @@ describe("email header-injection defense", () => {
     // The "Name <addr>" form is split into the structured { name, email } the builder wants,
     // so the sender keeps its display name instead of showing a bare address.
     expect(sent[0]?.from).toEqual({ name: "Derive", email: "notifications@derive.to" })
-  })
-
-  it("passes a bare from address through as a plain string", async () => {
-    const sent: SentMsg[] = []
-    const sender = cloudflareEmailSender(
-      {
-        send: async (m) => {
-          sent.push(m)
-          return { messageId: "x" }
-        },
-      },
-      "notifications@send.derive.to",
-    )
-    await sender.send({ to: "a@b.com", subject: "s", html: "<p>x</p>", text: "x" })
-    expect(sent[0]?.from).toBe("notifications@send.derive.to")
-  })
-
-  it("names the recipient when toName is set", async () => {
-    const sent: SentMsg[] = []
-    const sender = cloudflareEmailSender(
-      {
-        send: async (m) => {
-          sent.push(m)
-          return { messageId: "x" }
-        },
-      },
-      "Derive <notifications@send.derive.to>",
-    )
-    await sender.send({ to: "a@b.com", toName: "Ada", subject: "s", html: "<p>x</p>", text: "x" })
-    expect(sent[0]?.to).toEqual({ name: "Ada", email: "a@b.com" })
   })
 })

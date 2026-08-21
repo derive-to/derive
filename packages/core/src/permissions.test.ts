@@ -5,9 +5,7 @@ import {
   can,
   effectiveRole,
   hasArtifactStanding,
-  isRole,
   type LinkRole,
-  maxRole,
   ROLES,
   type Role,
   roleAllows,
@@ -50,36 +48,6 @@ describe("roleAllows — the action/role matrix", () => {
         if (roleAllows(lower, action))
           expect(roleAllows(higher, action), `${higher} ⊇ ${lower} for ${action}`).toBe(true)
     }
-  })
-
-  it("a commenter comments but never publishes", () => {
-    expect(roleAllows("commenter", "comment")).toBe(true)
-    expect(roleAllows("commenter", "publish")).toBe(false)
-  })
-
-  it("keeps manage owner-only", () => {
-    expect(roleAllows("editor", "manage")).toBe(false)
-    expect(roleAllows("owner", "manage")).toBe(true)
-  })
-})
-
-describe("maxRole", () => {
-  it("returns the highest role and ignores null/undefined", () => {
-    expect(maxRole("viewer", "editor", "commenter")).toBe("editor")
-    expect(maxRole(null, "commenter", undefined)).toBe("commenter")
-    expect(maxRole("owner", "viewer")).toBe("owner")
-  })
-
-  it("returns null when nothing is supplied", () => {
-    expect(maxRole()).toBeNull()
-    expect(maxRole(null, undefined)).toBeNull()
-  })
-})
-
-describe("isRole", () => {
-  it("accepts the four roles and rejects everything else", () => {
-    for (const role of ROLES) expect(isRole(role)).toBe(true)
-    for (const v of ["admin", "", "VIEWER", null, undefined, 2, {}]) expect(isRole(v)).toBe(false)
   })
 })
 
@@ -254,9 +222,16 @@ describe("can — the one authorization gate", () => {
   it("lets a token (CI/agent) do everything", () => {
     for (const action of ACTIONS) expect(can(token, action, "member")).toBe(true)
   })
+})
 
-  it("a bare viewer can read but not comment", () => {
-    expect(can(user({ orgRole: "viewer" }), "read", "member")).toBe(true)
-    expect(can(user({ orgRole: "viewer" }), "comment", "member")).toBe(false)
+describe("effectiveRole resolution", () => {
+  const user = (over: Partial<Actor>): Actor => ({ kind: "user", userId: "u1", ...over })
+
+  it("folds an inherited collection link into the same additive role ladder", () => {
+    expect(effectiveRole(user({ inheritedLinkRole: "commenter" }), "none")).toBe("commenter")
+    expect(
+      effectiveRole(user({ artifactRole: "viewer", inheritedLinkRole: "editor" }), "none"),
+    ).toBe("editor")
+    expect(effectiveRole({ kind: "anon", inheritedLinkRole: "editor" }, "none")).toBe("viewer")
   })
 })

@@ -1,32 +1,22 @@
 #!/bin/sh
-# Pre-push: `pnpm verify` — CI's "check" job in full (ci → typecheck →
-# test:coverage), in the same order, about 50s.
+# Pre-push: `pnpm verify:affected` — the guardrails, then typecheck + tests for the
+# packages this branch changed (and their dependents) since the merge base with
+# origin/main. A branch that only touches apps/web does not wait on the API suite; a
+# change to packages/core runs everything downstream of it.
 #
-# Pre-commit already covers the first step; the two that only ran in CI were
-# typecheck and the per-package coverage ratchet, and those are exactly what a
-# green `pnpm test` hides: `test` skips coverage, so a change that drops a
-# package under its floor passes locally and fails on push. Catching it here
-# costs a minute; catching it in CI costs a round trip and a red commit on the
-# branch's history.
+# CI always runs the full `pnpm verify` on every push, plus the lanes that need real
+# engines (Postgres, D1, workerd) and the image builds. This hook exists to catch the
+# common failure before the round trip, not to replace CI.
 #
 # Enabled automatically via the package.json "prepare" script
 # (git config core.hooksPath .githooks) on `pnpm install`.
-
-# Git exports GIT_DIR (and friends) into its hooks, and a child `git` prefers those
-# over its own working directory. Any test that shells out to git — packages/cli
-# builds throwaway repos to test repo sync — would therefore run against THIS repo
-# instead of its fixture, and fail here while passing everywhere else. Scrub them so
-# the suite sees the same environment it does from a shell.
-unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX GIT_COMMON_DIR \
-  GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
-
-if ! pnpm verify; then
+if ! pnpm verify:affected; then
   echo ""
   echo "✖ pre-push checks failed — CI would fail on this too."
   echo "  Run the failing step alone to iterate:"
-  echo "    pnpm run ci        # biome + guardrails"
+  echo "    pnpm run ci        # biome + guardrails (pnpm lint:<name> for one)"
   echo "    pnpm typecheck     # tsgo"
-  echo "    pnpm test:coverage # tests + the coverage ratchet"
+  echo "    pnpm test          # vitest"
   echo "  (Emergency bypass: git push --no-verify)"
   exit 1
 fi

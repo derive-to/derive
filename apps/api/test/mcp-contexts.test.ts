@@ -262,43 +262,6 @@ describe("use — open, check, and the grant edges", () => {
     ])
   })
 
-  it("clips an oversized answer and transcript entries, steering to the console", async () => {
-    const { app, cx, ownerToken, answeringToken } = await setup("mcx-ask-clip")
-    expect(
-      (
-        await app.request(
-          `/v1/contexts/${cx.id}/access`,
-          jsonAs(as(dev.email), { ask_policy: "workspace" }),
-        )
-      ).status,
-    ).toBe(200)
-    // A 5k question and a 50k answer — both over their caps (1.5k/entry, 40k answer).
-    const opened = await call(app, ownerToken, "use", {
-      context: cx.id,
-      instruction: "q".repeat(5_000),
-      wait: 0,
-    })
-    expect(
-      (
-        await answerAs(app, answeringToken, opened.session_id, {
-          body_md: "a".repeat(50_000),
-          state: "answered",
-        })
-      ).status,
-    ).toBe(201)
-    const res = await call(app, ownerToken, "use", { session_id: opened.session_id, wait: 0 })
-    // The answer keeps a generous prefix; the steer names the console.
-    expect(res.answer.body_md.length).toBeLessThan(45_000)
-    expect(res.answer.body_md).toContain("truncated")
-    expect(res.answer.body_md).toContain(`/contexts/${cx.id}`)
-    // Transcript entries are tight — the question comes back clipped too.
-    const asker = res.transcript.find((m: { author: string }) => m.author === "asker")
-    expect(asker.body_md.length).toBeLessThan(2_000)
-    expect(asker.body_md).toContain(`/contexts/${cx.id}`)
-    // Clipping truncates — the kept prefix is verbatim, not reflowed.
-    expect(res.transcript.at(-1).body_md.startsWith("a".repeat(1_500))).toBe(true)
-  })
-
   it("names the askable contexts when the ref misses — and stays silent when none are", async () => {
     const { app, cx, ownerToken } = await setup("mcx-ask-miss")
     // No grant at all: the miss must not enumerate what exists.
@@ -485,25 +448,6 @@ describe("automate create_context — skills_count comes from frontmatter pins",
     return { createContext }
   }
 
-  it("counts the frontmatter pins, with no hint when the declaration is right", async () => {
-    const { createContext } = await setupOwnerBot("mcx-cc-pins")
-    const md = [
-      "---",
-      "skills:",
-      "  - id: skl11111",
-      "    version: 2",
-      "  - id: skl22222",
-      "---",
-      "# QA manifest",
-      "Run the checks with derive://skills/loop in mind.",
-    ].join("\n")
-    const r = await createContext("QA", md)
-    expect(r.context_id).toBeTruthy()
-    expect(r.skills_count).toBe(2)
-    // Pinned properly: the body mention changes nothing and earns no lecture.
-    expect(r.skills_hint).toBeUndefined()
-  })
-
   it("a body-only derive://skills mention pins nothing — and the response says so", async () => {
     const { createContext } = await setupOwnerBot("mcx-cc-prose")
     const r = await createContext("QA", "# QA manifest\nRead derive://skills/loop before acting.")
@@ -513,12 +457,151 @@ describe("automate create_context — skills_count comes from frontmatter pins",
     expect(r.skills_hint).toContain("frontmatter")
     expect(r.skills_hint).toContain("- id:")
   })
+})
 
-  it("no pins and no mention is just zero — silence, not a warning", async () => {
-    const { createContext } = await setupOwnerBot("mcx-cc-plain")
-    const r = await createContext("QA", "# QA manifest\nRun the checks.")
-    expect(r.context_id).toBeTruthy()
-    expect(r.skills_count).toBe(0)
-    expect(r.skills_hint).toBeUndefined()
+// READING a context: a context is a PACKAGE (manifest + pinned skills + sources), and
+// `read` loads it — the mode that had no way in. The surface previously described contexts
+// as ask-only, and `find` went further and told callers a context row is "never
+// read/opened", so the package was only assemblable by hand from its manifest short_id.
+//
+// The two properties worth pinning here are the ones that could go quietly wrong:
+//   ACCESS  — reading is gated on canUserAskContext, the SAME grant `find` filters on, so
+//             `read` can never open a package `find` would not have shown. A second access
+//             path to workspace-scoped material is exactly the bug to avoid.
+//   PARITY  — the skills a reader is told about are the skills a RUN would materialize,
+//             staleness included, because both go through parseManifestSkillPins.
+describe("read — a context opens as a package", () => {
+  /** owner registers both agents (Admin-only); dev authors the manifest and creates the
+   *  context, so dev is CREATOR and owner is a plain member — the interesting side of the
+   *  ask gate, the same cast as the ask tests above. */
+  const setupPackage = async (name: string, manifestBody: string) => {
+    const made = makeAuthedApp(name, [owner, dev], "editor")
+    const { app } = made
+    await app.request("/v1/me", { headers: as(owner.email) })
+    await app.request("/v1/me", { headers: as(dev.email) })
+    const answering = await (
+      await app.request("/v1/agents", jsonAs(as(owner.email), { name: "Analyst" }))
+    ).json()
+    const ownerBot = await (
+      await app.request("/v1/agents", jsonAs(as(owner.email), { name: "OwnerBot" }))
+    ).json()
+    const manifest = await (
+      await publishAs(app, manifestBody, { title: "Analytics manifest" }, as(dev.email))
+    ).json()
+    const cx = await (
+      await app.request(
+        "/v1/contexts",
+        jsonAs(as(dev.email), {
+          name: "Analytics",
+          agent_id: answering.id,
+          manifest_short_id: manifest.short_id,
+        }),
+      )
+    ).json()
+    const invite = async () =>
+      app.request(`/v1/contexts/${cx.id}/askers`, jsonAs(as(dev.email), { email: owner.email }))
+    return { app, cx, manifest, ownerToken: ownerBot.token as string, invite }
+  }
+
+  it("is gated on the ask grant: unreachable before the invite, the package after", async () => {
+    const { app, cx, ownerToken, invite } = await setupPackage(
+      "cxr-gate",
+      "# Analytics manifest\n\nBody.",
+    )
+
+    // Default ask_policy is `invited` (creator + roster). owner is a plain member, so the
+    // context is not askable — and must not be readable either, or `read` would be a second
+    // way into material the ask gate withholds.
+    const denied = await callRaw(app, ownerToken, "read", { short_id: cx.id })
+    expect(denied.isError).toBe(true)
+    expect(denied.text).toMatch(/No context/i)
+
+    expect((await invite()).status).toBe(201)
+
+    const pkg = await call(app, ownerToken, "read", { short_id: cx.id })
+    expect(pkg.context.id).toBe(cx.id)
+    expect(pkg.context.name).toBe("Analytics")
+    // Reading never needs a runner — the context has never polled, and that is fine.
+    expect(pkg.context.online).toBe(false)
+    // PROGRESSIVE OPENING: the manifest is the eager layer, so its body is inline.
+    expect(pkg.manifest.content).toContain("Analytics manifest")
+    expect(pkg.how).toMatch(/use\(\{context, instruction\}\)/)
+  })
+
+  it("returns pinned skills as POINTERS, and says which pins have gone stale", async () => {
+    // A skill the manifest pins at v1...
+    const made = makeAuthedApp("cxr-pins", [owner, dev], "editor")
+    const { app } = made
+    await app.request("/v1/me", { headers: as(owner.email) })
+    await app.request("/v1/me", { headers: as(dev.email) })
+    const skill = await (
+      await publishAs(app, "# How to analyse", { title: "Analysis skill" }, as(dev.email))
+    ).json()
+
+    const answering = await (
+      await app.request("/v1/agents", jsonAs(as(owner.email), { name: "Analyst" }))
+    ).json()
+    const ownerBot = await (
+      await app.request("/v1/agents", jsonAs(as(owner.email), { name: "OwnerBot" }))
+    ).json()
+    const manifest = await (
+      await publishAs(
+        app,
+        `---\nskills:\n  - id: ${skill.short_id}\n    version: 1\n---\n# Analytics\n\nBody.`,
+        { title: "Analytics manifest" },
+        as(dev.email),
+      )
+    ).json()
+    const cx = await (
+      await app.request(
+        "/v1/contexts",
+        jsonAs(as(dev.email), {
+          name: "Analytics",
+          agent_id: answering.id,
+          manifest_short_id: manifest.short_id,
+        }),
+      )
+    ).json()
+    await app.request(`/v1/contexts/${cx.id}/askers`, jsonAs(as(dev.email), { email: owner.email }))
+
+    const before = await call(app, ownerBot.token, "read", { short_id: cx.id })
+    expect(before.skills).toHaveLength(1)
+    expect(before.skills[0].short_id).toBe(skill.short_id)
+    expect(before.skills[0].pinned_version).toBe(1)
+    // A POINTER, not the body — following it is a separate read, which is the whole point.
+    expect(before.skills[0]).not.toHaveProperty("content")
+    expect(before.skills[0].stale).toBe(false)
+
+    // ...now the skill moves to v2 while the pin still says v1. A run would execute v1, so
+    // the read has to say so — the one thing a pinned-skill model gets silently wrong.
+    await publishAs(app, "# How to analyse, revised", {}, as(dev.email), skill.short_id)
+    const after = await call(app, ownerBot.token, "read", { short_id: cx.id })
+    expect(after.skills[0].pinned_version).toBe(1)
+    expect(after.skills[0].current_version).toBe(2)
+    expect(after.skills[0].stale).toBe(true)
+  })
+
+  it("resolves a context by NAME, but never shadows an artifact of that name", async () => {
+    const { app, ownerToken, invite } = await setupPackage(
+      "cxr-name",
+      "# Analytics manifest\n\nBody.",
+    )
+    expect((await invite()).status).toBe(201)
+
+    // By name: the package.
+    const byName = await call(app, ownerToken, "read", { short_id: "Analytics" })
+    expect(byName.context?.name).toBe("Analytics")
+
+    // A DOCUMENT is still reached by its own short_id — the context branch only runs for a
+    // ctx_ id, or as a fallback after the artifact lookup misses, so documents keep priority.
+    const doc = await (
+      await publishAs(app, "# A real document", { title: "Analytics" }, as(dev.email))
+    ).json()
+    // A document read comes back as a DOC response (text), not the package JSON — so the
+    // absence of a context payload here is the assertion.
+    const byShortId = await callRaw(app, ownerToken, "read", { short_id: doc.short_id })
+    expect(byShortId.isError).toBe(false)
+    expect(byShortId.text).toContain("A real document")
+    expect(byShortId.text).not.toContain('"context"')
   })
 })

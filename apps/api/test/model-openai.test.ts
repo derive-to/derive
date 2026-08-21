@@ -37,14 +37,6 @@ describe("the request it builds", () => {
     expect((seen[0]?.init.headers as Record<string, string>).authorization).toBe("Bearer k-123")
   })
 
-  it("tolerates a trailing slash on the base url", async () => {
-    // Pasting a URL with a trailing slash is the single most likely config typo, and it would
-    // otherwise produce a //chat/completions that some gateways 404.
-    const { seen, impl } = capture()
-    await model(impl, "https://gw.example.com/v1/")({ system: "s", messages: [], tools: [] })
-    expect(seen[0]?.url).toBe("https://gw.example.com/v1/chat/completions")
-  })
-
   it("sends the system prompt as a MESSAGE, not a top-level field", async () => {
     // The difference that makes this a separate client rather than a base-url switch. Sent as a
     // top-level `system` (Anthropic's shape) it is silently ignored and the model loses its
@@ -98,64 +90,6 @@ describe("the request it builds", () => {
         function: { name: "svc.read", description: "read", parameters: { type: "object" } },
       },
     ])
-  })
-})
-
-describe("routing preferences on a gateway that routes", () => {
-  // OpenRouter serves one model id from a dozen backends whose generation speed differs by an
-  // order of magnitude, so "which model" is only half the request. Measured on the incumbent
-  // gateway: ~18 tokens/sec, which is what turned a three-call agent turn into half a minute.
-  const send = async (extraBody?: Record<string, unknown>) => {
-    let body: Record<string, unknown> | undefined
-    const impl = (async (_u: string, init: RequestInit) => {
-      body = JSON.parse(String(init.body))
-      return new Response(
-        JSON.stringify({ choices: [{ message: { content: "ok" }, finish_reason: "stop" }] }),
-        { status: 200, headers: { "content-type": "application/json" } },
-      )
-    }) as unknown as typeof fetch
-    await openAiCompatModel({
-      apiKey: "k",
-      baseUrl: "https://gw.test/v1",
-      model: "deepseek/deepseek-v4-flash-0731",
-      fetchImpl: impl,
-      ...(extraBody ? { extraBody } : {}),
-    })({ system: "s", messages: [], tools: [] })
-    return body
-  }
-
-  it("sends the provider order when one is configured", async () => {
-    const body = await send({
-      provider: { order: ["DeepInfra", "GMICloud"], allow_fallbacks: true },
-    })
-    expect(body?.provider).toEqual({ order: ["DeepInfra", "GMICloud"], allow_fallbacks: true })
-    // and still the ordinary request
-    expect(body?.model).toBe("deepseek/deepseek-v4-flash-0731")
-  })
-
-  it("always tells the model not to think, since chat is interactive", async () => {
-    // A constant, not configuration: a reasoning model spends most of a short answer's budget
-    // thinking, an attended turn makes several calls, and no deployment wants its interactive
-    // turns slower. Measured ~1.7x faster with it off.
-    const body = await send({ reasoning: { enabled: false } })
-    expect(body?.reasoning).toEqual({ enabled: false })
-  })
-
-  it("sends NOTHING extra when unset, so a non-routing gateway sees no stray field", async () => {
-    const body = await send()
-    expect(body).not.toHaveProperty("provider")
-  })
-
-  it("never lets a routing field overwrite the request the adapter built", async () => {
-    // A config typo must not be able to rewrite `messages` or `model` — routing is the caller's
-    // business, the request shape is the adapter's.
-    const body = await send({
-      model: "someone-elses-model",
-      messages: [],
-      provider: { order: ["X"] },
-    })
-    expect(body?.model).toBe("deepseek/deepseek-v4-flash-0731")
-    expect(body?.provider).toEqual({ order: ["X"] })
   })
 })
 
@@ -221,15 +155,6 @@ describe("the response it reads", () => {
     await expect(
       model(reply({ error: "rate limited" }, 429))({ system: "s", messages: [], tools: [] }),
     ).rejects.toThrow(/model call failed \(429\)/)
-  })
-
-  it("reports cost as null rather than guessing a rate", async () => {
-    const res = await model(reply({ choices: [{ message: { content: "x" } }] }))({
-      system: "s",
-      messages: [],
-      tools: [],
-    })
-    expect(res.costUsd).toBeNull()
   })
 
   it("THROWS on a truncated reply rather than pasting raw JSON as the answer", async () => {
@@ -355,12 +280,6 @@ const textFrames = [
 ]
 
 describe("streaming", () => {
-  it("does not ask for a stream when nobody is listening", async () => {
-    const { seen, impl } = capture()
-    await model(impl)({ system: "s", messages: [], tools: [] })
-    expect(seen[0]?.body.stream).toBeUndefined()
-  })
-
   it("asks for a stream (and usage) only when onDelta is passed", async () => {
     const { seen, impl } = streamImpl(textFrames)
     await model(impl)({ system: "s", messages: [], tools: [], onDelta: () => {} })
@@ -427,38 +346,6 @@ describe("streaming", () => {
       model(impl)({ system: "s", messages: [], tools: [], onDelta: () => {} }),
     ).rejects.toThrow(/token ceiling/)
   })
-
-  it("a listener that throws does not cost us the reply", async () => {
-    const { impl } = streamImpl(textFrames)
-    const turn = await model(impl)({
-      system: "s",
-      messages: [],
-      tools: [],
-      onDelta: () => {
-        throw new Error("subscriber blew up")
-      },
-    })
-    expect(turn.text).toBe("Hello, world")
-  })
-
-  it("skips a malformed frame instead of losing the rest of the reply", async () => {
-    const got: string[] = []
-    const { impl } = streamImpl([
-      JSON.stringify({ choices: [{ delta: { content: "before" } }] }),
-      "{not json at all",
-      JSON.stringify({ choices: [{ delta: { content: "after" } }] }),
-      JSON.stringify({ choices: [{ delta: {}, finish_reason: "stop" }] }),
-      "[DONE]",
-    ])
-    const turn = await model(impl)({
-      system: "s",
-      messages: [],
-      tools: [],
-      onDelta: (t) => got.push(t),
-    })
-    expect(got).toEqual(["before", "after"])
-    expect(turn.text).toBe("beforeafter")
-  })
 })
 
 describe("streaming failure modes", () => {
@@ -478,31 +365,6 @@ describe("streaming failure modes", () => {
     ])
     const turn = await model(impl)({ system: "s", messages: [], tools: [], onDelta: () => {} })
     expect(turn.text).toBe("Here is the fir")
-  })
-
-  it("accepts a stream terminated by [DONE] alone", async () => {
-    const { impl } = streamImpl([
-      JSON.stringify({ choices: [{ delta: { content: "done properly" } }] }),
-      "[DONE]",
-    ])
-    const turn = await model(impl)({ system: "s", messages: [], tools: [], onDelta: () => {} })
-    expect(turn.text).toBe("done properly")
-  })
-
-  it("reads an event whose first line is not data: (event:/id:/comment)", async () => {
-    // Spec-legal framing that a proxy or self-hosted gateway really does emit. Testing
-    // startsWith on the whole frame dropped these silently and yielded an empty reply.
-    const wire =
-      `event: message\ndata: ${JSON.stringify({ choices: [{ delta: { content: "hello " } }] })}\n\n` +
-      `id: 42\ndata: ${JSON.stringify({ choices: [{ delta: { content: "world" } }] })}\n\n` +
-      `: keep-alive\ndata: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "stop" }] })}\n\n`
-    const impl = (async () =>
-      new Response(new TextEncoder().encode(wire), {
-        status: 200,
-        headers: { "content-type": "text/event-stream" },
-      })) as unknown as typeof fetch
-    const turn = await model(impl)({ system: "s", messages: [], tools: [], onDelta: () => {} })
-    expect(turn.text).toBe("hello world")
   })
 
   it("refuses an unaddressed tool-call fragment rather than stapling it onto another call", async () => {

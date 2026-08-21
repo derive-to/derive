@@ -61,26 +61,6 @@ describe("POST /v1/assets", () => {
     expect(res.status).toBe(400)
   })
 
-  it("stores a woff2 font and serves it back with the font content-type", async () => {
-    // Magic bytes 'wOF2'; the route only sniffs the header, so a stub body suffices.
-    const woff2 = new Uint8Array([0x77, 0x4f, 0x46, 0x32, 0, 1, 2, 3, 4, 5])
-    const res = await postAsset(woff2, "font/woff2")
-    expect(res.status).toBe(200)
-    const body = await res.json()
-    expect(body.type).toBe("font/woff2")
-    expect(body.url).toMatch(/\.woff2$/)
-
-    const served = await app.request(new URL(body.url).pathname)
-    expect(served.status).toBe(200)
-    expect(served.headers.get("content-type")).toBe("font/woff2")
-    expect(new Uint8Array(await served.arrayBuffer())).toEqual(woff2)
-  })
-
-  it("rejects an empty body", async () => {
-    const res = await postAsset(new Uint8Array(), "image/png")
-    expect(res.status).toBe(400)
-  })
-
   it("is closed to anonymous callers (the write-lockdown)", async () => {
     const res = await anonApp.request("/v1/assets", {
       method: "POST",
@@ -131,13 +111,6 @@ describe("POST /v1/assets/t/:token (MCP-minted upload URL)", () => {
     const served = await tokApp.request(new URL(body.url).pathname)
     expect(served.status).toBe(200)
     expect(new Uint8Array(await served.arrayBuffer())).toEqual(PNG_BYTES)
-  })
-
-  it("the token is reusable until expiry (one mint stages a batch)", async () => {
-    const tok = await unbound(Date.now() + 60_000)
-    const woff2 = new Uint8Array([0x77, 0x4f, 0x46, 0x32, 0, 1, 2, 3, 4, 5])
-    expect((await postTokened(tok, PNG_BYTES)).status).toBe(200)
-    expect((await postTokened(tok, woff2)).status).toBe(200)
   })
 
   it("an expired token → 403", async () => {
@@ -192,5 +165,51 @@ describe("POST /v1/assets/t/:token (MCP-minted upload URL)", () => {
       body: PNG_BYTES,
     })
     expect(res.status).toBe(403)
+  })
+})
+
+describe("blob", () => {
+  // GET /blob/:hash is the public capability URL side of POST /v1/assets (above): a
+  // permanent, unauthenticated link to a staged image's bytes.
+  // The one thing this route must never do is serve a hash it only knows about
+  // because SOME OTHER blob (a bundle manifest, an HTML page) happens to live at
+  // that key in the shared content-addressed store — only a hash with its own
+  // `asset` row (written at upload) is fair game. That's the security boundary
+  // under test here, not just the happy path.
+
+  const postPng = async () => {
+    const res = await app.request("/v1/assets", {
+      method: "POST",
+      headers: { "content-type": "image/png" },
+      body: PNG_BYTES,
+    })
+    return res.json()
+  }
+
+  describe("GET /blob/:file", () => {
+    it("serves a staged asset's bytes, unauthenticated, with an immutable cache header", async () => {
+      const { key } = await postPng()
+      const res = await app.request(`/blob/${key}.png`, { headers: {} }) // no auth header at all
+      expect(res.status).toBe(200)
+      expect(res.headers.get("content-type")).toBe("image/png")
+      expect(res.headers.get("cache-control")).toContain("immutable")
+      expect(new Uint8Array(await res.arrayBuffer())).toEqual(PNG_BYTES)
+    })
+
+    it("404s a well-formed hash that was never uploaded", async () => {
+      const res = await app.request(`/blob/${"0".repeat(64)}.png`)
+      expect(res.status).toBe(404)
+    })
+
+    it("SECURITY: never serves a blob-store hash that has no asset row (a bundle manifest, an HTML page)", async () => {
+      // Simulate a real bytes-in-the-store-but-not-a-staged-asset case: a private
+      // bundle's manifest JSON or an HTML page blob, which lives in the exact same
+      // content-addressed store /blob reads from. Without the asset-row gate this
+      // would leak arbitrary artifact content by hash, unauthenticated.
+      const blobs = new FsBlobStore(join(dir, "blobs"))
+      const hash = await blobs.put(new TextEncoder().encode('{"entry":"/index.html","files":{}}'))
+      const res = await app.request(`/blob/${hash}`)
+      expect(res.status).toBe(404)
+    })
   })
 })

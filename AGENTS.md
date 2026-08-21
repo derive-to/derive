@@ -11,13 +11,14 @@ pnpm verify        # exactly what CI's `check` job runs, in the same order
 which is these three, and you can run them one at a time while iterating:
 
 ```bash
-pnpm run ci        # biome + the design-token / frontend / test-id / dead-code checks
+pnpm run ci        # biome + every custom guardrail, run concurrently (~5s)
 pnpm typecheck     # tsgo across the workspace
-pnpm test:coverage # vitest (embedded SQLite) + the per-package coverage ratchet
+pnpm test          # vitest against the embedded SQLite store
 ```
 
-Run `pnpm verify` before you push, not a shorter approximation of it. `pnpm test`
-skips the coverage ratchet, so it can pass on a change that CI then fails.
+The pre-push hook runs `pnpm verify:affected`: the same gate, with typecheck and tests
+scoped to the packages your branch changed and their dependents. CI runs the full
+`pnpm verify` on every push.
 
 `check` is the big gate but not the only one: CI also runs a gitleaks secret scan,
 the Postgres and D1 store contracts against real engines, and the bundle and runner
@@ -44,3 +45,9 @@ Highlights:
 When you add a capability that a future change could silently regress, prefer adding a
 guardrail (a Biome rule, a `scripts/check-*.mjs`, or a test) over a note in a doc: an
 agent can ignore an instruction or a review comment, but it cannot ignore a red build.
+
+The bar for a test is in [CONTRIBUTING.md → Tests](CONTRIBUTING.md#tests): it pins a
+contract through the surface a user or agent actually uses, and it lives in the file
+that already owns the feature. A new test file per change is the wrong default: in
+`apps/api` every store-backed file re-boots the whole app, so file count, not case
+count, is what makes the suite slow.

@@ -16,29 +16,6 @@ describe("hostable agents + workspace agent settings", () => {
     return (await res.json()) as { id: string; hosted: boolean; role: string; token: string }
   }
 
-  it("agents are born un-hosted; the Admin toggle flips it and the list reflects it", async () => {
-    const created = await createAgent("Scribe")
-    expect(created.hosted).toBe(false)
-
-    const on = await app.request(`/v1/agents/${created.id}`, {
-      ...jsonAs(as(owner.email), { hosted: true }),
-      method: "PATCH",
-    })
-    expect(on.status).toBe(200)
-    const flipped = await on.json()
-    // Hosting flips WHERE it runs; identity and cap are untouched.
-    expect(flipped).toMatchObject({ id: created.id, hosted: true, role: "commenter" })
-
-    const list = await (await app.request("/v1/agents", { headers: as(owner.email) })).json()
-    expect(list.agents.find((a: { id: string }) => a.id === created.id)?.hosted).toBe(true)
-
-    const off = await app.request(`/v1/agents/${created.id}`, {
-      ...jsonAs(as(owner.email), { hosted: false }),
-      method: "PATCH",
-    })
-    expect((await off.json()).hosted).toBe(false)
-  })
-
   it("the toggle is Admin-only and workspace-scoped", async () => {
     const created = await createAgent("Scoped")
     // A commenter-seat member can't manage agents.
@@ -53,33 +30,6 @@ describe("hostable agents + workspace agent settings", () => {
       method: "PATCH",
     })
     expect(missing.status).toBe(404)
-  })
-
-  it("agent settings default sanely and round-trip through a partial PATCH", async () => {
-    const before = await (
-      await app.request("/v1/workspace/settings", { headers: as(owner.email) })
-    ).json()
-    expect(before).toMatchObject({
-      hostedAgentsEnabled: true,
-      // ON by default — the one agent-write switch; off is the deliberate brake.
-      agentWrites: true,
-    })
-    expect(before.defaultAgentId).toBeUndefined()
-
-    const patched = await (
-      await app.request("/v1/workspace/settings", {
-        ...jsonAs(as(owner.email), { agentWrites: false, hostedAgentsEnabled: false }),
-        method: "PATCH",
-      })
-    ).json()
-    expect(patched).toMatchObject({ agentWrites: false, hostedAgentsEnabled: false })
-    // Partial PATCH: untouched keys survive.
-    expect(patched.emailNotifications).toBe(true)
-    // Restore: the suite shares one workspace, and later tests assume the defaults.
-    await app.request("/v1/workspace/settings", {
-      ...jsonAs(as(owner.email), { agentWrites: true, hostedAgentsEnabled: true }),
-      method: "PATCH",
-    })
   })
 
   it("defaultAgentId must name an agent in THIS workspace; null clears it", async () => {

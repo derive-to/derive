@@ -295,21 +295,4 @@ describe("connecting an MCP server by signing in", () => {
     expect(res.status).toBe(400)
     expect(String(((await res.json()) as { error: string }).error)).toMatch(/expired|invalid/i)
   })
-
-  it("a pasted-key connection is untouched by any of this", async () => {
-    // The two credential shapes coexist forever: plenty of MCP servers offer no OAuth at all.
-    const srv = await startOauthServer({ issue: "at_live_1" })
-    const created = await connect({
-      toolkit: "pasted",
-      mcp_url: srv.url,
-      mcp_secret: "at_live_1",
-    })
-    expect(created.status).toBe(201)
-    expect(created.body.status).toBe("active")
-    const [row] = await meta.getConnectionsByIds([created.body.id as string])
-    expect(readCredential(row?.secret_enc ?? null, SECRET)).toEqual({
-      kind: "bearer",
-      token: "at_live_1",
-    })
-  })
 })

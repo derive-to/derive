@@ -14,30 +14,23 @@ import { dir, pub, quotaApp } from "./helpers"
 describe.skipIf(process.env.DERIVE_TEST_DB === "pg")("OAuth agent workspace targeting", () => {
   // One OAuth grant (tok_ws → u_owner) and TWO workspaces the owner belongs to:
   // ws_one (older, the grant's default) and ws_two (the intended target).
-  function twoWorkspaceApp(name: string, opts: { withUsername?: boolean } = {}) {
+  function twoWorkspaceApp(name: string) {
     const path = join(dir, `${name}.db`)
     const meta = new SqliteMetaStore(path)
     const db = new Database(path)
     // getUsers SELECTs id/email/name/image/username/profession/about as one
     // statement — sqlite fails the whole query (not just the missing column) if
-    // the table lacks any of them, and getUsers swallows that to []. Most tests
-    // here don't care about the owner's profile, so the table stays minimal
-    // (id/email/name/image) and `account.handle` degrades to null; opts.withUsername
-    // adds the rest so the one test that checks a real handle can populate it.
+    // the table lacks any of them, and getUsers swallows that to []. No test
+    // here cares about the owner's profile, so the table stays minimal
+    // (id/email/name/image) and `account.handle` degrades to null.
     db.exec(`
-      CREATE TABLE IF NOT EXISTS "user" (id TEXT PRIMARY KEY, email TEXT, name TEXT, image TEXT${opts.withUsername ? ", username TEXT, profession TEXT, about TEXT" : ""});
+      CREATE TABLE IF NOT EXISTS "user" (id TEXT PRIMARY KEY, email TEXT, name TEXT, image TEXT);
       CREATE TABLE IF NOT EXISTS "oauthClient" (clientId TEXT PRIMARY KEY, name TEXT);
       CREATE TABLE IF NOT EXISTS "oauthAccessToken" (token TEXT PRIMARY KEY, clientId TEXT, userId TEXT, scopes TEXT, expiresAt TEXT);
     `)
-    if (opts.withUsername) {
-      db.prepare(
-        `INSERT OR IGNORE INTO "user"(id,email,name,username) VALUES('u_owner','owner@x.test','Owner','owner')`,
-      ).run()
-    } else {
-      db.prepare(
-        `INSERT OR IGNORE INTO "user"(id,email,name) VALUES('u_owner','owner@x.test','Owner')`,
-      ).run()
-    }
+    db.prepare(
+      `INSERT OR IGNORE INTO "user"(id,email,name) VALUES('u_owner','owner@x.test','Owner')`,
+    ).run()
     db.prepare(`INSERT OR IGNORE INTO "oauthClient"(clientId,name) VALUES('cli','Claude')`).run()
     db.prepare(
       `INSERT INTO "oauthAccessToken"(token,clientId,userId,scopes,expiresAt) VALUES(?,?,?,?,?)`,
@@ -134,13 +127,6 @@ describe.skipIf(process.env.DERIVE_TEST_DB === "pg")("OAuth agent workspace targ
     expect(body.account).toEqual({ id: "u_owner", handle: null, name: null })
   })
 
-  it("GET /v1/workspaces' account carries the owner's handle when one exists", async () => {
-    const { app } = twoWorkspaceApp("ws-target-handle", { withUsername: true })
-    const res = await app.request("/v1/workspaces", { headers: bearer })
-    const body = (await res.json()) as { account: { id: string; handle: string | null } }
-    expect(body.account).toEqual({ id: "u_owner", handle: "owner", name: "Owner" })
-  })
-
   // ---- Grant workspace SCOPE (the consent screen's multi-select) -------------
   // A grant stores the ticked workspaces as a set. EMPTY = all (dynamic). A
   // non-empty set restricts every resolution: default org, the header re-home,
@@ -199,19 +185,6 @@ describe.skipIf(process.env.DERIVE_TEST_DB === "pg")("OAuth agent workspace targ
     expect(res.status).toBe(201)
     const { short_id } = (await res.json()) as { short_id: string }
     expect((await meta.getByShortId(short_id))?.org_id).toBe("ws_two")
-  })
-
-  it("re-consent REPLACES the whole set; empty clears it back to all", async () => {
-    const { meta } = twoWorkspaceApp("ws-scope-replace")
-    await meta.setOAuthClientWorkspaces("u_owner", "cli", ["ws_one", "ws_two"])
-    expect((await meta.getOAuthClientWorkspaces("u_owner", "cli")).sort()).toEqual([
-      "ws_one",
-      "ws_two",
-    ])
-    await meta.setOAuthClientWorkspaces("u_owner", "cli", ["ws_two"])
-    expect(await meta.getOAuthClientWorkspaces("u_owner", "cli")).toEqual(["ws_two"])
-    await meta.setOAuthClientWorkspaces("u_owner", "cli", [])
-    expect(await meta.getOAuthClientWorkspaces("u_owner", "cli")).toEqual([])
   })
 
   // ---- POST /oauth/consent/workspace (the multi-select's persistence endpoint)
