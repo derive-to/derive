@@ -24,8 +24,12 @@ const publicCopyFiles = new Set([
   "SECURITY.md",
   ".github/SUPPORT.md",
   ...walkText("apps/docs/content"),
-  ...walkText("apps/web/public").filter(
-    (path) => !path.startsWith("apps/web/public/site/") && path !== "apps/web/public/security.html",
+  ...walkText("apps/web/public"),
+  ...walkText("apps/web/hosted").filter(
+    (path) =>
+      !path.startsWith("apps/web/hosted/site/") &&
+      !path.startsWith("apps/web/hosted/posts/") &&
+      path !== "apps/web/hosted/security.html",
   ),
   "apps/docs/docs-manifest.mjs",
   "apps/web/src/pages/login.tsx",
@@ -104,9 +108,10 @@ const publicProseFiles = new Set([
   "SECURITY.md",
   ...walkText("apps/api/src/skills"),
   ...walkText("apps/docs/content"),
+  ...walkText("apps/web/hosted/posts"),
   ...walkText("examples"),
-  "apps/web/public/llms.txt",
-  "apps/web/public/llms-full.txt",
+  "apps/web/hosted/llms.txt",
+  "apps/web/hosted/llms-full.txt",
   "packages/mcp/SKILL.md",
 ])
 
@@ -201,7 +206,7 @@ requireText(
   "describe the current license",
 )
 requireText(
-  "apps/web/public/.well-known/security.txt",
+  "apps/web/hosted/.well-known/security.txt",
   "server is source available",
   "describe the current license",
 )

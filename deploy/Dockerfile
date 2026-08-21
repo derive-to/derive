@@ -13,6 +13,9 @@ COPY . .
 # ignore-file edit uploads either one, fail before dependency or source build.
 RUN test ! -e deploy/.env && test ! -e deploy/backups/build-context-canary
 RUN pnpm install --offline --frozen-lockfile
+# The application alone. derive.to's own public surface (marketing pages, blog,
+# sitemap, trust files) is assembled by a separate build step this deliberately does
+# not run, so a self-hosted instance serves its operator's front door, not ours.
 RUN NODE_OPTIONS=--dns-result-order=ipv4first pnpm --filter @derive/web build
 # A production-only, portable dependency graph. The legacy deploy mode is
 # intentional until this workspace opts into pnpm's injected-workspace layout.

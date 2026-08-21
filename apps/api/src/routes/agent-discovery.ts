@@ -24,7 +24,7 @@ import type { AppContext } from "../context"
  * (+ wrangler.toml run_worker_first + the Vite dev proxy) so the SPA's
  * not-found handling never shadows them.
  */
-export const agentDiscoveryRoutes = (_ctx: AppContext) => {
+export const agentDiscoveryRoutes = (ctx: AppContext) => {
   const app = new Hono()
 
   // Short shared cache: content only changes on deploy, but a stale copy
@@ -62,8 +62,15 @@ export const agentDiscoveryRoutes = (_ctx: AppContext) => {
     }),
   )
 
-  app.get("/.well-known/agent.json", (c: Context) => {
+  app.get("/.well-known/agent.json", async (c: Context) => {
     const base = new URL(c.req.url).origin
+    // The examples page and the llms files are part of derive.to's own public surface,
+    // which only its build assembles (apps/web/scripts/build-hosted.mjs). A self-host has
+    // none of them, so advertise them only where they resolve: a manifest that names a
+    // 404 is worse than a shorter one. Probe the provider rather than test for it: on the
+    // edge the providers always exist (worker.ts binds them to asset URLs) and resolve
+    // null only when the build shipped no page, so presence alone proves nothing there.
+    const hosted = !!(await ctx.deps.marketing?.examples())
     return c.json(
       {
         schema_version: "1.0",
@@ -92,10 +99,14 @@ export const agentDiscoveryRoutes = (_ctx: AppContext) => {
           openapi: `${base}/openapi.json`,
           docs: `${base}/docs`,
           guides: "https://docs.derive.to/",
-          examples: `${base}/examples`,
           skill: `${base}/skill.md`,
-          llms_txt: `${base}/llms.txt`,
-          llms_full_txt: `${base}/llms-full.txt`,
+          ...(hosted
+            ? {
+                examples: `${base}/examples`,
+                llms_txt: `${base}/llms.txt`,
+                llms_full_txt: `${base}/llms-full.txt`,
+              }
+            : {}),
         },
         source: "https://github.com/derive-to/derive",
         not_for:

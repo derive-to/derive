@@ -292,10 +292,10 @@ const blobs: BlobStore = cfg.objectStoreUrl
 // meta) and to mountWeb (the client-router fallback). Only when serving the web.
 const shellHtml = cfg.serveWeb ? readFileSync(cfg.webShell, "utf8") : undefined
 
-// The marketing pages, read once from the web build's site/ directory like the
-// shell above. Always on when the web build ships the pages — a build without
-// them (or a missing page) resolves null and the routes fall back to the shell,
-// so the front door can never 404.
+// The marketing pages, read once from the build's site/ directory like the shell
+// above. Only the hosted build assembles them (apps/web/scripts/build-hosted.mjs),
+// so a self-host resolves null here and the routes fall back to the shell — the
+// front door can never 404, and it is never derive.to's brochure.
 const readSitePage = (name: string): string | null => {
   try {
     return readFileSync(join(cfg.webDir, "site", name), "utf8")

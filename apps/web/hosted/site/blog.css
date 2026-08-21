@@ -1,0 +1,372 @@
+/* The blog: the index at /blog and every post under it.
+ *
+ * Built on the shared shell (tokens, container, navigation) and on
+ * docs/design-system.md, like the rest of the public site. The register is the
+ * house one, one step quieter: a mono date as the only label, a display heading,
+ * a lede, then the writing. Nothing on this page competes with the sentence.
+ *
+ * The pages are generated (apps/web/scripts/build-blog.mjs), so this file is the
+ * only place a post's look is decided. Prose styles have to survive whatever
+ * markdown produces, which is why they are written against elements rather than
+ * classes.
+ */
+
+@font-face {
+  font-family: "Geist";
+  src: url("/site/geist.woff2") format("woff2");
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Geist Mono";
+  src: url("/site/geist-mono.woff2") format("woff2");
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.65;
+  letter-spacing: -0.011em;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  padding-top: var(--nav-height);
+}
+
+main {
+  padding-bottom: 40px;
+}
+
+.lede {
+  max-width: 62ch;
+  margin: 22px 0 0;
+  color: var(--muted-fg);
+  font-size: clamp(17px, 1.7vw, 20px);
+  line-height: 1.55;
+}
+
+/* Index ----------------------------------------------------------------- */
+
+.head {
+  padding: 120px 0 0;
+}
+
+.head h1 {
+  margin-top: 18px;
+  max-width: 18ch;
+  font-size: clamp(34px, 5vw, 56px);
+  line-height: 1.06;
+}
+
+/* One post per row, separated by a hairline rather than a card: the list is a
+   table of contents, and a card would promise a thumbnail that is not there. */
+.posts {
+  margin: 72px 0 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--border-soft);
+}
+
+.posts li {
+  border-bottom: 1px solid var(--border-soft);
+}
+
+/* The whole row is the link, so the shell's in-sentence underline has to come
+   back off: it is chrome here, and only the title carries the hover. */
+.posts a {
+  display: block;
+  padding: 30px 4px;
+  text-decoration: none;
+}
+
+.posts a:hover h2 {
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+}
+
+.posts time {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted-fg);
+}
+
+.posts h2 {
+  margin-top: 10px;
+  font-size: clamp(20px, 2.4vw, 26px);
+  line-height: 1.2;
+}
+
+.posts p {
+  margin: 10px 0 0;
+  max-width: 68ch;
+  color: var(--muted-fg);
+  font-size: 15px;
+}
+
+.empty {
+  margin: 72px 0 0;
+  padding-top: 30px;
+  border-top: 1px solid var(--border-soft);
+  color: var(--muted-fg);
+}
+
+/* Post ------------------------------------------------------------------ */
+
+.post-head {
+  padding: 120px 0 34px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.post-head h1 {
+  margin-top: 16px;
+  font-size: clamp(30px, 4.4vw, 46px);
+  line-height: 1.08;
+}
+
+.post-head .eyebrow a {
+  color: inherit;
+}
+
+.post-head .eyebrow a:hover {
+  color: var(--fg);
+}
+
+.post-meta {
+  margin: 26px 0 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted-fg);
+}
+
+/* Prose. The measure is the point: 68ch at a relaxed line-height, with headings
+   that separate sections without shouting. */
+.prose {
+  margin-top: 44px;
+  max-width: 68ch;
+  color: var(--fg);
+  font-size: 17px;
+  line-height: 1.75;
+}
+
+.prose > * {
+  min-width: 0;
+}
+
+.prose p,
+.prose ul,
+.prose ol,
+.prose pre,
+.prose blockquote,
+.prose table {
+  margin: 24px 0;
+}
+
+.prose h2 {
+  margin: 56px 0 0;
+  font-size: clamp(22px, 2.6vw, 28px);
+  line-height: 1.2;
+}
+
+.prose h3 {
+  margin: 40px 0 0;
+  font-size: 18px;
+}
+
+.prose h2 + p,
+.prose h3 + p {
+  margin-top: 14px;
+}
+
+.prose strong {
+  font-weight: 500;
+}
+
+.prose ul,
+.prose ol {
+  padding-left: 1.3em;
+}
+
+.prose li {
+  margin: 8px 0;
+}
+
+.prose li::marker {
+  color: var(--muted-fg);
+}
+
+.prose blockquote {
+  padding-left: 20px;
+  border-left: 2px solid var(--border);
+  color: var(--muted-fg);
+}
+
+.prose code {
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+  background: var(--secondary);
+  border: 1px solid var(--border-soft);
+  border-radius: 5px;
+  padding: 0.1em 0.35em;
+}
+
+/* A code block scrolls inside itself; the page never scrolls sideways. */
+.prose pre {
+  overflow-x: auto;
+  padding: 18px 20px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font-size: 13.5px;
+  line-height: 1.6;
+}
+
+.prose pre code {
+  background: none;
+  border: 0;
+  padding: 0;
+  font-size: inherit;
+}
+
+.prose img {
+  max-width: 100%;
+  height: auto;
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+}
+
+.prose hr {
+  margin: 48px 0;
+  border: 0;
+  border-top: 1px solid var(--border-soft);
+}
+
+.prose table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 15px;
+}
+
+.prose th,
+.prose td {
+  padding: 10px 14px;
+  border: 1px solid var(--border-soft);
+  text-align: left;
+}
+
+.prose th {
+  font-weight: 500;
+  background: var(--secondary);
+}
+
+.post-foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px 28px;
+  margin-top: 72px;
+  padding-top: 26px;
+  border-top: 1px solid var(--border-soft);
+  font-size: 14px;
+  color: var(--muted-fg);
+}
+
+.post-foot a:hover {
+  color: var(--fg);
+}
+
+.post-foot .next {
+  margin-left: auto;
+}
+
+/* Footer ---------------------------------------------------------------- */
+
+footer {
+  margin-top: 110px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.foot-inner {
+  max-width: var(--maxw);
+  margin: 0 auto;
+  padding: 34px 24px 44px;
+  display: flex;
+  align-items: center;
+  gap: 16px 28px;
+  flex-wrap: wrap;
+}
+
+.foot-inner .fm {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.foot-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+  font-size: 13px;
+  color: var(--muted-fg);
+}
+
+.foot-links a:hover {
+  color: var(--fg);
+}
+
+.foot-inner .license {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  color: var(--muted-fg);
+}
+
+@media (max-width: 720px) {
+  .foot-inner .license {
+    margin-left: 0;
+    width: 100%;
+  }
+
+  .post-foot .next {
+    margin-left: 0;
+  }
+}
+
+@media (max-width: 640px) {
+  .head,
+  .post-head {
+    padding-top: 92px;
+  }
+
+  .posts {
+    margin-top: 52px;
+  }
+
+  .prose {
+    font-size: 16px;
+  }
+
+  footer {
+    margin-top: 84px;
+  }
+}

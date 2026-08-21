@@ -1,8 +1,10 @@
+# Every deployment ships this file. The application paths below are never useful
+# to a crawler, and two of them (settings, the API) are private by definition.
+# derive.to overlays its own copy at build time, which adds the sitemap; an
+# instance that wants to be indexed differently can replace this file.
 User-agent: *
 Allow: /
 Disallow: /api/
 Disallow: /oauth/
 Disallow: /settings/
 Disallow: /v1/
-
-Sitemap: https://derive.to/sitemap.xml

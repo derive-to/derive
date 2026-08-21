@@ -63,6 +63,14 @@ export const isApiPath = (path: string): boolean =>
 // build emits new hashes, so this is safe and maximizes cache hits.
 const IMMUTABLE_CACHE = "public, max-age=31536000, immutable"
 
+/** The file behind a blog URL: the directory index for /blog, `<slug>.html` for a
+ *  post, and the file itself for anything that already names one (rss.xml). */
+const blogFile = (path: string): string => {
+  const trimmed = path.length > 1 && path.endsWith("/") ? path.slice(0, -1) : path
+  if (trimmed === "/blog") return "/blog"
+  return /\.[^/]+$/.test(trimmed) ? trimmed : `${trimmed}.html`
+}
+
 export interface ServeWebOpts {
   /** serveStatic root, relative to `process.cwd()`. */
   webRoot: string
@@ -87,14 +95,22 @@ export const mountWeb = (app: Hono, { webRoot, shellHtml, notFoundHtml }: ServeW
   )
   // Root-level static files Vite emits (favicon, manifest, …).
   app.get("/:file{[^/]+\\.[^/]+}", serveStatic({ root: webRoot }))
-  // Nested public/ directories the marketing pages reference (/site fonts + og
-  // image, /brand wordmark). Without these the shell fallback swallows them —
-  // the Worker's Static Assets serve them natively, so only Node needs the routes.
+  // Nested build directories the marketing pages reference (/site fonts + og image,
+  // /brand wordmark). Without these the shell fallback swallows them — the Worker's
+  // Static Assets serve them natively, so only Node needs the routes. /site is absent
+  // from a self-host build (only the hosted build assembles it) and these 404 there,
+  // which is correct: nothing links to them.
   app.get("/site/*", serveStatic({ root: webRoot }))
   app.get("/brand/*", serveStatic({ root: webRoot }))
-  // Cloudflare's Static Assets HTML handling maps the physical security.html
-  // file to its canonical extensionless URL. Mirror that contract in the Node
-  // self-host so links, crawlers and scanners see the same page on both tiers.
+  // The blog, generated into the build by apps/web/scripts/build-blog.mjs. On the
+  // edge Cloudflare's HTML handling maps blog/<slug>.html to /blog/<slug> and the
+  // directory to /blog; do the same here so a self-host publishes the same URLs.
+  app.get("/blog", serveStatic({ root: webRoot, rewriteRequestPath: blogFile }))
+  app.get("/blog/*", serveStatic({ root: webRoot, rewriteRequestPath: blogFile }))
+  // Cloudflare's Static Assets HTML handling maps the physical security.html file to
+  // its canonical extensionless URL. Mirror that contract so both tiers of a HOSTED
+  // deployment serve the same page; the file is part of derive.to's own surface, so
+  // an ordinary self-host build has none and this route simply misses.
   app.get("/security", serveStatic({ root: webRoot, path: "security.html" }))
   // Same reason, for the one static file that lives under a dot-directory:
   // /.well-known/security.txt (RFC 9116). The root-file route above only matches a
