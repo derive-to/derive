@@ -13,7 +13,6 @@ export const Route = createFileRoute("/templates")({
     derive: search.derive === true || search.derive === "true" ? true : undefined,
     source: typeof search.source === "string" ? search.source : undefined,
     library: typeof search.library === "string" ? search.library : undefined,
-    use: typeof search.use === "string" ? search.use : undefined,
   }),
   component: Templates,
 })

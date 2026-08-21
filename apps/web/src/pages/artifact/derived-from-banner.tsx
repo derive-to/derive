@@ -53,11 +53,6 @@ export function DerivedFromBanner({ art }: { art: Artifact }) {
   // nothing to link to or fill from, so no banner.
   const source = art.derived_from
   if (!source || dismissed || !me) return null
-  const builtInTemplate =
-    source.kind === "template" || source.short_id.startsWith("derive://templates/")
-  const builtInTemplateId = builtInTemplate
-    ? source.short_id.slice("derive://templates/".length)
-    : null
   // Rebrand needs a Brandprint and an addressable agent (the fire/picker states).
   // The setup/connect onboarding paths stay in the ⋯ menu's Rework item — a
   // provenance banner is the wrong place to start Brandprint setup from.
@@ -75,25 +70,15 @@ export function DerivedFromBanner({ art }: { art: Artifact }) {
       className="flex shrink-0 items-center gap-2.5 border-b border-border bg-muted/40 px-4 py-1.5"
     >
       <Eyebrow className="shrink-0">Derived from</Eyebrow>
-      {builtInTemplateId ? (
-        <Link
-          to="/templates"
-          search={{ use: builtInTemplateId }}
-          className="min-w-0 truncate text-sm text-foreground hover:underline"
-        >
-          {source.title ?? source.short_id}
-        </Link>
-      ) : (
-        <Link
-          to="/artifacts/$ref"
-          params={{ ref: refFor({ short_id: source.short_id, title: source.title }) }}
-          className="min-w-0 truncate text-sm text-foreground hover:underline"
-        >
-          {source.title ?? source.short_id}
-        </Link>
-      )}
+      <Link
+        to="/artifacts/$ref"
+        params={{ ref: refFor({ short_id: source.short_id, title: source.title }) }}
+        className="min-w-0 truncate text-sm text-foreground hover:underline"
+      >
+        {source.title ?? source.short_id}
+      </Link>
       <div className="min-w-0 flex-1" />
-      {!builtInTemplate && (rework.state === "fire" || rework.state === "picker") && (
+      {(rework.state === "fire" || rework.state === "picker") && (
         <AgentMenu
           agents={agents}
           menuLabel="Rebrand with which agent?"
@@ -113,11 +98,9 @@ export function DerivedFromBanner({ art }: { art: Artifact }) {
           )}
         />
       )}
-      {!builtInTemplate ? (
-        <Button size="sm" data-testid="banner-fill" onClick={() => setFillOpen(true)}>
-          Fill with your work
-        </Button>
-      ) : null}
+      <Button size="sm" data-testid="banner-fill" onClick={() => setFillOpen(true)}>
+        Fill with your work
+      </Button>
       <Button
         variant="ghost"
         size="sm"
@@ -134,14 +117,12 @@ export function DerivedFromBanner({ art }: { art: Artifact }) {
       >
         ×
       </Button>
-      {!builtInTemplate ? (
-        <FillDialog
-          shortId={art.short_id}
-          agents={agents}
-          open={fillOpen}
-          onOpenChange={setFillOpen}
-        />
-      ) : null}
+      <FillDialog
+        shortId={art.short_id}
+        agents={agents}
+        open={fillOpen}
+        onOpenChange={setFillOpen}
+      />
     </div>
   )
 }

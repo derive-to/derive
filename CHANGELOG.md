@@ -15,6 +15,15 @@ for the recommended install and verification flow.
 ## [Unreleased]
 
 ### Removed
+- **The built-in template catalog and `@derive-to/templates`.** The 30 code-defined
+  starters, the `derive://templates/catalog` and `derive://templates/<id>` MCP
+  resources, and the built-in form of `derived_from` are gone; templates are artifacts
+  tagged `template` (see Changed). `derived_from` takes an artifact short id or a
+  library-entry URI. The npm package `@derive-to/templates` ends at 0.1.0 and is being
+  deprecated. A database that holds built-in lineage strings from the retired form
+  (`derived_from LIKE 'derive://templates/%'`; none on derive.to) can clear them with
+  `deploy/drop-built-in-template-lineage.sql`; until then those rows read as
+  underived.
 - **Proposals and the approval step.** The two review ceremonies are gone: ask-first
   candidate versions awaiting an editor's decision, and the `approved` round state with
   its served-version pointer. Review is one loop: every write publishes live as a kept,

@@ -965,47 +965,8 @@ describe("remote MCP endpoint (/mcp)", () => {
     const adoptedArtifact = await meta.getByShortId(adopted.short_id)
     expect(adoptedArtifact?.derived_from).toBe(artifact.id)
 
-    // Built-ins use the same resource/read concepts, and template discovery is
-    // one mode of find rather than another MCP tool.
-    const builtinResources = await rpc(app, token, {
-      jsonrpc: "2.0",
-      id: 5,
-      method: "resources/list",
-    })
-    const builtinUris = (
-      (builtinResources.parsed?.result as { resources?: { uri: string }[] } | undefined)
-        ?.resources ?? []
-    ).map((resource) => resource.uri)
-    expect(builtinUris).toContain("derive://templates/catalog")
-    const builtInRead = toolText(
-      await call(app, token, "read", { short_id: "derive://templates/decision-memo" }),
-    )
-    expect(builtInRead).toMatch(/Decision/i)
-    const builtInAdoption = JSON.parse(
-      toolText(
-        await call(app, token, "publish", {
-          title: "Adapted decision memo",
-          content: "# Adapted decision memo\n\nA specific call for this team.",
-          derived_from: "derive://templates/decision-memo",
-        }),
-      ),
-    ) as { short_id: string; derived_from?: string }
-    expect(builtInAdoption.derived_from).toBe("derive://templates/decision-memo")
-    expect((await meta.getByShortId(builtInAdoption.short_id))?.derived_from).toBe(
-      "derive://templates/decision-memo",
-    )
-    const builtInDetail = (await (
-      await app.request(`/v1/artifacts/${builtInAdoption.short_id}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-    ).json()) as { derived_from?: { short_id: string; title: string; kind?: string } }
-    expect(builtInDetail.derived_from).toEqual({
-      short_id: "derive://templates/decision-memo",
-      title: "Decision memo",
-      kind: "template",
-    })
     // The shelf is artifacts tagged `template`: tag the source and find lists it by short_id,
-    // ahead of the authored library entry. Built-ins are no longer a find result.
+    // ahead of the authored library entry.
     await call(app, token, "organize", { short_ids: [artifact.short_id], add: ["template"] })
     const found = JSON.parse(toolText(await call(app, token, "find", { templates: true }))) as {
       results: { uri: string; source: string }[]
@@ -1014,16 +975,6 @@ describe("remote MCP endpoint (/mcp)", () => {
       "derive://template-libraries/tlb_mcp/tpl_mcp",
     )
     expect(found.results[0]).toMatchObject({ uri: artifact.short_id, source: "workspace" })
-    expect(found.results.some((result) => result.uri.startsWith("derive://templates/"))).toBe(false)
-    expect(
-      toolText(
-        await call(app, token, "publish", {
-          title: "Missing built-in",
-          content: "# No",
-          derived_from: "derive://templates/not-in-this-release",
-        }),
-      ),
-    ).toContain("No built-in template")
 
     // Canonical URIs fail closed. Extra path segments must never be silently
     // interpreted as the valid starter that happens to prefix them.

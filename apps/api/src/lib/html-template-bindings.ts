@@ -1,13 +1,11 @@
-import type { TemplateInput } from "./types"
-
 /**
- * Beta HTML bindings are deliberately text-only. Refusing placeholders inside
- * tags, scripts, and styles avoids ambiguous JS/CSS/unquoted-attribute contexts
- * while still supporting rich authored pages and decks byte-for-byte.
+ * Library-entry HTML bindings are text-only: a `{{Name}}` placeholder inside a tag,
+ * script, or style has no safe substitution (JS, CSS, unquoted attributes), so the
+ * entry is refused rather than substituted ambiguously. Returns the offending names.
  */
 export function unsafeHtmlTemplateBindings(
   source: string,
-  inputs: readonly TemplateInput[],
+  inputs: readonly { name: string }[],
 ): string[] {
   const names = new Set(
     inputs.flatMap((input) => [
@@ -20,8 +18,7 @@ export function unsafeHtmlTemplateBindings(
   const scriptRanges = [...source.matchAll(/<(script|style)\b[^>]*>[\s\S]*?<\/\1\s*>/gi)].map(
     (match) => [match.index ?? 0, (match.index ?? 0) + match[0].length] as const,
   )
-  // Scan delimiters directly so malformed input cannot trigger regex
-  // backtracking on whitespace-heavy sequences such as "{{{{    ".
+  // Scanned by hand so malformed input ("{{{{    ") cannot trigger regex backtracking.
   let cursor = 0
   while (cursor < source.length) {
     const start = source.indexOf("{{", cursor)

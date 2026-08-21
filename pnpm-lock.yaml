@@ -78,9 +78,6 @@ importers:
       '@cloudflare/puppeteer':
         specifier: ^1.0.0
         version: 1.1.0(yauzl@2.10.0)
-      '@derive-to/templates':
-        specifier: workspace:*
-        version: link:../../packages/templates
       '@derive/broker':
         specifier: workspace:*
         version: link:../../packages/broker
@@ -489,9 +486,6 @@ importers:
       '@derive-to/cli':
         specifier: workspace:*
         version: link:../cli
-      '@derive-to/templates':
-        specifier: workspace:*
-        version: link:../templates
       '@modelcontextprotocol/sdk':
         specifier: ^1.12.0
         version: 1.29.0(zod@4.4.3)
@@ -542,15 +536,6 @@ importers:
       vitest:
         specifier: ^4.1.9
         version: 4.1.9(@opentelemetry/api@1.9.1)(@types/node@25.9.3)(@vitest/coverage-v8@4.1.9)(vite@8.0.16(@types/node@25.9.3)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))
-
-  packages/templates:
-    devDependencies:
-      typescript:
-        specifier: ^6.0.3
-        version: 6.0.3
-      vitest:
-        specifier: ^4.1.9
-        version: 4.1.9(@opentelemetry/api@1.9.1)(@types/node@26.2.0)(@vitest/coverage-v8@4.1.9)(vite@8.0.16(@types/node@26.2.0)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))
 
 packages:
 

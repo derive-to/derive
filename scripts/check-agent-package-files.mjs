@@ -19,10 +19,6 @@ const packages = [
     dir: "packages/mcp",
     required: ["README.md", "SKILL.md", "references/connect.md", "references/compatibility.md"],
   },
-  {
-    dir: "packages/templates",
-    required: ["README.md"],
-  },
 ]
 
 const errors = []
