@@ -20,7 +20,7 @@ const workflowPage = () => {
   const linked = {
     schema: "derive.linked-bundle/v1",
     purpose: "Publish a weekly brief after product review",
-    members: [{ id: "brief", ref: "abc12345", label: "Signal brief" }],
+    members: [],
     diagrams: [
       {
         id: "weekly-brief",
@@ -29,7 +29,7 @@ const workflowPage = () => {
         nodes: [
           { id: "research", label: "Research signals" },
           { id: "review", label: "Product review" },
-          { id: "publish", label: "Publish brief", member: "brief" },
+          { id: "publish", label: "Publish brief" },
         ],
         edges: [
           { from: "research", to: "review" },
@@ -125,6 +125,26 @@ const workflowPage = () => {
 }
 
 describe("workflow preview", () => {
+  it("scaffolds a graph-first workflow and points cold start to Preview", () => {
+    const dir = join(tmp(), "starter")
+    const bin = join(import.meta.dirname, "..", "bin", "derive.js")
+    const init = spawnSync(
+      process.execPath,
+      [bin, "init", dir, "--template", "workflow", "--title", "Weekly brief"],
+      { encoding: "utf8" },
+    )
+    expect(init.status).toBe(0)
+    expect(init.stdout).toContain("derive workflow preview workflow.html")
+
+    const preview = spawnSync(process.execPath, [bin, "workflow", "preview", "workflow.html"], {
+      cwd: dir,
+      encoding: "utf8",
+    })
+    expect(preview.status).toBe(0)
+    expect(preview.stdout).toContain("Preview only — no context session has started")
+    expect(preview.stdout).toContain("Context sessions on explicit run")
+  })
+
   it("extracts facts without executing HTML and matches core's ready preview", () => {
     const source = workflowPage()
     expect(factJson(source, "workflow-definition").error).toBeNull()
@@ -132,6 +152,8 @@ describe("workflow preview", () => {
     expect(preview).toEqual(previewCoreWorkflow(source))
     expect(formatWorkflowPreview(preview)).toContain("✓ Ready to run")
     expect(formatWorkflowPreview(preview)).toContain("Will pause")
+    expect(formatWorkflowPreview(preview)).toContain("Context sessions on explicit run")
+    expect(formatWorkflowPreview(preview)).toContain("Research signals → signal-researcher")
     expect(formatWorkflowPreview(preview)).toContain("Cannot do")
   })
 

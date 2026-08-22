@@ -22,10 +22,13 @@ pause sensitive actions later.
    safety or behavior.
 2. Reuse the smallest shape that fits: linear handoff, fan-out/join, approval, router, or bounded
    evaluator–optimizer loop. Do not add a graph to a one-step task.
-3. Author one HTML artifact with two facts from the same model:
+3. Start cold with `derive init <dir> --template workflow --title "<outcome>"`, or repair the
+   existing artifact in place. Author one HTML artifact with two facts from the same model:
    - `bundle-manifest` is #799's visible topology and authored working state.
    - `workflow-definition` adds executable context bindings, route conditions, bounds, effects,
      gates, forbidden actions, and scenarios. Join only by stable diagram/node IDs.
+   This is **same IDs, different jobs**. A graph may start with `members:[]`; add real result
+   artifacts to members as context sessions answer. Never invent placeholder artifact ids.
 4. Read [references/protocol.md](references/protocol.md) for the exact contract. Keep every
    visible node and edge in sync with the companion definition.
 5. Run `derive workflow preview <file>`. Repair every blocker and rerun until it says

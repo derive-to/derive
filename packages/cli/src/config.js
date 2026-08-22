@@ -469,7 +469,7 @@ export const defaultConfig = (title = "My artifact", entry = "index.md") => ({
   id: null,
 })
 
-export const TEMPLATES = ["md", "html", "slides", "site", "skill", "context"]
+export const TEMPLATES = ["md", "html", "workflow", "slides", "site", "skill", "context"]
 
 /** Read derive.json from `dir`, or null if absent. Throws on malformed JSON. */
 export function loadConfig(dir = ".") {
@@ -612,6 +612,10 @@ export function writeSkillPin(dir, { id, version, name }) {
 const STARTERS = {
   md: { entry: "index.md", files: (t) => ({ "index.md": starterMd(t) }) },
   html: { entry: "index.html", files: (t) => ({ "index.html": starterHtml(t) }) },
+  workflow: {
+    entry: "workflow.html",
+    files: (t) => ({ "workflow.html": starterWorkflow(t) }),
+  },
   slides: { entry: "slides.html", files: (t) => ({ "slides.html": starterSlides(t) }) },
   site: {
     entry: "site",
@@ -1124,6 +1128,153 @@ const starterHtml = (title) => `<!doctype html>
 </body>
 </html>
 `
+
+const starterWorkflow = (title) => {
+  const purpose = `Review and publish ${title}`
+  const bundle = {
+    schema: "derive.linked-bundle/v1",
+    purpose,
+    members: [],
+    diagrams: [
+      {
+        id: "review-and-publish",
+        title: "Review and publish",
+        type: "graph",
+        nodes: [
+          { id: "draft", label: "Draft", state: "pending" },
+          { id: "review", label: "Review", state: "pending" },
+          { id: "publish", label: "Publish", state: "pending" },
+        ],
+        edges: [
+          { from: "draft", to: "review", label: "draft ready" },
+          { from: "review", to: "draft", label: "revise" },
+          { from: "review", to: "publish", label: "approve" },
+        ],
+      },
+    ],
+  }
+  const workflow = {
+    schema: "derive.workflow/v1",
+    purpose,
+    forbidden: ["Publish without approval"],
+    diagrams: [
+      {
+        id: "review-and-publish",
+        entry: "draft",
+        nodes: [
+          {
+            id: "draft",
+            kind: "context",
+            context_ref: "draft-builder",
+            instruction: `Create a reviewable ${title} draft.`,
+            result: `A reviewable ${title} draft`,
+          },
+          {
+            id: "review",
+            kind: "human",
+            decision: "Approve or request one revision",
+            options: ["approve", "revise"],
+            resume: "The reviewer chooses approve or revise",
+          },
+          {
+            id: "publish",
+            kind: "context",
+            context_ref: "artifact-publisher",
+            instruction: "Publish the approved draft without changing its claims.",
+            result: `A published ${title}`,
+            terminal: true,
+            effects: [
+              {
+                kind: "write",
+                description: `Publish ${title}`,
+                gate: "human",
+                approval_ref: "review",
+              },
+            ],
+          },
+        ],
+        routes: [
+          { from: "draft", to: "review", when: "always" },
+          { from: "review", to: "draft", when: "revise" },
+          { from: "review", to: "publish", when: "approve" },
+        ],
+        loops: [
+          {
+            id: "bounded-revision",
+            nodes: ["draft", "review"],
+            goal: "Reach an approvable draft",
+            evaluate: "The reviewer checks accuracy, clarity, and scope",
+            stop: {
+              max_attempts: 2,
+              stagnation_limit: 1,
+              max_minutes: 20,
+              human_stop: "The reviewer stops or changes the work",
+            },
+          },
+        ],
+        scenarios: [
+          {
+            id: "expected",
+            kind: "expected",
+            path: ["draft", "review", "publish"],
+            outcome: `Approved ${title} is published`,
+          },
+          {
+            id: "context-failure",
+            kind: "failure",
+            path: ["draft"],
+            outcome: "The failed context session stays visible and the run stops",
+          },
+          {
+            id: "revision",
+            kind: "human",
+            path: ["draft", "review", "draft", "review", "publish"],
+            outcome: "One revision lands before approval",
+          },
+        ],
+      },
+    ],
+  }
+  const fact = (value) => JSON.stringify(value, null, 2).replaceAll("<", "\\u003c")
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${title} · workflow</title>
+<style>
+  body{font:16px/1.6 system-ui,-apple-system,"Segoe UI",sans-serif;color:#17231f;
+    background:#eef5f1;max-width:880px;margin:0 auto;padding:48px 24px}
+  h1{font-size:42px;line-height:1.05;letter-spacing:-.04em;margin:0 0 10px}
+  .sub{color:#5b6d66;margin:0 0 30px}.flow{display:grid;grid-template-columns:1fr auto 1fr auto 1fr;
+    gap:12px;align-items:center}.node{background:white;border:1px solid #d8e5de;border-radius:16px;
+    padding:20px}.arrow{font-size:24px;color:#087f5b}.note{margin-top:18px;padding:14px 16px;
+    background:#fff1c7;border-radius:12px}code{background:#dff3e9;padding:2px 6px;border-radius:5px}
+  @media(max-width:700px){.flow{grid-template-columns:1fr}.arrow{transform:rotate(90deg);text-align:center}}
+</style>
+</head>
+<body>
+  <h1>${title}</h1>
+  <p class="sub">A graph-first Derive workflow. The visible graph and runnable definition use
+  the same stable IDs for different jobs.</p>
+  <div class="flow">
+    <div class="node"><b>Draft</b><br>One context produces a reviewable result.</div><div class="arrow">→</div>
+    <div class="node"><b>Review</b><br>A person chooses approve or revise.</div><div class="arrow">→</div>
+    <div class="node"><b>Publish</b><br>The approved result is published.</div>
+  </div>
+  <p class="note">The revise route is bounded to two attempts. Edit the outcome and context
+  references below, then run <code>derive workflow preview workflow.html</code>. Preview explains
+  and validates; it never starts the workflow.</p>
+<script type="application/derive-facts" data-fact="bundle-manifest">
+${fact(bundle)}
+</script>
+<script type="application/derive-facts" data-fact="workflow-definition">
+${fact(workflow)}
+</script>
+</body>
+</html>
+`
+}
 
 // The slides starter is THE canonical Derive deck, shared byte-for-byte with the MCP
 // template resource (derive://decks/template) and the library’s “Start a deck” — one

@@ -91,11 +91,18 @@ export interface WorkflowPreviewDiagram {
   will_pause: string[]
   can_repeat: string[]
   side_effects: string[]
+  context_sessions: Array<{
+    node_id: string
+    label: string
+    context_ref: string
+    starts_when: string
+  }>
   scenarios: Array<{ kind: WorkflowScenarioDefinition["kind"]; outcome: string }>
 }
 
 export interface WorkflowPreview {
   status: "ready" | "needs-changes"
+  execution_started: false
   purpose: string | null
   errors: string[]
   warnings: string[]
@@ -581,14 +588,19 @@ export const validateWorkflowDefinition = (
       for (const id of definedNodes)
         if (!visibleNodes.has(id))
           errors.push(`WF-02 workflow node "${diagram.id}/${id}" is not visible in bundle-manifest`)
+      const labels = new Map(visible.nodes.map((node) => [node.id, node.label]))
       const visibleEdges = new Set(visible.edges.map((edge) => edgeKey(edge.from, edge.to)))
       const definedRoutes = new Set(diagram.routes.map((route) => edgeKey(route.from, route.to)))
-      for (const key of visibleEdges)
-        if (!definedRoutes.has(key))
-          errors.push(`WF-02 a visible edge in "${diagram.id}" has no workflow route`)
-      for (const key of definedRoutes)
-        if (!visibleEdges.has(key))
-          errors.push(`WF-02 a workflow route in "${diagram.id}" is not visible in bundle-manifest`)
+      for (const edge of visible.edges)
+        if (!definedRoutes.has(edgeKey(edge.from, edge.to)))
+          errors.push(
+            `WF-02 visible edge "${labels.get(edge.from) ?? edge.from}" → "${labels.get(edge.to) ?? edge.to}" in "${diagram.id}" has no workflow route`,
+          )
+      for (const route of diagram.routes)
+        if (!visibleEdges.has(edgeKey(route.from, route.to)))
+          errors.push(
+            `WF-02 workflow route "${labels.get(route.from) ?? route.from}" → "${labels.get(route.to) ?? route.to}" in "${diagram.id}" is not visible`,
+          )
       if (visible.type === "loop" && !diagram.loops?.length)
         errors.push(`WF-04 visible loop "${diagram.id}" has no bounded loop policy`)
     }
@@ -645,6 +657,7 @@ export const previewWorkflow = (source: string): WorkflowPreview => {
   if (!validation)
     return {
       status: "needs-changes",
+      execution_started: false,
       purpose: null,
       errors: ["WF-01 no workflow-definition fact found"],
       warnings: [],
@@ -654,6 +667,7 @@ export const previewWorkflow = (source: string): WorkflowPreview => {
   if (!validation.definition)
     return {
       status: "needs-changes",
+      execution_started: false,
       purpose: null,
       errors: validation.errors,
       warnings: validation.warnings,
@@ -663,6 +677,7 @@ export const previewWorkflow = (source: string): WorkflowPreview => {
   const visibleByDiagram = new Map((linked?.diagrams ?? []).map((diagram) => [diagram.id, diagram]))
   return {
     status: "ready",
+    execution_started: false,
     purpose: validation.definition.purpose,
     errors: [],
     warnings: validation.warnings,
@@ -702,6 +717,28 @@ export const previewWorkflow = (source: string): WorkflowPreview => {
                 `${effect.description} — ${effect.gate === "human" ? `authorized at ${nodeLabel(nodes.get(effect.approval_ref ?? ""), effect.approval_ref ?? "human gate")}` : `replay-safe: ${effect.idempotency ?? "declared"}`}`,
             ),
         ),
+        context_sessions: diagram.nodes
+          .filter(
+            (node): node is WorkflowNodeDefinition & { context_ref: string } =>
+              node.kind === "context" && !!node.context_ref,
+          )
+          .map((node) => {
+            const incoming = diagram.routes.filter((route) => route.to === node.id)
+            return {
+              node_id: node.id,
+              label: nodeLabel(nodes.get(node.id), node.id),
+              context_ref: node.context_ref,
+              starts_when:
+                node.id === diagram.entry
+                  ? "explicit run"
+                  : incoming
+                      .map(
+                        (route) =>
+                          `${nodeLabel(nodes.get(route.from), route.from)} returns ${route.when}`,
+                      )
+                      .join("; "),
+            }
+          }),
         scenarios: diagram.scenarios.map((scenario) => ({
           kind: scenario.kind,
           outcome: scenario.outcome,

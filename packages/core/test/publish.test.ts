@@ -96,7 +96,7 @@ const workflowPage = (mutate?: (workflow: Record<string, unknown>) => void): str
   const linked = {
     schema: "derive.linked-bundle/v1",
     purpose: "Publish a weekly brief after product review",
-    members: [{ id: "brief", ref: "abc12345", label: "Signal brief" }],
+    members: [],
     diagrams: [
       {
         id: "weekly-brief",
@@ -105,7 +105,7 @@ const workflowPage = (mutate?: (workflow: Record<string, unknown>) => void): str
         nodes: [
           { id: "research", label: "Research signals" },
           { id: "review", label: "Product review" },
-          { id: "publish", label: "Publish brief", member: "brief" },
+          { id: "publish", label: "Publish brief" },
         ],
         edges: [
           { from: "research", to: "review" },
@@ -198,7 +198,7 @@ const workflowPage = (mutate?: (workflow: Record<string, unknown>) => void): str
     ],
   }
   mutate?.(workflow)
-  return `<!doctype html><html><body><a href="/artifacts/abc12345">Signal brief</a><script type="application/derive-facts" data-fact="bundle-manifest">${JSON.stringify(linked)}</script><script type="application/derive-facts" data-fact="workflow-definition">${JSON.stringify(workflow)}</script></body></html>`
+  return `<!doctype html><html><body><script type="application/derive-facts" data-fact="bundle-manifest">${JSON.stringify(linked)}</script><script type="application/derive-facts" data-fact="workflow-definition">${JSON.stringify(workflow)}</script></body></html>`
 }
 
 describe("publish: single file", () => {
@@ -267,6 +267,20 @@ describe("workflow preview contract", () => {
         "Reach an approvable brief — at most 2 attempts; human stop: The product lead stops or changes the brief",
       ],
       side_effects: ["Publish the approved brief — authorized at Product review"],
+      context_sessions: [
+        {
+          node_id: "research",
+          label: "Research signals",
+          context_ref: "signal-researcher",
+          starts_when: "explicit run",
+        },
+        {
+          node_id: "publish",
+          label: "Publish brief",
+          context_ref: "brief-publisher",
+          starts_when: "Product review returns approve",
+        },
+      ],
     })
     expect(preview.cannot_do).toEqual(["Publish without approval"])
     expect(workflowDefinitionOf(workflowPage())?.errors).toEqual([])
@@ -307,7 +321,9 @@ describe("workflow preview contract", () => {
     })
     const preview = previewWorkflow(source)
     expect(preview.status).toBe("needs-changes")
-    expect(preview.errors).toContain('WF-02 a visible edge in "weekly-brief" has no workflow route')
+    expect(preview.errors).toContain(
+      'WF-02 visible edge "Product review" → "Publish brief" in "weekly-brief" has no workflow route',
+    )
   })
 
   it("requires a runnable entry and a loop policy covering the actual cycle", () => {
@@ -343,6 +359,37 @@ describe("workflow preview contract", () => {
 })
 
 describe("linked bundle agent tiers", () => {
+  it("accepts a graph-first manifest before any result artifacts exist", () => {
+    const graphFirst = validateLinkedBundle({
+      schema: "derive.linked-bundle/v1",
+      purpose: "Preview work before it creates artifacts",
+      members: [],
+      diagrams: [
+        {
+          id: "preview",
+          title: "Preview",
+          type: "graph",
+          nodes: [{ id: "draft", label: "Draft", state: "pending" }],
+          edges: [],
+        },
+      ],
+    })
+    expect(graphFirst.errors).toEqual([])
+    expect(graphFirst.manifest?.members).toEqual([])
+    expect(
+      renderLinkedBundle(graphFirst.manifest as NonNullable<typeof graphFirst.manifest>),
+    ).toContain("No result artifacts yet.")
+
+    expect(
+      validateLinkedBundle({
+        schema: "derive.linked-bundle/v1",
+        purpose: "Empty",
+        members: [],
+        diagrams: [],
+      }).errors,
+    ).toContain("members or diagrams must contain at least one item")
+  })
+
   it("accepts and renders optional human-readable node working state", () => {
     const result = validateLinkedBundle({
       schema: "derive.linked-bundle/v1",

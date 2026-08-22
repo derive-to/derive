@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // derive — scaffold, publish, and continue work against a Derive server.
-//   derive init [dir] [--template md|html|slides|site|skill|context] [--title t]
+//   derive init [dir] [--template md|html|workflow|slides|site|skill|context] [--title t]
 //   derive onboard [dir] [--update]       add/update artifact-first instructions + agent setup
 //   derive agent setup [dir] [--update]   install/update Codex/Claude skills + MCP config
 //   derive login [--local] [--server url] [--workspace w] [--pick] [--add] [--sync] [--manage]
@@ -164,7 +164,12 @@ if (cmd === "init") {
   // The starter the user should open next — not the config/convention files.
   const meta = [CONFIG_FILE, "derive.schema.json", "AGENTS.md", "CLAUDE.md", ".gitignore"]
   const entry = created.find((f) => !meta.includes(f) && !f.startsWith(".")) ?? "the entry"
-  const next = template === "context" ? "derive context push" : "derive publish"
+  const next =
+    template === "context"
+      ? "derive context push"
+      : template === "workflow"
+        ? "derive workflow preview workflow.html"
+        : "derive publish"
   console.log(
     created.length
       ? `\nReady (${template}). Edit ${entry}, then run \`${next}\`.`
@@ -1467,7 +1472,7 @@ if (cmd === "workflow") {
 
 if (cmd !== "publish") {
   console.error(`usage:
-  derive init [dir] [--template md|html|slides|site|skill|context] [--title t]
+  derive init [dir] [--template md|html|workflow|slides|site|skill|context] [--title t]
   derive onboard [dir] [--update]         prefer Derive in AGENTS.md + CLAUDE.md; install skills + MCP config
   derive agent setup [dir] [--update]     compatibility alias for derive onboard
   derive login [--local] [--server url] [--workspace w] [--pick] [--add] [--sync] [--manage]

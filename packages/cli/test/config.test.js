@@ -29,6 +29,7 @@ import {
   writeId,
   writeSkillPin,
 } from "../src/config.js"
+import { previewWorkflowSource } from "../src/workflow.js"
 
 const dirs = []
 const tmp = () => {
@@ -41,6 +42,28 @@ afterEach(() => {
 })
 
 describe("scaffold", () => {
+  it("workflow template starts graph-first and previews without a fake artifact member", () => {
+    const d = tmp()
+    const { created } = scaffold(d, "Weekly brief", "workflow")
+    expect(created).toContain("workflow.html")
+    expect(JSON.parse(readFileSync(join(d, CONFIG_FILE), "utf8")).entry).toBe("workflow.html")
+    const source = readFileSync(join(d, "workflow.html"), "utf8")
+    expect(previewWorkflowSource(source)).toMatchObject({
+      status: "ready",
+      purpose: "Review and publish Weekly brief",
+      diagrams: [
+        {
+          context_sessions: [
+            { context_ref: "draft-builder", starts_when: "explicit run" },
+            { context_ref: "artifact-publisher", starts_when: "Review returns approve" },
+          ],
+        },
+      ],
+    })
+    expect(source).toContain('"members": []')
+    expect(source).not.toContain("abc12345")
+  })
+
   it("md template writes derive.json + index.md + the Codex/Claude agent on-ramp", () => {
     const d = tmp()
     const { created } = scaffold(d, "Report", "md")

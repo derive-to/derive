@@ -11,12 +11,16 @@ meaning without changing #799's state semantics.
 Both facts must describe identical diagram IDs, node IDs, and edges/routes. `derive workflow
 preview` refuses drift between them.
 
+Think **same IDs, different jobs**: `bundle-manifest` is what people see; `workflow-definition` is
+what the harness needs. A graph may begin with `members:[]`. Add real result artifacts to members
+and set `node.member` only after a context returns one—never use a fake placeholder id.
+
 ```html
 <script type="application/derive-facts" data-fact="bundle-manifest">
 {
   "schema": "derive.linked-bundle/v1",
   "purpose": "Publish a weekly signal brief after product review",
-  "members": [{"id":"brief","ref":"abc12345","label":"Signal brief"}],
+  "members": [],
   "diagrams": [{
     "id": "weekly-signal",
     "title": "Weekly signal brief",
@@ -24,7 +28,7 @@ preview` refuses drift between them.
     "nodes": [
       {"id":"research","label":"Research signals","state":"pending"},
       {"id":"review","label":"Product review","state":"pending"},
-      {"id":"publish","label":"Publish brief","member":"brief","state":"pending"}
+      {"id":"publish","label":"Publish brief","state":"pending"}
     ],
     "edges": [
       {"from":"research","to":"review","label":"draft ready"},

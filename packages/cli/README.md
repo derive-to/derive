@@ -69,13 +69,16 @@ The workflow skill authors a visible `bundle-manifest` plus a companion
 as one step; there is no separate validation gate.
 
 ```bash
+derive init weekly-brief --template workflow --title "Weekly brief"
+cd weekly-brief
 derive workflow preview workflow.html
 derive workflow preview workflow.html --json
 ```
 
 A ready preview exits `0`. A preview with blockers exits `1` and names the `WF-*` repairs. Preview
-does not execute nodes, call tools, or mutate external systems; the connected Codex or Claude
-harness runs approved work through Derive context sessions.
+does not execute nodes, call tools, or mutate external systems. It lists the context sessions that
+an explicit run would open; the connected Codex or Claude harness runs approved work through those
+existing Derive context sessions.
 
 ## Hosted and self-hosted servers
 

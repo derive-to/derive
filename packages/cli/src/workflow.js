@@ -83,8 +83,9 @@ function validateBundle(value, errors) {
   const purpose = text(value.purpose)
   if (!purpose) errors.push("WF-02 bundle-manifest purpose is required")
   const members = Array.isArray(value.members) ? value.members : []
-  if (!members.length)
-    errors.push("WF-02 bundle-manifest members must contain at least one artifact")
+  if (!Array.isArray(value.members)) errors.push("WF-02 bundle-manifest members must be an array")
+  else if (!members.length && (!Array.isArray(value.diagrams) || !value.diagrams.length))
+    errors.push("WF-02 bundle-manifest members or diagrams must contain at least one item")
   const memberIds = new Set()
   for (const [index, member] of members.entries()) {
     const id = object(member) ? localId(member.id) : null
@@ -531,18 +532,23 @@ function validateDefinition(value, bundle, errors) {
           errors.push(
             `WF-02 workflow node "${diagram.id}/${node}" is not visible in bundle-manifest`,
           )
+      const labels = new Map(visible.nodes.map((node) => [node.id, node.label]))
       const visibleEdges = new Set(
         visible.edges
           .filter((edge) => edge.from && edge.to)
           .map((edge) => edgeKey(edge.from, edge.to)),
       )
       const definedRoutes = new Set(diagram.routes.map((route) => edgeKey(route.from, route.to)))
-      for (const edge of visibleEdges)
-        if (!definedRoutes.has(edge))
-          errors.push(`WF-02 a visible edge in "${diagram.id}" has no workflow route`)
-      for (const route of definedRoutes)
-        if (!visibleEdges.has(route))
-          errors.push(`WF-02 a workflow route in "${diagram.id}" is not visible in bundle-manifest`)
+      for (const edge of visible.edges)
+        if (edge.from && edge.to && !definedRoutes.has(edgeKey(edge.from, edge.to)))
+          errors.push(
+            `WF-02 visible edge "${labels.get(edge.from) ?? edge.from}" → "${labels.get(edge.to) ?? edge.to}" in "${diagram.id}" has no workflow route`,
+          )
+      for (const route of diagram.routes)
+        if (!visibleEdges.has(edgeKey(route.from, route.to)))
+          errors.push(
+            `WF-02 workflow route "${labels.get(route.from) ?? route.from}" → "${labels.get(route.to) ?? route.to}" in "${diagram.id}" is not visible`,
+          )
       if (visible.type === "loop" && !diagram.loops?.length)
         errors.push(`WF-04 visible loop "${diagram.id}" has no bounded loop policy`)
     }
@@ -576,6 +582,7 @@ export function previewWorkflowSource(source) {
   if (!definition || errors.length)
     return {
       status: "needs-changes",
+      execution_started: false,
       purpose: null,
       errors,
       warnings,
@@ -586,6 +593,7 @@ export function previewWorkflowSource(source) {
   const visibleById = new Map(bundle.diagrams.map((diagram) => [diagram.id, diagram]))
   return {
     status: "ready",
+    execution_started: false,
     purpose: definition.purpose,
     errors: [],
     warnings,
@@ -617,6 +625,22 @@ export function previewWorkflowSource(source) {
                 `${effect.description} — ${effect.gate === "human" ? `authorized at ${label(effect.approval_ref ?? "human gate")}` : `replay-safe: ${effect.idempotency}`}`,
             ),
         ),
+        context_sessions: diagram.nodes
+          .filter((node) => node.kind === "context" && node.context_ref)
+          .map((node) => {
+            const incoming = diagram.routes.filter((route) => route.to === node.id)
+            return {
+              node_id: node.id,
+              label: label(node.id),
+              context_ref: node.context_ref,
+              starts_when:
+                node.id === diagram.entry
+                  ? "explicit run"
+                  : incoming
+                      .map((route) => `${label(route.from)} returns ${route.when}`)
+                      .join("; "),
+            }
+          }),
         scenarios: diagram.scenarios.map((scenario) => ({
           kind: scenario.kind,
           outcome: scenario.outcome,
@@ -636,10 +660,14 @@ export function formatWorkflowPreview(preview) {
   if (preview.status !== "ready")
     return [
       `✗ Needs changes — ${preview.errors.length} blocker${preview.errors.length === 1 ? "" : "s"}`,
+      "  Preview only — no context session has started.",
       ...preview.errors.map((error) => `  - ${error}`),
       ...section("Warnings", preview.warnings),
     ].join("\n")
-  const lines = [`✓ Ready to run — ${preview.purpose}`]
+  const lines = [
+    `✓ Ready to run — ${preview.purpose}`,
+    "Preview only — no context session has started.",
+  ]
   for (const diagram of preview.diagrams) {
     lines.push(`\n${diagram.title}`)
     lines.push(...section("Will do", diagram.will_do))
@@ -647,6 +675,15 @@ export function formatWorkflowPreview(preview) {
     lines.push(...section("Will pause", diagram.will_pause))
     lines.push(...section("Can repeat", diagram.can_repeat))
     lines.push(...section("External effects", diagram.side_effects))
+    lines.push(
+      ...section(
+        "Context sessions on explicit run",
+        diagram.context_sessions.map(
+          (session) =>
+            `${session.label} → ${session.context_ref}; starts when ${session.starts_when}`,
+        ),
+      ),
+    )
     lines.push(
       ...section(
         "Scenarios checked",

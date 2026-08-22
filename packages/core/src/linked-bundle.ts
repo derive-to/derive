@@ -121,8 +121,12 @@ export const validateLinkedBundle = (value: unknown): LinkedBundleValidation => 
   if (value.schema !== LINKED_BUNDLE_SCHEMA) errors.push(`schema must be "${LINKED_BUNDLE_SCHEMA}"`)
   const purpose = text(value.purpose)
   if (!purpose) errors.push("purpose is required")
-  if (!Array.isArray(value.members) || value.members.length === 0)
-    errors.push("members must contain at least one artifact")
+  if (!Array.isArray(value.members)) errors.push("members must be an array")
+  else if (
+    value.members.length === 0 &&
+    (!Array.isArray(value.diagrams) || value.diagrams.length === 0)
+  )
+    errors.push("members or diagrams must contain at least one item")
 
   const memberIds = new Set<string>()
   const members: LinkedBundleMember[] = []
@@ -452,6 +456,9 @@ export const renderLinkedBundle = (
         `<li><a href="/artifacts/${member.ref}">${escapeHtml(member.label)}</a>${member.role ? ` <small>${escapeHtml(member.role)}</small>` : ""}${member.note ? `<p>${escapeHtml(member.note)}</p>` : ""}</li>`,
     )
     .join("")
+  const membersSection = members
+    ? `<section><h2>Artifacts</h2><ul>${members}</ul></section>`
+    : '<section><h2>Artifacts</h2><p class="empty">No result artifacts yet.</p></section>'
   const diagrams = (model.diagrams ?? [])
     .map((diagram) => {
       const policy =
@@ -496,5 +503,5 @@ export const renderLinkedBundle = (
       return `<section class="diagram ${diagram.type}"><p class="eyebrow">${diagram.type}</p><h2>${escapeHtml(diagram.title)}</h2>${policy}<div class="nodes">${nodes}</div><div class="edges">${edges}</div></section>`
     })
     .join("")
-  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)}</title><style>body{font:16px/1.5 system-ui,sans-serif;max-width:880px;margin:auto;padding:clamp(24px,5vw,64px);color:#171717}h1{font-size:clamp(2rem,6vw,4rem);letter-spacing:-.05em}.eyebrow,small,.arrow{color:#68706a}section{border-top:1px solid #ddd;padding-top:24px;margin-top:40px}li{margin:.75rem 0}a{color:inherit;text-underline-offset:3px}dl{display:grid;gap:8px}.policy{display:grid;grid-template-columns:100px 1fr;gap:8px}.policy dt{color:#68706a}.policy dd{margin:0}.nodes{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-top:24px}.edges{display:grid;gap:8px;margin-top:12px}.edge{display:flex;align-items:center;gap:10px;overflow:auto;border-top:1px solid #eee;padding-top:8px}.node{border:1px solid #ddd;border-radius:8px;padding:10px 12px}.node strong,.node small{display:block}.arrow{font-size:13px;white-space:nowrap}</style></head><body><p class="eyebrow">Linked bundle</p><h1>${escapeHtml(title)}</h1><p>${escapeHtml(model.purpose)}</p><section><h2>Artifacts</h2><ul>${members}</ul></section>${diagrams}<script type="application/derive-facts" data-fact="${LINKED_BUNDLE_FACT}">${json}</script></body></html>`
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)}</title><style>body{font:16px/1.5 system-ui,sans-serif;max-width:880px;margin:auto;padding:clamp(24px,5vw,64px);color:#171717}h1{font-size:clamp(2rem,6vw,4rem);letter-spacing:-.05em}.eyebrow,small,.arrow,.empty{color:#68706a}section{border-top:1px solid #ddd;padding-top:24px;margin-top:40px}li{margin:.75rem 0}a{color:inherit;text-underline-offset:3px}dl{display:grid;gap:8px}.policy{display:grid;grid-template-columns:100px 1fr;gap:8px}.policy dt{color:#68706a}.policy dd{margin:0}.nodes{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-top:24px}.edges{display:grid;gap:8px;margin-top:12px}.edge{display:flex;align-items:center;gap:10px;overflow:auto;border-top:1px solid #eee;padding-top:8px}.node{border:1px solid #ddd;border-radius:8px;padding:10px 12px}.node strong,.node small{display:block}.arrow{font-size:13px;white-space:nowrap}</style></head><body><p class="eyebrow">Linked bundle</p><h1>${escapeHtml(title)}</h1><p>${escapeHtml(model.purpose)}</p>${membersSection}${diagrams}<script type="application/derive-facts" data-fact="${LINKED_BUNDLE_FACT}">${json}</script></body></html>`
 }
