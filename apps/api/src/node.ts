@@ -376,7 +376,7 @@ const channelSenders: ChannelSenders = {
   github_review_comment: makeGithubCommentSender(meta, authSecret),
   github_issue_comment: makeGithubCommentSender(meta, authSecret),
   // Slack App posting (bot token decrypted with the auth secret per delivery): the
-  // comment thread mirror and per-user DMs (mentions, review requests, shares).
+  // comment thread mirror and per-user DMs (agent completions, mentions, review requests, shares).
   slack_app: makeSlackSender(meta, authSecret),
   slack_dm: makeSlackDmSender(meta, authSecret),
   // Inbound: a Slack thread reply the events endpoint deferred — resolve the author and

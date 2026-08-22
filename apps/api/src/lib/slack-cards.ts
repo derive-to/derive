@@ -1,5 +1,5 @@
 // Block Kit primitives for the connected Slack App's messages: the comment thread mirror,
-// channel event cards, and per-user DMs (mentions, review requests, shares). Pure functions
+// channel event cards, and per-user DMs (agent completions, mentions, review requests, shares). Pure functions
 // (no I/O). Slack renders mrkdwn, never HTML, and there are two kinds of untrusted text with
 // two different treatments:
 //   - short identity fields (author, title, a Slack display name) → `escapeMrkdwn`; they are

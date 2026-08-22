@@ -1,5 +1,5 @@
 // Per-user Slack DMs: the same "email is for interrupts" policy as notify-email.ts
-// (mentions, review requests, shares — see that file's header), mirrored onto Slack.
+// (agent completions, mentions, review requests, shares — see that file's header), mirrored onto Slack.
 // The Slack user is resolved from the account link when the recipient has one, and only
 // falls back to guessing by their Derive account email via users.lookupByEmail (see
 // lib/slack.ts resolveSlackUserIdByEmail) when they haven't linked. That fallback is
@@ -27,6 +27,7 @@ import { openSlackDm, resolveSlackUserIdByEmail } from "./slack"
 import { actionButton, actions, mrkdwnBody, mrkdwnLabel, openButton, section } from "./slack-cards"
 import { postWithRecovery, resolveBotToken, slackFailure } from "./slack-delivery"
 import {
+  artifactCompletionEntity,
   commentThreadEntity,
   encodeReviewAction,
   reviewNotificationEntity,
@@ -56,7 +57,8 @@ interface SlackDmPayload {
   }
 }
 
-/** Whether a user wants Slack DMs for interrupts (mentions, review requests, shares —
+/** Whether a user wants Slack DMs for important updates (agent completions, mentions,
+ *  review requests, shares —
  *  default on). Stored in their per-workspace notification prefs so a user can turn it
  *  off, independent of the workspace-level `emailNotifications` gate email uses. */
 export const wantsSlackDm = (prefsJson: string | undefined): boolean => {
@@ -80,6 +82,61 @@ export const wantsReviewEmail = (prefsJson: string | undefined): boolean => {
 }
 
 const title = (a: ArtifactRecord) => a.title ?? a.short_id
+
+/** Tell the human behind an agent grant that a successful publish finished. Review requests
+ * use their own actionable DM instead, so callers must not enqueue both for one version. */
+export const enqueueSlackArtifactCompletedDm = async (
+  deps: { meta: MetaStore; baseUrl: string },
+  artifact: ArtifactRecord,
+  input: { agentName: string; version: number; summary: ReviewSummary },
+  recipientId: string,
+): Promise<void> => {
+  const { meta, baseUrl } = deps
+  const install = await meta.getSlackInstall(artifact.org_id)
+  if (!install) return
+  const pref = await meta.getUserNotificationPref(artifact.org_id, recipientId)
+  if (!wantsSlackDm(pref?.prefs)) return
+  const link = artifactUrl(baseUrl, artifact)
+  const t = title(artifact)
+  const changes = input.summary.changes ?? []
+  const remaining = Math.max(0, (input.summary.totalChanges ?? changes.length) - changes.length)
+  const action = input.summary.fromVersion ? "updated" : "finished"
+  const changeBlocks = changes.slice(0, 3).map((change) => {
+    const label =
+      change.kind === "added" ? "ADDED" : change.kind === "removed" ? "REMOVED" : "UPDATED"
+    const detail = change.after ?? change.before
+    return section(
+      `*${label} · ${mrkdwnLabel(change.title)}*${detail ? `\n${mrkdwnBody(detail, 350)}` : ""}`,
+    )
+  })
+  const blocks = [
+    section(
+      `:white_check_mark: *${mrkdwnLabel(input.agentName)} ${action} <${link}|${mrkdwnLabel(t)}>*\n${input.summary.fromVersion ? `v${input.summary.fromVersion} → ` : ""}v${input.version} · ${reviewDeltaLabel(input.summary)}`,
+    ),
+    ...(changeBlocks.length ? [section("*What changed*"), ...changeBlocks] : []),
+    ...(remaining
+      ? [section(`_${remaining} more ${remaining === 1 ? "change" : "changes"} in the full work_`)]
+      : []),
+    actions([openButton(link, "Open & comment")]),
+  ]
+  await enqueueChannelDelivery(meta, "slack_dm", "artifact.completed", {
+    orgId: artifact.org_id,
+    userId: recipientId,
+    text: `${mrkdwnLabel(input.agentName)} ${action} ${mrkdwnLabel(t)} (v${input.version} · ${reviewDeltaLabel(input.summary)})`,
+    blocks,
+    metadata: {
+      entities: [
+        artifactCompletionEntity({
+          baseUrl,
+          artifact,
+          agentName: input.agentName,
+          summary: input.summary,
+          iconUrl: new URL("/icon.png", link).toString(),
+        }),
+      ],
+    },
+  } satisfies SlackDmPayload)
+}
 
 /** Enqueue a DM to each mentioned Derive user who's still a member of the workspace and
  *  hasn't turned Slack DMs off. Resolution to a Slack account happens later, at delivery

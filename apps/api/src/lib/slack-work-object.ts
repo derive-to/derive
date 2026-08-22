@@ -59,6 +59,7 @@ export const DERIVE_ENTITY_TYPE = "artifact"
  * that happens to reference the artifact. */
 export const DERIVE_COMMENT_THREAD_ENTITY_TYPE = "comment_thread"
 export const DERIVE_REVIEW_REQUEST_ENTITY_TYPE = "review_request"
+export const DERIVE_ARTIFACT_COMPLETION_ENTITY_TYPE = "artifact_completion"
 
 /** Work Object metadata for one open Derive conversation. Used on the first personal mention
  * DM and for a pasted deep link to an exact question. Subsequent activity is a normal Slack
@@ -195,6 +196,61 @@ export const reviewNotificationEntity = (args: {
       attributes: {
         title: { text: args.artifact.title ?? args.artifact.short_id },
         display_type: "Review",
+        product_name: "Derive",
+        product_icon: { url: args.iconUrl, alt_text: "Derive" },
+      },
+      fields: { description: { value: description, format: "markdown" } },
+      custom_fields: [
+        { key: "version", label: "Version", value: `v${args.summary.toVersion}`, type: "string" },
+        {
+          key: "changes",
+          label: "Changes",
+          value: reviewDeltaLabel(args.summary),
+          type: "string",
+        },
+      ],
+    },
+  }
+}
+
+/** A successful agent publish as a native Slack Work Object. This is intentionally a
+ * read/comment surface, not a second review request: when a review round exists the richer
+ * review entity is sent instead. */
+export const artifactCompletionEntity = (args: {
+  baseUrl: string
+  artifact: ArtifactRecord
+  agentName: string
+  summary: ReviewSummary
+  iconUrl: string
+}): Record<string, unknown> => {
+  const link = artifactUrl(args.baseUrl, args.artifact)
+  const shown = args.summary.changes ?? []
+  const remaining = Math.max(0, (args.summary.totalChanges ?? shown.length) - shown.length)
+  const lines = shown.slice(0, 3).map((change) => {
+    const marker = change.kind === "added" ? "+" : change.kind === "removed" ? "−" : "~"
+    const detail = change.after ?? change.before
+    return `*${marker} ${mrkdwnBody(change.title, 100)}*${detail ? ` — ${mrkdwnBody(detail, 180)}` : ""}`
+  })
+  if (remaining > 0) lines.push(`_${remaining} more ${remaining === 1 ? "change" : "changes"}_`)
+  const action = args.summary.fromVersion ? "updated" : "finished"
+  const description = [
+    `*${mrkdwnBody(args.agentName, 100)} ${action} this work*`,
+    reviewDeltaLabel(args.summary),
+    ...lines,
+  ]
+    .filter(Boolean)
+    .join("\n")
+  return {
+    url: link,
+    external_ref: {
+      id: `${args.artifact.id}:v${args.summary.toVersion}`,
+      type: DERIVE_ARTIFACT_COMPLETION_ENTITY_TYPE,
+    },
+    entity_type: "slack#/entities/content_item",
+    entity_payload: {
+      attributes: {
+        title: { text: args.artifact.title ?? args.artifact.short_id },
+        display_type: "Work completed",
         product_name: "Derive",
         product_icon: { url: args.iconUrl, alt_text: "Derive" },
       },

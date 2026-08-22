@@ -8,7 +8,7 @@
 // keep only what genuinely differs: who the reviewer is, and what the channel card should
 // attribute.
 //
-// The bell + auto-open push an agent-credentialed publish owes the human behind the grant
+// The Slack completion, bell + auto-open push an agent-credentialed publish owes the human behind the grant
 // (`agentPushFanout`) is shared for the same reason: one row per push, a review ask beats a
 // plain publish, and the delivery receipt becomes `opened_in_tab`.
 
@@ -25,7 +25,11 @@ import { log } from "../log"
 import { enqueueChannelDelivery } from "../webhooks"
 import { buildReviewEmail } from "./email"
 import { buildReviewSummary, type ReviewSummary } from "./review-summary"
-import { enqueueSlackReviewRequestedDm, wantsReviewEmail } from "./slack-dm"
+import {
+  enqueueSlackArtifactCompletedDm,
+  enqueueSlackReviewRequestedDm,
+  wantsReviewEmail,
+} from "./slack-dm"
 
 export interface ReviewRequestDeps {
   meta: MetaStore
@@ -149,18 +153,51 @@ export interface AgentPushInput {
   reviewRound: boolean
   /** A create pushes even without a round; a plain revision does not. */
   isNew: boolean
+  /** Whether this surface should try to auto-open the artifact in a live Derive tab. */
+  notifyBrowser?: boolean
 }
 
 /**
- * The bell + auto-open an agent-credentialed publish owes the human behind the grant, so a
- * push reaches them even with no tab open. Returns whether an open tab caught the push
+ * The Slack completion, bell + auto-open an agent-credentialed publish owes the human behind
+ * the grant, so a push reaches them even with no tab open. Returns whether an open tab caught the push
  * (`opened_in_tab`), so the agent knows whether to open the URL itself.
  */
 export const agentPushFanout = async (
-  deps: Pick<ReviewRequestDeps, "meta" | "bus" | "baseUrl">,
+  deps: Pick<ReviewRequestDeps, "meta" | "blobs" | "bus" | "baseUrl" | "pokeWebhooks">,
   artifact: ArtifactRecord,
   input: AgentPushInput,
 ): Promise<boolean> => {
+  // A successful agent publish is the reliable completion boundary shared by every client.
+  // Review asks already enqueue a richer actionable DM, so one version never produces both.
+  if (!input.reviewRound) {
+    let summary: ReviewSummary
+    try {
+      summary = await buildReviewSummary(deps.meta, deps.blobs, artifact.id, input.version)
+    } catch (err) {
+      log.warn("completion summary could not be built; sending completion without a diff", {
+        artifact: artifact.id,
+        version: input.version,
+        error: err instanceof Error ? err.message : String(err),
+      })
+      summary = {
+        fromVersion: input.version > 1 ? input.version - 1 : null,
+        toVersion: input.version,
+        added: 0,
+        removed: 0,
+        changes: [],
+        totalChanges: 0,
+        highlights: [],
+        note: null,
+      }
+    }
+    await enqueueSlackArtifactCompletedDm(
+      { meta: deps.meta, baseUrl: deps.baseUrl },
+      artifact,
+      { agentName: input.agentName, version: input.version, summary },
+      input.user,
+    )
+    deps.pokeWebhooks?.()
+  }
   // One bell row per push that warrants one: a review ask beats a plain "published".
   if (input.reviewRound || input.isNew) {
     const row = {
@@ -183,6 +220,8 @@ export const agentPushFanout = async (
       notification: { ...row, read: 0, created_at: new Date().toISOString() },
     })
   }
+  if (input.notifyBrowser === false) return false
+
   // A context-bound agent is an askable service: its publishes are routinely OTHER
   // people's asks riding this owner's grant, so the push must not commandeer the owner's
   // browser. Flag it — the client downgrades auto-open to a toast (the bell row still

@@ -2194,7 +2194,7 @@
           },
           "slack_dm": {
             "type": "boolean",
-            "description": "The caller's \"DM me for interrupts\" preference (mentions, review requests, shares)"
+            "description": "The caller's \"DM me for important updates\" preference (agent completions, mentions, review requests, shares)"
           },
           "review_email": {
             "type": "boolean",

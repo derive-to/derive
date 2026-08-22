@@ -809,15 +809,20 @@ export function registerPublishTool(tc: ToolContext): void {
           )
         }
         const url = artifactUrl(ctx.deps.baseUrl, artifact)
-        // Bell + auto-open for the human behind the grant — the shared fan-out the HTTP
-        // route runs. The delivery receipt becomes `opened_in_tab`, so the agent knows
-        // whether to open the URL locally. An attended surface pushes only for a CREATE
-        // (auto-opening the new page is the point); its edits happen in front of the
-        // person, whose tab live-reloads — a bell about their own edit is noise.
+        // Slack completion + bell + auto-open for the human behind the grant — the shared
+        // fan-out the HTTP route runs. The delivery receipt becomes `opened_in_tab`, so the
+        // agent knows whether to open the URL locally. An attended revision still gets the
+        // completion DM, but does not commandeer the person's browser; their live tab reloads.
         let openedInTab = false
-        if (actingFor && (!attended || !short_id)) {
+        if (actingFor) {
           openedInTab = await agentPushFanout(
-            { meta: ctx.meta, bus: ctx.bus, baseUrl: ctx.deps.baseUrl },
+            {
+              meta: ctx.meta,
+              blobs: ctx.blobs,
+              bus: ctx.bus,
+              baseUrl: ctx.deps.baseUrl,
+              pokeWebhooks: ctx.deps.pokeWebhooks,
+            },
             artifact,
             {
               user: actingFor.id,
@@ -826,6 +831,7 @@ export function registerPublishTool(tc: ToolContext): void {
               version: version.n,
               reviewRound: !!review_round,
               isNew: !short_id,
+              notifyBrowser: !attended || !short_id,
             },
           )
         }

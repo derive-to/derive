@@ -995,14 +995,18 @@ export const artifactRoutes = (ctx: AppContext) => {
       // already looking at it.
       let openedInTab: boolean | null = null
       if (agentPrincipal && onBehalf) {
-        openedInTab = await agentPushFanout({ meta, bus, baseUrl: deps.baseUrl }, artifact, {
-          user: onBehalf,
-          agentId: agentPrincipal.id,
-          agentName: agentPrincipal.name,
-          version: version.n,
-          reviewRound: roundCreated,
-          isNew: !shortId,
-        })
+        openedInTab = await agentPushFanout(
+          { meta, blobs, bus, baseUrl: deps.baseUrl, pokeWebhooks: deps.pokeWebhooks },
+          artifact,
+          {
+            user: onBehalf,
+            agentId: agentPrincipal.id,
+            agentName: agentPrincipal.name,
+            version: version.n,
+            reviewRound: roundCreated,
+            isNew: !shortId,
+          },
+        )
       }
       const versions = await meta.listVersions(artifact.id)
       // Advisories over what was just stored (missing viewport meta, oversized

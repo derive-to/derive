@@ -10,6 +10,7 @@ import { buildReviewEmail } from "../src/lib/email"
 import { summarizeReviewDocuments } from "../src/lib/review-summary"
 import { postWithRecovery } from "../src/lib/slack-delivery"
 import {
+  enqueueSlackArtifactCompletedDm,
   enqueueSlackArtifactMentionDms,
   enqueueSlackMentionDms,
   enqueueSlackReviewRequestedDm,
@@ -272,6 +273,96 @@ describe("enqueueSlackReviewRequestedDm (gate)", () => {
           toVersion: 3,
           added: 0,
           removed: 0,
+          highlights: [],
+          note: null,
+        },
+      },
+      optout.id,
+    )
+    expect((await claim(meta)).filter((d) => d.kind === "slack_dm")).toHaveLength(0)
+  })
+})
+
+describe("enqueueSlackArtifactCompletedDm", () => {
+  it("defaults on and renders a bounded visual diff with an open-and-comment action", async () => {
+    const meta = make("slack-dm-completed")
+    await connect(meta)
+    const artifact = await makeArtifact(meta)
+    await enqueueSlackArtifactCompletedDm(
+      { meta, baseUrl },
+      artifact,
+      {
+        agentName: "Codex",
+        version: 8,
+        summary: {
+          fromVersion: 7,
+          toVersion: 8,
+          added: 12,
+          removed: 3,
+          changes: [
+            {
+              kind: "updated",
+              title: "Review flow",
+              added: 4,
+              removed: 1,
+              after: "Comment inline.",
+            },
+            {
+              kind: "added",
+              title: "Diagram",
+              added: 5,
+              removed: 0,
+              after: "Draft → Review → Done.",
+            },
+            {
+              kind: "removed",
+              title: "Publish step",
+              added: 0,
+              removed: 2,
+              before: "Publish manually.",
+            },
+          ],
+          totalChanges: 6,
+          highlights: [],
+          note: null,
+        },
+      },
+      linked.id,
+    )
+    const dms = (await claim(meta)).filter((d) => d.kind === "slack_dm")
+    expect(dms).toHaveLength(1)
+    expect(dms[0]?.event_type).toBe("artifact.completed")
+    const payload = JSON.parse(dms[0]?.payload ?? "{}")
+    expect(payload.text).toContain("Codex updated Doc")
+    expect(JSON.stringify(payload.blocks)).toContain("Open & comment")
+    expect(JSON.stringify(payload.blocks)).toContain("3 more changes")
+    expect(payload.metadata.entities[0].entity_payload.attributes.display_type).toBe(
+      "Work completed",
+    )
+    expect(payload.metadata.entities[0].external_ref).toEqual({
+      id: `${artifact.id}:v8`,
+      type: "artifact_completion",
+    })
+  })
+
+  it("does not enqueue after the user turns Slack updates off", async () => {
+    const meta = make("slack-dm-completed-optout")
+    await connect(meta)
+    await optOut(meta, optout.id)
+    const artifact = await makeArtifact(meta)
+    await enqueueSlackArtifactCompletedDm(
+      { meta, baseUrl },
+      artifact,
+      {
+        agentName: "Codex",
+        version: 1,
+        summary: {
+          fromVersion: null,
+          toVersion: 1,
+          added: 0,
+          removed: 0,
+          changes: [],
+          totalChanges: 0,
           highlights: [],
           note: null,
         },
