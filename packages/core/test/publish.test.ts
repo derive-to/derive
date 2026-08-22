@@ -2,7 +2,7 @@ import { zipSync } from "fflate"
 import { describe, expect, it } from "vitest"
 import { MODEL_FAMILY_TIERS, tierForModelFamily } from "../src/agent-routing"
 import { sha256Hex } from "../src/hash"
-import { validateLinkedBundle } from "../src/linked-bundle"
+import { renderLinkedBundle, validateLinkedBundle } from "../src/linked-bundle"
 import type { ArtifactRecord, BlobStore, MetaStore, NewArtifact, NewVersion } from "../src/ports"
 import { artifactUrl, looksLikeHtmlDocument, type PublishInput, publish } from "../src/publish"
 
@@ -138,6 +138,131 @@ describe("publish: single file", () => {
 })
 
 describe("linked bundle agent tiers", () => {
+  it("accepts and renders optional human-readable node working state", () => {
+    const result = validateLinkedBundle({
+      schema: "derive.linked-bundle/v1",
+      purpose: "Coordinate a careful handoff",
+      members: [{ id: "brief", ref: "abc12345", label: "Brief" }],
+      diagrams: [
+        {
+          id: "handoff",
+          title: "Handoff",
+          type: "graph",
+          nodes: [
+            {
+              id: "review",
+              label: "Review the brief",
+              member: "brief",
+              state: "waiting",
+              role: "  Evidence reviewer  ",
+              tier: "expert",
+              confidence: { level: "medium", basis: "Source coverage is complete" },
+              help: {
+                needed: true,
+                question: "Which source should take priority?",
+                can_continue: "I can continue with the current ordering.",
+              },
+            },
+          ],
+          edges: [],
+        },
+      ],
+    })
+
+    expect(result.errors).toEqual([])
+    expect(result.manifest?.diagrams?.[0]?.nodes[0]).toMatchObject({
+      state: "waiting",
+      role: "Evidence reviewer",
+      tier: "expert",
+      confidence: { level: "medium", basis: "Source coverage is complete" },
+      help: {
+        needed: true,
+        question: "Which source should take priority?",
+        can_continue: "I can continue with the current ordering.",
+      },
+    })
+    const html = renderLinkedBundle(result.manifest as NonNullable<typeof result.manifest>)
+    expect(html).toContain("Role: Evidence reviewer")
+    expect(html).toContain("Tier: expert")
+    expect(html).toContain("Confidence: medium — Source coverage is complete")
+    expect(html).toContain("Help needed: Which source should take priority?")
+    expect(html).not.toContain("<form")
+  })
+
+  it("renders the effective diagram tier when a node inherits it", () => {
+    const manifest = {
+      schema: "derive.linked-bundle/v1" as const,
+      purpose: "Route work by durable capability",
+      members: [{ id: "brief", ref: "abc12345", label: "Brief" }],
+      diagrams: [
+        {
+          id: "handoff",
+          title: "Handoff",
+          type: "graph" as const,
+          tier: "expert" as const,
+          nodes: [{ id: "review", label: "Review the brief" }],
+          edges: [],
+        },
+      ],
+    }
+    expect(renderLinkedBundle(manifest)).toContain("Tier: expert")
+  })
+
+  it("rejects invalid optional node working state shapes", () => {
+    const result = validateLinkedBundle({
+      schema: "derive.linked-bundle/v1",
+      purpose: "Reject malformed state",
+      members: [{ id: "brief", ref: "abc12345", label: "Brief" }],
+      diagrams: [
+        {
+          id: "handoff",
+          title: "Handoff",
+          type: "graph",
+          nodes: [
+            {
+              id: "review",
+              label: "Review",
+              state: "paused",
+              role: "   ",
+              confidence: { level: "certain", basis: "" },
+              help: { needed: true },
+            },
+            {
+              id: "approve",
+              label: "Approve",
+              help: {
+                needed: false,
+                question: "This should not be here",
+                can_continue: "Nor should this",
+              },
+            },
+          ],
+          edges: [],
+        },
+      ],
+    })
+
+    expect(result.errors).toContain(
+      'diagrams[0].nodes[0].state must be "pending", "active", "blocked", "waiting", or "done"',
+    )
+    expect(result.errors).toContain("diagrams[0].nodes[0].role must be a nonempty string")
+    expect(result.errors).toContain(
+      'diagrams[0].nodes[0].confidence.level must be "low", "medium", or "high"',
+    )
+    expect(result.errors).toContain(
+      "diagrams[0].nodes[0].confidence.basis must be a nonempty string",
+    )
+    expect(result.errors).toContain(
+      "diagrams[0].nodes[0].help.question is required when help.needed is true",
+    )
+    expect(result.errors).toContain(
+      "diagrams[0].nodes[1].help.question must not be set when help.needed is false",
+    )
+    expect(result.errors).toContain(
+      "diagrams[0].nodes[1].help.can_continue must not be set when help.needed is false",
+    )
+  })
+
   it("keeps a graph default and per-step tier without pinning a model version", () => {
     const result = validateLinkedBundle({
       schema: "derive.linked-bundle/v1",

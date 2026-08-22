@@ -66,7 +66,7 @@ import { Presence } from "./rail-deck"
 import { ReviewCard } from "./review-card"
 import type { ArtifactSearch } from "./route-config"
 import { SourceEditor } from "./source-editor"
-import { type ComposerState, parseAnchor } from "./types"
+import { type ComposerState, parseAnchor, type Sel } from "./types"
 import { useArtifactFrame } from "./use-artifact-frame"
 import { useArtifactLive } from "./use-artifact-live"
 import { useArtifactRoute } from "./use-artifact-route"
@@ -1009,14 +1009,17 @@ export function Artifact({ template = false }: { template?: boolean }) {
     />
   )
 
-  const pinBundleTarget = (target: { id: string; kind: string; label: string }) => {
+  const openBundleComment = (anchor: Sel | null) => {
     setVisualPin(false)
     setRail("comments")
     setPanel("open")
     setActiveThread(null)
     setSel(null)
-    setComposer({ anchor: linkedBundleAnchor(target), docTop: null })
+    setComposer({ anchor, docTop: null })
   }
+  const pinBundleTarget = (target: { id: string; kind: string; label: string }) =>
+    openBundleComment(linkedBundleAnchor(target))
+  const commentOnBundle = () => openBundleComment(null)
   const reviewBundleTarget = (target: string) => {
     setRail("comments")
     setPanel("open")
@@ -1051,6 +1054,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
         setSel(null)
         setVisualPin((on) => !on)
       }}
+      onComment={commentOnBundle}
       onPin={pinBundleTarget}
       onReview={reviewBundleTarget}
       onDocument={() => setBundleView("document")}

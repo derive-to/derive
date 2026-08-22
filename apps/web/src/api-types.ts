@@ -6857,14 +6857,38 @@ export interface components {
                     title: string;
                     /** @enum {string} */
                     type: "loop" | "graph";
+                    /**
+                     * @description Default capability tier for nodes without their own tier.
+                     * @enum {string}
+                     */
+                    tier?: "utility" | "fast" | "balanced" | "expert" | "frontier";
                     nodes: {
                         id: string;
                         label: string;
                         member?: string;
+                        /** @description The responsibility this node owns. */
+                        role?: string;
+                        /**
+                         * @description Node capability tier; overrides the diagram default.
+                         * @enum {string}
+                         */
+                        tier?: "utility" | "fast" | "balanced" | "expert" | "frontier";
                         /** @enum {string} */
-                        state?: "pending" | "active" | "blocked" | "done";
+                        state?: "pending" | "active" | "waiting" | "blocked" | "done";
                         basis_version?: number;
                         note?: string;
+                        /** @description Current confidence and the evidence or judgment supporting it. */
+                        confidence?: {
+                            /** @enum {string} */
+                            level: "low" | "medium" | "high";
+                            basis: string;
+                        };
+                        /** @description Whether help is needed, the concise question, and work that can continue. */
+                        help?: {
+                            needed: boolean;
+                            question?: string;
+                            can_continue?: string;
+                        };
                     }[];
                     edges: {
                         from: string;

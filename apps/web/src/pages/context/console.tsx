@@ -95,6 +95,35 @@ function stripFrontmatter(md: string): string {
   return md.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "")
 }
 
+type ContextOutput = Awaited<ReturnType<typeof api.listContextOutputs>>["outputs"][number]
+
+export type ContextNowSummary = {
+  working: number
+  waiting: number
+  needsReview: number
+  failed: number
+  headline: string
+}
+
+/** Reduce the visible session record to the small set of states a person needs first.
+ * It never infers help: only an authored escalated state becomes "needs review". */
+export function contextNowSummary(sessions: Session[]): ContextNowSummary {
+  const working = sessions.filter((session) => session.state === "working").length
+  const waiting = sessions.filter((session) => session.state === "open").length
+  const needsReview = sessions.filter((session) => session.state === "escalated").length
+  const failed = sessions.filter((session) => session.state === "failed").length
+  const headline = needsReview
+    ? `${needsReview} ${needsReview === 1 ? "run needs" : "runs need"} your review.`
+    : failed
+      ? `${failed} ${failed === 1 ? "run has" : "runs have"} failed.`
+      : working
+        ? `${working} ${working === 1 ? "run is" : "runs are"} working now.`
+        : waiting
+          ? `${waiting} ${waiting === 1 ? "run is" : "runs are"} waiting to start.`
+          : "Ready for a new question."
+  return { working, waiting, needsReview, failed, headline }
+}
+
 function Console({ id }: { id: string }) {
   const { me } = useAuth()
   const qc = useQueryClient()
@@ -120,6 +149,11 @@ function Console({ id }: { id: string }) {
   // One flat list off the pages — the picker and Activity both read it, and neither
   // cares where a page boundary fell.
   const sessions = sessionPages?.pages.flatMap((p) => p.sessions)
+  const {
+    data: outputs,
+    isPending: outputsPending,
+    isError: outputsFailed,
+  } = useQuery(contextOutputsQuery(id))
   // The tab names the context; base title while it loads (or on no-access).
   useDocumentTitle(context?.name ?? null)
 
@@ -199,6 +233,15 @@ function Console({ id }: { id: string }) {
           </p>
         )}
       </div>
+
+      <ContextStatusWorkspace
+        context={context}
+        sessions={sessions ?? []}
+        outputs={outputs ?? []}
+        outputsPending={outputsPending}
+        outputsFailed={outputsFailed}
+        onSeeAllOutputs={() => setTab("output")}
+      />
 
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList variant="line">
@@ -334,6 +377,210 @@ function Console({ id }: { id: string }) {
         )}
       </Tabs>
     </PageShell>
+  )
+}
+
+function ContextOutputCard({
+  output,
+  testId = "context-now-output",
+}: {
+  output: ContextOutput
+  testId?: string
+}) {
+  const unreadable = output.title === null
+  const body = (
+    <>
+      <span
+        aria-hidden="true"
+        className={cn(
+          "absolute inset-y-0 left-0 w-1",
+          unreadable ? "bg-muted-foreground/35" : "bg-success",
+        )}
+      />
+      <span className="flex min-w-0 items-start justify-between gap-2">
+        <span className="min-w-0">
+          <span className="block truncate text-sm font-medium text-foreground">
+            {output.title ?? output.short_id}
+          </span>
+          <span className="mt-0.5 block text-2xs text-muted-foreground">
+            {output.runs} {output.runs === 1 ? "run" : "runs"}
+          </span>
+        </span>
+        {output.version != null ? (
+          <span className="shrink-0 rounded-md border border-share/20 bg-share/10 px-1.5 py-0.5 font-mono text-2xs font-semibold text-share">
+            v{output.version}
+          </span>
+        ) : null}
+      </span>
+      <span
+        className={cn(
+          "mt-2 inline-flex items-center gap-1.5 rounded-md border px-1.5 py-0.5 font-mono text-2xs",
+          unreadable
+            ? "border-border bg-muted/45 text-muted-foreground"
+            : "border-success/20 bg-success/10 text-success",
+        )}
+      >
+        <span
+          className={cn(
+            "size-1.5 rounded-full",
+            unreadable ? "bg-muted-foreground/55" : "bg-success",
+          )}
+        />
+        Updated {ago(output.last_run_at)}
+      </span>
+    </>
+  )
+  const className = cn(
+    "relative min-w-56 overflow-hidden rounded-xl border bg-card p-3 pl-4 text-left transition-colors lg:min-w-0",
+    unreadable ? "opacity-60" : "hover:border-primary/35 hover:bg-muted/30",
+  )
+  return unreadable ? (
+    <div className={className} data-testid={`${testId}-unavailable`}>
+      {body}
+    </div>
+  ) : (
+    <Link
+      to="/artifacts/$ref"
+      params={{ ref: output.short_id }}
+      data-testid={testId}
+      className={className}
+    >
+      {body}
+    </Link>
+  )
+}
+
+function ContextStatusWorkspace({
+  context,
+  sessions,
+  outputs,
+  outputsPending,
+  outputsFailed,
+  onSeeAllOutputs,
+}: {
+  context: ContextDetail
+  sessions: Session[]
+  outputs: ContextOutput[]
+  outputsPending: boolean
+  outputsFailed: boolean
+  onSeeAllOutputs: () => void
+}) {
+  const summary = contextNowSummary(sessions)
+  const runner = runnerStatus(context.runner_seen_at)
+  const latest = sessions[0]
+  return (
+    <section
+      className="grid gap-3 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]"
+      data-testid="context-now-workspace"
+    >
+      <div className="rounded-xl border bg-card p-4">
+        <Eyebrow>Now</Eyebrow>
+        <h2 className="mt-2 text-base font-semibold tracking-tight text-foreground">
+          {summary.headline}
+        </h2>
+        <div className="mt-3 flex flex-wrap items-center gap-1.5 font-mono text-2xs">
+          <span
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-md border px-1.5 py-0.5",
+              runner.online
+                ? "border-success/20 bg-success/10 text-success"
+                : runner.away
+                  ? "border-warning/20 bg-warning/10 text-warning"
+                  : "border-border bg-muted/45 text-muted-foreground",
+            )}
+          >
+            <span
+              className={cn(
+                "size-1.5 rounded-full",
+                runner.online
+                  ? "bg-success"
+                  : runner.away
+                    ? "bg-warning"
+                    : "bg-muted-foreground/50",
+              )}
+            />
+            {runner.online ? "runner ready" : runner.away ? "runner away" : "runner offline"}
+          </span>
+          {summary.working ? (
+            <span className="rounded-md border border-insights/20 bg-insights/10 px-1.5 py-0.5 text-insights">
+              {summary.working} working
+            </span>
+          ) : null}
+          {summary.waiting ? (
+            <span className="rounded-md border border-warning/20 bg-warning/10 px-1.5 py-0.5 text-warning">
+              {summary.waiting} waiting
+            </span>
+          ) : null}
+          {summary.needsReview ? (
+            <span className="rounded-md border border-warning/20 bg-warning/10 px-1.5 py-0.5 font-semibold text-warning">
+              {summary.needsReview} need review
+            </span>
+          ) : null}
+          {summary.failed ? (
+            <span className="rounded-md border border-destructive/20 bg-destructive/10 px-1.5 py-0.5 font-semibold text-destructive">
+              {summary.failed} failed
+            </span>
+          ) : null}
+          {context.manifest_version != null ? (
+            <span className="rounded-md border border-share/20 bg-share/10 px-1.5 py-0.5 font-semibold text-share">
+              manifest v{context.manifest_version}
+            </span>
+          ) : null}
+        </div>
+        {latest ? (
+          <p className="mt-2 text-2xs text-muted-foreground">
+            Latest activity {ago(latest.updated_at)} · context v{latest.context_version ?? "—"}
+          </p>
+        ) : (
+          <p className="mt-2 text-2xs text-muted-foreground">No runs yet.</p>
+        )}
+      </div>
+
+      <div className="min-w-0 rounded-xl border bg-card p-4" data-testid="context-artifact-shelf">
+        <div className="mb-2 flex items-baseline justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold text-foreground">Living artifacts</h2>
+            <p className="mt-0.5 text-2xs text-muted-foreground">
+              Latest results stay visible as they evolve
+            </p>
+          </div>
+          {outputs.length > 3 ? (
+            <button
+              type="button"
+              data-testid="context-now-see-all-outputs"
+              onClick={onSeeAllOutputs}
+              className="shrink-0 text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+            >
+              See all {outputs.length} →
+            </button>
+          ) : (
+            <span className="shrink-0 font-mono text-2xs text-muted-foreground">
+              {outputs.length} total
+            </span>
+          )}
+        </div>
+        {outputsPending ? (
+          <div className="h-20 animate-pulse rounded-xl bg-muted" />
+        ) : outputsFailed ? (
+          <div className="rounded-xl border border-dashed px-3 py-5 text-center text-xs text-muted-foreground">
+            Artifacts unavailable right now
+          </div>
+        ) : outputs.length ? (
+          <div className="flex gap-2 overflow-x-auto pb-1 lg:grid lg:grid-cols-2 lg:overflow-visible lg:pb-0">
+            {outputs.slice(0, 3).map((output) => (
+              <ContextOutputCard key={output.short_id} output={output} />
+            ))}
+          </div>
+        ) : (
+          <div className="rounded-xl border border-dashed px-3 py-5 text-center">
+            <p className="text-xs font-medium text-foreground">No published artifacts yet</p>
+            <p className="mt-0.5 text-2xs text-muted-foreground">
+              A result appears here when a run publishes or updates one.
+            </p>
+          </div>
+        )}
+      </div>
+    </section>
   )
 }
 
@@ -1175,25 +1422,40 @@ function SessionThread({
 // history is the trend line. Renders once, right after the answer that bound it.
 function ResultChip({ shortId }: { shortId: string }) {
   const { data } = useQuery({ ...artifactQuery(shortId), enabled: !!shortId })
+  const currentVersion = data?.versions.find((version) => version.n === data.current_version)
   return (
     <div className="ml-1 flex flex-col gap-0.5">
       <Link
         to="/artifacts/$ref"
         params={{ ref: shortId }}
         data-testid="console-result-chip"
-        className="inline-flex w-fit items-center gap-2 rounded-lg border bg-secondary px-3 py-1.5 text-sm font-medium text-foreground hover:bg-accent"
+        className="relative inline-flex w-fit items-center gap-2 overflow-hidden rounded-lg border bg-secondary px-3 py-1.5 pl-4 text-sm font-medium text-foreground hover:bg-accent"
       >
+        <span className="absolute inset-y-0 left-0 w-1 bg-success" aria-hidden="true" />
         <Icon name="all" size={14} className="text-muted-foreground" />
         {data?.title ?? shortId}
         {data?.current_version != null && (
-          <span className="font-mono text-2xs text-muted-foreground">v{data.current_version}</span>
+          <span className="rounded-md border border-share/20 bg-share/10 px-1.5 py-0.5 font-mono text-2xs font-semibold text-share">
+            v{data.current_version}
+          </span>
         )}
+        {currentVersion ? (
+          <span className="font-mono text-2xs text-success">
+            updated {ago(currentVersion.created_at)}
+          </span>
+        ) : null}
       </Link>
       <span className="text-2xs text-muted-foreground">
-        Republished after each run. Its history shows the trend.
+        Living artifact · republished after each run
       </span>
     </div>
   )
+}
+
+const confidenceTone = (confidence: number): string => {
+  if (confidence >= 0.85) return "border-success/20 bg-success/10 text-success"
+  if (confidence < 0.6) return "border-warning/20 bg-warning/10 text-warning"
+  return "border-insights/20 bg-insights/10 text-insights"
 }
 
 // meta is runner-supplied and schema-free on the server (deliberately, for
@@ -1244,12 +1506,17 @@ function MessageRow({ m, contextName }: { m: SessionMessage; contextName: string
           </Button>
         )}
         {meta.escalation && (
-          <Badge variant="outline" data-testid="console-escalated">
+          <Badge variant="warning" data-testid="console-escalated">
             Escalated: {meta.escalation}
           </Badge>
         )}
         {meta.confidence !== null && (
-          <span className="ml-auto tabular-nums">
+          <span
+            className={cn(
+              "ml-auto rounded-md border px-1.5 py-0.5 font-mono text-2xs tabular-nums",
+              confidenceTone(meta.confidence),
+            )}
+          >
             confidence {Math.round(meta.confidence * 100)}%
           </span>
         )}
@@ -1416,49 +1683,11 @@ function OutputList({ contextId }: { contextId: string }) {
       />
     )
   return (
-    <ul className="flex flex-col">
-      {outputs.map((o) => {
-        // A run this viewer can see, on a document they can't: the row stays (the run
-        // is already in Activity) but it never becomes a link to something unreadable.
-        const unreadable = o.title === null
-        const body = (
-          <>
-            <Icon name="all" size={14} className="text-muted-foreground" />
-            <span className={cn("truncate", unreadable && "text-muted-foreground")}>
-              {o.title ?? o.short_id}
-            </span>
-            {unreadable && (
-              <Badge variant="outline" className="text-2xs">
-                unavailable
-              </Badge>
-            )}
-            <span className="ml-auto flex shrink-0 items-center gap-2.5 font-mono text-xs text-muted-foreground">
-              {o.version != null && <span>v{o.version}</span>}
-              <span>
-                {o.runs} {o.runs === 1 ? "run" : "runs"}
-              </span>
-              <span>{ago(o.last_run_at)}</span>
-            </span>
-          </>
-        )
-        return (
-          <li key={o.short_id} className="border-b last:border-0">
-            {unreadable ? (
-              <div className="flex items-center gap-3 px-1 py-2.5 text-sm">{body}</div>
-            ) : (
-              <Link
-                to="/artifacts/$ref"
-                params={{ ref: o.short_id }}
-                data-testid="console-output-row"
-                className="flex items-center gap-3 px-1 py-2.5 text-sm hover:bg-accent"
-              >
-                {body}
-              </Link>
-            )}
-          </li>
-        )
-      })}
-    </ul>
+    <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+      {outputs.map((output) => (
+        <ContextOutputCard key={output.short_id} output={output} testId="console-output-row" />
+      ))}
+    </div>
   )
 }
 
@@ -1467,10 +1696,22 @@ function OutputList({ contextId }: { contextId: string }) {
 // rail, so the picker/Activity pill stays the honest "waiting" either way.
 const STATE_BADGE: Record<
   Session["state"],
-  { variant: NonNullable<Parameters<typeof badgeVariants>[0]>["variant"]; label: string }
+  {
+    variant: NonNullable<Parameters<typeof badgeVariants>[0]>["variant"]
+    label: string
+    className?: string
+  }
 > = {
-  open: { variant: "outline", label: "waiting" },
-  working: { variant: "outline", label: "working" },
+  open: {
+    variant: "outline",
+    label: "waiting",
+    className: "border-warning/25 bg-warning/10 text-warning",
+  },
+  working: {
+    variant: "outline",
+    label: "working",
+    className: "border-insights/25 bg-insights/10 text-insights",
+  },
   answered: { variant: "success", label: "answered" },
   escalated: { variant: "warning", label: "escalated" },
   failed: { variant: "destructive", label: "failed" },
@@ -1480,7 +1721,7 @@ const STATE_BADGE: Record<
 function StateBadge({ state }: { state: Session["state"] }) {
   const cfg = STATE_BADGE[state]
   return (
-    <Badge variant={cfg.variant} shape="pill" className="gap-1 text-xs">
+    <Badge variant={cfg.variant} shape="pill" className={cn("gap-1 text-xs", cfg.className)}>
       {state === "working" && (
         <Spinner size="sm" tone="current" className="size-2.5 border-[1.5px]" aria-hidden />
       )}

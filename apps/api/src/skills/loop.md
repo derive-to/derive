@@ -48,7 +48,8 @@ Leave feedback on an artifact, reply in a thread, react, and/or resolve or reope
 in one tool. Thread ids come from `catch_up`.
 
 - **New comment.** Anchor it to a quoted span of the rendered text with `quote` (the exact
-  text a reader sees, matching the visible text in the `text` read format).
+  text a reader sees, matching the visible text in the `text` read format), or omit every target
+  for an ordinary general comment.
 - **Reply.** Pass the thread id as `reply_to`.
 - **React.** Pass `react` with `reply_to` to acknowledge the latest comment without writing a
   reply. Pass the reaction explicitly.
