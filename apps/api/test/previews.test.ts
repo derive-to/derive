@@ -19,6 +19,7 @@ import {
   runRenderTick,
   startPreviewWorker,
   sweepMissingRenders,
+  waitForRenderQuiescence,
 } from "../src/previews"
 
 // ---------------------------------------------------------------------------
@@ -361,6 +362,83 @@ describe("previews: refusing to screenshot an error page", () => {
     expect(() =>
       assertRenderedDocumentOk({ contentType: "text/plain", bodyText: "  BLOB MISSING\n" }, url),
     ).toThrow(/navigation rendered a blob missing service response/)
+  })
+})
+
+describe("previews: waiting for visible layout quiescence", () => {
+  const layout = (
+    fingerprint: string,
+    overrides: Partial<{
+      readyState: string
+      pendingImages: number
+      visibleElements: number
+      bodyTextLength: number
+    }> = {},
+  ) => ({
+    readyState: overrides.readyState ?? "complete",
+    pendingImages: overrides.pendingImages ?? 0,
+    scrollWidth: 1200,
+    scrollHeight: 1800,
+    bodyTextLength: overrides.bodyTextLength ?? 120,
+    visibleElements: overrides.visibleElements ?? 12,
+    layoutFingerprint: fingerprint,
+  })
+
+  it("waits past a stable shell until a late gallery has itself stabilized", async () => {
+    const samples = [
+      layout("shell", { visibleElements: 12 }),
+      layout("shell+gallery", { visibleElements: 47, bodyTextLength: 430 }),
+      layout("shell+gallery", { visibleElements: 47, bodyTextLength: 430 }),
+      layout("shell+gallery", { visibleElements: 47, bodyTextLength: 430 }),
+    ]
+    let calls = 0
+    let delays = 0
+
+    const settled = await waitForRenderQuiescence(
+      async () =>
+        samples[Math.min(calls++, samples.length - 1)] ?? layout("unexpected missing sample"),
+      async () => {
+        delays += 1
+      },
+      { intervalMs: 1, timeoutMs: 10, stableTransitions: 2 },
+    )
+
+    expect(settled.layoutFingerprint).toBe("shell+gallery")
+    expect(settled.visibleElements).toBe(47)
+    expect(calls).toBe(4)
+    expect(delays).toBe(3)
+  })
+
+  it("does not settle while eager images are still loading", async () => {
+    const samples = [
+      layout("complete-layout", { pendingImages: 1 }),
+      layout("complete-layout", { pendingImages: 1 }),
+      layout("complete-layout"),
+      layout("complete-layout"),
+      layout("complete-layout"),
+    ]
+    let calls = 0
+
+    await waitForRenderQuiescence(
+      async () =>
+        samples[Math.min(calls++, samples.length - 1)] ?? layout("unexpected missing sample"),
+      async () => {},
+      { intervalMs: 1, timeoutMs: 10, stableTransitions: 2 },
+    )
+
+    expect(calls).toBe(5)
+  })
+
+  it("fails instead of storing a screenshot when layout never settles", async () => {
+    let calls = 0
+    await expect(
+      waitForRenderQuiescence(
+        async () => layout(`moving-${calls++}`),
+        async () => {},
+        { intervalMs: 1, timeoutMs: 4, stableTransitions: 2 },
+      ),
+    ).rejects.toThrow(/render did not settle before screenshot/)
+    expect(calls).toBe(4)
   })
 })
 

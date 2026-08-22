@@ -4,6 +4,8 @@ import {
   assertRenderedDocumentOk,
   type Renderer,
   type ScreenshotOpts,
+  sampleRenderLayout,
+  waitForRenderQuiescence,
 } from "./previews"
 
 /**
@@ -26,6 +28,11 @@ export const cfBrowserRenderer = (binding: BrowserWorker): Renderer => ({
       assertNavigationOk(
         await page.goto(url, { waitUntil: "networkidle0", timeout: opts.timeoutMs }),
         url,
+      )
+      await waitForRenderQuiescence(
+        () => page.evaluate(sampleRenderLayout),
+        (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+        { timeoutMs: Math.min(2_500, Math.max(600, Math.floor(opts.timeoutMs / 5))) },
       )
       assertRenderedDocumentOk(
         await page.evaluate(() => {

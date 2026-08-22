@@ -71,6 +71,125 @@ export interface Renderer {
   screenshot(url: string, opts: ScreenshotOpts): Promise<Uint8Array>
 }
 
+/** A cheap geometry fingerprint sampled inside the artifact page before a screenshot.
+ *  Network idle is not a render-complete signal: client code can populate a gallery on
+ *  the next task, image decode can move it, and a screenshot taken in that gap stores a
+ *  convincing shell with a blank middle. Both browser runtimes collect this same shape. */
+export interface RenderLayoutSnapshot {
+  readyState: string
+  pendingImages: number
+  scrollWidth: number
+  scrollHeight: number
+  bodyTextLength: number
+  visibleElements: number
+  layoutFingerprint: string
+}
+
+/** Runs inside Chromium through page.evaluate. Keep it closure-free and describe the tiny
+ * DOM surface explicitly because the Cloudflare Worker build intentionally has no DOM libs. */
+export const sampleRenderLayout = (): RenderLayoutSnapshot => {
+  const pageGlobal = globalThis as unknown as {
+    document: {
+      readyState: string
+      images: Array<{ loading: string; complete: boolean }>
+      documentElement: { scrollWidth: number; scrollHeight: number }
+      body?: {
+        innerText: string
+        scrollWidth: number
+        scrollHeight: number
+        querySelectorAll(selector: string): Array<{
+          tagName: string
+          getBoundingClientRect(): { left: number; top: number; width: number; height: number }
+        }>
+      } | null
+    }
+    getComputedStyle(element: unknown): { display: string; visibility: string }
+  }
+  const body = pageGlobal.document.body
+  let visibleElements = 0
+  const geometry: string[] = []
+  for (const element of body?.querySelectorAll("*") ?? []) {
+    const rect = element.getBoundingClientRect()
+    if (rect.width <= 0 || rect.height <= 0) continue
+    const style = pageGlobal.getComputedStyle(element)
+    if (style.display === "none" || style.visibility === "hidden") continue
+    visibleElements += 1
+    if (geometry.length < 500)
+      geometry.push(
+        `${element.tagName}:${Math.round(rect.left)},${Math.round(rect.top)},${Math.round(rect.width)},${Math.round(rect.height)}`,
+      )
+  }
+  return {
+    readyState: pageGlobal.document.readyState,
+    pendingImages: [...pageGlobal.document.images].filter(
+      (image) => image.loading !== "lazy" && !image.complete,
+    ).length,
+    scrollWidth: Math.max(pageGlobal.document.documentElement.scrollWidth, body?.scrollWidth ?? 0),
+    scrollHeight: Math.max(
+      pageGlobal.document.documentElement.scrollHeight,
+      body?.scrollHeight ?? 0,
+    ),
+    bodyTextLength: body?.innerText.length ?? 0,
+    visibleElements,
+    layoutFingerprint: geometry.join("|"),
+  }
+}
+
+export interface RenderQuiescenceOptions {
+  timeoutMs?: number
+  intervalMs?: number
+  /** Number of consecutive matching transitions. Two means three identical samples. */
+  stableTransitions?: number
+}
+
+const layoutKey = (sample: RenderLayoutSnapshot): string =>
+  [
+    sample.scrollWidth,
+    sample.scrollHeight,
+    sample.bodyTextLength,
+    sample.visibleElements,
+    sample.layoutFingerprint,
+  ].join(":")
+
+/** Wait until the loaded artifact has finished constructing its visible layout.
+ *
+ * This is deliberately geometry-based instead of timer-based. A fixed sleep still races a
+ * slower artifact, while `networkidle` fires before DOM work scheduled after a fetch. Three
+ * matching samples also tolerate animated canvases and videos: their element geometry is
+ * stable even though their pixels keep changing.
+ */
+export const waitForRenderQuiescence = async (
+  sample: () => Promise<RenderLayoutSnapshot>,
+  delay: (ms: number) => Promise<void>,
+  options: RenderQuiescenceOptions = {},
+): Promise<RenderLayoutSnapshot> => {
+  const timeoutMs = options.timeoutMs ?? 2_500
+  const intervalMs = options.intervalMs ?? 120
+  const stableTransitions = options.stableTransitions ?? 2
+  const attempts = Math.max(stableTransitions + 1, Math.ceil(timeoutMs / intervalMs))
+  let previousKey: string | null = null
+  let stable = 0
+  let last: RenderLayoutSnapshot | null = null
+
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    const current = await sample()
+    last = current
+    const ready = current.readyState === "complete" && current.pendingImages === 0
+    const key = layoutKey(current)
+    stable = ready && previousKey === key ? stable + 1 : 0
+    if (ready && stable >= stableTransitions) return current
+    // A matching geometry sample taken while the document was not ready is not a
+    // stable transition. Clear it so the first ready sample starts a fresh window.
+    previousKey = ready ? key : null
+    if (attempt < attempts - 1) await delay(intervalMs)
+  }
+
+  const state = last
+    ? `readyState=${last.readyState}, pendingImages=${last.pendingImages}, visibleElements=${last.visibleElements}`
+    : "no layout sample"
+  throw new Error(`render did not settle before screenshot (${state})`)
+}
+
 /**
  * Refuse to screenshot an error page.
  *

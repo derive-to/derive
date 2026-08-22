@@ -4,6 +4,8 @@ import {
   assertRenderedDocumentOk,
   type Renderer,
   type ScreenshotOpts,
+  sampleRenderLayout,
+  waitForRenderQuiescence,
 } from "./previews"
 
 /** A Renderer backed by a locally-installed Playwright Chromium. Node self-host only —
@@ -21,6 +23,11 @@ export const playwrightRenderer = (): Renderer => ({
       assertNavigationOk(
         await page.goto(url, { waitUntil: "networkidle", timeout: opts.timeoutMs }),
         url,
+      )
+      await waitForRenderQuiescence(
+        () => page.evaluate(sampleRenderLayout),
+        (ms) => page.waitForTimeout(ms),
+        { timeoutMs: Math.min(2_500, Math.max(600, Math.floor(opts.timeoutMs / 5))) },
       )
       assertRenderedDocumentOk(
         await page.evaluate(() => ({
