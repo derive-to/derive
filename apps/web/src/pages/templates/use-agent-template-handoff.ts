@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query"
 import { useId, useState } from "react"
 import { workspaceDisplayName } from "@/api"
+import { useAuth } from "@/ctx"
 import { useCopy } from "@/lib/clipboard"
 import { workspacesQuery } from "@/lib/queries"
 import { type AgentTemplateTarget, localAgentHandoff } from "./agent-handoff"
@@ -11,7 +12,9 @@ export function useAgentTemplateHandoff(target: AgentTemplateTarget) {
   const [showHandoff, setShowHandoff] = useState(false)
   const { copied, copy } = useCopy(4000)
   const descriptionId = useId()
-  const workspacesState = useQuery(workspacesQuery())
+  // /v1/workspaces is an authed endpoint; signed out, the handoff names no destination workspace.
+  const { me } = useAuth()
+  const workspacesState = useQuery({ ...workspacesQuery(), enabled: !!me })
   const activeWorkspaceSummary = workspacesState.data?.workspaces.find(
     (workspace) => workspace.id === workspacesState.data.active,
   )

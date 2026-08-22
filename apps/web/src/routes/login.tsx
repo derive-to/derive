@@ -29,13 +29,10 @@ export const Route = createFileRoute("/login")({
     // your new password" confirmation.
     if (s.reset) out.reset = true
     // Where to land after sign-in (e.g. the shared artifact whose "sign in to comment"
-    // CTA sent us here). Same-origin relative paths only — never `//host` or an absolute
-    // URL — so it can't be weaponized into an open redirect.
-    if (
-      typeof s.return_to === "string" &&
-      s.return_to.startsWith("/") &&
-      !s.return_to.startsWith("//")
-    )
+    // CTA sent us here). Same-origin relative paths only — never `//host`, `/\host`
+    // (browsers read the backslash as a slash), or an absolute URL — so it can't be
+    // weaponized into an open redirect.
+    if (typeof s.return_to === "string" && /^\/(?![/\\])/.test(s.return_to))
       out.return_to = s.return_to
     for (const k of OAUTH_KEYS) if (typeof s[k] === "string") out[k] = s[k] as string
     return out

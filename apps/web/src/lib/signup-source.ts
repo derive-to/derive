@@ -15,8 +15,7 @@ export const signupSourceSearch = (
   landingPath: string,
 ): SignupSourceSearch => {
   if (!KIND.test(kind)) throw new Error("invalid signup source")
-  const landing =
-    landingPath.startsWith("/") && !landingPath.startsWith("//") ? landingPath.slice(0, 200) : "/"
+  const landing = /^\/(?![/\\])/.test(landingPath) ? landingPath.slice(0, 200) : "/"
   return {
     src: kind.toLowerCase(),
     landing,

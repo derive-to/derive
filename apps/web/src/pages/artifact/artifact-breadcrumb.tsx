@@ -22,6 +22,7 @@ import { useApiMutation } from "@/lib/use-api-mutation"
 import { cn } from "@/lib/utils"
 import { folderScopedSiblingIds, resolveContextCollection, siblingNav } from "./lib/siblings"
 import { refFor } from "./parse-ref"
+import type { ArtifactSearch } from "./route-config"
 
 // Shared title styling so the plain-title and switcher-trigger forms are pixel-identical
 // (the reframe's document header: serif, base, tight).
@@ -121,7 +122,8 @@ function EditableTitle({ art, className }: { art: Artifact; className?: string }
 // focus mode by the header wrapper (it stays mounted; keyboard paging is gated off then).
 export function ArtifactBreadcrumb({ art, focusMode }: { art: Artifact; focusMode: boolean }) {
   const nav = useNavigate()
-  const { collection: paramCollection } = useSearch({ from: "/artifacts/$ref" })
+  // The page mounts under /artifacts/$ref and /templates/$ref (see route-config.ts).
+  const { collection: paramCollection } = useSearch({ strict: false }) as ArtifactSearch
   const { data: collections = [] } = useQuery(collectionsQuery())
   const contextId = resolveContextCollection(paramCollection, art.collections)
   const { data: siblings = [] } = useQuery({

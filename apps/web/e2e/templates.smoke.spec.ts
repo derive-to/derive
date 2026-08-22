@@ -9,6 +9,14 @@ async function tagAsTemplate(page: Page, shortId: string) {
   expect(res.ok(), await res.text()).toBeTruthy()
 }
 
+// The public shelf lists artifacts that are listed publicly, not merely link-readable.
+async function listPublicly(page: Page, shortId: string) {
+  const res = await page.request.patch(`/v1/artifacts/${shortId}/access`, {
+    data: { listed: "public" },
+  })
+  expect(res.ok(), await res.text()).toBeTruthy()
+}
+
 test.describe("templates", () => {
   test("a tagged artifact appears on the workspace shelf and copies into the workspace", async ({
     owner: page,
@@ -26,6 +34,12 @@ test.describe("templates", () => {
     await expect(page.getByTestId(`template-card-${shortId}`)).toBeVisible()
     await expect(page.getByTestId(`template-copy-${shortId}`)).toContainText("Make a copy")
 
+    // The card's title is the template's own address; signed in, that is the workbench.
+    await page.getByTestId(`template-open-${shortId}`).click()
+    await expect(page).toHaveURL(new RegExp(`/templates/.*${shortId}`))
+    await expect(page.getByText("Comments", { exact: true })).toBeVisible()
+
+    await page.goto("/templates")
     await page.getByTestId(`template-copy-${shortId}`).click()
     await expect(page).toHaveURL(/\/artifacts\//)
     // The copy is a new artifact, not the template itself.
@@ -70,5 +84,87 @@ test.describe("templates", () => {
     // The shelf has settled once the tagged one is on it; only then is absence meaningful.
     await expect(page.getByTestId(`template-card-${tagged}`)).toBeVisible()
     await expect(page.getByTestId(`template-card-${untagged}`)).toHaveCount(0)
+  })
+})
+
+test.describe("templates, signed out", () => {
+  test("the public shelf is readable, and Make a copy goes through sign-in keeping the template", async ({
+    owner,
+    browser,
+  }) => {
+    const shortId = await publishArtifact(owner, "brief.md", "# Launch brief", "text/markdown")
+    await tagAsTemplate(owner, shortId)
+    await listPublicly(owner, shortId)
+
+    const anon = await browser.newContext()
+    const page = await anon.newPage()
+    try {
+      await page.goto("/templates")
+      // The chrome-light frame, not the workbench: sign-in, no workspace verbs.
+      await expect(page.getByTestId("public-sign-in")).toBeVisible()
+      await expect(page.getByTestId("templates-shelf-public")).toBeVisible()
+      await expect(page.getByTestId(`template-card-${shortId}`)).toBeVisible()
+      await expect(page.getByTestId("templates-new-blank")).toHaveCount(0)
+      await expect(page.getByTestId("templates-create-existing")).toHaveCount(0)
+
+      await page.getByTestId(`template-copy-${shortId}`).click()
+      await expect(page).toHaveURL(/\/login\?/)
+      // Sign-in returns to the template's own page with the copy intent intact.
+      const returnTo = new URL(page.url()).searchParams.get("return_to") ?? ""
+      expect(returnTo).toMatch(new RegExp(`^/templates/.*${shortId}\\?use=1$`))
+
+      // Creating the account from here finishes the copy: the visitor lands on their own.
+      await page.getByTestId("login-name").fill("Copier")
+      await page.getByTestId("login-email").fill(`e2e-copier-${Date.now()}@example.com`)
+      await page.getByTestId("login-password").fill("e2e-pass-1234")
+      await page.getByTestId("login-submit").click()
+      await expect(page).toHaveURL(/\/artifacts\//, { timeout: 15_000 })
+      expect(new URL(page.url()).pathname).not.toContain(shortId)
+    } finally {
+      await anon.close()
+    }
+  })
+
+  test("a template page presents the strip, and public footers lead to it", async ({
+    owner,
+    browser,
+  }) => {
+    const tagged = await publishArtifact(owner, "kit.md", "# Starter kit", "text/markdown")
+    await tagAsTemplate(owner, tagged)
+    const plain = await publishArtifact(owner, "note.md", "# Just a note", "text/markdown")
+
+    const anon = await browser.newContext()
+    const page = await anon.newPage()
+    try {
+      await page.goto(`/templates/${tagged}`)
+      await expect(page.getByTestId("template-strip")).toBeVisible()
+      await expect(page.getByTestId("public-make-your-own")).toHaveAttribute(
+        "href",
+        /return_to=%2Ftemplates%2F/,
+      )
+      await expect(page.getByTestId("public-start-from")).toHaveText("Browse templates")
+      await page.getByTestId("template-ask-agent").click()
+      await expect(page.getByRole("heading", { name: /^Use / })).toBeVisible()
+      await page.keyboard.press("Escape")
+
+      // The artifact address of a tagged artifact is the plain page; its footer is the
+      // way to the template page.
+      await page.goto(`/artifacts/${tagged}`)
+      await expect(page.getByTestId("public-start-from")).toHaveText("Start from this template")
+      await expect(page.getByTestId("template-strip")).toHaveCount(0)
+      await page.getByTestId("public-start-from").click()
+      await expect(page).toHaveURL(new RegExp(`/templates/.*${tagged}`))
+      await expect(page.getByTestId("template-strip")).toBeVisible()
+
+      // An untagged artifact offers a copy of itself, through sign-in.
+      await page.goto(`/artifacts/${plain}`)
+      await expect(page.getByTestId("public-start-from")).toHaveText("Start from this page")
+      await expect(page.getByTestId("public-start-from")).toHaveAttribute(
+        "href",
+        /return_to=%2Fartifacts%2F[^&]*%3Fuse%3D1/,
+      )
+    } finally {
+      await anon.close()
+    }
   })
 })

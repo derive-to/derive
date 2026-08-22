@@ -8,10 +8,12 @@ import { EmptyState } from "@/components/shared/empty-state"
 import { LoadError } from "@/components/shared/load-error"
 import { PageHeader } from "@/components/shared/page-header"
 import { PageShell } from "@/components/shared/page-shell"
+import { PublicFrame } from "@/components/shared/public-frame"
 import { SearchField } from "@/components/shared/search-field"
 import { StatusPanel } from "@/components/shared/status-panel"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { useAuth } from "@/ctx"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { useDocumentTitle } from "@/lib/use-document-title"
 import { refFor } from "@/pages/artifact/parse-ref"
@@ -31,12 +33,17 @@ const templateMatches = (template: TemplateArtifact, query: string): boolean => 
 /**
  * The template shelf: artifacts tagged `template`, this workspace's then public ones.
  * Starting from one is the artifact page's own "Make a copy", or the agent handoff.
+ *
+ * Public: signed out, the shelf is the public one, in the anonymous frame, and "Make a
+ * copy" goes through sign-in and lands on the template with the copy intent kept.
  */
 export function Templates() {
   useDocumentTitle("Templates")
-  const search = useSearch({ from: "/templates" })
-  const nav = useNavigate({ from: "/templates" })
-  const librariesOpen = search.tab === "libraries"
+  const { me } = useAuth()
+  const signedIn = !!me
+  const search = useSearch({ from: "/templates/" })
+  const nav = useNavigate({ from: "/templates/" })
+  const librariesOpen = signedIn && search.tab === "libraries"
   const query = useDeferredValue(search.query ?? "")
   const shelfState = useQuery({
     queryKey: ["templates", "shelf"],
@@ -105,6 +112,7 @@ export function Templates() {
             <TemplateArtifactCard
               key={template.short_id}
               template={template}
+              signedIn={signedIn}
               copying={copyMut.isPendingFor(template.short_id)}
               onCopy={() => copyMut.mutate(template.short_id)}
               onAsk={() => setAgentTarget(targetFromArtifact(template))}
@@ -114,31 +122,33 @@ export function Templates() {
       </section>
     ) : null
 
-  return (
+  const page = (
     <PageShell width="wide" className="flex flex-col gap-6">
       <PageHeader
         title="Templates"
         subtitle="Start from an artifact someone finished. Make a copy, or hand it to your agent."
         actions={
-          <>
-            <Button
-              variant="outline"
-              data-testid="templates-create-existing"
-              onClick={() => {
-                setSourceArtifactError("")
-                void nav({ search: { ...search, derive: true } })
-              }}
-            >
-              <Icon name="derive" /> Start from an artifact
-            </Button>
-            <Button data-testid="templates-new-blank" onClick={() => nav({ to: "/new" })}>
-              <Icon name="plus" /> Blank artifact
-            </Button>
-          </>
+          signedIn ? (
+            <>
+              <Button
+                variant="outline"
+                data-testid="templates-create-existing"
+                onClick={() => {
+                  setSourceArtifactError("")
+                  void nav({ search: { ...search, derive: true } })
+                }}
+              >
+                <Icon name="derive" /> Start from an artifact
+              </Button>
+              <Button data-testid="templates-new-blank" onClick={() => nav({ to: "/new" })}>
+                <Icon name="plus" /> Blank artifact
+              </Button>
+            </>
+          ) : undefined
         }
       />
 
-      {(TEMPLATE_LIBRARIES_ENABLED || librariesOpen) && (
+      {signedIn && (TEMPLATE_LIBRARIES_ENABLED || librariesOpen) && (
         <Tabs
           value={librariesOpen ? "libraries" : "artifacts"}
           onValueChange={(value) => setTab(value as TemplateTab)}
@@ -163,7 +173,7 @@ export function Templates() {
         />
       ) : null}
 
-      {search.derive && (
+      {signedIn && search.derive && (
         <DeriveSource
           autoFocus={!!search.derive}
           onUse={(artifact) => {
@@ -214,7 +224,9 @@ export function Templates() {
               description={
                 query
                   ? "Try a broader word or clear the search."
-                  : "Tag any artifact “template” and it appears here for you; show it in the workspace library and teammates see it too. Public ones show up for everyone."
+                  : signedIn
+                    ? "Tag any artifact “template” and it appears here for you; show it in the workspace library and teammates see it too. Public ones show up for everyone."
+                    : "No public templates yet. Sign in to tag your own."
               }
               action={
                 query ? (
@@ -244,4 +256,6 @@ export function Templates() {
       />
     </PageShell>
   )
+
+  return signedIn ? page : <PublicFrame returnTo="/templates">{page}</PublicFrame>
 }
