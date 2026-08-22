@@ -1,10 +1,12 @@
 import { zipSync } from "fflate"
 import { describe, expect, it } from "vitest"
+import { publishAdvisories } from "../src/advisories"
 import { MODEL_FAMILY_TIERS, tierForModelFamily } from "../src/agent-routing"
 import { sha256Hex } from "../src/hash"
 import { renderLinkedBundle, validateLinkedBundle } from "../src/linked-bundle"
 import type { ArtifactRecord, BlobStore, MetaStore, NewArtifact, NewVersion } from "../src/ports"
 import { artifactUrl, looksLikeHtmlDocument, type PublishInput, publish } from "../src/publish"
+import { previewWorkflow, workflowDefinitionOf } from "../src/workflow"
 
 // publish() stores content then writes the artifact/version. The
 // interesting, security-relevant logic is storeContent's bundle handling (zip
@@ -90,6 +92,115 @@ const bundle = (files: Record<string, string>, over: Partial<PublishInput> = {})
   ...over,
 })
 
+const workflowPage = (mutate?: (workflow: Record<string, unknown>) => void): string => {
+  const linked = {
+    schema: "derive.linked-bundle/v1",
+    purpose: "Publish a weekly brief after product review",
+    members: [{ id: "brief", ref: "abc12345", label: "Signal brief" }],
+    diagrams: [
+      {
+        id: "weekly-brief",
+        title: "Weekly brief",
+        type: "graph",
+        nodes: [
+          { id: "research", label: "Research signals" },
+          { id: "review", label: "Product review" },
+          { id: "publish", label: "Publish brief", member: "brief" },
+        ],
+        edges: [
+          { from: "research", to: "review" },
+          { from: "review", to: "research", label: "revise" },
+          { from: "review", to: "publish", label: "approved" },
+        ],
+      },
+    ],
+  }
+  const workflow: Record<string, unknown> = {
+    schema: "derive.workflow/v1",
+    purpose: "Publish a weekly brief after product review",
+    forbidden: ["Publish without approval"],
+    diagrams: [
+      {
+        id: "weekly-brief",
+        entry: "research",
+        nodes: [
+          {
+            id: "research",
+            kind: "context",
+            context_ref: "signal-researcher",
+            instruction: "Produce this week's evidence-backed brief.",
+            result: "A cited draft brief",
+          },
+          {
+            id: "review",
+            kind: "human",
+            decision: "Approve or request one revision",
+            options: ["approve", "revise"],
+            resume: "The product lead chooses an option",
+          },
+          {
+            id: "publish",
+            kind: "context",
+            context_ref: "brief-publisher",
+            instruction: "Publish the approved brief.",
+            result: "A published Derive artifact",
+            terminal: true,
+            effects: [
+              {
+                kind: "write",
+                description: "Publish the approved brief",
+                gate: "human",
+                approval_ref: "review",
+              },
+            ],
+          },
+        ],
+        routes: [
+          { from: "research", to: "review", when: "always" },
+          { from: "review", to: "research", when: "revise" },
+          { from: "review", to: "publish", when: "approve" },
+        ],
+        loops: [
+          {
+            id: "brief-repair",
+            nodes: ["research", "review"],
+            goal: "Reach an approvable brief",
+            evaluate: "Check evidence, clarity, and scope",
+            stop: {
+              max_attempts: 2,
+              stagnation_limit: 1,
+              max_minutes: 20,
+              human_stop: "The product lead stops or changes the brief",
+            },
+          },
+        ],
+        scenarios: [
+          {
+            id: "expected",
+            kind: "expected",
+            path: ["research", "review", "publish"],
+            outcome: "Approved brief is published",
+          },
+          {
+            id: "failure",
+            kind: "failure",
+            path: ["research"],
+            outcome: "Failed context session is visible and the run stops",
+          },
+          {
+            id: "revision",
+            kind: "human",
+            path: ["research", "review", "research", "review", "publish"],
+            outcome: "One revision lands before approval",
+          },
+        ],
+      },
+    ],
+  }
+  mutate?.(workflow)
+  return `<!doctype html><html><body><a href="/artifacts/abc12345">Signal brief</a><script type="application/derive-facts" data-fact="bundle-manifest">${JSON.stringify(linked)}</script><script type="application/derive-facts" data-fact="workflow-definition">${JSON.stringify(workflow)}</script></body></html>`
+}
+
 describe("publish: single file", () => {
   it("creates an artifact + first version, titled from the filename", async () => {
     const meta = makeMeta()
@@ -134,6 +245,100 @@ describe("publish: single file", () => {
     expect(artifact.link_role).toBe("viewer")
     expect(artifact.listed).toBe("public")
     expect(version.author).toBe("amy")
+  })
+})
+
+describe("workflow preview contract", () => {
+  it("explains one valid graph while keeping the linked bundle as visible truth", () => {
+    const preview = previewWorkflow(workflowPage())
+    expect(preview.status).toBe("ready")
+    expect(preview.purpose).toBe("Publish a weekly brief after product review")
+    expect(preview.diagrams[0]).toMatchObject({
+      id: "weekly-brief",
+      title: "Weekly brief",
+      will_do: [
+        "Research signals — A cited draft brief",
+        "Publish brief — A published Derive artifact",
+      ],
+      will_pause: [
+        "Product review — Approve or request one revision; resume: The product lead chooses an option",
+      ],
+      can_repeat: [
+        "Reach an approvable brief — at most 2 attempts; human stop: The product lead stops or changes the brief",
+      ],
+      side_effects: ["Publish the approved brief — authorized at Product review"],
+    })
+    expect(preview.cannot_do).toEqual(["Publish without approval"])
+    expect(workflowDefinitionOf(workflowPage())?.errors).toEqual([])
+  })
+
+  it("blocks unbounded cycles and unsafe effects in the same Preview result", () => {
+    const source = workflowPage((workflow) => {
+      const diagram = (workflow.diagrams as Array<Record<string, unknown>>)[0]
+      if (!diagram) return
+      diagram.loops = []
+      const nodes = diagram.nodes as Array<Record<string, unknown>>
+      const publishNode = nodes.find((node) => node.id === "publish")
+      if (publishNode)
+        publishNode.effects = [
+          { kind: "write", description: "Publish the approved brief", gate: "none" },
+        ]
+    })
+    const preview = previewWorkflow(source)
+    expect(preview.status).toBe("needs-changes")
+    expect(preview.errors).toEqual(
+      expect.arrayContaining([expect.stringContaining("WF-04"), expect.stringContaining("WF-05")]),
+    )
+    expect(publishAdvisories(source, "text/x-derive-linked-bundle")).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("Workflow preview: WF-04"),
+        expect.stringContaining("Workflow preview: WF-05"),
+      ]),
+    )
+  })
+
+  it("blocks drift between visible edges and executable routes", () => {
+    const source = workflowPage((workflow) => {
+      const diagram = (workflow.diagrams as Array<Record<string, unknown>>)[0]
+      if (!diagram) return
+      diagram.routes = (diagram.routes as Array<Record<string, unknown>>).filter(
+        (route) => route.to !== "publish",
+      )
+    })
+    const preview = previewWorkflow(source)
+    expect(preview.status).toBe("needs-changes")
+    expect(preview.errors).toContain('WF-02 a visible edge in "weekly-brief" has no workflow route')
+  })
+
+  it("requires a runnable entry and a loop policy covering the actual cycle", () => {
+    const source = workflowPage((workflow) => {
+      const diagram = (workflow.diagrams as Array<Record<string, unknown>>)[0]
+      if (!diagram) return
+      diagram.entry = "missing"
+      const loops = diagram.loops as Array<Record<string, unknown>>
+      if (loops[0]) loops[0].nodes = ["publish"]
+    })
+    const preview = previewWorkflow(source)
+    expect(preview.status).toBe("needs-changes")
+    expect(preview.errors).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("requires an entry node"),
+        expect.stringContaining("has no covering bounded loop policy"),
+      ]),
+    )
+  })
+
+  it("does not treat an unknown human response as approval through fallback", () => {
+    const source = workflowPage((workflow) => {
+      const diagram = (workflow.diagrams as Array<Record<string, unknown>>)[0]
+      if (!diagram) return
+      const routes = diagram.routes as Array<Record<string, unknown>>
+      const approval = routes.find((route) => route.to === "publish")
+      if (approval) approval.fallback = true
+    })
+    expect(previewWorkflow(source).errors).toContain(
+      'WF-02 human node "review" routes must match its options exactly and omit fallback',
+    )
   })
 })
 

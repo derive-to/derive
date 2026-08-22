@@ -679,10 +679,24 @@ const DERIVE_SKILL_PATHS = [
   "references/compatibility.md",
 ]
 
+const WORKFLOW_SKILL_PATHS = [
+  "SKILL.md",
+  "agents/openai.yaml",
+  "references/protocol.md",
+  "references/runtime.md",
+]
+
 const deriveSkillFiles = Object.fromEntries(
   DERIVE_SKILL_PATHS.map((path) => [
     path,
     readFileSync(new URL(`../skills/derive/${path}`, import.meta.url), "utf8"),
+  ]),
+)
+
+const workflowSkillFiles = Object.fromEntries(
+  WORKFLOW_SKILL_PATHS.map((path) => [
+    path,
+    readFileSync(new URL(`../skills/derive-workflows/${path}`, import.meta.url), "utf8"),
   ]),
 )
 
@@ -691,9 +705,13 @@ const deriveSkillFiles = Object.fromEntries(
  *  discovery locations. */
 export function agentScaffoldFiles() {
   const files = {}
-  for (const root of [".agents/skills/derive", ".claude/skills/derive"])
-    for (const [path, contents] of Object.entries(deriveSkillFiles))
-      files[`${root}/${path}`] = contents
+  for (const harnessRoot of [".agents/skills", ".claude/skills"])
+    for (const [skill, skillFiles] of [
+      ["derive", deriveSkillFiles],
+      ["derive-workflows", workflowSkillFiles],
+    ])
+      for (const [path, contents] of Object.entries(skillFiles))
+        files[`${harnessRoot}/${skill}/${path}`] = contents
   return {
     ...files,
     ".mcp.json": `${JSON.stringify(MCP_CONFIG, null, 2)}\n`,
@@ -910,7 +928,12 @@ export function scaffold(dir = ".", title = "My artifact", template = "md") {
   )
 }
 
-const AGENT_SKILL_PREFIXES = [".agents/skills/derive/", ".claude/skills/derive/"]
+const AGENT_SKILL_PREFIXES = [
+  ".agents/skills/derive/",
+  ".claude/skills/derive/",
+  ".agents/skills/derive-workflows/",
+  ".claude/skills/derive-workflows/",
+]
 const isAgentSkillFile = (name) => AGENT_SKILL_PREFIXES.some((prefix) => name.startsWith(prefix))
 
 /** Install the native skill, MCP configs, and managed instruction block into an

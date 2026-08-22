@@ -48,7 +48,10 @@ describe("scaffold", () => {
       expect.arrayContaining([
         ".agents/skills/derive/SKILL.md",
         ".agents/skills/derive/agents/openai.yaml",
+        ".agents/skills/derive-workflows/SKILL.md",
+        ".agents/skills/derive-workflows/references/protocol.md",
         ".claude/skills/derive/SKILL.md",
+        ".claude/skills/derive-workflows/SKILL.md",
         ".codex/config.toml",
         ".mcp.json",
         "AGENTS.md",
@@ -87,6 +90,9 @@ describe("scaffold", () => {
     expect(readFileSync(join(d, ".agents/skills/derive/agents/openai.yaml"), "utf8")).toContain(
       'url: "https://derive.to/mcp"',
     )
+    const workflowSkill = readFileSync(join(d, ".agents/skills/derive-workflows/SKILL.md"), "utf8")
+    expect(workflowSkill).toContain("name: derive-workflows")
+    expect(workflowSkill).toContain("Preview includes structural validation")
   })
 
   it("installs the agent on-ramp alone and never clobbers an existing config", () => {
@@ -98,7 +104,7 @@ describe("scaffold", () => {
     expect(created).toContain(".codex/config.toml")
     expect(skipped).toContain(".mcp.json")
     expect(readFileSync(join(d, ".mcp.json"), "utf8")).toBe('{"mine":true}\n')
-    expect(Object.keys(agentScaffoldFiles())).toHaveLength(10)
+    expect(Object.keys(agentScaffoldFiles())).toHaveLength(18)
 
     const skillPath = join(d, ".agents/skills/derive/SKILL.md")
     writeFileSync(skillPath, "locally changed\n")

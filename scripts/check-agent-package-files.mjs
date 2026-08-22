@@ -13,6 +13,10 @@ const packages = [
       "skills/derive/agents/openai.yaml",
       "skills/derive/references/connect.md",
       "skills/derive/references/compatibility.md",
+      "skills/derive-workflows/SKILL.md",
+      "skills/derive-workflows/agents/openai.yaml",
+      "skills/derive-workflows/references/protocol.md",
+      "skills/derive-workflows/references/runtime.md",
     ],
   },
   {

@@ -58,9 +58,24 @@ suggests the change in a comment for a person to apply.
 derive agent setup
 ```
 
-This installs Derive's skill in the native Codex and Claude project locations and
-adds their project MCP configuration. Run `derive agent setup --update` to refresh the
-packaged Derive skill without replacing your MCP configuration.
+This installs Derive's artifact and workflow skills in the native Codex and Claude project
+locations and adds their project MCP configuration. Run `derive agent setup --update` to refresh
+the packaged skills without replacing your MCP configuration.
+
+## Preview a graph or bounded loop
+
+The workflow skill authors a visible `bundle-manifest` plus a companion
+`workflow-definition` fact. Preview explains the likely paths and runs structural/scenario checks
+as one step; there is no separate validation gate.
+
+```bash
+derive workflow preview workflow.html
+derive workflow preview workflow.html --json
+```
+
+A ready preview exits `0`. A preview with blockers exits `1` and names the `WF-*` repairs. Preview
+does not execute nodes, call tools, or mutate external systems; the connected Codex or Claude
+harness runs approved work through Derive context sessions.
 
 ## Hosted and self-hosted servers
 

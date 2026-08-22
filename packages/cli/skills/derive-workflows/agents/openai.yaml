@@ -1,0 +1,16 @@
+interface:
+  display_name: "Derive Workflows"
+  short_description: "Build and preview graphs and bounded loops"
+  brand_color: "#6B46FF"
+  default_prompt: "Use $derive-workflows to turn this outcome into a previewable graph or bounded loop."
+
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "derive"
+      description: "Derive MCP for artifacts, contexts, review, and workspace tools"
+      transport: "streamable_http"
+      url: "https://derive.to/mcp"
+
+policy:
+  allow_implicit_invocation: true
