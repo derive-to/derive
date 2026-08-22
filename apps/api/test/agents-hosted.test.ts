@@ -94,6 +94,13 @@ describe("hostable agents + workspace agent settings", () => {
       ...(await meta.getOrgSettings("default")),
       brandprint: { collectionId: "col_bp", profileId: short_id },
     })
+    await meta.setUserNotificationPref({
+      id: "unp-brand-review-email",
+      org_id: "default",
+      user_id: owner.id,
+      prefs: JSON.stringify({ reviewEmail: true }),
+      created_at: new Date().toISOString(),
+    })
     const agent = await createAgent("Stylist", "editor")
     const wrote = await publishAs(app, "<h1>new voice</h1>", {}, bearer(agent.token), short_id)
     expect(wrote.status).toBeLessThan(300)
@@ -102,8 +109,7 @@ describe("hostable agents + workspace agent settings", () => {
     const pending = rounds.find((r) => r.state === "pending")
     expect(pending).toBeTruthy()
     expect(pending?.requested_for).toBe(owner.id)
-    // A DETACHED request interrupts the human it acts for — the positive twin of the
-    // attended lane's no-self-email rule: the review email is enqueued here.
+    // The reviewer explicitly opted into email above, so this review request uses it.
     const far = new Date(Date.now() + 10_000_000).toISOString()
     const due = await meta.claimDueDeliveries(far, 50, far)
     expect(due.some((d) => d.kind === "email" && d.event_type === "review.requested")).toBe(true)

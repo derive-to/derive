@@ -2130,6 +2130,10 @@
             "type": "boolean",
             "description": "The caller's \"DM me for interrupts\" preference (mentions, review requests, shares)"
           },
+          "review_email": {
+            "type": "boolean",
+            "description": "The caller's opt-in preference for review-request email (default false)"
+          },
           "linked": {
             "type": "boolean",
             "description": "Whether the caller has linked their Slack identity for the connected team"
@@ -2141,6 +2145,7 @@
           "team_name",
           "needs_reauth",
           "slack_dm",
+          "review_email",
           "linked"
         ]
       },

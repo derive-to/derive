@@ -63,7 +63,7 @@ import {
   threadStateBlocks,
 } from "../lib/slack-comments"
 import { flagSlackReauth, resolveBotToken } from "../lib/slack-delivery"
-import { enqueueSlackDm, wantsSlackDm } from "../lib/slack-dm"
+import { enqueueSlackDm, wantsReviewEmail, wantsSlackDm } from "../lib/slack-dm"
 import { isVerifiedLink, linkToActMessage } from "../lib/slack-identity"
 import { handleSlackMention } from "../lib/slack-mention"
 import {
@@ -552,6 +552,9 @@ export const slackRoutes = (ctx: AppContext) => {
         .describe(
           'The caller\'s "DM me for interrupts" preference (mentions, review requests, shares)',
         ),
+      review_email: z
+        .boolean()
+        .describe("The caller's opt-in preference for review-request email (default false)"),
       linked: z
         .boolean()
         .describe("Whether the caller has linked their Slack identity for the connected team"),
@@ -1624,16 +1627,23 @@ export const slackRoutes = (ctx: AppContext) => {
         team_name: install?.team_name ?? null,
         needs_reauth: install?.needs_reauth === 1,
         slack_dm: wantsSlackDm(pref?.prefs),
+        review_email: wantsReviewEmail(pref?.prefs),
         linked,
       })
     },
   )
 
-  // Toggle the caller's "DM me for interrupts" preference.
+  // Update the caller's personal delivery preferences. Slack defaults on; review email
+  // defaults off and still sits behind the workspace-wide email master switch.
   app.patch("/v1/slack/prefs", async (c) => {
     const me = await requireUser(c)
     if (me instanceof Response) return me
-    const b = await readJson(c, z.object({ slack_dm: z.boolean() }))
+    const b = await readJson(
+      c,
+      z
+        .object({ slack_dm: z.boolean().optional(), review_email: z.boolean().optional() })
+        .refine((value) => value.slack_dm !== undefined || value.review_email !== undefined),
+    )
     if (b instanceof Response) return b
     const org = await activeWorkspace(c)
     const cur = await meta.getUserNotificationPref(org, me.id)
@@ -1641,7 +1651,11 @@ export const slackRoutes = (ctx: AppContext) => {
     try {
       if (cur) existing = JSON.parse(cur.prefs) as Record<string, unknown>
     } catch {}
-    const prefs = { ...existing, slackDm: b.slack_dm }
+    const prefs = {
+      ...existing,
+      ...(b.slack_dm !== undefined ? { slackDm: b.slack_dm } : {}),
+      ...(b.review_email !== undefined ? { reviewEmail: b.review_email } : {}),
+    }
     await meta.setUserNotificationPref({
       id: cur?.id ?? newId("unp"),
       org_id: org,
@@ -1649,7 +1663,10 @@ export const slackRoutes = (ctx: AppContext) => {
       prefs: JSON.stringify(prefs),
       created_at: cur?.created_at ?? new Date().toISOString(),
     })
-    return c.json({ slack_dm: b.slack_dm })
+    return c.json({
+      slack_dm: wantsSlackDm(JSON.stringify(prefs)),
+      review_email: wantsReviewEmail(JSON.stringify(prefs)),
+    })
   })
 
   // Send the caller a test DM (verifies their account email matches a Slack account +

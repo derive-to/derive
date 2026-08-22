@@ -20,9 +20,10 @@
 // stable short id and never a slug.
 
 import type { ArtifactRecord, CommentRecord, UnfurlInfo } from "@derive/core"
-import { unfurlDescription } from "@derive/core"
+import { artifactUrl, unfurlDescription } from "@derive/core"
 import { type ArtifactStatus, agoLabel, statusPhrase } from "./artifact-status"
 import { commentDeepLink } from "./comments"
+import { type ReviewSummary, reviewDeltaLabel } from "./review-summary"
 import { mrkdwnBody } from "./slack-cards"
 import { encodeQuestionReply, SLACK_QUESTION_REPLY_ACTION } from "./slack-question"
 
@@ -57,6 +58,7 @@ export const DERIVE_ENTITY_TYPE = "artifact"
  * namespace: a Slack DM about one question should aggregate its replies, not every discussion
  * that happens to reference the artifact. */
 export const DERIVE_COMMENT_THREAD_ENTITY_TYPE = "comment_thread"
+export const DERIVE_REVIEW_REQUEST_ENTITY_TYPE = "review_request"
 
 /** Work Object metadata for one open Derive conversation. Used on the first personal mention
  * DM and for a pasted deep link to an exact question. Subsequent activity is a normal Slack
@@ -156,6 +158,59 @@ const reviewActions = (artifactId: string) => ({
     },
   ],
 })
+
+/** A personal review request as a native Slack Work Object. The structural diff is short on
+ * purpose: Slack remains a useful place to decide, while the canonical work stays in Derive. */
+export const reviewNotificationEntity = (args: {
+  baseUrl: string
+  artifact: ArtifactRecord
+  roundId: string
+  requestedBy: string
+  summary: ReviewSummary
+  iconUrl: string
+}): Record<string, unknown> => {
+  const link = artifactUrl(args.baseUrl, args.artifact)
+  const shown = args.summary.changes ?? []
+  const remaining = Math.max(0, (args.summary.totalChanges ?? shown.length) - shown.length)
+  const lines = shown.slice(0, 2).map((change) => {
+    const marker = change.kind === "added" ? "+" : change.kind === "removed" ? "−" : "~"
+    const detail = change.after ?? change.before
+    return `*${marker} ${mrkdwnBody(change.title, 100)}*${detail ? ` — ${mrkdwnBody(detail, 180)}` : ""}`
+  })
+  if (remaining > 0) lines.push(`_${remaining} more ${remaining === 1 ? "change" : "changes"}_`)
+  const description = [
+    `*${mrkdwnBody(args.requestedBy, 100)} updated this work*`,
+    reviewDeltaLabel(args.summary),
+    args.summary.note ? `> ${mrkdwnBody(args.summary.note, 400)}` : null,
+    ...lines,
+  ]
+    .filter(Boolean)
+    .join("\n")
+  return {
+    url: link,
+    external_ref: { id: args.roundId, type: DERIVE_REVIEW_REQUEST_ENTITY_TYPE },
+    entity_type: "slack#/entities/content_item",
+    entity_payload: {
+      actions: reviewActions(args.artifact.id),
+      attributes: {
+        title: { text: args.artifact.title ?? args.artifact.short_id },
+        display_type: "Review",
+        product_name: "Derive",
+        product_icon: { url: args.iconUrl, alt_text: "Derive" },
+      },
+      fields: { description: { value: description, format: "markdown" } },
+      custom_fields: [
+        { key: "version", label: "Version", value: `v${args.summary.toVersion}`, type: "string" },
+        {
+          key: "changes",
+          label: "Changes",
+          value: reviewDeltaLabel(args.summary),
+          type: "string",
+        },
+      ],
+    },
+  }
+}
 
 export interface WorkObjectArgs {
   /** The URL exactly as pasted — Slack matches the unfurl back to the message by this, so it is
