@@ -380,8 +380,15 @@ describe("connected-channel event cards (publishes)", () => {
 })
 
 describe("review-request + share emails", () => {
-  it("an agent's review request emails the human it acts for", async () => {
+  it("emails an opted-in human when an agent requests their review", async () => {
     const { app, meta } = makeAuthedApp("fanout-review", [owner, editor], "editor")
+    await meta.setUserNotificationPref({
+      id: "unp-review-email",
+      org_id: "default",
+      user_id: owner.id,
+      prefs: JSON.stringify({ reviewEmail: true }),
+      created_at: new Date().toISOString(),
+    })
     const reg = await (
       await app.request("/v1/agents", jsonAs(as(owner.email), { name: "Scribe", role: "editor" }))
     ).json()
@@ -392,10 +399,10 @@ describe("review-request + share emails", () => {
     const emails = (await claim(meta)).filter((d) => d.kind === "email")
     expect(emails).toHaveLength(1)
     expect(emails[0]?.payload).toContain(owner.email)
-    expect(emails[0]?.payload).toContain("requested your review")
+    expect(emails[0]?.payload).toContain("updated")
   })
 
-  it("a human's own request_review never emails themselves", async () => {
+  it("does not email a reviewer who has not opted in", async () => {
     const { app, meta } = makeAuthedApp("fanout-review-self", [owner], "editor")
     const res = await pub(
       app,

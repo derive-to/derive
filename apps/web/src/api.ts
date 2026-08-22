@@ -1296,6 +1296,8 @@ export const api = {
     f("/v1/slack", { method: "DELETE", credentials: "include" }).then(() => undefined),
   setSlackDm: (slack_dm: boolean): Promise<{ slack_dm: boolean }> =>
     f("/v1/slack/prefs", { ...opts({ slack_dm }), method: "PATCH" }).then(j),
+  setReviewEmail: (review_email: boolean): Promise<{ slack_dm: boolean; review_email: boolean }> =>
+    f("/v1/slack/prefs", { ...opts({ review_email }), method: "PATCH" }).then(j),
   sendSlackTestDm: (): Promise<{ ok: boolean }> =>
     f("/v1/slack/test-dm", { ...opts({}), method: "POST" }).then(j),
   // Link is a redirect to /v1/slack/link (full-page navigation); only unlink is a fetch.

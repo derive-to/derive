@@ -12,18 +12,28 @@
 // (`agentPushFanout`) is shared for the same reason: one row per push, a review ask beats a
 // plain publish, and the delivery receipt becomes `opened_in_tab`.
 
-import { type ArtifactRecord, artifactUrl, type MetaStore, newId } from "@derive/core"
+import {
+  type ArtifactRecord,
+  artifactUrl,
+  type BlobStore,
+  type MetaStore,
+  newId,
+} from "@derive/core"
 import type { Backplane } from "../bus"
 import type { WebhookEvent } from "../events"
+import { log } from "../log"
 import { enqueueChannelDelivery } from "../webhooks"
 import { buildReviewEmail } from "./email"
-import { enqueueSlackReviewRequestedDm } from "./slack-dm"
+import { buildReviewSummary, type ReviewSummary } from "./review-summary"
+import { enqueueSlackReviewRequestedDm, wantsReviewEmail } from "./slack-dm"
 
 export interface ReviewRequestDeps {
   meta: MetaStore
+  blobs: BlobStore
   bus: Backplane
   baseUrl: string
   notify: (a: ArtifactRecord, event: WebhookEvent, data: Record<string, unknown>) => Promise<void>
+  pokeWebhooks?: () => void
 }
 
 export interface ReviewRequestInput {
@@ -42,11 +52,6 @@ export interface ReviewRequestInput {
    *  acting, else the acting user; null when neither is known. The card's `author` is
    *  always `requestedByName`. */
   actorId: string | null
-  /** Suppress the reviewer's email/DM when they ARE this user — nobody needs an interrupt
-   *  about a request that is their own action. Attended surfaces pass the acting human's id
-   *  (their click or their conversational edit); a detached executor passes null, because
-   *  interrupting the human it acts for is the point. */
-  selfId?: string | null
 }
 
 /** Open the round and run the whole reviewer fan-out. Returns the round id. */
@@ -70,31 +75,66 @@ export const openReviewRound = async (
     author: input.requestedByName,
     actor_id: input.actorId,
   })
-  // The review request is the one event that earns an interrupt: the loop is blocked on the
-  // reviewer, who may have no tab open. Never for your own request on yourself.
-  if (input.reviewer !== input.selfId) {
-    if ((await deps.meta.getOrgSettings(artifact.org_id)).emailNotifications) {
-      const [r] = await deps.meta.getUsers([input.reviewer])
-      if (r?.email)
-        await enqueueChannelDelivery(deps.meta, "email", "review.requested", {
-          to: r.email,
-          toName: r.name ?? undefined,
-          ...buildReviewEmail(deps.baseUrl, artifact, {
-            requestedBy: input.requestedByName,
-            version: input.version,
-            note: input.note ?? null,
-          }),
-        })
-    }
-    // Same interrupt, mirrored to Slack (independent of the email gate above — gated on
-    // the reviewer's own Slack-DM preference instead).
-    await enqueueSlackReviewRequestedDm(
-      { meta: deps.meta, baseUrl: deps.baseUrl },
-      artifact,
-      { requestedBy: input.requestedByName, version: input.version, note: input.note ?? null },
-      input.reviewer,
+  let summary: ReviewSummary
+  try {
+    summary = await buildReviewSummary(
+      deps.meta,
+      deps.blobs,
+      artifact.id,
+      input.version,
+      input.note,
     )
+  } catch (err) {
+    log.warn("review summary could not be built; sending the review request without a diff", {
+      artifact: artifact.id,
+      version: input.version,
+      error: err instanceof Error ? err.message : String(err),
+    })
+    summary = {
+      fromVersion: input.version > 1 ? input.version - 1 : null,
+      toVersion: input.version,
+      added: 0,
+      removed: 0,
+      changes: [],
+      totalChanges: 0,
+      highlights: [],
+      note: input.note ?? null,
+    }
   }
+  const [reviewer, pref, orgSettings] = await Promise.all([
+    deps.meta.getUsers([input.reviewer]).then(([user]) => user),
+    deps.meta.getUserNotificationPref(artifact.org_id, input.reviewer),
+    deps.meta.getOrgSettings(artifact.org_id),
+  ])
+  // Slack is the default review surface, including attended Derive sessions. It now carries
+  // enough of the diff to be useful rather than merely echoing that a request exists.
+  await enqueueSlackReviewRequestedDm(
+    { meta: deps.meta, baseUrl: deps.baseUrl },
+    artifact,
+    {
+      requestedBy: input.requestedByName,
+      roundId: round.id,
+      version: input.version,
+      note: input.note ?? null,
+      summary,
+    },
+    input.reviewer,
+  )
+  // Review email requires both the workspace master gate and an explicit personal opt-in.
+  if (orgSettings.emailNotifications && wantsReviewEmail(pref?.prefs) && reviewer?.email)
+    await enqueueChannelDelivery(deps.meta, "email", "review.requested", {
+      to: reviewer.email,
+      toName: reviewer.name ?? undefined,
+      ...buildReviewEmail(deps.baseUrl, artifact, {
+        requestedBy: input.requestedByName,
+        version: input.version,
+        note: input.note ?? null,
+        summary,
+      }),
+    })
+  // notify() poked before these direct outbox rows existed. Wake the drainer again so Slack
+  // arrives immediately instead of waiting for the next hosted cron tick.
+  deps.pokeWebhooks?.()
   return round.id
 }
 
