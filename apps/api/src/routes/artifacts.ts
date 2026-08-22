@@ -949,15 +949,18 @@ export const artifactRoutes = (ctx: AppContext) => {
           (await meta.listMemberships(org)).find((m) => m.role === "owner")?.user_id ??
           null
         if (reviewer) {
-          await openReviewRound({ meta, bus, baseUrl: deps.baseUrl, notify }, artifact, {
-            reviewer,
-            requestedById: actor?.id ?? "agent",
-            requestedByName: actor?.name ?? "An agent",
-            version: version.n,
-            note: str(body["review_note"]) ?? null,
-            actorId: agentPrincipal?.id ?? actor?.id ?? null,
-            selfId: actor?.id ?? null,
-          })
+          await openReviewRound(
+            { meta, blobs, bus, baseUrl: deps.baseUrl, notify, pokeWebhooks: deps.pokeWebhooks },
+            artifact,
+            {
+              reviewer,
+              requestedById: actor?.id ?? "agent",
+              requestedByName: actor?.name ?? "An agent",
+              version: version.n,
+              note: str(body["review_note"]) ?? null,
+              actorId: agentPrincipal?.id ?? actor?.id ?? null,
+            },
+          )
           roundCreated = true
         }
       }
@@ -972,14 +975,17 @@ export const artifactRoutes = (ctx: AppContext) => {
         onBehalf &&
         agentSettings?.brandprint?.profileId === artifact.short_id
       ) {
-        await openReviewRound({ meta, bus, baseUrl: deps.baseUrl, notify }, artifact, {
-          reviewer: onBehalf,
-          requestedById: agentPrincipal.id,
-          requestedByName: agentPrincipal.name,
-          version: version.n,
-          actorId: agentPrincipal.id,
-          selfId: null,
-        })
+        await openReviewRound(
+          { meta, blobs, bus, baseUrl: deps.baseUrl, notify, pokeWebhooks: deps.pokeWebhooks },
+          artifact,
+          {
+            reviewer: onBehalf,
+            requestedById: agentPrincipal.id,
+            requestedByName: agentPrincipal.name,
+            version: version.n,
+            actorId: agentPrincipal.id,
+          },
+        )
         roundCreated = true
       }
       // The MCP loop over HTTP: an AGENT-credentialed publish (a registered

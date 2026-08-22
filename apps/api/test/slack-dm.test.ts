@@ -6,6 +6,8 @@ import {
   newId,
 } from "@derive/core"
 import { afterEach, describe, expect, it, vi } from "vitest"
+import { buildReviewEmail } from "../src/lib/email"
+import { summarizeReviewDocuments } from "../src/lib/review-summary"
 import { postWithRecovery } from "../src/lib/slack-delivery"
 import {
   enqueueSlackArtifactMentionDms,
@@ -13,6 +15,8 @@ import {
   enqueueSlackReviewRequestedDm,
   enqueueSlackShareDm,
   makeSlackDmSender,
+  wantsReviewEmail,
+  wantsSlackDm,
 } from "../src/lib/slack-dm"
 import { quotaApp, type TestUser } from "./helpers"
 
@@ -215,23 +219,115 @@ describe("enqueueSlackReviewRequestedDm (gate)", () => {
     await enqueueSlackReviewRequestedDm(
       { meta, baseUrl },
       artifact,
-      { requestedBy: "Ada", version: 3, note: "please check the intro" },
+      {
+        requestedBy: "Ada",
+        roundId: "rr-review-1",
+        version: 3,
+        note: "please check the intro",
+        summary: {
+          fromVersion: 2,
+          toVersion: 3,
+          added: 4,
+          removed: 1,
+          changes: [
+            {
+              kind: "updated",
+              title: "Approval flow",
+              added: 4,
+              removed: 1,
+              before: "Publish immediately after approval.",
+              after: "Open the work and leave contextual feedback.",
+            },
+          ],
+          totalChanges: 4,
+          highlights: [],
+          note: "please check the intro",
+        },
+      },
       linked.id,
     )
     const dms = (await claim(meta)).filter((d) => d.kind === "slack_dm")
     expect(dms).toHaveLength(1)
     const payload = JSON.parse(dms[0]?.payload ?? "{}")
     expect(payload.userId).toBe(linked.id)
-    expect(payload.text).toContain("Ada requested your review")
+    expect(payload.text).toContain("Ada updated")
+    expect(JSON.stringify(payload.blocks)).toContain("Approval flow")
+    expect(JSON.stringify(payload.blocks)).toContain("3 more changes")
+    expect(payload.metadata.entities[0].entity_payload.attributes.display_type).toBe("Review")
+    expect(payload.metadata.entities[0].external_ref).toEqual({
+      id: "rr-review-1",
+      type: "review_request",
+    })
 
     await optOut(meta, optout.id)
     await enqueueSlackReviewRequestedDm(
       { meta, baseUrl },
       artifact,
-      { requestedBy: "Ada", version: 3 },
+      {
+        requestedBy: "Ada",
+        roundId: "rr-review-2",
+        version: 3,
+        summary: {
+          fromVersion: 2,
+          toVersion: 3,
+          added: 0,
+          removed: 0,
+          highlights: [],
+          note: null,
+        },
+      },
       optout.id,
     )
     expect((await claim(meta)).filter((d) => d.kind === "slack_dm")).toHaveLength(0)
+  })
+})
+
+describe("notification preferences", () => {
+  it("defaults Slack on and review email off", () => {
+    expect(wantsSlackDm(undefined)).toBe(true)
+    expect(wantsReviewEmail(undefined)).toBe(false)
+    expect(wantsReviewEmail("not-json")).toBe(false)
+    expect(wantsReviewEmail(JSON.stringify({ reviewEmail: true }))).toBe(true)
+  })
+})
+
+describe("review summary", () => {
+  it("turns HTML and Mermaid changes into ranked, bounded structural cards", () => {
+    const summary = summarizeReviewDocuments({
+      before: `<h1>Checkout</h1><h2>Flow</h2><pre class="mermaid">graph LR\nCart-->|Pay|Receipt</pre><h2>Legacy</h2><p>Publish immediately after approval.</p>`,
+      after: `<h1>Checkout</h1><h2>Flow</h2><pre class="mermaid">graph LR\nCart-->|Review|Approval\nApproval-->|Pay|Receipt</pre><h2>Review controls</h2><p>Open the work and leave contextual feedback.</p><h2>Audit trail</h2><p>Every decision records its author and time.</p>`,
+      beforeContentType: "text/html",
+      afterContentType: "text/html",
+      fromVersion: 6,
+      toVersion: 7,
+    })
+    expect(summary.added).toBeGreaterThan(0)
+    expect(summary.removed).toBeGreaterThan(0)
+    expect(summary.changes?.length).toBeLessThanOrEqual(3)
+    expect(summary.totalChanges).toBeGreaterThanOrEqual(summary.changes?.length ?? 0)
+    expect(JSON.stringify(summary)).toContain("Review controls")
+    expect(JSON.stringify(summary)).not.toContain("<h2>")
+  })
+
+  it("keeps the email compact and puts the open action above and below the diff", async () => {
+    const meta = make("review-email-render")
+    const artifact = await makeArtifact(meta)
+    const summary = summarizeReviewDocuments({
+      before: "# Intro\nOld introduction.\n# Flow\nOld flow.\n# Legacy\nRemove this.\n",
+      after:
+        "# Intro\nNew introduction.\n# Flow\nNew flow.\n# Diagram\nDraft → Review → Done.\n# Audit\nEvery choice is recorded.\n",
+      fromVersion: 2,
+      toVersion: 3,
+    })
+    const email = buildReviewEmail(baseUrl, artifact, {
+      requestedBy: "Ada",
+      version: 3,
+      summary: { ...summary, totalChanges: 6 },
+    })
+    expect(email.subject).toContain("updated Doc")
+    expect(email.html).toContain('<meta charset="utf-8"')
+    expect(email.html.match(/>Open the work</g)).toHaveLength(2)
+    expect(email.html).toContain("+ 3 more changes")
   })
 })
 

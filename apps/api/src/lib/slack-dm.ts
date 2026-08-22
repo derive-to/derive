@@ -22,10 +22,16 @@ import {
 import type { ChannelSendResult } from "../webhooks"
 import { enqueueChannelDelivery } from "../webhooks"
 import { commentDeepLink, type Mention, previewOf } from "./comments"
+import { type ReviewSummary, reviewDeltaLabel } from "./review-summary"
 import { openSlackDm, resolveSlackUserIdByEmail } from "./slack"
 import { actionButton, actions, mrkdwnBody, mrkdwnLabel, openButton, section } from "./slack-cards"
 import { postWithRecovery, resolveBotToken, slackFailure } from "./slack-delivery"
-import { commentThreadEntity, encodeReviewAction, SLACK_REVIEW_ACTION } from "./slack-work-object"
+import {
+  commentThreadEntity,
+  encodeReviewAction,
+  reviewNotificationEntity,
+  SLACK_REVIEW_ACTION,
+} from "./slack-work-object"
 
 /** The self-contained payload a slack_dm delivery carries. */
 interface SlackDmPayload {
@@ -33,6 +39,8 @@ interface SlackDmPayload {
   userId: string
   text: string
   blocks: unknown[]
+  /** Native Slack Work Object metadata. Blocks remain the graceful fallback. */
+  metadata?: Record<string, unknown>
   /** Present only for an @mention. It gives the delivery worker enough durable context to make
    *  the first DM a Work Object and to thread every later ping under that one root. */
   mention?: {
@@ -57,6 +65,17 @@ export const wantsSlackDm = (prefsJson: string | undefined): boolean => {
     return (JSON.parse(prefsJson) as { slackDm?: boolean }).slackDm !== false
   } catch {
     return true
+  }
+}
+
+/** Review email is deliberately opt-in. Workspace email remains the administrator's master
+ * gate, but an absent or malformed personal preference must never create inbox noise. */
+export const wantsReviewEmail = (prefsJson: string | undefined): boolean => {
+  if (!prefsJson) return false
+  try {
+    return (JSON.parse(prefsJson) as { reviewEmail?: boolean }).reviewEmail === true
+  } catch {
+    return false
   }
 }
 
@@ -150,13 +169,18 @@ export const enqueueSlackArtifactMentionDms = async (
   }
 }
 
-/** DM the human a review is blocked on — the one event that most deserves to interrupt
- *  (same rationale as buildReviewEmail): the loop is waiting on them and they may have no
- *  tab open. Never for your own request on yourself; caller already enforces that. */
+/** DM the human a review is blocked on. Slack defaults on because the message explains the
+ * change itself instead of merely announcing that a review exists. */
 export const enqueueSlackReviewRequestedDm = async (
   deps: { meta: MetaStore; baseUrl: string },
   artifact: ArtifactRecord,
-  round: { requestedBy: string; version: number; note?: string | null },
+  round: {
+    requestedBy: string
+    roundId: string
+    version: number
+    note?: string | null
+    summary: ReviewSummary
+  },
   reviewerId: string,
 ): Promise<void> => {
   const { meta, baseUrl } = deps
@@ -166,16 +190,31 @@ export const enqueueSlackReviewRequestedDm = async (
   if (!wantsSlackDm(pref?.prefs)) return
   const link = artifactUrl(baseUrl, artifact)
   const t = title(artifact)
+  const changes = round.summary.changes ?? []
+  const remaining = Math.max(0, (round.summary.totalChanges ?? changes.length) - changes.length)
+  const changeBlocks = changes.map((change) => {
+    const label =
+      change.kind === "added" ? "ADDED" : change.kind === "removed" ? "REMOVED" : "UPDATED"
+    const details = [
+      `*${label} · ${mrkdwnLabel(change.title)}*`,
+      change.before ? `~Before: ${mrkdwnBody(change.before, 350)}~` : null,
+      change.after
+        ? `${change.kind === "added" ? "New" : "Now"}: ${mrkdwnBody(change.after, 350)}`
+        : null,
+    ]
+      .filter(Boolean)
+      .join("\n")
+    return section(details)
+  })
   const blocks = [
     section(
-      `:mag: *${mrkdwnLabel(round.requestedBy)}* requested your review of <${link}|${mrkdwnLabel(t)}> (v${round.version}).`,
+      `:mag: *${mrkdwnLabel(round.requestedBy)} updated <${link}|${mrkdwnLabel(t)}>*\n${round.summary.fromVersion ? `v${round.summary.fromVersion} → ` : ""}v${round.version} · ${reviewDeltaLabel(round.summary)}`,
     ),
     ...(round.note ? [section(`> ${mrkdwnBody(round.note, 600)}`)] : []),
-    // Settle it HERE. This DM is the one moment the loop is blocked on a named person, and it
-    // is addressed to exactly them — so the two answers the agent is waiting for belong on it,
-    // with "Review in Derive" kept for everything a button cannot express. Sending them to a
-    // browser to press the same button is the difference between a notification and a
-    // place to work.
+    ...(changeBlocks.length ? [section("*What changed*"), ...changeBlocks] : []),
+    ...(remaining
+      ? [section(`_${remaining} more ${remaining === 1 ? "change" : "changes"} in the full work_`)]
+      : []),
     actions([
       actionButton(
         SLACK_REVIEW_ACTION.sendBack,
@@ -183,14 +222,26 @@ export const enqueueSlackReviewRequestedDm = async (
         encodeReviewAction(artifact.id),
         "primary",
       ),
-      openButton(link, "Review in Derive"),
+      openButton(link, "Open & comment"),
     ]),
   ]
   await enqueueChannelDelivery(meta, "slack_dm", "review.requested", {
     orgId: artifact.org_id,
     userId: reviewerId,
-    text: `${mrkdwnLabel(round.requestedBy)} requested your review of ${mrkdwnLabel(t)} (v${round.version})`,
+    text: `${mrkdwnLabel(round.requestedBy)} updated ${mrkdwnLabel(t)} (v${round.version} · ${reviewDeltaLabel(round.summary)})`,
     blocks,
+    metadata: {
+      entities: [
+        reviewNotificationEntity({
+          baseUrl,
+          artifact,
+          roundId: round.roundId,
+          requestedBy: round.requestedBy,
+          summary: round.summary,
+          iconUrl: new URL("/icon.png", link).toString(),
+        }),
+      ],
+    },
   } satisfies SlackDmPayload)
 }
 
@@ -321,7 +372,7 @@ export const makeSlackDmSender =
               }),
             ],
           }
-        : undefined
+        : p.metadata
     const res = await postWithRecovery(
       meta,
       p.orgId,

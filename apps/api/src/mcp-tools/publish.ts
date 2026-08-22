@@ -790,7 +790,14 @@ export function registerPublishTool(tc: ToolContext): void {
         const reviewFor = actingFor?.id ?? (profileAskReview ? profileReviewer : null)
         if ((request_review || profileAskReview) && reviewFor) {
           review_round = await openReviewRound(
-            { meta: ctx.meta, bus: ctx.bus, baseUrl: ctx.deps.baseUrl, notify: ctx.notify },
+            {
+              meta: ctx.meta,
+              blobs: ctx.blobs,
+              bus: ctx.bus,
+              baseUrl: ctx.deps.baseUrl,
+              notify: ctx.notify,
+              pokeWebhooks: ctx.deps.pokeWebhooks,
+            },
             artifact,
             {
               reviewer: reviewFor,
@@ -798,10 +805,6 @@ export function registerPublishTool(tc: ToolContext): void {
               requestedByName: agent.name,
               version: version.n,
               actorId: agent.id,
-              // A detached executor's request interrupts the human it acts for — that is
-              // the point. An attended surface's request is the person's own conversational
-              // edit: the round is the record, and emailing them about it would be noise.
-              selfId: attended ? reviewFor : null,
             },
           )
         }

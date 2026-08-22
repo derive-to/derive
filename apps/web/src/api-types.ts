@@ -7437,6 +7437,8 @@ export interface components {
             needs_reauth: boolean;
             /** @description The caller's "DM me for interrupts" preference (mentions, review requests, shares) */
             slack_dm: boolean;
+            /** @description The caller's opt-in preference for review-request email (default false) */
+            review_email: boolean;
             /** @description Whether the caller has linked their Slack identity for the connected team */
             linked: boolean;
         };

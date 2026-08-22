@@ -5,10 +5,11 @@
 // pre-rendered at enqueue time (the drainer has no request context) and this sender
 // just transports the finished message.
 
-import { type ArtifactRecord, type DeliveryRecord, escapeHtml } from "@derive/core"
+import { type ArtifactRecord, artifactUrl, type DeliveryRecord, escapeHtml } from "@derive/core"
 import { log } from "../log"
 import type { ChannelSendResult } from "../webhooks"
 import { commentDeepLink } from "./comments"
+import { type ReviewChange, type ReviewSummary, reviewDeltaLabel } from "./review-summary"
 import { truncate } from "./text"
 
 /** A finished message, ready to transport. `from` is filled by the sender's config. */
@@ -183,23 +184,73 @@ export const buildArtifactInviteEmail = buildShareInviteEmail
 export const buildReviewEmail = (
   baseUrl: string,
   artifact: ArtifactRecord,
-  input: { requestedBy: string; version: number; note?: string | null },
+  input: {
+    requestedBy: string
+    version: number
+    note?: string | null
+    summary?: ReviewSummary
+  },
 ): { subject: string; html: string; text: string } => {
   const title = artifact.title ?? artifact.short_id
-  const link = `${baseUrl.replace(/\/$/, "")}/artifacts/${artifact.short_id}`
-  const subject = `${input.requestedBy} requested your review of ${title}`
-  const note = input.note ? truncate(input.note, 600) : null
-  const html = `<!doctype html><html><body style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#1a1a1a;line-height:1.5">
-  <p><strong>${escapeHtml(input.requestedBy)}</strong> requested your review of <a href="${escapeHtml(link)}">${escapeHtml(title)}</a> (v${input.version}).</p>
-  ${note ? `<p style="white-space:pre-wrap">${escapeHtml(note)}</p>` : ""}
-  <p><a href="${escapeHtml(link)}" style="display:inline-block;background:#111;color:#fff;padding:8px 16px;border-radius:6px;text-decoration:none">Review in Derive</a></p>
+  const link = artifactUrl(baseUrl.replace(/\/$/, ""), artifact)
+  const summary = input.summary
+  const delta = summary ? reviewDeltaLabel(summary) : null
+  const subject = summary
+    ? `${input.requestedBy} updated ${title} · ${delta}`
+    : `${input.requestedBy} updated ${title}`
+  const note = input.note ? truncate(input.note, 600) : (summary?.note ?? null)
+  const highlights = summary?.highlights ?? []
+  const changes = summary?.changes ?? []
+  const remaining = Math.max(0, (summary?.totalChanges ?? changes.length) - changes.length)
+  const changeHtml = (change: ReviewChange): string => {
+    const palette = {
+      added: { label: "ADDED", color: "#137333", bg: "#e9f5ec" },
+      updated: { label: "UPDATED", color: "#7a4f01", bg: "#fff4d6" },
+      removed: { label: "REMOVED", color: "#a50e0e", bg: "#fce8e6" },
+    }[change.kind]
+    const renamed = change.previousTitle
+      ? `<div style="color:#777;font-size:12px;margin-top:3px">${escapeHtml(change.previousTitle)} → ${escapeHtml(change.title)}</div>`
+      : ""
+    const before = change.before
+      ? `<div style="color:#777;font-size:14px;margin-top:9px"><span style="font-size:11px;font-weight:700;letter-spacing:.04em">BEFORE</span><br/><span style="text-decoration:line-through">${escapeHtml(change.before)}</span></div>`
+      : ""
+    const after = change.after
+      ? `<div style="color:#1a1a1a;font-size:14px;margin-top:9px"><span style="font-size:11px;font-weight:700;letter-spacing:.04em">${change.kind === "added" ? "NEW" : "NOW"}</span><br/>${escapeHtml(change.after)}</div>`
+      : ""
+    return `<div style="border:1px solid #e6e6e6;border-left:4px solid ${palette.color};border-radius:9px;padding:12px 14px;margin:10px 0">
+      <span style="display:inline-block;background:${palette.bg};color:${palette.color};font-size:10px;font-weight:700;letter-spacing:.06em;border-radius:999px;padding:3px 7px">${palette.label}</span>
+      <strong style="margin-left:7px">${escapeHtml(change.title)}</strong>${renamed}${before}${after}
+    </div>`
+  }
+  const html = `<!doctype html><html><head><meta charset="utf-8"/></head><body style="margin:0;background:#fff;font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#1a1a1a;line-height:1.5"><div style="max-width:640px;margin:0 auto;padding:24px 16px">
+  <p style="font-size:18px;margin:0 0 6px"><strong>${escapeHtml(input.requestedBy)} updated ${escapeHtml(title)}</strong></p>
+  <p style="color:#666;margin:0 0 18px">${summary?.fromVersion ? `v${summary.fromVersion} → ` : ""}v${input.version}${delta ? ` · ${escapeHtml(delta)}` : ""}</p>
+  ${note ? `<p style="white-space:pre-wrap;background:#f6f6f6;border-radius:8px;padding:12px 14px">${escapeHtml(note)}</p>` : ""}
+  <p><a href="${escapeHtml(link)}" style="display:inline-block;background:#111;color:#fff;padding:10px 18px;border-radius:7px;text-decoration:none">Open the work</a></p>
+  ${changes.length ? `<div style="margin:18px 0"><strong>What changed</strong>${changes.map(changeHtml).join("")}${remaining ? `<div style="color:#666;font-size:13px;font-weight:600;text-align:center;margin:12px 0 2px">+ ${remaining} more ${remaining === 1 ? "change" : "changes"} in the full work</div>` : ""}</div>` : highlights.length ? `<div style="border:1px solid #e6e6e6;border-radius:10px;padding:14px 16px;margin:18px 0"><strong>What changed</strong><ul style="padding-left:20px;margin:8px 0 0">${highlights.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ul></div>` : ""}
+  <p><a href="${escapeHtml(link)}" style="display:inline-block;background:#111;color:#fff;padding:10px 18px;border-radius:7px;text-decoration:none">Open the work</a></p>
   <hr style="border:none;border-top:1px solid #eee;margin:24px 0"/>
-  <p style="color:#999;font-size:12px">You're receiving this because the revision is waiting on your review.</p>
-  </body></html>`
+  <p style="color:#999;font-size:12px">This version is waiting for your feedback in Derive.</p>
+  </div></body></html>`
   const text = [
-    `${input.requestedBy} requested your review of ${title} (v${input.version}).`,
+    `${input.requestedBy} updated ${title} (v${input.version}${delta ? ` · ${delta}` : ""}).`,
     note ? `\n${note}` : "",
-    `\nReview in Derive: ${link}`,
+    changes.length
+      ? `\nWhat changed:\n${changes
+          .map((change) => {
+            const lines = [`- ${change.kind.toUpperCase()} · ${change.title}`]
+            if (change.before) lines.push(`  Before: ${change.before}`)
+            if (change.after)
+              lines.push(`  ${change.kind === "added" ? "New" : "Now"}: ${change.after}`)
+            return lines.join("\n")
+          })
+          .join(
+            "\n",
+          )}${remaining ? `\n+ ${remaining} more ${remaining === 1 ? "change" : "changes"} in the full work` : ""}`
+      : highlights.length
+        ? `\nWhat changed:\n${highlights.map((line) => `- ${line}`).join("\n")}`
+        : "",
+    `\nOpen the work: ${link}`,
   ]
     .filter(Boolean)
     .join("\n")
