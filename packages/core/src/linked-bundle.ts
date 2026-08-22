@@ -1,3 +1,4 @@
+import { type AgentTier, isAgentTier } from "./agent-routing"
 import { LINKED_BUNDLE_HTML_CONTENT_TYPE } from "./content-types"
 import { artifactRefIn, artifactRefOf } from "./derived-facts"
 import { parseFacts } from "./facts"
@@ -31,6 +32,8 @@ export interface LinkedBundleNode {
   basis_version?: number
   /** Short human-readable context for the current state. */
   note?: string
+  /** Capability requested for this step. The execution harness resolves the concrete model. */
+  tier?: AgentTier
 }
 
 export interface LinkedBundleEdge {
@@ -46,6 +49,8 @@ export interface LinkedBundleDiagram {
   type: "loop" | "graph"
   nodes: LinkedBundleNode[]
   edges: LinkedBundleEdge[]
+  /** Default capability for nodes that do not carry a narrower override. */
+  tier?: AgentTier
   /** Descriptive, inspectable loop policy. Derive does not execute it. */
   goal?: string
   evaluate?: string
@@ -173,6 +178,7 @@ export const validateLinkedBundle = (value: unknown): LinkedBundleValidation => 
         Number.isInteger(nodeRaw.basis_version) && Number(nodeRaw.basis_version) > 0
           ? Number(nodeRaw.basis_version)
           : null
+      const tier = isAgentTier(nodeRaw.tier) ? nodeRaw.tier : null
       if (!nodeId) errors.push(`diagrams[${index}].nodes[${nodeIndex}].id is invalid`)
       else if (nodeIds.has(nodeId)) errors.push(`diagram "${id ?? index}" repeats node "${nodeId}"`)
       if (!nodeLabel) errors.push(`diagrams[${index}].nodes[${nodeIndex}].label is required`)
@@ -182,6 +188,10 @@ export const validateLinkedBundle = (value: unknown): LinkedBundleValidation => 
         )
       if (nodeRaw.basis_version !== undefined && !basisVersion)
         errors.push(`diagrams[${index}].nodes[${nodeIndex}].basis_version must be positive`)
+      if (nodeRaw.tier !== undefined && !tier)
+        errors.push(
+          `diagrams[${index}].nodes[${nodeIndex}].tier must be "utility", "fast", "balanced", "expert", or "frontier"`,
+        )
       if (member && !memberIds.has(member))
         errors.push(`diagram node "${nodeId ?? nodeIndex}" names unknown member "${member}"`)
       if (basisVersion && !member)
@@ -197,6 +207,7 @@ export const validateLinkedBundle = (value: unknown): LinkedBundleValidation => 
         ...(state ? { state } : {}),
         ...(basisVersion ? { basis_version: basisVersion } : {}),
         ...(text(nodeRaw.note) ? { note: text(nodeRaw.note) as string } : {}),
+        ...(tier ? { tier } : {}),
       })
     }
 
@@ -223,6 +234,11 @@ export const validateLinkedBundle = (value: unknown): LinkedBundleValidation => 
     const goal = text(raw.goal)
     const evaluate = text(raw.evaluate)
     const stop = text(raw.stop)
+    const tier = isAgentTier(raw.tier) ? raw.tier : null
+    if (raw.tier !== undefined && !tier)
+      errors.push(
+        `diagrams[${index}].tier must be "utility", "fast", "balanced", "expert", or "frontier"`,
+      )
     if (type === "loop") {
       if (!goal) warnings.push(`loop "${id ?? index}" has no stated goal`)
       if (!evaluate) warnings.push(`loop "${id ?? index}" has no evaluation condition`)
@@ -239,6 +255,7 @@ export const validateLinkedBundle = (value: unknown): LinkedBundleValidation => 
         type,
         nodes,
         edges,
+        ...(tier ? { tier } : {}),
         ...(goal ? { goal } : {}),
         ...(evaluate ? { evaluate } : {}),
         ...(stop ? { stop } : {}),
