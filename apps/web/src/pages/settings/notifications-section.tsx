@@ -127,8 +127,8 @@ export function NotificationsSection() {
               label="Send important updates in Slack"
               description={
                 connected
-                  ? "Get a Slack direct message when someone mentions you, requests your review, or shares a document with you. Link your Slack account below so Derive knows where to send it."
-                  : "A Slack direct message when someone @mentions you, requests your review, or shares a doc with you. Takes effect once an admin connects Slack under Integrations."
+                  ? "Get a Slack direct message when an agent finishes work, someone mentions you, requests your review, or shares a document with you. Link your Slack account below so Derive knows where to send it."
+                  : "A Slack direct message when an agent finishes work, someone @mentions you, requests your review, or shares a doc with you. Takes effect once an admin connects Slack under Integrations."
               }
             >
               <div className="flex items-center gap-2">

@@ -550,7 +550,7 @@ export const slackRoutes = (ctx: AppContext) => {
       slack_dm: z
         .boolean()
         .describe(
-          'The caller\'s "DM me for interrupts" preference (mentions, review requests, shares)',
+          'The caller\'s "DM me for important updates" preference (agent completions, mentions, review requests, shares)',
         ),
       review_email: z
         .boolean()

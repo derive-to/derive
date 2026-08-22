@@ -7435,7 +7435,7 @@ export interface components {
             team_name: string | null;
             /** @description Whether the stored bot token needs a re-auth — a failed auth/scope call, or Slack reporting the app uninstalled or its token revoked */
             needs_reauth: boolean;
-            /** @description The caller's "DM me for interrupts" preference (mentions, review requests, shares) */
+            /** @description The caller's "DM me for important updates" preference (agent completions, mentions, review requests, shares) */
             slack_dm: boolean;
             /** @description The caller's opt-in preference for review-request email (default false) */
             review_email: boolean;

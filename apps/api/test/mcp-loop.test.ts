@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import type { DeliveryRecord } from "@derive/core"
 import { SqliteMetaStore } from "@derive/db/sqlite"
 import { FsBlobStore } from "@derive/storage/fs"
 import Database from "better-sqlite3"
@@ -21,7 +22,7 @@ afterAll(() => rmSync(dir, { recursive: true, force: true }))
 
 // Same harness as mcp.test.ts (OAuth grant seeded straight into the provider
 // tables), plus an injected in-process backplane the test can observe.
-function loopApp(name: string) {
+function loopApp(name: string, clientId = "cli") {
   const path = join(dir, `${name}.db`)
   const meta = new SqliteMetaStore(path)
   const db = new Database(path)
@@ -33,12 +34,15 @@ function loopApp(name: string) {
   db.prepare(
     `INSERT OR IGNORE INTO "user"(id,email,name) VALUES('u_o','owner@x.test','Owner')`,
   ).run()
-  db.prepare(`INSERT OR IGNORE INTO "oauthClient"(clientId,name) VALUES('cli','Claude')`).run()
+  db.prepare(`INSERT OR IGNORE INTO "oauthClient"(clientId,name) VALUES(?,?)`).run(
+    clientId,
+    clientId === "chat" ? "ChatGPT" : "Claude",
+  )
   db.prepare(
     `INSERT INTO "oauthAccessToken"(token,clientId,userId,scopes,expiresAt) VALUES(?,?,?,?,?)`,
   ).run(
     sha256(`tok_${name}`),
-    "cli",
+    clientId,
     "u_o",
     JSON.stringify(["openid", "derive:read", "derive:publish"]),
     new Date(Date.now() + 3_600_000).toISOString(),
@@ -97,9 +101,27 @@ const record = (bp: Backplane, channel: string): DeriveEvent[] => {
   return seen
 }
 
+const connectSlack = (meta: SqliteMetaStore, orgId = "ws_p_u_o") =>
+  meta.setSlackInstall({
+    org_id: orgId,
+    team_id: "T1",
+    team_name: "Derive",
+    bot_token: "xoxb-test",
+    bot_user_id: "UBOT",
+    created_at: new Date().toISOString(),
+  })
+
+const claim = (meta: SqliteMetaStore): Promise<DeliveryRecord[]> =>
+  meta.claimDueDeliveries(
+    new Date(Date.now() + 60_000).toISOString(),
+    100,
+    new Date(Date.now() + 120_000).toISOString(),
+  )
+
 describe("MCP publish reaches the human (event parity + auto-open)", () => {
   it("emits version.published + artifact.pushed, writes a bell row, and reports opened_in_tab", async () => {
     const { app, meta, backplane, token } = loopApp("push")
+    await connectSlack(meta)
     // An "open tab": a live subscriber on the user channel (what the bell SSE holds).
     const userEvents = record(backplane, "u:u_o")
 
@@ -139,10 +161,16 @@ describe("MCP publish reaches the human (event parity + auto-open)", () => {
     // Revisions don't add bell rows (only creates and review asks do).
     const after = await meta.listNotifications("u_o", 10)
     expect(after.filter((r) => r.artifact_short_id === created.short_id)).toHaveLength(1)
+    const completions = (await claim(meta)).filter(
+      (d) => d.kind === "slack_dm" && d.event_type === "artifact.completed",
+    )
+    expect(completions).toHaveLength(2)
+    expect(JSON.parse(completions[1]?.payload ?? "{}").text).toContain("Claude updated Loop Draft")
   })
 
   it("request_review writes ONE bell row (review beats publish) and notifies live", async () => {
     const { app, meta, backplane, token } = loopApp("ask")
+    await connectSlack(meta)
     const userEvents = record(backplane, "u:u_o")
     const created = await call(app, token, "publish", {
       content: "<h1>Plan</h1>",
@@ -157,6 +185,29 @@ describe("MCP publish reaches the human (event parity + auto-open)", () => {
     expect(mine[0]?.preview).toContain("review")
     const pushed = userEvents.find((e) => e.type === "artifact.pushed")
     expect(pushed?.review_requested).toBe(true)
+    const dms = (await claim(meta)).filter((d) => d.kind === "slack_dm")
+    expect(dms.map((d) => d.event_type)).toEqual(["review.requested"])
+  })
+
+  it("still sends Slack completion for an attended revision without auto-opening it", async () => {
+    const { app, meta, backplane, token } = loopApp("attended-completion", "chat")
+    await connectSlack(meta)
+    const userEvents = record(backplane, "u:u_o")
+    const created = await call(app, token, "publish", {
+      content: "<h1>Draft</h1>",
+      title: "Attended work",
+    })
+    const revised = await call(app, token, "publish", {
+      content: "<h1>Finished</h1><h2>Decision</h2><p>Ship it.</p>",
+      short_id: created.short_id,
+    })
+    expect(revised.opened_in_tab).toBe(false)
+    expect(userEvents.some((e) => e.type === "artifact.pushed" && e.kind === "revised")).toBe(false)
+    const completions = (await claim(meta)).filter(
+      (d) => d.kind === "slack_dm" && d.event_type === "artifact.completed",
+    )
+    expect(completions).toHaveLength(2)
+    expect(JSON.stringify(JSON.parse(completions[1]?.payload ?? "{}").blocks)).toContain("Decision")
   })
 })
 
