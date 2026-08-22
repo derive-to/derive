@@ -1367,26 +1367,26 @@ export function LinkedBundleWorkspace({
             </fieldset>
             <LinkedBundleFocusSearch diagrams={diagrams} members={members} onFocus={focusTarget} />
             {canComment ? (
-              <Button
-                variant="outline"
-                size="sm"
-                data-testid="bundle-workspace-comment"
-                onClick={onComment}
-              >
-                <Icon name="comments" size={14} /> Comment
-              </Button>
-            ) : null}
-            {canComment ? (
-              <Button
-                variant={pinning ? "default" : "outline"}
-                size="sm"
-                data-testid="bundle-workspace-pin"
-                aria-pressed={pinning}
-                onClick={onTogglePinning}
-              >
-                <Icon name="pin" size={14} weight={pinning ? "fill" : "regular"} />
-                {pinning ? "Cancel pin" : "Pin comment"}
-              </Button>
+              <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  data-testid="bundle-workspace-comment"
+                  onClick={onComment}
+                >
+                  <Icon name="comments" size={14} /> Comment
+                </Button>
+                <Button
+                  variant={pinning ? "default" : "outline"}
+                  size="sm"
+                  data-testid="bundle-workspace-pin"
+                  aria-pressed={pinning}
+                  onClick={onTogglePinning}
+                >
+                  <Icon name="pin" size={14} weight={pinning ? "fill" : "regular"} />
+                  {pinning ? "Cancel pin" : "Pin comment"}
+                </Button>
+              </>
             ) : null}
             {canEdit ? (
               <Button variant="outline" size="sm" onClick={onEdit} data-testid="bundle-edit-source">
