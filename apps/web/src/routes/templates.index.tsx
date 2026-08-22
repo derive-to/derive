@@ -1,12 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router"
-import { requireOnboarded } from "../lib/route-guards"
 import { Templates } from "../pages/templates"
 import type { TemplatesSearch, TemplateTab } from "../pages/templates/types"
 
 const TABS: TemplateTab[] = ["artifacts", "libraries"]
 
-export const Route = createFileRoute("/templates")({
-  beforeLoad: requireOnboarded,
+// No auth guard on purpose: the shelf is public, and the page picks its frame by session.
+export const Route = createFileRoute("/templates/")({
   validateSearch: (search: Record<string, unknown>): TemplatesSearch => ({
     tab: TABS.includes(search.tab as TemplateTab) ? (search.tab as TemplateTab) : undefined,
     query: typeof search.query === "string" ? search.query : undefined,

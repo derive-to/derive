@@ -5,7 +5,8 @@ import { Button } from "@/components/ui/button"
 import { signupSourceSearch } from "@/lib/signup-source"
 
 // The chrome-light frame for a public surface an anonymous visitor lands on — a
-// shared profile today (the artifact viewer has its own richer PublicViewer). A slim
+// shared profile or the template shelf (the artifact viewer has its own richer
+// PublicViewer). A slim
 // brand header (→ home) + the growth verbs, the content as the hero, and a quiet
 // "Made with Derive" footer: the same public-shell language as PublicViewer, minus the
 // artifact-specific identity/presence. An anon never sees app chrome, just this frame

@@ -78,6 +78,15 @@ for the recommended install and verification flow.
   these surfaces; `/v1/templates` returns artifact rows (the `BuiltInTemplate` schema
   is gone from the OpenAPI document), the Contexts tab is gone, and the Libraries tab
   is hidden behind a flag while `?tab=libraries` keeps working.
+- **Templates have public pages.** `/templates` is readable signed out: the public shelf
+  in the chrome-light frame, where "Make a copy" goes through sign-in and keeps the copy
+  intent for afterward. Every template also has a page of its own, `/templates/<ref>`:
+  the artifact page, presented to a signed-out visitor as a template, with a strip that
+  names the two ways to start from it ("Make a copy", "Ask your agent") and its tags. The
+  public footer, wherever a workspace shows the "Made with Derive" mark, now closes the
+  loop: "Start from this template" on an artifact tagged `template`, "Start from this
+  page" (a copy, through sign-in) otherwise, and "Browse templates" on a template page.
+  The address presents an artifact as a template only when it carries the tag.
 - **Agent writes publish live, and the write policy is one switch.** An agent's write
   lands exactly like a person's: a new version with the full publish fan-out (bell,
   email, Slack, the open tab live-reloads). Asking for a look is `request_review` on

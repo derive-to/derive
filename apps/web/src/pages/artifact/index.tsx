@@ -64,6 +64,7 @@ import { PasswordGate } from "./password-gate"
 import { PublicViewer } from "./public-viewer"
 import { Presence } from "./rail-deck"
 import { ReviewCard } from "./review-card"
+import type { ArtifactSearch } from "./route-config"
 import { SourceEditor } from "./source-editor"
 import { type ComposerState, parseAnchor } from "./types"
 import { useArtifactFrame } from "./use-artifact-frame"
@@ -123,10 +124,19 @@ function FocusShellSync({ focus }: { focus: boolean }) {
   return null
 }
 
-export function Artifact() {
+/**
+ * The artifact page. `template` is the /templates/$ref address: the same document,
+ * presented to a signed-out visitor with the template strip and footer.
+ */
+export function Artifact({ template = false }: { template?: boolean }) {
   const { switchWorkspace } = useShell()
-  const { ref } = useParams({ from: "/artifacts/$ref" })
-  const search = useSearch({ from: "/artifacts/$ref" })
+  // Mounted by /artifacts/$ref and /templates/$ref (route-config.ts). `from:` names one
+  // route, so both reads are `strict: false`; the two routes validate the same search.
+  const { ref } = useParams({ strict: false }) as { ref: string }
+  const search = useSearch({ strict: false }) as ArtifactSearch
+  // Every same-artifact navigation below keeps whichever address the visitor arrived at.
+  const selfBase = template ? "/templates" : "/artifacts"
+  const selfRoute = `${selfBase}/$ref` as const
   const { shortId, version } = parseRef(ref)
   const { me, loading } = useAuth()
   const nav = useNavigate()
@@ -189,7 +199,7 @@ export function Artifact() {
     useFired.current = true
     const strip = () =>
       nav({
-        to: "/artifacts/$ref",
+        to: selfRoute,
         params: { ref },
         search: (s) => ({ ...s, use: undefined }),
         replace: true,
@@ -211,7 +221,7 @@ export function Artifact() {
         toast.error("Couldn't copy this artifact into your workspace")
         strip()
       })
-  }, [search.use, loading, me, shortId, ref, nav])
+  }, [search.use, loading, me, shortId, ref, selfRoute, nav])
   // The tab is named after the document, like the workbench header (title, else id).
   useDocumentTitle(art ? (art.title ?? shortId) : null)
   const commentsAvailable =
@@ -607,7 +617,7 @@ export function Artifact() {
     locked,
     error,
     onCanonical: (canonical) =>
-      nav({ to: "/artifacts/$ref", params: { ref: canonical }, search: (s) => s, replace: true }),
+      nav({ to: selfRoute, params: { ref: canonical }, search: (s) => s, replace: true }),
     onLoginBounce: () => nav({ to: "/login", search: artifactLoginSearch(window.location) }),
     onOpenComments: () => setRail("comments"),
     post,
@@ -645,7 +655,7 @@ export function Artifact() {
     refetchComments,
     onRestoredJump: () =>
       nav({
-        to: "/artifacts/$ref",
+        to: selfRoute,
         params: { ref: refFor({ short_id: shortId, title: art?.title }) },
         // Same artifact — keep the search (the ?collection switcher context, deep links).
         search: (s) => s,
@@ -980,7 +990,7 @@ export function Artifact() {
       onRestore={() => restore(shown)}
       onBackToCurrent={() =>
         nav({
-          to: "/artifacts/$ref",
+          to: selfRoute,
           params: { ref: refFor({ short_id: shortId, title: art.title }) },
         })
       }
@@ -1080,10 +1090,11 @@ export function Artifact() {
       <PublicViewer
         art={art}
         shown={shown}
-        returnTo={`/artifacts/${ref}`}
+        returnTo={`${selfBase}/${ref}`}
         viewers={live.viewers}
         selfId={guestPresenceId()}
         isMobile={isMobile}
+        template={template}
       >
         {primaryEl}
       </PublicViewer>
@@ -1147,7 +1158,7 @@ export function Artifact() {
             goTo={(n) => {
               const base = refFor({ short_id: shortId, title: art.title })
               nav({
-                to: "/artifacts/$ref",
+                to: selfRoute,
                 params: { ref: n === art.current_version ? base : `${base}@v${n}` },
                 // Same artifact, different version — preserve the ?collection context.
                 search: (s) => s,

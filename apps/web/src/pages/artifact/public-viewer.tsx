@@ -4,6 +4,7 @@ import { type ReactNode, useState } from "react"
 import type { Artifact, Viewer } from "@/api"
 import { Icon } from "@/components/icons"
 import { Logo } from "@/components/shared/logo"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -15,14 +16,22 @@ import { artifactTypeLabel } from "@/lib/artifact"
 import { signupSourceSearch } from "@/lib/signup-source"
 import { ago } from "@/lib/time"
 import { cn } from "@/lib/utils"
+import {
+  AgentTemplateDialog,
+  type AgentTemplateTarget,
+} from "@/pages/templates/agent-template-dialog"
+import { targetFromArtifact } from "@/pages/templates/template-target"
 import { FloatingControl } from "./floating-control"
 import { commentNudgeCopy, shouldPromptSignInToComment } from "./lib/comment-access"
 import { markUseIntent } from "./lib/use-intent"
 import { refFor } from "./parse-ref"
 import { Presence } from "./rail-deck"
 
+const footerLink =
+  "rounded-md outline-none hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+
 // The public / viral viewer — the chrome-light experience an anonymous visitor
-// gets on a shared /artifacts/ link (the growth loop). The render is the whole page; a
+// gets on a shared /artifacts/ or /templates/ link (the growth loop). The render is the whole page; a
 // slim public header carries the Derive brand (→ home), the artifact's identity +
 // a CREATOR BYLINE (attribution drives sharing), live presence, and the growth
 // actions (Make a copy · Sign in); a quiet "Made with Derive" mark closes it. No
@@ -36,21 +45,27 @@ export function PublicViewer({
   viewers,
   selfId,
   isMobile,
+  template = false,
   children,
 }: {
   art: Artifact
   /** The version being rendered (an @vN link may pin one behind current). */
   shown: number
-  /** The current /artifacts/<ref> path, so Sign in returns here afterward. */
+  /** The current page path (/artifacts/<ref> or /templates/<ref>), so Sign in returns here. */
   returnTo: string
   viewers: Viewer[]
   selfId?: string
   isMobile: boolean
+  /** The /templates/<ref> address. Presented as a template only when the artifact carries the tag. */
+  template?: boolean
   /** The render (ArtifactDocument) — the page owns its refs/bridge and threads it in. */
   children: ReactNode
 }) {
   const author = art.author
   const authorName = author?.name ?? author?.login ?? null
+  const taggedTemplate = !!art.tags?.includes("template")
+  const asTemplate = template && taggedTemplate
+  const [agentTarget, setAgentTarget] = useState<AgentTemplateTarget | null>(null)
 
   // The comment nudge: only on a link that grants commenting — signing in on a
   // view-only link unlocks nothing, so prompting there would be a bait-and-switch.
@@ -117,7 +132,7 @@ export function PublicViewer({
                   {[...(art.versions ?? [])].reverse().map((v) => (
                     <DropdownMenuItem key={v.n} asChild data-testid={`public-version-${v.n}`}>
                       <Link
-                        to="/artifacts/$ref"
+                        to={template ? "/templates/$ref" : "/artifacts/$ref"}
                         params={{
                           ref: v.n === art.current_version ? baseRef : `${baseRef}@v${v.n}`,
                         }}
@@ -185,6 +200,44 @@ export function PublicViewer({
         </Button>
       </header>
 
+      {/* The template strip: label, tags, and the agent handoff. The copy verb stays the
+          header's "Make a copy"; the strip adds only the other way in. */}
+      {asTemplate && (
+        <div
+          data-testid="template-strip"
+          className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2 border-b border-border bg-muted/40 px-4 py-2 text-sm max-sm:px-3"
+        >
+          <span className="font-mono text-2xs uppercase tracking-wider text-muted-foreground">
+            Template
+          </span>
+          <span className="min-w-0 flex-1 text-muted-foreground">
+            Make a copy to start from it, or hand it to your agent.
+          </span>
+          {(art.tags ?? [])
+            .filter((tag) => tag !== "template")
+            .slice(0, 4)
+            .map((tag) => (
+              <Badge key={tag} variant="outline" shape="pill">
+                {tag}
+              </Badge>
+            ))}
+          <Button
+            size="sm"
+            variant="outline"
+            data-testid="template-ask-agent"
+            onClick={() => setAgentTarget(targetFromArtifact(art))}
+          >
+            <Icon name="sparkles" /> Ask your agent
+          </Button>
+        </div>
+      )}
+      {asTemplate && (
+        <AgentTemplateDialog
+          target={agentTarget}
+          onOpenChange={(open) => !open && setAgentTarget(null)}
+        />
+      )}
+
       {/* The render is the hero — it owns the rest of the height. */}
       <div className="relative flex min-h-0 flex-1 flex-col">
         {children}
@@ -248,11 +301,12 @@ export function PublicViewer({
       </div>
 
       {/* A quiet, permanent brand mark (the "Made in Framer" idiom — attribution +
-          a soft nudge, never a wall). A real link: the click lands in product
-          (signup → publish), stamped as the badge surface. White-label workspaces
-          (art.badge === false) drop the strip entirely — that's what they pay for. */}
+          a soft nudge, never a wall) plus the way back into the loop: start from this
+          page (a copy, through login), or, when the page is a template, its template
+          page. White-label workspaces (art.badge === false) drop the strip entirely —
+          that's what they pay for. */}
       {art.badge !== false && (
-        <footer className="flex shrink-0 items-center justify-center border-t border-border-soft py-1.5 font-mono text-2xs text-muted-foreground">
+        <footer className="flex shrink-0 items-center justify-center gap-1.5 border-t border-border-soft py-1.5 font-mono text-2xs text-muted-foreground">
           <Link
             to="/login"
             search={{
@@ -261,11 +315,42 @@ export function PublicViewer({
               ...signupSourceSearch("badge", art.short_id, returnTo),
             }}
             data-testid="public-made-with"
-            className="flex items-center gap-1.5 rounded-md outline-none hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+            className={cn(footerLink, "flex items-center gap-1.5")}
           >
             <Logo size={12} />
             Made with Derive
           </Link>
+          <span aria-hidden="true">·</span>
+          {asTemplate ? (
+            <Link to="/templates" data-testid="public-start-from" className={footerLink}>
+              Browse templates
+            </Link>
+          ) : taggedTemplate ? (
+            <Link
+              to="/templates/$ref"
+              params={{ ref: baseRef }}
+              data-testid="public-start-from"
+              className={footerLink}
+            >
+              Start from this template
+            </Link>
+          ) : (
+            <Link
+              to="/login"
+              search={{
+                signup: true,
+                return_to: `${returnTo}?use=1`,
+                ...signupSourceSearch("footer", art.short_id, returnTo),
+              }}
+              onClick={() => {
+                markUseIntent(art.short_id)
+              }}
+              data-testid="public-start-from"
+              className={footerLink}
+            >
+              Start from this page
+            </Link>
+          )}
         </footer>
       )}
     </div>
