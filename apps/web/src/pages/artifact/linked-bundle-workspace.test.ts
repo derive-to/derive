@@ -1,10 +1,16 @@
 import { describe, expect, it } from "vitest"
 import type { Artifact, Comment } from "@/api"
 import { linkedBundleManifestProblem, linkedBundleManifestSource } from "./linked-bundle-editor"
-import { linkedBundleCommentCounts, linkedBundleReviewTarget } from "./linked-bundle-panel"
+import {
+  linkedBundleCommentCounts,
+  linkedBundleEffectiveTier,
+  linkedBundleReviewTarget,
+} from "./linked-bundle-panel"
 import { linkedBundleReconciliationEdit } from "./linked-bundle-reconcile"
 import {
   linkedBundleAnchor,
+  linkedBundleCurrentNodes,
+  linkedBundleFitScale,
   linkedBundleFocusedElements,
   linkedBundleNodeFreshness,
 } from "./linked-bundle-workspace"
@@ -55,6 +61,36 @@ describe("linked bundle workspace", () => {
     } satisfies Member
     expect(linkedBundleNodeFreshness(node, member)).toBe("updated")
     expect(linkedBundleNodeFreshness({ ...node, basis_version: 5 }, member)).toBe("fresh")
+  })
+
+  it("uses a node tier before the graph default", () => {
+    const diagram = { ...graph, tier: "expert" as const }
+    expect(linkedBundleEffectiveTier({ id: "brief", label: "Brief" }, diagram)).toBe("expert")
+    expect(linkedBundleEffectiveTier({ id: "brief", label: "Brief", tier: "fast" }, diagram)).toBe(
+      "fast",
+    )
+    expect(linkedBundleEffectiveTier({ id: "brief", label: "Brief" }, graph)).toBeNull()
+  })
+
+  it("keeps mobile graph labels readable while desktop still fits the overview", () => {
+    expect(linkedBundleFitScale(390, 2_400)).toBe(0.72)
+    expect(linkedBundleFitScale(1_200, 2_400)).toBeCloseTo(1_160 / 2_400)
+    expect(linkedBundleFitScale(1_200, 800)).toBe(1)
+  })
+
+  it("surfaces only current or attention-worthy nodes for the mobile summary", () => {
+    const diagram = {
+      ...graph,
+      nodes: [
+        { id: "brief", label: "Brief", state: "done" as const },
+        { id: "research", label: "Research", state: "active" as const },
+        { id: "decision", label: "Decision", state: "waiting" as const },
+      ],
+    }
+    expect(linkedBundleCurrentNodes(diagram).map((node) => node.id)).toEqual([
+      "research",
+      "decision",
+    ])
   })
 
   it("focuses a selected node and only its immediate graph context", () => {
@@ -175,6 +211,59 @@ describe("linked bundle reconciliation", () => {
     expect(edit?.serialized).toContain(
       '"state":"done","basis_version":7,"note":"Reviewed by a human"',
     )
+  })
+
+  it("serializes optional role, confidence, and help details only when authored", () => {
+    const edit = linkedBundleReconciliationEdit(source, "graph", "brief", {
+      state: "waiting",
+      role: "Decision owner",
+      confidence: { level: "high", basis: "Reviewed the current brief" },
+      help: {
+        needed: true,
+        question: "Approve the launch date?",
+        canContinue: "Prepare the rollout plan",
+      },
+    })
+    expect(edit?.serialized).toContain('"state":"waiting"')
+    expect(edit?.serialized).toContain('"role":"Decision owner"')
+    expect(edit?.serialized).toContain(
+      '"confidence":{"level":"high","basis":"Reviewed the current brief"}',
+    )
+    expect(edit?.serialized).toContain(
+      '"help":{"needed":true,"question":"Approve the launch date?","can_continue":"Prepare the rollout plan"}',
+    )
+  })
+
+  it("removes optional node details when they are left unset", () => {
+    const sourceWithDetails = source.replace(
+      '"state":"active","basis_version":4',
+      '"state":"active","basis_version":4,"role":"Old role","confidence":{"level":"low","basis":"Old basis"},"help":{"needed":true,"question":"Old question"}',
+    )
+    const edit = linkedBundleReconciliationEdit(sourceWithDetails, "graph", "brief", {
+      state: "done",
+    })
+    expect(edit?.serialized).not.toContain('"role"')
+    expect(edit?.serialized).not.toContain('"confidence"')
+    expect(edit?.serialized).not.toContain('"help"')
+  })
+
+  it("stores a no-help marker without stale question details", () => {
+    const edit = linkedBundleReconciliationEdit(source, "graph", "brief", {
+      state: "active",
+      help: { needed: false },
+    })
+    expect(edit?.serialized).toContain('"help":{"needed":false}')
+    expect(edit?.serialized).not.toContain('"question"')
+    expect(edit?.serialized).not.toContain('"can_continue"')
+  })
+
+  it("does not infer pending state when editing another optional detail", () => {
+    const sourceWithoutState = source.replace(',"state":"active","basis_version":4', "")
+    const edit = linkedBundleReconciliationEdit(sourceWithoutState, "graph", "brief", {
+      role: "Decision owner",
+    })
+    expect(edit?.serialized).toContain('"role":"Decision owner"')
+    expect(edit?.serialized).not.toContain('"state"')
   })
 
   it("fails closed when the requested node is not in the manifest", () => {

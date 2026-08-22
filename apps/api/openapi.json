@@ -523,6 +523,17 @@
                         "graph"
                       ]
                     },
+                    "tier": {
+                      "type": "string",
+                      "enum": [
+                        "utility",
+                        "fast",
+                        "balanced",
+                        "expert",
+                        "frontier"
+                      ],
+                      "description": "Default capability tier for nodes without their own tier."
+                    },
                     "nodes": {
                       "type": "array",
                       "items": {
@@ -537,11 +548,27 @@
                           "member": {
                             "type": "string"
                           },
+                          "role": {
+                            "type": "string",
+                            "description": "The responsibility this node owns."
+                          },
+                          "tier": {
+                            "type": "string",
+                            "enum": [
+                              "utility",
+                              "fast",
+                              "balanced",
+                              "expert",
+                              "frontier"
+                            ],
+                            "description": "Node capability tier; overrides the diagram default."
+                          },
                           "state": {
                             "type": "string",
                             "enum": [
                               "pending",
                               "active",
+                              "waiting",
                               "blocked",
                               "done"
                             ]
@@ -553,6 +580,45 @@
                           },
                           "note": {
                             "type": "string"
+                          },
+                          "confidence": {
+                            "type": "object",
+                            "properties": {
+                              "level": {
+                                "type": "string",
+                                "enum": [
+                                  "low",
+                                  "medium",
+                                  "high"
+                                ]
+                              },
+                              "basis": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "level",
+                              "basis"
+                            ],
+                            "description": "Current confidence and the evidence or judgment supporting it."
+                          },
+                          "help": {
+                            "type": "object",
+                            "properties": {
+                              "needed": {
+                                "type": "boolean"
+                              },
+                              "question": {
+                                "type": "string"
+                              },
+                              "can_continue": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "needed"
+                            ],
+                            "description": "Whether help is needed, the concise question, and work that can continue."
                           }
                         },
                         "required": [

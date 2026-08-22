@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils"
 import { LinkedBundleFocusSearch, type LinkedBundleFocusTarget } from "./linked-bundle-focus"
 import {
   linkedBundleCommentCounts,
+  linkedBundleEffectiveTier,
   linkedBundleMemberDetail,
   linkedBundleReviewTarget,
 } from "./linked-bundle-panel"
@@ -28,8 +29,21 @@ export type LinkedBundleVisualLayout = {
   nodes: Record<string, Point>
 }
 
+/** Keep dense graphs pannable rather than shrinking their labels below a readable size
+ * on narrow screens. The canvas still fits on desktop, where overview matters most. */
+export const linkedBundleFitScale = (canvasWidth: number, layoutWidth: number): number => {
+  if (!canvasWidth) return 1
+  const minimum = canvasWidth < 640 ? 0.72 : 0.28
+  return Math.min(1, Math.max(minimum, (canvasWidth - 40) / layoutWidth))
+}
+
+export const linkedBundleCurrentNodes = (diagram: Diagram): DiagramNode[] =>
+  diagram.nodes.filter(
+    (node) => node.state === "active" || node.state === "waiting" || node.state === "blocked",
+  )
+
 const NODE_W = 184
-const NODE_H = 76
+const NODE_H = 112
 const PAD_X = 58
 const PAD_Y = 48
 
@@ -71,7 +85,7 @@ export const linkedBundleLayout = (diagram: Diagram): LinkedBundleVisualLayout =
   if (diagram.type === "loop") {
     const count = diagram.nodes.length
     const width = Math.max(620, count * 138)
-    const height = Math.max(390, Math.ceil(count / 2) * 126)
+    const height = Math.max(430, Math.ceil(count / 2) * 154)
     const cx = width / 2
     const cy = height / 2
     const rx = Math.max(155, width / 2 - NODE_W / 2 - PAD_X)
@@ -91,14 +105,14 @@ export const linkedBundleLayout = (diagram: Diagram): LinkedBundleVisualLayout =
   const columns = [...groups.entries()].sort(([a], [b]) => a - b)
   const maxRows = Math.max(1, ...columns.map(([, ids]) => ids.length))
   const width = Math.max(660, columns.length * 236 + PAD_X * 2)
-  const height = Math.max(360, maxRows * 122 + PAD_Y * 2)
+  const height = Math.max(360, maxRows * 158 + PAD_Y * 2)
   const nodes: Record<string, Point> = {}
   columns.forEach(([, ids], column) => {
     const x = PAD_X + column * 236
-    const span = ids.length * NODE_H + Math.max(0, ids.length - 1) * 38
+    const span = ids.length * NODE_H + Math.max(0, ids.length - 1) * 46
     const y0 = Math.max(PAD_Y, (height - span) / 2)
     ids.forEach((id, row) => {
-      nodes[id] = { x, y: y0 + row * (NODE_H + 38) }
+      nodes[id] = { x, y: y0 + row * (NODE_H + 46) }
     })
   })
   return { width, height, nodes }
@@ -270,8 +284,17 @@ function DiagramWorkspace({
     })
     return () => cancelAnimationFrame(frame)
   }, [diagram.id, focusActive, selected])
-  const scale =
-    fit && canvasWidth ? Math.min(1, Math.max(0.28, (canvasWidth - 40) / layout.width)) : 1
+  useEffect(() => {
+    if (!reconciling) return
+    const frame = requestAnimationFrame(() => {
+      canvasRef.current
+        ?.closest("section")
+        ?.querySelector<HTMLElement>("[data-testid=bundle-reconcile-panel]")
+        ?.scrollIntoView({ block: "center", behavior: "smooth" })
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [reconciling])
+  const scale = fit ? linkedBundleFitScale(canvasWidth, layout.width) : 1
   const select = (kind: ReviewKind, local: string, label: string) => {
     const id = linkedBundleReviewTarget(diagram.id, kind, local)
     if (pinning && canComment) {
@@ -289,6 +312,7 @@ function DiagramWorkspace({
     () => linkedBundleFocusedElements(diagram, focusActive ? selected : null),
     [diagram, focusActive, selected],
   )
+  const currentNodes = useMemo(() => linkedBundleCurrentNodes(diagram), [diagram])
 
   const selection = (() => {
     if (!selected || selected.diagram !== diagram.id) return null
@@ -303,6 +327,7 @@ function DiagramWorkspace({
         detail: node.note ?? member?.label ?? "No linked artifact",
         count: counts.get(linkedBundleReviewTarget(diagram.id, "node", node.id)) ?? 0,
         state: node.state,
+        tier: linkedBundleEffectiveTier(node, diagram),
         freshness: linkedBundleNodeFreshness(node, member),
         basis: node.basis_version,
         member,
@@ -428,6 +453,34 @@ function DiagramWorkspace({
         </div>
       ) : null}
 
+      {currentNodes.length ? (
+        <div className="flex items-center gap-2 overflow-x-auto border-b border-border-soft bg-muted/15 px-3 py-2 sm:hidden">
+          <span className="shrink-0 font-mono text-2xs uppercase tracking-[0.1em] text-muted-foreground">
+            Current
+          </span>
+          {currentNodes.map((node) => (
+            <button
+              key={node.id}
+              type="button"
+              data-testid={`bundle-current-${diagram.id}-${node.id}`}
+              onClick={() =>
+                select(
+                  "node",
+                  node.id,
+                  `${diagram.type === "loop" ? "Loop step" : "Graph node"} — ${node.label}`,
+                )
+              }
+              className="shrink-0 rounded-full border border-border bg-card px-2.5 py-1 text-xs font-medium text-foreground"
+            >
+              {node.label}
+              {node.help?.needed ? (
+                <span className="ml-1 text-destructive">· needs help</span>
+              ) : null}
+            </button>
+          ))}
+        </div>
+      ) : null}
+
       <div className="min-h-0">
         <div ref={canvasRef} className="min-h-0 overflow-auto bg-muted/15 p-3 sm:p-5">
           <div
@@ -435,6 +488,11 @@ function DiagramWorkspace({
             style={{ width: layout.width * scale, height: layout.height * scale }}
             data-testid={`bundle-canvas-${diagram.id}`}
           >
+            {!focusActive ? (
+              <div className="pointer-events-none absolute left-3 top-3 z-30 rounded-full border border-border bg-card/95 px-2.5 py-1 font-mono text-2xs text-muted-foreground shadow-sm sm:hidden">
+                Choose current work or drag to explore
+              </div>
+            ) : null}
             <div
               className="absolute left-0 top-0"
               style={{
@@ -562,13 +620,26 @@ function DiagramWorkspace({
                       <span className="truncate text-sm font-semibold text-foreground">
                         {node.label}
                       </span>
+                      {node.help?.needed ? (
+                        <span className="ml-auto shrink-0 rounded border border-destructive/40 bg-destructive/10 px-1.5 py-0.5 font-mono text-2xs font-semibold uppercase tracking-[0.08em] text-destructive">
+                          Needs help
+                        </span>
+                      ) : null}
                     </span>
-                    <span className="mt-1 flex min-w-0 items-center gap-1.5 text-2xs text-muted-foreground">
-                      <span className="truncate">
-                        {member?.label ?? node.state ?? "Unlinked step"}
+                    <span className="mt-1.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 font-mono text-2xs text-muted-foreground">
+                      <span className="capitalize">{node.state ?? "state not set"}</span>
+                      <span>tier {linkedBundleEffectiveTier(node, diagram) ?? "not set"}</span>
+                      {node.role ? <span className="truncate">{node.role}</span> : null}
+                      {node.confidence ? (
+                        <span className="capitalize">{node.confidence.level} confidence</span>
+                      ) : null}
+                    </span>
+                    {member || (counts.get(target) ?? 0) > 0 ? (
+                      <span className="mt-1 flex min-w-0 items-center gap-1.5 text-2xs text-muted-foreground">
+                        {member ? <span className="truncate">{member.label}</span> : null}
+                        {(counts.get(target) ?? 0) > 0 ? <Count>{counts.get(target)}</Count> : null}
                       </span>
-                      {(counts.get(target) ?? 0) > 0 ? <Count>{counts.get(target)}</Count> : null}
-                    </span>
+                    ) : null}
                     {freshness === "updated" ? (
                       <span className="mt-auto font-mono text-2xs text-warning">
                         artifact updated
@@ -602,10 +673,71 @@ function DiagramWorkspace({
                       ) : null}
                     </span>
                   ) : null}
+                  {"tier" in selection ? (
+                    <span className="text-xs text-muted-foreground">
+                      Tier {selection.tier ?? "not set"}
+                    </span>
+                  ) : null}
                 </div>
                 <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
                   {selection.detail}
                 </p>
+                {selection.node ? (
+                  <dl className="mt-3 grid gap-x-5 gap-y-2 text-xs sm:grid-cols-2 lg:grid-cols-3">
+                    <div>
+                      <dt className="font-mono text-2xs uppercase tracking-[0.08em] text-muted-foreground">
+                        Role
+                      </dt>
+                      <dd className="mt-0.5 text-foreground">
+                        {selection.node.role ?? "Not stated"}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="font-mono text-2xs uppercase tracking-[0.08em] text-muted-foreground">
+                        Confidence
+                      </dt>
+                      <dd className="mt-0.5 capitalize text-foreground">
+                        {selection.node.confidence?.level ?? "Not stated"}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="font-mono text-2xs uppercase tracking-[0.08em] text-muted-foreground">
+                        Confidence basis
+                      </dt>
+                      <dd className="mt-0.5 text-foreground">
+                        {selection.node.confidence?.basis ?? "Not stated"}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="font-mono text-2xs uppercase tracking-[0.08em] text-muted-foreground">
+                        Help status
+                      </dt>
+                      <dd className="mt-0.5 text-foreground">
+                        {selection.node.help
+                          ? selection.node.help.needed
+                            ? "Needs help"
+                            : "No help needed"
+                          : "Not stated"}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="font-mono text-2xs uppercase tracking-[0.08em] text-muted-foreground">
+                        Help question
+                      </dt>
+                      <dd className="mt-0.5 text-foreground">
+                        {selection.node.help?.question ?? "Not stated"}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="font-mono text-2xs uppercase tracking-[0.08em] text-muted-foreground">
+                        Can continue
+                      </dt>
+                      <dd className="mt-0.5 text-foreground">
+                        {selection.node.help?.can_continue ?? "Not stated"}
+                      </dd>
+                    </div>
+                  </dl>
+                ) : null}
                 {selection.freshness === "updated" && selection.member?.current_version ? (
                   <div className="mt-2 inline-flex rounded-lg border border-warning/30 bg-warning/5 px-3 py-2 text-xs text-warning">
                     {selection.member.label} is now v{selection.member.current_version}. Reconcile

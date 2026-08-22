@@ -26,15 +26,30 @@ export interface LinkedBundleNode {
   member?: string
   /** Explicit workflow state authored by an agent or editor. Derive displays it;
    * it never infers or advances it. */
-  state?: "pending" | "active" | "blocked" | "done"
+  state?: "pending" | "active" | "blocked" | "waiting" | "done"
   /** The linked member version the authored state was based on. When the member
    * moves past this version the UI can show an honest "artifact updated" cue. */
   basis_version?: number
   /** Short human-readable context for the current state. */
   note?: string
+  /** Optional responsibility for the step, expressed in human-readable terms. */
+  role?: string
   /** Capability requested for this step. The execution harness resolves the concrete model. */
   tier?: AgentTier
+  /** Authored assessment with the evidence or reasoning behind it. */
+  confidence?: {
+    level: "low" | "medium" | "high"
+    basis: string
+  }
+  /** A bounded request for human input; it does not control execution. */
+  help?: {
+    needed: boolean
+    question?: string
+    can_continue?: string
+  }
 }
+
+type LinkedBundleConfidenceLevel = NonNullable<LinkedBundleNode["confidence"]>["level"]
 
 export interface LinkedBundleEdge {
   from: string
@@ -171,6 +186,7 @@ export const validateLinkedBundle = (value: unknown): LinkedBundleValidation => 
         nodeRaw.state === "pending" ||
         nodeRaw.state === "active" ||
         nodeRaw.state === "blocked" ||
+        nodeRaw.state === "waiting" ||
         nodeRaw.state === "done"
           ? nodeRaw.state
           : null
@@ -179,19 +195,93 @@ export const validateLinkedBundle = (value: unknown): LinkedBundleValidation => 
           ? Number(nodeRaw.basis_version)
           : null
       const tier = isAgentTier(nodeRaw.tier) ? nodeRaw.tier : null
+      const role = text(nodeRaw.role)
+      const confidenceRaw = object(nodeRaw.confidence) ? nodeRaw.confidence : null
+      const confidence: {
+        level: LinkedBundleConfidenceLevel | null
+        basis: string | null
+        basisProvided: boolean
+      } | null = confidenceRaw
+        ? {
+            level:
+              confidenceRaw.level === "low" ||
+              confidenceRaw.level === "medium" ||
+              confidenceRaw.level === "high"
+                ? confidenceRaw.level
+                : null,
+            basis: text(confidenceRaw.basis),
+            basisProvided: confidenceRaw.basis !== undefined,
+          }
+        : null
+      const helpRaw = object(nodeRaw.help) ? nodeRaw.help : null
+      const help: {
+        needed: unknown
+        question: string | null
+        questionProvided: boolean
+        canContinue: string | null
+        canContinueProvided: boolean
+      } | null = helpRaw
+        ? {
+            needed: helpRaw.needed,
+            question: text(helpRaw.question),
+            questionProvided: helpRaw.question !== undefined,
+            canContinue: text(helpRaw.can_continue),
+            canContinueProvided: helpRaw.can_continue !== undefined,
+          }
+        : null
       if (!nodeId) errors.push(`diagrams[${index}].nodes[${nodeIndex}].id is invalid`)
       else if (nodeIds.has(nodeId)) errors.push(`diagram "${id ?? index}" repeats node "${nodeId}"`)
       if (!nodeLabel) errors.push(`diagrams[${index}].nodes[${nodeIndex}].label is required`)
       if (nodeRaw.state !== undefined && !state)
         errors.push(
-          `diagrams[${index}].nodes[${nodeIndex}].state must be "pending", "active", "blocked", or "done"`,
+          `diagrams[${index}].nodes[${nodeIndex}].state must be "pending", "active", "blocked", "waiting", or "done"`,
         )
       if (nodeRaw.basis_version !== undefined && !basisVersion)
         errors.push(`diagrams[${index}].nodes[${nodeIndex}].basis_version must be positive`)
+      if (nodeRaw.role !== undefined && !role)
+        errors.push(`diagrams[${index}].nodes[${nodeIndex}].role must be a nonempty string`)
       if (nodeRaw.tier !== undefined && !tier)
         errors.push(
           `diagrams[${index}].nodes[${nodeIndex}].tier must be "utility", "fast", "balanced", "expert", or "frontier"`,
         )
+      if (nodeRaw.confidence !== undefined && !object(nodeRaw.confidence))
+        errors.push(`diagrams[${index}].nodes[${nodeIndex}].confidence must be an object`)
+      if (confidence && !confidence.level)
+        errors.push(
+          `diagrams[${index}].nodes[${nodeIndex}].confidence.level must be "low", "medium", or "high"`,
+        )
+      if (confidence && !confidence.basisProvided)
+        errors.push(`diagrams[${index}].nodes[${nodeIndex}].confidence.basis is required`)
+      else if (confidence && !confidence.basis)
+        errors.push(
+          `diagrams[${index}].nodes[${nodeIndex}].confidence.basis must be a nonempty string`,
+        )
+      if (nodeRaw.help !== undefined && !object(nodeRaw.help))
+        errors.push(`diagrams[${index}].nodes[${nodeIndex}].help must be an object`)
+      if (help && typeof help.needed !== "boolean")
+        errors.push(`diagrams[${index}].nodes[${nodeIndex}].help.needed must be a boolean`)
+      if (help && typeof help.needed === "boolean") {
+        if (help.needed && !help.questionProvided)
+          errors.push(
+            `diagrams[${index}].nodes[${nodeIndex}].help.question is required when help.needed is true`,
+          )
+        else if (help.needed && !help.question)
+          errors.push(
+            `diagrams[${index}].nodes[${nodeIndex}].help.question must be a nonempty string`,
+          )
+        if (help.needed && help.canContinueProvided && !help.canContinue)
+          errors.push(
+            `diagrams[${index}].nodes[${nodeIndex}].help.can_continue must be a nonempty string`,
+          )
+        if (!help.needed && help.questionProvided)
+          errors.push(
+            `diagrams[${index}].nodes[${nodeIndex}].help.question must not be set when help.needed is false`,
+          )
+        if (!help.needed && help.canContinueProvided)
+          errors.push(
+            `diagrams[${index}].nodes[${nodeIndex}].help.can_continue must not be set when help.needed is false`,
+          )
+      }
       if (member && !memberIds.has(member))
         errors.push(`diagram node "${nodeId ?? nodeIndex}" names unknown member "${member}"`)
       if (basisVersion && !member)
@@ -207,7 +297,20 @@ export const validateLinkedBundle = (value: unknown): LinkedBundleValidation => 
         ...(state ? { state } : {}),
         ...(basisVersion ? { basis_version: basisVersion } : {}),
         ...(text(nodeRaw.note) ? { note: text(nodeRaw.note) as string } : {}),
+        ...(role ? { role } : {}),
         ...(tier ? { tier } : {}),
+        ...(confidence?.level && confidence.basis
+          ? { confidence: { level: confidence.level, basis: confidence.basis } }
+          : {}),
+        ...(help && typeof help.needed === "boolean"
+          ? {
+              help: {
+                needed: help.needed,
+                ...(help.needed && help.question ? { question: help.question } : {}),
+                ...(help.needed && help.canContinue ? { can_continue: help.canContinue } : {}),
+              },
+            }
+          : {}),
       })
     }
 
@@ -366,7 +469,20 @@ export const renderLinkedBundle = (
         .map((node) => {
           const kind = diagram.type === "loop" ? "loop-step" : "graph-node"
           const id = linkedBundleReviewId(diagram.id, "node", node.id)
-          return `<div class="node" ${reviewAttrs(id, kind, `${diagram.type === "loop" ? "Loop step" : "Graph node"} — ${node.label}`)}${node.state ? ` data-state="${node.state}"` : ""}><strong>${escapeHtml(node.label)}</strong>${node.state ? `<small>${escapeHtml(node.state)}</small>` : ""}${node.member ? `<small>${escapeHtml(node.member)}${node.basis_version ? ` · based on v${node.basis_version}` : ""}</small>` : ""}${node.note ? `<p>${escapeHtml(node.note)}</p>` : ""}</div>`
+          const effectiveTier = node.tier ?? diagram.tier
+          const details = [
+            node.role ? `Role: ${node.role}` : null,
+            effectiveTier ? `Tier: ${effectiveTier}` : null,
+            node.confidence
+              ? `Confidence: ${node.confidence.level} — ${node.confidence.basis}`
+              : null,
+            node.help?.needed
+              ? `Help needed: ${node.help.question}${node.help.can_continue ? ` · Can continue: ${node.help.can_continue}` : ""}`
+              : node.help
+                ? "Help: not needed"
+                : null,
+          ].filter((detail): detail is string => !!detail)
+          return `<div class="node" ${reviewAttrs(id, kind, `${diagram.type === "loop" ? "Loop step" : "Graph node"} — ${node.label}`)}${node.state ? ` data-state="${node.state}"` : ""}><strong>${escapeHtml(node.label)}</strong>${node.state ? `<small>${escapeHtml(node.state)}</small>` : ""}${node.member ? `<small>${escapeHtml(node.member)}${node.basis_version ? ` · based on v${node.basis_version}` : ""}</small>` : ""}${details.map((detail) => `<small>${escapeHtml(detail)}</small>`).join("")}${node.note ? `<p>${escapeHtml(node.note)}</p>` : ""}</div>`
         })
         .join("")
       const edges = diagram.edges

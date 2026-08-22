@@ -2291,6 +2291,7 @@ describe("remote MCP endpoint (/mcp)", () => {
           id: "improve",
           title: "Improve until confident",
           type: "loop",
+          tier: "balanced",
           goal: "Make the brief decision-ready",
           evaluate: "Check claims against evidence",
           stop: "No material objections remain",
@@ -2299,10 +2300,31 @@ describe("remote MCP endpoint (/mcp)", () => {
               id: "revise",
               label: "Revise",
               member: "brief",
+              role: "draft owner",
+              tier: "expert",
               state: "active",
               basis_version: 4,
+              confidence: {
+                level: "medium",
+                basis: "The evidence objection has not been resolved.",
+              },
+              help: {
+                needed: true,
+                question: "Which source resolves the evidence objection?",
+                can_continue: "Tighten the uncontested sections.",
+              },
             },
-            { id: "check", label: "Check", member: "evidence" },
+            {
+              id: "check",
+              label: "Check",
+              member: "evidence",
+              role: "evidence reviewer",
+              state: "waiting",
+              confidence: {
+                level: "high",
+                basis: "The evidence is current; the source owner has not replied.",
+              },
+            },
           ],
           edges: [
             { from: "revise", to: "check" },
@@ -2322,7 +2344,15 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(read).toContain("bundle_purpose: Keep the loop and its evidence together.")
     expect(read).toContain("brief=Product brief (abc12345) [output]")
     expect(read).toContain("bundle_diagrams: loop:Improve until confident")
-    expect(read).toContain("bundle_state: improve.revise=active@v4")
+    expect(read).toContain(
+      "bundle_state: improve.revise=active@v4 [tier:expert] [role:draft owner] [confidence:medium; The evidence objection has not been resolved.]",
+    )
+    expect(read).toContain(
+      "improve.check=waiting [tier:balanced] [role:evidence reviewer] [confidence:high; The evidence is current; the source owner has not replied.]",
+    )
+    expect(read).toContain(
+      "bundle_help: improve.revise: question: Which source resolves the evidence objection?; can continue: Tighten the uncontested sections.",
+    )
     const data = JSON.parse(
       toolText(
         await call(app, token, "read", {
