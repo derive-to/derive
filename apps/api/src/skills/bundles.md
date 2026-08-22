@@ -47,9 +47,20 @@ the member artifacts normally.
           "id": "revise",
           "label": "Revise",
           "member": "brief",
+          "role": "draft owner",
+          "tier": "expert",
           "state": "active",
           "basis_version": 4,
-          "note": "Address the open evidence objection"
+          "note": "Address the open evidence objection",
+          "confidence": {
+            "level": "medium",
+            "basis": "The current brief covers the known evidence, but one objection is unresolved."
+          },
+          "help": {
+            "needed": true,
+            "question": "Which source resolves the open evidence objection?",
+            "can_continue": "Tighten the uncontested sections while that source is located."
+          }
         },
         { "id": "check", "label": "Evaluate", "member": "evidence" }
       ],
@@ -93,11 +104,21 @@ underscores, and hyphens. Member `ref` is an artifact short id or artifact URL; 
 normalizes it to the short id. Diagram nodes may point at a member id. Edges point at node
 ids in the same diagram.
 
-Node state is optional and explicitly authored: `pending`, `active`, `blocked`, or `done`.
+Node state is optional and explicitly authored: `pending`, `active`, `waiting`, `blocked`, or `done`.
 Never infer it from prose or a version count. When a node names a member, set
 `basis_version` to the member version the state was based on. If that artifact later moves
 past the basis, Derive shows “artifact updated” until an agent or editor reconciles the
-state. `note` is a short explanation of what the state means right now.
+state. `note` is a short explanation of what the state means right now. A diagram may set a
+default `tier` (`utility`, `fast`, `balanced`, `expert`, or `frontier`); a node's `tier`
+overrides it. `role` names the node's responsibility, not a person or a concrete model.
+
+For an `active`, `waiting`, or `blocked` node, use `confidence:{level,basis}` when a
+confidence judgment materially affects the next decision. Use
+`help:{needed,question?,can_continue?}` when outside input would help: ask one concise
+question and say what can proceed in parallel. These are handoff cues, not a task tracker:
+author or refresh them only at meaningful transitions (activation, a new wait/blocker,
+material confidence change, resolution, or handoff). Agents maintain them as part of their
+work; never ask humans to keep node state, tier, confidence, or help metadata current.
 
 ## Recipe: create or update a loop
 
@@ -121,7 +142,7 @@ how artifacts relate.
 1. Reuse existing artifacts and assign stable member ids.
 2. Create one `type:"graph"` diagram whose nodes name work/artifacts and whose directed,
    labelled edges state the actual dependency or relationship.
-3. Author `pending` / `active` / `blocked` / `done` only from what the agent actually
+3. Author `pending` / `active` / `waiting` / `blocked` / `done` only from what the agent actually
    knows. Put the reason in `note`; set `basis_version` for artifact-backed state.
 4. Update the relevant member artifacts, then the graph state. Pin review to the exact
    node or edge when feedback changes the route.

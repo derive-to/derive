@@ -7,7 +7,7 @@
 // `skills:` list, unquote, ignore everything else) and reports pins that trail
 // the pinned artifact's current version, so the pull that is about to execute the
 // manifest can SAY so.
-import type { MetaStore } from "@derive/core"
+import { type MetaStore, toMarkdown } from "@derive/core"
 
 export interface SkillPin {
   id: string
@@ -119,7 +119,20 @@ export const parseManifestRepos = (md: string): ManifestRepo[] => {
  *  first non-blank run of lines joined and capped. Null on an empty/frontmatter-only
  *  body rather than an empty string, so callers can tell "no description" from "". */
 export const manifestDescription = (md: string, maxChars = 220): string | null => {
-  const body = md.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "")
+  // Context manifests are usually Markdown, but linked graphs are ordinary HTML
+  // artifacts carrying a bundle-manifest fact. Convert that viewer source before
+  // taking its first paragraph so the directory never leaks `<!doctype …>` as a
+  // supposedly human description.
+  const html = /^\s*(?:<!doctype\s+html\b|<html\b)/i.test(md)
+  let readable = html ? toMarkdown(md, "text/html") : md
+  if (html) {
+    const lines = readable.split(/\r?\n/)
+    const heading = lines.findIndex((line) => /^#\s/.test(line))
+    // Styled pages commonly put a tiny eyebrow before their H1. Treat the H1 as
+    // the semantic start when it appears near the top, then use the prose after it.
+    if (heading >= 0 && heading <= 4) readable = lines.slice(heading).join("\n")
+  }
+  const body = readable.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "")
   const lines = body.split(/\r?\n/)
   let i = 0
   const skipBlank = () => {

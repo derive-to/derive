@@ -16,6 +16,10 @@ export const roleEnum = z.enum([
   "owner",
 ] as const satisfies readonly Role[])
 
+/** Capability tiers are durable intent for an execution harness, never a concrete model
+ * selection. A diagram can set a default and a node can narrow it. */
+const linkedBundleTierEnum = z.enum(["utility", "fast", "balanced", "expert", "frontier"])
+
 /** A collaborator on an artifact or collection — identified by public @handle, never
  *  email. Returned by `sharing`, `collections` (members), and later `workspace` members,
  *  so its schema is defined once here. `profession` is joined only by some payloads
@@ -282,14 +286,38 @@ export const Artifact = z
               id: z.string(),
               title: z.string(),
               type: z.enum(["loop", "graph"]),
+              tier: linkedBundleTierEnum
+                .optional()
+                .describe("Default capability tier for nodes without their own tier."),
               nodes: z.array(
                 z.object({
                   id: z.string(),
                   label: z.string(),
                   member: z.string().optional(),
-                  state: z.enum(["pending", "active", "blocked", "done"]).optional(),
+                  role: z.string().optional().describe("The responsibility this node owns."),
+                  tier: linkedBundleTierEnum
+                    .optional()
+                    .describe("Node capability tier; overrides the diagram default."),
+                  state: z.enum(["pending", "active", "waiting", "blocked", "done"]).optional(),
                   basis_version: z.number().int().positive().optional(),
                   note: z.string().optional(),
+                  confidence: z
+                    .object({
+                      level: z.enum(["low", "medium", "high"]),
+                      basis: z.string(),
+                    })
+                    .optional()
+                    .describe("Current confidence and the evidence or judgment supporting it."),
+                  help: z
+                    .object({
+                      needed: z.boolean(),
+                      question: z.string().optional(),
+                      can_continue: z.string().optional(),
+                    })
+                    .optional()
+                    .describe(
+                      "Whether help is needed, the concise question, and work that can continue.",
+                    ),
                 }),
               ),
               edges: z.array(

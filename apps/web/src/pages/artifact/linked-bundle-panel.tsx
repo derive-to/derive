@@ -7,6 +7,8 @@ import { parseAnchor } from "./types"
 
 type LinkedBundle = NonNullable<Artifact["linked_bundle"]>
 type Diagram = NonNullable<LinkedBundle["diagrams"]>[number]
+type DiagramNode = Diagram["nodes"][number]
+type AgentTier = NonNullable<DiagramNode["tier"]>
 type BundleMember = LinkedBundle["members"][number]
 
 export type LinkedBundleReviewKind = "node" | "edge" | "policy"
@@ -43,6 +45,10 @@ export const linkedBundleMemberDetail = (member: BundleMember): string =>
   ]
     .filter(Boolean)
     .join(" · ") || (member.available ? "Artifact" : "Unavailable")
+
+/** A node-specific routing request wins over its diagram's authored default. */
+export const linkedBundleEffectiveTier = (node: DiagramNode, diagram: Diagram): AgentTier | null =>
+  node.tier ?? diagram.tier ?? null
 
 function ReviewRow({
   target,
@@ -128,6 +134,7 @@ function DiagramCard({
         {diagram.nodes.map((node) => {
           const target = linkedBundleReviewTarget(diagram.id, "node", node.id)
           const member = node.member ? members.get(node.member) : undefined
+          const tier = linkedBundleEffectiveTier(node, diagram)
           const updated =
             !!node.basis_version &&
             !!member?.current_version &&
@@ -137,15 +144,20 @@ function DiagramCard({
               key={node.id}
               target={target}
               label={node.label}
-              detail={
+              detail={[
+                node.state,
+                tier ? `tier ${tier}` : null,
+                node.role,
+                node.confidence ? `${node.confidence.level} confidence` : null,
+                node.help?.needed ? "needs help" : null,
                 member
-                  ? `${node.state ? `${node.state} · ` : ""}Artifact · ${member.label}${member.current_version ? ` · v${member.current_version}` : ""}${updated ? " · updated" : ""}`
+                  ? `Artifact · ${member.label}${member.current_version ? ` · v${member.current_version}` : ""}${updated ? " · updated" : ""}`
                   : node.member
                     ? `Artifact · ${node.member}`
-                    : node.state
-                      ? `${nodeKind} · ${node.state}`
-                      : nodeKind
-              }
+                    : nodeKind,
+              ]
+                .filter(Boolean)
+                .join(" · ")}
               count={counts.get(target) ?? 0}
               onFocus={onFocus}
             />

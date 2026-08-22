@@ -878,12 +878,50 @@ export function registerReadTool(tc: ToolContext): void {
                                 .flatMap((diagram) =>
                                   diagram.nodes
                                     .filter((node) => node.state)
-                                    .map(
-                                      (node) =>
-                                        `${diagram.id}.${node.id}=${node.state}${node.basis_version ? `@v${node.basis_version}` : ""}`,
-                                    ),
+                                    .map((node) => {
+                                      const actionable =
+                                        node.state === "active" ||
+                                        node.state === "waiting" ||
+                                        node.state === "blocked"
+                                      const tier = node.tier ?? diagram.tier
+                                      const confidence =
+                                        actionable && node.confidence
+                                          ? ` [confidence:${node.confidence.level}; ${clean(node.confidence.basis)}]`
+                                          : ""
+                                      return `${diagram.id}.${node.id}=${node.state}${node.basis_version ? `@v${node.basis_version}` : ""}${tier ? ` [tier:${tier}]` : ""}${node.role ? ` [role:${clean(node.role)}]` : ""}${confidence}`
+                                    }),
                                 )
                                 .join(" | "),
+                              ...(checked.manifest.diagrams.some((diagram) =>
+                                diagram.nodes.some(
+                                  (node) =>
+                                    (node.state === "active" ||
+                                      node.state === "waiting" ||
+                                      node.state === "blocked") &&
+                                    node.help?.needed &&
+                                    (node.help.question || node.help.can_continue),
+                                ),
+                              )
+                                ? {
+                                    bundle_help: checked.manifest.diagrams
+                                      .flatMap((diagram) =>
+                                        diagram.nodes
+                                          .filter(
+                                            (node) =>
+                                              (node.state === "active" ||
+                                                node.state === "waiting" ||
+                                                node.state === "blocked") &&
+                                              node.help?.needed &&
+                                              (node.help.question || node.help.can_continue),
+                                          )
+                                          .map(
+                                            (node) =>
+                                              `${diagram.id}.${node.id}: ${node.help?.question ? `question: ${clean(node.help.question)}` : ""}${node.help?.question && node.help?.can_continue ? "; " : ""}${node.help?.can_continue ? `can continue: ${clean(node.help.can_continue)}` : ""}`,
+                                          ),
+                                      )
+                                      .join(" | "),
+                                  }
+                                : {}),
                             }
                           : {}),
                       }

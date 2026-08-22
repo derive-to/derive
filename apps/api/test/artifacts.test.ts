@@ -186,6 +186,7 @@ describe("linked bundles", () => {
           id: "improve",
           title: "Improve until confident",
           type: "loop",
+          tier: "balanced",
           goal: "Make the brief decision-ready",
           evaluate: "Check material claims",
           stop: "No material objections remain",
@@ -194,9 +195,20 @@ describe("linked bundles", () => {
               id: "revise",
               label: "Revise",
               member: "brief",
+              role: "draft owner",
+              tier: "expert",
               state: "active",
               basis_version: 1,
               note: "Address the evidence objection",
+              confidence: {
+                level: "medium",
+                basis: "One evidence objection remains unresolved.",
+              },
+              help: {
+                needed: true,
+                question: "Which source resolves the objection?",
+                can_continue: "Tighten uncontested sections.",
+              },
             },
             { id: "check", label: "Check", member: "evidence" },
           ],
@@ -229,12 +241,24 @@ describe("linked bundles", () => {
         {
           id: "improve",
           type: "loop",
+          tier: "balanced",
           nodes: [
             {
               id: "revise",
+              role: "draft owner",
+              tier: "expert",
               state: "active",
               basis_version: 1,
               note: "Address the evidence objection",
+              confidence: {
+                level: "medium",
+                basis: "One evidence objection remains unresolved.",
+              },
+              help: {
+                needed: true,
+                question: "Which source resolves the objection?",
+                can_continue: "Tighten uncontested sections.",
+              },
             },
             { id: "check" },
           ],
