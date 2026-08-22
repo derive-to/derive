@@ -129,6 +129,28 @@ const addV = async (m: MetaStore, artifactId: string): Promise<number> => {
 }
 
 describe("slack status + admin routes", () => {
+  it("defaults Slack review DMs on, review email off, and lets each change independently", async () => {
+    const { app } = make("slack-personal-prefs")
+    const initial = await (await app.request("/v1/slack", { headers: as(owner.email) })).json()
+    expect(initial).toMatchObject({ slack_dm: true, review_email: false })
+
+    const emailOn = await (
+      await app.request("/v1/slack/prefs", {
+        ...jsonAs(as(owner.email), { review_email: true }),
+        method: "PATCH",
+      })
+    ).json()
+    expect(emailOn).toMatchObject({ slack_dm: true, review_email: true })
+
+    const slackOff = await (
+      await app.request("/v1/slack/prefs", {
+        ...jsonAs(as(owner.email), { slack_dm: false }),
+        method: "PATCH",
+      })
+    ).json()
+    expect(slackOff).toMatchObject({ slack_dm: false, review_email: true })
+  })
+
   it("persists an OAuth install and returns an explicit success handoff", async () => {
     const { app, meta } = make("slack-oauth-success")
     const start = await app.request("/v1/slack/install", { headers: as(owner.email) })

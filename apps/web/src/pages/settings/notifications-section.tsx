@@ -48,6 +48,15 @@ export function NotificationsSection() {
       return rollback
     },
   })
+  const reviewEmail = useApiMutation({
+    mutationFn: (next: boolean) => api.setReviewEmail(next),
+    optimistic: (next, client) => {
+      const qk = slackQuery().queryKey
+      const rollback = snapshot(client, qk)
+      client.setQueryData(qk, (prev) => (prev ? { ...prev, review_email: next } : prev))
+      return rollback
+    },
+  })
   const testDm = useApiMutation({
     mutationFn: () => api.sendSlackTestDm(),
     success: "Test DM sent",
@@ -190,6 +199,27 @@ export function NotificationsSection() {
               </SettingRow>
             )}
           </>
+        )}
+      </SettingsGroup>
+
+      <SettingsGroup title="Email">
+        {!slack ? (
+          <div>
+            <SettingsListSkeleton rows={1} />
+          </div>
+        ) : (
+          <SettingRow
+            htmlFor="toggle-review-email"
+            label="Email me review requests"
+            description="Off by default. Turn this on when you also want review requests in your inbox. A workspace admin must keep email delivery enabled."
+          >
+            <Switch
+              id="toggle-review-email"
+              data-testid="toggle-review-email"
+              checked={slack.review_email ?? false}
+              onCheckedChange={(next) => reviewEmail.mutate(next)}
+            />
+          </SettingRow>
         )}
       </SettingsGroup>
 
