@@ -187,16 +187,26 @@ export const linkedBundleAnchor = (target: { id: string; kind: string; label: st
 
 const stateTone = (state?: DiagramNode["state"]): string => {
   if (state === "done") return "border-success/40 bg-success/5"
-  if (state === "active") return "border-primary/50 bg-primary/5"
-  if (state === "blocked") return "border-warning/50 bg-warning/5"
+  if (state === "active") return "border-insights/50 bg-insights/5"
+  if (state === "waiting") return "border-warning/50 bg-warning/5"
+  if (state === "blocked") return "border-destructive/50 bg-destructive/5"
   return "border-border bg-card"
 }
 
 const stateDot = (state?: DiagramNode["state"]): string => {
   if (state === "done") return "bg-success"
-  if (state === "active") return "bg-primary"
-  if (state === "blocked") return "bg-warning"
+  if (state === "active") return "bg-insights"
+  if (state === "waiting") return "bg-warning"
+  if (state === "blocked") return "bg-destructive"
   return "bg-muted-foreground/60"
+}
+
+const stateChipTone = (state?: DiagramNode["state"]): string => {
+  if (state === "done") return "border-success/25 bg-success/10 text-success"
+  if (state === "active") return "border-insights/25 bg-insights/10 text-insights"
+  if (state === "waiting") return "border-warning/25 bg-warning/10 text-warning"
+  if (state === "blocked") return "border-destructive/25 bg-destructive/10 text-destructive"
+  return "border-border bg-muted/45 text-muted-foreground"
 }
 
 export const linkedBundleNodeFreshness = (
@@ -894,11 +904,18 @@ function ArtifactShelf({ members }: { members: BundleMember[] }) {
             href={member.available ? `/artifacts/${member.ref}` : undefined}
             aria-disabled={!member.available}
             className={cn(
-              "min-w-60 rounded-xl border border-border bg-card p-3 transition-colors lg:min-w-0",
+              "relative min-w-60 overflow-hidden rounded-xl border border-border bg-card p-3 pl-4 transition-colors lg:min-w-0",
               member.available ? "hover:border-primary/35 hover:bg-muted/30" : "opacity-60",
             )}
             data-testid={`bundle-workspace-member-${member.id}`}
           >
+            <span
+              aria-hidden="true"
+              className={cn(
+                "absolute inset-y-0 left-0 w-1",
+                member.available ? "bg-success" : "bg-muted-foreground/35",
+              )}
+            />
             <span className="flex items-start justify-between gap-3">
               <span className="min-w-0">
                 <span className="block truncate text-sm font-medium text-foreground">
@@ -908,16 +925,38 @@ function ArtifactShelf({ members }: { members: BundleMember[] }) {
                   {linkedBundleMemberDetail(member)}
                 </span>
               </span>
-              {member.available ? (
-                <Icon name="link" size={13} className="mt-0.5 shrink-0 text-muted-foreground" />
-              ) : null}
+              <span className="flex shrink-0 items-center gap-1.5">
+                {member.current_version ? (
+                  <span className="rounded-md border border-share/20 bg-share/10 px-1.5 py-0.5 font-mono text-2xs font-semibold text-share">
+                    v{member.current_version}
+                  </span>
+                ) : null}
+                {member.available ? (
+                  <Icon name="link" size={13} className="text-muted-foreground" />
+                ) : null}
+              </span>
             </span>
-            <span className="mt-3 flex items-center justify-between font-mono text-2xs text-muted-foreground">
-              <span>
-                {member.updated_at ? `updated ${ago(member.updated_at)}` : "not resolved"}
+            <span className="mt-3 flex flex-wrap items-center gap-1.5 font-mono text-2xs">
+              <span
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-md border px-1.5 py-0.5",
+                  member.updated_at
+                    ? "border-success/20 bg-success/10 text-success"
+                    : "border-border bg-muted/45 text-muted-foreground",
+                )}
+              >
+                <span
+                  className={cn(
+                    "size-1.5 rounded-full",
+                    member.updated_at ? "bg-success" : "bg-muted-foreground/50",
+                  )}
+                />
+                {member.updated_at ? `Updated ${ago(member.updated_at)}` : "Not resolved"}
               </span>
               {(member.open_comment_count ?? 0) > 0 ? (
-                <span>{member.open_comment_count} open</span>
+                <span className="rounded-md border border-warning/20 bg-warning/10 px-1.5 py-0.5 font-semibold text-warning">
+                  {member.open_comment_count} open
+                </span>
               ) : null}
             </span>
           </a>
@@ -974,7 +1013,7 @@ function NowWorkspace({
           treatment === "help"
             ? "border-destructive/35 bg-destructive/5"
             : treatment === "current"
-              ? "border-primary/30 bg-primary/5"
+              ? "border-insights/30 bg-insights/5"
               : "border-border bg-card",
         )}
       >
@@ -997,13 +1036,43 @@ function NowWorkspace({
             Can continue: {node.help.can_continue}
           </span>
         ) : null}
-        <span className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-2xs text-muted-foreground">
-          {node.state ? <span className="capitalize">{node.state}</span> : null}
-          {tier ? <span>tier {tier}</span> : null}
-          {node.confidence ? (
-            <span className="capitalize">{node.confidence.level} confidence</span>
+        <span className="mt-3 flex flex-wrap items-center gap-1.5 font-mono text-2xs">
+          {node.state ? (
+            <span
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-md border px-1.5 py-0.5 capitalize",
+                stateChipTone(node.state),
+              )}
+            >
+              <span className={cn("size-1.5 rounded-full", stateDot(node.state))} />
+              {node.state}
+            </span>
           ) : null}
-          {member ? <span className="truncate">{member.label}</span> : null}
+          {tier ? (
+            <span className="rounded-md border border-border bg-muted/35 px-1.5 py-0.5 text-muted-foreground">
+              tier {tier}
+            </span>
+          ) : null}
+          {node.confidence ? (
+            <span
+              className={cn(
+                "rounded-md border px-1.5 py-0.5 capitalize",
+                node.confidence.level === "high"
+                  ? "border-success/20 bg-success/10 text-success"
+                  : node.confidence.level === "low"
+                    ? "border-warning/20 bg-warning/10 text-warning"
+                    : "border-border bg-muted/35 text-muted-foreground",
+              )}
+            >
+              {node.confidence.level} confidence
+            </span>
+          ) : null}
+          {member ? (
+            <span className="truncate rounded-md border border-share/15 bg-share/5 px-1.5 py-0.5 text-share">
+              {member.label}
+              {member.current_version ? ` · v${member.current_version}` : ""}
+            </span>
+          ) : null}
         </span>
       </button>
     )
@@ -1021,8 +1090,29 @@ function NowWorkspace({
           This briefing comes directly from authored graph state. Open any item in Advanced to
           inspect its exact relationships, confidence basis, or history.
         </p>
-        <div className="mt-3 font-mono text-2xs text-muted-foreground">
-          {summary.done} of {summary.total} work items done
+        <div className="mt-3 flex flex-wrap items-center gap-1.5 font-mono text-2xs">
+          <span className="rounded-md border border-insights/20 bg-insights/10 px-1.5 py-0.5 text-insights">
+            {summary.current.length} current
+          </span>
+          {summary.needsHelp.length ? (
+            <span className="rounded-md border border-destructive/20 bg-destructive/10 px-1.5 py-0.5 font-semibold text-destructive">
+              {summary.needsHelp.length} need you
+            </span>
+          ) : null}
+          <span className="rounded-md border border-border bg-muted/40 px-1.5 py-0.5 text-muted-foreground">
+            {summary.next.length} next
+          </span>
+          <span className="text-muted-foreground">
+            {summary.done} of {summary.total} done
+          </span>
+        </div>
+        <div className="mt-2 h-1.5 max-w-lg overflow-hidden rounded-full bg-muted">
+          <div
+            className="h-full rounded-full bg-success transition-[width]"
+            style={{
+              width: `${summary.total ? Math.round((summary.done / summary.total) * 100) : 0}%`,
+            }}
+          />
         </div>
       </section>
 
@@ -1096,7 +1186,16 @@ function NowWorkspace({
                         {loop.title}
                       </span>
                     </span>
-                    <span className="shrink-0 font-mono text-2xs text-muted-foreground">
+                    <span
+                      className={cn(
+                        "shrink-0 rounded-md border px-1.5 py-0.5 font-mono text-2xs",
+                        complete
+                          ? "border-success/20 bg-success/10 text-success"
+                          : current.length
+                            ? "border-insights/20 bg-insights/10 text-insights"
+                            : "border-border bg-muted/40 text-muted-foreground",
+                      )}
+                    >
                       {complete ? "complete" : current.length ? "in progress" : "not started"}
                     </span>
                   </span>
