@@ -926,7 +926,7 @@ export function registerReadTool(tc: ToolContext): void {
                           : {}),
                       }
                     : {}),
-                  bundle_next: `Read the full topology with read(short_id:"${short_id}", data:"${LINKED_BUNDLE_FACT}"). Keep member artifacts independent; revise this bundle only when its purpose, membership, or diagrams change.`,
+                  bundle_next: `Start with catch_up(short_id:"${short_id}") so open general and pinned feedback enters the run. Read the full topology with read(short_id:"${short_id}", data:"${LINKED_BUNDLE_FACT}"). Keep member artifacts independent; revise this bundle only when its purpose, membership, or diagrams change.`,
                 }
               }
             } catch {

@@ -2278,7 +2278,11 @@ describe("remote MCP endpoint (/mcp)", () => {
   })
 
   it("MCP recognizes linked bundles on publish, read, and library browse", async () => {
-    const { app, token } = appWithGrant(dir, "linkedbundle", "openid derive:read derive:publish")
+    const { app, token } = appWithGrant(
+      dir,
+      "linkedbundle",
+      "openid derive:read derive:comment derive:publish",
+    )
     const manifest = {
       schema: "derive.linked-bundle/v1",
       purpose: "Keep the loop and its evidence together.",
@@ -2340,6 +2344,16 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(receipt).toMatchObject({ published: true, linked_bundle: true })
     expect(receipt.bundle_next).toContain('data:"bundle-manifest"')
 
+    const note = JSON.parse(
+      toolText(
+        await call(app, token, "comment", {
+          short_id: receipt.short_id,
+          body: "Make the next draft more founder-like.",
+        }),
+      ),
+    )
+    expect(note).toMatchObject({ anchored_to: null })
+
     const read = toolText(await call(app, token, "read", { short_id: receipt.short_id }))
     expect(read).toContain("bundle_purpose: Keep the loop and its evidence together.")
     expect(read).toContain("brief=Product brief (abc12345) [output]")
@@ -2352,6 +2366,25 @@ describe("remote MCP endpoint (/mcp)", () => {
     )
     expect(read).toContain(
       "bundle_help: improve.revise: question: Which source resolves the evidence objection?; can continue: Tighten the uncontested sections.",
+    )
+    expect(read).toContain(
+      `bundle_next: Start with catch_up(short_id:"${receipt.short_id}") so open general and pinned feedback enters the run.`,
+    )
+
+    const open = JSON.parse(
+      toolText(
+        await call(app, token, "catch_up", {
+          short_id: receipt.short_id,
+          comments: "open",
+        }),
+      ),
+    )
+    expect(open.comments).toContainEqual(
+      expect.objectContaining({
+        thread: note.thread,
+        quote: null,
+        body: "Make the next draft more founder-like.",
+      }),
     )
     const data = JSON.parse(
       toolText(

@@ -99,6 +99,12 @@ record are involved.
 Keep these ids stable across visual redesigns. A comment then stays attached to the named
 semantic part while normal version history records every revision.
 
+Feedback does not have to name a graph part. Use an ordinary general comment when it applies to
+the whole bundle; pin only when the target adds useful precision. Start every bundle run with
+`catch_up` on the bundle so open general and pinned threads enter the work naturally. Catch up on a
+member before revising that artifact too. Resolve ordinary threads when their feedback lands;
+unresolved feedback remains open for the next run without a second tracking system.
+
 Member `id` and diagram/node ids are stable bundle-local names: letters, numbers,
 underscores, and hyphens. Member `ref` is an artifact short id or artifact URL; Derive
 normalizes it to the short id. Diagram nodes may point at a member id. Edges point at node

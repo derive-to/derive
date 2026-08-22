@@ -22,7 +22,7 @@ export function registerCommentTool(tc: ToolContext): void {
     "comment",
     {
       description:
-        "Comment, reply, react, resolve, or reopen. Anchor new feedback with `quote` or a linked-bundle `visual_target`; use `reply_to` for an existing thread. See derive://skills/loop and /bundles.",
+        "Comment anywhere, reply, react, resolve, or reopen. Omit quote/visual_target for an ordinary general comment; use either target only when it adds useful precision. See derive://skills/loop and /bundles.",
       // Writes (comments, reactions, thread state) but nothing here deletes: a comment
       // once posted stays, and set_state's resolve/reopen is explicitly reversible either
       // way. The Slack/webhook/email fan-out is a best-effort side notification, not the

@@ -1239,6 +1239,7 @@ export function LinkedBundleWorkspace({
   refreshing,
   refreshedAt,
   onTogglePinning,
+  onComment,
   onPin,
   onReview,
   onDocument,
@@ -1257,6 +1258,7 @@ export function LinkedBundleWorkspace({
   refreshing: boolean
   refreshedAt: number
   onTogglePinning: () => void
+  onComment: () => void
   onPin: (target: { id: string; kind: string; label: string }) => void
   onReview: (target: string) => void
   onDocument: () => void
@@ -1364,6 +1366,16 @@ export function LinkedBundleWorkspace({
               </button>
             </fieldset>
             <LinkedBundleFocusSearch diagrams={diagrams} members={members} onFocus={focusTarget} />
+            {canComment ? (
+              <Button
+                variant="outline"
+                size="sm"
+                data-testid="bundle-workspace-comment"
+                onClick={onComment}
+              >
+                <Icon name="comments" size={14} /> Comment
+              </Button>
+            ) : null}
             {canComment ? (
               <Button
                 variant={pinning ? "default" : "outline"}

@@ -1017,6 +1017,14 @@ export function Artifact({ template = false }: { template?: boolean }) {
     setSel(null)
     setComposer({ anchor: linkedBundleAnchor(target), docTop: null })
   }
+  const commentOnBundle = () => {
+    setVisualPin(false)
+    setRail("comments")
+    setPanel("open")
+    setActiveThread(null)
+    setSel(null)
+    setComposer({ anchor: null, docTop: null })
+  }
   const reviewBundleTarget = (target: string) => {
     setRail("comments")
     setPanel("open")
@@ -1051,6 +1059,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
         setSel(null)
         setVisualPin((on) => !on)
       }}
+      onComment={commentOnBundle}
       onPin={pinBundleTarget}
       onReview={reviewBundleTarget}
       onDocument={() => setBundleView("document")}
