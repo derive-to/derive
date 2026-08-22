@@ -42,6 +42,56 @@ export const linkedBundleCurrentNodes = (diagram: Diagram): DiagramNode[] =>
     (node) => node.state === "active" || node.state === "waiting" || node.state === "blocked",
   )
 
+export type LinkedBundleNowReference = {
+  diagram: string
+  node: string
+}
+
+export type LinkedBundleNowSummary = {
+  current: LinkedBundleNowReference[]
+  needsHelp: LinkedBundleNowReference[]
+  next: LinkedBundleNowReference[]
+  done: number
+  total: number
+}
+
+/** Project the precise graph into the few questions a returning human asks first.
+ * The graph remains canonical; this summary never invents state or ordering. */
+export const linkedBundleNowSummary = (diagrams: Diagram[]): LinkedBundleNowSummary => {
+  const current: LinkedBundleNowReference[] = []
+  const needsHelp: LinkedBundleNowReference[] = []
+  const next: LinkedBundleNowReference[] = []
+  const nextKeys = new Set<string>()
+  let done = 0
+  let total = 0
+
+  for (const diagram of diagrams) {
+    total += diagram.nodes.length
+    const byId = new Map(diagram.nodes.map((node) => [node.id, node]))
+    const currentIds = new Set<string>()
+    for (const node of diagram.nodes) {
+      if (node.state === "done") done += 1
+      if (node.state === "active" || node.state === "waiting" || node.state === "blocked") {
+        const reference = { diagram: diagram.id, node: node.id }
+        current.push(reference)
+        currentIds.add(node.id)
+        if (node.help?.needed) needsHelp.push(reference)
+      }
+    }
+    for (const edge of diagram.edges) {
+      if (!currentIds.has(edge.from)) continue
+      const target = byId.get(edge.to)
+      if (!target || (target.state && target.state !== "pending")) continue
+      const key = `${diagram.id}:${target.id}`
+      if (nextKeys.has(key)) continue
+      nextKeys.add(key)
+      next.push({ diagram: diagram.id, node: target.id })
+    }
+  }
+
+  return { current, needsHelp, next, done, total }
+}
+
 const NODE_W = 184
 const NODE_H = 112
 const PAD_X = 58
@@ -822,6 +872,263 @@ function DiagramWorkspace({
   )
 }
 
+function ArtifactShelf({ members }: { members: BundleMember[] }) {
+  return (
+    <aside
+      className="order-first min-w-0 lg:order-none lg:sticky lg:top-32 lg:max-h-[calc(100vh-9rem)] lg:self-start lg:overflow-y-auto"
+      data-testid="bundle-artifact-shelf"
+    >
+      <div className="mb-2 flex items-baseline justify-between gap-3">
+        <div>
+          <h2 className="text-sm font-semibold text-foreground">Living artifacts</h2>
+          <p className="mt-0.5 text-2xs text-muted-foreground">Always in this workspace</p>
+        </div>
+        <span className="shrink-0 font-mono text-2xs text-muted-foreground">
+          {members.length} total
+        </span>
+      </div>
+      <div className="flex gap-2 overflow-x-auto pb-2 lg:grid lg:overflow-visible lg:pb-0">
+        {members.map((member) => (
+          <a
+            key={member.id}
+            href={member.available ? `/artifacts/${member.ref}` : undefined}
+            aria-disabled={!member.available}
+            className={cn(
+              "min-w-60 rounded-xl border border-border bg-card p-3 transition-colors lg:min-w-0",
+              member.available ? "hover:border-primary/35 hover:bg-muted/30" : "opacity-60",
+            )}
+            data-testid={`bundle-workspace-member-${member.id}`}
+          >
+            <span className="flex items-start justify-between gap-3">
+              <span className="min-w-0">
+                <span className="block truncate text-sm font-medium text-foreground">
+                  {member.label}
+                </span>
+                <span className="mt-1 block truncate text-2xs text-muted-foreground">
+                  {linkedBundleMemberDetail(member)}
+                </span>
+              </span>
+              {member.available ? (
+                <Icon name="link" size={13} className="mt-0.5 shrink-0 text-muted-foreground" />
+              ) : null}
+            </span>
+            <span className="mt-3 flex items-center justify-between font-mono text-2xs text-muted-foreground">
+              <span>
+                {member.updated_at ? `updated ${ago(member.updated_at)}` : "not resolved"}
+              </span>
+              {(member.open_comment_count ?? 0) > 0 ? (
+                <span>{member.open_comment_count} open</span>
+              ) : null}
+            </span>
+          </a>
+        ))}
+      </div>
+    </aside>
+  )
+}
+
+function NowWorkspace({
+  diagrams,
+  members,
+  onFocus,
+}: {
+  diagrams: Diagram[]
+  members: Map<string, BundleMember>
+  onFocus: (target: { diagram: string; local: string }) => void
+}) {
+  const summary = useMemo(() => linkedBundleNowSummary(diagrams), [diagrams])
+  const diagramById = useMemo(
+    () => new Map(diagrams.map((diagram) => [diagram.id, diagram])),
+    [diagrams],
+  )
+  const helpKeys = new Set(summary.needsHelp.map((item) => `${item.diagram}:${item.node}`))
+  const moving = summary.current.filter((item) => !helpKeys.has(`${item.diagram}:${item.node}`))
+  const resolve = (reference: LinkedBundleNowReference) => {
+    const diagram = diagramById.get(reference.diagram)
+    const node = diagram?.nodes.find((item) => item.id === reference.node)
+    if (!diagram || !node) return null
+    return { diagram, node, member: node.member ? members.get(node.member) : undefined }
+  }
+  const headline = summary.needsHelp.length
+    ? `${summary.needsHelp.length} ${summary.needsHelp.length === 1 ? "item needs" : "items need"} your help.`
+    : summary.current.length
+      ? `${summary.current.length} ${summary.current.length === 1 ? "work item is" : "work items are"} moving. No agent has asked for help.`
+      : "No active work is reported right now."
+
+  const nodeButton = (
+    reference: LinkedBundleNowReference,
+    treatment: "current" | "help" | "next",
+  ) => {
+    const resolved = resolve(reference)
+    if (!resolved) return null
+    const { diagram, node, member } = resolved
+    const tier = linkedBundleEffectiveTier(node, diagram)
+    return (
+      <button
+        key={`${diagram.id}:${node.id}`}
+        type="button"
+        data-testid={`bundle-now-${treatment}-${diagram.id}-${node.id}`}
+        onClick={() => onFocus({ diagram: diagram.id, local: node.id })}
+        className={cn(
+          "rounded-xl border p-4 text-left transition-colors hover:border-primary/40 hover:bg-muted/25",
+          treatment === "help"
+            ? "border-destructive/35 bg-destructive/5"
+            : treatment === "current"
+              ? "border-primary/30 bg-primary/5"
+              : "border-border bg-card",
+        )}
+      >
+        <span className="flex items-start justify-between gap-3">
+          <span className="min-w-0">
+            <span className="font-mono text-2xs uppercase tracking-[0.1em] text-muted-foreground">
+              {diagram.title}
+            </span>
+            <span className="mt-1 block text-sm font-semibold text-foreground">{node.label}</span>
+          </span>
+          <span className="shrink-0 text-2xs text-muted-foreground">Open in Advanced →</span>
+        </span>
+        <span className="mt-1.5 block text-xs leading-relaxed text-muted-foreground">
+          {treatment === "help"
+            ? node.help?.question
+            : (node.note ?? member?.label ?? "No additional detail stated")}
+        </span>
+        {treatment === "help" && node.help?.can_continue ? (
+          <span className="mt-2 block text-2xs text-muted-foreground">
+            Can continue: {node.help.can_continue}
+          </span>
+        ) : null}
+        <span className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-2xs text-muted-foreground">
+          {node.state ? <span className="capitalize">{node.state}</span> : null}
+          {tier ? <span>tier {tier}</span> : null}
+          {node.confidence ? (
+            <span className="capitalize">{node.confidence.level} confidence</span>
+          ) : null}
+          {member ? <span className="truncate">{member.label}</span> : null}
+        </span>
+      </button>
+    )
+  }
+
+  const loops = diagrams.filter((diagram) => diagram.type === "loop")
+  return (
+    <div className="grid gap-5" data-testid="bundle-now-view">
+      <section className="rounded-xl border border-border bg-card p-4 sm:p-6">
+        <div className="font-mono text-2xs uppercase tracking-[0.12em] text-primary">Now</div>
+        <h2 className="mt-2 max-w-3xl text-lg font-semibold tracking-tight text-foreground sm:text-2xl">
+          {headline}
+        </h2>
+        <p className="mt-2 hidden max-w-3xl text-sm leading-relaxed text-muted-foreground sm:block">
+          This briefing comes directly from authored graph state. Open any item in Advanced to
+          inspect its exact relationships, confidence basis, or history.
+        </p>
+        <div className="mt-3 font-mono text-2xs text-muted-foreground">
+          {summary.done} of {summary.total} work items done
+        </div>
+      </section>
+
+      {summary.needsHelp.length ? (
+        <section data-testid="bundle-now-needs-help">
+          <div className="mb-2">
+            <h2 className="text-sm font-semibold text-destructive">Needs you</h2>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              Only explicit agent help requests appear here.
+            </p>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {summary.needsHelp.map((item) => nodeButton(item, "help"))}
+          </div>
+        </section>
+      ) : null}
+
+      {moving.length ? (
+        <section>
+          <div className="mb-2">
+            <h2 className="text-sm font-semibold text-foreground">Current work</h2>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              Active, waiting, and blocked work—without the graph mechanics.
+            </p>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {moving.map((item) => nodeButton(item, "current"))}
+          </div>
+        </section>
+      ) : null}
+
+      {summary.next.length ? (
+        <section>
+          <div className="mb-2">
+            <h2 className="text-sm font-semibold text-foreground">Likely next</h2>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              Pending work directly downstream from what is current.
+            </p>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {summary.next.map((item) => nodeButton(item, "next"))}
+          </div>
+        </section>
+      ) : null}
+
+      {loops.length ? (
+        <section>
+          <div className="mb-2">
+            <h2 className="text-sm font-semibold text-foreground">Improvement attempts</h2>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              Loops read as goals, current attempts, and stop conditions here.
+            </p>
+          </div>
+          <div className="grid gap-2 xl:grid-cols-2">
+            {loops.map((loop) => {
+              const current = linkedBundleCurrentNodes(loop)
+              const complete =
+                loop.nodes.length > 0 && loop.nodes.every((node) => node.state === "done")
+              return (
+                <article
+                  key={loop.id}
+                  className="rounded-xl border border-border bg-card p-4"
+                  data-testid={`bundle-now-loop-${loop.id}`}
+                >
+                  <span className="flex items-start justify-between gap-3">
+                    <span>
+                      <span className="font-mono text-2xs uppercase tracking-[0.1em] text-muted-foreground">
+                        Improvement loop
+                      </span>
+                      <span className="mt-1 block text-sm font-semibold text-foreground">
+                        {loop.title}
+                      </span>
+                    </span>
+                    <span className="shrink-0 font-mono text-2xs text-muted-foreground">
+                      {complete ? "complete" : current.length ? "in progress" : "not started"}
+                    </span>
+                  </span>
+                  <dl className="mt-3 grid gap-2 text-xs sm:grid-cols-3 xl:grid-cols-1 2xl:grid-cols-3">
+                    <div>
+                      <dt className="font-mono text-2xs uppercase text-muted-foreground">Goal</dt>
+                      <dd className="mt-1 text-foreground">{loop.goal ?? "Not stated"}</dd>
+                    </div>
+                    <div>
+                      <dt className="font-mono text-2xs uppercase text-muted-foreground">
+                        Current attempt
+                      </dt>
+                      <dd className="mt-1 text-foreground">
+                        {current.map((node) => node.label).join(", ") ||
+                          (complete ? "Completed" : "Not stated")}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="font-mono text-2xs uppercase text-muted-foreground">Stop</dt>
+                      <dd className="mt-1 text-foreground">{loop.stop ?? "Not stated"}</dd>
+                    </div>
+                  </dl>
+                </article>
+              )
+            })}
+          </div>
+        </section>
+      ) : null}
+    </div>
+  )
+}
+
 export function LinkedBundleWorkspace({
   shortId,
   version,
@@ -865,6 +1172,7 @@ export function LinkedBundleWorkspace({
     () => new Map(bundle.members.map((member) => [member.id, member])),
     [bundle.members],
   )
+  const [view, setView] = useState<"now" | "advanced">("now")
   const selected = reviewState.selected
   useEffect(() => {
     if (!selected) {
@@ -895,7 +1203,8 @@ export function LinkedBundleWorkspace({
       })
   }, [diagrams, onReviewStateChange, reviewState, selected])
 
-  const focusTarget = (target: LinkedBundleFocusTarget) => {
+  const focusNode = (target: { diagram: string; local: string }) => {
+    setView("advanced")
     onReviewStateChange({
       selected: { diagram: target.diagram, kind: "node", local: target.local },
       focus: true,
@@ -903,6 +1212,7 @@ export function LinkedBundleWorkspace({
       inspector: false,
     })
   }
+  const focusTarget = (target: LinkedBundleFocusTarget) => focusNode(target)
 
   const loops = diagrams.filter((diagram) => diagram.type === "loop").length
   const graphs = diagrams.length - loops
@@ -912,8 +1222,8 @@ export function LinkedBundleWorkspace({
       data-testid="linked-bundle-workspace"
     >
       <div className="sticky top-0 z-30 border-b border-border bg-background/95 px-4 py-3 backdrop-blur sm:px-6">
-        <div className="mx-auto flex max-w-7xl flex-wrap items-start gap-3">
-          <div className="min-w-0 flex-1">
+        <div className="mx-auto grid max-w-[90rem] gap-3">
+          <div className="min-w-0">
             <div className="font-mono text-2xs uppercase tracking-[0.12em] text-primary">
               Linked bundle workspace
             </div>
@@ -927,6 +1237,33 @@ export function LinkedBundleWorkspace({
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            <fieldset className="flex rounded-lg border border-border p-0.5">
+              <legend className="sr-only">Workspace view</legend>
+              <button
+                type="button"
+                data-testid="bundle-view-now"
+                aria-pressed={view === "now"}
+                onClick={() => setView("now")}
+                className={cn(
+                  "rounded-md px-2.5 py-1.5 text-xs text-muted-foreground",
+                  view === "now" && "bg-muted font-medium text-foreground",
+                )}
+              >
+                Now
+              </button>
+              <button
+                type="button"
+                data-testid="bundle-view-advanced"
+                aria-pressed={view === "advanced"}
+                onClick={() => setView("advanced")}
+                className={cn(
+                  "rounded-md px-2.5 py-1.5 text-xs text-muted-foreground",
+                  view === "advanced" && "bg-muted font-medium text-foreground",
+                )}
+              >
+                Advanced
+              </button>
+            </fieldset>
             <LinkedBundleFocusSearch diagrams={diagrams} members={members} onFocus={focusTarget} />
             {canComment ? (
               <Button
@@ -956,77 +1293,59 @@ export function LinkedBundleWorkspace({
           </div>
         </div>
         {pinning ? (
-          <div className="mx-auto mt-3 max-w-7xl rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-primary">
+          <div className="mx-auto mt-3 max-w-[90rem] rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-primary">
             Select a loop policy, step, graph node, or relationship to pin feedback.
           </div>
         ) : null}
       </div>
 
-      <div className="mx-auto grid max-w-7xl gap-4 p-4 sm:p-6">
-        <section>
-          <div className="mb-2 flex items-baseline justify-between gap-3">
-            <h2 className="text-sm font-semibold text-foreground">Living artifacts</h2>
-            <span className="text-xs text-muted-foreground">Versions update in place</span>
-          </div>
-          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-            {bundle.members.map((member) => (
-              <a
-                key={member.id}
-                href={member.available ? `/artifacts/${member.ref}` : undefined}
-                aria-disabled={!member.available}
-                className={cn(
-                  "rounded-xl border border-border bg-card p-3 transition-colors",
-                  member.available ? "hover:border-primary/35 hover:bg-muted/30" : "opacity-60",
-                )}
-                data-testid={`bundle-workspace-member-${member.id}`}
-              >
-                <span className="block truncate text-sm font-medium text-foreground">
-                  {member.label}
-                </span>
-                <span className="mt-1 block truncate text-2xs text-muted-foreground">
-                  {linkedBundleMemberDetail(member)}
-                </span>
-                <span className="mt-3 flex items-center justify-between font-mono text-2xs text-muted-foreground">
-                  <span>
-                    {member.updated_at ? `updated ${ago(member.updated_at)}` : "not resolved"}
-                  </span>
-                  {(member.open_comment_count ?? 0) > 0 ? (
-                    <span>{member.open_comment_count} open</span>
-                  ) : null}
-                </span>
-              </a>
-            ))}
-          </div>
-        </section>
-
-        {diagrams.length ? (
-          diagrams.map((diagram) => (
-            <DiagramWorkspace
-              key={diagram.id}
-              diagram={diagram}
-              members={members}
-              counts={counts}
-              reviewState={reviewState}
-              pinning={pinning}
-              canComment={canComment}
-              onReviewStateChange={onReviewStateChange}
-              onPin={onPin}
-              onReview={onReview}
-              shortId={shortId}
-              version={version}
-              canEdit={canEdit}
-              onSaved={onSaved}
-              onEditManifest={onEdit}
-            />
-          ))
-        ) : (
-          <div className="rounded-xl border border-dashed border-border p-8 text-center">
-            <div className="text-sm font-medium text-foreground">No loop or graph yet</div>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Ask an agent to add one, or edit the visible manifest.
-            </p>
-          </div>
-        )}
+      <div className="mx-auto grid max-w-[90rem] gap-5 p-4 sm:p-6 lg:grid-cols-[minmax(0,1fr)_18rem]">
+        <main className="min-w-0">
+          {view === "now" ? (
+            <NowWorkspace diagrams={diagrams} members={members} onFocus={focusNode} />
+          ) : diagrams.length ? (
+            <div className="grid gap-4" data-testid="bundle-advanced-view">
+              <div className="rounded-xl border border-border bg-card p-4">
+                <div className="font-mono text-2xs uppercase tracking-[0.12em] text-muted-foreground">
+                  Advanced
+                </div>
+                <h2 className="mt-1 text-base font-semibold text-foreground">
+                  Full graph and authored state
+                </h2>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Inspect exact relationships, tiers, confidence, help state, and loop policy.
+                </p>
+              </div>
+              {diagrams.map((diagram) => (
+                <DiagramWorkspace
+                  key={diagram.id}
+                  diagram={diagram}
+                  members={members}
+                  counts={counts}
+                  reviewState={reviewState}
+                  pinning={pinning}
+                  canComment={canComment}
+                  onReviewStateChange={onReviewStateChange}
+                  onPin={onPin}
+                  onReview={onReview}
+                  shortId={shortId}
+                  version={version}
+                  canEdit={canEdit}
+                  onSaved={onSaved}
+                  onEditManifest={onEdit}
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-xl border border-dashed border-border p-8 text-center">
+              <div className="text-sm font-medium text-foreground">No loop or graph yet</div>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Ask an agent to add one, or edit the visible manifest.
+              </p>
+            </div>
+          )}
+        </main>
+        <ArtifactShelf members={bundle.members} />
       </div>
     </div>
   )

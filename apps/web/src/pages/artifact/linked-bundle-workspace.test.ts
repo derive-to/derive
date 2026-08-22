@@ -13,6 +13,7 @@ import {
   linkedBundleFitScale,
   linkedBundleFocusedElements,
   linkedBundleNodeFreshness,
+  linkedBundleNowSummary,
 } from "./linked-bundle-workspace"
 
 type Diagram = NonNullable<NonNullable<Artifact["linked_bundle"]>["diagrams"]>[number]
@@ -91,6 +92,38 @@ describe("linked bundle workspace", () => {
       "research",
       "decision",
     ])
+  })
+
+  it("projects authored graph state into current, help, and likely-next work", () => {
+    const diagram = {
+      ...graph,
+      nodes: [
+        { id: "brief", label: "Brief", state: "done" as const },
+        { id: "research", label: "Research", state: "active" as const },
+        {
+          id: "decision",
+          label: "Decision",
+          state: "waiting" as const,
+          help: { needed: true, question: "Choose the launch date" },
+        },
+        { id: "launch", label: "Launch", state: "pending" as const },
+      ],
+      edges: [
+        { from: "brief", to: "research" },
+        { from: "research", to: "decision" },
+        { from: "decision", to: "launch" },
+      ],
+    }
+    expect(linkedBundleNowSummary([diagram])).toEqual({
+      current: [
+        { diagram: "launch", node: "research" },
+        { diagram: "launch", node: "decision" },
+      ],
+      needsHelp: [{ diagram: "launch", node: "decision" }],
+      next: [{ diagram: "launch", node: "launch" }],
+      done: 1,
+      total: 4,
+    })
   })
 
   it("focuses a selected node and only its immediate graph context", () => {
