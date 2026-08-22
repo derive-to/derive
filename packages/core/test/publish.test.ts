@@ -1,6 +1,8 @@
 import { zipSync } from "fflate"
 import { describe, expect, it } from "vitest"
+import { MODEL_FAMILY_TIERS, tierForModelFamily } from "../src/agent-routing"
 import { sha256Hex } from "../src/hash"
+import { validateLinkedBundle } from "../src/linked-bundle"
 import type { ArtifactRecord, BlobStore, MetaStore, NewArtifact, NewVersion } from "../src/ports"
 import { artifactUrl, looksLikeHtmlDocument, type PublishInput, publish } from "../src/publish"
 
@@ -132,6 +134,86 @@ describe("publish: single file", () => {
     expect(artifact.link_role).toBe("viewer")
     expect(artifact.listed).toBe("public")
     expect(version.author).toBe("amy")
+  })
+})
+
+describe("linked bundle agent tiers", () => {
+  it("keeps a graph default and per-step tier without pinning a model version", () => {
+    const result = validateLinkedBundle({
+      schema: "derive.linked-bundle/v1",
+      purpose: "Regression improvement loop",
+      members: [{ id: "qa", ref: "abc12345", label: "QA evidence" }],
+      diagrams: [
+        {
+          id: "qa-loop",
+          title: "QA loop",
+          type: "loop",
+          tier: "balanced",
+          nodes: [
+            { id: "test", label: "Test", member: "qa", tier: "fast" },
+            { id: "judge", label: "Judge", tier: "frontier" },
+          ],
+          edges: [
+            { from: "test", to: "judge" },
+            { from: "judge", to: "test" },
+          ],
+          goal: "Improve confidence",
+          evaluate: "Compare against the previous run",
+          stop: "No material regression remains",
+        },
+      ],
+    })
+
+    expect(result.errors).toEqual([])
+    expect(result.manifest?.diagrams?.[0]).toMatchObject({
+      tier: "balanced",
+      nodes: [{ tier: "fast" }, { tier: "frontier" }],
+    })
+  })
+
+  it("rejects tiers outside the five-step contract", () => {
+    const result = validateLinkedBundle({
+      schema: "derive.linked-bundle/v1",
+      purpose: "Bad graph",
+      members: [{ id: "qa", ref: "abc12345", label: "QA" }],
+      diagrams: [
+        {
+          id: "bad",
+          title: "Bad",
+          type: "graph",
+          tier: "ultra",
+          nodes: [{ id: "test", label: "Test", tier: "cheap" }],
+          edges: [],
+        },
+      ],
+    })
+
+    expect(result.errors).toContain(
+      'diagrams[0].tier must be "utility", "fast", "balanced", "expert", or "frontier"',
+    )
+    expect(result.errors).toContain(
+      'diagrams[0].nodes[0].tier must be "utility", "fast", "balanced", "expert", or "frontier"',
+    )
+  })
+
+  it("maps stable model families to tiers and covers the monthly OpenRouter leaders", () => {
+    expect(MODEL_FAMILY_TIERS).toMatchObject({
+      "deepseek-v4-flash": "fast",
+      hy3: "balanced",
+      mimo: "fast",
+      luna: "balanced",
+      "nemotron-ultra": "fast",
+      glm: "balanced",
+      opus: "frontier",
+      ox: "expert",
+      "deepseek-v4-pro": "expert",
+      sonnet: "expert",
+      terra: "expert",
+      sol: "frontier",
+      fable: "frontier",
+    })
+    expect(tierForModelFamily("opus")).toBe("frontier")
+    expect(tierForModelFamily("opus-5-20260801")).toBeNull()
   })
 })
 

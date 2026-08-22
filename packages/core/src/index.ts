@@ -1,4 +1,5 @@
 export * from "./advisories"
+export * from "./agent-routing"
 export * from "./anchor"
 export * from "./billing"
 export * from "./brandprint"
