@@ -210,9 +210,9 @@ export interface Env {
  *  same thread, no network, the request passed through whole so the site sees the
  *  real URL and answers with its own headers. Absent ⇒ undefined ⇒ the application
  *  owns the front door. */
-// The cast pair sidesteps the workers-types/DOM Request dualism (the binding's
-// types want the workers Request; Hono hands us the DOM one; they are the same
-// object at runtime) — the same dance assetResponse does with a URL string.
+// The cast pair bridges the workers-types/DOM Request dualism: the binding's types
+// want the workers Request, Hono hands us the DOM one, and they are the same object
+// at runtime. assetResponse sidesteps the same mismatch with a URL string.
 const fetchSite = (site: Fetcher, req: Request): Promise<Response> =>
   site.fetch(req as unknown as Parameters<Fetcher["fetch"]>[0]) as unknown as Promise<Response>
 
@@ -427,11 +427,6 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
           }
           return shellCache
         },
-        // The public site over the service binding: same thread, no network. The
-        // request passes through whole, so the site sees the real URL and can
-        // 307 trailing slashes or serve its 404 page itself. Absent binding ⇒
-        // undefined ⇒ the app owns the front door (routes/site.ts falls back to
-        // the shell on `/`, and the fast path below serves the app's 404 page).
         site: siteUpstream(env),
       })
     }
