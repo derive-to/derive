@@ -1475,7 +1475,11 @@ if (cmd === "workflow") {
       if (synced.changed) writeFileSync(target, synced.source)
       source = synced.source
       if (!flags.json)
-        console.log(synced.changed ? "✓ Visible graph synced" : "✓ Visible graph already synced")
+        console.log(
+          synced.changed
+            ? "✓ Visible graph synced"
+            : "✓ Topology unchanged; workflow policy checked",
+        )
     } catch (e) {
       console.error(`error: couldn't sync ${target}: ${e.message}`)
       process.exit(1)

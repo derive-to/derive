@@ -1268,6 +1268,7 @@ const starterWorkflow = (title) => {
 <script type="application/derive-facts" data-fact="bundle-manifest">
 ${fact(bundle)}
 </script>
+<!-- Edit workflow behavior in this fact. The workflow sync command projects its topology above. -->
 <script type="application/derive-facts" data-fact="workflow-definition">
 ${fact(workflow)}
 </script>

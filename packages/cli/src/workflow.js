@@ -772,5 +772,8 @@ export function formatWorkflowPreview(preview) {
   }
   lines.push(...section("Cannot do", preview.cannot_do))
   lines.push(...section("Warnings", preview.warnings))
+  lines.push(
+    "\nNext: derive publish, then open the shared Preview to Run with my agent or copy the handoff.",
+  )
   return lines.join("\n")
 }

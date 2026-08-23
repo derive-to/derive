@@ -148,6 +148,7 @@ describe("workflow preview", () => {
     expect(preview.status).toBe(0)
     expect(preview.stdout).toContain("Preview only — no context session has started")
     expect(preview.stdout).toContain("Context sessions on explicit run")
+    expect(preview.stdout).toContain("Run with my agent")
   })
 
   it("syncs visible topology from the runnable definition while preserving authored state", () => {
