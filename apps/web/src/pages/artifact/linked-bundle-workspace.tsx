@@ -204,6 +204,14 @@ const stateDot = (state?: DiagramNode["state"]): string => {
   return "bg-muted-foreground/60"
 }
 
+const stateTextTone = (state?: DiagramNode["state"]): string => {
+  if (state === "done") return "text-success"
+  if (state === "active") return "text-insights"
+  if (state === "waiting") return "text-warning"
+  if (state === "blocked") return "text-destructive"
+  return "text-muted-foreground"
+}
+
 const stateChipTone = (state?: DiagramNode["state"]): string => {
   if (state === "done") return "border-success/25 bg-success/10 text-success"
   if (state === "active") return "border-insights/25 bg-insights/10 text-insights"
@@ -676,6 +684,7 @@ function DiagramWorkspace({
                   selected.local === node.id
                 const inFocus = !focusActive || focused.nodes.has(node.id)
                 const freshness = linkedBundleNodeFreshness(node, member)
+                const tier = linkedBundleEffectiveTier(node, diagram)
                 return (
                   <button
                     key={node.id}
@@ -709,14 +718,20 @@ function DiagramWorkspace({
                         </span>
                       ) : null}
                     </span>
-                    <span className="mt-1.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 font-mono text-2xs text-muted-foreground">
-                      <span className="capitalize">{node.state ?? "state not set"}</span>
-                      <span>tier {linkedBundleEffectiveTier(node, diagram) ?? "not set"}</span>
-                      {node.role ? <span className="truncate">{node.role}</span> : null}
-                      {node.confidence ? (
-                        <span className="capitalize">{node.confidence.level} confidence</span>
-                      ) : null}
-                    </span>
+                    {node.state || tier || node.role || node.confidence ? (
+                      <span className="mt-1.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 font-mono text-2xs text-muted-foreground">
+                        {node.state ? (
+                          <span className={cn("capitalize", stateTextTone(node.state))}>
+                            {node.state}
+                          </span>
+                        ) : null}
+                        {tier ? <span>tier {tier}</span> : null}
+                        {node.role ? <span className="truncate">{node.role}</span> : null}
+                        {node.confidence ? (
+                          <span className="capitalize">{node.confidence.level} confidence</span>
+                        ) : null}
+                      </span>
+                    ) : null}
                     {member || (counts.get(target) ?? 0) > 0 ? (
                       <span className="mt-1 flex min-w-0 items-center gap-1.5 text-2xs text-muted-foreground">
                         {member ? <span className="truncate">{member.label}</span> : null}
@@ -750,16 +765,16 @@ function DiagramWorkspace({
                   {selection.state ? (
                     <span className="flex items-center gap-1.5 text-xs">
                       <span className={cn("size-2 rounded-full", stateDot(selection.state))} />
-                      <span className="capitalize text-foreground">{selection.state}</span>
+                      <span className={cn("capitalize", stateTextTone(selection.state))}>
+                        {selection.state}
+                      </span>
                       {selection.basis ? (
                         <span className="text-muted-foreground">· based on v{selection.basis}</span>
                       ) : null}
                     </span>
                   ) : null}
-                  {"tier" in selection ? (
-                    <span className="text-xs text-muted-foreground">
-                      Tier {selection.tier ?? "not set"}
-                    </span>
+                  {"tier" in selection && selection.tier ? (
+                    <span className="text-xs text-muted-foreground">Tier {selection.tier}</span>
                   ) : null}
                 </div>
                 <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
