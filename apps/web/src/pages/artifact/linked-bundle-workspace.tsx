@@ -96,6 +96,7 @@ const NODE_W = 184
 const NODE_H = 112
 const PAD_X = 58
 const PAD_Y = 48
+const GRAPH_COLUMN_STEP = 268
 
 const groupsAtDepth = (diagram: Diagram): Map<number, string[]> => {
   const incoming = new Map(diagram.nodes.map((node) => [node.id, 0]))
@@ -118,9 +119,11 @@ const groupsAtDepth = (diagram: Diagram): Map<number, string[]> => {
     }
   }
   // Graphs may intentionally contain a cycle. Keep it visible without pretending
-  // we found a topological order: place unresolved nodes in one final column.
+  // we found a topological order: preserve authored order across trailing columns
+  // instead of stacking every unresolved node and edge on top of each other.
   const last = Math.max(0, ...depth.values()) + (visited.size ? 1 : 0)
-  for (const node of diagram.nodes) if (!visited.has(node.id)) depth.set(node.id, last)
+  const unresolved = diagram.nodes.filter((node) => !visited.has(node.id))
+  for (const [index, node] of unresolved.entries()) depth.set(node.id, last + index)
   const groups = new Map<number, string[]>()
   for (const node of diagram.nodes) {
     const d = depth.get(node.id) ?? 0
@@ -154,11 +157,11 @@ export const linkedBundleLayout = (diagram: Diagram): LinkedBundleVisualLayout =
   const groups = groupsAtDepth(diagram)
   const columns = [...groups.entries()].sort(([a], [b]) => a - b)
   const maxRows = Math.max(1, ...columns.map(([, ids]) => ids.length))
-  const width = Math.max(660, columns.length * 236 + PAD_X * 2)
+  const width = Math.max(660, columns.length * GRAPH_COLUMN_STEP + PAD_X * 2)
   const height = Math.max(360, maxRows * 158 + PAD_Y * 2)
   const nodes: Record<string, Point> = {}
   columns.forEach(([, ids], column) => {
-    const x = PAD_X + column * 236
+    const x = PAD_X + column * GRAPH_COLUMN_STEP
     const span = ids.length * NODE_H + Math.max(0, ids.length - 1) * 46
     const y0 = Math.max(PAD_Y, (height - span) / 2)
     ids.forEach((id, row) => {
@@ -217,7 +220,7 @@ export const linkedBundleNodeFreshness = (
   return member.current_version > node.basis_version ? "updated" : "fresh"
 }
 
-const edgePath = (
+export const linkedBundleEdgePath = (
   diagram: Diagram,
   edge: DiagramEdge,
   points: Record<string, Point>,
@@ -235,6 +238,26 @@ const edgePath = (
       y: fy - 84,
     }
   if (diagram.type === "graph") {
+    const reciprocal = diagram.edges.some(
+      (candidate) => candidate.from === edge.to && candidate.to === edge.from,
+    )
+    if (reciprocal) {
+      const vx = tx - fx
+      const vy = ty - fy
+      const length = Math.max(1, Math.hypot(vx, vy))
+      const nx = -vy / length
+      const ny = vx / length
+      const bend = 104
+      const c1x = fx + vx / 3 + nx * bend
+      const c1y = fy + vy / 3 + ny * bend
+      const c2x = fx + (vx * 2) / 3 + nx * bend
+      const c2y = fy + (vy * 2) / 3 + ny * bend
+      return {
+        d: `M ${fx} ${fy} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${tx} ${ty}`,
+        x: (fx + tx) / 2 + nx * bend * 0.75,
+        y: (fy + ty) / 2 + ny * bend * 0.75,
+      }
+    }
     const dx = Math.max(58, Math.abs(tx - fx) / 2)
     return {
       d: `M ${fx} ${fy} C ${fx + dx} ${fy}, ${tx - dx} ${ty}, ${tx} ${ty}`,
@@ -582,7 +605,7 @@ function DiagramWorkspace({
                 {diagram.edges.map((edge, index) => {
                   const local = `${index}-${edge.from}-${edge.to}`
                   const target = linkedBundleReviewTarget(diagram.id, "edge", local)
-                  const path = edgePath(diagram, edge, layout.nodes)
+                  const path = linkedBundleEdgePath(diagram, edge, layout.nodes)
                   const active =
                     selected?.diagram === diagram.id &&
                     selected.kind === "edge" &&
@@ -610,7 +633,7 @@ function DiagramWorkspace({
               {diagram.edges.map((edge, index) => {
                 const local = `${index}-${edge.from}-${edge.to}`
                 const target = linkedBundleReviewTarget(diagram.id, "edge", local)
-                const path = edgePath(diagram, edge, layout.nodes)
+                const path = linkedBundleEdgePath(diagram, edge, layout.nodes)
                 const active =
                   selected?.diagram === diagram.id &&
                   selected.kind === "edge" &&

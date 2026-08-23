@@ -10,8 +10,10 @@ import { linkedBundleReconciliationEdit } from "./linked-bundle-reconcile"
 import {
   linkedBundleAnchor,
   linkedBundleCurrentNodes,
+  linkedBundleEdgePath,
   linkedBundleFitScale,
   linkedBundleFocusedElements,
+  linkedBundleLayout,
   linkedBundleNodeFreshness,
   linkedBundleNowSummary,
 } from "./linked-bundle-workspace"
@@ -77,6 +79,24 @@ describe("linked bundle workspace", () => {
     expect(linkedBundleFitScale(390, 2_400)).toBe(0.72)
     expect(linkedBundleFitScale(1_200, 2_400)).toBeCloseTo(1_160 / 2_400)
     expect(linkedBundleFitScale(1_200, 800)).toBe(1)
+  })
+
+  it("keeps cyclic graph nodes and reciprocal edge labels from overlapping", () => {
+    const cyclic = {
+      ...graph,
+      edges: [
+        { from: "brief", to: "research", label: "ready" },
+        { from: "research", to: "brief", label: "revise" },
+        { from: "research", to: "decision", label: "approve" },
+      ],
+    }
+    const layout = linkedBundleLayout(cyclic)
+    expect(new Set(Object.values(layout.nodes).map((point) => point.x)).size).toBe(3)
+    const [first, second] = cyclic.edges
+    if (!first || !second) throw new Error("reciprocal fixture is incomplete")
+    const forward = linkedBundleEdgePath(cyclic, first, layout.nodes)
+    const reverse = linkedBundleEdgePath(cyclic, second, layout.nodes)
+    expect(Math.abs(forward.y - reverse.y)).toBeGreaterThan(112)
   })
 
   it("surfaces only current or attention-worthy nodes for the mobile summary", () => {
