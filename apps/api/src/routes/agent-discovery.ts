@@ -24,7 +24,7 @@ import type { AppContext } from "../context"
  * (+ wrangler.toml run_worker_first + the Vite dev proxy) so the SPA's
  * not-found handling never shadows them.
  */
-export const agentDiscoveryRoutes = (_ctx: AppContext) => {
+export const agentDiscoveryRoutes = (ctx: AppContext) => {
   const app = new Hono()
 
   // Short shared cache: content only changes on deploy, but a stale copy
@@ -92,10 +92,13 @@ export const agentDiscoveryRoutes = (_ctx: AppContext) => {
           openapi: `${base}/openapi.json`,
           docs: `${base}/docs`,
           guides: "https://docs.derive.to/",
-          examples: `${base}/examples`,
           skill: `${base}/skill.md`,
           llms_txt: `${base}/llms.txt`,
           llms_full_txt: `${base}/llms-full.txt`,
+          // The examples page belongs to the public site (deps.site); a manifest
+          // that names a URL this deployment answers with a 404 is worse than a
+          // shorter one, so advertise it only where the site is bound.
+          ...(ctx.deps.site ? { examples: `${base}/examples` } : {}),
         },
         source: "https://github.com/derive-to/derive",
         not_for:

@@ -102,6 +102,7 @@ for (const line of lines) {
 blocks.push(cur)
 
 const DROP = new Set([
+  "[[services]]",
   "[[routes]]",
   "[triggers]",
   "[[queues.consumers]]",
@@ -155,6 +156,10 @@ const must = (cond, msg) => {
   }
 }
 must(!out.includes("[[routes]]"), "routes survived — the preview would serve production hostnames")
+must(
+  !out.includes("[[services]]"),
+  "service bindings survived — the preview would serve production's public site",
+)
 must(!out.includes("[triggers]"), "cron survived — a second scheduler on production's rows")
 must(!out.includes("queues.consumers"), "queue consumer survived — it would steal run messages")
 // The producer is the direction that was missed for a long time: with it, a preview pokes

@@ -41,26 +41,19 @@ export const isSpaPath = (path: string): boolean => {
 }
 
 // Root-level files emitted by Vite that must bypass the application when all
-// navigations are worker-first. Keep the canonical extensionless security page
-// beside its physical filename: Cloudflare's HTML handling serves
-// `/security.html` at `/security`, while the explicit allowlist prevents an
-// arbitrary missing file from falling through to the SPA shell with a soft 200.
-const STATIC_ROOT_PATHS = new Set([
-  "/.well-known/glama.json",
-  "/.well-known/mcp-registry-auth",
-  "/.well-known/security.txt",
-  "/llms-full.txt",
-  "/llms.txt",
-  "/robots.txt",
-  "/security",
-  "/security.html",
-  "/sitemap.xml",
-])
+// navigations are worker-first. Only the agent-documentation files remain: the
+// public site's pages and trust files (sitemap, security.*, the .well-known
+// verifications) belong to the site Worker, and robots.txt is an app route whose
+// Sitemap line depends on a site being bound.
+const STATIC_ROOT_PATHS = new Set(["/llms-full.txt", "/llms.txt"])
 
 /** True when a root-level public file belongs to the static asset binding. */
 export const isStaticRootPath = (path: string): boolean => STATIC_ROOT_PATHS.has(path)
 
-const SERVER_EXACT = new Set(["/", "/pricing", "/privacy", "/guides", "/examples"])
+// Only `/` needs app logic among the site's URLs: it is session-dependent. The
+// rest of the public site never enters the app's routes — the Worker fast path
+// and Node's not-found fallback forward them to the SITE upstream wholesale.
+const SERVER_EXACT = new Set(["/"])
 const SERVER_PREFIXES = ["/artifacts/", "/settings/github/", "/settings/slack/", "/users/"] as const
 
 /** Paths that need app logic before a shell or page can be selected. */

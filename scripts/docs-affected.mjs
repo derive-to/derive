@@ -41,6 +41,9 @@ const affects = (path) =>
   path.startsWith("apps/docs/") ||
   // A canonical source the manifest turns into a page.
   sources.has(path) ||
+  // The brand files the docs build copies in (fonts, favicon): a swap there
+  // otherwise skips the redeploy and the docs silently keep the old bytes.
+  path.startsWith("apps/web/public/brand/") ||
   // The toolchain. astro, @astrojs/mdx, pagefind and wrangler are pinned in the
   // lockfile and each changes the rendered output or how it ships, so a bump has
   // to redeploy even though it touches no content file.

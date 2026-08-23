@@ -30,6 +30,7 @@ import { catalogFromGateway, type GatewayConfig } from "./lib/model-catalog"
 import { getInstanceSlot, modelSource, readLibrary } from "./lib/model-library"
 import { mountWeb } from "./lib/serve-web"
 import { signupPolicy } from "./lib/signup-policy"
+import { originProxy } from "./lib/site"
 import { makeSlackIngestSender, makeSlackSender } from "./lib/slack-comments"
 import { makeSlackDmSender } from "./lib/slack-dm"
 import { loopSubstrate } from "./lib/substrate-loop"
@@ -292,31 +293,21 @@ const blobs: BlobStore = cfg.objectStoreUrl
 // meta) and to mountWeb (the client-router fallback). Only when serving the web.
 const shellHtml = cfg.serveWeb ? readFileSync(cfg.webShell, "utf8") : undefined
 
-// The marketing pages, read once from the web build's site/ directory like the
-// shell above. Always on when the web build ships the pages — a build without
-// them (or a missing page) resolves null and the routes fall back to the shell,
-// so the front door can never 404.
-const readSitePage = (name: string): string | null => {
+// The web build's 404 page, read once like the shell above.
+const readWebFile = (name: string): string | null => {
   try {
-    return readFileSync(join(cfg.webDir, "site", name), "utf8")
+    return readFileSync(join(cfg.webDir, name), "utf8")
   } catch {
     return null
   }
 }
-const notFoundHtml = cfg.serveWeb ? readSitePage("../404.html") : null
-const marketingHome = cfg.serveWeb ? readSitePage("index.html") : null
-const marketingPricing = cfg.serveWeb ? readSitePage("pricing.html") : null
-const marketingPrivacy = cfg.serveWeb ? readSitePage("privacy.html") : null
-const marketingExamples = cfg.serveWeb ? readSitePage("examples.html") : null
-const marketing =
-  marketingHome || marketingPricing || marketingPrivacy || marketingExamples
-    ? {
-        home: async () => marketingHome,
-        pricing: async () => marketingPricing,
-        privacy: async () => marketingPrivacy,
-        examples: async () => marketingExamples,
-      }
-    : undefined
+const notFoundHtml = cfg.serveWeb ? readWebFile("404.html") : null
+
+// The public site upstream. derive.to's hosted tier runs on Workers (a service
+// binding, see worker.ts); on Node this exists for local development against the
+// site repo's `astro dev` and for a hosted Node deployment. Self-hosts leave
+// DERIVE_SITE_ORIGIN unset and the application owns the front door.
+const site = cfg.siteOrigin ? originProxy(cfg.siteOrigin) : undefined
 
 // The webhook outbox drainer: an interval delivers queued events with retries +
 // backoff, and `poke` (wired into the app below) drains on demand so a fresh event
@@ -511,9 +502,9 @@ const app = createApp({
   search,
   baseUrl: cfg.baseUrl,
   shell: shellHtml,
-  // The marketing front door (`/` for signed-out visitors + `/pricing` + `/privacy`);
-  // unset only when the web build ships no site/ pages, leaving the SPA all paths.
-  marketing,
+  // The public site upstream (`/` for signed-out visitors + every navigation the
+  // app does not own); unset on self-hosts, leaving the application the front door.
+  site,
   token: cfg.token,
   // Encrypt stored third-party secrets (GitHub PATs) at rest with the auth secret.
   encryptionKey: authSecret,
@@ -578,6 +569,7 @@ if (cfg.serveWeb && shellHtml !== undefined)
     webRoot: relative(process.cwd(), cfg.webDir) || ".",
     shellHtml,
     notFoundHtml: notFoundHtml ?? undefined,
+    site,
   })
 
 // Analytics retention: views are a rolling window (default 365 days). A daily

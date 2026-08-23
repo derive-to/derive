@@ -52,7 +52,7 @@ Derive injects `/raw/derive-client.js` into every served artifact. It handles te
 
 ## REST API
 
-Base URL: `https://derive.to` (or your self-hosted instance).
+Base URL: `https://derive.to` (the reference deployment) or your instance's own origin.
 Auth: `Authorization: Bearer $DERIVE_TOKEN` for write operations. Artifacts whose link
 role grants viewer or better are readable without auth.
 

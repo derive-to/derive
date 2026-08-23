@@ -63,6 +63,8 @@ export interface Config {
   analytics: boolean
   rateLimit: boolean
   sandboxOrigin?: string
+  /** Origin of the public-site Worker/dev server (hosted deployments only). */
+  siteOrigin?: string
   crossSite: boolean
   /** Base domain for vanity subdomains (e.g. "derived.app"): an artifact assigned
    *  `q3.derived.app` is served at that host's root. Unset = subdomain mode off. */
@@ -219,6 +221,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     analytics: env.DERIVE_ANALYTICS !== "false",
     rateLimit: env.DERIVE_RATE_LIMIT !== "false",
     sandboxOrigin: env.DERIVE_SANDBOX_URL,
+    siteOrigin: env.DERIVE_SITE_ORIGIN,
     crossSite: env.DERIVE_CROSS_SITE === "true",
     subdomainBase: subdomainBaseFromEnv(env),
     versionWindowMs: env.DERIVE_VERSION_WINDOW

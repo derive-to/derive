@@ -103,6 +103,10 @@ export interface Env {
    *  a hand-run deploy, which then reports "dev" — honest rather than wrong. */
   BUILD_SHA?: string
   BUCKET: R2Bucket
+  // The public site (github.com/derive-to/site): derive.to's marketing pages,
+  // blog and trust files, on their own Worker. Bound only on the hosted deploy;
+  // absent ⇒ the application owns the front door (every self-host, previews).
+  SITE?: Fetcher
   // Optional semantic search: Workers AI embeddings (bge-m3) for the dense arm, stored in pgvector
   // in the Hyperdrive Postgres. Bind AI (+ HYPERDRIVE) to add the dense/hybrid arm; omit ⇒ search
   // stays lexical-only, exactly as self-host. Structurally typed (see embedder.ts).
@@ -202,23 +206,20 @@ export interface Env {
   DERIVE_BILLING_ENFORCE_AT?: string
 }
 
-/** A cached one-shot fetch of a static asset's text (a marketing page) from the
- *  ASSETS binding, by its canonical URL. Null on any miss — the marketing routes
- *  then fall back to the SPA shell, so a stale build can't 404 the front door. */
-function siteFetch(env: Env, baseUrl: string, path: string): () => Promise<string | null> {
-  return async () => {
-    const hit = siteCache.get(path)
-    if (hit !== undefined) return hit
-    let text: string | null = null
-    try {
-      const res = await env.ASSETS.fetch(new URL(path, baseUrl).toString())
-      text = res.ok ? await res.text() : null
-    } catch {
-      text = null
-    }
-    siteCache.set(path, text)
-    return text
-  }
+/** The public site over the SITE service binding, when this deployment binds one:
+ *  same thread, no network, the request passed through whole so the site sees the
+ *  real URL and answers with its own headers. Absent ⇒ undefined ⇒ the application
+ *  owns the front door. */
+// The cast pair sidesteps the workers-types/DOM Request dualism (the binding's
+// types want the workers Request; Hono hands us the DOM one; they are the same
+// object at runtime) — the same dance assetResponse does with a URL string.
+const fetchSite = (site: Fetcher, req: Request): Promise<Response> =>
+  site.fetch(req as unknown as Parameters<Fetcher["fetch"]>[0]) as unknown as Promise<Response>
+
+function siteUpstream(env: Env): ((req: Request) => Promise<Response>) | undefined {
+  const site = env.SITE
+  if (!site) return undefined
+  return (req: Request) => fetchSite(site, req)
 }
 
 /** Poke the singleton outbox DO so it drains now (a fresh event) or self-heals (cron). */
@@ -247,9 +248,6 @@ let app: ReturnType<typeof createApp> | null = null
 // The SPA shell, fetched from ASSETS once per isolate and reused (it's immutable for
 // a deployment). Injected with per-artifact unfurl meta on each /artifacts/:ref request.
 let shellCache: string | null = null
-// The marketing pages, same lifecycle as the shell: fetched from ASSETS once per
-// isolate (immutable for a deployment), keyed by their canonical asset URL.
-const siteCache = new Map<string, string | null>()
 
 // The request handler behind both tiers. Split from `fetch` so the pg tier can
 // wrap it in a request-scoped pool without indenting the whole body.
@@ -429,20 +427,12 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
           }
           return shellCache
         },
-        // The marketing front door, always on: `/` for signed-out visitors +
-        // `/pricing` + `/privacy` + `/examples`, from the web build's site/
-        // pages. Fetched at the
-        // CANONICAL asset URLs — html_handling serves site/index.html at /site/ and
-        // site/pricing.html at /site/pricing (site/privacy.html at /site/privacy,
-        // same rule), and redirects the literal filenames, which ASSETS.fetch would
-        // surface as a non-2xx. A build without the pages resolves null and the
-        // routes fall back to the SPA shell.
-        marketing: {
-          home: siteFetch(env, baseUrl, "/site/"),
-          pricing: siteFetch(env, baseUrl, "/site/pricing"),
-          privacy: siteFetch(env, baseUrl, "/site/privacy"),
-          examples: siteFetch(env, baseUrl, "/site/examples"),
-        },
+        // The public site over the service binding: same thread, no network. The
+        // request passes through whole, so the site sees the real URL and can
+        // 307 trailing slashes or serve its 404 page itself. Absent binding ⇒
+        // undefined ⇒ the app owns the front door (routes/site.ts falls back to
+        // the shell on `/`, and the fast path below serves the app's 404 page).
+        site: siteUpstream(env),
       })
     }
     // Run within the per-request context so the DO backplane's publish can waitUntil.
@@ -497,14 +487,14 @@ export default {
   fetch(req: Request, env: Env, ctx: ExecutionContext): Response | Promise<Response> {
     const url = new URL(req.url)
     const navigation = req.method === "GET" || req.method === "HEAD"
-    // The static namespaces (/assets, /site, /brand) are worker-first solely so
+    // The static namespaces (/assets, /brand) are worker-first solely so
     // vanity/draft hosts can reach domain mode (Static Assets routing is host-blind
     // — see serve-web.ts STATIC_NAMESPACE_PREFIXES). Everything that is NOT a
     // vanity host gets the platform's asset serving back verbatim, before any DB
     // binding — the app host, its app.* alias, workers.dev, and every custom
     // domain behave exactly as they did when these paths never hit the Worker.
-    // URL-string fetch (the siteFetch precedent) sidesteps the workers-types/DOM
-    // Request dualism; assets are GET/HEAD-only so nothing else is intercepted.
+    // URL-string fetch sidesteps the workers-types/DOM Request dualism; assets
+    // are GET/HEAD-only so nothing else is intercepted.
     if (navigation && staticNamespacePassthrough(req, env))
       return assetResponse(req, env, url.pathname)
     if (navigation && isStaticRootPath(url.pathname)) return assetResponse(req, env, url.pathname)
@@ -513,7 +503,11 @@ export default {
     // and receive the same prerendered shell Cloudflare's SPA fallback used to serve.
     if (navigation && appHostRequest(req, env)) {
       if (isSpaPath(url.pathname) && !needsApp(url.pathname)) return assetResponse(req, env, "/")
-      if (!needsApp(url.pathname)) return staticNotFound(req, env)
+      // A navigation the app does not own belongs to the public site (pages,
+      // blog, sitemap, trust files) when this deployment has one. Zero DB
+      // bindings touched either way; the site's own script sets its headers.
+      if (!needsApp(url.pathname))
+        return env.SITE ? fetchSite(env.SITE, req) : staticNotFound(req, env)
     }
     // Postgres tier: bind a request-scoped pool (see edge-pg.ts) for livePgPool to
     // resolve. Never end()ed here — `background()` fan-out (context.ts) keeps

@@ -357,20 +357,16 @@ export interface AppDeps {
    */
   pokeRun?: (runId: string) => void
   /**
-   * The marketing site (the front door). When set, `/` serves the marketing page
-   * to signed-out visitors (signed-in ones keep the SPA); `/pricing`, `/privacy`,
-   * and `/examples` serve their public pages. Each provider returns
-   * the page HTML — read from the web build's `site/` directory on Node, fetched
-   * from the ASSETS binding on the edge — or null when the page is missing (falls
-   * back to the shell). Set whenever the web build ships the pages; unset (a
-   * page-less build, tests) ⇒ the SPA owns `/`.
+   * derive.to's public site (the front door): the marketing pages, the blog, and
+   * the trust files, served by their own Worker (github.com/derive-to/site). A
+   * function from request to response because it is the SITE service binding on
+   * the edge and an origin proxy (DERIVE_SITE_ORIGIN) on Node. When set, `/`
+   * serves the site's landing page to signed-out visitors (signed-in ones keep
+   * the SPA) and every navigation the app does not own is answered by the site.
+   * Unset (every self-host, tests) ⇒ the application owns the front door and an
+   * unknown path gets its 404 page.
    */
-  marketing?: {
-    home: () => Promise<string | null>
-    pricing: () => Promise<string | null>
-    privacy: () => Promise<string | null>
-    examples: () => Promise<string | null>
-  }
+  site?: (req: Request) => Promise<Response>
 }
 
 /**

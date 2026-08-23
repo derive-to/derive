@@ -22,10 +22,7 @@
       "entry": [
         "src/components/ui/**",
         "e2e/**/*.screens.ts",
-        "e2e/public-quality/static-server.mjs",
-        "public/site/guides.css",
-        "public/site/shell.css",
-        "public/site/shell.js"
+        "e2e/public-quality/static-server.mjs"
       ]
     },
     "packages/cli": {

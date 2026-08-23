@@ -68,6 +68,7 @@ export default defineConfig({
         "/.well-known/openid-configuration",
         "/skill.md",
         "/.well-known/agent.json",
+        "/robots.txt",
       ].map((p) => [p, { target: API, changeOrigin: true }]),
     ),
   },
