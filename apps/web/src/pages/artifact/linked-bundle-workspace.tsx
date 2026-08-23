@@ -23,6 +23,7 @@ type DiagramNode = Diagram["nodes"][number]
 type DiagramEdge = Diagram["edges"][number]
 type BundleMember = LinkedBundle["members"][number]
 type ReviewKind = "node" | "edge" | "policy"
+type LinkedBundleView = "preview" | "now" | "advanced"
 
 type Point = { x: number; y: number }
 export type LinkedBundleVisualLayout = {
@@ -43,6 +44,19 @@ export const linkedBundleCurrentNodes = (diagram: Diagram): DiagramNode[] =>
   diagram.nodes.filter(
     (node) => node.state === "active" || node.state === "waiting" || node.state === "blocked",
   )
+
+/** Authored node state is the execution receipt. An untouched workflow starts in
+ * Preview; once any node moves beyond pending, current run state takes priority. */
+export const linkedBundleHasRunState = (diagrams: Diagram[]): boolean =>
+  diagrams.some((diagram) =>
+    diagram.nodes.some((node) => node.state !== undefined && node.state !== "pending"),
+  )
+
+export const linkedBundleInitialView = (
+  diagrams: Diagram[],
+  hasWorkflowPreview: boolean,
+): LinkedBundleView =>
+  hasWorkflowPreview && !linkedBundleHasRunState(diagrams) ? "preview" : "now"
 
 export type LinkedBundleNowReference = {
   diagram: string
@@ -1418,11 +1432,15 @@ export function LinkedBundleWorkspace({
     () => new Map(bundle.members.map((member) => [member.id, member])),
     [bundle.members],
   )
-  const [view, setView] = useState<"preview" | "now" | "advanced">(
-    workflowPreview ? "preview" : "now",
+  const hasRunState = linkedBundleHasRunState(diagrams)
+  const [view, setView] = useState<LinkedBundleView>(() =>
+    linkedBundleInitialView(diagrams, !!workflowPreview),
   )
   const [runDiagram, setRunDiagram] = useState<string | null>(null)
   const selected = reviewState.selected
+  useEffect(() => {
+    if (hasRunState) setView("now")
+  }, [hasRunState])
   useEffect(() => {
     if (!selected) {
       const first = diagrams[0]?.nodes[0]

@@ -35,7 +35,8 @@ pause sensitive actions later.
 5. Repair every blocker and rerun sync until it says `Ready to run`. Use
    `derive workflow preview <file>` when you only need a read-only check. Preview is validation.
 6. Publish the artifact. Keep #799's Now view legible; precise bindings and policies belong in
-   Advanced/source, not in the cold-start briefing.
+   Advanced/source, not in the cold-start briefing. Publishing the workflow, its result artifacts,
+   and honest run-state updates to Derive is the default—not a reason to ask for another approval.
 
 ## Run
 
@@ -55,8 +56,9 @@ silence or elapsed time.
   its context, instruction, and expected result.
 - Every cycle has a measurable goal, evaluator, maximum attempts, stagnation behavior, and human
   stop.
-- Every external write/message/spend/access change reuses a named human approval or has an
-  idempotency contract.
+- Derive artifact publication and run-state updates use an idempotency contract and proceed by
+  default. A consequential write/message/spend/access effect outside Derive reuses a named human
+  approval unless the person has explicitly authorized autonomous execution.
 - Scenarios cover the expected route, a context failure, and every human interrupt.
 - Preview distinguishes guaranteed policy from illustrative paths; it never promises exact model
   or tool behavior.

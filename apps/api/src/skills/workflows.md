@@ -37,16 +37,19 @@ pause sensitive actions later.
 5. Before any publish or `use` call, compile the facts in memory and present one Preview: what will
    happen, possible branches, human pauses, bounds, external effects, forbidden actions, scenarios,
    and either **Ready to run** or the exact blockers. Repair in memory until Ready.
-6. Publish only after the person approves artifact creation. Treat any workflow advisories in the
-   response as defense-in-depth blockers and repair them before run. Inspect the rendered artifact.
+6. Publish the Ready workflow artifact and subsequent Derive result/state updates by default; do
+   not add a second approval merely because the action is a Derive publish. Treat workflow
+   advisories as defense-in-depth blockers and repair them before run. Inspect the rendered
+   artifact. Add a human gate only when the person requests one or an effect is consequential
+   outside Derive.
 
 The companion fact has this shape:
 
 ```json
 {
   "schema": "derive.workflow/v1",
-  "purpose": "Publish a weekly brief after product review",
-  "forbidden": ["Publish without approval"],
+  "purpose": "Build and publish a weekly brief",
+  "forbidden": ["Publish outside the current Derive workspace", "Continue past loop bounds"],
   "diagrams": [{
     "id": "weekly-brief",
     "entry": "research",
@@ -59,48 +62,49 @@ The companion fact has this shape:
         "result": "A cited draft brief"
       },
       {
-        "id": "review",
-        "kind": "human",
-        "decision": "Approve or request one revision",
-        "options": ["approve", "revise"],
-        "resume": "The product lead chooses an option"
+        "id": "evaluate",
+        "kind": "context",
+        "context_ref": "brief-quality-checker",
+        "instruction": "Evaluate the brief against its stated evidence and clarity bar; return ready or revise.",
+        "result": "A grounded ready-or-revise decision",
+        "routing": "one"
       },
       {
         "id": "publish",
         "kind": "context",
         "context_ref": "brief-publisher",
-        "instruction": "Publish the approved brief without changing its claims.",
+        "instruction": "Publish the ready brief to the current Derive workspace.",
         "result": "A published Derive artifact",
         "terminal": true,
         "effects": [{
           "kind": "write",
-          "description": "Publish the approved brief",
-          "gate": "human",
-          "approval_ref": "review"
+          "description": "Publish the weekly brief to Derive",
+          "gate": "none",
+          "idempotency": "Publish one version for this workflow node attempt"
         }]
       }
     ],
     "routes": [
-      {"from":"research","to":"review","when":"always"},
-      {"from":"review","to":"research","when":"revise"},
-      {"from":"review","to":"publish","when":"approve"}
+      {"from":"research","to":"evaluate","when":"always"},
+      {"from":"evaluate","to":"research","when":"revise","fallback":true},
+      {"from":"evaluate","to":"publish","when":"ready"}
     ],
     "loops": [{
       "id": "brief-repair",
-      "nodes": ["research", "review"],
-      "goal": "Reach an approvable brief",
+      "nodes": ["research", "evaluate"],
+      "goal": "Reach the stated quality bar",
       "evaluate": "Check evidence, clarity, and scope",
       "stop": {
         "max_attempts": 2,
         "stagnation_limit": 1,
         "max_minutes": 20,
-        "human_stop": "The product lead stops or changes the brief"
+        "human_stop": "The person stops or changes the brief"
       }
     }],
     "scenarios": [
-      {"id":"expected","kind":"expected","path":["research","review","publish"],"outcome":"Approved brief is published"},
+      {"id":"expected","kind":"expected","path":["research","evaluate","publish"],"outcome":"Ready brief is published"},
       {"id":"failure","kind":"failure","path":["research"],"outcome":"Failed session is visible and the run stops"},
-      {"id":"revision","kind":"human","path":["research","review","research","review","publish"],"outcome":"One revision lands before approval"}
+      {"id":"revision","kind":"expected","path":["research","evaluate","research","evaluate","publish"],"outcome":"One bounded revision lands before publication"}
     ]
   }]
 }
@@ -116,8 +120,9 @@ The companion fact has this shape:
 - Every diagram declares an `entry`; all nodes are reachable from it and at least one is terminal.
   Human routes match their options exactly and omit fallback; context fan-out and branching are
   explicit through `routing`.
-- Effects are `read`, `write`, `message`, `spend`, or `access`. Every non-read effect has a
-  `human` gate with an `approval_ref` to an existing human node, or an idempotency contract.
+- Effects are `read`, `write`, `message`, `spend`, or `access`. Derive artifact publication and
+  state updates normally use `gate:"none"` with an idempotency contract. Reserve a `human` gate
+  for explicitly requested review or consequential effects outside Derive.
 - Every directed cycle has a loop with a goal, evaluator, integer `max_attempts` (1–100), optional
   stagnation/time/cost limits, and `human_stop`.
 - Every diagram has an expected scenario. Context work adds a failure scenario; human work adds a
@@ -151,6 +156,10 @@ Project session truth into the authored graph:
 - `escalated` → `waiting` with explicit `help.question` and resume action
 - `failed` → declared retry or `blocked`
 - `closed` → stopped deliberately
+
+Publish each result artifact and graph-state transition back to the same Derive workflow as normal
+run bookkeeping. Do this by default with version/idempotency protection; it does not need a fresh
+human approval.
 
 An effect's `approval_ref` reuses that human node's decision; do not ask again when the approved
 decision and the described effect match. Stop at a terminal result, exhausted loop/time/cost/stagnation bound, unresolved human gate,

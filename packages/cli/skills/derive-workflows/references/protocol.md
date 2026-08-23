@@ -21,7 +21,7 @@ and set `node.member` only after a context returns one—never use a fake placeh
 <script type="application/derive-facts" data-fact="bundle-manifest">
 {
   "schema": "derive.linked-bundle/v1",
-  "purpose": "Publish a weekly signal brief after product review",
+  "purpose": "Build and publish a weekly signal brief",
   "members": [],
   "diagrams": [{
     "id": "weekly-signal",
@@ -29,13 +29,13 @@ and set `node.member` only after a context returns one—never use a fake placeh
     "type": "graph",
     "nodes": [
       {"id":"research","label":"Research signals","state":"pending"},
-      {"id":"review","label":"Product review","state":"pending"},
+      {"id":"evaluate","label":"Quality check","state":"pending"},
       {"id":"publish","label":"Publish brief","state":"pending"}
     ],
     "edges": [
-      {"from":"research","to":"review","label":"draft ready"},
-      {"from":"review","to":"research","label":"revise"},
-      {"from":"review","to":"publish","label":"approved"}
+      {"from":"research","to":"evaluate","label":"draft ready"},
+      {"from":"evaluate","to":"research","label":"revise"},
+      {"from":"evaluate","to":"publish","label":"quality bar met"}
     ]
   }]
 }
@@ -44,8 +44,8 @@ and set `node.member` only after a context returns one—never use a fake placeh
 <script type="application/derive-facts" data-fact="workflow-definition">
 {
   "schema": "derive.workflow/v1",
-  "purpose": "Publish a weekly signal brief after product review",
-  "forbidden": ["Publish without product approval", "Add a new source without permission"],
+  "purpose": "Build and publish a weekly signal brief",
+  "forbidden": ["Publish outside the current Derive workspace", "Continue past loop bounds"],
   "diagrams": [{
     "id": "weekly-signal",
     "entry": "research",
@@ -58,48 +58,49 @@ and set `node.member` only after a context returns one—never use a fake placeh
         "result": "A cited draft brief"
       },
       {
-        "id": "review",
-        "kind": "human",
-        "decision": "Approve the brief or request one bounded revision",
-        "options": ["approve", "revise"],
-        "resume": "The product lead chooses approve or revise"
+        "id": "evaluate",
+        "kind": "context",
+        "context_ref": "brief-quality-checker",
+        "instruction": "Evaluate the brief against its evidence and clarity bar; return ready or revise.",
+        "result": "A grounded ready-or-revise decision",
+        "routing": "one"
       },
       {
         "id": "publish",
         "kind": "context",
         "context_ref": "brief-publisher",
-        "instruction": "Publish the approved brief without changing its claims.",
+        "instruction": "Publish the ready brief to the current Derive workspace.",
         "result": "A published Derive artifact",
         "terminal": true,
         "effects": [{
           "kind": "write",
-          "description": "Publish the approved brief",
-          "gate": "human",
-          "approval_ref": "review"
+          "description": "Publish the weekly brief to Derive",
+          "gate": "none",
+          "idempotency": "Publish one version for this workflow node attempt"
         }]
       }
     ],
     "routes": [
-      {"from":"research","to":"review","when":"always"},
-      {"from":"review","to":"research","when":"revise"},
-      {"from":"review","to":"publish","when":"approve"}
+      {"from":"research","to":"evaluate","when":"always"},
+      {"from":"evaluate","to":"research","when":"revise","fallback":true},
+      {"from":"evaluate","to":"publish","when":"ready"}
     ],
     "loops": [{
       "id": "brief-repair",
-      "nodes": ["research", "review"],
-      "goal": "Reach an approvable, evidence-backed brief",
-      "evaluate": "Product lead checks evidence, clarity, and scope",
+      "nodes": ["research", "evaluate"],
+      "goal": "Reach the stated evidence and clarity bar",
+      "evaluate": "Quality checker evaluates evidence, clarity, and scope",
       "stop": {
         "max_attempts": 2,
         "stagnation_limit": 1,
         "max_minutes": 20,
-        "human_stop": "The product lead stops or changes the brief"
+        "human_stop": "The person stops or changes the brief"
       }
     }],
     "scenarios": [
-      {"id":"expected","kind":"expected","path":["research","review","publish"],"outcome":"Approved brief is published"},
+      {"id":"expected","kind":"expected","path":["research","evaluate","publish"],"outcome":"Ready brief is published"},
       {"id":"context-failure","kind":"failure","path":["research"],"outcome":"Run stops with the failed session visible"},
-      {"id":"revision","kind":"human","path":["research","review","research","review","publish"],"outcome":"One revision is incorporated before approval"}
+      {"id":"revision","kind":"expected","path":["research","evaluate","research","evaluate","publish"],"outcome":"One bounded revision is incorporated before publication"}
     ]
   }]
 }
@@ -121,9 +122,11 @@ and omit fallback; context fan-out and branching are explicit through `routing`.
 ## Effects
 
 Effects are `read`, `write`, `message`, `spend`, or `access`. Every effect names a human-readable
-`description` and `gate` (`none` or `human`). A non-read effect with no human gate must declare
-`idempotency`. A human-gated effect names the existing human node that authorizes it with
-`approval_ref`; it does not invent a second approval. Add `compensation` when undo behavior exists.
+`description` and `gate` (`none` or `human`). Publishing artifacts and run-state updates to Derive
+normally uses `gate:"none"` with `idempotency`; do not add a human gate merely because publishing
+is a write. A human-gated effect names the existing human node that authorizes it with
+`approval_ref`; reserve it for requested review or consequential effects outside Derive. Add
+`compensation` when undo behavior exists.
 
 ## Loops and scenarios
 

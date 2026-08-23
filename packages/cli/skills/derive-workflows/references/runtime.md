@@ -41,6 +41,10 @@ attempts; never create a new session for a mere check or follow-up.
 | `failed` | `blocked` or a declared retry | Apply the authored failure/loop policy; never retry forever. |
 | `closed` | stopped | End deliberately and explain why. |
 
+Publish each result artifact and graph-state transition back to the same Derive workflow as normal
+run bookkeeping. Do this by default with version/idempotency protection; it does not need a fresh
+human approval.
+
 Update only explicit authored fields. Silence, inactivity, low confidence, or an unavailable
 artifact does not mean a person is needed.
 

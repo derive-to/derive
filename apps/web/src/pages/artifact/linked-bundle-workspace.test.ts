@@ -13,6 +13,7 @@ import {
   linkedBundleEdgePath,
   linkedBundleFitScale,
   linkedBundleFocusedElements,
+  linkedBundleInitialView,
   linkedBundleLayout,
   linkedBundleNodeFreshness,
   linkedBundleNowSummary,
@@ -112,6 +113,24 @@ describe("linked bundle workspace", () => {
       "research",
       "decision",
     ])
+  })
+
+  it("opens untouched workflows on Preview and started workflows on Now", () => {
+    expect(linkedBundleInitialView([graph], true)).toBe("preview")
+    expect(
+      linkedBundleInitialView(
+        [
+          {
+            ...graph,
+            nodes: graph.nodes.map((node, index) =>
+              index === 0 ? { ...node, state: "done" as const } : node,
+            ),
+          },
+        ],
+        true,
+      ),
+    ).toBe("now")
+    expect(linkedBundleInitialView([graph], false)).toBe("now")
   })
 
   it("projects authored graph state into current, help, and likely-next work", () => {

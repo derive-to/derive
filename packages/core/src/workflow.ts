@@ -742,7 +742,11 @@ const previewWorkflowValidation = (
                   : incoming
                       .map(
                         (route) =>
-                          `${nodeLabel(nodes.get(route.from), route.from)} returns ${route.when}`,
+                          `${nodeLabel(nodes.get(route.from), route.from)}${
+                            route.when.toLowerCase() === "always"
+                              ? " completes"
+                              : ` returns ${route.when}`
+                          }`,
                       )
                       .join("; "),
             }

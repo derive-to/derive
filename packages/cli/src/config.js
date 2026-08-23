@@ -1130,25 +1130,25 @@ const starterHtml = (title) => `<!doctype html>
 `
 
 const starterWorkflow = (title) => {
-  const purpose = `Review and publish ${title}`
+  const purpose = `Build and publish ${title}`
   const bundle = {
     schema: "derive.linked-bundle/v1",
     purpose,
     members: [],
     diagrams: [
       {
-        id: "review-and-publish",
-        title: "Review and publish",
+        id: "build-and-publish",
+        title: "Build and publish",
         type: "graph",
         nodes: [
           { id: "draft", label: "Draft", state: "pending" },
-          { id: "review", label: "Review", state: "pending" },
+          { id: "evaluate", label: "Quality check", state: "pending" },
           { id: "publish", label: "Publish", state: "pending" },
         ],
         edges: [
-          { from: "draft", to: "review", label: "draft ready" },
-          { from: "review", to: "draft", label: "revise" },
-          { from: "review", to: "publish", label: "approve" },
+          { from: "draft", to: "evaluate", label: "draft ready" },
+          { from: "evaluate", to: "draft", label: "revise" },
+          { from: "evaluate", to: "publish", label: "quality bar met" },
         ],
       },
     ],
@@ -1156,10 +1156,10 @@ const starterWorkflow = (title) => {
   const workflow = {
     schema: "derive.workflow/v1",
     purpose,
-    forbidden: ["Publish without approval"],
+    forbidden: ["Publish outside the current Derive workspace", "Continue past loop bounds"],
     diagrams: [
       {
-        id: "review-and-publish",
+        id: "build-and-publish",
         entry: "draft",
         nodes: [
           {
@@ -1167,48 +1167,49 @@ const starterWorkflow = (title) => {
             kind: "context",
             context_ref: "draft-builder",
             instruction: `Create a reviewable ${title} draft.`,
-            result: `A reviewable ${title} draft`,
+            result: `A complete ${title} draft`,
           },
           {
-            id: "review",
-            kind: "human",
-            decision: "Approve or request one revision",
-            options: ["approve", "revise"],
-            resume: "The reviewer chooses approve or revise",
+            id: "evaluate",
+            kind: "context",
+            context_ref: "quality-checker",
+            instruction: `Evaluate the ${title} draft against its stated outcome and return either ready or revise with specific evidence.`,
+            result: "A grounded ready-or-revise decision",
+            routing: "one",
           },
           {
             id: "publish",
             kind: "context",
             context_ref: "artifact-publisher",
-            instruction: "Publish the approved draft without changing its claims.",
+            instruction: "Publish the ready draft to the current Derive workspace.",
             result: `A published ${title}`,
             terminal: true,
             effects: [
               {
                 kind: "write",
-                description: `Publish ${title}`,
-                gate: "human",
-                approval_ref: "review",
+                description: `Publish ${title} to Derive`,
+                gate: "none",
+                idempotency: "Publish one version for this workflow node attempt",
               },
             ],
           },
         ],
         routes: [
-          { from: "draft", to: "review", when: "always" },
-          { from: "review", to: "draft", when: "revise" },
-          { from: "review", to: "publish", when: "approve" },
+          { from: "draft", to: "evaluate", when: "always" },
+          { from: "evaluate", to: "draft", when: "revise", fallback: true },
+          { from: "evaluate", to: "publish", when: "ready" },
         ],
         loops: [
           {
-            id: "bounded-revision",
-            nodes: ["draft", "review"],
-            goal: "Reach an approvable draft",
-            evaluate: "The reviewer checks accuracy, clarity, and scope",
+            id: "bounded-improvement",
+            nodes: ["draft", "evaluate"],
+            goal: "Reach the stated quality bar",
+            evaluate: "The quality checker evaluates accuracy, clarity, and scope",
             stop: {
               max_attempts: 2,
               stagnation_limit: 1,
               max_minutes: 20,
-              human_stop: "The reviewer stops or changes the work",
+              human_stop: "The person stops or changes the work",
             },
           },
         ],
@@ -1216,8 +1217,8 @@ const starterWorkflow = (title) => {
           {
             id: "expected",
             kind: "expected",
-            path: ["draft", "review", "publish"],
-            outcome: `Approved ${title} is published`,
+            path: ["draft", "evaluate", "publish"],
+            outcome: `${title} meets the quality bar and is published`,
           },
           {
             id: "context-failure",
@@ -1227,9 +1228,9 @@ const starterWorkflow = (title) => {
           },
           {
             id: "revision",
-            kind: "human",
-            path: ["draft", "review", "draft", "review", "publish"],
-            outcome: "One revision lands before approval",
+            kind: "expected",
+            path: ["draft", "evaluate", "draft", "evaluate", "publish"],
+            outcome: "One bounded revision lands before publication",
           },
         ],
       },
@@ -1258,9 +1259,9 @@ const starterWorkflow = (title) => {
   <p class="sub">A graph-first Derive workflow. The visible graph and runnable definition use
   the same stable IDs for different jobs.</p>
   <div class="flow">
-    <div class="node"><b>Draft</b><br>One context produces a reviewable result.</div><div class="arrow">→</div>
-    <div class="node"><b>Review</b><br>A person chooses approve or revise.</div><div class="arrow">→</div>
-    <div class="node"><b>Publish</b><br>The approved result is published.</div>
+    <div class="node"><b>Draft</b><br>One context produces a complete result.</div><div class="arrow">→</div>
+    <div class="node"><b>Quality check</b><br>Another context returns ready or revise.</div><div class="arrow">→</div>
+    <div class="node"><b>Publish</b><br>The ready result is published to Derive.</div>
   </div>
   <p class="note">The revise route is bounded to two attempts. Edit the outcome and context
   references below, then run <code>derive workflow sync workflow.html</code>. Sync projects the

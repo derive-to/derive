@@ -48,19 +48,24 @@ describe("scaffold", () => {
     expect(created).toContain("workflow.html")
     expect(JSON.parse(readFileSync(join(d, CONFIG_FILE), "utf8")).entry).toBe("workflow.html")
     const source = readFileSync(join(d, "workflow.html"), "utf8")
-    expect(previewWorkflowSource(source)).toMatchObject({
+    const preview = previewWorkflowSource(source)
+    expect(preview).toMatchObject({
       status: "ready",
-      purpose: "Review and publish Weekly brief",
+      purpose: "Build and publish Weekly brief",
       diagrams: [
         {
           context_sessions: [
             { context_ref: "draft-builder", starts_when: "explicit run" },
-            { context_ref: "artifact-publisher", starts_when: "Review returns approve" },
+            { context_ref: "quality-checker", starts_when: "Draft completes" },
+            { context_ref: "artifact-publisher", starts_when: "Quality check returns ready" },
           ],
+          side_effects: [expect.stringContaining("Publish Weekly brief to Derive — replay-safe")],
         },
       ],
     })
+    expect(preview.diagrams[0]?.will_pause).toEqual([])
     expect(source).toContain('"members": []')
+    expect(source).not.toContain("Publish without approval")
     expect(source).not.toContain("abc12345")
   })
 

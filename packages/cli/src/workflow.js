@@ -719,7 +719,11 @@ export function previewWorkflowSource(source) {
                 node.id === diagram.entry
                   ? "explicit run"
                   : incoming
-                      .map((route) => `${label(route.from)} returns ${route.when}`)
+                      .map((route) =>
+                        route.when.toLowerCase() === "always"
+                          ? `${label(route.from)} completes`
+                          : `${label(route.from)} returns ${route.when}`,
+                      )
                       .join("; "),
             }
           }),
