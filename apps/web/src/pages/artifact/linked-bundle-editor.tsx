@@ -38,10 +38,11 @@ export const linkedBundleManifestProblem = (value: unknown): string | null => {
     return 'Schema must be "derive.linked-bundle/v1".'
   if (typeof manifest.purpose !== "string" || !manifest.purpose.trim())
     return "Purpose is required."
-  if (!Array.isArray(manifest.members) || manifest.members.length === 0)
-    return "Add at least one artifact member."
+  if (!Array.isArray(manifest.members)) return "Members must be an array."
   if (manifest.diagrams !== undefined && !Array.isArray(manifest.diagrams))
     return "Diagrams must be an array."
+  if (manifest.members.length === 0 && (!manifest.diagrams || manifest.diagrams.length === 0))
+    return "Add at least one artifact member, loop, or graph."
   return null
 }
 

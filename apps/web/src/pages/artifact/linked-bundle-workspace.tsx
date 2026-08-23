@@ -1079,6 +1079,11 @@ function NowWorkspace({
   }
 
   const loops = diagrams.filter((diagram) => diagram.type === "loop")
+  const topologyTitle = diagrams.every((diagram) => diagram.type === "graph")
+    ? "Graph at a glance"
+    : diagrams.every((diagram) => diagram.type === "loop")
+      ? "Loop at a glance"
+      : "Workflow shape"
   return (
     <div className="grid gap-5" data-testid="bundle-now-view">
       <section className="rounded-xl border border-border bg-card p-4 sm:p-6">
@@ -1115,6 +1120,93 @@ function NowWorkspace({
           />
         </div>
       </section>
+
+      {diagrams.length ? (
+        <section data-testid="bundle-now-topology">
+          <div className="mb-2">
+            <h2 className="text-sm font-semibold text-foreground">{topologyTitle}</h2>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              A compact view of the authored topology. Open a relationship for the full canvas.
+            </p>
+          </div>
+          <div className="grid gap-2">
+            {diagrams.map((diagram) => {
+              const labels = new Map(diagram.nodes.map((node) => [node.id, node.label]))
+              return (
+                <article
+                  key={diagram.id}
+                  className="rounded-xl border border-border bg-card p-4"
+                  data-testid={`bundle-now-topology-${diagram.id}`}
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div>
+                      <div className="font-mono text-2xs uppercase tracking-[0.12em] text-primary">
+                        {diagram.type} · {diagram.nodes.length}{" "}
+                        {diagram.type === "loop" ? "steps" : "nodes"}
+                      </div>
+                      <h3 className="mt-1 text-sm font-semibold text-foreground">
+                        {diagram.title}
+                      </h3>
+                    </div>
+                    <span className="font-mono text-2xs text-muted-foreground">
+                      {diagram.edges.length}{" "}
+                      {diagram.type === "loop" ? "transitions" : "relationships"}
+                    </span>
+                  </div>
+                  {diagram.edges.length ? (
+                    <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                      {diagram.edges.slice(0, 6).map((edge, index) => (
+                        <button
+                          key={`${edge.from}:${edge.to}:${edge.label ?? ""}`}
+                          type="button"
+                          onClick={() => onFocus({ diagram: diagram.id, local: edge.to })}
+                          className="flex min-w-0 items-center gap-2 rounded-lg border border-border-soft bg-muted/15 px-3 py-2 text-left text-xs transition-colors hover:border-primary/35 hover:bg-muted/30"
+                          data-testid={`bundle-now-relationship-${diagram.id}-${index}`}
+                        >
+                          <span className="truncate font-medium text-foreground">
+                            {labels.get(edge.from) ?? edge.from}
+                          </span>
+                          <span aria-hidden="true" className="shrink-0 text-primary">
+                            →
+                          </span>
+                          <span className="truncate font-medium text-foreground">
+                            {labels.get(edge.to) ?? edge.to}
+                          </span>
+                          {edge.label ? (
+                            <span className="ml-auto shrink-0 text-2xs text-muted-foreground">
+                              {edge.label}
+                            </span>
+                          ) : null}
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {diagram.nodes.slice(0, 6).map((node) => (
+                        <button
+                          key={node.id}
+                          type="button"
+                          onClick={() => onFocus({ diagram: diagram.id, local: node.id })}
+                          className="rounded-lg border border-border-soft bg-muted/15 px-3 py-2 text-xs font-medium text-foreground transition-colors hover:border-primary/35 hover:bg-muted/30"
+                          data-testid={`bundle-now-node-${diagram.id}-${node.id}`}
+                        >
+                          {node.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {diagram.edges.length > 6 ? (
+                    <p className="mt-2 text-2xs text-muted-foreground">
+                      +{diagram.edges.length - 6} more{" "}
+                      {diagram.type === "loop" ? "transitions" : "relationships"} in Advanced
+                    </p>
+                  ) : null}
+                </article>
+              )
+            })}
+          </div>
+        </section>
+      ) : null}
 
       {summary.needsHelp.length ? (
         <section data-testid="bundle-now-needs-help">

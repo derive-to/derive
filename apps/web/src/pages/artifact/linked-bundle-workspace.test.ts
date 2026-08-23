@@ -175,8 +175,17 @@ describe("linked bundle manifest editor", () => {
         schema: "derive.linked-bundle/v1",
         purpose: "x",
         members: [],
+        diagrams: [graph],
       }),
-    ).toContain("artifact member")
+    ).toBeNull()
+    expect(
+      linkedBundleManifestProblem({
+        schema: "derive.linked-bundle/v1",
+        purpose: "x",
+        members: [],
+        diagrams: [],
+      }),
+    ).toContain("artifact member, loop, or graph")
   })
 })
 
