@@ -715,6 +715,7 @@ export function previewWorkflowSource(source) {
               node_id: node.id,
               label: label(node.id),
               context_ref: node.context_ref,
+              result: node.result,
               starts_when:
                 node.id === diagram.entry
                   ? "explicit run"

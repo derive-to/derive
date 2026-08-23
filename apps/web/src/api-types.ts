@@ -7061,6 +7061,7 @@ export interface components {
                     node_id: string;
                     label: string;
                     context_ref: string;
+                    result: string;
                     starts_when: string;
                 }[];
                 scenarios: {

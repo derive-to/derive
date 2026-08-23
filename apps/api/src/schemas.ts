@@ -83,6 +83,7 @@ export const WorkflowPreview = z
             node_id: z.string(),
             label: z.string(),
             context_ref: z.string(),
+            result: z.string(),
             starts_when: z.string(),
           }),
         ),

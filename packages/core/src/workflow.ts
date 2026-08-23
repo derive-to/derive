@@ -95,6 +95,7 @@ export interface WorkflowPreviewDiagram {
     node_id: string
     label: string
     context_ref: string
+    result: string
     starts_when: string
   }>
   scenarios: Array<{ kind: WorkflowScenarioDefinition["kind"]; outcome: string }>
@@ -736,6 +737,7 @@ const previewWorkflowValidation = (
               node_id: node.id,
               label: nodeLabel(nodes.get(node.id), node.id),
               context_ref: node.context_ref,
+              result: node.result ?? "Declared result",
               starts_when:
                 node.id === diagram.entry
                   ? "explicit run"

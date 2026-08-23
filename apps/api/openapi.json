@@ -947,6 +947,9 @@
                       "context_ref": {
                         "type": "string"
                       },
+                      "result": {
+                        "type": "string"
+                      },
                       "starts_when": {
                         "type": "string"
                       }
@@ -955,6 +958,7 @@
                       "node_id",
                       "label",
                       "context_ref",
+                      "result",
                       "starts_when"
                     ]
                   }

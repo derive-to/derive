@@ -47,6 +47,105 @@ const Section = ({
   )
 }
 
+export const workflowTriggerLabel = (startsWhen: string): string => {
+  if (startsWhen === "explicit run") return "Starts when you run this workflow"
+  if (startsWhen.endsWith(" completes")) return `After ${startsWhen}`
+  return `When ${startsWhen}`
+}
+
+const RunPath = ({ diagram }: { diagram: PreviewDiagram }) => (
+  <section className="min-w-0">
+    <h3 className="text-sm font-semibold text-foreground">The run</h3>
+    <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+      One context session per step. Later steps start only when their stated condition is met.
+    </p>
+    {diagram.context_sessions.length ? (
+      <ol className="mt-3 grid gap-2">
+        {diagram.context_sessions.map((session, index) => {
+          return (
+            <li
+              key={session.node_id}
+              className="flex min-w-0 gap-3 rounded-lg border border-border-soft bg-background/45 p-3"
+            >
+              <span className="grid size-6 shrink-0 place-items-center rounded-full bg-primary/10 font-mono text-2xs font-semibold text-primary">
+                {index + 1}
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                  <span className="break-words text-sm font-semibold text-foreground">
+                    {session.label}
+                  </span>
+                  <span className="max-w-full break-all rounded-md bg-muted/60 px-1.5 py-0.5 font-mono text-2xs text-muted-foreground">
+                    {session.context_ref}
+                  </span>
+                </div>
+                <div className="mt-1 break-words text-xs leading-relaxed text-foreground">
+                  Produces: {session.result}
+                </div>
+                <div className="mt-1 break-words text-2xs text-muted-foreground">
+                  {workflowTriggerLabel(session.starts_when)}
+                </div>
+              </div>
+            </li>
+          )
+        })}
+      </ol>
+    ) : (
+      <p className="mt-3 rounded-lg border border-border-soft bg-background/45 p-3 text-xs text-muted-foreground">
+        This workflow completes without starting a context session.
+      </p>
+    )}
+  </section>
+)
+
+const RunConsiderations = ({ diagram }: { diagram: PreviewDiagram }) => (
+  <aside className="min-w-0 rounded-lg border border-border-soft bg-muted/20 p-4">
+    <h3 className="text-sm font-semibold text-foreground">Things to know</h3>
+    <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+      The choices, pauses, and limits that can change the path.
+    </p>
+    <div className="mt-4 grid gap-4">
+      <Section title="Can take another route" items={diagram.may_do} />
+      {diagram.will_pause.length ? (
+        <Section title="Will ask a person" items={diagram.will_pause} tone="pause" />
+      ) : (
+        <div className="flex items-center gap-2 text-xs text-success">
+          <span aria-hidden="true" className="size-1.5 rounded-full bg-success" />
+          No human pauses
+        </div>
+      )}
+      <Section title="Repeat limit" items={diagram.can_repeat} tone="pause" />
+      <Section title="Writes and other effects" items={diagram.side_effects} tone="effect" />
+    </div>
+  </aside>
+)
+
+const ScenarioChecks = ({ scenarios }: { scenarios: PreviewDiagram["scenarios"] }) => {
+  if (!scenarios.length) return null
+  return (
+    <details className="border-t border-border-soft px-4 py-3 sm:px-5">
+      <summary className="cursor-pointer text-xs font-medium text-foreground">
+        Checks passed · {scenarios.length} scenario{scenarios.length === 1 ? "" : "s"}
+      </summary>
+      <div className="mt-3 grid gap-2 md:grid-cols-3">
+        {scenarios.map((scenario) => (
+          <div
+            key={`${scenario.kind}-${scenario.outcome}`}
+            className="rounded-lg border border-border-soft p-3"
+          >
+            <div className="font-mono text-2xs uppercase text-muted-foreground">
+              {scenario.kind}
+            </div>
+            <div className="mt-1 break-words text-xs leading-relaxed text-foreground">
+              {scenario.outcome}
+            </div>
+          </div>
+        ))}
+      </div>
+    </details>
+  )
+}
+
 const DiagramPreview = ({
   diagram,
   onRun,
@@ -75,54 +174,11 @@ const DiagramPreview = ({
         </Button>
       ) : null}
     </header>
-    <div className="grid gap-5 p-4 sm:grid-cols-2 sm:p-5 xl:grid-cols-3">
-      <Section title="Will do" items={diagram.will_do} />
-      <Section title="May branch" items={diagram.may_do} />
-      <Section title="Will pause" items={diagram.will_pause} tone="pause" />
-      <Section title="Can repeat" items={diagram.can_repeat} tone="pause" />
-      <Section title="External effects" items={diagram.side_effects} tone="effect" />
-      {diagram.context_sessions.length ? (
-        <section className="min-w-0">
-          <h3 className="font-mono text-2xs font-semibold uppercase tracking-[0.11em] text-muted-foreground">
-            Contexts on run
-          </h3>
-          <ul className="mt-2 grid gap-2">
-            {diagram.context_sessions.map((session) => (
-              <li key={session.node_id} className="min-w-0 rounded-lg bg-muted/40 px-3 py-2">
-                <div className="break-words text-sm font-medium text-foreground">
-                  {session.label}
-                </div>
-                <div className="mt-0.5 break-all font-mono text-2xs text-muted-foreground">
-                  {session.context_ref} · {session.starts_when}
-                </div>
-              </li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
-      {diagram.scenarios.length ? (
-        <section className="min-w-0 sm:col-span-2 xl:col-span-3">
-          <h3 className="font-mono text-2xs font-semibold uppercase tracking-[0.11em] text-muted-foreground">
-            Scenarios checked
-          </h3>
-          <div className="mt-2 grid gap-2 md:grid-cols-3">
-            {diagram.scenarios.map((scenario) => (
-              <div
-                key={`${scenario.kind}-${scenario.outcome}`}
-                className="rounded-lg border border-border p-3"
-              >
-                <div className="font-mono text-2xs uppercase text-muted-foreground">
-                  {scenario.kind}
-                </div>
-                <div className="mt-1 break-words text-xs leading-relaxed text-foreground">
-                  {scenario.outcome}
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
-      ) : null}
+    <div className="grid gap-5 p-4 sm:p-5 xl:grid-cols-[minmax(0,1.45fr)_minmax(18rem,0.75fr)]">
+      <RunPath diagram={diagram} />
+      <RunConsiderations diagram={diagram} />
     </div>
+    <ScenarioChecks scenarios={diagram.scenarios} />
   </article>
 )
 
@@ -137,6 +193,18 @@ export function WorkflowPreview({
   onRun?: (diagramId: string) => void
 }) {
   const ready = preview.status === "ready"
+  const stepCount = preview.diagrams.reduce(
+    (count, diagram) => count + diagram.context_sessions.length,
+    0,
+  )
+  const pauseCount = preview.diagrams.reduce(
+    (count, diagram) => count + diagram.will_pause.length,
+    0,
+  )
+  const loopCount = preview.diagrams.reduce(
+    (count, diagram) => count + diagram.can_repeat.length,
+    0,
+  )
   return (
     <div className="grid gap-4" data-testid="workflow-preview">
       <section
@@ -155,17 +223,34 @@ export function WorkflowPreview({
             )}
           >
             <span className={cn("size-2 rounded-full", ready ? "bg-success" : "bg-destructive")} />
-            {ready ? "Ready" : "Needs changes"}
+            {ready ? "Ready to run" : "Needs changes"}
           </span>
           <span className="text-xs text-muted-foreground">Preview only · nothing has started</span>
         </div>
         <h2 className="mt-3 text-lg font-semibold text-foreground">
-          {ready ? "What will happen when your agent runs this" : "Fix these blockers before run"}
+          {ready ? "Review the run before it starts" : "Fix these blockers before run"}
         </h2>
         {preview.purpose ? (
           <p className="mt-1 max-w-3xl text-sm leading-relaxed text-muted-foreground">
             {preview.purpose}
           </p>
+        ) : null}
+        {ready ? (
+          <div className="mt-3 flex flex-wrap gap-2 text-2xs text-muted-foreground">
+            <span className="rounded-md border border-border-soft bg-background/40 px-2 py-1">
+              {stepCount} agent step{stepCount === 1 ? "" : "s"}
+            </span>
+            <span className="rounded-md border border-border-soft bg-background/40 px-2 py-1">
+              {pauseCount
+                ? `${pauseCount} human pause${pauseCount === 1 ? "" : "s"}`
+                : "No human pauses"}
+            </span>
+            {loopCount ? (
+              <span className="rounded-md border border-border-soft bg-background/40 px-2 py-1">
+                {loopCount} bounded loop{loopCount === 1 ? "" : "s"}
+              </span>
+            ) : null}
+          </div>
         ) : null}
         {preview.errors.length ? (
           <ul className="mt-4 grid gap-2">
