@@ -1263,8 +1263,8 @@ const starterWorkflow = (title) => {
     <div class="node"><b>Publish</b><br>The approved result is published.</div>
   </div>
   <p class="note">The revise route is bounded to two attempts. Edit the outcome and context
-  references below, then run <code>derive workflow preview workflow.html</code>. Preview explains
-  and validates; it never starts the workflow.</p>
+  references below, then run <code>derive workflow sync workflow.html</code>. Sync projects the
+  definition into the visible graph and runs Preview; it never starts the workflow.</p>
 <script type="application/derive-facts" data-fact="bundle-manifest">
 ${fact(bundle)}
 </script>

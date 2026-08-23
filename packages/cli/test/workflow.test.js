@@ -1,10 +1,15 @@
 import { spawnSync } from "node:child_process"
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
 import { previewWorkflow as previewCoreWorkflow } from "../../core/src/workflow"
-import { factJson, formatWorkflowPreview, previewWorkflowSource } from "../src/workflow.js"
+import {
+  factJson,
+  formatWorkflowPreview,
+  previewWorkflowSource,
+  syncWorkflowSource,
+} from "../src/workflow.js"
 
 const dirs = []
 const tmp = () => {
@@ -134,7 +139,7 @@ describe("workflow preview", () => {
       { encoding: "utf8" },
     )
     expect(init.status).toBe(0)
-    expect(init.stdout).toContain("derive workflow preview workflow.html")
+    expect(init.stdout).toContain("derive workflow sync workflow.html")
 
     const preview = spawnSync(process.execPath, [bin, "workflow", "preview", "workflow.html"], {
       cwd: dir,
@@ -143,6 +148,59 @@ describe("workflow preview", () => {
     expect(preview.status).toBe(0)
     expect(preview.stdout).toContain("Preview only — no context session has started")
     expect(preview.stdout).toContain("Context sessions on explicit run")
+  })
+
+  it("syncs visible topology from the runnable definition while preserving authored state", () => {
+    const source = workflowPage()
+    const bundle = factJson(source, "bundle-manifest").value
+    bundle.diagrams[0].nodes = [
+      { id: "research", label: "Evidence scan", state: "active", confidence: { level: "high" } },
+      { id: "ghost", label: "Removed step", state: "blocked" },
+    ]
+    bundle.diagrams[0].edges = [{ from: "research", to: "ghost", label: "old" }]
+    const drifted = source.replace(
+      /(<script data-fact="bundle-manifest" type="application\/derive-facts">)[\s\S]*?(<\/script>)/,
+      (_match, open, close) => `${open}${JSON.stringify(bundle)}${close}`,
+    )
+    expect(previewWorkflowSource(drifted).status).toBe("needs-changes")
+
+    const synced = syncWorkflowSource(drifted)
+    const visible = factJson(synced.source, "bundle-manifest").value.diagrams[0]
+    expect(visible.nodes.map((node) => node.id)).toEqual(["research", "review", "publish"])
+    expect(visible.nodes[0]).toMatchObject({
+      label: "Evidence scan",
+      state: "active",
+      confidence: { level: "high" },
+    })
+    expect(visible.edges.map((edge) => `${edge.from}->${edge.to}`)).toEqual([
+      "research->review",
+      "review->research",
+      "review->publish",
+    ])
+    expect(previewWorkflowSource(synced.source).status).toBe("ready")
+  })
+
+  it("derive workflow sync writes the projection and runs the same Preview gate", () => {
+    const dir = tmp()
+    const file = join(dir, "workflow.html")
+    writeFileSync(
+      file,
+      workflowPage().replace(
+        '"id":"publish","label":"Publish brief"',
+        '"id":"stale","label":"Stale"',
+      ),
+    )
+    const bin = join(import.meta.dirname, "..", "bin", "derive.js")
+    const result = spawnSync(process.execPath, [bin, "workflow", "sync", file], {
+      cwd: dir,
+      encoding: "utf8",
+    })
+    expect(result.status).toBe(0)
+    expect(result.stdout).toContain("Visible graph synced")
+    expect(result.stdout).toContain("Ready to run")
+    expect(factJson(readFileSync(file, "utf8"), "bundle-manifest").value.diagrams[0].nodes).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "publish" })]),
+    )
   })
 
   it("extracts facts without executing HTML and matches core's ready preview", () => {
@@ -185,7 +243,7 @@ describe("workflow preview", () => {
       '"from":"review","to":"publish","when":"approve","fallback":true',
     )
     expect(previewWorkflowSource(source).errors).toContain(
-      'WF-02 human node "review" routes must match its options exactly and omit fallback',
+      'WF-02 human node "review" routes must match its options exactly; fallback is not allowed',
     )
   })
 

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react"
-import type { Artifact, Comment } from "@/api"
+import type { Artifact, Comment, DirUser } from "@/api"
 import { Icon } from "@/components/icons"
 import { Count } from "@/components/shared/section-eyebrow"
 import { Button } from "@/components/ui/button"
@@ -14,6 +14,8 @@ import {
 } from "./linked-bundle-panel"
 import { LinkedBundleReconcile } from "./linked-bundle-reconcile"
 import type { Sel } from "./types"
+import { WorkflowPreview } from "./workflow-preview"
+import { WorkflowRunDialog } from "./workflow-run-dialog"
 
 type LinkedBundle = NonNullable<Artifact["linked_bundle"]>
 type Diagram = NonNullable<LinkedBundle["diagrams"]>[number]
@@ -1362,6 +1364,8 @@ export function LinkedBundleWorkspace({
   shortId,
   version,
   bundle,
+  workflowPreview,
+  agents,
   comments,
   canComment,
   canEdit,
@@ -1381,6 +1385,8 @@ export function LinkedBundleWorkspace({
   shortId: string
   version: number
   bundle: LinkedBundle
+  workflowPreview?: Artifact["workflow_preview"]
+  agents: DirUser[]
   comments: Comment[]
   canComment: boolean
   canEdit: boolean
@@ -1403,7 +1409,10 @@ export function LinkedBundleWorkspace({
     () => new Map(bundle.members.map((member) => [member.id, member])),
     [bundle.members],
   )
-  const [view, setView] = useState<"now" | "advanced">("now")
+  const [view, setView] = useState<"preview" | "now" | "advanced">(
+    workflowPreview ? "preview" : "now",
+  )
+  const [runDiagram, setRunDiagram] = useState<string | null>(null)
   const selected = reviewState.selected
   useEffect(() => {
     if (!selected) {
@@ -1470,6 +1479,20 @@ export function LinkedBundleWorkspace({
           <div className="flex flex-wrap items-center gap-2">
             <fieldset className="flex rounded-lg border border-border p-0.5">
               <legend className="sr-only">Workspace view</legend>
+              {workflowPreview ? (
+                <button
+                  type="button"
+                  data-testid="bundle-view-preview"
+                  aria-pressed={view === "preview"}
+                  onClick={() => setView("preview")}
+                  className={cn(
+                    "rounded-md px-2.5 py-1.5 text-xs text-muted-foreground",
+                    view === "preview" && "bg-muted font-medium text-foreground",
+                  )}
+                >
+                  Preview
+                </button>
+              ) : null}
               <button
                 type="button"
                 data-testid="bundle-view-now"
@@ -1542,7 +1565,12 @@ export function LinkedBundleWorkspace({
 
       <div className="mx-auto grid max-w-[90rem] gap-5 p-4 sm:p-6 lg:grid-cols-[minmax(0,1fr)_18rem]">
         <main className="min-w-0">
-          {view === "now" ? (
+          {view === "preview" && workflowPreview ? (
+            <WorkflowPreview
+              preview={workflowPreview}
+              onRun={canComment ? setRunDiagram : undefined}
+            />
+          ) : view === "now" ? (
             <NowWorkspace diagrams={diagrams} members={members} onFocus={focusNode} />
           ) : diagrams.length ? (
             <div className="grid gap-4" data-testid="bundle-advanced-view">
@@ -1588,6 +1616,17 @@ export function LinkedBundleWorkspace({
         </main>
         <ArtifactShelf members={bundle.members} />
       </div>
+      {runDiagram ? (
+        <WorkflowRunDialog
+          shortId={shortId}
+          diagramId={runDiagram}
+          agents={agents}
+          open
+          onOpenChange={(open) => {
+            if (!open) setRunDiagram(null)
+          }}
+        />
+      ) : null}
     </div>
   )
 }

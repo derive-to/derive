@@ -35,6 +35,81 @@ export function factJson(source, slot) {
   }
 }
 
+const titleFromId = (id) =>
+  id.replaceAll(/[-_]+/g, " ").replace(/^./, (letter) => letter.toUpperCase())
+
+/** Make the visible graph's topology a projection of the runnable definition.
+ * Existing labels, node state, and review metadata survive by stable id; only
+ * nodes and edges are reconciled. This removes the most error-prone two-fact edit
+ * while keeping the visible bundle rich enough to carry live human state. */
+export function syncWorkflowSource(source) {
+  const definitionFact = factJson(source, "workflow-definition")
+  if (definitionFact.error) throw new Error(definitionFact.error)
+  if (!object(definitionFact.value) || !Array.isArray(definitionFact.value.diagrams))
+    throw new Error("workflow-definition is missing or invalid")
+  const bundleFact = factJson(source, "bundle-manifest")
+  if (bundleFact.error) throw new Error(bundleFact.error)
+  const existing = object(bundleFact.value) ? bundleFact.value : {}
+  const oldDiagrams = new Map(
+    (Array.isArray(existing.diagrams) ? existing.diagrams : [])
+      .filter(object)
+      .map((diagram) => [diagram.id, diagram]),
+  )
+  const diagrams = definitionFact.value.diagrams.filter(object).map((definition) => {
+    const old = oldDiagrams.get(definition.id)
+    const oldNodes = new Map(
+      (Array.isArray(old?.nodes) ? old.nodes : []).filter(object).map((node) => [node.id, node]),
+    )
+    const oldEdges = new Map(
+      (Array.isArray(old?.edges) ? old.edges : [])
+        .filter(object)
+        .map((edge) => [edgeKey(edge.from, edge.to), edge]),
+    )
+    return {
+      ...(old ?? {}),
+      id: definition.id,
+      title: text(old?.title) ?? titleFromId(definition.id),
+      type:
+        old?.type === "loop" || old?.type === "graph"
+          ? old.type
+          : Array.isArray(definition.loops) && definition.loops.length
+            ? "loop"
+            : "graph",
+      nodes: (Array.isArray(definition.nodes) ? definition.nodes : [])
+        .filter(object)
+        .map((node) => ({
+          ...(oldNodes.get(node.id) ?? {}),
+          id: node.id,
+          label: text(oldNodes.get(node.id)?.label) ?? titleFromId(node.id),
+          state: oldNodes.get(node.id)?.state ?? "pending",
+        })),
+      edges: (Array.isArray(definition.routes) ? definition.routes : [])
+        .filter(object)
+        .map((route) => ({
+          ...(oldEdges.get(edgeKey(route.from, route.to)) ?? {}),
+          from: route.from,
+          to: route.to,
+          label:
+            text(oldEdges.get(edgeKey(route.from, route.to))?.label) ??
+            (route.when === "always" ? "next" : route.when),
+        })),
+    }
+  })
+  const bundle = {
+    ...existing,
+    schema: "derive.linked-bundle/v1",
+    purpose: text(definitionFact.value.purpose) ?? text(existing.purpose) ?? "Workflow",
+    members: Array.isArray(existing.members) ? existing.members : [],
+    diagrams,
+  }
+  const escaped = JSON.stringify(bundle, null, 2).replaceAll("<", "\\u003c")
+  const pattern =
+    /(<script\b(?=[^>]*\btype=["']application\/derive-facts["'])(?=[^>]*\bdata-fact=["']bundle-manifest["'])[^>]*>)[\s\S]*?(<\/script\s*>)/i
+  if (!pattern.test(source)) throw new Error("bundle-manifest fact is missing")
+  const next = source.replace(pattern, (_match, open, close) => `${open}\n${escaped}\n${close}`)
+  return { source: next, changed: next !== source }
+}
+
 const cyclicComponents = (nodes, routes) => {
   const outgoing = new Map(nodes.map((node) => [node, []]))
   for (const route of routes) outgoing.get(route.from)?.push(route.to)
@@ -342,13 +417,17 @@ function validateDefinition(value, bundle, errors) {
       if (node?.kind === "human") {
         const options = new Set(node.options ?? [])
         const conditions = new Set(choices.map((route) => route.when))
-        if (
-          choices.some((route) => route.fallback) ||
-          options.size !== conditions.size ||
-          [...options].some((option) => !conditions.has(option))
-        )
+        const missing = [...options].filter((option) => !conditions.has(option))
+        const unexpected = [...conditions].filter((condition) => !options.has(condition))
+        const hasFallback = choices.some((route) => route.fallback)
+        if (hasFallback || options.size !== conditions.size || missing.length > 0)
           errors.push(
-            `WF-02 human node "${from}" routes must match its options exactly and omit fallback`,
+            `WF-02 human node "${from}" routes must match its options exactly` +
+              (missing.length ? `; missing ${missing.map((item) => `"${item}"`).join(", ")}` : "") +
+              (unexpected.length
+                ? `; unexpected ${unexpected.map((item) => `"${item}"`).join(", ")}`
+                : "") +
+              (hasFallback ? "; fallback is not allowed" : ""),
           )
       } else if (choices.length > 1 && node?.routing === "all") {
         if (

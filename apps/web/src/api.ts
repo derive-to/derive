@@ -1585,6 +1585,19 @@ export const api = {
     shortId: string,
     body: { agentId?: string; note?: string },
   ): Promise<{ requestId: string }> => f(`/v1/artifacts/${shortId}/fill`, opts(body)).then(j),
+  workflowRunPrompt: (
+    shortId: string,
+    diagramId: string,
+  ): Promise<{ prompt: string; diagram: { id: string; title: string } }> =>
+    f(
+      `/v1/artifacts/${shortId}/workflow-run?diagram=${encodeURIComponent(diagramId)}`,
+      opts(),
+    ).then(j),
+  runWorkflow: (
+    shortId: string,
+    body: { agentId?: string; diagramId: string },
+  ): Promise<{ requestId: string }> =>
+    f(`/v1/artifacts/${shortId}/workflow-run`, opts(body)).then(j),
   // Ask a registered agent to build the workspace's brand profile (shortId must be the
   // profile artifact). Same queue mechanics as reworkArtifact, different canned brief.
   generateProfile: (shortId: string, agentId?: string): Promise<{ requestId: string }> =>

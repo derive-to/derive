@@ -675,6 +675,9 @@
             ],
             "description": "Present for an HTML artifact carrying a valid bundle-manifest fact. Members are resolved through the caller's normal read permissions; unavailable members expose no additional metadata."
           },
+          "workflow_preview": {
+            "$ref": "#/components/schemas/WorkflowPreview"
+          },
           "source_path": {
             "type": "string",
             "nullable": true,
@@ -856,6 +859,160 @@
           "created_by",
           "owner_name"
         ]
+      },
+      "WorkflowPreview": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ready",
+              "needs-changes"
+            ]
+          },
+          "execution_started": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
+          },
+          "purpose": {
+            "type": "string",
+            "nullable": true
+          },
+          "errors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "diagrams": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "will_do": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "may_do": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "will_pause": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "can_repeat": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "side_effects": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "context_sessions": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "node_id": {
+                        "type": "string"
+                      },
+                      "label": {
+                        "type": "string"
+                      },
+                      "context_ref": {
+                        "type": "string"
+                      },
+                      "starts_when": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "node_id",
+                      "label",
+                      "context_ref",
+                      "starts_when"
+                    ]
+                  }
+                },
+                "scenarios": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "expected",
+                          "failure",
+                          "human"
+                        ]
+                      },
+                      "outcome": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "outcome"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "id",
+                "title",
+                "will_do",
+                "may_do",
+                "will_pause",
+                "can_repeat",
+                "side_effects",
+                "context_sessions",
+                "scenarios"
+              ]
+            }
+          },
+          "cannot_do": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "status",
+          "execution_started",
+          "purpose",
+          "errors",
+          "warnings",
+          "diagrams",
+          "cannot_do"
+        ],
+        "description": "Present when the current linked bundle also carries workflow-definition. This is the validated, non-executing shared Preview."
       },
       "DirUser": {
         "type": "object",
@@ -7956,6 +8113,128 @@
                   "required": [
                     "rounds",
                     "pending"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/workflow-run": {
+      "get": {
+        "tags": [
+          "Artifacts"
+        ],
+        "summary": "Get the explicit handoff prompt for a validated workflow diagram.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "diagram",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A copyable prompt for any local agent harness. Previewing it does not start execution.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "prompt": {
+                      "type": "string"
+                    },
+                    "diagram": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "title": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "title"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "prompt",
+                    "diagram"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Artifacts"
+        ],
+        "summary": "Queue a validated workflow diagram for a registered local agent.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "agentId": {
+                    "type": "string"
+                  },
+                  "diagramId": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "diagramId"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The validated workflow handoff landed in the selected agent's pull inbox. Derive does not execute the workflow itself.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "requestId": {
+                      "type": "string",
+                      "description": "The request comment's thread id."
+                    }
+                  },
+                  "required": [
+                    "requestId"
                   ]
                 }
               }

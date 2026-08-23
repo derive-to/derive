@@ -388,13 +388,17 @@ export const validateWorkflowDefinition = (
       if (node?.kind === "human") {
         const options = new Set(node.options ?? [])
         const conditions = new Set(choices.map((route) => route.when))
-        if (
-          choices.some((route) => route.fallback) ||
-          options.size !== conditions.size ||
-          [...options].some((option) => !conditions.has(option))
-        )
+        const missing = [...options].filter((option) => !conditions.has(option))
+        const unexpected = [...conditions].filter((condition) => !options.has(condition))
+        const hasFallback = choices.some((route) => route.fallback)
+        if (hasFallback || options.size !== conditions.size || missing.length > 0)
           errors.push(
-            `WF-02 human node "${from}" routes must match its options exactly and omit fallback`,
+            `WF-02 human node "${from}" routes must match its options exactly` +
+              (missing.length ? `; missing ${missing.map((item) => `"${item}"`).join(", ")}` : "") +
+              (unexpected.length
+                ? `; unexpected ${unexpected.map((item) => `"${item}"`).join(", ")}`
+                : "") +
+              (hasFallback ? "; fallback is not allowed" : ""),
           )
       } else if (choices.length > 1 && node?.routing === "all") {
         if (
@@ -651,19 +655,10 @@ export const workflowDefinitionAdvisories = (source: string): string[] => {
   ]
 }
 
-export const previewWorkflow = (source: string): WorkflowPreview => {
-  const validation = workflowDefinitionOf(source)
-  const linked = linkedBundleOf(source)?.manifest ?? null
-  if (!validation)
-    return {
-      status: "needs-changes",
-      execution_started: false,
-      purpose: null,
-      errors: ["WF-01 no workflow-definition fact found"],
-      warnings: [],
-      diagrams: [],
-      cannot_do: [],
-    }
+const previewWorkflowValidation = (
+  validation: WorkflowValidation,
+  linked: LinkedBundleManifest | null,
+): WorkflowPreview => {
   if (!validation.definition)
     return {
       status: "needs-changes",
@@ -748,3 +743,38 @@ export const previewWorkflow = (source: string): WorkflowPreview => {
     cannot_do: validation.definition.forbidden ?? [],
   }
 }
+
+/** Build the same one-gate Preview from already-extracted facts. The artifact
+ * detail API uses this path so the shared page can render exactly what the CLI
+ * explains without re-reading or executing the document bytes. */
+export const previewWorkflowDefinition = (
+  value: unknown,
+  linked: LinkedBundleManifest | null,
+): WorkflowPreview => previewWorkflowValidation(validateWorkflowDefinition(value, linked), linked)
+
+export const previewWorkflow = (source: string): WorkflowPreview => {
+  const validation = workflowDefinitionOf(source)
+  const linked = linkedBundleOf(source)?.manifest ?? null
+  if (!validation)
+    return {
+      status: "needs-changes",
+      execution_started: false,
+      purpose: null,
+      errors: ["WF-01 no workflow-definition fact found"],
+      warnings: [],
+      diagrams: [],
+      cannot_do: [],
+    }
+  return previewWorkflowValidation(validation, linked)
+}
+
+/** A self-contained handoff for any approved local harness. Derive stores the
+ * workflow and its receipts; the addressed agent performs the work through the
+ * existing context-session contract. */
+export const workflowRunInstruction = (shortId: string, diagramId: string): string =>
+  `Read Derive artifact ${shortId} and run workflow diagram "${diagramId}". This is explicit run intent. ` +
+  "Use its workflow-definition as the policy and Preview it again before opening any context " +
+  "session; stop and report the blockers if it Needs changes. Use the existing Derive context " +
+  "sessions for ready context nodes, preserve the authored loop bounds and human gates, and " +
+  "project only explicit session truth back into the visible graph. Derive stores the graph, " +
+  "artifacts, review, and receipts; this agent is the harness that performs the work."

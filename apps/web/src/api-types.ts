@@ -4354,6 +4354,84 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/artifacts/{shortId}/workflow-run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get the explicit handoff prompt for a validated workflow diagram. */
+        get: {
+            parameters: {
+                query: {
+                    diagram: string;
+                };
+                header?: never;
+                path: {
+                    shortId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description A copyable prompt for any local agent harness. Previewing it does not start execution. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            prompt: string;
+                            diagram: {
+                                id: string;
+                                title: string;
+                            };
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** Queue a validated workflow diagram for a registered local agent. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    shortId: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        agentId?: string;
+                        diagramId: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description The validated workflow handoff landed in the selected agent's pull inbox. Derive does not execute the workflow itself. */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            /** @description The request comment's thread id. */
+                            requestId: string;
+                        };
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/artifacts/{shortId}/rework": {
         parameters: {
             query?: never;
@@ -6900,6 +6978,7 @@ export interface components {
                     stop?: string;
                 }[];
             };
+            workflow_preview?: components["schemas"]["WorkflowPreview"];
             /** @description Source path (e.g. the repo path of a synced artifact); null when none. */
             source_path?: string | null;
             /** @description The artifact this one was copied from ("use as template"). Detail responses only; null when the source no longer resolves, absent when not derived. */
@@ -6960,6 +7039,37 @@ export interface components {
             created_by: string;
             /** @description Creator's display name for attribution ("Managed by …"); null when unknown. */
             owner_name: string | null;
+        };
+        /** @description Present when the current linked bundle also carries workflow-definition. This is the validated, non-executing shared Preview. */
+        WorkflowPreview: {
+            /** @enum {string} */
+            status: "ready" | "needs-changes";
+            /** @enum {boolean} */
+            execution_started: false;
+            purpose: string | null;
+            errors: string[];
+            warnings: string[];
+            diagrams: {
+                id: string;
+                title: string;
+                will_do: string[];
+                may_do: string[];
+                will_pause: string[];
+                can_repeat: string[];
+                side_effects: string[];
+                context_sessions: {
+                    node_id: string;
+                    label: string;
+                    context_ref: string;
+                    starts_when: string;
+                }[];
+                scenarios: {
+                    /** @enum {string} */
+                    kind: "expected" | "failure" | "human";
+                    outcome: string;
+                }[];
+            }[];
+            cannot_do: string[];
         };
         DirUser: {
             /** @description User id, or the agent id when kind is agent. */

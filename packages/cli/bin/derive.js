@@ -31,7 +31,7 @@
 //   derive doctor [--server url] [--token t]  report which optional features are configured
 //   derive runner serve|once|doctor|install   run a context's answer daemon, or drain once (npx-able anywhere)
 //   derive context push|dev                ship a context dir as its manifest / tune it live
-//   derive workflow preview [file] [--json] explain + validate a graph/loop before it runs
+//   derive workflow sync|preview [file] [--json] sync the visible graph, then explain + validate
 import { spawn } from "node:child_process"
 import { createHash, randomBytes } from "node:crypto"
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
@@ -72,7 +72,11 @@ import { createAgent, createContext, saveAgentToken } from "../src/context.js"
 import { readTarget, uploadArtifact } from "../src/publish.js"
 import { DeriveClient, parseManifest } from "../src/runner.js"
 import { materializeNotes, materializeSkills, pinManifestSkills } from "../src/skills.js"
-import { formatWorkflowPreview, previewWorkflowSource } from "../src/workflow.js"
+import {
+  formatWorkflowPreview,
+  previewWorkflowSource,
+  syncWorkflowSource,
+} from "../src/workflow.js"
 
 const args = process.argv.slice(2)
 const cmd = args.shift()
@@ -168,7 +172,7 @@ if (cmd === "init") {
     template === "context"
       ? "derive context push"
       : template === "workflow"
-        ? "derive workflow preview workflow.html"
+        ? "derive workflow sync workflow.html"
         : "derive publish"
   console.log(
     created.length
@@ -1440,8 +1444,8 @@ if (cmd === "brandprint") {
 
 if (cmd === "workflow") {
   const action = positional[0]
-  if (action !== "preview") {
-    console.error("usage: derive workflow preview [file] [--json]")
+  if (action !== "preview" && action !== "sync") {
+    console.error("usage: derive workflow sync|preview [file] [--json]")
     process.exit(1)
   }
   let config = null
@@ -1464,6 +1468,18 @@ if (cmd === "workflow") {
   } catch (e) {
     console.error(`error: couldn't read ${target}: ${e.message}`)
     process.exit(1)
+  }
+  if (action === "sync") {
+    try {
+      const synced = syncWorkflowSource(source)
+      if (synced.changed) writeFileSync(target, synced.source)
+      source = synced.source
+      if (!flags.json)
+        console.log(synced.changed ? "✓ Visible graph synced" : "✓ Visible graph already synced")
+    } catch (e) {
+      console.error(`error: couldn't sync ${target}: ${e.message}`)
+      process.exit(1)
+    }
   }
   const preview = previewWorkflowSource(source)
   console.log(flags.json ? JSON.stringify(preview) : formatWorkflowPreview(preview))
@@ -1501,6 +1517,7 @@ if (cmd !== "publish") {
   derive send-back [--id X] [--note m]     open the page to send your answers back (a browser gesture)
   derive runner serve|doctor|install       run a context's answer daemon (\`derive runner\` for flags)
   derive context push|dev                  ship a context dir as its manifest / tune it on the working tree
+  derive workflow sync [file] [--json]     project definition topology into the visible graph, then Preview
   derive workflow preview [file] [--json]  explain + validate a graph/loop before it runs
   derive skill add <short_id>              materialize a published skill into ./.claude/skills/ (pinned)
   derive brandprint pull                   materialize the workspace + your Brandprint into this repo`)

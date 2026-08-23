@@ -30,6 +30,7 @@ import {
   PublishError,
   pageText,
   parseSortMode,
+  previewWorkflowDefinition,
   publish,
   publishAdvisories,
   type Role,
@@ -43,6 +44,8 @@ import {
   toJson,
   toMarkdown,
   validateLinkedBundle,
+  WORKFLOW_DEFINITION_FACT,
+  type WorkflowPreview,
   type WorkspaceAccess,
 } from "@derive/core"
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
@@ -1634,12 +1637,36 @@ export const artifactRoutes = (ctx: AppContext) => {
             >
           })
         | undefined
+      let workflowPreview: WorkflowPreview | undefined
       if (current?.content_type === LINKED_BUNDLE_CONTENT_TYPE) {
-        const row = (await meta.getVersionData(artifact.id, current.n, LINKED_BUNDLE_FACT))[0]
+        // One version-data read carries both authored facts. The native graph and
+        // native Preview must come from the same immutable version without adding a
+        // second round trip to this hot detail route.
+        const dataRows = await meta.getVersionData(artifact.id, current.n)
+        const row = dataRows.find((item) => item.slot === LINKED_BUNDLE_FACT)
         if (row) {
           try {
             const checked = validateLinkedBundle(JSON.parse(row.json))
             if (checked.manifest) {
+              const workflowRow = dataRows.find((item) => item.slot === WORKFLOW_DEFINITION_FACT)
+              if (workflowRow) {
+                try {
+                  workflowPreview = previewWorkflowDefinition(
+                    JSON.parse(workflowRow.json),
+                    checked.manifest,
+                  )
+                } catch {
+                  workflowPreview = {
+                    status: "needs-changes",
+                    execution_started: false,
+                    purpose: null,
+                    errors: ["WF-01 workflow-definition is not valid JSON"],
+                    warnings: [],
+                    diagrams: [],
+                    cannot_do: [],
+                  }
+                }
+              }
               const resolved = await meta.getByShortIds(
                 checked.manifest.members.map((member) => member.ref),
               )
@@ -1769,6 +1796,7 @@ export const artifactRoutes = (ctx: AppContext) => {
         // description, entry, files } — the client renders the file tree + skill chrome.
         ...(bundle ? { bundle } : {}),
         ...(linkedBundle ? { linked_bundle: linkedBundle } : {}),
+        ...(workflowPreview ? { workflow_preview: workflowPreview } : {}),
         // A taken-down artifact keeps its record but serves no content (410); the
         // UI shows a tombstone instead of the iframe.
         removed: !!artifact.removed_at,

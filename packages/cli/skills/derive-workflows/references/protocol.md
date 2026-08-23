@@ -8,8 +8,10 @@ The artifact is ordinary single-file HTML. Its visible graph and working state r
 `bundle-manifest` contract. A companion `workflow-definition` fact adds preflight and execution
 meaning without changing #799's state semantics.
 
-Both facts must describe identical diagram IDs, node IDs, and edges/routes. `derive workflow
-preview` refuses drift between them.
+`workflow-definition` is the authoring source for diagram IDs, node IDs, and routes. Run
+`derive workflow sync <file>` to project that topology into `bundle-manifest`; it preserves
+human-readable labels and authored working state on matching stable IDs, then runs Preview.
+`derive workflow preview` is the read-only check and refuses any remaining drift.
 
 Think **same IDs, different jobs**: `bundle-manifest` is what people see; `workflow-definition` is
 what the harness needs. A graph may begin with `members:[]`. Add real result artifacts to members

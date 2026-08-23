@@ -353,7 +353,7 @@ describe("workflow preview contract", () => {
       if (approval) approval.fallback = true
     })
     expect(previewWorkflow(source).errors).toContain(
-      'WF-02 human node "review" routes must match its options exactly and omit fallback',
+      'WF-02 human node "review" routes must match its options exactly; fallback is not allowed',
     )
   })
 })
