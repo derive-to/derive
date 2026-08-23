@@ -240,6 +240,18 @@ binding = "ASSETS"
 run_worker_first = true
 not_found_handling = "single-page-application"
 
+# The public site (derive.to's marketing pages, blog and trust files), a separate
+# Worker from the derive-to/site repository. Bound here so the app stays the one
+# public front door: it answers `/` for signed-out visitors and every navigation
+# it does not own by asking the site over this binding (same thread, no network).
+# A deployment without the binding — every self-host — serves the application
+# alone, and routes/site.ts + the worker fast path fall back accordingly.
+# SELF-HOSTING ON WORKERS: delete this block (wrangler refuses to deploy against
+# a Worker you don't have); nothing else changes.
+[[services]]
+binding = "SITE"
+service = "derive-site"
+
 # Public hosts: the derive.to apex is canonical, app.derive.to an alias. Cloudflare
 # auto-creates the DNS records + edge certs. baseUrl falls back to the request
 # origin, so the workers.dev origin keeps serving for smoke tests.

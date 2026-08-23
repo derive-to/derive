@@ -212,6 +212,12 @@ const CONFIG_VARS: ConfigVar[] = [
     example: "https://usercontent.example.com",
   },
   {
+    name: "DERIVE_SITE_ORIGIN",
+    group: "hosting",
+    doc: "Origin of the public site (marketing pages, blog) for a HOSTED deployment on the\nNode tier: navigations the app does not own are proxied there, and `/` serves its\nlanding page to signed-out visitors. derive.to itself runs on Workers and binds the\nsite Worker directly (wrangler.toml [[services]] SITE). Unset = the application owns\nthe front door, which is right for every self-host.",
+    example: "http://localhost:4321",
+  },
+  {
     name: "DERIVE_SUBDOMAIN_BASE",
     group: "hosting",
     doc: "Vanity subdomains (domain mode): a base domain whose wildcard (*.<base>) points at this\nserver. An artifact assigned `q3-review.<base>` is served at that host's root. Unset =\nsubdomain serving off.",

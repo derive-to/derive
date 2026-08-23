@@ -45,6 +45,10 @@ const API_EXACT = [
   // not_found_handling would otherwise answer with the shell.
   "/skill.md",
   "/.well-known/agent.json",
+  // Crawler policy (routes/site.ts): app-owned on every deployment — the
+  // Disallow lines guard the app's own private paths — with the Sitemap line
+  // only where a public site is bound. In the dev proxy so Vite serves it too.
+  "/robots.txt",
 ] as const
 
 /** Server-owned path tokens in declaration order (as the dev proxy lists them). */
@@ -70,6 +74,8 @@ export interface ServeWebOpts {
   shellHtml: string
   /** A human 404 page emitted by the web build. Falls back to plain text when absent. */
   notFoundHtml?: string
+  /** The public site upstream (deps.site), consulted for navigations the app does not own. */
+  site?: (req: Request) => Promise<Response>
 }
 
 /**
@@ -80,33 +86,29 @@ export interface ServeWebOpts {
  * always win; `isApiPath` keeps unmatched API URLs as JSON 404s instead of leaking
  * the shell.
  */
-export const mountWeb = (app: Hono, { webRoot, shellHtml, notFoundHtml }: ServeWebOpts): void => {
+export const mountWeb = (
+  app: Hono,
+  { webRoot, shellHtml, notFoundHtml, site }: ServeWebOpts,
+): void => {
   app.use(
     "/assets/*",
     serveStatic({ root: webRoot, onFound: (_p, c) => c.header("Cache-Control", IMMUTABLE_CACHE) }),
   )
   // Root-level static files Vite emits (favicon, manifest, …).
   app.get("/:file{[^/]+\\.[^/]+}", serveStatic({ root: webRoot }))
-  // Nested public/ directories the marketing pages reference (/site fonts + og
-  // image, /brand wordmark). Without these the shell fallback swallows them —
-  // the Worker's Static Assets serve them natively, so only Node needs the routes.
-  app.get("/site/*", serveStatic({ root: webRoot }))
+  // The brand files (wordmark, favicon, fonts) ship in every build and the app
+  // itself references them. Without this the shell fallback swallows them — the
+  // Worker's Static Assets serve them natively, so only Node needs the route.
   app.get("/brand/*", serveStatic({ root: webRoot }))
-  // Cloudflare's Static Assets HTML handling maps the physical security.html
-  // file to its canonical extensionless URL. Mirror that contract in the Node
-  // self-host so links, crawlers and scanners see the same page on both tiers.
-  app.get("/security", serveStatic({ root: webRoot, path: "security.html" }))
-  // Same reason, for the one static file that lives under a dot-directory:
-  // /.well-known/security.txt (RFC 9116). The root-file route above only matches a
-  // single segment, so without this the shell fallback swallows it and scanners see
-  // HTML where the security contact should be. The server-owned well-knowns (OAuth
-  // discovery, /.well-known/skills, agent.json) are mounted before mountWeb and
-  // still win; an unmatched one falls through to `isApiPath` and stays a JSON 404.
-  app.get("/.well-known/*", serveStatic({ root: webRoot }))
   app.notFound((c) => {
     if (isApiPath(c.req.path)) return c.json({ error: "not found" }, 404)
-    if ((c.req.method === "GET" || c.req.method === "HEAD") && isSpaPath(c.req.path))
-      return c.html(shellHtml)
+    const navigation = c.req.method === "GET" || c.req.method === "HEAD"
+    if (navigation && isSpaPath(c.req.path)) return c.html(shellHtml)
+    // A navigation the app does not own belongs to the public site when this
+    // deployment has one (derive.to's pages, blog and trust files) — the Node
+    // mirror of the Worker fast path's SITE fallback. The site answers with its
+    // own status, including its 404 page.
+    if (navigation && site) return site(c.req.raw)
     return notFoundHtml ? c.html(notFoundHtml, 404) : c.text("not found", 404)
   })
 }

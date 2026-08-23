@@ -25,6 +25,7 @@ const NON_CONFIG = new Set([
   "HYPERDRIVE",
   "BUCKET",
   "ASSETS",
+  "SITE",
   "SEND_EMAIL",
   "WEBHOOK_OUTBOX",
   "SYNC_RUNNER",

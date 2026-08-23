@@ -115,6 +115,17 @@ user id. It refuses an existing account or a second operator unless you pass the
 recovery flags shown by its usage error. `DERIVE_SUPERADMIN_EMAILS` is deprecated and only
 migrates an already-verified legacy account to the user-id record; it never admits signup.
 
+### What your instance serves at `/`
+
+Your instance is the application, not a copy of derive.to. Signed-out visitors land on
+the sign-in page; there is no marketing site, pricing page, or blog, because those pages
+belong to derive.to and live in their own repository
+([derive-to/site](https://github.com/derive-to/site)), reached only by derive.to's own
+deployment. The same applies to `sitemap.xml`, the security pages, and the `.well-known`
+verification files. Every build does serve a `robots.txt` that keeps crawlers out of the
+API and settings paths. To put your own front door on the instance, serve it from your
+reverse proxy at `/` and let Derive keep the application paths.
+
 ### Backup, restore, and password recovery
 
 Create the host backup directory once (`mkdir -p deploy/backups`), then:
