@@ -1,7 +1,7 @@
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { Hono } from "hono"
-import { afterAll, beforeAll, describe, expect, it } from "vitest"
+import { describe, expect, it } from "vitest"
 import { API_PATHS, isApiPath, mountWeb } from "../src/lib/serve-web"
 import { isSpaPath, isStaticRootPath } from "../src/lib/spa-paths"
 
@@ -29,6 +29,7 @@ describe("serve-web: SPA vs API path contract", () => {
       "/healthz",
       "/.well-known/oauth-authorization-server",
       "/.well-known/oauth-protected-resource",
+      "/robots.txt",
     ])
       expect(isApiPath(p)).toBe(true)
     for (const p of [
@@ -97,58 +98,69 @@ describe("serve-web: SPA vs API path contract", () => {
   })
 })
 
-// The trust-signal static files (RFC 9116 security.txt, sitemap.xml). Both must
-// serve their real bytes rather than the SPA shell — a scanner that gets HTML from
-// /.well-known/security.txt reads it as a soft-404, which is the thing these were
-// added to fix. sitemap.xml is covered by the root-file route; security.txt needs
-// the dot-directory route, so this pins the one that is easy to regress.
-describe("serve-web: static trust-signal files are not swallowed by the shell", () => {
-  // serveStatic resolves `root` against process.cwd() (apps/api under vitest), so
-  // the fixture has to live on disk under it rather than in a system temp dir.
-  const rootRel = "test/.tmp-serve-web"
-  const rootAbs = join(apiDir, rootRel)
+// The public-site upstream (deps.site). derive.to's pages, sitemap and trust files
+// live in their own Worker; on Node the not-found fallback forwards any navigation
+// the app does not own to it, and the site answers with its own status — including
+// its 404 page. Without the upstream (every self-host) the app's 404 stands.
+describe("serve-web: navigations the app does not own go to the site upstream", () => {
+  const site = async (req: Request): Promise<Response> => {
+    const path = new URL(req.url).pathname
+    if (path === "/pricing")
+      return new Response("SITE PRICING", {
+        headers: { "Content-Type": "text/html", "Cache-Control": "public, max-age=300" },
+      })
+    if (path === "/.well-known/security.txt")
+      return new Response("Contact: mailto:security@x", {
+        headers: { "Content-Type": "text/plain" },
+      })
+    return new Response("SITE 404 PAGE", { status: 404, headers: { "Content-Type": "text/html" } })
+  }
 
-  beforeAll(() => {
-    mkdirSync(join(rootAbs, ".well-known"), { recursive: true })
-    writeFileSync(join(rootAbs, ".well-known", "security.txt"), "Contact: mailto:security@x\n")
-    writeFileSync(join(rootAbs, "sitemap.xml"), '<?xml version="1.0"?><urlset/>')
-    writeFileSync(join(rootAbs, "security.html"), "<!doctype html><h1>Security</h1>")
-  })
-  afterAll(() => rmSync(rootAbs, { recursive: true, force: true }))
-
-  const app = () => {
+  const app = (withSite: boolean) => {
     const a = new Hono()
     // A server-owned well-known, mounted before mountWeb exactly as node.ts does.
     a.get("/.well-known/openid-configuration", (c) => c.json({ issuer: "https://x" }))
-    mountWeb(a, { webRoot: rootRel, shellHtml: "SHELL_MARKER" })
+    mountWeb(a, { webRoot: ".", shellHtml: "SHELL_MARKER", site: withSite ? site : undefined })
     return a
   }
 
-  it("serves security.txt and sitemap.xml as themselves", async () => {
-    const sec = await app().request("/.well-known/security.txt")
-    expect(sec.status).toBe(200)
+  it("forwards pages and trust files whole, headers included", async () => {
+    const pricing = await app(true).request("/pricing")
+    expect(pricing.status).toBe(200)
+    expect(await pricing.text()).toBe("SITE PRICING")
+    expect(pricing.headers.get("cache-control")).toBe("public, max-age=300")
+
+    const sec = await app(true).request("/.well-known/security.txt")
     expect(await sec.text()).toContain("Contact: mailto:security@x")
-
-    const map = await app().request("/sitemap.xml")
-    expect(map.status).toBe(200)
-    expect(await map.text()).toContain("<urlset/>")
-
-    const page = await app().request("/security")
-    expect(page.status).toBe(200)
-    expect(page.headers.get("content-type")).toContain("text/html")
-    expect(await page.text()).toContain("<h1>Security</h1>")
   })
 
-  it("does not shadow server-owned well-knowns", async () => {
-    const oidc = await app().request("/.well-known/openid-configuration")
-    expect(oidc.status).toBe(200)
-    expect(await oidc.json()).toEqual({ issuer: "https://x" })
-
-    // Unknown path under an API-owned well-known prefix stays a JSON 404 — the
-    // static route must fall through, never hand back the shell.
-    const miss = await app().request("/.well-known/skills/nope.json")
+  it("lets the site answer unknown paths with its own 404 page", async () => {
+    const miss = await app(true).request("/definitely-not-a-route")
     expect(miss.status).toBe(404)
-    expect(await miss.json()).toEqual({ error: "not found" })
+    expect(await miss.text()).toBe("SITE 404 PAGE")
+  })
+
+  it("keeps the app's own routes out of the upstream", async () => {
+    // SPA routes stay the shell; API misses stay JSON; non-navigations never forward.
+    expect(await (await app(true).request("/login")).text()).toContain("SHELL_MARKER")
+    const api = await app(true).request("/v1/nope")
+    expect(await api.json()).toEqual({ error: "not found" })
+    const post = await app(true).request("/pricing", { method: "POST" })
+    expect(post.status).toBe(404)
+    expect(await post.text()).toBe("not found")
+
+    const oidc = await app(true).request("/.well-known/openid-configuration")
+    expect(await oidc.json()).toEqual({ issuer: "https://x" })
+    // Unknown path under an API-owned well-known prefix stays a JSON 404 — never
+    // the shell, never the site.
+    const skills = await app(true).request("/.well-known/skills/nope.json")
+    expect(await skills.json()).toEqual({ error: "not found" })
+  })
+
+  it("without the upstream, the app's 404 stands (every self-host)", async () => {
+    const miss = await app(false).request("/pricing")
+    expect(miss.status).toBe(404)
+    expect(await miss.text()).toBe("not found")
   })
 })
 
@@ -156,17 +168,18 @@ describe("serve-web: static trust-signal files are not swallowed by the shell", 
 // the Node server (the contract above), the Cloudflare Worker, and the dev proxy.
 // These assert the other two never drift from the contract.
 describe("serve-web: every declaration of the path set agrees", () => {
-  it("sends the canonical security URL and trust-signal files to static assets", () => {
+  it("keeps only the agent-documentation files on the asset binding", () => {
+    for (const path of ["/llms.txt", "/llms-full.txt"])
+      expect(isStaticRootPath(path), `${path} must reach the asset binding`).toBe(true)
+    // The site Worker owns these now; robots.txt is an app route (routes/site.ts).
     for (const path of [
       "/security",
       "/security.html",
       "/.well-known/security.txt",
-      "/llms.txt",
       "/robots.txt",
       "/sitemap.xml",
     ])
-      expect(isStaticRootPath(path), `${path} must reach the asset binding`).toBe(true)
-    expect(isStaticRootPath("/definitely-not-a-static-file")).toBe(false)
+      expect(isStaticRootPath(path), `${path} must NOT reach the asset binding`).toBe(false)
   })
 
   it("the Vite dev proxy list == the contract", () => {

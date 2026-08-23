@@ -3,10 +3,11 @@
 The Derive web application and public website, built with TanStack Start and Vite.
 
 The application contains the signed-in library, artifact viewer, collaboration and review
-surfaces, workspace settings, and onboarding. Static public assets live in `public/`;
-the hosted marketing pages live in `public/site/` and are served by the API's marketing
-routes. In local development, Vite serves the application on port 3090 and proxies the
-API on port 8090.
+surfaces, workspace settings, and onboarding. Static assets every deployment ships live in
+`public/`. The public site (derive.to's marketing pages, blog and trust files) is its own
+repository and Worker, [derive-to/site](https://github.com/derive-to/site), which the API
+reaches over a service binding; nothing of it ships in this build. In local development,
+Vite serves the application on port 3090 and proxies the API on port 8090.
 
 From the repository root:
 

@@ -24,9 +24,7 @@ const publicCopyFiles = new Set([
   "SECURITY.md",
   ".github/SUPPORT.md",
   ...walkText("apps/docs/content"),
-  ...walkText("apps/web/public").filter(
-    (path) => !path.startsWith("apps/web/public/site/") && path !== "apps/web/public/security.html",
-  ),
+  ...walkText("apps/web/public"),
   "apps/docs/docs-manifest.mjs",
   "apps/web/src/pages/login.tsx",
   "apps/web/src/pages/roadmap.tsx",
@@ -198,11 +196,6 @@ requireText("apps/web/src/pages/login.tsx", "Fair Source.", "do not claim OSI st
 requireText(
   "apps/web/src/components/shared/connect-agent.tsx",
   "Fair Source workspace for agent-made artifacts",
-  "describe the current license",
-)
-requireText(
-  "apps/web/public/.well-known/security.txt",
-  "server is source available",
   "describe the current license",
 )
 requireText("README.md", "a compatible agent over MCP", "scope agent compatibility")
