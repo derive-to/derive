@@ -48,6 +48,15 @@ describe("the front door (worker-first `/` and `/robots.txt`)", () => {
     }
   })
 
+  it("shows the landing page to a signed-in visitor who asks with ?home", async () => {
+    const app = workerApp(SITE)
+    const res = await app.request("/?home", {
+      headers: { cookie: "better-auth.session_token=abc" },
+    })
+    expect(await res.text()).toBe("SITE HOME")
+    expect(res.headers.get("cache-control")).toBe("private, max-age=0, must-revalidate")
+  })
+
   it("serves the SPA shell on the app.* alias host", async () => {
     const res = await workerApp(SITE).request("/", { headers: { host: "app.derive.test" } })
     expect(await res.text()).toContain("id=root")

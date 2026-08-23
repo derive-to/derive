@@ -12,6 +12,8 @@ import { SESSION_COOKIE_NAMES } from "../lib/http"
  *   GET /            the shared URL. Signed-OUT visitors get the site's landing
  *                    page; a session cookie (or the app.* alias host) gets the
  *                    SPA shell, so the app keeps owning `/` for its users.
+ *                    `/?home` overrides the check, for looking at the landing
+ *                    page while signed in.
  *   GET /robots.txt  crawler policy is the app's on every deployment (the
  *                    Disallow lines guard its own private paths); the Sitemap
  *                    line exists only where a site does.
@@ -66,9 +68,14 @@ export const siteRoutes = (ctx: AppContext) => {
   const hasSession = (c: Context): boolean => SESSION_COOKIE_NAMES.some((n) => !!getCookie(c, n))
 
   app.get("/", async (c) => {
+    // ?home is the one way a signed-in person can see the landing page: the
+    // session check is presence-only, so without it the brochure is unreachable
+    // from a logged-in browser. Nothing links to it; the response below is
+    // already never shared-cacheable, so the parameter changes nothing else.
+    const wantsHome = c.req.query("home") !== undefined
     // app.* is the app alias: its visitors chose the app, never the brochure.
     const host = (c.req.header("host") ?? "").toLowerCase()
-    if (host.startsWith("app.") || hasSession(c)) return shellOr404(c)
+    if (!wantsHome && (host.startsWith("app.") || hasSession(c))) return shellOr404(c)
     const page = await site(c.req.raw)
     // A broken or empty site deploy must never 404 the front door.
     if (!page.ok) return shellOr404(c)
