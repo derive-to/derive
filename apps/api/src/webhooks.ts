@@ -296,6 +296,26 @@ export async function enqueueChannelDelivery(
   })
 }
 
+/** A first-party delivery whose stable id lets rapid equivalent events collapse while pending.
+ * Once the row is delivered, later writes with the same id are intentionally ignored. */
+export async function enqueueCoalescedChannelDelivery(
+  meta: MetaStore,
+  id: string,
+  kind: Exclude<DeliveryKind, "generic" | "slack">,
+  event: string,
+  payload: unknown,
+): Promise<void> {
+  await meta.enqueueCoalescedDelivery({
+    id,
+    webhook_id: INTERNAL_DELIVERY,
+    url: "",
+    secret: "",
+    kind,
+    event_type: event,
+    payload: JSON.stringify(payload),
+  })
+}
+
 const backoff = (attempts: number) => Math.min(MAX_BACKOFF_MS, BASE_BACKOFF_MS * 2 ** attempts)
 
 /**

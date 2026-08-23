@@ -80,12 +80,15 @@ export const postWithRecovery = async (
     channel: string
     text: string
     blocks?: unknown
+    /** Expanded Block Kit used only when Slack rejects native Work Object metadata. */
+    fallbackBlocks?: unknown
     threadTs?: string
     metadata?: Record<string, unknown>
   },
   opts: { autoJoin?: boolean; textFallback?: boolean; metadataFallback?: boolean } = {},
 ): Promise<SlackDeliveryResult> => {
-  const post = (blocks: unknown) => postSlackMessage(token, { ...args, blocks })
+  const { fallbackBlocks, ...postArgs } = args
+  const post = (blocks: unknown) => postSlackMessage(token, { ...postArgs, blocks })
   const ok = (ts: string, channel: string, note = ""): SlackDeliveryResult => ({
     ok: true,
     status: `posted${note} ${ts}`,
@@ -116,7 +119,11 @@ export const postWithRecovery = async (
     // network ambiguity), avoiding duplicate DMs.
     if (opts.metadataFallback && args.metadata && WORK_OBJECT_METADATA_ERRORS.has(err.code)) {
       try {
-        const res = await postSlackMessage(token, { ...args, metadata: undefined })
+        const res = await postSlackMessage(token, {
+          ...postArgs,
+          blocks: fallbackBlocks ?? args.blocks,
+          metadata: undefined,
+        })
         return ok(res.ts, res.channel, " blocks-only")
       } catch (retryErr) {
         return slackFailure(meta, orgId, retryErr)

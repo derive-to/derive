@@ -2096,6 +2096,16 @@ export class PgMetaStore implements MetaStore {
   async enqueueDelivery(d: NewDelivery): Promise<void> {
     await this.db.insert(webhookDelivery).values(d)
   }
+  async enqueueCoalescedDelivery(d: NewDelivery): Promise<void> {
+    await this.db
+      .insert(webhookDelivery)
+      .values(d)
+      .onConflictDoUpdate({
+        target: webhookDelivery.id,
+        set: { payload: d.payload, event_type: d.event_type },
+        setWhere: eq(webhookDelivery.status, "pending"),
+      })
+  }
   async enqueueDeliveries(rows: NewDelivery[]): Promise<void> {
     if (rows.length === 0) return
     await this.db.insert(webhookDelivery).values(rows)

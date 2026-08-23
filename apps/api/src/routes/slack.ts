@@ -94,8 +94,10 @@ import {
   artifactDetails,
   artifactEntity,
   commentThreadEntity,
+  DERIVE_ARTIFACT_COMPLETION_ENTITY_TYPE,
   DERIVE_COMMENT_THREAD_ENTITY_TYPE,
   DERIVE_ENTITY_TYPE,
+  DERIVE_REVIEW_REQUEST_ENTITY_TYPE,
   decodeReviewAction,
   SLACK_REVIEW_ACTION,
 } from "../lib/slack-work-object"
@@ -484,9 +486,21 @@ export const slackRoutes = (ctx: AppContext) => {
     }
 
     let artifact: ArtifactRecord | null = null
-    for (const id of candidateShortIds(ref)) {
-      artifact = await meta.getByShortId(id)
-      if (artifact) break
+    // Personal notification entities are version/round-specific, but their flexpane still
+    // describes the underlying artifact. The prefix is the stable artifact id; the suffix only
+    // keeps separate Slack cards from collapsing into one entity. Without this branch Slack
+    // treated the whole composite ref as a short id and showed a false "no longer exists" view.
+    if (
+      ev.external_ref?.type === DERIVE_ARTIFACT_COMPLETION_ENTITY_TYPE ||
+      ev.external_ref?.type === DERIVE_REVIEW_REQUEST_ENTITY_TYPE
+    ) {
+      const separator = ref.indexOf("::")
+      artifact = separator > 0 ? await meta.getArtifactById(ref.slice(0, separator)) : null
+    } else {
+      for (const id of candidateShortIds(ref)) {
+        artifact = await meta.getByShortId(id)
+        if (artifact) break
+      }
     }
     if (!artifact || artifact.removed_at || artifact.org_id !== install.org_id)
       return say(

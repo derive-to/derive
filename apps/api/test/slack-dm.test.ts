@@ -252,11 +252,12 @@ describe("enqueueSlackReviewRequestedDm (gate)", () => {
     const payload = JSON.parse(dms[0]?.payload ?? "{}")
     expect(payload.userId).toBe(linked.id)
     expect(payload.text).toContain("Ada updated")
-    expect(JSON.stringify(payload.blocks)).toContain("Approval flow")
-    expect(JSON.stringify(payload.blocks)).toContain("3 more changes")
+    expect(payload.blocks).toEqual([])
+    expect(JSON.stringify(payload.fallbackBlocks)).toContain("Approval flow")
+    expect(JSON.stringify(payload.fallbackBlocks)).toContain("3 more changes")
     expect(payload.metadata.entities[0].entity_payload.attributes.display_type).toBe("Review")
     expect(payload.metadata.entities[0].external_ref).toEqual({
-      id: "rr-review-1",
+      id: `${artifact.id}::rr-review-1`,
       type: "review_request",
     })
 
@@ -334,15 +335,47 @@ describe("enqueueSlackArtifactCompletedDm", () => {
     expect(dms[0]?.event_type).toBe("artifact.completed")
     const payload = JSON.parse(dms[0]?.payload ?? "{}")
     expect(payload.text).toContain("Codex updated Doc")
-    expect(JSON.stringify(payload.blocks)).toContain("Open & comment")
-    expect(JSON.stringify(payload.blocks)).toContain("3 more changes")
+    expect(payload.blocks).toEqual([])
+    expect(JSON.stringify(payload.fallbackBlocks)).toContain("Open & comment")
+    expect(JSON.stringify(payload.fallbackBlocks)).toContain("3 more changes")
     expect(payload.metadata.entities[0].entity_payload.attributes.display_type).toBe(
       "Work completed",
     )
     expect(payload.metadata.entities[0].external_ref).toEqual({
-      id: `${artifact.id}:v8`,
+      id: `${artifact.id}::v8`,
       type: "artifact_completion",
     })
+  })
+
+  it("coalesces rapid publishes of one artifact into the latest pending card", async () => {
+    const meta = make("slack-dm-completed-coalesce")
+    await connect(meta)
+    const artifact = await makeArtifact(meta)
+    for (const version of [2, 3])
+      await enqueueSlackArtifactCompletedDm(
+        { meta, baseUrl },
+        artifact,
+        {
+          agentName: "Codex",
+          version,
+          summary: {
+            fromVersion: version - 1,
+            toVersion: version,
+            added: version,
+            removed: 0,
+            changes: [{ kind: "updated", title: `Version ${version}`, added: version, removed: 0 }],
+            totalChanges: 1,
+            highlights: [],
+            note: null,
+          },
+        },
+        linked.id,
+      )
+    const dms = (await claim(meta)).filter((d) => d.kind === "slack_dm")
+    expect(dms).toHaveLength(1)
+    const payload = JSON.parse(dms[0]?.payload ?? "{}")
+    expect(payload.text).toContain("v3")
+    expect(JSON.stringify(payload.metadata)).toContain("Version 3")
   })
 
   it("does not enqueue after the user turns Slack updates off", async () => {
@@ -607,7 +640,8 @@ describe("Slack Work Object recovery", () => {
       {
         channel: "D1",
         text: "A mention",
-        blocks: [{ type: "section" }],
+        blocks: [],
+        fallbackBlocks: [{ type: "section", block_id: "expanded-fallback" }],
         metadata: { entities: [{ external_ref: { id: "th_1" } }] },
       },
       { metadataFallback: true },
@@ -616,7 +650,9 @@ describe("Slack Work Object recovery", () => {
     expect(r).toMatchObject({ ok: true, status: expect.stringContaining("blocks-only") })
     expect(posted).toHaveLength(2)
     expect(posted[0]?.metadata).toBeTruthy()
+    expect(posted[0]?.blocks).toEqual([])
     expect(posted[1]?.metadata).toBeUndefined()
+    expect(JSON.stringify(posted[1]?.blocks)).toContain("expanded-fallback")
   })
 
   it("keeps entity metadata when only the Block Kit payload is invalid", async () => {
