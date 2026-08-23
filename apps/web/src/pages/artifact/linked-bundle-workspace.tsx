@@ -922,10 +922,19 @@ function DiagramWorkspace({
   )
 }
 
-function ArtifactShelf({ members }: { members: BundleMember[] }) {
+function ArtifactShelf({
+  members,
+  afterMain = false,
+}: {
+  members: BundleMember[]
+  afterMain?: boolean
+}) {
   return (
     <aside
-      className="order-first min-w-0 lg:order-none lg:sticky lg:top-32 lg:max-h-[calc(100vh-9rem)] lg:self-start lg:overflow-y-auto"
+      className={cn(
+        "min-w-0 lg:order-none lg:sticky lg:top-32 lg:max-h-[calc(100vh-9rem)] lg:self-start lg:overflow-y-auto",
+        !afterMain && "order-first",
+      )}
       data-testid="bundle-artifact-shelf"
     >
       <div className="mb-2 flex items-baseline justify-between gap-3">
@@ -1614,7 +1623,7 @@ export function LinkedBundleWorkspace({
             </div>
           )}
         </main>
-        <ArtifactShelf members={bundle.members} />
+        <ArtifactShelf members={bundle.members} afterMain={view === "preview"} />
       </div>
       {runDiagram ? (
         <WorkflowRunDialog
