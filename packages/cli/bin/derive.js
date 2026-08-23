@@ -1469,23 +1469,31 @@ if (cmd === "workflow") {
     console.error(`error: couldn't read ${target}: ${e.message}`)
     process.exit(1)
   }
+  let synced = null
   if (action === "sync") {
     try {
-      const synced = syncWorkflowSource(source)
-      if (synced.changed) writeFileSync(target, synced.source)
+      synced = syncWorkflowSource(source)
       source = synced.source
-      if (!flags.json)
-        console.log(
-          synced.changed
-            ? "✓ Visible graph synced"
-            : "✓ Topology unchanged; workflow policy checked",
-        )
     } catch (e) {
       console.error(`error: couldn't sync ${target}: ${e.message}`)
       process.exit(1)
     }
   }
   const preview = previewWorkflowSource(source)
+  if (synced && preview.status === "ready") {
+    try {
+      if (synced.changed) writeFileSync(target, synced.source)
+    } catch (e) {
+      console.error(`error: couldn't write ${target}: ${e.message}`)
+      process.exit(1)
+    }
+    if (!flags.json)
+      console.log(
+        synced.changed ? "✓ Visible graph synced" : "✓ Topology unchanged; workflow policy checked",
+      )
+  } else if (synced?.changed && !flags.json) {
+    console.error("Visible graph not written because Preview needs changes.")
+  }
   console.log(flags.json ? JSON.stringify(preview) : formatWorkflowPreview(preview))
   process.exit(preview.status === "ready" ? 0 : 1)
 }

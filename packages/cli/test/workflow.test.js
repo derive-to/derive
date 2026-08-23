@@ -204,6 +204,24 @@ describe("workflow preview", () => {
     )
   })
 
+  it("does not write a projected graph until the full Preview is Ready", () => {
+    const dir = tmp()
+    const file = join(dir, "workflow.html")
+    const broken = workflowPage()
+      .replace('"id":"publish","label":"Publish brief"', '"id":"stale","label":"Stale"')
+      .replace('"max_attempts":2', '"max_attempts":0')
+    writeFileSync(file, broken)
+    const bin = join(import.meta.dirname, "..", "bin", "derive.js")
+    const result = spawnSync(process.execPath, [bin, "workflow", "sync", file], {
+      cwd: dir,
+      encoding: "utf8",
+    })
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain("Visible graph not written")
+    expect(result.stdout).toContain("Needs changes")
+    expect(readFileSync(file, "utf8")).toBe(broken)
+  })
+
   it("extracts facts without executing HTML and matches core's ready preview", () => {
     const source = workflowPage()
     expect(factJson(source, "workflow-definition").error).toBeNull()
@@ -269,5 +287,33 @@ describe("workflow preview", () => {
       status: "ready",
       purpose: "Publish a weekly brief after product review",
     })
+  })
+})
+
+describe("workflow Preview parity with core", () => {
+  it.each([
+    ["ready", (source) => source],
+    [
+      "malformed workflow JSON",
+      (source) => source.replace('"schema":"derive.workflow/v1"', '"schema":'),
+    ],
+    ["unsafe external effect", (source) => source.replace('"gate":"human"', '"gate":"none"')],
+    [
+      "human fallback",
+      (source) =>
+        source.replace(
+          '"from":"review","to":"publish","when":"approve"',
+          '"from":"review","to":"publish","when":"approve","fallback":true',
+        ),
+    ],
+    ["missing entry", (source) => source.replace('"entry":"research"', '"entry":"missing"')],
+    [
+      "oversized workflow fact",
+      (source) =>
+        source.replace('"forbidden":[', `"padding":"${"x".repeat(33 * 1024)}","forbidden":[`),
+    ],
+  ])("keeps %s behavior identical", (_name, mutate) => {
+    const source = mutate(workflowPage())
+    expect(previewWorkflowSource(source)).toEqual(previewCoreWorkflow(source))
   })
 })

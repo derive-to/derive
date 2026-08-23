@@ -4,14 +4,10 @@ import {
   type ArtifactRecord,
   buildProfileInstruction,
   fillInstruction,
-  LINKED_BUNDLE_FACT,
   newId,
-  previewWorkflowDefinition,
   profileState,
   reworkInstruction,
   saveAsSkillInstruction,
-  validateLinkedBundle,
-  WORKFLOW_DEFINITION_FACT,
   workflowRunInstruction,
 } from "@derive/core"
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
@@ -23,6 +19,7 @@ import { parseMeta, quoteOf } from "../lib/comments"
 import { bail, fail, readJson } from "../lib/http"
 import { notifyMentions } from "../lib/mentions"
 import { notifyCommentBells } from "../lib/notify-comment"
+import { parseLinkedWorkflowFacts } from "../lib/workflow-facts"
 
 /** The canned agent-request endpoints — Rework, generate-profile, and the fill and
  *  save-as-skill pairs (each pair: a GET returning the instruction for copy-paste, a
@@ -136,31 +133,24 @@ export const reworkRoutes = (ctx: AppContext) => {
 
   const requireReadyWorkflow = async (c: Context, artifact: ArtifactRecord, diagramId: string) => {
     const rows = await meta.getVersionData(artifact.id, artifact.current_version)
-    const bundleRow = rows.find((row) => row.slot === LINKED_BUNDLE_FACT)
-    const workflowRow = rows.find((row) => row.slot === WORKFLOW_DEFINITION_FACT)
-    if (!bundleRow || !workflowRow)
+    const facts = parseLinkedWorkflowFacts(rows)
+    if (!facts.bundleFound || !facts.workflowFound)
       return fail(c, 409, "this artifact does not contain a runnable workflow", {
         code: "notWorkflow",
       })
-    try {
-      const checked = validateLinkedBundle(JSON.parse(bundleRow.json))
-      if (!checked.manifest)
-        return fail(c, 409, "the visible workflow graph needs changes", {
-          code: "needsChanges",
-          errors: checked.errors,
-        })
-      const preview = previewWorkflowDefinition(JSON.parse(workflowRow.json), checked.manifest)
-      if (preview.status !== "ready")
-        return fail(c, 409, "the workflow Preview needs changes", {
-          code: "needsChanges",
-          errors: preview.errors,
-        })
-      const diagram = preview.diagrams.find((item) => item.id === diagramId)
-      if (!diagram) return fail(c, 404, "no such workflow diagram")
-      return { preview, diagram }
-    } catch {
-      return fail(c, 409, "the workflow facts are not valid JSON", { code: "needsChanges" })
-    }
+    if (!facts.manifest)
+      return fail(c, 409, "the visible workflow graph needs changes", {
+        code: "needsChanges",
+        errors: facts.bundleErrors,
+      })
+    if (facts.preview?.status !== "ready")
+      return fail(c, 409, "the workflow Preview needs changes", {
+        code: "needsChanges",
+        errors: facts.preview?.errors ?? [],
+      })
+    const diagram = facts.preview.diagrams.find((item) => item.id === diagramId)
+    if (!diagram) return fail(c, 404, "no such workflow diagram")
+    return diagram
   }
 
   // Pick the addressee: the named agent, else the workspace's sole one.
@@ -271,8 +261,8 @@ export const reworkRoutes = (ctx: AppContext) => {
       const ready = await requireReadyWorkflow(c, artifact, c.req.query("diagram") ?? "")
       if (ready instanceof Response) return bail(ready)
       return c.json({
-        prompt: workflowRunInstruction(artifact.short_id, ready.diagram.id),
-        diagram: { id: ready.diagram.id, title: ready.diagram.title },
+        prompt: workflowRunInstruction(artifact.short_id, ready.id),
+        diagram: { id: ready.id, title: ready.title },
       })
     },
   )
@@ -312,7 +302,7 @@ export const reworkRoutes = (ctx: AppContext) => {
         artifact,
         acting,
         agent,
-        workflowRunInstruction(artifact.short_id, ready.diagram.id),
+        workflowRunInstruction(artifact.short_id, ready.id),
       )
       if (requestId instanceof Response) return bail(requestId)
       return c.json({ requestId }, 201)

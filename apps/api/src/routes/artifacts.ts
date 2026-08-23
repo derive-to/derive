@@ -21,7 +21,7 @@ import {
   isHtmlLike,
   isMarkdownBundle,
   LINKED_BUNDLE_CONTENT_TYPE,
-  LINKED_BUNDLE_FACT,
+  type LinkedBundleManifest,
   maxRole,
   missingBlobAdvisory,
   newId,
@@ -30,7 +30,6 @@ import {
   PublishError,
   pageText,
   parseSortMode,
-  previewWorkflowDefinition,
   publish,
   publishAdvisories,
   type Role,
@@ -43,8 +42,6 @@ import {
   sortKeyOf,
   toJson,
   toMarkdown,
-  validateLinkedBundle,
-  WORKFLOW_DEFINITION_FACT,
   type WorkflowPreview,
   type WorkspaceAccess,
 } from "@derive/core"
@@ -111,6 +108,7 @@ import {
   workspaceSearchReport,
 } from "../lib/search"
 import { normalizeTags, parseTagsField } from "../lib/tags"
+import { parseLinkedWorkflowFacts } from "../lib/workflow-facts"
 import { log } from "../log"
 import { Artifact } from "../schemas"
 
@@ -1621,11 +1619,9 @@ export const artifactRoutes = (ctx: AppContext) => {
       // source of truth; this detail-only block is native chrome over that fact, with
       // every member resolved through the same read gate as opening it directly.
       let linkedBundle:
-        | (NonNullable<ReturnType<typeof validateLinkedBundle>["manifest"]> & {
+        | (LinkedBundleManifest & {
             members: Array<
-              NonNullable<
-                ReturnType<typeof validateLinkedBundle>["manifest"]
-              >["members"][number] & {
+              LinkedBundleManifest["members"][number] & {
                 available: boolean
                 url?: string
                 title?: string | null
@@ -1643,67 +1639,44 @@ export const artifactRoutes = (ctx: AppContext) => {
         // native Preview must come from the same immutable version without adding a
         // second round trip to this hot detail route.
         const dataRows = await meta.getVersionData(artifact.id, current.n)
-        const row = dataRows.find((item) => item.slot === LINKED_BUNDLE_FACT)
-        if (row) {
+        const facts = parseLinkedWorkflowFacts(dataRows)
+        const manifest = facts.manifest
+        if (manifest) {
+          workflowPreview = facts.preview
           try {
-            const checked = validateLinkedBundle(JSON.parse(row.json))
-            if (checked.manifest) {
-              const workflowRow = dataRows.find((item) => item.slot === WORKFLOW_DEFINITION_FACT)
-              if (workflowRow) {
-                try {
-                  workflowPreview = previewWorkflowDefinition(
-                    JSON.parse(workflowRow.json),
-                    checked.manifest,
-                  )
-                } catch {
-                  workflowPreview = {
-                    status: "needs-changes",
-                    execution_started: false,
-                    purpose: null,
-                    errors: ["WF-01 workflow-definition is not valid JSON"],
-                    warnings: [],
-                    diagrams: [],
-                    cannot_do: [],
-                  }
+            const resolved = await meta.getByShortIds(manifest.members.map((member) => member.ref))
+            const byRef = new Map(resolved.map((member) => [member.short_id, member]))
+            const [readableRows, commentSignals] = await Promise.all([
+              Promise.all(
+                resolved.map(
+                  async (member) => [member.short_id, await authorize(c, "read", member)] as const,
+                ),
+              ),
+              meta.commentSignals(
+                actor.kind === "user" ? resolved.map((member) => member.id) : [],
+                actor.kind === "user" ? (actor.userId ?? null) : null,
+              ),
+            ])
+            const readable = new Map(readableRows)
+            linkedBundle = {
+              ...manifest,
+              members: manifest.members.map((member) => {
+                const target = byRef.get(member.ref)
+                if (!target || target.removed_at || !readable.get(member.ref))
+                  return { ...member, available: false }
+                return {
+                  ...member,
+                  available: true,
+                  url: artifactUrl(deps.baseUrl, target),
+                  title: target.title,
+                  content_type: target.current_content_type,
+                  current_version: target.current_version,
+                  updated_at: target.updated_at,
+                  ...(actor.kind === "user"
+                    ? { open_comment_count: commentSignals[target.id]?.open_threads ?? 0 }
+                    : {}),
                 }
-              }
-              const resolved = await meta.getByShortIds(
-                checked.manifest.members.map((member) => member.ref),
-              )
-              const byRef = new Map(resolved.map((member) => [member.short_id, member]))
-              const [readableRows, commentSignals] = await Promise.all([
-                Promise.all(
-                  resolved.map(
-                    async (member) =>
-                      [member.short_id, await authorize(c, "read", member)] as const,
-                  ),
-                ),
-                meta.commentSignals(
-                  actor.kind === "user" ? resolved.map((member) => member.id) : [],
-                  actor.kind === "user" ? (actor.userId ?? null) : null,
-                ),
-              ])
-              const readable = new Map(readableRows)
-              linkedBundle = {
-                ...checked.manifest,
-                members: checked.manifest.members.map((member) => {
-                  const target = byRef.get(member.ref)
-                  if (!target || target.removed_at || !readable.get(member.ref))
-                    return { ...member, available: false }
-                  return {
-                    ...member,
-                    available: true,
-                    url: artifactUrl(deps.baseUrl, target),
-                    title: target.title,
-                    content_type: target.current_content_type,
-                    current_version: target.current_version,
-                    updated_at: target.updated_at,
-                    ...(actor.kind === "user"
-                      ? { open_comment_count: commentSignals[target.id]?.open_threads ?? 0 }
-                      : {}),
-                  }
-                }),
-              }
+              }),
             }
           } catch {
             // Stored authored facts are validated JSON. If an old/corrupt row slips

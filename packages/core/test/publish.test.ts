@@ -6,7 +6,7 @@ import { sha256Hex } from "../src/hash"
 import { renderLinkedBundle, validateLinkedBundle } from "../src/linked-bundle"
 import type { ArtifactRecord, BlobStore, MetaStore, NewArtifact, NewVersion } from "../src/ports"
 import { artifactUrl, looksLikeHtmlDocument, type PublishInput, publish } from "../src/publish"
-import { previewWorkflow, workflowDefinitionOf } from "../src/workflow"
+import { previewWorkflow, previewWorkflowJson, workflowDefinitionOf } from "../src/workflow"
 
 // publish() stores content then writes the artifact/version. The
 // interesting, security-relevant logic is storeContent's bundle handling (zip
@@ -249,6 +249,18 @@ describe("publish: single file", () => {
 })
 
 describe("workflow preview contract", () => {
+  it("classifies malformed extracted workflow JSON through the same Preview contract", () => {
+    expect(previewWorkflowJson("{", null)).toEqual({
+      status: "needs-changes",
+      execution_started: false,
+      purpose: null,
+      errors: ["WF-01 workflow-definition is not valid JSON"],
+      warnings: [],
+      diagrams: [],
+      cannot_do: [],
+    })
+  })
+
   it("explains one valid graph while keeping the linked bundle as visible truth", () => {
     const preview = previewWorkflow(workflowPage())
     expect(preview.status).toBe("ready")

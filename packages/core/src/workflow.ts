@@ -1,4 +1,4 @@
-import { parseFacts } from "./facts"
+import { MAX_FACT_BYTES, parseFacts } from "./facts"
 import { type LinkedBundleManifest, type LinkedBundleNode, linkedBundleOf } from "./linked-bundle"
 
 export const WORKFLOW_DEFINITION_FACT = "workflow-definition"
@@ -630,10 +630,23 @@ export const validateWorkflowDefinition = (
 }
 
 export const workflowDefinitionOf = (source: string): WorkflowValidation | null => {
-  const row = parseFacts(source, "text/html").facts.find(
-    (fact) => fact.slot === WORKFLOW_DEFINITION_FACT,
-  )
-  if (!row) return null
+  const parsed = parseFacts(source, "text/html")
+  const row = parsed.facts.find((fact) => fact.slot === WORKFLOW_DEFINITION_FACT)
+  if (!row) {
+    const advisory = parsed.advisories.find((item) =>
+      item.includes(`Facts "${WORKFLOW_DEFINITION_FACT}"`),
+    )
+    if (!advisory) return null
+    return {
+      definition: null,
+      errors: [
+        advisory.includes(`over the ${MAX_FACT_BYTES / 1024}KB limit`)
+          ? `WF-01 workflow-definition exceeds ${MAX_FACT_BYTES / 1024}KB fact limit`
+          : "WF-01 workflow-definition is not valid JSON",
+      ],
+      warnings: [],
+    }
+  }
   const linked = linkedBundleOf(source)
   try {
     return validateWorkflowDefinition(JSON.parse(row.json), linked?.manifest ?? null)
@@ -751,6 +764,28 @@ export const previewWorkflowDefinition = (
   value: unknown,
   linked: LinkedBundleManifest | null,
 ): WorkflowPreview => previewWorkflowValidation(validateWorkflowDefinition(value, linked), linked)
+
+/** Parse an already-extracted workflow fact and produce the canonical Preview.
+ * API surfaces share this helper so malformed JSON cannot be classified or
+ * worded differently from one route to another. */
+export const previewWorkflowJson = (
+  json: string,
+  linked: LinkedBundleManifest | null,
+): WorkflowPreview => {
+  try {
+    return previewWorkflowDefinition(JSON.parse(json), linked)
+  } catch {
+    return {
+      status: "needs-changes",
+      execution_started: false,
+      purpose: null,
+      errors: ["WF-01 workflow-definition is not valid JSON"],
+      warnings: [],
+      diagrams: [],
+      cannot_do: [],
+    }
+  }
+}
 
 export const previewWorkflow = (source: string): WorkflowPreview => {
   const validation = workflowDefinitionOf(source)

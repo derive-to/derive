@@ -3,6 +3,7 @@
 // derive.workflow/v1 contract from the two facts embedded in one HTML artifact.
 
 export const WORKFLOW_DEFINITION_SCHEMA = "derive.workflow/v1"
+const MAX_FACT_BYTES = 32 * 1024
 
 const object = (value) => value !== null && typeof value === "object" && !Array.isArray(value)
 const text = (value) => (typeof value === "string" && value.trim() ? value.trim() : null)
@@ -28,6 +29,8 @@ export function factJson(source, slot) {
   )
   const body = source.match(pattern)?.[1]
   if (!body) return { value: null, error: null }
+  if (new TextEncoder().encode(body.trim()).length > MAX_FACT_BYTES)
+    return { value: null, error: `${slot} exceeds ${MAX_FACT_BYTES / 1024}KB fact limit` }
   try {
     return { value: JSON.parse(body), error: null }
   } catch {

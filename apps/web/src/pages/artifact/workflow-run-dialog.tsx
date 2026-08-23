@@ -13,6 +13,7 @@ import {
 import { toast } from "@/components/ui/sonner"
 import { copyText } from "@/lib/clipboard"
 import { useApiMutation } from "@/lib/use-api-mutation"
+import { cn } from "@/lib/utils"
 import { AgentMenu, ALREADY_QUEUED, queuedFor } from "./ask-agent"
 import type { AgentTarget } from "./types"
 
@@ -29,11 +30,13 @@ export function WorkflowRunDialog({
   open: boolean
   onOpenChange: (open: boolean) => void
 }) {
-  const { data, isError, refetch } = useQuery({
+  const { data, error, isError, refetch } = useQuery({
     queryKey: ["workflow-run-prompt", shortId, diagramId] as const,
     queryFn: () => api.workflowRunPrompt(shortId, diagramId),
     enabled: open,
   })
+  const previewChanged = error instanceof ApiError && error.code === "needsChanges"
+  const handoffReady = !!data && !isError
   const run = useApiMutation<{ requestId: string }, AgentTarget>({
     mutationFn: (agent) => api.runWorkflow(shortId, { agentId: agent.id, diagramId }),
     success: (_result, agent) => queuedFor("Workflow", agent.name),
@@ -60,8 +63,23 @@ export function WorkflowRunDialog({
             graph, artifacts, review, and receipts—it is not the runtime.
           </DialogDescription>
         </DialogHeader>
-        <div className="rounded-lg border border-success/25 bg-success/5 px-3 py-2 text-xs text-success">
-          Preview passed. Nothing starts until you hand this to an agent.
+        <div
+          className={cn(
+            "rounded-lg border px-3 py-2 text-xs",
+            handoffReady
+              ? "border-success/25 bg-success/5 text-success"
+              : isError
+                ? "border-destructive/25 bg-destructive/5 text-destructive"
+                : "border-border bg-muted/30 text-muted-foreground",
+          )}
+        >
+          {handoffReady
+            ? "Preview passed. Nothing starts until you hand this to an agent."
+            : previewChanged
+              ? "Preview is out of date. Return to the workflow and review it again."
+              : isError
+                ? "Handoff unavailable."
+                : "Checking the latest Preview…"}
         </div>
         <div className="rounded-md border border-border">
           <Eyebrow
@@ -69,20 +87,28 @@ export function WorkflowRunDialog({
             className="flex items-center justify-between border-b border-border-soft py-1 pr-1 pl-3"
           >
             Prompt for any agent
-            <Button variant="ghost" size="sm" data-testid="workflow-run-copy" onClick={copy}>
+            <Button
+              variant="ghost"
+              size="sm"
+              data-testid="workflow-run-copy"
+              disabled={!data}
+              onClick={copy}
+            >
               Copy
             </Button>
           </Eyebrow>
           {isError ? (
             <div className="flex items-center gap-2 px-3 py-3 text-sm text-muted-foreground">
-              Couldn’t compose the handoff.
+              {previewChanged
+                ? "The workflow changed and needs a fresh Preview."
+                : "Couldn’t compose the handoff."}
               <Button
                 variant="ghost"
                 size="sm"
                 data-testid="workflow-run-retry"
-                onClick={() => refetch()}
+                onClick={() => (previewChanged ? onOpenChange(false) : refetch())}
               >
-                Retry
+                {previewChanged ? "Close" : "Retry"}
               </Button>
             </div>
           ) : (

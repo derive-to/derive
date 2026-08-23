@@ -106,9 +106,9 @@ const DiagramPreview = ({
             Scenarios checked
           </h3>
           <div className="mt-2 grid gap-2 md:grid-cols-3">
-            {diagram.scenarios.map((scenario, index) => (
+            {diagram.scenarios.map((scenario) => (
               <div
-                key={`${scenario.kind}-${index}`}
+                key={`${scenario.kind}-${scenario.outcome}`}
                 className="rounded-lg border border-border p-3"
               >
                 <div className="font-mono text-2xs uppercase text-muted-foreground">
@@ -169,7 +169,7 @@ export function WorkflowPreview({
         ) : null}
         {preview.errors.length ? (
           <ul className="mt-4 grid gap-2">
-            {preview.errors.map((error) => (
+            {[...new Set(preview.errors)].map((error) => (
               <li key={error} className="break-words font-mono text-xs text-destructive">
                 {error}
               </li>
@@ -178,7 +178,7 @@ export function WorkflowPreview({
         ) : null}
         {preview.warnings.length ? (
           <ul className="mt-4 grid gap-2">
-            {preview.warnings.map((warning) => (
+            {[...new Set(preview.warnings)].map((warning) => (
               <li key={warning} className="break-words text-xs text-warning">
                 {warning}
               </li>
