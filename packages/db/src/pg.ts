@@ -781,6 +781,77 @@ export class PgMetaStore implements MetaStore {
     })
   }
 
+  async replaceCurrentVersion(
+    artifactId: string,
+    expected: { n: number; blobKey: string },
+    v: NewVersion,
+  ): Promise<VersionRecord | null> {
+    return this.db.transaction(async (tx) => {
+      const current = await tx
+        .select({ n: artifact.current_version })
+        .from(artifact)
+        .where(eq(artifact.id, artifactId))
+        .for("update")
+      if (current[0]?.n !== expected.n) return null
+
+      const now = new Date().toISOString()
+      const rows = await tx
+        .update(version)
+        .set({
+          blob_key: v.blob_key,
+          content_type: v.content_type,
+          size_bytes: v.size_bytes ?? 0,
+          author: v.author,
+          author_login: v.author_login ?? null,
+          author_avatar: v.author_avatar ?? null,
+          author_gh_id: v.author_gh_id ?? null,
+          author_id: v.author_id ?? null,
+          source: v.source ?? null,
+          message: v.message,
+          name: v.name ?? null,
+          preview_key: null,
+          preview_status: null,
+          preview_error: null,
+          preview_full_key: null,
+          preview_full_status: null,
+          preview_full_error: null,
+          preview_marked_key: null,
+          preview_marked_status: null,
+          preview_marked_error: null,
+          summary: null,
+          summary_src_hash: null,
+          created_at: now,
+        })
+        .where(
+          and(
+            eq(version.artifact_id, artifactId),
+            eq(version.n, expected.n),
+            eq(version.blob_key, expected.blobKey),
+          ),
+        )
+        .returning()
+      const replaced = rows[0]
+      if (!replaced) return null
+
+      await tx
+        .delete(versionData)
+        .where(and(eq(versionData.artifact_id, artifactId), eq(versionData.n, expected.n)))
+      await tx
+        .update(artifact)
+        .set({
+          current_content_type: v.content_type,
+          updated_at: now,
+          author_name: v.author,
+          author_login: v.author_login ?? null,
+          author_avatar: v.author_avatar ?? null,
+          author_gh_id: v.author_gh_id ?? null,
+          author_id: v.author_id ?? null,
+        })
+        .where(and(eq(artifact.id, artifactId), eq(artifact.current_version, expected.n)))
+      return replaced
+    })
+  }
+
   listVersions(artifactId: string): Promise<VersionRecord[]> {
     return this.db
       .select()
