@@ -164,8 +164,8 @@ describe("MCP publish reaches the human (event parity + auto-open)", () => {
     const completions = (await claim(meta)).filter(
       (d) => d.kind === "slack_dm" && d.event_type === "artifact.completed",
     )
-    expect(completions).toHaveLength(2)
-    expect(JSON.parse(completions[1]?.payload ?? "{}").text).toContain("Claude updated Loop Draft")
+    expect(completions).toHaveLength(1)
+    expect(JSON.parse(completions[0]?.payload ?? "{}").text).toContain("Claude updated Loop Draft")
   })
 
   it("request_review writes ONE bell row (review beats publish) and notifies live", async () => {
@@ -206,8 +206,10 @@ describe("MCP publish reaches the human (event parity + auto-open)", () => {
     const completions = (await claim(meta)).filter(
       (d) => d.kind === "slack_dm" && d.event_type === "artifact.completed",
     )
-    expect(completions).toHaveLength(2)
-    expect(JSON.stringify(JSON.parse(completions[1]?.payload ?? "{}").blocks)).toContain("Decision")
+    expect(completions).toHaveLength(1)
+    const payload = JSON.parse(completions[0]?.payload ?? "{}")
+    expect(payload.text).toContain("v2")
+    expect(JSON.stringify(payload.metadata)).toContain("Decision")
   })
 })
 

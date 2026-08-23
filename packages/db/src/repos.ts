@@ -1497,6 +1497,17 @@ export function makeRepos(db: SqliteDb) {
   const enqueueDelivery = async (d: NewDelivery): Promise<void> => {
     await db.insert(webhookDelivery).values(d).run()
   }
+  const enqueueCoalescedDelivery = async (d: NewDelivery): Promise<void> => {
+    await db
+      .insert(webhookDelivery)
+      .values(d)
+      .onConflictDoUpdate({
+        target: webhookDelivery.id,
+        set: { payload: d.payload, event_type: d.event_type },
+        setWhere: eq(webhookDelivery.status, "pending"),
+      })
+      .run()
+  }
   const enqueueDeliveries = async (rows: NewDelivery[]): Promise<void> => {
     if (rows.length === 0) return
     await db.insert(webhookDelivery).values(rows).run()
@@ -5062,6 +5073,7 @@ export function makeRepos(db: SqliteDb) {
     deleteWebhook,
     activeWebhooks,
     enqueueDelivery,
+    enqueueCoalescedDelivery,
     enqueueDeliveries,
     claimDueDeliveries,
     updateDelivery,

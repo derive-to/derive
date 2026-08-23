@@ -897,6 +897,8 @@ export interface WebhookStore {
   activeWebhooks(artifactId: string, orgId: string): Promise<WebhookRecord[]>
   /** Enqueue a delivery into the outbox (target is denormalized for durability). */
   enqueueDelivery(d: NewDelivery): Promise<void>
+  /** Insert a delivery, or replace its payload only while the same id is still pending. */
+  enqueueCoalescedDelivery(d: NewDelivery): Promise<void>
   /** Enqueue the whole subscriber fan-out for one event in ONE insert. Empty ⇒ no-op.
    *  Use over a per-subscriber enqueueDelivery loop. */
   enqueueDeliveries(rows: NewDelivery[]): Promise<void>

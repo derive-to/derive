@@ -173,7 +173,7 @@ export const reviewNotificationEntity = (args: {
   const link = artifactUrl(args.baseUrl, args.artifact)
   const shown = args.summary.changes ?? []
   const remaining = Math.max(0, (args.summary.totalChanges ?? shown.length) - shown.length)
-  const lines = shown.slice(0, 2).map((change) => {
+  const lines = shown.slice(0, 3).map((change) => {
     const marker = change.kind === "added" ? "+" : change.kind === "removed" ? "−" : "~"
     const detail = change.after ?? change.before
     return `*${marker} ${mrkdwnBody(change.title, 100)}*${detail ? ` — ${mrkdwnBody(detail, 180)}` : ""}`
@@ -189,7 +189,12 @@ export const reviewNotificationEntity = (args: {
     .join("\n")
   return {
     url: link,
-    external_ref: { id: args.roundId, type: DERIVE_REVIEW_REQUEST_ENTITY_TYPE },
+    // The artifact id makes entity_details_requested resolvable without a global review-round
+    // lookup; the round id keeps each request a distinct Slack entity.
+    external_ref: {
+      id: `${args.artifact.id}::${args.roundId}`,
+      type: DERIVE_REVIEW_REQUEST_ENTITY_TYPE,
+    },
     entity_type: "slack#/entities/content_item",
     entity_payload: {
       actions: reviewActions(args.artifact.id),
@@ -243,7 +248,7 @@ export const artifactCompletionEntity = (args: {
   return {
     url: link,
     external_ref: {
-      id: `${args.artifact.id}:v${args.summary.toVersion}`,
+      id: `${args.artifact.id}::v${args.summary.toVersion}`,
       type: DERIVE_ARTIFACT_COMPLETION_ENTITY_TYPE,
     },
     entity_type: "slack#/entities/content_item",

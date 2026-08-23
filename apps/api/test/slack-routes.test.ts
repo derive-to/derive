@@ -2107,8 +2107,9 @@ describe("entity_details_requested (the flexpane)", () => {
 
   const clickAndCapture = async (
     app: ReturnType<typeof make>["app"],
-    shortId: string,
+    ref: string,
     user = "U1",
+    type = "artifact",
   ) => {
     const seen: Record<string, unknown>[] = []
     let fired: (v: unknown) => void = () => {}
@@ -2131,7 +2132,7 @@ describe("entity_details_requested (the flexpane)", () => {
           type: "entity_details_requested",
           user,
           trigger_id: "trig-1",
-          external_ref: { id: shortId, type: "artifact" },
+          external_ref: { id: ref, type },
         },
       }),
     )
@@ -2191,6 +2192,16 @@ describe("entity_details_requested (the flexpane)", () => {
   it("shows the real detail to a viewer who may read it", async () => {
     const { app, artifact } = await withInstall("flex-allowed")
     const body = await clickAndCapture(app, artifact.short_id)
+    expect(JSON.stringify(body.metadata)).toContain("Secret plan")
+    expect(body.error).toBeUndefined()
+  })
+
+  it.each([
+    ["artifact_completion", "v2"],
+    ["review_request", "rr-review-1"],
+  ])("resolves the artifact behind a %s notification entity", async (type, suffix) => {
+    const { app, artifact } = await withInstall(`flex-${type}`)
+    const body = await clickAndCapture(app, `${artifact.id}::${suffix}`, "U1", type)
     expect(JSON.stringify(body.metadata)).toContain("Secret plan")
     expect(body.error).toBeUndefined()
   })

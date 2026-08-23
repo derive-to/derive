@@ -20,7 +20,7 @@ import {
   type SlackThreadLinkRecord,
 } from "@derive/core"
 import type { ChannelSendResult } from "../webhooks"
-import { enqueueChannelDelivery } from "../webhooks"
+import { enqueueChannelDelivery, enqueueCoalescedChannelDelivery } from "../webhooks"
 import { commentDeepLink, type Mention, previewOf } from "./comments"
 import { type ReviewSummary, reviewDeltaLabel } from "./review-summary"
 import { openSlackDm, resolveSlackUserIdByEmail } from "./slack"
@@ -40,6 +40,8 @@ interface SlackDmPayload {
   userId: string
   text: string
   blocks: unknown[]
+  /** The larger Block Kit card is sent only when native Work Objects are unavailable. */
+  fallbackBlocks?: unknown[]
   /** Native Slack Work Object metadata. Blocks remain the graceful fallback. */
   metadata?: Record<string, unknown>
   /** Present only for an @mention. It gives the delivery worker enough durable context to make
@@ -119,23 +121,35 @@ export const enqueueSlackArtifactCompletedDm = async (
       : []),
     actions([openButton(link, "Open & comment")]),
   ]
-  await enqueueChannelDelivery(meta, "slack_dm", "artifact.completed", {
-    orgId: artifact.org_id,
-    userId: recipientId,
-    text: `${mrkdwnLabel(input.agentName)} ${action} ${mrkdwnLabel(t)} (v${input.version} · ${reviewDeltaLabel(input.summary)})`,
-    blocks,
-    metadata: {
-      entities: [
-        artifactCompletionEntity({
-          baseUrl,
-          artifact,
-          agentName: input.agentName,
-          summary: input.summary,
-          iconUrl: new URL("/icon.png", link).toString(),
-        }),
-      ],
-    },
-  } satisfies SlackDmPayload)
+  // At most one card per artifact/recipient in a ten-minute work window. Rapid agent saves
+  // replace the pending payload with the latest version; after delivery the bucket stays quiet.
+  const window = Math.floor(Date.now() / (10 * 60_000))
+  await enqueueCoalescedChannelDelivery(
+    meta,
+    `wd_ac_${artifact.id}_${recipientId}_${window}`,
+    "slack_dm",
+    "artifact.completed",
+    {
+      orgId: artifact.org_id,
+      userId: recipientId,
+      text: `${mrkdwnLabel(input.agentName)} ${action} ${mrkdwnLabel(t)} (v${input.version} · ${reviewDeltaLabel(input.summary)})`,
+      // Keep the successful native notification to one compact card. The longer blocks are
+      // retained solely for older Slack installs that reject Work Object metadata.
+      blocks: [],
+      fallbackBlocks: blocks,
+      metadata: {
+        entities: [
+          artifactCompletionEntity({
+            baseUrl,
+            artifact,
+            agentName: input.agentName,
+            summary: input.summary,
+            iconUrl: new URL("/icon.png", link).toString(),
+          }),
+        ],
+      },
+    } satisfies SlackDmPayload,
+  )
 }
 
 /** Enqueue a DM to each mentioned Derive user who's still a member of the workspace and
@@ -286,7 +300,8 @@ export const enqueueSlackReviewRequestedDm = async (
     orgId: artifact.org_id,
     userId: reviewerId,
     text: `${mrkdwnLabel(round.requestedBy)} updated ${mrkdwnLabel(t)} (v${round.version} · ${reviewDeltaLabel(round.summary)})`,
-    blocks,
+    blocks: [],
+    fallbackBlocks: blocks,
     metadata: {
       entities: [
         reviewNotificationEntity({
@@ -438,6 +453,7 @@ export const makeSlackDmSender =
         channel,
         text: p.text,
         blocks,
+        fallbackBlocks: p.fallbackBlocks,
         threadTs: existing?.message_ts,
         metadata,
       },

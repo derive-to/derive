@@ -196,7 +196,8 @@ export const agentPushFanout = async (
       { agentName: input.agentName, version: input.version, summary },
       input.user,
     )
-    deps.pokeWebhooks?.()
+    // Completion rows intentionally wait for the regular outbox tick, giving rapid publishes
+    // time to collapse into the latest card. Review requests still poke immediately above.
   }
   // One bell row per push that warrants one: a review ask beats a plain "published".
   if (input.reviewRound || input.isNew) {
