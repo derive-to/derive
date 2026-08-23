@@ -71,6 +71,15 @@ export type LinkedBundleNowSummary = {
   total: number
 }
 
+export const linkedBundleNowHeadline = (summary: LinkedBundleNowSummary): string => {
+  if (summary.needsHelp.length)
+    return `${summary.needsHelp.length} ${summary.needsHelp.length === 1 ? "item needs" : "items need"} your help.`
+  if (summary.current.length)
+    return `${summary.current.length} ${summary.current.length === 1 ? "work item is" : "work items are"} moving. No agent has asked for help.`
+  if (summary.total > 0 && summary.done === summary.total) return "Run complete."
+  return "No active work is reported right now."
+}
+
 /** Project the precise graph into the few questions a returning human asks first.
  * The graph remains canonical; this summary never invents state or ordering. */
 export const linkedBundleNowSummary = (diagrams: Diagram[]): LinkedBundleNowSummary => {
@@ -1051,11 +1060,7 @@ function NowWorkspace({
     if (!diagram || !node) return null
     return { diagram, node, member: node.member ? members.get(node.member) : undefined }
   }
-  const headline = summary.needsHelp.length
-    ? `${summary.needsHelp.length} ${summary.needsHelp.length === 1 ? "item needs" : "items need"} your help.`
-    : summary.current.length
-      ? `${summary.current.length} ${summary.current.length === 1 ? "work item is" : "work items are"} moving. No agent has asked for help.`
-      : "No active work is reported right now."
+  const headline = linkedBundleNowHeadline(summary)
 
   const nodeButton = (
     reference: LinkedBundleNowReference,

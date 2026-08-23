@@ -16,6 +16,7 @@ import {
   linkedBundleInitialView,
   linkedBundleLayout,
   linkedBundleNodeFreshness,
+  linkedBundleNowHeadline,
   linkedBundleNowSummary,
 } from "./linked-bundle-workspace"
 
@@ -163,6 +164,12 @@ describe("linked bundle workspace", () => {
       done: 1,
       total: 4,
     })
+  })
+
+  it("calls a fully completed graph a completed run", () => {
+    expect(
+      linkedBundleNowHeadline({ current: [], needsHelp: [], next: [], done: 3, total: 3 }),
+    ).toBe("Run complete.")
   })
 
   it("focuses a selected node and only its immediate graph context", () => {
