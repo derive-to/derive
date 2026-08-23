@@ -79,6 +79,11 @@ export interface PublishInput {
   listed?: Listed
   /** Names this publish a pinned checkpoint (Docs-style). */
   name?: string
+  /**
+   * Replace this exact current version instead of appending one. Used only for a
+   * short burst of attended web edits. The store rejects a stale blob key.
+   */
+  replaceCurrent?: { n: number; blobKey: string }
   /** Pre-minted short_id for a NEW artifact (create only, ignored on republish) —
    *  lets a caller embed the artifact's own id in its first version's content
    *  (the lineage resume block). 409 if already taken. */
@@ -292,7 +297,7 @@ export async function publish(
     if (!artifact) throw new PublishError(404, `no artifact with short_id ${shortId}`)
     if (artifact.kind !== kind)
       throw new PublishError(409, `artifact is a ${artifact.kind}; republish the same kind`)
-    const version = await meta.addVersion(artifact.id, {
+    const nextVersion = {
       id: newId("v"),
       blob_key: blobKey,
       content_type: contentType,
@@ -305,7 +310,12 @@ export async function publish(
       source: input.source ?? null,
       message: input.message ?? null,
       name: input.name ?? null,
-    })
+    }
+    const version = input.replaceCurrent
+      ? await meta.replaceCurrentVersion(artifact.id, input.replaceCurrent, nextVersion)
+      : await meta.addVersion(artifact.id, nextVersion)
+    if (!version)
+      throw new PublishError(409, "artifact changed while editing — reload and try again")
     // Rename on republish only when a title is explicitly supplied (the in-browser
     // editor sends it; a CLI republish without --title leaves the name untouched).
     const newTitle = input.title?.trim()

@@ -1,5 +1,5 @@
 import { zipSync } from "fflate"
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 import {
   app,
   as,
@@ -19,6 +19,100 @@ describe("version sessions", () => {
     const a = await (await app.request(`/v1/artifacts/${short_id}`)).json()
     expect(a.versions[1].name).toBe("Final draft")
     expect(a.versions[0].name).toBeNull()
+  })
+})
+
+describe("inline edit version coalescing", () => {
+  const owner: TestUser = { id: "inline-owner", email: "inline-owner@test.dev", name: "Owner" }
+  const editor: TestUser = {
+    id: "inline-editor",
+    email: "inline-editor@test.dev",
+    name: "Editor",
+  }
+  const { app: inlineApp } = makeAuthedApp("inline-version-coalescing", [owner, editor], "editor")
+  const { app: timedApp } = makeAuthedApp("inline-version-timeout", [owner])
+
+  const edit = (
+    shortId: string,
+    baseVersion: number,
+    oldStr: string,
+    newStr: string,
+    headers: Record<string, string>,
+    target = inlineApp,
+  ) => {
+    const form = new FormData()
+    form.append("edits", JSON.stringify([{ old_str: oldStr, new_str: newStr }]))
+    form.append("base_version", String(baseVersion))
+    form.append("message", "Inline edit")
+    form.append("coalesce", "true")
+    return target.request(`/v1/artifacts/${shortId}/versions`, {
+      method: "POST",
+      body: form,
+      headers,
+    })
+  }
+
+  it("keeps consecutive edits by one person in the current version", async () => {
+    const created = await (
+      await publishAs(inlineApp, "<h1>One</h1>", { title: "Working page" }, as(owner.email))
+    ).json()
+    const saved = await edit(created.short_id, 1, "One", "Two", as(owner.email))
+    expect(saved.status).toBe(201)
+    expect((await saved.json()).current_version).toBe(1)
+
+    const detail = await (
+      await inlineApp.request(`/v1/artifacts/${created.short_id}`, {
+        headers: as(owner.email),
+      })
+    ).json()
+    expect(detail.versions).toHaveLength(1)
+    expect(
+      await (
+        await inlineApp.request(`/v1/artifacts/${created.short_id}/content`, {
+          headers: as(owner.email),
+        })
+      ).text(),
+    ).toContain("<h1>Two</h1>")
+  })
+
+  it("starts a new version when another person edits", async () => {
+    const created = await (
+      await publishAs(inlineApp, "<h1>A</h1>", { title: "Shared page" }, as(owner.email))
+    ).json()
+    const saved = await edit(created.short_id, 1, "A", "B", as(editor.email))
+    expect(saved.status).toBe(201)
+    expect((await saved.json()).current_version).toBe(2)
+  })
+
+  it("starts a new version after five minutes", async () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date("2026-08-22T12:00:00.000Z"))
+      const created = await (
+        await publishAs(timedApp, "<h1>Early</h1>", { title: "Timed page" }, as(owner.email))
+      ).json()
+      vi.advanceTimersByTime(5 * 60_000 + 1)
+
+      const saved = await edit(created.short_id, 1, "Early", "Later", as(owner.email), timedApp)
+      expect(saved.status).toBe(201)
+      expect((await saved.json()).current_version).toBe(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it("keeps named checkpoints immutable", async () => {
+    const created = await (
+      await publishAs(
+        inlineApp,
+        "<h1>Checkpoint</h1>",
+        { title: "Pinned page", name: "First draft" },
+        as(owner.email),
+      )
+    ).json()
+    const saved = await edit(created.short_id, 1, "Checkpoint", "Changed", as(owner.email))
+    expect(saved.status).toBe(201)
+    expect((await saved.json()).current_version).toBe(2)
   })
 })
 

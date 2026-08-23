@@ -224,6 +224,32 @@ export function runStoreContract(
       expect(await store.getVersion(a.id, 99)).toBeNull()
     })
 
+    it("replaces only the exact current version and clears its derived data", async () => {
+      const a = await store.createArtifact(newArtifact())
+      const v1 = await store.addVersion(a.id, newVersion({ blob_key: "working-1" }))
+      await store.setVersionData(a.id, v1.n, [
+        { id: uuid(), slot: "metric", json: "1", size_bytes: 1, gen: 1 },
+      ])
+
+      const replaced = await store.replaceCurrentVersion(
+        a.id,
+        { n: v1.n, blobKey: v1.blob_key },
+        newVersion({ blob_key: "working-2", message: "small edit" }),
+      )
+      expect(replaced).toMatchObject({ n: 1, blob_key: "working-2", message: "small edit" })
+      expect(await store.listVersions(a.id)).toHaveLength(1)
+      expect(await store.getVersionData(a.id, 1)).toEqual([])
+
+      await expect(
+        store.replaceCurrentVersion(
+          a.id,
+          { n: 1, blobKey: "working-1" },
+          newVersion({ blob_key: "stale" }),
+        ),
+      ).resolves.toBeNull()
+      expect((await store.getVersion(a.id, 1))?.blob_key).toBe("working-2")
+    })
+
     it("stores and reads a version's facts by name and all-at-once", async () => {
       const a = await store.createArtifact(newArtifact())
       const v = await store.addVersion(a.id, newVersion())
