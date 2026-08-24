@@ -107,11 +107,11 @@
     "verify:affected": "sh scripts/verify-affected.sh"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.0",
+    "@biomejs/biome": "^2.5.10",
     "@typescript/native-preview": "7.0.0-dev.20260707.2",
-    "@vitest/coverage-v8": "^4.1.9",
-    "dependency-cruiser": "^18.0.0",
-    "esbuild": "0.28.1",
+    "@vitest/coverage-v8": "^4.1.11",
+    "dependency-cruiser": "^18.2.0",
+    "esbuild": "0.28.2",
     "knip": "^6.16.1",
     "typescript": "^6.0.3"
   }
