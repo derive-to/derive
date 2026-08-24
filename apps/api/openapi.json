@@ -924,6 +924,52 @@
                     "type": "string"
                   }
                 },
+                "node_details": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "node_id": {
+                        "type": "string"
+                      },
+                      "label": {
+                        "type": "string"
+                      },
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "context",
+                          "human",
+                          "terminal"
+                        ]
+                      },
+                      "instruction": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "result": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "context_ref": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "exit_condition": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "node_id",
+                      "label",
+                      "kind",
+                      "instruction",
+                      "result",
+                      "context_ref",
+                      "exit_condition"
+                    ]
+                  }
+                },
                 "context_sessions": {
                   "type": "array",
                   "items": {
@@ -986,6 +1032,7 @@
                 "will_pause",
                 "can_repeat",
                 "side_effects",
+                "node_details",
                 "context_sessions",
                 "scenarios"
               ]

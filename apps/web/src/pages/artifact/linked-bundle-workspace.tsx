@@ -22,6 +22,8 @@ type Diagram = NonNullable<LinkedBundle["diagrams"]>[number]
 type DiagramNode = Diagram["nodes"][number]
 type DiagramEdge = Diagram["edges"][number]
 type BundleMember = LinkedBundle["members"][number]
+type WorkflowPreviewValue = NonNullable<Artifact["workflow_preview"]>
+type WorkflowNodeDetail = WorkflowPreviewValue["diagrams"][number]["node_details"][number]
 type ReviewKind = "node" | "edge" | "policy"
 type LinkedBundleView = "preview" | "now" | "advanced"
 
@@ -118,7 +120,7 @@ export const linkedBundleNowSummary = (diagrams: Diagram[]): LinkedBundleNowSumm
 }
 
 const NODE_W = 184
-const NODE_H = 112
+const NODE_H = 128
 const PAD_X = 58
 const PAD_Y = 48
 const GRAPH_COLUMN_STEP = 268
@@ -253,6 +255,51 @@ export const linkedBundleNodeFreshness = (
   return member.current_version > node.basis_version ? "updated" : "fresh"
 }
 
+export type LinkedBundleNodeExplanation = {
+  whatHappens: string | null
+  source: "note" | "workflow" | null
+  ownerContext: string | null
+  expectedOutput: string | null
+  exitCondition: string | null
+}
+
+/** Join the visible node with its executable workflow description without
+ * pretending one owns the other. An authored note wins; workflow instruction
+ * and result are progressive-disclosure fallbacks for older manifests. */
+export const linkedBundleNodeExplanation = (
+  diagram: Diagram,
+  node: DiagramNode,
+  workflow?: WorkflowNodeDetail,
+): LinkedBundleNodeExplanation => {
+  const whatHappens = node.note ?? workflow?.instruction ?? workflow?.result ?? null
+  const workflowContext = workflow?.context_ref
+    ? workflow.context_ref
+    : workflow?.kind === "human"
+      ? "Human decision"
+      : workflow?.kind === "terminal"
+        ? "Workflow"
+        : null
+  const ownerContext = [node.role, workflowContext].filter(Boolean).join(" · ") || null
+  const labels = new Map(diagram.nodes.map((item) => [item.id, item.label]))
+  const outgoing = diagram.edges.filter((edge) => edge.from === node.id)
+  const authoredExit = outgoing.length
+    ? outgoing
+        .map((edge) =>
+          edge.label
+            ? `${edge.label} → ${labels.get(edge.to) ?? edge.to}`
+            : `Continue → ${labels.get(edge.to) ?? edge.to}`,
+        )
+        .join("; ")
+    : null
+  return {
+    whatHappens,
+    source: node.note ? "note" : whatHappens ? "workflow" : null,
+    ownerContext,
+    expectedOutput: workflow?.result ?? null,
+    exitCondition: workflow?.exit_condition ?? authoredExit,
+  }
+}
+
 export const linkedBundleEdgePath = (
   diagram: Diagram,
   edge: DiagramEdge,
@@ -348,6 +395,7 @@ export const linkedBundleFocusedElements = (
 function DiagramWorkspace({
   diagram,
   members,
+  workflowNodes,
   counts,
   reviewState,
   pinning,
@@ -363,6 +411,7 @@ function DiagramWorkspace({
 }: {
   diagram: Diagram
   members: Map<string, BundleMember>
+  workflowNodes: Map<string, WorkflowNodeDetail>
   counts: Map<string, number>
   reviewState: LinkedBundleReviewState
   pinning: boolean
@@ -436,11 +485,20 @@ function DiagramWorkspace({
       const node = diagram.nodes.find((item) => item.id === selected.local)
       if (!node) return null
       const member = node.member ? members.get(node.member) : undefined
+      const explanation = linkedBundleNodeExplanation(
+        diagram,
+        node,
+        workflowNodes.get(`${diagram.id}:${node.id}`),
+      )
       return {
         target: linkedBundleReviewTarget(diagram.id, "node", node.id),
         title: node.label,
         eyebrow: diagram.type === "loop" ? "Loop step" : "Graph node",
-        detail: node.note ?? member?.label ?? "No linked artifact",
+        detail: explanation.whatHappens,
+        detailSource: explanation.source,
+        ownerContext: explanation.ownerContext,
+        expectedOutput: explanation.expectedOutput,
+        exitCondition: explanation.exitCondition,
         count: counts.get(linkedBundleReviewTarget(diagram.id, "node", node.id)) ?? 0,
         state: node.state,
         tier: linkedBundleEffectiveTier(node, diagram),
@@ -724,7 +782,7 @@ function DiagramWorkspace({
                       )
                     }
                     className={cn(
-                      "absolute z-20 flex flex-col rounded-xl border p-3 text-left shadow-sm transition-[border-color,box-shadow,transform,opacity] hover:-translate-y-0.5 hover:shadow-md",
+                      "absolute z-20 flex cursor-pointer flex-col rounded-xl border p-3 text-left shadow-sm transition-[border-color,box-shadow,transform,opacity] hover:-translate-y-0.5 hover:border-primary/45 hover:shadow-md focus-visible:ring-[3px] focus-visible:ring-primary/45",
                       stateTone(node.state),
                       active && "-translate-y-1 ring-[3px] ring-primary/55 shadow-lg",
                       focusActive && !inFocus && "opacity-25",
@@ -764,10 +822,11 @@ function DiagramWorkspace({
                       </span>
                     ) : null}
                     {freshness === "updated" ? (
-                      <span className="mt-auto font-mono text-2xs text-warning">
-                        artifact updated
-                      </span>
+                      <span className="font-mono text-2xs text-warning">artifact updated</span>
                     ) : null}
+                    <span className="mt-auto flex w-full items-center justify-end gap-1 font-mono text-2xs font-medium text-primary">
+                      Details <Icon name="arrow" size={11} />
+                    </span>
                   </button>
                 )
               })}
@@ -775,12 +834,9 @@ function DiagramWorkspace({
           </div>
         </div>
 
-        <aside className="border-t border-border-soft bg-card p-4 pb-14 lg:pb-4 lg:pr-36">
+        <aside className="border-t border-border-soft bg-card p-4 pb-14 lg:pb-4">
           {selection ? (
-            <div
-              data-testid="bundle-selection"
-              className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_auto]"
-            >
+            <div data-testid="bundle-selection" className="grid items-start gap-4">
               <div className="min-w-0">
                 <div className="font-mono text-2xs uppercase tracking-[0.12em] text-muted-foreground">
                   {selection.eyebrow}
@@ -802,65 +858,110 @@ function DiagramWorkspace({
                     <span className="text-xs text-muted-foreground">Tier {selection.tier}</span>
                   ) : null}
                 </div>
-                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                  {selection.detail}
-                </p>
                 {selection.node ? (
-                  <dl className="mt-3 grid gap-x-5 gap-y-2 text-xs sm:grid-cols-2 lg:grid-cols-3">
-                    <div>
-                      <dt className="font-mono text-2xs uppercase tracking-[0.08em] text-muted-foreground">
-                        Role
-                      </dt>
-                      <dd className="mt-0.5 text-foreground">
-                        {selection.node.role ?? "Not stated"}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt className="font-mono text-2xs uppercase tracking-[0.08em] text-muted-foreground">
-                        Confidence
-                      </dt>
-                      <dd className="mt-0.5 capitalize text-foreground">
-                        {selection.node.confidence?.level ?? "Not stated"}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt className="font-mono text-2xs uppercase tracking-[0.08em] text-muted-foreground">
-                        Confidence basis
-                      </dt>
-                      <dd className="mt-0.5 text-foreground">
-                        {selection.node.confidence?.basis ?? "Not stated"}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt className="font-mono text-2xs uppercase tracking-[0.08em] text-muted-foreground">
-                        Help status
-                      </dt>
-                      <dd className="mt-0.5 text-foreground">
-                        {selection.node.help
-                          ? selection.node.help.needed
-                            ? "Needs help"
-                            : "No help needed"
-                          : "Not stated"}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt className="font-mono text-2xs uppercase tracking-[0.08em] text-muted-foreground">
-                        Help question
-                      </dt>
-                      <dd className="mt-0.5 text-foreground">
-                        {selection.node.help?.question ?? "Not stated"}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt className="font-mono text-2xs uppercase tracking-[0.08em] text-muted-foreground">
-                        Can continue
-                      </dt>
-                      <dd className="mt-0.5 text-foreground">
-                        {selection.node.help?.can_continue ?? "Not stated"}
-                      </dd>
-                    </div>
-                  </dl>
-                ) : null}
+                  <>
+                    <dl className="mt-3 grid overflow-hidden rounded-lg border border-border-soft bg-background/40 text-xs sm:grid-cols-2">
+                      <div className="border-b border-border-soft p-3 sm:col-span-2">
+                        <dt className="flex flex-wrap items-center gap-2 font-mono text-2xs uppercase tracking-[0.08em] text-muted-foreground">
+                          What happens
+                          {selection.detailSource === "workflow" ? (
+                            <span className="rounded border border-border bg-muted/50 px-1.5 py-0.5 normal-case tracking-normal">
+                              From workflow
+                            </span>
+                          ) : null}
+                        </dt>
+                        <dd className="mt-1 text-sm leading-relaxed text-foreground">
+                          {selection.detail ?? "No details added yet."}
+                        </dd>
+                      </div>
+                      <div className="border-b border-border-soft p-3 sm:border-r">
+                        <dt className="font-mono text-2xs uppercase tracking-[0.08em] text-muted-foreground">
+                          Owner / context
+                        </dt>
+                        <dd className="mt-1 leading-relaxed text-foreground">
+                          {selection.ownerContext ?? "Not stated"}
+                        </dd>
+                      </div>
+                      <div className="border-b border-border-soft p-3">
+                        <dt className="font-mono text-2xs uppercase tracking-[0.08em] text-muted-foreground">
+                          Expected output
+                        </dt>
+                        <dd className="mt-1 leading-relaxed text-foreground">
+                          {selection.expectedOutput ?? "Not stated"}
+                        </dd>
+                      </div>
+                      <div className="p-3 sm:col-span-2">
+                        <dt className="font-mono text-2xs uppercase tracking-[0.08em] text-muted-foreground">
+                          Exit condition
+                        </dt>
+                        <dd className="mt-1 leading-relaxed text-foreground">
+                          {selection.exitCondition ?? "Not stated"}
+                        </dd>
+                      </div>
+                    </dl>
+                    {!selection.detail ? (
+                      <div
+                        className="mt-3 rounded-lg border border-warning/30 bg-warning/5 px-3 py-2 text-xs leading-relaxed text-warning"
+                        data-testid="bundle-node-detail-advisory"
+                      >
+                        Preview advisory: this node has no note or workflow instruction/result.
+                        {canEdit
+                          ? " Add a note so people can understand what happens here."
+                          : " Ask an editor to add a note."}
+                      </div>
+                    ) : null}
+                    <dl className="mt-3 grid gap-x-5 gap-y-2 text-xs sm:grid-cols-2 lg:grid-cols-3">
+                      <div>
+                        <dt className="font-mono text-2xs uppercase tracking-[0.08em] text-muted-foreground">
+                          Confidence
+                        </dt>
+                        <dd className="mt-0.5 capitalize text-foreground">
+                          {selection.node.confidence?.level ?? "Not stated"}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="font-mono text-2xs uppercase tracking-[0.08em] text-muted-foreground">
+                          Confidence basis
+                        </dt>
+                        <dd className="mt-0.5 text-foreground">
+                          {selection.node.confidence?.basis ?? "Not stated"}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="font-mono text-2xs uppercase tracking-[0.08em] text-muted-foreground">
+                          Help status
+                        </dt>
+                        <dd className="mt-0.5 text-foreground">
+                          {selection.node.help
+                            ? selection.node.help.needed
+                              ? "Needs help"
+                              : "No help needed"
+                            : "Not stated"}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="font-mono text-2xs uppercase tracking-[0.08em] text-muted-foreground">
+                          Help question
+                        </dt>
+                        <dd className="mt-0.5 text-foreground">
+                          {selection.node.help?.question ?? "Not stated"}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt className="font-mono text-2xs uppercase tracking-[0.08em] text-muted-foreground">
+                          Can continue
+                        </dt>
+                        <dd className="mt-0.5 text-foreground">
+                          {selection.node.help?.can_continue ?? "Not stated"}
+                        </dd>
+                      </div>
+                    </dl>
+                  </>
+                ) : (
+                  <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                    {selection.detail}
+                  </p>
+                )}
                 {selection.freshness === "updated" && selection.member?.current_version ? (
                   <div className="mt-2 inline-flex rounded-lg border border-warning/30 bg-warning/5 px-3 py-2 text-xs text-warning">
                     {selection.member.label} is now v{selection.member.current_version}. Reconcile
@@ -868,7 +969,7 @@ function DiagramWorkspace({
                   </div>
                 ) : null}
               </div>
-              <div className="flex flex-wrap gap-2 lg:justify-end">
+              <div className="flex flex-wrap gap-2">
                 {selection.member?.available ? (
                   <Button
                     asChild
@@ -917,12 +1018,12 @@ function DiagramWorkspace({
                     data-testid="bundle-selection-update-state"
                     onClick={() => onReviewStateChange({ ...reviewState, inspector: !reconciling })}
                   >
-                    <Icon name="edit" size={14} /> Update state
+                    <Icon name="pencil" size={14} /> Edit details
                   </Button>
                 ) : null}
               </div>
               {canEdit && reconciling && selection.node ? (
-                <div className="lg:col-span-2">
+                <div>
                   <LinkedBundleReconcile
                     shortId={shortId}
                     version={version}
@@ -1041,10 +1142,12 @@ function ArtifactShelf({
 function NowWorkspace({
   diagrams,
   members,
+  workflowNodes,
   onFocus,
 }: {
   diagrams: Diagram[]
   members: Map<string, BundleMember>
+  workflowNodes: Map<string, WorkflowNodeDetail>
   onFocus: (target: { diagram: string; local: string }) => void
 }) {
   const summary = useMemo(() => linkedBundleNowSummary(diagrams), [diagrams])
@@ -1070,6 +1173,11 @@ function NowWorkspace({
     if (!resolved) return null
     const { diagram, node, member } = resolved
     const tier = linkedBundleEffectiveTier(node, diagram)
+    const explanation = linkedBundleNodeExplanation(
+      diagram,
+      node,
+      workflowNodes.get(`${diagram.id}:${node.id}`),
+    )
     return (
       <button
         key={`${diagram.id}:${node.id}`}
@@ -1097,7 +1205,7 @@ function NowWorkspace({
         <span className="mt-1.5 block text-xs leading-relaxed text-muted-foreground">
           {treatment === "help"
             ? node.help?.question
-            : (node.note ?? member?.label ?? "No additional detail stated")}
+            : (explanation.whatHappens ?? member?.label ?? "No additional detail stated")}
         </span>
         {treatment === "help" && node.help?.can_continue ? (
           <span className="mt-2 block text-2xs text-muted-foreground">
@@ -1437,6 +1545,12 @@ export function LinkedBundleWorkspace({
     () => new Map(bundle.members.map((member) => [member.id, member])),
     [bundle.members],
   )
+  const workflowNodes = useMemo(() => {
+    const entries = (workflowPreview?.diagrams ?? []).flatMap((diagram) =>
+      (diagram.node_details ?? []).map((node) => [`${diagram.id}:${node.node_id}`, node] as const),
+    )
+    return new Map(entries)
+  }, [workflowPreview])
   const hasRunState = linkedBundleHasRunState(diagrams)
   const [view, setView] = useState<LinkedBundleView>(() =>
     linkedBundleInitialView(diagrams, !!workflowPreview),
@@ -1603,7 +1717,12 @@ export function LinkedBundleWorkspace({
               onRun={canComment ? setRunDiagram : undefined}
             />
           ) : view === "now" ? (
-            <NowWorkspace diagrams={diagrams} members={members} onFocus={focusNode} />
+            <NowWorkspace
+              diagrams={diagrams}
+              members={members}
+              workflowNodes={workflowNodes}
+              onFocus={focusNode}
+            />
           ) : diagrams.length ? (
             <div className="grid gap-4" data-testid="bundle-advanced-view">
               <div className="rounded-xl border border-border bg-card p-4">
@@ -1622,6 +1741,7 @@ export function LinkedBundleWorkspace({
                   key={diagram.id}
                   diagram={diagram}
                   members={members}
+                  workflowNodes={workflowNodes}
                   counts={counts}
                   reviewState={reviewState}
                   pinning={pinning}

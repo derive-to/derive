@@ -9,6 +9,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { Textarea } from "@/components/ui/textarea"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { linkedBundleManifestSource } from "./linked-bundle-editor"
 
@@ -258,12 +259,13 @@ export function LinkedBundleReconcile({
           />
         </label>
         <label className="grid gap-1 text-xs text-muted-foreground">
-          Reviewer note
-          <Input
+          Node note
+          <Textarea
             data-testid="bundle-reconcile-note"
             value={note}
             onChange={(event) => setNote(event.target.value)}
-            placeholder="Why this state is correct"
+            placeholder="Explain what happens in this step"
+            className="min-h-20 resize-y"
           />
         </label>
       </div>

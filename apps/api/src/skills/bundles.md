@@ -114,7 +114,10 @@ Node state is optional and explicitly authored: `pending`, `active`, `waiting`, 
 Never infer it from prose or a version count. When a node names a member, set
 `basis_version` to the member version the state was based on. If that artifact later moves
 past the basis, Derive shows “artifact updated” until an agent or editor reconciles the
-state. `note` is a short explanation of what the state means right now. A diagram may set a
+state. `note` is the editable, short explanation of what happens at the node and what its
+current state means. In a workflow-backed bundle, the detail panel falls back to the matching
+workflow `instruction`, then `result`, when `note` is absent. Add `note` when neither fallback
+explains the node (especially for human decisions); Preview calls out any node left empty. A diagram may set a
 default `tier` (`utility`, `fast`, `balanced`, `expert`, or `frontier`); a node's `tier`
 overrides it. `role` names the node's responsibility, not a person or a concrete model.
 
