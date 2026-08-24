@@ -41,6 +41,50 @@ test("publish, comment, resolve, and find it in the library", async ({ owner }) 
   await expect(owner.getByTestId(`artifact-card-open-${shortId}`)).toBeVisible()
 })
 
+test("a cached screenshot still becomes a visible library thumbnail", async ({ owner }) => {
+  const shortId = await publishArtifact(owner, "cached-thumb.md", "# Cached thumbnail")
+
+  // Reproduce the production race: the screenshot is already decoded in the browser
+  // cache before the card mounts and its non-bubbling load event is already gone, while
+  // the library reports that a static preview exists.
+  await owner.addInitScript(() => {
+    const addEventListener = HTMLImageElement.prototype.addEventListener
+    HTMLImageElement.prototype.addEventListener = function (
+      type: string,
+      listener: EventListenerOrEventListenerObject,
+      options?: boolean | AddEventListenerOptions,
+    ) {
+      if (type === "load") return
+      Reflect.apply(addEventListener, this, [type, listener, options])
+    }
+    Object.defineProperties(HTMLImageElement.prototype, {
+      complete: { configurable: true, get: () => true },
+      naturalWidth: { configurable: true, get: () => 1200 },
+    })
+  })
+  await owner.route("**/v1/artifacts?**", async (route) => {
+    const response = await route.fetch()
+    const body = (await response.json()) as {
+      artifacts: Array<{ short_id: string; has_preview?: boolean }>
+      next_cursor: string | null
+    }
+    await route.fulfill({
+      response,
+      json: {
+        ...body,
+        artifacts: body.artifacts.map((artifact) =>
+          artifact.short_id === shortId ? { ...artifact, has_preview: true } : artifact,
+        ),
+      },
+    })
+  })
+
+  await owner.goto("/")
+  const image = owner.locator(`img[src="/v1/og/${shortId}?v=1"]`)
+  await expect(image).toBeVisible()
+  await expect(image).toHaveCSS("opacity", "1")
+})
+
 test("owner shares an artifact and the member appears", async ({ owner, secondUser }) => {
   const shortId = await publishArtifact(owner)
   await owner.goto(`/artifacts/${shortId}`)
