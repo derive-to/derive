@@ -351,7 +351,7 @@ export interface AppDeps {
   pokeRun?: (runId: string) => void
   /**
    * derive.to's public site (the front door): the marketing pages, the blog, and
-   * the trust files, served by their own Worker (github.com/derive-to/site). A
+   * the trust files, served by their own Worker (the derive-to/site repo, private). A
    * function from request to response because it is the SITE service binding on
    * the edge and an origin proxy (DERIVE_SITE_ORIGIN) on Node. When set, `/`
    * serves the site's landing page to signed-out visitors (signed-in ones keep

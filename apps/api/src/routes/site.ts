@@ -5,7 +5,7 @@ import { SESSION_COOKIE_NAMES } from "../lib/http"
 
 /**
  * The front door. derive.to's public site (the marketing pages, the blog, the
- * trust files) lives in its own Worker — github.com/derive-to/site — reached
+ * trust files) lives in its own Worker — the derive-to/site repo, private — reached
  * through `deps.site`: the SITE service binding on the edge, DERIVE_SITE_ORIGIN
  * on Node. The app itself owns exactly two paths here:
  *
