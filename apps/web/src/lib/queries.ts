@@ -158,17 +158,20 @@ export const workspaceSkillsQuery = () =>
         .then((r) => r.artifacts.filter((a) => a.current_content_type === "derive/skill")),
   })
 
-// The caller's own connected sources. NO UI CONSUMES THIS YET, on purpose: the Sources
-// settings screen was removed because neither broker can produce a usable connection. The
-// local broker reports `active` immediately and then echoes a tool's own arguments back
-// instead of calling anything, and the Composio broker returns `pending` with no callback
-// route to ever complete it — while toolsForRun only ever passes `active` connections to a
-// run. So the screen said "connected" and meant nothing. Kept because the server half is
-// real and the screen comes back the moment a connection can actually reach `active`.
+// The caller's personal connected sources, used by Settings → Sources. Standard workspace
+// integrations live in a separate scope and join this list only for surfaces that can bind them.
 export const connectionsQuery = () =>
   queryOptions({
     queryKey: ["connections"] as const,
     queryFn: () => api.connections(),
+  })
+
+// Personal sources plus workspace integrations the caller can offer to an automation. Settings
+// → Sources owns the narrower personal list; this inventory also includes install-backed rows.
+export const attachableConnectionsQuery = () =>
+  queryOptions({
+    queryKey: ["connections", "attachable"] as const,
+    queryFn: () => api.attachableConnections(),
   })
 
 // A small, flat slice of the Following feed — recent work from the people you follow —

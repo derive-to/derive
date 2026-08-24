@@ -28,9 +28,9 @@ import { Textarea } from "@/components/ui/textarea"
 import {
   agentsQuery,
   artifactQuery,
+  attachableConnectionsQuery,
   automationsQuery,
   collectionsQuery,
-  connectionsQuery,
   contextsQuery,
   modelCredentialsQuery,
   runsQuery,
@@ -116,18 +116,29 @@ export function AutomationForm({
 
   const docs = useQuery(targetPickerQuery(q))
   const collections = useQuery(collectionsQuery())
-  // ACTIVE only. A pending source has an unpinned ref, which every run refuses — offering it
-  // here would let someone build an automation that silently reads nothing.
-  const connections = useQuery(connectionsQuery())
+  // Personal sources plus workspace-standard integrations. Save-time binding policy stays on
+  // the server; this query is only the complete inventory the picker should render.
+  const connections = useQuery(attachableConnectionsQuery())
   const contexts = useQuery(contextsQuery())
   const modelCredentials = useQuery(modelCredentialsQuery())
   const personalPlan = modelCredentials.data?.find((c) => c.provider === provider)
+  // ACTIVE only. Pending sources cannot contribute tools, so offering one would let someone
+  // build a run that silently reads nothing. Kind is deliberately not narrowed: GitHub/Slack
+  // integrations and broker-backed sources use the same least-privilege run boundary.
   const sources = useMemo(
-    () => (connections.data ?? []).filter((c) => c.kind === "mcp" && c.status === "active"),
+    () => (connections.data ?? []).filter((c) => c.status === "active"),
     [connections.data],
   )
-  const sourceLabel = (id: string): string =>
-    sources.find((s) => s.id === id)?.toolkit ?? "a disconnected source"
+  const sourceName = (source: (typeof sources)[number]): string => {
+    const toolkit =
+      source.toolkit === "github" ? "GitHub" : source.toolkit === "slack" ? "Slack" : source.toolkit
+    const detail = source.scopes_label?.trim()
+    return detail ? `${toolkit} · ${detail}` : toolkit
+  }
+  const sourceLabel = (id: string): string => {
+    const source = sources.find((candidate) => candidate.id === id)
+    return source ? sourceName(source) : "a disconnected source"
+  }
   const collectionMatches = useMemo(() => {
     const all = collections.data ?? []
     const needle = q.trim().toLowerCase()
@@ -353,7 +364,7 @@ export function AutomationForm({
 
       <Field
         label="Sources"
-        hint="Connected MCP servers this run may read from. Its tools were recorded when you connected it."
+        hint="Connected integrations and MCP sources this run may use. Credentials stay server-side, and only selected sources are available."
       >
         <div className="flex flex-wrap items-center gap-1.5">
           {sourceIds.map((id) => (
@@ -394,7 +405,7 @@ export function AutomationForm({
                         .map((c) => (
                           <CommandItem
                             key={c.id}
-                            value={c.toolkit}
+                            value={`${c.toolkit} ${c.scopes_label ?? ""}`}
                             data-testid={`automation-source-${c.id}`}
                             onSelect={() => {
                               setSourceIds((cur) => [...cur, c.id])
@@ -402,9 +413,13 @@ export function AutomationForm({
                             }}
                           >
                             <Plug className="size-3.5 text-muted-foreground" aria-hidden />
-                            <span className="truncate">{c.toolkit}</span>
+                            <span className="truncate">{sourceName(c)}</span>
                             <span className="ml-auto max-w-36 truncate text-2xs text-muted-foreground">
-                              {c.base_url ?? ""}
+                              {c.kind === "github_app" || c.kind === "slack"
+                                ? "Integration"
+                                : c.kind === "mcp"
+                                  ? "MCP"
+                                  : "Source"}
                             </span>
                           </CommandItem>
                         ))}
@@ -417,7 +432,8 @@ export function AutomationForm({
             // Said plainly rather than hidden: a run with no source can still only read what is
             // already in Derive, and that is the difference this field exists to explain.
             <span className="text-muted-foreground text-xs">
-              No sources connected yet. Add one under Settings → Sources.
+              No sources connected yet. Connect GitHub under Settings → Integrations, or add an MCP
+              server under Settings → Sources.
             </span>
           ) : null}
         </div>

@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button"
 import { toast } from "@/components/ui/sonner"
 import { Switch } from "@/components/ui/switch"
 import {
+  attachableConnectionsQuery,
   connectionsQuery,
   githubQuery,
   slackQuery,
@@ -140,6 +141,7 @@ export function IntegrationsSection() {
     if (!githubInstallResult) return
     void qc.invalidateQueries({ queryKey: githubQuery().queryKey })
     void qc.invalidateQueries({ queryKey: connectionsQuery().queryKey })
+    void qc.invalidateQueries({ queryKey: attachableConnectionsQuery().queryKey })
     if (githubInstallResult.connected) toast.success("GitHub connected")
   }, [githubInstallResult, qc])
 
@@ -169,7 +171,11 @@ export function IntegrationsSection() {
   const disconnectGithub = useApiMutation({
     mutationFn: (connectionId: string) => api.disconnectGithub(connectionId),
     success: "GitHub disconnected",
-    invalidate: [githubQuery().queryKey, connectionsQuery().queryKey],
+    invalidate: [
+      githubQuery().queryKey,
+      connectionsQuery().queryKey,
+      attachableConnectionsQuery().queryKey,
+    ],
   })
   const confirmDisconnectGithub = () => {
     const connectionId = disconnectingGithub?.connection_id

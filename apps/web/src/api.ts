@@ -561,7 +561,8 @@ export interface SearchHit {
   semantic: boolean
 }
 
-// A per-user connected external account (WO3) — a Source. Always the caller's own.
+// A connected external account (WO3) — either the caller's personal source or a standard
+// workspace integration. The list endpoint decides which scope is present; credentials never do.
 export interface Connection {
   id: string
   user_id: string
@@ -571,8 +572,8 @@ export interface Connection {
    *  It decides who a source reaches once it is exposed to chat — a personal one answers for
    *  its owner and nobody else, so exposing it never lends somebody's account to the team. */
   scope?: "personal" | "workspace"
-  /** How it authenticates. `mcp` is a Model Context Protocol server connected by URL — it needs
-   *  no vendor account and no broker plan, which is why it is the one kind you can add here. */
+  /** How it authenticates. Standard integrations such as GitHub and Slack are workspace rows;
+   *  `mcp` is a Model Context Protocol server connected by URL. */
   kind?: "oauth" | "secret" | "github_app" | "slack" | "mcp"
   /** kind `mcp`: the server URL. Display only — the credential never comes back. */
   base_url?: string | null
@@ -1613,6 +1614,20 @@ export const api = {
     return f("/v1/connections?mine=1", opts())
       .then(j)
       .then((r) => r.connections as Connection[])
+  },
+  /** Everything the caller may bind to unattended work: their personal connections plus the
+   *  workspace's standard integrations. Save-time authorization remains server-side. */
+  attachableConnections(): Promise<Connection[]> {
+    return Promise.all([
+      f("/v1/connections?mine=1", opts()).then(j),
+      f("/v1/connections?scope=workspace", opts()).then(j),
+    ]).then(([personal, workspace]) => {
+      const rows = [
+        ...((personal.connections ?? []) as Connection[]),
+        ...((workspace.connections ?? []) as Connection[]),
+      ]
+      return [...new Map(rows.map((connection) => [connection.id, connection])).values()]
+    })
   },
   connect(toolkit: string): Promise<Connection & { connect_url: string }> {
     return f("/v1/connections", opts({ toolkit })).then(j)

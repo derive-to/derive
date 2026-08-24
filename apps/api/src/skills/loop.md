@@ -105,7 +105,9 @@ before building a `create` that will be refused.
 - **`create_context`** wires a new context to a manifest artifact (`name` + `manifest_short_id`),
   which needs share standing on that manifest. Skills load **only** from the manifest's
   frontmatter `skills:` list. Naming one in the body pins nothing, and the response says so
-  when it spots that mistake. The context's `dk_agt_` token is deliberately not returned here.
+  when it spots that mistake. Pass `connection_ids` to give direct asks and test runs the same
+  least-privilege sources the context will use in production. The context's `dk_agt_` token is
+  deliberately not returned here.
 
 Automations are not the way to answer a comment or ship one revision; that is the loop above.
 Reach for one when the same instruction should run again without anyone remembering to start it.
