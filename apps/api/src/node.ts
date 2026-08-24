@@ -25,7 +25,6 @@ import { dispatchPass, dispatchRunNow } from "./lib/dispatch"
 import { sweepExpiredDrafts } from "./lib/drafts"
 import { buildAuthEmail, emailDeliverySender, logEmailSender, resendEmailSender } from "./lib/email"
 import { workspaceIdsFromEnv } from "./lib/env"
-import { makeGithubCommentSender } from "./lib/github-comments"
 import { catalogFromGateway, type GatewayConfig } from "./lib/model-catalog"
 import { getInstanceSlot, modelSource, readLibrary } from "./lib/model-library"
 import { mountWeb } from "./lib/serve-web"
@@ -38,7 +37,6 @@ import { nodeSubstrate } from "./lib/substrate-node"
 import { providerSubstrate } from "./lib/substrate-provider"
 import { makeShutdown } from "./lifecycle"
 import { log } from "./log"
-import { createNodeSyncRunner } from "./node-sync"
 import { playwrightRenderer } from "./preview-node"
 import { startPreviewWorker } from "./previews"
 import { PgvectorSearchIndex } from "./search-pgvector"
@@ -249,9 +247,8 @@ if (cfg.databaseUrl) {
     .run()
 }
 
-// Backfill author_id on artifacts that predate the column: where a GitHub-synced
-// artifact's commit author (author_gh_id) maps to a Derive account, attribute it to that
-// user so their synced work surfaces on their profile + feed by author_id directly.
+// Backfill author_id on historical imports that predate the column: where their stored
+// GitHub author maps to a Derive account, attribute the work to that user directly.
 // Idempotent — only fills nulls that have a known GitHub→user mapping; a no-op once done.
 // Runs after the auth tables exist. Hand-published pre-feature work without a GitHub
 // identity has no recoverable author and stays null (it re-stamps on its next publish).
@@ -362,10 +359,6 @@ const channelSenders: ChannelSenders = {
       ? resendEmailSender(cfg.resendApiKey, cfg.emailFrom)
       : logEmailSender(),
   ),
-  // GitHub PR comment write-back mints an installation token per delivery from the
-  // stored App (encrypted with the auth secret).
-  github_review_comment: makeGithubCommentSender(meta, authSecret),
-  github_issue_comment: makeGithubCommentSender(meta, authSecret),
   // Slack App posting (bot token decrypted with the auth secret per delivery): the
   // comment thread mirror and per-user DMs (agent completions, mentions, review requests, shares).
   slack_app: makeSlackSender(meta, authSecret),
@@ -413,11 +406,6 @@ const previewWorker = cfg.previews
       secret: authSecret,
     })
   : undefined
-
-// GitHub-sync runner: drives a triggered sync to completion in-process (detached from
-// the request) so it survives the user navigating away — the self-host counterpart to
-// the edge `RepoSyncRunner` DO. Resumed below on boot + a short interval.
-const syncRunner = createNodeSyncRunner(meta, blobs, authSecret)
 
 // EXPERIMENTAL hosted runs (DERIVE_HOSTED_RUNS, default off): this API process becomes the
 // executor host — it materializes due schedules, reclaims runs whose executor died, and starts
@@ -551,8 +539,6 @@ const app = createApp({
   // Enqueue a render job on publish and drain on demand when previews are enabled.
   renderPreviews: cfg.previews,
   pokePreviews: previewWorker?.poke,
-  // Run a triggered GitHub sync in the background so it survives a closed tab.
-  startSync: syncRunner.start,
   // Start a just-created run immediately instead of at the next tick, so "Run now" and a fire
   // URL feel instant. Unset when hosted runs are off — the run then waits for a polling runner.
   pokeRun: hostedDispatch
@@ -604,17 +590,6 @@ const draftSweepTimer = cfg.backgroundWorkers
   ? setInterval(() => void sweepExpiredDrafts(meta, search).catch(() => 0), 3600_000)
   : undefined
 draftSweepTimer?.unref?.()
-
-// Resume any GitHub sync left mid-flight: once on boot (a restart mid-sync) and on a
-// short interval (a self-heal backstop, mirroring the edge cron). The persisted
-// file-map makes resume idempotent, and the runner dedupes already-running loops, so
-// this is safe to call repeatedly. unref'd so it never holds the process open.
-let syncResumeTimer: ReturnType<typeof setInterval> | undefined
-if (cfg.backgroundWorkers) {
-  void syncRunner.resumeStalled()
-  syncResumeTimer = setInterval(() => void syncRunner.resumeStalled(), 60_000)
-  syncResumeTimer.unref?.()
-}
 
 // EXPERIMENTAL hosted runs (DERIVE_HOSTED_RUNS=true, default off): this API process becomes
 // the executor host. A minutely tick materializes due schedules, reclaims runs whose executor
@@ -703,7 +678,6 @@ const shutdown = makeShutdown({
   },
   clearTimers: () => {
     if (pruneTimer) clearInterval(pruneTimer)
-    if (syncResumeTimer) clearInterval(syncResumeTimer)
     if (draftSweepTimer) clearInterval(draftSweepTimer)
   },
   closeStores,

@@ -19,7 +19,6 @@ import {
   collectionsJson,
   enrich,
   PREVIEW_PER_COLLECTION,
-  sourceMaps,
 } from "../lib/boot-shapes"
 import { BULK_MAX, BulkSummarySchema, bulkArtifactOp } from "../lib/bulk"
 import { voteCollections } from "../lib/collection-suggest"
@@ -154,13 +153,9 @@ export const collectionRoutes = (ctx: AppContext) => {
           col.password_hash ? fail(c, 401, "password required") : fail(c, 404, "not found"),
         )
       const standing = await collectionStandingRole(c, col)
-      const [ids, sources] = await Promise.all([
-        meta.collectionArtifactIds(col.id),
-        meta.listRepoSources(col.org_id),
-      ])
-      const { srcByCollection, branchByRepo } = sourceMaps(sources)
+      const ids = await meta.collectionArtifactIds(col.id)
       return c.json({
-        ...enrich({ ...col, count: ids.length, my_role: role }, srcByCollection, branchByRepo),
+        ...enrich({ ...col, count: ids.length, my_role: role }),
         can_share: roleAllows(standing ?? "viewer", "share"),
         url: `${ctx.deps.baseUrl.replace(/\/$/, "")}/collections/${col.id}`,
       })
@@ -190,13 +185,12 @@ export const collectionRoutes = (ctx: AppContext) => {
       // token) see them. A non-member (incl. anon in open mode) gets an empty list, so
       // a workspace's collections can't be enumerated via a public artifact's workspace.
       if (!(await isMember(c, org))) return c.json({ collections: [] })
-      // ONE store call answers the whole view: the org's collections + repo sources, and
+      // ONE store call answers the whole view: the org's collections and
       // (for a signed-in reader) their stars, worked-in set, and per-shelf preview strip.
       // Those last three were separate reads for one release — ~240ms of round trips on
       // the edge tier, which round-trip-budget.test.ts now fails on.
       const {
         collections: cols,
-        sources,
         starred,
         workedIn,
         previews: rawPreviews,
@@ -224,7 +218,6 @@ export const collectionRoutes = (ctx: AppContext) => {
           : {}
       const collections = collectionsJson(
         cols,
-        sources,
         roleMap,
         me?.id ?? null,
         isToken(c),
@@ -278,9 +271,9 @@ export const collectionRoutes = (ctx: AppContext) => {
         user_id: createdBy,
         role: "owner",
       })
-      // A brand-new collection is empty (count 0) and user-created (manual) — return the
+      // A brand-new collection is empty — return the
       // full shape so the client can drop it straight into its list without a refetch.
-      return c.json({ ...col, count: 0, my_role: "owner" as const, kind: "manual" as const }, 201)
+      return c.json({ ...col, count: 0, my_role: "owner" as const }, 201)
     },
   )
 
@@ -343,16 +336,12 @@ export const collectionRoutes = (ctx: AppContext) => {
       })
       if (!updated) return bail(fail(c, 404, "not found"))
       // Return the SAME enriched shape as the list, so every collection response is one
-      // type. Count + origin are unchanged by a rename; re-derive them (rare op).
-      const [ids, sources, role] = await Promise.all([
+      // type. Count and role are unchanged by a rename; re-derive them (rare op).
+      const [ids, role] = await Promise.all([
         meta.collectionArtifactIds(updated.id),
-        meta.listRepoSources(updated.org_id),
         collectionRole(c, updated),
       ])
-      const { srcByCollection, branchByRepo } = sourceMaps(sources)
-      return c.json(
-        enrich({ ...updated, count: ids.length, my_role: role }, srcByCollection, branchByRepo),
-      )
+      return c.json(enrich({ ...updated, count: ids.length, my_role: role }))
     },
   )
 

@@ -17,7 +17,7 @@ interface Group {
   id: string
   /** Section header in .env.example; the first group (core) omits a header. */
   title?: string
-  /** A trailing note for the group (e.g. "repo sync needs no env"). */
+  /** A trailing note for the generated section. */
   note?: string
 }
 
@@ -30,7 +30,7 @@ const GROUPS: Group[] = [
   {
     id: "providers",
     title: "Sign-in providers (OAuth / SSO)",
-    note: "GitHub repo sync needs no env: the GitHub App is registered one-click from\nSettings → GitHub (manifest flow) and its credentials are encrypted at rest with\nDERIVE_AUTH_SECRET. (That key must be set for repo sync via the App to work.)",
+    note: "The GitHub integration is created from Settings → Integrations and stores its\nApp credentials encrypted with DERIVE_AUTH_SECRET. It does not use these sign-in vars.",
   },
   { id: "slack", title: "Slack (connect + reply-back)" },
   { id: "search", title: "Semantic search (pgvector)" },
@@ -267,7 +267,7 @@ const CONFIG_VARS: ConfigVar[] = [
   {
     name: "GITHUB_LOGIN_CLIENT_ID",
     group: "providers",
-    doc: "Optional GitHub sign-in (a standard GitHub OAuth app — distinct from the repo-sync\nGitHub App). Callback URL: <BASE_URL>/api/auth/callback/github",
+    doc: "Optional GitHub sign-in (distinct from the GitHub integration App). Callback URL:\n<BASE_URL>/api/auth/callback/github",
     example: "",
   },
   { name: "GITHUB_LOGIN_CLIENT_SECRET", group: "providers", doc: "", example: "" },
@@ -342,7 +342,7 @@ const CONFIG_VARS: ConfigVar[] = [
   {
     name: "DERIVE_BACKGROUND_WORKERS",
     group: "advanced",
-    doc: "Set to 0 to stop this process running the shared background work: the webhook delivery\nworker, the daily prune, the expired-draft sweep, and GitHub sync resume. They are ON by\ndefault and a deployment should leave them on. This exists for one case — pointing a local\nprocess at a REMOTE database to reproduce something. Those workers WRITE (the prune and the\nsweep delete rows, and both the prune and sync-resume fire on boot, not just on a timer), so\nwithout this a laptop joins that database's worker pool the moment it starts.",
+    doc: "Set to 0 to stop this process running shared background work: webhook delivery,\nthe daily prune, and the expired-draft sweep. They are ON by default and a deployment\nshould leave them on. This exists for one case — pointing a local process at a REMOTE\ndatabase to reproduce something. Those workers WRITE (the prune and sweep delete rows,\nand the prune fires on boot), so without this a laptop joins that database's worker pool\nthe moment it starts.",
     example: "0",
   },
   {
@@ -458,7 +458,7 @@ export const CAPABILITIES: Capability[] = [
     label: "GitHub sign-in",
     requires: ["GITHUB_LOGIN_CLIENT_ID", "GITHUB_LOGIN_CLIENT_SECRET"],
     detail:
-      "Adds a Continue-with-GitHub button (distinct from the repo-sync GitHub App). Callback: <BASE_URL>/api/auth/callback/github.",
+      "Adds a Continue-with-GitHub button (distinct from the GitHub integration App). Callback: <BASE_URL>/api/auth/callback/github.",
   },
   {
     id: "oidc",

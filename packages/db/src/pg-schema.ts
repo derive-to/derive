@@ -75,13 +75,13 @@ export const artifact = pgTable("artifact", {
   public_history: integer("public_history").$type<0 | 1>(),
   source_path: text("source_path"),
   // The CURRENT (last) author, denormalized from the latest version for the list view +
-  // author filtering. For a GitHub-synced artifact these mirror the last commit's author.
+  // author filtering. GitHub fields remain for historical imported artifacts.
   // All nullable (legacy/anonymous/non-synced rows). Mirrors schema.ts.
   author_name: text("author_name"),
   author_login: text("author_login"),
   author_avatar: text("author_avatar"),
   author_gh_id: text("author_gh_id"),
-  // The Derive user who last published this by hand; null for sync/token/legacy. Mirrors
+  // The Derive user who last published this; null for imports/token/legacy. Mirrors
   // schema.ts — drives the profile work-list + people-follow.
   author_id: text("author_id"),
   // Remix lineage: the artifact id this was derived from. Not an FK (the source may be
@@ -101,16 +101,15 @@ export const version = pgTable(
     content_type: text("content_type").notNull(),
     size_bytes: integer("size_bytes").notNull().default(0),
     author: text("author").notNull(),
-    // The GitHub identity behind this version, when synced (login / avatar / numeric
-    // user id as text). All nullable — manual/anonymous/unmappable publishes leave them
-    // null and `author` carries the display name. Mirrors schema.ts.
+    // Historical imported-author identity. Current publish paths leave these nullable
+    // compatibility columns empty. Mirrors schema.ts.
     author_login: text("author_login"),
     author_avatar: text("author_avatar"),
     author_gh_id: text("author_gh_id"),
-    // The Derive user who published this version by hand; null for sync/anon/legacy.
+    // The Derive user who published this version; null for imports/anon/legacy.
     author_id: text("author_id"),
-    // Which surface created this version ('web' | 'mcp' | 'api' | 'sync') — the
-    // onboarding/analytics stamp. Mirrors schema.ts.
+    // Which surface created this version ('web' | 'mcp' | 'api'; historical rows may carry
+    // 'sync') — the onboarding/analytics stamp. Mirrors schema.ts.
     source: text("source").$type<VersionSource>(),
     message: text("message"),
     name: text("name"),
@@ -560,27 +559,6 @@ export const collectionFavorite = pgTable(
   },
   (t) => [uniqueIndex("collection_favorite_user").on(t.collection_id, t.user_id)],
 )
-export const repoSource = pgTable("repo_source", {
-  id: text("id").primaryKey(),
-  org_id: text("org_id").notNull().default("local"),
-  collection_id: text("collection_id")
-    .notNull()
-    .references(() => collection.id),
-  repo: text("repo").notNull(),
-  ref: text("ref").notNull().default("HEAD"),
-  includes: text("includes").notNull(),
-  token: text("token"),
-  installation_id: text("installation_id"),
-  // PR preview discriminator — see schema.ts (sqlite) for the contract. NULL = a
-  // normal branch mirror; set = a read-only preview of that PR's changed docs.
-  pr_number: integer("pr_number"),
-  files: text("files").notNull().default("{}"),
-  last_synced_at: text("last_synced_at"),
-  last_status: text("last_status"),
-  progress: text("progress"),
-  created_by: text("created_by").notNull(),
-  created_at: text("created_at").notNull().$defaultFn(isoNow),
-})
 export const orgSettings = pgTable("org_settings", {
   org_id: text("org_id").primaryKey(),
   settings: text("settings").notNull().default("{}"),
@@ -736,7 +714,6 @@ export const githubApp = pgTable("github_app", {
   client_id: text("client_id").notNull(),
   client_secret: text("client_secret").notNull(),
   private_key: text("private_key").notNull(),
-  webhook_secret: text("webhook_secret").notNull(),
   created_at: text("created_at").notNull().$defaultFn(isoNow),
 })
 export const githubInstallation = pgTable("github_installation", {
@@ -1022,7 +999,6 @@ const TABLES = [
   folder,
   templateLibrary,
   templateLibraryEntry,
-  repoSource,
   orgSettings,
   subscription,
   slackInstall,

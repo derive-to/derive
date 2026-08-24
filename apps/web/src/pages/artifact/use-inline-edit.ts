@@ -95,7 +95,7 @@ export function useInlineEdit(p: {
   /** Clear selection/composer state the moment edit mode opens. */
   onEnter?: () => void
   /** This viewer could open the mode right now (permission, current version, not a
-   *  bundle, not GitHub-managed). Gates every entry point — the header button, the
+   *  bundle). Gates every entry point — the header button, the
    *  `e` shortcut, and the Edit verb on a selection. */
   canEdit: boolean
   /** Force saved edits through review even when the effective role is editor. */

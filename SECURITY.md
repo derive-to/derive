@@ -76,9 +76,7 @@ Derive ships safe defaults, but a few choices matter for an internet-facing depl
   artifacts (workspace_access=none, no link) never appear in another viewer's
   listings, profiles, or People surfaces (your own library and the "Created by me"
   filter always find your own). Widening access by granting the workspace, listing wider,
-  or opening the link to Anyone is always an explicit act. GitHub-mirror syncs
-  publish as workspace-listed because a mirrored repo is a workspace resource, not a
-  personal draft.
+  or opening the link to Anyone is always an explicit act.
 
   `packages/core/src/permissions.ts` (`effectiveRole`) is the single source of truth for
   this table, enforced on every request by the one `can()` gate and surfaced in the UI so

@@ -155,29 +155,6 @@ describe("organize state — retire an artifact and put it back", () => {
     expect(out.state.undo.arguments.short_ids).toEqual([mine.short_id])
   })
 
-  it("warns when the artifact is repo-synced, because sync will undo the retirement", async () => {
-    // sync.ts clears removed_at whenever it republishes a changed file, so retiring a
-    // synced artifact does not stay retired — and nothing would have said why it came
-    // back. Allowed (it is what you asked for today) but never silent.
-    const { app, meta, token } = await setup("shelve-synced")
-    const pub = await call(app, token, "publish", { title: "Synced", content: "# Synced\n\nbody" })
-    const art = await meta.getByShortId(pub.short_id)
-    if (!art) throw new Error("artifact missing")
-    await meta.setArtifactSourcePath(art.id, "docs/synced.md")
-
-    const gone = await call(app, token, "organize", {
-      short_ids: [pub.short_id],
-      state: "removed",
-    })
-    expect(gone.state.changed).toBe(1)
-    expect(gone.state.synced_from_repo).toEqual([pub.short_id])
-    expect(gone.state.synced_from_repo_note).toContain("remove the file at the source")
-
-    // Restoring says nothing about sync: there is no surprise to warn about that way.
-    const back = await call(app, token, "organize", { short_ids: [pub.short_id], state: "live" })
-    expect(back.state.synced_from_repo).toBeUndefined()
-  })
-
   it("will not let an editor reverse a MODERATION takedown", async () => {
     // removed_at means two different things. An author retiring their own draft is the
     // cheap one; an admin taking content down is not, and it also resolves the open

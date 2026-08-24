@@ -13,7 +13,6 @@ import { BillingSection } from "./billing-section"
 import { BrandprintSettings } from "./brandprint-settings"
 import { CustomDomainsSection } from "./custom-domains-section"
 import { GeneralSection } from "./general-section"
-import { GithubSection } from "./github-section"
 import { IntegrationsSection } from "./integrations-section"
 import { MembersSection } from "./members-section"
 import { ModelPlansSection } from "./model-plans-section"
@@ -54,7 +53,6 @@ const SECTIONS: { id: string; label: string; group: (typeof GROUP_ORDER)[number]
   { id: "integrations", label: "Integrations", group: "Workspace" },
   { id: "sources", label: "Sources", group: "Workspace" },
   { id: "brandprint", label: "Brandprint", group: "Workspace" },
-  { id: "github", label: "GitHub", group: "Workspace" },
   { id: "webhooks", label: "Webhooks", group: "Workspace" },
   { id: "agents", label: "Agents", group: "Workspace" },
   { id: "automations", label: "Automations", group: "Workspace" },
@@ -71,9 +69,8 @@ const SECTION_TITLES: Record<string, string> = Object.fromEntries(
 // (You · Workspace · Operator) beside a readable detail column,
 // reflowing to a horizontal strip on a narrow pane. The active section is a path
 // segment (/settings/$section) — deep-linkable, back-button-friendly, and a peer of
-// the server's own /settings/github/app/* pages — and the GitHub App install lands on
-// `/settings/github?gh_install=…`. AppShell gates auth, so `me` is present whenever
-// Settings renders.
+// the server's own integration setup pages. AppShell gates auth, so `me` is present
+// whenever Settings renders.
 export function Settings() {
   const { me } = useAuth()
   const qc = useQueryClient()
@@ -154,7 +151,6 @@ export function Settings() {
             {active === "integrations" && <IntegrationsSection />}
             {active === "sources" && <SourcesSection />}
             {active === "brandprint" && <BrandprintSettings />}
-            {active === "github" && <GithubSection />}
             {active === "webhooks" && <WebhooksSection />}
             {active === "agents" && <AgentsSection meId={me.id} />}
             {active === "automations" && <AutomationsSection />}

@@ -1092,7 +1092,7 @@ export const slackRoutes = (ctx: AppContext) => {
     // while a fan-out can involve slow webhook lookups and retrying outbox writes.
     runAfterAck(
       commentCreatedAction(
-        { meta, bus, blobs, baseUrl: deps.baseUrl, notify, pokeWebhooks: deps.pokeWebhooks },
+        { meta, bus, baseUrl: deps.baseUrl, notify, pokeWebhooks: deps.pokeWebhooks },
         artifact,
         comment,
         { mentions: [], actorId: actor.user.id },
@@ -1247,7 +1247,6 @@ export const slackRoutes = (ctx: AppContext) => {
         {
           meta,
           bus,
-          blobs,
           baseUrl: deps.baseUrl,
           notify,
           pokeWebhooks: deps.pokeWebhooks,

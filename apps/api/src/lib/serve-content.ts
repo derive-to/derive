@@ -36,11 +36,6 @@ export const serveContent = async (
    *  full HTML document). The caller uses this to self-heal the stored content_type
    *  so the mislabel is fixed permanently, not just rendered-around each view. */
   onMismatch?: () => void,
-  /** Serve-time rewrite applied to every HTML body this produces (a raw HTML file,
-   *  markdown-rendered output, or a mislabeled-HTML markdown blob) before the anchor
-   *  client is appended. Resolves a synced artifact's relative cross-document links
-   *  into in-app navigations; omitted ⇒ identity. */
-  transformHtml?: (html: string) => Promise<string>,
   /** Auto-reflow non-mobile-optimized HTML at serve time (inject a viewport tag + a
    *  conservative overflow reset, only when the document declares no viewport). Detection-
    *  gated and non-destructive — the stored bytes are untouched. Default on; pass false to
@@ -60,7 +55,6 @@ export const serveContent = async (
   append = "",
 ) => {
   const headers = { ...RAW_HEADERS, "Cache-Control": cacheControl }
-  const tx = (doc: string) => (transformHtml ? transformHtml(doc) : Promise.resolve(doc))
   const rf = (doc: string) => (reflow ? reflowHtml(doc) : doc)
   // ?marks=1 draws numbered @N badges on the page's top-level landmark regions — the
   // marked-render variant of the render rung (see marks-script.ts). Gated on a query
@@ -71,10 +65,9 @@ export const serveContent = async (
   const wantsMarks = ["1", "true"].includes(c.req.query("marks") ?? "")
   const marks = wantsMarks ? MARKS_SCRIPT : ""
   const anchorClient = anchors ? SELECTION_SCRIPT : ""
-  // Produce the final HTML body for a document: cross-doc rewrite + auto-reflow, then append
-  // the anchor client (for comment anchoring + live cursors) and, when asked, the marks overlay.
-  const htmlBody = async (doc: string): Promise<string> =>
-    rf(await tx(doc)) + anchorClient + marks + append
+  // Produce the final HTML body for a document: auto-reflow, then append the anchor
+  // client (for comment anchoring + live cursors) and, when asked, the marks overlay.
+  const htmlBody = (doc: string): string => rf(doc) + anchorClient + marks + append
   let path = rawPath
   if (isBundleContentType(content.content_type)) {
     const manifestBytes = await blobs.get(content.blob_key)
@@ -113,7 +106,7 @@ export const serveContent = async (
       // would otherwise render it as a stray `<hr>` + heading. The parsed fields surface
       // as skill chrome around this iframe, not in the document body.
       const body = parseFrontmatter(new TextDecoder().decode(data)).body
-      const html = (await tx(await renderMarkdown(body, title))) + append
+      const html = (await renderMarkdown(body, title)) + append
       return c.body(html, 200, { ...headers, "Content-Type": "text/html; charset=utf-8" })
     }
     return c.body(toBody(data), 200, { ...headers, "Content-Type": entry.type })
@@ -142,7 +135,7 @@ export const serveContent = async (
         "Content-Type": "text/html; charset=utf-8",
       })
     }
-    const html = (await tx(await renderMarkdown(text, title))) + append
+    const html = (await renderMarkdown(text, title)) + append
     return c.body(html, 200, { ...headers, "Content-Type": "text/html; charset=utf-8" })
   }
 

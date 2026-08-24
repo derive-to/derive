@@ -137,7 +137,7 @@ export interface ArtifactRecord {
   /** Denormalized from the current version row — updated on every publish. */
   current_content_type: string | null
   created_at: string
-  /** Set on every new version (publish/sync); null until first versioned (read it as
+  /** Set on every new version; null until first versioned (read it as
    *  `updated_at ?? created_at`). Drives "most recently updated" sort + the label. */
   updated_at: string | null
   /** A takedown tombstone: when set, the content is gone (410) but the record stays. */
@@ -156,23 +156,18 @@ export interface ArtifactRecord {
    *  versions). Falsy = anon sees the current version only; signed-in readers always
    *  keep workbench history (auth is the gate, like comments). */
   public_history: 0 | 1 | null
-  /** For a GitHub-synced artifact: its path within the repo (e.g. "docs/plans/foo.md").
-   *  The structural "location" — drives the folder/tree view — kept distinct from the
-   *  human `title`. Null for artifacts not mirrored from a repo. */
+  /** Historical import metadata retained on existing records for data compatibility.
+   *  New integrations do not mirror repository files or write this field. */
   source_path: string | null
-  /** The CURRENT (last) author, denormalized from the latest version row for the list
-   *  view + author filtering. `author_name` is the display name (commit author name,
-   *  "GitHub sync", or a user display name); `author_login`/`author_avatar`/`author_gh_id`
-   *  carry the GitHub login, avatar URL, and numeric user id (text) for a synced version.
-   *  All null for legacy/anonymous/non-synced rows. */
+  /** The CURRENT (last) author, denormalized from the latest version row for list views.
+   *  The GitHub fields are retained for historical imported versions; new GitHub
+   *  integrations do not publish artifacts or write them. */
   author_name: string | null
   author_login: string | null
   author_avatar: string | null
   author_gh_id: string | null
-  /** The Derive user who last published this artifact by hand (the signed-in publisher).
-   *  Null for GitHub-synced versions (attributed via `author_gh_id` instead), bare
-   *  static-token publishes, and legacy rows. Lets a person's profile + people-follow
-   *  surface their hand-published work. */
+  /** The Derive user who last published this artifact (the signed-in publisher).
+   *  Null for historical imports, bare static-token publishes, and legacy rows. */
   author_id: string | null
   /** Remix lineage: the artifact id this one was derived from ("use as template").
    *  Null for ordinary artifacts. Not an FK — the copy outlives a deleted source. */
@@ -257,7 +252,7 @@ export interface WorkspaceSummary {
 
 export interface ArtifactDetailOpts {
   artifactId: string
-  /** The artifact's workspace — settings + managed-mirror status are keyed on it. */
+  /** The artifact's workspace — settings are keyed on it. */
   orgId: string
   /** The signed-in viewer, or null (anonymous). Null skips the favorite lookup. */
   viewerId: string | null
@@ -278,8 +273,6 @@ export interface ArtifactDetail {
   openThreads: number
   favorite: boolean
   settings: OrgSettings
-  /** True when this artifact is mirrored from a GitHub sync source (read-only in Derive). */
-  managed: boolean
 }
 
 export interface ListEnrichmentOpts {
@@ -360,13 +353,11 @@ export interface VersionRecord {
   /** Byte length of the uploaded payload, summed per workspace for storage quotas. */
   size_bytes: number
   author: string
-  /** The GitHub identity behind this version, when it came from a sync: the commit
-   *  author's login, avatar URL, and numeric user id (text). All null for a manual or
-   *  anonymous publish, or a commit GitHub can't map to an account. */
+  /** Historical imported-author metadata. New integrations do not write these fields. */
   author_login: string | null
   author_avatar: string | null
   author_gh_id: string | null
-  /** The Derive user who published this version by hand; null for sync/anon/legacy. */
+  /** The Derive user who published this version; null for imports/anon/legacy. */
   author_id: string | null
   /** Which surface created this version — the onboarding/analytics stamp. Null for
    *  versions predating the column and for paths that don't stamp (restore, PR preview). */
@@ -438,7 +429,7 @@ export interface NewArtifact {
 }
 
 /** Which surface created a version: the web app, the MCP publish tool, the HTTP API
- *  (agent tokens / OAuth bearers, incl. the CLI), or a GitHub sync. */
+ *  (agent tokens / OAuth bearers, incl. the CLI), or a historical GitHub import. */
 export type VersionSource = "web" | "mcp" | "api" | "sync"
 
 export interface NewVersion {
@@ -447,11 +438,11 @@ export interface NewVersion {
   content_type: string
   size_bytes?: number
   author: string
-  /** The GitHub identity behind this version (sync only); null/omitted otherwise. */
+  /** Historical import compatibility; new integrations do not set these fields. */
   author_login?: string | null
   author_avatar?: string | null
   author_gh_id?: string | null
-  /** The Derive user who published this version by hand; null/omitted for sync/anon. */
+  /** The Derive user who published this version; null/omitted for imports/anon. */
   author_id?: string | null
   /** Which surface created this version; omitted for paths that don't stamp. */
   source?: VersionSource | null
@@ -516,14 +507,6 @@ export interface ArtifactStore {
   /** Batch-load artifacts by internal id in ONE query (id ∈ ids). Order is unspecified;
    *  callers key by `id`. Empty ids ⇒ []. Use this over a per-row getArtifactById loop. */
   getArtifactsByIds(ids: string[]): Promise<ArtifactRecord[]>
-  /** GitHub-synced artifacts in `orgId` whose `source_path` is one of `paths` —
-   *  resolves relative cross-document links (a sibling `.html`/`.md`) to the
-   *  artifact each points at. Returns only what the link rewrite needs. Empty
-   *  `paths` ⇒ none. */
-  siblingsBySourcePaths(
-    orgId: string,
-    paths: string[],
-  ): Promise<{ short_id: string; slug: string | null; source_path: string }[]>
   /** Appends the next version and bumps current_version. */
   addVersion(artifactId: string, v: NewVersion): Promise<VersionRecord>
   /**
@@ -632,7 +615,7 @@ export interface ArtifactStore {
    *
    *  CANDIDATES, not answers. The `LIKE` narrows to the few rows that could contain the ref
    *  and the CALLER CONFIRMS by parsing `json` — a substring match is not proof (the same
-   *  reasoning, and the same shape, as isManagedArtifact). The caller must then gate the
+   *  reasoning as any substring-narrowed index). The caller must then gate the
    *  rows through api lib/visibility.ts before counting or returning them: these are the
    *  LINKING artifacts, reached by content rather than by id, so the org scope is not a read
    *  permission here either.
@@ -781,14 +764,13 @@ export interface ArtifactQueryStore {
   /**
    * Everything the artifact DETAIL response needs about one artifact, in ONE store call:
    * its versions, tags, the collections it sits in, its open-thread count,
-   * whether the viewer has favorited it, its workspace's settings, and whether it is a
-   * read-only GitHub mirror. Same motivation as `listEnrichment` — these were seven
+   * whether the viewer has favorited it, and its workspace's settings. Same motivation
+   * as `listEnrichment` — these were seven
    * sequential ~80ms round trips on the edge tier, all keyed on the same artifact (or its
    * org). `viewerId` null skips the favorite check (anonymous readers can't have one).
    *
-   * `managed` and `favorite` are answered as booleans about THIS artifact rather than by
-   * fetching the org's whole managed-id set / the user's whole favorite list and calling
-   * `.includes()`, which is what the route used to do.
+   * `favorite` is answered as a boolean about THIS artifact rather than by fetching the
+   * user's whole favorite list and calling `.includes()`.
    */
   artifactDetail(opts: ArtifactDetailOpts): Promise<ArtifactDetail>
   /**
@@ -858,7 +840,7 @@ export interface ArtifactQueryStore {
    */
   workspaceSummary(orgId: string, userId: string | null): Promise<WorkspaceSummary>
   /** The signed-in boot read: everything the app shell asks for in its first breath —
-   *  sidebar summary, collections + repo sources + the caller's collection roles,
+   *  sidebar summary, collections + the caller's collection roles,
    *  workspace settings, and the notifications page — as ONE store call, so the
    *  hosted tier answers it in one Postgres round trip instead of four requests'
    *  worth of sequential reads. Embedded drivers compose it from the underlying
@@ -1015,20 +997,15 @@ export interface SocialStore {
     perCollection: number,
   ): Promise<Record<string, CollectionPreview[]>>
 
-  // ---- Follows (per-user: track GitHub authors, repo paths, and people) --
+  // ---- Follows (per-user: track people) -------------------------------
   /** Record a follow (idempotent on (user, org, kind, target)); returns the row. */
   addFollow(f: NewFollow): Promise<FollowRecord>
   removeFollow(userId: string, orgId: string, kind: FollowKind, target: string): Promise<void>
-  /** A user's follows for the Following management UI: their `author`/`path` follows in
-   *  `orgId` PLUS their global `user` (people) follows (org_id = "*"), newest first. */
+  /** A user's global people follows, newest first. */
   listFollows(userId: string, orgId: string): Promise<FollowRecord[]>
   /** Artifact ids (not removed) surfaced by this user's follows — the activity feed.
-   *  Two scopes: author/path follows match within the active workspace `orgId` (a followed
-   *  author_login, case-insensitive, or a source_path prefix); people follows match a
-   *  followed person's PUBLIC work in ANY workspace (by `author_id` or their linked GitHub
-   *  ids) — a person you follow usually publishes in their own workspace, not yours. The
-   *  people scope is gated to `public`, so following someone never exposes their private
-   *  cross-workspace work. Empty when the user follows nothing. */
+   *  People follows match a followed person's PUBLIC work in any workspace. Following
+   *  someone never exposes their private cross-workspace work. */
   followedArtifactIds(userId: string, orgId: string): Promise<string[]>
   /** How many people follow this user (kind='user', target=userId). */
   countFollowers(userId: string): Promise<number>
@@ -1070,10 +1047,8 @@ export interface CollectionStore {
   deleteCollection(id: string): Promise<void>
   /** Collections with their item counts, newest first; scoped to a workspace when orgId is given. */
   listCollections(orgId?: string): Promise<(CollectionRecord & { count: number })[]>
-  /** `listCollections` + `listRepoSources` for the SAME org, in one call — the list route's
-   *  two independent org-scoped reads collapsed to one round trip on the edge tier.
-   *
-   *  Pass `viewer` and the per-user decoration the Collections view needs — stars, the
+  /** The collection list and its per-user decoration in one read. Pass `viewer` for
+   *  the Collections view's stars, the
    *  worked-in set, and each shelf's preview strip — rides the same statement. Those are
    *  three more reads a route must NOT make separately: on the edge tier each is ~80ms
    *  (see apps/api/test/round-trip-budget.test.ts). Omit it and the per-user fields come
@@ -1243,42 +1218,6 @@ export interface CollectionStore {
 }
 
 export interface IntegrationStore {
-  // ---- GitHub sync sources (a repo mirrored into a collection, one-way) ---
-  createRepoSource(s: NewRepoSource): Promise<RepoSourceRecord>
-  /** One source by id, scoped to a workspace when orgId is given. */
-  getRepoSource(id: string, orgId?: string): Promise<RepoSourceRecord | null>
-  /** A workspace's sync sources, newest first. */
-  listRepoSources(orgId: string): Promise<RepoSourceRecord[]>
-  /** Persist post-sync state — the path→artifact map, time, and status — and/or
-   *  re-point a PR preview at a new head (`ref`). Fields are partial; only those
-   *  given are written. */
-  updateRepoSourceSync(
-    id: string,
-    fields: Partial<{
-      files: string
-      last_synced_at: string
-      last_status: string
-      ref: string
-    }>,
-  ): Promise<void>
-  /** Write just the live `progress` JSON (cheap, frequent — drives the UI bar). */
-  setRepoSourceProgress(id: string, progress: string | null): Promise<void>
-  deleteRepoSource(id: string, orgId: string): Promise<void>
-  /** Every source backed by a GitHub App installation, across workspaces — the
-   *  webhook router resolves push/repo events to the sources to re-sync. */
-  listRepoSourcesByInstallation(installationId: string): Promise<RepoSourceRecord[]>
-  /** Every source with a non-null `progress`, across workspaces — the Node entry
-   *  resumes any left mid-sync on boot (a process restart) so it finishes
-   *  server-side. The caller filters to the still-running phases. */
-  listSyncingRepoSources(): Promise<RepoSourceRecord[]>
-  /** Ids of every artifact mirrored from a sync source in this workspace —
-   *  drives the read-only gate + the `managed` flag (synced docs aren't editable). */
-  managedArtifactIds(orgId: string): Promise<string[]>
-  /** Is THIS artifact mirrored from a sync source? The single-artifact question three
-   *  write paths were answering with `managedArtifactIds(org).includes(id)` — pulling the
-   *  workspace's entire managed-id set (parsed out of every repo source's file manifest)
-   *  to test one membership, which gets steadily worse as a workspace syncs more repos. */
-  isManagedArtifact(orgId: string, artifactId: string): Promise<boolean>
   // ---- GitHub App (instance credentials + per-workspace installations) -----
   /** The instance's GitHub App credentials, or null before the manifest setup. */
   getGithubApp(): Promise<GitHubAppRecord | null>
@@ -1289,7 +1228,6 @@ export interface IntegrationStore {
   getGithubInstallation(installationId: string): Promise<GitHubInstallationRecord | null>
   /** A workspace's installations, newest first. */
   listGithubInstallations(orgId: string): Promise<GitHubInstallationRecord[]>
-  deleteGithubInstallation(installationId: string): Promise<void>
   // ---- Workspace integration settings (enable/disable each channel) --------
   /** The workspace's integration preferences, merged over defaults (so a workspace
    *  that never saved any returns all-enabled). */
@@ -1858,7 +1796,6 @@ export interface DirectoryStore {
 /** One collections read — see MetaStore.collectionsOverview. */
 export interface CollectionsOverviewRead {
   collections: (CollectionRecord & { count: number })[]
-  sources: RepoSourceRecord[]
   /** Collection ids the viewer starred. Empty when no `viewer` was passed. */
   starred: string[]
   /** The collections the viewer worked in since `activeSince`, each with THEIR latest
@@ -1878,7 +1815,6 @@ export interface CollectionsOverviewRead {
 export interface BootstrapRead {
   summary: WorkspaceSummary
   collections: (CollectionRecord & { count: number })[]
-  sources: RepoSourceRecord[]
   /** The viewer's stars / worked-in set / preview strips — see CollectionsOverviewRead. */
   starred: string[]
   workedIn: { id: string; at: string }[]
@@ -2231,22 +2167,12 @@ export interface ModerationStore {
    *  but reports still open, or no audit trail). Replaces the route's
    *  read-loop-write, which was both non-atomic and N+1 in the open-report count. */
   takedownArtifact(input: TakedownInput): Promise<void>
-  /** Update an artifact's display title (used when a GitHub-synced file is renamed —
-   *  the title tracks the repo path; the artifact + its comments are preserved). */
   /** Rename. Pass `slug` to re-derive the URL name with it: the ref is
    *  `<slug>-<short_id>` and `parseRef` resolves on the trailing short id, so an old
    *  link keeps working while a renamed doc stops advertising its former title. */
   setArtifactTitle(id: string, title: string, slug?: string | null): Promise<void>
-  /** Set the repo path of a GitHub-synced artifact (its folder/tree "location"). */
-  setArtifactSourcePath(id: string, sourcePath: string | null): Promise<void>
-  /** Override "updated_at" with an external timestamp (a synced file's last-commit
-   *  date), so the card's "updated" reflects the SOURCE's last change, not when Derive
-   *  ingested it. Publish bumps updated_at to now; the sync calls this after to correct it. */
+  /** Test/maintenance helper for ordering and migration paths. */
   setArtifactUpdatedAt(id: string, updatedAt: string): Promise<void>
-  /** Set the artifact's denormalized current author (its author_* columns). Used by the
-   *  sync backfill path to stamp an existing tracked artifact's author from its last
-   *  commit without republishing. `null` clears all four columns. */
-  setArtifactAuthor(artifactId: string, author: GithubAuthor | null): Promise<void>
   /** One-shot, idempotent: fill `artifact.author_id` for rows that predate the column,
    *  where the artifact's `author_gh_id` maps to a Derive account (Better Auth `account`,
    *  providerId='github'). Only touches rows with a null author_id and a known mapping;
@@ -2325,12 +2251,9 @@ export interface MetaStore
     ModerationStore,
     AssetStore {}
 
-/** What a user follows: a GitHub author (`target` = the login), a repo path prefix
- *  (`target` = a path prefix, e.g. "docs/plans"), or a Derive person (`target` = their
- *  user id). `author`/`path` follows are workspace-scoped; `user` follows are global
- *  (stored with `org_id = "*"`) since a person's work spans workspaces. */
-export type FollowKind = "author" | "path" | "user"
-/** Sentinel org_id for `user` (people) follows — they are global, not workspace-scoped,
+/** What a user follows: another Derive person (`target` = their user id). */
+export type FollowKind = "user"
+/** Sentinel org_id for people follows — they are global, not workspace-scoped,
  *  so a person's work surfaces regardless of which workspace the follower is viewing. */
 export const GLOBAL_FOLLOW_ORG = "*"
 /** A per-user follow — the same shape of relation as a favorite, but keyed on a
@@ -2340,8 +2263,7 @@ export interface FollowRecord {
   org_id: string
   user_id: string
   kind: FollowKind
-  /** For `author`: the GitHub login (stored lowercased). For `path`: a repo path prefix.
-   *  For `user`: the followed Derive user id (verbatim). */
+  /** The followed Derive user id (verbatim). */
   target: string
   created_at: string
 }
@@ -2660,8 +2582,8 @@ export type ConnectionScope = "personal" | "workspace"
  *
  *  oauth       a broker-side connected account; broker_ref points at the vendor.
  *  secret      a pasted API key / bearer token, encrypted at rest and write-only after.
- *  github_app  no stored credential — broker_ref is the installation id of the App repo
- *              sync already uses, and a short-lived token is minted per call.
+ *  github_app  no stored credential — broker_ref is the App installation id, and a
+ *              least-privilege short-lived token is minted per call.
  *  slack       no stored credential — the workspace's existing bot install provides it.
  */
 /** How a connection authenticates, and therefore who spends its credential.
@@ -3276,71 +3198,6 @@ export interface NewCollectionMember {
   role: Role
 }
 
-/**
- * A GitHub repository mirrored into a collection, one-way (GitHub is the source
- * of truth). `files` is a JSON map of repo path → { artifact_id, sha } so a
- * re-sync can skip unchanged files (sha match), version changed ones, and
- * tombstone vanished ones. The token is a read-only PAT (null for public repos)
- * and is never returned to clients (redacted in list responses).
- */
-/** Live, pollable progress for one repo sync (stored as JSON in repo_source.progress).
- *  `phase` runs queued → listing → mirroring → done|error. The UI renders done/total. */
-export interface SyncProgress {
-  phase: "queued" | "listing" | "mirroring" | "done" | "error"
-  /** Docs mirrored so far. */
-  done: number
-  /** Total matching docs this run (0 until the tree is listed). */
-  total: number
-  /** Error text when phase === "error". */
-  message?: string
-  /** ISO time of this update (drives a "stalled?" check + resume on Node restart). */
-  updatedAt: string
-}
-
-export interface RepoSourceRecord {
-  id: string
-  org_id: string
-  collection_id: string
-  /** "owner/name". */
-  repo: string
-  /** Branch or ref to read (default "HEAD"). */
-  ref: string
-  /** Comma-separated include globs, e.g. "**\/*.md,**\/*.html". */
-  includes: string
-  token: string | null
-  /** GitHub App installation backing this source. When set, sync mints a
-   *  short-lived installation token; `token` (a PAT) is the fallback path. */
-  installation_id: string | null
-  /** When set, this source is a read-only PREVIEW of that pull request: `ref` is the
-   *  PR head sha and it mirrors only the PR's changed docs into its own collection.
-   *  NULL = an ordinary branch mirror. Keeps PR previews out of the per-repo dedup
-   *  and the push auto-sync matcher. */
-  pr_number: number | null
-  /** JSON: { [repoPath]: { artifact_id: string; sha: string } }. */
-  files: string
-  last_synced_at: string | null
-  /** "ok" or "error: …" from the last run. */
-  last_status: string | null
-  /** Live sync progress as JSON (see SyncProgress): phase + done/total, written
-   *  frequently during a run so the UI can poll a precise bar. Null = never run. */
-  progress: string | null
-  created_by: string
-  created_at: string
-}
-export interface NewRepoSource {
-  id: string
-  org_id: string
-  collection_id: string
-  repo: string
-  ref: string
-  includes: string
-  token?: string | null
-  installation_id?: string | null
-  /** Set only for a PR-preview source (the PR number); omit for a branch mirror. */
-  pr_number?: number | null
-  created_by: string
-}
-
 /** The instance's GitHub App credentials (single row, id = "default"), captured
  *  via the one-click manifest flow. The three secret columns are encrypted at
  *  rest by the route layer before they reach the store. */
@@ -3350,14 +3207,6 @@ export interface NewRepoSource {
 export interface OrgSettings {
   /** Send notification emails on comments/mentions. */
   emailNotifications: boolean
-  /** Post a Derive comment to the PR (inline review or top-level) when it's on a
-   *  PR-sourced artifact. */
-  githubPostComments: boolean
-  /** Mirror PR comments made on GitHub back into the Derive artifact. */
-  githubMirrorComments: boolean
-  /** When a PR opens (and on each push), post + keep updated a single comment on the
-   *  pull request linking to the Derive preview of its docs. */
-  githubPreviewLink: boolean
   /** Post Derive comment activity to the connected Slack workspace (the thread mirror). */
   /** The access a NEW publish lands with when the publisher doesn't say (see
    *  access-model.md). Factory default is the "team draft": `workspace_access =
@@ -3535,9 +3384,6 @@ export interface Brandprint {
 
 export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   emailNotifications: true,
-  githubPostComments: true,
-  githubMirrorComments: true,
-  githubPreviewLink: true,
   defaultWorkspaceAccess: "member",
   defaultLinkRole: "none",
   defaultListed: "none",
@@ -3718,7 +3564,6 @@ export interface GitHubAppRecord {
   client_secret: string
   /** PEM private key (encrypted at rest). */
   private_key: string
-  webhook_secret: string
   created_at: string
 }
 
@@ -3764,14 +3609,7 @@ export type DeliveryStatus = "pending" | "delivered" | "dead"
  * worker — the endpoint acks Slack under its 3s deadline and the outbox retries a
  * transient failure instead of dropping the reply.
  */
-export type DeliveryKind =
-  | WebhookKind
-  | "slack_app"
-  | "slack_dm"
-  | "slack_ingest"
-  | "github_review_comment"
-  | "github_issue_comment"
-  | "email"
+export type DeliveryKind = WebhookKind | "slack_app" | "slack_dm" | "slack_ingest" | "email"
 
 /** Sentinel `webhook_id` for outbox rows not tied to a configured `webhook` row. */
 export const INTERNAL_DELIVERY = "internal"

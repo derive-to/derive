@@ -362,9 +362,8 @@ export async function indexArtifactVersion(
 // Hard-delete an artifact from BOTH search arms. `meta.deleteArtifact` drops the row + its FTS
 // entry inside the DB; the dense vector lives OUTSIDE the DB, so it must be dropped separately —
 // best-effort, since an orphan is only wasted storage (the Tier-2 gate filters a stale nomination).
-// Every hard-delete path MUST go through this: the dense arm silently drifted from the FTS on the
-// repo-sync `wipe` path exactly because it called meta.deleteArtifact directly. Not for takedown
-// (that soft-removes, keeping the vector valid) or account deletion (that anonymizes + retains).
+// Every hard-delete path MUST go through this. Not for takedown (which soft-removes and keeps
+// the vector valid) or account deletion (which anonymizes and retains the record).
 export async function deleteArtifactAndUnindex(
   meta: Pick<MetaStore, "deleteArtifact">,
   search: Pick<SearchIndex, "unindexArtifact"> | undefined,

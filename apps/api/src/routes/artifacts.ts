@@ -609,11 +609,6 @@ export const artifactRoutes = (ctx: AppContext) => {
           : false
         : await authorize(c, "publish", existing)
       if (!publishOk) return fail(c, 403, "forbidden")
-      // A GitHub-synced artifact is read-only in Derive: GitHub is the source of
-      // truth, so a republish would be silently overwritten on the next sync.
-      // Edit it in the repo instead.
-      if (await meta.isManagedArtifact(existing.org_id, existing.id))
-        return fail(c, 409, "managed by GitHub sync — edit this file in the repo")
       // Locked: even an editor can't publish directly. The lock is a freeze — comment
       // with the suggested change, or unlock to publish.
       if (existing.locked)
@@ -1542,11 +1537,10 @@ export const artifactRoutes = (ctx: AppContext) => {
           collections: [],
           collection_access: [],
           removed: true,
-          managed: false,
         })
       // The detail response's whole artifact-scoped context — versions, tags, the
       // collections it sits in, the open-thread count, the viewer's
-      // favorite, the workspace's settings, and whether it is a read-only GitHub mirror
+      // favorite, and the workspace's settings
       // — in ONE store call. These were eight sequential round trips (~80ms each on the
       // edge, see edge-pg.ts) all keyed on this one artifact or its org.
       const detail = await meta.artifactDetail({
@@ -1813,9 +1807,6 @@ export const artifactRoutes = (ctx: AppContext) => {
         // A taken-down artifact keeps its record but serves no content (410); the
         // UI shows a tombstone instead of the iframe.
         removed: !!artifact.removed_at,
-        // Mirrored from a GitHub sync source → read-only in Derive (the client hides
-        // Edit; the publish routes also refuse it server-side).
-        managed: detail.managed,
         // The content iframe is sandboxed with no `allow-same-origin` (opaque origin —
         // it must not be able to touch derive.to cookies/storage), which means it also has
         // no origin of its own to send OUR session cookie back on, and Chrome refuses to
@@ -2069,8 +2060,6 @@ export const artifactRoutes = (ctx: AppContext) => {
       // everyone can see. A LOCKED artifact is still renamable: the lock is about
       // content going through review, and a title carries none.
       if (!(await authorizeStanding(c, "publish", artifact))) return bail(fail(c, 403, "forbidden"))
-      if (await meta.isManagedArtifact(artifact.org_id, artifact.id))
-        return bail(fail(c, 409, "managed by GitHub sync — rename the file in the repo"))
       const b = await readJson(c, z.object({ title: z.string().min(1).max(200) }))
       if (b instanceof Response) return bail(b)
       const title = b.title.trim()

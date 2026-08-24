@@ -635,9 +635,9 @@ applies the app DDL (idempotent) and reconciles the Better Auth schema, reading
 `DATABASE_URL` from the environment or the repo-root `.env`. Like the D1 tier, the edge
 never applies schema at runtime (the Node tier does, on boot).
 
-Durable Objects (`ArtifactRoom`, `WebhookOutbox`, `RepoSyncRunner`) continue handling
-realtime fan-out, the webhook outbox drain, and GitHub sync. Those stay on the edge
-regardless, and the outbox/sync DOs read the same Postgres through Hyperdrive.
+Durable Objects (`ArtifactRoom`, `WebhookOutbox`) continue handling realtime fan-out
+and the webhook outbox drain. Those stay on the edge, and the outbox reads the same
+Postgres through Hyperdrive.
 
 The `[[d1_databases]]` binding in `wrangler.toml` is still required by the Workers
 runtime even when `HYPERDRIVE` takes over at app startup. Leave the binding in place;

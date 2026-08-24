@@ -1,12 +1,5 @@
 import type { Artifact } from "@/api"
 
-// The parent directory of a synced artifact's source path ("" when top-level) — the
-// folder chip on cards/rows and the grouping key for folder-grouped repo views.
-export const dirOf = (path: string): string => {
-  const i = path.lastIndexOf("/")
-  return i < 0 ? "" : path.slice(0, i)
-}
-
 /** Can this viewer publish a change straight to the artifact? Editors and owners
  *  publish; a LOCK is a freeze that stops even them until someone unlocks. One
  *  spelling, because the page (which labels the buttons) and the inline-edit hook
@@ -18,7 +11,7 @@ export const canPublishArtifact = (a: Artifact): boolean =>
  *  the in-document gesture that opens it, and the raw source editor: a single file
  *  at its current version that this viewer can PUBLISH to (editing is publishing;
  *  a commenter suggests changes in comments instead), unlocked, with no source
- *  editor already open and no GitHub sync owning the bytes. Kept here rather
+ *  editor already open. Kept here rather
  *  than inline on the page because the page and the frame's arming decide it at
  *  different points in the render, and a new rule must land in both. */
 export const canEditArtifactDoc = (
@@ -31,14 +24,13 @@ export const canEditArtifactDoc = (
   shownVersion === a.current_version &&
   (a.my_role === "editor" || a.my_role === "owner") &&
   !a.locked &&
-  !sourceEditorOpen &&
-  !a.managed
+  !sourceEditorOpen
 
 /** May this viewer rename the artifact? Publish rights, like editing the words —
  *  but a LOCK doesn't stop it: a lock routes CONTENT through review, and a title
- *  carries none. GitHub-synced artifacts are named by their repo path. */
+ *  carries none. */
 export const canRenameArtifact = (a: Artifact): boolean =>
-  (a.my_role === "editor" || a.my_role === "owner") && !a.managed
+  a.my_role === "editor" || a.my_role === "owner"
 
 /** The format (md vs html) of the artifact's CURRENT version — publishing must keep
  *  it (editing an .md artifact stays markdown), and the source editor keys its

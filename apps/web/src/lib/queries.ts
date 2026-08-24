@@ -277,17 +277,6 @@ export const workspacePeopleQuery = () =>
     queryFn: () => api.workspacePeople().then((r) => r.users),
   })
 
-// The active-sync poll behind the rail's SyncChip. Fast cadence while a sync runs
-// (smooth progress bar), relaxed when idle; unlike the app default this DOES refetch
-// on focus, so returning to the tab surfaces a sync that started elsewhere.
-export const activeSyncsQuery = () =>
-  queryOptions({
-    queryKey: ["sync-active"] as const,
-    queryFn: () => api.activeSyncs(),
-    refetchInterval: (q) => (q.state.data?.active.length ? 1500 : 8000),
-    refetchOnWindowFocus: true,
-  })
-
 // Every cache shape that lives under the ["artifacts"] key prefix: the library's
 // infinite pages, the needs-feedback flat array, and the {artifacts} envelope the
 // target-picker stores. The seed scanner below reads them all.
@@ -397,9 +386,6 @@ export const workspaceInvitesQuery = () =>
     queryFn: () => api.listWorkspaceInvites().then((r) => r.invites),
   })
 
-// Per-workspace integration switches (email + GitHub mirroring + Slack posting)
-// behind the Integrations section. The toggles flip this cache entry optimistically
-// and roll it back on error.
 /** The deploy-wide model plus the catalog to choose from — operator-only, so its failure is
  *  also the signal that the person is not one. */
 export const instanceChatModelQuery = () =>
@@ -475,6 +461,15 @@ export const slackQuery = () =>
   queryOptions({
     queryKey: ["slack"] as const,
     queryFn: () => api.getSlack(),
+    refetchOnWindowFocus: "always",
+  })
+
+// GitHub standard-integration status. The install callback returns to this page, and a
+// GitHub-side repository selection change may happen in another tab, so refetch on focus.
+export const githubQuery = () =>
+  queryOptions({
+    queryKey: ["github"] as const,
+    queryFn: () => api.getGithub(),
     refetchOnWindowFocus: "always",
   })
 

@@ -481,12 +481,6 @@ export function Artifact({ template = false }: { template?: boolean }) {
       setActiveThread(null)
       setComposer({ anchor: selection.selector, docTop: selection.docTop })
     },
-    onNavigate: (ref, newTab) => {
-      // Same-origin SPA route. A modified/middle click opens it un-sandboxed in a new
-      // tab (the frame's own new tab would inherit the sandbox and break the app).
-      if (newTab) window.open(`/artifacts/${ref}`, "_blank", "noopener")
-      else nav({ to: "/artifacts/$ref", params: { ref } })
-    },
     // Live read (the edit hook is declared below this one) so the host's arrow keys
     // stop driving the deck the moment an edit session opens.
     isEditing: () => inlineEditRef.current.active,
@@ -512,7 +506,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
     },
     // A non-bundle link clicked inside the frame. The href is untrusted artifact
     // HTML — allowlist the scheme (a hostile doc could post javascript:). The
-    // app's own /artifacts/… links SPA-navigate (same as data-derive-nav links);
+    // app's own /artifacts/… links SPA-navigate;
     // everything else opens a clean tab, never the frame.
     onOpenExternal: (href) => {
       let u: URL
@@ -1250,7 +1244,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
               // The raw-source fallback. It is not a dev tool (the inline editor's
               // own errors send people here by name), so it no longer says "(dev)".
               editLabel="Edit source"
-              // Inline editing: current version, single file, not GitHub-managed.
+              // Inline editing: current version and a single-file artifact.
               // Phones included: tap a block, type on the keyboard, save
               // from the bar. DECKS INCLUDED — a slide's headline is the most
               // typo-prone text Derive holds and the source editor was the only way

@@ -30,7 +30,6 @@ import type {
   FollowRecord,
   GitHubAppRecord,
   GitHubInstallationRecord,
-  GithubAuthor,
   InvitationRecord,
   LinkRole,
   ListArtifactsOpts,
@@ -62,7 +61,6 @@ import type {
   NewPlan,
   NewRenderJob,
   NewReport,
-  NewRepoSource,
   NewReviewRound,
   NewRun,
   NewSession,
@@ -85,7 +83,6 @@ import type {
   RenderJobStatus,
   ReportRecord,
   ReportState,
-  RepoSourceRecord,
   ReviewRoundRecord,
   Role,
   RunRecord,
@@ -184,7 +181,6 @@ import {
   plan,
   renderJob,
   report,
-  repoSource,
   reviewRound,
   run,
   sessionMessage,
@@ -394,7 +390,6 @@ export const schema = {
   folder,
   templateLibrary,
   templateLibraryEntry,
-  repoSource,
   githubApp,
   githubInstallation,
   domain,
@@ -440,7 +435,6 @@ const _schemaShapes: Shapes<typeof schema> = {
   folder: true,
   templateLibrary: true,
   templateLibraryEntry: true,
-  repoSource: true,
   githubApp: true,
   githubInstallation: true,
   domain: true,
@@ -463,9 +457,6 @@ export type SqliteDb = BaseSQLiteDatabase<"sync" | "async", unknown, typeof sche
  *  `changes` directly; D1 nests it under `meta`. */
 type RunResult = { changes?: number; meta?: { changes?: number } }
 
-/** Pull the artifact ids out of repo_source `files` JSON rows. A file map is
- *  `{ [repoPath]: { artifact_id, sha } }`; a managed artifact is any id therein.
- *  Shared by both drivers so "is this artifact synced?" reads identically. */
 /** The oauth-provider stores granted scopes as a JSON array string
  *  (`["openid","derive:publish"]`); tolerate a space-separated form too. On the
  *  Postgres tier the driver hands json/jsonb columns back ALREADY PARSED, so the
@@ -539,22 +530,6 @@ export const parseOrgSettings = (raw: string | null): OrgSettings => {
   }
 }
 
-export const collectManagedIds = (rows: { files: string }[]): string[] => {
-  const ids = new Set<string>()
-  for (const r of rows) {
-    try {
-      const map = JSON.parse(r.files) as Record<string, { artifact_id?: string }>
-      for (const k in map) {
-        const id = map[k]?.artifact_id
-        if (id) ids.add(id)
-      }
-    } catch {
-      // A malformed map shouldn't break the gate; treat it as managing nothing.
-    }
-  }
-  return [...ids]
-}
-
 /**
  * The dialect-agnostic SQLite repository: the bulk of the MetaStore implemented
  * once over drizzle's SQLite query builder. The better-sqlite3 and D1 drivers
@@ -589,30 +564,6 @@ export function makeRepos(db: SqliteDb) {
     (await db.select().from(artifact).where(eq(artifact.id, id)).get()) ?? null
   const getArtifactsByIds = async (ids: string[]): Promise<ArtifactRecord[]> =>
     ids.length === 0 ? [] : db.select().from(artifact).where(inArray(artifact.id, ids)).all()
-
-  const siblingsBySourcePaths = async (
-    orgId: string,
-    paths: string[],
-  ): Promise<{ short_id: string; slug: string | null; source_path: string }[]> => {
-    if (paths.length === 0) return []
-    const rows = await db
-      .select({
-        short_id: artifact.short_id,
-        slug: artifact.slug,
-        source_path: artifact.source_path,
-      })
-      .from(artifact)
-      .where(
-        and(
-          eq(artifact.org_id, orgId),
-          inArray(artifact.source_path, paths),
-          isNull(artifact.removed_at),
-          isNull(artifact.archived_at),
-        ),
-      )
-      .all()
-    return rows.filter((r): r is typeof r & { source_path: string } => r.source_path != null)
-  }
 
   const createArtifact = async (a: NewArtifact): Promise<ArtifactRecord> => {
     await db.insert(artifact).values(a).run()
@@ -652,21 +603,6 @@ export function makeRepos(db: SqliteDb) {
       .from(version)
       .where(and(eq(version.artifact_id, artifactId), eq(version.n, n)))
       .get()) ?? null
-
-  // "Is THIS artifact synced?" without materializing the workspace's whole managed set.
-  // The ids live inside each repo source's `files` JSON, so there is no column to filter on —
-  // but a LIKE on the raw text narrows to the few sources that could possibly contain it, and
-  // the parse then CONFIRMS, because a substring match is not proof (an id can appear inside a
-  // longer one, or in another field). Same answer as `managedArtifactIds(org).includes(id)`,
-  // without reading every manifest in the workspace to get it.
-  const isManagedArtifact = async (orgId: string, artifactId: string): Promise<boolean> => {
-    const rows = await db
-      .select({ files: repoSource.files })
-      .from(repoSource)
-      .where(and(eq(repoSource.org_id, orgId), like(repoSource.files, `%${artifactId}%`)))
-      .all()
-    return collectManagedIds(rows).includes(artifactId)
-  }
 
   // The artifact + its workspace's settings. One join here too — the embedded dialects can
   // express it just as well, and it keeps the two drivers' shapes identical.
@@ -1010,7 +946,7 @@ export function makeRepos(db: SqliteDb) {
   // The BACKLINK scan: the inversion of $links. Same join as above, two more predicates.
   //
   // The LIKE NARROWS, the caller CONFIRMS by parsing — a substring match is not proof (the
-  // same reasoning as isManagedArtifact above). The quote anchoring that makes it exact
+  // same reasoning as any substring-narrowed index). The quote anchoring that makes it exact
   // today rests on facts in three other files: the slot is $links, the deriver emits only
   // [0-9a-z]{6,12}, and the caller passes no metacharacter. A fourth deriver breaks two of
   // them, and the confirm is what makes that a non-event rather than a wrong answer.
@@ -1355,28 +1291,9 @@ export function makeRepos(db: SqliteDb) {
       .where(eq(artifact.id, id))
       .run()
   }
-  const setArtifactSourcePath = async (id: string, sourcePath: string | null): Promise<void> => {
-    await db.update(artifact).set({ source_path: sourcePath }).where(eq(artifact.id, id)).run()
-  }
   const setArtifactUpdatedAt = async (id: string, updatedAt: string): Promise<void> => {
     await db.update(artifact).set({ updated_at: updatedAt }).where(eq(artifact.id, id)).run()
   }
-  const setArtifactAuthor = async (
-    artifactId: string,
-    author: GithubAuthor | null,
-  ): Promise<void> => {
-    await db
-      .update(artifact)
-      .set({
-        author_name: author?.name ?? null,
-        author_login: author?.login ?? null,
-        author_avatar: author?.avatar ?? null,
-        author_gh_id: author?.ghId ?? null,
-      })
-      .where(eq(artifact.id, artifactId))
-      .run()
-  }
-
   // ---- Comments + threads ------------------------------------------------
   const getComment = async (id: string): Promise<CommentRecord | null> =>
     (await db.select().from(comment).where(eq(comment.id, id)).get()) ?? null
@@ -2198,13 +2115,12 @@ export function makeRepos(db: SqliteDb) {
       )
       .run()
   }
-  // A user's follows for the management UI: their author/path follows in this workspace
-  // PLUS their global people-follows (org_id = "*"), newest first.
-  const listFollows = async (userId: string, orgId: string): Promise<FollowRecord[]> =>
+  // A user's global people follows, newest first.
+  const listFollows = async (userId: string, _orgId: string): Promise<FollowRecord[]> =>
     db
       .select()
       .from(follow)
-      .where(and(eq(follow.user_id, userId), inArray(follow.org_id, [orgId, GLOBAL_FOLLOW_ORG])))
+      .where(and(eq(follow.user_id, userId), eq(follow.org_id, GLOBAL_FOLLOW_ORG)))
       .orderBy(desc(follow.created_at), desc(follow.id))
       .all()
   // The GitHub numeric ids a set of Derive users linked via Better Auth (raw account read;
@@ -2225,47 +2141,21 @@ export function makeRepos(db: SqliteDb) {
       return []
     }
   }
-  // The "following" feed's id set (live artifacts only). Two scopes ORed together:
-  //  · author/path follows match within the ACTIVE workspace (your repo-sync feed) —
-  //    a followed login (case-insensitive) or a followed source_path prefix.
-  //  · people follows match a followed person's PUBLIC work across ANY workspace
-  //    (by the artifact's denormalized author_id, or their linked GitHub ids), since a
-  //    person you follow usually publishes in their own workspace, not yours. Gated to
-  //    `public`, so following someone never surfaces their private cross-workspace work.
+  // The "following" feed's id set: public work authored by followed people.
   const followedArtifactIds = async (userId: string, orgId: string): Promise<string[]> => {
-    const follows = await listFollows(userId, orgId)
-    const logins = follows.filter((f) => f.kind === "author").map((f) => f.target.toLowerCase())
-    const prefixes = follows.filter((f) => f.kind === "path").map((f) => f.target)
-    const people = follows.filter((f) => f.kind === "user").map((f) => f.target)
-    if (logins.length === 0 && prefixes.length === 0 && people.length === 0) return []
-    const branches: SQL[] = []
-    // Workspace branch: author/path matches, scoped to the active workspace.
-    const wsConds: SQL[] = []
-    if (logins.length > 0) wsConds.push(inArray(sql`lower(${artifact.author_login})`, logins))
-    // A path prefix is a LIKE 'prefix%'. Escape LIKE metacharacters in the prefix and
-    // declare the escape char so a path that happens to contain % or _ matches literally.
-    for (const p of prefixes) {
-      const escaped = p.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_")
-      wsConds.push(sql`${artifact.source_path} like ${`${escaped}%`} escape '\\'`)
-    }
-    if (wsConds.length > 0) {
-      const wsMatch = wsConds.length === 1 ? wsConds[0] : or(...wsConds)
-      if (wsMatch) branches.push(and(eq(artifact.org_id, orgId), wsMatch) as SQL)
-    }
-    // People branch: a followed person's public work, in any workspace.
-    if (people.length > 0) {
-      const authorConds: SQL[] = [inArray(artifact.author_id, people)]
-      const ghIds = (await githubIdsForUsers(people)).map((g) => g.toLowerCase())
-      if (ghIds.length > 0) authorConds.push(inArray(sql`lower(${artifact.author_gh_id})`, ghIds))
-      const authored = authorConds.length === 1 ? authorConds[0] : or(...authorConds)
-      if (authored) branches.push(and(eq(artifact.listed, "public"), authored) as SQL)
-    }
-    if (branches.length === 0) return []
-    const match = branches.length === 1 ? branches[0] : or(...branches)
+    const people = (await listFollows(userId, orgId)).map((f) => f.target)
+    if (people.length === 0) return []
     const rows = await db
       .select({ id: artifact.id })
       .from(artifact)
-      .where(and(isNull(artifact.removed_at), isNull(artifact.archived_at), match))
+      .where(
+        and(
+          isNull(artifact.removed_at),
+          isNull(artifact.archived_at),
+          eq(artifact.listed, "public"),
+          inArray(artifact.author_id, people),
+        ),
+      )
       .all()
     return rows.map((r) => r.id)
   }
@@ -2306,11 +2196,11 @@ export function makeRepos(db: SqliteDb) {
     return rows.map((r) => r.org)
   }
   // The WHERE for a person's visible work: not removed, authored by them (author_id or a
-  // linked GitHub id), and visible to the viewer (public OR in a shared workspace).
+  // linked GitHub id retained on a historical import), and visible to the viewer.
   const userWorksConds = (userId: string, ghIds: string[], opts: ListArtifactsOpts): SQL[] => {
     // artifactListConditions handles the keyset cursor (key,id); we add the rest.
     const conds: SQL[] = [...artifactListConditions(artifact, opts), isNull(artifact.removed_at)]
-    // Authored by them: author_id is the person, OR a linked GitHub id wrote a synced version.
+    // Authored by them: author_id is the person, OR a linked GitHub id wrote a historical import.
     if (ghIds.length > 0) {
       const m = or(
         eq(artifact.author_id, userId),
@@ -2925,57 +2815,6 @@ export function makeRepos(db: SqliteDb) {
     await db.delete(templateLibraryEntry).where(eq(templateLibraryEntry.id, id)).run()
   }
 
-  // ---- GitHub sync sources -----------------------------------------------
-  const createRepoSource = async (s: NewRepoSource): Promise<RepoSourceRecord> =>
-    (await db.insert(repoSource).values(s).returning().get()) as RepoSourceRecord
-  const getRepoSource = async (id: string, orgId?: string): Promise<RepoSourceRecord | null> =>
-    (await db
-      .select()
-      .from(repoSource)
-      .where(and(eq(repoSource.id, id), orgId ? eq(repoSource.org_id, orgId) : undefined))
-      .get()) ?? null
-  const listRepoSources = async (orgId: string): Promise<RepoSourceRecord[]> =>
-    db
-      .select()
-      .from(repoSource)
-      .where(eq(repoSource.org_id, orgId))
-      .orderBy(desc(repoSource.created_at))
-      .all()
-  const updateRepoSourceSync = async (
-    id: string,
-    fields: { files: string; last_synced_at: string; last_status: string },
-  ): Promise<void> => {
-    await db.update(repoSource).set(fields).where(eq(repoSource.id, id)).run()
-  }
-  const setRepoSourceProgress = async (id: string, progress: string | null): Promise<void> => {
-    await db.update(repoSource).set({ progress }).where(eq(repoSource.id, id)).run()
-  }
-  const deleteRepoSource = async (id: string, orgId: string): Promise<void> => {
-    await db
-      .delete(repoSource)
-      .where(and(eq(repoSource.id, id), eq(repoSource.org_id, orgId)))
-      .run()
-  }
-  const managedArtifactIds = async (orgId: string): Promise<string[]> => {
-    const rows = await db
-      .select({ files: repoSource.files })
-      .from(repoSource)
-      .where(eq(repoSource.org_id, orgId))
-      .all()
-    return collectManagedIds(rows)
-  }
-  const listRepoSourcesByInstallation = async (
-    installationId: string,
-  ): Promise<RepoSourceRecord[]> =>
-    db
-      .select()
-      .from(repoSource)
-      .where(eq(repoSource.installation_id, installationId))
-      .orderBy(desc(repoSource.created_at))
-      .all()
-  const listSyncingRepoSources = async (): Promise<RepoSourceRecord[]> =>
-    db.select().from(repoSource).where(isNotNull(repoSource.progress)).all()
-
   // ---- GitHub App (instance credentials + per-workspace installations) -----
   const getGithubApp = async (): Promise<GitHubAppRecord | null> =>
     (await db.select().from(githubApp).where(eq(githubApp.id, "default")).get()) ?? null
@@ -3328,12 +3167,6 @@ export function makeRepos(db: SqliteDb) {
       .where(eq(githubInstallation.org_id, orgId))
       .orderBy(desc(githubInstallation.created_at))
       .all()
-  const deleteGithubInstallation = async (installationId: string): Promise<void> => {
-    await db
-      .delete(githubInstallation)
-      .where(eq(githubInstallation.installation_id, installationId))
-      .run()
-  }
   // ---- Domains (hostname → artifact) -------------------------------------
   const getDomain = async (host: string): Promise<DomainRecord | null> =>
     (await db.select().from(domain).where(eq(domain.host, host)).get()) ?? null
@@ -5090,7 +4923,6 @@ export function makeRepos(db: SqliteDb) {
     artifactWithSettings,
     getArtifactById,
     getArtifactsByIds,
-    siblingsBySourcePaths,
     addVersion,
     replaceCurrentVersion,
     listVersions,
@@ -5127,9 +4959,7 @@ export function makeRepos(db: SqliteDb) {
     setArtifactArchived,
     setArtifactsArchived,
     setArtifactTitle,
-    setArtifactSourcePath,
     setArtifactUpdatedAt,
-    setArtifactAuthor,
     createComment,
     getComment,
     updateComment,
@@ -5237,16 +5067,6 @@ export function makeRepos(db: SqliteDb) {
     searchTemplateLibraryEntries,
     countTemplateLibraryEntries,
     deleteTemplateLibraryEntry,
-    createRepoSource,
-    getRepoSource,
-    listRepoSources,
-    updateRepoSourceSync,
-    setRepoSourceProgress,
-    deleteRepoSource,
-    listRepoSourcesByInstallation,
-    listSyncingRepoSources,
-    managedArtifactIds,
-    isManagedArtifact,
     getGithubApp,
     setGithubApp,
     getOrgSettings,
@@ -5282,7 +5102,6 @@ export function makeRepos(db: SqliteDb) {
     upsertGithubInstallation,
     getGithubInstallation,
     listGithubInstallations,
-    deleteGithubInstallation,
     getDomain,
     setDomain,
     getArtifactDomains,

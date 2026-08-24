@@ -49,20 +49,13 @@ export interface PublishInput {
   spa?: boolean
   message?: string
   author?: string
-  /** The GitHub identity behind this publish (sync only): the commit author's login,
-   *  avatar URL, and numeric user id (text). Stored per-version and denormalized as the
-   *  artifact's current author. Omitted/null for a manual or anonymous publish — then
-   *  only the `author` display name is recorded. */
-  authorLogin?: string | null
-  authorAvatar?: string | null
-  authorGhId?: string | null
   /** The Derive user publishing this by hand (the signed-in publisher). Stored per-version
    *  and denormalized as the artifact's current `author_id`, so the person's profile and
-   *  people-follow surface their hand-published work. Omitted/null for sync and bare
+   *  people-follow surface their hand-published work. Omitted/null for historical imports and bare
    *  static-token publishes. */
   authorId?: string | null
-  /** Which surface created this version ('web' | 'mcp' | 'api' | 'sync'); stored on the
-   *  version row. Omitted for paths that don't stamp. */
+  /** Which surface created this version ('web' | 'mcp' | 'api', plus historical 'sync' rows);
+   *  stored on the version row. Omitted for paths that don't stamp. */
   source?: VersionSource | null
   /** The workspace the new artifact belongs to (multi-workspace). */
   orgId?: string
@@ -303,9 +296,9 @@ export async function publish(
       content_type: contentType,
       size_bytes: input.bytes.length,
       author,
-      author_login: input.authorLogin ?? null,
-      author_avatar: input.authorAvatar ?? null,
-      author_gh_id: input.authorGhId ?? null,
+      author_login: null,
+      author_avatar: null,
+      author_gh_id: null,
       author_id: input.authorId ?? null,
       source: input.source ?? null,
       message: input.message ?? null,
@@ -365,9 +358,9 @@ export async function publish(
     content_type: contentType,
     size_bytes: input.bytes.length,
     author,
-    author_login: input.authorLogin ?? null,
-    author_avatar: input.authorAvatar ?? null,
-    author_gh_id: input.authorGhId ?? null,
+    author_login: null,
+    author_avatar: null,
+    author_gh_id: null,
     author_id: input.authorId ?? null,
     source: input.source ?? null,
     message: input.message ?? "first publish",
@@ -400,12 +393,8 @@ export const toJson = (baseUrl: string, a: ArtifactRecord, versions: VersionReco
   /** Bumped on each new version; drives "most recently updated" sort + the label. */
   updated_at: a.updated_at,
   archived: !!a.archived_at,
-  /** Repo path for a GitHub-synced artifact (drives the folder view); null otherwise. */
-  source_path: a.source_path,
-  /** The CURRENT (last) author, denormalized — drives "who last changed this" + the
-   *  author filter in the list. For a GitHub-synced artifact these mirror the last
-   *  commit's author; null for legacy/anonymous/non-synced rows. The route may attach a
-   *  resolved `author` profile object (with the Derive handle) on top of these. */
+  /** The CURRENT (last) author, denormalized for list/history views. GitHub fields can
+   *  remain on historical imported rows; new integrations do not write them. */
   author_name: a.author_name,
   author_login: a.author_login,
   author_avatar: a.author_avatar,
@@ -415,7 +404,7 @@ export const toJson = (baseUrl: string, a: ArtifactRecord, versions: VersionReco
     sha256: v.blob_key,
     content_type: v.content_type,
     author: v.author,
-    /** The GitHub identity behind this version (sync only); null otherwise. */
+    /** Historical imported-author metadata; null for current publish paths. */
     author_login: v.author_login,
     author_avatar: v.author_avatar,
     author_gh_id: v.author_gh_id,

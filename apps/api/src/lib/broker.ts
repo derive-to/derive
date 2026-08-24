@@ -2,7 +2,8 @@ import type { BrokerToolDef, ToolBroker } from "@derive/broker"
 import { type McpAuthResolver, makeBroker, quietReason, refRouter } from "@derive/broker"
 import type { ConnectionKind, ConnectionRecord, MetaStore } from "@derive/core"
 import { decryptSecret } from "./crypto"
-import { installationToken } from "./github-app"
+import { GitHubError, installationToken } from "./github-app"
+import { githubSourcePolicy } from "./github-source-policy"
 import { liveBearer } from "./mcp-oauth"
 
 /** One tool a hosted run may call, paired with the connected-account ref it executes through.
@@ -232,12 +233,18 @@ export const authTarget = (ref: string, connectionId: string): string => `${ref}
 export const httpTools = (toolkit: string): BrokerToolDef[] => [
   {
     name: `${toolkit}.get`,
-    description: `GET a path on the ${toolkit} API (authenticated server-side).`,
+    description:
+      toolkit === "github"
+        ? "Read installation repositories, pull requests, changed files, or PR conversation comments from GitHub."
+        : `GET a path on the ${toolkit} API (authenticated server-side).`,
     params: { path: { type: "string", description: "Path starting with /" } },
   },
   {
     name: `${toolkit}.post`,
-    description: `POST JSON to a path on the ${toolkit} API (authenticated server-side).`,
+    description:
+      toolkit === "github"
+        ? "Add one top-level GitHub pull request conversation comment. Other writes are refused."
+        : `POST JSON to a path on the ${toolkit} API (authenticated server-side).`,
     params: { path: { type: "string" }, body: { type: "object" } },
   },
 ]
@@ -247,8 +254,8 @@ export const httpTools = (toolkit: string): BrokerToolDef[] => [
  * stored on the RunTool. Each kind answers the same question from a different place:
  *
  *   secret      the pasted credential, decrypted here
- *   github_app  a short-lived installation token, minted per call (cached ~1h) against the
- *               App install that repo sync already uses — so nothing long-lived exists to leak
+ *   github_app  a short-lived, permission-narrowed installation token minted per call
+ *               (cached ~1h), so no long-lived repository credential exists to leak
  *   slack       the workspace's bot token from its existing install
  *
  * Throws when the underlying install is gone (uninstalled, revoked): the connection outlives
@@ -267,11 +274,24 @@ export const bearerFor = async (
   if (cn.kind === "github_app") {
     const app = await meta.getGithubApp()
     if (!app) throw new Error("the GitHub App is not configured on this instance")
-    return installationToken(
-      app.app_id,
-      decryptSecret(app.private_key, encryptionKey),
-      cn.broker_ref,
-    )
+    try {
+      return await installationToken(
+        app.app_id,
+        decryptSecret(app.private_key, encryptionKey),
+        cn.broker_ref,
+      )
+    } catch (err) {
+      // Installation removal/suspension must stop being advertised after the first live call.
+      // Transient 5xx/rate failures leave the source active so a later run can recover.
+      if (
+        err instanceof GitHubError &&
+        (err.status === 401 || err.status === 403 || err.status === 404)
+      ) {
+        await meta.setConnectionStatus(cn.id, cn.org_id, "revoked")
+        throw new Error("GitHub is no longer authorized; reconnect it in Settings → Integrations")
+      }
+      throw err
+    }
   }
   if (cn.kind === "slack") {
     const install = await meta.getSlackInstall(cn.org_id)
@@ -314,12 +334,37 @@ export const executeHttpTool = async (
   const url = new URL(`.${path}`, base)
   if (!url.href.startsWith(base.href)) throw new Error("path escapes the connection's base_url")
   const verb = tool.endsWith(".post") ? "POST" : "GET"
+  // GitHub's vendor permission is necessarily write-level for PR comments. Constrain the
+  // effective surface before minting that token, so a prompt can never turn github.post into
+  // a branch/PR mutation. Other direct integrations retain the generic confined HTTP surface.
+  const githubPolicy = cn.kind === "github_app" ? githubSourcePolicy(tool, url, a.body) : null
+  const bearer = await bearerFor(meta, cn, encryptionKey)
+  const headers = {
+    authorization: `Bearer ${bearer}`,
+    ...(cn.kind === "github_app"
+      ? {
+          accept: "application/vnd.github+json",
+          "user-agent": "derive-source/1",
+          "x-github-api-version": "2022-11-28",
+        }
+      : {}),
+    ...(verb === "POST" ? { "content-type": "application/json" } : {}),
+  }
+  if (githubPolicy?.prPreflightPath) {
+    const preflight = new URL(`.${githubPolicy.prPreflightPath}`, base)
+    const check = await fetchImpl(preflight.href, {
+      headers,
+      signal: AbortSignal.timeout(20_000),
+    })
+    if (!check.ok)
+      return {
+        status: 400,
+        body: { error: "GitHub comment target is not an accessible pull request" },
+      }
+  }
   const res = await fetchImpl(url.href, {
     method: verb,
-    headers: {
-      authorization: `Bearer ${await bearerFor(meta, cn, encryptionKey)}`,
-      ...(verb === "POST" ? { "content-type": "application/json" } : {}),
-    },
+    headers,
     body: verb === "POST" ? JSON.stringify(a.body ?? {}) : undefined,
     signal: AbortSignal.timeout(20_000),
   })

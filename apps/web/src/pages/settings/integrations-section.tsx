@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { AlertTriangle } from "lucide-react"
 import { useEffect, useState } from "react"
-import { api, type OrgSettings } from "@/api"
+import { api, type GithubIntegrationAccount, type OrgSettings } from "@/api"
 import { AdminNote } from "@/components/shared/admin-note"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { LoadError } from "@/components/shared/load-error"
@@ -11,7 +11,13 @@ import { StatusPanel } from "@/components/shared/status-panel"
 import { Button } from "@/components/ui/button"
 import { toast } from "@/components/ui/sonner"
 import { Switch } from "@/components/ui/switch"
-import { slackQuery, workspaceQuery, workspaceSettingsQuery } from "@/lib/queries"
+import {
+  connectionsQuery,
+  githubQuery,
+  slackQuery,
+  workspaceQuery,
+  workspaceSettingsQuery,
+} from "@/lib/queries"
 import { snapshot, useApiMutation } from "@/lib/use-api-mutation"
 import { useOneShotParams } from "@/lib/use-one-shot-params"
 import { SettingsListSkeleton } from "./settings-list-skeleton"
@@ -19,6 +25,7 @@ import { SettingsSection } from "./settings-section"
 import { SlackSubscriptionsSection } from "./slack-subscriptions-section"
 
 type SlackInstallResult = { connected: true } | { connected: false; error: string } | null
+type GithubInstallResult = { connected: true } | { connected: false; error: string } | null
 
 const DEFAULT_SLACK_INSTALL_ERROR = {
   title: "Slack couldn't be connected",
@@ -46,11 +53,34 @@ const SLACK_INSTALL_ERRORS: Record<string, { title: string; description: string 
   oauth: DEFAULT_SLACK_INSTALL_ERROR,
 }
 
-// The workspace activity toggles (email + GitHub mirroring) plus the Slack connection —
-// all workspace-wide. Personal notification prefs (your Slack DM, account link, auto-open)
-// live in notifications-section.tsx. Where Slack posts is per-channel now — see
-// slack-subscriptions-section.tsx. Toggles apply optimistically with no save (the toggle
-// contract); the Slack channel id is an explicit save.
+const DEFAULT_GITHUB_INSTALL_ERROR = {
+  title: "GitHub couldn't be connected",
+  description: "GitHub didn't complete the installation. Try again or check the App configuration.",
+}
+
+const GITHUB_INSTALL_ERRORS: Record<string, { title: string; description: string }> = {
+  canceled: {
+    title: "GitHub connection canceled",
+    description: "Nothing changed. Connect again when you're ready to select repositories.",
+  },
+  expired: {
+    title: "GitHub connection expired",
+    description: "The login session was missing or expired. Start the connection again.",
+  },
+  config: {
+    title: "GitHub App configuration needs attention",
+    description: "The App is missing or the installation response was invalid.",
+  },
+  save: {
+    title: "Derive couldn't save the GitHub connection",
+    description: "GitHub approved the App, but Derive couldn't persist the connection. Try again.",
+  },
+}
+
+// Workspace-wide notifications plus standard integrations. GitHub is an on-demand integration:
+// its install callback creates the workspace connection directly, with no repo mirroring UI.
+// Personal notification prefs live in notifications-section.tsx; Slack delivery destinations
+// live in slack-subscriptions-section.tsx.
 export function IntegrationsSection() {
   const qc = useQueryClient()
   const { data: settings, isPending, isError, refetch } = useQuery(workspaceSettingsQuery())
@@ -59,29 +89,59 @@ export function IntegrationsSection() {
   const { data: ws } = useQuery(workspaceQuery())
   const isAdmin = ws?.role === "owner"
   const { data: slack, isFetching: slackIsFetching } = useQuery(slackQuery())
-  // The one-shot callback result the Slack OAuth flow lands back on.
-  const { slack_connected: slackConnected, slack_error: slackError } = useOneShotParams(
-    "slack_connected",
-    "slack_error",
-  )
-  const [installResult] = useState<SlackInstallResult>(() =>
+  const {
+    data: github,
+    isPending: githubIsPending,
+    isFetching: githubIsFetching,
+    isError: githubIsError,
+    refetch: refetchGithub,
+  } = useQuery(githubQuery())
+  // The one-shot callback results the Slack OAuth and GitHub App flows land back on.
+  const {
+    slack_connected: slackConnected,
+    slack_error: slackError,
+    github_connected: githubConnected,
+    github_error: githubError,
+  } = useOneShotParams("slack_connected", "slack_error", "github_connected", "github_error")
+  const [slackInstallResult] = useState<SlackInstallResult>(() =>
     slackConnected === "1"
       ? { connected: true }
       : slackError
         ? { connected: false, error: slackError }
         : null,
   )
-  const installError =
-    installResult && !installResult.connected
-      ? (SLACK_INSTALL_ERRORS[installResult.error] ?? DEFAULT_SLACK_INSTALL_ERROR)
+  const [githubInstallResult] = useState<GithubInstallResult>(() =>
+    githubConnected === "1"
+      ? { connected: true }
+      : githubError
+        ? { connected: false, error: githubError }
+        : null,
+  )
+  const slackInstallError =
+    slackInstallResult && !slackInstallResult.connected
+      ? (SLACK_INSTALL_ERRORS[slackInstallResult.error] ?? DEFAULT_SLACK_INSTALL_ERROR)
       : null
-  const [disconnecting, setDisconnecting] = useState(false)
+  const githubInstallError =
+    githubInstallResult && !githubInstallResult.connected
+      ? (GITHUB_INSTALL_ERRORS[githubInstallResult.error] ?? DEFAULT_GITHUB_INSTALL_ERROR)
+      : null
+  const [disconnectingSlack, setDisconnectingSlack] = useState(false)
+  const [disconnectingGithub, setDisconnectingGithub] = useState<GithubIntegrationAccount | null>(
+    null,
+  )
 
   useEffect(() => {
-    if (!installResult) return
+    if (!slackInstallResult) return
     void qc.invalidateQueries({ queryKey: slackQuery().queryKey })
-    if (installResult.connected) toast.success("Slack connected")
-  }, [installResult, qc])
+    if (slackInstallResult.connected) toast.success("Slack connected")
+  }, [slackInstallResult, qc])
+
+  useEffect(() => {
+    if (!githubInstallResult) return
+    void qc.invalidateQueries({ queryKey: githubQuery().queryKey })
+    void qc.invalidateQueries({ queryKey: connectionsQuery().queryKey })
+    if (githubInstallResult.connected) toast.success("GitHub connected")
+  }, [githubInstallResult, qc])
 
   // Toggle a single settings key, optimistically flipping the shared cache entry so the
   // switch stays live; the primitive rolls back + toasts on failure, and the server's
@@ -106,10 +166,22 @@ export function IntegrationsSection() {
   })
   const disconnectSlack = () => disconnect.mutate()
 
+  const disconnectGithub = useApiMutation({
+    mutationFn: (connectionId: string) => api.disconnectGithub(connectionId),
+    success: "GitHub disconnected",
+    invalidate: [githubQuery().queryKey, connectionsQuery().queryKey],
+  })
+  const confirmDisconnectGithub = () => {
+    const connectionId = disconnectingGithub?.connection_id
+    if (!connectionId) return
+    setDisconnectingGithub(null)
+    disconnectGithub.mutate(connectionId)
+  }
+
   return (
     <SettingsSection
       title="Integrations"
-      description="Route this workspace's comment and PR activity to the tools your team already uses. Each switch applies instantly, for everyone."
+      description="Connect workspace tools once, then make them available to contexts and automations."
     >
       {isPending ? (
         <SettingsListSkeleton />
@@ -135,49 +207,172 @@ export function IntegrationsSection() {
                 onCheckedChange={flip("emailNotifications")}
               />
             </SettingRow>
-            <SettingRow
-              htmlFor="toggle-github-post"
-              label="Post comments to GitHub"
-              description="When you comment on a PR-sourced doc, mirror it onto the pull request."
-            >
-              <Switch
-                id="toggle-github-post"
-                data-testid="toggle-github-post"
-                checked={settings.githubPostComments}
-                disabled={!isAdmin}
-                onCheckedChange={flip("githubPostComments")}
-              />
-            </SettingRow>
-            <SettingRow
-              htmlFor="toggle-github-mirror"
-              label="Mirror PR comments into Derive"
-              description="Comments made on the pull request show up on the Derive artifact."
-            >
-              <Switch
-                id="toggle-github-mirror"
-                data-testid="toggle-github-mirror"
-                checked={settings.githubMirrorComments}
-                disabled={!isAdmin}
-                onCheckedChange={flip("githubMirrorComments")}
-              />
-            </SettingRow>
-            <SettingRow
-              htmlFor="toggle-github-preview-link"
-              label="Comment a preview link on PRs"
-              description="When a pull request opens, post (and keep updated) a comment linking to the Derive preview of its docs."
-            >
-              <Switch
-                id="toggle-github-preview-link"
-                data-testid="toggle-github-preview-link"
-                checked={settings.githubPreviewLink}
-                disabled={!isAdmin}
-                onCheckedChange={flip("githubPreviewLink")}
-              />
-            </SettingRow>
           </SettingsGroup>
           {!isAdmin && <AdminNote can="change workspace activity settings" />}
         </>
       ) : null}
+
+      <SettingsGroup
+        title="GitHub"
+        description="Read pull requests and add top-level PR conversation comments in repositories selected during installation. Derive does not mirror repository files or create collections."
+      >
+        {githubInstallError && githubInstallResult && !githubInstallResult.connected && (
+          <StatusPanel
+            tone={githubInstallResult.error === "canceled" ? "warning" : "danger"}
+            layout="inline"
+            icon={<AlertTriangle aria-hidden />}
+            title={githubInstallError.title}
+            description={githubInstallError.description}
+            action={
+              isAdmin && (
+                <Button data-testid="github-install-retry" variant="outline" size="sm" asChild>
+                  <a href="/v1/github/install">Try again</a>
+                </Button>
+              )
+            }
+          />
+        )}
+        {github?.needs_permissions && github.permissions_url && (
+          <StatusPanel
+            tone="danger"
+            layout="inline"
+            title="GitHub needs updated pull request access"
+            description="Update the App permission, then approve it for each connected account."
+            action={
+              isAdmin && (
+                <Button data-testid="github-update-permissions" size="sm" asChild>
+                  <a href={github.permissions_url}>Update permissions</a>
+                </Button>
+              )
+            }
+          />
+        )}
+        {githubIsPending ? (
+          <SettingsListSkeleton />
+        ) : githubIsError ? (
+          <LoadError
+            layout="inline"
+            title="Couldn’t load the GitHub connection"
+            testId="github-retry"
+            onRetry={() => refetchGithub()}
+          />
+        ) : github && !github.available ? (
+          <div className="flex flex-col items-start gap-3 py-1">
+            <p className="text-sm text-muted-foreground">
+              GitHub isn't configured on this Derive instance yet. Create the App once, then install
+              it on the repositories agents may read.
+            </p>
+            {isAdmin ? (
+              <Button data-testid="github-setup" variant="default" asChild>
+                <a href="/settings/github/app/new">Set up GitHub App</a>
+              </Button>
+            ) : (
+              <AdminNote can="set up the GitHub App" />
+            )}
+          </div>
+        ) : githubInstallResult?.connected && !github?.connected ? (
+          <StatusPanel
+            tone={githubIsFetching ? "neutral" : "danger"}
+            layout="inline"
+            title={
+              githubIsFetching
+                ? "Finishing the GitHub connection…"
+                : "GitHub approved the App, but the connection is missing"
+            }
+            description={
+              githubIsFetching
+                ? "Derive is confirming the installation and workspace connection now."
+                : "Derive couldn't confirm the saved connection. Connect once more."
+            }
+            action={
+              !githubIsFetching &&
+              isAdmin && (
+                <Button data-testid="github-confirm-retry" variant="outline" size="sm" asChild>
+                  <a href="/v1/github/install">Try again</a>
+                </Button>
+              )
+            }
+          />
+        ) : github?.accounts.length ? (
+          <>
+            <div className="divide-y">
+              {github.accounts.map((account) => (
+                <div
+                  key={account.installation_id}
+                  className="flex flex-wrap items-center justify-between gap-3 py-3.5"
+                >
+                  <div>
+                    <p className="text-sm font-medium">
+                      {account.account_login ?? `Installation ${account.installation_id}`}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {account.state === "active"
+                        ? "Available to this workspace's contexts and automations"
+                        : account.state === "needs_reauth"
+                          ? "The GitHub installation is missing or was removed"
+                          : "Installed, but disconnected from agent use"}
+                    </p>
+                  </div>
+                  {isAdmin && (
+                    <div className="flex flex-wrap items-center gap-2">
+                      {account.state === "active" && account.connection_id ? (
+                        <Button
+                          data-testid={`github-disconnect-${account.installation_id}`}
+                          variant="destructive-ghost"
+                          size="sm"
+                          onClick={() => setDisconnectingGithub(account)}
+                        >
+                          Disconnect
+                        </Button>
+                      ) : (
+                        <Button
+                          data-testid={`github-reconnect-${account.installation_id}`}
+                          variant="default"
+                          size="sm"
+                          asChild
+                        >
+                          <a href="/v1/github/install">Reconnect</a>
+                        </Button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+            {isAdmin && (
+              <div className="py-2">
+                <Button data-testid="github-add-account" variant="outline" size="sm" asChild>
+                  <a href="/v1/github/install">Connect another account</a>
+                </Button>
+              </div>
+            )}
+            {!isAdmin && <AdminNote can="manage the GitHub connection" />}
+          </>
+        ) : (
+          <div className="flex flex-col items-start gap-3 py-1">
+            <p className="text-sm text-muted-foreground">
+              Install the GitHub App, sign in or complete SSO if GitHub asks, and choose the
+              repositories agents may read.
+            </p>
+            {isAdmin ? (
+              <Button data-testid="github-connect" variant="default" asChild>
+                <a href="/v1/github/install">Connect GitHub</a>
+              </Button>
+            ) : (
+              <AdminNote can="connect GitHub" />
+            )}
+          </div>
+        )}
+        <ConfirmDialog
+          open={!!disconnectingGithub}
+          onOpenChange={(open) => !open && setDisconnectingGithub(null)}
+          title="Disconnect GitHub?"
+          description="Agents will immediately lose access to this GitHub installation. The App stays installed on GitHub, so reconnecting can restore existing bindings."
+          confirmLabel="Disconnect"
+          onConfirm={confirmDisconnectGithub}
+          confirmTestId="github-disconnect-confirm"
+        />
+      </SettingsGroup>
 
       <SettingsGroup
         title="Slack"
@@ -192,13 +387,13 @@ export function IntegrationsSection() {
           ) : undefined
         }
       >
-        {installError && installResult && !installResult.connected && (
+        {slackInstallError && slackInstallResult && !slackInstallResult.connected && (
           <StatusPanel
-            tone={installResult.error === "canceled" ? "warning" : "danger"}
+            tone={slackInstallResult.error === "canceled" ? "warning" : "danger"}
             layout="inline"
             icon={<AlertTriangle aria-hidden />}
-            title={installError.title}
-            description={installError.description}
+            title={slackInstallError.title}
+            description={slackInstallError.description}
             action={
               <Button data-testid="slack-install-retry" variant="outline" size="sm" asChild>
                 <a href="/v1/slack/install">Try again</a>
@@ -216,7 +411,7 @@ export function IntegrationsSection() {
               <a href="/settings/slack/app/new">Set up Slack app</a>
             </Button>
           </div>
-        ) : installResult?.connected && !slack?.connected ? (
+        ) : slackInstallResult?.connected && !slack?.connected ? (
           <StatusPanel
             tone={slackIsFetching ? "neutral" : "danger"}
             layout="inline"
@@ -263,14 +458,14 @@ export function IntegrationsSection() {
                 data-testid="slack-disconnect"
                 variant="destructive-ghost"
                 size="sm"
-                onClick={() => setDisconnecting(true)}
+                onClick={() => setDisconnectingSlack(true)}
               >
                 Disconnect Slack
               </Button>
             </div>
             <ConfirmDialog
-              open={disconnecting}
-              onOpenChange={setDisconnecting}
+              open={disconnectingSlack}
+              onOpenChange={setDisconnectingSlack}
               title="Disconnect Slack?"
               description="Comments will stop posting to your channel, and replies from Slack will stop. You can reconnect anytime."
               confirmLabel="Disconnect"

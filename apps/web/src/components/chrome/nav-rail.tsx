@@ -1,6 +1,5 @@
 import { useQuery } from "@tanstack/react-query"
 import { Link, useLocation } from "@tanstack/react-router"
-import { useState } from "react"
 import type { Collection } from "@/api"
 import { Icon, type IconName } from "@/components/icons"
 import { Logo } from "@/components/shared/logo"
@@ -14,14 +13,10 @@ import {
   SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
-  SidebarMenuAction,
   SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarMenuSkeleton,
-  SidebarMenuSub,
-  SidebarMenuSubButton,
-  SidebarMenuSubItem,
   SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar"
@@ -30,7 +25,6 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { useAuth } from "@/ctx"
 import { useBootGate } from "@/lib/bootstrap"
 import { getMonogram } from "@/lib/initials"
-import { prTitle } from "@/lib/pr"
 import {
   collectionsQuery,
   summaryQuery,
@@ -43,13 +37,7 @@ import type { LibrarySearch } from "@/pages/library/types"
 import { GettingStarted } from "./getting-started"
 import { NotificationBell } from "./notification-bell"
 import { useShell } from "./shell-context"
-import { SyncChip } from "./sync-chip"
 import { UserPod } from "./user-pod"
-
-// How many of a repo's PR previews to list inline in the sidebar before collapsing
-// the rest behind a "+N more" link (which opens the repo's in-collection PR viewer).
-// Keeps the rail readable when a repo has dozens of open PRs.
-const MAX_SIDEBAR_PRS = 5
 
 // Icons carry the muted register at rest; hover and the active row re-ink them
 // (the label itself is always full-strength — sidebar-foreground).
@@ -149,18 +137,9 @@ function NavItem({
   )
 }
 
-// A collection's leading glyph, chosen by kind: a repo mirror gets the folder-git
-// glyph, a PR preview the pull-request glyph, and an ordinary (manual) collection a
-// monochrome monogram tile — its initial in a neutral chip. The uniform folder icon
-// is gone from manual collections: identical on every row, it differentiated nothing;
-// the monogram gives each collection a leading letter that also survives the collapsed
-// icon rail. Monochrome by design (see icons.tsx) — the chrome stays out of the way of
-// the user's own coloured artifacts. The letter follows the same ink register as the
-// sibling svg glyphs (ROW_ICON): muted at rest, re-inked on hover and on the active
-// row, so a manual row's glyph doesn't read louder or dimmer than a repo/PR row's.
+// A collection's leading glyph is a monochrome monogram tile. It differentiates
+// shelves without turning the navigation into a second file browser.
 function CollectionGlyph({ col }: { col: Collection }) {
-  if (col.kind === "repo") return <Icon name="repo" />
-  if (col.kind === "pr") return <Icon name="review" />
   return (
     <span
       aria-hidden="true"
@@ -171,10 +150,7 @@ function CollectionGlyph({ col }: { col: Collection }) {
   )
 }
 
-// One collection row — the common case (a repo with nested PR previews takes the
-// bespoke branch inline in NavRail). Mirrors FilterItem, but the glyph is kind-aware
-// (CollectionGlyph) rather than a fixed IconName, and it carries a tooltip so the
-// collapsed icon rail still names it.
+// One collection row. It carries a tooltip so the collapsed icon rail still names it.
 function CollectionRow({ col, active }: { col: Collection; active: boolean }) {
   const linkProps = useRowLinkProps(col.title, active, `sidebar-collection-${col.id}`, col.count)
   return (
@@ -386,16 +362,6 @@ export function NavRail() {
   // Picking a destination on mobile closes the drawer (no-op on desktop).
   const closeMobile = () => setOpenMobile(false)
 
-  // Repo collections whose nested PR previews are collapsed. Default-expanded, so the
-  // set holds only the ones the user has folded shut.
-  const [collapsedRepos, setCollapsedRepos] = useState<Set<string>>(new Set())
-  const toggleRepo = (id: string) =>
-    setCollapsedRepos((prev) => {
-      const next = new Set(prev)
-      next.has(id) ? next.delete(id) : next.add(id)
-      return next
-    })
-
   // Brandprint-pointed collections are managed in Settings → Brandprint, not here — hiding
   // them keeps the docs and their options in one place (see use-brandprint-ids).
   const brandprintIds = useBrandprintCollectionIds()
@@ -404,126 +370,7 @@ export function NavRail() {
   // Only starred collections reach the rail; the rest live in the library's Collections
   // view. Every collection used to be listed here, which grew unbounded.
   //
-  // Nest PR-preview collections under their repo. A "pr" collection with a known
-  // parentId becomes a child; everything else (repos, manual, orphaned PRs) stays
-  // top-level. Children sort newest-PR-first.
-  const childPrsByRepo = new Map<string, typeof collections>()
-  const topCollections = visibleCollections.filter((col) => {
-    if (col.kind === "pr" && col.parentId && collections.some((p) => p.id === col.parentId)) {
-      const arr = childPrsByRepo.get(col.parentId) ?? []
-      arr.push(col)
-      childPrsByRepo.set(col.parentId, arr)
-      return false
-    }
-    return true
-  })
-  for (const arr of childPrsByRepo.values())
-    arr.sort((a, b) => (b.prNumber ?? 0) - (a.prNumber ?? 0))
-  // One collection row. A repo with nested PRs keeps its bespoke collapsible row;
-  // everything else is a flat CollectionRow.
-  const starredCollections = topCollections.filter((col) => col.starred)
-
-  const renderCollection = (col: Collection) => {
-    const childPrs = childPrsByRepo.get(col.id)
-    const colActive = onLibrary && search.collection === col.id
-    if (!childPrs || childPrs.length === 0)
-      return <CollectionRow key={col.id} col={col} active={colActive} />
-    const repoCollapsed = collapsedRepos.has(col.id)
-    return (
-      <SidebarMenuItem key={col.id}>
-        <SidebarMenuButton asChild isActive={colActive} tooltip={col.title}>
-          <Link
-            to="/"
-            search={{ collection: col.id }}
-            aria-label={col.title}
-            data-testid={`sidebar-collection-${col.id}`}
-            aria-current={colActive ? "page" : undefined}
-            onClick={closeMobile}
-            // pr-12 clears both the count and the fold action.
-            className={cn(ROW_ICON, col.count > 0 && "pr-12")}
-          >
-            <CollectionGlyph col={col} />
-            <span>{col.title}</span>
-            {col.count > 0 && (
-              <SidebarMenuBadge className={cn(COUNT_BADGE, "right-7")}>
-                {col.count}
-              </SidebarMenuBadge>
-            )}
-          </Link>
-        </SidebarMenuButton>
-        <SidebarMenuAction
-          onClick={() => toggleRepo(col.id)}
-          aria-expanded={!repoCollapsed}
-          aria-label={
-            repoCollapsed
-              ? `Show ${childPrs.length} pull request${childPrs.length === 1 ? "" : "s"}`
-              : "Hide pull requests"
-          }
-          data-testid={`sidebar-collection-${col.id}-toggle`}
-          className="text-muted-foreground hover:text-foreground"
-        >
-          <Icon
-            name="caret"
-            className={cn("transition-transform", repoCollapsed && "-rotate-90")}
-          />
-        </SidebarMenuAction>
-        {!repoCollapsed && (
-          <SidebarMenuSub>
-            {childPrs.slice(0, MAX_SIDEBAR_PRS).map((pr) => {
-              const prActive = onLibrary && search.collection === pr.id
-              return (
-                <SidebarMenuSubItem key={pr.id}>
-                  <SidebarMenuSubButton asChild isActive={prActive}>
-                    <Link
-                      to="/"
-                      search={{ collection: pr.id }}
-                      data-testid={`sidebar-collection-${pr.id}`}
-                      aria-current={prActive ? "page" : undefined}
-                      onClick={closeMobile}
-                      className={cn(ROW_ICON, pr.count > 0 && "pr-7")}
-                    >
-                      <Icon name="review" />
-                      <span className="min-w-0 flex-1 truncate">
-                        {pr.prNumber
-                          ? `#${pr.prNumber} ${prTitle(pr.title, pr.prNumber)}`
-                          : prTitle(pr.title)}
-                      </span>
-                      {pr.count > 0 && (
-                        <SidebarMenuBadge className={cn(COUNT_BADGE, "top-1")}>
-                          {pr.count}
-                        </SidebarMenuBadge>
-                      )}
-                    </Link>
-                  </SidebarMenuSubButton>
-                </SidebarMenuSubItem>
-              )
-            })}
-            {childPrs.length > MAX_SIDEBAR_PRS && (
-              <SidebarMenuSubItem>
-                <SidebarMenuSubButton
-                  asChild
-                  size="sm"
-                  className="text-muted-foreground hover:text-foreground"
-                >
-                  <Link
-                    to="/"
-                    search={{ collection: col.id }}
-                    data-testid={`sidebar-collection-${col.id}-more-prs`}
-                    onClick={closeMobile}
-                  >
-                    <span>
-                      +{childPrs.length - MAX_SIDEBAR_PRS} more pull request
-                      {childPrs.length - MAX_SIDEBAR_PRS === 1 ? "" : "s"}
-                    </span>
-                  </Link>
-                </SidebarMenuSubButton>
-              </SidebarMenuSubItem>
-            )}
-          </SidebarMenuSub>
-        )}
-      </SidebarMenuItem>
-    )
-  }
+  const starredCollections = visibleCollections.filter((col) => col.starred)
 
   // Collapsed icon rail: collections don't shrink to single letters (a letter alone is a
   // cheap object glyph). Instead one "Collections" icon opens a flyout listing them by
@@ -589,17 +436,24 @@ export function NavRail() {
           <SidebarGroup>
             <SidebarGroupLabel data-testid="sidebar-starred">Starred</SidebarGroupLabel>
             <SidebarGroupContent>
-              <SidebarMenu>{starredCollections.map((col) => renderCollection(col))}</SidebarMenu>
+              <SidebarMenu>
+                {starredCollections.map((col) => (
+                  <CollectionRow
+                    key={col.id}
+                    col={col}
+                    active={onLibrary && search.collection === col.id}
+                  />
+                ))}
+              </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
         )}
 
-        {/* Tools — a running sync, notifications, and Settings. Pinned to the foot of
+        {/* Tools — notifications and Settings. Pinned to the foot of
             the scroll (mt-auto); the whitespace above sets them apart, no divider. */}
         <SidebarGroup className="mt-auto">
           <SidebarGroupContent>
             <SidebarMenu>
-              <SyncChip />
               <NotificationBell />
               <SidebarMenuItem>
                 <SidebarMenuButton asChild isActive={onSettings} tooltip="Settings">

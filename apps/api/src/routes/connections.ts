@@ -32,8 +32,7 @@ const present = (cn: ConnectionRecord) => ({
 
 // What to say when someone wires up an integration Derive isn't connected to yet. The fix
 // is the integration's own setup flow, not this endpoint — so the message points there.
-const installMissing: Record<"github_app" | "slack", string> = {
-  github_app: "connect the GitHub App first (Settings → Sync), then add it as a connection",
+const installMissing: Record<"slack", string> = {
   slack: "connect Slack to this workspace first (Settings → Slack), then add it as a connection",
 }
 
@@ -69,7 +68,7 @@ export const connectionRoutes = (ctx: AppContext) => {
       z.object({
         // Slug-shaped because it becomes the prefix of the tool names a model reads
         // (`github.get`): whitespace or a dot would make the surface ambiguous.
-        // Ignored for github_app/slack, which name themselves.
+        // Ignored for Slack, which names itself.
         toolkit: z
           .string()
           .min(1)
@@ -93,9 +92,10 @@ export const connectionRoutes = (ctx: AppContext) => {
         // credential decides what every context bound to it can reach.
         scope: z.enum(["personal", "workspace"]).default("personal"),
         // How it authenticates. "oauth" (default) = broker round trip. "secret" = paste
-        // a key. "github_app"/"slack" = give an install Derive ALREADY holds a tool
-        // surface; they store no credential of their own.
-        kind: z.enum(["oauth", "secret", "github_app", "slack"]).default("oauth"),
+        // a key. "slack" = give an install Derive ALREADY holds a tool surface; it
+        // stores no credential of its own. GitHub connections are created only by the
+        // dedicated verified installation flow under /v1/github.
+        kind: z.enum(["oauth", "secret", "slack"]).default("oauth"),
         // kind "secret" only:
         secret: z.string().min(8).max(4096).optional(),
         // nullish, not optional: GET /v1/connections renders an absent host as `base_url: null`,
@@ -107,22 +107,18 @@ export const connectionRoutes = (ctx: AppContext) => {
     if (b instanceof Response) return bail(b)
     // An install-backed connection is org infrastructure by construction — the install
     // belongs to the workspace, not to whoever happens to wire it up.
-    const scope = b.kind === "github_app" || b.kind === "slack" ? "workspace" : b.scope
+    const scope = b.kind === "slack" ? "workspace" : b.scope
     if (scope === "workspace") {
       const gate = await requireWorkspace(c, "manage")
       if (gate instanceof Response) return gate
     }
-    if (b.kind === "github_app" || b.kind === "slack") {
+    if (b.kind === "slack") {
       // Point at what the workspace already connected. Nothing is created here and no
       // OAuth is started — if the install is missing, the integration's own flow is
-      // where you go. A second App install on the same workspace is a real (if rare)
-      // case; the first is used until someone asks to choose.
-      const install =
-        b.kind === "slack"
-          ? await meta.getSlackInstall(org).then((i) => i && { ref: i.team_id, label: i.team_name })
-          : await meta
-              .listGithubInstallations(org)
-              .then(([i]) => i && { ref: i.installation_id, label: i.account_login })
+      // where you go.
+      const install = await meta
+        .getSlackInstall(org)
+        .then((i) => i && { ref: i.team_id, label: i.team_name })
       if (!install) return fail(c, 400, installMissing[b.kind])
       // One install, one connection: re-wiring is idempotent rather than piling up rows
       // that all point at the same place and can't be told apart in a picker.
@@ -139,9 +135,9 @@ export const connectionRoutes = (ctx: AppContext) => {
         // Deliberately no secret_enc: the credential is minted or read per call from the
         // install this ref points at, so there is nothing here to leak or to rotate.
         broker: "none",
-        toolkit: b.kind === "slack" ? "slack" : "github",
+        toolkit: "slack",
         broker_ref: install.ref,
-        base_url: b.kind === "slack" ? "https://slack.com/api" : "https://api.github.com",
+        base_url: "https://slack.com/api",
         scopes_label: b.scopes_label ?? install.label,
         status: "active",
       })

@@ -9,7 +9,7 @@
 // deliberately returns true for a registered agent, so the trust gate was written to let an
 // agent's comment through to exactly these channels.
 
-import type { ArtifactRecord, BlobStore, CommentRecord, MetaStore } from "@derive/core"
+import type { ArtifactRecord, CommentRecord, MetaStore } from "@derive/core"
 import type { Backplane } from "../bus"
 import type { WebhookEvent } from "../events"
 import { log } from "../log"
@@ -21,7 +21,6 @@ import {
   parseMeta,
   quoteOf,
 } from "./comments"
-import { enqueueGithubPrComment } from "./github-comments"
 import { notifyMentions, notifyThreadReplyAgents } from "./mentions"
 import { notifyCommentBells } from "./notify-comment"
 import { enqueueCommentEmails } from "./notify-email"
@@ -31,7 +30,6 @@ import { enqueueSlackMentionDms } from "./slack-dm"
 export interface CommentActionDeps {
   meta: MetaStore
   bus: Backplane
-  blobs: BlobStore
   baseUrl: string
   notify: (a: ArtifactRecord, event: WebhookEvent, data: Record<string, unknown>) => Promise<void>
   /** Drain the outbox now rather than on the next tick. Absent on runtimes without a drainer. */
@@ -53,20 +51,20 @@ export interface CommentActionDeps {
 
 /**
  * Fan one new comment out to every channel it belongs on: webhooks (comment.created, plus
- * comment.mention when anyone was reached), mention DMs, notification bells, email, the GitHub
- * PR mirror and the Slack channel mirror.
+ * comment.mention when anyone was reached), mention DMs, notification bells, email, and the
+ * Slack channel mirror.
  *
  * Best-effort by contract. Each delivery branch is isolated: a failed webhook, notification
  * write, or connected-channel enqueue is logged, but can neither undo the durable comment nor
  * prevent a later branch (especially a waiting @derive continuation) from running.
  *
- * The per-workspace Settings toggles gate the noisy channels, and the GitHub + Slack mirrors
- * additionally require a *collaborator* author. Note what that gate does and does NOT do:
+ * The per-workspace Settings toggles gate the noisy channels, and the Slack mirror additionally
+ * requires a *collaborator* author. Note what that gate does and does NOT do:
  * anonymous callers cannot comment at all — the global anon-write lockdown (app.ts) 403s them,
  * and effectiveRole clamps an anonymous link holder to viewer — so the principal this actually
  * excludes is a SIGNED-IN user holding only a commenter/editor link, with no share and no seat.
- * An invited outsider's comment stays in Derive instead of being relayed into a connected repo
- * or channel.
+ * An invited outsider's comment stays in Derive instead of being relayed into a connected Slack
+ * channel.
  */
 export const commentCreatedAction = async (
   deps: CommentActionDeps,
@@ -90,7 +88,7 @@ export const commentCreatedAction = async (
     onBehalfOf?: string | null
   },
 ): Promise<void> => {
-  const { meta, bus, blobs, baseUrl, notify } = deps
+  const { meta, bus, baseUrl, notify } = deps
   const { mentions, actorId, onBehalfOf } = opts
   const mentionIds = new Set(mentions.map((m) => m.id))
   const fanOut = async <T>(surface: string, work: () => Promise<T>): Promise<T | undefined> => {
@@ -179,10 +177,6 @@ export const commentCreatedAction = async (
       actorId,
       onBehalfOf: onBehalfOf ?? null,
     })
-  if (trustedAuthor && settings?.githubPostComments)
-    await fanOut("github", () =>
-      enqueueGithubPrComment({ meta, blobs, baseUrl }, artifact, comment),
-    )
   // No global on/off any more: a channel subscription is the switch, and resolveChannels
   // applies its event + author filters.
   if (trustedAuthor)

@@ -1,7 +1,6 @@
 import type { SortMode } from "@derive/core"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useNavigate, useSearch } from "@tanstack/react-router"
-import { FolderTree, List } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 import { type Artifact, api } from "@/api"
 import { useShell } from "@/components/chrome/shell-context"
@@ -14,7 +13,6 @@ import { PageShell } from "@/components/shared/page-shell"
 import { SearchField } from "@/components/shared/search-field"
 import { Spinner } from "@/components/shared/spinner"
 import { Button } from "@/components/ui/button"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { useAuth } from "@/ctx"
 import { useBootGate } from "@/lib/bootstrap"
 import {
@@ -34,14 +32,12 @@ import { useFollows } from "@/lib/use-follows"
 import { usePrefetchArtifact } from "@/lib/use-prefetch-artifact"
 import { refFor } from "../artifact/parse-ref"
 import { ArtifactGrid } from "./artifact-grid"
-import { ArtifactListRow, ListShell } from "./artifact-list"
 import { BrandprintNudge } from "./brandprint-nudge"
 import { CollectionBar } from "./collection-bar"
 import { CollectionFolders, NewFolderControl } from "./collection-folders"
 import { CollectionsView } from "./collections-view"
 import { DisplayMenu } from "./display-menu"
 import { FilterMenu } from "./filter-menu"
-import { FolderGroups } from "./folder-groups"
 import { FollowingStrip } from "./following-strip"
 import { HowItWorks } from "./how-it-works"
 import { LibraryDropZone } from "./library-drop-zone"
@@ -49,14 +45,12 @@ import { LibrarySkeleton } from "./library-skeleton"
 import { NewArtifactButton } from "./new-artifact-button"
 import { libraryFeedParams } from "./params"
 import { LibraryCollectionsDialog } from "./quick-organize"
-import { byRecency } from "./recency"
-import { RepoPullRequests } from "./repo-pull-requests"
 import { SelectionBar } from "./selection-bar"
 import { ShareCollectionDialog } from "./share-collection-dialog"
 import { DEFAULT_SORT } from "./sort"
 import type { Filter, LibrarySearch, LibraryView } from "./types"
 import { useLibraryFeed } from "./use-library-feed"
-import { type LibrarySelection, useLibrarySelection } from "./use-library-selection"
+import { useLibrarySelection } from "./use-library-selection"
 import { ViewSwitch } from "./view-switch"
 
 // Shared library body for the home and named feed routes. The route selects the base feed;
@@ -171,16 +165,10 @@ function LibraryBody({ view }: { view: LibraryView }) {
   // Hold the skeleton back ~150 ms so a cache-warm / fast first load flashes nothing.
   const showSkeleton = useDelayedPending(isPending)
 
-  // A synced repo/PR collection gets the folder/flat treatment. Derive this from the
-  // collection's KNOWN kind (collections are preloaded in the route loader), NOT from
-  // whether a loaded item happens to carry a source_path — so the view can't render as a
-  // grid and then flip to flat/folders once the first synced item lands.
   const activeCollection =
     filter.kind === "collection" ? collections.find((c) => c.id === filter.id) : undefined
-  const isSyncedCollection = activeCollection?.kind === "repo" || activeCollection?.kind === "pr"
-  // In-collection folders (manual collections only; repos use the path-based FolderGroups).
-  // Fetch the folder list + artifact→folder assignment map so the view can group.
-  const isManualCollection = filter.kind === "collection" && !isSyncedCollection
+  // Fetch a collection's folder list + artifact→folder assignment map so the view can group.
+  const isManualCollection = filter.kind === "collection"
   const { data: colFolders } = useQuery({
     ...collectionFoldersQuery(filter.kind === "collection" ? filter.id : ""),
     enabled: !!me && isManualCollection,
@@ -191,11 +179,7 @@ function LibraryBody({ view }: { view: LibraryView }) {
   const canManageFolders =
     isManualCollection &&
     (activeCollection?.my_role === "editor" || activeCollection?.my_role === "owner")
-  const recencyItems = isSyncedCollection ? [...items].sort(byRecency) : items
-
-  // Folder-vs-flat is remembered PER COLLECTION (a JSON map under the one storage key),
-  // so opening a different synced repo starts at its own preference (flat by default)
-  // instead of inheriting the last collection's toggle.
+  // Folder grouping is remembered per collection.
   const [folderPrefs, setFolderPrefs] = useState<Record<string, boolean>>(() => {
     if (typeof window === "undefined") return {}
     try {
@@ -238,7 +222,6 @@ function LibraryBody({ view }: { view: LibraryView }) {
       replace: true,
     })
   const openContext = filter.kind === "collection" ? { collection: filter.id } : {}
-  const showFolders = filter.kind === "collection" ? !!folderPrefs[filter.id] : false
   // A manual collection that HAS folders defaults to the grouped folder view; the
   // "Group by folder" (per-collection pref, same storage as the synced view's toggle);
   // default on when folders exist.
@@ -274,13 +257,11 @@ function LibraryBody({ view }: { view: LibraryView }) {
     setShowFolders(on)
     if (!on) setFolderAnchor(undefined)
   }
-  // Pull the WHOLE collection when the sort + grouping need every doc: always for a synced
-  // repo/PR, and for a manual collection while its folder view is active (so buckets +
-  // counts reflect every item, not just the first page). Collections are finite and
-  // scoping keeps them small.
+  // Pull the whole collection while its folder view is active so buckets and counts
+  // reflect every item, not just the first page.
   useEffect(() => {
-    if ((isSyncedCollection || foldersView) && hasNextPage && !isFetchingNextPage) fetchNextPage()
-  }, [isSyncedCollection, foldersView, hasNextPage, isFetchingNextPage, fetchNextPage])
+    if (foldersView && hasNextPage && !isFetchingNextPage) fetchNextPage()
+  }, [foldersView, hasNextPage, isFetchingNextPage, fetchNextPage])
 
   const renameCol = useApiMutation({
     mutationFn: ({ id, title }: { id: string; title: string }) => api.renameCollection(id, title),
@@ -338,32 +319,9 @@ function LibraryBody({ view }: { view: LibraryView }) {
     const { author: _drop, ...rest } = search
     nav({ to: "/", search: rest })
   }
-  const { follows, isFollowingAuthor, toggleAuthor, unfollow } = useFollows()
-  const followingAuthor = !!search.author && isFollowingAuthor(search.author)
+  const { follows, unfollow } = useFollows()
 
-  // The in-collection PR viewer: on a repo mirror it lists that repo's open PR previews;
-  // on a PR preview it lists the siblings (so you can hop between PRs).
-  const prParentId =
-    activeCollection?.kind === "repo"
-      ? activeCollection.id
-      : activeCollection?.kind === "pr"
-        ? activeCollection.parentId
-        : undefined
-  const repoPrs = prParentId
-    ? collections
-        .filter((c) => c.kind === "pr" && c.parentId === prParentId)
-        .sort((a, b) => (b.prNumber ?? 0) - (a.prNumber ?? 0))
-    : []
-  // Where this collection sits. A PR preview genuinely nests under its repo mirror, so
-  // the trail says so; everything else is one level under the library.
-  const parentRepo =
-    activeCollection?.kind === "pr" && activeCollection.parentId
-      ? collections.find((c) => c.id === activeCollection.parentId)
-      : undefined
-  const collectionAncestors = [
-    { label: "Library" },
-    ...(parentRepo ? [{ label: parentRepo.title, collection: parentRepo.id }] : []),
-  ]
+  const collectionAncestors = [{ label: "Library" }]
 
   const collectionTitle =
     activeCollection?.title ?? feed.data?.pages?.[0]?.collection?.title ?? "Collection"
@@ -502,7 +460,6 @@ function LibraryBody({ view }: { view: LibraryView }) {
               onOpenChange={setNewFolderOpen}
             />
           )}
-          <RepoPullRequests prs={repoPrs} repo={activeCollection?.repo} activeId={filter.id} />
         </>
       ) : (
         <>
@@ -519,40 +476,16 @@ function LibraryBody({ view }: { view: LibraryView }) {
             </h1>
             <span className="min-w-4 flex-1" />
             {search.author && (
-              <>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  data-testid="library-author-filter-clear"
-                  title={`Clear author filter: ${search.author}`}
-                  onClick={clearAuthor}
-                >
-                  <Icon name="user" size={16} /> {search.author}
-                  <Icon name="close" size={16} />
-                </Button>
-                <Button
-                  variant={followingAuthor ? "secondary" : "outline"}
-                  size="sm"
-                  data-testid={`library-follow-author-${search.author}`}
-                  aria-pressed={followingAuthor}
-                  title={
-                    followingAuthor
-                      ? `Unfollow @${search.author}`
-                      : `Follow @${search.author} to see their changes in your feed`
-                  }
-                  onClick={() => search.author && toggleAuthor(search.author)}
-                >
-                  {followingAuthor ? (
-                    <>
-                      <Icon name="check" size={16} /> Following
-                    </>
-                  ) : (
-                    <>
-                      <Icon name="following" size={16} /> Follow @{search.author}
-                    </>
-                  )}
-                </Button>
-              </>
+              <Button
+                variant="outline"
+                size="sm"
+                data-testid="library-author-filter-clear"
+                title={`Clear author filter: ${search.author}`}
+                onClick={clearAuthor}
+              >
+                <Icon name="user" size={16} /> {search.author}
+                <Icon name="close" size={16} />
+              </Button>
             )}
             {filterField}
             {/* Feeds have no view row, so Display stays up here for them; home's moves
@@ -669,25 +602,6 @@ function LibraryBody({ view }: { view: LibraryView }) {
           ) : (
             <EmptyState {...emptyProps} />
           )
-        ) : isSyncedCollection ? (
-          <SyncedCollection
-            items={recencyItems}
-            showFolders={showFolders}
-            onToggle={setShowFolders}
-            hasNextPage={!!hasNextPage}
-            isFetchingNextPage={isFetchingNextPage}
-            onLoadMore={() => fetchNextPage()}
-            onOpen={(a) =>
-              nav({ to: "/artifacts/$ref", params: { ref: refFor(a) }, search: openContext })
-            }
-            onToggleFavorite={toggleFavorite}
-            onPickAuthor={pickAuthor}
-            onAddToCollection={setPendingCollections}
-            onArchive={archiveArtifact}
-            onDelete={setPendingDelete}
-            onPrefetch={(a) => prefetch(a.short_id)}
-            selection={selection}
-          />
         ) : foldersView && isManualCollection && folders.length > 0 ? (
           // An organized manual collection, grouped. Grouping is DECOUPLED from
           // presentation: the Display menu's "Group by folder" flips grouping on/off, and
@@ -781,106 +695,6 @@ function LibraryBody({ view }: { view: LibraryView }) {
         />
       )}
     </PageShell>
-  )
-}
-
-// A mirrored repo/PR collection: a flat, most-recently-updated list by default, with the
-// folder tree available behind a toggle (off by default). Split out of the render switch
-// so the body reads top-to-bottom.
-function SyncedCollection({
-  items,
-  showFolders,
-  onToggle,
-  hasNextPage,
-  isFetchingNextPage,
-  onLoadMore,
-  onOpen,
-  onToggleFavorite,
-  onPickAuthor,
-  onAddToCollection,
-  onArchive,
-  onDelete,
-  onPrefetch,
-  selection,
-}: {
-  items: Artifact[]
-  showFolders: boolean
-  onToggle: (on: boolean) => void
-  hasNextPage: boolean
-  isFetchingNextPage: boolean
-  onLoadMore: () => void
-  onOpen: (a: Artifact) => void
-  onToggleFavorite: (a: Artifact) => void
-  onPickAuthor: (login: string) => void
-  onAddToCollection: (a: Artifact) => void
-  onArchive: (a: Artifact) => void
-  onDelete: (a: Artifact) => void
-  onPrefetch: (a: Artifact) => void
-  selection?: LibrarySelection
-}) {
-  return (
-    <div className="flex flex-col gap-3">
-      <ToggleGroup
-        type="single"
-        variant="outline"
-        size="sm"
-        aria-label="View"
-        className="self-end"
-        value={showFolders ? "folders" : "list"}
-        onValueChange={(v) => v && onToggle(v === "folders")}
-      >
-        <ToggleGroupItem value="list" aria-label="List" data-testid="library-view-list">
-          <List aria-hidden />
-          List
-        </ToggleGroupItem>
-        <ToggleGroupItem value="folders" aria-label="Folders" data-testid="library-view-folders">
-          <FolderTree aria-hidden />
-          Folders
-        </ToggleGroupItem>
-      </ToggleGroup>
-      {showFolders ? (
-        <FolderGroups
-          items={items}
-          hasNextPage={hasNextPage}
-          isFetchingNextPage={isFetchingNextPage}
-          onLoadMore={onLoadMore}
-          onOpen={onOpen}
-          onToggleFavorite={onToggleFavorite}
-          onPickAuthor={onPickAuthor}
-          onAddToCollection={onAddToCollection}
-          onArchive={onArchive}
-          onDelete={onDelete}
-          onPrefetch={onPrefetch}
-          selection={selection}
-        />
-      ) : (
-        <ListShell>
-          <div data-testid="library-flat-list">
-            {items.map((a) => (
-              <ArtifactListRow
-                key={a.short_id}
-                artifact={a}
-                onOpen={() => onOpen(a)}
-                onToggleFavorite={() => onToggleFavorite(a)}
-                onPickAuthor={onPickAuthor}
-                onAddToCollection={() => onAddToCollection(a)}
-                onArchive={() => onArchive(a)}
-                onDelete={() => onDelete(a)}
-                onPrefetch={() => onPrefetch(a)}
-                selected={selection?.selected.has(a.short_id)}
-                selectionActive={selection?.active}
-                onSelect={selection ? (shift) => selection.toggle(a.short_id, shift) : undefined}
-              />
-            ))}
-          </div>
-          {(hasNextPage || isFetchingNextPage) && (
-            <div className="flex justify-center py-2">
-              <Spinner />
-            </div>
-          )}
-        </ListShell>
-      )}
-    </div>
   )
 }
 
