@@ -59,6 +59,5 @@ const SERVER_PREFIXES = ["/artifacts/", "/settings/github/", "/settings/slack/",
 /** Paths that need app logic before a shell or page can be selected. */
 export const isServerRenderedPath = (path: string): boolean =>
   SERVER_EXACT.has(path) ||
-  path === "/settings/github" ||
   path === "/settings/slack" ||
   SERVER_PREFIXES.some((prefix) => path.startsWith(prefix))
