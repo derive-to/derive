@@ -40,6 +40,12 @@ const THEME_BOOT = `(function(){try{var t=localStorage.getItem(${JSON.stringify(
   STORAGE_KEYS.theme,
 )});if(t!=="light"&&t!=="dark")t=matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light";var e=document.documentElement;e.classList.remove("light","dark");e.classList.add(t)}catch(e){}})()`
 
+// Google and other crawlers see the dark, light-surface-safe hrefs in the raw
+// document. Once the browser has parsed those links, swap to the white variants
+// only when its own chrome is dark. This follows the same split GitHub uses:
+// crawler-safe defaults in HTML, browser-only theme selection afterwards.
+const FAVICON_BOOT = `(function(){var m=matchMedia("(prefers-color-scheme: light)");var a=function(){document.querySelectorAll("[data-theme-favicon]").forEach(function(e){var l=e.getAttribute("data-light-href")||e.getAttribute("href");if(l&&!e.getAttribute("data-light-href"))e.setAttribute("data-light-href",l);var d=e.getAttribute("data-dark-href");if(l)e.setAttribute("href",m.matches?l:(d||l))})};a();m.addEventListener("change",a)})()`
+
 // Pre-paint sibling to THEME_BOOT: tag <html> with which boot frame to reserve —
 // before the shell paints — from the persisted auth hint AND the entry path. A
 // returning signed-in user (hint set) on an app route gets the rail silhouette;
@@ -114,10 +120,21 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { name: "robots", content: "noindex,nofollow" },
     ],
     links: [
-      // Theme-aware: dark glyph on light browser chrome, light on dark
-      // (prefers-color-scheme media query inside the SVG).
-      { rel: "icon", type: "image/svg+xml", href: "/brand/favicon.svg" },
-      { rel: "icon", type: "image/png", href: "/brand/favicon.png" },
+      {
+        rel: "icon",
+        type: "image/png",
+        sizes: "512x512",
+        href: "/brand/favicon.png",
+        "data-theme-favicon": "",
+        "data-dark-href": "/brand/favicon-dark.png",
+      },
+      {
+        rel: "icon",
+        type: "image/svg+xml",
+        href: "/brand/favicon.svg",
+        "data-theme-favicon": "",
+        "data-dark-href": "/brand/favicon-dark.svg",
+      },
       { rel: "apple-touch-icon", href: "/brand/favicon.png" },
       // Fonts are self-hosted via @fontsource-variable imports in globals.css —
       // Geist Sans + Geist Mono (both weight-only), so no third-party request.
@@ -224,6 +241,10 @@ function RootDocument({ children }: { children: ReactNode }) {
           dangerouslySetInnerHTML={{ __html: DATA_BOOT }}
         />
         <HeadContent />
+        <script
+          // biome-ignore lint/security/noDangerouslySetInnerHtml: static favicon paths only, no user input.
+          dangerouslySetInnerHTML={{ __html: FAVICON_BOOT }}
+        />
       </head>
       <body>
         {children}

@@ -80,6 +80,29 @@ test("docs search loads the local browser index", async ({ page }) => {
   expect(violations).toEqual([])
 })
 
+test("docs favicons keep crawler-safe defaults and follow browser chrome", async ({ page }) => {
+  await page.emulateMedia({ colorScheme: "light" })
+  await page.goto(`${docsOrigin}/`)
+  await expect(page.locator('link[type="image/png"][data-theme-favicon]')).toHaveAttribute(
+    "href",
+    "/favicon.png",
+  )
+  await expect(page.locator('link[type="image/svg+xml"][data-theme-favicon]')).toHaveAttribute(
+    "href",
+    "/favicon.svg",
+  )
+
+  await page.emulateMedia({ colorScheme: "dark" })
+  await expect(page.locator('link[type="image/png"][data-theme-favicon]')).toHaveAttribute(
+    "href",
+    "/favicon-dark.png",
+  )
+  await expect(page.locator('link[type="image/svg+xml"][data-theme-favicon]')).toHaveAttribute(
+    "href",
+    "/favicon-dark.svg",
+  )
+})
+
 test("docs pages expose and copy their canonical Markdown", async ({ context, page }, testInfo) => {
   const markdown = await page.request.get(`${docsOrigin}/start/first-artifact.md`)
   expect(markdown.ok()).toBe(true)

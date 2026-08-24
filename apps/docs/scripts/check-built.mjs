@@ -34,6 +34,10 @@ const required = [
   "llms-full.txt",
   "sitemap-index.xml",
   "pagefind/pagefind.js",
+  "favicon.svg",
+  "favicon.png",
+  "favicon-dark.svg",
+  "favicon-dark.png",
 ]
 for (const path of required) if (!existsSync(join(DIST, path))) fail(`missing build output ${path}`)
 
@@ -68,6 +72,12 @@ for (const path of htmlFiles) {
     fail(`${label} has no docs.derive.to canonical URL`)
   if (label === "404.html" && !/name="robots" content="noindex/.test(html))
     fail("404.html must be noindex")
+  if (!html.includes('href="/favicon.png" type="image/png" sizes="512x512"'))
+    fail(`${label} has no dark PNG favicon default`)
+  if (!html.includes('href="/favicon.svg" type="image/svg+xml"'))
+    fail(`${label} has no dark SVG favicon default`)
+  if (!html.includes('data-dark-href="/favicon-dark.svg"'))
+    fail(`${label} has no browser dark-theme favicon`)
   const expectedMarkdownHref =
     label === "index.html"
       ? "/index.md"
