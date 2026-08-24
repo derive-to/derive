@@ -209,6 +209,15 @@ writeFileSync(
 
 mkdirSync(join(PUBLIC_ROOT, "fonts"), { recursive: true })
 copyFileSync(join(REPO_ROOT, "apps/web/public/brand/favicon.svg"), join(PUBLIC_ROOT, "favicon.svg"))
+copyFileSync(join(REPO_ROOT, "apps/web/public/brand/favicon.png"), join(PUBLIC_ROOT, "favicon.png"))
+copyFileSync(
+  join(REPO_ROOT, "apps/web/public/brand/favicon-dark.svg"),
+  join(PUBLIC_ROOT, "favicon-dark.svg"),
+)
+copyFileSync(
+  join(REPO_ROOT, "apps/web/public/brand/favicon-dark.png"),
+  join(PUBLIC_ROOT, "favicon-dark.png"),
+)
 copyFileSync(
   join(REPO_ROOT, "apps/web/public/brand/fonts/geist.woff2"),
   join(PUBLIC_ROOT, "fonts/geist.woff2"),
