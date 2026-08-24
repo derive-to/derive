@@ -35,7 +35,6 @@ import type {
   FollowRecord,
   GitHubAppRecord,
   GitHubInstallationRecord,
-  GithubAuthor,
   GithubUserMapping,
   InvitationRecord,
   LinkRole,
@@ -72,7 +71,6 @@ import type {
   NewPlan,
   NewRenderJob,
   NewReport,
-  NewRepoSource,
   NewReviewRound,
   NewRun,
   NewSession,
@@ -97,7 +95,6 @@ import type {
   RenderJobStatus,
   ReportRecord,
   ReportState,
-  RepoSourceRecord,
   ReviewRoundRecord,
   Role,
   RunRecord,
@@ -198,7 +195,6 @@ import {
   plan,
   renderJob,
   report,
-  repoSource,
   reviewRound,
   run,
   sessionMessage,
@@ -221,7 +217,6 @@ import {
   artifactListConditions,
   artifactListOrder,
   artifactSortExpr,
-  collectManagedIds,
   parseOAuthScopes,
   parseOrgSettings,
 } from "./repos"
@@ -273,7 +268,6 @@ export const schema = {
   folder,
   templateLibrary,
   templateLibraryEntry,
-  repoSource,
   githubApp,
   githubInstallation,
   domain,
@@ -319,7 +313,6 @@ const _schemaShapes: Shapes<typeof schema> = {
   folder: true,
   templateLibrary: true,
   templateLibraryEntry: true,
-  repoSource: true,
   githubApp: true,
   githubInstallation: true,
   domain: true,
@@ -483,9 +476,7 @@ const collectionsOverviewSql = (
             GROUP BY ci2.collection_id
          ) ci ON ci.collection_id = c.id
          WHERE c.org_id = $1
-       ) t
-       UNION ALL
-       SELECT 'source', row_to_json(r) FROM repo_source r WHERE r.org_id = $1${
+       ) t${
          !viewer
            ? ""
            : `
@@ -534,7 +525,6 @@ const COLLECTIONS_OVERVIEW_SQL = collectionsOverviewSql()
 type OverviewRow = { kind: string; doc: unknown }
 const mapOverviewRows = (rows: OverviewRow[]): CollectionsOverviewRead => {
   const collections: (CollectionRecord & { count: number })[] = []
-  const sources: RepoSourceRecord[] = []
   const starred: string[] = []
   const workedIn: { id: string; at: string }[] = []
   const previews: Record<string, CollectionPreview[]> = {}
@@ -573,9 +563,7 @@ const mapOverviewRows = (rows: OverviewRow[]): CollectionsOverviewRead => {
         break
       }
       default:
-        // 'source'. Named explicitly rather than left as the catch-all: five arms in,
-        // a typo'd discriminator should drop the row, not land it in sources.
-        if (r.kind === "source") sources.push(r.doc as RepoSourceRecord)
+        break
     }
   }
   collections.sort((a, b) =>
@@ -585,7 +573,7 @@ const mapOverviewRows = (rows: OverviewRow[]): CollectionsOverviewRead => {
   // guarantee once the arms are merged — re-apply the strip's order here.
   for (const bucket of Object.values(previews))
     bucket.sort((a, b) => b.updated_at.localeCompare(a.updated_at) || b.id.localeCompare(a.id))
-  return { collections, sources, starred, workedIn, previews, previewBylines }
+  return { collections, starred, workedIn, previews, previewBylines }
 }
 
 export class PgMetaStore implements MetaStore {
@@ -724,29 +712,6 @@ export class PgMetaStore implements MetaStore {
   async getArtifactsByIds(ids: string[]): Promise<ArtifactRecord[]> {
     if (ids.length === 0) return []
     return this.db.select().from(artifact).where(inArray(artifact.id, ids))
-  }
-
-  async siblingsBySourcePaths(
-    orgId: string,
-    paths: string[],
-  ): Promise<{ short_id: string; slug: string | null; source_path: string }[]> {
-    if (paths.length === 0) return []
-    const rows = await this.db
-      .select({
-        short_id: artifact.short_id,
-        slug: artifact.slug,
-        source_path: artifact.source_path,
-      })
-      .from(artifact)
-      .where(
-        and(
-          eq(artifact.org_id, orgId),
-          inArray(artifact.source_path, paths),
-          isNull(artifact.removed_at),
-          isNull(artifact.archived_at),
-        ),
-      )
-    return rows.filter((r): r is typeof r & { source_path: string } => r.source_path != null)
   }
 
   async addVersion(artifactId: string, v: NewVersion): Promise<VersionRecord> {
@@ -924,8 +889,8 @@ export class PgMetaStore implements MetaStore {
 
   async artifactDetail(opts: ArtifactDetailOpts): Promise<ArtifactDetail> {
     const { artifactId, orgId, viewerId } = opts
-    // Seven sequential ~80ms round trips (versions, tags, collection ids,
-    // open threads, favorite, settings, managed) collapsed into one UNION ALL. Whole
+    // Six sequential ~80ms round trips (versions, tags, collection ids,
+    // open threads, favorite, settings) collapsed into one UNION ALL. Whole
     // rows ride as JSON in `doc` so branches with different column sets can share the
     // union; the scalar branches carry a count or a marker row.
     // The byline arm reads Better Auth's `user` table, which this package's schema does
@@ -945,9 +910,7 @@ export class PgMetaStore implements MetaStore {
        SELECT 'favorite', to_json(count(*)::int) FROM artifact_favorite f
         WHERE f.artifact_id = $1 AND $2::text IS NOT NULL AND f.user_id = $2
        UNION ALL
-       SELECT 'settings', to_json(s.settings) FROM org_settings s WHERE s.org_id = $3
-       UNION ALL
-       SELECT 'source', to_json(r.files) FROM repo_source r WHERE r.org_id = $3`
+       SELECT 'settings', to_json(s.settings) FROM org_settings s WHERE s.org_id = $3`
     // The live rows behind every author_id on this artifact and its versions. This was
     // its own resolveUserBylines round trip at the end of the record route, sequential
     // with everything above it; as an arm it costs nothing extra.
@@ -970,7 +933,6 @@ export class PgMetaStore implements MetaStore {
     const bylines: { id: string; name: string | null; username: string | null }[] = []
     const tags: string[] = []
     const collectionIds: string[] = []
-    const sourceFiles: { files: string }[] = []
     let openThreads = 0
     let favorite = false
     let settingsJson: string | null = null
@@ -997,9 +959,6 @@ export class PgMetaStore implements MetaStore {
         case "settings":
           settingsJson = (r.doc as string | null) ?? null
           break
-        case "source":
-          if (typeof r.doc === "string") sourceFiles.push({ files: r.doc })
-          break
       }
     }
     // Same orderings the individual queries guaranteed: versions ascending by n (the
@@ -1015,7 +974,6 @@ export class PgMetaStore implements MetaStore {
       openThreads,
       favorite,
       settings: parseOrgSettings(settingsJson),
-      managed: collectManagedIds(sourceFiles).includes(artifactId),
     }
   }
 
@@ -1155,7 +1113,7 @@ export class PgMetaStore implements MetaStore {
   // The BACKLINK scan: the inversion of $links. Same join as above, two more predicates.
   //
   // The LIKE NARROWS, the caller CONFIRMS by parsing — a substring match is not proof (the
-  // same reasoning as isManagedArtifact). The quote anchoring that makes it exact today
+  // same reasoning as any substring-narrowed index). The quote anchoring that makes it exact today
   // rests on facts in three other files: the slot is $links, the deriver emits only
   // [0-9a-z]{6,12}, and the caller passes no metacharacter. A fourth deriver breaks two of
   // them, and the confirm is what makes that a non-event rather than a wrong answer.
@@ -1992,7 +1950,7 @@ export class PgMetaStore implements MetaStore {
     }
     const arm: Record<string, unknown> = {}
     for (const r of rows) arm[r.arm] = r.doc
-    const { collections, sources, starred, workedIn, previews, previewBylines } = mapOverviewRows(
+    const { collections, starred, workedIn, previews, previewBylines } = mapOverviewRows(
       (arm.overview as OverviewRow[] | null) ?? [],
     )
     // maxRole, not last-wins: the two arms both answer for a collection you are an
@@ -2005,7 +1963,6 @@ export class PgMetaStore implements MetaStore {
     return {
       summary: mapSummaryRows((arm.summary as SummaryRow[] | null) ?? []),
       collections,
-      sources,
       starred,
       workedIn,
       previews,
@@ -2831,12 +2788,12 @@ export class PgMetaStore implements MetaStore {
         ),
       )
   }
-  // Author/path follows in this workspace PLUS the user's global people-follows (org "*").
-  listFollows(userId: string, orgId: string): Promise<FollowRecord[]> {
+  // A user's global people follows.
+  listFollows(userId: string, _orgId: string): Promise<FollowRecord[]> {
     return this.db
       .select()
       .from(follow)
-      .where(and(eq(follow.user_id, userId), inArray(follow.org_id, [orgId, GLOBAL_FOLLOW_ORG])))
+      .where(and(eq(follow.user_id, userId), eq(follow.org_id, GLOBAL_FOLLOW_ORG)))
       .orderBy(desc(follow.created_at), desc(follow.id))
   }
   // GitHub numeric ids a set of Derive users linked (raw account read; [] if absent).
@@ -2854,40 +2811,21 @@ export class PgMetaStore implements MetaStore {
       return []
     }
   }
-  // The "following" feed id set: live artifacts whose current author is a followed login
-  // (case-insensitive), whose source_path starts with a followed path prefix, OR whose
-  // author/path follows match within the active workspace; people follows match a
-  // followed person's PUBLIC work across ANY workspace. Mirrors the sqlite path.
+  // The "following" feed id set: public work authored by followed people.
   async followedArtifactIds(userId: string, orgId: string): Promise<string[]> {
-    const follows = await this.listFollows(userId, orgId)
-    const logins = follows.filter((f) => f.kind === "author").map((f) => f.target.toLowerCase())
-    const prefixes = follows.filter((f) => f.kind === "path").map((f) => f.target)
-    const people = follows.filter((f) => f.kind === "user").map((f) => f.target)
-    if (logins.length === 0 && prefixes.length === 0 && people.length === 0) return []
-    const branches = []
-    const wsConds = []
-    if (logins.length > 0) wsConds.push(inArray(sql`lower(${artifact.author_login})`, logins))
-    for (const p of prefixes) {
-      const escaped = p.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_")
-      wsConds.push(sql`${artifact.source_path} like ${`${escaped}%`} escape '\\'`)
-    }
-    if (wsConds.length > 0) {
-      const wsMatch = wsConds.length === 1 ? wsConds[0] : or(...wsConds)
-      if (wsMatch) branches.push(and(eq(artifact.org_id, orgId), wsMatch))
-    }
-    if (people.length > 0) {
-      const authorConds = [inArray(artifact.author_id, people)]
-      const ghIds = (await this.githubIdsForUsers(people)).map((g) => g.toLowerCase())
-      if (ghIds.length > 0) authorConds.push(inArray(sql`lower(${artifact.author_gh_id})`, ghIds))
-      const authored = authorConds.length === 1 ? authorConds[0] : or(...authorConds)
-      if (authored) branches.push(and(eq(artifact.listed, "public"), authored))
-    }
-    if (branches.length === 0) return []
-    const match = branches.length === 1 ? branches[0] : or(...branches)
+    const people = (await this.listFollows(userId, orgId)).map((f) => f.target)
+    if (people.length === 0) return []
     const rows = await this.db
       .select({ id: artifact.id })
       .from(artifact)
-      .where(and(isNull(artifact.removed_at), isNull(artifact.archived_at), match))
+      .where(
+        and(
+          isNull(artifact.removed_at),
+          isNull(artifact.archived_at),
+          eq(artifact.listed, "public"),
+          inArray(artifact.author_id, people),
+        ),
+      )
     return rows.map((r) => r.id)
   }
   // ---- People profiles: works, shared workspaces, follower/following -----
@@ -3131,11 +3069,7 @@ export class PgMetaStore implements MetaStore {
     orgId: string,
     viewer?: CollectionsViewer,
   ): Promise<CollectionsOverviewRead> {
-    // The list route used to run listCollections + listRepoSources as two independent
-    // org-scoped round trips; a UNION ALL discriminated by `kind` answers both in one,
-    // each branch's full row carried as JSON so the shapes don't have to be reconciled
-    // into a single column set. The viewer arms join the same union rather than adding
-    // three more trips.
+    // Viewer decoration joins the same union rather than adding separate round trips.
     // Statement text shared with bootstrap() — see WORKSPACE_SUMMARY_SQL's note.
     const params = viewer ? [orgId, viewer.userId, viewer.activeSince, viewer.previewPer] : [orgId]
     const run = (bylines: boolean) =>
@@ -3524,67 +3458,6 @@ export class PgMetaStore implements MetaStore {
     await this.db.delete(templateLibraryEntry).where(eq(templateLibraryEntry.id, id))
   }
 
-  // ---- GitHub sync sources -----------------------------------------------
-  async createRepoSource(s: NewRepoSource): Promise<RepoSourceRecord> {
-    const rows = await this.db.insert(repoSource).values(s).returning()
-    return one(rows)
-  }
-  async getRepoSource(id: string, orgId?: string): Promise<RepoSourceRecord | null> {
-    const rows = await this.db
-      .select()
-      .from(repoSource)
-      .where(and(eq(repoSource.id, id), orgId ? eq(repoSource.org_id, orgId) : undefined))
-    return rows[0] ?? null
-  }
-  async listRepoSources(orgId: string): Promise<RepoSourceRecord[]> {
-    return this.db
-      .select()
-      .from(repoSource)
-      .where(eq(repoSource.org_id, orgId))
-      .orderBy(desc(repoSource.created_at))
-  }
-  async updateRepoSourceSync(
-    id: string,
-    fields: { files: string; last_synced_at: string; last_status: string },
-  ): Promise<void> {
-    await this.db.update(repoSource).set(fields).where(eq(repoSource.id, id))
-  }
-  async setRepoSourceProgress(id: string, progress: string | null): Promise<void> {
-    await this.db.update(repoSource).set({ progress }).where(eq(repoSource.id, id))
-  }
-  async deleteRepoSource(id: string, orgId: string): Promise<void> {
-    await this.db.delete(repoSource).where(and(eq(repoSource.id, id), eq(repoSource.org_id, orgId)))
-  }
-  async isManagedArtifact(orgId: string, artifactId: string): Promise<boolean> {
-    // The managed ids live inside each repo source's `files` JSON, so there is no column to
-    // filter on — but a LIKE narrows to the few sources that could contain this id, instead
-    // of reading every manifest in the workspace to answer one boolean. The parse then
-    // CONFIRMS: a substring match is not proof (an id can appear inside a longer one, or in
-    // some other field), so the answer stays identical to managedArtifactIds().includes().
-    const rows = await this.db
-      .select({ files: repoSource.files })
-      .from(repoSource)
-      .where(and(eq(repoSource.org_id, orgId), like(repoSource.files, `%${artifactId}%`)))
-    return collectManagedIds(rows).includes(artifactId)
-  }
-  async managedArtifactIds(orgId: string): Promise<string[]> {
-    const rows = await this.db
-      .select({ files: repoSource.files })
-      .from(repoSource)
-      .where(eq(repoSource.org_id, orgId))
-    return collectManagedIds(rows)
-  }
-  async listRepoSourcesByInstallation(installationId: string): Promise<RepoSourceRecord[]> {
-    return this.db
-      .select()
-      .from(repoSource)
-      .where(eq(repoSource.installation_id, installationId))
-      .orderBy(desc(repoSource.created_at))
-  }
-  async listSyncingRepoSources(): Promise<RepoSourceRecord[]> {
-    return this.db.select().from(repoSource).where(isNotNull(repoSource.progress))
-  }
-
   // ---- GitHub App (instance credentials + per-workspace installations) -----
   async getGithubApp(): Promise<GitHubAppRecord | null> {
     const rows = await this.db.select().from(githubApp).where(eq(githubApp.id, "default"))
@@ -3951,11 +3824,6 @@ export class PgMetaStore implements MetaStore {
       .from(githubInstallation)
       .where(eq(githubInstallation.org_id, orgId))
       .orderBy(desc(githubInstallation.created_at))
-  }
-  async deleteGithubInstallation(installationId: string): Promise<void> {
-    await this.db
-      .delete(githubInstallation)
-      .where(eq(githubInstallation.installation_id, installationId))
   }
 
   // ---- Domains (hostname → artifact) -------------------------------------
@@ -5832,22 +5700,8 @@ export class PgMetaStore implements MetaStore {
       .set(slug === undefined ? { title } : { title, slug })
       .where(eq(artifact.id, id))
   }
-  async setArtifactSourcePath(id: string, sourcePath: string | null): Promise<void> {
-    await this.db.update(artifact).set({ source_path: sourcePath }).where(eq(artifact.id, id))
-  }
   async setArtifactUpdatedAt(id: string, updatedAt: string): Promise<void> {
     await this.db.update(artifact).set({ updated_at: updatedAt }).where(eq(artifact.id, id))
-  }
-  async setArtifactAuthor(artifactId: string, author: GithubAuthor | null): Promise<void> {
-    await this.db
-      .update(artifact)
-      .set({
-        author_name: author?.name ?? null,
-        author_login: author?.login ?? null,
-        author_avatar: author?.avatar ?? null,
-        author_gh_id: author?.ghId ?? null,
-      })
-      .where(eq(artifact.id, artifactId))
   }
   async createAuditLog(a: NewAuditLog): Promise<void> {
     await this.db.insert(auditLog).values(a)

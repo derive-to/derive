@@ -1950,27 +1950,11 @@ interface ElReg {
         post({ type: "anchor-click", id: hit })
         return
       }
-      navLink(e)
       extLink(e)
     },
     true,
   )
-  /* Cross-document links: a relative <a> the server resolved to a sibling artifact
-     (data-derive-nav="<ref>"). The sandboxed frame can't navigate the host, so hand the
-     click off for an in-app transition (or a new tab on a modified / middle click —
-     the host opens that un-sandboxed). preventDefault stops the frame loading /artifacts/… into
-     itself. Only marked links are touched; ordinary and in-page links are untouched. */
-  const navLink = (e: MouseEvent) => {
-    const a = asEl(e.target)?.closest("a[data-derive-nav]")
-    if (!a) return
-    e.preventDefault()
-    post({
-      type: "navigate",
-      ref: a.getAttribute("data-derive-nav"),
-      newTab: !!(e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1),
-    })
-  }
-  /* Every OTHER link: never navigate the sandboxed frame itself. In-page (#)
+  /* Links never navigate the sandboxed frame itself. In-page (#)
      links and bundle-internal links (same origin, under the /raw/ serving path —
      a bundle is a whole site; its internal nav belongs in the frame) keep the
      browser default. Everything else is handed to the host, which SPA-navigates
@@ -1981,7 +1965,7 @@ interface ElReg {
   const extLink = (e: MouseEvent) => {
     if (e.defaultPrevented) return
     const a = asEl(e.target)?.closest("a[href]")
-    if (!a || a.hasAttribute("data-derive-nav")) return
+    if (!a) return
     const href = a.getAttribute("href") || ""
     if (href.startsWith("#")) return
     let u: URL
@@ -2004,11 +1988,10 @@ interface ElReg {
         // Same rule as editClick: no navigation while editing. Without this a
         // middle-click would run the browser default — opening the raw sandbox
         // origin in a tab, bypassing the host's scheme allowlist entirely.
-        if (asEl(e.target)?.closest("a[href],a[data-derive-nav]")) e.preventDefault()
+        if (asEl(e.target)?.closest("a[href]")) e.preventDefault()
         return
       }
       if (e.button === 1) {
-        navLink(e)
         extLink(e)
       }
     },
@@ -3252,7 +3235,7 @@ interface ElReg {
     const el0 = asEl(e.target)
     if (el0?.closest(".derive-edit-ui")) return
     // Never navigate while editing — a click on a link edits its text instead.
-    if (el0?.closest("a[href],a[data-derive-nav]")) e.preventDefault()
+    if (el0?.closest("a[href]")) e.preventDefault()
     // Once a text block is active, a double/triple click belongs to the browser's
     // native word/paragraph selection. Re-focusing that same contenteditable from
     // the click handler collapses Chromium's just-created selection to a caret,

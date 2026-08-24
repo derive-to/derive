@@ -39,7 +39,6 @@ import type {
   PlanRecord,
   RenderJobRecord,
   ReportRecord,
-  RepoSourceRecord,
   ReviewRoundRecord,
   RunRecord,
   SessionMessageRecord,
@@ -91,7 +90,6 @@ export interface TypedTables {
   folder: FolderRecord
   templateLibrary: TemplateLibraryRecord
   templateLibraryEntry: TemplateLibraryEntryRecord
-  repoSource: RepoSourceRecord
   githubApp: GitHubAppRecord
   githubInstallation: GitHubInstallationRecord
   domain: DomainRecord

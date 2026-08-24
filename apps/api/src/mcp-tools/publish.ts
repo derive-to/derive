@@ -636,12 +636,8 @@ export function registerPublishTool(tc: ToolContext): void {
           )
         if (existing.kind === "file" && isBundle)
           return text(`"${short_id}" is a single-file artifact — pass \`content\`, not \`files\`.`)
-        // The SAME two republish gates the HTTP route enforces (routes/artifacts.ts) — the
+        // The SAME republish gate the HTTP route enforces (routes/artifacts.ts) — the
         // agent path must never be the one that walks around them.
-        if (await ctx.meta.isManagedArtifact(existing.org_id, existing.id))
-          return err(
-            `"${short_id}" is managed by GitHub sync — edit this file in the repo instead.`,
-          )
         if (existing.locked)
           return err(
             `"${short_id}" is locked — leave your suggested change as a comment, or ask an editor to unlock it.`,

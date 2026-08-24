@@ -9,4 +9,7 @@
 export const SECTION_ALIASES: Record<string, string> = {
   // The id was never `brand`; links that guessed it used to strand on Profile.
   brand: "brandprint",
+  // GitHub is a standard workspace integration now; old bookmarks land on the single
+  // connection surface instead of exposing a retired standalone page.
+  github: "integrations",
 }

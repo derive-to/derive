@@ -196,17 +196,6 @@ export function runStoreContract(
       expect((await store.getArtifactById(derived.id))?.derived_from).toBe(a.id)
     })
 
-    it("sets source_path (the synced-file location) independently of the title", async () => {
-      const a = await store.createArtifact(newArtifact({ title: "Taxonomy System" }))
-      expect((await store.getArtifactById(a.id))?.source_path).toBeNull() // null by default
-      await store.setArtifactSourcePath(a.id, "packages/core/ai-services/TAXONOMY.md")
-      const got = await store.getArtifactById(a.id)
-      expect(got?.source_path).toBe("packages/core/ai-services/TAXONOMY.md")
-      expect(got?.title).toBe("Taxonomy System") // title untouched
-      await store.setArtifactSourcePath(a.id, null)
-      expect((await store.getArtifactById(a.id))?.source_path).toBeNull()
-    })
-
     it("appends versions, bumps current_version, lists newest data", async () => {
       const a = await store.createArtifact(newArtifact())
       // updated_at is null until first versioned (read as updated_at ?? created_at).
@@ -828,8 +817,8 @@ export function runStoreContract(
     })
   })
 
-  describe(`${label}: author attribution (GitHub-synced)`, () => {
-    it("denormalizes the version author onto the artifact, clearing GitHub fields on a non-GitHub edit", async () => {
+  describe(`${label}: historical imported-author attribution`, () => {
+    it("preserves historical GitHub attribution until a normal edit becomes current", async () => {
       const a = await store.createArtifact(newArtifact())
       const v1 = await store.addVersion(
         a.id,
@@ -945,30 +934,6 @@ export function runStoreContract(
       expect((await store.getArtifactById(a.id))?.author_id).toBeNull() // the denorm moved…
       expect(await store.artifactIdsOwnedBy(org, me)).toEqual([a.id]) // …the filter didn't
       expect(await store.countOwnedBy(org, me, "none")).toBe(1)
-    })
-
-    it("sets and clears the current author directly (the backfill path)", async () => {
-      const a = await store.createArtifact(newArtifact())
-      await store.setArtifactAuthor(a.id, {
-        name: "Grace Hopper",
-        login: "grace",
-        avatar: "https://avatars/grace.png",
-        ghId: "99",
-      })
-      expect(await store.getByShortId(a.short_id)).toMatchObject({
-        author_name: "Grace Hopper",
-        author_login: "grace",
-        author_avatar: "https://avatars/grace.png",
-        author_gh_id: "99",
-      })
-      // Null clears every author field.
-      await store.setArtifactAuthor(a.id, null)
-      expect(await store.getByShortId(a.short_id)).toMatchObject({
-        author_name: null,
-        author_login: null,
-        author_avatar: null,
-        author_gh_id: null,
-      })
     })
   })
 
@@ -1430,163 +1395,9 @@ export function runStoreContract(
     })
   })
 
-  describe(`${label}: follows (authors + paths)`, () => {
-    it("adds (idempotent), lists, and removes a follow", async () => {
-      const user = `u_${uuid()}`
-      const a1 = await store.addFollow({
-        id: uuid(),
-        org_id: ORG,
-        user_id: user,
-        kind: "author",
-        target: "ada",
-      })
-      expect(a1).toMatchObject({ kind: "author", target: "ada", org_id: ORG, user_id: user })
-      // A repeat add on the same (user, org, kind, target) is a no-op that returns the
-      // SAME row (idempotent on the unique key, like setFavorite).
-      const a2 = await store.addFollow({
-        id: uuid(),
-        org_id: ORG,
-        user_id: user,
-        kind: "author",
-        target: "ada",
-      })
-      expect(a2.id).toBe(a1.id)
-      const p1 = await store.addFollow({
-        id: uuid(),
-        org_id: ORG,
-        user_id: user,
-        kind: "path",
-        target: "docs/plans",
-      })
-      const list = await store.listFollows(user, ORG)
-      expect(list.map((f) => `${f.kind}:${f.target}`).sort()).toEqual([
-        "author:ada",
-        "path:docs/plans",
-      ])
-      // Removing one leaves the other; removing by the wrong kind is a no-op.
-      await store.removeFollow(user, ORG, "author", "nobody")
-      expect(await store.listFollows(user, ORG)).toHaveLength(2)
-      await store.removeFollow(user, ORG, "author", "ada")
-      const after = await store.listFollows(user, ORG)
-      expect(after.map((f) => f.id)).toEqual([p1.id])
-    })
-
+  describe(`${label}: follows`, () => {
     it("returns [] from followedArtifactIds when the user follows nothing", async () => {
       expect(await store.followedArtifactIds(`u_${uuid()}`, ORG)).toEqual([])
-    })
-
-    it("matches artifacts by followed author (case-insensitive) and by path prefix, org-scoped", async () => {
-      const user = `u_${uuid()}`
-      // An artifact authored by "Ada" (login "ada").
-      const byAda = await store.createArtifact(newArtifact())
-      await store.addVersion(byAda.id, newVersion({ author: "Ada", author_login: "Ada" }))
-      // An artifact under docs/plans/ (a followed path prefix), authored by someone else.
-      const inPlans = await store.createArtifact(newArtifact())
-      await store.addVersion(inPlans.id, newVersion({ author: "bob", author_login: "bob" }))
-      await store.setArtifactSourcePath(inPlans.id, "docs/plans/q3.md")
-      // A non-matching artifact: different author, path outside the followed prefix.
-      const other = await store.createArtifact(newArtifact())
-      await store.addVersion(other.id, newVersion({ author: "carol", author_login: "carol" }))
-      await store.setArtifactSourcePath(other.id, "src/index.ts")
-      // The same author + path in ANOTHER org (must be excluded by the org scope).
-      const otherOrg = `${ORG}_feed_other`
-      const elsewhere = await store.createArtifact(newArtifact({ org_id: otherOrg }))
-      await store.addVersion(elsewhere.id, newVersion({ author: "Ada", author_login: "ada" }))
-      await store.setArtifactSourcePath(elsewhere.id, "docs/plans/elsewhere.md")
-
-      // Follow author "ada" (lowercased target) + path prefix "docs/plans".
-      await store.addFollow({
-        id: uuid(),
-        org_id: ORG,
-        user_id: user,
-        kind: "author",
-        target: "ada",
-      })
-      await store.addFollow({
-        id: uuid(),
-        org_id: ORG,
-        user_id: user,
-        kind: "path",
-        target: "docs/plans",
-      })
-
-      const ids = await store.followedArtifactIds(user, ORG)
-      expect(ids).toContain(byAda.id) // author match, case-insensitive (login "Ada")
-      expect(ids).toContain(inPlans.id) // path-prefix match
-      expect(ids).not.toContain(other.id) // neither author nor path matches
-      expect(ids).not.toContain(elsewhere.id) // matches but in another org
-
-      // Author-only follow set: no path follow → only the author match comes back.
-      const authorOnly = `u_${uuid()}`
-      await store.addFollow({
-        id: uuid(),
-        org_id: ORG,
-        user_id: authorOnly,
-        kind: "author",
-        target: "ada",
-      })
-      const authorIds = await store.followedArtifactIds(authorOnly, ORG)
-      expect(authorIds).toContain(byAda.id)
-      expect(authorIds).not.toContain(inPlans.id)
-
-      // Path-only follow set: no author follow → only the path match comes back.
-      const pathOnly = `u_${uuid()}`
-      await store.addFollow({
-        id: uuid(),
-        org_id: ORG,
-        user_id: pathOnly,
-        kind: "path",
-        target: "docs/plans",
-      })
-      const pathIds = await store.followedArtifactIds(pathOnly, ORG)
-      expect(pathIds).toContain(inPlans.id)
-      expect(pathIds).not.toContain(byAda.id)
-
-      // A removed (tombstoned) artifact drops out of the feed.
-      await store.setArtifactRemoved(byAda.id, new Date().toISOString())
-      expect(await store.followedArtifactIds(authorOnly, ORG)).not.toContain(byAda.id)
-      await store.setArtifactRemoved(byAda.id, null)
-    })
-
-    it("treats a path follow as a literal prefix: respects folder boundaries + escapes LIKE metachars", async () => {
-      // A folder follow (trailing slash) matches files INSIDE the folder…
-      const user = `u_${uuid()}`
-      const inside = await store.createArtifact(newArtifact())
-      await store.addVersion(inside.id, newVersion())
-      await store.setArtifactSourcePath(inside.id, "docs/plans/q3.md")
-      // …but NOT a sibling folder that merely shares the prefix string.
-      const sibling = await store.createArtifact(newArtifact())
-      await store.addVersion(sibling.id, newVersion())
-      await store.setArtifactSourcePath(sibling.id, "docs/plans2/x.md")
-      await store.addFollow({
-        id: uuid(),
-        org_id: ORG,
-        user_id: user,
-        kind: "path",
-        target: "docs/plans/",
-      })
-      const ids = await store.followedArtifactIds(user, ORG)
-      expect(ids).toContain(inside.id)
-      expect(ids).not.toContain(sibling.id) // "docs/plans2/…" is not under "docs/plans/"
-
-      // A "_" in the prefix is matched literally, not as the LIKE single-char wildcard.
-      const esc = `u_${uuid()}`
-      const literal = await store.createArtifact(newArtifact())
-      await store.addVersion(literal.id, newVersion())
-      await store.setArtifactSourcePath(literal.id, "a_b/notes.md")
-      const wildcardish = await store.createArtifact(newArtifact())
-      await store.addVersion(wildcardish.id, newVersion())
-      await store.setArtifactSourcePath(wildcardish.id, "axb/notes.md")
-      await store.addFollow({
-        id: uuid(),
-        org_id: ORG,
-        user_id: esc,
-        kind: "path",
-        target: "a_b/",
-      })
-      const escIds = await store.followedArtifactIds(esc, ORG)
-      expect(escIds).toContain(literal.id)
-      expect(escIds).not.toContain(wildcardish.id) // "_" escaped → literal, not "any char"
     })
   })
 
@@ -1633,45 +1444,6 @@ export function runStoreContract(
       await store.setArtifactRemoved(pub.id, new Date().toISOString())
       expect(await store.followedArtifactIds(follower, followerOrg)).not.toContain(pub.id)
       await store.setArtifactRemoved(pub.id, null)
-    })
-
-    it("combines an author follow (workspace-scoped) with a person follow (public, anywhere)", async () => {
-      const user = `u_${uuid()}`
-      const homeOrg = `${ORG}_home_ws`
-      const person = `u_person_${uuid()}`
-      const farOrg = `${ORG}_far_ws`
-
-      // An author-login match in the user's OWN workspace (workspace-scoped branch).
-      const local = await store.createArtifact(newArtifact({ org_id: homeOrg }))
-      await store.addVersion(local.id, newVersion({ author: "Ada", author_login: "ada" }))
-      // The same login in another workspace — author follows stay workspace-scoped, excluded.
-      const localElsewhere = await store.createArtifact(newArtifact({ org_id: farOrg }))
-      await store.addVersion(localElsewhere.id, newVersion({ author: "Ada", author_login: "ada" }))
-      // A followed person's public work in a far workspace (person branch, any workspace).
-      const personPub = await store.createArtifact(
-        newArtifact({ org_id: farOrg, listed: "public" }),
-      )
-      await store.addVersion(personPub.id, newVersion({ author: "Pat", author_id: person }))
-
-      await store.addFollow({
-        id: uuid(),
-        org_id: homeOrg,
-        user_id: user,
-        kind: "author",
-        target: "ada",
-      })
-      await store.addFollow({
-        id: uuid(),
-        org_id: "*",
-        user_id: user,
-        kind: "user",
-        target: person,
-      })
-
-      const ids = await store.followedArtifactIds(user, homeOrg)
-      expect(ids).toContain(local.id) // author match in the active workspace
-      expect(ids).not.toContain(localElsewhere.id) // author match in another workspace — excluded
-      expect(ids).toContain(personPub.id) // followed person's public work, anywhere
     })
   })
 
@@ -1727,7 +1499,7 @@ export function runStoreContract(
       expect(orgs).not.toContain(onlyA) // only `a` is a member there
     })
 
-    it("derives a user's GitHub login from their authored artifacts (null when unknown)", async () => {
+    it("derives a user's GitHub login from historical author attribution (null when unknown)", async () => {
       const gh = await store.createArtifact(newArtifact())
       await store.addVersion(
         gh.id,
@@ -1840,82 +1612,8 @@ export function runStoreContract(
     })
   })
 
-  describe(`${label}: github sync sources`, () => {
-    it("creates a source, scopes reads by org, persists the file map, retitles + tombstones, deletes", async () => {
-      const col = await store.createCollection({
-        id: uuid(),
-        org_id: ORG,
-        title: "GitHub: acme/docs",
-        created_by: "amy",
-      })
-      const art = await store.createArtifact(newArtifact({ title: "docs/a.md" }))
-      const src = await store.createRepoSource({
-        id: uuid(),
-        org_id: ORG,
-        collection_id: col.id,
-        repo: "acme/docs",
-        ref: "main",
-        includes: "**/*.md",
-        token: "tok",
-        created_by: "amy",
-      })
-      expect(src.files).toBe("{}")
-      // Org-scoped read: present for its org, absent for another.
-      expect(await store.getRepoSource(src.id, ORG)).toMatchObject({ repo: "acme/docs" })
-      expect(await store.getRepoSource(src.id, `${ORG}_other`)).toBeNull()
-      expect(await store.listRepoSources(ORG)).toHaveLength(1)
-
-      // Record a sync: the path→artifact map drives managedArtifactIds (the gate).
-      await store.updateRepoSourceSync(src.id, {
-        files: JSON.stringify({
-          "docs/a.md": { artifact_id: art.id, short_id: art.short_id, sha: "s1" },
-        }),
-        last_synced_at: "2026-06-14T00:00:00.000Z",
-        last_status: "ok",
-      })
-      expect(await store.managedArtifactIds(ORG)).toContain(art.id)
-
-      // Live progress: a cheap JSON column the engine writes every batch (the UI bar
-      // polls it). Null until a sync starts; listed cross-org so the Node entry can
-      // resume mid-flight syncs on boot; cleared back to null when done.
-      expect((await store.getRepoSource(src.id, ORG))?.progress).toBeNull()
-      expect(await store.listSyncingRepoSources()).toHaveLength(0)
-      await store.setRepoSourceProgress(
-        src.id,
-        JSON.stringify({
-          phase: "mirroring",
-          done: 3,
-          total: 10,
-          updatedAt: "2026-06-14T00:00:00.000Z",
-        }),
-      )
-      expect((await store.getRepoSource(src.id, ORG))?.progress).toContain('"phase":"mirroring"')
-      expect((await store.listSyncingRepoSources()).map((s) => s.id)).toContain(src.id)
-      await store.setRepoSourceProgress(src.id, null)
-      expect((await store.getRepoSource(src.id, ORG))?.progress).toBeNull()
-      expect(await store.listSyncingRepoSources()).toHaveLength(0)
-
-      // Rename re-homes the artifact: retitle + clear any tombstone.
-      await store.setArtifactRemoved(art.id, "2026-06-14T00:00:00.000Z")
-      await store.setArtifactTitle(art.id, "docs/b.md")
-      await store.setArtifactRemoved(art.id, null)
-      expect(await store.getArtifactById(art.id)).toMatchObject({
-        title: "docs/b.md",
-        removed_at: null,
-      })
-
-      await store.deleteRepoSource(src.id, ORG)
-      expect(await store.getRepoSource(src.id, ORG)).toBeNull()
-      expect(await store.managedArtifactIds(ORG)).not.toContain(art.id)
-    })
-
-    it("backs a source with a GitHub App installation and routes by it", async () => {
-      const col = await store.createCollection({
-        id: uuid(),
-        org_id: ORG,
-        title: "GitHub: acme/site",
-        created_by: "amy",
-      })
+  describe(`${label}: github app`, () => {
+    it("stores a workspace installation", async () => {
       const inst = await store.upsertGithubInstallation({
         installation_id: "4242",
         org_id: ORG,
@@ -1936,26 +1634,6 @@ export function runStoreContract(
         account_login: "acme-renamed",
       })
       expect(await store.listGithubInstallations(ORG)).toHaveLength(1)
-
-      const src = await store.createRepoSource({
-        id: uuid(),
-        org_id: ORG,
-        collection_id: col.id,
-        repo: "acme/site",
-        ref: "main",
-        includes: "**/*.md",
-        installation_id: "4242",
-        created_by: "amy",
-      })
-      expect(src.installation_id).toBe("4242")
-      expect(src.token).toBeNull()
-      // The webhook router resolves an installation id → its sources, cross-org.
-      const byInst = await store.listRepoSourcesByInstallation("4242")
-      expect(byInst.map((s) => s.id)).toContain(src.id)
-
-      await store.deleteRepoSource(src.id, ORG)
-      await store.deleteGithubInstallation("4242")
-      expect(await store.getGithubInstallation("4242")).toBeNull()
     })
 
     it("stores the instance GitHub App credentials as a single upserted row", async () => {
@@ -1967,7 +1645,6 @@ export function runStoreContract(
         client_id: "Iv1.abc",
         client_secret: "enc-secret",
         private_key: "enc-pem",
-        webhook_secret: "enc-whsec",
         created_at: "2026-06-15T00:00:00.000Z",
       })
       expect(await store.getGithubApp()).toMatchObject({ app_id: "111", slug: "derive-on-acme" })
@@ -1979,7 +1656,6 @@ export function runStoreContract(
         client_id: "Iv1.def",
         client_secret: "enc-secret-2",
         private_key: "enc-pem-2",
-        webhook_secret: "enc-whsec-2",
         created_at: "2026-06-15T00:00:00.000Z",
       })
       expect(await store.getGithubApp()).toMatchObject({ app_id: "222" })
@@ -2461,7 +2137,6 @@ export function runStoreContract(
       )
       expect(detail.favorite).toBe((await store.listUserFavoriteIds(viewer)).includes(a.id))
       expect(detail.settings).toEqual(await store.getOrgSettings(org))
-      expect(detail.managed).toBe((await store.managedArtifactIds(org)).includes(a.id))
       // Populated, not vacuously equal-empty — and ORDER matters: the route indexes its
       // mapped array against `versions[i]`, so ascending-by-n is part of the contract.
       expect(detail.versions.map((v) => v.n)).toEqual([1, 2])
@@ -2470,7 +2145,6 @@ export function runStoreContract(
       expect(detail.openThreads).toBe(1)
       expect(detail.favorite).toBe(true)
       expect(detail.settings.whiteLabel).toBe(true)
-      expect(detail.managed).toBe(false)
 
       // An anonymous viewer has no favorite; everything else is unchanged.
       const anon = await store.artifactDetail({ artifactId: a.id, orgId: org, viewerId: null })
@@ -2500,7 +2174,6 @@ export function runStoreContract(
       expect(detail.collectionIds).toEqual([])
       expect(detail.openThreads).toBe(0)
       expect(detail.favorite).toBe(false)
-      expect(detail.managed).toBe(false)
       // No org_settings row ⇒ the parsed defaults, same as getOrgSettings would give.
       expect(detail.settings).toEqual(await store.getOrgSettings(org))
     })
@@ -2609,48 +2282,6 @@ export function runStoreContract(
       // unreachable in practice; it stays a LEFT JOIN because the code it replaces also
       // tolerated an unresolvable manifest rather than dropping the row.)
       expect(rows.map((r) => r.id)).toEqual((await store.listContexts(org)).map((r) => r.id))
-    })
-
-    it("isManagedArtifact agrees with managedArtifactIds, including the substring trap", async () => {
-      const org = `org_${uuid()}`
-      await store.setWorkspace(org, "Managed WS")
-      const col = await store.createCollection({
-        id: uuid(),
-        org_id: org,
-        title: "Mirror",
-        created_by: "amy",
-      })
-      const synced = await store.createArtifact(newArtifact({ org_id: org }))
-      const plain = await store.createArtifact(newArtifact({ org_id: org }))
-      const src = await store.createRepoSource({
-        id: uuid(),
-        org_id: org,
-        collection_id: col.id,
-        repo: "acme/derive",
-        ref: "main",
-        includes: "**/*.md",
-        pr_number: null,
-        created_by: "amy",
-      })
-      // The path→artifact map is written by the sync, not at creation.
-      await store.updateRepoSourceSync(src.id, {
-        files: JSON.stringify({ "README.md": { artifact_id: synced.id } }),
-      })
-
-      expect(await store.isManagedArtifact(org, synced.id)).toBe(true)
-      expect(await store.isManagedArtifact(org, plain.id)).toBe(false)
-      // Agrees with the call it replaces, both ways.
-      const all = await store.managedArtifactIds(org)
-      expect(all.includes(synced.id)).toBe(true)
-      expect(all.includes(plain.id)).toBe(false)
-      // THE SUBSTRING TRAP: the implementation narrows with a SQL LIKE and then confirms by
-      // parsing. A prefix of a managed id appears inside the stored JSON as a substring, so a
-      // LIKE alone would answer true — the parse is what makes it false.
-      expect(await store.isManagedArtifact(org, synced.id.slice(0, 8))).toBe(false)
-      // Another workspace's mirror never counts as this one's.
-      const otherOrg = `org_${uuid()}`
-      await store.setWorkspace(otherOrg, "Other")
-      expect(await store.isManagedArtifact(otherOrg, synced.id)).toBe(false)
     })
 
     it("artifactWithSettings returns the artifact and its workspace's settings together", async () => {
@@ -2888,31 +2519,19 @@ export function runStoreContract(
       expect(missing.favorites).toBe(0)
     })
 
-    it("collectionsOverview matches listCollections + listRepoSources for the same org", async () => {
+    it("collectionsOverview matches listCollections for the same org", async () => {
       const org = `org_${uuid()}`
       await store.setWorkspace(org, "Overview")
       const col = await store.createCollection({
         id: uuid(),
         org_id: org,
-        title: "Repo mirror",
-        created_by: "amy",
-      })
-      await store.createRepoSource({
-        id: uuid(),
-        org_id: org,
-        collection_id: col.id,
-        repo: "acme/derive",
-        ref: "main",
-        includes: "**/*.md",
-        pr_number: null,
+        title: "Planning",
         created_by: "amy",
       })
       const overview = await store.collectionsOverview(org)
       expect(overview.collections.map((c) => c.id)).toEqual(
         (await store.listCollections(org)).map((c) => c.id),
       )
-      expect(overview.sources).toEqual(await store.listRepoSources(org))
-      expect(overview.sources).toHaveLength(1)
       // No viewer ⇒ the per-user arms are empty rather than absent, so a caller can
       // destructure them unconditionally.
       expect(overview.starred).toEqual([])
@@ -2922,7 +2541,6 @@ export function runStoreContract(
       const empty = await store.collectionsOverview(`org_${uuid()}`)
       expect(empty).toEqual({
         collections: [],
-        sources: [],
         starred: [],
         workedIn: [],
         previews: {},
@@ -3925,12 +3543,10 @@ export function runStoreContract(
       // First write (insert path). Overridden channels stick; the rest stay default on read.
       await store.setOrgSettings(settingsOrg, {
         ...DEFAULT_ORG_SETTINGS,
-        githubPostComments: false,
+        emailNotifications: false,
       })
       expect(await store.getOrgSettings(settingsOrg)).toMatchObject({
-        emailNotifications: true,
-        githubPostComments: false,
-        githubMirrorComments: true,
+        emailNotifications: false,
       })
       // Second write for the same org exercises the onConflict update path.
       await store.setOrgSettings(settingsOrg, {
@@ -3939,7 +3555,6 @@ export function runStoreContract(
       })
       expect(await store.getOrgSettings(settingsOrg)).toMatchObject({
         emailNotifications: false,
-        githubPostComments: true,
       })
     })
 

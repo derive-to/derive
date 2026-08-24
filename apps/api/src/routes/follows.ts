@@ -5,10 +5,8 @@ import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
 import { bail, fail, readJson } from "../lib/http"
 
-/** Follows (per-user: GitHub authors, repo path prefixes, and people). The followed set
- *  drives the `scope=following` activity feed in GET /v1/artifacts. Author/path follows
- *  are scoped to the caller's active workspace; people (`user`) follows are global
- *  (org_id = "*"). All endpoints require a signed-in user.
+/** People follows drive the `scope=following` activity feed in GET /v1/artifacts.
+ *  They are global (org_id = "*"). All endpoints require a signed-in user.
  *
  *  Contract-first: the Follow response schema below is the SINGLE source for the web
  *  client's `Follow` type (generated from the OpenAPI spec into apps/web/src/api-types.ts).
@@ -18,12 +16,7 @@ export const followRoutes = (ctx: AppContext) => {
   const { meta, requireUser, activeWorkspace } = ctx
   const app = new OpenAPIHono<BlankEnv>()
 
-  // Author targets are normalized to lowercase so they match the (lowercased)
-  // author_login comparison in followedArtifactIds; path targets are kept verbatim.
-  const normalizeTarget = (kind: FollowKind, target: string): string =>
-    kind === "author" ? target.trim().toLowerCase() : target.trim()
-
-  const kind = z.enum(["author", "path", "user"])
+  const kind = z.literal("user")
   const followBody = z.object({
     kind,
     target: z.string().min(1, "target is required"),
@@ -40,10 +33,8 @@ export const followRoutes = (ctx: AppContext) => {
         .string()
         .describe('The workspace this follow is scoped to; "*" (global) for people-follows'),
       user_id: z.string().describe("The follower (the signed-in user who owns this follow)"),
-      kind: kind.describe("What's followed: a GitHub author, a repo path prefix, or a person"),
-      target: z
-        .string()
-        .describe("The followed value: author login, path prefix, or (people) public @handle"),
+      kind: kind.describe("What's followed: a person"),
+      target: z.string().describe("The followed person's public @handle"),
       created_at: z.string(),
       handle: z
         .string()
@@ -71,21 +62,12 @@ export const followRoutes = (ctx: AppContext) => {
     me: { id: string },
     b: { kind: FollowKind; target: string },
   ): Promise<{ target: string; orgId: string; followedUserId?: string } | Response> => {
-    if (b.kind === "user") {
-      const profile = await meta.getUserByUsername(normalizeUsername(b.target))
-      if (!profile) return fail(c, 404, "no profile with that username")
-      if (profile.id === me.id) return fail(c, 400, "you can't follow yourself")
-      // Following is work awareness, not a social graph: you follow people you
-      // work with. Enforced here (not just hidden in the UI) so no client can
-      // build a global follower graph. The stored row stays global-keyed — if a
-      // shared workspace appears later, the feed just starts matching.
-      if ((await meta.sharedOrgIds(me.id, profile.id)).length === 0)
-        return fail(c, 403, "you can only follow people you share a workspace with")
-      return { target: profile.id, orgId: GLOBAL_FOLLOW_ORG, followedUserId: profile.id }
-    }
-    const target = normalizeTarget(b.kind, b.target)
-    if (!target) return fail(c, 400, "target is required")
-    return { target, orgId: await activeWorkspace(c) }
+    const profile = await meta.getUserByUsername(normalizeUsername(b.target))
+    if (!profile) return fail(c, 404, "no profile with that username")
+    if (profile.id === me.id) return fail(c, 400, "you can't follow yourself")
+    if ((await meta.sharedOrgIds(me.id, profile.id)).length === 0)
+      return fail(c, 403, "you can only follow people you share a workspace with")
+    return { target: profile.id, orgId: GLOBAL_FOLLOW_ORG, followedUserId: profile.id }
   }
 
   app.openapi(
@@ -109,15 +91,13 @@ export const followRoutes = (ctx: AppContext) => {
       const follows = await meta.listFollows(me.id, org)
       // Resolve each people-follow's target id → a public handle so the client can render
       // it (and match follow-state by username) without ever holding a raw user id. One
-      // batched lookup; author/path follows pass through untouched. The internal id is
-      // REPLACED by the handle in `target` on the way out — it never reaches the client.
-      const userIds = follows.filter((f) => f.kind === "user").map((f) => f.target)
+      // batched lookup. The internal id is replaced by the handle in `target` on the way out.
+      const userIds = follows.map((f) => f.target)
       const byId = new Map(
         userIds.length ? (await meta.getUsers(userIds)).map((u) => [u.id, u] as const) : [],
       )
       return c.json({
         follows: follows.map((f) => {
-          if (f.kind !== "user") return f
           const u = byId.get(f.target)
           const handle = u?.username ?? null
           // target := the public handle (not the internal user id). The client keys
@@ -139,7 +119,7 @@ export const followRoutes = (ctx: AppContext) => {
       method: "post",
       path: "/v1/follows",
       tags: ["Follows"],
-      summary: "Follow a GitHub author, a repo path prefix, or a person.",
+      summary: "Follow a person.",
       responses: {
         201: {
           description: "The created follow.",

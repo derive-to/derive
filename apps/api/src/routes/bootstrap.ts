@@ -111,7 +111,6 @@ export const bootstrapRoutes = (ctx: AppContext) => {
         // operator-token owner-everywhere branch is a plain `false`.
         collections: collectionsJson(
           b.collections,
-          b.sources,
           b.collectionRoles,
           me.id,
           false,

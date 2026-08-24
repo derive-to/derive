@@ -162,13 +162,13 @@ export function registerCommentTool(tc: ToolContext): void {
         })
         ctx.bus.publish(a.id, { type: "comment.created" })
         // The SAME fan-out the HTTP route runs (lib/comment-actions.ts): bells for thread
-        // participants + the artifact's owners, plus webhooks, email, and the GitHub and Slack
-        // mirrors. This path used to bell only, so an agent's comment reached no channel at
+        // participants + the artifact's owners, plus webhooks, email, and connected Slack
+        // channels. This path used to bell only, so an agent's comment reached no channel at
         // all. It now sends the same resolved mention payload as the web composer too.
         const created = await ctx.meta.getComment(commentId)
         // Through ctx.background, exactly as the HTTP route runs it: the fan-out is
         // best-effort, and the comment is already durable by now. Awaiting it bare would turn
-        // any channel-side failure (a Slack install lookup, a blob read for the GitHub diff)
+        // any channel-side failure (such as a Slack install lookup)
         // into a tool error for a comment that WAS written — and an agent that believes its
         // comment failed retries and duplicates it. background() catches + logs, and on
         // Workers rides waitUntil; on Node it still settles inline.
@@ -178,7 +178,6 @@ export function registerCommentTool(tc: ToolContext): void {
               {
                 meta: ctx.meta,
                 bus: ctx.bus,
-                blobs: ctx.blobs,
                 baseUrl: ctx.deps.baseUrl,
                 notify: ctx.notify,
                 pokeWebhooks: ctx.deps.pokeWebhooks,

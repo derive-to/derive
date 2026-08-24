@@ -13,7 +13,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { artifactTypeLabel, dirOf } from "@/lib/artifact"
+import { artifactTypeLabel } from "@/lib/artifact"
 import { OVER_CONTENT, REVEAL_MENU, reveal } from "@/lib/interaction"
 import { ago } from "@/lib/time"
 import { cn } from "@/lib/utils"
@@ -74,18 +74,9 @@ export function ArtifactCard({
   // work meant reading the absences.
   const hasAuthor = !!(author?.name || author?.login || a.author_login || a.author_name)
   const updated = a.updated_at ?? a.created_at ?? a.versions[0]?.created_at
-  const _versionDepth = Math.max(a.current_version, a.versions.length)
-  const sourceDir = a.source_path ? dirOf(a.source_path) : ""
   const isPrivate = a.workspace_access === "none" && (a.link_role ?? "none") === "none"
 
-  // Machine-register state line under the title (house " · " join, matching the
-  // workbench header): a synced file's folder, else its version when there's history,
-  // then how fresh it is. The TYPE rides the placard, so it isn't repeated here.
-  // Relative time, plus the folder for a synced doc (that is where it lives). The
-  // version number and type prefix are dropped — the render already shows the type.
-  const stateLine = [sourceDir ? `${sourceDir}/` : "", updated ? ago(updated) : ""]
-    .filter(Boolean)
-    .join(" · ")
+  const stateLine = updated ? ago(updated) : ""
 
   return (
     <Card
@@ -264,10 +255,7 @@ export function ArtifactCard({
             {a.title ?? a.short_id}
           </span>
           {stateLine && (
-            <span
-              className="truncate font-mono text-2xs tabular-nums text-muted-foreground"
-              title={sourceDir ? (a.source_path ?? undefined) : undefined}
-            >
+            <span className="truncate font-mono text-2xs tabular-nums text-muted-foreground">
               {stateLine}
             </span>
           )}

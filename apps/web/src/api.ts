@@ -418,42 +418,6 @@ export type TemplateLibraryScope = TemplateLibrary["scope"]
 export type Viewer = components["schemas"]["Viewer"]
 /** A webhook delivery attempt. Generated from the OpenAPI spec. */
 export type Delivery = components["schemas"]["Delivery"]
-/** A GitHub repo mirrored into a collection (token redacted, file map collapsed
- *  to a count by the API). */
-/** A GitHub repo source (branch mirror), client-safe (token redacted, files→count).
- *  Generated from the OpenAPI spec. */
-export type RepoSource = components["schemas"]["RepoSource"]
-/** Live, pollable sync progress — the engine writes this every batch; the UI bar +
- *  global chip read it. Parsed client-side from the `progress` string. */
-export interface SyncProgress {
-  phase: "queued" | "listing" | "mirroring" | "done" | "error"
-  done: number
-  total: number
-  message?: string
-  updatedAt: string
-}
-/** Parse a RepoSource.progress / SyncStatus.progress string; null if absent/malformed. */
-export const parseProgress = (raw: string | null | undefined): SyncProgress | null => {
-  if (!raw) return null
-  try {
-    return JSON.parse(raw) as SyncProgress
-  } catch {
-    return null
-  }
-}
-/** The cheap status-poll response that drives the progress bar. Generated from the spec. */
-export type SyncStatus = components["schemas"]["SyncStatus"]
-/** A GitHub App installation on a workspace. Generated from the OpenAPI spec. */
-export type GithubInstallation = components["schemas"]["GithubInstallation"]
-/** A read-only preview of an open pull request's changed docs. Generated from the spec. */
-export type PrPreview = components["schemas"]["PrPreview"]
-/** GitHub sync connection status (sources + PR previews + App + installations).
- *  Generated from the OpenAPI spec. */
-export type GithubSyncStatus = components["schemas"]["GithubSyncStatus"]
-/** A repo an installation can mirror (the picker). Generated from the OpenAPI spec. */
-export type InstallationRepo = components["schemas"]["InstallationRepo"]
-/** A repo+scope preview: how many docs would mirror, split by type. Generated from the spec. */
-export type SyncPreview = components["schemas"]["SyncPreview"]
 /** One line of a unified diff, as the diff endpoint's ?format=json returns it
  *  (the route is served outside the OpenAPI surface). */
 export type DiffOp = { t: "ctx" | "add" | "del"; line: string }
@@ -616,6 +580,9 @@ export interface Connection {
   status: "active" | "pending" | "revoked"
   created_at: string
 }
+
+export type GithubStatus = components["schemas"]["GithubStatus"]
+export type GithubIntegrationAccount = GithubStatus["accounts"][number]
 
 export const api = {
   // The ONE identity read — behind meQuery, and re-read after login/signup to seed the
@@ -1179,42 +1146,11 @@ export const api = {
   closeSession: (id: string): Promise<{ session: Session }> =>
     f(`/v1/sessions/${id}`, { ...opts({ state: "closed" }), method: "PATCH" }).then(j),
 
-  // GitHub sync: mirror a repo's Markdown/HTML into a collection (one-way).
-  // Status carries the connected sources, whether the instance GitHub App is set
-  // up, and this workspace's installations (so the UI can jump to the picker).
-  githubSync: (): Promise<GithubSyncStatus> => f("/v1/sync/github", opts()).then(j),
-  connectRepoSource: (input: {
-    repo: string
-    ref?: string
-    includes?: string
-    token?: string
-    installation_id?: string
-  }): Promise<RepoSource> => f("/v1/sync/github", opts(input)).then(j),
-  // The GitHub App install URL; navigate the browser there to pick repos.
-  githubInstallUrl: (): Promise<{ url: string }> => f("/v1/sync/github/install", opts({})).then(j),
-  // Re-seed github_installation rows from GitHub's live install list (recovery path).
-  resyncInstallations: (): Promise<{ synced: number }> =>
-    f("/v1/sync/github/resync-installations", opts({})).then(j),
-  // Repos a given installation can mirror (drives the repo picker).
-  listInstallationRepos: (installationId: string): Promise<{ repos: InstallationRepo[] }> =>
-    f(`/v1/sync/github/installations/${installationId}/repos`, opts()).then(j),
-  // How many docs a repo+scope would mirror (live count in the picker).
-  previewRepo: (installationId: string, repo: string, includes?: string): Promise<SyncPreview> => {
-    const qs = new URLSearchParams({ repo })
-    if (includes) qs.set("includes", includes)
-    return f(`/v1/sync/github/installations/${installationId}/preview?${qs}`, opts()).then(j)
-  },
-  // Trigger a sync. The work runs on the server (a Durable Object on the edge, a
-  // detached loop on Node), so this returns at once — poll `syncStatus` for the bar.
-  runRepoSync: (id: string): Promise<RepoSource> =>
-    f(`/v1/sync/github/${id}/run`, opts({})).then(j),
-  // Cheap status poll for the live progress bar (no GitHub round-trip).
-  syncStatus: (id: string): Promise<SyncStatus> =>
-    f(`/v1/sync/github/${id}/status`, opts()).then(j),
-  // Sources currently mid-sync in this workspace (drives the global progress chip).
-  activeSyncs: (): Promise<{ active: RepoSource[] }> => f("/v1/sync/github/active", opts()).then(j),
-  deleteRepoSource: (id: string, wipe?: boolean): Promise<void> =>
-    f(`/v1/sync/github/${id}${wipe ? "?wipe=true" : ""}`, {
+  // Standard GitHub integration: install-backed and available directly to contexts
+  // and automations.
+  getGithub: (): Promise<GithubStatus> => f("/v1/github", opts()).then(j),
+  disconnectGithub: (connectionId: string): Promise<void> =>
+    f(`/v1/github/connections/${connectionId}`, {
       method: "DELETE",
       credentials: "include",
     }).then(() => undefined),

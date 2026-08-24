@@ -12,15 +12,6 @@ import { DEFAULT_WORKSPACE_NAME } from "./http"
 export const OrgSettings = z
   .object({
     emailNotifications: z.boolean().describe("When true, send workspace email notifications."),
-    githubPostComments: z
-      .boolean()
-      .describe("When true, post Derive comments onto the linked GitHub PR."),
-    githubMirrorComments: z
-      .boolean()
-      .describe("When true, mirror GitHub PR comments back into Derive."),
-    githubPreviewLink: z
-      .boolean()
-      .describe("When true, add a preview link to the linked GitHub PR."),
     // The access a NEW publish lands with (see access-model.md): the three
     // single-purpose fields. Factory default is the team draft — member / none / none.
     defaultWorkspaceAccess: z
@@ -175,34 +166,9 @@ export const Collection = z
       .describe(
         "Whether the caller has worked in this collection recently — published, commented, or been added. Derived from acts that leave a row; reading is not recorded.",
       ),
-    kind: z
-      .enum(["manual", "repo", "pr"])
-      .optional()
-      .describe('Origin: "manual" (user-made), "repo" (GitHub mirror), or "pr" (PR preview).'),
-    parentId: z
-      .string()
-      .optional()
-      .describe("For a PR preview: the repo collection it nests under, when connected."),
-    prNumber: z.number().optional().describe("For a PR preview: the pull-request number."),
-    repo: z.string().optional().describe('For repo/PR collections: the "owner/name" slug.'),
   })
   .openapi("Collection")
 
-// A repo_source links a collection to a "owner/name" repo; pr_number null = the branch
-// mirror (the parent), set = a PR preview (a child). Built once, shared by every path
-// that enriches a collection so the origin logic lives in one place.
-export type Src = { repo: string; pr: number | null }
-export const sourceMaps = (
-  sources: { collection_id: string; repo: string; pr_number: number | null }[],
-) => {
-  const srcByCollection = new Map<string, Src>()
-  const branchByRepo = new Map<string, string>()
-  for (const s of sources) {
-    srcByCollection.set(s.collection_id, { repo: s.repo, pr: s.pr_number })
-    if (s.pr_number === null) branchByRepo.set(s.repo, s.collection_id)
-  }
-  return { srcByCollection, branchByRepo }
-}
 export const enrich = (
   col: CollectionRecord & {
     count: number
@@ -222,26 +188,12 @@ export const enrich = (
       author_avatar: string | null
     }[]
   },
-  srcByCollection: Map<string, Src>,
-  branchByRepo: Map<string, string>,
 ) => {
   // `password_hash` is authorization material, never wire data. Every collection
   // response goes through this mapper, so one omission protects list, bootstrap,
   // create, rename, and public detail together.
   const { password_hash, ...safe } = col
-  const publicCol = { ...safe, password_protected: !!password_hash }
-  const src = srcByCollection.get(col.id)
-  if (!src) return { ...publicCol, kind: "manual" as const }
-  if (src.pr === null) return { ...publicCol, kind: "repo" as const, repo: src.repo }
-  return {
-    ...publicCol,
-    kind: "pr" as const,
-    repo: src.repo,
-    prNumber: src.pr,
-    // Omitted when the repo was disconnected but the PR source lingers → the
-    // client falls back to rendering it top-level.
-    parentId: branchByRepo.get(src.repo),
-  }
+  return { ...safe, password_protected: !!password_hash }
 }
 
 /** The /v1/tags response body, from a WorkspaceSummary — shared by the tags route and
@@ -259,10 +211,9 @@ export const summaryJson = (summary: WorkspaceSummary) => ({
 
 /** The /v1/collections response body from the store's overview + batched roles — the
  *  list route's exact chain (operator token = owner everywhere; creator = owner; else
- *  the batched map; null role rows drop out) followed by origin enrichment. */
+ *  the batched map; null role rows drop out). */
 export const collectionsJson = (
   cols: (CollectionRecord & { count: number })[],
-  sources: { collection_id: string; repo: string; pr_number: number | null }[],
   roleMap: Record<string, Role>,
   meId: string | null,
   operator: boolean,
@@ -278,7 +229,6 @@ export const collectionsJson = (
    *  name is the CLIENT ("Claude Code (derive)"), and the id is the human it acted for. */
   previewBylines: { id: string; name: string | null; username: string | null }[] = [],
 ) => {
-  const { srcByCollection, branchByRepo } = sourceMaps(sources)
   const bylineById = new Map(previewBylines.map((u) => [u.id, u]))
   const healedName = (p: CollectionPreview) => {
     const live = p.author_id ? bylineById.get(p.author_id) : undefined
@@ -299,31 +249,27 @@ export const collectionsJson = (
           a.col.id.localeCompare(b.col.id),
       )
       .map(({ col, role }) =>
-        enrich(
-          {
-            ...col,
-            my_role: role,
-            starred: starredIds.has(col.id),
-            active: workedIn.has(col.id),
-            my_last_activity: workedIn.get(col.id),
-            // Everything the Collections digest renders per cover: the caption (title),
-            // the window check (updated_at), and the recent-editor avatars (byline).
-            // Only the internal id stays server-side.
-            preview: (previews[col.id] ?? []).map((p) => ({
-              short_id: p.short_id,
-              title: p.title,
-              current_version: p.current_version,
-              has_preview: p.has_preview,
-              updated_at: p.updated_at,
-              author_name: healedName(p),
-              author_login: p.author_login,
-              author_avatar: p.author_avatar,
-            })),
-            last_activity: previews[col.id]?.[0]?.updated_at,
-          },
-          srcByCollection,
-          branchByRepo,
-        ),
+        enrich({
+          ...col,
+          my_role: role,
+          starred: starredIds.has(col.id),
+          active: workedIn.has(col.id),
+          my_last_activity: workedIn.get(col.id),
+          // Everything the Collections digest renders per cover: the caption (title),
+          // the window check (updated_at), and the recent-editor avatars (byline).
+          // Only the internal id stays server-side.
+          preview: (previews[col.id] ?? []).map((p) => ({
+            short_id: p.short_id,
+            title: p.title,
+            current_version: p.current_version,
+            has_preview: p.has_preview,
+            updated_at: p.updated_at,
+            author_name: healedName(p),
+            author_login: p.author_login,
+            author_avatar: p.author_avatar,
+          })),
+          last_activity: previews[col.id]?.[0]?.updated_at,
+        }),
       )
   )
 }

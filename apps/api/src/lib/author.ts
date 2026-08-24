@@ -64,8 +64,8 @@ export const resolveUserBylines = async (
 
 /** The artifact's current author as a resolved profile; null when it has no author at all.
  *  A publish-by-hand carries the Derive user in `author_id`, so prefer that user's live
- *  byline over the denormalized `author_name` (which self-heals a stale agent-client name);
- *  a GitHub-synced artifact has no `author_id` and falls through to its commit identity. */
+ *  byline over the denormalized `author_name` (which self-heals a stale agent-client name).
+ *  Historical imports without an `author_id` fall through to their stored author identity. */
 export const authorProfile = (
   a: ArtifactRecord,
   handleByGhId: Record<string, string | null>,

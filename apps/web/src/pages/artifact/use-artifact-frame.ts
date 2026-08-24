@@ -56,10 +56,6 @@ export function useArtifactFrame(p: {
   /** Visual review mode picked a semantic element (loop step, graph node/edge,
    *  chart, image…). The page opens a composer directly on this durable anchor. */
   onVisualPin?: (selection: NonNullable<Selection> | null) => void
-  // A cross-document link inside the frame was clicked: the server resolved it to a
-  // sibling artifact `ref`. The frame is sandboxed and can't navigate the host, so it
-  // hands the click here for an SPA transition (or a new tab on a modified click).
-  onNavigate: (ref: string, newTab: boolean) => void
   /** Escape pressed while keyboard focus was inside the frame — the client
    *  forwards it because the host's window listener can't see in. Treat it like
    *  a window Escape (exit focus mode, cancel a composer). */
@@ -93,15 +89,7 @@ export function useArtifactFrame(p: {
     onPointerLeave,
     onTap,
   } = p
-  const {
-    setHoverThread,
-    setActiveThread,
-    setPanel,
-    onOpenComments,
-    onNavigate,
-    onEsc,
-    onOpenExternal,
-  } = p
+  const { setHoverThread, setActiveThread, setPanel, onOpenComments, onEsc, onOpenExternal } = p
   const frame = useRef<HTMLIFrameElement>(null)
   const onVisualPinRef = useRef(p.onVisualPin)
   onVisualPinRef.current = p.onVisualPin
@@ -291,8 +279,6 @@ export function useArtifactFrame(p: {
         // `p` pressed with focus inside the document. Only a deck can be presented,
         // and only from a read state — mid-edit the mode has its own answer.
         if (deckRef.current || videoRef.current) presentRef.current()
-      } else if (d.type === "navigate" && typeof d.ref === "string") {
-        onNavigate(d.ref, !!d.newTab)
       } else if (d.type === "open-external" && typeof d.href === "string") {
         onOpenExternal?.(d.href)
       } else if (d.type === "esc") {
@@ -309,7 +295,6 @@ export function useArtifactFrame(p: {
     setActiveThread,
     setPanel,
     onOpenComments,
-    onNavigate,
     onEsc,
     onOpenExternal,
     updateGeom,

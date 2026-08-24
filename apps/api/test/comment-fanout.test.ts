@@ -83,7 +83,6 @@ describe("comment channel fan-out", () => {
         {
           meta: failingMeta,
           bus: { publish: () => {}, subscribe: () => () => {} } as never,
-          blobs: {} as never,
           baseUrl: "http://derive.test",
           notify: async () => {
             throw new Error("webhook enqueue unavailable")
@@ -180,9 +179,6 @@ describe("comment channel fan-out", () => {
     await meta.setOrgSettings("default", {
       ...DEFAULT_ORG_SETTINGS,
       emailNotifications: false,
-      githubPostComments: true,
-      githubMirrorComments: true,
-      githubPreviewLink: true,
     })
     const shortId = await newArtifact(app)
     await comment(app, shortId, editor.email, [{ id: owner.id, name: "Owner" }])
@@ -270,7 +266,6 @@ describe("comment channel fan-out", () => {
         {
           meta: d.meta,
           bus: { publish: () => {}, subscribe: () => () => {} } as never,
-          blobs: {} as never,
           baseUrl: "http://derive.test",
           notify: async () => {},
         },

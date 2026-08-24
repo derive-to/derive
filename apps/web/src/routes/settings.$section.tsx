@@ -2,11 +2,10 @@ import { createFileRoute, redirect } from "@tanstack/react-router"
 import { Settings } from "../pages/settings"
 import { SECTION_ALIASES } from "../pages/settings/section-aliases"
 
-// A settings section as a path segment: /settings/$section (profile, members, github…).
-// The transient GitHub-install signals (gh_install / gh_error) still ride as query
-// params — they're a one-shot handshake, not a place — and are read from
-// window.location by the GitHub section. The passthrough validator keeps them from
-// being stripped off the URL before that section consumes them.
+// A settings section as a path segment: /settings/$section (profile, members,
+// integrations…). Transient integration callback signals ride as query params — they're a
+// one-shot handshake, not a place. The passthrough validator keeps them from being stripped
+// before the relevant section consumes them.
 //
 // beforeLoad rewrites stale addresses instead of letting them strand on the
 // Profile fallback: old/misspelled ids via SECTION_ALIASES, and /settings/people —

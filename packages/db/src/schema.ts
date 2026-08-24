@@ -100,17 +100,15 @@ export const artifact = sqliteTable("artifact", {
   // Nullable (null = off), no default, so it ALTER ADDs cleanly.
   public_history: integer("public_history").$type<0 | 1>(),
   source_path: text("source_path"),
-  // The CURRENT (last) author, denormalized from the latest version row for the list
-  // view + author filtering. For a GitHub-synced artifact these mirror the last commit's
-  // author: `author_name`/`author_login`/`author_avatar` are the display name, GitHub
-  // login, and avatar URL; `author_gh_id` is the GitHub numeric user id (text) used to
-  // map back to a Derive account. All nullable (legacy/anonymous/non-synced rows).
+  // The CURRENT (last) author, denormalized from the latest version row for list views.
+  // GitHub identity fields remain for historical imported rows; the current integration
+  // never publishes artifacts or writes them.
   author_name: text("author_name"),
   author_login: text("author_login"),
   author_avatar: text("author_avatar"),
   author_gh_id: text("author_gh_id"),
-  // The Derive user who last published this by hand (the signed-in publisher). Null for
-  // GitHub-synced versions (attributed via author_gh_id), static-token, and legacy rows.
+  // The Derive user who last published this (the signed-in publisher). Null for
+  // historical imports, static-token publishes, and legacy rows.
   // Drives the profile work-list + people-follow. Nullable so it ALTER ADDs cleanly.
   author_id: text("author_id"),
   // Remix lineage: the artifact id this one was derived from ("Use this as a
@@ -131,17 +129,15 @@ export const version = sqliteTable(
     content_type: text("content_type").notNull(),
     size_bytes: integer("size_bytes").notNull().default(0),
     author: text("author").notNull(),
-    // The GitHub identity behind this version, when it came from a sync: the commit
-    // author's login, avatar URL, and numeric user id (text). All nullable — a manual
-    // publish, an anonymous one, or a commit GitHub can't map to an account leaves them
-    // null and `author` carries the display name (commit author name / "GitHub sync").
+    // Historical imported-author identity. Current publish paths leave these nullable
+    // compatibility columns empty and use `author_id` for a signed-in publisher.
     author_login: text("author_login"),
     author_avatar: text("author_avatar"),
     author_gh_id: text("author_gh_id"),
-    // The Derive user who published this version by hand; null for sync/anon/legacy.
+    // The Derive user who published this version; null for imports/anon/legacy.
     author_id: text("author_id"),
-    // Which surface created this version ('web' | 'mcp' | 'api' | 'sync') — the
-    // onboarding/analytics stamp. Null for pre-column versions and non-stamping paths.
+    // Which surface created this version ('web' | 'mcp' | 'api'; historical rows may carry
+    // 'sync') — the onboarding/analytics stamp. Null for pre-column/non-stamping paths.
     source: text("source").$type<VersionSource>(),
     message: text("message"),
     name: text("name"),
@@ -727,39 +723,10 @@ export const templateLibraryEntry = sqliteTable(
   (t) => [index("template_library_entry_library").on(t.library_id, t.created_at)],
 )
 
-// A GitHub repo mirrored into a collection, one-way. `files` is a JSON path→
-// {artifact_id, sha} map so a re-sync skips unchanged files and tombstones gone ones.
-export const repoSource = sqliteTable("repo_source", {
-  id: text("id").primaryKey(),
-  org_id: text("org_id").notNull().default("local"),
-  collection_id: text("collection_id")
-    .notNull()
-    .references(() => collection.id),
-  repo: text("repo").notNull(),
-  ref: text("ref").notNull().default("HEAD"),
-  includes: text("includes").notNull(),
-  token: text("token"),
-  // GitHub App installation backing this source. When set, sync mints a
-  // short-lived installation token instead of using `token` (the PAT path).
-  installation_id: text("installation_id"),
-  // When set, this source is a read-only PREVIEW of an open pull request: `ref` is
-  // the PR head sha and the source mirrors only the PR's changed docs into its own
-  // collection ("PR #<pr_number>: <title>"). NULL = an ordinary branch mirror. This
-  // is the discriminator that keeps PR previews out of the per-repo dedup + push matcher.
-  pr_number: integer("pr_number"),
-  files: text("files").notNull().default("{}"),
-  last_synced_at: text("last_synced_at"),
-  last_status: text("last_status"),
-  progress: text("progress"),
-  created_by: text("created_by").notNull(),
-  created_at: text("created_at").notNull().default(now),
-})
-
 // The instance's GitHub App credentials, captured once via the manifest flow
 // (one-click "Set up GitHub App"). A single row, id = 'default'. The three
 // secret columns are AES-GCM encrypted at rest (see lib/crypto).
-// Per-workspace integration switches (email / GitHub post + mirror / Slack). One row
-// per org; `settings` is a JSON OrgSettings blob. Absent row ⇒ defaults (all on).
+// Per-workspace preferences. One row per org; `settings` is a JSON OrgSettings blob.
 export const orgSettings = sqliteTable("org_settings", {
   org_id: text("org_id").primaryKey(),
   settings: text("settings").notNull().default("{}"),
@@ -938,13 +905,12 @@ export const githubApp = sqliteTable("github_app", {
   client_id: text("client_id").notNull(),
   client_secret: text("client_secret").notNull(),
   private_key: text("private_key").notNull(),
-  webhook_secret: text("webhook_secret").notNull(),
   created_at: text("created_at").notNull().default(now),
 })
 
 // A GitHub App installation a workspace connected — the binding between a GitHub
-// account's selected repos and a Derive workspace. One installation backs many
-// repo_source rows; sync mints installation tokens against installation_id.
+// account's selected repos and a Derive workspace. Agent source calls mint
+// short-lived installation tokens against installation_id.
 export const githubInstallation = sqliteTable("github_installation", {
   installation_id: text("installation_id").primaryKey(),
   org_id: text("org_id").notNull(),
@@ -1248,7 +1214,6 @@ const TABLES = [
   folder,
   templateLibrary,
   templateLibraryEntry,
-  repoSource,
   orgSettings,
   subscription,
   modelCredential,

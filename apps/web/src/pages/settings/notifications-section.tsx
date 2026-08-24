@@ -18,8 +18,8 @@ import { SettingsSection } from "./settings-section"
 // How Derive gets YOUR attention — and nothing else. Everything on this page is
 // scoped to the caller: the Slack DM preference is per-user-per-workspace
 // (user_notification_pref), the account link is per-user, and auto-open is per
-// device. The workspace-wide switches (does this workspace email anyone at all,
-// does it mirror to GitHub) stay under Integrations — a workspace decision must
+// device. The workspace-wide switches (for example, whether this workspace emails anyone)
+// stay under Integrations — a workspace decision must
 // not dress up as a personal one.
 //
 // The Slack DM pref is deliberately settable BEFORE the workspace connects Slack

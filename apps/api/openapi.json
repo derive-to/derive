@@ -44,7 +44,7 @@
     },
     {
       "name": "Follows",
-      "description": "Follow people and repo paths to build the activity feed."
+      "description": "Follow people to build the activity feed."
     },
     {
       "name": "Notifications",
@@ -63,8 +63,8 @@
       "description": "Custom domains and vanity subdomains bound to artifacts."
     },
     {
-      "name": "Sync",
-      "description": "GitHub repository mirroring: connect a repo and keep its docs in sync."
+      "name": "GitHub",
+      "description": "Install-backed GitHub access for reading pull requests and posting comments."
     },
     {
       "name": "Slack",
@@ -383,10 +383,6 @@
             "type": "boolean",
             "description": "true when the artifact is on the reversible archive shelf."
           },
-          "managed": {
-            "type": "boolean",
-            "description": "true when mirrored from a GitHub sync — read-only in Derive."
-          },
           "bundle": {
             "type": "object",
             "properties": {
@@ -677,11 +673,6 @@
           },
           "workflow_preview": {
             "$ref": "#/components/schemas/WorkflowPreview"
-          },
-          "source_path": {
-            "type": "string",
-            "nullable": true,
-            "description": "Source path (e.g. the repo path of a synced artifact); null when none."
           },
           "derived_from": {
             "type": "object",
@@ -1249,18 +1240,6 @@
             "type": "boolean",
             "description": "When true, send workspace email notifications."
           },
-          "githubPostComments": {
-            "type": "boolean",
-            "description": "When true, post Derive comments onto the linked GitHub PR."
-          },
-          "githubMirrorComments": {
-            "type": "boolean",
-            "description": "When true, mirror GitHub PR comments back into Derive."
-          },
-          "githubPreviewLink": {
-            "type": "boolean",
-            "description": "When true, add a preview link to the linked GitHub PR."
-          },
           "defaultWorkspaceAccess": {
             "type": "string",
             "enum": [
@@ -1338,9 +1317,6 @@
         },
         "required": [
           "emailNotifications",
-          "githubPostComments",
-          "githubMirrorComments",
-          "githubPreviewLink",
           "defaultWorkspaceAccess",
           "defaultLinkRole",
           "defaultListed",
@@ -1766,15 +1742,13 @@
           "kind": {
             "type": "string",
             "enum": [
-              "author",
-              "path",
               "user"
             ],
-            "description": "What's followed: a GitHub author, a repo path prefix, or a person"
+            "description": "What's followed: a person"
           },
           "target": {
             "type": "string",
-            "description": "The followed value: author login, path prefix, or (people) public @handle"
+            "description": "The followed person's public @handle"
           },
           "created_at": {
             "type": "string"
@@ -1926,27 +1900,6 @@
           "active": {
             "type": "boolean",
             "description": "Whether the caller has worked in this collection recently — published, commented, or been added. Derived from acts that leave a row; reading is not recorded."
-          },
-          "kind": {
-            "type": "string",
-            "enum": [
-              "manual",
-              "repo",
-              "pr"
-            ],
-            "description": "Origin: \"manual\" (user-made), \"repo\" (GitHub mirror), or \"pr\" (PR preview)."
-          },
-          "parentId": {
-            "type": "string",
-            "description": "For a PR preview: the repo collection it nests under, when connected."
-          },
-          "prNumber": {
-            "type": "number",
-            "description": "For a PR preview: the pull-request number."
-          },
-          "repo": {
-            "type": "string",
-            "description": "For repo/PR collections: the \"owner/name\" slug."
           }
         },
         "required": [
@@ -2003,334 +1956,69 @@
           "created_at"
         ]
       },
-      "GithubSyncStatus": {
+      "GithubStatus": {
         "type": "object",
         "properties": {
-          "sources": {
+          "available": {
+            "type": "boolean",
+            "description": "Whether this instance has a live GitHub App configured"
+          },
+          "connected": {
+            "type": "boolean",
+            "description": "Whether this workspace has at least one active GitHub connection"
+          },
+          "app_slug": {
+            "type": "string",
+            "nullable": true
+          },
+          "needs_permissions": {
+            "type": "boolean"
+          },
+          "permissions_url": {
+            "type": "string",
+            "nullable": true
+          },
+          "accounts": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/RepoSource"
-            },
-            "description": "Branch mirrors, one per connected repo."
-          },
-          "prs": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/PrPreview"
-            },
-            "description": "PR previews, one per pull request being mirrored."
-          },
-          "app": {
-            "type": "object",
-            "properties": {
-              "configured": {
-                "type": "boolean",
-                "description": "True when a live GitHub App is set up on this server."
-              },
-              "slug": {
-                "type": "string",
-                "description": "The App's GitHub slug for install links; absent when unconfigured."
-              },
-              "upToDate": {
-                "type": "boolean",
-                "description": "True when the App has every required permission and event."
-              },
-              "missing": {
-                "type": "object",
-                "properties": {
-                  "permissions": {
-                    "type": "object",
-                    "additionalProperties": {
-                      "type": "string"
-                    },
-                    "description": "Scope → level still to grant (e.g. contents → read)."
-                  },
-                  "events": {
-                    "type": "array",
-                    "items": {
-                      "type": "string"
-                    },
-                    "description": "Webhook event names still to subscribe to."
-                  }
+              "type": "object",
+              "properties": {
+                "installation_id": {
+                  "type": "string"
                 },
-                "required": [
-                  "permissions",
-                  "events"
-                ],
-                "description": "Permissions and events still to grant; absent when up to date."
+                "account_login": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "connection_id": {
+                  "type": "string",
+                  "nullable": true
+                },
+                "state": {
+                  "type": "string",
+                  "enum": [
+                    "active",
+                    "disconnected",
+                    "needs_reauth"
+                  ]
+                }
               },
-              "permissionsUrl": {
-                "type": "string",
-                "description": "GitHub URL to adjust the App's permissions; absent when unconfigured."
-              },
-              "approveUrl": {
-                "type": "string",
-                "description": "GitHub URL to install or approve the App; absent when unconfigured."
-              }
-            },
-            "required": [
-              "configured"
-            ],
-            "description": "The instance GitHub App's setup and permission state."
-          },
-          "installations": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/GithubInstallation"
-            },
-            "description": "This workspace's App installations (entry points to the repo picker)."
+              "required": [
+                "installation_id",
+                "account_login",
+                "connection_id",
+                "state"
+              ]
+            }
           }
         },
         "required": [
-          "sources",
-          "prs",
-          "app",
-          "installations"
-        ]
-      },
-      "RepoSource": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "collection_id": {
-            "type": "string",
-            "description": "Collection the repo's docs are mirrored into."
-          },
-          "repo": {
-            "type": "string",
-            "description": "The connected GitHub repo, as owner/name."
-          },
-          "ref": {
-            "type": "string",
-            "description": "Branch or tag to mirror; \"HEAD\" tracks the default branch."
-          },
-          "includes": {
-            "type": "string",
-            "description": "Comma-separated glob patterns selecting which files to mirror."
-          },
-          "token": {
-            "type": "string",
-            "nullable": true,
-            "description": "Redacted to \"•••\" when a PAT is stored; null for App-backed sources."
-          },
-          "installation_id": {
-            "type": "string",
-            "nullable": true,
-            "description": "GitHub App installation backing this source; null when using a PAT."
-          },
-          "last_synced_at": {
-            "type": "string",
-            "nullable": true,
-            "description": "When the last sync finished; null if it has never synced."
-          },
-          "last_status": {
-            "type": "string",
-            "nullable": true,
-            "description": "Outcome of the last sync run; null if it has never synced."
-          },
-          "created_by": {
-            "type": "string"
-          },
-          "created_at": {
-            "type": "string"
-          },
-          "file_count": {
-            "type": "number",
-            "description": "How many files are currently mirrored from the repo."
-          },
-          "progress": {
-            "type": "string",
-            "nullable": true,
-            "description": "Live sync progress as a JSON blob driving the bar; null when none recorded."
-          }
-        },
-        "required": [
-          "id",
-          "collection_id",
-          "repo",
-          "ref",
-          "includes",
-          "token",
-          "installation_id",
-          "last_synced_at",
-          "last_status",
-          "created_by",
-          "created_at",
-          "file_count",
-          "progress"
-        ]
-      },
-      "PrPreview": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "collection_id": {
-            "type": "string",
-            "description": "Collection holding this PR's previewed docs."
-          },
-          "repo": {
-            "type": "string",
-            "description": "The connected GitHub repo, as owner/name."
-          },
-          "pr_number": {
-            "type": "number",
-            "description": "The pull request number this preview mirrors."
-          },
-          "title": {
-            "type": "string",
-            "description": "The PR's title, used as the preview's display name."
-          },
-          "last_status": {
-            "type": "string",
-            "nullable": true,
-            "description": "Outcome of the last sync run; null if it has never synced."
-          },
-          "last_synced_at": {
-            "type": "string",
-            "nullable": true,
-            "description": "When the last sync finished; null if it has never synced."
-          },
-          "file_count": {
-            "type": "number",
-            "description": "How many of the PR's changed docs are mirrored."
-          },
-          "progress": {
-            "type": "string",
-            "nullable": true,
-            "description": "Live sync progress as a JSON blob driving the bar; null when none recorded."
-          }
-        },
-        "required": [
-          "id",
-          "collection_id",
-          "repo",
-          "pr_number",
-          "title",
-          "last_status",
-          "last_synced_at",
-          "file_count",
-          "progress"
-        ]
-      },
-      "GithubInstallation": {
-        "type": "object",
-        "properties": {
-          "installation_id": {
-            "type": "string",
-            "description": "GitHub's numeric App installation id, as a string."
-          },
-          "account_login": {
-            "type": "string",
-            "nullable": true,
-            "description": "The org/user the App is installed on; null until GitHub reports it."
-          }
-        },
-        "required": [
-          "installation_id",
-          "account_login"
-        ]
-      },
-      "InstallationRepo": {
-        "type": "object",
-        "properties": {
-          "full_name": {
-            "type": "string",
-            "description": "The repository's full name, as owner/name."
-          },
-          "private": {
-            "type": "boolean",
-            "description": "True when the repo is private on GitHub."
-          },
-          "default_branch": {
-            "type": "string",
-            "description": "The repo's default branch (e.g. main)."
-          },
-          "pushed_at": {
-            "type": "string",
-            "nullable": true,
-            "description": "When the repo was last pushed to; null if unknown. Drives sort order."
-          }
-        },
-        "required": [
-          "full_name",
-          "private",
-          "default_branch",
-          "pushed_at"
-        ]
-      },
-      "SyncPreview": {
-        "type": "object",
-        "properties": {
-          "total": {
-            "type": "number",
-            "description": "Total files matching the include globs."
-          },
-          "md": {
-            "type": "number",
-            "description": "How many matches are Markdown files."
-          },
-          "html": {
-            "type": "number",
-            "description": "How many matches are HTML files."
-          },
-          "other": {
-            "type": "number",
-            "description": "Matches that are neither Markdown nor HTML."
-          },
-          "truncated": {
-            "type": "boolean",
-            "description": "True when GitHub capped the tree, so counts are a lower bound."
-          }
-        },
-        "required": [
-          "total",
-          "md",
-          "html",
-          "other",
-          "truncated"
-        ]
-      },
-      "SyncStatus": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "string"
-          },
-          "repo": {
-            "type": "string",
-            "description": "The connected GitHub repo, as owner/name."
-          },
-          "progress": {
-            "type": "string",
-            "nullable": true,
-            "description": "Live sync progress as a JSON blob driving the bar; null when none recorded."
-          },
-          "last_status": {
-            "type": "string",
-            "nullable": true,
-            "description": "Outcome of the last sync run; null if it has never synced."
-          },
-          "last_synced_at": {
-            "type": "string",
-            "nullable": true,
-            "description": "When the last sync finished; null if it has never synced."
-          },
-          "file_count": {
-            "type": "number",
-            "description": "How many files are currently mirrored from the repo."
-          }
-        },
-        "required": [
-          "id",
-          "repo",
-          "progress",
-          "last_status",
-          "last_synced_at",
-          "file_count"
+          "available",
+          "connected",
+          "app_slug",
+          "needs_permissions",
+          "permissions_url",
+          "accounts"
         ]
       },
       "SlackStatus": {
@@ -6200,7 +5888,7 @@
         "tags": [
           "Follows"
         ],
-        "summary": "Follow a GitHub author, a repo path prefix, or a person.",
+        "summary": "Follow a person.",
         "responses": {
           "201": {
             "description": "The created follow.",
@@ -7175,75 +6863,19 @@
         }
       }
     },
-    "/v1/sync/github/resync-installations": {
-      "post": {
-        "tags": [
-          "Sync"
-        ],
-        "summary": "Re-import this App's installations from GitHub (Admin only).",
-        "responses": {
-          "200": {
-            "description": "How many installations were re-imported.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "synced": {
-                      "type": "number"
-                    }
-                  },
-                  "required": [
-                    "synced"
-                  ]
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/sync/github": {
+    "/v1/github": {
       "get": {
         "tags": [
-          "Sync"
+          "GitHub"
         ],
-        "summary": "The workspace's synced repos, PR previews, App status, and installations.",
+        "summary": "GitHub standard-integration status for the current workspace.",
         "responses": {
           "200": {
-            "description": "Branch sources, PR previews, the App's setup/permissions, installations.",
+            "description": "App availability, connection health, and connected GitHub accounts.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/GithubSyncStatus"
-                }
-              }
-            }
-          }
-        }
-      },
-      "post": {
-        "tags": [
-          "Sync"
-        ],
-        "summary": "Connect a repo for mirroring (App installation or a PAT).",
-        "responses": {
-          "200": {
-            "description": "The existing source (this repo was already connected).",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RepoSource"
-                }
-              }
-            }
-          },
-          "201": {
-            "description": "The newly connected source (first sync kicked off).",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RepoSource"
+                  "$ref": "#/components/schemas/GithubStatus"
                 }
               }
             }
@@ -7251,212 +6883,12 @@
         }
       }
     },
-    "/v1/sync/github/install": {
-      "post": {
-        "tags": [
-          "Sync"
-        ],
-        "summary": "Get the GitHub App install URL for this workspace (Admin only).",
-        "responses": {
-          "200": {
-            "description": "The GitHub install URL to navigate the browser to.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "url": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "url"
-                  ]
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/sync/github/installations/{id}/repos": {
-      "get": {
-        "tags": [
-          "Sync"
-        ],
-        "summary": "The repos an installation can mirror (Admin only).",
-        "parameters": [
-          {
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "name": "id",
-            "in": "path"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "The installation's repos, most-recent-push first.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "repos": {
-                      "type": "array",
-                      "items": {
-                        "$ref": "#/components/schemas/InstallationRepo"
-                      }
-                    }
-                  },
-                  "required": [
-                    "repos"
-                  ]
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/sync/github/installations/{id}/preview": {
-      "get": {
-        "tags": [
-          "Sync"
-        ],
-        "summary": "How many docs a repo + scope would mirror (Admin only).",
-        "parameters": [
-          {
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "name": "id",
-            "in": "path"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Matching file counts by type + whether the tree was truncated.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SyncPreview"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/sync/github/{id}/run": {
-      "post": {
-        "tags": [
-          "Sync"
-        ],
-        "summary": "Trigger a server-side sync (Admin only).",
-        "parameters": [
-          {
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "name": "id",
-            "in": "path"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "The finished source (ran inline; no runner wired).",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RepoSource"
-                }
-              }
-            }
-          },
-          "202": {
-            "description": "The source, queued (sync runs on the server; poll /status).",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RepoSource"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/sync/github/{id}/status": {
-      "get": {
-        "tags": [
-          "Sync"
-        ],
-        "summary": "Cheap status poll for a source's live progress bar.",
-        "parameters": [
-          {
-            "schema": {
-              "type": "string"
-            },
-            "required": true,
-            "name": "id",
-            "in": "path"
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "The source's persisted progress + last status + file count.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SyncStatus"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/sync/github/active": {
-      "get": {
-        "tags": [
-          "Sync"
-        ],
-        "summary": "Sources mid-sync in this workspace (drives the global syncing chip).",
-        "responses": {
-          "200": {
-            "description": "The sources currently syncing.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "active": {
-                      "type": "array",
-                      "items": {
-                        "$ref": "#/components/schemas/RepoSource"
-                      }
-                    }
-                  },
-                  "required": [
-                    "active"
-                  ]
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/sync/github/{id}": {
+    "/v1/github/connections/{id}": {
       "delete": {
         "tags": [
-          "Sync"
+          "GitHub"
         ],
-        "summary": "Disconnect a source (?wipe=true also deletes its artifacts).",
+        "summary": "Disconnect one GitHub installation from agent use (Admin only).",
         "parameters": [
           {
             "schema": {
@@ -7469,7 +6901,7 @@
         ],
         "responses": {
           "204": {
-            "description": "The source was disconnected."
+            "description": "The GitHub connection was disconnected."
           }
         }
       }

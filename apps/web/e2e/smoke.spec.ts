@@ -176,9 +176,7 @@ test("settings save and theme switch persist", async ({ owner }) => {
   await expect(owner.locator("html")).toHaveClass(/dark/)
 })
 
-test("Brandprint lives in Settings, People is its own page, and old paths on both still resolve", async ({
-  owner,
-}) => {
+test("settings destinations and their retired paths resolve", async ({ owner }) => {
   // The rail is down to the two destinations that are places. Everything else is a
   // filter, a setting, or reachable from the surface it belongs to.
   await owner.goto("/")
@@ -201,6 +199,16 @@ test("Brandprint lives in Settings, People is its own page, and old paths on bot
   // The old Brandprint path keeps working — bookmarks, and links agents have already emitted.
   await owner.goto("/brandprint")
   await expect(owner).toHaveURL(/\/settings\/brandprint$/)
+
+  // GitHub is a standard integration now. Its retired standalone settings path lands on the
+  // shared connection surface, with no repository-mirroring controls or collection workflow.
+  await owner.goto("/settings/github")
+  await expect(owner).toHaveURL(/\/settings\/integrations$/)
+  await expect(owner.getByRole("heading", { name: "GitHub", exact: true })).toBeVisible()
+  await expect(owner.getByTestId("github-setup")).toBeVisible()
+  await expect(owner.getByTestId("toggle-github-post")).toHaveCount(0)
+  await expect(owner.getByTestId("toggle-github-mirror")).toHaveCount(0)
+  await expect(owner.getByTestId("toggle-github-preview-link")).toHaveCount(0)
 })
 
 test("Archived lives inside the Library filter rather than the primary rail", async ({ owner }) => {

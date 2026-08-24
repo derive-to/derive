@@ -4,8 +4,7 @@ import { Eyebrow } from "@/components/shared/section-eyebrow"
 import { Badge } from "@/components/ui/badge"
 
 // The top-of-feed "following" summary + manage surface: the caller's current
-// follows as chips — @<login> for GitHub authors, @<handle> for people, <path> for
-// paths — each with an unfollow (×). Doubles as the manage-follows surface, so the
+// follows as @handle chips, each with an unfollow (×). Doubles as the manage-follows surface, so the
 // feed and the settings live in one place.
 export function FollowingStrip({
   follows,
@@ -21,13 +20,8 @@ export function FollowingStrip({
       {follows.map((fol) => {
         // People-follows store a user id in `target` but carry a resolved `handle`; label
         // them @handle and unfollow BY handle (the server resolves it back to the id).
-        const label =
-          fol.kind === "author"
-            ? `@${fol.target}`
-            : fol.kind === "user"
-              ? `@${fol.handle ?? fol.target}`
-              : fol.target
-        const unfollowTarget = fol.kind === "user" ? (fol.handle ?? fol.target) : fol.target
+        const label = `@${fol.handle ?? fol.target}`
+        const unfollowTarget = fol.handle ?? fol.target
         return (
           // Follow chips are the neutral Badge (never brand tints) in the machine
           // register; overflow-visible lets the unfollow ×'s touch target escape.

@@ -43,6 +43,7 @@ import {
  *  model. Deliberately NOT AfterPublishDeps — this turn never publishes, so it never reaches
  *  the post-publish path, and claiming those deps would be a lie about what it does. */
 export interface CommentTurnDeps extends CommentActionDeps {
+  blobs: BlobStore
   model: ResolvedChatModel
 }
 
@@ -97,7 +98,7 @@ export const runCommentTurn = async (
       ...(awaiting ? { meta: JSON.stringify({ awaiting_reply: true }) } : {}),
     })
     // The SAME fan-out any other comment runs — which is what puts this answer in the Slack
-    // mirror, the GitHub mirror, the bells and the webhooks for free. Recursion is not a risk:
+    // channel, the bells and the webhooks for free. Recursion is not a risk:
     // this comment mentions nobody, and the branch that calls us skips a Derive-authored one.
     await commentCreatedAction(deps, artifact, created, {
       mentions: [],

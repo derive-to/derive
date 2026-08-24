@@ -6,45 +6,27 @@
 // success/failure landing. Styled like the CLI callback so setup feels like Derive.
 import { esc, brandShell as SHELL } from "./brand-page"
 
-// ---- The permission/event spec Derive's CURRENT code needs ------------------
-// SINGLE SOURCE OF TRUTH. The manifest is born with these, and the live App is
-// diffed against these on every settings load (routes/sync.ts) — a gap surfaces
-// the in-app "update permissions" banner. To request a NEW permission as a feature
-// lands, add ONE line here, deploy, and the banner walks the owner through it.
+// ---- The permission/event spec the STANDARD GitHub source needs --------------
+// SINGLE SOURCE OF TRUTH for every newly-created App. GitHub is an on-demand source:
+// read pull requests and add a top-level PR conversation comment. Repository mirroring
+// is gone and deliberately does not shape new App permissions or events.
 //
 // GitHub has NO API to change a live App's permissions (the whole Apps REST API is
 // read-only for app config — PATCH /app doesn't exist). The owner toggles + saves
-// once on github.com/settings/apps/{slug}/permissions, then each install approves;
-// the `installation`/`new_permissions_accepted` webhook + a live GET /app re-check
-// confirm it. So this constant drives "what we want"; GitHub holds "what we have".
+// once on github.com/settings/apps/{slug}/permissions, then each install approves.
+// Settings uses a live GET /app re-check to confirm it. So this constant drives
+// "what we want"; GitHub holds "what we have".
 //
-// contents+metadata (read) mirror docs; pull_requests is WRITE — Derive posts a PR
-// review/issue comment when someone comments on a PR-sourced artifact, and receives
-// `pull_request` + comment events to preview PR docs and mirror PR comments back into
-// Derive (the bidirectional collaboration loop). push + pull_request drive auto-sync.
-// issues:READ backs the `issue_comment` event. GitHub's manifest-creation validator maps
-// that event to the Issues permission (NOT Pull requests), so omitting it fails creation
-// with "Default events are not supported by permissions: issue_comment". Read is enough:
-// we only RECEIVE issue_comment events. Posting a PR conversation comment goes through
-// pull_requests:write — the target is always a PR (see prSourceForArtifact), never a bare
-// issue — so we never need issues:write.
+// `pull_requests:write` is necessary because GitHub's top-level PR conversation endpoint is
+// an Issues route that accepts either Issues:write or Pull requests:write. The latter also
+// covers every PR read this source performs. Derive's server-side request policy narrows the
+// effective write to comment creation only.
 export const REQUIRED_PERMISSIONS: Record<string, string> = {
-  contents: "read",
-  issues: "read",
   metadata: "read",
   pull_requests: "write",
 }
-// Only permission-backed events belong here (push needs contents, the pull_request +
-// comment events need pull_requests). The installation + installation_repositories
-// lifecycle events are delivered to every App automatically — listing them here is
-// rejected by GitHub. `issue_comment` carries PR conversation comments; the inline
-// review comments arrive as `pull_request_review_comment`.
-export const REQUIRED_EVENTS = [
-  "push",
-  "pull_request",
-  "issue_comment",
-  "pull_request_review_comment",
-]
+// Scheduled/manual runs query GitHub directly. No webhook collection is part of this path.
+export const REQUIRED_EVENTS: string[] = []
 
 /** The GitHub App manifest: what permissions/events/URLs the new App is born with.
  *  Consumes REQUIRED_PERMISSIONS/REQUIRED_EVENTS so a fresh App is always current.
@@ -55,13 +37,14 @@ export const buildManifest = (baseUrl: string, host: string) => ({
   url: baseUrl,
   // Where GitHub sends the browser after the App is CREATED (manifest → code).
   redirect_url: new URL("/settings/github/app/created", baseUrl).toString(),
-  hook_attributes: { url: new URL("/v1/sync/github/webhook", baseUrl).toString(), active: true },
   // Where GitHub sends the browser after the App is INSTALLED — our callback
-  // records the installation (with the signed state) then bounces to the picker.
-  setup_url: new URL("/v1/sync/github/callback", baseUrl).toString(),
+  // starts a user-authorization proof before any installation is persisted.
+  setup_url: new URL("/v1/github/callback", baseUrl).toString(),
+  callback_urls: [new URL("/v1/github/authorize", baseUrl).toString()],
+  request_oauth_on_install: false,
   // Public so it can be installed on organizations too, not just the owner's
-  // personal account (GitHub restricts a private App to its owner account). It's
-  // read-only, and an installation only matters once bound to a workspace via our
+  // personal account (GitHub restricts a private App to its owner account). It is
+  // server-narrowed to PR reads plus top-level comments, and only matters once bound via our
   // signed-state callback, so a stray direct install is inert.
   public: true,
   default_permissions: REQUIRED_PERMISSIONS,
@@ -88,12 +71,12 @@ export function manifestFormHTML(props: { baseUrl: string; state: string }): str
     "Set up GitHub App",
     "",
     `<h1>Create your GitHub App</h1>
-    <p class="sub">This opens GitHub to create a Derive app for your account. You install it on the repos you want to mirror — no tokens to paste.</p>
+    <p class="sub">This opens GitHub to create a Derive app for your account. Select the repositories agents may read — no tokens to paste and no repository mirror.</p>
     <form id="f" method="post" action="${esc(action)}">
       <input type="hidden" name="manifest" value="${esc(manifestJson)}"/>
       <button class="btn" type="submit">Continue to GitHub</button>
     </form>
-    <p class="foot">Derive asks for <strong>Contents: read</strong> and <strong>Metadata: read</strong> to mirror your docs, <strong>Issues: read</strong> to receive PR comment events, and <strong>Pull requests: write</strong> to sync comments to and from PRs.</p>
+    <p class="foot">Derive asks for <strong>Metadata: read</strong> and <strong>Pull requests: write</strong>. The write level is required to add a top-level PR conversation comment; Derive permits no other GitHub write.</p>
     <script>setTimeout(function(){document.getElementById("f").submit()},400)</script>`,
   )
 }
@@ -113,7 +96,7 @@ export function setupResultHTML(props: { ok: boolean; slug?: string; error?: str
     "GitHub App ready",
     `<span class="badge ok">Connected</span>`,
     `<h1>Your GitHub App is ready</h1>
-    <p class="sub">${props.slug ? `<code>${esc(props.slug)}</code> ` : ""}is set up. Head back to Settings to install it on your repos.</p>
-    <p class="foot"><a class="btn" href="/settings/github">Back to Settings</a></p>`,
+    <p class="sub">${props.slug ? `<code>${esc(props.slug)}</code> ` : ""}is set up. Head back to Integrations to connect it to the repositories agents may read.</p>
+    <p class="foot"><a class="btn" href="/settings/integrations">Back to Integrations</a></p>`,
   )
 }
