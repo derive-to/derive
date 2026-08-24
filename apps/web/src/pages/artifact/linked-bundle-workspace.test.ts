@@ -2,6 +2,12 @@ import { describe, expect, it } from "vitest"
 import type { Artifact, Comment } from "@/api"
 import { linkedBundleManifestProblem, linkedBundleManifestSource } from "./linked-bundle-editor"
 import {
+  linkedBundleCurrentNodes,
+  linkedBundleInitialView,
+  linkedBundleNowHeadline,
+  linkedBundleNowSummary,
+} from "./linked-bundle-now-workspace"
+import {
   linkedBundleCommentCounts,
   linkedBundleEffectiveTier,
   linkedBundleReviewTarget,
@@ -9,16 +15,11 @@ import {
 import { linkedBundleReconciliationEdit } from "./linked-bundle-reconcile"
 import {
   linkedBundleAnchor,
-  linkedBundleCurrentNodes,
   linkedBundleEdgePath,
   linkedBundleFitScale,
   linkedBundleFocusedElements,
-  linkedBundleInitialView,
   linkedBundleLayout,
-  linkedBundleNodeExplanation,
   linkedBundleNodeFreshness,
-  linkedBundleNowHeadline,
-  linkedBundleNowSummary,
 } from "./linked-bundle-workspace"
 
 type Diagram = NonNullable<NonNullable<Artifact["linked_bundle"]>["diagrams"]>[number]
@@ -67,56 +68,6 @@ describe("linked bundle workspace", () => {
     } satisfies Member
     expect(linkedBundleNodeFreshness(node, member)).toBe("updated")
     expect(linkedBundleNodeFreshness({ ...node, basis_version: 5 }, member)).toBe("fresh")
-  })
-
-  it("uses the authored note before workflow detail and exposes the four-part explanation", () => {
-    const node = {
-      id: "research",
-      label: "Research",
-      note: "Review the strongest customer evidence.",
-      role: "Research owner",
-    }
-    const explanation = linkedBundleNodeExplanation(graph, node, {
-      node_id: "research",
-      label: "Research",
-      kind: "context",
-      instruction: "Collect customer evidence.",
-      result: "A cited evidence brief",
-      context_ref: "customer-research",
-      exit_condition: "On completion → Decision",
-    })
-    expect(explanation).toEqual({
-      whatHappens: "Review the strongest customer evidence.",
-      source: "note",
-      ownerContext: "Research owner · customer-research",
-      expectedOutput: "A cited evidence brief",
-      exitCondition: "On completion → Decision",
-    })
-  })
-
-  it("falls back from a missing node note to workflow instruction then result", () => {
-    const node = graph.nodes.find((item) => item.id === "research")
-    if (!node) throw new Error("research fixture is missing")
-    const base = {
-      node_id: "research",
-      label: "Research",
-      kind: "context" as const,
-      result: "A cited evidence brief",
-      context_ref: "customer-research",
-      exit_condition: "On completion → Decision",
-    }
-    expect(
-      linkedBundleNodeExplanation(graph, node, {
-        ...base,
-        instruction: "Collect customer evidence.",
-      }).whatHappens,
-    ).toBe("Collect customer evidence.")
-    expect(
-      linkedBundleNodeExplanation(graph, node, {
-        ...base,
-        instruction: null,
-      }).whatHappens,
-    ).toBe("A cited evidence brief")
   })
 
   it("uses a node tier before the graph default", () => {
