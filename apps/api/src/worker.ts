@@ -100,7 +100,7 @@ export interface Env {
    *  a hand-run deploy, which then reports "dev" — honest rather than wrong. */
   BUILD_SHA?: string
   BUCKET: R2Bucket
-  // The public site (github.com/derive-to/site): derive.to's marketing pages,
+  // The public site (the derive-to/site repo, private): derive.to's marketing pages,
   // blog and trust files, on their own Worker. Bound only on the hosted deploy;
   // absent ⇒ the application owns the front door (every self-host, previews).
   SITE?: Fetcher
