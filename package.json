@@ -65,6 +65,7 @@
     "lint:api": "node scripts/check-api.mjs",
     "lint:schema": "node scripts/check-schema.mjs",
     "lint:filesize": "node scripts/check-file-size.mjs",
+    "lint:favicons": "node scripts/check-favicons.mjs",
     "lint:bundle": "node scripts/check-bundle.mjs",
     "lint:anchor-client": "node scripts/check-anchor-client.mjs",
     "lint:deadcode": "knip",

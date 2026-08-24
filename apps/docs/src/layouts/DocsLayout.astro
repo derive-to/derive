@@ -72,7 +72,10 @@ const updatedLabel = lastUpdated
     <meta name="derive-docs-build" content={__DERIVE_DOCS_BUILD__} />
     {noindex && <meta name="robots" content="noindex, nofollow" />}
     <link rel="canonical" href={canonical} />
-    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <!-- Search crawlers get fixed dark defaults; the browser swaps to the white
+         variants below only when its own chrome uses a dark system theme. -->
+    <link rel="icon" href="/favicon.png" type="image/png" sizes="512x512" data-theme-favicon data-dark-href="/favicon-dark.png" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" data-theme-favicon data-dark-href="/favicon-dark.svg" />
     {!noindex && (
       <link rel="alternate" type="text/markdown" href={markdownPath} title={`${title} as Markdown`} />
     )}
@@ -167,6 +170,18 @@ const updatedLabel = lastUpdated
     <script>
       const root = document.documentElement
       const themeToggle = document.querySelector<HTMLButtonElement>(".theme-toggle")
+      const systemLight = window.matchMedia("(prefers-color-scheme: light)")
+      const favicons = document.querySelectorAll<HTMLLinkElement>("[data-theme-favicon]")
+      const updateFavicons = () => {
+        for (const icon of favicons) {
+          const lightHref = icon.dataset.lightHref ?? icon.getAttribute("href")
+          const darkHref = icon.dataset.darkHref
+          if (lightHref && !icon.dataset.lightHref) icon.dataset.lightHref = lightHref
+          if (lightHref) icon.setAttribute("href", systemLight.matches ? lightHref : (darkHref ?? lightHref))
+        }
+      }
+      systemLight.addEventListener("change", updateFavicons)
+      updateFavicons()
       const updateThemeLabel = () => {
         themeToggle?.setAttribute(
           "aria-label",

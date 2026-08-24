@@ -31,6 +31,7 @@ const CHECKS = {
   schema: script("check-schema.mjs"),
   hyperdrive: script("check-hyperdrive-no-pool.mjs"),
   filesize: script("check-file-size.mjs"),
+  favicons: script("check-favicons.mjs"),
   "anchor-client": script("check-anchor-client.mjs"),
   deadcode: [bin("knip")],
   boundaries: [bin("depcruise"), "--config", ".dependency-cruiser.mjs", "packages", "apps"],
