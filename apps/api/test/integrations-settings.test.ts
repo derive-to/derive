@@ -10,14 +10,11 @@ const { app } = makeAuthedApp("integ-settings", [owner, editor], "editor", {
 })
 
 describe("workspace integration settings", () => {
-  it("defaults to all channels enabled", async () => {
+  it("returns the shipped workspace defaults", async () => {
     const r = await app.request("/v1/workspace/settings", { headers: as(owner.email) })
     expect(r.status).toBe(200)
     expect(await r.json()).toEqual({
       emailNotifications: true,
-      githubPostComments: true,
-      githubMirrorComments: true,
-      githubPreviewLink: true,
       // The access NEW publishes land with — the team draft (see access-model.md).
       defaultWorkspaceAccess: "member",
       defaultLinkRole: "none",
@@ -41,17 +38,16 @@ describe("workspace integration settings", () => {
     const r = await app.request("/v1/workspace/settings", {
       method: "PATCH",
       headers: { "content-type": "application/json", ...as(owner.email) },
-      body: JSON.stringify({ githubPostComments: false }),
+      body: JSON.stringify({ emailNotifications: false }),
     })
     expect(r.status).toBe(200)
     const s = await r.json()
-    expect(s.githubPostComments).toBe(false)
-    expect(s.emailNotifications).toBe(true)
+    expect(s.emailNotifications).toBe(false)
     // Persisted across reads.
     const again = await (
       await app.request("/v1/workspace/settings", { headers: as(owner.email) })
     ).json()
-    expect(again.githubPostComments).toBe(false)
+    expect(again.emailNotifications).toBe(false)
   })
 
   it("a non-admin can read but not change settings", async () => {

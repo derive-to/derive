@@ -3,7 +3,7 @@ import { join } from "node:path"
 import { Hono } from "hono"
 import { describe, expect, it } from "vitest"
 import { API_PATHS, isApiPath, mountWeb } from "../src/lib/serve-web"
-import { isSpaPath, isStaticRootPath } from "../src/lib/spa-paths"
+import { isServerRenderedPath, isSpaPath, isStaticRootPath } from "../src/lib/spa-paths"
 
 const apiDir = join(import.meta.dirname, "..")
 
@@ -95,6 +95,12 @@ describe("serve-web: SPA vs API path contract", () => {
       const sample = generatedPath.replace(/\$[^/]+/g, "example")
       expect(isSpaPath(sample), `${generatedPath} must be represented by isSpaPath`).toBe(true)
     }
+  })
+
+  it("serves the retired GitHub settings path through the SPA while keeping setup server-owned", () => {
+    expect(isSpaPath("/settings/github")).toBe(true)
+    expect(isServerRenderedPath("/settings/github")).toBe(false)
+    expect(isServerRenderedPath("/settings/github/app/new")).toBe(true)
   })
 })
 

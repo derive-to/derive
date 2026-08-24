@@ -88,22 +88,19 @@ export const composeArtifactDetail = async (
     | "commentSignals"
     | "listUserFavoriteIds"
     | "getOrgSettings"
-    | "managedArtifactIds"
     | "getUsers"
   >,
   opts: ArtifactDetailOpts,
 ): Promise<ArtifactDetail> => {
   const { artifactId, orgId, viewerId } = opts
-  const [versions, tagsById, collectionIds, signals, favIds, settings, managedIds] =
-    await Promise.all([
-      store.listVersions(artifactId),
-      store.tagsForArtifacts([artifactId]),
-      store.collectionIdsForArtifact(artifactId),
-      store.commentSignals([artifactId], null),
-      viewerId ? store.listUserFavoriteIds(viewerId) : Promise.resolve<string[]>([]),
-      store.getOrgSettings(orgId),
-      store.managedArtifactIds(orgId),
-    ])
+  const [versions, tagsById, collectionIds, signals, favIds, settings] = await Promise.all([
+    store.listVersions(artifactId),
+    store.tagsForArtifacts([artifactId]),
+    store.collectionIdsForArtifact(artifactId),
+    store.commentSignals([artifactId], null),
+    viewerId ? store.listUserFavoriteIds(viewerId) : Promise.resolve<string[]>([]),
+    store.getOrgSettings(orgId),
+  ])
   // Same rows the pg driver's `byline` arm returns, resolved from the versions this
   // call just read plus the artifact's own author. Embedded drivers pay no wire trips,
   // so an extra read here costs nothing the pg fold was buying back.
@@ -119,7 +116,6 @@ export const composeArtifactDetail = async (
     openThreads: signals[artifactId]?.open_threads ?? 0,
     favorite: favIds.includes(artifactId),
     settings,
-    managed: managedIds.includes(artifactId),
   }
 }
 
@@ -167,7 +163,7 @@ export const composeBootstrap = async (
   viewer: Omit<CollectionsViewer, "userId">,
 ): Promise<BootstrapRead> => {
   const summary = await composeWorkspaceSummary(store, orgId, userId)
-  const { collections, sources, starred, workedIn, previews, previewBylines } =
+  const { collections, starred, workedIn, previews, previewBylines } =
     await composeCollectionsOverview(store, orgId, { userId, ...viewer })
   const collectionRoles = await store.collectionRolesForUser(
     collections.map((c) => c.id),
@@ -184,7 +180,6 @@ export const composeBootstrap = async (
   return {
     summary,
     collections,
-    sources,
     starred,
     workedIn,
     previews,
@@ -284,12 +279,11 @@ export const composeAutomationsWithExecutors = async (
   return autos.map((a) => ({ ...a, executor_seen_at: seen.get(a.agent_id) ?? null }))
 }
 
-/** See `composeListEnrichment` — the collections list's org-scoped pair. */
+/** See `composeListEnrichment` — the collections list with viewer decoration. */
 export const composeCollectionsOverview = async (
   store: Pick<
     MetaStore,
     | "listCollections"
-    | "listRepoSources"
     | "listUserFavoriteCollectionIds"
     | "collectionsWorkedIn"
     | "collectionPreviews"
@@ -298,12 +292,8 @@ export const composeCollectionsOverview = async (
   orgId: string,
   viewer?: CollectionsViewer,
 ): Promise<CollectionsOverviewRead> => {
-  const [collections, sources] = await Promise.all([
-    store.listCollections(orgId),
-    store.listRepoSources(orgId),
-  ])
-  if (!viewer)
-    return { collections, sources, starred: [], workedIn: [], previews: {}, previewBylines: [] }
+  const collections = await store.listCollections(orgId)
+  if (!viewer) return { collections, starred: [], workedIn: [], previews: {}, previewBylines: [] }
   // The pg driver answers these as arms of the one overview statement; here they are
   // more free local reads.
   const [starred, workedIn, previews] = await Promise.all([
@@ -329,5 +319,5 @@ export const composeCollectionsOverview = async (
     name: u.name,
     username: u.username,
   }))
-  return { collections, sources, starred, workedIn, previews, previewBylines }
+  return { collections, starred, workedIn, previews, previewBylines }
 }

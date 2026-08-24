@@ -10,7 +10,6 @@ import { tickStore } from "./edge-pg"
 import { cloudflareEmailSender, type SendEmailBinding } from "./email-cf"
 import { answerDeriveMention } from "./lib/comment-turn"
 import { emailDeliverySender } from "./lib/email"
-import { makeGithubCommentSender } from "./lib/github-comments"
 import { catalogFromGateway } from "./lib/model-catalog"
 import { modelSource, readLibrary } from "./lib/model-library"
 import { makeSlackIngestSender, makeSlackSender } from "./lib/slack-comments"
@@ -35,8 +34,6 @@ export interface WebhookOutboxEnv {
   HYPERDRIVE?: Hyperdrive
   SEND_EMAIL?: SendEmailBinding
   EMAIL_FROM?: string
-  // The auth secret doubles as the at-rest encryption key for stored GitHub App
-  // credentials — the GitHub comment sender needs it to mint installation tokens.
   DERIVE_AUTH_SECRET?: string
   // Everything below is for answering an @Derive mention typed in a mirrored Slack thread. A
   // Durable Object receives the SAME script-wide bindings the Worker does; they were simply
@@ -107,17 +104,13 @@ export class WebhookOutbox {
   ) {}
 
   // First-party channel senders for this tier, rebuilt per tick (they capture the
-  // tick's store). Email when the Cloudflare Email Service binding is bound; GitHub
-  // PR comment write-back when the auth secret (the App-credential encryption key)
-  // is present.
+  // tick's store). Email is present when the Cloudflare Email Service binding is bound.
   private senders(store: MetaStore): ChannelSenders {
     const env = this.env
     return {
       ...(env.SEND_EMAIL && env.EMAIL_FROM
         ? { email: emailDeliverySender(cloudflareEmailSender(env.SEND_EMAIL, env.EMAIL_FROM)) }
         : {}),
-      github_review_comment: makeGithubCommentSender(store, env.DERIVE_AUTH_SECRET),
-      github_issue_comment: makeGithubCommentSender(store, env.DERIVE_AUTH_SECRET),
       slack_app: makeSlackSender(store, env.DERIVE_AUTH_SECRET),
       slack_dm: makeSlackDmSender(store, env.DERIVE_AUTH_SECRET),
       // Inbound Slack thread reply deferred by the events endpoint. No bus here: the DO

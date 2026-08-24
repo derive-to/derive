@@ -1,17 +1,25 @@
-// GitHub App auth, layered on top of the read-only REST client in ./github.
-// Three jobs: (1) sign the App-level JWT, (2) trade it for a short-lived
-// installation token, (3) the manifest-conversion + webhook-signature helpers
-// the one-click setup and push auto-sync need. Everything runs on Node and the
+// GitHub App auth for the standard integration: sign App JWTs, mint tightly scoped
+// installation tokens, and handle App setup/installer authorization. Everything runs on the
 // Cloudflare Worker (node:crypto under nodejs_compat — same basis as ./crypto).
 
-import { createHmac, createPrivateKey, createSign, timingSafeEqual } from "node:crypto"
-import { GitHubError } from "./github"
+import { createPrivateKey, createSign } from "node:crypto"
 
 const API = "https://api.github.com"
-const UA = "derive-sync/1"
+const WEB = "https://github.com"
+const UA = "derive/1"
 const API_VERSION = "2022-11-28"
 
 const b64url = (b: Buffer | string): string => Buffer.from(b).toString("base64url")
+
+export class GitHubError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message)
+    this.name = "GitHubError"
+  }
+}
 
 // `auth` is omitted for the manifest-conversion call: that endpoint is
 // unauthenticated (the one-time code is the credential), and sending a bogus
@@ -89,7 +97,7 @@ export async function getAppInfo(
   }
 }
 
-// Per-isolate cache so a burst of syncs against one installation mints one token.
+// Per-isolate cache so a burst of source calls against one installation mints one token.
 // Re-minted 60s before expiry. Cleared implicitly when the isolate recycles.
 const tokenCache = new Map<string, InstallationToken>()
 
@@ -99,85 +107,109 @@ export async function installationToken(
   privateKeyPem: string,
   installationId: string,
 ): Promise<string> {
-  const cached = tokenCache.get(installationId)
+  const cacheKey = `${appId}:${installationId}`
+  const cached = tokenCache.get(cacheKey)
   if (cached && Date.parse(cached.expiresAt) - 60_000 > Date.now()) return cached.token
 
   const jwt = appJwt(appId, privateKeyPem)
   const res = await fetch(`${API}/app/installations/${installationId}/access_tokens`, {
     method: "POST",
-    headers: ghHeaders(`Bearer ${jwt}`),
+    headers: {
+      ...ghHeaders(`Bearer ${jwt}`),
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ permissions: { metadata: "read", pull_requests: "write" } }),
   })
   if (!res.ok) return raise(res, "minting an installation token")
   const data = (await res.json()) as { token: string; expires_at: string }
-  tokenCache.set(installationId, { token: data.token, expiresAt: data.expires_at })
+  tokenCache.set(cacheKey, { token: data.token, expiresAt: data.expires_at })
   return data.token
+}
+
+/** Read one installation with App-JWT auth. The callback uses this to label the standard
+ *  source immediately, without listing every installation or asking the user to name it. */
+export async function getAppInstallation(
+  appId: string,
+  privateKeyPem: string,
+  installationId: string,
+): Promise<AppInstallation> {
+  const res = await fetch(`${API}/app/installations/${encodeURIComponent(installationId)}`, {
+    headers: ghHeaders(`Bearer ${appJwt(appId, privateKeyPem)}`),
+  })
+  if (!res.ok) return raise(res, "reading the GitHub App installation")
+  const data = (await res.json()) as {
+    id?: number
+    account?: { login?: string; type?: string }
+  }
+  return {
+    id: data.id ?? Number(installationId),
+    account: data.account
+      ? { login: data.account.login ?? "", type: data.account.type ?? "" }
+      : null,
+  }
+}
+
+/** Exchange GitHub's one-time web-flow code. The token exists only long enough to prove that
+ * the signed-in installer can access the installation they are binding; it is never persisted. */
+export async function exchangeGithubUserCode(input: {
+  clientId: string
+  clientSecret: string
+  code: string
+  redirectUri: string
+  codeVerifier: string
+}): Promise<string> {
+  const res = await fetch(`${WEB}/login/oauth/access_token`, {
+    method: "POST",
+    headers: { accept: "application/json", "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: input.clientId,
+      client_secret: input.clientSecret,
+      code: input.code,
+      redirect_uri: input.redirectUri,
+      code_verifier: input.codeVerifier,
+    }),
+  })
+  if (!res.ok) return raise(res, "authorizing the GitHub installer")
+  const data = (await res.json()) as { access_token?: string; error?: string }
+  if (!data.access_token)
+    throw new Error(`authorizing the GitHub installer failed (${data.error ?? "missing token"})`)
+  return data.access_token
+}
+
+/** GitHub's documented defense against a spoofed setup `installation_id`: use the temporary
+ * user access token to confirm the installer is associated with that installation. */
+export async function getUserInstallation(
+  userToken: string,
+  installationId: string,
+): Promise<AppInstallation | null> {
+  for (let page = 1; page <= 10; page++) {
+    const res = await fetch(`${API}/user/installations?per_page=100&page=${page}`, {
+      headers: ghHeaders(`Bearer ${userToken}`),
+    })
+    if (!res.ok) return raise(res, "checking the GitHub installer's installations")
+    const data = (await res.json()) as {
+      installations?: {
+        id?: number
+        account?: { login?: string; type?: string }
+      }[]
+    }
+    const installations = data.installations ?? []
+    const found = installations.find((installation) => String(installation.id) === installationId)
+    if (found)
+      return {
+        id: found.id ?? Number(installationId),
+        account: found.account
+          ? { login: found.account.login ?? "", type: found.account.type ?? "" }
+          : null,
+      }
+    if (installations.length < 100) break
+  }
+  return null
 }
 
 export interface AppInstallation {
   id: number
   account: { login: string; type: string } | null
-}
-
-/** All installations of this App across GitHub accounts (App-JWT auth, paginated). */
-export async function listAppInstallations(
-  appId: string,
-  privateKeyPem: string,
-): Promise<AppInstallation[]> {
-  const out: AppInstallation[] = []
-  for (let page = 1; page <= 20; page++) {
-    const res = await fetch(`${API}/app/installations?per_page=100&page=${page}`, {
-      headers: ghHeaders(`Bearer ${appJwt(appId, privateKeyPem)}`),
-    })
-    if (!res.ok) return raise(res, "listing App installations")
-    const data = (await res.json()) as {
-      id?: number
-      account?: { login?: string; type?: string }
-    }[]
-    if (!data.length) break
-    out.push(
-      ...data.map((i) => ({
-        id: i.id ?? 0,
-        account: i.account ? { login: i.account.login ?? "", type: i.account.type ?? "" } : null,
-      })),
-    )
-    if (data.length < 100) break
-  }
-  return out
-}
-
-export interface InstallationRepo {
-  full_name: string
-  private: boolean
-  default_branch: string
-  /** Last push (ISO); drives the picker's most-recent-first ordering. */
-  pushed_at: string | null
-}
-
-/** Every repo the installation can read (paginated, capped at 1000), sorted
- *  most-recently-pushed first so the picker surfaces active repos at the top. */
-export async function listInstallationRepos(token: string): Promise<InstallationRepo[]> {
-  const out: InstallationRepo[] = []
-  for (let page = 1; page <= 10; page++) {
-    const res = await fetch(`${API}/installation/repositories?per_page=100&page=${page}`, {
-      headers: ghHeaders(`Bearer ${token}`),
-    })
-    if (!res.ok) return raise(res, "listing installation repositories")
-    const data = (await res.json()) as {
-      repositories?: (InstallationRepo & { pushed_at?: string | null })[]
-    }
-    const repos = data.repositories ?? []
-    out.push(
-      ...repos.map((r) => ({
-        full_name: r.full_name,
-        private: r.private,
-        default_branch: r.default_branch,
-        pushed_at: r.pushed_at ?? null,
-      })),
-    )
-    if (repos.length < 100) break
-  }
-  // Most-recently-pushed first; repos without a timestamp sink to the bottom.
-  return out.sort((a, b) => (b.pushed_at ?? "").localeCompare(a.pushed_at ?? ""))
 }
 
 export interface ManifestConversion {
@@ -187,7 +219,6 @@ export interface ManifestConversion {
   client_secret: string
   /** PEM private key (PKCS#1). */
   pem: string
-  webhook_secret: string
 }
 
 /**
@@ -207,7 +238,6 @@ export async function convertManifestCode(code: string): Promise<ManifestConvers
     client_id: string
     client_secret: string
     pem: string
-    webhook_secret: string
   }
   return {
     app_id: String(d.id),
@@ -215,23 +245,5 @@ export async function convertManifestCode(code: string): Promise<ManifestConvers
     client_id: d.client_id,
     client_secret: d.client_secret,
     pem: d.pem,
-    webhook_secret: d.webhook_secret,
   }
-}
-
-/**
- * Verify a webhook's `x-hub-signature-256` header (HMAC-SHA256 of the raw body
- * keyed by the App's webhook secret). Constant-time, and length-guarded so the
- * compare never throws on a malformed header.
- */
-export function verifyWebhookSignature(
-  rawBody: string,
-  signatureHeader: string | undefined,
-  secret: string,
-): boolean {
-  if (!signatureHeader) return false
-  const expected = `sha256=${createHmac("sha256", secret).update(rawBody).digest("hex")}`
-  const a = Buffer.from(expected)
-  const b = Buffer.from(signatureHeader)
-  return a.length === b.length && timingSafeEqual(a, b)
 }

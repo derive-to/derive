@@ -68,7 +68,6 @@ import {
 } from "@/components/ui/sidebar"
 import { Skeleton } from "@/components/ui/skeleton"
 import { toast } from "@/components/ui/sonner"
-import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
@@ -516,7 +515,6 @@ function FormDemo() {
 
 function FormControlsDemo() {
   const [notify, setNotify] = useState(true)
-  const [sync, setSync] = useState(false)
   const [plan, setPlan] = useState("pro")
   const [reach, setReach] = useState("team")
   return (
@@ -544,10 +542,6 @@ function FormControlsDemo() {
           Email notifications
           <span className="block text-sm text-muted-foreground">On new comments and versions.</span>
         </span>
-      </Label>
-      <Label className="flex items-center justify-between gap-3 font-normal text-foreground">
-        Auto-sync from GitHub
-        <Switch checked={sync} onCheckedChange={setSync} />
       </Label>
       <RadioGroup value={reach} onValueChange={setReach} className="gap-1.5">
         <span className="mb-0.5 text-sm font-medium text-foreground">Who can reach it</span>

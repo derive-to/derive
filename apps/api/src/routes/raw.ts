@@ -7,7 +7,6 @@ import {
 import type { Context } from "hono"
 import { Hono } from "hono"
 import type { AppContext } from "../context"
-import { crossDocTransform } from "../lib/cross-doc"
 import { verifyState } from "../lib/crypto"
 import {
   cacheControlFor,
@@ -201,10 +200,6 @@ export const rawRoutes = (ctx: AppContext) => {
       // every view repairs it — the publish-time sniff stops new ones, this drains
       // the backlog as artifacts are opened, with no manual maintenance step needed.
       () => background(meta.reclassifyVersion(artifact.id, n, "text/html")),
-      // Resolve relative cross-document links to sibling artifacts (synced folders),
-      // so a tab like `walkthrough.html` navigates to the walkthrough artifact instead
-      // of re-serving this page. No-op unless this artifact is GitHub-synced.
-      crossDocTransform(meta, artifact),
     )
   }
 

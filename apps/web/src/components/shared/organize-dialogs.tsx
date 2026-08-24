@@ -32,14 +32,13 @@ import { cn } from "@/lib/utils"
 // Membership lives in the row's trailing checkbox — bg-accent stays the
 // pointer/keyboard wash, never a second meaning.
 
-/** Collections an organize dialog offers at all: hand-made ones. Repo mirrors and PR
- *  previews fill themselves from GitHub, and Brandprint-pointed collections are managed
- *  on /brandprint — offering any of them here is a row you shouldn't press. */
+/** Collections an organize dialog offers. Brandprint-pointed collections are managed on
+ *  /brandprint, so offering them here would be a row the user should not press. */
 export function pickableCollections(
   all: Collection[],
   excludeIds: ReadonlySet<string>,
 ): Collection[] {
-  return all.filter((col) => (col.kind ?? "manual") === "manual" && !excludeIds.has(col.id))
+  return all.filter((col) => !excludeIds.has(col.id))
 }
 
 /** Whether the caller can file an artifact into this collection. The add route demands

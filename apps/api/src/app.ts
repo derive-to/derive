@@ -34,6 +34,7 @@ import { embedRoutes } from "./routes/embeds"
 import { favoriteRoutes } from "./routes/favorites"
 import { folderRoutes } from "./routes/folders"
 import { followRoutes } from "./routes/follows"
+import { githubRoutes } from "./routes/github"
 import { githubAppRoutes } from "./routes/github-app"
 import { mcpOauthRoutes } from "./routes/mcp-oauth"
 import { modelCredentialRoutes } from "./routes/model-credentials"
@@ -49,7 +50,6 @@ import { sessionRoutes } from "./routes/session"
 import { sharingRoutes } from "./routes/sharing"
 import { siteRoutes } from "./routes/site"
 import { slackRoutes } from "./routes/slack"
-import { syncRoutes } from "./routes/sync"
 import { systemRoutes } from "./routes/system"
 import { templateLibraryRoutes } from "./routes/template-libraries"
 import { vitalsRoutes } from "./routes/vitals"
@@ -227,7 +227,6 @@ export function createApp(deps: AppDeps): Hono {
         rawPath,
         a.expires_at ? "no-store" : cacheControlFor(a.link_role, !!a.password_hash),
         undefined, // onMismatch: the raw route owns content-type self-healing
-        undefined, // transformHtml
         true, // reflow
         // No anchor client: these hosts are top-level pages, never embedded by the
         // app viewer, so its hover/selection comment UI would render but reach no
@@ -397,7 +396,6 @@ export function createApp(deps: AppDeps): Hono {
     /^\/v1\/artifacts\/[^/]+\/unlock$/, // password unlock — the password is the gate
     /^\/v1\/collections\/[^/]+\/unlock$/, // collection password unlock — password is the gate
     /^\/v1\/vitals$/, // anonymous Core Web Vitals beacon (telemetry, no state)
-    /^\/v1\/sync\/github\/webhook$/, // GitHub App webhook — HMAC signature is the gate
     /^\/v1\/automations\/[^/]+\/fire$/, // automation fire URL — the per-automation secret is the gate
     /^\/v1\/slack\/events$/, // Slack Events API — signing-secret signature is the gate
     /^\/v1\/slack\/interactivity$/, // Slack Block Kit actions — signing-secret signature is the gate
@@ -431,7 +429,7 @@ export function createApp(deps: AppDeps): Hono {
     followRoutes,
     collectionRoutes,
     folderRoutes,
-    syncRoutes,
+    githubRoutes,
     slackRoutes,
     billingRoutes,
     vitalsRoutes,
@@ -519,7 +517,7 @@ export function createApp(deps: AppDeps): Hono {
       },
       { name: "Assets", description: "Standalone binary image assets referenced from bundles." },
       { name: "Favorites", description: "The caller's favorited artifacts." },
-      { name: "Follows", description: "Follow people and repo paths to build the activity feed." },
+      { name: "Follows", description: "Follow people to build the activity feed." },
       { name: "Notifications", description: "The caller's in-app notification feed." },
       {
         name: "Session",
@@ -531,8 +529,8 @@ export function createApp(deps: AppDeps): Hono {
       },
       { name: "Domains", description: "Custom domains and vanity subdomains bound to artifacts." },
       {
-        name: "Sync",
-        description: "GitHub repository mirroring: connect a repo and keep its docs in sync.",
+        name: "GitHub",
+        description: "Install-backed GitHub access for reading pull requests and posting comments.",
       },
       { name: "Slack", description: "Slack connection status and integration toggles." },
       { name: "Webhooks", description: "Outgoing webhooks and their delivery log." },

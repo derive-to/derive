@@ -437,25 +437,6 @@ CREATE TABLE IF NOT EXISTS template_library_entry (
   FOREIGN KEY (library_id) REFERENCES template_library(id)
 );
 
-CREATE TABLE IF NOT EXISTS repo_source (
-  id TEXT PRIMARY KEY,
-  org_id TEXT NOT NULL DEFAULT 'local',
-  collection_id TEXT NOT NULL,
-  repo TEXT NOT NULL,
-  ref TEXT NOT NULL DEFAULT 'HEAD',
-  includes TEXT NOT NULL,
-  token TEXT,
-  installation_id TEXT,
-  pr_number INTEGER,
-  files TEXT NOT NULL DEFAULT '{}',
-  last_synced_at TEXT,
-  last_status TEXT,
-  progress TEXT,
-  created_by TEXT NOT NULL,
-  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-  FOREIGN KEY (collection_id) REFERENCES collection(id)
-);
-
 CREATE TABLE IF NOT EXISTS org_settings (
   org_id TEXT PRIMARY KEY,
   settings TEXT NOT NULL DEFAULT '{}',
@@ -556,7 +537,6 @@ CREATE TABLE IF NOT EXISTS github_app (
   client_id TEXT NOT NULL,
   client_secret TEXT NOT NULL,
   private_key TEXT NOT NULL,
-  webhook_secret TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 
@@ -754,8 +734,6 @@ CREATE INDEX IF NOT EXISTS template_library_org_scope ON template_library (org_i
 CREATE INDEX IF NOT EXISTS template_library_scope_time ON template_library (scope, created_at, id);
 
 CREATE INDEX IF NOT EXISTS template_library_owner ON template_library (created_by, created_at);
-
-CREATE INDEX IF NOT EXISTS repo_source_org ON repo_source (org_id);
 
 CREATE INDEX IF NOT EXISTS domain_artifact ON domain (artifact_id);
 

@@ -73,12 +73,10 @@ const REG = {
   all: Layers,
   archive: Archive,
   favorites: Star,
-  // The activity feed of followed authors + repo paths.
+  // The activity feed of followed people.
   following: Users,
   collections: Folders,
   collection: Folder,
-  // A mirrored GitHub repo collection — a folder-with-git glyph, distinct from the
-  // plain `collection` folder so a repo reads as code-backed at a glance.
   repo: FolderGit2,
   context: Bot,
   templates: LayoutTemplate,

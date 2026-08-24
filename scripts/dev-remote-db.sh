@@ -16,8 +16,8 @@
 #
 #   2. DERIVE_BACKGROUND_WORKERS=0, forced below. The API otherwise runs shared
 #      background work that WRITES: the webhook delivery worker every 1.5s, a daily
-#      prune and an expired-draft sweep that DELETE rows, and GitHub sync resume. The
-#      prune and sync-resume fire on BOOT, not just on a timer — so without this, merely
+#      prune and an expired-draft sweep that DELETE rows. The prune fires on BOOT, not
+#      just on a timer — so without this, merely
 #      starting this script would delete rows in that database and start delivering its
 #      webhooks from this machine.
 set -euo pipefail

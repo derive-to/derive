@@ -65,13 +65,6 @@ class_name = "ArtifactRoom"
 name = "WEBHOOK_OUTBOX"
 class_name = "WebhookOutbox"
 
-# The GitHub-sync runner (one instance per source, addressed by name). Its alarm
-# mirrors a repo batch-by-batch to completion server-side, so a sync survives the
-# user closing the tab — the edge counterpart to the Node detached batch-loop.
-[[durable_objects.bindings]]
-name = "SYNC_RUNNER"
-class_name = "RepoSyncRunner"
-
 # The preview renderer (a single named instance). Its alarm drains the render_job
 # queue sequentially via Cloudflare Browser Rendering — one browser at a time so
 # concurrent-browser billing stays at the floor. Omit this block (and the browser
@@ -110,6 +103,12 @@ class_name = "RunContainer"
 [[migrations]]
 tag = "v5"
 new_sqlite_classes = ["RunContainer"]
+
+# The old repository-mirroring integration used RepoSyncRunner. Keep its historical
+# creation migration above for already-deployed scripts, then explicitly retire the class.
+[[migrations]]
+tag = "v6"
+deleted_classes = ["RepoSyncRunner"]
 
 [[containers]]
 class_name = "RunContainer"

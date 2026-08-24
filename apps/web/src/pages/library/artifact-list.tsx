@@ -12,7 +12,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { dirOf } from "@/lib/artifact"
 import { reveal, SWAP_IN, SWAP_IN_MENU, SWAP_OUT } from "@/lib/interaction"
 import { ago } from "@/lib/time"
 import { cn } from "@/lib/utils"
@@ -170,7 +169,6 @@ export function ArtifactListRow({
   indent?: boolean
 }) {
   const updated = a.updated_at ?? a.created_at ?? a.versions[0]?.created_at
-  const dir = a.source_path ? dirOf(a.source_path) : ""
   const isPrivate = a.workspace_access === "none" && (a.link_role ?? "none") === "none"
   const showArchive = !a.removed && (a.my_role === "owner" || a.my_role === "editor") && !!onArchive
   // The 10px gutter is reserved, always. A row that wants you takes an ink bar in it, so
@@ -235,14 +233,6 @@ export function ArtifactListRow({
         <span className="truncate text-sm font-medium tracking-tight text-foreground">
           {a.title ?? a.short_id}
         </span>
-        {dir && (
-          <span
-            className="shrink-0 truncate font-mono text-2xs text-muted-foreground/80"
-            title={a.source_path ?? undefined}
-          >
-            {dir}/
-          </span>
-        )}
       </button>
 
       <span className={cn(COL.author, "min-w-0 pr-3")}>

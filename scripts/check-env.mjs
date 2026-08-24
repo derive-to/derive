@@ -28,7 +28,6 @@ const NON_CONFIG = new Set([
   "SITE",
   "SEND_EMAIL",
   "WEBHOOK_OUTBOX",
-  "SYNC_RUNNER",
   "PREVIEW_RENDERER",
   "BROWSER",
   // Hosted automation runs (experimental): the per-run container + the dispatch queue.

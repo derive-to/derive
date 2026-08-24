@@ -279,10 +279,6 @@ export const Artifact = z
       .boolean()
       .optional()
       .describe("true when the artifact is on the reversible archive shelf."),
-    managed: z
-      .boolean()
-      .optional()
-      .describe("true when mirrored from a GitHub sync — read-only in Derive."),
     bundle: z
       .object({
         isSkill: z.boolean().describe("true when the bundle is a skill (entry SKILL.md)."),
@@ -377,11 +373,6 @@ export const Artifact = z
     workflow_preview: WorkflowPreview.optional().describe(
       "Present when the current linked bundle also carries workflow-definition. This is the validated, non-executing shared Preview.",
     ),
-    source_path: z
-      .string()
-      .nullable()
-      .optional()
-      .describe("Source path (e.g. the repo path of a synced artifact); null when none."),
     derived_from: z
       .object({
         short_id: z.string(),

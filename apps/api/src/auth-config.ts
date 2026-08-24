@@ -210,7 +210,7 @@ export function makeAuth(db: AuthDb, baseUrl: string, secret: string, hooks: Aut
   const googleSecret = env("GOOGLE_CLIENT_SECRET")
   if (googleId && googleSecret)
     socialProviders.google = { clientId: googleId, clientSecret: googleSecret }
-  // GitHub sign-in (distinct from the repo-sync GitHub App): a standard OAuth app.
+  // GitHub sign-in (distinct from the GitHub integration App): a standard OAuth app.
   // GITHUB_LOGIN_* rather than GITHUB_* so it's never confused with the App creds.
   const ghLoginId = env("GITHUB_LOGIN_CLIENT_ID")
   const ghLoginSecret = env("GITHUB_LOGIN_CLIENT_SECRET")

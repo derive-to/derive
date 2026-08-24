@@ -5,7 +5,7 @@ import { takeFromSearch } from "./one-shot-params"
 // mount, then strip them from the address bar so a reload (or a copied link)
 // can't replay the moment. One hook for what billing (?checkout=success),
 // sources (?connected=1), general (?new-workspace=1), Slack (?slack_connected /
-// ?slack_error) and GitHub (?gh_install / ?gh_error) each hand-rolled — three
+// ?slack_error) and GitHub (?github_connected / ?github_error) each hand-rolled — three
 // different replaceState signatures between them. history.state is preserved
 // so the router's own state survives the strip.
 export function useOneShotParams(...names: string[]): Record<string, string> {

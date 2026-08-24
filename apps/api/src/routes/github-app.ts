@@ -22,7 +22,7 @@ export const githubAppRoutes = (ctx: AppContext) => {
         setupResultHTML({ ok: false, error: "Server is missing an encryption key." }),
         500,
       )
-    if (!(await workspaceCan(c, "publish")))
+    if (!(await workspaceCan(c, "manage")))
       return c.redirect("/login?return_to=/settings/github/app/new")
     const uid = (await currentUser(c))?.id ?? "anon"
     const state = signState({ kind: "app-manifest", uid }, deps.encryptionKey)
@@ -47,7 +47,6 @@ export const githubAppRoutes = (ctx: AppContext) => {
         client_id: conv.client_id,
         client_secret: encryptSecret(conv.client_secret, key),
         private_key: encryptSecret(conv.pem, key),
-        webhook_secret: encryptSecret(conv.webhook_secret, key),
         created_at: new Date().toISOString(),
       })
       return c.html(setupResultHTML({ ok: true, slug: conv.slug }))

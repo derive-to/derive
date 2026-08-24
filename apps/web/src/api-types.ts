@@ -2461,7 +2461,7 @@ export interface paths {
             };
         };
         put?: never;
-        /** Follow a GitHub author, a repo path prefix, or a person. */
+        /** Follow a person. */
         post: {
             parameters: {
                 query?: never;
@@ -3344,52 +3344,14 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/sync/github/resync-installations": {
+    "/v1/github": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        get?: never;
-        put?: never;
-        /** Re-import this App's installations from GitHub (Admin only). */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description How many installations were re-imported. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": {
-                            synced: number;
-                        };
-                    };
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/sync/github": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** The workspace's synced repos, PR previews, App status, and installations. */
+        /** GitHub standard-integration status for the current workspace. */
         get: {
             parameters: {
                 query?: never;
@@ -3399,120 +3361,13 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description Branch sources, PR previews, the App's setup/permissions, installations. */
+                /** @description App availability, connection health, and connected GitHub accounts. */
                 200: {
                     headers: {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": components["schemas"]["GithubSyncStatus"];
-                    };
-                };
-            };
-        };
-        put?: never;
-        /** Connect a repo for mirroring (App installation or a PAT). */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description The existing source (this repo was already connected). */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["RepoSource"];
-                    };
-                };
-                /** @description The newly connected source (first sync kicked off). */
-                201: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["RepoSource"];
-                    };
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/sync/github/install": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Get the GitHub App install URL for this workspace (Admin only). */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description The GitHub install URL to navigate the browser to. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": {
-                            url: string;
-                        };
-                    };
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/sync/github/installations/{id}/repos": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** The repos an installation can mirror (Admin only). */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description The installation's repos, most-recent-push first. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": {
-                            repos: components["schemas"]["InstallationRepo"][];
-                        };
+                        "application/json": components["schemas"]["GithubStatus"];
                     };
                 };
             };
@@ -3525,168 +3380,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/sync/github/installations/{id}/preview": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** How many docs a repo + scope would mirror (Admin only). */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Matching file counts by type + whether the tree was truncated. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["SyncPreview"];
-                    };
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/sync/github/{id}/run": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Trigger a server-side sync (Admin only). */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description The finished source (ran inline; no runner wired). */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["RepoSource"];
-                    };
-                };
-                /** @description The source, queued (sync runs on the server; poll /status). */
-                202: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["RepoSource"];
-                    };
-                };
-            };
-        };
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/sync/github/{id}/status": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Cheap status poll for a source's live progress bar. */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path: {
-                    id: string;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description The source's persisted progress + last status + file count. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["SyncStatus"];
-                    };
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/sync/github/active": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Sources mid-sync in this workspace (drives the global syncing chip). */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description The sources currently syncing. */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": {
-                            active: components["schemas"]["RepoSource"][];
-                        };
-                    };
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/sync/github/{id}": {
+    "/v1/github/connections/{id}": {
         parameters: {
             query?: never;
             header?: never;
@@ -3696,7 +3390,7 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /** Disconnect a source (?wipe=true also deletes its artifacts). */
+        /** Disconnect one GitHub installation from agent use (Admin only). */
         delete: {
             parameters: {
                 query?: never;
@@ -3708,7 +3402,7 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description The source was disconnected. */
+                /** @description The GitHub connection was disconnected. */
                 204: {
                     headers: {
                         [name: string]: unknown;
@@ -6893,8 +6587,6 @@ export interface components {
             removed?: boolean;
             /** @description true when the artifact is on the reversible archive shelf. */
             archived?: boolean;
-            /** @description true when mirrored from a GitHub sync — read-only in Derive. */
-            managed?: boolean;
             /** @description Present for a markdown bundle (skill or docs folder): entry, file tree, identity. */
             bundle?: {
                 /** @description true when the bundle is a skill (entry SKILL.md). */
@@ -6979,8 +6671,6 @@ export interface components {
                 }[];
             };
             workflow_preview?: components["schemas"]["WorkflowPreview"];
-            /** @description Source path (e.g. the repo path of a synced artifact); null when none. */
-            source_path?: string | null;
             /** @description The artifact this one was copied from ("use as template"). Detail responses only; null when the source no longer resolves, absent when not derived. */
             derived_from?: {
                 short_id: string;
@@ -7155,12 +6845,6 @@ export interface components {
         OrgSettings: {
             /** @description When true, send workspace email notifications. */
             emailNotifications: boolean;
-            /** @description When true, post Derive comments onto the linked GitHub PR. */
-            githubPostComments: boolean;
-            /** @description When true, mirror GitHub PR comments back into Derive. */
-            githubMirrorComments: boolean;
-            /** @description When true, add a preview link to the linked GitHub PR. */
-            githubPreviewLink: boolean;
             /**
              * @description Access a new publish lands with: none, or member (factory default).
              * @enum {string}
@@ -7335,11 +7019,11 @@ export interface components {
             /** @description The follower (the signed-in user who owns this follow) */
             user_id: string;
             /**
-             * @description What's followed: a GitHub author, a repo path prefix, or a person
+             * @description What's followed: a person
              * @enum {string}
              */
-            kind: "author" | "path" | "user";
-            /** @description The followed value: author login, path prefix, or (people) public @handle */
+            kind: "user";
+            /** @description The followed person's public @handle */
             target: string;
             created_at: string;
             /** @description For people-follows, the followed person's public @handle; absent otherwise */
@@ -7395,17 +7079,6 @@ export interface components {
             }[];
             /** @description Whether the caller has worked in this collection recently — published, commented, or been added. Derived from acts that leave a row; reading is not recorded. */
             active?: boolean;
-            /**
-             * @description Origin: "manual" (user-made), "repo" (GitHub mirror), or "pr" (PR preview).
-             * @enum {string}
-             */
-            kind?: "manual" | "repo" | "pr";
-            /** @description For a PR preview: the repo collection it nests under, when connected. */
-            parentId?: string;
-            /** @description For a PR preview: the pull-request number. */
-            prNumber?: number;
-            /** @description For repo/PR collections: the "owner/name" slug. */
-            repo?: string;
         };
         CollectionSuggestion: {
             /** @description The suggested collection's id. */
@@ -7422,120 +7095,21 @@ export interface components {
             created_by: string;
             created_at: string;
         };
-        GithubSyncStatus: {
-            /** @description Branch mirrors, one per connected repo. */
-            sources: components["schemas"]["RepoSource"][];
-            /** @description PR previews, one per pull request being mirrored. */
-            prs: components["schemas"]["PrPreview"][];
-            /** @description The instance GitHub App's setup and permission state. */
-            app: {
-                /** @description True when a live GitHub App is set up on this server. */
-                configured: boolean;
-                /** @description The App's GitHub slug for install links; absent when unconfigured. */
-                slug?: string;
-                /** @description True when the App has every required permission and event. */
-                upToDate?: boolean;
-                /** @description Permissions and events still to grant; absent when up to date. */
-                missing?: {
-                    /** @description Scope → level still to grant (e.g. contents → read). */
-                    permissions: {
-                        [key: string]: string;
-                    };
-                    /** @description Webhook event names still to subscribe to. */
-                    events: string[];
-                };
-                /** @description GitHub URL to adjust the App's permissions; absent when unconfigured. */
-                permissionsUrl?: string;
-                /** @description GitHub URL to install or approve the App; absent when unconfigured. */
-                approveUrl?: string;
-            };
-            /** @description This workspace's App installations (entry points to the repo picker). */
-            installations: components["schemas"]["GithubInstallation"][];
-        };
-        RepoSource: {
-            id: string;
-            /** @description Collection the repo's docs are mirrored into. */
-            collection_id: string;
-            /** @description The connected GitHub repo, as owner/name. */
-            repo: string;
-            /** @description Branch or tag to mirror; "HEAD" tracks the default branch. */
-            ref: string;
-            /** @description Comma-separated glob patterns selecting which files to mirror. */
-            includes: string;
-            /** @description Redacted to "•••" when a PAT is stored; null for App-backed sources. */
-            token: string | null;
-            /** @description GitHub App installation backing this source; null when using a PAT. */
-            installation_id: string | null;
-            /** @description When the last sync finished; null if it has never synced. */
-            last_synced_at: string | null;
-            /** @description Outcome of the last sync run; null if it has never synced. */
-            last_status: string | null;
-            created_by: string;
-            created_at: string;
-            /** @description How many files are currently mirrored from the repo. */
-            file_count: number;
-            /** @description Live sync progress as a JSON blob driving the bar; null when none recorded. */
-            progress: string | null;
-        };
-        PrPreview: {
-            id: string;
-            /** @description Collection holding this PR's previewed docs. */
-            collection_id: string;
-            /** @description The connected GitHub repo, as owner/name. */
-            repo: string;
-            /** @description The pull request number this preview mirrors. */
-            pr_number: number;
-            /** @description The PR's title, used as the preview's display name. */
-            title: string;
-            /** @description Outcome of the last sync run; null if it has never synced. */
-            last_status: string | null;
-            /** @description When the last sync finished; null if it has never synced. */
-            last_synced_at: string | null;
-            /** @description How many of the PR's changed docs are mirrored. */
-            file_count: number;
-            /** @description Live sync progress as a JSON blob driving the bar; null when none recorded. */
-            progress: string | null;
-        };
-        GithubInstallation: {
-            /** @description GitHub's numeric App installation id, as a string. */
-            installation_id: string;
-            /** @description The org/user the App is installed on; null until GitHub reports it. */
-            account_login: string | null;
-        };
-        InstallationRepo: {
-            /** @description The repository's full name, as owner/name. */
-            full_name: string;
-            /** @description True when the repo is private on GitHub. */
-            private: boolean;
-            /** @description The repo's default branch (e.g. main). */
-            default_branch: string;
-            /** @description When the repo was last pushed to; null if unknown. Drives sort order. */
-            pushed_at: string | null;
-        };
-        SyncPreview: {
-            /** @description Total files matching the include globs. */
-            total: number;
-            /** @description How many matches are Markdown files. */
-            md: number;
-            /** @description How many matches are HTML files. */
-            html: number;
-            /** @description Matches that are neither Markdown nor HTML. */
-            other: number;
-            /** @description True when GitHub capped the tree, so counts are a lower bound. */
-            truncated: boolean;
-        };
-        SyncStatus: {
-            id: string;
-            /** @description The connected GitHub repo, as owner/name. */
-            repo: string;
-            /** @description Live sync progress as a JSON blob driving the bar; null when none recorded. */
-            progress: string | null;
-            /** @description Outcome of the last sync run; null if it has never synced. */
-            last_status: string | null;
-            /** @description When the last sync finished; null if it has never synced. */
-            last_synced_at: string | null;
-            /** @description How many files are currently mirrored from the repo. */
-            file_count: number;
+        GithubStatus: {
+            /** @description Whether this instance has a live GitHub App configured */
+            available: boolean;
+            /** @description Whether this workspace has at least one active GitHub connection */
+            connected: boolean;
+            app_slug: string | null;
+            needs_permissions: boolean;
+            permissions_url: string | null;
+            accounts: {
+                installation_id: string;
+                account_login: string | null;
+                connection_id: string | null;
+                /** @enum {string} */
+                state: "active" | "disconnected" | "needs_reauth";
+            }[];
         };
         SlackStatus: {
             /** @description True if this instance has Slack configured at all */

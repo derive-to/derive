@@ -4,8 +4,8 @@ import { as, jsonAs, makeAuthedApp, pub, type TestUser } from "./helpers"
 // commentCreatedAction states a CONTRACT in its own docstring: a caller that authorized the
 // request as a human principal must pass that principal as `onBehalfOf`, because an OAuth grant
 // authors under the synthetic `oauth:<client>` id, which is a row in no table the collaborator
-// check reads. Miss it and the author is untrusted, and the Slack and GitHub mirrors are skipped
-// in silence — the comment lands in Derive and reaches no channel.
+// check reads. Miss it and the author is untrusted, and Slack channel delivery is skipped in
+// silence — the comment lands in Derive and reaches no connected channel.
 //
 // The gate itself was already tested, by calling commentCreatedAction with onBehalfOf passed by
 // hand. That proved the branch works and said nothing about whether the route supplies it. It

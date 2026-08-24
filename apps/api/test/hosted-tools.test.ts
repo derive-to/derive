@@ -1,8 +1,19 @@
+import { generateKeyPairSync } from "node:crypto"
 import { LocalBroker } from "@derive/broker"
-import { describe, expect, it } from "vitest"
-import { callTool, executeHttpTool, toolsForRun } from "../src/lib/broker"
+import { afterEach, describe, expect, it, vi } from "vitest"
+import { callTool, executeHttpTool, httpTools, toolsForRun } from "../src/lib/broker"
 import { encryptSecret } from "../src/lib/crypto"
+import { upsertGithubConnection } from "../src/lib/github-connection"
+import { githubSourcePolicy } from "../src/lib/github-source-policy"
 import { as, jsonAs, makeAuthedApp, type TestUser } from "./helpers"
+
+const { privateKey: GITHUB_APP_PEM } = generateKeyPairSync("rsa", {
+  modulusLength: 2048,
+  privateKeyEncoding: { type: "pkcs1", format: "pem" },
+  publicKeyEncoding: { type: "spki", format: "pem" },
+})
+
+afterEach(() => vi.unstubAllGlobals())
 
 // WO4 — least-privilege tool injection. A hosted run sees the tools of its BOUND connections
 // only, never the workspace's whole list. This is the load-bearing safety property of the
@@ -216,52 +227,246 @@ describe("hosted tool injection — least privilege (WO4)", () => {
     ).rejects.toThrow(/reconnect/i)
   })
 
-  it("github_app: points at the sync install, stores nothing, and never revokes it", async () => {
-    const h = makeAuthedApp("conn-gh", [owner], "editor", { deps: { encryptionKey: "k" } })
-    const early = await h.app.request(
-      "/v1/connections",
-      jsonAs(as(owner.email), { kind: "github_app" }),
-    )
-    expect(early.status).toBe(400)
-    expect((await early.json()).error).toMatch(/GitHub App/i)
+  it("github_app: exposes only PR reads and new top-level PR comments", async () => {
+    const connection = {
+      id: "conn_gh_policy",
+      org_id: "default",
+      user_id: owner.id,
+      scope: "workspace" as const,
+      kind: "github_app" as const,
+      secret_enc: null,
+      base_url: "https://api.github.com",
+      broker: "none",
+      toolkit: "github",
+      broker_ref: "99001",
+      scopes_label: "derive-to",
+      status: "active" as const,
+      created_at: new Date().toISOString(),
+    }
+    let fetched = 0
+    const neverFetch = (async () => {
+      fetched += 1
+      return new Response("unexpected", { status: 500 })
+    }) as typeof fetch
 
+    // All are rejected before bearer resolution or a network call — this fake connection has
+    // no App configured, which proves policy evaluation is the first gate.
+    for (const [tool, path, body] of [
+      ["github.get", "/repos/derive-to/derive/contents/README.md", undefined],
+      ["github.post", "/repos/derive-to/derive/pulls/42/update-branch", {}],
+      ["github.post", "/repos/derive-to/derive/issues", { title: "no" }],
+      ["github.post", "/repos/derive-to/derive/issues/42/comments", { body: "", extra: true }],
+    ] as const) {
+      await expect(
+        executeHttpTool(meta, connection, tool, { path, body }, "k", neverFetch),
+      ).rejects.toThrow(/GitHub|pull request comment/i)
+    }
+    expect(fetched).toBe(0)
+
+    for (const url of [
+      "https://api.github.com/installation/repositories?per_page=100&page=2",
+      "https://api.github.com/repos/derive-to/derive/pulls?state=closed&sort=updated&direction=desc&page=2",
+      "https://api.github.com/repos/derive-to/derive/pulls/42",
+      "https://api.github.com/repos/derive-to/derive/pulls/42/files?per_page=100&page=2",
+    ])
+      expect(githubSourcePolicy("github.get", new URL(url), undefined)).toEqual({ verb: "GET" })
+    expect(
+      githubSourcePolicy(
+        "github.get",
+        new URL("https://api.github.com/repos/derive-to/derive/issues/42/comments?per_page=100"),
+        undefined,
+      ),
+    ).toEqual({ verb: "GET", prPreflightPath: "/repos/derive-to/derive/pulls/42" })
+    expect(() =>
+      githubSourcePolicy(
+        "github.get",
+        new URL("https://api.github.com/repos/derive-to/derive/pulls?unexpected=true"),
+        undefined,
+      ),
+    ).toThrow(/only permits reading/i)
+    expect(() =>
+      githubSourcePolicy(
+        "github.delete",
+        new URL("https://api.github.com/repos/derive-to/derive/pulls/42"),
+        undefined,
+      ),
+    ).toThrow(/only exposes/i)
+    expect(
+      githubSourcePolicy(
+        "github.post",
+        new URL("https://api.github.com/repos/derive-to/derive/issues/42/comments"),
+        { body: "One explicit PR comment." },
+      ),
+    ).toEqual({ verb: "POST", prPreflightPath: "/repos/derive-to/derive/pulls/42" })
+
+    const defs = httpTools("github")
+    expect(defs.find((tool) => tool.name === "github.get")?.description).toContain("pull requests")
+    expect(defs.find((tool) => tool.name === "github.post")?.description).toContain(
+      "Other writes are refused",
+    )
+  })
+
+  it("github_app: verifies a comment target is a PR before posting", async () => {
+    const key = "github-policy-key"
+    const h = makeAuthedApp("conn-gh-comment", [owner], "editor", {
+      deps: { encryptionKey: key },
+    })
+    await h.meta.setGithubApp({
+      id: "default",
+      app_id: "551",
+      slug: "derive-test",
+      client_id: "Iv1.test",
+      client_secret: encryptSecret("client-secret", key),
+      private_key: encryptSecret(GITHUB_APP_PEM, key),
+      created_at: new Date().toISOString(),
+    })
     await h.meta.upsertGithubInstallation({
-      installation_id: "77123",
+      installation_id: "99002",
       org_id: "default",
       account_login: "derive-to",
       created_by: owner.id,
       created_at: new Date().toISOString(),
     })
-    const cn = await (
-      await h.app.request("/v1/connections", jsonAs(as(owner.email), { kind: "github_app" }))
-    ).json()
-    expect(cn).toMatchObject({
-      kind: "github_app",
+    const connection = await upsertGithubConnection(h.meta, {
+      orgId: "default",
+      userId: owner.id,
+      installationId: "99002",
+      accountLogin: "derive-to",
+    })
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string | URL) => {
+        expect(String(url)).toContain("/app/installations/99002/access_tokens")
+        return new Response(
+          JSON.stringify({
+            token: "github-installation-token",
+            expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+          }),
+          { status: 201 },
+        )
+      }),
+    )
+    const calls: { url: string; method: string; auth: string | null; body: string | null }[] = []
+    const githubFetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({
+        url: String(url),
+        method: init?.method ?? "GET",
+        auth: new Headers(init?.headers).get("authorization"),
+        body: typeof init?.body === "string" ? init.body : null,
+      })
+      return String(url).endsWith("/pulls/42")
+        ? new Response(JSON.stringify({ number: 42 }), { status: 200 })
+        : new Response(JSON.stringify({ id: 7 }), { status: 201 })
+    }) as typeof fetch
+
+    const out = await executeHttpTool(
+      h.meta,
+      connection,
+      "github.post",
+      {
+        path: "/repos/derive-to/derive/issues/42/comments",
+        body: { body: "A bounded top-level PR comment." },
+      },
+      key,
+      githubFetch,
+    )
+    expect(out).toEqual({ status: 201, body: { id: 7 } })
+    expect(calls).toEqual([
+      {
+        url: "https://api.github.com/repos/derive-to/derive/pulls/42",
+        method: "GET",
+        auth: "Bearer github-installation-token",
+        body: null,
+      },
+      {
+        url: "https://api.github.com/repos/derive-to/derive/issues/42/comments",
+        method: "POST",
+        auth: "Bearer github-installation-token",
+        body: JSON.stringify({ body: "A bounded top-level PR comment." }),
+      },
+    ])
+
+    calls.length = 0
+    const issueOnlyFetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({
+        url: String(url),
+        method: init?.method ?? "GET",
+        auth: new Headers(init?.headers).get("authorization"),
+        body: typeof init?.body === "string" ? init.body : null,
+      })
+      return new Response(JSON.stringify({ message: "Not Found" }), { status: 404 })
+    }) as typeof fetch
+    const issueComments = await executeHttpTool(
+      h.meta,
+      connection,
+      "github.get",
+      { path: "/repos/derive-to/derive/issues/99/comments" },
+      key,
+      issueOnlyFetch,
+    )
+    expect(issueComments).toEqual({
+      status: 400,
+      body: { error: "GitHub comment target is not an accessible pull request" },
+    })
+    expect(calls).toEqual([
+      {
+        url: "https://api.github.com/repos/derive-to/derive/pulls/99",
+        method: "GET",
+        auth: "Bearer github-installation-token",
+        body: null,
+      },
+    ])
+  })
+
+  it("github_app: revokes a source when GitHub reports the installation gone", async () => {
+    const key = "github-revoke-key"
+    const h = makeAuthedApp("conn-gh-gone", [owner], "editor", {
+      deps: { encryptionKey: key },
+    })
+    await h.meta.setGithubApp({
+      id: "default",
+      app_id: "552",
+      slug: "derive-test",
+      client_id: "Iv1.test",
+      client_secret: encryptSecret("client-secret", key),
+      private_key: encryptSecret(GITHUB_APP_PEM, key),
+      created_at: new Date().toISOString(),
+    })
+    const connection = await h.meta.createConnection({
+      id: "conn_gh_gone",
+      org_id: "default",
+      user_id: owner.id,
       scope: "workspace",
+      kind: "github_app",
+      broker: "none",
       toolkit: "github",
+      broker_ref: "99003",
       base_url: "https://api.github.com",
+      status: "active",
     })
-    const [rec] = await h.meta.getConnectionsByIds([cn.id])
-    // The installation id is the whole reference — no credential is stored, so there is
-    // nothing here to leak, and nothing to rotate when GitHub rotates the token.
-    expect(rec?.secret_enc).toBeNull()
-    expect(rec?.broker_ref).toBe("77123")
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("gone", { status: 404 })),
+    )
+    let called = false
+    const apiFetch = (async () => {
+      called = true
+      return new Response("unexpected", { status: 500 })
+    }) as typeof fetch
 
-    // Wiring it again returns the same row rather than piling up duplicates.
-    const again = await (
-      await h.app.request("/v1/connections", jsonAs(as(owner.email), { kind: "github_app" }))
-    ).json()
-    expect(again.id).toBe(cn.id)
-
-    // Revoking the connection removes the AGENT's access and must leave the install
-    // alone — the workspace still syncs repos through it.
-    const del = await h.app.request(`/v1/connections/${cn.id}`, {
-      method: "DELETE",
-      headers: as(owner.email),
-    })
-    expect(del.status).toBe(204)
-    expect(await h.meta.listGithubInstallations("default")).toHaveLength(1)
-    expect(await toolsForRun(h.meta, new LocalBroker(), "default", [cn.id])).toHaveLength(0)
+    await expect(
+      executeHttpTool(
+        h.meta,
+        connection,
+        "github.get",
+        { path: "/repos/derive-to/derive/pulls?state=closed" },
+        key,
+        apiFetch,
+      ),
+    ).rejects.toThrow(/reconnect it in Settings → Integrations/i)
+    expect(called).toBe(false)
+    expect(await h.meta.getConnection(connection.id)).toMatchObject({ status: "revoked" })
   })
 
   it("a departed member's PERSONAL connection stops resolving; a workspace one survives", async () => {

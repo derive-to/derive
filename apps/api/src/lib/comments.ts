@@ -1,7 +1,7 @@
 import type { ArtifactRecord, CommentRecord, MetaStore } from "@derive/core"
 
-/** A deep link to a comment thread on an artifact — channel-neutral, shared by the email,
- *  Slack, and GitHub notification builders. Normalizes a trailing slash on baseUrl. */
+/** A deep link to a comment thread on an artifact — channel-neutral and shared by the email
+ *  and Slack notification builders. Normalizes a trailing slash on baseUrl. */
 export const commentDeepLink = (
   baseUrl: string,
   artifact: Pick<ArtifactRecord, "short_id">,
@@ -9,11 +9,11 @@ export const commentDeepLink = (
 ): string =>
   `${baseUrl.replace(/\/$/, "")}/artifacts/${artifact.short_id}?comment=${encodeURIComponent(threadId)}`
 
-/** Is `actorId` a trusted author for OUTBOUND external posting (Slack / GitHub PR)?
- *  Those channels post as Derive's own bot/app into the customer's systems, so we only
+/** Is `actorId` a trusted author for outbound Slack posting?
+ *  Slack posts as Derive's own bot into the customer's workspace, so we only
  *  mirror comments authored by a real collaborator — a workspace member, an explicit
  *  artifact-share recipient, or a registered agent. An anonymous commenter or a logged-in
- *  non-member on a public artifact is NOT trusted to write into the owner's GitHub/Slack.
+ *  non-member on a public artifact is NOT trusted to write into the owner's Slack.
  *  (In-app notifications + email to collaborators are gated separately and stay in-Derive.) */
 export const isCollaboratorAuthor = async (
   meta: MetaStore,
@@ -67,11 +67,6 @@ export type CommentMeta = {
   /** An explicit model protocol marker: Derive asked a question and the next human reply in the
    * thread should resume the turn. This is never inferred from punctuation. */
   awaiting_reply?: boolean
-  // Provenance for cross-channel sync. Set when a comment ORIGINATED in GitHub
-  // (mirrored in) or, once Derive has posted a comment OUT to GitHub, the id GitHub
-  // assigned it. Either presence means "don't re-post this comment to GitHub" —
-  // the loop-prevention marker for bidirectional PR comment sync.
-  github?: { comment_id: number; kind: "issue" | "review" }
   // Likewise for the connected Slack App: a comment that came FROM a Slack thread
   // reply (so it isn't echoed back), or the Slack message ts a Derive comment produced.
   slack?: { ts: string; channel: string }

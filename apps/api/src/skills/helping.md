@@ -57,10 +57,9 @@ Read this when the question is about DERIVE, not about the workspace's contents.
 | `/settings/members` | Invite people, change roles, remove them. Admin only. |
 | `/people` | The workspace people directory. |
 | `/settings/billing` | Plan, seats, invoices. Admin only. |
-| `/settings/integrations` | Slack, email notifications, GitHub comment mirroring. |
+| `/settings/integrations` | Connect Slack and GitHub; manage workspace email notifications. |
 | `/settings/sources` | Connect an MCP server so an agent can read from it. |
 | `/settings/brandprint` | The workspace's brand: what published pages look like. |
-| `/settings/github` | Install the GitHub app, pick repos, PR previews. |
 | `/settings/webhooks` | Send Derive events to a URL. |
 | `/settings/agents` | Register an agent, mint or rotate its token. |
 | `/settings/automations` | Scheduled or triggered agent work. |

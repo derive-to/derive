@@ -155,7 +155,6 @@ export const PERF_INDEXES: string[] = [
   `CREATE INDEX IF NOT EXISTS template_library_org_scope ON template_library (org_id, scope, created_at)`,
   `CREATE INDEX IF NOT EXISTS template_library_scope_time ON template_library (scope, created_at, id)`,
   `CREATE INDEX IF NOT EXISTS template_library_owner ON template_library (created_by, created_at)`,
-  `CREATE INDEX IF NOT EXISTS repo_source_org ON repo_source (org_id)`,
   `CREATE INDEX IF NOT EXISTS domain_artifact ON domain (artifact_id)`,
   `CREATE INDEX IF NOT EXISTS comment_artifact_state ON comment (artifact_id, state)`,
   `CREATE INDEX IF NOT EXISTS report_state ON report (state, created_at)`,

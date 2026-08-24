@@ -51,15 +51,12 @@ import { bindingSummarizer, type TextGenAiLike } from "./summarizer"
 import { enqueueChannelDelivery } from "./webhooks"
 
 export { PreviewRenderer } from "./preview-do"
-// The bound Durable Object classes — the realtime room (one per channel), the webhook
-// outbox drainer (a single named instance), and the GitHub-sync runner (one per source)
-// — re-exported so the Workers runtime can instantiate them (see wrangler.toml
-// `durable_objects.bindings`).
+// The bound Durable Object classes are re-exported so the Workers runtime can
+// instantiate them (see wrangler.toml `durable_objects.bindings`).
 export { ArtifactRoom } from "./realtime-do"
 // EXPERIMENTAL hosted runs: one automation run per container instance, then it exits.
 // Declared in wrangler.toml [[containers]] + its DO binding; unbound = hosted runs off.
 export { RunContainer } from "./run-container"
-export { RepoSyncRunner } from "./sync-runner-do"
 export { WebhookOutbox } from "./webhook-do"
 
 // The webhook outbox DO is a singleton: every isolate pokes the same instance by a
@@ -117,10 +114,6 @@ export interface Env {
   ROOMS: DurableObjectNamespace
   // The webhook outbox drainer DO (a single named instance). Declared in wrangler.toml.
   WEBHOOK_OUTBOX: DurableObjectNamespace
-  // The GitHub-sync runner DO (one instance per source, by name). Declared in
-  // wrangler.toml. Drives a triggered sync to completion server-side so it survives
-  // the user navigating away — the edge counterpart to the Node detached loop.
-  SYNC_RUNNER: DurableObjectNamespace
   // The preview renderer DO (a single named instance). Declared in wrangler.toml.
   // Drives sequential screenshot rendering via Cloudflare Browser Rendering.
   // Unbound (local / D1-only deploys) → renderPreviews is false, no jobs enqueue.
@@ -234,14 +227,6 @@ function pokePreviewRenderer(env: Env): Promise<unknown> {
   if (!env.PREVIEW_RENDERER) return Promise.resolve()
   const stub = env.PREVIEW_RENDERER.get(env.PREVIEW_RENDERER.idFromName(PREVIEW_NAME))
   return stub.fetch("https://previews/poke", { method: "POST" }).catch(() => {})
-}
-
-/** Poke the per-source sync runner DO so it starts (or resumes) mirroring on our
- *  servers — tab-independent, so the user can close the page mid-sync. */
-function pokeSync(env: Env, sourceId: string): Promise<unknown> {
-  const stub = env.SYNC_RUNNER.get(env.SYNC_RUNNER.idFromName(`sync:${sourceId}`))
-  const url = `https://sync/start?source=${encodeURIComponent(sourceId)}`
-  return stub.fetch(url, { method: "POST" }).catch(() => {})
 }
 
 let app: ReturnType<typeof createApp> | null = null
@@ -396,10 +381,6 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
         // Deliver freshly enqueued events now: poke the outbox DO so its alarm fires,
         // riding waitUntil so the subrequest isn't cancelled when the response is sent.
         pokeWebhooks: () => edgeWaitUntil(pokeOutbox(env)),
-        // Run a triggered GitHub sync server-side: poke the per-source runner DO so
-        // it mirrors to completion on our servers (tab-independent). waitUntil keeps
-        // the poke subrequest alive past the 202 response.
-        startSync: (sourceId) => edgeWaitUntil(pokeSync(env, sourceId)),
         // Enable preview rendering only when the Browser Rendering binding is present
         // (hosted Workers). When BROWSER is unbound (self-host / D1-only / local dev),
         // renderPreviews is false so no jobs are enqueued.

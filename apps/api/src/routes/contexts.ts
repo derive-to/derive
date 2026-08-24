@@ -566,15 +566,6 @@ export const contextRoutes = (ctx: AppContext) => {
         )
         return
       }
-      // GitHub-synced artifacts are read-only in Derive —
-      // changes belong in the repo, and chat must not be a way around that.
-      if (await meta.isManagedArtifact(artifact.org_id, artifact.id)) {
-        await reply(
-          "This document is managed by GitHub sync, so changes belong in the repo rather than here.",
-          "failed",
-        )
-        return
-      }
       // WRITE STANDING, resolved fresh per turn like the role above — a demoted editor, a
       // just-locked document or a flipped workspace switch must bind the NEXT turn, not the
       // next session. Plain standing in priority order; the turn still runs either way, and

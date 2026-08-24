@@ -1,6 +1,6 @@
-import { createHmac, createVerify, generateKeyPairSync } from "node:crypto"
-import { describe, expect, it } from "vitest"
-import { appJwt, verifyWebhookSignature } from "../src/lib/github-app"
+import { createVerify, generateKeyPairSync } from "node:crypto"
+import { afterEach, describe, expect, it, vi } from "vitest"
+import { appJwt, installationToken } from "../src/lib/github-app"
 
 // A throwaway RSA keypair, PKCS#1 PEM — the exact format GitHub's manifest
 // conversion hands back, so this also proves createPrivateKey accepts it.
@@ -11,6 +11,8 @@ const { privateKey, publicKey } = generateKeyPairSync("rsa", {
 })
 
 const decode = (seg: string) => JSON.parse(Buffer.from(seg, "base64url").toString("utf8"))
+
+afterEach(() => vi.unstubAllGlobals())
 
 describe("appJwt", () => {
   it("signs a verifiable RS256 JWT with the App id as issuer", () => {
@@ -29,17 +31,32 @@ describe("appJwt", () => {
   })
 })
 
-describe("verifyWebhookSignature", () => {
-  const secret = "whsec_test"
-  // sha256 HMAC of "hello" keyed by the secret, computed independently.
-  it("accepts a correct signature and rejects everything else", () => {
-    const body = JSON.stringify({ hello: "world" })
-    // Round-trip: sign via the same HMAC the verifier expects.
-    const good = `sha256=${createHmac("sha256", secret).update(body).digest("hex")}`
-    expect(verifyWebhookSignature(body, good, secret)).toBe(true)
-    expect(verifyWebhookSignature(body, good, "wrong-secret")).toBe(false)
-    expect(verifyWebhookSignature(`${body} `, good, secret)).toBe(false)
-    expect(verifyWebhookSignature(body, undefined, secret)).toBe(false)
-    expect(verifyWebhookSignature(body, "sha256=deadbeef", secret)).toBe(false)
+describe("installationToken", () => {
+  it("always down-scopes a token to the standard PR capability", async () => {
+    const calls: RequestInit[] = []
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string | URL, init?: RequestInit) => {
+        calls.push(init ?? {})
+        return new Response(
+          JSON.stringify({
+            token: `installation-profile-${calls.length}`,
+            expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+          }),
+          { status: 201 },
+        )
+      }),
+    )
+
+    const narrow = await installationToken("12345", privateKey, "profile-9001")
+    const narrowAgain = await installationToken("12345", privateKey, "profile-9001")
+
+    expect(narrow).toBe("installation-profile-1")
+    expect(narrowAgain).toBe(narrow)
+    expect(calls).toHaveLength(1)
+    expect(JSON.parse(String(calls[0]?.body))).toEqual({
+      permissions: { metadata: "read", pull_requests: "write" },
+    })
+    expect(new Headers(calls[0]?.headers).get("content-type")).toBe("application/json")
   })
 })

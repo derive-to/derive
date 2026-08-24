@@ -259,7 +259,6 @@ export function registerOrganizeTool(tc: ToolContext): void {
           const ok: string[] = []
           const archivedOk: string[] = []
           const done: string[] = []
-          const synced: string[] = []
           const moderated: string[] = []
           const wiredTo: { short_id: string; context: string }[] = []
           let skipped = 0
@@ -295,8 +294,6 @@ export function registerOrganizeTool(tc: ToolContext): void {
             }
             ok.push(reached.a.id)
             done.push(shortId)
-            // Repository sync may clear this tombstone when the source file changes.
-            if (reached.a.source_path) synced.push(shortId)
             for (const cx of contexts)
               if (cx.manifest_artifact_id === reached.a.id)
                 wiredTo.push({ short_id: shortId, context: cx.name })
@@ -333,13 +330,6 @@ export function registerOrganizeTool(tc: ToolContext): void {
                   moderation_hold: moderated,
                   moderation_hold_note:
                     "These were taken down by moderation, not retired by an author. Restoring one is an admin decision — it reopens content someone removed deliberately — so it needs a manage-level grant.",
-                }
-              : {}),
-            ...(state === "removed" && synced.length
-              ? {
-                  synced_from_repo: synced,
-                  synced_from_repo_note:
-                    "These are synced from a repository, and a sync that sees their file change will clear the retirement. To retire one for good, remove the file at the source.",
                 }
               : {}),
             note:

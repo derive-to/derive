@@ -72,7 +72,8 @@ export type LibrarySearch = {
   folder?: string
   // Free-text title search; composes with any view.
   query?: string
-  // Narrow to artifacts last changed by this GitHub login (synced collections).
+  // Narrow to artifacts carrying this GitHub author attribution. Retained for historical
+  // imports; the standard GitHub integration does not publish artifacts.
   author?: string
   // How the home library is narrowed. Absent = everything you can see. These were
   // three separate places — /favorites and /shared were routes, "Created by me" was
