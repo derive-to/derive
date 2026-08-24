@@ -177,8 +177,9 @@ describe("fill", () => {
       const promptRes = await getFill(copy, "payments team only")
       expect(promptRes.status).toBe(200)
       const { prompt } = (await promptRes.json()) as { prompt: string }
-      expect(prompt).toContain("read its matching Derive skill")
-      expect(prompt).toContain("validate that protocol before publishing")
+      expect(prompt).toContain('data:"*"')
+      expect(prompt).toContain("workflow-definition")
+      expect(prompt).toContain("Arbitrary facts do not imply a matching skill")
 
       const res = await postFill(copy, { note: "payments team only" })
       expect(res.status).toBe(201)

@@ -1,3 +1,5 @@
+import { TEMPLATE_PROTOCOL_INSTRUCTION } from "./template-protocol-instruction.gen"
+
 /**
  * The canned fill-with-your-work instruction — server-side single source of truth,
  * shared by the copyable prompt (GET /v1/artifacts/:id/fill) and the one-click ask
@@ -20,8 +22,7 @@ export const fillInstruction = (
   `Publish a new version of ${copyShortId}: keep what makes the template good — its register, ` +
   `its visual system, and any load-bearing structure (a deck's protocol, a facts block) — and ` +
   `treat the structure as a starting point: cut sections there is no real content for, add ` +
-  `sections the work needs. If the artifact announces a Derive protocol or structured facts, ` +
-  `read its matching Derive skill and validate that protocol before publishing. Fill it from ` +
+  `sections the work needs. ${TEMPLATE_PROTOCOL_INSTRUCTION} Fill it from ` +
   `whatever sources this workspace actually has; assume ` +
   `no particular tool.` +
   (opts.brandprint ? " Apply our brand profile (derive://brandprint/profile)." : "") +
