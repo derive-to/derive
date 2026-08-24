@@ -1660,6 +1660,9 @@ export const api = {
     const fd = new FormData()
     fd.append("edits", JSON.stringify(edits))
     fd.append("base_version", String(baseVersion))
+    // Consecutive attended edits are one working version for five minutes. The
+    // server applies the author/time/review barriers and falls back to an append.
+    fd.append("coalesce", "true")
     if (message) fd.append("message", message)
     return f(`/v1/artifacts/${id}/versions`, {
       method: "POST",

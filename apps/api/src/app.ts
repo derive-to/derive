@@ -35,7 +35,6 @@ import { favoriteRoutes } from "./routes/favorites"
 import { folderRoutes } from "./routes/folders"
 import { followRoutes } from "./routes/follows"
 import { githubAppRoutes } from "./routes/github-app"
-import { marketingRoutes } from "./routes/marketing"
 import { mcpOauthRoutes } from "./routes/mcp-oauth"
 import { modelCredentialRoutes } from "./routes/model-credentials"
 import { moderationRoutes } from "./routes/moderation"
@@ -48,6 +47,7 @@ import { reviewRoutes } from "./routes/review"
 import { reworkRoutes } from "./routes/rework"
 import { sessionRoutes } from "./routes/session"
 import { sharingRoutes } from "./routes/sharing"
+import { siteRoutes } from "./routes/site"
 import { slackRoutes } from "./routes/slack"
 import { syncRoutes } from "./routes/sync"
 import { systemRoutes } from "./routes/system"
@@ -459,7 +459,7 @@ export function createApp(deps: AppDeps): Hono {
     oauthRoutes,
     githubAppRoutes,
     systemRoutes,
-    marketingRoutes,
+    siteRoutes,
     agentDiscoveryRoutes,
   ])
     app.route("/", routes(ctx))

@@ -134,6 +134,12 @@ const SAFE_BINARY_CONTENT_TYPES = new Set([
   "application/json",
 ])
 
+/**
+ * Attended inline saves are a working burst, not a trail of meaningful checkpoints.
+ * Five minutes matches the product rule: a pause creates the next durable version.
+ */
+const INLINE_EDIT_COALESCE_MS = 5 * 60_000
+
 /** The artifact lifecycle: browse + summary, publish/republish, detail, restore,
  *  source read-back, and version diffs. */
 export const artifactRoutes = (ctx: AppContext) => {
@@ -792,6 +798,39 @@ export const artifactRoutes = (ctx: AppContext) => {
           403,
           "publishing the brand profile needs a user to attribute its review to — use a grant bound to a user",
         )
+      // The web inline editor marks small attended saves as coalescible. Replace only
+      // the same person's unreviewed current web version, and only during a short
+      // burst. Named checkpoints, API/MCP writes, comments, review rounds, and a
+      // five-minute pause all force the normal append-only path.
+      let replaceCurrent: { n: number; blobKey: string } | undefined
+      const coalesceRequested =
+        typeof editsField === "string" &&
+        (body["coalesce"] === "true" || body["coalesce"] === "1") &&
+        !str(body["name"]) &&
+        body["request_review"] !== "true" &&
+        body["request_review"] !== "1" &&
+        !str(body["resolves"])
+      if (coalesceRequested && existing && onBehalf && !agentPrincipal) {
+        const current = await meta.getVersion(existing.id, existing.current_version)
+        const age = current ? Date.now() - Date.parse(current.created_at) : Number.POSITIVE_INFINITY
+        if (
+          current &&
+          current.author_id === onBehalf &&
+          current.source === "web" &&
+          !current.name &&
+          age >= 0 &&
+          age <= INLINE_EDIT_COALESCE_MS
+        ) {
+          const [comments, rounds] = await Promise.all([
+            meta.listComments(existing.id),
+            meta.listReviewRounds(existing.id),
+          ])
+          const hasFeedback = comments.some((comment) => comment.base_version === current.n)
+          const hasReview = rounds.some((round) => round.version === current.n)
+          if (!hasFeedback && !hasReview)
+            replaceCurrent = { n: current.n, blobKey: current.blob_key }
+        }
+      }
       // Access is set-on-create: a republish never re-stamps it (publish() only adds a
       // version). On a NEW artifact each field resolves independently — explicit request
       // field > legacy `visibility` mapping > the workspace default (factory default is
@@ -859,6 +898,7 @@ export const artifactRoutes = (ctx: AppContext) => {
           // agent principal (OAuth bearer / dk_agt_ token, incl. the CLI) is the API,
           // and a plain session publish is the web app.
           source: tokenAuth ? (draft ? "api" : "mcp") : agentPrincipal ? "api" : "web",
+          replaceCurrent,
           name: str(body["name"]),
           orgId: org,
           workspaceAccess: resolvedWorkspaceAccess,

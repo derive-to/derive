@@ -9,7 +9,7 @@ comment on exact text with W3C TextQuoteSelector, edit directly, and control who
 change the work. Review rounds are there when a decision needs a named look: the reviewer
 answers in comments and sends the work back with a note.
 
-Fair Source and self-hostable (Docker, Fly.io, Railway, Render, Cloudflare Workers). Hosted tier at derive.to. The FSL license converts each release to Apache-2.0 after two years.
+Fair Source and self-hostable (Docker, Fly.io, Railway, Render, Cloudflare Workers). The reference deployment is derive.to; a self-hosted instance serves the same API at its own origin. The FSL license converts each release to Apache-2.0 after two years.
 
 ## Artifact types
 
@@ -25,7 +25,8 @@ The zero-setup path. One HTTP call, no credentials:
 POST /v1/drafts    multipart: file (one .html/.md, or a .zip site), optional title
 ```
 
-Returns `draft_url` (live immediately at `<id>.derive.page`), `claim_url`, and
+Returns `draft_url` (live immediately, on the instance's usercontent domain; on
+derive.to that is `<id>.derive.page`), `claim_url`, and
 `expires_at` (72h). Report all three to the user: the draft expires unless they open
 the claim link (sign in, one click) to keep it as a permanent versioned artifact.
 The draft URL then redirects to the permanent home. The secret URL is the only

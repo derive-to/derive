@@ -526,6 +526,17 @@ export interface ArtifactStore {
   ): Promise<{ short_id: string; slug: string | null; source_path: string }[]>
   /** Appends the next version and bumps current_version. */
   addVersion(artifactId: string, v: NewVersion): Promise<VersionRecord>
+  /**
+   * Replaces the current working version without changing its number.
+   *
+   * The compare-and-swap keys prevent a concurrent publish from being overwritten.
+   * Returns null when either the version number or blob key is no longer current.
+   */
+  replaceCurrentVersion(
+    artifactId: string,
+    expected: { n: number; blobKey: string },
+    v: NewVersion,
+  ): Promise<VersionRecord | null>
   listVersions(artifactId: string): Promise<VersionRecord[]>
   getVersion(artifactId: string, n: number): Promise<VersionRecord | null>
   /** What an unfurl/embed card needs for one artifact: its version and comment COUNTS,

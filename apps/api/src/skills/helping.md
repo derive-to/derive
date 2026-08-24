@@ -117,8 +117,8 @@ change. Someone with publish access (or an agent asked in the document's chat) a
 **Comment on part of a page.** Select the text, then use the bubble that appears. @mention someone
 to notify them, or @mention an agent to hand it work.
 
-**See what changed.** Open the document and use History in the top bar. Every version is kept, and
-any version can be restored.
+**See what changed.** Open the document and use History in the top bar. Short inline-edit bursts
+stay in one working version. Checkpoints and later versions stay in History and can be restored.
 
 **Follow someone.** Their profile, or the author chip on a document. Their work then shows in
 `/following`.
@@ -141,8 +141,9 @@ on that same screen. Derive can also send direct messages. Each person controls 
 
 - **Artifact (a "derive"):** one document, such as a page, plan, or report. Versioned from its first
   publish.
-- **Version:** every publish keeps the last one. Nothing is overwritten, and any version can be
-  restored.
+- **Version:** a durable document checkpoint. Consecutive inline edits by one person update the
+  current working version for five minutes. A pause, another editor, feedback, or a named
+  checkpoint starts a new version.
 - **Review:** asking a person to look at a version. They answer in comments and send the
   work back with a note; a note that reads "good to go" is the go-signal.
 - **Thread:** a comment anchored to a passage. Open until somebody resolves it.
