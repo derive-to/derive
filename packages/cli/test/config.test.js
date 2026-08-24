@@ -29,6 +29,7 @@ import {
   writeId,
   writeSkillPin,
 } from "../src/config.js"
+import { previewWorkflowSource } from "../src/workflow.js"
 
 const dirs = []
 const tmp = () => {
@@ -41,6 +42,33 @@ afterEach(() => {
 })
 
 describe("scaffold", () => {
+  it("workflow template starts graph-first and previews without a fake artifact member", () => {
+    const d = tmp()
+    const { created } = scaffold(d, "Weekly brief", "workflow")
+    expect(created).toContain("workflow.html")
+    expect(JSON.parse(readFileSync(join(d, CONFIG_FILE), "utf8")).entry).toBe("workflow.html")
+    const source = readFileSync(join(d, "workflow.html"), "utf8")
+    const preview = previewWorkflowSource(source)
+    expect(preview).toMatchObject({
+      status: "ready",
+      purpose: "Build and publish Weekly brief",
+      diagrams: [
+        {
+          context_sessions: [
+            { context_ref: "draft-builder", starts_when: "explicit run" },
+            { context_ref: "quality-checker", starts_when: "Draft completes" },
+            { context_ref: "artifact-publisher", starts_when: "Quality check returns ready" },
+          ],
+          side_effects: [expect.stringContaining("Publish Weekly brief to Derive — replay-safe")],
+        },
+      ],
+    })
+    expect(preview.diagrams[0]?.will_pause).toEqual([])
+    expect(source).toContain('"members": []')
+    expect(source).not.toContain("Publish without approval")
+    expect(source).not.toContain("abc12345")
+  })
+
   it("md template writes derive.json + index.md + the Codex/Claude agent on-ramp", () => {
     const d = tmp()
     const { created } = scaffold(d, "Report", "md")
@@ -48,7 +76,10 @@ describe("scaffold", () => {
       expect.arrayContaining([
         ".agents/skills/derive/SKILL.md",
         ".agents/skills/derive/agents/openai.yaml",
+        ".agents/skills/derive-workflows/SKILL.md",
+        ".agents/skills/derive-workflows/references/protocol.md",
         ".claude/skills/derive/SKILL.md",
+        ".claude/skills/derive-workflows/SKILL.md",
         ".codex/config.toml",
         ".mcp.json",
         "AGENTS.md",
@@ -87,6 +118,9 @@ describe("scaffold", () => {
     expect(readFileSync(join(d, ".agents/skills/derive/agents/openai.yaml"), "utf8")).toContain(
       'url: "https://derive.to/mcp"',
     )
+    const workflowSkill = readFileSync(join(d, ".agents/skills/derive-workflows/SKILL.md"), "utf8")
+    expect(workflowSkill).toContain("name: derive-workflows")
+    expect(workflowSkill).toContain("Preview includes structural validation")
   })
 
   it("installs the agent on-ramp alone and never clobbers an existing config", () => {
@@ -98,7 +132,7 @@ describe("scaffold", () => {
     expect(created).toContain(".codex/config.toml")
     expect(skipped).toContain(".mcp.json")
     expect(readFileSync(join(d, ".mcp.json"), "utf8")).toBe('{"mine":true}\n')
-    expect(Object.keys(agentScaffoldFiles())).toHaveLength(10)
+    expect(Object.keys(agentScaffoldFiles())).toHaveLength(18)
 
     const skillPath = join(d, ".agents/skills/derive/SKILL.md")
     writeFileSync(skillPath, "locally changed\n")

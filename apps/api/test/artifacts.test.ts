@@ -266,6 +266,130 @@ describe("publish html file", () => {
 })
 
 describe("linked bundles", () => {
+  it("returns the validated workflow Preview on the shared artifact detail", async () => {
+    const manifest = {
+      schema: "derive.linked-bundle/v1",
+      purpose: "Publish a reviewed signal brief.",
+      members: [],
+      diagrams: [
+        {
+          id: "signal-brief",
+          title: "Reviewed signal brief",
+          type: "graph",
+          nodes: [
+            { id: "draft", label: "Draft", state: "pending" },
+            { id: "review", label: "Review", state: "pending" },
+            { id: "publish", label: "Publish", state: "pending" },
+            { id: "stop", label: "Stop", state: "pending" },
+          ],
+          edges: [
+            { from: "draft", to: "review", label: "ready" },
+            { from: "review", to: "publish", label: "approve" },
+            { from: "review", to: "stop", label: "stop" },
+          ],
+        },
+      ],
+    }
+    const workflow = {
+      schema: "derive.workflow/v1",
+      purpose: manifest.purpose,
+      forbidden: ["Publish without approval"],
+      diagrams: [
+        {
+          id: "signal-brief",
+          entry: "draft",
+          nodes: [
+            {
+              id: "draft",
+              kind: "context",
+              context_ref: "signal-writer",
+              instruction: "Draft the signal brief.",
+              result: "A reviewable brief",
+            },
+            {
+              id: "review",
+              kind: "human",
+              decision: "Approve or stop",
+              options: ["approve", "stop"],
+              resume: "The reviewer chooses",
+            },
+            {
+              id: "publish",
+              kind: "context",
+              context_ref: "artifact-publisher",
+              instruction: "Publish the approved brief.",
+              result: "A published brief",
+              terminal: true,
+              effects: [
+                {
+                  kind: "write",
+                  description: "Publish the brief",
+                  gate: "human",
+                  approval_ref: "review",
+                },
+              ],
+            },
+            {
+              id: "stop",
+              kind: "terminal",
+              result: "The workflow is stopped without publishing",
+            },
+          ],
+          routes: [
+            { from: "draft", to: "review", when: "always" },
+            { from: "review", to: "publish", when: "approve" },
+            { from: "review", to: "stop", when: "stop" },
+          ],
+          scenarios: [
+            {
+              id: "expected",
+              kind: "expected",
+              path: ["draft", "review", "publish"],
+              outcome: "The approved brief is published",
+            },
+            {
+              id: "failure",
+              kind: "failure",
+              path: ["draft"],
+              outcome: "The failed context stays visible",
+            },
+            {
+              id: "human",
+              kind: "human",
+              path: ["draft", "review", "stop"],
+              outcome: "The reviewer stops the workflow",
+            },
+          ],
+        },
+      ],
+    }
+    const html =
+      '<!doctype html><html><head><meta name="viewport" content="width=device-width"></head><body>' +
+      `<script type="application/derive-facts" data-fact="bundle-manifest">${JSON.stringify(manifest)}</script>` +
+      `<script type="application/derive-facts" data-fact="workflow-definition">${JSON.stringify(workflow)}</script>` +
+      "</body></html>"
+    const published = await (
+      await upload("workflow.html", html, { title: "Signal workflow" })
+    ).json()
+
+    const detail = await (await app.request(`/v1/artifacts/${published.short_id}`)).json()
+    expect(detail.workflow_preview).toMatchObject({
+      status: "ready",
+      execution_started: false,
+      purpose: manifest.purpose,
+      diagrams: [
+        {
+          id: "signal-brief",
+          title: "Reviewed signal brief",
+          will_do: ["Draft — A reviewable brief", "Publish — A published brief"],
+          will_pause: ["Review — Approve or stop; resume: The reviewer chooses"],
+          side_effects: ["Publish the brief — authorized at Review"],
+        },
+      ],
+      cannot_do: ["Publish without approval"],
+    })
+  })
+
   it("resolves readable members and leaves missing ones explicit", async () => {
     const member = await (await upload("brief.md", "# Brief", { title: "Product brief" })).json()
     const manifest = {

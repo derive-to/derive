@@ -59,6 +59,46 @@ export const VersionSession = z
   })
   .openapi("VersionSession")
 
+/** The one workflow gate rendered by both the CLI and the shared artifact page.
+ * It is descriptive only: execution_started is always false because opening or
+ * previewing an artifact never starts a context session. */
+export const WorkflowPreview = z
+  .object({
+    status: z.enum(["ready", "needs-changes"]),
+    execution_started: z.literal(false),
+    purpose: z.string().nullable(),
+    errors: z.array(z.string()),
+    warnings: z.array(z.string()),
+    diagrams: z.array(
+      z.object({
+        id: z.string(),
+        title: z.string(),
+        will_do: z.array(z.string()),
+        may_do: z.array(z.string()),
+        will_pause: z.array(z.string()),
+        can_repeat: z.array(z.string()),
+        side_effects: z.array(z.string()),
+        context_sessions: z.array(
+          z.object({
+            node_id: z.string(),
+            label: z.string(),
+            context_ref: z.string(),
+            result: z.string(),
+            starts_when: z.string(),
+          }),
+        ),
+        scenarios: z.array(
+          z.object({
+            kind: z.enum(["expected", "failure", "human"]),
+            outcome: z.string(),
+          }),
+        ),
+      }),
+    ),
+    cannot_do: z.array(z.string()),
+  })
+  .openapi("WorkflowPreview")
+
 /** A collection that grants access to an artifact, as the share dialog discloses it: a
  *  workspace-open collection reaches every workspace seat at their role; an invite-only
  *  one reaches its explicit members. The artifact's own access fields never see this
@@ -334,6 +374,9 @@ export const Artifact = z
       .describe(
         "Present for an HTML artifact carrying a valid bundle-manifest fact. Members are resolved through the caller's normal read permissions; unavailable members expose no additional metadata.",
       ),
+    workflow_preview: WorkflowPreview.optional().describe(
+      "Present when the current linked bundle also carries workflow-definition. This is the validated, non-executing shared Preview.",
+    ),
     source_path: z
       .string()
       .nullable()

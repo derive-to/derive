@@ -181,6 +181,141 @@ describe("rework: queue dedupe", () => {
   })
 })
 
+describe("workflow run: explicit local-agent handoff", () => {
+  const workflowHtml = (broken = false) => {
+    const manifest = {
+      schema: "derive.linked-bundle/v1",
+      purpose: "Review and publish a brief.",
+      members: [],
+      diagrams: [
+        {
+          id: "brief",
+          title: "Reviewed brief",
+          type: "graph",
+          nodes: [
+            { id: "draft", label: "Draft", state: "pending" },
+            { id: "review", label: "Review", state: "pending" },
+            { id: "publish", label: "Publish", state: "pending" },
+            { id: "stop", label: "Stop", state: "pending" },
+          ],
+          edges: [
+            { from: "draft", to: "review", label: "ready" },
+            { from: "review", to: "publish", label: "approve" },
+            { from: "review", to: "stop", label: "stop" },
+          ],
+        },
+      ],
+    }
+    const workflow = {
+      schema: "derive.workflow/v1",
+      purpose: manifest.purpose,
+      diagrams: [
+        {
+          id: "brief",
+          entry: "draft",
+          nodes: [
+            {
+              id: "draft",
+              kind: "context",
+              context_ref: "brief-writer",
+              instruction: "Draft the brief.",
+              result: "A reviewable brief",
+            },
+            {
+              id: "review",
+              kind: "human",
+              decision: "Approve the brief",
+              options: ["approve", "stop"],
+              resume: "The reviewer approves or stops",
+            },
+            {
+              id: "publish",
+              kind: "context",
+              context_ref: "publisher",
+              instruction: "Publish the approved brief.",
+              result: "A published brief",
+              terminal: true,
+            },
+            { id: "stop", kind: "terminal", result: "Stopped without publishing" },
+          ],
+          routes: [
+            { from: "draft", to: "review", when: "always" },
+            ...(broken ? [] : [{ from: "review", to: "publish", when: "approve" }]),
+            { from: "review", to: "stop", when: "stop" },
+          ],
+          scenarios: [
+            {
+              id: "expected",
+              kind: "expected",
+              path: ["draft", "review", "publish"],
+              outcome: "The approved brief is published",
+            },
+            {
+              id: "failure",
+              kind: "failure",
+              path: ["draft"],
+              outcome: "A failed context remains visible",
+            },
+            {
+              id: "human",
+              kind: "human",
+              path: ["draft", "review", "stop"],
+              outcome: "The reviewer explicitly stops",
+            },
+          ],
+        },
+      ],
+    }
+    return (
+      `<script type="application/derive-facts" data-fact="bundle-manifest">${JSON.stringify(manifest)}</script>` +
+      `<script type="application/derive-facts" data-fact="workflow-definition">${JSON.stringify(workflow)}</script>`
+    )
+  }
+
+  it("GET explains the handoff without running; POST queues that same policy for the agent", async () => {
+    const { app } = makeAuthedApp("workflow-run", [owner, editor], "editor")
+    const published = await (
+      await publishAs(app, workflowHtml(), { title: "Workflow" }, as(owner.email))
+    ).json()
+    const agent = await addAgent(app, "Runner")
+
+    const promptRes = await app.request(
+      `/v1/artifacts/${published.short_id}/workflow-run?diagram=brief`,
+      { headers: as(editor.email) },
+    )
+    expect(promptRes.status).toBe(200)
+    const prompt = (await promptRes.json()) as { prompt: string; diagram: { title: string } }
+    expect(prompt.diagram.title).toBe("Reviewed brief")
+    expect(prompt.prompt).toContain("explicit run intent")
+    expect(prompt.prompt).toContain("this agent is the harness")
+    expect(await inboxBodies(app, agent.token)).toHaveLength(0)
+
+    const runRes = await app.request(
+      `/v1/artifacts/${published.short_id}/workflow-run`,
+      jsonAs(as(editor.email), { agentId: agent.id, diagramId: "brief" }),
+    )
+    expect(runRes.status).toBe(201)
+    const queued = await inboxBodies(app, agent.token)
+    expect(queued).toHaveLength(1)
+    expect(queued[0]?.body).toContain(prompt.prompt)
+  })
+
+  it("refuses a workflow whose Preview needs changes", async () => {
+    const { app } = makeAuthedApp("workflow-needs-changes", [owner, editor], "editor")
+    const published = await (
+      await publishAs(app, workflowHtml(true), { title: "Broken workflow" }, as(owner.email))
+    ).json()
+    const res = await app.request(
+      `/v1/artifacts/${published.short_id}/workflow-run?diagram=brief`,
+      { headers: as(editor.email) },
+    )
+    expect(res.status).toBe(409)
+    const body = (await res.json()) as { code: string; errors: string[] }
+    expect(body.code).toBe("needsChanges")
+    expect(body.errors.join("\n")).toContain('missing "approve"')
+  })
+})
+
 // ---------------------------------------------------------------------------
 // Save-as-skill: the same canned-instruction-to-agent-inbox pattern as rework (needsAgent,
 // alreadyQueued, the thread must be on this artifact).

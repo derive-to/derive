@@ -469,7 +469,7 @@ export const defaultConfig = (title = "My artifact", entry = "index.md") => ({
   id: null,
 })
 
-export const TEMPLATES = ["md", "html", "slides", "site", "skill", "context"]
+export const TEMPLATES = ["md", "html", "workflow", "slides", "site", "skill", "context"]
 
 /** Read derive.json from `dir`, or null if absent. Throws on malformed JSON. */
 export function loadConfig(dir = ".") {
@@ -612,6 +612,10 @@ export function writeSkillPin(dir, { id, version, name }) {
 const STARTERS = {
   md: { entry: "index.md", files: (t) => ({ "index.md": starterMd(t) }) },
   html: { entry: "index.html", files: (t) => ({ "index.html": starterHtml(t) }) },
+  workflow: {
+    entry: "workflow.html",
+    files: (t) => ({ "workflow.html": starterWorkflow(t) }),
+  },
   slides: { entry: "slides.html", files: (t) => ({ "slides.html": starterSlides(t) }) },
   site: {
     entry: "site",
@@ -679,10 +683,24 @@ const DERIVE_SKILL_PATHS = [
   "references/compatibility.md",
 ]
 
+const WORKFLOW_SKILL_PATHS = [
+  "SKILL.md",
+  "agents/openai.yaml",
+  "references/protocol.md",
+  "references/runtime.md",
+]
+
 const deriveSkillFiles = Object.fromEntries(
   DERIVE_SKILL_PATHS.map((path) => [
     path,
     readFileSync(new URL(`../skills/derive/${path}`, import.meta.url), "utf8"),
+  ]),
+)
+
+const workflowSkillFiles = Object.fromEntries(
+  WORKFLOW_SKILL_PATHS.map((path) => [
+    path,
+    readFileSync(new URL(`../skills/derive-workflows/${path}`, import.meta.url), "utf8"),
   ]),
 )
 
@@ -691,9 +709,13 @@ const deriveSkillFiles = Object.fromEntries(
  *  discovery locations. */
 export function agentScaffoldFiles() {
   const files = {}
-  for (const root of [".agents/skills/derive", ".claude/skills/derive"])
-    for (const [path, contents] of Object.entries(deriveSkillFiles))
-      files[`${root}/${path}`] = contents
+  for (const harnessRoot of [".agents/skills", ".claude/skills"])
+    for (const [skill, skillFiles] of [
+      ["derive", deriveSkillFiles],
+      ["derive-workflows", workflowSkillFiles],
+    ])
+      for (const [path, contents] of Object.entries(skillFiles))
+        files[`${harnessRoot}/${skill}/${path}`] = contents
   return {
     ...files,
     ".mcp.json": `${JSON.stringify(MCP_CONFIG, null, 2)}\n`,
@@ -910,7 +932,12 @@ export function scaffold(dir = ".", title = "My artifact", template = "md") {
   )
 }
 
-const AGENT_SKILL_PREFIXES = [".agents/skills/derive/", ".claude/skills/derive/"]
+const AGENT_SKILL_PREFIXES = [
+  ".agents/skills/derive/",
+  ".claude/skills/derive/",
+  ".agents/skills/derive-workflows/",
+  ".claude/skills/derive-workflows/",
+]
 const isAgentSkillFile = (name) => AGENT_SKILL_PREFIXES.some((prefix) => name.startsWith(prefix))
 
 /** Install the native skill, MCP configs, and managed instruction block into an
@@ -1101,6 +1128,155 @@ const starterHtml = (title) => `<!doctype html>
 </body>
 </html>
 `
+
+const starterWorkflow = (title) => {
+  const purpose = `Build and publish ${title}`
+  const bundle = {
+    schema: "derive.linked-bundle/v1",
+    purpose,
+    members: [],
+    diagrams: [
+      {
+        id: "build-and-publish",
+        title: "Build and publish",
+        type: "graph",
+        nodes: [
+          { id: "draft", label: "Draft", state: "pending" },
+          { id: "evaluate", label: "Quality check", state: "pending" },
+          { id: "publish", label: "Publish", state: "pending" },
+        ],
+        edges: [
+          { from: "draft", to: "evaluate", label: "draft ready" },
+          { from: "evaluate", to: "draft", label: "revise" },
+          { from: "evaluate", to: "publish", label: "quality bar met" },
+        ],
+      },
+    ],
+  }
+  const workflow = {
+    schema: "derive.workflow/v1",
+    purpose,
+    forbidden: ["Publish outside the current Derive workspace", "Continue past loop bounds"],
+    diagrams: [
+      {
+        id: "build-and-publish",
+        entry: "draft",
+        nodes: [
+          {
+            id: "draft",
+            kind: "context",
+            context_ref: "draft-builder",
+            instruction: `Create a reviewable ${title} draft.`,
+            result: `A complete ${title} draft`,
+          },
+          {
+            id: "evaluate",
+            kind: "context",
+            context_ref: "quality-checker",
+            instruction: `Evaluate the ${title} draft against its stated outcome and return either ready or revise with specific evidence.`,
+            result: "A grounded ready-or-revise decision",
+            routing: "one",
+          },
+          {
+            id: "publish",
+            kind: "context",
+            context_ref: "artifact-publisher",
+            instruction: "Publish the ready draft to the current Derive workspace.",
+            result: `A published ${title}`,
+            terminal: true,
+            effects: [
+              {
+                kind: "write",
+                description: `Publish ${title} to Derive`,
+                gate: "none",
+                idempotency: "Publish one version for this workflow node attempt",
+              },
+            ],
+          },
+        ],
+        routes: [
+          { from: "draft", to: "evaluate", when: "always" },
+          { from: "evaluate", to: "draft", when: "revise", fallback: true },
+          { from: "evaluate", to: "publish", when: "ready" },
+        ],
+        loops: [
+          {
+            id: "bounded-improvement",
+            nodes: ["draft", "evaluate"],
+            goal: "Reach the stated quality bar",
+            evaluate: "The quality checker evaluates accuracy, clarity, and scope",
+            stop: {
+              max_attempts: 2,
+              stagnation_limit: 1,
+              max_minutes: 20,
+              human_stop: "The person stops or changes the work",
+            },
+          },
+        ],
+        scenarios: [
+          {
+            id: "expected",
+            kind: "expected",
+            path: ["draft", "evaluate", "publish"],
+            outcome: `${title} meets the quality bar and is published`,
+          },
+          {
+            id: "context-failure",
+            kind: "failure",
+            path: ["draft"],
+            outcome: "The failed context session stays visible and the run stops",
+          },
+          {
+            id: "revision",
+            kind: "expected",
+            path: ["draft", "evaluate", "draft", "evaluate", "publish"],
+            outcome: "One bounded revision lands before publication",
+          },
+        ],
+      },
+    ],
+  }
+  const fact = (value) => JSON.stringify(value, null, 2).replaceAll("<", "\\u003c")
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${title} · workflow</title>
+<style>
+  body{font:16px/1.6 system-ui,-apple-system,"Segoe UI",sans-serif;color:#17231f;
+    background:#eef5f1;max-width:880px;margin:0 auto;padding:48px 24px}
+  h1{font-size:42px;line-height:1.05;letter-spacing:-.04em;margin:0 0 10px}
+  .sub{color:#5b6d66;margin:0 0 30px}.flow{display:grid;grid-template-columns:1fr auto 1fr auto 1fr;
+    gap:12px;align-items:center}.node{background:white;border:1px solid #d8e5de;border-radius:16px;
+    padding:20px}.arrow{font-size:24px;color:#087f5b}.note{margin-top:18px;padding:14px 16px;
+    background:#fff1c7;border-radius:12px}code{background:#dff3e9;padding:2px 6px;border-radius:5px}
+  @media(max-width:700px){.flow{grid-template-columns:1fr}.arrow{transform:rotate(90deg);text-align:center}}
+</style>
+</head>
+<body>
+  <h1>${title}</h1>
+  <p class="sub">A graph-first Derive workflow. The visible graph and runnable definition use
+  the same stable IDs for different jobs.</p>
+  <div class="flow">
+    <div class="node"><b>Draft</b><br>One context produces a complete result.</div><div class="arrow">→</div>
+    <div class="node"><b>Quality check</b><br>Another context returns ready or revise.</div><div class="arrow">→</div>
+    <div class="node"><b>Publish</b><br>The ready result is published to Derive.</div>
+  </div>
+  <p class="note">The revise route is bounded to two attempts. Edit the outcome and context
+  references below, then run <code>derive workflow sync workflow.html</code>. Sync projects the
+  definition into the visible graph and runs Preview; it never starts the workflow.</p>
+<script type="application/derive-facts" data-fact="bundle-manifest">
+${fact(bundle)}
+</script>
+<!-- Edit workflow behavior in this fact. The workflow sync command projects its topology above. -->
+<script type="application/derive-facts" data-fact="workflow-definition">
+${fact(workflow)}
+</script>
+</body>
+</html>
+`
+}
 
 // The slides starter is THE canonical Derive deck, shared byte-for-byte with the MCP
 // template resource (derive://decks/template) and the library’s “Start a deck” — one

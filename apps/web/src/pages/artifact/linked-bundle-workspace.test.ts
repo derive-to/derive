@@ -10,9 +10,13 @@ import { linkedBundleReconciliationEdit } from "./linked-bundle-reconcile"
 import {
   linkedBundleAnchor,
   linkedBundleCurrentNodes,
+  linkedBundleEdgePath,
   linkedBundleFitScale,
   linkedBundleFocusedElements,
+  linkedBundleInitialView,
+  linkedBundleLayout,
   linkedBundleNodeFreshness,
+  linkedBundleNowHeadline,
   linkedBundleNowSummary,
 } from "./linked-bundle-workspace"
 
@@ -79,6 +83,24 @@ describe("linked bundle workspace", () => {
     expect(linkedBundleFitScale(1_200, 800)).toBe(1)
   })
 
+  it("keeps cyclic graph nodes and reciprocal edge labels from overlapping", () => {
+    const cyclic = {
+      ...graph,
+      edges: [
+        { from: "brief", to: "research", label: "ready" },
+        { from: "research", to: "brief", label: "revise" },
+        { from: "research", to: "decision", label: "approve" },
+      ],
+    }
+    const layout = linkedBundleLayout(cyclic)
+    expect(new Set(Object.values(layout.nodes).map((point) => point.x)).size).toBe(3)
+    const [first, second] = cyclic.edges
+    if (!first || !second) throw new Error("reciprocal fixture is incomplete")
+    const forward = linkedBundleEdgePath(cyclic, first, layout.nodes)
+    const reverse = linkedBundleEdgePath(cyclic, second, layout.nodes)
+    expect(Math.abs(forward.y - reverse.y)).toBeGreaterThan(112)
+  })
+
   it("surfaces only current or attention-worthy nodes for the mobile summary", () => {
     const diagram = {
       ...graph,
@@ -92,6 +114,24 @@ describe("linked bundle workspace", () => {
       "research",
       "decision",
     ])
+  })
+
+  it("opens untouched workflows on Preview and started workflows on Now", () => {
+    expect(linkedBundleInitialView([graph], true)).toBe("preview")
+    expect(
+      linkedBundleInitialView(
+        [
+          {
+            ...graph,
+            nodes: graph.nodes.map((node, index) =>
+              index === 0 ? { ...node, state: "done" as const } : node,
+            ),
+          },
+        ],
+        true,
+      ),
+    ).toBe("now")
+    expect(linkedBundleInitialView([graph], false)).toBe("now")
   })
 
   it("projects authored graph state into current, help, and likely-next work", () => {
@@ -124,6 +164,12 @@ describe("linked bundle workspace", () => {
       done: 1,
       total: 4,
     })
+  })
+
+  it("calls a fully completed graph a completed run", () => {
+    expect(
+      linkedBundleNowHeadline({ current: [], needsHelp: [], next: [], done: 3, total: 3 }),
+    ).toBe("Run complete.")
   })
 
   it("focuses a selected node and only its immediate graph context", () => {
@@ -175,8 +221,17 @@ describe("linked bundle manifest editor", () => {
         schema: "derive.linked-bundle/v1",
         purpose: "x",
         members: [],
+        diagrams: [graph],
       }),
-    ).toContain("artifact member")
+    ).toBeNull()
+    expect(
+      linkedBundleManifestProblem({
+        schema: "derive.linked-bundle/v1",
+        purpose: "x",
+        members: [],
+        diagrams: [],
+      }),
+    ).toContain("artifact member, loop, or graph")
   })
 })
 

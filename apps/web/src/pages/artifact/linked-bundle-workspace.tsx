@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react"
-import type { Artifact, Comment } from "@/api"
+import type { Artifact, Comment, DirUser } from "@/api"
 import { Icon } from "@/components/icons"
 import { Count } from "@/components/shared/section-eyebrow"
 import { Button } from "@/components/ui/button"
@@ -14,6 +14,8 @@ import {
 } from "./linked-bundle-panel"
 import { LinkedBundleReconcile } from "./linked-bundle-reconcile"
 import type { Sel } from "./types"
+import { WorkflowPreview } from "./workflow-preview"
+import { WorkflowRunDialog } from "./workflow-run-dialog"
 
 type LinkedBundle = NonNullable<Artifact["linked_bundle"]>
 type Diagram = NonNullable<LinkedBundle["diagrams"]>[number]
@@ -21,6 +23,7 @@ type DiagramNode = Diagram["nodes"][number]
 type DiagramEdge = Diagram["edges"][number]
 type BundleMember = LinkedBundle["members"][number]
 type ReviewKind = "node" | "edge" | "policy"
+type LinkedBundleView = "preview" | "now" | "advanced"
 
 type Point = { x: number; y: number }
 export type LinkedBundleVisualLayout = {
@@ -42,6 +45,19 @@ export const linkedBundleCurrentNodes = (diagram: Diagram): DiagramNode[] =>
     (node) => node.state === "active" || node.state === "waiting" || node.state === "blocked",
   )
 
+/** Authored node state is the execution receipt. An untouched workflow starts in
+ * Preview; once any node moves beyond pending, current run state takes priority. */
+export const linkedBundleHasRunState = (diagrams: Diagram[]): boolean =>
+  diagrams.some((diagram) =>
+    diagram.nodes.some((node) => node.state !== undefined && node.state !== "pending"),
+  )
+
+export const linkedBundleInitialView = (
+  diagrams: Diagram[],
+  hasWorkflowPreview: boolean,
+): LinkedBundleView =>
+  hasWorkflowPreview && !linkedBundleHasRunState(diagrams) ? "preview" : "now"
+
 export type LinkedBundleNowReference = {
   diagram: string
   node: string
@@ -53,6 +69,15 @@ export type LinkedBundleNowSummary = {
   next: LinkedBundleNowReference[]
   done: number
   total: number
+}
+
+export const linkedBundleNowHeadline = (summary: LinkedBundleNowSummary): string => {
+  if (summary.needsHelp.length)
+    return `${summary.needsHelp.length} ${summary.needsHelp.length === 1 ? "item needs" : "items need"} your help.`
+  if (summary.current.length)
+    return `${summary.current.length} ${summary.current.length === 1 ? "work item is" : "work items are"} moving. No agent has asked for help.`
+  if (summary.total > 0 && summary.done === summary.total) return "Run complete."
+  return "No active work is reported right now."
 }
 
 /** Project the precise graph into the few questions a returning human asks first.
@@ -96,6 +121,7 @@ const NODE_W = 184
 const NODE_H = 112
 const PAD_X = 58
 const PAD_Y = 48
+const GRAPH_COLUMN_STEP = 268
 
 const groupsAtDepth = (diagram: Diagram): Map<number, string[]> => {
   const incoming = new Map(diagram.nodes.map((node) => [node.id, 0]))
@@ -118,9 +144,11 @@ const groupsAtDepth = (diagram: Diagram): Map<number, string[]> => {
     }
   }
   // Graphs may intentionally contain a cycle. Keep it visible without pretending
-  // we found a topological order: place unresolved nodes in one final column.
+  // we found a topological order: preserve authored order across trailing columns
+  // instead of stacking every unresolved node and edge on top of each other.
   const last = Math.max(0, ...depth.values()) + (visited.size ? 1 : 0)
-  for (const node of diagram.nodes) if (!visited.has(node.id)) depth.set(node.id, last)
+  const unresolved = diagram.nodes.filter((node) => !visited.has(node.id))
+  for (const [index, node] of unresolved.entries()) depth.set(node.id, last + index)
   const groups = new Map<number, string[]>()
   for (const node of diagram.nodes) {
     const d = depth.get(node.id) ?? 0
@@ -154,11 +182,11 @@ export const linkedBundleLayout = (diagram: Diagram): LinkedBundleVisualLayout =
   const groups = groupsAtDepth(diagram)
   const columns = [...groups.entries()].sort(([a], [b]) => a - b)
   const maxRows = Math.max(1, ...columns.map(([, ids]) => ids.length))
-  const width = Math.max(660, columns.length * 236 + PAD_X * 2)
+  const width = Math.max(660, columns.length * GRAPH_COLUMN_STEP + PAD_X * 2)
   const height = Math.max(360, maxRows * 158 + PAD_Y * 2)
   const nodes: Record<string, Point> = {}
   columns.forEach(([, ids], column) => {
-    const x = PAD_X + column * 236
+    const x = PAD_X + column * GRAPH_COLUMN_STEP
     const span = ids.length * NODE_H + Math.max(0, ids.length - 1) * 46
     const y0 = Math.max(PAD_Y, (height - span) / 2)
     ids.forEach((id, row) => {
@@ -201,6 +229,14 @@ const stateDot = (state?: DiagramNode["state"]): string => {
   return "bg-muted-foreground/60"
 }
 
+const stateTextTone = (state?: DiagramNode["state"]): string => {
+  if (state === "done") return "text-success"
+  if (state === "active") return "text-insights"
+  if (state === "waiting") return "text-warning"
+  if (state === "blocked") return "text-destructive"
+  return "text-muted-foreground"
+}
+
 const stateChipTone = (state?: DiagramNode["state"]): string => {
   if (state === "done") return "border-success/25 bg-success/10 text-success"
   if (state === "active") return "border-insights/25 bg-insights/10 text-insights"
@@ -217,7 +253,7 @@ export const linkedBundleNodeFreshness = (
   return member.current_version > node.basis_version ? "updated" : "fresh"
 }
 
-const edgePath = (
+export const linkedBundleEdgePath = (
   diagram: Diagram,
   edge: DiagramEdge,
   points: Record<string, Point>,
@@ -235,6 +271,26 @@ const edgePath = (
       y: fy - 84,
     }
   if (diagram.type === "graph") {
+    const reciprocal = diagram.edges.some(
+      (candidate) => candidate.from === edge.to && candidate.to === edge.from,
+    )
+    if (reciprocal) {
+      const vx = tx - fx
+      const vy = ty - fy
+      const length = Math.max(1, Math.hypot(vx, vy))
+      const nx = -vy / length
+      const ny = vx / length
+      const bend = 104
+      const c1x = fx + vx / 3 + nx * bend
+      const c1y = fy + vy / 3 + ny * bend
+      const c2x = fx + (vx * 2) / 3 + nx * bend
+      const c2y = fy + (vy * 2) / 3 + ny * bend
+      return {
+        d: `M ${fx} ${fy} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${tx} ${ty}`,
+        x: (fx + tx) / 2 + nx * bend * 0.75,
+        y: (fy + ty) / 2 + ny * bend * 0.75,
+      }
+    }
     const dx = Math.max(58, Math.abs(tx - fx) / 2)
     return {
       d: `M ${fx} ${fy} C ${fx + dx} ${fy}, ${tx - dx} ${ty}, ${tx} ${ty}`,
@@ -582,7 +638,7 @@ function DiagramWorkspace({
                 {diagram.edges.map((edge, index) => {
                   const local = `${index}-${edge.from}-${edge.to}`
                   const target = linkedBundleReviewTarget(diagram.id, "edge", local)
-                  const path = edgePath(diagram, edge, layout.nodes)
+                  const path = linkedBundleEdgePath(diagram, edge, layout.nodes)
                   const active =
                     selected?.diagram === diagram.id &&
                     selected.kind === "edge" &&
@@ -610,7 +666,7 @@ function DiagramWorkspace({
               {diagram.edges.map((edge, index) => {
                 const local = `${index}-${edge.from}-${edge.to}`
                 const target = linkedBundleReviewTarget(diagram.id, "edge", local)
-                const path = edgePath(diagram, edge, layout.nodes)
+                const path = linkedBundleEdgePath(diagram, edge, layout.nodes)
                 const active =
                   selected?.diagram === diagram.id &&
                   selected.kind === "edge" &&
@@ -653,6 +709,7 @@ function DiagramWorkspace({
                   selected.local === node.id
                 const inFocus = !focusActive || focused.nodes.has(node.id)
                 const freshness = linkedBundleNodeFreshness(node, member)
+                const tier = linkedBundleEffectiveTier(node, diagram)
                 return (
                   <button
                     key={node.id}
@@ -686,14 +743,20 @@ function DiagramWorkspace({
                         </span>
                       ) : null}
                     </span>
-                    <span className="mt-1.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 font-mono text-2xs text-muted-foreground">
-                      <span className="capitalize">{node.state ?? "state not set"}</span>
-                      <span>tier {linkedBundleEffectiveTier(node, diagram) ?? "not set"}</span>
-                      {node.role ? <span className="truncate">{node.role}</span> : null}
-                      {node.confidence ? (
-                        <span className="capitalize">{node.confidence.level} confidence</span>
-                      ) : null}
-                    </span>
+                    {node.state || tier || node.role || node.confidence ? (
+                      <span className="mt-1.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 font-mono text-2xs text-muted-foreground">
+                        {node.state ? (
+                          <span className={cn("capitalize", stateTextTone(node.state))}>
+                            {node.state}
+                          </span>
+                        ) : null}
+                        {tier ? <span>tier {tier}</span> : null}
+                        {node.role ? <span className="truncate">{node.role}</span> : null}
+                        {node.confidence ? (
+                          <span className="capitalize">{node.confidence.level} confidence</span>
+                        ) : null}
+                      </span>
+                    ) : null}
                     {member || (counts.get(target) ?? 0) > 0 ? (
                       <span className="mt-1 flex min-w-0 items-center gap-1.5 text-2xs text-muted-foreground">
                         {member ? <span className="truncate">{member.label}</span> : null}
@@ -727,16 +790,16 @@ function DiagramWorkspace({
                   {selection.state ? (
                     <span className="flex items-center gap-1.5 text-xs">
                       <span className={cn("size-2 rounded-full", stateDot(selection.state))} />
-                      <span className="capitalize text-foreground">{selection.state}</span>
+                      <span className={cn("capitalize", stateTextTone(selection.state))}>
+                        {selection.state}
+                      </span>
                       {selection.basis ? (
                         <span className="text-muted-foreground">· based on v{selection.basis}</span>
                       ) : null}
                     </span>
                   ) : null}
-                  {"tier" in selection ? (
-                    <span className="text-xs text-muted-foreground">
-                      Tier {selection.tier ?? "not set"}
-                    </span>
+                  {"tier" in selection && selection.tier ? (
+                    <span className="text-xs text-muted-foreground">Tier {selection.tier}</span>
                   ) : null}
                 </div>
                 <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
@@ -882,10 +945,19 @@ function DiagramWorkspace({
   )
 }
 
-function ArtifactShelf({ members }: { members: BundleMember[] }) {
+function ArtifactShelf({
+  members,
+  afterMain = false,
+}: {
+  members: BundleMember[]
+  afterMain?: boolean
+}) {
   return (
     <aside
-      className="order-first min-w-0 lg:order-none lg:sticky lg:top-32 lg:max-h-[calc(100vh-9rem)] lg:self-start lg:overflow-y-auto"
+      className={cn(
+        "min-w-0 lg:order-none lg:sticky lg:top-32 lg:max-h-[calc(100vh-9rem)] lg:self-start lg:overflow-y-auto",
+        !afterMain && "order-first",
+      )}
       data-testid="bundle-artifact-shelf"
     >
       <div className="mb-2 flex items-baseline justify-between gap-3">
@@ -988,11 +1060,7 @@ function NowWorkspace({
     if (!diagram || !node) return null
     return { diagram, node, member: node.member ? members.get(node.member) : undefined }
   }
-  const headline = summary.needsHelp.length
-    ? `${summary.needsHelp.length} ${summary.needsHelp.length === 1 ? "item needs" : "items need"} your help.`
-    : summary.current.length
-      ? `${summary.current.length} ${summary.current.length === 1 ? "work item is" : "work items are"} moving. No agent has asked for help.`
-      : "No active work is reported right now."
+  const headline = linkedBundleNowHeadline(summary)
 
   const nodeButton = (
     reference: LinkedBundleNowReference,
@@ -1079,6 +1147,11 @@ function NowWorkspace({
   }
 
   const loops = diagrams.filter((diagram) => diagram.type === "loop")
+  const topologyTitle = diagrams.every((diagram) => diagram.type === "graph")
+    ? "Graph at a glance"
+    : diagrams.every((diagram) => diagram.type === "loop")
+      ? "Loop at a glance"
+      : "Workflow shape"
   return (
     <div className="grid gap-5" data-testid="bundle-now-view">
       <section className="rounded-xl border border-border bg-card p-4 sm:p-6">
@@ -1115,6 +1188,93 @@ function NowWorkspace({
           />
         </div>
       </section>
+
+      {diagrams.length ? (
+        <section data-testid="bundle-now-topology">
+          <div className="mb-2">
+            <h2 className="text-sm font-semibold text-foreground">{topologyTitle}</h2>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              A compact view of the authored topology. Open a relationship for the full canvas.
+            </p>
+          </div>
+          <div className="grid gap-2">
+            {diagrams.map((diagram) => {
+              const labels = new Map(diagram.nodes.map((node) => [node.id, node.label]))
+              return (
+                <article
+                  key={diagram.id}
+                  className="rounded-xl border border-border bg-card p-4"
+                  data-testid={`bundle-now-topology-${diagram.id}`}
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div>
+                      <div className="font-mono text-2xs uppercase tracking-[0.12em] text-primary">
+                        {diagram.type} · {diagram.nodes.length}{" "}
+                        {diagram.type === "loop" ? "steps" : "nodes"}
+                      </div>
+                      <h3 className="mt-1 text-sm font-semibold text-foreground">
+                        {diagram.title}
+                      </h3>
+                    </div>
+                    <span className="font-mono text-2xs text-muted-foreground">
+                      {diagram.edges.length}{" "}
+                      {diagram.type === "loop" ? "transitions" : "relationships"}
+                    </span>
+                  </div>
+                  {diagram.edges.length ? (
+                    <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                      {diagram.edges.slice(0, 6).map((edge, index) => (
+                        <button
+                          key={`${edge.from}:${edge.to}:${edge.label ?? ""}`}
+                          type="button"
+                          onClick={() => onFocus({ diagram: diagram.id, local: edge.to })}
+                          className="flex min-w-0 items-center gap-2 rounded-lg border border-border-soft bg-muted/15 px-3 py-2 text-left text-xs transition-colors hover:border-primary/35 hover:bg-muted/30"
+                          data-testid={`bundle-now-relationship-${diagram.id}-${index}`}
+                        >
+                          <span className="truncate font-medium text-foreground">
+                            {labels.get(edge.from) ?? edge.from}
+                          </span>
+                          <span aria-hidden="true" className="shrink-0 text-primary">
+                            →
+                          </span>
+                          <span className="truncate font-medium text-foreground">
+                            {labels.get(edge.to) ?? edge.to}
+                          </span>
+                          {edge.label ? (
+                            <span className="ml-auto shrink-0 text-2xs text-muted-foreground">
+                              {edge.label}
+                            </span>
+                          ) : null}
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {diagram.nodes.slice(0, 6).map((node) => (
+                        <button
+                          key={node.id}
+                          type="button"
+                          onClick={() => onFocus({ diagram: diagram.id, local: node.id })}
+                          className="rounded-lg border border-border-soft bg-muted/15 px-3 py-2 text-xs font-medium text-foreground transition-colors hover:border-primary/35 hover:bg-muted/30"
+                          data-testid={`bundle-now-node-${diagram.id}-${node.id}`}
+                        >
+                          {node.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {diagram.edges.length > 6 ? (
+                    <p className="mt-2 text-2xs text-muted-foreground">
+                      +{diagram.edges.length - 6} more{" "}
+                      {diagram.type === "loop" ? "transitions" : "relationships"} in Advanced
+                    </p>
+                  ) : null}
+                </article>
+              )
+            })}
+          </div>
+        </section>
+      ) : null}
 
       {summary.needsHelp.length ? (
         <section data-testid="bundle-now-needs-help">
@@ -1232,6 +1392,8 @@ export function LinkedBundleWorkspace({
   shortId,
   version,
   bundle,
+  workflowPreview,
+  agents,
   comments,
   canComment,
   canEdit,
@@ -1251,6 +1413,8 @@ export function LinkedBundleWorkspace({
   shortId: string
   version: number
   bundle: LinkedBundle
+  workflowPreview?: Artifact["workflow_preview"]
+  agents: DirUser[]
   comments: Comment[]
   canComment: boolean
   canEdit: boolean
@@ -1273,8 +1437,15 @@ export function LinkedBundleWorkspace({
     () => new Map(bundle.members.map((member) => [member.id, member])),
     [bundle.members],
   )
-  const [view, setView] = useState<"now" | "advanced">("now")
+  const hasRunState = linkedBundleHasRunState(diagrams)
+  const [view, setView] = useState<LinkedBundleView>(() =>
+    linkedBundleInitialView(diagrams, !!workflowPreview),
+  )
+  const [runDiagram, setRunDiagram] = useState<string | null>(null)
   const selected = reviewState.selected
+  useEffect(() => {
+    if (hasRunState) setView("now")
+  }, [hasRunState])
   useEffect(() => {
     if (!selected) {
       const first = diagrams[0]?.nodes[0]
@@ -1340,6 +1511,20 @@ export function LinkedBundleWorkspace({
           <div className="flex flex-wrap items-center gap-2">
             <fieldset className="flex rounded-lg border border-border p-0.5">
               <legend className="sr-only">Workspace view</legend>
+              {workflowPreview ? (
+                <button
+                  type="button"
+                  data-testid="bundle-view-preview"
+                  aria-pressed={view === "preview"}
+                  onClick={() => setView("preview")}
+                  className={cn(
+                    "rounded-md px-2.5 py-1.5 text-xs text-muted-foreground",
+                    view === "preview" && "bg-muted font-medium text-foreground",
+                  )}
+                >
+                  Preview
+                </button>
+              ) : null}
               <button
                 type="button"
                 data-testid="bundle-view-now"
@@ -1412,7 +1597,12 @@ export function LinkedBundleWorkspace({
 
       <div className="mx-auto grid max-w-[90rem] gap-5 p-4 sm:p-6 lg:grid-cols-[minmax(0,1fr)_18rem]">
         <main className="min-w-0">
-          {view === "now" ? (
+          {view === "preview" && workflowPreview ? (
+            <WorkflowPreview
+              preview={workflowPreview}
+              onRun={canComment ? setRunDiagram : undefined}
+            />
+          ) : view === "now" ? (
             <NowWorkspace diagrams={diagrams} members={members} onFocus={focusNode} />
           ) : diagrams.length ? (
             <div className="grid gap-4" data-testid="bundle-advanced-view">
@@ -1456,8 +1646,19 @@ export function LinkedBundleWorkspace({
             </div>
           )}
         </main>
-        <ArtifactShelf members={bundle.members} />
+        <ArtifactShelf members={bundle.members} afterMain={view === "preview"} />
       </div>
+      {runDiagram ? (
+        <WorkflowRunDialog
+          shortId={shortId}
+          diagramId={runDiagram}
+          agents={agents}
+          open
+          onOpenChange={(open) => {
+            if (!open) setRunDiagram(null)
+          }}
+        />
+      ) : null}
     </div>
   )
 }

@@ -21,7 +21,7 @@ import {
   isHtmlLike,
   isMarkdownBundle,
   LINKED_BUNDLE_CONTENT_TYPE,
-  LINKED_BUNDLE_FACT,
+  type LinkedBundleManifest,
   maxRole,
   missingBlobAdvisory,
   newId,
@@ -42,7 +42,7 @@ import {
   sortKeyOf,
   toJson,
   toMarkdown,
-  validateLinkedBundle,
+  type WorkflowPreview,
   type WorkspaceAccess,
 } from "@derive/core"
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
@@ -108,6 +108,7 @@ import {
   workspaceSearchReport,
 } from "../lib/search"
 import { normalizeTags, parseTagsField } from "../lib/tags"
+import { parseLinkedWorkflowFacts } from "../lib/workflow-facts"
 import { log } from "../log"
 import { Artifact } from "../schemas"
 
@@ -1658,11 +1659,9 @@ export const artifactRoutes = (ctx: AppContext) => {
       // source of truth; this detail-only block is native chrome over that fact, with
       // every member resolved through the same read gate as opening it directly.
       let linkedBundle:
-        | (NonNullable<ReturnType<typeof validateLinkedBundle>["manifest"]> & {
+        | (LinkedBundleManifest & {
             members: Array<
-              NonNullable<
-                ReturnType<typeof validateLinkedBundle>["manifest"]
-              >["members"][number] & {
+              LinkedBundleManifest["members"][number] & {
                 available: boolean
                 url?: string
                 title?: string | null
@@ -1674,49 +1673,50 @@ export const artifactRoutes = (ctx: AppContext) => {
             >
           })
         | undefined
+      let workflowPreview: WorkflowPreview | undefined
       if (current?.content_type === LINKED_BUNDLE_CONTENT_TYPE) {
-        const row = (await meta.getVersionData(artifact.id, current.n, LINKED_BUNDLE_FACT))[0]
-        if (row) {
+        // One version-data read carries both authored facts. The native graph and
+        // native Preview must come from the same immutable version without adding a
+        // second round trip to this hot detail route.
+        const dataRows = await meta.getVersionData(artifact.id, current.n)
+        const facts = parseLinkedWorkflowFacts(dataRows)
+        const manifest = facts.manifest
+        if (manifest) {
+          workflowPreview = facts.preview
           try {
-            const checked = validateLinkedBundle(JSON.parse(row.json))
-            if (checked.manifest) {
-              const resolved = await meta.getByShortIds(
-                checked.manifest.members.map((member) => member.ref),
-              )
-              const byRef = new Map(resolved.map((member) => [member.short_id, member]))
-              const [readableRows, commentSignals] = await Promise.all([
-                Promise.all(
-                  resolved.map(
-                    async (member) =>
-                      [member.short_id, await authorize(c, "read", member)] as const,
-                  ),
+            const resolved = await meta.getByShortIds(manifest.members.map((member) => member.ref))
+            const byRef = new Map(resolved.map((member) => [member.short_id, member]))
+            const [readableRows, commentSignals] = await Promise.all([
+              Promise.all(
+                resolved.map(
+                  async (member) => [member.short_id, await authorize(c, "read", member)] as const,
                 ),
-                meta.commentSignals(
-                  actor.kind === "user" ? resolved.map((member) => member.id) : [],
-                  actor.kind === "user" ? (actor.userId ?? null) : null,
-                ),
-              ])
-              const readable = new Map(readableRows)
-              linkedBundle = {
-                ...checked.manifest,
-                members: checked.manifest.members.map((member) => {
-                  const target = byRef.get(member.ref)
-                  if (!target || target.removed_at || !readable.get(member.ref))
-                    return { ...member, available: false }
-                  return {
-                    ...member,
-                    available: true,
-                    url: artifactUrl(deps.baseUrl, target),
-                    title: target.title,
-                    content_type: target.current_content_type,
-                    current_version: target.current_version,
-                    updated_at: target.updated_at,
-                    ...(actor.kind === "user"
-                      ? { open_comment_count: commentSignals[target.id]?.open_threads ?? 0 }
-                      : {}),
-                  }
-                }),
-              }
+              ),
+              meta.commentSignals(
+                actor.kind === "user" ? resolved.map((member) => member.id) : [],
+                actor.kind === "user" ? (actor.userId ?? null) : null,
+              ),
+            ])
+            const readable = new Map(readableRows)
+            linkedBundle = {
+              ...manifest,
+              members: manifest.members.map((member) => {
+                const target = byRef.get(member.ref)
+                if (!target || target.removed_at || !readable.get(member.ref))
+                  return { ...member, available: false }
+                return {
+                  ...member,
+                  available: true,
+                  url: artifactUrl(deps.baseUrl, target),
+                  title: target.title,
+                  content_type: target.current_content_type,
+                  current_version: target.current_version,
+                  updated_at: target.updated_at,
+                  ...(actor.kind === "user"
+                    ? { open_comment_count: commentSignals[target.id]?.open_threads ?? 0 }
+                    : {}),
+                }
+              }),
             }
           } catch {
             // Stored authored facts are validated JSON. If an old/corrupt row slips
@@ -1809,6 +1809,7 @@ export const artifactRoutes = (ctx: AppContext) => {
         // description, entry, files } — the client renders the file tree + skill chrome.
         ...(bundle ? { bundle } : {}),
         ...(linkedBundle ? { linked_bundle: linkedBundle } : {}),
+        ...(workflowPreview ? { workflow_preview: workflowPreview } : {}),
         // A taken-down artifact keeps its record but serves no content (410); the
         // UI shows a tombstone instead of the iframe.
         removed: !!artifact.removed_at,

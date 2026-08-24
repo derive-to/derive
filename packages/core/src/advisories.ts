@@ -12,6 +12,7 @@ import { factDriftAdvisories, missingFactAdvisory, parseFacts, shapeOfJson } fro
 import { linkedBundleAdvisories } from "./linked-bundle"
 import type { BlobStore } from "./ports"
 import { needsReflow } from "./reflow"
+import { workflowDefinitionAdvisories } from "./workflow"
 
 /**
  * A bundle page carrying a facts block that nobody will ever read — empty when there is
@@ -51,6 +52,7 @@ export const publishAdvisories = (content: string, contentType: string): string[
   // version-bump chain, so what's advised here and what's stored can never disagree.
   out.push(...parseFacts(content, contentType).advisories)
   out.push(...linkedBundleAdvisories(content))
+  out.push(...workflowDefinitionAdvisories(content))
 
   // A page full of figures with no slot: the nudge that keeps facts from depending on the
   // author remembering. Last, so it never crowds out something that is actually wrong.

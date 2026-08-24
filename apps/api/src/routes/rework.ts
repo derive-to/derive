@@ -8,6 +8,7 @@ import {
   profileState,
   reworkInstruction,
   saveAsSkillInstruction,
+  workflowRunInstruction,
 } from "@derive/core"
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { Context } from "hono"
@@ -18,6 +19,7 @@ import { parseMeta, quoteOf } from "../lib/comments"
 import { bail, fail, readJson } from "../lib/http"
 import { notifyMentions } from "../lib/mentions"
 import { notifyCommentBells } from "../lib/notify-comment"
+import { parseLinkedWorkflowFacts } from "../lib/workflow-facts"
 
 /** The canned agent-request endpoints — Rework, generate-profile, and the fill and
  *  save-as-skill pairs (each pair: a GET returning the instruction for copy-paste, a
@@ -77,12 +79,20 @@ export const reworkRoutes = (ctx: AppContext) => {
       c,
       z.object({
         agentId: z.string().optional(),
+        diagramId: z.string().optional(),
         note: z.string().max(500).optional(),
         threadId: z.string().optional(),
       }),
     )
     if (body instanceof Response) return body
-    return { artifact, acting, agentId: body.agentId, note: body.note, threadId: body.threadId }
+    return {
+      artifact,
+      acting,
+      agentId: body.agentId,
+      diagramId: body.diagramId,
+      note: body.note,
+      threadId: body.threadId,
+    }
   }
 
   // A thread reference in a capture request must name a thread ON this artifact —
@@ -119,6 +129,28 @@ export const reworkRoutes = (ctx: AppContext) => {
   const hasBrandprint = async (orgId: string, userId: string): Promise<boolean> => {
     const resolved = await resolveActorBrandprint(meta, orgId, userId)
     return resolved.collectionIds.length > 0 || !!resolved.profileId
+  }
+
+  const requireReadyWorkflow = async (c: Context, artifact: ArtifactRecord, diagramId: string) => {
+    const rows = await meta.getVersionData(artifact.id, artifact.current_version)
+    const facts = parseLinkedWorkflowFacts(rows)
+    if (!facts.bundleFound || !facts.workflowFound)
+      return fail(c, 409, "this artifact does not contain a runnable workflow", {
+        code: "notWorkflow",
+      })
+    if (!facts.manifest)
+      return fail(c, 409, "the visible workflow graph needs changes", {
+        code: "needsChanges",
+        errors: facts.bundleErrors,
+      })
+    if (facts.preview?.status !== "ready")
+      return fail(c, 409, "the workflow Preview needs changes", {
+        code: "needsChanges",
+        errors: facts.preview?.errors ?? [],
+      })
+    const diagram = facts.preview.diagrams.find((item) => item.id === diagramId)
+    if (!diagram) return fail(c, 404, "no such workflow diagram")
+    return diagram
   }
 
   // Pick the addressee: the named agent, else the workspace's sole one.
@@ -195,6 +227,87 @@ export const reworkRoutes = (ctx: AppContext) => {
     )
     return created.thread_id
   }
+
+  app.openapi(
+    createRoute({
+      method: "get",
+      path: "/v1/artifacts/{shortId}/workflow-run",
+      tags: ["Artifacts"],
+      summary: "Get the explicit handoff prompt for a validated workflow diagram.",
+      request: {
+        params: z.object({ shortId: z.string() }),
+        query: z.object({ diagram: z.string().min(1) }),
+      },
+      responses: {
+        200: {
+          description:
+            "A copyable prompt for any local agent harness. Previewing it does not start execution.",
+          content: {
+            "application/json": {
+              schema: z.object({
+                prompt: z.string(),
+                diagram: z.object({ id: z.string(), title: z.string() }),
+              }),
+            },
+          },
+        },
+      },
+    }),
+    async (c) => {
+      const artifact = await meta.getByShortId(c.req.param("shortId"))
+      if (!artifact || artifact.current_version === 0) return bail(fail(c, 404, "not found"))
+      if (!(await authorize(c, "comment", artifact))) return bail(fail(c, 403, "forbidden"))
+      if (!(await actingUser(c))) return bail(fail(c, 401, "sign in to run this workflow"))
+      const ready = await requireReadyWorkflow(c, artifact, c.req.query("diagram") ?? "")
+      if (ready instanceof Response) return bail(ready)
+      return c.json({
+        prompt: workflowRunInstruction(artifact.short_id, ready.id),
+        diagram: { id: ready.id, title: ready.title },
+      })
+    },
+  )
+
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/v1/artifacts/{shortId}/workflow-run",
+      tags: ["Artifacts"],
+      summary: "Queue a validated workflow diagram for a registered local agent.",
+      request: {
+        params: z.object({ shortId: z.string() }),
+        body: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: z.object({ agentId: z.string().optional(), diagramId: z.string().min(1) }),
+            },
+          },
+        },
+      },
+      responses: requestCreated(
+        "The validated workflow handoff landed in the selected agent's pull inbox. Derive does not execute the workflow itself.",
+      ),
+    }),
+    async (c) => {
+      const rc = await requestContext(c, c.req.param("shortId"))
+      if (rc instanceof Response) return bail(rc)
+      const { artifact, acting, agentId, diagramId } = rc
+      if (!diagramId) return bail(fail(c, 400, "diagramId is required"))
+      const ready = await requireReadyWorkflow(c, artifact, diagramId)
+      if (ready instanceof Response) return bail(ready)
+      const agent = pickAgent(c, await meta.listAgents(artifact.org_id), agentId)
+      if (agent instanceof Response) return bail(agent)
+      const requestId = await postRequest(
+        c,
+        artifact,
+        acting,
+        agent,
+        workflowRunInstruction(artifact.short_id, ready.id),
+      )
+      if (requestId instanceof Response) return bail(requestId)
+      return c.json({ requestId }, 201)
+    },
+  )
 
   app.openapi(
     createRoute({

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // derive — scaffold, publish, and continue work against a Derive server.
-//   derive init [dir] [--template md|html|slides|site|skill|context] [--title t]
+//   derive init [dir] [--template md|html|workflow|slides|site|skill|context] [--title t]
 //   derive onboard [dir] [--update]       add/update artifact-first instructions + agent setup
 //   derive agent setup [dir] [--update]   install/update Codex/Claude skills + MCP config
 //   derive login [--local] [--server url] [--workspace w] [--pick] [--add] [--sync] [--manage]
@@ -31,6 +31,7 @@
 //   derive doctor [--server url] [--token t]  report which optional features are configured
 //   derive runner serve|once|doctor|install   run a context's answer daemon, or drain once (npx-able anywhere)
 //   derive context push|dev                ship a context dir as its manifest / tune it live
+//   derive workflow sync|preview [file] [--json] sync the visible graph, then explain + validate
 import { spawn } from "node:child_process"
 import { createHash, randomBytes } from "node:crypto"
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
@@ -71,6 +72,11 @@ import { createAgent, createContext, saveAgentToken } from "../src/context.js"
 import { readTarget, uploadArtifact } from "../src/publish.js"
 import { DeriveClient, parseManifest } from "../src/runner.js"
 import { materializeNotes, materializeSkills, pinManifestSkills } from "../src/skills.js"
+import {
+  formatWorkflowPreview,
+  previewWorkflowSource,
+  syncWorkflowSource,
+} from "../src/workflow.js"
 
 const args = process.argv.slice(2)
 const cmd = args.shift()
@@ -162,7 +168,12 @@ if (cmd === "init") {
   // The starter the user should open next — not the config/convention files.
   const meta = [CONFIG_FILE, "derive.schema.json", "AGENTS.md", "CLAUDE.md", ".gitignore"]
   const entry = created.find((f) => !meta.includes(f) && !f.startsWith(".")) ?? "the entry"
-  const next = template === "context" ? "derive context push" : "derive publish"
+  const next =
+    template === "context"
+      ? "derive context push"
+      : template === "workflow"
+        ? "derive workflow sync workflow.html"
+        : "derive publish"
   console.log(
     created.length
       ? `\nReady (${template}). Edit ${entry}, then run \`${next}\`.`
@@ -1431,9 +1442,65 @@ if (cmd === "brandprint") {
   process.exit(0)
 }
 
+if (cmd === "workflow") {
+  const action = positional[0]
+  if (action !== "preview" && action !== "sync") {
+    console.error("usage: derive workflow sync|preview [file] [--json]")
+    process.exit(1)
+  }
+  let config = null
+  try {
+    config = loadConfig(".")
+  } catch (e) {
+    console.error(`error: ${e.message}`)
+    process.exit(1)
+  }
+  const target = positional[1] ?? config?.entry ?? (existsSync("index.html") ? "index.html" : null)
+  if (!target) {
+    console.error(
+      `error: no workflow file. Pass one, set "entry" in ${CONFIG_FILE}, or add index.html.`,
+    )
+    process.exit(1)
+  }
+  let source
+  try {
+    source = readFileSync(target, "utf8")
+  } catch (e) {
+    console.error(`error: couldn't read ${target}: ${e.message}`)
+    process.exit(1)
+  }
+  let synced = null
+  if (action === "sync") {
+    try {
+      synced = syncWorkflowSource(source)
+      source = synced.source
+    } catch (e) {
+      console.error(`error: couldn't sync ${target}: ${e.message}`)
+      process.exit(1)
+    }
+  }
+  const preview = previewWorkflowSource(source)
+  if (synced && preview.status === "ready") {
+    try {
+      if (synced.changed) writeFileSync(target, synced.source)
+    } catch (e) {
+      console.error(`error: couldn't write ${target}: ${e.message}`)
+      process.exit(1)
+    }
+    if (!flags.json)
+      console.log(
+        synced.changed ? "✓ Visible graph synced" : "✓ Topology unchanged; workflow policy checked",
+      )
+  } else if (synced?.changed && !flags.json) {
+    console.error("Visible graph not written because Preview needs changes.")
+  }
+  console.log(flags.json ? JSON.stringify(preview) : formatWorkflowPreview(preview))
+  process.exit(preview.status === "ready" ? 0 : 1)
+}
+
 if (cmd !== "publish") {
   console.error(`usage:
-  derive init [dir] [--template md|html|slides|site|skill|context] [--title t]
+  derive init [dir] [--template md|html|workflow|slides|site|skill|context] [--title t]
   derive onboard [dir] [--update]         prefer Derive in AGENTS.md + CLAUDE.md; install skills + MCP config
   derive agent setup [dir] [--update]     compatibility alias for derive onboard
   derive login [--local] [--server url] [--workspace w] [--pick] [--add] [--sync] [--manage]
@@ -1462,6 +1529,8 @@ if (cmd !== "publish") {
   derive send-back [--id X] [--note m]     open the page to send your answers back (a browser gesture)
   derive runner serve|doctor|install       run a context's answer daemon (\`derive runner\` for flags)
   derive context push|dev                  ship a context dir as its manifest / tune it on the working tree
+  derive workflow sync [file] [--json]     project definition topology into the visible graph, then Preview
+  derive workflow preview [file] [--json]  explain + validate a graph/loop before it runs
   derive skill add <short_id>              materialize a published skill into ./.claude/skills/ (pinned)
   derive brandprint pull                   materialize the workspace + your Brandprint into this repo`)
   process.exit(cmd ? 1 : 0)
