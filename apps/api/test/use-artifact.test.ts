@@ -174,6 +174,12 @@ describe("fill", () => {
     it("lands the same instruction in the agent's inbox, once", async () => {
       const { src, copy } = await derive()
       const agent = await addAgent("Filler")
+      const promptRes = await getFill(copy, "payments team only")
+      expect(promptRes.status).toBe(200)
+      const { prompt } = (await promptRes.json()) as { prompt: string }
+      expect(prompt).toContain("read its matching Derive skill")
+      expect(prompt).toContain("validate that protocol before publishing")
+
       const res = await postFill(copy, { note: "payments team only" })
       expect(res.status).toBe(201)
 
@@ -184,6 +190,7 @@ describe("fill", () => {
       expect(body).toContain(src)
       expect(body).toContain(copy)
       expect(body).toContain("From the requester: payments team only")
+      expect(body.endsWith(prompt)).toBe(true)
 
       // The pull queue holds one ask per (agent, artifact) until the agent acks.
       const again = await postFill(copy)
