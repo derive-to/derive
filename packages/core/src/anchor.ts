@@ -136,6 +136,51 @@ const INVISIBLE_NAMES = [
 ]
 const SVG_INVISIBLE_NAMES = new Set(["desc", "metadata"])
 const MATH_INVISIBLE_NAMES = new Set(["annotation", "annotation-xml"])
+const BLOCK_TEXT_ELEMENTS = new Set([
+  "address",
+  "article",
+  "aside",
+  "blockquote",
+  "body",
+  "br",
+  "caption",
+  "dd",
+  "div",
+  "dl",
+  "dt",
+  "fieldset",
+  "figcaption",
+  "figure",
+  "footer",
+  "form",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "header",
+  "hgroup",
+  "hr",
+  "html",
+  "li",
+  "listing",
+  "main",
+  "nav",
+  "ol",
+  "p",
+  "pre",
+  "section",
+  "table",
+  "tbody",
+  "td",
+  "tfoot",
+  "th",
+  "thead",
+  "tr",
+  "ul",
+  "xmp",
+])
 
 /** Memoized left-to-right indexOf. During a forward scan, thousands of failed
  *  searches for the same needle (unclosed "<!--" after unclosed "<!--") would each
@@ -245,6 +290,9 @@ export function pageTextParts(
   const omitted = new Set(omitContentsOf)
   const parsedTags = tags(html)
   const tagEnds = new Map(parsedTags.map((tag) => [tag.start, tag.end]))
+  const blockTagStarts = new Set(
+    parsedTags.filter((tag) => BLOCK_TEXT_ELEMENTS.has(tag.name)).map((tag) => tag.start),
+  )
   const invisibleEnds = new Map<number, number>()
   const literalRanges: { start: number; end: number; entities: boolean }[] = []
   for (let i = 0; i < parsedTags.length; i++) {
@@ -295,21 +343,22 @@ export function pageTextParts(
 
   /** The strip token starting exactly at html[i] (which is "<"), or null when this
    *  "<" is literal text. */
-  const stripTokenAt = (i: number): number | null => {
+  const stripTokenAt = (i: number): { end: number; space: boolean } | null => {
     const invisibleEnd = invisibleEnds.get(i)
-    if (invisibleEnd !== undefined) return invisibleEnd
+    if (invisibleEnd !== undefined) return { end: invisibleEnd, space: false }
     // <!-- ... -->
-    if (lower.startsWith("<!--", i)) return commentCloseEnd(i + 4)
+    if (lower.startsWith("<!--", i)) return { end: commentCloseEnd(i + 4), space: false }
     const parsedEnd = tagEnds.get(i)
-    if (parsedEnd !== undefined) return parsedEnd
+    if (parsedEnd !== undefined) return { end: parsedEnd, space: blockTagStarts.has(i) }
     // A browser keeps consuming an opening tag while an attribute quote remains
     // unterminated, including apparent `>` characters and later markup through
     // EOF. The shared scanner emits no tag for that malformed remainder; do not
     // let the coarse fallback expose its attribute bytes as editable prose.
-    if (/^<\/?[a-zA-Z][a-zA-Z0-9-]*/.test(html.slice(i, i + 64))) return html.length
+    if (/^<\/?[a-zA-Z][a-zA-Z0-9-]*/.test(html.slice(i, i + 64)))
+      return { end: html.length, space: false }
     // <[^>]+>
     const gt = findRaw(">", i + 1)
-    if (gt > i + 1) return gt + 1
+    if (gt > i + 1) return { end: gt + 1, space: false }
     return null
   }
 
@@ -334,17 +383,25 @@ export function pageTextParts(
     }
     const i = findRaw("<", from)
     if (i < 0) break
-    const end = stripTokenAt(i)
-    if (end === null) {
+    const token = stripTokenAt(i)
+    if (token === null) {
       from = i + 1 // a literal "<": it stays inside the text run
       continue
     }
     if (i > last) tLen = pushTextRun(segments, parts, tLen, html, last, i)
-    segments.push({ kind: "gap", tStart: tLen, tEnd: tLen + 1, rStart: i, rEnd: end })
-    parts.push(" ")
-    tLen += 1
-    last = end
-    from = end
+    segments.push({
+      kind: "gap",
+      tStart: tLen,
+      tEnd: tLen + (token.space ? 1 : 0),
+      rStart: i,
+      rEnd: token.end,
+    })
+    if (token.space) {
+      parts.push(" ")
+      tLen++
+    }
+    last = token.end
+    from = token.end
   }
   if (last < html.length) tLen = pushTextRun(segments, parts, tLen, html, last, html.length)
   return { text: parts.join(""), segments }

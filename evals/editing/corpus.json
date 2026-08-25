@@ -368,6 +368,26 @@
       "cadence": "regression"
     },
     {
+      "id": "MD-033",
+      "lane": "core",
+      "surface": "markdown",
+      "risk": "P1",
+      "oracle": "exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "later paragraph siblings inside a list item receive independent source maps",
+      "cadence": "regression"
+    },
+    {
+      "id": "MD-034",
+      "lane": "core",
+      "surface": "markdown",
+      "risk": "P1",
+      "oracle": "exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "fenced-code siblings after list-item prose receive independent source maps",
+      "cadence": "regression"
+    },
+    {
       "id": "HTML-001",
       "lane": "core",
       "surface": "html",
@@ -685,6 +705,16 @@
       "oracle": "browser-parity-and-safe-refusal",
       "source": "packages/core/test/editing-eval.test.ts",
       "covers": "textarea control values stay outside page-text editing",
+      "cadence": "regression"
+    },
+    {
+      "id": "HTML-033",
+      "lane": "core",
+      "surface": "html",
+      "risk": "P1",
+      "oracle": "browser-parity-and-exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "adjacent inline elements project a zero-width browser text seam",
       "cadence": "regression"
     },
     {

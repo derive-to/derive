@@ -320,6 +320,24 @@ describe("editing eval — Markdown source preservation", () => {
       )
     }
   })
+
+  it("[MD-033] maps a later paragraph sibling inside one list item", () => {
+    for (const newline of ["\n", "\r\n"]) {
+      const source = `- a${newline}  one${newline}${newline}  two`
+      expect(applyQuoteEdits(source, MD, [qe("two", "changed")])).toBe(
+        `- a${newline}  one${newline}${newline}  changed`,
+      )
+    }
+  })
+
+  it("[MD-034] maps a fenced-code sibling after list-item prose", () => {
+    for (const newline of ["\n", "\r\n"]) {
+      const source = `- a${newline}  one${newline}  \`\`\`ts${newline}  two${newline}  \`\`\``
+      expect(applyQuoteEdits(source, MD, [qe("two", "changed")])).toBe(
+        `- a${newline}  one${newline}  \`\`\`ts${newline}  changed${newline}  \`\`\``,
+      )
+    }
+  })
 })
 
 describe("editing eval — HTML projection, topology, and injection", () => {
@@ -411,7 +429,7 @@ describe("editing eval — HTML projection, topology, and injection", () => {
   it("[HTML-010] keeps hostile unclosed markup projection bounded", () => {
     const source = `${"<!-- ".repeat(5000)}tail unique`
     const start = performance.now()
-    expect(pageTextParts(source).text).toBe(" ")
+    expect(pageTextParts(source).text).toBe("")
     expect(performance.now() - start).toBeLessThan(500)
   })
 
@@ -630,6 +648,19 @@ describe("editing eval — HTML projection, topology, and injection", () => {
     const source = "<textarea>A &amp; B</textarea><p>tail</p>"
     expect(pageTextParts(source).text).not.toContain("A & B")
     expect(() => applyQuoteEdits(source, HTML, [qe("A & B", "X")])).toThrow(/wasn't found/)
+  })
+
+  it("[HTML-033] projects adjacent inline elements as a zero-width text seam", () => {
+    for (const source of [
+      "<p><span>A</span><span>B</span></p><p>tail</p>",
+      "<p><b>A</b><i>B</i></p><p>tail</p>",
+      "<p>A<span>B</span>C</p><p>tail</p>",
+    ]) {
+      expect(pageTextParts(source).text).toMatch(/ABC?|AB/)
+      expect(applyQuoteEdits(source, HTML, [qe(source.includes("C") ? "ABC" : "AB", "X")])).toMatch(
+        /<p>X<\/p><p>tail<\/p>$/,
+      )
+    }
   })
 })
 

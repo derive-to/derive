@@ -371,27 +371,38 @@ export function markdownTextParts(source: string): MarkdownTextParts {
       const at = located < 0 ? cursor : located
       const end = located < 0 ? (nextAnchor >= 0 ? nextAnchor : rangeEnd) : located + raw.length
       let itemCursor = at
-      for (const child of item.tokens ?? []) {
+      const children = item.tokens ?? []
+      for (let childIndex = 0; childIndex < children.length; childIndex++) {
+        const child = children[childIndex] as MarkdownToken
         const childRaw = child.raw ?? ""
-        const childAt = locate(childRaw, itemCursor, end)
+        const childAnchor = firstSourceAnchor(child, itemCursor, end)
+        const childAt = exactStartAtAnchor(childRaw, childAnchor, itemCursor, end)
+        let nextChildAnchor = -1
+        for (let next = childIndex + 1; next < children.length && nextChildAnchor < 0; next++)
+          nextChildAnchor = firstSourceAnchor(
+            children[next] as MarkdownToken,
+            childAnchor >= 0 ? childAnchor + 1 : itemCursor,
+            end,
+          )
+        const childFallbackEnd = nextChildAnchor >= 0 ? nextChildAnchor : end
         if (childAt < 0 && child.type === "code") {
-          mapCode(child, itemCursor, end, blockSeq++)
-          itemCursor = end
+          mapCode(child, itemCursor, childFallbackEnd, blockSeq++)
+          itemCursor = childFallbackEnd
           continue
         }
         if (childAt < 0 && child.type === "blockquote") {
-          mapBlockquote(child, itemCursor, end)
-          itemCursor = end
+          mapBlockquote(child, itemCursor, childFallbackEnd)
+          itemCursor = childFallbackEnd
           continue
         }
         if (childAt < 0 && child.type === "list") {
-          mapList(child, itemCursor, end)
-          itemCursor = end
+          mapList(child, itemCursor, childFallbackEnd)
+          itemCursor = childFallbackEnd
           continue
         }
         if (childAt < 0 && Array.isArray(child.tokens) && child.tokens.length) {
-          mapInline(child.tokens, itemCursor, end, blockSeq++)
-          itemCursor = end
+          mapInline(child.tokens, itemCursor, childFallbackEnd, blockSeq++)
+          itemCursor = childFallbackEnd
           continue
         }
         if (childAt < 0) continue
