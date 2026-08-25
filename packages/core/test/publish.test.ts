@@ -248,6 +248,32 @@ describe("publish: single file", () => {
   })
 })
 
+describe("publish advisories", () => {
+  it.each([
+    "localStorage",
+    "sessionStorage",
+    "indexedDB",
+    "document.cookie",
+  ])("warns when sandboxed HTML references unavailable %s", (storage) => {
+    const advisories = publishAdvisories(
+      `<!doctype html><html><script>void ${storage}</script></html>`,
+      "text/html",
+    )
+    expect(advisories).toEqual(
+      expect.arrayContaining([expect.stringMatching(/opaque sandbox.*derive\.shared/)]),
+    )
+  })
+
+  it("does not warn for ordinary HTML or non-HTML source examples", () => {
+    expect(
+      publishAdvisories("<!doctype html><html><p>Persistent state</p></html>", "text/html"),
+    ).not.toEqual(expect.arrayContaining([expect.stringContaining("browser storage")]))
+    expect(
+      publishAdvisories("Use `localStorage` in a normal web app.", "text/markdown"),
+    ).not.toEqual(expect.arrayContaining([expect.stringContaining("browser storage")]))
+  })
+})
+
 describe("workflow preview contract", () => {
   it("classifies malformed extracted workflow JSON through the same Preview contract", () => {
     expect(previewWorkflowJson("{", null)).toEqual({

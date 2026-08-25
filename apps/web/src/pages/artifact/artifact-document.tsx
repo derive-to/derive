@@ -7,7 +7,7 @@ import type { OrganizerSlide } from "./deck-organizer"
 import { DiffView } from "./diff-view"
 import { DeckBar, VideoBar } from "./rail-deck"
 import { RenderStage } from "./render-stage"
-import type { Deck, Video } from "./types"
+import type { ArtifactRuntimeError, Deck, Video } from "./types"
 
 /**
  * The document surface: a past-version banner when off the live version, then the
@@ -33,6 +33,8 @@ export function ArtifactDocument({
   frameRef,
   presentWrapRef,
   cursor,
+  runtimeError,
+  canFixRuntimeError = false,
   onScrollDoc,
   onFrameLoad,
   onToggleDiff,
@@ -76,6 +78,8 @@ export function ArtifactDocument({
   frameRef: RefObject<HTMLIFrameElement | null>
   presentWrapRef: RefObject<HTMLDivElement | null>
   cursor: CursorLayerHandle
+  runtimeError?: ArtifactRuntimeError | null
+  canFixRuntimeError?: boolean
   onScrollDoc: (dy: number) => void
   onFrameLoad: () => void
   onToggleDiff: () => void
@@ -167,6 +171,8 @@ export function ArtifactDocument({
           frameRef={frameRef}
           wrapRef={presentWrapRef}
           onFrameLoad={onFrameLoad}
+          runtimeError={runtimeError}
+          canFixRuntimeError={canFixRuntimeError}
           overlay={presentOverlay}
           presenting={presenting}
           overlays={

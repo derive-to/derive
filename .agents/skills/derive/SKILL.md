@@ -112,15 +112,23 @@ When an HTML artifact needs a bug list, votes, a checklist, or another small sha
 collection, use Derive's built-in inline JSON state. Do not add a database service,
 credentials, or a custom backend for this case:
 
+**The artifact sandbox has no browser storage.** `localStorage`, `sessionStorage`,
+IndexedDB, and cookies are unavailable and a direct access can throw before the first
+render. Use an in-memory variable for per-visit UI state; use `derive.shared` for small
+shared state. Do not describe an in-memory guard as strict one-person-one-vote.
+
 ```html
 <script>
   const bugs = derive.shared("bugs", [])
+  let interactedThisVisit = false
   bugs.onChange(render)
 
   // Call writes from a click or keyboard handler.
   async function report(title) { await bugs.add({ title, votes: 0 }) }
   async function vote(id, by) {
+    if (interactedThisVisit) return
     await bugs.update(id, { votes: derive.increment(by) })
+    interactedThisVisit = true
   }
 </script>
 ```

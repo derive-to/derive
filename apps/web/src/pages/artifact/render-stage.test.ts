@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { type UpdateCueState, updateCue } from "./render-stage"
+import { runtimeFailureCopy, type UpdateCueState, updateCue } from "./render-stage"
 
 // The soft "Updated · vN" cue's decision, pinned after it shipped a phantom: the render
 // stage stays mounted while the sibling switcher pages between artifacts, and a bare
@@ -50,5 +50,22 @@ describe("updateCue", () => {
     expect(s.state).toBeNull()
     s = step(s.state, "other", 9)
     expect(s.fire).toBeNull()
+  })
+})
+
+describe("runtimeFailureCopy", () => {
+  it("gives editors the sandbox-storage repair without exposing exception details", () => {
+    const copy = runtimeFailureCopy("sandbox-storage", true)
+    expect(copy.title).toContain("Browser storage")
+    expect(copy.description).toContain("derive.shared")
+    expect(copy.description).not.toContain("SecurityError")
+  })
+
+  it("keeps reader-facing failures neutral", () => {
+    expect(runtimeFailureCopy("sandbox-storage", false)).toEqual({
+      title: "This artifact couldn’t start",
+      description: "Its author needs to update it for Derive’s secure sandbox.",
+    })
+    expect(runtimeFailureCopy("script-error", false).description).not.toContain("stack")
   })
 })
