@@ -248,6 +248,26 @@
       "cadence": "regression"
     },
     {
+      "id": "MD-021",
+      "lane": "core",
+      "surface": "markdown",
+      "risk": "P1",
+      "oracle": "exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "fenced code nested in blockquotes and lists maps to authored source",
+      "cadence": "regression"
+    },
+    {
+      "id": "MD-022",
+      "lane": "core",
+      "surface": "markdown",
+      "risk": "P1",
+      "oracle": "exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "significant inline-code whitespace maps as a whole payload",
+      "cadence": "regression"
+    },
+    {
       "id": "HTML-001",
       "lane": "core",
       "surface": "html",
@@ -388,6 +408,36 @@
       "cadence": "regression"
     },
     {
+      "id": "HTML-015",
+      "lane": "core",
+      "surface": "html",
+      "risk": "P0",
+      "oracle": "safe-refusal",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "plain-text replacement cannot delete authored links or metadata",
+      "cadence": "regression"
+    },
+    {
+      "id": "HTML-016",
+      "lane": "core",
+      "surface": "html",
+      "risk": "P0",
+      "oracle": "projection-and-exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "nested templates hidden attributes and legacy comments match browser visibility",
+      "cadence": "regression"
+    },
+    {
+      "id": "HTML-017",
+      "lane": "core",
+      "surface": "html",
+      "risk": "P1",
+      "oracle": "exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "sanitized links preserve entity-backed query separators",
+      "cadence": "regression"
+    },
+    {
       "id": "DECK-001",
       "lane": "core",
       "surface": "deck",
@@ -475,6 +525,16 @@
       "oracle": "safe-refusal",
       "source": "packages/core/test/editing-eval.test.ts",
       "covers": "duplicate identity attributes on one slide refuse",
+      "cadence": "regression"
+    },
+    {
+      "id": "DECK-010",
+      "lane": "core",
+      "surface": "deck",
+      "risk": "P0",
+      "oracle": "classifier-slicer-parity",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "quoted greater-than attributes do not split slide tags",
       "cadence": "regression"
     },
     {
@@ -675,6 +735,16 @@
       "oracle": "status-version-source",
       "source": "apps/web/e2e/deep/editing.deep.spec.ts",
       "covers": "real versions route duplicates slides and refuses no-op publication",
+      "cadence": "regression"
+    },
+    {
+      "id": "BROWSER-VIDEO-001",
+      "lane": "browser",
+      "surface": "video",
+      "risk": "P0",
+      "oracle": "active-identity-and-stored-order",
+      "source": "apps/web/e2e/deep/editing.deep.spec.ts",
+      "covers": "moving a video scene preserves the active scene by stable identity",
       "cadence": "regression"
     },
     {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { decodeEntities, pageTextParts } from "../src/anchor"
-import { applySlideOps, sliceSlides } from "../src/decks"
+import { applySlideOps, countSlideElements, isDeckDocument, sliceSlides } from "../src/decks"
 import {
   type ElementSelector,
   elementLabel,
@@ -226,6 +226,19 @@ describe("editing eval — Markdown source preservation", () => {
     expect(applyQuoteEdits("(**bold**), tail", MD, [qe("(bold),", "X")])).toBe("X tail")
     expect(applyQuoteEdits("a**bold**b", MD, [qe("aboldb", "X")])).toBe("X")
   })
+
+  it("[MD-021] maps fenced-code bodies nested under block structure", () => {
+    expect(applyQuoteEdits("> ```ts\n> value\n> ```", MD, [qe("value", "changed")])).toBe(
+      "> ```ts\n> changed\n> ```",
+    )
+    expect(applyQuoteEdits("- item\n  ```ts\n  value\n  ```", MD, [qe("value", "changed")])).toBe(
+      "- item\n  ```ts\n  changed\n  ```",
+    )
+  })
+
+  it("[MD-022] edits the full significant-whitespace payload of an inline code span", () => {
+    expect(applyQuoteEdits("Text ``  a  ``", MD, [qe(" a ", "X")])).toBe("Text ``X``")
+  })
 })
 
 describe("editing eval — HTML projection, topology, and injection", () => {
@@ -365,6 +378,35 @@ describe("editing eval — HTML projection, topology, and injection", () => {
         /split a character/,
       )
   })
+
+  it("[HTML-015] refuses plain-text replacement that would delete authored metadata", () => {
+    const source = '<p><a href="/x">foo</a> <mark data-k="v">bar</mark></p>'
+    expect(() => applyQuoteEdits(source, HTML, [qe("foo bar", "X")])).toThrow(
+      /could remove links or attributes/,
+    )
+  })
+
+  it("[HTML-016] keeps nested templates, hidden elements, and legacy comments invisible", () => {
+    for (const [source, exact] of [
+      [
+        "<template><template>inner-hidden</template>outer-hidden</template><p>visible</p>",
+        "outer-hidden",
+      ],
+      ["<div hidden>hidden-attribute</div><p>visible</p>", "hidden-attribute"],
+    ] as const)
+      expect(() => applyQuoteEdits(source, HTML, [qe(exact, "X")])).toThrow(/wasn't found/)
+    expect(
+      applyQuoteEdits("<!-- hidden --!><p>visible-tail</p>", HTML, [qe("visible-tail", "X")]),
+    ).toBe("<!-- hidden --!><p>X</p>")
+  })
+
+  it("[HTML-017] preserves URL query entities through inline sanitization", () => {
+    expect(
+      applyQuoteEdits("<p>target</p>", HTML, [
+        markup("target", '<a href="https://derive.to?x=1&amp;y=2">link</a>'),
+      ]),
+    ).toBe('<p><a href="https://derive.to?x=1&amp;y=2">link</a></p>')
+  })
 })
 
 describe("editing eval — deck identity and structural operations", () => {
@@ -445,6 +487,15 @@ describe("editing eval — deck identity and structural operations", () => {
     expect(() => applySlideOps(source, [{ op: "move", from: 1, to: 2 }])).toThrow(
       /more than one data-derive-slide/,
     )
+  })
+
+  it("[DECK-010] classifies quote-aware slide tags exactly as the structural slicer", () => {
+    const source =
+      '<main><section data-title=">" class="slide">A</section>' +
+      '<section class="slide">B</section><script>window.x="derive-deck"</script></main>'
+    expect(countSlideElements(source)).toBe(2)
+    expect(sliceSlides(source)).toHaveLength(2)
+    expect(isDeckDocument(source)).toBe(true)
   })
 })
 

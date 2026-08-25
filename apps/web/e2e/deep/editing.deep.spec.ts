@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer"
-import { DECK_TEMPLATE, pageTextParts } from "@derive/core"
+import { DECK_TEMPLATE, pageTextParts, sliceScenes } from "@derive/core"
 import type { Page } from "@playwright/test"
 import { expect, openArtifact, publishArtifact, test } from "../fixtures"
 
@@ -209,6 +209,33 @@ test("[BROWSER-DECK-OPS-001] the real versions route preserves identity and reje
   expect(noOp.status()).toBe(400)
   expect(await versionOf(owner, shortId)).toBe(2)
   expect(await contentOf(owner, shortId)).toBe(stored)
+})
+
+test("[BROWSER-VIDEO-001] moving a scene keeps that stable scene active", async ({ owner }) => {
+  const source =
+    '<main data-derive-video><section data-derive-scene="a" data-duration-ms="5000"><h2>A</h2></section>' +
+    '<section data-derive-scene="b" data-duration-ms="5000"><h2>B</h2></section>' +
+    '<section data-derive-scene="c" data-duration-ms="5000"><h2>C</h2></section></main>'
+  const shortId = await publishArtifact(owner, "active-scene.html", source, "text/html")
+  await openArtifact(owner, shortId)
+  await expect(owner.getByTestId("video-bar")).toBeVisible()
+  await owner.getByTestId("video-next").click()
+  await expect(frame(owner).locator("[data-derive-video-active]")).toHaveText("B")
+
+  await enterEditMode(owner)
+  await expect(owner.getByTestId("artifact-inspect-scene")).toContainText("Scene 2 of 3")
+  await owner.getByTestId("artifact-inspect-scene-earlier").click()
+  await expect(frame(owner).locator("[data-derive-video-active]")).toHaveText("B")
+  await expect(owner.getByTestId("artifact-inspect-scene")).toContainText("Scene 1 of 3")
+
+  await owner.getByTestId("inline-edit-save").click()
+  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+  const stored = await contentOf(owner, shortId)
+  expect(
+    sliceScenes(stored).map((scene) =>
+      pageTextParts(stored.slice(scene.start, scene.end)).text.trim(),
+    ),
+  ).toEqual(["B", "A", "C"])
 })
 
 test("[BROWSER-CONCURRENCY-001] stale save keeps dirty work and succeeds after re-read", async ({

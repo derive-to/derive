@@ -28,17 +28,49 @@ export interface HtmlTag {
   end: number
 }
 
+const isHtmlSpace = (char: string): boolean =>
+  char === " " || char === "\t" || char === "\n" || char === "\r" || char === "\f"
+
+/** HTML accepts the legacy `--!>` comment terminator in addition to `-->`.
+ *  Returning the first valid closer keeps every scanner on the browser's side of
+ *  the visible/hidden boundary without a backtracking regular expression. */
+const commentCloseEnd = (html: string, from: number): number => {
+  let cursor = from
+  for (;;) {
+    const dashes = html.indexOf("--", cursor)
+    if (dashes < 0) return -1
+    if (html.startsWith("-->", dashes)) return dashes + 3
+    if (html.startsWith("--!>", dashes)) return dashes + 4
+    cursor = dashes + 2
+  }
+}
+
+/** Find a real raw-text closing tag. `\b` is not sufficient here: a hyphen is a
+ *  word boundary, so `</script-widget>` would otherwise close `<script>`. */
+const rawTextCloseStart = (lower: string, name: string, from: number): number => {
+  const needle = `</${name}`
+  let cursor = from
+  for (;;) {
+    const close = lower.indexOf(needle, cursor)
+    if (close < 0) return -1
+    const boundary = lower[close + needle.length] ?? ""
+    if (!boundary || boundary === ">" || boundary === "/" || isHtmlSpace(boundary)) return close
+    cursor = close + needle.length
+  }
+}
+
 /** Every tag in `html`, in document order. */
 export const tags = (html: string): HtmlTag[] => {
   const out: HtmlTag[] = []
+  const lower = html.toLowerCase()
   let i = 0
   while (i < html.length) {
     const lt = html.indexOf("<", i)
     if (lt === -1) break
     if (html.startsWith("<!--", lt)) {
-      const close = html.indexOf("-->", lt + 4)
+      const close = commentCloseEnd(html, lt + 4)
       if (close === -1) break // unterminated: a browser comments out the rest
-      i = close + 3
+      i = close
       continue
     }
     const m = /^<\/?([a-zA-Z][a-zA-Z0-9-]*)/.exec(html.slice(lt, lt + 64))
@@ -71,9 +103,9 @@ export const tags = (html: string): HtmlTag[] => {
     i = j + 1
     // Raw-text elements: their content is text, so skip straight past the close tag.
     if (!closing && (name === "script" || name === "style")) {
-      const close = new RegExp(`</${name}\\b`, "i").exec(html.slice(i))
-      if (!close) break
-      i += close.index
+      const close = rawTextCloseStart(lower, name, i)
+      if (close < 0) break
+      i = close
     }
   }
   return out
@@ -102,6 +134,13 @@ export const attrValues = (attrs: string, name: string): string[] => {
   const values: string[] = []
   for (let m = re.exec(attrs); m; m = re.exec(attrs)) values.push(m[1] ?? m[2] ?? m[3] ?? "")
   return values
+}
+
+/** Whether raw attribute text contains an attribute, including boolean attributes
+ *  such as `hidden` that intentionally have no equals sign or value. */
+export const hasAttr = (attrs: string, name: string): boolean => {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  return new RegExp(`(?:^|\\s)${escaped}(?=\\s|=|/|$)`, "i").test(attrs)
 }
 
 /** The offset just past the element opened by `tags[i]`, tracking same-name nesting, or

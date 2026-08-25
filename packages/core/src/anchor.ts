@@ -2,6 +2,7 @@ import { DecodingMode, decodeHTML, EntityDecoder, htmlDecodeTree } from "entitie
 import { findQuoteWithContext } from "./anchor-shared"
 import { isHtmlLike } from "./content-types"
 import { elementResolvesIn, parseElementSelector } from "./element-anchor"
+import { elementEnd, hasAttr, tags } from "./html-tags"
 import { MENTION_NON_PROSE_TAGS } from "./mention-shared"
 import type { CommentState } from "./ports"
 
@@ -122,8 +123,6 @@ export interface PageTextParts {
 }
 
 const INVISIBLE_NAMES = ["script", "style", "noscript", "template", "head", "title", "iframe"]
-const isHtmlSpace = (c: string): boolean =>
-  c === " " || c === "\t" || c === "\n" || c === "\r" || c === "\f"
 
 /** Memoized left-to-right indexOf. During a forward scan, thousands of failed
  *  searches for the same needle (unclosed "<!--" after unclosed "<!--") would each
@@ -214,50 +213,37 @@ export function pageTextParts(
 ): PageTextParts {
   const lower = html.toLowerCase()
   const findRaw = makeFinder(html)
-  const findLower = makeFinder(lower)
+  const omitted = new Set(omitContentsOf)
+  const parsedTags = tags(html)
+  const tagEnds = new Map(parsedTags.map((tag) => [tag.start, tag.end]))
+  const invisibleEnds = new Map<number, number>()
+  for (let i = 0; i < parsedTags.length; i++) {
+    const tag = parsedTags[i]
+    if (!tag || tag.closing || (!omitted.has(tag.name) && !hasAttr(tag.attrs, "hidden"))) continue
+    const end = elementEnd(parsedTags, i)
+    invisibleEnds.set(tag.start, end < 0 ? html.length : end)
+  }
 
-  const rawTextCloseEnd = (name: string, from: number): number | null => {
-    const needle = `</${name}`
+  const commentCloseEnd = (from: number): number => {
     let cursor = from
     for (;;) {
-      const close = findLower(needle, cursor)
-      if (close < 0) return null
-      const after = close + needle.length
-      const boundary = html[after] ?? ""
-      if (boundary && boundary !== ">" && boundary !== "/" && !isHtmlSpace(boundary)) {
-        cursor = after
-        continue
-      }
-      const gt = findRaw(">", after)
-      return gt < 0 ? null : gt + 1
+      const dashes = findRaw("--", cursor)
+      if (dashes < 0) return html.length
+      if (html.startsWith("-->", dashes)) return dashes + 3
+      if (html.startsWith("--!>", dashes)) return dashes + 4
+      cursor = dashes + 2
     }
   }
 
   /** The strip token starting exactly at html[i] (which is "<"), or null when this
    *  "<" is literal text. */
   const stripTokenAt = (i: number): number | null => {
+    const invisibleEnd = invisibleEnds.get(i)
+    if (invisibleEnd !== undefined) return invisibleEnd
     // <!-- ... -->
-    if (lower.startsWith("<!--", i)) {
-      const close = findRaw("-->", i + 4)
-      if (close >= 0) return close + 3
-      // Browsers treat the rest of the document as commented. Exposing it as
-      // editable prose would let the server target text the reader cannot see.
-      return html.length
-    }
-    // <script|style|noscript ...> ... </same>
-    for (const name of omitContentsOf) {
-      if (!lower.startsWith(name, i + 1)) continue
-      const after = i + 1 + name.length
-      const boundary = html[after] ?? ""
-      if (boundary && boundary !== ">" && boundary !== "/" && !isHtmlSpace(boundary)) continue
-      const open = findRaw(">", after)
-      if (open < 0) continue
-      const closeEnd = rawTextCloseEnd(name, open + 1)
-      if (closeEnd !== null) return closeEnd
-      // Raw-text elements run to EOF when unclosed. Hide the remainder just as the
-      // browser does; never offer script/style bytes as visible editable prose.
-      return html.length
-    }
+    if (lower.startsWith("<!--", i)) return commentCloseEnd(i + 4)
+    const parsedEnd = tagEnds.get(i)
+    if (parsedEnd !== undefined) return parsedEnd
     // <[^>]+>
     const gt = findRaw(">", i + 1)
     if (gt > i + 1) return gt + 1

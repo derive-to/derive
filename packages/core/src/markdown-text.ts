@@ -143,6 +143,36 @@ export function markdownTextParts(source: string): MarkdownTextParts {
     return at >= from && at + raw.length <= limit ? at : -1
   }
 
+  /** A renderer removes blockquote/list prefixes from fenced code token.raw. Map
+   *  the visible code body inside the authored range instead of requiring that
+   *  normalized token slice to occur byte-for-byte in the source. Multi-line
+   *  prefixed bodies stay line-local so an edit cannot erase their structural
+   *  `>` or list indentation. */
+  const mapCode = (token: MarkdownToken, rangeStart: number, rangeEnd: number, block: number) => {
+    const body = token.text ?? ""
+    if (!body) {
+      pushGap(rangeStart, rangeEnd, block, "structural")
+      return
+    }
+    const direct = locate(body, rangeStart, rangeEnd)
+    if (direct >= 0) {
+      pushGap(rangeStart, direct, block, "structural")
+      pushText(direct, direct + body.length, block)
+      pushGap(direct + body.length, rangeEnd, block, "structural")
+      return
+    }
+    let cursor = rangeStart
+    for (const line of body.split("\n")) {
+      if (!line) continue
+      const at = locate(line, cursor, rangeEnd)
+      if (at < 0) continue
+      pushGap(cursor, at, block, "structural")
+      pushText(at, at + line.length, block)
+      cursor = at + line.length
+    }
+    pushGap(cursor, rangeEnd, block, "structural")
+  }
+
   /** Map a renderer-owned inline token list inside one source range. */
   const mapInline = (
     tokens: readonly MarkdownToken[],
@@ -230,6 +260,11 @@ export function markdownTextParts(source: string): MarkdownTextParts {
       for (const child of item.tokens ?? []) {
         const childRaw = child.raw ?? ""
         const childAt = locate(childRaw, itemCursor, end)
+        if (childAt < 0 && child.type === "code") {
+          mapCode(child, itemCursor, end, blockSeq++)
+          itemCursor = end
+          continue
+        }
         if (childAt < 0) continue
         const childEnd = childAt + childRaw.length
         if (child.type === "list") {
@@ -238,7 +273,8 @@ export function markdownTextParts(source: string): MarkdownTextParts {
         } else {
           const block = blockSeq++
           pushGap(itemCursor, childAt, block, "structural")
-          if (Array.isArray(child.tokens) && child.tokens.length)
+          if (child.type === "code") mapCode(child, childAt, childEnd, block)
+          else if (Array.isArray(child.tokens) && child.tokens.length)
             mapInline(child.tokens, childAt, childEnd, block)
           else pushText(childAt, childEnd, block)
         }
@@ -257,11 +293,17 @@ export function markdownTextParts(source: string): MarkdownTextParts {
     for (const child of token.tokens ?? []) {
       const raw = child.raw ?? ""
       const at = locate(raw, cursor, rangeEnd)
+      if (at < 0 && child.type === "code") {
+        mapCode(child, cursor, rangeEnd, blockSeq++)
+        cursor = rangeEnd
+        continue
+      }
       if (at < 0) continue
       const end = at + raw.length
       const block = blockSeq++
       pushGap(cursor, at, block, "structural")
       if (child.type === "list") mapList(child, at, end)
+      else if (child.type === "code") mapCode(child, at, end, block)
       else if (Array.isArray(child.tokens) && child.tokens.length)
         mapInline(child.tokens, at, end, block)
       else pushText(at, end, block)
@@ -304,6 +346,7 @@ export function markdownTextParts(source: string): MarkdownTextParts {
     else if (token.type === "list") mapList(token, at, end)
     else if (token.type === "blockquote") mapBlockquote(token, at, end)
     else if (token.type === "table") mapTable(token, at, end)
+    else if (token.type === "code") mapCode(token, at, end, block)
     else if (token.type === "html") pushHtml(raw, at, block)
     else if (token.type === "space" || token.type === "hr") pushGap(at, end, block)
     else {

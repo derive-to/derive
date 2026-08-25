@@ -1321,9 +1321,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
               // to fix one. What used to make a deck unsafe to edit (its own Space
               // and arrow keys flipping slides under the caret) is handled in the
               // frame: while a caret is in a block, the page's keyboard is off.
-              showInlineEdit={
-                canEditDoc && !isDeckLike && !inlineEdit.active && !bundleWorkspaceActive
-              }
+              showInlineEdit={canEditDoc && !inlineEdit.active && !bundleWorkspaceActive}
               inlineEditLabel="Edit"
               onInlineEdit={() => inlineEdit.start()}
               isDeck={isDeckLike}

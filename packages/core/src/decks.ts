@@ -28,14 +28,13 @@ const withoutComments = (html: string): string => {
     const start = html.indexOf("<!--", i)
     if (start === -1) return out + html.slice(i)
     out += html.slice(i, start)
-    const end = html.indexOf("-->", start + 4)
+    const ordinary = html.indexOf("-->", start + 4)
+    const legacy = html.indexOf("--!>", start + 4)
+    const end = ordinary < 0 ? legacy : legacy < 0 ? ordinary : Math.min(ordinary, legacy)
     if (end === -1) return out // unterminated: the rest of the document is inside it
-    i = end + 3
+    i = end + (html.startsWith("--!>", end) ? 4 : 3)
   }
 }
-
-/** A container tag that MIGHT be a slide — the cheap linear scan; `isSlideAttrs` decides. */
-const SLIDE_CANDIDATE = /<(?:section|div|article|li)\b([^>]*)>/gi
 
 /** Is this opening tag a slide? It carries the stable `data-derive-slide` index, or `slide`
  *  as a WHOLE class token.
@@ -51,9 +50,9 @@ export const isSlideAttrs = (attrs: string): boolean =>
 
 /** How many slide elements this HTML actually contains. */
 export const countSlideElements = (html: string): number => {
-  const src = withoutComments(html)
   let n = 0
-  for (const m of src.matchAll(SLIDE_CANDIDATE)) if (isSlideAttrs(m[1] ?? "")) n++
+  for (const tag of tags(html))
+    if (!tag.closing && SLIDE_TAGS.has(tag.name) && isSlideAttrs(tag.attrs)) n++
   return n
 }
 

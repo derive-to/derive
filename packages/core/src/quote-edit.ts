@@ -549,6 +549,16 @@ export function applyQuoteEdits(src: string, contentType: string, edits: QuoteEd
   }
   const safeTextOffsets = graphemeBoundaries(text)
 
+  const literalMatches = (quote: string): { start: number; end: number }[] => {
+    const matches: { start: number; end: number }[] = []
+    let at = text.indexOf(quote)
+    while (at >= 0 && matches.length < 20) {
+      matches.push({ start: at, end: at + quote.length })
+      at = text.indexOf(quote, at + 1)
+    }
+    return matches
+  }
+
   const spans: {
     rStart: number
     rEnd: number
@@ -565,12 +575,16 @@ export function applyQuoteEdits(src: string, contentType: string, edits: QuoteEd
     // that matches twice (identical repeated cards) must refuse, not silently edit
     // the first card when the user touched the second. A context miss is acceptable
     // only when the exact text appears exactly once in the document.
-    const ctx = findQuoteContextUnique(text, exact, e.quote.prefix, e.quote.suffix)
-    if (ctx.matches > 1)
-      throw new EditError(
-        `${label} failed: "${clip(exact, 60)}" appears in ${ctx.matches} identical contexts — the edit can't be pinned to one. Open the source editor.`,
-      )
-    let span = ctx.span
+    const outerWhitespaceMatches = exact !== exact.trim() ? literalMatches(exact) : []
+    let span = outerWhitespaceMatches.length === 1 ? outerWhitespaceMatches[0] : null
+    if (!span) {
+      const ctx = findQuoteContextUnique(text, exact, e.quote.prefix, e.quote.suffix)
+      if (ctx.matches > 1)
+        throw new EditError(
+          `${label} failed: "${clip(exact, 60)}" appears in ${ctx.matches} identical contexts — the edit can't be pinned to one. Open the source editor.`,
+        )
+      span = ctx.span
+    }
     if (!span) {
       const all = findQuoteMatches(text, exact)
       if (all.length === 1) span = all[0] as { start: number; end: number }
@@ -605,13 +619,9 @@ export function applyQuoteEdits(src: string, contentType: string, edits: QuoteEd
       throw new EditError(
         `${label} failed: this document is Markdown — write formatting as Markdown text, not HTML.`,
       )
-    if (
-      e.new_html !== undefined &&
-      raw.crossesMarkup &&
-      selectionTouchesProtectedMarkup(src, raw.rStart, raw.rEnd)
-    )
+    if (raw.crossesMarkup && selectionTouchesProtectedMarkup(src, raw.rStart, raw.rEnd))
       throw new EditError(
-        `${label} failed: formatting across existing authored markup could remove links or attributes. Format a plain-text run, or open the source editor.`,
+        `${label} failed: editing across existing authored markup could remove links or attributes. Edit a plain-text run, or open the source editor.`,
       )
     const replacement =
       e.new_html !== undefined
