@@ -72,6 +72,11 @@ export const selLabel = (s: Sel | null | undefined): string | null =>
 // re-renders per scroll frame.
 export type FrameGeom = { scrollY: number; docH: number; viewH: number }
 
+/** A safe, deliberately coarse boot failure reported by the first-injected artifact
+ * runtime. Never carries authored source, stack traces, or exception text across the
+ * sandbox boundary. */
+export type ArtifactRuntimeError = "sandbox-storage" | "script-error"
+
 // The active text selection reported by the sandboxed artifact frame — the W3C
 // selector plus its geometry, used to place the new-comment composer and its
 // pin. `top` is frame-viewport-relative AT SELECTION TIME (frozen); `docTop` is
