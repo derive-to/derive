@@ -92,6 +92,18 @@ const segmentIndexAt = (segments: PageTextSegment[], t: number): number => {
   return -1
 }
 
+/** Every safe splice point in the rendered projection. JavaScript string offsets
+ *  can land inside surrogate pairs, combining sequences, emoji modifiers, or ZWJ
+ *  emoji; editing at such an offset corrupts what the reader sees. */
+const graphemeBoundaries = (text: string): Set<number> => {
+  const boundaries = new Set<number>([0, text.length])
+  for (const part of new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(text)) {
+    boundaries.add(part.index)
+    boundaries.add(part.index + part.segment.length)
+  }
+  return boundaries
+}
+
 const INLINE_TAGS = new Set([
   "a",
   "abbr",
@@ -129,6 +141,7 @@ interface ParsedHtmlTag {
   closing: boolean
   name: string
   selfClosing: boolean
+  hasAttributes: boolean
 }
 
 const isHtmlSpace = (char: string): boolean =>
@@ -159,7 +172,39 @@ const parseHtmlTag = (raw: string): ParsedHtmlTag | null => {
   while (i < raw.length - 1 && isTagNameChar(raw[i] ?? "")) i++
   const name = raw.slice(nameStart, i).toLowerCase()
   const selfClosing = !closing && raw.slice(0, -1).trimEnd().endsWith("/")
-  return { closing, name, selfClosing }
+  const tail = raw.slice(i, -1).trim().replace(/\/$/, "").trim()
+  return { closing, name, selfClosing, hasAttributes: !closing && !!tail }
+}
+
+/** Whether a formatted replacement intersects authored identity/link metadata.
+ *  Replacing across plain `<b>`/`<i>` runs is an intentional formatting action,
+ *  but silently deleting an href, class, data attribute, or other authored state
+ *  is not. */
+const selectionTouchesProtectedMarkup = (src: string, rStart: number, rEnd: number): boolean => {
+  const stack: { name: string; protected: boolean }[] = []
+  for (
+    let boundary = nextHtmlBoundary(src, 0);
+    boundary;
+    boundary = nextHtmlBoundary(src, boundary.next)
+  ) {
+    const { at, raw } = boundary
+    if (at >= rStart && at < rEnd && stack.some((entry) => entry.protected)) return true
+    if (at >= rEnd) return stack.some((entry) => entry.protected)
+    const parsed = parseHtmlTag(raw)
+    if (!parsed) continue
+    if (parsed.closing) {
+      for (let i = stack.length - 1; i >= 0; i--)
+        if (stack[i]?.name === parsed.name) {
+          stack.splice(i, 1)
+          break
+        }
+    } else {
+      const protectedMarkup = parsed.name === "a" || parsed.hasAttributes
+      if (at >= rStart && at < rEnd && protectedMarkup) return true
+      if (!parsed.selfClosing) stack.push({ name: parsed.name, protected: protectedMarkup })
+    }
+  }
+  return stack.some((entry) => entry.protected)
 }
 
 /** Return the next complete tag/comment without backtracking over attacker input. */
@@ -321,7 +366,7 @@ const spanToRaw = (
   start: number,
   end: number,
   label: string,
-): { rStart: number; rEnd: number; before: string; after: string } => {
+): { rStart: number; rEnd: number; before: string; after: string; crossesMarkup: boolean } => {
   const firstIdx = segmentIndexAt(segments, start)
   const lastIdx = segmentIndexAt(segments, end - 1)
   if (firstIdx < 0 || lastIdx < 0)
@@ -345,7 +390,9 @@ const spanToRaw = (
   const rStart = first.kind === "entity" ? first.rStart : first.rStart + (start - first.tStart)
   const rEnd = lastSeg.kind === "entity" ? lastSeg.rEnd : lastSeg.rStart + (end - lastSeg.tStart)
   const repair = crossesMarkup ? inlineBoundaryRepair(src, rStart, rEnd, label) : null
-  return repair ?? { rStart, rEnd, before: "", after: "" }
+  return repair
+    ? { ...repair, crossesMarkup }
+    : { rStart, rEnd, before: "", after: "", crossesMarkup }
 }
 
 const sameMarkdownWrapper = (a: MarkdownInlineWrapper, b: MarkdownInlineWrapper): boolean =>
@@ -441,7 +488,7 @@ const markdownSpanToRaw = (
   start: number,
   end: number,
   label: string,
-): { rStart: number; rEnd: number; before: string; after: string } => {
+): { rStart: number; rEnd: number; before: string; after: string; crossesMarkup: boolean } => {
   const firstIdx = segmentIndexAt(segments, start)
   const lastIdx = segmentIndexAt(segments, end - 1)
   if (firstIdx < 0 || lastIdx < 0)
@@ -473,8 +520,8 @@ const markdownSpanToRaw = (
   const rStart = first.kind === "entity" ? first.rStart : first.rStart + (start - first.tStart)
   const rEnd = last.kind === "entity" ? last.rEnd : last.rStart + (end - last.tStart)
   return crossesMarkup
-    ? markdownBoundaryRepair(src, rStart, rEnd, wrappers)
-    : { rStart, rEnd, before: "", after: "" }
+    ? { ...markdownBoundaryRepair(src, rStart, rEnd, wrappers), crossesMarkup }
+    : { rStart, rEnd, before: "", after: "", crossesMarkup }
 }
 
 /**
@@ -500,6 +547,7 @@ export function applyQuoteEdits(src: string, contentType: string, edits: QuoteEd
     text = parts.text
     markdown = { segments: parts.segments, wrappers: parts.wrappers }
   }
+  const safeTextOffsets = graphemeBoundaries(text)
 
   const spans: {
     rStart: number
@@ -535,17 +583,35 @@ export function applyQuoteEdits(src: string, contentType: string, edits: QuoteEd
           `${label} failed: "${clip(exact, 60)}" appears ${all.length} times and the surrounding context didn't pin one down.`,
         )
     }
+    if (!safeTextOffsets.has(span.start) || !safeTextOffsets.has(span.end))
+      throw new EditError(
+        `${label} failed: the edit would split a character, emoji, or grapheme. Select the whole character.`,
+      )
     const raw = segments
       ? spanToRaw(src, segments, span.start, span.end, label)
       : markdown
         ? markdownSpanToRaw(src, markdown.segments, markdown.wrappers, span.start, span.end, label)
-        : { rStart: span.start, rEnd: span.end, before: "", after: "" }
+        : {
+            rStart: span.start,
+            rEnd: span.end,
+            before: "",
+            after: "",
+            crossesMarkup: false,
+          }
     // Markup, only where markup is the language. On markdown the source IS what the
     // author writes, so formatting is `**bold**` typed as text; splicing tags there
     // would put literal HTML in someone's prose.
     if (e.new_html !== undefined && !isHtml)
       throw new EditError(
         `${label} failed: this document is Markdown — write formatting as Markdown text, not HTML.`,
+      )
+    if (
+      e.new_html !== undefined &&
+      raw.crossesMarkup &&
+      selectionTouchesProtectedMarkup(src, raw.rStart, raw.rEnd)
+    )
+      throw new EditError(
+        `${label} failed: formatting across existing authored markup could remove links or attributes. Format a plain-text run, or open the source editor.`,
       )
     const replacement =
       e.new_html !== undefined

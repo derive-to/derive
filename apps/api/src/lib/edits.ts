@@ -298,9 +298,11 @@ export async function materializeEdits(
  *  a malformed field must fail loudly, not coerce to NaN and reject every edit as
  *  "moved to vNaN" regardless of whether the artifact actually moved. */
 export function parseBaseVersion(raw: string | undefined): number | undefined {
-  if (!raw) return undefined
+  if (raw === undefined) return undefined
+  if (!/^[1-9]\d*$/.test(raw))
+    throw new EditError(`base_version "${raw}" is not a valid version number.`)
   const n = Number(raw)
-  if (!Number.isInteger(n) || n < 1)
+  if (!Number.isSafeInteger(n))
     throw new EditError(`base_version "${raw}" is not a valid version number.`)
   return n
 }

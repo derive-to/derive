@@ -191,6 +191,41 @@ describe("editing eval — Markdown source preservation", () => {
       ]),
     ).toBe("This is changed text.")
   })
+
+  it("[MD-016] uses punctuation-adjacent context to pin repeated text", () => {
+    const source = "First résumé. (résumé), chosen."
+    expect(
+      applyQuoteEdits(source, MD, [qe("résumé", "resume", { prefix: "(", suffix: "), chosen" })]),
+    ).toBe("First résumé. (resume), chosen.")
+  })
+
+  it("[MD-017] maps nested list and blockquote-list text without dropping formatting", () => {
+    expect(
+      applyQuoteEdits("- outer\n  - inner **todo**\n", MD, [qe("inner todo", "inner done")]),
+    ).toBe("- outer\n  - inner done\n")
+    expect(applyQuoteEdits("- outer\n  - inner **todo**\n", MD, [qe("todo", "done")])).toBe(
+      "- outer\n  - inner **done**\n",
+    )
+    expect(applyQuoteEdits("> - quoted **todo**\n", MD, [qe("quoted todo", "quoted done")])).toBe(
+      "> - quoted done\n",
+    )
+  })
+
+  it("[MD-018] edits inline-code content without removing its fence", () => {
+    expect(applyQuoteEdits("Text `code` here", MD, [qe("code", "value")])).toBe("Text `value` here")
+  })
+
+  it("[MD-019] refuses edits inside a Unicode grapheme cluster", () => {
+    for (const exact of ["👩", "\u200d", "🏽", "\u0301"])
+      expect(() => applyQuoteEdits("👩🏽‍💻 café", MD, [qe(exact, "X")])).toThrow(
+        /split a character/,
+      )
+  })
+
+  it("[MD-020] treats inline formatting delimiters as zero-width text seams", () => {
+    expect(applyQuoteEdits("(**bold**), tail", MD, [qe("(bold),", "X")])).toBe("X tail")
+    expect(applyQuoteEdits("a**bold**b", MD, [qe("aboldb", "X")])).toBe("X")
+  })
 })
 
 describe("editing eval — HTML projection, topology, and injection", () => {
@@ -285,6 +320,51 @@ describe("editing eval — HTML projection, topology, and injection", () => {
     expect(pageTextParts(source).text).toBe(" ")
     expect(performance.now() - start).toBeLessThan(500)
   })
+
+  it("[HTML-011] matches the browser's full character-reference decoding", () => {
+    for (const [entity, visible] of [
+      ["&NotEqualTilde;", "≂̸"],
+      ["&CounterClockwiseContourIntegral;", "∳"],
+      ["&copy", "©"],
+      ["&#x80;", "€"],
+      ["&#128;", "€"],
+    ] as const) {
+      const source = `<p>A${entity}B</p>`
+      expect(applyQuoteEdits(source, HTML, [qe(`A${visible}B`, "X")])).toBe("<p>X</p>")
+    }
+  })
+
+  it("[HTML-012] hides inert document containers and recognizes spaced raw-text closers", () => {
+    const hidden =
+      "<head><title>secret-title</title></head><template><p>secret-template</p></template>" +
+      '<iframe srcdoc="<p>secret-frame</p>"></iframe><p>visible</p>'
+    for (const exact of ["secret-title", "secret-template", "secret-frame"])
+      expect(() => applyQuoteEdits(hidden, HTML, [qe(exact, "X")])).toThrow(/wasn't found/)
+    expect(
+      applyQuoteEdits("<script>hidden</script >VISIBLETAIL", HTML, [qe("VISIBLETAIL", "X")]),
+    ).toBe("<script>hidden</script >X")
+  })
+
+  it("[HTML-013] blocks normalized script URLs and refuses formatting over authored markup", () => {
+    for (const href of ["java&#9;script:alert(1)", "java\nscript:alert(1)"]) {
+      const out = applyQuoteEdits("<p>target</p>", HTML, [
+        markup("target", `<a href="${href}">target</a>`),
+      ])
+      expect(out).toBe("<p><a>target</a></p>")
+    }
+    const authored =
+      '<p><mark data-note="keep">Acme</mark> <a href="/jobs">platform</a> <em>team</em></p>'
+    expect(() =>
+      applyQuoteEdits(authored, HTML, [markup("Acme platform team", "<b>Acme platform team</b>")]),
+    ).toThrow(/could remove links or attributes/)
+  })
+
+  it("[HTML-014] refuses surrogate, combining-mark, modifier, and ZWJ splits", () => {
+    for (const exact of ["\udc69", "\u0301", "🏽", "\u200d"])
+      expect(() => applyQuoteEdits("<p>👩🏽‍💻 café</p>", HTML, [qe(exact, "X")])).toThrow(
+        /split a character/,
+      )
+  })
 })
 
 describe("editing eval — deck identity and structural operations", () => {
@@ -348,6 +428,24 @@ describe("editing eval — deck identity and structural operations", () => {
       source.slice(source.lastIndexOf("</section>") + 10),
     )
   })
+
+  it("[DECK-008] refuses malformed authored slide identities before duplicating", () => {
+    const source =
+      '<section class="slide" data-derive-slide="1.5">A</section>\n' +
+      '<section class="slide" data-derive-slide="4">B</section>'
+    expect(() => applySlideOps(source, [{ op: "duplicate", at: 1 }])).toThrow(
+      /whole, safely representable integer/,
+    )
+  })
+
+  it("[DECK-009] refuses duplicate identity attributes on one slide", () => {
+    const source =
+      '<section class="slide" data-derive-slide="1" data-derive-slide="2">A</section>\n' +
+      '<section class="slide" data-derive-slide="3">B</section>'
+    expect(() => applySlideOps(source, [{ op: "move", from: 1, to: 2 }])).toThrow(
+      /more than one data-derive-slide/,
+    )
+  })
 })
 
 describe("editing eval — video scene operations", () => {
@@ -396,6 +494,13 @@ describe("editing eval — video scene operations", () => {
     expect(() => applySceneEdits(video(), [{ op: "scene-update", id: "opening" }])).toThrow(
       /nothing to publish/,
     )
+  })
+
+  it("[VIDEO-005] refuses duplicate identity attributes on one scene", () => {
+    const source =
+      '<main data-derive-video><section data-derive-scene="one" ' +
+      'data-derive-scene="shadow"></section></main>'
+    expect(() => sliceScenes(source)).toThrow(/more than one data-derive-scene/)
   })
 })
 

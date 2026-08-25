@@ -8,16 +8,22 @@ element operations without treating a cleared toolbar as proof that source was s
 
 ```bash
 pnpm test:editing                 # deterministic core + API lanes
+pnpm test:editing:regression      # important cases across core + API + real browser
 pnpm test:editing -- --lane core  # one lane while iterating
-pnpm test:editing:full            # core + API + real browser lane
+pnpm test:editing:full            # every regression + extended chaos case in every lane
 pnpm test:editing -- --list       # manifest inventory
 pnpm test:editing -- --json       # machine-readable result for an agent/reviewer
 ```
 
 `corpus.json` is the ledger. Every scenario has a stable id, risk tier, surface,
-oracle, and executable source file. The runner refuses duplicate ids, missing source
+oracle, cadence, and executable source file. The runner refuses duplicate ids, missing source
 files, or scenarios whose id is absent from their owning test. A scenario therefore
 cannot be documented without also being enforced.
+
+`regression` cadence is for deterministic P0/P1 cases that should stay cheap enough to
+run continuously. `extended` cadence is for scale, fuzz, and expensive chaos probes. The
+default command keeps the tight core/API loop; the regression command adds important real
+browser behavior; the full command runs both cadences across all lanes.
 
 ## Loop policy
 

@@ -8,6 +8,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..")
 const manifest = JSON.parse(readFileSync(join(ROOT, "evals/editing/corpus.json"), "utf8"))
 const args = process.argv.slice(2)
 const full = args.includes("--full")
+const regression = args.includes("--regression")
 const json = args.includes("--json")
 const list = args.includes("--list")
 const laneAt = args.indexOf("--lane")
@@ -19,7 +20,9 @@ const fail = (message) => {
 }
 
 if (manifest.schema !== "derive.editing-eval/v1") fail("unsupported corpus schema")
-if (!manifest.lanes || !Array.isArray(manifest.scenarios)) fail("malformed corpus")
+if (!manifest.lanes || !manifest.cadences || !Array.isArray(manifest.scenarios))
+  fail("malformed corpus")
+if (full && regression) fail("choose either --regression or --full")
 
 const ids = new Set()
 const sourceCache = new Map()
@@ -27,6 +30,8 @@ for (const scenario of manifest.scenarios) {
   if (!scenario.id || ids.has(scenario.id)) fail(`duplicate or empty scenario id: ${scenario.id}`)
   ids.add(scenario.id)
   if (!manifest.lanes[scenario.lane]) fail(`${scenario.id} names unknown lane ${scenario.lane}`)
+  if (!manifest.cadences[scenario.cadence])
+    fail(`${scenario.id} names unknown cadence ${scenario.cadence}`)
   const sourcePath = join(ROOT, scenario.source)
   let source = sourceCache.get(sourcePath)
   if (source === undefined) {
@@ -49,20 +54,31 @@ if (onlyLane && !manifest.lanes[onlyLane]) fail(`unknown lane ${onlyLane}`)
 if (list) {
   for (const scenario of manifest.scenarios)
     process.stdout.write(
-      `${scenario.id}\t${scenario.risk}\t${scenario.surface}\t${scenario.lane}\t${scenario.covers}\n`,
+      `${scenario.id}\t${scenario.risk}\t${scenario.cadence}\t${scenario.surface}\t${scenario.lane}\t${scenario.covers}\n`,
     )
   process.exit(0)
 }
 
 const selected = Object.entries(manifest.lanes).filter(
-  ([name, lane]) => (!onlyLane || name === onlyLane) && (full || lane.tier !== "full"),
+  ([name, lane]) =>
+    (!onlyLane || name === onlyLane) && (full || regression || lane.tier !== "full"),
+)
+const selectedScenarios = manifest.scenarios.filter(
+  (scenario) =>
+    selected.some(([name]) => name === scenario.lane) &&
+    (full || scenario.cadence === "regression"),
 )
 const results = []
 for (const [name, lane] of selected) {
   const [command, ...commandArgs] = lane.command
+  const laneIds = selectedScenarios
+    .filter((scenario) => scenario.lane === name)
+    .map((scenario) => scenario.id)
+  if (laneIds.length === 0) continue
+  const filter = `\\[(?:${laneIds.join("|")})\\]`
   const started = performance.now()
   if (!json) process.stdout.write(`\nediting-eval: ${name}\n`)
-  const result = spawnSync(command, commandArgs, {
+  const result = spawnSync(command, [...commandArgs, lane.filterFlag, filter], {
     cwd: ROOT,
     encoding: "utf8",
     env: process.env,
@@ -85,10 +101,8 @@ for (const [name, lane] of selected) {
 
 const report = {
   schema: manifest.schema,
-  mode: full ? "full" : "fast",
-  scenarioCount: manifest.scenarios.filter((scenario) =>
-    selected.some(([name]) => name === scenario.lane),
-  ).length,
+  mode: full ? "full" : regression ? "regression" : "fast",
+  scenarioCount: selectedScenarios.length,
   passed: results.every((result) => result.passed),
   results,
 }

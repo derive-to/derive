@@ -11,6 +11,7 @@ import {
   MAX_EDITS_PER_BATCH,
   materializeEdits,
   materializeSlideOps,
+  parseBaseVersion,
 } from "../src/lib/edits"
 
 const mkDeps = (versions: Record<number, { text: string; contentType?: string }>) => {
@@ -161,5 +162,12 @@ describe("editing eval — API materialization boundary", () => {
         1,
       ),
     ).rejects.toThrow(/nothing to publish/)
+  })
+
+  it("[PIPE-007] accepts only canonical positive-integer base versions", () => {
+    expect(parseBaseVersion(undefined)).toBeUndefined()
+    expect(parseBaseVersion("1")).toBe(1)
+    for (const raw of ["", "0", "01", "1.0", "1e0", " 1 ", "+1", "0x1"])
+      expect(() => parseBaseVersion(raw)).toThrow(/not a valid version number/)
   })
 })

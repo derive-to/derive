@@ -1,5 +1,5 @@
 import { EditError } from "./doc-text"
-import { attrValue, elementEnd, type HtmlTag, tags } from "./html-tags"
+import { attrValue, attrValues, elementEnd, type HtmlTag, tags } from "./html-tags"
 
 export const VIDEO_CONTENT_TYPE = "text/x-derive-video"
 const SCENE_TAGS = new Set(["section", "div", "article"])
@@ -54,7 +54,12 @@ export const sliceScenes = (html: string): VideoScene[] => {
     const open = all[i] as HtmlTag
     if (open.closing || !SCENE_TAGS.has(open.name)) continue
     if (open.start <= root.tag.start || open.start >= rootEnd) continue
-    const id = attrValue(open.attrs, "data-derive-scene")
+    const sceneIds = attrValues(open.attrs, "data-derive-scene")
+    if (sceneIds.length > 1)
+      throw new EditError(
+        "A video scene has more than one data-derive-scene attribute, so its identity is ambiguous.",
+      )
+    const id = sceneIds[0] ?? null
     if (!id) continue
     if (!SCENE_ID.test(id))
       throw new EditError(

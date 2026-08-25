@@ -1,5 +1,9 @@
 {
   "schema": "derive.editing-eval/v1",
+  "cadences": {
+    "regression": "Important deterministic cases that run on every editing regression pass",
+    "extended": "Scale, fuzz, and expensive chaos cases that run on the occasional full pass"
+  },
   "lanes": {
     "core": {
       "tier": "fast",
@@ -11,7 +15,8 @@
         "vitest",
         "run",
         "test/editing-eval.test.ts"
-      ]
+      ],
+      "filterFlag": "--testNamePattern"
     },
     "api": {
       "tier": "fast",
@@ -23,7 +28,8 @@
         "vitest",
         "run",
         "test/editing-eval.test.ts"
-      ]
+      ],
+      "filterFlag": "--testNamePattern"
     },
     "browser": {
       "tier": "full",
@@ -36,7 +42,8 @@
         "test",
         "e2e/deep/editing.deep.spec.ts",
         "--project=editing-deep"
-      ]
+      ],
+      "filterFlag": "--grep"
     }
   },
   "scenarios": [
@@ -47,7 +54,8 @@
       "risk": "P0",
       "oracle": "exact-source",
       "source": "packages/core/test/editing-eval.test.ts",
-      "covers": "two consecutive bold subtitle runs"
+      "covers": "two consecutive bold subtitle runs",
+      "cadence": "regression"
     },
     {
       "id": "MD-002",
@@ -56,7 +64,8 @@
       "risk": "P0",
       "oracle": "exact-source",
       "source": "packages/core/test/editing-eval.test.ts",
-      "covers": "formatted context pins a repeated accented word"
+      "covers": "formatted context pins a repeated accented word",
+      "cadence": "regression"
     },
     {
       "id": "MD-003",
@@ -65,7 +74,8 @@
       "risk": "P1",
       "oracle": "exact-source",
       "source": "packages/core/test/editing-eval.test.ts",
-      "covers": "nested strong and emphasis boundary repair"
+      "covers": "nested strong and emphasis boundary repair",
+      "cadence": "regression"
     },
     {
       "id": "MD-004",
@@ -74,7 +84,8 @@
       "risk": "P1",
       "oracle": "exact-source",
       "source": "packages/core/test/editing-eval.test.ts",
-      "covers": "link destination remains source-only"
+      "covers": "link destination remains source-only",
+      "cadence": "regression"
     },
     {
       "id": "MD-005",
@@ -83,7 +94,8 @@
       "risk": "P1",
       "oracle": "exact-source-and-refusal",
       "source": "packages/core/test/editing-eval.test.ts",
-      "covers": "entities escapes and code spans are indivisible"
+      "covers": "entities escapes and code spans are indivisible",
+      "cadence": "regression"
     },
     {
       "id": "MD-006",
@@ -92,7 +104,8 @@
       "risk": "P1",
       "oracle": "exact-source",
       "source": "packages/core/test/editing-eval.test.ts",
-      "covers": "RTL emoji combining marks and CJK"
+      "covers": "RTL emoji combining marks and CJK",
+      "cadence": "regression"
     },
     {
       "id": "MD-007",
@@ -101,7 +114,8 @@
       "risk": "P0",
       "oracle": "exact-source",
       "source": "packages/core/test/editing-eval.test.ts",
-      "covers": "rendered selections in GFM table list quote and task blocks"
+      "covers": "rendered selections in GFM table list quote and task blocks",
+      "cadence": "regression"
     },
     {
       "id": "MD-008",
@@ -110,7 +124,8 @@
       "risk": "P0",
       "oracle": "safe-refusal",
       "source": "packages/core/test/editing-eval.test.ts",
-      "covers": "cross-block selection refuses"
+      "covers": "cross-block selection refuses",
+      "cadence": "regression"
     },
     {
       "id": "MD-009",
@@ -119,7 +134,8 @@
       "risk": "P1",
       "oracle": "safe-refusal",
       "source": "packages/core/test/editing-eval.test.ts",
-      "covers": "raw HTML boundary refuses while inner text edits"
+      "covers": "raw HTML boundary refuses while inner text edits",
+      "cadence": "regression"
     },
     {
       "id": "MD-010",
@@ -128,7 +144,8 @@
       "risk": "P0",
       "oracle": "atomic-no-change",
       "source": "packages/core/test/editing-eval.test.ts",
-      "covers": "late failure cancels a multi-edit batch"
+      "covers": "late failure cancels a multi-edit batch",
+      "cadence": "regression"
     },
     {
       "id": "MD-011",
@@ -137,7 +154,8 @@
       "risk": "P0",
       "oracle": "safe-refusal",
       "source": "packages/core/test/editing-eval.test.ts",
-      "covers": "overlapping edits refuse"
+      "covers": "overlapping edits refuse",
+      "cadence": "regression"
     },
     {
       "id": "MD-012",
@@ -146,7 +164,8 @@
       "risk": "P2",
       "oracle": "bounded-runtime",
       "source": "packages/core/test/editing-eval.test.ts",
-      "covers": "large repeated inline syntax remains bounded"
+      "covers": "large repeated inline syntax remains bounded",
+      "cadence": "extended"
     },
     {
       "id": "MD-013",
@@ -155,7 +174,8 @@
       "risk": "P0",
       "oracle": "safe-refusal",
       "source": "packages/core/test/editing-eval.test.ts",
-      "covers": "selection crossing an image seam cannot delete the image"
+      "covers": "selection crossing an image seam cannot delete the image",
+      "cadence": "regression"
     },
     {
       "id": "MD-014",
@@ -164,7 +184,8 @@
       "risk": "P1",
       "oracle": "valid-source",
       "source": "packages/core/test/editing-eval.test.ts",
-      "covers": "mixed underscore and asterisk emphasis delimiters are not merged"
+      "covers": "mixed underscore and asterisk emphasis delimiters are not merged",
+      "cadence": "regression"
     },
     {
       "id": "MD-015",
@@ -173,9 +194,59 @@
       "risk": "P1",
       "oracle": "typed-content-type",
       "source": "packages/core/test/editing-eval.test.ts",
-      "covers": "Markdown MIME parameters use the rendered-source mapper"
+      "covers": "Markdown MIME parameters use the rendered-source mapper",
+      "cadence": "regression"
     },
-
+    {
+      "id": "MD-016",
+      "lane": "core",
+      "surface": "markdown",
+      "risk": "P0",
+      "oracle": "exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "punctuation-adjacent context pins repeated rendered text",
+      "cadence": "regression"
+    },
+    {
+      "id": "MD-017",
+      "lane": "core",
+      "surface": "markdown",
+      "risk": "P0",
+      "oracle": "exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "nested list and blockquote-list text maps through inline formatting",
+      "cadence": "regression"
+    },
+    {
+      "id": "MD-018",
+      "lane": "core",
+      "surface": "markdown",
+      "risk": "P1",
+      "oracle": "exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "inline-code content replacement preserves its fence",
+      "cadence": "regression"
+    },
+    {
+      "id": "MD-019",
+      "lane": "core",
+      "surface": "markdown",
+      "risk": "P0",
+      "oracle": "safe-refusal",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "Unicode grapheme clusters cannot be split",
+      "cadence": "regression"
+    },
+    {
+      "id": "MD-020",
+      "lane": "core",
+      "surface": "markdown",
+      "risk": "P1",
+      "oracle": "exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "inline formatting delimiters project as zero-width seams",
+      "cadence": "regression"
+    },
     {
       "id": "HTML-001",
       "lane": "core",
@@ -183,7 +254,8 @@
       "risk": "P0",
       "oracle": "exact-source",
       "source": "packages/core/test/editing-eval.test.ts",
-      "covers": "nested inline wrappers repair at both edges"
+      "covers": "nested inline wrappers repair at both edges",
+      "cadence": "regression"
     },
     {
       "id": "HTML-002",
@@ -192,7 +264,8 @@
       "risk": "P0",
       "oracle": "safe-refusal",
       "source": "packages/core/test/editing-eval.test.ts",
-      "covers": "selection across structural elements refuses"
+      "covers": "selection across structural elements refuses",
+      "cadence": "regression"
     },
     {
       "id": "HTML-003",
@@ -201,7 +274,8 @@
       "risk": "P1",
       "oracle": "exact-source-and-refusal",
       "source": "packages/core/test/editing-eval.test.ts",
-      "covers": "decoded entities are indivisible"
+      "covers": "decoded entities are indivisible",
+      "cadence": "regression"
     },
     {
       "id": "HTML-004",
@@ -210,7 +284,8 @@
       "risk": "P0",
       "oracle": "invisible-source-unchanged",
       "source": "packages/core/test/editing-eval.test.ts",
-      "covers": "script style noscript and comments never match"
+      "covers": "script style noscript and comments never match",
+      "cadence": "regression"
     },
     {
       "id": "HTML-005",
@@ -219,7 +294,8 @@
       "risk": "P0",
       "oracle": "escaped-source",
       "source": "packages/core/test/editing-eval.test.ts",
-      "covers": "typed text cannot inject markup"
+      "covers": "typed text cannot inject markup",
+      "cadence": "regression"
     },
     {
       "id": "HTML-006",
@@ -228,7 +304,8 @@
       "risk": "P0",
       "oracle": "sanitized-source",
       "source": "packages/core/test/editing-eval.test.ts",
-      "covers": "format markup allowlist strips active content"
+      "covers": "format markup allowlist strips active content",
+      "cadence": "regression"
     },
     {
       "id": "HTML-007",
@@ -237,7 +314,8 @@
       "risk": "P1",
       "oracle": "exact-source",
       "source": "packages/core/test/editing-eval.test.ts",
-      "covers": "formatted context pins repeated cards"
+      "covers": "formatted context pins repeated cards",
+      "cadence": "regression"
     },
     {
       "id": "HTML-008",
@@ -246,7 +324,8 @@
       "risk": "P1",
       "oracle": "exact-source",
       "source": "packages/core/test/editing-eval.test.ts",
-      "covers": "RTL emoji and adjacent tags"
+      "covers": "RTL emoji and adjacent tags",
+      "cadence": "regression"
     },
     {
       "id": "HTML-009",
@@ -255,7 +334,8 @@
       "risk": "P1",
       "oracle": "safe-refusal",
       "source": "packages/core/test/editing-eval.test.ts",
-      "covers": "malformed and non-text boundaries refuse"
+      "covers": "malformed and non-text boundaries refuse",
+      "cadence": "regression"
     },
     {
       "id": "HTML-010",
@@ -264,9 +344,49 @@
       "risk": "P2",
       "oracle": "bounded-runtime",
       "source": "packages/core/test/editing-eval.test.ts",
-      "covers": "hostile unclosed markup remains bounded"
+      "covers": "hostile unclosed markup remains bounded",
+      "cadence": "extended"
     },
-
+    {
+      "id": "HTML-011",
+      "lane": "core",
+      "surface": "html",
+      "risk": "P0",
+      "oracle": "browser-parity",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "full named legacy and Windows-1252 character references map to source",
+      "cadence": "regression"
+    },
+    {
+      "id": "HTML-012",
+      "lane": "core",
+      "surface": "html",
+      "risk": "P0",
+      "oracle": "invisible-source-unchanged",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "template head iframe contents stay hidden and raw-text closers accept whitespace",
+      "cadence": "regression"
+    },
+    {
+      "id": "HTML-013",
+      "lane": "core",
+      "surface": "html",
+      "risk": "P0",
+      "oracle": "sanitized-source-and-refusal",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "URL-normalized script schemes and authored link metadata cannot be stripped",
+      "cadence": "regression"
+    },
+    {
+      "id": "HTML-014",
+      "lane": "core",
+      "surface": "html",
+      "risk": "P0",
+      "oracle": "safe-refusal",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "HTML edits cannot split surrogate combining modifier or ZWJ graphemes",
+      "cadence": "regression"
+    },
     {
       "id": "DECK-001",
       "lane": "core",
@@ -274,7 +394,8 @@
       "risk": "P0",
       "oracle": "exact-source",
       "source": "packages/core/test/editing-eval.test.ts",
-      "covers": "context pins repeated text to one slide"
+      "covers": "context pins repeated text to one slide",
+      "cadence": "regression"
     },
     {
       "id": "DECK-002",
@@ -283,7 +404,8 @@
       "risk": "P0",
       "oracle": "safe-refusal",
       "source": "packages/core/test/editing-eval.test.ts",
-      "covers": "text selection cannot merge slides"
+      "covers": "text selection cannot merge slides",
+      "cadence": "regression"
     },
     {
       "id": "DECK-003",
@@ -292,7 +414,8 @@
       "risk": "P0",
       "oracle": "identity-and-order",
       "source": "packages/core/test/editing-eval.test.ts",
-      "covers": "sequential move duplicate delete operations"
+      "covers": "sequential move duplicate delete operations",
+      "cadence": "regression"
     },
     {
       "id": "DECK-004",
@@ -301,7 +424,8 @@
       "risk": "P1",
       "oracle": "stable-identity",
       "source": "packages/core/test/editing-eval.test.ts",
-      "covers": "class-only slides get stable identities"
+      "covers": "class-only slides get stable identities",
+      "cadence": "regression"
     },
     {
       "id": "DECK-005",
@@ -310,7 +434,8 @@
       "risk": "P0",
       "oracle": "safe-refusal",
       "source": "packages/core/test/editing-eval.test.ts",
-      "covers": "orphan content between slides refuses"
+      "covers": "orphan content between slides refuses",
+      "cadence": "regression"
     },
     {
       "id": "DECK-006",
@@ -319,7 +444,8 @@
       "risk": "P0",
       "oracle": "safe-refusal",
       "source": "packages/core/test/editing-eval.test.ts",
-      "covers": "duplicate slide identities refuse"
+      "covers": "duplicate slide identities refuse",
+      "cadence": "regression"
     },
     {
       "id": "DECK-007",
@@ -328,9 +454,29 @@
       "risk": "P1",
       "oracle": "unrelated-bytes",
       "source": "packages/core/test/editing-eval.test.ts",
-      "covers": "deck shell scripts styles and comments stay byte-identical"
+      "covers": "deck shell scripts styles and comments stay byte-identical",
+      "cadence": "regression"
     },
-
+    {
+      "id": "DECK-008",
+      "lane": "core",
+      "surface": "deck",
+      "risk": "P0",
+      "oracle": "safe-refusal",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "malformed authored slide identities refuse before duplication",
+      "cadence": "regression"
+    },
+    {
+      "id": "DECK-009",
+      "lane": "core",
+      "surface": "deck",
+      "risk": "P1",
+      "oracle": "safe-refusal",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "duplicate identity attributes on one slide refuse",
+      "cadence": "regression"
+    },
     {
       "id": "VIDEO-001",
       "lane": "core",
@@ -338,7 +484,8 @@
       "risk": "P0",
       "oracle": "identity-and-order",
       "source": "packages/core/test/editing-eval.test.ts",
-      "covers": "scene update duplicate move and delete"
+      "covers": "scene update duplicate move and delete",
+      "cadence": "regression"
     },
     {
       "id": "VIDEO-002",
@@ -347,7 +494,8 @@
       "risk": "P1",
       "oracle": "sanitized-source-and-refusal",
       "source": "packages/core/test/editing-eval.test.ts",
-      "covers": "timing transition caption and id bounds"
+      "covers": "timing transition caption and id bounds",
+      "cadence": "regression"
     },
     {
       "id": "VIDEO-003",
@@ -356,7 +504,8 @@
       "risk": "P0",
       "oracle": "safe-refusal",
       "source": "packages/core/test/editing-eval.test.ts",
-      "covers": "nested duplicate and orphan scene structures refuse"
+      "covers": "nested duplicate and orphan scene structures refuse",
+      "cadence": "regression"
     },
     {
       "id": "VIDEO-004",
@@ -365,9 +514,19 @@
       "risk": "P0",
       "oracle": "safe-refusal",
       "source": "packages/core/test/editing-eval.test.ts",
-      "covers": "invalid directions unknown operations and no-op scene batches refuse"
+      "covers": "invalid directions unknown operations and no-op scene batches refuse",
+      "cadence": "regression"
     },
-
+    {
+      "id": "VIDEO-005",
+      "lane": "core",
+      "surface": "video",
+      "risk": "P1",
+      "oracle": "safe-refusal",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "duplicate identity attributes on one scene refuse",
+      "cadence": "regression"
+    },
     {
       "id": "ELEMENT-001",
       "lane": "core",
@@ -375,7 +534,8 @@
       "risk": "P1",
       "oracle": "exact-source",
       "source": "packages/core/test/editing-eval.test.ts",
-      "covers": "repeated element selector changes only intended tag"
+      "covers": "repeated element selector changes only intended tag",
+      "cadence": "regression"
     },
     {
       "id": "ELEMENT-002",
@@ -384,7 +544,8 @@
       "risk": "P1",
       "oracle": "css-preservation",
       "source": "packages/core/test/editing-eval.test.ts",
-      "covers": "CSS strings functions data URLs and custom properties survive"
+      "covers": "CSS strings functions data URLs and custom properties survive",
+      "cadence": "regression"
     },
     {
       "id": "ELEMENT-003",
@@ -393,9 +554,9 @@
       "risk": "P0",
       "oracle": "safe-refusal",
       "source": "packages/core/test/editing-eval.test.ts",
-      "covers": "stale selector bounds no-op and malformed payloads refuse"
+      "covers": "stale selector bounds no-op and malformed payloads refuse",
+      "cadence": "regression"
     },
-
     {
       "id": "PIPE-001",
       "lane": "api",
@@ -403,7 +564,8 @@
       "risk": "P0",
       "oracle": "conflict-no-version",
       "source": "apps/api/test/editing-eval.test.ts",
-      "covers": "stale base version refuses before materialization"
+      "covers": "stale base version refuses before materialization",
+      "cadence": "regression"
     },
     {
       "id": "PIPE-002",
@@ -412,7 +574,8 @@
       "risk": "P0",
       "oracle": "atomic-source",
       "source": "apps/api/test/editing-eval.test.ts",
-      "covers": "quote plus resize materialize atomically"
+      "covers": "quote plus resize materialize atomically",
+      "cadence": "regression"
     },
     {
       "id": "PIPE-003",
@@ -421,7 +584,8 @@
       "risk": "P0",
       "oracle": "atomic-source",
       "source": "apps/api/test/editing-eval.test.ts",
-      "covers": "quote plus scene operations materialize atomically"
+      "covers": "quote plus scene operations materialize atomically",
+      "cadence": "regression"
     },
     {
       "id": "PIPE-004",
@@ -430,7 +594,8 @@
       "risk": "P1",
       "oracle": "typed-filename",
       "source": "apps/api/test/editing-eval.test.ts",
-      "covers": "Markdown and HTML retain content type"
+      "covers": "Markdown and HTML retain content type",
+      "cadence": "regression"
     },
     {
       "id": "PIPE-005",
@@ -439,7 +604,8 @@
       "risk": "P0",
       "oracle": "safe-refusal",
       "source": "apps/api/test/editing-eval.test.ts",
-      "covers": "mixed edit semantics and oversized batches refuse"
+      "covers": "mixed edit semantics and oversized batches refuse",
+      "cadence": "regression"
     },
     {
       "id": "PIPE-006",
@@ -448,9 +614,19 @@
       "risk": "P0",
       "oracle": "no-op-no-version",
       "source": "apps/api/test/editing-eval.test.ts",
-      "covers": "slide operations that cancel refuse publication"
+      "covers": "slide operations that cancel refuse publication",
+      "cadence": "regression"
     },
-
+    {
+      "id": "PIPE-007",
+      "lane": "api",
+      "surface": "pipeline",
+      "risk": "P1",
+      "oracle": "canonical-input",
+      "source": "apps/api/test/editing-eval.test.ts",
+      "covers": "optimistic-concurrency versions accept only canonical positive integers",
+      "cadence": "regression"
+    },
     {
       "id": "BROWSER-MD-001",
       "lane": "browser",
@@ -458,7 +634,8 @@
       "risk": "P0",
       "oracle": "stored-source",
       "source": "apps/web/e2e/deep/editing.deep.spec.ts",
-      "covers": "Markdown selection across bold runs saves"
+      "covers": "Markdown selection across bold runs saves",
+      "cadence": "regression"
     },
     {
       "id": "BROWSER-MD-002",
@@ -467,7 +644,8 @@
       "risk": "P0",
       "oracle": "stored-source-and-render",
       "source": "apps/web/e2e/deep/editing.deep.spec.ts",
-      "covers": "rendered GFM list selection maps back through emphasis"
+      "covers": "rendered GFM list selection maps back through emphasis",
+      "cadence": "regression"
     },
     {
       "id": "BROWSER-HTML-001",
@@ -476,7 +654,8 @@
       "risk": "P0",
       "oracle": "stored-source",
       "source": "apps/web/e2e/deep/editing.deep.spec.ts",
-      "covers": "HTML multi-block text format resize undo redo save"
+      "covers": "HTML multi-block text format resize undo redo save",
+      "cadence": "regression"
     },
     {
       "id": "BROWSER-DECK-001",
@@ -485,7 +664,8 @@
       "risk": "P0",
       "oracle": "stored-source-and-position",
       "source": "apps/web/e2e/deep/editing.deep.spec.ts",
-      "covers": "deck text edit preserves navigation and slide identity"
+      "covers": "deck text edit preserves navigation and slide identity",
+      "cadence": "regression"
     },
     {
       "id": "BROWSER-DECK-OPS-001",
@@ -494,7 +674,8 @@
       "risk": "P0",
       "oracle": "status-version-source",
       "source": "apps/web/e2e/deep/editing.deep.spec.ts",
-      "covers": "real versions route duplicates slides and refuses no-op publication"
+      "covers": "real versions route duplicates slides and refuses no-op publication",
+      "cadence": "regression"
     },
     {
       "id": "BROWSER-CONCURRENCY-001",
@@ -503,7 +684,8 @@
       "risk": "P0",
       "oracle": "conflict-no-version",
       "source": "apps/web/e2e/deep/editing.deep.spec.ts",
-      "covers": "concurrent publish rejects stale inline save"
+      "covers": "concurrent publish rejects stale inline save",
+      "cadence": "regression"
     }
   ]
 }

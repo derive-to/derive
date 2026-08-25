@@ -1,7 +1,7 @@
 import { marked } from "marked"
 // xss is CJS; named ESM imports fail at runtime under Node's interop.
 import xssPkg from "xss"
-import { SELECTION_SCRIPT } from "./anchor"
+import { decodeEntities, SELECTION_SCRIPT } from "./anchor"
 
 const { FilterXSS, whiteList } = xssPkg as unknown as typeof import("xss")
 
@@ -99,9 +99,18 @@ const inlineSanitizer = new FilterXSS({
   onTagAttr: (tag, name, value) => {
     if (tag !== "a" || name !== "href") return ""
     const v = value.trim()
+    // Browsers remove ASCII tabs/newlines while parsing URLs, so inspect a more
+    // conservative normalized spelling. Otherwise `java&#9;script:` passes this
+    // check and becomes `javascript:` when the document is opened.
+    const schemeInput = [...decodeEntities(v)]
+      .filter((char) => {
+        const code = char.charCodeAt(0)
+        return code > 0x20 && code !== 0x7f
+      })
+      .join("")
     // Relative and in-page links are fine; an absolute one must be a scheme a
     // reader can follow, spelled out rather than pattern-matched.
-    const scheme = /^[a-z][a-z0-9+.-]*:/i.exec(v)?.[0]?.toLowerCase()
+    const scheme = /^[a-z][a-z0-9+.-]*:/i.exec(schemeInput)?.[0]?.toLowerCase()
     if (scheme && scheme !== "http:" && scheme !== "https:" && scheme !== "mailto:") return ""
     return `href="${escapeHtml(v)}"`
   },

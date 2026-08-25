@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Editing Eval Evidence — Luna Round 3</title>
+  <style>
+    :root{--ink:#18211b;--paper:#eef2ec;--panel:#fff;--line:#cdd7cd;--green:#096b4b;--acid:#dfff66;--orange:#e66e3b;--muted:#637067;--blue:#3558a5}*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.5 system-ui,sans-serif}.wrap{max-width:1120px;margin:auto;padding:52px 26px 76px}.eyebrow{font:700 12px ui-monospace,monospace;letter-spacing:.14em;text-transform:uppercase;color:var(--green)}h1{font-size:clamp(42px,7vw,78px);line-height:.93;letter-spacing:-.06em;margin:12px 0 18px}.lead{font-size:19px;color:var(--muted);max-width:790px}.verdict{display:flex;gap:16px;align-items:center;margin:28px 0;background:var(--ink);color:#fff;border-radius:18px;padding:20px 22px}.check{width:48px;height:48px;display:grid;place-items:center;border-radius:50%;background:var(--acid);color:var(--ink);font-size:27px;font-weight:900}.verdict strong{display:block;font-size:25px}.verdict span{color:#c9d2cc}.metrics,.grid,.fixes{display:grid;gap:13px}.metrics{grid-template-columns:repeat(4,1fr)}.metric,.card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:20px}.metric strong{display:block;font-size:35px;letter-spacing:-.05em}.metric span,.small{color:var(--muted)}.grid{grid-template-columns:1fr 1fr;margin-top:13px}.full{grid-column:1/-1}.card h2{margin:0 0 14px;font-size:23px}.fixes{grid-template-columns:repeat(2,1fr)}.fix{border-left:5px solid var(--green);background:#f5f8f4;border-radius:8px;padding:13px 14px}.fix b{display:block}.fix small{color:var(--muted)}.run{background:#151c17;color:#eef8f0;border-radius:12px;padding:18px;font:12px/1.7 ui-monospace,monospace;white-space:pre-wrap}.tier{padding:14px;border-radius:10px;background:#f4f6ff;border:1px solid #ccd3ee}.tier b{color:var(--blue)}ul{padding-left:20px}li{margin:9px 0}code{font:12px ui-monospace,monospace;background:#e7ece6;border-radius:5px;padding:2px 5px}@media(max-width:720px){.metrics,.grid,.fixes{grid-template-columns:1fr}.full{grid-column:auto}.wrap{padding:34px 18px}}
+  </style>
+</head>
+<body><main class="wrap">
+  <div class="eyebrow">Luna dogfood · exploration round 3 · 2026-08-24</div>
+  <h1>Thirteen new regressions. Sixty-four green cases.</h1>
+  <p class="lead">Three Luna agents attacked Markdown, HTML/browser behavior, and deck/video persistence. The minimized deterministic failures were repaired and promoted; expensive interaction and scale probes remain in the occasional full pass.</p>
+  <div class="verdict"><div class="check">✓</div><div><strong>Regression and full tiers are green</strong><span>62/62 important cases · 64/64 complete corpus · exact <code>pnpm verify</code> exited 0</span></div></div>
+
+  <section class="metrics">
+    <div class="metric"><strong>13</strong><span>new named regressions</span></div>
+    <div class="metric"><strong>62</strong><span>always-on regression cases</span></div>
+    <div class="metric"><strong>2</strong><span>extended scale cases</span></div>
+    <div class="metric"><strong>3</strong><span>Luna attack lanes</span></div>
+  </section>
+
+  <section class="grid">
+    <article class="card full"><h2>Failures repaired and kept forever</h2><div class="fixes">
+      <div class="fix"><b>Adjacent quote context</b><small>Punctuation and zero-whitespace prefixes now pin repeated text instead of forcing synthetic spaces.</small></div>
+      <div class="fix"><b>Nested Markdown structures</b><small>Nested lists and blockquote-lists recurse through rendered tokens; inline-code edits preserve fences.</small></div>
+      <div class="fix"><b>Zero-width syntax seams</b><small>Formatting delimiters no longer invent spaces in <code>(**bold**)</code> or <code>a**bold**b</code>.</small></div>
+      <div class="fix"><b>Unicode splice safety</b><small>Surrogate pairs, combining sequences, emoji modifiers, and ZWJ clusters cannot be split.</small></div>
+      <div class="fix"><b>Browser entity parity</b><small>Full named, legacy semicolonless, invalid-scalar, and Windows-1252 references share exact raw spans.</small></div>
+      <div class="fix"><b>Invisible HTML parity</b><small>Head, title, template, and iframe contents stay untargetable; spaced raw-text closers are recognized.</small></div>
+      <div class="fix"><b>Rich-text safety</b><small>Control-character-obfuscated URL schemes are normalized before checking; formatting cannot discard authored link/attribute metadata.</small></div>
+      <div class="fix"><b>Structural identity</b><small>Malformed or duplicate slide/scene identity attributes refuse before mutation; deck duplication cannot emit corrupt markup.</small></div>
+      <div class="fix"><b>Canonical concurrency input</b><small><code>base_version</code> accepts canonical positive integers only—no exponent, hex, whitespace, sign, or decimal coercion.</small></div>
+    </div></article>
+
+    <article class="card"><h2>Cadence policy</h2>
+      <div class="tier"><b>Regression · every pass</b><br>Deterministic P0/P1 preservation, refusal, identity, safety, persistence, and browser cases.</div>
+      <div class="tier" style="margin-top:10px"><b>Extended · occasional full pass</b><br>Large repeated syntax, bounded-runtime attacks, fuzz seeds, and expensive UI coalescing journeys.</div>
+    </article>
+    <article class="card"><h2>Verified commands</h2><div class="run">pnpm test:editing
+→ 56/56 core + API fast cases
+
+pnpm test:editing:regression
+→ 62/62 across core + API + browser
+
+pnpm test:editing:full
+→ 64/64 across all lanes
+
+pnpm verify
+→ 34/34 guardrails + typecheck + all tests</div></article>
+
+    <article class="card full"><h2>Next Luna attack queue</h2><ul>
+      <li><b>Browser coalescing:</b> type inside authored markup, then format the changed run before Save; prove no silent uncaptured dirty state.</li>
+      <li><b>Malformed HTML locality:</b> target text inside already-crossed inline nesting and decide whether byte-preserving edits are allowed or must refuse.</li>
+      <li><b>Markdown replacement policy:</b> decide whether <code>new_text</code> is literal plaintext or intentionally permits authored Markdown syntax.</li>
+      <li><b>Variable code fences:</b> embedded backticks, whitespace-normalized code spans, and fenced-code policy.</li>
+      <li><b>Identity journeys:</b> deck comment anchors after duplicate/move/delete and video controls through persisted playback.</li>
+      <li><b>Generated chaos:</b> seeded syntax mutations with minimized reproductions and complexity-ratio oracles.</li>
+    </ul><p class="small">The stop condition remains unmet: round 3 found reproducible P0–P2 issues. The loop continues until two consecutive exploration rounds find none while every deterministic gate remains green.</p></article>
+  </section>
+</main></body>
+</html>

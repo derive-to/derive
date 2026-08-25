@@ -1,5 +1,5 @@
 import { marked } from "marked"
-import { decodeEntities, ENTITY_RE, type PageTextSegment, pageTextParts } from "./anchor"
+import { decodedEntitiesIn, type PageTextSegment, pageTextParts } from "./anchor"
 
 /** A page-text run projected from Markdown. `block` is the rendered editable block
  *  that owns the text; an edit may cross inline syntax inside one block, but never
@@ -10,7 +10,7 @@ export interface MarkdownTextSegment extends PageTextSegment {
 }
 
 export interface MarkdownInlineWrapper {
-  kind: "strong" | "em" | "del" | "link"
+  kind: "strong" | "em" | "del" | "link" | "code"
   at: number
   end: number
   contentStart: number
@@ -35,7 +35,7 @@ interface MarkdownToken {
   rows?: MarkdownToken[][]
 }
 
-const WRAPPERS = new Set<MarkdownInlineWrapper["kind"]>(["strong", "em", "del", "link"])
+const WRAPPERS = new Set<MarkdownInlineWrapper["kind"]>(["strong", "em", "del", "link", "code"])
 
 /**
  * Project the rendered text of the Markdown blocks the inline editor can mutate
@@ -59,19 +59,22 @@ export function markdownTextParts(source: string): MarkdownTextParts {
     rEnd: number,
     block: number,
     boundary: "inline" | "html" | "structural" = "inline",
+    projectSpace = true,
   ) => {
     if (rEnd <= rStart) return
     segments.push({
       kind: "gap",
       tStart: tLen,
-      tEnd: tLen + 1,
+      tEnd: tLen + (projectSpace ? 1 : 0),
       rStart,
       rEnd,
       block,
       boundary,
     })
-    parts.push(" ")
-    tLen++
+    if (projectSpace) {
+      parts.push(" ")
+      tLen++
+    }
   }
 
   const pushEntity = (text: string, rStart: number, rEnd: number, block: number) => {
@@ -83,26 +86,25 @@ export function markdownTextParts(source: string): MarkdownTextParts {
 
   const pushText = (rStart: number, rEnd: number, block: number) => {
     const raw = source.slice(rStart, rEnd)
-    const entityRe = new RegExp(ENTITY_RE.source, "g")
     let last = 0
-    for (let match = entityRe.exec(raw); match; match = entityRe.exec(raw)) {
-      const decoded = decodeEntities(match[0])
-      if (decoded === match[0]) continue
-      if (match.index > last) {
-        const plain = raw.slice(last, match.index)
+    for (const entity of decodedEntitiesIn(source, rStart, rEnd)) {
+      const localStart = entity.start - rStart
+      const localEnd = entity.end - rStart
+      if (localStart > last) {
+        const plain = raw.slice(last, localStart)
         segments.push({
           kind: "text",
           tStart: tLen,
           tEnd: tLen + plain.length,
           rStart: rStart + last,
-          rEnd: rStart + match.index,
+          rEnd: entity.start,
           block,
         })
         parts.push(plain)
         tLen += plain.length
       }
-      pushEntity(decoded, rStart + match.index, rStart + match.index + match[0].length, block)
-      last = match.index + match[0].length
+      pushEntity(entity.text, entity.start, entity.end, block)
+      last = localEnd
     }
     if (last >= raw.length) return
     const plain = raw.slice(last)
@@ -156,7 +158,7 @@ export function markdownTextParts(source: string): MarkdownTextParts {
       const at = locate(raw, cursor, rangeEnd)
       if (at < 0) continue
       const end = at + raw.length
-      pushGap(cursor, at, block)
+      pushGap(cursor, at, block, "inline", /\s/.test(source.slice(cursor, at)))
       first ??= at
       last = end
 
@@ -182,16 +184,33 @@ export function markdownTextParts(source: string): MarkdownTextParts {
           })
         }
       } else if (token.type === "text") pushText(at, end, block)
-      else if (token.type === "escape" || token.type === "codespan")
-        pushEntity(token.text ?? "", at, end, block)
+      else if (token.type === "codespan") {
+        const fence = /^`+/.exec(raw)?.[0] ?? ""
+        if (fence && raw.endsWith(fence) && raw.length >= fence.length * 2) {
+          const contentStart = at + fence.length
+          const contentEnd = end - fence.length
+          pushGap(at, contentStart, block, "inline", false)
+          pushEntity(token.text ?? "", contentStart, contentEnd, block)
+          pushGap(contentEnd, end, block, "inline", false)
+          wrappers.push({
+            kind: "code",
+            at,
+            end,
+            contentStart,
+            contentEnd,
+            open: fence,
+            close: fence,
+          })
+        } else pushGap(at, end, block, "structural", /\s/.test(raw))
+      } else if (token.type === "escape") pushEntity(token.text ?? "", at, end, block)
       else if (token.type === "html") pushHtml(raw, at, block)
       // A break contributes no DOM text, an image contributes no text node, and
       // every other non-leaf token is renderer syntax. Keep it as a mapped gap.
-      else pushGap(at, end, block)
+      else pushGap(at, end, block, "inline", /\s/.test(raw))
 
       cursor = end
     }
-    pushGap(cursor, rangeEnd, block)
+    pushGap(cursor, rangeEnd, block, "inline", /\s/.test(source.slice(cursor, rangeEnd)))
     return { first, last }
   }
 
@@ -207,18 +226,25 @@ export function markdownTextParts(source: string): MarkdownTextParts {
       const at = locate(raw, cursor, rangeEnd)
       if (at < 0) continue
       const end = at + raw.length
-      const block = blockSeq++
-      pushGap(cursor, at, block, "structural")
-      const textToken = (item.tokens ?? []).find(
-        (child) => child.type === "text" && Array.isArray(child.tokens),
-      )
-      const textRaw = textToken?.raw ?? ""
-      const textAt = locate(textRaw, at, end)
-      if (textToken && textAt >= 0) {
-        pushGap(at, textAt, block, "structural")
-        mapInline(textToken.tokens ?? [], textAt, textAt + textRaw.length, block)
-        pushGap(textAt + textRaw.length, end, block, "structural")
-      } else pushText(at, end, block)
+      let itemCursor = at
+      for (const child of item.tokens ?? []) {
+        const childRaw = child.raw ?? ""
+        const childAt = locate(childRaw, itemCursor, end)
+        if (childAt < 0) continue
+        const childEnd = childAt + childRaw.length
+        if (child.type === "list") {
+          pushGap(itemCursor, childAt, blockSeq++, "structural")
+          mapList(child, childAt, childEnd)
+        } else {
+          const block = blockSeq++
+          pushGap(itemCursor, childAt, block, "structural")
+          if (Array.isArray(child.tokens) && child.tokens.length)
+            mapInline(child.tokens, childAt, childEnd, block)
+          else pushText(childAt, childEnd, block)
+        }
+        itemCursor = childEnd
+      }
+      if (itemCursor < end) pushGap(itemCursor, end, blockSeq++, "structural")
       cursor = end
     }
     if (cursor < rangeEnd) pushGap(cursor, rangeEnd, blockSeq++, "structural")
@@ -235,7 +261,8 @@ export function markdownTextParts(source: string): MarkdownTextParts {
       const end = at + raw.length
       const block = blockSeq++
       pushGap(cursor, at, block, "structural")
-      if (Array.isArray(child.tokens) && child.tokens.length)
+      if (child.type === "list") mapList(child, at, end)
+      else if (Array.isArray(child.tokens) && child.tokens.length)
         mapInline(child.tokens, at, end, block)
       else pushText(at, end, block)
       cursor = end

@@ -8,7 +8,7 @@
 // The authoring guide is derive://skills/decks; the starter is deck-template.html.
 
 import { EditError } from "./doc-text"
-import { classTokens, elementEnd, type HtmlTag, tags } from "./html-tags"
+import { attrValues, classTokens, elementEnd, type HtmlTag, tags } from "./html-tags"
 
 /** HTML comments hold prose ABOUT decks (including this repo's own annotated starter) and
  *  render nothing, so they must never make a page look like a deck. Stripped before any
@@ -46,7 +46,7 @@ const SLIDE_CANDIDATE = /<(?:section|div|article|li)\b([^>]*)>/gi
  *  slide, which inflated the count and made the slicer refuse the deck outright. Found by
  *  running this over real published decks rather than fixtures. */
 export const isSlideAttrs = (attrs: string): boolean =>
-  /data-derive-slide\s*=/i.test(attrs) ||
+  attrValues(attrs, "data-derive-slide").length > 0 ||
   classTokens(attrs).some((t) => t.toLowerCase() === "slide")
 
 /** How many slide elements this HTML actually contains. */
@@ -106,10 +106,18 @@ const SLIDE_TAGS = new Set(["section", "div", "article", "li"])
 
 /** The `data-derive-slide` value on an opening tag, when it carries a numeric one. */
 const idOf = (attrs: string): number | null => {
-  const m = attrs.match(/data-derive-slide\s*=\s*["']?(-?\d+)/i)
-  if (!m?.[1]) return null
-  const n = Number(m[1])
-  return Number.isInteger(n) ? n : null
+  const values = attrValues(attrs, "data-derive-slide")
+  if (values.length > 1)
+    throw new EditError(
+      "A slide has more than one data-derive-slide attribute, so its identity is ambiguous. Edit the source directly.",
+    )
+  const raw = values[0]
+  if (raw === undefined) return null
+  if (!/^-?\d+$/.test(raw) || !Number.isSafeInteger(Number(raw)))
+    throw new EditError(
+      `Slide identity ${JSON.stringify(raw)} must be one whole, safely representable integer. Edit the source directly.`,
+    )
+  return Number(raw)
 }
 
 /** One slide element's exact span in the source. */
