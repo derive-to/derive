@@ -132,6 +132,7 @@ const INVISIBLE_NAMES = [
   "iframe",
   "noembed",
   "noframes",
+  "textarea",
 ]
 const SVG_INVISIBLE_NAMES = new Set(["desc", "metadata"])
 const MATH_INVISIBLE_NAMES = new Set(["annotation", "annotation-xml"])

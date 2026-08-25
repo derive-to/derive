@@ -358,6 +358,16 @@
       "cadence": "regression"
     },
     {
+      "id": "MD-032",
+      "lane": "core",
+      "surface": "markdown",
+      "risk": "P1",
+      "oracle": "rendered-newline-and-exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "multiline list continuation text remains one editable block across prefixed newlines",
+      "cadence": "regression"
+    },
+    {
       "id": "HTML-001",
       "lane": "core",
       "surface": "html",
@@ -654,7 +664,27 @@
       "risk": "P1",
       "oracle": "browser-parity-and-exact-source",
       "source": "packages/core/test/editing-eval.test.ts",
-      "covers": "apparent tags inside RAWTEXT and RCDATA bodies remain literal editable text",
+      "covers": "apparent tags inside XMP raw text remain literal editable text",
+      "cadence": "regression"
+    },
+    {
+      "id": "HTML-031",
+      "lane": "core",
+      "surface": "html",
+      "risk": "P1",
+      "oracle": "browser-parity-and-exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "listing descendants parse as ordinary markup in modern browsers",
+      "cadence": "regression"
+    },
+    {
+      "id": "HTML-032",
+      "lane": "core",
+      "surface": "html",
+      "risk": "P1",
+      "oracle": "browser-parity-and-safe-refusal",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "textarea control values stay outside page-text editing",
       "cadence": "regression"
     },
     {

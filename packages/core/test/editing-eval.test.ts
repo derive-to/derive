@@ -311,6 +311,15 @@ describe("editing eval — Markdown source preservation", () => {
       "> ```ts\r\n> changed\r\n> ```",
     )
   })
+
+  it("[MD-032] maps multiline list continuation text as one editable block", () => {
+    for (const newline of ["\n", "\r\n"]) {
+      const source = `> - a${newline}>   one${newline}>   two`
+      expect(applyQuoteEdits(source, MD, [qe("one\ntwo", "changed")])).toBe(
+        `> - a${newline}>   changed`,
+      )
+    }
+  })
 })
 
 describe("editing eval — HTML projection, topology, and injection", () => {
@@ -601,14 +610,26 @@ describe("editing eval — HTML projection, topology, and injection", () => {
     }
   })
 
-  it("[HTML-030] keeps apparent tags literal inside RAWTEXT and RCDATA elements", () => {
-    for (const name of ["xmp", "listing", "textarea"]) {
-      const source = `<${name}>hello <b>world</b></${name}><p>tail</p>`
-      expect(pageTextParts(source).text).toContain("hello <b>world</b>")
-      expect(applyQuoteEdits(source, HTML, [qe("hello <b>world</b>", "X")])).toBe(
-        `<${name}>X</${name}><p>tail</p>`,
-      )
-    }
+  it("[HTML-030] keeps apparent tags literal inside XMP raw text", () => {
+    const source = "<xmp>hello <b>world</b></xmp><p>tail</p>"
+    expect(pageTextParts(source).text).toContain("hello <b>world</b>")
+    expect(applyQuoteEdits(source, HTML, [qe("hello <b>world</b>", "X")])).toBe(
+      "<xmp>X</xmp><p>tail</p>",
+    )
+  })
+
+  it("[HTML-031] parses listing descendants as ordinary markup", () => {
+    const source = "<listing>hello <b>world</b></listing><p>tail</p>"
+    expect(pageTextParts(source).text).not.toContain("<b>")
+    expect(applyQuoteEdits(source, HTML, [qe("hello world", "X")])).toBe(
+      "<listing>X</listing><p>tail</p>",
+    )
+  })
+
+  it("[HTML-032] omits textarea control values from page-text editing", () => {
+    const source = "<textarea>A &amp; B</textarea><p>tail</p>"
+    expect(pageTextParts(source).text).not.toContain("A & B")
+    expect(() => applyQuoteEdits(source, HTML, [qe("A & B", "X")])).toThrow(/wasn't found/)
   })
 })
 

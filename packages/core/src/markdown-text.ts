@@ -264,21 +264,25 @@ export function markdownTextParts(source: string): MarkdownTextParts {
         // each visible line in order and keep the intervening prefixes structural.
         if (token.type === "text" && raw.includes("\n")) {
           let lineCursor = cursor
-          for (const line of raw.split("\n")) {
+          let previousLine = -1
+          for (const [lineIndex, line] of raw.split("\n").entries()) {
             if (!line) continue
             const lineAt = locate(line, lineCursor, rangeEnd)
             if (lineAt < 0) continue
-            pushGap(
-              lineCursor,
-              lineAt,
-              block,
-              "structural",
-              /\s/.test(source.slice(lineCursor, lineAt)),
-            )
+            if (previousLine < 0)
+              pushGap(
+                lineCursor,
+                lineAt,
+                block,
+                "structural",
+                /\s/.test(source.slice(lineCursor, lineAt)),
+              )
+            else pushEntity("\n".repeat(lineIndex - previousLine), lineCursor, lineAt, block)
             pushText(lineAt, lineAt + line.length, block)
             first ??= lineAt
             last = lineAt + line.length
             lineCursor = lineAt + line.length
+            previousLine = lineIndex
           }
           cursor = lineCursor
         }

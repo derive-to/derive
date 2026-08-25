@@ -62,7 +62,6 @@ export const RAW_TEXT_ELEMENTS = new Set([
   "iframe",
   "noembed",
   "noframes",
-  "listing",
 ])
 export const RCDATA_ELEMENTS = new Set(["title", "textarea"])
 
