@@ -8,6 +8,7 @@ import { OAUTH_ANON_CLIENT_TTL_MS } from "./auth-config"
 import { type AppDeps, buildContext } from "./context"
 import { draftChip, expiredDraftPage } from "./lib/draft-chip"
 import { cacheControlFor, corsFor, fail, TOMBSTONE } from "./lib/http"
+import { isMissingTable } from "./lib/missing-table"
 import { observability, redactPath } from "./lib/observability"
 import { inMemoryRateLimiters, ipRateLimit } from "./lib/rate-limit"
 import { serveContent } from "./lib/serve-content"
@@ -140,6 +141,11 @@ export function createApp(deps: AppDeps): Hono {
     if (templateLibraryPath && isTemplateLibrarySchemaUnavailable(err))
       return fail(c, 503, "template libraries are waiting for the database update", {
         code: "template_library_schema_unavailable",
+      })
+    const sharedStatePath = /^\/v1\/artifacts\/[^/]+\/state\/[^/]+(?:\/activity)?$/.test(c.req.path)
+    if (sharedStatePath && isMissingTable(err, ["shared_state", "shared_state_activity"]))
+      return fail(c, 503, "shared state is waiting for the database update", {
+        code: "shared_state_schema_unavailable",
       })
     log.error("unhandled error", {
       method: c.req.method,

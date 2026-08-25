@@ -25,7 +25,9 @@ describe("comment access via the general-access link", () => {
   // Bob is signed in but reaches Alice's artifact purely via the link (his own isolated
   // workspace → no membership, no share): the "signed in via link" column.
   const bob: TestUser = { id: "u_ca_bob", email: "bob@ca.test", name: "Bob" }
-  const { app } = makeAuthedApp("comment-access", [alice, bob], undefined, { isolated: true })
+  const { app, meta } = makeAuthedApp("comment-access", [alice, bob], undefined, {
+    isolated: true,
+  })
 
   const setAccess = (shortId: string, linkRole: "viewer" | "commenter") =>
     app.request(`/v1/artifacts/${shortId}/access`, {
@@ -170,6 +172,27 @@ describe("comment access via the general-access link", () => {
     expect(
       (await mutate({ op: "add", initial: [], value: { title: "no" } }, as(bob.email))).status,
     ).toBe(403)
+  })
+
+  it("explains when a production-backed preview is waiting for the new tables", async () => {
+    await app.request("/v1/me", { headers: as(alice.email) })
+    const shortId = (await (await publishAs(app, "<h1>preview</h1>", {}, as(alice.email))).json())
+      .short_id
+    Object.assign(meta, {
+      getSharedState: async () => {
+        throw Object.assign(new Error('relation "shared_state" does not exist'), {
+          code: "42P01",
+        })
+      },
+    })
+
+    const response = await app.request(`/v1/artifacts/${shortId}/state/bugs`, {
+      headers: as(alice.email),
+    })
+    expect(response.status).toBe(503)
+    await expect(response.json()).resolves.toMatchObject({
+      code: "shared_state_schema_unavailable",
+    })
   })
 })
 
