@@ -3,6 +3,9 @@ import type {
   LinkRole,
   Listed,
   Role,
+  SharedStateActivity,
+  SharedStateMutation,
+  SharedStateResult,
   SortMode,
   WorkspaceAccess,
 } from "@derive/core"
@@ -417,20 +420,7 @@ export type TemplateLibraryScope = TemplateLibrary["scope"]
  *  effective role here. */
 export type Viewer = components["schemas"]["Viewer"]
 
-export interface SharedStateResult {
-  value: unknown
-  version: number
-}
-export interface SharedStateActivity {
-  action: "add" | "update"
-  version: number
-  item_id: string
-  actor: { id: string; name: string }
-  at: string
-}
-export type SharedStateMutation =
-  | { op: "add"; initial: unknown; value: Record<string, unknown> }
-  | { op: "update"; initial: unknown; id: string; patch: Record<string, unknown> }
+export type { SharedStateActivity, SharedStateMutation, SharedStateResult }
 /** A webhook delivery attempt. Generated from the OpenAPI spec. */
 export type Delivery = components["schemas"]["Delivery"]
 /** One line of a unified diff, as the diff endpoint's ?format=json returns it

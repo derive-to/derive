@@ -4,11 +4,14 @@
  * can call `derive.shared(...)` synchronously. Authentication stays in the host:
  * this opaque-origin client only speaks postMessage.
  */
+import { SHARED_STATE_KEY_PATTERN } from "./shared-state"
+
 export const SHARED_STATE_CLIENT_JS = `(function () {
   var root = window.derive;
   if (!root || (typeof root !== "object" && typeof root !== "function")) root = {};
   if (typeof root.shared === "function") return;
   var states = Object.create(null), pending = Object.create(null), queued = [], seq = 0;
+  var keyPattern = new RegExp(${JSON.stringify(SHARED_STATE_KEY_PATTERN)});
   var ready = false;
 
   function send(message) {
@@ -41,7 +44,7 @@ export const SHARED_STATE_CLIENT_JS = `(function () {
   }
 
   function shared(key, initial) {
-    if (!/^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(key)) throw new Error("invalid shared-state key");
+    if (!keyPattern.test(key)) throw new Error("invalid shared-state key");
     if (states[key]) return states[key].handle;
     var state = { value: initial, version: 0, listeners: [], handle: null };
     var handle = {

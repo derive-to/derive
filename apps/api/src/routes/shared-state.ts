@@ -1,17 +1,21 @@
-import { newId, type SharedStateAction } from "@derive/core"
+import {
+  isSharedStateKey,
+  newId,
+  SHARED_STATE_MAX_BYTES,
+  SHARED_STATE_MAX_ITEMS,
+  type SharedStateAction,
+  type SharedStateMutation,
+} from "@derive/core"
 import { z } from "@hono/zod-openapi"
 import { Hono } from "hono"
 import type { AppContext } from "../context"
 import { fail, readJson } from "../lib/http"
 
-const KEY = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/
-const MAX_ITEMS = 2_000
-const MAX_BYTES = 256 * 1024
 const CAS_ATTEMPTS = 8
 const RESERVED_FIELDS = new Set(["id", "__proto__", "constructor", "prototype"])
 
 const JsonObject = z.record(z.string(), z.unknown())
-const Mutation = z.discriminatedUnion("op", [
+const Mutation: z.ZodType<SharedStateMutation> = z.discriminatedUnion("op", [
   z.object({
     op: z.literal("add"),
     initial: z.unknown().optional().default([]),
@@ -30,7 +34,8 @@ type MutationBody = z.infer<typeof Mutation>
 
 const collection = (value: unknown, mintMissingIds: boolean): Item[] | string => {
   if (!Array.isArray(value)) return "shared state must be an array"
-  if (value.length > MAX_ITEMS) return `shared state is limited to ${MAX_ITEMS} items`
+  if (value.length > SHARED_STATE_MAX_ITEMS)
+    return `shared state is limited to ${SHARED_STATE_MAX_ITEMS} items`
   const items: Item[] = []
   for (const item of value) {
     if (!item || typeof item !== "object" || Array.isArray(item))
@@ -61,7 +66,8 @@ const apply = (
   if (body.op === "add") {
     for (const key of Object.keys(body.value))
       if (RESERVED_FIELDS.has(key) && key !== "id") return `field "${key}" is reserved`
-    if (items.length >= MAX_ITEMS) return `shared state is limited to ${MAX_ITEMS} items`
+    if (items.length >= SHARED_STATE_MAX_ITEMS)
+      return `shared state is limited to ${SHARED_STATE_MAX_ITEMS} items`
     return { value: [...items, { ...body.value, id: addId }], itemId: addId }
   }
 
@@ -94,7 +100,7 @@ export const sharedStateRoutes = (ctx: AppContext) => {
     const artifact = await requireArtifact(c, "read")
     if (artifact instanceof Response) return artifact
     const key = c.req.param("key")
-    if (!KEY.test(key)) return fail(c, 400, "invalid shared-state key")
+    if (!isSharedStateKey(key)) return fail(c, 400, "invalid shared-state key")
     return c.json(publicState(await meta.getSharedState(artifact.id, key)))
   })
 
@@ -102,7 +108,7 @@ export const sharedStateRoutes = (ctx: AppContext) => {
     const artifact = await requireArtifact(c, "comment", { split: true })
     if (artifact instanceof Response) return artifact
     const key = c.req.param("key")
-    if (!KEY.test(key)) return fail(c, 400, "invalid shared-state key")
+    if (!isSharedStateKey(key)) return fail(c, 400, "invalid shared-state key")
     const rows = await meta.listSharedStateActivity(artifact.id, key, 50)
     return c.json({
       activity: rows.map((row) => ({
@@ -119,7 +125,7 @@ export const sharedStateRoutes = (ctx: AppContext) => {
     const artifact = await requireArtifact(c, "comment", { split: true })
     if (artifact instanceof Response) return artifact
     const key = c.req.param("key")
-    if (!KEY.test(key)) return fail(c, 400, "invalid shared-state key")
+    if (!isSharedStateKey(key)) return fail(c, 400, "invalid shared-state key")
     const body = await readJson(c, Mutation)
     if (body instanceof Response) return body
     const actor = (await actingUser(c)) ?? { id: "system", name: "automation" }
@@ -140,8 +146,8 @@ export const sharedStateRoutes = (ctx: AppContext) => {
       if (typeof changed === "string")
         return fail(c, changed === "item not found" ? 404 : 400, changed)
       const json = JSON.stringify(changed.value)
-      if (new TextEncoder().encode(json).byteLength > MAX_BYTES)
-        return fail(c, 413, `shared state is limited to ${MAX_BYTES / 1024} KB`)
+      if (new TextEncoder().encode(json).byteLength > SHARED_STATE_MAX_BYTES)
+        return fail(c, 413, `shared state is limited to ${SHARED_STATE_MAX_BYTES / 1024} KB`)
       const at = new Date().toISOString()
       const saved = await meta.putSharedState({
         id: stateId,

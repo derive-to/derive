@@ -3,6 +3,7 @@
  * Everything here must run on Node AND Cloudflare Workers — no Node APIs.
  */
 import type { LinkRole, Listed, Role, WorkspaceAccess } from "./roles"
+import type { SharedStateAction } from "./shared-state"
 import type { SortMode } from "./sort"
 
 export interface BlobStore {
@@ -2247,8 +2248,6 @@ export interface SharedStateRecord {
   updated_by_name: string
   updated_at: string
 }
-
-export type SharedStateAction = "add" | "update"
 
 /** Append-only attribution for an interaction. Identity is always stamped by
  * the API from the authenticated principal, never accepted from artifact code. */

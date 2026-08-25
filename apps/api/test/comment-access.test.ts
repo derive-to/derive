@@ -126,14 +126,40 @@ describe("comment access via the general-access link", () => {
     expect(voted.status).toBe(200)
     expect(await voted.json()).toMatchObject({ version: 2, value: [{ id: itemId, votes: 1 }] })
 
+    // Two people can hit the same vote control at once without one increment
+    // overwriting the other. The route's CAS retry makes each interaction land.
+    const simultaneous = await Promise.all([
+      mutate(
+        {
+          op: "update",
+          initial: [],
+          id: itemId,
+          patch: { votes: { __derive_increment: 1 } },
+        },
+        as(alice.email),
+      ),
+      mutate(
+        {
+          op: "update",
+          initial: [],
+          id: itemId,
+          patch: { votes: { __derive_increment: 1 } },
+        },
+        as(bob.email),
+      ),
+    ])
+    expect(simultaneous.every((response) => response.status === 200)).toBe(true)
+
     // State is artifact-readable, but the attributed ledger stays collaborator-only.
     const publicRead = await app.request(`/v1/artifacts/${shortId}/state/bugs`)
     expect(publicRead.status).toBe(200)
-    expect(await publicRead.json()).toMatchObject({ version: 2, value: [{ votes: 1 }] })
+    expect(await publicRead.json()).toMatchObject({ version: 4, value: [{ votes: 3 }] })
     const activity = await app.request(`/v1/artifacts/${shortId}/state/bugs/activity`, {
       headers: as(bob.email),
     })
     expect((await activity.json()).activity).toMatchObject([
+      { action: "update", item_id: itemId },
+      { action: "update", item_id: itemId },
       { action: "update", item_id: itemId, actor: { id: bob.id, name: "Bob" } },
       { action: "add", item_id: itemId, actor: { id: bob.id, name: "Bob" } },
     ])

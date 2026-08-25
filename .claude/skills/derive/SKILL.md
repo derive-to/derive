@@ -105,6 +105,34 @@ For a new artifact, publish it as the workspace's default team draft unless the 
 explicitly asks for wider access. Return the artifact URL, version, access state, and a
 short account of what changed. Do not request review merely because an artifact exists.
 
+## Small shared interactions
+
+When an HTML artifact needs a bug list, votes, a checklist, or another small shared
+collection, use Derive's built-in inline JSON state. Do not add a database service,
+credentials, or a custom backend for this case:
+
+```html
+<script>
+  const bugs = derive.shared("bugs", [])
+  bugs.onChange(render)
+
+  // Call writes from a click or keyboard handler.
+  async function report(title) { await bugs.add({ title, votes: 0 }) }
+  async function vote(id, by) {
+    await bugs.update(id, { votes: derive.increment(by) })
+  }
+</script>
+```
+
+Viewers read and receive live updates. Signed-in commenters can add/update and call
+`bugs.activity()` for attributed history; they do not need source-edit rights. Derive
+stamps the actor from the signed-in principal, so never put identity in the item or
+mutation. When the user explicitly asks for anyone with the URL to participate, publish
+with `link_role: commenter`; an unsigned visitor signs in before a write can be
+attributed. Keep the state deliberately small: each stable key is one array of JSON
+objects (2,000 items / 256 KB). Use this primitive for artifact interaction, not secrets,
+server-side compute, or a general application backend.
+
 ## Non-negotiable rules
 
 - Do not widen access or listing without the user's explicit request.
