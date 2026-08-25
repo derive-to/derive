@@ -133,6 +133,17 @@ export const placeholderTables = (iso: string): string[] => [
     viewer_kind TEXT NOT NULL DEFAULT 'anon',
     created_at TEXT NOT NULL DEFAULT ${iso}
   )`,
+  // A confirmed read: this viewer was still present, beating, CONFIRM_READ_MS after
+  // their view landed (see confirmRead). Its own table rather than a column on `view`
+  // because `view` has no drizzle def and so gets no automatic ADD COLUMN migration,
+  // and SQLite has no ADD COLUMN IF NOT EXISTS — a new table is forward-only on all
+  // three dialects. Keyed on (artifact, viewer): a read is a fact, not a counter.
+  `CREATE TABLE IF NOT EXISTS view_read (
+    artifact_id TEXT NOT NULL REFERENCES artifact(id),
+    viewer TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT ${iso},
+    PRIMARY KEY (artifact_id, viewer)
+  )`,
 ]
 
 /** Performance indexes (identical SQL across dialects; the unique ones are inline

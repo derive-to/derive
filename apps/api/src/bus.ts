@@ -59,6 +59,13 @@ export interface Viewer {
 // open) is counted gone this long after its last beat. Shared with the edge DO.
 export const PRESENCE_TTL_MS = 45_000
 
+// How long a viewer must stay before a view counts as a read. The web client beats on
+// mount and every 20s, so the second beat is the first that can clear this; sitting just
+// under 20s means a slightly late beat still lands. Link-preview crawlers (LinkedIn,
+// Slack, iMessage) render with a real browser and do execute recordView, but tear the
+// context down in seconds — long enough to log a view, never long enough to beat twice.
+export const CONFIRM_READ_MS = 15_000
+
 /** Ephemeral presence per artifact. A viewer is present while they hold ≥1 open SSE
  *  stream — join on connect, leave the instant that stream closes, so a departure
  *  (tab-close or crash) reflects in ~a second, not after the heartbeat TTL. The TTL
