@@ -16,6 +16,9 @@ const DOMAIN_EVENTS = [
   "version.published",
   "review.requested",
   "review.sent_back",
+  // A mini-app interaction changed one persistent JSON collection. The value is
+  // authoritative state (not identity/activity, which stays comment-gated).
+  "artifact.state.updated",
   "presence",
   "cursor",
   "notification",

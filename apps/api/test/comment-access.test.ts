@@ -25,7 +25,9 @@ describe("comment access via the general-access link", () => {
   // Bob is signed in but reaches Alice's artifact purely via the link (his own isolated
   // workspace → no membership, no share): the "signed in via link" column.
   const bob: TestUser = { id: "u_ca_bob", email: "bob@ca.test", name: "Bob" }
-  const { app } = makeAuthedApp("comment-access", [alice, bob], undefined, { isolated: true })
+  const { app } = makeAuthedApp("comment-access", [alice, bob], undefined, {
+    isolated: true,
+  })
 
   const setAccess = (shortId: string, linkRole: "viewer" | "commenter") =>
     app.request(`/v1/artifacts/${shortId}/access`, {
@@ -86,6 +88,189 @@ describe("comment access via the general-access link", () => {
     // Flip back to view-only: the same reacher can no longer comment.
     expect((await setAccess(shortId, "viewer")).ok).toBe(true)
     expect((await comment(shortId, as(bob.email))).status).toBe(403)
+  })
+
+  it("lets commenters interact with shared state and stamps their identity server-side", async () => {
+    await app.request("/v1/me", { headers: as(alice.email) })
+    const shortId = (await (await publishAs(app, "<h1>bugs</h1>", {}, as(alice.email))).json())
+      .short_id
+    expect((await setAccess(shortId, "commenter")).ok).toBe(true)
+    const mutate = (body: unknown, headers: Record<string, string>) =>
+      app.request(`/v1/artifacts/${shortId}/state/bugs`, jsonAs(headers, body))
+
+    expect(
+      (
+        await mutate(
+          {
+            op: "add",
+            initial: [
+              { id: "same", title: "one" },
+              { id: "same", title: "two" },
+            ],
+            value: { title: "no" },
+          },
+          as(bob.email),
+        )
+      ).status,
+    ).toBe(400)
+    expect(
+      (
+        await mutate(
+          { op: "add", initial: [], value: { id: "caller-picked", title: "no" } },
+          as(bob.email),
+        )
+      ).status,
+    ).toBe(400)
+
+    const added = await mutate(
+      {
+        op: "add",
+        initial: [],
+        value: { title: "Voting is stale", votes: 0 },
+        actor: { id: alice.id, name: "Alice" },
+      },
+      as(bob.email),
+    )
+    expect(added.status).toBe(200)
+    const addBody = (await added.json()) as {
+      value: { id: string; title: string; votes: number }[]
+      version: number
+    }
+    expect(addBody).toMatchObject({ version: 1, value: [{ title: "Voting is stale", votes: 0 }] })
+    const itemId = addBody.value[0]?.id
+    if (!itemId) throw new Error("shared-state add did not mint an item id")
+
+    const voted = await mutate(
+      {
+        op: "update",
+        initial: [],
+        id: itemId,
+        patch: { votes: { __derive_increment: 1 } },
+      },
+      as(bob.email),
+    )
+    expect(voted.status).toBe(200)
+    expect(await voted.json()).toMatchObject({ version: 2, value: [{ id: itemId, votes: 1 }] })
+
+    // Two people can hit the same vote control at once without one increment
+    // overwriting the other. The route's CAS retry makes each interaction land.
+    const simultaneous = await Promise.all([
+      mutate(
+        {
+          op: "update",
+          initial: [],
+          id: itemId,
+          patch: { votes: { __derive_increment: 1 } },
+        },
+        as(alice.email),
+      ),
+      mutate(
+        {
+          op: "update",
+          initial: [],
+          id: itemId,
+          patch: { votes: { __derive_increment: 1 } },
+        },
+        as(bob.email),
+      ),
+    ])
+    expect(simultaneous.every((response) => response.status === 200)).toBe(true)
+
+    // State is artifact-readable, but the attributed ledger stays collaborator-only.
+    const publicRead = await app.request(`/v1/artifacts/${shortId}/state/bugs`)
+    expect(publicRead.status).toBe(200)
+    expect(await publicRead.json()).toMatchObject({ version: 4, value: [{ votes: 3 }] })
+    const activity = await app.request(`/v1/artifacts/${shortId}/state/bugs/activity`, {
+      headers: as(bob.email),
+    })
+    expect((await activity.json()).activity).toMatchObject([
+      { action: "update", item_id: itemId },
+      { action: "update", item_id: itemId },
+      { action: "update", item_id: itemId, actor: { id: bob.id, name: "Bob" } },
+      { action: "add", item_id: itemId, actor: { id: bob.id, name: "Bob" } },
+    ])
+
+    // Comment rights enable the intended public interaction vocabulary, not an
+    // arbitrary HTTP patch that bypasses the artifact's controls.
+    expect(
+      (
+        await mutate(
+          { op: "update", initial: [], id: itemId, patch: { title: "vandalized" } },
+          as(bob.email),
+        )
+      ).status,
+    ).toBe(403)
+    const ownerUpdate = await mutate(
+      { op: "update", initial: [], id: itemId, patch: { status: "triaged" } },
+      as(alice.email),
+    )
+    expect(ownerUpdate.status).toBe(200)
+    expect(await ownerUpdate.json()).toMatchObject({
+      version: 5,
+      value: [{ id: itemId, title: "Voting is stale", votes: 3, status: "triaged" }],
+    })
+
+    expect((await mutate({ op: "add", initial: [], value: {} }, {})).status).toBe(403)
+    expect((await app.request(`/v1/artifacts/${shortId}/state/bugs/activity`)).status).toBe(403)
+    expect((await setAccess(shortId, "viewer")).ok).toBe(true)
+    expect(
+      (await mutate({ op: "add", initial: [], value: { title: "no" } }, as(bob.email))).status,
+    ).toBe(403)
+  })
+
+  it("bounds the number of shared keys one artifact can allocate", async () => {
+    await app.request("/v1/me", { headers: as(alice.email) })
+    const shortId = (await (await publishAs(app, "<h1>bounded</h1>", {}, as(alice.email))).json())
+      .short_id
+    expect((await setAccess(shortId, "commenter")).ok).toBe(true)
+    for (let i = 0; i < 16; i++) {
+      const response = await app.request(
+        `/v1/artifacts/${shortId}/state/k${i}`,
+        jsonAs(as(bob.email), { op: "add", initial: [], value: { n: i } }),
+      )
+      expect(response.status).toBe(200)
+    }
+    const over = await app.request(
+      `/v1/artifacts/${shortId}/state/overflow`,
+      jsonAs(as(bob.email), { op: "add", initial: [], value: { n: 17 } }),
+    )
+    expect(over.status).toBe(413)
+    expect(await over.json()).toMatchObject({
+      error: "shared state is limited to 16 keys per artifact",
+    })
+  })
+
+  it("explains when a production-backed preview is waiting for the new tables", async () => {
+    const seeded = makeAuthedApp("comment-access-schema", [alice], undefined, { isolated: true })
+    await seeded.app.request("/v1/me", { headers: as(alice.email) })
+    const shortId = (
+      await (await publishAs(seeded.app, "<h1>preview</h1>", {}, as(alice.email))).json()
+    ).short_id
+    // Postgres test stores are deferred proxies, so replace the dependency before
+    // createApp closes over it instead of trying to patch one of its methods later.
+    const missingSchema = new Proxy(seeded.meta, {
+      get(target, prop, receiver) {
+        if (prop === "getSharedState")
+          return async () => {
+            throw Object.assign(new Error('relation "shared_state" does not exist'), {
+              code: "42P01",
+            })
+          }
+        return Reflect.get(target, prop, receiver)
+      },
+    })
+    const { app: preview } = makeAuthedApp("comment-access-schema-route", [alice], undefined, {
+      isolated: true,
+      deps: { meta: missingSchema },
+    })
+
+    const response = await preview.request(`/v1/artifacts/${shortId}/state/bugs`, {
+      headers: as(alice.email),
+    })
+    expect(response.status).toBe(503)
+    await expect(response.json()).resolves.toMatchObject({
+      code: "shared_state_schema_unavailable",
+    })
   })
 })
 
