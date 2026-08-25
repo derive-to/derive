@@ -809,13 +809,44 @@ export const previewWorkflow = (source: string): WorkflowPreview => {
   return previewWorkflowValidation(validation, linked)
 }
 
-/** A self-contained handoff for any approved local harness. Derive stores the
- * workflow and its receipts; the addressed agent performs the work through the
- * existing context-session contract. */
-export const workflowRunInstruction = (shortId: string, diagramId: string): string =>
-  `Read Derive artifact ${shortId} and run workflow diagram "${diagramId}". This is explicit run intent. ` +
-  "Use its workflow-definition as the policy and Preview it again before opening any context " +
-  "session; stop and report the blockers if it Needs changes. Use the existing Derive context " +
-  "sessions for ready context nodes, preserve the authored loop bounds and human gates, and " +
-  "project only explicit session truth back into the visible graph. Derive stores the graph, " +
-  "artifacts, review, and receipts; this agent is the harness that performs the work."
+export interface WorkflowRunTarget {
+  shortId: string
+  version: number
+  diagramId: string
+  baseUrl: string
+}
+
+/** A version-pinned, self-contained handoff for any approved local harness. Derive
+ * stores policy and receipts; a harness with the existing context `use` capability
+ * performs the work. A read/publish-only compatibility MCP must fail clearly instead
+ * of pretending it ran context nodes. */
+export const workflowRunInstruction = ({
+  shortId,
+  version,
+  diagramId,
+  baseUrl,
+}: WorkflowRunTarget): string => {
+  const origin = baseUrl.replace(/\/$/, "")
+  const runKey = `${shortId}@v${version}:${diagramId}`
+  return [
+    `Run Derive workflow ${shortId}@v${version}, diagram "${diagramId}". This is explicit run intent.`,
+    "",
+    "Derive is the persistent control and evidence layer; this agent session is the execution harness. Do not create another scheduler, queue, run database, or graph-run API.",
+    "",
+    "Pinned inputs — do not silently substitute the artifact's current head:",
+    `- Artifact: ${origin}/artifacts/${shortId}`,
+    `- Read: read({ short_id: "${shortId}", version: ${version}, format: "html" })`,
+    `- Workflow policy: ${origin}/raw/${shortId}/v/${version}/data/workflow-definition.json`,
+    `- Visible graph/state: ${origin}/raw/${shortId}/v/${version}/data/bundle-manifest.json`,
+    `- Run key: ${runKey}`,
+    "",
+    "Execution contract:",
+    '1. Parse the pinned workflow-definition and bundle-manifest, select the named diagram, and run the same Preview validation. If it is not "Ready to run", stop and report the exact blockers without opening a context session.',
+    `2. Begin at the declared entry. For each ready context-node attempt, call the existing remote Derive context tool: use({ context: node.context_ref, instruction: node.instruction, dedupe_key: "${runKey}:<node-id>:<attempt>" }). Continue that same attempt by session_id; a retry gets the next attempt number.`,
+    "3. Honor route conditions, loop/time/cost/stagnation bounds, forbidden actions, and human nodes. A human-gated effect may run only after its approval_ref node returned the authorizing option. Never infer approval, confidence, or urgency from silence.",
+    "4. Project only explicit context-session truth back to the same Derive workflow using ordinary version-checked publishes: open→waiting, working→active, answered→done, escalated→waiting with the exact help question, failed→the declared retry or blocked, closed→stopped. Bind real result artifacts; never invent ids.",
+    "5. Stop at a terminal result, exhausted bound, unresolved human gate, terminal failure, or the person's stop request. Report the pinned workflow version, completed nodes, result artifacts, and any remaining help request.",
+    "",
+    `Capability check: execution requires the remote Derive MCP context use capability (${origin}/mcp) or another approved harness that implements that same context-session contract. The local stdio compatibility MCP and CLI can read and publish, but cannot execute context nodes. If use is unavailable, stop before execution and explain how to connect the remote MCP; do not claim the workflow ran.`,
+  ].join("\n")
+}

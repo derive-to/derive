@@ -92,9 +92,9 @@ export function syncWorkflowSource(source) {
           ...(oldEdges.get(edgeKey(route.from, route.to)) ?? {}),
           from: route.from,
           to: route.to,
-          label:
-            text(oldEdges.get(edgeKey(route.from, route.to))?.label) ??
-            (route.when === "always" ? "next" : route.when),
+          // Route policy is authoritative. Preserving an old label here makes the
+          // visible graph lie after `when` changes while topology stays stable.
+          label: route.when === "always" ? "next" : route.when,
         })),
     }
   })

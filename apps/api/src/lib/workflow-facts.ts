@@ -3,7 +3,9 @@ import {
   type LinkedBundleManifest,
   previewWorkflowJson,
   validateLinkedBundle,
+  validateWorkflowDefinition,
   WORKFLOW_DEFINITION_FACT,
+  type WorkflowDefinition,
   type WorkflowPreview,
 } from "@derive/core"
 
@@ -15,6 +17,7 @@ export interface LinkedWorkflowFacts {
   manifest: LinkedBundleManifest | null
   bundleErrors: string[]
   preview?: WorkflowPreview
+  definition?: WorkflowDefinition
 }
 
 /** Parse the two authored workflow facts once for every API surface. This keeps
@@ -50,11 +53,23 @@ export const parseLinkedWorkflowFacts = (rows: FactRow[]): LinkedWorkflowFacts =
       bundleErrors: checked.errors,
     }
 
+  const preview = workflowRow ? previewWorkflowJson(workflowRow.json, checked.manifest) : undefined
+  let definition: WorkflowDefinition | undefined
+  if (workflowRow && preview?.status === "ready") {
+    try {
+      const validated = validateWorkflowDefinition(JSON.parse(workflowRow.json), checked.manifest)
+      if (validated.definition) definition = validated.definition
+    } catch {
+      // The shared Preview already owns malformed JSON wording. Definition stays absent.
+    }
+  }
+
   return {
     bundleFound: true,
     workflowFound: !!workflowRow,
     manifest: checked.manifest,
     bundleErrors: checked.errors,
-    ...(workflowRow ? { preview: previewWorkflowJson(workflowRow.json, checked.manifest) } : {}),
+    ...(preview ? { preview } : {}),
+    ...(definition ? { definition } : {}),
   }
 }

@@ -1038,6 +1038,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
       version={art.current_version}
       bundle={art.linked_bundle as NonNullable<typeof art.linked_bundle>}
       workflowPreview={art.workflow_preview}
+      workflowDefinition={art.workflow_definition}
       agents={agents}
       comments={comments}
       canComment={canComment}

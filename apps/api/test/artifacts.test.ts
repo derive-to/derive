@@ -388,6 +388,22 @@ describe("linked bundles", () => {
       ],
       cannot_do: ["Publish without approval"],
     })
+    expect(detail.workflow_definition).toMatchObject({
+      schema: "derive.workflow/v1",
+      purpose: manifest.purpose,
+    })
+    expect(detail.workflow_definition.diagrams[0].nodes[0]).toMatchObject({
+      id: "draft",
+      kind: "context",
+      context_ref: "signal-writer",
+      instruction: "Draft the signal brief.",
+      result: "A reviewable brief",
+    })
+    expect(detail.workflow_definition.diagrams[0].routes[0]).toEqual({
+      from: "draft",
+      to: "review",
+      when: "always",
+    })
   })
 
   it("resolves readable members and leaves missing ones explicit", async () => {

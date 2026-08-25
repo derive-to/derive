@@ -18,6 +18,8 @@ import {
   linkedBundleNodeFreshness,
   linkedBundleNowHeadline,
   linkedBundleNowSummary,
+  linkedBundleWorkflowNode,
+  linkedBundleWorkflowRoute,
 } from "./linked-bundle-workspace"
 
 type Diagram = NonNullable<NonNullable<Artifact["linked_bundle"]>["diagrams"]>[number]
@@ -37,6 +39,58 @@ const graph: Diagram = {
     { from: "research", to: "decision" },
   ],
 }
+
+const workflow = {
+  schema: "derive.workflow/v1" as const,
+  purpose: "Launch safely",
+  diagrams: [
+    {
+      id: "launch",
+      entry: "brief",
+      nodes: [
+        {
+          id: "brief",
+          kind: "context" as const,
+          context_ref: "launch-brief-writer",
+          instruction: "Write the launch brief from the approved inputs.",
+          result: "A reviewable launch brief",
+        },
+        {
+          id: "research",
+          kind: "human" as const,
+          decision: "Is the evidence sufficient?",
+          options: ["approve", "revise"],
+          resume: "Continue with the selected option",
+        },
+        {
+          id: "decision",
+          kind: "terminal" as const,
+          result: "A recorded launch decision",
+          effects: [
+            {
+              kind: "write" as const,
+              description: "Record the decision in Derive",
+              gate: "none" as const,
+              idempotency: "One result per node attempt",
+            },
+          ],
+        },
+      ],
+      routes: [
+        { from: "brief", to: "research", when: "brief ready" },
+        { from: "research", to: "decision", when: "approve", fallback: true },
+      ],
+      scenarios: [
+        {
+          id: "expected",
+          kind: "expected" as const,
+          path: ["brief", "research", "decision"],
+          outcome: "The launch decision is recorded",
+        },
+      ],
+    },
+  ],
+} satisfies NonNullable<Artifact["workflow_definition"]>
 
 describe("linked bundle workspace", () => {
   it("turns a native visual selection into the durable semantic anchor", () => {
@@ -190,6 +244,32 @@ describe("linked bundle workspace", () => {
     })
     expect([...focus.nodes]).toEqual(["research", "decision"])
     expect([...focus.edges]).toEqual([1])
+  })
+
+  it("resolves exact node behavior from workflow-definition by stable ids", () => {
+    expect(linkedBundleWorkflowNode(workflow, "launch", "brief")).toMatchObject({
+      kind: "context",
+      context_ref: "launch-brief-writer",
+      instruction: "Write the launch brief from the approved inputs.",
+      result: "A reviewable launch brief",
+    })
+    expect(linkedBundleWorkflowNode(workflow, "launch", "research")).toMatchObject({
+      kind: "human",
+      decision: "Is the evidence sufficient?",
+      options: ["approve", "revise"],
+      resume: "Continue with the selected option",
+    })
+    expect(linkedBundleWorkflowNode(workflow, "missing", "brief")).toBeUndefined()
+  })
+
+  it("uses the authored route condition instead of a possibly stale canvas label", () => {
+    const edge = { from: "research", to: "decision", label: "old label" }
+    expect(linkedBundleWorkflowRoute(workflow, "launch", edge)).toEqual({
+      from: "research",
+      to: "decision",
+      when: "approve",
+      fallback: true,
+    })
   })
 })
 

@@ -222,6 +222,13 @@ describe.skipIf(process.env.DERIVE_TEST_DB === "pg")("MCP owner-run + create_con
     const watching = await call(app, "tok_full", "use", { session_id: opened.session_id, wait: 0 })
     expect(watching.state).toBe("working")
     expect(watching.progress.body_md).toContain("SMK-1")
+    const invented = await callRaw(app, "tok_full", "use", {
+      session_id: opened.session_id,
+      answer: "done",
+      result_artifact_id: "invented-result",
+    })
+    expect(invented.isError).toBe(true)
+    expect(invented.text).toContain("not a live artifact")
     // Settle with a result artifact bound; the give side collects the answer.
     const report = await call(app, "tok_full", "publish", {
       title: "QA run report",
@@ -271,6 +278,60 @@ describe.skipIf(process.env.DERIVE_TEST_DB === "pg")("MCP owner-run + create_con
     })
     expect(probe.isError).toBe(true)
     expect(probe.text).toContain("No session")
+  })
+
+  it("owner-run fails closed when the context manifest moved after the session opened", async () => {
+    const { app } = ownerApp("own-version-pin")
+    const { manifest } = await setupContext(app)
+    const opened = await call(app, "tok_full", "use", {
+      context: "QA",
+      instruction: "Run exactly the context I opened.",
+      wait: 0,
+    })
+    expect(opened.state).toBe("open")
+    const revised = await call(app, "tok_full", "publish", {
+      short_id: manifest.short_id,
+      content: "# QA manifest v2\nChanged instructions.",
+    })
+    expect(revised.version).toBe(2)
+
+    const pulled = await call(app, "tok_full", "use", { context: "QA" })
+    expect(pulled.claimed).toBe(0)
+    expect(pulled.stale_context_versions).toEqual([
+      { session_id: opened.session_id, opened: 1, current: 2 },
+    ])
+    const observed = await call(app, "tok_full", "use", {
+      session_id: opened.session_id,
+      wait: 0,
+    })
+    expect(observed.state).toBe("failed")
+    expect(observed.answer.body_md).toContain("changed from v1 to v2")
+    expect(observed.answer.body_md).toContain("nothing ran")
+  })
+
+  it("owner-run fails closed for an unpinned legacy session", async () => {
+    const { app, meta } = ownerApp("own-version-unpinned")
+    const { created } = await setupContext(app)
+    const legacy = await meta.createSession({
+      id: "ses_legacy_unpinned_owner_run",
+      context_id: created.context_id,
+      org_id: "ws_main",
+      asker_id: "u_admin",
+      context_version: null,
+    })
+
+    const pulled = await call(app, "tok_full", "use", { context: "QA" })
+    expect(pulled.claimed).toBe(0)
+    expect(pulled.stale_context_versions).toEqual([
+      { session_id: legacy.id, opened: null, current: 1 },
+    ])
+    const observed = await call(app, "tok_full", "use", {
+      session_id: legacy.id,
+      wait: 0,
+    })
+    expect(observed.state).toBe("failed")
+    expect(observed.answer.body_md).toContain("an unpinned legacy version")
+    expect(observed.answer.body_md).toContain("nothing ran")
   })
   // THE BETA GATE, over MCP. `automateBeta` appeared nowhere in mcp-tools/automate.ts, so an
   // agent could stand up an automation and fire it in a workspace where the REST route 404s —

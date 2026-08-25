@@ -99,6 +99,82 @@ export const WorkflowPreview = z
   })
   .openapi("WorkflowPreview")
 
+/** The validated execution policy paired with a linked bundle. The browser uses
+ * stable diagram/node ids to show exact authored semantics for a visual selection;
+ * exposing it is descriptive and never starts execution. */
+export const WorkflowDefinition = z
+  .object({
+    schema: z.literal("derive.workflow/v1"),
+    purpose: z.string(),
+    diagrams: z.array(
+      z.object({
+        id: z.string(),
+        entry: z.string(),
+        nodes: z.array(
+          z.object({
+            id: z.string(),
+            kind: z.enum(["context", "human", "terminal"]),
+            routing: z.enum(["all", "one"]).optional(),
+            terminal: z.boolean().optional(),
+            context_ref: z.string().optional(),
+            instruction: z.string().optional(),
+            result: z.string().optional(),
+            decision: z.string().optional(),
+            options: z.array(z.string()).optional(),
+            resume: z.string().optional(),
+            effects: z
+              .array(
+                z.object({
+                  kind: z.enum(["read", "write", "message", "spend", "access"]),
+                  description: z.string(),
+                  gate: z.enum(["none", "human"]),
+                  approval_ref: z.string().optional(),
+                  idempotency: z.string().optional(),
+                  compensation: z.string().optional(),
+                }),
+              )
+              .optional(),
+          }),
+        ),
+        routes: z.array(
+          z.object({
+            from: z.string(),
+            to: z.string(),
+            when: z.string(),
+            fallback: z.boolean().optional(),
+          }),
+        ),
+        loops: z
+          .array(
+            z.object({
+              id: z.string(),
+              nodes: z.array(z.string()),
+              goal: z.string(),
+              evaluate: z.string(),
+              stop: z.object({
+                max_attempts: z.number().int().positive(),
+                stagnation_limit: z.number().int().positive().optional(),
+                max_minutes: z.number().positive().optional(),
+                max_cost_usd: z.number().positive().optional(),
+                human_stop: z.string(),
+              }),
+            }),
+          )
+          .optional(),
+        scenarios: z.array(
+          z.object({
+            id: z.string(),
+            kind: z.enum(["expected", "failure", "human"]),
+            path: z.array(z.string()),
+            outcome: z.string(),
+          }),
+        ),
+      }),
+    ),
+    forbidden: z.array(z.string()).optional(),
+  })
+  .openapi("WorkflowDefinition")
+
 /** A collection that grants access to an artifact, as the share dialog discloses it: a
  *  workspace-open collection reaches every workspace seat at their role; an invite-only
  *  one reaches its explicit members. The artifact's own access fields never see this
@@ -372,6 +448,9 @@ export const Artifact = z
       ),
     workflow_preview: WorkflowPreview.optional().describe(
       "Present when the current linked bundle also carries workflow-definition. This is the validated, non-executing shared Preview.",
+    ),
+    workflow_definition: WorkflowDefinition.optional().describe(
+      "Present only when workflow-definition validates against the current bundle-manifest. Stable ids connect its exact node and route semantics to the native graph.",
     ),
     derived_from: z
       .object({

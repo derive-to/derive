@@ -30,7 +30,8 @@ import { parseLinkedWorkflowFacts } from "../lib/workflow-facts"
  *  publishes per its grant: a publish-capable agent posts directly, a lower grant
  *  answers in comments — no special case here. */
 export const reworkRoutes = (ctx: AppContext) => {
-  const { meta, bus, background, notify, actingUser, authorize, limited, commentLimiter } = ctx
+  const { meta, bus, background, notify, actingUser, authorize, limited, commentLimiter, deps } =
+    ctx
   const app = new OpenAPIHono<BlankEnv>()
 
   type Acting = Exclude<Awaited<ReturnType<AppContext["actingUser"]>>, null>
@@ -261,7 +262,12 @@ export const reworkRoutes = (ctx: AppContext) => {
       const ready = await requireReadyWorkflow(c, artifact, c.req.query("diagram") ?? "")
       if (ready instanceof Response) return bail(ready)
       return c.json({
-        prompt: workflowRunInstruction(artifact.short_id, ready.id),
+        prompt: workflowRunInstruction({
+          shortId: artifact.short_id,
+          version: artifact.current_version,
+          diagramId: ready.id,
+          baseUrl: deps.baseUrl,
+        }),
         diagram: { id: ready.id, title: ready.title },
       })
     },
@@ -302,7 +308,12 @@ export const reworkRoutes = (ctx: AppContext) => {
         artifact,
         acting,
         agent,
-        workflowRunInstruction(artifact.short_id, ready.id),
+        workflowRunInstruction({
+          shortId: artifact.short_id,
+          version: artifact.current_version,
+          diagramId: ready.id,
+          baseUrl: deps.baseUrl,
+        }),
       )
       if (requestId instanceof Response) return bail(requestId)
       return c.json({ requestId }, 201)

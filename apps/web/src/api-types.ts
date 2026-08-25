@@ -6671,6 +6671,7 @@ export interface components {
                 }[];
             };
             workflow_preview?: components["schemas"]["WorkflowPreview"];
+            workflow_definition?: components["schemas"]["WorkflowDefinition"];
             /** @description The artifact this one was copied from ("use as template"). Detail responses only; null when the source no longer resolves, absent when not derived. */
             derived_from?: {
                 short_id: string;
@@ -6761,6 +6762,67 @@ export interface components {
                 }[];
             }[];
             cannot_do: string[];
+        };
+        /** @description Present only when workflow-definition validates against the current bundle-manifest. Stable ids connect its exact node and route semantics to the native graph. */
+        WorkflowDefinition: {
+            /** @enum {string} */
+            schema: "derive.workflow/v1";
+            purpose: string;
+            diagrams: {
+                id: string;
+                entry: string;
+                nodes: {
+                    id: string;
+                    /** @enum {string} */
+                    kind: "context" | "human" | "terminal";
+                    /** @enum {string} */
+                    routing?: "all" | "one";
+                    terminal?: boolean;
+                    context_ref?: string;
+                    instruction?: string;
+                    result?: string;
+                    decision?: string;
+                    options?: string[];
+                    resume?: string;
+                    effects?: {
+                        /** @enum {string} */
+                        kind: "read" | "write" | "message" | "spend" | "access";
+                        description: string;
+                        /** @enum {string} */
+                        gate: "none" | "human";
+                        approval_ref?: string;
+                        idempotency?: string;
+                        compensation?: string;
+                    }[];
+                }[];
+                routes: {
+                    from: string;
+                    to: string;
+                    when: string;
+                    fallback?: boolean;
+                }[];
+                loops?: {
+                    id: string;
+                    nodes: string[];
+                    goal: string;
+                    evaluate: string;
+                    stop: {
+                        max_attempts: number;
+                        stagnation_limit?: number;
+                        max_minutes?: number;
+                        max_cost_usd?: number;
+                        human_stop: string;
+                    };
+                }[];
+                scenarios: {
+                    id: string;
+                    /** @enum {string} */
+                    kind: "expected" | "failure" | "human";
+                    path: string[];
+                    outcome: string;
+                }[];
+            }[];
+            forbidden?: string[];
         };
         DirUser: {
             /** @description User id, or the agent id when kind is agent. */

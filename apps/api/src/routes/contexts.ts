@@ -1,5 +1,6 @@
 import { refRouter } from "@derive/broker"
 import {
+  type ArtifactRecord,
   type ContextAskerRecord,
   type ContextRecord,
   decodeCursor,
@@ -101,6 +102,21 @@ export const contextRoutes = (ctx: AppContext) => {
     workspaceCan,
   } = ctx
   const app = new OpenAPIHono<BlankEnv>()
+
+  // A runner may bind only a real, live result in the context's own workspace.
+  // Session result ids become durable links and output-ledger entries; accepting an
+  // arbitrary or foreign short id would turn that receipt into an authz bypass or lie.
+  const resultArtifactFor = async (
+    c: Context,
+    orgId: string,
+    shortId: string | undefined,
+  ): Promise<ArtifactRecord | Response | undefined> => {
+    if (!shortId) return undefined
+    const result = await meta.getByShortId(shortId)
+    if (!result || result.org_id !== orgId || result.removed_at || result.current_version === 0)
+      return fail(c, 404, "result artifact not found in this context's workspace")
+    return result
+  }
 
   /** A run-scoped capability token, which must not reach the session lane.
    *
@@ -989,6 +1005,33 @@ export const contextRoutes = (ctx: AppContext) => {
   const settleWake = (s: SessionRecord, state: SessionState) =>
     bus.publish(`u:${s.asker_id}`, { type: "session.settled", session_id: s.id, state })
 
+  // A session is opened against one manifest version. The current runner still
+  // materializes context packages by context id, so if that manifest moved before
+  // claim the only truthful behavior is to fail closed. This avoids silently running
+  // different instructions/tools without adding a second workflow runtime.
+  const failIfContextVersionMoved = async (
+    s: SessionRecord,
+    manifest: ArtifactRecord | null,
+  ): Promise<boolean> => {
+    if (manifest && s.context_version === manifest.current_version) return false
+    const opened =
+      s.context_version === null ? "an unpinned legacy version" : `v${s.context_version}`
+    const current = manifest ? `v${manifest.current_version}` : "a missing manifest"
+    await meta.addSessionMessage(
+      {
+        id: newId("sm"),
+        session_id: s.id,
+        author_kind: "agent",
+        author_id: "derive",
+        body_md: `This context changed from ${opened} to ${current} before execution, so nothing ran. Start a new session to explicitly use the current context.`,
+        meta: JSON.stringify({ outcome: "failed", reason: "context_version_changed" }),
+      },
+      "failed",
+    )
+    settleWake(s, "failed")
+    return true
+  }
+
   // A NON-settling progress tick from a long-running (Maker) runner: the session
   // stays `working`, but the asker's use({wait}) long-poll should return the tick
   // now instead of blocking to timeout. A wake only; the waiter re-reads the
@@ -1774,6 +1817,8 @@ export const contextRoutes = (ctx: AppContext) => {
         }),
       )
       if (b instanceof Response) return bail(b)
+      const resultArtifact = await resultArtifactFor(c, x.org_id, b.result_artifact_id)
+      if (resultArtifact instanceof Response) return bail(resultArtifact)
       // Atomic session + first message — see createSessionWithMessage's own doc on why this
       // isn't two separate INSERTs (an isolate dying between them strands a session with no
       // first message, and nothing reopens that).
@@ -1799,7 +1844,7 @@ export const contextRoutes = (ctx: AppContext) => {
         },
         b.outcome,
       )
-      if (b.result_artifact_id) await meta.setResultArtifact(session.id, b.result_artifact_id)
+      if (resultArtifact) await meta.setResultArtifact(session.id, resultArtifact.short_id)
       // Re-read: addSessionMessage moved the session's state off "open" and
       // setResultArtifact (if any) touched a column the in-memory `session` predates.
       const settled = (await meta.getSession(session.id)) ?? session
@@ -2423,7 +2468,13 @@ export const contextRoutes = (ctx: AppContext) => {
           }),
         )
         if (b instanceof Response) return bail(b)
-        if (b.result_artifact_id) await meta.setResultArtifact(s.id, b.result_artifact_id)
+        const resultArtifact = await resultArtifactFor(
+          c,
+          linked.context.org_id,
+          b.result_artifact_id,
+        )
+        if (resultArtifact instanceof Response) return bail(resultArtifact)
+        if (resultArtifact) await meta.setResultArtifact(s.id, resultArtifact.short_id)
         // A model run takes minutes; the asker may follow up mid-run. An answer
         // generated before that follow-up must not settle the session — it would
         // take the follow-up off the queue unanswered, permanently. When the
@@ -2682,8 +2733,12 @@ export const contextRoutes = (ctx: AppContext) => {
       if (await agentWritesOff(meta, x.org_id)) return c.json({ sessions: [], tools: [] })
       const working = await meta.countWorkingSessions(x.id)
       const room = Math.max(0, (x.max_concurrency ?? 1) - working)
-      const sessions =
+      const claimed =
         room === 0 ? [] : await meta.claimPendingSessions(x.id, Math.min(limit, room), leaseFor(x))
+      const manifest = claimed.length ? await meta.getArtifactById(x.manifest_artifact_id) : null
+      const sessions: SessionRecord[] = []
+      for (const session of claimed)
+        if (!(await failIfContextVersionMoved(session, manifest))) sessions.push(session)
       // One query for every pending session's transcript, then group by session_id —
       // not a listSessionMessages per session.
       const bySession = new Map<string, ReturnType<typeof messageJson>[]>()
@@ -2748,6 +2803,7 @@ export const contextRoutes = (ctx: AppContext) => {
     // executor exits clean rather than double-answering.
     if (!claimed) return c.json({ session: null })
     const manifest = await meta.getArtifactById(x.manifest_artifact_id)
+    if (await failIfContextVersionMoved(claimed, manifest)) return c.json({ session: null })
     const reach = await contextTools(x)
     return c.json({
       session: {

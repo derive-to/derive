@@ -178,7 +178,26 @@ describe("workflow preview", () => {
       "review->research",
       "review->publish",
     ])
+    expect(visible.edges.map((edge) => edge.label)).toEqual(["next", "revise", "approve"])
     expect(previewWorkflowSource(synced.source).status).toBe("ready")
+  })
+
+  it("refreshes an existing edge label when the authoritative route condition changes", () => {
+    const source = workflowPage()
+    const bundle = factJson(source, "bundle-manifest").value
+    bundle.diagrams[0].edges[1].label = "stale-condition"
+    const drifted = source.replace(
+      /(<script data-fact="bundle-manifest" type="application\/derive-facts">)[\s\S]*?(<\/script>)/,
+      (_match, open, close) => `${open}${JSON.stringify(bundle)}${close}`,
+    )
+
+    const synced = syncWorkflowSource(drifted)
+    const visible = factJson(synced.source, "bundle-manifest").value.diagrams[0]
+    expect(visible.edges[1]).toMatchObject({
+      from: "review",
+      to: "research",
+      label: "revise",
+    })
   })
 
   it("derive workflow sync writes the projection and runs the same Preview gate", () => {

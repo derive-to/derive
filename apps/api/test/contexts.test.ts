@@ -377,6 +377,88 @@ describe("sessions: the ask → answer → follow-up loop", () => {
   })
 })
 
+describe("sessions: context policy is pinned at open", () => {
+  it("fails closed before claim when the context manifest changed", async () => {
+    const owner: TestUser = { id: "u_pin_own", email: "pinown@derive.test", name: "Owner" }
+    const asker: TestUser = { id: "u_pin_ask", email: "pinask@derive.test", name: "Asker" }
+    const { app, meta } = makeAuthedApp("contexts-version-pin", [owner, asker], "commenter")
+    await app.request("/v1/me", { headers: as(owner.email) })
+    await app.request("/v1/me", { headers: as(asker.email) })
+    const agent = await (
+      await app.request(
+        "/v1/agents",
+        jsonAs(as(owner.email), { name: "Pinned runner", role: "editor" }),
+      )
+    ).json()
+    const manifest = await (await publishAs(app, "# Manifest v1", {}, as(owner.email))).json()
+    const context = await (
+      await app.request(
+        "/v1/contexts",
+        jsonAs(as(owner.email), {
+          name: "Pinned context",
+          agent_id: agent.id,
+          manifest_short_id: manifest.short_id,
+        }),
+      )
+    ).json()
+    await app.request(
+      `/v1/contexts/${context.id}/askers`,
+      jsonAs(as(owner.email), { email: asker.email }),
+    )
+    const opened = await (
+      await app.request(
+        `/v1/contexts/${context.id}/sessions`,
+        jsonAs(as(asker.email), { body_md: "Run the pinned policy." }),
+      )
+    ).json()
+    expect(opened.session.context_version).toBe(1)
+
+    const revised = await publishAs(
+      app,
+      "# Manifest v2\nChanged instructions.",
+      {},
+      as(owner.email),
+      manifest.short_id,
+    )
+    expect(revised.status).toBe(201)
+    const queue = await (
+      await app.request(`/v1/contexts/${context.id}/queue`, {
+        headers: bearer(agent.token),
+      })
+    ).json()
+    expect(queue.sessions).toHaveLength(0)
+
+    const observed = await (
+      await app.request(`/v1/sessions/${opened.session.id}`, { headers: as(asker.email) })
+    ).json()
+    expect(observed.session.state).toBe("failed")
+    expect(observed.messages.at(-1).body_md).toContain("changed from v1 to v2")
+    expect(observed.messages.at(-1).body_md).toContain("nothing ran")
+
+    // Sessions queued before context-version pinning shipped have NULL here. They must not
+    // inherit whatever manifest happens to be current at rollout: that would execute policy
+    // they never opened against. Fail them exactly like a moved explicit pin.
+    const legacy = await meta.createSession({
+      id: "ses_legacy_unpinned_queue",
+      context_id: context.id,
+      org_id: "default",
+      asker_id: asker.id,
+      context_version: null,
+    })
+    const legacyQueue = await (
+      await app.request(`/v1/contexts/${context.id}/queue`, {
+        headers: bearer(agent.token),
+      })
+    ).json()
+    expect(legacyQueue.sessions).toHaveLength(0)
+    const legacyObserved = await meta.getSession(legacy.id)
+    expect(legacyObserved?.state).toBe("failed")
+    const legacyMessages = await meta.listSessionMessagesFor([legacy.id])
+    expect(legacyMessages.at(-1)?.body_md).toContain("an unpinned legacy version")
+    expect(legacyMessages.at(-1)?.body_md).toContain("nothing ran")
+  })
+})
+
 // Revoking ask-access closes an IN-FLIGHT session too: a member who opened a
 // session and is then removed from the workspace can neither read it nor keep
 // asking — otherwise the session would be a standing query window that outlives
@@ -824,6 +906,19 @@ describe("contexts: record a run that already happened locally", () => {
       jsonAs(as(member.email), { instruction: "run smoke", answer: "done" }),
     )
     expect(res.status).toBe(403)
+  })
+
+  it("refuses to bind a result id that is not a live artifact in the context workspace", async () => {
+    const res = await app.request(
+      `/v1/contexts/${contextId}/sessions/record`,
+      jsonAs(as(owner.email), {
+        instruction: "run smoke",
+        answer: "done",
+        result_artifact_id: "not-a-result",
+      }),
+    )
+    expect(res.status).toBe(404)
+    expect((await res.json()).error).toContain("result artifact")
   })
 })
 

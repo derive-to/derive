@@ -22,6 +22,10 @@ type Diagram = NonNullable<LinkedBundle["diagrams"]>[number]
 type DiagramNode = Diagram["nodes"][number]
 type DiagramEdge = Diagram["edges"][number]
 type BundleMember = LinkedBundle["members"][number]
+type WorkflowDefinition = NonNullable<Artifact["workflow_definition"]>
+type WorkflowDiagram = WorkflowDefinition["diagrams"][number]
+type WorkflowNode = WorkflowDiagram["nodes"][number]
+type WorkflowRoute = WorkflowDiagram["routes"][number]
 type ReviewKind = "node" | "edge" | "policy"
 type LinkedBundleView = "preview" | "now" | "advanced"
 
@@ -253,6 +257,178 @@ export const linkedBundleNodeFreshness = (
   return member.current_version > node.basis_version ? "updated" : "fresh"
 }
 
+export const linkedBundleWorkflowNode = (
+  definition: WorkflowDefinition | undefined,
+  diagramId: string,
+  nodeId: string,
+): WorkflowNode | undefined =>
+  definition?.diagrams
+    .find((diagram) => diagram.id === diagramId)
+    ?.nodes.find((node) => node.id === nodeId)
+
+/** Route conditions live in workflow-definition, while an edge label is only the
+ * visible presentation. Always resolve by the stable topology ids for inspection. */
+export const linkedBundleWorkflowRoute = (
+  definition: WorkflowDefinition | undefined,
+  diagramId: string,
+  edge: Pick<DiagramEdge, "from" | "to">,
+): WorkflowRoute | undefined =>
+  definition?.diagrams
+    .find((diagram) => diagram.id === diagramId)
+    ?.routes.find((route) => route.from === edge.from && route.to === edge.to)
+
+function WorkflowNodeSemantics({ node }: { node: WorkflowNode }) {
+  return (
+    <section
+      className="mt-3 rounded-lg border border-primary/20 bg-primary/5 p-3"
+      data-testid="bundle-selection-workflow-node"
+    >
+      <div className="font-mono text-2xs uppercase tracking-[0.1em] text-primary">What happens</div>
+      <dl className="mt-2 grid gap-x-5 gap-y-2 text-xs sm:grid-cols-2 lg:grid-cols-3">
+        <div>
+          <dt className="font-mono text-2xs uppercase tracking-[0.08em] text-muted-foreground">
+            Node kind
+          </dt>
+          <dd className="mt-0.5 capitalize text-foreground">{node.kind}</dd>
+        </div>
+        {node.context_ref ? (
+          <div>
+            <dt className="font-mono text-2xs uppercase tracking-[0.08em] text-muted-foreground">
+              Context
+            </dt>
+            <dd className="mt-0.5 font-mono text-foreground">{node.context_ref}</dd>
+          </div>
+        ) : null}
+        {node.result ? (
+          <div>
+            <dt className="font-mono text-2xs uppercase tracking-[0.08em] text-muted-foreground">
+              Expected result
+            </dt>
+            <dd className="mt-0.5 text-foreground">{node.result}</dd>
+          </div>
+        ) : null}
+        {node.instruction ? (
+          <div className="sm:col-span-2 lg:col-span-3">
+            <dt className="font-mono text-2xs uppercase tracking-[0.08em] text-muted-foreground">
+              Instruction
+            </dt>
+            <dd className="mt-0.5 whitespace-pre-wrap text-foreground">{node.instruction}</dd>
+          </div>
+        ) : null}
+        {node.decision ? (
+          <div>
+            <dt className="font-mono text-2xs uppercase tracking-[0.08em] text-muted-foreground">
+              Human decision
+            </dt>
+            <dd className="mt-0.5 text-foreground">{node.decision}</dd>
+          </div>
+        ) : null}
+        {node.options?.length ? (
+          <div>
+            <dt className="font-mono text-2xs uppercase tracking-[0.08em] text-muted-foreground">
+              Options
+            </dt>
+            <dd className="mt-1 flex flex-wrap gap-1">
+              {node.options.map((option) => (
+                <span
+                  key={option}
+                  className="rounded-md border border-border bg-card px-1.5 py-0.5 text-foreground"
+                >
+                  {option}
+                </span>
+              ))}
+            </dd>
+          </div>
+        ) : null}
+        {node.resume ? (
+          <div>
+            <dt className="font-mono text-2xs uppercase tracking-[0.08em] text-muted-foreground">
+              Resume with
+            </dt>
+            <dd className="mt-0.5 text-foreground">{node.resume}</dd>
+          </div>
+        ) : null}
+      </dl>
+      {node.effects?.length ? (
+        <div className="mt-3 border-t border-primary/15 pt-3" data-testid="bundle-node-effects">
+          <div className="font-mono text-2xs uppercase tracking-[0.08em] text-muted-foreground">
+            Effects
+          </div>
+          <div className="mt-1.5 grid gap-2 sm:grid-cols-2">
+            {node.effects.map((effect) => (
+              <div
+                key={`${effect.kind}:${effect.gate}:${effect.description}`}
+                className="rounded-md border border-border bg-card p-2"
+              >
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="font-mono text-2xs uppercase text-primary">{effect.kind}</span>
+                  <span className="text-2xs text-muted-foreground">
+                    {effect.gate === "human"
+                      ? `Human gate${effect.approval_ref ? ` · ${effect.approval_ref}` : ""}`
+                      : "No additional gate"}
+                  </span>
+                </div>
+                <p className="mt-1 text-xs text-foreground">{effect.description}</p>
+                {effect.idempotency ? (
+                  <p className="mt-1 text-2xs text-muted-foreground">
+                    Replay safety: {effect.idempotency}
+                  </p>
+                ) : null}
+                {effect.compensation ? (
+                  <p className="mt-1 text-2xs text-muted-foreground">
+                    Recovery: {effect.compensation}
+                  </p>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </section>
+  )
+}
+
+function WorkflowRouteSemantics({
+  route,
+  visibleLabel,
+}: {
+  route: WorkflowRoute
+  visibleLabel?: string
+}) {
+  return (
+    <section
+      className="mt-3 rounded-lg border border-primary/20 bg-primary/5 p-3"
+      data-testid="bundle-selection-workflow-route"
+    >
+      <div className="font-mono text-2xs uppercase tracking-[0.1em] text-primary">
+        Authoritative route
+      </div>
+      <dl className="mt-2 grid gap-x-5 gap-y-2 text-xs sm:grid-cols-3">
+        <div>
+          <dt className="font-mono text-2xs uppercase tracking-[0.08em] text-muted-foreground">
+            Condition
+          </dt>
+          <dd className="mt-0.5 text-foreground">{route.when}</dd>
+        </div>
+        <div>
+          <dt className="font-mono text-2xs uppercase tracking-[0.08em] text-muted-foreground">
+            Fallback
+          </dt>
+          <dd className="mt-0.5 text-foreground">{route.fallback ? "Yes" : "No"}</dd>
+        </div>
+        {visibleLabel ? (
+          <div>
+            <dt className="font-mono text-2xs uppercase tracking-[0.08em] text-muted-foreground">
+              Canvas label
+            </dt>
+            <dd className="mt-0.5 text-foreground">{visibleLabel}</dd>
+          </div>
+        ) : null}
+      </dl>
+    </section>
+  )
+}
+
 export const linkedBundleEdgePath = (
   diagram: Diagram,
   edge: DiagramEdge,
@@ -347,6 +523,7 @@ export const linkedBundleFocusedElements = (
 
 function DiagramWorkspace({
   diagram,
+  workflowDefinition,
   members,
   counts,
   reviewState,
@@ -362,6 +539,7 @@ function DiagramWorkspace({
   onEditManifest,
 }: {
   diagram: Diagram
+  workflowDefinition?: WorkflowDefinition
   members: Map<string, BundleMember>
   counts: Map<string, number>
   reviewState: LinkedBundleReviewState
@@ -436,6 +614,7 @@ function DiagramWorkspace({
       const node = diagram.nodes.find((item) => item.id === selected.local)
       if (!node) return null
       const member = node.member ? members.get(node.member) : undefined
+      const workflowNode = linkedBundleWorkflowNode(workflowDefinition, diagram.id, node.id)
       return {
         target: linkedBundleReviewTarget(diagram.id, "node", node.id),
         title: node.label,
@@ -448,6 +627,8 @@ function DiagramWorkspace({
         basis: node.basis_version,
         member,
         node,
+        workflowNode,
+        workflowRoute: undefined,
       }
     }
     if (selected.kind === "edge") {
@@ -455,12 +636,18 @@ function DiagramWorkspace({
       const edge = diagram.edges[index]
       if (!edge) return null
       const target = linkedBundleReviewTarget(diagram.id, "edge", selected.local)
+      const workflowRoute = linkedBundleWorkflowRoute(workflowDefinition, diagram.id, edge)
       return {
         target,
         title: `${edge.from} → ${edge.to}`,
         eyebrow: diagram.type === "loop" ? "Loop transition" : "Graph relationship",
-        detail: edge.label ?? "Unlabelled relationship",
+        detail: workflowRoute
+          ? `When ${workflowRoute.when}${workflowRoute.fallback ? " · fallback route" : ""}`
+          : (edge.label ?? "Unlabelled relationship"),
         count: counts.get(target) ?? 0,
+        edge,
+        workflowNode: undefined,
+        workflowRoute,
       }
     }
     const value = diagram[selected.local as "goal" | "evaluate" | "stop"]
@@ -471,6 +658,8 @@ function DiagramWorkspace({
       eyebrow: "Loop policy",
       detail: value ?? "Not stated",
       count: counts.get(target) ?? 0,
+      workflowNode: undefined,
+      workflowRoute: undefined,
     }
   })()
 
@@ -805,6 +994,15 @@ function DiagramWorkspace({
                 <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
                   {selection.detail}
                 </p>
+                {selection.workflowNode ? (
+                  <WorkflowNodeSemantics node={selection.workflowNode} />
+                ) : null}
+                {selection.workflowRoute ? (
+                  <WorkflowRouteSemantics
+                    route={selection.workflowRoute}
+                    visibleLabel={selection.edge?.label}
+                  />
+                ) : null}
                 {selection.node ? (
                   <dl className="mt-3 grid gap-x-5 gap-y-2 text-xs sm:grid-cols-2 lg:grid-cols-3">
                     <div>
@@ -1393,6 +1591,7 @@ export function LinkedBundleWorkspace({
   version,
   bundle,
   workflowPreview,
+  workflowDefinition,
   agents,
   comments,
   canComment,
@@ -1414,6 +1613,7 @@ export function LinkedBundleWorkspace({
   version: number
   bundle: LinkedBundle
   workflowPreview?: Artifact["workflow_preview"]
+  workflowDefinition?: Artifact["workflow_definition"]
   agents: DirUser[]
   comments: Comment[]
   canComment: boolean
@@ -1614,13 +1814,14 @@ export function LinkedBundleWorkspace({
                   Full graph and authored state
                 </h2>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Inspect exact relationships, tiers, confidence, help state, and loop policy.
+                  Inspect exact execution semantics, relationships, authored state, and loop policy.
                 </p>
               </div>
               {diagrams.map((diagram) => (
                 <DiagramWorkspace
                   key={diagram.id}
                   diagram={diagram}
+                  workflowDefinition={workflowDefinition}
                   members={members}
                   counts={counts}
                   reviewState={reviewState}

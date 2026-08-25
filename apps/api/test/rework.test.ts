@@ -287,7 +287,11 @@ describe("workflow run: explicit local-agent handoff", () => {
     const prompt = (await promptRes.json()) as { prompt: string; diagram: { title: string } }
     expect(prompt.diagram.title).toBe("Reviewed brief")
     expect(prompt.prompt).toContain("explicit run intent")
-    expect(prompt.prompt).toContain("this agent is the harness")
+    expect(prompt.prompt).toContain(`${published.short_id}@v1`)
+    expect(prompt.prompt).toContain(`/raw/${published.short_id}/v/1/data/workflow-definition.json`)
+    expect(prompt.prompt).toContain("this agent session is the execution harness")
+    expect(prompt.prompt).toContain("local stdio compatibility MCP and CLI")
+    expect(prompt.prompt).toContain("cannot execute context nodes")
     expect(await inboxBodies(app, agent.token)).toHaveLength(0)
 
     const runRes = await app.request(

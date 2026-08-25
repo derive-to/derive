@@ -105,8 +105,47 @@ export async function runnerDispatch(
       await ctx.meta.touchContextSeen(x.id, new Date(now).toISOString()).catch(() => {})
     const working = await ctx.meta.countWorkingSessions(x.id)
     const room = Math.max(0, (x.max_concurrency ?? 1) - working)
-    const sessions =
+    const claimed =
       room === 0 ? [] : await ctx.meta.claimPendingSessions(x.id, Math.min(10, room), leaseFor(x))
+    const manifest = claimed.length ? await ctx.meta.getArtifactById(x.manifest_artifact_id) : null
+    const staleContextVersions: Array<{
+      session_id: string
+      opened: number | null
+      current: number | null
+    }> = []
+    const sessions: SessionRecord[] = []
+    for (const session of claimed) {
+      if (manifest && session.context_version === manifest.current_version) {
+        sessions.push(session)
+        continue
+      }
+      staleContextVersions.push({
+        session_id: session.id,
+        opened: session.context_version,
+        current: manifest?.current_version ?? null,
+      })
+      const opened =
+        session.context_version === null
+          ? "an unpinned legacy version"
+          : `v${session.context_version}`
+      const current = manifest ? `v${manifest.current_version}` : "a missing manifest"
+      await ctx.meta.addSessionMessage(
+        {
+          id: newId("sm"),
+          session_id: session.id,
+          author_kind: "agent",
+          author_id: "derive",
+          body_md: `This context changed from ${opened} to ${current} before execution, so nothing ran. Start a new session to explicitly use the current context.`,
+          meta: JSON.stringify({ outcome: "failed", reason: "context_version_changed" }),
+        },
+        "failed",
+      )
+      ctx.bus.publish(`u:${session.asker_id}`, {
+        type: "session.settled",
+        session_id: session.id,
+        state: "failed",
+      })
+    }
     // Stale-pin check, only when work was actually claimed (never on idle polls —
     // a serve loop polls every few seconds and this reads the manifest). The
     // manifest's skill pins are the right versioning model, but the bump is manual
@@ -116,7 +155,7 @@ export async function runnerDispatch(
     let stale: StalePin[] = []
     if (sessions.length > 0) {
       try {
-        const man = (await ctx.meta.getArtifactsByIds([x.manifest_artifact_id]))[0]
+        const man = manifest ?? (await ctx.meta.getArtifactsByIds([x.manifest_artifact_id]))[0]
         const v = man ? await ctx.meta.getVersion(man.id, man.current_version) : null
         const md = v ? await ctx.sourceText(v) : null
         if (md) stale = await stalePins(ctx.meta, parseManifestSkillPins(md))
@@ -134,6 +173,13 @@ export async function runnerDispatch(
     return json({
       context: x.name,
       claimed: sessions.length,
+      ...(staleContextVersions.length
+        ? {
+            stale_context_versions: staleContextVersions,
+            stale_context_versions_note:
+              "These sessions failed before execution because the context manifest changed after they opened. Start new sessions to use the current version.",
+          }
+        : {}),
       ...(room === 0 && working > 0
         ? {
             note: "At the context's concurrency cap — answer an in-flight session before claiming more.",
@@ -180,7 +226,17 @@ export async function runnerDispatch(
     },
   ) => {
     if (s.state === "closed") return err("That session is closed — nothing to answer.")
-    if (o.result_artifact_id) await ctx.meta.setResultArtifact(s.id, o.result_artifact_id)
+    if (o.result_artifact_id) {
+      const result = await ctx.meta.getByShortId(o.result_artifact_id)
+      if (
+        !result ||
+        result.org_id !== x.org_id ||
+        result.removed_at ||
+        result.current_version === 0
+      )
+        return err("That result artifact is not a live artifact in this context's workspace.")
+      await ctx.meta.setResultArtifact(s.id, result.short_id)
+    }
     const isProgress = o.progress === true && !o.state
     let sstate: SessionState = isProgress ? "working" : (o.state ?? "answered")
     let payloadMeta: Record<string, unknown> | undefined = isProgress

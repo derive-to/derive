@@ -674,6 +674,9 @@
           "workflow_preview": {
             "$ref": "#/components/schemas/WorkflowPreview"
           },
+          "workflow_definition": {
+            "$ref": "#/components/schemas/WorkflowDefinition"
+          },
           "derived_from": {
             "type": "object",
             "nullable": true,
@@ -1008,6 +1011,270 @@
           "cannot_do"
         ],
         "description": "Present when the current linked bundle also carries workflow-definition. This is the validated, non-executing shared Preview."
+      },
+      "WorkflowDefinition": {
+        "type": "object",
+        "properties": {
+          "schema": {
+            "type": "string",
+            "enum": [
+              "derive.workflow/v1"
+            ]
+          },
+          "purpose": {
+            "type": "string"
+          },
+          "diagrams": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "entry": {
+                  "type": "string"
+                },
+                "nodes": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "context",
+                          "human",
+                          "terminal"
+                        ]
+                      },
+                      "routing": {
+                        "type": "string",
+                        "enum": [
+                          "all",
+                          "one"
+                        ]
+                      },
+                      "terminal": {
+                        "type": "boolean"
+                      },
+                      "context_ref": {
+                        "type": "string"
+                      },
+                      "instruction": {
+                        "type": "string"
+                      },
+                      "result": {
+                        "type": "string"
+                      },
+                      "decision": {
+                        "type": "string"
+                      },
+                      "options": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "resume": {
+                        "type": "string"
+                      },
+                      "effects": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "read",
+                                "write",
+                                "message",
+                                "spend",
+                                "access"
+                              ]
+                            },
+                            "description": {
+                              "type": "string"
+                            },
+                            "gate": {
+                              "type": "string",
+                              "enum": [
+                                "none",
+                                "human"
+                              ]
+                            },
+                            "approval_ref": {
+                              "type": "string"
+                            },
+                            "idempotency": {
+                              "type": "string"
+                            },
+                            "compensation": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "description",
+                            "gate"
+                          ]
+                        }
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "kind"
+                    ]
+                  }
+                },
+                "routes": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "from": {
+                        "type": "string"
+                      },
+                      "to": {
+                        "type": "string"
+                      },
+                      "when": {
+                        "type": "string"
+                      },
+                      "fallback": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "from",
+                      "to",
+                      "when"
+                    ]
+                  }
+                },
+                "loops": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "nodes": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "goal": {
+                        "type": "string"
+                      },
+                      "evaluate": {
+                        "type": "string"
+                      },
+                      "stop": {
+                        "type": "object",
+                        "properties": {
+                          "max_attempts": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "exclusiveMinimum": true
+                          },
+                          "stagnation_limit": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "exclusiveMinimum": true
+                          },
+                          "max_minutes": {
+                            "type": "number",
+                            "minimum": 0,
+                            "exclusiveMinimum": true
+                          },
+                          "max_cost_usd": {
+                            "type": "number",
+                            "minimum": 0,
+                            "exclusiveMinimum": true
+                          },
+                          "human_stop": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "max_attempts",
+                          "human_stop"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "nodes",
+                      "goal",
+                      "evaluate",
+                      "stop"
+                    ]
+                  }
+                },
+                "scenarios": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "expected",
+                          "failure",
+                          "human"
+                        ]
+                      },
+                      "path": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "outcome": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "kind",
+                      "path",
+                      "outcome"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "id",
+                "entry",
+                "nodes",
+                "routes",
+                "scenarios"
+              ]
+            }
+          },
+          "forbidden": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "schema",
+          "purpose",
+          "diagrams"
+        ],
+        "description": "Present only when workflow-definition validates against the current bundle-manifest. Stable ids connect its exact node and route semantics to the native graph."
       },
       "DirUser": {
         "type": "object",

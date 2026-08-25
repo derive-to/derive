@@ -42,6 +42,7 @@ import {
   sortKeyOf,
   toJson,
   toMarkdown,
+  type WorkflowDefinition,
   type WorkflowPreview,
   type WorkspaceAccess,
 } from "@derive/core"
@@ -1668,6 +1669,7 @@ export const artifactRoutes = (ctx: AppContext) => {
           })
         | undefined
       let workflowPreview: WorkflowPreview | undefined
+      let workflowDefinition: WorkflowDefinition | undefined
       if (current?.content_type === LINKED_BUNDLE_CONTENT_TYPE) {
         // One version-data read carries both authored facts. The native graph and
         // native Preview must come from the same immutable version without adding a
@@ -1677,6 +1679,7 @@ export const artifactRoutes = (ctx: AppContext) => {
         const manifest = facts.manifest
         if (manifest) {
           workflowPreview = facts.preview
+          workflowDefinition = facts.definition
           try {
             const resolved = await meta.getByShortIds(manifest.members.map((member) => member.ref))
             const byRef = new Map(resolved.map((member) => [member.short_id, member]))
@@ -1804,6 +1807,7 @@ export const artifactRoutes = (ctx: AppContext) => {
         ...(bundle ? { bundle } : {}),
         ...(linkedBundle ? { linked_bundle: linkedBundle } : {}),
         ...(workflowPreview ? { workflow_preview: workflowPreview } : {}),
+        ...(workflowDefinition ? { workflow_definition: workflowDefinition } : {}),
         // A taken-down artifact keeps its record but serves no content (410); the
         // UI shows a tombstone instead of the iframe.
         removed: !!artifact.removed_at,

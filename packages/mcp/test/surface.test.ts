@@ -29,6 +29,8 @@ describe("stdio MCP onboarding surface", () => {
     try {
       await client.connect(transport)
       expect(client.getInstructions()).toContain("Read derive://guide before the first write")
+      expect(client.getInstructions()).toContain("read derive://guide/workflows")
+      expect(client.getInstructions()).toContain("context execution requires the remote OAuth")
 
       const listed = (await client.listTools()).tools
       const tools = listed.map((tool) => tool.name)
@@ -66,6 +68,7 @@ describe("stdio MCP onboarding surface", () => {
           "derive://guide",
           "derive://guide/connect",
           "derive://guide/compatibility",
+          "derive://guide/workflows",
         ]),
       )
 
@@ -74,6 +77,15 @@ describe("stdio MCP onboarding surface", () => {
         arguments: { short_id: "derive://guide" },
       })
       expect(JSON.stringify(guide)).toContain("name: derive")
+
+      const workflows = await client.callTool({
+        name: "read",
+        arguments: { short_id: "derive://guide/workflows" },
+      })
+      const workflowGuide = JSON.stringify(workflows)
+      expect(workflowGuide).toContain("Derive is the persistent control and evidence layer")
+      expect(workflowGuide).toContain("cannot execute workspace-context nodes")
+      expect(workflowGuide).toContain("codex mcp add derive --url https://derive.to/mcp")
 
       for (const short_id of ["derive://guide/missing", "derive://guide/constructor"]) {
         const missing = await client.callTool({

@@ -144,6 +144,27 @@ describe("context connections (the ask lane gets hands)", () => {
     }
   })
 
+  it("a hosted claim fails closed for an unpinned legacy session", async () => {
+    const ctx = await makeContext("Legacy pin guard")
+    const legacy = await meta.createSession({
+      id: "ses_legacy_unpinned_hosted",
+      context_id: ctx.id,
+      org_id: "default",
+      asker_id: owner.id,
+      context_version: null,
+    })
+    const token = await tokenFor(legacy.id)
+    expect(token).toBeTruthy()
+
+    const claim = await app.request("/v1/agent/sessions/claim", jsonAs(bearer(token), {}))
+    expect(claim.status).toBe(200)
+    expect(await claim.json()).toEqual({ session: null })
+    expect((await meta.getSession(legacy.id))?.state).toBe("failed")
+    const messages = await meta.listSessionMessagesFor([legacy.id])
+    expect(messages.at(-1)?.body_md).toContain("an unpinned legacy version")
+    expect(messages.at(-1)?.body_md).toContain("nothing ran")
+  })
+
   it("a BYO polling runner gets the same tools, and may spend them with its standing bearer", async () => {
     const secretValue = "fixture-bearer-byo-lane"
     const conn = await makeConnection({
