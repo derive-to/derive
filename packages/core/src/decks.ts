@@ -261,6 +261,21 @@ const IDREF_LIST_ATTRS = new Set([
 ])
 const IDREF_ATTRS = new Set(["aria-activedescendant", "contextmenu", "for", "form", "list"])
 const FRAGMENT_ATTRS = new Set(["href", "usemap", "xlink:href"])
+const SVG_TIMING_ATTRS = new Set(["begin", "end"])
+
+const cssUnescapeIdentifier = (value: string): string =>
+  value.replace(
+    /\\(?:([0-9a-f]{1,6})(?:\r\n|[ \n\r\t\f])?|(\r\n|[\n\r\f])|(.))/gis,
+    (_whole, hex: string | undefined, newline: string | undefined, escaped: string | undefined) => {
+      if (hex) {
+        const cp = Number.parseInt(hex, 16)
+        return cp === 0 || cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff)
+          ? "�"
+          : String.fromCodePoint(cp)
+      }
+      return newline ? "" : (escaped ?? "")
+    },
+  )
 
 const domIds = (html: string): string[] =>
   tags(html).flatMap((tag) => (tag.closing ? [] : attrValues(tag.attrs, "id")))
@@ -293,11 +308,24 @@ const rewriteCopiedDomIds = (html: string, slideId: number, used: Set<string>): 
       return value.replace(/\S+/g, (token) => rewritten.get(token) ?? token)
     if (FRAGMENT_ATTRS.has(lower) && value.startsWith("#"))
       return `#${rewritten.get(value.slice(1)) ?? value.slice(1)}`
+    if (SVG_TIMING_ATTRS.has(lower)) {
+      let nextValue = value
+      for (const [original, next] of rewritten) {
+        const escaped = original.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+        nextValue = nextValue.replace(
+          new RegExp(`(^|;)(\\s*)${escaped}(?=\\.)`, "g"),
+          (_whole, boundary: string, space: string) => `${boundary}${space}${next}`,
+        )
+      }
+      return nextValue
+    }
     return value.replace(
       /url\(\s*((?:["'])|(?:&(?:quot|apos|#(?:34|39)|#x(?:22|27));))?#([^\s)"'&]+)\1\s*\)/gi,
       (whole, _quote, ref: string) => {
-        const next = rewritten.get(ref)
-        return next ? whole.replace(`#${ref}`, `#${next}`) : whole
+        const decoded = cssUnescapeIdentifier(ref)
+        const next = rewritten.get(decoded)
+        const encoded = next?.startsWith(decoded) ? ref + next.slice(decoded.length) : next
+        return encoded ? whole.replace(`#${ref}`, `#${encoded}`) : whole
       },
     )
   }
@@ -425,7 +453,12 @@ export const applySlideOps = (html: string, ops: SlideOp[]): string => {
     ids,
   )
   let nextId = Math.max(-1, ...items.map((item) => item.id)) + 1
-  const usedDomIds = new Set(items.flatMap((item) => domIds(item.text)))
+  const authoredDomIds = domIds(html)
+  if (new Set(authoredDomIds).size !== authoredDomIds.length)
+    throw new EditError(
+      "This deck repeats a DOM id, so its document-wide references are already ambiguous. Give every element a unique id before arranging slides.",
+    )
+  const usedDomIds = new Set(authoredDomIds)
 
   const at = (n: unknown, label: string, max: number): number => {
     if (typeof n !== "number" || !Number.isInteger(n) || n < 1 || n > max)

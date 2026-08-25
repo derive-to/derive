@@ -20,6 +20,8 @@ export interface HtmlTag {
   closing: boolean
   /** True when the browser ends this opening element at its own `>`. */
   selfClosing: boolean
+  /** Parsing namespace selected by the browser for this element. */
+  namespace: "html" | "svg" | "math"
   /** Raw attribute text between the name and the closing `>`. */
   attrs: string
   /** Offset of the opening `<`. */
@@ -280,6 +282,7 @@ export const tags = (html: string): HtmlTag[] => {
       name,
       closing,
       selfClosing,
+      namespace,
       attrs,
       start: lt,
       end: j + 1,

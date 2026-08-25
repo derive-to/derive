@@ -608,6 +608,16 @@
       "cadence": "regression"
     },
     {
+      "id": "HTML-027",
+      "lane": "core",
+      "surface": "html",
+      "risk": "P1",
+      "oracle": "browser-parity-and-safe-refusal",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "SVG description or metadata and MathML annotations stay outside editable text",
+      "cadence": "regression"
+    },
+    {
       "id": "DECK-001",
       "lane": "core",
       "surface": "deck",
@@ -785,6 +795,36 @@
       "oracle": "unique-identity-and-reference-integrity",
       "source": "packages/core/test/editing-eval.test.ts",
       "covers": "duplicated slides rewrite standard HTML IDREFs and quoted CSS fragment URLs",
+      "cadence": "regression"
+    },
+    {
+      "id": "DECK-019",
+      "lane": "core",
+      "surface": "deck",
+      "risk": "P1",
+      "oracle": "unique-identity-and-reference-integrity",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "duplicated slides rewrite SVG animation timing references",
+      "cadence": "regression"
+    },
+    {
+      "id": "DECK-020",
+      "lane": "core",
+      "surface": "deck",
+      "risk": "P2",
+      "oracle": "unique-identity-and-reference-integrity",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "duplicated slides preserve CSS escapes while rewriting fragment ids",
+      "cadence": "regression"
+    },
+    {
+      "id": "DECK-021",
+      "lane": "core",
+      "surface": "deck",
+      "risk": "P2",
+      "oracle": "safe-refusal",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "structural editing refuses pre-existing document-wide duplicate DOM ids",
       "cadence": "regression"
     },
     {

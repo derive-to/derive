@@ -123,6 +123,8 @@ export interface PageTextParts {
 }
 
 const INVISIBLE_NAMES = ["script", "style", "noscript", "template", "head", "title", "iframe"]
+const SVG_INVISIBLE_NAMES = new Set(["desc", "metadata"])
+const MATH_INVISIBLE_NAMES = new Set(["annotation", "annotation-xml"])
 
 /** Memoized left-to-right indexOf. During a forward scan, thousands of failed
  *  searches for the same needle (unclosed "<!--" after unclosed "<!--") would each
@@ -219,7 +221,15 @@ export function pageTextParts(
   const invisibleEnds = new Map<number, number>()
   for (let i = 0; i < parsedTags.length; i++) {
     const tag = parsedTags[i]
-    if (!tag || tag.closing || (!omitted.has(tag.name) && !hasAttr(tag.attrs, "hidden"))) continue
+    const foreignMetadata =
+      (tag?.namespace === "svg" && SVG_INVISIBLE_NAMES.has(tag.name)) ||
+      (tag?.namespace === "math" && MATH_INVISIBLE_NAMES.has(tag.name))
+    if (
+      !tag ||
+      tag.closing ||
+      (!omitted.has(tag.name) && !hasAttr(tag.attrs, "hidden") && !foreignMetadata)
+    )
+      continue
     const end = elementEnd(parsedTags, i)
     invisibleEnds.set(tag.start, end < 0 ? html.length : end)
   }

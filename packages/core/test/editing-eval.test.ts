@@ -547,6 +547,28 @@ describe("editing eval — HTML projection, topology, and injection", () => {
       expect(() => applyQuoteEdits(source, HTML, [qe("visible", "X")])).toThrow(/wasn't found/)
     }
   })
+
+  it("[HTML-027] omits SVG metadata and MathML annotations from editable text", () => {
+    for (const [source, hidden] of [
+      ["<svg><desc>hidden-desc</desc><text>visible-svg</text></svg><p>tail</p>", "hidden-desc"],
+      [
+        "<svg><metadata>hidden-meta</metadata><text>visible-svg</text></svg><p>tail</p>",
+        "hidden-meta",
+      ],
+      [
+        "<math><semantics><mi>visible</mi><annotation>hidden-ann</annotation></semantics></math><p>tail</p>",
+        "hidden-ann",
+      ],
+      [
+        '<math><semantics><mi>visible</mi><annotation-xml encoding="application/xml">hidden-xml</annotation-xml></semantics></math><p>tail</p>',
+        "hidden-xml",
+      ],
+    ] as const) {
+      expect(pageTextParts(source).text).toMatch(/visible.*tail/)
+      expect(pageTextParts(source).text).not.toContain(hidden)
+      expect(() => applyQuoteEdits(source, HTML, [qe(hidden, "X")])).toThrow(/wasn't found/)
+    }
+  })
 })
 
 describe("editing eval — deck identity and structural operations", () => {
@@ -728,6 +750,33 @@ describe("editing eval — deck identity and structural operations", () => {
     expect(out).toContain('usemap="#map--derive-copy-12"')
     expect(out).toContain("url('#grad--derive-copy-12')")
     expect(out).toContain("url(&quot;#grad--derive-copy-12&quot;)")
+  })
+
+  it("[DECK-019] rewrites copied SVG timing references", () => {
+    const source = deck([
+      '<svg><rect id="trigger"></rect>' +
+        '<animate id="anim" begin="trigger.end; trigger.click+1s" end="trigger.begin" href="#trigger"></animate></svg>',
+      "B",
+    ])
+    const out = applySlideOps(source, [{ op: "duplicate", at: 1 }])
+    expect(out).toContain('begin="trigger--derive-copy-12.end; trigger--derive-copy-12.click+1s"')
+    expect(out).toContain('end="trigger--derive-copy-12.begin"')
+  })
+
+  it("[DECK-020] rewrites CSS-escaped fragment ids on copied slides", () => {
+    const source = deck([
+      '<svg><linearGradient id="grad:alt"></linearGradient>' +
+        '<rect style="fill:url(#grad\\:alt)"></rect></svg>',
+      "B",
+    ])
+    expect(applySlideOps(source, [{ op: "duplicate", at: 1 }])).toContain(
+      "url(#grad\\:alt--derive-copy-12)",
+    )
+  })
+
+  it("[DECK-021] refuses document-wide duplicate DOM ids before structural edits", () => {
+    const source = deck(['<div id="same">A</div>', '<div id="same">B</div>'])
+    expect(() => applySlideOps(source, [{ op: "duplicate", at: 1 }])).toThrow(/repeats a DOM id/)
   })
 })
 
