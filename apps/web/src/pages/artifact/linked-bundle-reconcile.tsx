@@ -214,7 +214,7 @@ export function LinkedBundleReconcile({
         <div>
           <div className="text-sm font-medium text-foreground">Update node details</div>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            Every field is optional. Saving creates bundle v{version + 1}; no runtime is inferred.
+            Every field is optional. Saving updates this bundle; no runtime is inferred.
           </p>
         </div>
         <Button
@@ -387,7 +387,7 @@ export function LinkedBundleReconcile({
             }}
             disabled={save.isPending || changes.length === 0}
           >
-            {save.isPending ? "Saving…" : `Save v${version + 1}`}
+            {save.isPending ? "Saving…" : "Save details"}
           </Button>
         </div>
       </div>
