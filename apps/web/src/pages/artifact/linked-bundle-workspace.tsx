@@ -8,10 +8,11 @@ import { cn } from "@/lib/utils"
 import { LinkedBundleFocusSearch, type LinkedBundleFocusTarget } from "./linked-bundle-focus"
 import {
   type LinkedBundleWorkflowNode,
-  linkedBundleNodeExplanation,
+  linkedBundleNodeNote,
   linkedBundleWorkflowNodeMap,
 } from "./linked-bundle-node-details"
 import { LinkedBundleNodeDetailsPanel } from "./linked-bundle-node-details-panel"
+import { LinkedBundleNodeNoteEditor } from "./linked-bundle-node-note-editor"
 import { linkedBundleNodeStateDot as stateDot } from "./linked-bundle-node-state"
 import {
   LinkedBundleNowWorkspace,
@@ -25,7 +26,6 @@ import {
   linkedBundleMemberDetail,
   linkedBundleReviewTarget,
 } from "./linked-bundle-panel"
-import { LinkedBundleReconcile } from "./linked-bundle-reconcile"
 import type { Sel } from "./types"
 import { WorkflowPreview } from "./workflow-preview"
 import { WorkflowRunDialog } from "./workflow-run-dialog"
@@ -280,7 +280,6 @@ function DiagramWorkspace({
   version,
   canEdit,
   onSaved,
-  onEditManifest,
 }: {
   diagram: Diagram
   members: Map<string, BundleMember>
@@ -296,12 +295,11 @@ function DiagramWorkspace({
   version: number
   canEdit: boolean
   onSaved: () => void
-  onEditManifest: () => void
 }) {
   const layout = useMemo(() => linkedBundleLayout(diagram), [diagram])
   const canvasRef = useRef<HTMLDivElement>(null)
   const [canvasWidth, setCanvasWidth] = useState(0)
-  const { selected, fit, focus: focusActive, inspector: reconciling } = reviewState
+  const { selected, fit, focus: focusActive, inspector: editingNote } = reviewState
   const marker = `bundle-arrow-${diagram.id}`
   useEffect(() => {
     const canvas = canvasRef.current
@@ -323,15 +321,15 @@ function DiagramWorkspace({
     return () => cancelAnimationFrame(frame)
   }, [diagram.id, focusActive, selected])
   useEffect(() => {
-    if (!reconciling) return
+    if (!editingNote) return
     const frame = requestAnimationFrame(() => {
       canvasRef.current
         ?.closest("section")
-        ?.querySelector<HTMLElement>("[data-testid=bundle-reconcile-panel]")
+        ?.querySelector<HTMLElement>("[data-testid=bundle-note-editor]")
         ?.scrollIntoView({ block: "center", behavior: "smooth" })
     })
     return () => cancelAnimationFrame(frame)
-  }, [reconciling])
+  }, [editingNote])
   const scale = fit ? linkedBundleFitScale(canvasWidth, layout.width) : 1
   const select = (kind: ReviewKind, local: string, label: string) => {
     const id = linkedBundleReviewTarget(diagram.id, kind, local)
@@ -358,17 +356,13 @@ function DiagramWorkspace({
       const node = diagram.nodes.find((item) => item.id === selected.local)
       if (!node) return null
       const member = node.member ? members.get(node.member) : undefined
-      const explanation = linkedBundleNodeExplanation(
-        diagram,
-        node,
-        workflowNodes.get(`${diagram.id}:${node.id}`),
-      )
+      const note = linkedBundleNodeNote(node, workflowNodes.get(`${diagram.id}:${node.id}`))
       return {
         target: linkedBundleReviewTarget(diagram.id, "node", node.id),
         title: node.label,
         eyebrow: diagram.type === "loop" ? "Loop step" : "Graph node",
-        detail: explanation.whatHappens,
-        explanation,
+        detail: note.text,
+        note,
         count: counts.get(linkedBundleReviewTarget(diagram.id, "node", node.id)) ?? 0,
         state: node.state,
         tier: linkedBundleEffectiveTier(node, diagram),
@@ -729,11 +723,7 @@ function DiagramWorkspace({
                   ) : null}
                 </div>
                 {selection.node ? (
-                  <LinkedBundleNodeDetailsPanel
-                    node={selection.node}
-                    explanation={selection.explanation}
-                    canEdit={canEdit}
-                  />
+                  <LinkedBundleNodeDetailsPanel note={selection.note} canEdit={canEdit} />
                 ) : (
                   <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
                     {selection.detail}
@@ -790,26 +780,28 @@ function DiagramWorkspace({
                 ) : null}
                 {canEdit && "node" in selection ? (
                   <Button
-                    variant={reconciling ? "default" : "outline"}
+                    variant={editingNote ? "default" : "outline"}
                     size="sm"
-                    data-testid="bundle-selection-update-state"
-                    onClick={() => onReviewStateChange({ ...reviewState, inspector: !reconciling })}
+                    data-testid="bundle-selection-edit-note"
+                    onClick={() => onReviewStateChange({ ...reviewState, inspector: !editingNote })}
                   >
-                    <Icon name="pencil" size={14} /> Edit details
+                    <Icon name="pencil" size={14} /> Edit note
                   </Button>
                 ) : null}
               </div>
-              {canEdit && reconciling && selection.node ? (
+              {canEdit && editingNote && selection.node ? (
                 <div>
-                  <LinkedBundleReconcile
+                  <LinkedBundleNodeNoteEditor
+                    key={`${diagram.id}:${selection.node.id}`}
                     shortId={shortId}
                     version={version}
                     diagramId={diagram.id}
                     node={selection.node}
-                    memberVersion={selection.member?.current_version}
+                    workflowDraft={
+                      selection.note.source === "workflow" ? selection.note.text : null
+                    }
                     onClose={() => onReviewStateChange({ ...reviewState, inspector: false })}
                     onSaved={onSaved}
-                    onEditManifest={onEditManifest}
                   />
                 </div>
               ) : null}
@@ -1171,7 +1163,6 @@ export function LinkedBundleWorkspace({
                   version={version}
                   canEdit={canEdit}
                   onSaved={onSaved}
-                  onEditManifest={onEdit}
                 />
               ))}
             </div>

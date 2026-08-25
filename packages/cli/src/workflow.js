@@ -685,7 +685,7 @@ export function previewWorkflowSource(source) {
       .map((node) => visibleNodes.get(node.id)?.label ?? node.id)
       .join(", ")
     warnings.push(
-      `Preview advisory: ${empty.length} node${empty.length === 1 ? " has" : "s have"} no note or workflow instruction/result (${labels}${empty.length > 3 ? ", …" : ""}). Add node.note so ${empty.length === 1 ? "its" : "their"} detail panel explains what happens.`,
+      `Preview advisory: ${empty.length} node${empty.length === 1 ? " has" : "s have"} no note or workflow description (${labels}${empty.length > 3 ? ", …" : ""}). Add a short node.note so ${empty.length === 1 ? "it is" : "they are"} easy to understand.`,
     )
   }
   return {

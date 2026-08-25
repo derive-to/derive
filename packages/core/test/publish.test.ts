@@ -317,7 +317,7 @@ describe("workflow preview contract", () => {
       ]),
     )
     expect(preview.warnings).toContain(
-      "Preview advisory: 1 node has no note or workflow instruction/result (Product review). Add node.note so its detail panel explains what happens.",
+      "Preview advisory: 1 node has no note or workflow description (Product review). Add a short node.note so it is easy to understand.",
     )
     expect(preview.cannot_do).toEqual(["Publish without approval"])
     expect(workflowDefinitionOf(workflowPage())?.errors).toEqual([])

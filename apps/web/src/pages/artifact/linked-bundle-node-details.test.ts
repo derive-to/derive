@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest"
 import type { Artifact } from "@/api"
-import {
-  linkedBundleNodeExplanation,
-  linkedBundleWorkflowNodeMap,
-} from "./linked-bundle-node-details"
+import { linkedBundleNodeNote, linkedBundleWorkflowNodeMap } from "./linked-bundle-node-details"
 
 type Diagram = NonNullable<NonNullable<Artifact["linked_bundle"]>["diagrams"]>[number]
 
@@ -23,14 +20,14 @@ const graph: Diagram = {
 }
 
 describe("linked bundle node details", () => {
-  it("uses the authored note before workflow detail and exposes the four-part explanation", () => {
+  it("uses the authored note before the workflow draft", () => {
     const node = {
       id: "research",
       label: "Research",
       note: "Review the strongest customer evidence.",
       role: "Research owner",
     }
-    const explanation = linkedBundleNodeExplanation(graph, node, {
+    const note = linkedBundleNodeNote(node, {
       node_id: "research",
       label: "Research",
       kind: "context",
@@ -40,16 +37,13 @@ describe("linked bundle node details", () => {
       exit_condition: "On completion → Decision",
     })
 
-    expect(explanation).toEqual({
-      whatHappens: "Review the strongest customer evidence.",
+    expect(note).toEqual({
+      text: "Review the strongest customer evidence.",
       source: "note",
-      ownerContext: "Research owner · customer-research",
-      expectedOutput: "A cited evidence brief",
-      exitCondition: "On completion → Decision",
     })
   })
 
-  it("falls back from a missing node note to workflow instruction then result", () => {
+  it("drafts a missing note from workflow instruction then result", () => {
     const node = graph.nodes.find((item) => item.id === "research")
     if (!node) throw new Error("research fixture is missing")
     const base = {
@@ -62,17 +56,23 @@ describe("linked bundle node details", () => {
     }
 
     expect(
-      linkedBundleNodeExplanation(graph, node, {
+      linkedBundleNodeNote(node, {
         ...base,
         instruction: "Collect customer evidence.",
-      }).whatHappens,
-    ).toBe("Collect customer evidence.")
+      }),
+    ).toEqual({ text: "Collect customer evidence.", source: "workflow" })
     expect(
-      linkedBundleNodeExplanation(graph, node, {
+      linkedBundleNodeNote(node, {
         ...base,
         instruction: null,
-      }).whatHappens,
-    ).toBe("A cited evidence brief")
+      }),
+    ).toEqual({ text: "A cited evidence brief", source: "workflow" })
+  })
+
+  it("keeps a truly empty node simple", () => {
+    const node = graph.nodes.find((item) => item.id === "decision")
+    if (!node) throw new Error("decision fixture is missing")
+    expect(linkedBundleNodeNote(node)).toEqual({ text: null, source: null })
   })
 
   it("indexes workflow nodes with one shared diagram-and-node key", () => {

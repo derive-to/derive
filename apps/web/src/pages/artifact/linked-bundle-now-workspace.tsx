@@ -1,10 +1,7 @@
 import { useMemo } from "react"
 import type { Artifact } from "@/api"
 import { cn } from "@/lib/utils"
-import {
-  type LinkedBundleWorkflowNode,
-  linkedBundleNodeExplanation,
-} from "./linked-bundle-node-details"
+import { type LinkedBundleWorkflowNode, linkedBundleNodeNote } from "./linked-bundle-node-details"
 import { linkedBundleNodeStateDot } from "./linked-bundle-node-state"
 import { linkedBundleEffectiveTier } from "./linked-bundle-panel"
 
@@ -131,11 +128,7 @@ export function LinkedBundleNowWorkspace({
     if (!resolved) return null
     const { diagram, node, member } = resolved
     const tier = linkedBundleEffectiveTier(node, diagram)
-    const explanation = linkedBundleNodeExplanation(
-      diagram,
-      node,
-      workflowNodes.get(`${diagram.id}:${node.id}`),
-    )
+    const note = linkedBundleNodeNote(node, workflowNodes.get(`${diagram.id}:${node.id}`))
     return (
       <button
         key={`${diagram.id}:${node.id}`}
@@ -163,7 +156,7 @@ export function LinkedBundleNowWorkspace({
         <span className="mt-1.5 block text-xs leading-relaxed text-muted-foreground">
           {treatment === "help"
             ? node.help?.question
-            : (explanation.whatHappens ?? member?.label ?? "No additional detail stated")}
+            : (note.text ?? member?.label ?? "No note yet")}
         </span>
         {treatment === "help" && node.help?.can_continue ? (
           <span className="mt-2 block text-2xs text-muted-foreground">

@@ -707,7 +707,7 @@ const previewWorkflowValidation = (
       .map((node) => nodeLabel(visibleNodes.get(node.id), node.id))
       .join(", ")
     return [
-      `Preview advisory: ${empty.length} node${empty.length === 1 ? " has" : "s have"} no note or workflow instruction/result (${labels}${empty.length > 3 ? ", …" : ""}). Add node.note so ${empty.length === 1 ? "its" : "their"} detail panel explains what happens.`,
+      `Preview advisory: ${empty.length} node${empty.length === 1 ? " has" : "s have"} no note or workflow description (${labels}${empty.length > 3 ? ", …" : ""}). Add a short node.note so ${empty.length === 1 ? "it is" : "they are"} easy to understand.`,
     ]
   })
   return {

@@ -35,7 +35,7 @@ attempts; never create a new session for a mere check or follow-up.
 | Context session | Authored graph state | Harness action |
 | --- | --- | --- |
 | `open` | `waiting` | Keep the node queued; do not infer a person is needed. |
-| `working` | `active` | Carry progress and any bound result artifact into the node note/member. |
+| `working` | `active` | Keep the explanatory note stable; bind any result artifact through the node member. |
 | `answered` | `done` | Add `result_artifact_id` to bundle members, point `node.member` at its local id, then route. |
 | `escalated` | `waiting` + explicit `help` | Pause with the exact question and resume event. |
 | `failed` | `blocked` or a declared retry | Apply the authored failure/loop policy; never retry forever. |
