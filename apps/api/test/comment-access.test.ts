@@ -25,7 +25,7 @@ describe("comment access via the general-access link", () => {
   // Bob is signed in but reaches Alice's artifact purely via the link (his own isolated
   // workspace → no membership, no share): the "signed in via link" column.
   const bob: TestUser = { id: "u_ca_bob", email: "bob@ca.test", name: "Bob" }
-  const { app, meta } = makeAuthedApp("comment-access", [alice, bob], undefined, {
+  const { app } = makeAuthedApp("comment-access", [alice, bob], undefined, {
     isolated: true,
   })
 
@@ -175,18 +175,30 @@ describe("comment access via the general-access link", () => {
   })
 
   it("explains when a production-backed preview is waiting for the new tables", async () => {
-    await app.request("/v1/me", { headers: as(alice.email) })
-    const shortId = (await (await publishAs(app, "<h1>preview</h1>", {}, as(alice.email))).json())
-      .short_id
-    Object.assign(meta, {
-      getSharedState: async () => {
-        throw Object.assign(new Error('relation "shared_state" does not exist'), {
-          code: "42P01",
-        })
+    const seeded = makeAuthedApp("comment-access-schema", [alice], undefined, { isolated: true })
+    await seeded.app.request("/v1/me", { headers: as(alice.email) })
+    const shortId = (
+      await (await publishAs(seeded.app, "<h1>preview</h1>", {}, as(alice.email))).json()
+    ).short_id
+    // Postgres test stores are deferred proxies, so replace the dependency before
+    // createApp closes over it instead of trying to patch one of its methods later.
+    const missingSchema = new Proxy(seeded.meta, {
+      get(target, prop, receiver) {
+        if (prop === "getSharedState")
+          return async () => {
+            throw Object.assign(new Error('relation "shared_state" does not exist'), {
+              code: "42P01",
+            })
+          }
+        return Reflect.get(target, prop, receiver)
       },
     })
+    const { app: preview } = makeAuthedApp("comment-access-schema-route", [alice], undefined, {
+      isolated: true,
+      deps: { meta: missingSchema },
+    })
 
-    const response = await app.request(`/v1/artifacts/${shortId}/state/bugs`, {
+    const response = await preview.request(`/v1/artifacts/${shortId}/state/bugs`, {
       headers: as(alice.email),
     })
     expect(response.status).toBe(503)
