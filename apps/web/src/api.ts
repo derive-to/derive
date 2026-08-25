@@ -1608,6 +1608,32 @@ export const api = {
     }).then(j)
   },
 
+  // Whole-slide edits from the visual organizer. The browser sends compact structural
+  // intent and the server materializes it against the stored source; base_version makes
+  // one arranged session atomic and conflict-safe.
+  publishSlideOps(
+    id: string,
+    ops: (
+      | { op: "move"; from: number; to: number }
+      | { op: "delete"; at: number }
+      | { op: "duplicate"; at: number }
+      | { op: "insert"; at: number }
+    )[],
+    baseVersion: number,
+    message: string,
+  ): Promise<Artifact> {
+    const fd = new FormData()
+    fd.append("slide_ops", JSON.stringify(ops))
+    fd.append("base_version", String(baseVersion))
+    fd.append("message", message)
+    return f(`/v1/artifacts/${id}/versions`, {
+      method: "POST",
+      body: fd,
+      credentials: "include",
+      headers: { accept: "application/json" },
+    }).then(j)
+  },
+
   // --- Connected sources (plain /v1 routes, hand-written client) ------------------------
   connections(): Promise<Connection[]> {
     return f("/v1/connections?mine=1", opts())

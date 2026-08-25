@@ -8,7 +8,7 @@
 // The authoring guide is derive://skills/decks; the starter is deck-template.html.
 
 import { EditError } from "./doc-text"
-import { classTokens, elementEnd, type HtmlTag, tags } from "./html-tags"
+import { attrValue, classTokens, elementEnd, type HtmlTag, tags } from "./html-tags"
 
 /** HTML comments hold prose ABOUT decks (including this repo's own annotated starter) and
  *  render nothing, so they must never make a page look like a deck. Stripped before any
@@ -160,6 +160,7 @@ export type SlideOp =
   | { op: "move"; from: number; to: number }
   | { op: "delete"; at: number }
   | { op: "duplicate"; at: number }
+  | { op: "insert"; at: number }
 
 /** Enough for any real rearranging session; a runaway loop is not an edit. */
 export const MAX_SLIDE_OPS = 200
@@ -188,6 +189,56 @@ const withId = (text: string, id: number): string => {
   return m
     ? `${text.slice(0, m[0].length)} data-derive-slide="${id}"${text.slice(m[0].length)}`
     : text
+}
+
+const inactiveClasses = (classes: string[]): string[] =>
+  classes.filter((name) => !["on", "active", "is-active", "current"].includes(name.toLowerCase()))
+
+/** A newly-created slide is never the live one merely because its source was. Deck
+ *  runtimes commonly persist `on`/`active` on the first slide in authored source; copying
+ *  that state would paint two slides at once after reload. Only the OUTER slide's class
+ *  list is touched, and content/style classes remain byte-for-byte. */
+const inactiveCopy = (text: string, id: number): string => {
+  const copied = withId(text, id)
+  const open = tags(copied).find((tag) => !tag.closing && SLIDE_TAGS.has(tag.name))
+  if (!open) return copied
+  const opening = copied
+    .slice(open.start, open.end)
+    .replace(/class\s*=\s*(["'])(.*?)\1/i, (_all, quote: string, value: string) => {
+      const classes = inactiveClasses(value.split(/\s+/).filter(Boolean))
+      return `class=${quote}${classes.join(" ")}${quote}`
+    })
+  return copied.slice(0, open.start) + opening + copied.slice(open.end)
+}
+
+const escapeAttr = (value: string): string =>
+  value.replaceAll("&", "&amp;").replaceAll('"', "&quot;")
+
+/** A blank slide inherits only visual/layout attributes. Content identity (`id`), ARIA
+ *  references, and arbitrary data hooks are unique to the source slide and would become
+ *  broken duplicates if copied onto a new one. */
+const blankOpening = (open: HtmlTag, id: number): string => {
+  const classes = inactiveClasses(classTokens(open.attrs))
+  const style = attrValue(open.attrs, "style")
+  const role = attrValue(open.attrs, "role")
+  return `<${open.name} data-derive-slide="${id}"${
+    classes.length ? ` class="${escapeAttr(classes.join(" "))}"` : ""
+  }${style ? ` style="${escapeAttr(style)}"` : ""}${role ? ` role="${escapeAttr(role)}"` : ""}>`
+}
+
+/** Make a deliberately small blank slide in the deck's own outer shell. Keeping the
+ *  source slide's tag + attributes preserves arbitrary deck layout conventions (a deck
+ *  may use `li.slide`, an inline style, or its own data attributes), while the fresh
+ *  identity keeps comment threads distinct. The interior is intentionally plain HTML:
+ *  it is useful immediately and can be changed with the rendered editor. */
+const blankFrom = (text: string, id: number): string => {
+  const all = tags(text)
+  const open = all.find((tag) => !tag.closing && SLIDE_TAGS.has(tag.name))
+  if (!open) throw new EditError("The slide used as a template has no readable opening tag.")
+  const close = [...all].reverse().find((tag) => tag.closing && tag.name === open.name)
+  const opening = blankOpening(open, id)
+  const closing = close ? text.slice(close.start, close.end) : `</${open.name}>`
+  return `${opening}\n  <h2>New slide</h2>\n  <p>Add content in Edit mode.</p>\n${closing}`
 }
 
 /**
@@ -270,11 +321,19 @@ export const applySlideOps = (html: string, ops: SlideOp[]): string => {
       const src = items[pos - 1] as { text: string; id: number | null }
       // The copy is a NEW slide: it must not inherit the original's identity, or every
       // thread pinned to the original would claim both.
-      items.splice(pos, 0, { text: withId(src.text, nextId), id: nextId })
+      items.splice(pos, 0, { text: inactiveCopy(src.text, nextId), id: nextId })
+      nextId++
+    } else if (op?.op === "insert") {
+      // `at` is the position the new slide will occupy, so unlike the other ops it may
+      // be one past the current end. Use the nearest existing slide as the visual shell.
+      const pos = at(op.at, "at", items.length + 1)
+      const templateAt = Math.min(Math.max(pos - 1, 0), items.length - 1)
+      const src = items[templateAt] as { text: string; id: number | null }
+      items.splice(pos - 1, 0, { text: blankFrom(src.text, nextId), id: nextId })
       nextId++
     } else {
       throw new EditError(
-        `slide_ops: unknown op ${JSON.stringify((op as { op?: unknown })?.op)} — use "move", "delete", or "duplicate".`,
+        `slide_ops: unknown op ${JSON.stringify((op as { op?: unknown })?.op)} — use "move", "delete", "duplicate", or "insert".`,
       )
     }
   }

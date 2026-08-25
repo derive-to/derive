@@ -34,6 +34,7 @@ export type ElementWire = {
   before?: string
   after?: string
   slide?: number
+  slide_identity?: string
   snapshot?: ElementSnapshotLite
 }
 
@@ -47,6 +48,7 @@ export type Sel = {
   prefix?: string
   suffix?: string
   slide?: number
+  slide_identity?: string
   // element-anchor fields (present when type === "ElementSelector")
   tag?: string
   role?: string
@@ -110,7 +112,8 @@ export type ComposerState = {
  * moves the deck: a protocol deck answers the host's `deck` message itself, while a
  * sniffed one is driven by the client (see `deck-drive`).
  */
-export type Deck = { i: number; total: number; sniffed: boolean }
+export type DeckSlide = { id: string; label: string }
+export type Deck = { i: number; total: number; sniffed: boolean; slides: DeckSlide[] }
 
 /** A first-class HTML video's live scene and clock, reported by its own runtime or
  *  by Derive's injected client for canonical data-derive-video markup. */
@@ -138,6 +141,7 @@ export type ParsedAnchor = {
   prefix?: string
   suffix?: string
   slide?: number
+  slide_identity?: string
   element?: ElementWire
   label?: string
 }
@@ -151,9 +155,22 @@ export function parseAnchor(a: string | null): ParsedAnchor | null {
       suffix?: string
     }
     if (s.type === "ElementSelector" && s.fingerprint && s.tag) {
-      return { element: s, label: s.snapshot?.label ?? "Element", slide: s.slide }
+      return {
+        element: s,
+        label: s.snapshot?.label ?? "Element",
+        slide: s.slide,
+        slide_identity: s.slide_identity,
+      }
     }
-    return s.exact ? { exact: s.exact, prefix: s.prefix, suffix: s.suffix, slide: s.slide } : null
+    return s.exact
+      ? {
+          exact: s.exact,
+          prefix: s.prefix,
+          suffix: s.suffix,
+          slide: s.slide,
+          slide_identity: s.slide_identity,
+        }
+      : null
   } catch {
     return null
   }
