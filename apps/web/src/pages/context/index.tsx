@@ -88,7 +88,7 @@ export function ContextRow({ context: x }: { context: ContextInfo }) {
       to="/contexts/$id"
       params={{ id: x.id }}
       data-testid="context-card"
-      className="relative flex flex-col gap-2 overflow-hidden rounded-xl border bg-card px-4 py-3 pl-5 transition-colors hover:bg-accent"
+      className="relative flex flex-col gap-2 overflow-hidden rounded-xl border bg-card px-4 py-3 pl-5 outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
     >
       <span
         aria-hidden="true"
@@ -97,12 +97,12 @@ export function ContextRow({ context: x }: { context: ContextInfo }) {
           status.online ? "bg-success" : status.away ? "bg-warning" : "bg-muted-foreground/35",
         )}
       />
-      <div className="flex items-center gap-2">
-        <Icon name="context" className="text-muted-foreground" />
-        <span className="text-sm font-medium text-foreground">{x.name}</span>
+      <div className="flex min-w-0 items-center gap-2">
+        <Icon name="context" className="shrink-0 text-muted-foreground" />
+        <span className="min-w-0 truncate text-sm font-medium text-foreground">{x.name}</span>
         <span
           className={cn(
-            "ml-auto flex items-center gap-1.5 rounded-md border px-1.5 py-0.5 font-mono text-2xs",
+            "ml-auto flex shrink-0 items-center gap-1.5 rounded-md border px-1.5 py-0.5 font-mono text-2xs",
             status.online
               ? "border-success/20 bg-success/10 text-success"
               : status.away

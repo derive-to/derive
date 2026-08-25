@@ -406,6 +406,7 @@ describe("linked bundles", () => {
     })
 
     const directory = await (await app.request("/v1/workflows")).json()
+    expect(directory.truncated).toBe(false)
     expect(directory.items).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

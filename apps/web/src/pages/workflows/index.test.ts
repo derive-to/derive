@@ -51,4 +51,18 @@ describe("Workflows directory", () => {
     )
     expect(entries.map((entry) => entry.kind)).toEqual(["bundle", "context", "bundle"])
   })
+
+  it("keeps a large mixed directory deterministic without duplicating bundles", () => {
+    const items = Array.from({ length: 1_000 }, (_, index) => ({
+      ...item(`bundle-${String(index).padStart(4, "0")}`, index % 2 ? ["graph"] : ["loop"]),
+      updated_at: new Date(Date.UTC(2026, 7, 24, 12, 0, index)).toISOString(),
+    }))
+    const entries = workflowDirectoryEntries([], items)
+
+    expect(entries).toHaveLength(1_000)
+    expect(entries[0]).toMatchObject({ kind: "bundle", item: { short_id: "bundle-0999" } })
+    expect(
+      new Set(entries.map((entry) => entry.kind === "bundle" && entry.item.short_id)).size,
+    ).toBe(1_000)
+  })
 })

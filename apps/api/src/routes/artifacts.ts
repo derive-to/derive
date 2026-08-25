@@ -224,14 +224,17 @@ export const artifactRoutes = (ctx: AppContext) => {
       // Over-fetch before the visibility cut so a run of inaccessible private bundles does
       // not make a reader's directory look empty. This is intentionally a bounded first
       // version of the directory; `truncated` keeps the cap honest until it needs cursors.
-      const factCap = 201
+      // Match the established fact-search policy: gate twice the display cap, then cut the
+      // visible result. Slicing before the gate lets newer private rows consume the entire
+      // public/member page.
+      const directoryLimit = 200
+      const factCap = directoryLimit * 2
       const bundleRows = await meta.listFactAcrossArtifacts(org, LINKED_BUNDLE_FACT, {
         limit: factCap,
       })
-      const candidates = bundleRows.slice(0, 200)
       const visible = await visibleArtifacts(
         meta,
-        candidates.map((row) => row.id),
+        bundleRows.map((row) => row.id),
         { orgId: org, viewerId: operator ? undefined : memberId, publicOnly },
       )
       const visibleIds = new Set(
@@ -244,7 +247,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       })
       const workflowByArtifact = new Map(workflowRows.map((row) => [row.id, row]))
 
-      const items = candidates.flatMap((row) => {
+      const visibleItems = bundleRows.flatMap((row) => {
         if (!visibleIds.has(row.id)) return []
         const workflowRow = workflowByArtifact.get(row.id)
         const parsed = parseLinkedWorkflowFacts([
@@ -279,7 +282,10 @@ export const artifactRoutes = (ctx: AppContext) => {
         ]
       })
 
-      return c.json({ items, truncated: bundleRows.length > 200 || workflowRows.length > 200 })
+      return c.json({
+        items: visibleItems.slice(0, directoryLimit),
+        truncated: visibleItems.length > directoryLimit,
+      })
     },
   )
 

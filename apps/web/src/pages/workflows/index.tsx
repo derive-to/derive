@@ -97,7 +97,7 @@ function WorkflowRow({ item }: { item: WorkflowDirectoryItem }) {
       to="/artifacts/$ref"
       params={{ ref: refFor(item) }}
       data-testid="workflow-card"
-      className="group flex flex-col gap-2 rounded-xl border bg-card px-4 py-3 transition-colors hover:bg-accent"
+      className="group flex flex-col gap-2 rounded-xl border bg-card px-4 py-3 outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
     >
       <div className="flex min-w-0 items-center gap-2">
         <Icon name={leadKind} className="shrink-0 text-muted-foreground" />
@@ -135,12 +135,14 @@ function WorkflowList({
   isPending,
   isError,
   onRetry,
+  onShowAll,
   emptyKind,
 }: {
   items: WorkflowDirectoryItem[]
   isPending: boolean
   isError: boolean
   onRetry: () => void
+  onShowAll: () => void
   emptyKind: "workflow" | "graph" | "loop"
 }) {
   if (isPending) return <WorkflowRowsSkeleton />
@@ -153,6 +155,18 @@ function WorkflowList({
         icon={<Icon name={emptyKind} />}
         title={`No ${noun} yet`}
         description="Ask your local Claude, Codex, or other harness to publish one into this workspace."
+        action={
+          emptyKind === "workflow" ? null : (
+            <Button
+              size="sm"
+              variant="outline"
+              data-testid="workflows-empty-show-all"
+              onClick={onShowAll}
+            >
+              Show all workflows
+            </Button>
+          )
+        }
       />
     )
   }
@@ -233,7 +247,10 @@ export function Workflows() {
       />
 
       <Tabs value={view} onValueChange={setView}>
-        <TabsList aria-label="Filter workflows by type">
+        <TabsList
+          aria-label="Filter workflows by type"
+          className="max-w-full justify-start overflow-x-auto"
+        >
           <TabsTrigger value="all" data-testid="workflows-tab-all">
             All
             <span className="font-mono text-2xs text-muted-foreground">{allEntries.length}</span>
@@ -319,6 +336,7 @@ export function Workflows() {
             isPending={workflows.isPending}
             isError={workflows.isError}
             onRetry={() => void workflows.refetch()}
+            onShowAll={() => setView("all")}
             emptyKind={view === "graphs" ? "graph" : "loop"}
           />
         </div>
