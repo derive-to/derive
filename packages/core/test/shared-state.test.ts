@@ -181,6 +181,8 @@ describe("shared-state contract", () => {
 
     const setMine = bugs.setMine("reaction", { kind: "up" })
     const actorMutation = sent.at(-1)
+    expect(bugs.mine("reaction")).toEqual({ id: "item_1", kind: "up" })
+    expect(seen.at(-1)).toEqual([{ id: "item_1", kind: "up" }])
     expect(actorMutation).toMatchObject({
       source: "derive",
       type: "shared-mutate",
@@ -207,6 +209,26 @@ describe("shared-state contract", () => {
     })
     await expect(setMine).resolves.toEqual(actorValue)
     expect(bugs.mine("reaction")).toEqual({ id: "item_2", kind: "up" })
+
+    const failedMine = bugs.setMine("reaction", null)
+    const failedMutation = sent.at(-1)
+    expect(bugs.mine("reaction")).toBeNull()
+    expect(bugs.value).toEqual([])
+    receive({
+      source: parent,
+      data: {
+        source: "derive-host",
+        type: "shared-result",
+        requestId: failedMutation?.requestId,
+        key: "bugs",
+        ok: false,
+        error: "write failed",
+      },
+    })
+    await expect(failedMine).rejects.toThrow("write failed")
+    expect(bugs.mine("reaction")).toEqual({ id: "item_2", kind: "up" })
+    expect(bugs.value).toEqual(actorValue)
+    expect(sent.at(-1)).toMatchObject({ source: "derive", type: "shared-open", key: "bugs" })
     expect(() => bugs.setMine("", {})).toThrow("mine slot must be a 1-128 character string")
     expect(() => bugs.setMine("reaction", [] as unknown as Record<string, unknown>)).toThrow(
       "setMine value must be an object or null",

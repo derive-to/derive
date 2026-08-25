@@ -49,6 +49,10 @@ stored values remain readable for aggregation, but actor ownership is never
 included in the collection. Use it for reactions, poll responses, RSVPs,
 acknowledgements, and other per-person state, not only votes.
 
+`setMine` updates `value`, `mine(slot)`, and `onChange` optimistically, then
+reconciles with the server response. A rejected write rolls back the local change
+and resyncs, so interaction feedback does not wait on network latency.
+
 For an honest loading or error state, await the handle's `ready` promise. The
 local initial value remains available immediately, while a failed first read is
 observable instead of looking like an empty collection:

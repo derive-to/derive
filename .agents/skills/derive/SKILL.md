@@ -134,7 +134,8 @@ render. Use `derive.shared` for shared and actor-scoped state instead.
 Viewers read and receive live updates. Signed-in commenters can add, apply atomic
 `+1`/`-1` counter interactions, set one durable value per actor and slot with
 `setMine(slot, value)`, and call `activity()` for attributed history. `mine(slot)` returns
-that actor's current item after `ready`; setting the value to `null` removes it. Derive
+that actor's current item after `ready`; setting the value to `null` removes it. `setMine`
+updates the local handle optimistically and rolls back plus resyncs if the write fails. Derive
 stamps and enforces identity server-side, so never put identity in an item or mutation.
 Arbitrary field replacement requires edit rights. When the user explicitly asks for
 anyone with the URL to participate, publish with `link_role: commenter`; an unsigned
