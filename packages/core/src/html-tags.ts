@@ -18,7 +18,7 @@ export interface HtmlTag {
   name: string
   /** True for `</name>`. */
   closing: boolean
-  /** True for `<name … />`. */
+  /** True when the browser ends this opening element at its own `>`. */
   selfClosing: boolean
   /** Raw attribute text between the name and the closing `>`. */
   attrs: string
@@ -218,7 +218,29 @@ export const tags = (html: string): HtmlTag[] => {
   const out: HtmlTag[] = []
   const lower = html.toLowerCase()
   let i = 0
-  let foreignDepth = 0
+  type Namespace = "html" | "svg" | "math"
+  const open: { name: string; namespace: Namespace; attrs: string }[] = []
+
+  const namespaceFor = (name: string): Namespace => {
+    const parent = open.at(-1)
+    let namespace: Namespace = parent?.namespace ?? "html"
+    if (parent?.namespace === "svg" && ["foreignobject", "desc", "title"].includes(parent.name))
+      namespace = "html"
+    else if (
+      parent?.namespace === "math" &&
+      ["mi", "mo", "mn", "ms", "mtext"].includes(parent.name) &&
+      !["mglyph", "malignmark"].includes(name)
+    )
+      namespace = "html"
+    else if (parent?.namespace === "math" && parent.name === "annotation-xml") {
+      const encoding = attrValue(parent.attrs, "encoding")?.toLowerCase()
+      if (encoding === "text/html" || encoding === "application/xhtml+xml") namespace = "html"
+    }
+    if (namespace === "html" && name === "svg") return "svg"
+    if (namespace === "html" && name === "math") return "math"
+    return namespace
+  }
+
   while (i < html.length) {
     const lt = html.indexOf("<", i)
     if (lt === -1) break
@@ -248,13 +270,12 @@ export const tags = (html: string): HtmlTag[] => {
     const closing = m[0][1] === "/"
     const attrs = html.slice(lt + m[0].length, j)
     const syntacticSlash = attrs.trimEnd().endsWith("/")
+    const namespace = namespaceFor(name)
     // In HTML, a trailing slash closes only void or foreign-content elements;
     // `<section/>` is still an open section. Expose browser-effective structure
     // so every downstream slicer and source mapper agrees with the DOM.
     const selfClosing =
-      !closing &&
-      (VOID_ELEMENTS.has(name) ||
-        (syntacticSlash && (foreignDepth > 0 || name === "svg" || name === "math")))
+      !closing && (namespace === "html" ? VOID_ELEMENTS.has(name) : syntacticSlash)
     out.push({
       name,
       closing,
@@ -263,8 +284,10 @@ export const tags = (html: string): HtmlTag[] => {
       start: lt,
       end: j + 1,
     })
-    if (closing && (name === "svg" || name === "math")) foreignDepth = Math.max(0, foreignDepth - 1)
-    else if (!closing && !selfClosing && (name === "svg" || name === "math")) foreignDepth++
+    if (closing) {
+      const matching = open.findLastIndex((tag) => tag.name === name)
+      if (matching >= 0) open.length = matching
+    } else if (!selfClosing) open.push({ name, namespace, attrs })
     i = j + 1
     // Raw-text elements: their content is text, so skip straight past the close tag.
     if (!closing && (name === "script" || name === "style")) {

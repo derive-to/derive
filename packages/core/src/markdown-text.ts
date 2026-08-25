@@ -143,20 +143,45 @@ export function markdownTextParts(source: string): MarkdownTextParts {
     return at >= from && at + raw.length <= limit ? at : -1
   }
 
+  const firstAuthoredLine = (raw: string): { text: string; offset: number } | null => {
+    let lineStart = 0
+    while (lineStart < raw.length) {
+      const lineEnd = raw.indexOf("\n", lineStart)
+      const end = lineEnd < 0 ? raw.length : lineEnd
+      const line = raw.slice(lineStart, end)
+      const text = line.trimStart()
+      if (text) return { text, offset: lineStart + line.length - text.length }
+      if (lineEnd < 0) break
+      lineStart = lineEnd + 1
+    }
+    return null
+  }
+
+  /** A normalized container's full raw value may not occur anywhere in authored
+   *  source. Anchor on its first real line before checking the one plausible exact
+   *  start, avoiding a failed suffix-wide search for every sibling. */
+  const exactStartAtAnchor = (raw: string, anchor: number, from: number, limit: number): number => {
+    if (!raw || anchor < 0) return -1
+    if (source.startsWith(raw, from) && from + raw.length <= limit) return from
+    const first = firstAuthoredLine(raw)
+    if (!first) return -1
+    const candidate = anchor - first.offset
+    return candidate >= from && candidate + raw.length <= limit && source.startsWith(raw, candidate)
+      ? candidate
+      : -1
+  }
+
   /** Find a stable authored foothold for a normalized container token. Marked
    *  removes a blockquote/list prefix from every line, so the whole `raw` often is
    *  absent while its first non-empty authored line is still exact. Descendants
    *  are the fallback for wrapper tokens whose own first line is only structure. */
   const firstSourceAnchor = (token: MarkdownToken, from: number, limit: number): number => {
     const raw = token.raw ?? ""
-    const direct = locate(raw, from, limit)
-    if (direct >= 0) return direct
-    for (const line of raw.split("\n")) {
-      const candidate = line.trimStart()
-      if (!candidate) continue
-      const at = locate(candidate, from, limit)
+    if (raw && source.startsWith(raw, from) && from + raw.length <= limit) return from
+    const first = firstAuthoredLine(raw)
+    if (first) {
+      const at = locate(first.text, from, limit)
       if (at >= 0) return at
-      break
     }
     for (const child of token.tokens ?? []) {
       const at = firstSourceAnchor(child, from, limit)
@@ -323,11 +348,11 @@ export function markdownTextParts(source: string): MarkdownTextParts {
     for (let itemIndex = 0; itemIndex < items.length; itemIndex++) {
       const item = items[itemIndex] as MarkdownToken
       const raw = item.raw ?? ""
-      const located = locate(raw, cursor, rangeEnd)
       // When the normalized item is not contiguous, bound it by the next sibling's
       // first authored line. This keeps one fallback item from consuming every
       // later sibling in the same prefixed list.
       const currentAnchor = firstSourceAnchor(item, cursor, rangeEnd)
+      const located = exactStartAtAnchor(raw, currentAnchor, cursor, rangeEnd)
       let nextAnchor = -1
       for (let next = itemIndex + 1; next < items.length && nextAnchor < 0; next++)
         nextAnchor = firstSourceAnchor(
@@ -393,8 +418,8 @@ export function markdownTextParts(source: string): MarkdownTextParts {
     for (let childIndex = 0; childIndex < children.length; childIndex++) {
       const child = children[childIndex] as MarkdownToken
       const raw = child.raw ?? ""
-      const at = locate(raw, cursor, rangeEnd)
       const currentAnchor = firstSourceAnchor(child, cursor, rangeEnd)
+      const at = exactStartAtAnchor(raw, currentAnchor, cursor, rangeEnd)
       let nextAnchor = -1
       for (let next = childIndex + 1; next < children.length && nextAnchor < 0; next++)
         nextAnchor = firstSourceAnchor(

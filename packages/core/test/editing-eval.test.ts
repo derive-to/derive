@@ -294,6 +294,16 @@ describe("editing eval — Markdown source preservation", () => {
       "> - a\n>   > - b\n>     > - c\n>       **changed**",
     )
   })
+
+  it("[MD-030] maps ten thousand prefixed list siblings within a bounded runtime", () => {
+    const source = Array.from(
+      { length: 10_000 },
+      (_, i) => `> - item${i}\n>   ${i === 9_999 ? "target" : `body${i}`}`,
+    ).join("\n")
+    const start = performance.now()
+    expect(applyQuoteEdits(source, MD, [qe("target", "changed")])).toMatch(/changed$/)
+    expect(performance.now() - start).toBeLessThan(1500)
+  })
 })
 
 describe("editing eval — HTML projection, topology, and injection", () => {
@@ -527,6 +537,16 @@ describe("editing eval — HTML projection, topology, and injection", () => {
       "<table><thead hidden><tr><td>hidden</tr></table><p>X</p>",
     )
   })
+
+  it("[HTML-026] treats SVG and MathML integration-point descendants as HTML", () => {
+    for (const source of [
+      "<svg><foreignObject><div hidden/><p>visible</p></foreignObject></svg>",
+      "<math><mtext><div hidden/><p>visible</p></mtext></math>",
+    ]) {
+      expect(pageTextParts(source).text).not.toContain("visible")
+      expect(() => applyQuoteEdits(source, HTML, [qe("visible", "X")])).toThrow(/wasn't found/)
+    }
+  })
 })
 
 describe("editing eval — deck identity and structural operations", () => {
@@ -683,6 +703,31 @@ describe("editing eval — deck identity and structural operations", () => {
       'aria-labelledby="title-a--derive-copy-12" aria-describedby="desc-a--derive-copy-12"',
     )
     expect(out).toContain('href="#icon-a--derive-copy-12"')
+  })
+
+  it("[DECK-017] rejects self-closing slide syntax at an SVG HTML integration point", () => {
+    const source =
+      '<main><svg><foreignObject><section class="slide" data-derive-slide="1"/>A</foreignObject>' +
+      '<foreignObject><section class="slide" data-derive-slide="2"/>B</foreignObject></svg>' +
+      '<script>window.source="derive-deck"</script></main>'
+    expect(() => sliceSlides(source)).toThrow(/nested|never closed/)
+    expect(isDeckDocument(source)).toBe(false)
+  })
+
+  it("[DECK-018] rewrites copied HTML IDREFs and quoted CSS fragment URLs", () => {
+    const source = deck([
+      '<div id="foo" itemref="foo map" contextmenu="menu" usemap="#map"></div>' +
+        '<map id="map"></map><menu id="menu"></menu>' +
+        '<svg><linearGradient id="grad"></linearGradient>' +
+        "<rect style=\"fill:url('#grad');stroke:url(&quot;#grad&quot;)\"></rect></svg>",
+      "B",
+    ])
+    const out = applySlideOps(source, [{ op: "duplicate", at: 1 }])
+    expect(out).toContain('itemref="foo--derive-copy-12 map--derive-copy-12"')
+    expect(out).toContain('contextmenu="menu--derive-copy-12"')
+    expect(out).toContain('usemap="#map--derive-copy-12"')
+    expect(out).toContain("url('#grad--derive-copy-12')")
+    expect(out).toContain("url(&quot;#grad--derive-copy-12&quot;)")
   })
 })
 

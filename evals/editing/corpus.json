@@ -338,6 +338,16 @@
       "cadence": "regression"
     },
     {
+      "id": "MD-030",
+      "lane": "core",
+      "surface": "markdown",
+      "risk": "P2",
+      "oracle": "bounded-runtime-and-exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "ten thousand list siblings inside a blockquote remain near-linear and editable",
+      "cadence": "extended"
+    },
+    {
       "id": "HTML-001",
       "lane": "core",
       "surface": "html",
@@ -588,6 +598,16 @@
       "cadence": "regression"
     },
     {
+      "id": "HTML-026",
+      "lane": "core",
+      "surface": "html",
+      "risk": "P1",
+      "oracle": "browser-parity-and-safe-refusal",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "SVG and MathML integration-point descendants use HTML self-closing semantics",
+      "cadence": "regression"
+    },
+    {
       "id": "DECK-001",
       "lane": "core",
       "surface": "deck",
@@ -745,6 +765,26 @@
       "oracle": "unique-identity-and-reference-integrity",
       "source": "packages/core/test/editing-eval.test.ts",
       "covers": "duplicated slides rewrite nested DOM ids and ARIA or SVG references",
+      "cadence": "regression"
+    },
+    {
+      "id": "DECK-017",
+      "lane": "core",
+      "surface": "deck",
+      "risk": "P1",
+      "oracle": "browser-parity-and-safe-classification",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "self-closing slide syntax inside SVG HTML integration points cannot masquerade as valid structure",
+      "cadence": "regression"
+    },
+    {
+      "id": "DECK-018",
+      "lane": "core",
+      "surface": "deck",
+      "risk": "P1",
+      "oracle": "unique-identity-and-reference-integrity",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "duplicated slides rewrite standard HTML IDREFs and quoted CSS fragment URLs",
       "cadence": "regression"
     },
     {

@@ -257,9 +257,10 @@ const IDREF_LIST_ATTRS = new Set([
   "aria-labelledby",
   "aria-owns",
   "headers",
+  "itemref",
 ])
-const IDREF_ATTRS = new Set(["aria-activedescendant", "for", "form", "list"])
-const FRAGMENT_ATTRS = new Set(["href", "xlink:href"])
+const IDREF_ATTRS = new Set(["aria-activedescendant", "contextmenu", "for", "form", "list"])
+const FRAGMENT_ATTRS = new Set(["href", "usemap", "xlink:href"])
 
 const domIds = (html: string): string[] =>
   tags(html).flatMap((tag) => (tag.closing ? [] : attrValues(tag.attrs, "id")))
@@ -292,10 +293,13 @@ const rewriteCopiedDomIds = (html: string, slideId: number, used: Set<string>): 
       return value.replace(/\S+/g, (token) => rewritten.get(token) ?? token)
     if (FRAGMENT_ATTRS.has(lower) && value.startsWith("#"))
       return `#${rewritten.get(value.slice(1)) ?? value.slice(1)}`
-    return value.replace(/url\(\s*#([^\s)]+)\s*\)/gi, (whole, ref: string) => {
-      const next = rewritten.get(ref)
-      return next ? `url(#${next})` : whole
-    })
+    return value.replace(
+      /url\(\s*((?:["'])|(?:&(?:quot|apos|#(?:34|39)|#x(?:22|27));))?#([^\s)"'&]+)\1\s*\)/gi,
+      (whole, _quote, ref: string) => {
+        const next = rewritten.get(ref)
+        return next ? whole.replace(`#${ref}`, `#${next}`) : whole
+      },
+    )
   }
 
   const attr = /([^\s"'<>/=]+)(\s*=\s*)(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/g
