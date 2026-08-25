@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer"
-import { DECK_TEMPLATE } from "@derive/core"
+import { DECK_TEMPLATE, pageTextParts } from "@derive/core"
 import type { Page } from "@playwright/test"
 import { expect, openArtifact, publishArtifact, test } from "../fixtures"
 
@@ -197,7 +197,7 @@ test("[BROWSER-DECK-OPS-001] the real versions route preserves identity and reje
     "12",
     "11",
   ])
-  expect(stored.replace(/<[^>]+>/g, "").replace(/\s+/g, "")).toContain("AAB")
+  expect(pageTextParts(stored).text.replace(/\s+/g, "")).toContain("AAB")
   expect(await versionOf(owner, shortId)).toBe(2)
 
   const noOp = await owner.request.post(`/v1/artifacts/${shortId}/versions`, {

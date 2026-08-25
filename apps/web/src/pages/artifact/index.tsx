@@ -1051,9 +1051,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
       deckArranging={deckOrganizer.open}
       onDeckEdit={isDeckLike && canEditDoc ? toggleDeckEdit : undefined}
       onDeckArrange={
-        isDeckLike && !!deck && deck.slides.length >= 2 && canEditDoc
-          ? toggleDeckArrange
-          : undefined
+        isDeckLike && deck && deck.slides.length >= 2 && canEditDoc ? toggleDeckArrange : undefined
       }
       readOnlyView={isAnon || isGuest}
     />

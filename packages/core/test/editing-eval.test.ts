@@ -394,7 +394,7 @@ describe("editing eval — deck identity and structural operations", () => {
     const spans = sliceSlides(out)
     expect(spans).toHaveLength(3)
     expect(new Set(spans.map((s) => s.id)).size).toBe(3)
-    expect(spans.map((s) => out.slice(s.start, s.end).replace(/<[^>]+>/g, ""))).toEqual([
+    expect(spans.map((s) => pageTextParts(out.slice(s.start, s.end)).text.trim())).toEqual([
       "C",
       "A",
       "A",
