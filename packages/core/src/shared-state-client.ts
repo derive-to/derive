@@ -115,14 +115,32 @@ export const SHARED_STATE_SCRIPT = `<script src="/raw/derive-shared.js"></script
 
 /** Put the SDK before an artifact's own scripts without moving the existing
  * end-of-document anchor client (which needs the DOM to be fully parsed). */
+const openingTagEnd = (html: string, name: "head" | "html"): number => {
+  const source = html.toLowerCase()
+  const token = `<${name}`
+  for (let start = source.indexOf(token); start >= 0; start = source.indexOf(token, start + 1)) {
+    const boundary = start + token.length
+    const next = html.charCodeAt(boundary)
+    if (next === 62) return boundary + 1 // >
+    if (next !== 9 && next !== 10 && next !== 12 && next !== 13 && next !== 32) continue
+    const end = html.indexOf(">", boundary + 1)
+    return end < 0 ? -1 : end + 1
+  }
+  return -1
+}
+
+const doctypeEnd = (html: string): number => {
+  const token = "<!doctype"
+  const start = html.toLowerCase().indexOf(token)
+  if (start < 0) return -1
+  const end = html.indexOf(">", start + token.length)
+  return end < 0 ? -1 : end + 1
+}
+
 export const injectSharedStateScript = (html: string): string => {
-  const points = [/<head(?:\s[^>]*)?>/i, /<html(?:\s[^>]*)?>/i, /<!doctype[^>]*>/i]
-  for (const pattern of points) {
-    const match = pattern.exec(html)
-    if (match?.index !== undefined) {
-      const at = match.index + match[0].length
-      return `${html.slice(0, at)}${SHARED_STATE_SCRIPT}${html.slice(at)}`
-    }
+  const points = [openingTagEnd(html, "head"), openingTagEnd(html, "html"), doctypeEnd(html)]
+  for (const at of points) {
+    if (at >= 0) return `${html.slice(0, at)}${SHARED_STATE_SCRIPT}${html.slice(at)}`
   }
   return SHARED_STATE_SCRIPT + html
 }

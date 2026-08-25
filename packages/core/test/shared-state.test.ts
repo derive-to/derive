@@ -43,6 +43,14 @@ describe("shared-state contract", () => {
     expect(injected.indexOf(SHARED_STATE_SCRIPT)).toBeLessThan(injected.indexOf("boot()"))
   })
 
+  it("inserts through adversarial tag-like input without a backtracking regex", () => {
+    const prefixes = "<header><headless>".repeat(10_000)
+    const html = `${prefixes}<HEAD data-theme="paper"><script>boot()</script></HEAD>`
+    const injected = injectSharedStateScript(html)
+    expect(injected.indexOf(SHARED_STATE_SCRIPT)).toBe(html.indexOf(">", prefixes.length) + 1)
+    expect(injected.indexOf(SHARED_STATE_SCRIPT)).toBeLessThan(injected.indexOf("boot()"))
+  })
+
   it("loads state, emits an atomic update, and applies the host result", async () => {
     const sent: RuntimeMessage[] = []
     let receive: MessageListener = () => {
