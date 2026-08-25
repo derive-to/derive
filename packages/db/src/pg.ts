@@ -773,6 +773,7 @@ export class PgMetaStore implements MetaStore {
 
   async appendSharedStateActivity(a: NewSharedStateActivity): Promise<void> {
     await this.db.insert(sharedStateActivity).values(a)
+    if (a.version <= SHARED_STATE_ACTIVITY_LIMIT) return
     await this.db
       .delete(sharedStateActivity)
       .where(

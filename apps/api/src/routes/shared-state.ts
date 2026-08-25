@@ -194,7 +194,8 @@ const commenterMutation = (body: MutationBody): boolean => {
  * visibility. Adds, actor-scoped values, and atomic counter gestures reuse
  * COMMENT permission; arbitrary field replacement follows PUBLISH permission. */
 export const sharedStateRoutes = (ctx: AppContext) => {
-  const { meta, bus, requireArtifact, authorize, actingUser, limited, commentLimiter } = ctx
+  const { meta, bus, background, requireArtifact, authorize, actingUser, limited, commentLimiter } =
+    ctx
   const app = new Hono()
 
   app.get("/v1/artifacts/:shortId/state/:key", async (c) => {
@@ -293,15 +294,17 @@ export const sharedStateRoutes = (ctx: AppContext) => {
         actor_name: actor.name,
         created_at: at,
       }
-      // State correctness is the primary write. An activity-ledger outage must not
-      // make a client retry an already-applied increment and count it twice.
-      await meta.appendSharedStateActivity(activity).catch(() => undefined)
       const response = publicState(saved, actor.id)
       bus.publish(artifact.id, {
         type: "artifact.state.updated",
         key,
         ...publicState(saved, null),
       })
+      // State correctness and its live broadcast are the hot path. The activity
+      // ledger is best-effort: on Workers it rides waitUntil, avoiding an insert +
+      // retention-delete before the response; on Node/tests background() awaits it.
+      // A ledger outage must never make a client retry an already-applied mutation.
+      await background(meta.appendSharedStateActivity(activity))
       return c.json(response)
     }
     return fail(c, 409, "shared state changed; try again")
