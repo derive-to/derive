@@ -62,6 +62,33 @@ describe("rate limits: per-actor write throttles (C4b)", () => {
     expect((await comment()).status).toBe(429)
   })
 
+  it("uses the actor-aware comment throttle for shared interactions", async () => {
+    const { app } = quotaApp("rl-shared-state", { rateLimit: true, commentRate: 2 })
+    const a = await (await pub(app, "<h1>board</h1>")).json()
+    const mutate = (body: unknown) =>
+      app.request(`/v1/artifacts/${a.short_id}/state/bugs`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...bearer("tok") },
+        body: JSON.stringify(body),
+      })
+    const added = await mutate({ op: "add", initial: [], value: { votes: 0 } })
+    expect(added.status).toBe(200)
+    const itemId = (await added.json()).value[0].id
+    expect(
+      (
+        await mutate({
+          op: "update",
+          initial: [],
+          id: itemId,
+          patch: { votes: { __derive_increment: 1 } },
+        })
+      ).status,
+    ).toBe(200)
+    const blocked = await mutate({ op: "add", initial: [], value: { votes: 0 } })
+    expect(blocked.status).toBe(429)
+    expect(blocked.headers.get("Retry-After")).toBeTruthy()
+  })
+
   it("throttles password-unlock attempts with a tight dedicated cap (5 per 5 min)", async () => {
     const { app } = quotaApp("rl-unlock", { rateLimit: true })
     const form = new FormData()

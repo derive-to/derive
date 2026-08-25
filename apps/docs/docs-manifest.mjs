@@ -80,6 +80,14 @@ export const docsSections = [
           "Author HTML, Markdown, bundles, and decks whose comments stay attached as they change.",
       },
       {
+        source: "apps/docs/content/artifacts/shared-state.md",
+        slug: "artifacts/shared-state",
+        title: "Shared state for interactive artifacts",
+        description:
+          "Add persistent JSON collections, voting, and attributed interactions to an HTML artifact.",
+        stripHeading: false,
+      },
+      {
         source: "examples/README.md",
         slug: "artifacts/examples",
         title: "Official artifact examples",

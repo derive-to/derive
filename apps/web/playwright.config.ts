@@ -56,6 +56,10 @@ export default defineConfig({
     // but include it in the shipped e2e gate (package.json) so it cannot become
     // a dormant folder of reassuring assertions that never execute.
     { name: "templates-deep", testMatch: /deep\/templates\.deep\.spec\.ts$/ },
+    // Editing has its own scenario corpus and an intentionally deeper browser pass.
+    // Keep it independently selectable so the fast smoke gate stays short while the
+    // self-improvement loop can exercise Markdown, HTML, and decks end to end.
+    { name: "editing-deep", testMatch: /deep\/editing\.deep\.spec\.ts$/ },
     // Visual-QA capture harness (not a test gate): seeds a realistic workspace and
     // screenshots the real, auth-walled dashboard across themes + viewports. Its
     // specs self-skip unless SHOTS=1, so a bare `playwright test` never runs them.

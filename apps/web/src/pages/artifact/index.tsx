@@ -43,6 +43,7 @@ import {
 import { ArtifactTopBar } from "./artifact-top-bar"
 import { BundleBar } from "./bundle-bar"
 import { ActionsCtx } from "./comment-actions"
+import { DeckOrganizer, DeckOrganizerDiscardDialog, useDeckOrganizer } from "./deck-organizer"
 import { DerivedFromBanner } from "./derived-from-banner"
 import { EditBar } from "./edit-bar"
 import { FloatingControl } from "./floating-control"
@@ -423,6 +424,19 @@ export function Artifact({ template = false }: { template?: boolean }) {
     [load, shortId],
   )
 
+  // useArtifactLive is declared before the iframe bridge below. A stable relay
+  // closes that hook-order gap without reconnecting SSE on every render.
+  const sharedPostRef = useRef<(message: Record<string, unknown>) => void>(() => {})
+  const onSharedStateLive = useCallback(
+    (update: { key: string; value: unknown; version: number }) =>
+      sharedPostRef.current({ type: "shared-updated", ...update }),
+    [],
+  )
+  const onLiveResync = useCallback(() => {
+    load()
+    sharedPostRef.current({ type: "shared-resync" })
+  }, [load])
+
   // Presence, live multiplayer cursors, the SSE stream, and view recording — see
   // use-artifact-live. The page feeds pointer moves in (from the iframe bridge
   // below) and reads `viewers` + the `cursorLayer` overlay ref back out.
@@ -435,7 +449,8 @@ export function Artifact({ template = false }: { template?: boolean }) {
     onComment: refetchComments,
     onVersion: onVersionLive,
     onReview,
-    onResync: load,
+    onSharedState: onSharedStateLive,
+    onResync: onLiveResync,
   })
 
   // The whole postMessage channel with the sandboxed iframe: text selection,
@@ -522,6 +537,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
       else window.open(u.href, "_blank", "noopener,noreferrer")
     },
   })
+  sharedPostRef.current = post
 
   useEffect(() => {
     post({ type: "review-mode", on: visualPin })
@@ -584,7 +600,10 @@ export function Artifact({ template = false }: { template?: boolean }) {
     if (!deck) return
     const a = parseAnchor(comments.find((c) => c.thread_id === threadId)?.anchor ?? null)
     const landed = landedSlides[threadId]
-    const target = landed != null ? landed : a?.slide
+    const identityAt = a?.slide_identity
+      ? deck.slides.findIndex((slide) => slide.id === a.slide_identity)
+      : -1
+    const target = landed != null ? landed : identityAt >= 0 ? identityAt : a?.slide
     if (target != null && target !== deck.i) deckCmd("goto", target)
   }
 
@@ -702,6 +721,14 @@ export function Artifact({ template = false }: { template?: boolean }) {
   useEffect(() => {
     if (inlineEdit.active) setVisualPin(false)
   }, [inlineEdit.active])
+
+  const deckOrganizer = useDeckOrganizer({
+    shortId,
+    art,
+    deck,
+    onSaved: load,
+    onGoTo: (i) => deckCmd("goto", i),
+  })
 
   // Inspect is an edit-mode companion, never a passive third destination. The existing
   // Edit entry point is the only way in; when it activates an editable HTML artifact,
@@ -950,6 +977,37 @@ export function Artifact({ template = false }: { template?: boolean }) {
   // so a desktop→mobile resize with a persisted "hidden" can't strand a phone.
   const effectivePanel = isMobile && commentsAvailable ? "open" : panel
 
+  const toggleDeckEdit = () => {
+    if (inlineEdit.active) {
+      inlineEdit.requestExit()
+      return
+    }
+    if (deckOrganizer.open) {
+      if (deckOrganizer.dirty) {
+        deckOrganizer.requestClose()
+        return
+      }
+      deckOrganizer.requestClose()
+    }
+    inlineEdit.start()
+  }
+
+  const toggleDeckArrange = () => {
+    if (deckOrganizer.open) {
+      deckOrganizer.requestClose()
+      return
+    }
+    if (inlineEdit.active) {
+      if (inlineEdit.dirty) {
+        inlineEdit.requestExit()
+        return
+      }
+      inlineEdit.done()
+    }
+    setPanel("hidden")
+    deckOrganizer.start()
+  }
+
   // Build the document once; public, guest, and workbench layouts share this surface.
   const documentEl = (
     <ArtifactDocument
@@ -968,6 +1026,11 @@ export function Artifact({ template = false }: { template?: boolean }) {
       onDiffRetry={retryDiff}
       restoring={restoring}
       deck={deck}
+      pendingDeckSlide={
+        deckOrganizer.open && deckOrganizer.selectedSlide?.kind !== "base"
+          ? deckOrganizer.selectedSlide
+          : null
+      }
       video={video}
       frameRef={frame}
       presentWrapRef={presentWrap}
@@ -999,6 +1062,12 @@ export function Artifact({ template = false }: { template?: boolean }) {
       presentOverlay={present.overlay}
       controlsIdle={present.idle}
       onPresent={present.toggle}
+      deckEditing={inlineEdit.active}
+      deckArranging={deckOrganizer.open}
+      onDeckEdit={isDeckLike && canEditDoc ? toggleDeckEdit : undefined}
+      onDeckArrange={
+        isDeckLike && deck && deck.slides.length >= 2 && canEditDoc ? toggleDeckArrange : undefined
+      }
       readOnlyView={isAnon || isGuest}
     />
   )
@@ -1130,6 +1199,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
           }
         }}
       />
+      <DeckOrganizerDiscardDialog organizer={deckOrganizer} />
       <ConfirmDialog
         open={inlineEdit.exitPrompt}
         onOpenChange={(o) => {
@@ -1252,7 +1322,9 @@ export function Artifact({ template = false }: { template?: boolean }) {
               // to fix one. What used to make a deck unsafe to edit (its own Space
               // and arrow keys flipping slides under the caret) is handled in the
               // frame: while a caret is in a block, the page's keyboard is off.
-              showInlineEdit={canEditDoc && !inlineEdit.active && !bundleWorkspaceActive}
+              showInlineEdit={
+                canEditDoc && !isDeckLike && !inlineEdit.active && !bundleWorkspaceActive
+              }
               inlineEditLabel="Edit"
               onInlineEdit={() => inlineEdit.start()}
               isDeck={isDeckLike}
@@ -1295,6 +1367,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
         {/* `relative` so the rail's tab strip anchors HERE, below the toolbar, rather than
             resolving to a further ancestor and overlapping the workbench buttons. */}
         <div className="relative flex min-h-0 flex-1">
+          {!focus && <DeckOrganizer organizer={deckOrganizer} isMobile={isMobile} />}
           <div
             className="relative flex min-w-0 flex-1 flex-col"
             // On phones the comments sheet sits at the bottom — reserve exactly the

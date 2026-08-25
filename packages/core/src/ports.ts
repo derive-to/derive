@@ -3,6 +3,7 @@
  * Everything here must run on Node AND Cloudflare Workers — no Node APIs.
  */
 import type { LinkRole, Listed, Role, WorkspaceAccess } from "./roles"
+import type { SharedStateAction } from "./shared-state"
 import type { SortMode } from "./sort"
 
 export interface BlobStore {
@@ -2242,6 +2243,72 @@ export interface AssetStore {
   assetStorageBytes(orgId: string): Promise<number>
 }
 
+/** One JSON collection owned by an artifact. The runtime presents this as
+ * `derive.shared(key, initial)`; the version is the compare-and-swap guard that
+ * keeps concurrent interactions from overwriting each other. */
+export interface SharedStateRecord {
+  id: string
+  artifact_id: string
+  key: string
+  json: string
+  version: number
+  updated_by_id: string
+  updated_by_name: string
+  updated_at: string
+}
+
+/** Append-only attribution for an interaction. Identity is always stamped by
+ * the API from the authenticated principal, never accepted from artifact code. */
+export interface SharedStateActivityRecord {
+  id: string
+  artifact_id: string
+  key: string
+  version: number
+  action: SharedStateAction
+  item_id: string
+  actor_id: string
+  actor_name: string
+  created_at: string
+}
+
+export interface SharedStateWrite {
+  id: string
+  artifact_id: string
+  key: string
+  json: string
+  expected_version: number
+  updated_by_id: string
+  updated_by_name: string
+  updated_at: string
+}
+
+export interface NewSharedStateActivity {
+  id: string
+  artifact_id: string
+  key: string
+  version: number
+  action: SharedStateAction
+  item_id: string
+  actor_id: string
+  actor_name: string
+  created_at: string
+}
+
+export interface SharedStateStore {
+  getSharedState(artifactId: string, key: string): Promise<SharedStateRecord | null>
+  countSharedStateKeys(artifactId: string): Promise<number>
+  /** Insert when expected_version is 0, otherwise update only the matching
+   * version. Null means another interaction won the race and the caller retries. */
+  putSharedState(write: SharedStateWrite): Promise<SharedStateRecord | null>
+  /** Append one attributed version and retain the bounded recent activity feed. */
+  appendSharedStateActivity(activity: NewSharedStateActivity): Promise<void>
+  listSharedStateActivity(
+    artifactId: string,
+    key: string,
+    limit: number,
+  ): Promise<SharedStateActivityRecord[]>
+}
+
 export interface MetaStore
   extends ArtifactStore,
     CommentStore,
@@ -2257,7 +2324,8 @@ export interface MetaStore
     DirectoryStore,
     AgentStore,
     ModerationStore,
-    AssetStore {}
+    AssetStore,
+    SharedStateStore {}
 
 /** What a user follows: another Derive person (`target` = their user id). */
 export type FollowKind = "user"

@@ -43,6 +43,8 @@ import type {
   RunRecord,
   SessionMessageRecord,
   SessionRecord,
+  SharedStateActivityRecord,
+  SharedStateRecord,
   SignupAttributionRecord,
   SubscriptionRecord,
   TemplateLibraryEntryRecord,
@@ -59,6 +61,8 @@ export type Exact<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : f
 /** Drizzle tables that mirror a core Record type — their shape is parity-checked. */
 export interface TypedTables {
   artifact: ArtifactRecord
+  sharedState: SharedStateRecord
+  sharedStateActivity: SharedStateActivityRecord
   version: VersionRecord
   versionData: VersionDataRecord
   comment: CommentRecord

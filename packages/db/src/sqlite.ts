@@ -46,6 +46,8 @@ import {
   SCHEMA_STATEMENTS,
   SLACK_THREAD_LINK_REKEY_SQLITE,
   sessionMessage,
+  sharedState,
+  sharedStateActivity,
   slackThreadLink,
   version,
   versionData,
@@ -306,6 +308,8 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
         // has a null artifact_id and never matches, so it survives, which is right: it was
         // never about this artifact. Found by scripts/check-delete-cascade.mjs.
         db.delete(webhook).where(eq(webhook.artifact_id, id)).run()
+        db.delete(sharedStateActivity).where(eq(sharedStateActivity.artifact_id, id)).run()
+        db.delete(sharedState).where(eq(sharedState.artifact_id, id)).run()
         db.delete(versionData).where(eq(versionData.artifact_id, id)).run()
         db.delete(version).where(eq(version.artifact_id, id)).run()
         db.delete(comment).where(eq(comment.artifact_id, id)).run()

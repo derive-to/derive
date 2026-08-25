@@ -1,6 +1,7 @@
 import {
   type BlobStore,
   type BundleManifest,
+  injectSharedStateScript,
   isBundleContentType,
   looksLikeHtmlDocument,
   MARKS_SCRIPT,
@@ -65,9 +66,10 @@ export const serveContent = async (
   const wantsMarks = ["1", "true"].includes(c.req.query("marks") ?? "")
   const marks = wantsMarks ? MARKS_SCRIPT : ""
   const anchorClient = anchors ? SELECTION_SCRIPT : ""
+  const withSharedState = anchors ? injectSharedStateScript : (doc: string) => doc
   // Produce the final HTML body for a document: auto-reflow, then append the anchor
   // client (for comment anchoring + live cursors) and, when asked, the marks overlay.
-  const htmlBody = (doc: string): string => rf(doc) + anchorClient + marks + append
+  const htmlBody = (doc: string): string => withSharedState(rf(doc)) + anchorClient + marks + append
   let path = rawPath
   if (isBundleContentType(content.content_type)) {
     const manifestBytes = await blobs.get(content.blob_key)
@@ -89,7 +91,7 @@ export const serveContent = async (
       const rewritten = rewriteAbsoluteUrls(new TextDecoder().decode(data), prefix.slice(0, -1))
       // Bundle pages get the anchor client too — comments stick everywhere.
       const out = entry.type.startsWith("text/html")
-        ? rf(rewritten) + anchorClient + marks + append
+        ? withSharedState(rf(rewritten)) + anchorClient + marks + append
         : rewritten
       return c.body(out, 200, { ...headers, "Content-Type": entry.type })
     }
@@ -106,7 +108,7 @@ export const serveContent = async (
       // would otherwise render it as a stray `<hr>` + heading. The parsed fields surface
       // as skill chrome around this iframe, not in the document body.
       const body = parseFrontmatter(new TextDecoder().decode(data)).body
-      const html = (await renderMarkdown(body, title)) + append
+      const html = withSharedState(await renderMarkdown(body, title)) + append
       return c.body(html, 200, { ...headers, "Content-Type": "text/html; charset=utf-8" })
     }
     return c.body(toBody(data), 200, { ...headers, "Content-Type": entry.type })
@@ -135,7 +137,7 @@ export const serveContent = async (
         "Content-Type": "text/html; charset=utf-8",
       })
     }
-    const html = (await renderMarkdown(text, title)) + append
+    const html = withSharedState(await renderMarkdown(text, title)) + append
     return c.body(html, 200, { ...headers, "Content-Type": "text/html; charset=utf-8" })
   }
 

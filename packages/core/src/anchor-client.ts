@@ -44,6 +44,7 @@ interface ElWire {
   before?: string
   after?: string
   slide?: number
+  slide_identity?: string
   snapshot?: unknown
 }
 
@@ -57,6 +58,7 @@ interface Anchor {
   prefix?: string
   suffix?: string
   slide?: number
+  slide_identity?: string
   el?: ElWire
   quiet?: boolean
 }
@@ -1381,6 +1383,33 @@ interface ElReg {
     if (slides.every(shown)) return null
     return { i: activeSlide(slides), total: slides.length }
   }
+  let lastOutline = ""
+  const postDeckOutline = () => {
+    // Bound what crosses the frame boundary. A hostile page can claim a billion slides;
+    // Derive still needs a responsive host even when that page's own DOM is unreasonable.
+    const slides = slideEls().slice(0, 500)
+    if (slides.length < 2) return
+    const explicit = slides.map((slide) => {
+      const value = slide.getAttribute("data-derive-slide")
+      return value !== null && /^-?\d+$/.test(value) ? Number(value) : null
+    })
+    let nextIdentity =
+      Math.max(-1, ...explicit.filter((value): value is number => value !== null)) + 1
+    const outline = slides.map((slide, i) => {
+      const heading = slide.querySelector("[data-slide-title],h1,h2,h3")
+      const raw = (heading?.textContent || slide.textContent || "").replace(/\s+/g, " ").trim()
+      return {
+        // Predict the server's first-arrange stamping for class-only decks. Comments made
+        // before that save then keep the same identity after slides move.
+        id: slide.getAttribute("data-derive-slide") || String(nextIdentity++),
+        label: raw.slice(0, 90) || `Untitled slide ${i + 1}`,
+      }
+    })
+    const key = JSON.stringify(outline)
+    if (key === lastOutline) return
+    lastOutline = key
+    post({ type: "deck-outline", slides: outline })
+  }
   let lastSniff = ""
   const postDeckSniff = () => {
     const d = sniffDeck()
@@ -1414,6 +1443,7 @@ interface ElReg {
       if (activeSlide(now) !== to)
         for (let i = 0; i < now.length; i++) (now[i] as Element).classList.toggle("on", i === to)
       postDeckSniff()
+      postDeckOutline()
     })
   }
   /* A slide flip is a class or style change, which fires no scroll, resize or load —
@@ -1425,6 +1455,7 @@ interface ElReg {
     try {
       const mo = new MutationObserver(() => {
         postDeckSniff()
+        postDeckOutline()
         // The slide changed under an open edit session — re-mask (see below).
         if (editOn) maskOffscreenSlides()
       })
@@ -1782,14 +1813,20 @@ interface ElReg {
          phrase on two slides can't collide), then fall back to a whole-document
          search if the text moved off that slide. Builds a Range (no DOM mutation) from
          the resolved span; the highlight is painted from every range together, below. */
-      const slide = a.slide != null ? slides[a.slide] : undefined
+      const identityAt = a.slide_identity
+        ? slides.findIndex(
+            (candidate) => candidate.getAttribute("data-derive-slide") === a.slide_identity,
+          )
+        : -1
+      const preferredAt = identityAt >= 0 ? identityAt : a.slide
+      const slide = preferredAt != null ? slides[preferredAt] : undefined
       let range: Range | null = null
       let where: number | null = null
-      if (a.slide != null && slide) {
+      if (preferredAt != null && slide) {
         const span = findIn(slide, a)
         if (span) {
           range = rangeAt(slide, span.start, span.end)
-          where = a.slide
+          where = preferredAt
         }
       }
       if (!range) {
@@ -1867,7 +1904,11 @@ interface ElReg {
     // (and again on the settle passes, for one built by a script of its own).
     watchSlides()
     postDeckSniff()
-    setTimeout(postDeckSniff, 400)
+    postDeckOutline()
+    setTimeout(() => {
+      postDeckSniff()
+      postDeckOutline()
+    }, 400)
     if (videoRoot()) showVideoScene(videoAt)
   })
   /* The artifact's OWN scripts can mutate the DOM after load (a chart library renders,
@@ -3524,24 +3565,21 @@ interface ElReg {
   /** Serialize a block as inline markup: text escaped, editor spans as real tags,
    *  anything else contributing its text only (the server refuses a span that
    *  crosses the document's own markup anyway, and this keeps that refusal clean). */
+  const serializeFmtNode = (n: Node): string => {
+    if (n.nodeType === 3) return escapeText(n.nodeValue ?? "")
+    if (n.nodeType !== 1) return ""
+    const e = n as Element
+    const kind = e.getAttribute(FMT_ATTR)
+    const inner = serializeFmt(e)
+    if (kind === "b") return `<b>${inner}</b>`
+    if (kind === "i") return `<i>${inner}</i>`
+    if (kind === "br") return "<br>"
+    if (kind === "a") return `<a href="${escapeText(e.getAttribute(HREF_ATTR) || "")}">${inner}</a>`
+    return inner
+  }
   const serializeFmt = (el: Node): string => {
     let out = ""
-    for (let n = el.firstChild; n; n = n.nextSibling) {
-      if (n.nodeType === 3) {
-        out += escapeText(n.nodeValue ?? "")
-        continue
-      }
-      if (n.nodeType !== 1) continue
-      const e = n as Element
-      const kind = e.getAttribute(FMT_ATTR)
-      const inner = serializeFmt(e)
-      if (kind === "b") out += `<b>${inner}</b>`
-      else if (kind === "i") out += `<i>${inner}</i>`
-      else if (kind === "br") out += "<br>"
-      else if (kind === "a")
-        out += `<a href="${escapeText(e.getAttribute(HREF_ATTR) || "")}">${inner}</a>`
-      else out += inner
-    }
+    for (let n = el.firstChild; n; n = n.nextSibling) out += serializeFmtNode(n)
     return out
   }
   const escapeText = (s: string): string =>
@@ -3633,9 +3671,43 @@ interface ElReg {
      PRE-edit text (which is what the stored source still holds), so a block that
      already contains markup is refused by the server's tag-crossing guard rather
      than mangled here — with a message that names the source editor. */
+  const targetedFormatEdit = (t: EditTarget): WireEdit | null => {
+    const base = editBase
+    if (!base) return null
+    const formatted = t.el.querySelectorAll(`[${FMT_ATTR}]`)
+    if (formatted.length !== 1) return null
+    const target = formatted[0] as Element
+    // A selection containing authored elements cannot be faithfully represented by
+    // the tiny formatting allowlist. Refuse it instead of flattening those elements.
+    if (target.querySelector(`*:not([${FMT_ATTR}])`)) return null
+    const exact = target.textContent ?? ""
+    if (!exact.trim()) return null
+    const matches: { node: number; at: number }[] = []
+    for (let i = 0; i < t.origValues.length; i++) {
+      const value = t.origValues[i] as string
+      for (let at = value.indexOf(exact); at >= 0; at = value.indexOf(exact, at + 1))
+        matches.push({ node: i, at })
+    }
+    if (matches.length !== 1) return null
+    const match = matches[0] as { node: number; at: number }
+    const start = (t.origStarts[match.node] as number) + match.at
+    return {
+      quote: {
+        exact,
+        prefix: base.text.slice(Math.max(0, start - 40), start),
+        suffix: base.text.slice(start + exact.length, start + exact.length + 40),
+      },
+      new_html: serializeFmtNode(target),
+    }
+  }
   const blockHtmlEdit = (t: EditTarget): WireEdit | null => {
     const base = editBase
     if (!base) return null
+    const targeted = targetedFormatEdit(t)
+    if (targeted) return targeted
+    // Whole-block serialization intentionally knows only editor-authored formatting.
+    // If the original block already carried elements, flattening it would lose source.
+    if (t.structSig) return null
     const exact = t.origValues.join("\n")
     if (!exact.trim()) return null
     const start = t.origStarts[0] ?? 0

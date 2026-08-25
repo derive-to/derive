@@ -25,7 +25,19 @@ describe("GET /.well-known/agent.json", () => {
     expect(m.endpoints.mcp).toBe("https://example.test/mcp")
     expect(m.endpoints.skill).toBe("https://example.test/skill.md")
     expect(m.protocols.mcp).toBe(true)
-    expect(m.capabilities.length).toBeGreaterThan(0)
+    expect(m.capabilities.some((capability) => capability.includes("derive.shared"))).toBe(true)
+  })
+
+  it("teaches an artifact-building agent the native shared-state path", async () => {
+    const r = await anonApp.request("https://example.test/skill.md")
+    expect(r.status).toBe(200)
+    const skill = await r.text()
+    expect(skill).toContain('derive.shared("bugs", [])')
+    expect(skill).toContain("commenters can add, apply atomic")
+    expect(skill).toContain("arbitrary field replacement requires edit rights")
+    expect(skill).toContain("bugs.ready")
+    expect(skill).toContain("bugs.activity()")
+    expect(skill).toContain("general application backend")
   })
 
   // The examples page belongs to the public site (deps.site); a manifest that names

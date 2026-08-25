@@ -239,6 +239,47 @@ describe("applySlideOps", () => {
     expect(idsOf(out)).toEqual([0, 3, 1, 2])
   })
 
+  it("does not copy the source slide's live-state class", () => {
+    const live = spaced([
+      `<section class="slide on feature" data-derive-slide="0"><h2>a</h2></section>`,
+      sl(1, "b"),
+    ])
+    const duplicate = applySlideOps(live, [{ op: "duplicate", at: 1 }])
+    const inserted = applySlideOps(live, [{ op: "insert", at: 2 }])
+    expect(duplicate.match(/class="slide on feature"/g)).toHaveLength(1)
+    expect(duplicate).toContain('class="slide feature" data-derive-slide="2"')
+    expect(inserted.match(/class="slide on feature"/g)).toHaveLength(1)
+  })
+
+  it("inserts a blank slide in the deck's own outer shell with a fresh identity", () => {
+    const out = applySlideOps(three(), [{ op: "insert", at: 2 }])
+    expect(order(out)).toEqual(["a", "New slide", "b", "c"])
+    expect(idsOf(out)).toEqual([0, 3, 1, 2])
+    expect(out).toContain("Add content in Edit mode.")
+  })
+
+  it("does not copy unique source attributes onto a blank slide", () => {
+    const html = spaced([
+      `<section class="slide feature" id="only-one" aria-labelledby="source-heading" data-hook="source" style="padding:2rem" data-derive-slide="0"><h2 id="source-heading">a</h2></section>`,
+      sl(1, "b"),
+    ])
+    const out = applySlideOps(html, [{ op: "insert", at: 1 }])
+    const span = sliceSlides(out)[0]
+    const inserted = span ? out.slice(span.start, span.end) : ""
+    expect(inserted).toContain('class="slide feature"')
+    expect(inserted).toContain('style="padding:2rem"')
+    expect(inserted).not.toContain("only-one")
+    expect(inserted).not.toContain("aria-labelledby")
+    expect(inserted).not.toContain("data-hook")
+  })
+
+  it("inserts at the beginning or one past the current end", () => {
+    const first = applySlideOps(three(), [{ op: "insert", at: 1 }])
+    const last = applySlideOps(three(), [{ op: "insert", at: 4 }])
+    expect(order(first)).toEqual(["New slide", "a", "b", "c"])
+    expect(order(last)).toEqual(["a", "b", "c", "New slide"])
+  })
+
   it("applies ops in order, each seeing the last one's result", () => {
     const out = applySlideOps(three(), [
       { op: "move", from: 3, to: 1 },
