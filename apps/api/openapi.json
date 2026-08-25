@@ -3216,6 +3216,10 @@
             "type": "number",
             "description": "How many of the unique viewers are anonymous"
           },
+          "reads": {
+            "type": "number",
+            "description": "Unique viewers who stayed, not just fetched (link previews do not count)"
+          },
           "perVersion": {
             "type": "array",
             "items": {
@@ -3295,6 +3299,7 @@
           "last24h",
           "unique",
           "anonViewers",
+          "reads",
           "perVersion",
           "daily",
           "recent"

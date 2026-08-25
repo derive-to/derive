@@ -857,6 +857,11 @@ export interface ArtifactQueryStore {
 
   /** Append a view event. */
   recordView(v: NewView): Promise<void>
+  /** Promote this viewer's view to a confirmed read, if it landed before
+   *  `viewedBeforeIso`. Idempotent: at most one read per (artifact, viewer), and a
+   *  no-op when they have no view row yet. Driven by the presence heartbeat, so
+   *  surviving the delay is what separates a reader from a one-shot fetch. */
+  confirmRead(artifactId: string, viewer: string, viewedBeforeIso: string): Promise<void>
   /** Has this viewer already seen this version since `sinceIso`? (open de-dup) */
   viewedSince(
     artifactId: string,
@@ -3748,6 +3753,9 @@ export interface ViewStats {
   unique: number
   /** Distinct anonymous viewers (the rest of `unique` are named users). */
   anonViewers: number
+  /** Distinct viewers confirmed to have stayed, not just fetched (see `confirmRead`).
+   *  Always <= unique. */
+  reads: number
   perVersion: { version: number; count: number }[]
   /** Daily counts over the trailing window, oldest first. */
   daily: { day: string; count: number }[]

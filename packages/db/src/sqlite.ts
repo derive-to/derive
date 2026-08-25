@@ -324,6 +324,7 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
         db.delete(slackThreadLink).where(eq(slackThreadLink.artifact_id, id)).run()
         // The view ledger is raw DDL (no drizzle model) with an FK to artifact(id) —
         // invisible to check-delete-cascade and enforced on Postgres. See pg.ts.
+        raw.prepare(`DELETE FROM view_read WHERE artifact_id = ?`).run(id)
         raw.prepare(`DELETE FROM view WHERE artifact_id = ?`).run(id)
         db.delete(artifact).where(eq(artifact.id, id)).run()
       })()
@@ -390,6 +391,19 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
         )
         .run(new Date().toISOString(), v.artifact_id)
     },
+    // See MetaStore.confirmRead. One idempotent statement, so the repeat heartbeats
+    // that follow cost a single indexed probe.
+    confirmRead: async (artifactId, viewer, viewedBeforeIso): Promise<void> => {
+      raw
+        .prepare(
+          `INSERT OR IGNORE INTO view_read (artifact_id, viewer)
+           SELECT ?, ?
+            WHERE EXISTS (
+              SELECT 1 FROM view WHERE artifact_id=? AND viewer=? AND created_at<=?
+            )`,
+        )
+        .run(artifactId, viewer, artifactId, viewer, viewedBeforeIso)
+    },
     viewedSince: async (artifactId, viewer, version, sinceIso): Promise<boolean> => {
       const row = raw
         .prepare(
@@ -398,11 +412,18 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
         .get(artifactId, viewer, version, sinceIso)
       return !!row
     },
-    pruneViews: async (cutoffIso): Promise<number> =>
-      raw.prepare(`DELETE FROM view WHERE created_at < ?`).run(cutoffIso).changes,
+    pruneViews: async (cutoffIso): Promise<number> => {
+      // Reads ride the same retention: leaving them behind would let `reads` outlive the
+      // views it is derived from, and outgrow `unique`.
+      raw.prepare(`DELETE FROM view_read WHERE created_at < ?`).run(cutoffIso)
+      return raw.prepare(`DELETE FROM view WHERE created_at < ?`).run(cutoffIso).changes
+    },
     pruneViewsByViewers: async (viewers): Promise<number> => {
       if (viewers.length === 0) return 0
       const ph = viewers.map(() => "?").join(",")
+      // Their reads go too, or an owner stays counted as a reader after the self-view
+      // rows they came from are gone.
+      raw.prepare(`DELETE FROM view_read WHERE viewer IN (${ph})`).run(...viewers)
       return raw
         .prepare(`DELETE FROM view WHERE viewer_kind='user' AND viewer IN (${ph})`)
         .run(...viewers).changes
@@ -423,6 +444,7 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
           `SELECT count(DISTINCT viewer) n FROM view WHERE artifact_id=? AND viewer_kind='anon'`,
           artifactId,
         ),
+        reads: n(`SELECT count(*) n FROM view_read WHERE artifact_id=?`, artifactId),
         perVersion: raw
           .prepare(
             `SELECT version, count(*) count FROM view WHERE artifact_id=? GROUP BY version ORDER BY version`,

@@ -1778,6 +1778,8 @@ export function runStoreContract(
       expect(stats.total).toBe(2)
       expect(stats.unique).toBe(2)
       expect(stats.anonViewers).toBe(1)
+      // A view alone is not a read: link-preview crawlers fetch and execute the page.
+      expect(stats.reads).toBe(0)
       // The rolling 24h window powers the Insights "24h" tile. Both rows were just
       // recorded, so all of them fall inside it.
       expect(stats.last24h).toBe(2)
@@ -1786,6 +1788,37 @@ export function runStoreContract(
       // Cleanup helpers.
       expect(await store.pruneViewsByViewers(["amy"])).toBeGreaterThanOrEqual(1)
       expect(await store.pruneViews("2999-01-01T00:00:00.000Z")).toBeGreaterThanOrEqual(1)
+    })
+
+    it("confirms a read only for a viewer who stayed, and counts it once", async () => {
+      const a = await store.createArtifact(newArtifact())
+      await store.recordView({
+        id: uuid(),
+        artifact_id: a.id,
+        version: 1,
+        viewer: "anon_reader",
+        viewer_kind: "anon",
+      })
+      const future = new Date(Date.now() + 60_000).toISOString()
+      const past = new Date(Date.now() - 60_000).toISOString()
+
+      // Too soon: the view landed after the cutoff, which is the crawler's signature.
+      await store.confirmRead(a.id, "anon_reader", past)
+      expect((await store.viewStats(a.id)).reads).toBe(0)
+
+      // A viewer with no view row at all can never be promoted.
+      await store.confirmRead(a.id, "anon_ghost", future)
+      expect((await store.viewStats(a.id)).reads).toBe(0)
+
+      // Still present after the delay: a reader.
+      await store.confirmRead(a.id, "anon_reader", future)
+      expect((await store.viewStats(a.id)).reads).toBe(1)
+
+      // Idempotent: every later heartbeat is a no-op, not another read.
+      await store.confirmRead(a.id, "anon_reader", future)
+      await store.confirmRead(a.id, "anon_reader", future)
+      expect((await store.viewStats(a.id)).reads).toBe(1)
+      expect((await store.viewStats(a.id)).total).toBe(1)
     })
 
     it("stamps first_foreign_view_at on the first view only (the activation moment)", async () => {
@@ -3281,6 +3314,18 @@ export function runStoreContract(
       const a = await store.createArtifact(newArtifact())
       const thread = uuid()
       const dv = await store.addVersion(a.id, newVersion())
+      // Same trap for the view ledger and its reads: both carry a NOT NULL FK to
+      // artifact(id), and neither is a drizzle model, so check-delete-cascade.mjs cannot
+      // see them. Postgres enforces the FK; better-sqlite3 does not, so only a live
+      // delete catches a miss here.
+      await store.recordView({
+        id: uuid(),
+        artifact_id: a.id,
+        version: 1,
+        viewer: "anon_reader",
+        viewer_kind: "anon",
+      })
+      await store.confirmRead(a.id, "anon_reader", new Date(Date.now() + 60_000).toISOString())
       // Facts hang off the version by artifact_id — a delete that doesn't clear them
       // first hits a FOREIGN KEY constraint (found by deleting a fact-bearing artifact live).
       await store.setVersionData(a.id, dv.n, [
