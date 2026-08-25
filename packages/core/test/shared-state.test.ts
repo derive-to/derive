@@ -19,6 +19,8 @@ interface SharedHandle {
   readonly ready: Promise<unknown>
   onChange(listener: (value: unknown) => void): () => void
   update(id: string, patch: Record<string, unknown>): Promise<unknown>
+  setMine(slot: string, value: Record<string, unknown> | null): Promise<unknown>
+  mine(slot: string): Record<string, unknown> | null
 }
 
 interface DeriveRuntime {
@@ -142,9 +144,11 @@ describe("shared-state contract", () => {
         ok: true,
         value: [{ id: "item_1", title: "Stale vote", votes: 0 }],
         version: 1,
+        mine: { reaction: "item_1" },
       },
     })
     await expect(bugs.ready).resolves.toEqual([{ id: "item_1", title: "Stale vote", votes: 0 }])
+    expect(bugs.mine("reaction")).toEqual({ id: "item_1", title: "Stale vote", votes: 0 })
 
     const updated = bugs.update("item_1", { votes: runtime.increment(1) })
     const mutation = sent.at(-1)
@@ -175,8 +179,67 @@ describe("shared-state contract", () => {
     expect(bugs.value).toEqual(next)
     expect(seen).toEqual([[], [{ id: "item_1", title: "Stale vote", votes: 0 }], next])
 
+    const setMine = bugs.setMine("reaction", { kind: "up" })
+    const actorMutation = sent.at(-1)
+    expect(actorMutation).toMatchObject({
+      source: "derive",
+      type: "shared-mutate",
+      key: "bugs",
+      mutation: {
+        op: "set_mine",
+        slot: "reaction",
+        value: { kind: "up" },
+      },
+    })
+    const actorValue = [{ id: "item_2", kind: "up" }]
+    receive({
+      source: parent,
+      data: {
+        source: "derive-host",
+        type: "shared-result",
+        requestId: actorMutation?.requestId,
+        key: "bugs",
+        ok: true,
+        value: actorValue,
+        version: 3,
+        mine: { reaction: "item_2" },
+      },
+    })
+    await expect(setMine).resolves.toEqual(actorValue)
+    expect(bugs.mine("reaction")).toEqual({ id: "item_2", kind: "up" })
+    expect(() => bugs.setMine("", {})).toThrow("mine slot must be a 1-128 character string")
+    expect(() => bugs.setMine("reaction", [] as unknown as Record<string, unknown>)).toThrow(
+      "setMine value must be an object or null",
+    )
+
+    receive({
+      source: parent,
+      data: {
+        source: "derive-host",
+        type: "shared-updated",
+        key: "bugs",
+        value: actorValue,
+        version: 4,
+      },
+    })
+    expect(bugs.mine("reaction")).toEqual({ id: "item_2", kind: "up" })
     receive({ source: parent, data: { source: "derive-host", type: "shared-resync" } })
-    expect(sent.at(-1)).toMatchObject({ source: "derive", type: "shared-open", key: "bugs" })
+    const resync = sent.at(-1)
+    expect(resync).toMatchObject({ source: "derive", type: "shared-open", key: "bugs" })
+    receive({
+      source: parent,
+      data: {
+        source: "derive-host",
+        type: "shared-result",
+        requestId: resync?.requestId,
+        key: "bugs",
+        ok: true,
+        value: actorValue,
+        version: 4,
+        mine: {},
+      },
+    })
+    expect(bugs.mine("reaction")).toBeNull()
   })
 
   it("exposes an initial read failure without discarding the local initial value", async () => {

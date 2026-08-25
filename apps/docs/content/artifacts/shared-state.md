@@ -11,19 +11,25 @@ Derive injects the `derive` global before your artifact's scripts run:
 ```html
 <script>
   const bugs = derive.shared("bugs", [])
+  const reactions = derive.shared("bug_reactions", [])
 
   bugs.onChange((items) => render(items))
+  reactions.onChange((items) => renderReactions(items))
 
   async function reportBug(title, details) {
     await bugs.add({ title, details, votes: 0 })
   }
 
   async function upvote(id) {
-    await bugs.update(id, { votes: derive.increment(1) })
+    await reactions.setMine(id, { bugId: id, value: 1 })
   }
 
   async function downvote(id) {
-    await bugs.update(id, { votes: derive.increment(-1) })
+    await reactions.setMine(id, { bugId: id, value: -1 })
+  }
+
+  function myVote(id) {
+    return reactions.mine(id)?.value ?? 0
   }
 </script>
 ```
@@ -34,6 +40,14 @@ the persisted value loads or another viewer changes it. `add` gives a new object
 a server-generated `id`. `update` shallowly patches the object with that id. Call
 `add` and `update` from a real click or keyboard interaction; Derive rejects
 load-time writes so an artifact cannot attribute changes to someone who only viewed it.
+
+`setMine(slot, value)` is the generic identity-backed operation. It atomically
+keeps one item for the signed-in actor and artifact-defined slot, replacing that
+item across refreshes, retries, and concurrent tabs. `mine(slot)` returns the
+caller's current item after `ready`; pass `null` to `setMine` to remove it. The
+stored values remain readable for aggregation, but actor ownership is never
+included in the collection. Use it for reactions, poll responses, RSVPs,
+acknowledgements, and other per-person state, not only votes.
 
 For an honest loading or error state, await the handle's `ready` promise. The
 local initial value remains available immediately, while a failed first read is
@@ -59,8 +73,8 @@ never supplies identity, so a user cannot claim somebody else's action.
 Shared state reuses the artifact's existing roles:
 
 - Viewers can read and receive live state.
-- Commenters can add items, apply atomic `+1` / `-1` counter interactions, and
-  read activity.
+- Commenters can add items, set or remove their own actor-scoped values, apply
+  atomic `+1` / `-1` counter interactions, and read activity.
 - Editors and owners can also replace fields with an arbitrary shallow update
   and use larger atomic increments.
 

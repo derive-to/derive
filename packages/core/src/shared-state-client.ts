@@ -54,9 +54,11 @@ export const SHARED_STATE_CLIENT_JS = `(function () {
       try { listener(state.value); } catch (_) { /* one view cannot break the others */ }
     });
   }
-  function accept(key, value, version) {
+  function accept(key, value, version, mine) {
     var state = states[key];
-    if (!state || typeof version !== "number" || version <= state.version) return;
+    if (!state || typeof version !== "number" || version < state.version) return;
+    if (mine && typeof mine === "object" && !Array.isArray(mine)) state.mine = mine;
+    if (version === state.version) return;
     state.value = value;
     state.version = version;
     notify(state);
@@ -66,7 +68,7 @@ export const SHARED_STATE_CLIENT_JS = `(function () {
   function shared(key, initial) {
     if (!keyPattern.test(key)) throw new Error("invalid shared-state key");
     if (states[key]) return states[key].handle;
-    var state = { value: initial, version: 0, listeners: [], handle: null };
+    var state = { value: initial, version: 0, mine: Object.create(null), listeners: [], handle: null };
     var handle = {
       onChange: function (listener) {
         if (typeof listener !== "function") throw new Error("onChange requires a function");
@@ -86,6 +88,23 @@ export const SHARED_STATE_CLIENT_JS = `(function () {
         return request("shared-mutate", key, {
           mutation: { op: "update", initial: initial, id: id, patch: patch }
         });
+      },
+      setMine: function (slot, value) {
+        if (typeof slot !== "string" || !slot.length || slot.length > 128)
+          throw new Error("mine slot must be a 1-128 character string");
+        if (value !== null && (!value || typeof value !== "object" || Array.isArray(value)))
+          throw new Error("setMine value must be an object or null");
+        return request("shared-mutate", key, {
+          mutation: { op: "set_mine", initial: initial, slot: slot, value: value }
+        });
+      },
+      mine: function (slot) {
+        var id = state.mine[slot];
+        if (!id || !Array.isArray(state.value)) return null;
+        for (var i = 0; i < state.value.length; i++) {
+          if (state.value[i] && state.value[i].id === id) return state.value[i];
+        }
+        return null;
       },
       activity: function () { return request("shared-activity", key); }
     };
@@ -112,7 +131,7 @@ export const SHARED_STATE_CLIENT_JS = `(function () {
       return;
     }
     if (data.type === "shared-updated") {
-      accept(data.key, data.value, data.version);
+      accept(data.key, data.value, data.version, data.mine);
       return;
     }
     if (data.type !== "shared-result" || !pending[data.requestId]) return;
@@ -126,7 +145,7 @@ export const SHARED_STATE_CLIENT_JS = `(function () {
       call.resolve(data.activity);
       return;
     }
-    if (data.version > 0) accept(data.key, data.value, data.version);
+    if (data.version >= 0) accept(data.key, data.value, data.version, data.mine);
     call.resolve(states[data.key] ? states[data.key].value : data.value);
   });
 
