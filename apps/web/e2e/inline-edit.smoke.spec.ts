@@ -465,6 +465,42 @@ test("Markdown keeps image replacement without offering an unsaveable resize", a
   await expect(doc(owner).getByRole("button", { name: "Resize element" })).toBeHidden()
 })
 
+test("Markdown saves a selection across consecutive bold subtitle lines", async ({ owner }) => {
+  const markdown =
+    "# Chief of Staff\n\n" +
+    "**San Francisco · Full-time · In person**  \n" +
+    "**$150,000–$180,000 base + discretionary bonus + carry eligibility**\n\n" +
+    "## The opportunity\n"
+  const shortId = await publishArtifact(owner, "role.md", markdown, "text/markdown")
+  await openArtifact(owner, shortId)
+  await enterEditMode(owner)
+
+  const subtitle = doc(owner).locator("p").first()
+  await subtitle.click()
+  await subtitle.evaluate((el) => {
+    const runs = el.querySelectorAll("strong")
+    const first = runs[0]?.firstChild
+    const second = runs[1]?.firstChild
+    if (!first || !second) throw new Error("subtitle strong runs missing")
+    const range = document.createRange()
+    range.setStart(first, first.textContent?.lastIndexOf("person") ?? 0)
+    range.setEnd(second, second.textContent?.length ?? 0)
+    const selection = window.getSelection()
+    selection?.removeAllRanges()
+    selection?.addRange(range)
+  })
+  await owner.keyboard.type("person")
+  await expect(owner.getByTestId("inline-edit-bar")).toContainText("1 unsaved change")
+  await owner.getByTestId("inline-edit-save").click()
+  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+
+  await expect(async () => {
+    const stored = await contentOf(owner, shortId)
+    expect(stored).toContain("**San Francisco · Full-time · In person**")
+    expect(stored).not.toContain("$150,000")
+  }).toPass({ timeout: 10_000 })
+})
+
 test("Inspect appears only inside an editor's HTML edit session", async ({ owner, secondUser }) => {
   // Make the shared chat tab explicit for this isolated workspace. The resting artifact
   // is conversation-only; Inspect appears only after the existing Edit entry point.

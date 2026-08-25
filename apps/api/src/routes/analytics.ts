@@ -22,6 +22,9 @@ export const analyticsRoutes = (ctx: AppContext) => {
         .number()
         .describe("Distinct viewers; a signed-in person or anon cookie counts once"),
       anonViewers: z.number().describe("How many of the unique viewers are anonymous"),
+      reads: z
+        .number()
+        .describe("Unique viewers who stayed, not just fetched (link previews do not count)"),
       perVersion: z.array(
         z.object({
           version: z.number(),

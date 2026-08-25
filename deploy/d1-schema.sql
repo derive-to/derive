@@ -34,6 +34,33 @@ CREATE TABLE IF NOT EXISTS artifact (
   derived_from TEXT
 );
 
+CREATE TABLE IF NOT EXISTS shared_state (
+  id TEXT PRIMARY KEY,
+  artifact_id TEXT NOT NULL,
+  key TEXT NOT NULL,
+  json TEXT NOT NULL,
+  version INTEGER NOT NULL,
+  updated_by_id TEXT NOT NULL,
+  updated_by_name TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  UNIQUE (artifact_id, key),
+  FOREIGN KEY (artifact_id) REFERENCES artifact(id)
+);
+
+CREATE TABLE IF NOT EXISTS shared_state_activity (
+  id TEXT PRIMARY KEY,
+  artifact_id TEXT NOT NULL,
+  key TEXT NOT NULL,
+  version INTEGER NOT NULL,
+  action TEXT NOT NULL,
+  item_id TEXT NOT NULL,
+  actor_id TEXT NOT NULL,
+  actor_name TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  UNIQUE (artifact_id, key, version),
+  FOREIGN KEY (artifact_id) REFERENCES artifact(id)
+);
+
 CREATE TABLE IF NOT EXISTS version (
   id TEXT PRIMARY KEY,
   artifact_id TEXT NOT NULL,
@@ -679,6 +706,13 @@ CREATE TABLE IF NOT EXISTS view (
     viewer TEXT NOT NULL,
     viewer_kind TEXT NOT NULL DEFAULT 'anon',
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+  );
+
+CREATE TABLE IF NOT EXISTS view_read (
+    artifact_id TEXT NOT NULL REFERENCES artifact(id),
+    viewer TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    PRIMARY KEY (artifact_id, viewer)
   );
 
 CREATE INDEX IF NOT EXISTS invitation_org_email ON invitation (org_id, email);

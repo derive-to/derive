@@ -100,7 +100,7 @@ export function ArtifactTopBar(props: {
             counterpart to the filled Share. Only someone who can publish sees it.
             It is no longer the only way in (`e`, or Edit on a selection), but it
             stays: it's what tells a first-time reader the document is editable. */}
-        {props.showInlineEdit && (
+        {props.showInlineEdit ? (
           <Button
             variant="ghost"
             size="sm"
@@ -111,7 +111,7 @@ export function ArtifactTopBar(props: {
             <Icon name="pencil" size={16} className="text-muted-foreground" />
             {props.inlineEditLabel}
           </Button>
-        )}
+        ) : null}
         {isGuest ? (
           <Button
             variant="default"

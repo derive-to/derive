@@ -7499,6 +7499,8 @@ export interface components {
             unique: number;
             /** @description How many of the unique viewers are anonymous */
             anonViewers: number;
+            /** @description Unique viewers who stayed, not just fetched (link previews do not count) */
+            reads: number;
             perVersion: {
                 version: number;
                 /** @description Views recorded for that version */

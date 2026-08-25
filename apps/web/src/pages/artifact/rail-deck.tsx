@@ -1,4 +1,13 @@
-import { Captions, ChevronLeft, ChevronRight, Pause, Play, RotateCcw } from "lucide-react"
+import {
+  Captions,
+  ChevronLeft,
+  ChevronRight,
+  GalleryHorizontalEnd,
+  Pause,
+  Pencil,
+  Play,
+  RotateCcw,
+} from "lucide-react"
 import { useState } from "react"
 import type { Viewer } from "@/api"
 import { Icon } from "@/components/icons"
@@ -26,6 +35,10 @@ export function DeckBar({
   onPrev,
   onNext,
   onPresent,
+  editing = false,
+  arranging = false,
+  onEdit,
+  onArrange,
 }: {
   deck: { i: number; total: number }
   presenting?: boolean
@@ -33,6 +46,10 @@ export function DeckBar({
   onPrev: () => void
   onNext: () => void
   onPresent: () => void
+  editing?: boolean
+  arranging?: boolean
+  onEdit?: () => void
+  onArrange?: () => void
 }) {
   return (
     <div
@@ -71,6 +88,33 @@ export function DeckBar({
       >
         <ChevronRight />
       </Button>
+      {!presenting && (onEdit || onArrange) && <span className="mx-0.5 h-4 w-px bg-border" />}
+      {!presenting && onEdit && (
+        <Button
+          variant={editing ? "secondary" : "ghost"}
+          size="icon-xs"
+          data-testid="deck-edit"
+          onClick={onEdit}
+          aria-label={editing ? "Leave edit mode" : "Edit slide content"}
+          title={editing ? "Leave edit mode" : "Edit slide content"}
+          aria-pressed={editing}
+        >
+          <Pencil />
+        </Button>
+      )}
+      {!presenting && onArrange && (
+        <Button
+          variant={arranging ? "secondary" : "ghost"}
+          size="icon-xs"
+          data-testid="deck-arrange"
+          onClick={onArrange}
+          aria-label={arranging ? "Close slide rearranger" : "Rearrange slides"}
+          title={arranging ? "Close slide rearranger" : "Rearrange slides"}
+          aria-pressed={arranging}
+        >
+          <GalleryHorizontalEnd />
+        </Button>
+      )}
       <Button
         variant="outline"
         size="icon-xs"

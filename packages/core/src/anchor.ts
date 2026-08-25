@@ -1,3 +1,4 @@
+import { DecodingMode, decodeHTML, EntityDecoder, htmlDecodeTree } from "entities/decode"
 import { findQuoteWithContext } from "./anchor-shared"
 import { isHtmlLike } from "./content-types"
 import { elementResolvesIn, parseElementSelector } from "./element-anchor"
@@ -14,6 +15,9 @@ export interface QuoteSelector {
    *  ordinary documents. Resolution scopes to this slide first, then falls back to
    *  the whole document (so a comment survives text moving between slides). */
   slide?: number
+  /** Stable `data-derive-slide` identity. New deck comments prefer this after a
+   *  rearrange; `slide` remains the backward-compatible positional fallback. */
+  slide_identity?: string
 }
 
 const CONTEXT = 24
@@ -55,60 +59,49 @@ export function reanchor(sel: QuoteSelector, text: string): Reanchor {
 // the edit path's offset map, so an entity the decoder learns is one the mapper
 // learns in the same breath — two copies of this regex once drifted a hair from
 // being a feature-wide refusal.
-export const ENTITY_RE = /&(#x?[0-9a-fA-F]+|[a-zA-Z]+);/g
-const ENTITY = ENTITY_RE
-// The five XML entities plus the common named entities real prose/documentation
-// actually uses (typographic punctuation, arrows, symbols) — found missing when
-// deep-testing the converter against real Sift/Derive docs, which use middot,
-// ndash, rarr, and curly quotes throughout. Unknown named entities still pass
-// through untouched; this just widens what "known" covers.
-const NAMED: Record<string, string> = {
-  amp: "&",
-  lt: "<",
-  gt: ">",
-  quot: '"',
-  apos: "'",
-  nbsp: " ",
-  mdash: "—",
-  ndash: "–",
-  hellip: "…",
-  middot: "·",
-  bull: "•",
-  rsquo: "’",
-  lsquo: "‘",
-  rdquo: "”",
-  ldquo: "“",
-  copy: "©",
-  reg: "®",
-  trade: "™",
-  deg: "°",
-  times: "×",
-  divide: "÷",
-  plusmn: "±",
-  rarr: "→",
-  larr: "←",
-  uarr: "↑",
-  darr: "↓",
-  shy: "­",
-  ensp: " ",
-  emsp: " ",
-  thinsp: " ",
+/** Legacy export retained for callers that only need a coarse candidate scan.
+ *  Offset-sensitive code uses {@link decodedEntitiesIn}, which follows the full
+ *  browser entity grammar including semicolonless legacy names. */
+export const ENTITY_RE = /&(?:#(?:x[0-9a-fA-F]+|[0-9]+)|[a-zA-Z][a-zA-Z0-9]+);?/g
+
+export interface DecodedEntity {
+  start: number
+  end: number
+  text: string
+}
+
+/** Browser-compatible character references and their exact raw spans. The entity
+ *  decoder reports how many source characters it consumed, which is essential for
+ *  mapping legacy semicolonless names and multi-code-point named entities back to
+ *  authored bytes without guessing. */
+export function decodedEntitiesIn(input: string, from = 0, to = input.length): DecodedEntity[] {
+  const out: DecodedEntity[] = []
+  let decoded = ""
+  const decoder = new EntityDecoder(htmlDecodeTree, (cp) => {
+    decoded += cp === 0xa0 ? " " : String.fromCodePoint(cp)
+  })
+  let cursor = from
+  for (;;) {
+    const amp = input.indexOf("&", cursor)
+    if (amp < 0 || amp >= to) break
+    decoded = ""
+    decoder.startEntity(DecodingMode.Legacy)
+    let consumed = decoder.write(input, amp + 1)
+    if (consumed < 0) consumed = decoder.end()
+    const end = amp + consumed
+    if (consumed > 1 && decoded && end <= to) {
+      out.push({ start: amp, end, text: decoded })
+      cursor = end
+    } else cursor = amp + 1
+  }
+  return out
 }
 
 /** Decode numeric character references and the common named entities the browser
  *  would. Unknown named entities pass through untouched. Shared by `pageText` and
  *  the doc-text markdown conversion so both read an `&amp;` the same way. */
 export function decodeEntities(s: string): string {
-  return s.replace(ENTITY, (whole, body: string) => {
-    if (body[0] === "#") {
-      const cp =
-        body[1] === "x" || body[1] === "X"
-          ? Number.parseInt(body.slice(2), 16)
-          : Number.parseInt(body.slice(1), 10)
-      return Number.isFinite(cp) ? String.fromCodePoint(cp) : whole
-    }
-    return NAMED[body] ?? whole
-  })
+  return decodeHTML(s, DecodingMode.Legacy).replaceAll("\u00a0", " ")
 }
 
 /** One run of the page-text projection: how a slice of visible text maps onto the
@@ -128,8 +121,9 @@ export interface PageTextParts {
   segments: PageTextSegment[]
 }
 
-const INVISIBLE_NAMES = ["script", "style", "noscript"]
-const isWordChar = (c: string): boolean => /[A-Za-z0-9_]/.test(c)
+const INVISIBLE_NAMES = ["script", "style", "noscript", "template", "head", "title", "iframe"]
+const isHtmlSpace = (c: string): boolean =>
+  c === " " || c === "\t" || c === "\n" || c === "\r" || c === "\f"
 
 /** Memoized left-to-right indexOf. During a forward scan, thousands of failed
  *  searches for the same needle (unclosed "<!--" after unclosed "<!--") would each
@@ -158,21 +152,17 @@ const pushTextRun = (
 ): number => {
   const run = raw.slice(rFrom, rTo)
   let last = 0
-  // A FRESH instance from the shared source: decodeEntities (called in this loop)
-  // uses the module-level ENTITY, and a /g regex's lastIndex is shared state — one
-  // object in both places restarts this exec loop from 0 forever.
-  const entityRe = new RegExp(ENTITY_RE.source, "g")
-  for (let m = entityRe.exec(run); m; m = entityRe.exec(run)) {
-    const decoded = decodeEntities(m[0])
-    if (decoded === m[0]) continue // unknown entity: passes through as plain text
-    if (m.index > last) {
-      const plain = run.slice(last, m.index)
+  for (const entity of decodedEntitiesIn(raw, rFrom, rTo)) {
+    const localStart = entity.start - rFrom
+    const localEnd = entity.end - rFrom
+    if (localStart > last) {
+      const plain = run.slice(last, localStart)
       out.push({
         kind: "text",
         tStart: tLen,
         tEnd: tLen + plain.length,
         rStart: rFrom + last,
-        rEnd: rFrom + m.index,
+        rEnd: entity.start,
       })
       parts.push(plain)
       tLen += plain.length
@@ -180,13 +170,13 @@ const pushTextRun = (
     out.push({
       kind: "entity",
       tStart: tLen,
-      tEnd: tLen + decoded.length,
-      rStart: rFrom + m.index,
-      rEnd: rFrom + m.index + m[0].length,
+      tEnd: tLen + entity.text.length,
+      rStart: entity.start,
+      rEnd: entity.end,
     })
-    parts.push(decoded)
-    tLen += decoded.length
-    last = m.index + m[0].length
+    parts.push(entity.text)
+    tLen += entity.text.length
+    last = localEnd
   }
   if (last < run.length) {
     const plain = run.slice(last)
@@ -213,10 +203,10 @@ const pushTextRun = (
  *
  * Strip rules, tried in order at each "<" (the order the old regexes resolved to):
  * an invisible block (script/style/noscript, attrs to the FIRST ">", closed by the
- * first literal "</name>", case-insensitive), else a comment ("<!--" to the first
- * "-->"), else a bare tag (1+ non-">" chars before ">"); a "<" matching none stays
- * literal text. Each stripped construct collapses to one space; entities in text
- * runs decode via {@link decodeEntities}.
+ * first literal "</name>", case-insensitive, or running to EOF when unclosed), else
+ * a comment ("<!--" to the first "-->", or EOF), else a bare tag (1+ non-">" chars
+ * before ">"); a "<" matching none stays literal text. Each stripped construct
+ * collapses to one space; entities in text runs decode via {@link decodeEntities}.
  */
 export function pageTextParts(
   html: string,
@@ -226,6 +216,23 @@ export function pageTextParts(
   const findRaw = makeFinder(html)
   const findLower = makeFinder(lower)
 
+  const rawTextCloseEnd = (name: string, from: number): number | null => {
+    const needle = `</${name}`
+    let cursor = from
+    for (;;) {
+      const close = findLower(needle, cursor)
+      if (close < 0) return null
+      const after = close + needle.length
+      const boundary = html[after] ?? ""
+      if (boundary && boundary !== ">" && boundary !== "/" && !isHtmlSpace(boundary)) {
+        cursor = after
+        continue
+      }
+      const gt = findRaw(">", after)
+      return gt < 0 ? null : gt + 1
+    }
+  }
+
   /** The strip token starting exactly at html[i] (which is "<"), or null when this
    *  "<" is literal text. */
   const stripTokenAt = (i: number): number | null => {
@@ -233,17 +240,23 @@ export function pageTextParts(
     if (lower.startsWith("<!--", i)) {
       const close = findRaw("-->", i + 4)
       if (close >= 0) return close + 3
+      // Browsers treat the rest of the document as commented. Exposing it as
+      // editable prose would let the server target text the reader cannot see.
+      return html.length
     }
     // <script|style|noscript ...> ... </same>
     for (const name of omitContentsOf) {
       if (!lower.startsWith(name, i + 1)) continue
       const after = i + 1 + name.length
-      if (after < html.length && isWordChar(html[after] as string)) continue // \b
+      const boundary = html[after] ?? ""
+      if (boundary && boundary !== ">" && boundary !== "/" && !isHtmlSpace(boundary)) continue
       const open = findRaw(">", after)
       if (open < 0) continue
-      const close = findLower(`</${name}>`, open + 1)
-      if (close >= 0) return close + name.length + 3
-      // No closer: this alternative fails; fall through to the bare-tag rule.
+      const closeEnd = rawTextCloseEnd(name, open + 1)
+      if (closeEnd !== null) return closeEnd
+      // Raw-text elements run to EOF when unclosed. Hide the remainder just as the
+      // browser does; never offer script/style bytes as visible editable prose.
+      return html.length
     }
     // <[^>]+>
     const gt = findRaw(">", i + 1)

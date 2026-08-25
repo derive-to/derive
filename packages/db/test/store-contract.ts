@@ -7,7 +7,7 @@ import type {
   SortMode,
   SubscriptionRecord,
 } from "@derive/core"
-import { DEFAULT_ORG_SETTINGS, maxRole } from "@derive/core"
+import { DEFAULT_ORG_SETTINGS, maxRole, SHARED_STATE_ACTIVITY_LIMIT } from "@derive/core"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
 /**
@@ -617,6 +617,104 @@ export function runStoreContract(
       await store.addVersion(a.id, newVersion({ blob_key: "other", size_bytes: 50 }))
       // 100 (shared, counted once) + 50 (other) = 150
       expect(await store.storageBytes(ORG)).toBeGreaterThanOrEqual(150)
+    })
+  })
+
+  describe(`${label}: artifact shared state`, () => {
+    it("compare-and-swaps JSON collections and keeps attributed activity", async () => {
+      const a = await store.createArtifact(newArtifact())
+      expect(await store.getSharedState(a.id, "bugs")).toBeNull()
+      expect(await store.countSharedStateKeys(a.id)).toBe(0)
+      const first = await store.putSharedState({
+        id: uuid(),
+        artifact_id: a.id,
+        key: "bugs",
+        json: `[{"id":"b1","votes":0}]`,
+        expected_version: 0,
+        updated_by_id: "amy",
+        updated_by_name: "Amy",
+        updated_at: "2026-01-01T00:00:00.000Z",
+      })
+      expect(first).toMatchObject({ version: 1, updated_by_id: "amy" })
+      expect(await store.countSharedStateKeys(a.id)).toBe(1)
+
+      // A stale writer cannot overwrite the row that won.
+      expect(
+        await store.putSharedState({
+          id: uuid(),
+          artifact_id: a.id,
+          key: "bugs",
+          json: `[]`,
+          expected_version: 0,
+          updated_by_id: "bob",
+          updated_by_name: "Bob",
+          updated_at: "2026-01-01T00:00:01.000Z",
+        }),
+      ).toBeNull()
+      const second = await store.putSharedState({
+        id: uuid(),
+        artifact_id: a.id,
+        key: "bugs",
+        json: `[{"id":"b1","votes":1}]`,
+        expected_version: 1,
+        updated_by_id: "bob",
+        updated_by_name: "Bob",
+        updated_at: "2026-01-01T00:00:01.000Z",
+      })
+      expect(second).toMatchObject({ version: 2, updated_by_name: "Bob" })
+
+      await store.appendSharedStateActivity({
+        id: uuid(),
+        artifact_id: a.id,
+        key: "bugs",
+        version: 2,
+        action: "update",
+        item_id: "b1",
+        actor_id: "bob",
+        actor_name: "Bob",
+        created_at: "2026-01-01T00:00:01.000Z",
+      })
+      expect(await store.listSharedStateActivity(a.id, "bugs", 10)).toMatchObject([
+        { action: "update", item_id: "b1", actor_id: "bob" },
+      ])
+      await expect(
+        store.appendSharedStateActivity({
+          id: uuid(),
+          artifact_id: a.id,
+          key: "bugs",
+          version: 2,
+          action: "update",
+          item_id: "b1",
+          actor_id: "amy",
+          actor_name: "Amy",
+          created_at: "2026-01-01T00:00:02.000Z",
+        }),
+      ).rejects.toThrow()
+    })
+
+    it("retains only the bounded recent activity feed", async () => {
+      const a = await store.createArtifact(newArtifact())
+      for (let version = 1; version <= SHARED_STATE_ACTIVITY_LIMIT + 2; version++) {
+        await store.appendSharedStateActivity({
+          id: uuid(),
+          artifact_id: a.id,
+          key: "votes",
+          version,
+          action: "update",
+          item_id: "b1",
+          actor_id: "amy",
+          actor_name: "Amy",
+          created_at: new Date(Date.UTC(2026, 0, 1, 0, 0, version)).toISOString(),
+        })
+      }
+      const rows = await store.listSharedStateActivity(
+        a.id,
+        "votes",
+        SHARED_STATE_ACTIVITY_LIMIT + 10,
+      )
+      expect(rows).toHaveLength(SHARED_STATE_ACTIVITY_LIMIT)
+      expect(rows[0]?.version).toBe(SHARED_STATE_ACTIVITY_LIMIT + 2)
+      expect(rows.at(-1)?.version).toBe(3)
     })
   })
 
@@ -1720,6 +1818,8 @@ export function runStoreContract(
       expect(stats.total).toBe(2)
       expect(stats.unique).toBe(2)
       expect(stats.anonViewers).toBe(1)
+      // A view alone is not a read: link-preview crawlers fetch and execute the page.
+      expect(stats.reads).toBe(0)
       // The rolling 24h window powers the Insights "24h" tile. Both rows were just
       // recorded, so all of them fall inside it.
       expect(stats.last24h).toBe(2)
@@ -1728,6 +1828,37 @@ export function runStoreContract(
       // Cleanup helpers.
       expect(await store.pruneViewsByViewers(["amy"])).toBeGreaterThanOrEqual(1)
       expect(await store.pruneViews("2999-01-01T00:00:00.000Z")).toBeGreaterThanOrEqual(1)
+    })
+
+    it("confirms a read only for a viewer who stayed, and counts it once", async () => {
+      const a = await store.createArtifact(newArtifact())
+      await store.recordView({
+        id: uuid(),
+        artifact_id: a.id,
+        version: 1,
+        viewer: "anon_reader",
+        viewer_kind: "anon",
+      })
+      const future = new Date(Date.now() + 60_000).toISOString()
+      const past = new Date(Date.now() - 60_000).toISOString()
+
+      // Too soon: the view landed after the cutoff, which is the crawler's signature.
+      await store.confirmRead(a.id, "anon_reader", past)
+      expect((await store.viewStats(a.id)).reads).toBe(0)
+
+      // A viewer with no view row at all can never be promoted.
+      await store.confirmRead(a.id, "anon_ghost", future)
+      expect((await store.viewStats(a.id)).reads).toBe(0)
+
+      // Still present after the delay: a reader.
+      await store.confirmRead(a.id, "anon_reader", future)
+      expect((await store.viewStats(a.id)).reads).toBe(1)
+
+      // Idempotent: every later heartbeat is a no-op, not another read.
+      await store.confirmRead(a.id, "anon_reader", future)
+      await store.confirmRead(a.id, "anon_reader", future)
+      expect((await store.viewStats(a.id)).reads).toBe(1)
+      expect((await store.viewStats(a.id)).total).toBe(1)
     })
 
     it("stamps first_foreign_view_at on the first view only (the activation moment)", async () => {
@@ -3223,6 +3354,18 @@ export function runStoreContract(
       const a = await store.createArtifact(newArtifact())
       const thread = uuid()
       const dv = await store.addVersion(a.id, newVersion())
+      // Same trap for the view ledger and its reads: both carry a NOT NULL FK to
+      // artifact(id), and neither is a drizzle model, so check-delete-cascade.mjs cannot
+      // see them. Postgres enforces the FK; better-sqlite3 does not, so only a live
+      // delete catches a miss here.
+      await store.recordView({
+        id: uuid(),
+        artifact_id: a.id,
+        version: 1,
+        viewer: "anon_reader",
+        viewer_kind: "anon",
+      })
+      await store.confirmRead(a.id, "anon_reader", new Date(Date.now() + 60_000).toISOString())
       // Facts hang off the version by artifact_id — a delete that doesn't clear them
       // first hits a FOREIGN KEY constraint (found by deleting a fact-bearing artifact live).
       await store.setVersionData(a.id, dv.n, [
@@ -3264,6 +3407,27 @@ export function runStoreContract(
         message_ts: "1.1",
         created_at: "2026-01-01T00:00:00.000Z",
       })
+      await store.putSharedState({
+        id: uuid(),
+        artifact_id: a.id,
+        key: "bugs",
+        json: `[{"id":"b1"}]`,
+        expected_version: 0,
+        updated_by_id: "amy",
+        updated_by_name: "Amy",
+        updated_at: "2026-01-01T00:00:00.000Z",
+      })
+      await store.appendSharedStateActivity({
+        id: uuid(),
+        artifact_id: a.id,
+        key: "bugs",
+        version: 1,
+        action: "add",
+        item_id: "b1",
+        actor_id: "amy",
+        actor_name: "Amy",
+        created_at: "2026-01-01T00:00:00.000Z",
+      })
 
       await store.deleteArtifact(a.id, ORG)
 
@@ -3275,6 +3439,8 @@ export function runStoreContract(
       expect(await store.getArtifactMember(a.id, "bob")).toBeNull()
       expect(await store.listUserFavoriteIds("amy")).not.toContain(a.id)
       expect(await store.artifactIdsByTag("del-tag")).not.toContain(a.id)
+      expect(await store.getSharedState(a.id, "bugs")).toBeNull()
+      expect(await store.listSharedStateActivity(a.id, "bugs", 10)).toHaveLength(0)
       // The Slack thread link is thread-keyed, not artifact_id-obvious — regression guard
       // that it's cleaned too (it was orphaned before).
       expect(await store.listSlackThreadLinksByThread(thread)).toHaveLength(0)

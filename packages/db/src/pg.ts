@@ -75,6 +75,7 @@ import type {
   NewRun,
   NewSession,
   NewSessionMessage,
+  NewSharedStateActivity,
   NewSignupAttribution,
   NewSlackSubscription,
   NewTemplateLibrary,
@@ -102,6 +103,9 @@ import type {
   SessionMessageRecord,
   SessionRecord,
   SessionState,
+  SharedStateActivityRecord,
+  SharedStateRecord,
+  SharedStateWrite,
   SignupAttributionRecord,
   SlackAuthorFilter,
   SlackInstallRecord,
@@ -132,6 +136,7 @@ import {
   mergeRunMeta,
   parseRunMeta,
   runCounter,
+  SHARED_STATE_ACTIVITY_LIMIT,
   WORKSPACE_FACT_ROW_CAP,
 } from "@derive/core"
 import {
@@ -198,6 +203,8 @@ import {
   reviewRound,
   run,
   sessionMessage,
+  sharedState,
+  sharedStateActivity,
   signupAttribution,
   slackInstall,
   slackSubscription,
@@ -231,6 +238,8 @@ const one = <T>(rows: T[]): T => {
 // columns PG_SCHEMA_STATEMENTS actually creates in a real Postgres.
 export const schema = {
   artifact,
+  sharedState,
+  sharedStateActivity,
   version,
   versionData,
   comment,
@@ -282,6 +291,8 @@ export const schema = {
 const _schemaExhaustive: Exhaustive<typeof schema> = true
 const _schemaShapes: Shapes<typeof schema> = {
   artifact: true,
+  sharedState: true,
+  sharedStateActivity: true,
   version: true,
   versionData: true,
   comment: true,
@@ -712,6 +723,78 @@ export class PgMetaStore implements MetaStore {
   async getArtifactsByIds(ids: string[]): Promise<ArtifactRecord[]> {
     if (ids.length === 0) return []
     return this.db.select().from(artifact).where(inArray(artifact.id, ids))
+  }
+
+  async getSharedState(artifactId: string, key: string): Promise<SharedStateRecord | null> {
+    const rows = await this.db
+      .select()
+      .from(sharedState)
+      .where(and(eq(sharedState.artifact_id, artifactId), eq(sharedState.key, key)))
+    return rows[0] ?? null
+  }
+
+  async countSharedStateKeys(artifactId: string): Promise<number> {
+    const rows = await this.db
+      .select({ n: count() })
+      .from(sharedState)
+      .where(eq(sharedState.artifact_id, artifactId))
+    return Number(rows[0]?.n ?? 0)
+  }
+
+  async putSharedState(write: SharedStateWrite): Promise<SharedStateRecord | null> {
+    const { expected_version, ...values } = write
+    if (expected_version === 0) {
+      const rows = await this.db
+        .insert(sharedState)
+        .values({ ...values, version: 1 })
+        .onConflictDoNothing()
+        .returning()
+      return rows[0] ?? null
+    }
+    const rows = await this.db
+      .update(sharedState)
+      .set({
+        json: values.json,
+        version: expected_version + 1,
+        updated_by_id: values.updated_by_id,
+        updated_by_name: values.updated_by_name,
+        updated_at: values.updated_at,
+      })
+      .where(
+        and(
+          eq(sharedState.artifact_id, values.artifact_id),
+          eq(sharedState.key, values.key),
+          eq(sharedState.version, expected_version),
+        ),
+      )
+      .returning()
+    return rows[0] ?? null
+  }
+
+  async appendSharedStateActivity(a: NewSharedStateActivity): Promise<void> {
+    await this.db.insert(sharedStateActivity).values(a)
+    await this.db
+      .delete(sharedStateActivity)
+      .where(
+        and(
+          eq(sharedStateActivity.artifact_id, a.artifact_id),
+          eq(sharedStateActivity.key, a.key),
+          lte(sharedStateActivity.version, a.version - SHARED_STATE_ACTIVITY_LIMIT),
+        ),
+      )
+  }
+
+  async listSharedStateActivity(
+    artifactId: string,
+    key: string,
+    limit: number,
+  ): Promise<SharedStateActivityRecord[]> {
+    return this.db
+      .select()
+      .from(sharedStateActivity)
+      .where(and(eq(sharedStateActivity.artifact_id, artifactId), eq(sharedStateActivity.key, key)))
+      .orderBy(desc(sharedStateActivity.version))
+      .limit(limit)
   }
 
   async addVersion(artifactId: string, v: NewVersion): Promise<VersionRecord> {
@@ -2007,6 +2090,20 @@ export class PgMetaStore implements MetaStore {
     )
   }
 
+  async confirmRead(artifactId: string, viewer: string, viewedBeforeIso: string): Promise<void> {
+    // EXISTS rather than a join: the read is anchored to a view row old enough to rule
+    // out a one-shot fetch, and ON CONFLICT makes every later heartbeat a cheap no-op.
+    await this.pool.query(
+      `INSERT INTO view_read (artifact_id, viewer)
+       SELECT $1, $2
+        WHERE EXISTS (
+          SELECT 1 FROM view WHERE artifact_id=$1 AND viewer=$2 AND created_at<=$3
+        )
+       ON CONFLICT (artifact_id, viewer) DO NOTHING`,
+      [artifactId, viewer, viewedBeforeIso],
+    )
+  }
+
   async viewedSince(
     artifactId: string,
     viewer: string,
@@ -2021,6 +2118,9 @@ export class PgMetaStore implements MetaStore {
   }
 
   async pruneViews(cutoffIso: string): Promise<number> {
+    // Reads ride the same retention: leaving them behind would let `reads` outlive the
+    // views it is derived from, and outgrow `unique`.
+    await this.pool.query(`DELETE FROM view_read WHERE created_at < $1`, [cutoffIso])
     const res = await this.pool.query(`DELETE FROM view WHERE created_at < $1`, [cutoffIso])
     return res.rowCount ?? 0
   }
@@ -2028,6 +2128,9 @@ export class PgMetaStore implements MetaStore {
   async pruneViewsByViewers(viewers: string[]): Promise<number> {
     if (viewers.length === 0) return 0
     const ph = viewers.map((_, i) => `$${i + 1}`).join(",")
+    // Their reads go too, or an owner stays counted as a reader after the self-view
+    // rows they came from are gone.
+    await this.pool.query(`DELETE FROM view_read WHERE viewer IN (${ph})`, viewers)
     const res = await this.pool.query(
       `DELETE FROM view WHERE viewer_kind='user' AND viewer IN (${ph})`,
       viewers,
@@ -2038,7 +2141,7 @@ export class PgMetaStore implements MetaStore {
   async viewStats(artifactId: string): Promise<ViewStats> {
     const cutoff = new Date(Date.now() - VIEW_WINDOW_MS).toISOString()
     const dayAgo = new Date(Date.now() - LAST_24H_MS).toISOString()
-    const [tot, day, uni, anon, perV, daily, recent] = await Promise.all([
+    const [tot, day, uni, anon, reads, perV, daily, recent] = await Promise.all([
       this.pool.query(`SELECT count(*)::int n FROM view WHERE artifact_id=$1`, [artifactId]),
       this.pool.query(`SELECT count(*)::int n FROM view WHERE artifact_id=$1 AND created_at>=$2`, [
         artifactId,
@@ -2051,6 +2154,7 @@ export class PgMetaStore implements MetaStore {
         `SELECT count(DISTINCT viewer)::int n FROM view WHERE artifact_id=$1 AND viewer_kind='anon'`,
         [artifactId],
       ),
+      this.pool.query(`SELECT count(*)::int n FROM view_read WHERE artifact_id=$1`, [artifactId]),
       this.pool.query(
         `SELECT version, count(*)::int c FROM view WHERE artifact_id=$1 GROUP BY version ORDER BY version`,
         [artifactId],
@@ -2069,6 +2173,7 @@ export class PgMetaStore implements MetaStore {
       last24h: day.rows[0].n,
       unique: uni.rows[0].n,
       anonViewers: anon.rows[0].n,
+      reads: reads.rows[0].n,
       perVersion: perV.rows.map((r) => ({ version: r.version, count: r.c })),
       daily: daily.rows.map((r) => ({ day: r.day, count: r.c })),
       recent: recent.rows.map((r) => ({ viewer: r.viewer, kind: r.viewer_kind, at: r.at })),
@@ -5733,6 +5838,8 @@ export class PgMetaStore implements MetaStore {
       // Artifact-SCOPED webhooks only; a workspace-wide one has a null artifact_id and
       // survives. Found by scripts/check-delete-cascade.mjs.
       await tx.delete(webhook).where(eq(webhook.artifact_id, id))
+      await tx.delete(sharedStateActivity).where(eq(sharedStateActivity.artifact_id, id))
+      await tx.delete(sharedState).where(eq(sharedState.artifact_id, id))
       await tx.delete(versionData).where(eq(versionData.artifact_id, id))
       await tx.delete(version).where(eq(version.artifact_id, id))
       await tx.delete(comment).where(eq(comment.artifact_id, id))
@@ -5752,6 +5859,7 @@ export class PgMetaStore implements MetaStore {
       // so deleting any artifact that had ever logged a view rolled the whole
       // transaction back (a production 500 the embedded suite could not reproduce:
       // better-sqlite3 runs with FK enforcement off). Raw SQL, matching the writes.
+      await tx.execute(sql`DELETE FROM view_read WHERE artifact_id = ${id}`)
       await tx.execute(sql`DELETE FROM view WHERE artifact_id = ${id}`)
       await tx.delete(artifact).where(eq(artifact.id, id))
     })

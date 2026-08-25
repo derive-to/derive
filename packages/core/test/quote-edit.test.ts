@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { decodeEntities, pageText, pageTextParts } from "../src/anchor"
-import { EditError } from "../src/doc-text"
+import { markdownTextParts } from "../src/markdown-text"
 import { applyQuoteEdits, isQuoteEdit, type QuoteEdit } from "../src/quote-edit"
 
 const qe = (
@@ -46,9 +46,6 @@ describe("pageTextParts", () => {
     "text &amp", // entity without semicolon: plain text
     "a < b and c > d", // literal angle brackets in prose
     "empty <> brackets stay literal",
-    "<!-- unclosed comment falls to the bare-tag rule > tail",
-    "<!-- unclosed, and no closing angle at all",
-    "<script>never closed but has > inside",
     "<SCRIPT src=x>UPPER</Script> case-insensitive close",
     "<scriptx>not a script tag</scriptx>",
     'att with gt <img alt="a>b"> tail', // attrs stop at the FIRST >
@@ -71,12 +68,56 @@ describe("pageTextParts", () => {
     const start = performance.now()
     const mapped = pageTextParts(hostile)
     expect(performance.now() - start).toBeLessThan(200)
-    expect(mapped.text).toBe(legacyPageText(hostile))
+    expect(mapped.text).toBe(" ")
+  })
+
+  it("hides the remainder after unclosed comments and raw-text elements", () => {
+    for (const doc of [
+      "visible <!-- hidden forever",
+      "visible <script>hidden forever",
+      "visible <style>hidden forever",
+      "visible <noscript>hidden forever",
+    ])
+      expect(pageTextParts(doc).text).toBe("visible  ")
   })
 })
 
 // ---------------------------------------------------------------------------------
-// Markdown: the source IS the match text.
+// Markdown: rendered text resolves back to source offsets without mangling syntax.
+
+describe("markdownTextParts", () => {
+  it("projects entities, escapes, code spans, raw HTML, and fallback blocks", () => {
+    const source =
+      "# A &amp; B\n\n" +
+      "Escaped \\* and `code &` plus <em>HTML &amp;</em> and &nosuchentity;.\n\n" +
+      "---\n\n" +
+      "- raw **list**\n"
+    const mapped = markdownTextParts(source)
+
+    expect(mapped.text).toContain("A & B")
+    expect(mapped.text).toContain("Escaped * and code & plus")
+    expect(mapped.text).toContain("HTML &")
+    expect(mapped.text).toContain("&nosuchentity;")
+    // GFM prose projects as the reader sees it; its list marker and emphasis
+    // delimiters are mapped seams rather than visible selector text.
+    expect(mapped.text).toMatch(/raw\s+list/)
+    expect(mapped.text).not.toContain("**list**")
+    expect(mapped.segments.some((segment) => segment.kind === "entity")).toBe(true)
+    expect(
+      mapped.segments.some((segment) => segment.kind === "gap" && segment.boundary === "html"),
+    ).toBe(true)
+  })
+
+  it("maps block HTML and treats images and hard breaks as text seams", () => {
+    const html = markdownTextParts("<section>Raw &amp; HTML</section>\n")
+    expect(html.text).toContain("Raw & HTML")
+    expect(html.segments.some((segment) => segment.boundary === "html")).toBe(true)
+
+    const inline = markdownTextParts("Before ![alt](img.png) after  \nnext")
+    expect(inline.text).toMatch(/Before\s+after\s+next/)
+    expect(inline.wrappers).toHaveLength(0)
+  })
+})
 
 describe("applyQuoteEdits — markdown", () => {
   const doc = "# Title\n\nThe quick brown fox jumps over the lazy dog. It was teh best of times.\n"
@@ -123,11 +164,106 @@ describe("applyQuoteEdits — markdown", () => {
     expect(() => applyQuoteEdits(doc, MD, [qe("never was here", "x")])).toThrow(/wasn't found/)
   })
 
-  it("rejects a rendered-text quote that crosses inline markdown syntax", () => {
+  it("replaces rendered text across inline Markdown formatting", () => {
     const md = "This is **bold** text."
-    // The reader sees "is bold text" — the source has ** in the middle, so a strict
-    // match must fail rather than mangle the emphasis markers.
-    expect(() => applyQuoteEdits(md, MD, [qe("is bold text", "is bald text")])).toThrow(EditError)
+    expect(applyQuoteEdits(md, MD, [qe("is bold text", "is bald text")])).toBe("This is bald text.")
+  })
+
+  it("edits the Zero Prime two-line bold subtitle without losing its Markdown", () => {
+    const md =
+      "# Chief of Staff — AI Council & Zero Prime Ventures #1\n\n" +
+      "**San Francisco · Full-time · In person**  \n" +
+      "**$150,000–$180,000 base + discretionary bonus + carry eligibility**\n\n" +
+      "## The opportunity\n"
+    const out = applyQuoteEdits(md, MD, [
+      qe("person\n$150,000–$180,000 base + discretionary bonus + carry eligibility", "person"),
+    ])
+    expect(out).toBe(
+      "# Chief of Staff — AI Council & Zero Prime Ventures #1\n\n" +
+        "**San Francisco · Full-time · In person**\n\n" +
+        "## The opportunity\n",
+    )
+  })
+
+  it("uses rendered Markdown context to pin a repeated accented word", () => {
+    const md =
+      "You should show ownership and judgment; that matters more than a perfectly matched résumé.\n\n" +
+      "## How to apply\n\n" +
+      "Send a **résumé** or LinkedIn profile and answer two questions.\n"
+    const out = applyQuoteEdits(md, MD, [
+      qe("résumé", "resume", { prefix: "Send a\n", suffix: "\nor LinkedIn profile" }),
+    ])
+    expect(out).toContain("Send a **resume** or LinkedIn profile")
+    expect(out).toContain("perfectly matched résumé")
+  })
+
+  it("keeps a seven-edit Markdown batch atomic while the last quote is repeated", () => {
+    const md = `# Role
+
+**San Francisco · Full-time · In person**
+
+We value agency, judgment, speed, ownership, clarity, and follow-through. A matched résumé is secondary.
+
+## Apply
+
+Send a **résumé** or LinkedIn profile today.
+`
+    const edits: QuoteEdit[] = [
+      qe("agency", "initiative"),
+      qe("judgment", "judgement"),
+      qe("speed", "velocity"),
+      qe("ownership", "accountability"),
+      qe("clarity", "precision"),
+      qe("follow-through", "follow through"),
+      qe("résumé", "resume", { prefix: "Apply\nSend a ", suffix: " or LinkedIn" }),
+    ]
+    const out = applyQuoteEdits(md, MD, edits)
+    expect(out).toContain("initiative, judgement, velocity, accountability, precision")
+    expect(out).toContain("and follow through. A matched résumé is secondary.")
+    expect(out).toContain("Send a **resume** or LinkedIn profile")
+  })
+
+  it("repairs formatting active at only one edge of a Markdown selection", () => {
+    expect(
+      applyQuoteEdits("**keep selected** plain tail", MD, [qe("selected plain", "changed")]),
+    ).toBe("**keep** changed tail")
+    expect(applyQuoteEdits("before **bold after**", MD, [qe("before bold", "changed")])).toBe(
+      "changed **after**",
+    )
+  })
+
+  it("preserves nested emphasis and same-destination links outside the edit", () => {
+    expect(applyQuoteEdits("Lead **bold _and italic_** tail", MD, [qe("bold and", "clear")])).toBe(
+      "Lead **clear _italic_** tail",
+    )
+    expect(
+      applyQuoteEdits("[keep selected](https://derive.to) plain tail", MD, [
+        qe("selected plain", "changed"),
+      ]),
+    ).toBe("[keep](https://derive.to) changed tail")
+  })
+
+  it("replaces whole Markdown escapes and refuses partial code-span edits", () => {
+    expect(applyQuoteEdits("Use \\* literally", MD, [qe("*", "+")])).toBe("Use + literally")
+    expect(() => applyQuoteEdits("Use `code` now", MD, [qe("cod", "x")])).toThrow(/whole character/)
+    expect(() => applyQuoteEdits("Use `code` now", MD, [qe("ode", "x")])).toThrow(/whole character/)
+  })
+
+  it("edits inside raw HTML but refuses a selection across its boundary", () => {
+    expect(applyQuoteEdits("before <em>inside</em> after", MD, [qe("inside", "within")])).toBe(
+      "before <em>within</em> after",
+    )
+    expect(() =>
+      applyQuoteEdits("before <em>inside</em> after", MD, [qe("before inside", "merged")]),
+    ).toThrow(/crosses raw HTML/)
+  })
+
+  it("still rejects a rendered quote across Markdown block structure", () => {
+    expect(() =>
+      applyQuoteEdits("First paragraph here.\n\nSecond paragraph there.", MD, [
+        qe("paragraph here. Second paragraph", "merged"),
+      ]),
+    ).toThrow(/Markdown block boundary/)
   })
 
   it("applies several non-overlapping edits back-to-front", () => {

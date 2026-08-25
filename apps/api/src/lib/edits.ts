@@ -185,7 +185,7 @@ async function currentSource(
  * `materializeEdits`, sharing its kind check, `base_version` staleness check and source
  * load so the two can't drift apart.
  *
- * Structural intent (move / delete / duplicate a slide) exists as its own payload because
+ * Structural intent (move / delete / duplicate / insert a slide) exists as its own payload because
  * the text pipelines cannot express it: a quote edit refuses any span crossing an element
  * boundary, and `old_str` can only move a slide by carrying two byte-perfect copies of it
  * through a model's output. Position in, position out — the whole slide never travels.
@@ -298,9 +298,11 @@ export async function materializeEdits(
  *  a malformed field must fail loudly, not coerce to NaN and reject every edit as
  *  "moved to vNaN" regardless of whether the artifact actually moved. */
 export function parseBaseVersion(raw: string | undefined): number | undefined {
-  if (!raw) return undefined
+  if (raw === undefined) return undefined
+  if (!/^[1-9]\d*$/.test(raw))
+    throw new EditError(`base_version "${raw}" is not a valid version number.`)
   const n = Number(raw)
-  if (!Number.isInteger(n) || n < 1)
+  if (!Number.isSafeInteger(n))
     throw new EditError(`base_version "${raw}" is not a valid version number.`)
   return n
 }

@@ -81,6 +81,7 @@ export const agentDiscoveryRoutes = (ctx: AppContext) => {
           "Search and browse workspace libraries; tags and collections",
           "Ask live workspace contexts (agents) for answers or delegated work",
           "Save resumable checkpoints of working state",
+          "Add small live JSON collections to HTML artifacts with derive.shared; commenters can interact without source-edit rights",
         ],
         auth: {
           mcp: "OAuth at the MCP endpoint — connect and complete the browser flow; no pasted secrets",
@@ -102,8 +103,8 @@ export const agentDiscoveryRoutes = (ctx: AppContext) => {
         },
         source: "https://github.com/derive-to/derive",
         not_for:
-          "Server-side code execution, general-purpose data storage, secrets, or app backends — " +
-          "Derive hosts artifacts, not compute.",
+          "Server-side code execution, general-purpose data storage, secrets, or general app backends — " +
+          "Derive hosts artifacts plus bounded interactive state, not compute.",
       },
       200,
       { "Cache-Control": CACHE },

@@ -65,6 +65,33 @@ describe("view analytics", () => {
     const row = list.artifacts.find((x: { short_id: string }) => x.short_id === short_id)
     expect(row.views).toBe(3)
   })
+
+  it("counts a read only once the viewer is still present after the delay", async () => {
+    const { short_id } = await (await upload("r.md", "# R", { visibility: "public" })).json()
+
+    // A link-preview crawler's whole footprint: fetch the page, run its scripts, leave.
+    const opened = await anonApp.request(`/v1/artifacts/${short_id}/view`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ version: 1 }),
+    })
+    const cookie = (opened.headers.get("set-cookie") ?? "").split(";")[0] ?? ""
+    const stats = async () =>
+      (await (await app.request(`/v1/artifacts/${short_id}/analytics`)).json()) as {
+        total: number
+        reads: number
+      }
+    expect((await stats()).total).toBe(1)
+    expect((await stats()).reads).toBe(0)
+
+    // The client beats on mount too, and that first beat is inside the window, so it
+    // must not promote the view. This is the case that separates a reader from a fetch.
+    await anonApp.request(`/v1/artifacts/${short_id}/presence`, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...(cookie ? { cookie } : {}) },
+    })
+    expect((await stats()).reads).toBe(0)
+  })
 })
 
 describe("live stream (SSE)", () => {

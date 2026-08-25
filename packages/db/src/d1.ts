@@ -83,6 +83,21 @@ export function createD1Store(d1: D1Database): MetaStore {
         sql`UPDATE artifact SET first_foreign_view_at = ${new Date().toISOString()} WHERE id = ${v.artifact_id} AND first_foreign_view_at IS NULL`,
       )
     },
+    // See MetaStore.confirmRead. One idempotent statement, so the repeat heartbeats
+    // that follow cost a single indexed probe.
+    confirmRead: async (
+      artifactId: string,
+      viewer: string,
+      viewedBeforeIso: string,
+    ): Promise<void> => {
+      await db.run(
+        sql`INSERT OR IGNORE INTO view_read (artifact_id, viewer)
+            SELECT ${artifactId}, ${viewer}
+             WHERE EXISTS (
+               SELECT 1 FROM view WHERE artifact_id=${artifactId} AND viewer=${viewer} AND created_at<=${viewedBeforeIso}
+             )`,
+      )
+    },
     viewedSince: async (
       artifactId: string,
       viewer: string,
@@ -95,6 +110,9 @@ export function createD1Store(d1: D1Database): MetaStore {
       return !!row
     },
     pruneViews: async (cutoffIso: string): Promise<number> => {
+      // Reads ride the same retention: leaving them behind would let `reads` outlive the
+      // views it is derived from, and outgrow `unique`.
+      await db.run(sql`DELETE FROM view_read WHERE created_at < ${cutoffIso}`)
       const res = await db.run(sql`DELETE FROM view WHERE created_at < ${cutoffIso}`)
       return res.meta.changes ?? 0
     },
@@ -104,6 +122,9 @@ export function createD1Store(d1: D1Database): MetaStore {
         viewers.map((v) => sql`${v}`),
         sql`, `,
       )
+      // Their reads go too, or an owner stays counted as a reader after the self-view
+      // rows they came from are gone.
+      await db.run(sql`DELETE FROM view_read WHERE viewer IN (${list})`)
       const res = await db.run(
         sql`DELETE FROM view WHERE viewer_kind='user' AND viewer IN (${list})`,
       )
@@ -124,6 +145,9 @@ export function createD1Store(d1: D1Database): MetaStore {
       const anon = (await db.get(
         sql`SELECT count(DISTINCT viewer) n FROM view WHERE artifact_id=${artifactId} AND viewer_kind='anon'`,
       )) as { n: number }
+      const reads = (await db.get(
+        sql`SELECT count(*) n FROM view_read WHERE artifact_id=${artifactId}`,
+      )) as { n: number }
       const perVersion = (await db.all(
         sql`SELECT version, count(*) count FROM view WHERE artifact_id=${artifactId} GROUP BY version ORDER BY version`,
       )) as { version: number; count: number }[]
@@ -138,6 +162,7 @@ export function createD1Store(d1: D1Database): MetaStore {
         last24h: day.n,
         unique: uni.n,
         anonViewers: anon.n,
+        reads: reads.n,
         perVersion,
         daily,
         recent,
