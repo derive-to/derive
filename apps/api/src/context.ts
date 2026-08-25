@@ -1573,9 +1573,35 @@ export function buildContext(deps: AppDeps) {
     opts?: { split?: boolean },
   ): Promise<ArtifactRecord | Response> => {
     const shortId = c.req.param("shortId")
-    const a = shortId ? await meta.getByShortId(shortId) : null
+    // Postgres can resolve the artifact and a signed-in human's complete grant set
+    // in one statement. Start active-workspace validation beside it, then seed
+    // actorFor with the same grants; stores without the combined read keep the
+    // original path. This is only a query consolidation — can() remains the one
+    // authorization decision and actorFor ignores preloaded grants for agents.
+    const viewer = shortId && meta.artifactWithGrants ? await currentUser(c) : null
+    const combined =
+      shortId && viewer && meta.artifactWithGrants
+        ? (await Promise.all([meta.artifactWithGrants(shortId, viewer.id), activeWorkspace(c)]))[0]
+        : undefined
+    const a = shortId
+      ? combined !== undefined
+        ? combined?.artifact
+        : await meta.getByShortId(shortId)
+      : null
     if (!a) return fail(c, 404, "not found")
-    if (!(await authorize(c, action, a))) {
+    const actor = await actorFor(
+      c,
+      a,
+      combined && viewer
+        ? {
+            userId: viewer.id,
+            orgRole: combined.orgRole,
+            artifactRoles: combined.artifactRoles,
+            portableArtifactRoles: combined.portableArtifactRoles,
+          }
+        : undefined,
+    )
+    if (!can(actor, action, a.workspace_access, a.link_role)) {
       return opts?.split ? fail(c, 403, "forbidden") : fail(c, 404, "not found")
     }
     return a
