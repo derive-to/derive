@@ -11,17 +11,8 @@ import { anonName, bail, readJson } from "../lib/http"
  *  Viewer response schema is the single source for the web client's type; the SSE
  *  event stream stays a plain route. */
 export const realtimeRoutes = (ctx: AppContext) => {
-  const {
-    meta,
-    bus,
-    presence,
-    backplane,
-    authorize,
-    currentUser,
-    actorFor,
-    guestViewerId,
-    requireArtifact,
-  } = ctx
+  const { meta, bus, presence, backplane, currentUser, actorFor, guestViewerId, requireArtifact } =
+    ctx
   const app = new OpenAPIHono<BlankEnv>()
 
   const ViewerSchema = z
@@ -80,8 +71,8 @@ export const realtimeRoutes = (ctx: AppContext) => {
 
   // Live event stream — SSE, so it stays a plain route (not typed JSON).
   app.get("/v1/artifacts/:shortId/events", async (c) => {
-    const artifact = await meta.getByShortId(c.req.param("shortId"))
-    if (!artifact || !(await authorize(c, "read", artifact))) return c.text("not found", 404)
+    const artifact = await requireArtifact(c, "read")
+    if (artifact instanceof Response) return c.text("not found", 404)
     const viewer = await deriveViewer(c, artifact)
     // A Durable Object backplane owns the stream itself (edge) AND tracks presence off
     // its connect/disconnect lifecycle; relay adapters (the in-process bus) return null,

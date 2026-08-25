@@ -5408,6 +5408,11 @@ export function runStoreContract(
           expect(await combined(u), `artifactWithGrants disagrees for ${u}`).toEqual(
             await slow(org, u),
           )
+        if (store.artifactWithGrants && store.artifactsWithGrants) {
+          const one = await store.artifactWithGrants(art.short_id, u)
+          const many = await store.artifactsWithGrants([art.short_id, `sid_missing_${uuid()}`], u)
+          expect(many, `artifactsWithGrants disagrees for ${u}`).toEqual(one ? [one] : [])
+        }
       }
 
       // The org arm must key on the org PASSED IN, not on the artifact's own workspace.

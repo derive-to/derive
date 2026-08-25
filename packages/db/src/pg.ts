@@ -2642,6 +2642,76 @@ export class PgMetaStore implements MetaStore {
     // either, since every one of them joins through it.
     return record ? { artifact: record, orgRole, artifactRoles, portableArtifactRoles } : null
   }
+  async artifactsWithGrants(
+    shortIds: string[],
+    userId: string,
+  ): Promise<
+    Array<{
+      artifact: ArtifactRecord
+      orgRole: Role | null
+      artifactRoles: Role[]
+      portableArtifactRoles: Role[]
+    }>
+  > {
+    if (shortIds.length === 0) return []
+    const ids = [...new Set(shortIds)]
+    const res = await this.db.execute(sql`
+      select to_jsonb(a) as artifact,
+             (select m.role from membership m
+               where m.org_id = a.org_id and m.user_id = ${userId}) as org_role,
+             array(
+               select am.role::text from artifact_member am
+                where am.artifact_id = a.id and am.user_id = ${userId}
+               union all
+               select cm.role::text
+                 from collection_item ci
+                 join collection_member cm on cm.collection_id = ci.collection_id
+                where ci.artifact_id = a.id and cm.user_id = ${userId}
+               union all
+               select m2.role::text
+                 from collection_item ci2
+                 join collection c on c.id = ci2.collection_id and c.workspace_access = 'member'
+                 join membership m2 on m2.org_id = c.org_id
+                where ci2.artifact_id = a.id and m2.user_id = ${userId}
+             ) as artifact_roles,
+             array(
+               select am.role::text from artifact_member am
+                where am.artifact_id = a.id and am.user_id = ${userId} and am.role <> 'owner'
+               union all
+               select cm.role::text
+                 from collection_item ci
+                 join collection_member cm on cm.collection_id = ci.collection_id
+                where ci.artifact_id = a.id and cm.user_id = ${userId} and cm.role <> 'owner'
+             ) as portable_artifact_roles
+        from artifact a
+       where a.short_id = any(${ids})
+    `)
+    const rows =
+      (
+        res as unknown as {
+          rows?: Array<{
+            artifact: ArtifactRecord
+            org_role: Role | null
+            artifact_roles: Role[]
+            portable_artifact_roles: Role[]
+          }>
+        }
+      ).rows ?? []
+    const byShortId = new Map(rows.map((row) => [row.artifact.short_id, row]))
+    return ids.flatMap((shortId) => {
+      const row = byShortId.get(shortId)
+      return row
+        ? [
+            {
+              artifact: row.artifact,
+              orgRole: row.org_role,
+              artifactRoles: row.artifact_roles,
+              portableArtifactRoles: row.portable_artifact_roles,
+            },
+          ]
+        : []
+    })
+  }
   async artifactRolesFor(userId: string, artifactIds: string[]): Promise<Record<string, Role>> {
     if (artifactIds.length === 0) return {}
     const rows = await this.db
