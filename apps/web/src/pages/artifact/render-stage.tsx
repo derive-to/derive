@@ -4,6 +4,7 @@ import { Spinner } from "@/components/shared/spinner"
 import { StatusPanel } from "@/components/shared/status-panel"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
+import type { ArtifactRuntimeError } from "./types"
 
 // How long we wait for the sandboxed render to fire `load` before calling it a
 // failed boot. A cache-warm artifact paints in well under a second; this only
@@ -50,6 +51,35 @@ export const updateCue = (
   return { fire: version, state }
 }
 
+/** Public copy stays source-free; editors get the one actionable repair for the
+ * storage case. The runtime sends only this coarse code, never exception text. */
+export const runtimeFailureCopy = (
+  error: ArtifactRuntimeError,
+  canFix: boolean,
+): { title: string; description: string } => {
+  if (error === "sandbox-storage")
+    return canFix
+      ? {
+          title: "Browser storage isn’t available here",
+          description:
+            "Derive artifacts run in a secure sandbox without localStorage, sessionStorage, IndexedDB, or cookies. Use derive.shared or in-memory state, then republish.",
+        }
+      : {
+          title: "This artifact couldn’t start",
+          description: "Its author needs to update it for Derive’s secure sandbox.",
+        }
+  return canFix
+    ? {
+        title: "Artifact script stopped",
+        description:
+          "A script failed before the artifact finished loading. Check the source and republish.",
+      }
+    : {
+        title: "This artifact couldn’t start",
+        description: "Its author needs to fix a script error.",
+      }
+}
+
 export function RenderStage({
   rawSrc,
   title,
@@ -58,6 +88,8 @@ export function RenderStage({
   frameRef,
   wrapRef,
   onFrameLoad,
+  runtimeError,
+  canFixRuntimeError = false,
   banner,
   overlays,
   overlay = false,
@@ -81,6 +113,10 @@ export function RenderStage({
   wrapRef: RefObject<HTMLDivElement | null>
   /** Called on the iframe's own `load` (the page's bridge handshakes off it). */
   onFrameLoad?: () => void
+  /** A source-free boot failure relayed by the first-injected sandbox runtime. */
+  runtimeError?: ArtifactRuntimeError | null
+  /** Editors get repair guidance; readers see a neutral failure. */
+  canFixRuntimeError?: boolean
   /** A strip above the render (the past-version banner). */
   banner?: ReactNode
   /** Absolutely-positioned children inside the render (deck bar, cursor overlay). */
@@ -114,6 +150,7 @@ export function RenderStage({
     setPhase("booting")
     setAttempt((n) => n + 1)
   }
+  const runtimeFailure = runtimeError ? runtimeFailureCopy(runtimeError, canFixRuntimeError) : null
 
   // "Updated" cue: when the shown version steps up IN PLACE (a peer published a new
   // version of the document being watched), flash a soft, non-blocking badge instead
@@ -225,6 +262,26 @@ export function RenderStage({
               title="Preview didn’t load"
               description="The render took too long or failed to start. This is usually temporary."
               className="max-w-sm"
+              action={
+                <Button variant="outline" data-testid="render-retry" onClick={retry}>
+                  Try again
+                </Button>
+              }
+            />
+          </div>
+        )}
+
+        {/* The iframe can load successfully while an authored script fails during
+            first render. The early runtime relay makes that terminal state explicit
+            instead of leaving the artifact's own loading copy on screen forever. */}
+        {phase === "ready" && runtimeFailure && (
+          <div className="absolute inset-0 z-20 grid place-items-center bg-background p-6">
+            <StatusPanel
+              tone="danger"
+              icon={<Icon name="removed" strokeWidth={1.75} />}
+              title={runtimeFailure.title}
+              description={runtimeFailure.description}
+              className="max-w-md"
               action={
                 <Button variant="outline" data-testid="render-retry" onClick={retry}>
                   Try again

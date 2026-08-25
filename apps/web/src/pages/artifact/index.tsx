@@ -474,6 +474,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
     anchorConf,
     anchorTops,
     subscribeGeom,
+    runtimeError,
   } = useArtifactFrame({
     // Paint the open thread anchors in the doc; a click focuses the thread.
     comments,
@@ -1035,6 +1036,8 @@ export function Artifact({ template = false }: { template?: boolean }) {
       frameRef={frame}
       presentWrapRef={presentWrap}
       cursor={live.cursor}
+      runtimeError={runtimeError}
+      canFixRuntimeError={canPublish}
       onScrollDoc={scrollBy}
       // A frame (re)load while inline editing means the edit session's document is
       // gone — the hook exits and warns rather than letting a later Save silently

@@ -13,6 +13,25 @@ export const SHARED_STATE_CLIENT_JS = `(function () {
   var states = Object.create(null), pending = Object.create(null), queued = [], seq = 0;
   var keyPattern = new RegExp(${JSON.stringify(SHARED_STATE_KEY_PATTERN)});
   var ready = false;
+  var booting = true;
+
+  function runtimeErrorCode(error, message) {
+    var text = String(message || (error && error.message) || "").toLowerCase();
+    return /localstorage|sessionstorage|indexeddb|cookie|browser storage/.test(text)
+      ? "sandbox-storage"
+      : "script-error";
+  }
+  function reportBootError(error, message) {
+    if (!booting) return;
+    send({ type: "runtime-error", code: runtimeErrorCode(error, message) });
+  }
+  window.addEventListener("error", function (event) {
+    reportBootError(event.error, event.message);
+  });
+  window.addEventListener("unhandledrejection", function (event) {
+    reportBootError(event.reason, "");
+  });
+  window.addEventListener("load", function () { booting = false; });
 
   function send(message) {
     message.source = "derive";

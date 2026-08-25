@@ -78,6 +78,22 @@ export const publishAdvisories = (content: string, contentType: string): string[
         'if this is a styled page, republish with filename:"index.html" so it renders as HTML.',
     )
 
+  // Browser storage is unavailable in the artifact sandbox's opaque origin. A direct
+  // access throws a SecurityError, commonly during the first render, leaving an otherwise
+  // healthy interactive page stuck on its own loading state. Keep this advisory heuristic
+  // and non-blocking: a page may show the API name as prose or guard the access deliberately,
+  // but the publish receipt is the last reliable place to catch the accidental case.
+  if (
+    isHtmlLike(contentType) &&
+    /\b(?:localStorage|sessionStorage|indexedDB)\b|\bdocument\s*\.\s*cookie\b/.test(content)
+  )
+    out.push(
+      "This page references browser storage, but Derive artifacts run in an opaque sandbox " +
+        "where localStorage, sessionStorage, IndexedDB, and cookies are unavailable and may " +
+        "throw before the page renders. Use derive.shared for small shared JSON state or an " +
+        "in-memory variable for per-visit UI state.",
+    )
+
   // Slides built without the deck protocol. The page paginates perfectly on its own, so
   // nothing looks broken — it has just silently forfeited everything the host would have
   // added: the deck bar, Present mode, and comments that pin to the slide they were left
