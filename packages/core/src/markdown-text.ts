@@ -143,6 +143,32 @@ export function markdownTextParts(source: string): MarkdownTextParts {
     return at >= from && at + raw.length <= limit ? at : -1
   }
 
+  /** Find a stable authored foothold for a normalized container token. Marked
+   *  removes a blockquote/list prefix from every line, so the whole `raw` often is
+   *  absent while its first non-empty authored line is still exact. Descendants
+   *  are the fallback for wrapper tokens whose own first line is only structure. */
+  const firstSourceAnchor = (token: MarkdownToken, from: number, limit: number): number => {
+    const raw = token.raw ?? ""
+    const direct = locate(raw, from, limit)
+    if (direct >= 0) return direct
+    for (const line of raw.split("\n")) {
+      const candidate = line.trimStart()
+      if (!candidate) continue
+      const at = locate(candidate, from, limit)
+      if (at >= 0) return at
+      break
+    }
+    for (const child of token.tokens ?? []) {
+      const at = firstSourceAnchor(child, from, limit)
+      if (at >= 0) return at
+    }
+    for (const item of token.items ?? []) {
+      const at = firstSourceAnchor(item, from, limit)
+      if (at >= 0) return at
+    }
+    return -1
+  }
+
   /** A renderer removes blockquote/list prefixes from fenced code token.raw. Map
    *  the visible code body inside the authored range instead of requiring that
    *  normalized token slice to occur byte-for-byte in the source. Multi-line
@@ -293,15 +319,24 @@ export function markdownTextParts(source: string): MarkdownTextParts {
    * task checkbox / nested remainder as structural seams. */
   const mapList = (token: MarkdownToken, rangeStart: number, rangeEnd: number) => {
     let cursor = rangeStart
-    for (const item of token.items ?? []) {
+    const items = token.items ?? []
+    for (let itemIndex = 0; itemIndex < items.length; itemIndex++) {
+      const item = items[itemIndex] as MarkdownToken
       const raw = item.raw ?? ""
       const located = locate(raw, cursor, rangeEnd)
-      // Container prefixes can make a normalized multi-line item absent as one
-      // contiguous source slice. A single item still owns the whole supplied
-      // range, and its child tokens can be located safely inside that range.
-      if (located < 0 && (token.items?.length ?? 0) !== 1) continue
+      // When the normalized item is not contiguous, bound it by the next sibling's
+      // first authored line. This keeps one fallback item from consuming every
+      // later sibling in the same prefixed list.
+      const currentAnchor = firstSourceAnchor(item, cursor, rangeEnd)
+      let nextAnchor = -1
+      for (let next = itemIndex + 1; next < items.length && nextAnchor < 0; next++)
+        nextAnchor = firstSourceAnchor(
+          items[next] as MarkdownToken,
+          currentAnchor >= 0 ? currentAnchor + 1 : cursor,
+          rangeEnd,
+        )
       const at = located < 0 ? cursor : located
-      const end = located < 0 ? rangeEnd : located + raw.length
+      const end = located < 0 ? (nextAnchor >= 0 ? nextAnchor : rangeEnd) : located + raw.length
       let itemCursor = at
       for (const child of item.tokens ?? []) {
         const childRaw = child.raw ?? ""
@@ -354,27 +389,38 @@ export function markdownTextParts(source: string): MarkdownTextParts {
    * raw inline text inside the original slice and keep the markers structural. */
   const mapBlockquote = (token: MarkdownToken, rangeStart: number, rangeEnd: number) => {
     let cursor = rangeStart
-    for (const child of token.tokens ?? []) {
+    const children = token.tokens ?? []
+    for (let childIndex = 0; childIndex < children.length; childIndex++) {
+      const child = children[childIndex] as MarkdownToken
       const raw = child.raw ?? ""
       const at = locate(raw, cursor, rangeEnd)
+      const currentAnchor = firstSourceAnchor(child, cursor, rangeEnd)
+      let nextAnchor = -1
+      for (let next = childIndex + 1; next < children.length && nextAnchor < 0; next++)
+        nextAnchor = firstSourceAnchor(
+          children[next] as MarkdownToken,
+          currentAnchor >= 0 ? currentAnchor + 1 : cursor,
+          rangeEnd,
+        )
+      const fallbackEnd = nextAnchor >= 0 ? nextAnchor : rangeEnd
       if (at < 0 && child.type === "code") {
-        mapCode(child, cursor, rangeEnd, blockSeq++)
-        cursor = rangeEnd
+        mapCode(child, cursor, fallbackEnd, blockSeq++)
+        cursor = fallbackEnd
         continue
       }
       if (at < 0 && child.type === "list") {
-        mapList(child, cursor, rangeEnd)
-        cursor = rangeEnd
+        mapList(child, cursor, fallbackEnd)
+        cursor = fallbackEnd
         continue
       }
       if (at < 0 && child.type === "blockquote") {
-        mapBlockquote(child, cursor, rangeEnd)
-        cursor = rangeEnd
+        mapBlockquote(child, cursor, fallbackEnd)
+        cursor = fallbackEnd
         continue
       }
       if (at < 0 && Array.isArray(child.tokens) && child.tokens.length) {
-        mapInline(child.tokens, cursor, rangeEnd, blockSeq++)
-        cursor = rangeEnd
+        mapInline(child.tokens, cursor, fallbackEnd, blockSeq++)
+        cursor = fallbackEnd
         continue
       }
       if (at < 0) continue

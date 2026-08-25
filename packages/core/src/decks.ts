@@ -36,22 +36,26 @@ const withoutCommentsInText = (html: string): string => {
   }
 }
 
-/** Remove real HTML comments while preserving raw script/style elements verbatim.
- *  In raw text, `<!--` is JavaScript/CSS data rather than an HTML tokenizer state;
- *  treating it as a document comment can hide a later, valid protocol post. */
+/** Remove real HTML comments while preserving parsed tags and raw script/style
+ *  elements verbatim. In raw text and quoted attributes, `<!--` is data rather
+ *  than an HTML comment opener; treating it as one can hide a valid protocol post. */
 const withoutComments = (html: string): string => {
   const all = tags(html)
-  const rawRanges: { start: number; end: number }[] = []
+  const protectedRanges: { start: number; end: number }[] = all.map((tag) => ({
+    start: tag.start,
+    end: tag.end,
+  }))
   for (let i = 0; i < all.length; i++) {
     const open = all[i]
     if (!open || open.closing || (open.name !== "script" && open.name !== "style")) continue
     const end = elementEnd(all, i)
-    rawRanges.push({ start: open.start, end: end < 0 ? html.length : end })
+    protectedRanges.push({ start: open.start, end: end < 0 ? html.length : end })
   }
-  if (!rawRanges.length) return withoutCommentsInText(html)
+  if (!protectedRanges.length) return withoutCommentsInText(html)
+  protectedRanges.sort((a, b) => a.start - b.start || b.end - a.end)
   let out = ""
   let cursor = 0
-  for (const range of rawRanges) {
+  for (const range of protectedRanges) {
     if (range.start < cursor) continue
     out += withoutCommentsInText(html.slice(cursor, range.start))
     out += html.slice(range.start, range.end)
@@ -244,12 +248,87 @@ const withId = (text: string, id: number): string => {
 const inactiveClasses = (classes: string[]): string[] =>
   classes.filter((name) => !["on", "active", "is-active", "current"].includes(name.toLowerCase()))
 
+const IDREF_LIST_ATTRS = new Set([
+  "aria-controls",
+  "aria-describedby",
+  "aria-details",
+  "aria-errormessage",
+  "aria-flowto",
+  "aria-labelledby",
+  "aria-owns",
+  "headers",
+])
+const IDREF_ATTRS = new Set(["aria-activedescendant", "for", "form", "list"])
+const FRAGMENT_ATTRS = new Set(["href", "xlink:href"])
+
+const domIds = (html: string): string[] =>
+  tags(html).flatMap((tag) => (tag.closing ? [] : attrValues(tag.attrs, "id")))
+
+/** A duplicated slide is a new DOM subtree, so authored IDs inside it must also be
+ *  new. Rewrite the IDREF attributes browsers and assistive technology resolve,
+ *  plus fragment/url references used by SVG. Attribute spelling and quote style
+ *  stay unchanged; only values that point at an ID from this slide move. */
+const rewriteCopiedDomIds = (html: string, slideId: number, used: Set<string>): string => {
+  const originals = domIds(html)
+  if (new Set(originals).size !== originals.length)
+    throw new EditError(
+      "This slide repeats a DOM id inside itself, so duplicating it would leave ambiguous references. Give its elements unique ids first.",
+    )
+  const rewritten = new Map<string, string>()
+  for (const original of originals) {
+    let candidate = `${original}--derive-copy-${slideId}`
+    let n = 2
+    while (used.has(candidate)) candidate = `${original}--derive-copy-${slideId}-${n++}`
+    rewritten.set(original, candidate)
+    used.add(candidate)
+  }
+  if (!rewritten.size) return html
+
+  const rewriteValue = (name: string, value: string): string => {
+    const lower = name.toLowerCase()
+    if (lower === "id") return rewritten.get(value) ?? value
+    if (IDREF_ATTRS.has(lower)) return rewritten.get(value) ?? value
+    if (IDREF_LIST_ATTRS.has(lower))
+      return value.replace(/\S+/g, (token) => rewritten.get(token) ?? token)
+    if (FRAGMENT_ATTRS.has(lower) && value.startsWith("#"))
+      return `#${rewritten.get(value.slice(1)) ?? value.slice(1)}`
+    return value.replace(/url\(\s*#([^\s)]+)\s*\)/gi, (whole, ref: string) => {
+      const next = rewritten.get(ref)
+      return next ? `url(#${next})` : whole
+    })
+  }
+
+  const attr = /([^\s"'<>/=]+)(\s*=\s*)(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/g
+  let out = ""
+  let cursor = 0
+  for (const tag of tags(html)) {
+    if (tag.closing) continue
+    out += html.slice(cursor, tag.start)
+    const raw = html
+      .slice(tag.start, tag.end)
+      .replace(
+        attr,
+        (whole, name: string, equals: string, double: string, single: string, bare: string) => {
+          const value = double ?? single ?? bare ?? ""
+          const next = rewriteValue(name, value)
+          if (next === value) return whole
+          if (double !== undefined) return `${name}${equals}"${next}"`
+          if (single !== undefined) return `${name}${equals}'${next}'`
+          return `${name}${equals}${next}`
+        },
+      )
+    out += raw
+    cursor = tag.end
+  }
+  return out + html.slice(cursor)
+}
+
 /** A newly-created slide is never the live one merely because its source was. Deck
  *  runtimes commonly persist `on`/`active` on the first slide in authored source; copying
  *  that state would paint two slides at once after reload. Only the OUTER slide's class
  *  list is touched, and content/style classes remain byte-for-byte. */
-const inactiveCopy = (text: string, id: number): string => {
-  const copied = withId(text, id)
+const inactiveCopy = (text: string, id: number, usedDomIds: Set<string>): string => {
+  const copied = rewriteCopiedDomIds(withId(text, id), id, usedDomIds)
   const open = tags(copied).find((tag) => !tag.closing && SLIDE_TAGS.has(tag.name))
   if (!open) return copied
   const opening = copied
@@ -342,6 +421,7 @@ export const applySlideOps = (html: string, ops: SlideOp[]): string => {
     ids,
   )
   let nextId = Math.max(-1, ...items.map((item) => item.id)) + 1
+  const usedDomIds = new Set(items.flatMap((item) => domIds(item.text)))
 
   const at = (n: unknown, label: string, max: number): number => {
     if (typeof n !== "number" || !Number.isInteger(n) || n < 1 || n > max)
@@ -371,7 +451,7 @@ export const applySlideOps = (html: string, ops: SlideOp[]): string => {
       const src = items[pos - 1] as { text: string; id: number | null }
       // The copy is a NEW slide: it must not inherit the original's identity, or every
       // thread pinned to the original would claim both.
-      items.splice(pos, 0, { text: inactiveCopy(src.text, nextId), id: nextId })
+      items.splice(pos, 0, { text: inactiveCopy(src.text, nextId, usedDomIds), id: nextId })
       nextId++
     } else if (op?.op === "insert") {
       // `at` is the position the new slide will occupy, so unlike the other ops it may

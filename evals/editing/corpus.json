@@ -308,6 +308,36 @@
       "cadence": "regression"
     },
     {
+      "id": "MD-027",
+      "lane": "core",
+      "surface": "markdown",
+      "risk": "P1",
+      "oracle": "exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "every list sibling inside a blockquote receives a source map",
+      "cadence": "regression"
+    },
+    {
+      "id": "MD-028",
+      "lane": "core",
+      "surface": "markdown",
+      "risk": "P1",
+      "oracle": "exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "later fenced-code siblings inside a blockquote remain editable",
+      "cadence": "regression"
+    },
+    {
+      "id": "MD-029",
+      "lane": "core",
+      "surface": "markdown",
+      "risk": "P1",
+      "oracle": "exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "formatted leaves survive four alternating container levels",
+      "cadence": "regression"
+    },
+    {
       "id": "HTML-001",
       "lane": "core",
       "surface": "html",
@@ -538,6 +568,26 @@
       "cadence": "regression"
     },
     {
+      "id": "HTML-024",
+      "lane": "core",
+      "surface": "html",
+      "risk": "P1",
+      "oracle": "browser-parity-and-exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "omitted hidden colgroup ends before visible table body content",
+      "cadence": "regression"
+    },
+    {
+      "id": "HTML-025",
+      "lane": "core",
+      "surface": "html",
+      "risk": "P1",
+      "oracle": "browser-parity-and-exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "hidden thead closes at the table end so following prose stays editable",
+      "cadence": "regression"
+    },
+    {
       "id": "DECK-001",
       "lane": "core",
       "surface": "deck",
@@ -665,6 +715,36 @@
       "oracle": "safe-classification",
       "source": "packages/core/test/editing-eval.test.ts",
       "covers": "unannounced-deck advice refuses structurally ambiguous slides",
+      "cadence": "regression"
+    },
+    {
+      "id": "DECK-014",
+      "lane": "core",
+      "surface": "deck",
+      "risk": "P1",
+      "oracle": "classifier-slicer-parity",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "comment-like quoted attributes cannot hide a valid protocol marker",
+      "cadence": "regression"
+    },
+    {
+      "id": "DECK-015",
+      "lane": "core",
+      "surface": "deck",
+      "risk": "P1",
+      "oracle": "browser-parity-and-safe-classification",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "non-void self-closing slide syntax cannot masquerade as valid structure",
+      "cadence": "regression"
+    },
+    {
+      "id": "DECK-016",
+      "lane": "core",
+      "surface": "deck",
+      "risk": "P1",
+      "oracle": "unique-identity-and-reference-integrity",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "duplicated slides rewrite nested DOM ids and ARIA or SVG references",
       "cadence": "regression"
     },
     {

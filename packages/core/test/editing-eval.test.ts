@@ -6,6 +6,7 @@ import {
   isDeckDocument,
   isUnannouncedDeck,
   sliceSlides,
+  speaksDeckProtocol,
 } from "../src/decks"
 import {
   type ElementSelector,
@@ -15,6 +16,7 @@ import {
   scanElements,
 } from "../src/element-anchor"
 import { applyElementEdits, type ElementResizeEdit } from "../src/element-edit"
+import { attrValues, tags } from "../src/html-tags"
 import { applyQuoteEdits, type QuoteEdit } from "../src/quote-edit"
 import { applySceneEdits, sliceScenes } from "../src/videos"
 
@@ -272,6 +274,26 @@ describe("editing eval — Markdown source preservation", () => {
     ] as const)
       expect(applyQuoteEdits(source, MD, [qe("text", "changed")])).toBe(expected)
   })
+
+  it("[MD-027] maps every list sibling inside a blockquote", () => {
+    expect(applyQuoteEdits("> - a\n> - b\n>   target", MD, [qe("target", "changed")])).toBe(
+      "> - a\n> - b\n>   changed",
+    )
+  })
+
+  it("[MD-028] maps later fenced-code siblings inside a blockquote", () => {
+    const source = "> ```ts\n> one\n> ```\n>\n> ```ts\n> two\n> ```"
+    expect(applyQuoteEdits(source, MD, [qe("two", "changed")])).toBe(
+      "> ```ts\n> one\n> ```\n>\n> ```ts\n> changed\n> ```",
+    )
+  })
+
+  it("[MD-029] maps formatted leaves through four alternating container levels", () => {
+    const source = "> - a\n>   > - b\n>     > - c\n>       **target**"
+    expect(applyQuoteEdits(source, MD, [qe("target", "changed")])).toBe(
+      "> - a\n>   > - b\n>     > - c\n>       **changed**",
+    )
+  })
 })
 
 describe("editing eval — HTML projection, topology, and injection", () => {
@@ -488,6 +510,23 @@ describe("editing eval — HTML projection, topology, and injection", () => {
       "<table><tr hidden><td>hidden</td><tr><td>X</td></tr></table><p>tail</p>",
     )
   })
+
+  it("[HTML-024] respects an omitted hidden colgroup end before the table body", () => {
+    const source =
+      "<table><colgroup hidden><col><tbody><tr><td>visible</td></tr></tbody></table><p>tail</p>"
+    expect(pageTextParts(source).text).toMatch(/visible.*tail/)
+    expect(applyQuoteEdits(source, HTML, [qe("visible", "X")])).toBe(
+      "<table><colgroup hidden><col><tbody><tr><td>X</td></tr></tbody></table><p>tail</p>",
+    )
+  })
+
+  it("[HTML-025] closes a hidden thead at the table end", () => {
+    const source = "<table><thead hidden><tr><td>hidden</tr></table><p>tail</p>"
+    expect(pageTextParts(source).text).toMatch(/tail/)
+    expect(applyQuoteEdits(source, HTML, [qe("tail", "X")])).toBe(
+      "<table><thead hidden><tr><td>hidden</tr></table><p>X</p>",
+    )
+  })
 })
 
 describe("editing eval — deck identity and structural operations", () => {
@@ -604,6 +643,46 @@ describe("editing eval — deck identity and structural operations", () => {
       '<section class="slide" data-derive-slide="4">C</section></main>'
     expect(() => sliceSlides(source)).toThrow(/more than one data-derive-slide/)
     expect(isUnannouncedDeck(source)).toBe(false)
+  })
+
+  it("[DECK-014] keeps comment-like quoted attributes from hiding the protocol", () => {
+    const source =
+      '<main><section class="slide" data-note="<!-- fake">A</section>' +
+      '<section class="slide">B</section>"derive-deck"</main>'
+    expect(sliceSlides(source)).toHaveLength(2)
+    expect(speaksDeckProtocol(source)).toBe(true)
+    expect(isDeckDocument(source)).toBe(true)
+  })
+
+  it("[DECK-015] rejects self-closing syntax on non-void slide elements", () => {
+    const source =
+      '<main><section class="slide" data-derive-slide="1"/>' +
+      '<section class="slide" data-derive-slide="2"/>' +
+      '<script>window.source="derive-deck"</script></main>'
+    expect(() => sliceSlides(source)).toThrow(/never closed/)
+    expect(isDeckDocument(source)).toBe(false)
+  })
+
+  it("[DECK-016] rewrites nested DOM ids and references in duplicated slides", () => {
+    const source = deck([
+      '<h2 id="title-a">A</h2><p id="desc-a">Description</p>' +
+        '<div aria-labelledby="title-a" aria-describedby="desc-a">' +
+        '<svg><symbol id="icon-a"></symbol><use href="#icon-a"></use></svg></div>',
+      "B",
+    ])
+    const out = applySlideOps(source, [{ op: "duplicate", at: 1 }])
+    expect(tags(out).flatMap((tag) => attrValues(tag.attrs, "id"))).toEqual([
+      "title-a",
+      "desc-a",
+      "icon-a",
+      "title-a--derive-copy-12",
+      "desc-a--derive-copy-12",
+      "icon-a--derive-copy-12",
+    ])
+    expect(out).toContain(
+      'aria-labelledby="title-a--derive-copy-12" aria-describedby="desc-a--derive-copy-12"',
+    )
+    expect(out).toContain('href="#icon-a--derive-copy-12"')
   })
 })
 

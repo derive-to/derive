@@ -128,7 +128,16 @@ const implicitlyCloses = (open: HtmlTag, tag: HtmlTag): boolean => {
     )
   if (open.name === "optgroup")
     return (!tag.closing && tag.name === "optgroup") || (tag.closing && tag.name === "select")
-  if (open.name === "thead") return !tag.closing && (tag.name === "tbody" || tag.name === "tfoot")
+  if (open.name === "colgroup")
+    return (
+      (!tag.closing && ["tbody", "thead", "tfoot", "tr"].includes(tag.name)) ||
+      (tag.closing && tag.name === "table")
+    )
+  if (open.name === "thead")
+    return (
+      (!tag.closing && (tag.name === "tbody" || tag.name === "tfoot")) ||
+      (tag.closing && tag.name === "table")
+    )
   if (open.name === "tbody")
     return (
       (!tag.closing && (tag.name === "tbody" || tag.name === "tfoot")) ||
@@ -171,7 +180,8 @@ const optionalScopeContainers = (name: string): ReadonlySet<string> | null => {
   if (name === "dt" || name === "dd") return new Set(["dl"])
   if (name === "rt" || name === "rp") return new Set(["ruby"])
   if (name === "option" || name === "optgroup") return new Set(["select", "datalist"])
-  if (["thead", "tbody", "tfoot", "tr", "td", "th"].includes(name)) return new Set(["table"])
+  if (["colgroup", "thead", "tbody", "tfoot", "tr", "td", "th"].includes(name))
+    return new Set(["table"])
   return null
 }
 
@@ -208,6 +218,7 @@ export const tags = (html: string): HtmlTag[] => {
   const out: HtmlTag[] = []
   const lower = html.toLowerCase()
   let i = 0
+  let foreignDepth = 0
   while (i < html.length) {
     const lt = html.indexOf("<", i)
     if (lt === -1) break
@@ -236,14 +247,24 @@ export const tags = (html: string): HtmlTag[] => {
     const name = m[1].toLowerCase()
     const closing = m[0][1] === "/"
     const attrs = html.slice(lt + m[0].length, j)
+    const syntacticSlash = attrs.trimEnd().endsWith("/")
+    // In HTML, a trailing slash closes only void or foreign-content elements;
+    // `<section/>` is still an open section. Expose browser-effective structure
+    // so every downstream slicer and source mapper agrees with the DOM.
+    const selfClosing =
+      !closing &&
+      (VOID_ELEMENTS.has(name) ||
+        (syntacticSlash && (foreignDepth > 0 || name === "svg" || name === "math")))
     out.push({
       name,
       closing,
-      selfClosing: attrs.trimEnd().endsWith("/"),
+      selfClosing,
       attrs,
       start: lt,
       end: j + 1,
     })
+    if (closing && (name === "svg" || name === "math")) foreignDepth = Math.max(0, foreignDepth - 1)
+    else if (!closing && !selfClosing && (name === "svg" || name === "math")) foreignDepth++
     i = j + 1
     // Raw-text elements: their content is text, so skip straight past the close tag.
     if (!closing && (name === "script" || name === "style")) {
@@ -291,7 +312,7 @@ export const hasAttr = (attrs: string, name: string): boolean => {
  *  -1 when it never closes. A self-closing tag ends at its own `>`. */
 export const elementEnd = (all: HtmlTag[], i: number): number => {
   const open = all[i] as HtmlTag
-  if (open.selfClosing || VOID_ELEMENTS.has(open.name)) return open.end
+  if (open.selfClosing) return open.end
   let depth = 1
   let optionalScopeDepth = 0
   const scopeContainers = optionalScopeContainers(open.name)
