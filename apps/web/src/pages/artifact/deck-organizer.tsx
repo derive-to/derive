@@ -371,7 +371,7 @@ function OrganizerBody({ organizer, touch }: { organizer: Organizer; touch: bool
                   setDropAt(null)
                 }}
                 className={cn(
-                  "group relative flex items-center gap-2 rounded-lg border bg-card p-1.5",
+                  "group relative flex shrink-0 items-center gap-2 rounded-lg border bg-card p-1.5",
                   selected ? "border-primary/50 bg-primary/5" : "border-border hover:bg-secondary",
                   dragged === i && "opacity-50",
                   dropAt === i &&

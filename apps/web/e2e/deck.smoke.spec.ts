@@ -118,6 +118,24 @@ test.describe("deck", () => {
     const src = await res.text()
     expect(src).toContain("<h2>New slide</h2>")
     expect(countSlideElements(src)).toBe(5)
+
+    // A phone gets a bottom sheet with persistent finger-sized move controls. Adding
+    // another row must scroll the list, never flex-compress the cards into each other.
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.getByTestId("artifact-arrange-slides").click()
+    await expect(page.getByTestId("deck-slide-down-1")).toBeVisible()
+    await page.getByTestId("deck-add-slide").click()
+    const overlap = await page.getByTestId(/^deck-slide-card-/).evaluateAll((cards) =>
+      cards.flatMap((card, i) => {
+        const next = cards[i + 1]
+        return next && card.getBoundingClientRect().bottom > next.getBoundingClientRect().top
+          ? [i + 1]
+          : []
+      }),
+    )
+    expect(overlap).toEqual([])
+    await page.getByTestId("deck-arrange-undo").click()
+    await page.getByTestId("deck-arrange-close").click()
   })
 
   test("a comment stays with its slide identity after a class-only deck is rearranged", async ({
