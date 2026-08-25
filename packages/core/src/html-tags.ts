@@ -286,7 +286,13 @@ export const tags = (html: string): HtmlTag[] => {
     const attrs = html.slice(lt + m[0].length, j)
     const syntacticSlash = attrs.trimEnd().endsWith("/")
     const namespace = namespaceFor(name)
-    const matching = closing ? open.findLastIndex((tag) => tag.name === name) : -1
+    let matching = -1
+    if (closing)
+      for (let at = open.length - 1; at >= 0; at--)
+        if (open[at]?.name === name) {
+          matching = at
+          break
+        }
     const closedOpenStarts = matching >= 0 ? open.slice(matching).map((tag) => tag.start) : []
     // In HTML, a trailing slash closes only void or foreign-content elements;
     // `<section/>` is still an open section. Expose browser-effective structure

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { decodeEntities, pageText, pageTextParts } from "../src/anchor"
+import { pageText, pageTextParts } from "../src/anchor"
 import { markdownTextParts } from "../src/markdown-text"
 import { applyQuoteEdits, isQuoteEdit, type QuoteEdit } from "../src/quote-edit"
 
@@ -12,19 +12,8 @@ const qe = (
 const MD = "text/markdown"
 const HTML = "text/html"
 
-// The ORIGINAL regex-based projection, kept here as an independent oracle for the
-// linear scanner that replaced it (the lazy quantifiers backtracked polynomially —
-// CodeQL js/polynomial-redos — so production runs the scanner only).
-const legacyPageText = (html: string): string =>
-  decodeEntities(
-    html
-      .replace(/<(script|style|noscript)\b[^>]*>[\s\S]*?<\/\1>/gi, " ")
-      .replace(/<!--[\s\S]*?-->/g, " ")
-      .replace(/<[^>]+>/g, " "),
-  )
-
 // ---------------------------------------------------------------------------------
-// pageTextParts: the one projection, checked against the legacy regex oracle.
+// pageTextParts: the one browser-aware projection.
 
 describe("pageTextParts", () => {
   const FIXTURES = [
@@ -50,10 +39,12 @@ describe("pageTextParts", () => {
     "<scriptx>not a script tag</scriptx>",
     'att with gt <img alt="a>b"> tail', // attrs stop at the FIRST >
   ]
-  it("matches the legacy regex projection on every fixture", () => {
-    for (const html of FIXTURES) {
-      expect(pageTextParts(html).text).toBe(legacyPageText(html))
-    }
+  it("separates blocks while keeping inline and non-rendered seams zero-width", () => {
+    expect(pageTextParts("<p>one</p><p>two</p>").text).toBe(" one  two ")
+    expect(pageTextParts('<div class="a"><span>in</span>line</div>').text).toBe(" inline ")
+    expect(pageTextParts("A<b>B</b><i>C</i>").text).toBe("ABC")
+    expect(pageTextParts("A<!-- private -->B").text).toBe("AB")
+    expect(pageTextParts("A<script>private</script>B").text).toBe("AB")
   })
 
   it("pageText IS the scanner's text (one implementation, no drift possible)", () => {
@@ -68,7 +59,7 @@ describe("pageTextParts", () => {
     const start = performance.now()
     const mapped = pageTextParts(hostile)
     expect(performance.now() - start).toBeLessThan(200)
-    expect(mapped.text).toBe(" ")
+    expect(mapped.text).toBe("")
   })
 
   it("hides the remainder after unclosed comments and raw-text elements", () => {
@@ -78,7 +69,7 @@ describe("pageTextParts", () => {
       "visible <style>hidden forever",
       "visible <noscript>hidden forever",
     ])
-      expect(pageTextParts(doc).text).toBe("visible  ")
+      expect(pageTextParts(doc).text).toBe("visible ")
   })
 })
 
@@ -285,13 +276,11 @@ Send a **résumé** or LinkedIn profile today.
     ).toThrow(/overlaps/)
   })
 
-  it("empty replacement deletes the span (exact is trimmed, boundary whitespace stays)", () => {
+  it("empty replacement deletes the trimmed span without doubling boundary whitespace", () => {
     const out = applyQuoteEdits("keep drop keep", MD, [
       qe(" drop", "", { prefix: "keep", suffix: " keep" }),
     ])
-    // The matcher trims `exact`, so the deleted span is "drop" — the space around it
-    // survives. Rendered output is unaffected (whitespace collapses in HTML/markdown).
-    expect(out).toBe("keep  keep")
+    expect(out).toBe("keep keep")
   })
 
   it("keeps the source verbatim outside the span", () => {
@@ -392,16 +381,22 @@ describe("applyQuoteEdits — html", () => {
     )
   })
 
-  it("preserves links and handles international text across formatting seams", () => {
+  it("protects links and handles international text across plain formatting seams", () => {
     const whole = '<p><a href="/docs">مرحبا 🌍</a> world</p>'
-    expect(applyQuoteEdits(whole, HTML, [qe("مرحبا 🌍 world", "hello world")])).toBe(
-      "<p>hello world</p>",
+    expect(() => applyQuoteEdits(whole, HTML, [qe("مرحبا 🌍 world", "hello world")])).toThrow(
+      /could remove links or attributes/,
     )
 
     const partial = '<p><a href="/docs">keep مرحبا</a> world</p>'
-    expect(applyQuoteEdits(partial, HTML, [qe("مرحبا world", "hello")])).toBe(
-      '<p><a href="/docs">keep </a>hello</p>',
+    expect(() => applyQuoteEdits(partial, HTML, [qe("مرحبا world", "hello")])).toThrow(
+      /could remove links or attributes/,
     )
+
+    expect(
+      applyQuoteEdits("<p><b>مرحبا 🌍</b><i> world</i></p>", HTML, [
+        qe("مرحبا 🌍 world", "hello world"),
+      ]),
+    ).toBe("<p>hello world</p>")
   })
 
   it("keeps mixed inline and plain-text batches atomic", () => {
