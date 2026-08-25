@@ -681,6 +681,13 @@ CREATE TABLE IF NOT EXISTS view (
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
   );
 
+CREATE TABLE IF NOT EXISTS view_read (
+    artifact_id TEXT NOT NULL REFERENCES artifact(id),
+    viewer TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    PRIMARY KEY (artifact_id, viewer)
+  );
+
 CREATE INDEX IF NOT EXISTS invitation_org_email ON invitation (org_id, email);
 
 CREATE INDEX IF NOT EXISTS artifact_invite_artifact_email ON artifact_invite (artifact_id, email);
