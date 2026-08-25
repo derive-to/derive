@@ -3,6 +3,7 @@ import type { Diff } from "@/api"
 import { Button } from "@/components/ui/button"
 import { CursorLayer } from "./cursors/cursor-layer"
 import type { CursorLayerHandle } from "./cursors/use-live-cursors"
+import type { OrganizerSlide } from "./deck-organizer"
 import { DiffView } from "./diff-view"
 import { DeckBar, VideoBar } from "./rail-deck"
 import { RenderStage } from "./render-stage"
@@ -27,6 +28,7 @@ export function ArtifactDocument({
   onDiffRetry,
   restoring,
   deck,
+  pendingDeckSlide,
   video,
   frameRef,
   presentWrapRef,
@@ -63,6 +65,9 @@ export function ArtifactDocument({
   onDiffRetry?: () => void
   restoring: boolean
   deck: Deck | null
+  /** A locally added/copied slide does not exist in the saved iframe yet. Show an
+   *  explicit draft card instead of pretending the old saved slide is its preview. */
+  pendingDeckSlide?: OrganizerSlide | null
   video: Video | null
   frameRef: RefObject<HTMLIFrameElement | null>
   presentWrapRef: RefObject<HTMLDivElement | null>
@@ -157,7 +162,25 @@ export function ArtifactDocument({
           presenting={presenting}
           overlays={
             <>
-              {deck && onPresent && (
+              {pendingDeckSlide && (
+                <div
+                  className="absolute inset-0 z-20 grid place-items-center bg-background/95 p-6"
+                  data-testid="deck-pending-preview"
+                >
+                  <div className="flex aspect-video w-full max-w-3xl flex-col items-center justify-center rounded-xl border border-border bg-card p-8 text-center shadow-[var(--shadow-lg)]">
+                    <span className="mb-3 rounded-full bg-primary/10 px-2.5 py-1 font-mono text-2xs uppercase tracking-wide text-primary">
+                      Unsaved {pendingDeckSlide.kind === "duplicate" ? "copy" : "slide"}
+                    </span>
+                    <h2 className="font-heading text-2xl font-medium">{pendingDeckSlide.label}</h2>
+                    <p className="mt-2 max-w-sm text-sm text-muted-foreground">
+                      {pendingDeckSlide.kind === "duplicate"
+                        ? "This copy will match its source when you save."
+                        : "This blank slide will be ready to edit after you save."}
+                    </p>
+                  </div>
+                </div>
+              )}
+              {deck && onPresent && !pendingDeckSlide && (
                 <DeckBar
                   deck={deck}
                   presenting={presenting}

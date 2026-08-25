@@ -1,4 +1,4 @@
-import { Maximize2, MousePointer2Off, Zap } from "lucide-react"
+import { GalleryHorizontalEnd, Maximize2, MousePointer2Off, Zap } from "lucide-react"
 import { useState } from "react"
 import type { CollectionGrant, LinkRole, Listed, Role, WorkspaceAccess } from "@/api"
 import { Icon } from "@/components/icons"
@@ -51,6 +51,9 @@ export function ArtifactTopBar(props: {
    *  button ahead of Share. The ⋯ "Edit source" item stays the raw fallback. */
   showInlineEdit: boolean
   inlineEditLabel: string
+  /** Current editable deck: open the host-owned visual slide organizer. */
+  showArrange: boolean
+  arrangeOpen: boolean
   /** This artifact is a slide deck — offer Present (fullscreen) in the ⋯ menu. */
   isDeck: boolean
   videoMoment?: { scene: string; timeMs: number }
@@ -73,6 +76,7 @@ export function ArtifactTopBar(props: {
   onHistory: () => void
   onStartEdit: () => void
   onInlineEdit: () => void
+  onArrange: () => void
   onToggleComments: () => void
   onPresent: () => void
   /** Open this artifact's current source as an independent draft. */
@@ -110,6 +114,20 @@ export function ArtifactTopBar(props: {
           >
             <Icon name="pencil" size={16} className="text-muted-foreground" />
             {props.inlineEditLabel}
+          </Button>
+        )}
+        {props.showArrange && (
+          <Button
+            variant="ghost"
+            size="sm"
+            title="Add, reorder, duplicate, or remove slides"
+            data-testid="artifact-arrange-slides"
+            aria-pressed={props.arrangeOpen}
+            className={cn(props.arrangeOpen && "bg-accent text-foreground")}
+            onClick={props.onArrange}
+          >
+            <GalleryHorizontalEnd className="size-4 text-muted-foreground" />
+            Arrange slides
           </Button>
         )}
         {isGuest ? (

@@ -14,6 +14,9 @@ export interface QuoteSelector {
    *  ordinary documents. Resolution scopes to this slide first, then falls back to
    *  the whole document (so a comment survives text moving between slides). */
   slide?: number
+  /** Stable `data-derive-slide` identity. New deck comments prefer this after a
+   *  rearrange; `slide` remains the backward-compatible positional fallback. */
+  slide_identity?: string
 }
 
 const CONTEXT = 24

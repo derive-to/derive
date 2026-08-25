@@ -1,4 +1,4 @@
-import { DECK_TEMPLATE } from "@derive/core"
+import { countSlideElements, DECK_TEMPLATE } from "@derive/core"
 import type { Page } from "@playwright/test"
 import { expect, openArtifact, publishArtifact, test } from "./fixtures"
 
@@ -66,6 +66,101 @@ test.describe("deck", () => {
     await expect(page.getByTestId("deck-fullscreen")).toBeVisible()
   })
 
+  test("an editor can visually arrange, add, duplicate, trash, restore, undo, and save slides", async ({
+    owner: page,
+  }) => {
+    const shortId = await seedDeck(page)
+    await page.getByTestId("artifact-arrange-slides").click()
+    await expect(page.getByTestId("deck-organizer")).toBeVisible()
+    await expect(page.getByTestId("deck-slide-card-1")).toContainText("New deck")
+    await expect(page.getByTestId("deck-slide-card-2")).toContainText(
+      "The stage is fixed. Only the scale changes.",
+    )
+
+    // Reorder is visible before it is published, and the structural Undo is one click.
+    await page.getByTestId("deck-slide-card-1").hover()
+    await page.getByTestId("deck-slide-down-1").click()
+    await expect(page.getByTestId("deck-slide-card-1")).toContainText("The stage is fixed")
+    await page.getByTestId("deck-arrange-undo").click()
+    await expect(page.getByTestId("deck-slide-card-1")).toContainText("New deck")
+
+    // The dedicated grab handle supports the same reorder with a visible drop target.
+    await page.getByTestId("deck-slide-drag-1").dragTo(page.getByTestId("deck-slide-card-2"))
+    await expect(page.getByTestId("deck-slide-card-1")).toContainText("The stage is fixed")
+    await page.getByTestId("deck-arrange-undo").click()
+
+    // Add is a real blank slide; Duplicate is a separate exact-copy operation.
+    await page.getByTestId("deck-add-slide").click()
+    await expect(page.getByTestId("deck-slide-card-2")).toContainText("New slide")
+    await expect(page.getByTestId("deck-pending-preview")).toContainText(
+      "This blank slide will be ready to edit after you save.",
+    )
+    await page.getByTestId("deck-slide-more-1").click()
+    await page.getByTestId("deck-slide-duplicate-1").click()
+    await expect(page.getByTestId("deck-slide-card-2")).toContainText("New deck copy")
+    await expect(page.getByTestId("deck-pending-preview")).toContainText(
+      "This copy will match its source when you save.",
+    )
+
+    // Remove parks the slide in a visible Trash instead of throwing it away.
+    await page.getByTestId("deck-slide-more-3").click()
+    await page.getByTestId("deck-slide-remove-3").click()
+    await page.getByTestId("deck-remove-confirm").click()
+    await expect(page.getByTestId("deck-trash-restore")).toBeVisible()
+    await page.getByTestId("deck-trash-restore").click()
+    await expect(page.getByTestId("deck-trash-restore")).toHaveCount(0)
+
+    await page.getByTestId("deck-arrange-save").click()
+    await expect(page.getByTestId("deck-organizer")).toBeHidden()
+    await expect(page.getByTestId("deck-position")).toContainText("/ 5")
+
+    const res = await page.request.get(`/v1/artifacts/${shortId}/content`)
+    const src = await res.text()
+    expect(src).toContain("<h2>New slide</h2>")
+    expect(countSlideElements(src)).toBe(5)
+  })
+
+  test("a comment stays with its slide identity after a class-only deck is rearranged", async ({
+    owner: page,
+  }) => {
+    // Before the first arrange, this deck has no explicit identities. The injected
+    // outline predicts the same numeric identities the server stamps, so a comment made
+    // now can still disambiguate repeated text after the slides trade places.
+    const classOnly = DECK_TEMPLATE.replace(/ data-derive-slide="\d+"/g, "")
+      .replace("<h1>New deck</h1>", "<h1>Repeated phrase</h1>")
+      .replace("<h2>The stage is fixed. Only the scale changes.</h2>", "<h2>Repeated phrase</h2>")
+    const shortId = await publishArtifact(page, "identity-deck.html", classOnly, "text/html")
+    const comment = async (body_md: string, anchor?: Record<string, unknown>) => {
+      const res = await page.request.post(`/v1/artifacts/${shortId}/comments`, {
+        data: { body_md, anchor },
+      })
+      expect(res.ok(), await res.text()).toBeTruthy()
+    }
+    await comment("This belongs to the original second slide.", {
+      type: "TextQuoteSelector",
+      exact: "Repeated phrase",
+      slide: 1,
+      slide_identity: "1",
+    })
+    await comment("General note.")
+
+    await openArtifact(page, shortId)
+    await page.getByTestId("artifact-arrange-slides").click()
+    await page.getByTestId("deck-slide-card-2").hover()
+    await page.getByTestId("deck-slide-up-2").click()
+    await page.getByTestId("deck-arrange-save").click()
+    await expect(page.getByTestId("deck-position")).toContainText("1 / 3")
+
+    // Move away, then jump to the anchored comment. Ordinal-only resolution would land
+    // on slide 2 (the old position); stable identity takes us back to the moved slide 1.
+    await page.getByTestId("deck-next").click()
+    await expect(page.getByTestId("deck-position")).toContainText("2 / 3")
+    const nextComment = page.getByTestId("comment-nav-next")
+    if (!(await nextComment.isVisible())) await page.getByTestId("artifact-show-comments").click()
+    await nextComment.click()
+    await expect(page.getByTestId("deck-position")).toContainText("1 / 3")
+  })
+
   test("a comment on a later slide flips the deck to that slide", async ({ owner: page }) => {
     // The claim the decks skill makes, and the one advertised deck feature I had verified
     // only by reasoning: comments bind to a SLIDE, so jumping to a thread takes you to the
@@ -97,7 +192,9 @@ test.describe("deck", () => {
     await expect(position).toHaveText("1 / 3")
 
     // Jump to the thread. The anchor resolves on slide 3, so the host drives the deck there.
-    await page.getByTestId("comment-nav-next").click()
+    const nextComment = page.getByTestId("comment-nav-next")
+    if (!(await nextComment.isVisible())) await page.getByTestId("artifact-show-comments").click()
+    await nextComment.click()
     await expect(position).toHaveText("3 / 3")
   })
 

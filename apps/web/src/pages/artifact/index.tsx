@@ -43,6 +43,7 @@ import {
 import { ArtifactTopBar } from "./artifact-top-bar"
 import { BundleBar } from "./bundle-bar"
 import { ActionsCtx } from "./comment-actions"
+import { DeckOrganizer, DeckOrganizerDiscardDialog, useDeckOrganizer } from "./deck-organizer"
 import { DerivedFromBanner } from "./derived-from-banner"
 import { EditBar } from "./edit-bar"
 import { FloatingControl } from "./floating-control"
@@ -584,7 +585,10 @@ export function Artifact({ template = false }: { template?: boolean }) {
     if (!deck) return
     const a = parseAnchor(comments.find((c) => c.thread_id === threadId)?.anchor ?? null)
     const landed = landedSlides[threadId]
-    const target = landed != null ? landed : a?.slide
+    const identityAt = a?.slide_identity
+      ? deck.slides.findIndex((slide) => slide.id === a.slide_identity)
+      : -1
+    const target = landed != null ? landed : identityAt >= 0 ? identityAt : a?.slide
     if (target != null && target !== deck.i) deckCmd("goto", target)
   }
 
@@ -702,6 +706,14 @@ export function Artifact({ template = false }: { template?: boolean }) {
   useEffect(() => {
     if (inlineEdit.active) setVisualPin(false)
   }, [inlineEdit.active])
+
+  const deckOrganizer = useDeckOrganizer({
+    shortId,
+    art,
+    deck,
+    onSaved: load,
+    onGoTo: (i) => deckCmd("goto", i),
+  })
 
   // Inspect is an edit-mode companion, never a passive third destination. The existing
   // Edit entry point is the only way in; when it activates an editable HTML artifact,
@@ -968,6 +980,11 @@ export function Artifact({ template = false }: { template?: boolean }) {
       onDiffRetry={retryDiff}
       restoring={restoring}
       deck={deck}
+      pendingDeckSlide={
+        deckOrganizer.open && deckOrganizer.selectedSlide?.kind !== "base"
+          ? deckOrganizer.selectedSlide
+          : null
+      }
       video={video}
       frameRef={frame}
       presentWrapRef={presentWrap}
@@ -1129,6 +1146,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
           }
         }}
       />
+      <DeckOrganizerDiscardDialog organizer={deckOrganizer} />
       <ConfirmDialog
         open={inlineEdit.exitPrompt}
         onOpenChange={(o) => {
@@ -1254,6 +1272,22 @@ export function Artifact({ template = false }: { template?: boolean }) {
               showInlineEdit={canEditDoc && !inlineEdit.active && !bundleWorkspaceActive}
               inlineEditLabel="Edit"
               onInlineEdit={() => inlineEdit.start()}
+              showArrange={
+                isDeckLike &&
+                !!deck &&
+                deck.slides.length >= 2 &&
+                canEditDoc &&
+                !inlineEdit.active &&
+                !bundleWorkspaceActive
+              }
+              arrangeOpen={deckOrganizer.open}
+              onArrange={() => {
+                if (deckOrganizer.open) deckOrganizer.requestClose()
+                else {
+                  setPanel("hidden")
+                  deckOrganizer.start()
+                }
+              }}
               isDeck={isDeckLike}
               videoMoment={video ? { scene: video.id, timeMs: video.elapsedMs } : undefined}
               canLock={canLock}
@@ -1294,6 +1328,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
         {/* `relative` so the rail's tab strip anchors HERE, below the toolbar, rather than
             resolving to a further ancestor and overlapping the workbench buttons. */}
         <div className="relative flex min-h-0 flex-1">
+          {!focus && <DeckOrganizer organizer={deckOrganizer} isMobile={isMobile} />}
           <div
             className="relative flex min-w-0 flex-1 flex-col"
             // On phones the comments sheet sits at the bottom — reserve exactly the

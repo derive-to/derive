@@ -352,6 +352,21 @@ describe("materializeSlideOps", () => {
     ])
   })
 
+  it("materializes a blank insert with a fresh stable identity", async () => {
+    const out = await materializeSlideOps(
+      htmlDeps(deck([0, 1])),
+      fileArtifact(1),
+      [{ op: "insert", at: 2 }],
+      1,
+    )
+    expect(out.content).toContain("<h2>New slide</h2>")
+    expect([...out.content.matchAll(/data-derive-slide="(\d+)"/g)].map((m) => m[1])).toEqual([
+      "0",
+      "2",
+      "1",
+    ])
+  })
+
   it("shares the base_version staleness check with edits (409-shaped)", async () => {
     await expect(
       materializeSlideOps(htmlDeps(deck([0, 1])), fileArtifact(3), [{ op: "delete", at: 1 }], 2),
