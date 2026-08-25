@@ -722,8 +722,28 @@ function DiagramWorkspace({
                     <span className="text-xs text-muted-foreground">Tier {selection.tier}</span>
                   ) : null}
                 </div>
-                {selection.node ? (
-                  <LinkedBundleNodeDetailsPanel note={selection.note} canEdit={canEdit} />
+                {selection.node && canEdit && editingNote ? (
+                  <LinkedBundleNodeNoteEditor
+                    key={`${diagram.id}:${selection.node.id}`}
+                    shortId={shortId}
+                    version={version}
+                    diagramId={diagram.id}
+                    node={selection.node}
+                    workflowDraft={
+                      selection.note.source === "workflow" ? selection.note.text : null
+                    }
+                    onClose={() => onReviewStateChange({ ...reviewState, inspector: false })}
+                    onSaved={onSaved}
+                  />
+                ) : selection.node ? (
+                  <LinkedBundleNodeDetailsPanel
+                    note={selection.note}
+                    onEdit={
+                      canEdit
+                        ? () => onReviewStateChange({ ...reviewState, inspector: true })
+                        : undefined
+                    }
+                  />
                 ) : (
                   <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
                     {selection.detail}
@@ -778,33 +798,7 @@ function DiagramWorkspace({
                     <Icon name="comments" size={14} /> Review {selection.count} open
                   </Button>
                 ) : null}
-                {canEdit && "node" in selection ? (
-                  <Button
-                    variant={editingNote ? "default" : "outline"}
-                    size="sm"
-                    data-testid="bundle-selection-edit-note"
-                    onClick={() => onReviewStateChange({ ...reviewState, inspector: !editingNote })}
-                  >
-                    <Icon name="pencil" size={14} /> Edit note
-                  </Button>
-                ) : null}
               </div>
-              {canEdit && editingNote && selection.node ? (
-                <div>
-                  <LinkedBundleNodeNoteEditor
-                    key={`${diagram.id}:${selection.node.id}`}
-                    shortId={shortId}
-                    version={version}
-                    diagramId={diagram.id}
-                    node={selection.node}
-                    workflowDraft={
-                      selection.note.source === "workflow" ? selection.note.text : null
-                    }
-                    onClose={() => onReviewStateChange({ ...reviewState, inspector: false })}
-                    onSaved={onSaved}
-                  />
-                </div>
-              ) : null}
             </div>
           ) : (
             <div className="text-sm text-muted-foreground">Select a policy, node, or edge.</div>

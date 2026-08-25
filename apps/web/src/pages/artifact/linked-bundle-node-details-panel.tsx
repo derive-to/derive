@@ -1,39 +1,47 @@
+import { Icon } from "@/components/icons"
+import { Button } from "@/components/ui/button"
 import type { LinkedBundleNodeNote } from "./linked-bundle-node-details"
 
 export function LinkedBundleNodeDetailsPanel({
   note,
-  canEdit,
+  onEdit,
 }: {
   note: LinkedBundleNodeNote
-  canEdit: boolean
+  onEdit?: () => void
 }) {
   return (
-    <>
-      <dl className="mt-3 rounded-lg border border-border-soft bg-background/40 p-3 text-xs">
-        <dt className="flex flex-wrap items-center gap-2 font-mono text-2xs uppercase tracking-[0.08em] text-muted-foreground">
+    <div className="mt-3 rounded-lg border border-border-soft bg-background/40 p-3 text-xs">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-2 font-mono text-2xs uppercase tracking-[0.08em] text-muted-foreground">
           Note
           {note.source === "workflow" ? (
             <span className="rounded border border-border bg-muted/50 px-1.5 py-0.5 normal-case tracking-normal">
               Drafted from workflow
             </span>
           ) : null}
-        </dt>
-        <dd className="mt-1 text-sm leading-relaxed text-foreground">
-          {note.text ?? "No note yet."}
-        </dd>
-      </dl>
-
+        </div>
+        {onEdit ? (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="-mr-1 -mt-1 h-7 px-2 text-xs"
+            data-testid="bundle-selection-edit-note"
+            onClick={onEdit}
+          >
+            <Icon name="pencil" size={13} /> Edit
+          </Button>
+        ) : null}
+      </div>
+      <p className="mt-1 text-sm leading-relaxed text-foreground">{note.text ?? "No note yet."}</p>
       {!note.text ? (
-        <div
-          className="mt-3 rounded-lg border border-warning/30 bg-warning/5 px-3 py-2 text-xs leading-relaxed text-warning"
+        <p
+          className="mt-2 text-xs leading-relaxed text-warning"
           data-testid="bundle-node-detail-advisory"
         >
           Preview advisory: this node has no note or workflow description.
-          {canEdit
-            ? " Add a short note so people can understand it."
-            : " Ask an editor to add a note."}
-        </div>
+          {onEdit ? " Add a short note." : " Ask an editor to add one."}
+        </p>
       ) : null}
-    </>
+    </div>
   )
 }
