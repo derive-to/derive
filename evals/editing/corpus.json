@@ -298,6 +298,16 @@
       "cadence": "regression"
     },
     {
+      "id": "MD-026",
+      "lane": "core",
+      "surface": "markdown",
+      "risk": "P1",
+      "oracle": "exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "arbitrary supported blockquote and list recursion remains addressable",
+      "cadence": "regression"
+    },
+    {
       "id": "HTML-001",
       "lane": "core",
       "surface": "html",
@@ -498,6 +508,36 @@
       "cadence": "regression"
     },
     {
+      "id": "HTML-021",
+      "lane": "core",
+      "surface": "html",
+      "risk": "P1",
+      "oracle": "browser-parity-and-exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "implicit head closure leaves following body content editable",
+      "cadence": "regression"
+    },
+    {
+      "id": "HTML-022",
+      "lane": "core",
+      "surface": "html",
+      "risk": "P1",
+      "oracle": "browser-parity-and-exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "omitted list-item ends do not let hidden items swallow visible siblings",
+      "cadence": "regression"
+    },
+    {
+      "id": "HTML-023",
+      "lane": "core",
+      "surface": "html",
+      "risk": "P1",
+      "oracle": "browser-parity-and-exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "omitted table-row ends do not let hidden rows swallow visible siblings",
+      "cadence": "regression"
+    },
+    {
       "id": "DECK-001",
       "lane": "core",
       "surface": "deck",
@@ -605,6 +645,26 @@
       "oracle": "safe-classification",
       "source": "packages/core/test/editing-eval.test.ts",
       "covers": "ambiguous duplicate slide identity cannot enable deck structural editing",
+      "cadence": "regression"
+    },
+    {
+      "id": "DECK-012",
+      "lane": "core",
+      "surface": "deck",
+      "risk": "P1",
+      "oracle": "classifier-slicer-parity",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "comment-like JavaScript cannot hide a valid deck protocol marker",
+      "cadence": "regression"
+    },
+    {
+      "id": "DECK-013",
+      "lane": "core",
+      "surface": "deck",
+      "risk": "P2",
+      "oracle": "safe-classification",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "unannounced-deck advice refuses structurally ambiguous slides",
       "cadence": "regression"
     },
     {

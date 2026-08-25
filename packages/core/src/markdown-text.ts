@@ -203,7 +203,32 @@ export function markdownTextParts(source: string): MarkdownTextParts {
     for (const token of tokens) {
       const raw = token.raw ?? ""
       const at = locate(raw, cursor, rangeEnd)
-      if (at < 0) continue
+      if (at < 0) {
+        // Container parsers normalize away a prefix on every authored line, so a
+        // multi-line text leaf may not exist as one contiguous raw substring. Map
+        // each visible line in order and keep the intervening prefixes structural.
+        if (token.type === "text" && raw.includes("\n")) {
+          let lineCursor = cursor
+          for (const line of raw.split("\n")) {
+            if (!line) continue
+            const lineAt = locate(line, lineCursor, rangeEnd)
+            if (lineAt < 0) continue
+            pushGap(
+              lineCursor,
+              lineAt,
+              block,
+              "structural",
+              /\s/.test(source.slice(lineCursor, lineAt)),
+            )
+            pushText(lineAt, lineAt + line.length, block)
+            first ??= lineAt
+            last = lineAt + line.length
+            lineCursor = lineAt + line.length
+          }
+          cursor = lineCursor
+        }
+        continue
+      }
       const end = at + raw.length
       pushGap(cursor, at, block, "inline", /\s/.test(source.slice(cursor, at)))
       first ??= at
@@ -291,6 +316,16 @@ export function markdownTextParts(source: string): MarkdownTextParts {
           itemCursor = end
           continue
         }
+        if (childAt < 0 && child.type === "list") {
+          mapList(child, itemCursor, end)
+          itemCursor = end
+          continue
+        }
+        if (childAt < 0 && Array.isArray(child.tokens) && child.tokens.length) {
+          mapInline(child.tokens, itemCursor, end, blockSeq++)
+          itemCursor = end
+          continue
+        }
         if (childAt < 0) continue
         const childEnd = childAt + childRaw.length
         if (child.type === "list") {
@@ -334,6 +369,11 @@ export function markdownTextParts(source: string): MarkdownTextParts {
       }
       if (at < 0 && child.type === "blockquote") {
         mapBlockquote(child, cursor, rangeEnd)
+        cursor = rangeEnd
+        continue
+      }
+      if (at < 0 && Array.isArray(child.tokens) && child.tokens.length) {
+        mapInline(child.tokens, cursor, rangeEnd, blockSeq++)
         cursor = rangeEnd
         continue
       }

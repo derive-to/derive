@@ -50,6 +50,131 @@ const VOID_ELEMENTS = new Set([
   "wbr",
 ])
 
+const HEAD_CONTENT = new Set([
+  "base",
+  "basefont",
+  "bgsound",
+  "link",
+  "meta",
+  "noframes",
+  "noscript",
+  "script",
+  "style",
+  "template",
+  "title",
+])
+
+const P_CLOSING_STARTS = new Set([
+  "address",
+  "article",
+  "aside",
+  "blockquote",
+  "details",
+  "dialog",
+  "div",
+  "dl",
+  "fieldset",
+  "figcaption",
+  "figure",
+  "footer",
+  "form",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "header",
+  "hgroup",
+  "hr",
+  "main",
+  "menu",
+  "nav",
+  "ol",
+  "p",
+  "pre",
+  "search",
+  "section",
+  "table",
+  "ul",
+])
+
+/** Whether `tag` is the browser tokenizer boundary that implicitly closes `open`.
+ *  These are the optional-end-tag families that matter to source projection: an
+ *  invisible element must not swallow later siblings merely because the author
+ *  used valid omitted closing tags. */
+const implicitlyCloses = (open: HtmlTag, tag: HtmlTag): boolean => {
+  if (open.name === "head")
+    return (
+      (!tag.closing && !HEAD_CONTENT.has(tag.name)) ||
+      (tag.closing && (tag.name === "body" || tag.name === "html"))
+    )
+  if (open.name === "li")
+    return (
+      (!tag.closing && tag.name === "li") ||
+      (tag.closing && (tag.name === "ul" || tag.name === "ol" || tag.name === "menu"))
+    )
+  if (open.name === "dt" || open.name === "dd")
+    return (
+      (!tag.closing && (tag.name === "dt" || tag.name === "dd")) ||
+      (tag.closing && tag.name === "dl")
+    )
+  if (open.name === "rt" || open.name === "rp")
+    return !tag.closing && (tag.name === "rt" || tag.name === "rp")
+  if (open.name === "option")
+    return (
+      (!tag.closing && (tag.name === "option" || tag.name === "optgroup")) ||
+      (tag.closing && (tag.name === "select" || tag.name === "datalist" || tag.name === "optgroup"))
+    )
+  if (open.name === "optgroup")
+    return (!tag.closing && tag.name === "optgroup") || (tag.closing && tag.name === "select")
+  if (open.name === "thead") return !tag.closing && (tag.name === "tbody" || tag.name === "tfoot")
+  if (open.name === "tbody")
+    return (
+      (!tag.closing && (tag.name === "tbody" || tag.name === "tfoot")) ||
+      (tag.closing && tag.name === "table")
+    )
+  if (open.name === "tfoot") return tag.closing && tag.name === "table"
+  if (open.name === "tr")
+    return (
+      (!tag.closing && tag.name === "tr") ||
+      (tag.closing && ["table", "tbody", "thead", "tfoot"].includes(tag.name))
+    )
+  if (open.name === "td" || open.name === "th")
+    return (
+      (!tag.closing && (tag.name === "td" || tag.name === "th")) ||
+      (tag.closing && ["tr", "table", "tbody", "thead", "tfoot"].includes(tag.name))
+    )
+  if (open.name === "p")
+    return (
+      (!tag.closing && P_CLOSING_STARTS.has(tag.name)) ||
+      (tag.closing &&
+        [
+          "address",
+          "article",
+          "aside",
+          "blockquote",
+          "div",
+          "footer",
+          "form",
+          "header",
+          "main",
+          "nav",
+          "section",
+        ].includes(tag.name))
+    )
+  return false
+}
+
+const optionalScopeContainers = (name: string): ReadonlySet<string> | null => {
+  if (name === "li") return new Set(["ul", "ol", "menu"])
+  if (name === "dt" || name === "dd") return new Set(["dl"])
+  if (name === "rt" || name === "rp") return new Set(["ruby"])
+  if (name === "option" || name === "optgroup") return new Set(["select", "datalist"])
+  if (["thead", "tbody", "tfoot", "tr", "td", "th"].includes(name)) return new Set(["table"])
+  return null
+}
+
 /** HTML accepts the legacy `--!>` comment terminator in addition to `-->`.
  *  Returning the first valid closer keeps every scanner on the browser's side of
  *  the visible/hidden boundary without a backtracking regular expression. */
@@ -168,8 +293,18 @@ export const elementEnd = (all: HtmlTag[], i: number): number => {
   const open = all[i] as HtmlTag
   if (open.selfClosing || VOID_ELEMENTS.has(open.name)) return open.end
   let depth = 1
+  let optionalScopeDepth = 0
+  const scopeContainers = optionalScopeContainers(open.name)
   for (let k = i + 1; k < all.length; k++) {
     const tag = all[k] as HtmlTag
+    if (scopeContainers?.has(tag.name)) {
+      if (!tag.closing && !tag.selfClosing) optionalScopeDepth++
+      else if (tag.closing && optionalScopeDepth > 0) {
+        optionalScopeDepth--
+        continue
+      }
+    }
+    if (depth === 1 && optionalScopeDepth === 0 && implicitlyCloses(open, tag)) return tag.start
     if (tag.name !== open.name || tag.selfClosing) continue
     depth += tag.closing ? -1 : 1
     if (depth === 0) return tag.end

@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest"
 import { decodeEntities, pageTextParts } from "../src/anchor"
-import { applySlideOps, countSlideElements, isDeckDocument, sliceSlides } from "../src/decks"
+import {
+  applySlideOps,
+  countSlideElements,
+  isDeckDocument,
+  isUnannouncedDeck,
+  sliceSlides,
+} from "../src/decks"
 import {
   type ElementSelector,
   elementLabel,
@@ -257,6 +263,15 @@ describe("editing eval — Markdown source preservation", () => {
       "> - outer\n>   > quoted **changed**",
     )
   })
+
+  it("[MD-026] recursively maps arbitrary supported list and blockquote nesting", () => {
+    for (const [source, expected] of [
+      ["> - a\n>   - b\n>     text", "> - a\n>   - b\n>     changed"],
+      ["- a\n  > - b\n    > **text**", "- a\n  > - b\n    > **changed**"],
+      ["> - a\n>   > - b\n>     > text", "> - a\n>   > - b\n>     > changed"],
+    ] as const)
+      expect(applyQuoteEdits(source, MD, [qe("text", "changed")])).toBe(expected)
+  })
 })
 
 describe("editing eval — HTML projection, topology, and injection", () => {
@@ -449,6 +464,30 @@ describe("editing eval — HTML projection, topology, and injection", () => {
       applyQuoteEdits("<p>target</p>", HTML, [markup("target", '<a href="/safe/path">target</a>')]),
     ).toBe('<p><a href="/safe/path">target</a></p>')
   })
+
+  it("[HTML-021] respects the head element's implied end before body content", () => {
+    const source = '<head><meta charset="utf-8"><p>visible</p>'
+    expect(pageTextParts(source).text).toMatch(/visible/)
+    expect(applyQuoteEdits(source, HTML, [qe("visible", "X")])).toBe(
+      '<head><meta charset="utf-8"><p>X</p>',
+    )
+  })
+
+  it("[HTML-022] respects an omitted list-item end tag after a hidden item", () => {
+    const source = "<ul><li hidden>hidden<li>visible</ul><p>tail</p>"
+    expect(pageTextParts(source).text).toMatch(/visible.*tail/)
+    expect(applyQuoteEdits(source, HTML, [qe("visible", "X")])).toBe(
+      "<ul><li hidden>hidden<li>X</ul><p>tail</p>",
+    )
+  })
+
+  it("[HTML-023] respects an omitted table-row end tag after a hidden row", () => {
+    const source = "<table><tr hidden><td>hidden</td><tr><td>visible</td></tr></table><p>tail</p>"
+    expect(pageTextParts(source).text).toMatch(/visible.*tail/)
+    expect(applyQuoteEdits(source, HTML, [qe("visible", "X")])).toBe(
+      "<table><tr hidden><td>hidden</td><tr><td>X</td></tr></table><p>tail</p>",
+    )
+  })
 })
 
 describe("editing eval — deck identity and structural operations", () => {
@@ -548,6 +587,23 @@ describe("editing eval — deck identity and structural operations", () => {
     expect(countSlideElements(source)).toBe(2)
     expect(() => sliceSlides(source)).toThrow(/more than one data-derive-slide/)
     expect(isDeckDocument(source)).toBe(false)
+  })
+
+  it("[DECK-012] keeps comment-like JavaScript from hiding the deck protocol", () => {
+    const source =
+      '<main><section class="slide">A</section><section class="slide">B</section>' +
+      '<script>const x="<!--"; window.source="derive-deck";</script></main>'
+    expect(sliceSlides(source)).toHaveLength(2)
+    expect(isDeckDocument(source)).toBe(true)
+  })
+
+  it("[DECK-013] does not advise protocol for a structurally ambiguous deck", () => {
+    const source =
+      '<main><section class="slide" data-derive-slide="1" data-derive-slide="2">A</section>' +
+      '<section class="slide" data-derive-slide="3">B</section>' +
+      '<section class="slide" data-derive-slide="4">C</section></main>'
+    expect(() => sliceSlides(source)).toThrow(/more than one data-derive-slide/)
+    expect(isUnannouncedDeck(source)).toBe(false)
   })
 })
 

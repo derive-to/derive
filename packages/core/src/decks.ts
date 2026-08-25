@@ -21,7 +21,7 @@ import { attrValue, attrValues, classTokens, elementEnd, type HtmlTag, tags } fr
  *  UNTERMINATED comment left the rest of the document visible to the regex, while a
  *  browser treats everything after it as commented out, so markup a reader never sees
  *  could still be counted as slides. */
-const withoutComments = (html: string): string => {
+const withoutCommentsInText = (html: string): string => {
   let out = ""
   let i = 0
   for (;;) {
@@ -34,6 +34,30 @@ const withoutComments = (html: string): string => {
     if (end === -1) return out // unterminated: the rest of the document is inside it
     i = end + (html.startsWith("--!>", end) ? 4 : 3)
   }
+}
+
+/** Remove real HTML comments while preserving raw script/style elements verbatim.
+ *  In raw text, `<!--` is JavaScript/CSS data rather than an HTML tokenizer state;
+ *  treating it as a document comment can hide a later, valid protocol post. */
+const withoutComments = (html: string): string => {
+  const all = tags(html)
+  const rawRanges: { start: number; end: number }[] = []
+  for (let i = 0; i < all.length; i++) {
+    const open = all[i]
+    if (!open || open.closing || (open.name !== "script" && open.name !== "style")) continue
+    const end = elementEnd(all, i)
+    rawRanges.push({ start: open.start, end: end < 0 ? html.length : end })
+  }
+  if (!rawRanges.length) return withoutCommentsInText(html)
+  let out = ""
+  let cursor = 0
+  for (const range of rawRanges) {
+    if (range.start < cursor) continue
+    out += withoutCommentsInText(html.slice(cursor, range.start))
+    out += html.slice(range.start, range.end)
+    cursor = range.end
+  }
+  return out + withoutCommentsInText(html.slice(cursor))
 }
 
 /** Is this opening tag a slide? It carries the stable `data-derive-slide` index, or `slide`
@@ -86,8 +110,14 @@ export const isDeckDocument = (html: string): boolean => {
 const ADVISE_MIN_SLIDES = 3
 
 /** True when a page is plainly a deck attempt that never announced itself. */
-export const isUnannouncedDeck = (html: string): boolean =>
-  !speaksDeckProtocol(html) && countSlideElements(html) >= ADVISE_MIN_SLIDES
+export const isUnannouncedDeck = (html: string): boolean => {
+  if (speaksDeckProtocol(html) || countSlideElements(html) < ADVISE_MIN_SLIDES) return false
+  try {
+    return sliceSlides(html).length >= ADVISE_MIN_SLIDES
+  } catch {
+    return false
+  }
+}
 
 // ── Structural slide operations ────────────────────────────────────────────────
 //
