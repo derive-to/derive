@@ -298,21 +298,13 @@ describe("workflow preview contract", () => {
       expect.arrayContaining([
         {
           node_id: "research",
-          label: "Research signals",
-          kind: "context",
           instruction: "Produce this week's evidence-backed brief.",
           result: "A cited draft brief",
-          context_ref: "signal-researcher",
-          exit_condition: "On completion → Product review",
         },
         {
           node_id: "review",
-          label: "Product review",
-          kind: "human",
           instruction: null,
           result: null,
-          context_ref: null,
-          exit_condition: "revise → Research signals; approve → Publish brief",
         },
       ]),
     )

@@ -29,12 +29,8 @@ describe("linked bundle node details", () => {
     }
     const note = linkedBundleNodeNote(node, {
       node_id: "research",
-      label: "Research",
-      kind: "context",
       instruction: "Collect customer evidence.",
       result: "A cited evidence brief",
-      context_ref: "customer-research",
-      exit_condition: "On completion → Decision",
     })
 
     expect(note).toEqual({
@@ -48,11 +44,7 @@ describe("linked bundle node details", () => {
     if (!node) throw new Error("research fixture is missing")
     const base = {
       node_id: "research",
-      label: "Research",
-      kind: "context" as const,
       result: "A cited evidence brief",
-      context_ref: "customer-research",
-      exit_condition: "On completion → Decision",
     }
 
     expect(
@@ -93,12 +85,8 @@ describe("linked bundle node details", () => {
           node_details: [
             {
               node_id: "research",
-              label: "Research",
-              kind: "context",
               instruction: "Collect customer evidence.",
               result: null,
-              context_ref: null,
-              exit_condition: "No outgoing transitions",
             },
           ],
           context_sessions: [],

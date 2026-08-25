@@ -91,16 +91,11 @@ export interface WorkflowPreviewDiagram {
   will_pause: string[]
   can_repeat: string[]
   side_effects: string[]
-  /** Per-node explanation used by the visible graph inspector. This is still a
-   * preview projection: it describes the authored contract and never implies a run. */
+  /** Minimal workflow text used when an older visible node has no authored note. */
   node_details: Array<{
     node_id: string
-    label: string
-    kind: WorkflowNodeKind
     instruction: string | null
     result: string | null
-    context_ref: string | null
-    exit_condition: string
   }>
   context_sessions: Array<{
     node_id: string
@@ -752,29 +747,11 @@ const previewWorkflowValidation = (
                 `${effect.description} — ${effect.gate === "human" ? `authorized at ${nodeLabel(nodes.get(effect.approval_ref ?? ""), effect.approval_ref ?? "human gate")}` : `replay-safe: ${effect.idempotency ?? "declared"}`}`,
             ),
         ),
-        node_details: diagram.nodes.map((node) => {
-          const outgoing = diagram.routes.filter((route) => route.from === node.id)
-          const exitCondition =
-            node.kind === "terminal" || node.terminal
-              ? "Workflow completes after this result"
-              : outgoing
-                  .map((route) => {
-                    const target = nodeLabel(nodes.get(route.to), route.to)
-                    return route.when.toLowerCase() === "always"
-                      ? `On completion → ${target}`
-                      : `${route.when} → ${target}`
-                  })
-                  .join("; ") || "Not stated"
-          return {
-            node_id: node.id,
-            label: nodeLabel(nodes.get(node.id), node.id),
-            kind: node.kind,
-            instruction: node.instruction ?? null,
-            result: node.result ?? null,
-            context_ref: node.context_ref ?? null,
-            exit_condition: exitCondition,
-          }
-        }),
+        node_details: diagram.nodes.map((node) => ({
+          node_id: node.id,
+          instruction: node.instruction ?? null,
+          result: node.result ?? null,
+        })),
         context_sessions: diagram.nodes
           .filter(
             (node): node is WorkflowNodeDefinition & { context_ref: string } =>

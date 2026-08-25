@@ -81,12 +81,8 @@ export const WorkflowPreview = z
         node_details: z.array(
           z.object({
             node_id: z.string(),
-            label: z.string(),
-            kind: z.enum(["context", "human", "terminal"]),
             instruction: z.string().nullable(),
             result: z.string().nullable(),
-            context_ref: z.string().nullable(),
-            exit_condition: z.string(),
           }),
         ),
         context_sessions: z.array(

@@ -722,27 +722,11 @@ export function previewWorkflowSource(source) {
                 `${effect.description} — ${effect.gate === "human" ? `authorized at ${label(effect.approval_ref ?? "human gate")}` : `replay-safe: ${effect.idempotency}`}`,
             ),
         ),
-        node_details: diagram.nodes.map((node) => {
-          const outgoing = diagram.routes.filter((route) => route.from === node.id)
-          return {
-            node_id: node.id,
-            label: label(node.id),
-            kind: node.kind,
-            instruction: node.instruction ?? null,
-            result: node.result ?? null,
-            context_ref: node.context_ref ?? null,
-            exit_condition:
-              node.kind === "terminal" || node.terminal
-                ? "Workflow completes after this result"
-                : outgoing
-                    .map((route) =>
-                      route.when.toLowerCase() === "always"
-                        ? `On completion → ${label(route.to)}`
-                        : `${route.when} → ${label(route.to)}`,
-                    )
-                    .join("; ") || "Not stated",
-          }
-        }),
+        node_details: diagram.nodes.map((node) => ({
+          node_id: node.id,
+          instruction: node.instruction ?? null,
+          result: node.result ?? null,
+        })),
         context_sessions: diagram.nodes
           .filter((node) => node.kind === "context" && node.context_ref)
           .map((node) => {
