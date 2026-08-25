@@ -3,7 +3,7 @@ import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { Context } from "hono"
 import { streamSSE } from "hono/streaming"
 import type { BlankEnv } from "hono/types"
-import type { Viewer } from "../bus"
+import { CONFIRM_READ_MS, type Viewer } from "../bus"
 import type { AppContext } from "../context"
 import { anonName, bail, readJson } from "../lib/http"
 
@@ -141,6 +141,11 @@ export const realtimeRoutes = (ctx: AppContext) => {
       if (artifact instanceof Response) return bail(artifact)
       const viewer = await deriveViewer(c, artifact)
       const viewers = await presence.heartbeat(artifact.id, viewer, Date.now())
+      // A beat this long after the view means a reader, not a fetch (see CONFIRM_READ_MS).
+      // Fire-and-forget: presence must never fail on an analytics write.
+      void meta
+        .confirmRead(artifact.id, viewer.id, new Date(Date.now() - CONFIRM_READ_MS).toISOString())
+        .catch(() => {})
       bus.publish(artifact.id, { type: "presence", viewers })
       return c.json({ viewers })
     },
