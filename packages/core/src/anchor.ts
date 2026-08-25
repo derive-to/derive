@@ -244,6 +244,11 @@ export function pageTextParts(
     if (lower.startsWith("<!--", i)) return commentCloseEnd(i + 4)
     const parsedEnd = tagEnds.get(i)
     if (parsedEnd !== undefined) return parsedEnd
+    // A browser keeps consuming an opening tag while an attribute quote remains
+    // unterminated, including apparent `>` characters and later markup through
+    // EOF. The shared scanner emits no tag for that malformed remainder; do not
+    // let the coarse fallback expose its attribute bytes as editable prose.
+    if (/^<\/?[a-zA-Z][a-zA-Z0-9-]*/.test(html.slice(i, i + 64))) return html.length
     // <[^>]+>
     const gt = findRaw(">", i + 1)
     if (gt > i + 1) return gt + 1

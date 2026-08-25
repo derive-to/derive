@@ -1618,6 +1618,8 @@ interface ElReg {
     wire: WireSceneEdit
     undo: () => void
     redo: () => void
+    activeBefore: string | undefined
+    activeAfter: string | undefined
   }
   const videoSceneById = (id: string): HTMLElement | null =>
     videoScenes().find((scene) => scene.dataset.deriveScene === id) ?? null
@@ -1678,11 +1680,17 @@ interface ElReg {
       redoScene = () => scene.remove()
       undoScene = () => root.insertBefore(scene, originalNext)
     }
-    const entry = { wire, undo: undoScene, redo: redoScene }
     redoScene()
+    restoreActiveVideoScene(activeId)
+    const entry = {
+      wire,
+      undo: undoScene,
+      redo: redoScene,
+      activeBefore: activeId,
+      activeAfter: activeVideoSceneId(),
+    }
     sceneEdits.push(entry)
     remember({ kind: "scene", entry, activeAfter: false })
-    restoreActiveVideoScene(activeId)
     postDirty()
   }
 
@@ -2375,16 +2383,16 @@ interface ElReg {
     const entry = from.pop()
     if (!entry) return
     if (entry.kind === "scene") {
-      const activeId = activeVideoSceneId()
       if (entry.activeAfter) {
         entry.entry.redo()
         if (!sceneEdits.includes(entry.entry)) sceneEdits.push(entry.entry)
+        restoreActiveVideoScene(entry.entry.activeAfter)
       } else {
         entry.entry.undo()
         sceneEdits = sceneEdits.filter((candidate) => candidate !== entry.entry)
+        restoreActiveVideoScene(entry.entry.activeBefore)
       }
       to.push({ ...entry, activeAfter: !entry.activeAfter })
-      restoreActiveVideoScene(activeId)
     } else if (!document.contains(entry.el)) return
     else if (entry.kind === "html") {
       to.push({ kind: "html", el: entry.el, html: entry.el.innerHTML })
@@ -3074,7 +3082,7 @@ interface ElReg {
   }
   const restoreEdits = () => {
     const restoredScenes = sceneEdits.length > 0
-    const activeSceneId = restoredScenes ? activeVideoSceneId() : undefined
+    const activeSceneId = restoredScenes ? sceneEdits[0]?.activeBefore : undefined
     for (let i = sceneEdits.length - 1; i >= 0; i--) sceneEdits[i]?.undo()
     if (restoredScenes) restoreActiveVideoScene(activeSceneId)
     for (const t of editTargets) {

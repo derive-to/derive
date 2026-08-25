@@ -68,8 +68,17 @@ const DECK_MIN_SLIDES = 2
 /** A deck: it announces itself AND has slides to announce. Both halves are required —
  *  the protocol name alone appears in any document about decks (this file included), and
  *  slides alone are just sections. */
-export const isDeckDocument = (html: string): boolean =>
-  speaksDeckProtocol(html) && countSlideElements(html) >= DECK_MIN_SLIDES
+export const isDeckDocument = (html: string): boolean => {
+  if (!speaksDeckProtocol(html) || countSlideElements(html) < DECK_MIN_SLIDES) return false
+  // Classification enables structural editing in the UI, so it must not advertise
+  // a deck whose slide structure the organizer will immediately refuse. Keep this
+  // predicate non-throwing because it also runs while sniffing arbitrary uploads.
+  try {
+    return sliceSlides(html).length >= DECK_MIN_SLIDES
+  } catch {
+    return false
+  }
+}
 
 /** Slides built without the protocol: the page paginates itself and silently forfeits the
  *  deck bar, Present mode, and slide-pinned comments. Three, so an ordinary page with a

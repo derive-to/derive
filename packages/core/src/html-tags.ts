@@ -31,6 +31,25 @@ export interface HtmlTag {
 const isHtmlSpace = (char: string): boolean =>
   char === " " || char === "\t" || char === "\n" || char === "\r" || char === "\f"
 
+/** Elements whose opening tag is the whole element in HTML. Browsers never wait
+ *  for a matching close tag for these, even when the optional `/` is omitted. */
+const VOID_ELEMENTS = new Set([
+  "area",
+  "base",
+  "br",
+  "col",
+  "embed",
+  "hr",
+  "img",
+  "input",
+  "link",
+  "meta",
+  "param",
+  "source",
+  "track",
+  "wbr",
+])
+
 /** HTML accepts the legacy `--!>` comment terminator in addition to `-->`.
  *  Returning the first valid closer keeps every scanner on the browser's side of
  *  the visible/hidden boundary without a backtracking regular expression. */
@@ -147,7 +166,7 @@ export const hasAttr = (attrs: string, name: string): boolean => {
  *  -1 when it never closes. A self-closing tag ends at its own `>`. */
 export const elementEnd = (all: HtmlTag[], i: number): number => {
   const open = all[i] as HtmlTag
-  if (open.selfClosing) return open.end
+  if (open.selfClosing || VOID_ELEMENTS.has(open.name)) return open.end
   let depth = 1
   for (let k = i + 1; k < all.length; k++) {
     const tag = all[k] as HtmlTag

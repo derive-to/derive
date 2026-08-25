@@ -268,6 +268,36 @@
       "cadence": "regression"
     },
     {
+      "id": "MD-023",
+      "lane": "core",
+      "surface": "markdown",
+      "risk": "P0",
+      "oracle": "exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "fenced code body lookup cannot target an identical info string",
+      "cadence": "regression"
+    },
+    {
+      "id": "MD-024",
+      "lane": "core",
+      "surface": "markdown",
+      "risk": "P1",
+      "oracle": "exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "multi-line prefixed fenced code preserves rendered newline mapping",
+      "cadence": "regression"
+    },
+    {
+      "id": "MD-025",
+      "lane": "core",
+      "surface": "markdown",
+      "risk": "P1",
+      "oracle": "exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "blockquote-list-blockquote nested inline text remains addressable",
+      "cadence": "regression"
+    },
+    {
       "id": "HTML-001",
       "lane": "core",
       "surface": "html",
@@ -438,6 +468,36 @@
       "cadence": "regression"
     },
     {
+      "id": "HTML-018",
+      "lane": "core",
+      "surface": "html",
+      "risk": "P0",
+      "oracle": "safe-refusal",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "unterminated quoted attributes never project source bytes as visible text",
+      "cadence": "regression"
+    },
+    {
+      "id": "HTML-019",
+      "lane": "core",
+      "surface": "html",
+      "risk": "P1",
+      "oracle": "exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "boolean-hidden void elements do not hide following prose",
+      "cadence": "regression"
+    },
+    {
+      "id": "HTML-020",
+      "lane": "core",
+      "surface": "html",
+      "risk": "P1",
+      "oracle": "safe-sanitization",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "protocol-relative external links cannot bypass the inline URL policy",
+      "cadence": "regression"
+    },
+    {
       "id": "DECK-001",
       "lane": "core",
       "surface": "deck",
@@ -535,6 +595,16 @@
       "oracle": "classifier-slicer-parity",
       "source": "packages/core/test/editing-eval.test.ts",
       "covers": "quoted greater-than attributes do not split slide tags",
+      "cadence": "regression"
+    },
+    {
+      "id": "DECK-011",
+      "lane": "core",
+      "surface": "deck",
+      "risk": "P1",
+      "oracle": "safe-classification",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "ambiguous duplicate slide identity cannot enable deck structural editing",
       "cadence": "regression"
     },
     {
@@ -745,6 +815,16 @@
       "oracle": "active-identity-and-stored-order",
       "source": "apps/web/e2e/deep/editing.deep.spec.ts",
       "covers": "moving a video scene preserves the active scene by stable identity",
+      "cadence": "regression"
+    },
+    {
+      "id": "BROWSER-VIDEO-002",
+      "lane": "browser",
+      "surface": "video",
+      "risk": "P1",
+      "oracle": "active-identity-and-atomic-discard",
+      "source": "apps/web/e2e/deep/editing.deep.spec.ts",
+      "covers": "undo and discard restore a deleted active scene and its stable identity",
       "cadence": "regression"
     },
     {

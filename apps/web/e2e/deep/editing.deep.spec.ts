@@ -238,6 +238,29 @@ test("[BROWSER-VIDEO-001] moving a scene keeps that stable scene active", async 
   ).toEqual(["B", "A", "C"])
 })
 
+test("[BROWSER-VIDEO-002] undo and discard restore a deleted active scene", async ({ owner }) => {
+  const source =
+    '<main data-derive-video><section data-derive-scene="a" data-duration-ms="5000"><h2>A</h2></section>' +
+    '<section data-derive-scene="b" data-duration-ms="5000"><h2>B</h2></section>' +
+    '<section data-derive-scene="c" data-duration-ms="5000"><h2>C</h2></section></main>'
+  const shortId = await publishArtifact(owner, "deleted-active-scene.html", source, "text/html")
+  await openArtifact(owner, shortId)
+  await owner.getByTestId("video-next").click()
+  await expect(frame(owner).locator("[data-derive-video-active]")).toHaveText("B")
+
+  await enterEditMode(owner)
+  await owner.getByTestId("artifact-inspect-scene-delete").click()
+  await expect(frame(owner).locator("[data-derive-video-active]")).toHaveText("C")
+  await owner.getByTestId("inline-edit-undo").click()
+  await expect(frame(owner).locator("[data-derive-video-active]")).toHaveText("B")
+
+  await owner.getByTestId("artifact-inspect-scene-delete").click()
+  await expect(frame(owner).locator("[data-derive-video-active]")).toHaveText("C")
+  await owner.getByTestId("inline-edit-discard").click()
+  await expect(frame(owner).locator("[data-derive-video-active]")).toHaveText("B")
+  expect(await contentOf(owner, shortId)).toBe(source)
+})
+
 test("[BROWSER-CONCURRENCY-001] stale save keeps dirty work and succeeds after re-read", async ({
   owner,
 }) => {

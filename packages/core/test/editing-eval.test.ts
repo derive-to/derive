@@ -239,6 +239,24 @@ describe("editing eval — Markdown source preservation", () => {
   it("[MD-022] edits the full significant-whitespace payload of an inline code span", () => {
     expect(applyQuoteEdits("Text ``  a  ``", MD, [qe(" a ", "X")])).toBe("Text ``X``")
   })
+
+  it("[MD-023] maps fenced code body text after an identical info string", () => {
+    expect(applyQuoteEdits("```value\nvalue\n```", MD, [qe("value", "changed")])).toBe(
+      "```value\nchanged\n```",
+    )
+  })
+
+  it("[MD-024] maps rendered newlines inside prefixed fenced code", () => {
+    expect(applyQuoteEdits("> ```ts\n> one\n> two\n> ```", MD, [qe("one\ntwo", "changed")])).toBe(
+      "> ```ts\n> changed\n> ```",
+    )
+  })
+
+  it("[MD-025] maps inline text through blockquote-list-blockquote nesting", () => {
+    expect(applyQuoteEdits("> - outer\n>   > quoted **value**", MD, [qe("value", "changed")])).toBe(
+      "> - outer\n>   > quoted **changed**",
+    )
+  })
 })
 
 describe("editing eval — HTML projection, topology, and injection", () => {
@@ -407,6 +425,30 @@ describe("editing eval — HTML projection, topology, and injection", () => {
       ]),
     ).toBe('<p><a href="https://derive.to?x=1&amp;y=2">link</a></p>')
   })
+
+  it("[HTML-018] never projects bytes from an unterminated quoted attribute", () => {
+    const source = '<div title=" > secret</div><p>visible</p>'
+    expect(pageTextParts(source).text).not.toContain("secret")
+    expect(pageTextParts(source).text).not.toContain("visible")
+    expect(() => applyQuoteEdits(source, HTML, [qe("secret", "X")])).toThrow(/wasn't found/)
+  })
+
+  it("[HTML-019] ends a boolean-hidden void element at its opening tag", () => {
+    const source = "<input hidden><p>visible</p>"
+    expect(pageTextParts(source).text).toMatch(/visible/)
+    expect(applyQuoteEdits(source, HTML, [qe("visible", "X")])).toBe("<input hidden><p>X</p>")
+  })
+
+  it("[HTML-020] strips protocol-relative external links from inline formatting", () => {
+    expect(
+      applyQuoteEdits("<p>target</p>", HTML, [
+        markup("target", '<a href="//evil.test/x">target</a>'),
+      ]),
+    ).toBe("<p><a>target</a></p>")
+    expect(
+      applyQuoteEdits("<p>target</p>", HTML, [markup("target", '<a href="/safe/path">target</a>')]),
+    ).toBe('<p><a href="/safe/path">target</a></p>')
+  })
 })
 
 describe("editing eval — deck identity and structural operations", () => {
@@ -496,6 +538,16 @@ describe("editing eval — deck identity and structural operations", () => {
     expect(countSlideElements(source)).toBe(2)
     expect(sliceSlides(source)).toHaveLength(2)
     expect(isDeckDocument(source)).toBe(true)
+  })
+
+  it("[DECK-011] does not classify a deck with ambiguous slide identity", () => {
+    const source =
+      '<main><section class="slide" data-derive-slide="1" data-derive-slide="2">A</section>' +
+      '<section class="slide" data-derive-slide="3">B</section>' +
+      '<script>window.source="derive-deck"</script></main>'
+    expect(countSlideElements(source)).toBe(2)
+    expect(() => sliceSlides(source)).toThrow(/more than one data-derive-slide/)
+    expect(isDeckDocument(source)).toBe(false)
   })
 })
 

@@ -154,21 +154,38 @@ export function markdownTextParts(source: string): MarkdownTextParts {
       pushGap(rangeStart, rangeEnd, block, "structural")
       return
     }
-    const direct = locate(body, rangeStart, rangeEnd)
+    // For fenced code, the info string is source-only metadata and may contain the
+    // same word as the rendered body. Never begin a body lookup until after the
+    // opening fence line.
+    const fenced = /^(?:`{3,}|~{3,})/.test(token.raw ?? "")
+    const openingLineEnd = fenced ? source.indexOf("\n", rangeStart) : -1
+    const bodyStart =
+      openingLineEnd >= rangeStart && openingLineEnd < rangeEnd ? openingLineEnd + 1 : rangeStart
+    const direct = locate(body, bodyStart, rangeEnd)
     if (direct >= 0) {
       pushGap(rangeStart, direct, block, "structural")
       pushText(direct, direct + body.length, block)
       pushGap(direct + body.length, rangeEnd, block, "structural")
       return
     }
-    let cursor = rangeStart
-    for (const line of body.split("\n")) {
+    let cursor = bodyStart
+    let previousLine = -1
+    for (const [lineIndex, line] of body.split("\n").entries()) {
       if (!line) continue
       const at = locate(line, cursor, rangeEnd)
       if (at < 0) continue
-      pushGap(cursor, at, block, "structural")
+      if (previousLine < 0 && lineIndex === 0) pushGap(rangeStart, at, block, "structural")
+      else {
+        if (previousLine < 0) pushGap(rangeStart, bodyStart, block, "structural")
+        // The browser exposes a newline between code lines, while authored
+        // blockquote/list prefixes live inside that separator. Mapping the whole
+        // separator as one rendered newline lets a replacement remove complete
+        // lines without leaving or deleting a partial structural prefix.
+        pushEntity("\n".repeat(lineIndex - previousLine), cursor, at, block)
+      }
       pushText(at, at + line.length, block)
       cursor = at + line.length
+      previousLine = lineIndex
     }
     pushGap(cursor, rangeEnd, block, "structural")
   }
@@ -253,9 +270,13 @@ export function markdownTextParts(source: string): MarkdownTextParts {
     let cursor = rangeStart
     for (const item of token.items ?? []) {
       const raw = item.raw ?? ""
-      const at = locate(raw, cursor, rangeEnd)
-      if (at < 0) continue
-      const end = at + raw.length
+      const located = locate(raw, cursor, rangeEnd)
+      // Container prefixes can make a normalized multi-line item absent as one
+      // contiguous source slice. A single item still owns the whole supplied
+      // range, and its child tokens can be located safely inside that range.
+      if (located < 0 && (token.items?.length ?? 0) !== 1) continue
+      const at = located < 0 ? cursor : located
+      const end = located < 0 ? rangeEnd : located + raw.length
       let itemCursor = at
       for (const child of item.tokens ?? []) {
         const childRaw = child.raw ?? ""
@@ -265,11 +286,19 @@ export function markdownTextParts(source: string): MarkdownTextParts {
           itemCursor = end
           continue
         }
+        if (childAt < 0 && child.type === "blockquote") {
+          mapBlockquote(child, itemCursor, end)
+          itemCursor = end
+          continue
+        }
         if (childAt < 0) continue
         const childEnd = childAt + childRaw.length
         if (child.type === "list") {
           pushGap(itemCursor, childAt, blockSeq++, "structural")
           mapList(child, childAt, childEnd)
+        } else if (child.type === "blockquote") {
+          pushGap(itemCursor, childAt, blockSeq++, "structural")
+          mapBlockquote(child, childAt, childEnd)
         } else {
           const block = blockSeq++
           pushGap(itemCursor, childAt, block, "structural")
@@ -298,11 +327,22 @@ export function markdownTextParts(source: string): MarkdownTextParts {
         cursor = rangeEnd
         continue
       }
+      if (at < 0 && child.type === "list") {
+        mapList(child, cursor, rangeEnd)
+        cursor = rangeEnd
+        continue
+      }
+      if (at < 0 && child.type === "blockquote") {
+        mapBlockquote(child, cursor, rangeEnd)
+        cursor = rangeEnd
+        continue
+      }
       if (at < 0) continue
       const end = at + raw.length
       const block = blockSeq++
       pushGap(cursor, at, block, "structural")
       if (child.type === "list") mapList(child, at, end)
+      else if (child.type === "blockquote") mapBlockquote(child, at, end)
       else if (child.type === "code") mapCode(child, at, end, block)
       else if (Array.isArray(child.tokens) && child.tokens.length)
         mapInline(child.tokens, at, end, block)
