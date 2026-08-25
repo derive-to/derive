@@ -56,6 +56,43 @@ describe("shared-state contract", () => {
     expect(injected.indexOf(SHARED_STATE_SCRIPT)).toBeLessThan(injected.indexOf("boot()"))
   })
 
+  it("relays a source-free boot error before authored scripts can fail silently", () => {
+    type BrowserListener = (event: Record<string, unknown>) => void
+    const sent: RuntimeMessage[] = []
+    const listeners = new Map<string, BrowserListener>()
+    const parent = { postMessage: (message: RuntimeMessage) => sent.push(message) }
+    const frame = {
+      derive: undefined as DeriveRuntime | undefined,
+      addEventListener: (type: string, listener: BrowserListener) => listeners.set(type, listener),
+      dispatchEvent: () => true,
+    }
+    const CustomEventStub = class {
+      constructor(
+        readonly type: string,
+        readonly init?: unknown,
+      ) {}
+    }
+    const load = Function("window", "parent", "CustomEvent", SHARED_STATE_CLIENT_JS) as (
+      frame: typeof frame,
+      parent: typeof parent,
+      event: typeof CustomEventStub,
+    ) => void
+    load(frame, parent, CustomEventStub)
+
+    const message = "Failed to read the 'localStorage' property: Access is denied"
+    listeners.get("error")?.({ error: { message }, message })
+    expect(sent).toHaveLength(0) // queued until the host's iframe-load handshake
+    listeners.get("message")?.({
+      source: parent,
+      data: { source: "derive-host", type: "shared-ready" },
+    })
+    expect(sent).toEqual([{ source: "derive", type: "runtime-error", code: "sandbox-storage" }])
+
+    listeners.get("load")?.({})
+    listeners.get("error")?.({ error: { message: "late click handler failed" } })
+    expect(sent).toHaveLength(1) // only first-render failures replace the artifact
+  })
+
   it("loads state, emits an atomic update, and applies the host result", async () => {
     const sent: RuntimeMessage[] = []
     let receive: MessageListener = () => {

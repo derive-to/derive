@@ -5,6 +5,7 @@ import { bareHotkey } from "@/lib/hotkey"
 import { groupThreads } from "./lib/layout"
 import {
   type AnchorConf,
+  type ArtifactRuntimeError,
   type Deck,
   type FrameGeom,
   type Panel,
@@ -95,6 +96,7 @@ export function useArtifactFrame(p: {
   onVisualPinRef.current = p.onVisualPin
   const presentWrap = useRef<HTMLDivElement>(null)
   const [frameReady, setFrameReady] = useState(0)
+  const [runtimeError, setRuntimeError] = useState<ArtifactRuntimeError | null>(null)
   const [sel, setSel] = useState<Selection>(null)
   const [inDoc, setInDoc] = useState<Record<string, boolean>>({})
   // Per-thread: the slide its anchor actually resolved on (null = not in any slide,
@@ -204,6 +206,13 @@ export function useArtifactFrame(p: {
         return
       }
       if (d.source !== "derive") return
+      if (
+        d.type === "runtime-error" &&
+        (d.code === "sandbox-storage" || d.code === "script-error")
+      ) {
+        setRuntimeError(d.code)
+        return
+      }
       // The opaque-origin artifact cannot carry the viewer's cookies, so its tiny
       // shared-state SDK relays requests through this authenticated host page.
       if (
@@ -538,6 +547,7 @@ export function useArtifactFrame(p: {
     // (pins go unlocated/invisible until the new doc reports) instead of pinning
     // stale cards over the new document.
     onFrameLoad: () => {
+      setRuntimeError(null)
       updateGeom({ scrollY: 0, docH: 0, viewH: 0 })
       setAnchorTops({})
       setFrameReady((n) => n + 1)
@@ -559,5 +569,6 @@ export function useArtifactFrame(p: {
     anchorConf,
     anchorTops,
     subscribeGeom,
+    runtimeError,
   }
 }
