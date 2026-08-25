@@ -185,7 +185,7 @@ async function currentSource(
  * `materializeEdits`, sharing its kind check, `base_version` staleness check and source
  * load so the two can't drift apart.
  *
- * Structural intent (move / delete / duplicate a slide) exists as its own payload because
+ * Structural intent (move / delete / duplicate / insert a slide) exists as its own payload because
  * the text pipelines cannot express it: a quote edit refuses any span crossing an element
  * boundary, and `old_str` can only move a slide by carrying two byte-perfect copies of it
  * through a model's output. Position in, position out — the whole slide never travels.

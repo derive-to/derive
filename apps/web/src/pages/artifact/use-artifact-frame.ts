@@ -138,6 +138,19 @@ export function useArtifactFrame(p: {
   // re-subscribes), so selection-capture and cursor-tagging see the CURRENT slide
   // rather than the stale value `deck` would be frozen at. Kept in sync below.
   const deckRef = useRef<Deck | null>(null)
+  const deckOutlineRef = useRef<Deck["slides"]>([])
+  const deckState = useCallback((rawI: unknown, rawTotal: unknown, sniffed: boolean): Deck => {
+    const reported =
+      typeof rawTotal === "number" && Number.isInteger(rawTotal)
+        ? Math.max(1, Math.min(500, rawTotal))
+        : 1
+    const total = deckOutlineRef.current.length || reported
+    const i =
+      typeof rawI === "number" && Number.isInteger(rawI)
+        ? Math.max(0, Math.min(total - 1, rawI))
+        : 0
+    return { i, total, sniffed, slides: deckOutlineRef.current }
+  }, [])
   const [video, setVideo] = useState<Video | null>(null)
   const videoRef = useRef<Video | null>(null)
 
@@ -166,7 +179,7 @@ export function useArtifactFrame(p: {
       if (!d) return
       // A slide deck reporting its position (any HTML that speaks the protocol).
       if (d.source === "derive-deck" && d.type === "state") {
-        const next = { i: d.i ?? 0, total: d.total ?? 1, sniffed: false }
+        const next = deckState(d.i, d.total, false)
         deckRef.current = next
         setDeck(next)
         return
@@ -191,13 +204,30 @@ export function useArtifactFrame(p: {
         return
       }
       if (d.source !== "derive") return
+      if (d.type === "deck-outline") {
+        const slides = Array.isArray(d.slides)
+          ? d.slides.flatMap((slide: unknown) => {
+              if (!slide || typeof slide !== "object") return []
+              const value = slide as { id?: unknown; label?: unknown }
+              if (typeof value.id !== "string" || typeof value.label !== "string") return []
+              return [{ id: value.id.slice(0, 120), label: value.label.slice(0, 90) }]
+            })
+          : []
+        deckOutlineRef.current = slides
+        if (deckRef.current) {
+          const next = deckState(deckRef.current.i, slides.length, deckRef.current.sniffed)
+          deckRef.current = next
+          setDeck(next)
+        }
+        return
+      }
       // The injected client recognised a deck the artifact never announced. An
       // artifact that speaks for itself always wins: once a protocol message has
       // arrived, the sniff is ignored for the life of this document, so a deck can
       // never be half-driven by both paths.
       if (d.type === "deck-sniff") {
         if (deckRef.current && !deckRef.current.sniffed) return
-        const next = { i: d.i ?? 0, total: d.total ?? 1, sniffed: true }
+        const next = deckState(d.i, d.total, true)
         deckRef.current = next
         setDeck(next)
         return
@@ -230,7 +260,13 @@ export function useArtifactFrame(p: {
           // On a deck, stamp the current slide onto the anchor so the comment is
           // pinned to the slide it was made on. Captured here at selection time.
           const cur = deckRef.current
-          const selector = cur ? { ...d.selector, slide: cur.i } : d.selector
+          const selector = cur
+            ? {
+                ...d.selector,
+                slide: cur.i,
+                slide_identity: cur.slides[cur.i]?.id,
+              }
+            : d.selector
           const next: NonNullable<Selection> = {
             selector,
             top: d.rect.top,
@@ -298,6 +334,7 @@ export function useArtifactFrame(p: {
     onEsc,
     onOpenExternal,
     updateGeom,
+    deckState,
   ])
 
   // Two-way hover: emphasize the matching highlight in the doc when a comment
@@ -363,6 +400,7 @@ export function useArtifactFrame(p: {
   useEffect(() => {
     setDeck(null)
     deckRef.current = null
+    deckOutlineRef.current = []
     setVideo(null)
     videoRef.current = null
     setSel(null)
@@ -426,6 +464,9 @@ export function useArtifactFrame(p: {
                 suffix: sel.suffix,
                 // The frame scopes resolution to this slide first (deck artifacts only).
                 slide: sel.slide,
+                // Position changes when slides move; identity does not. Older comments
+                // carry only `slide`, so the client keeps that fallback too.
+                slide_identity: sel.slide_identity,
               },
         ]
       })

@@ -637,7 +637,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     // source instead of a re-uploaded `file`. Materialize the full content, then
     // fall through to the same publish path everything else uses.
     const editsField = body["edits"]
-    // `slide_ops` — structural intent on a deck (move/delete/duplicate a slide by
+    // `slide_ops` — structural intent on a deck (move/delete/duplicate/insert a slide by
     // position), materialized against the stored source the same way `edits` is. Its own
     // field because a slide move is not a text replacement: the text pipelines refuse
     // spans that cross element boundaries, and expressing it as search/replace means

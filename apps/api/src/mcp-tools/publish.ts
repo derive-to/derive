@@ -369,11 +369,17 @@ export function registerPublishTool(tc: ToolContext): void {
                 op: z.literal("duplicate"),
                 at: z.coerce.number().describe("1-based position of the slide to copy."),
               }),
+              z.object({
+                op: z.literal("insert"),
+                at: z.coerce
+                  .number()
+                  .describe("1-based position for a new blank slide (may be one past the end)."),
+              }),
             ]),
           )
           .optional()
           .describe(
-            "Rearrange a DECK: move / delete / duplicate whole slides by 1-based position, applied in order. Use instead of `edits` for structural changes. Ambiguous structure refuses the whole batch.",
+            "Rearrange a DECK: move / delete / duplicate / insert whole slides by 1-based position, applied in order. Use instead of `edits` for structural changes. Ambiguous structure refuses the whole batch.",
           ),
         base_version: z.coerce
           .number()

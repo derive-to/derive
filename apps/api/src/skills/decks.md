@@ -85,15 +85,16 @@ without carrying the rest.
 
 ## Rearranging: `slide_ops`, not find-and-replace
 
-To move, remove, or copy whole slides, pass `slide_ops` to `publish`, not `edits`.
+To move, add, remove, or copy whole slides, pass `slide_ops` to `publish`, not `edits`.
 
 ```
 publish(short_id, slide_ops: [{op: "move", from: 5, to: 2}, {op: "delete", at: 7}])
 ```
 
-Ops are `{op:"move", from, to}`, `{op:"delete", at}` and `{op:"duplicate", at}`, applied in
-order, each seeing the last one's result. Positions are 1-based, matching the numbers the deck bar
-shows a person, not the protocol's 0-based `i`.
+Ops are `{op:"move", from, to}`, `{op:"delete", at}`, `{op:"duplicate", at}` and
+`{op:"insert", at}`, applied in order, each seeing the last one's result. `insert` creates a blank
+slide in the nearest slide's outer visual shell. Positions are 1-based, matching the numbers the
+deck bar shows a person, not the protocol's 0-based `i`; an insert position may be one past the end.
 
 Reach for it because every alternative is bad in its own way. A quote edit cannot do it at
 all: it refuses any span that crosses an element boundary. An `old_str` edit can only do it
