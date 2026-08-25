@@ -416,6 +416,21 @@ export type TemplateLibraryScope = TemplateLibrary["scope"]
  *  (never email — presence is broadcast to anonymous co-viewers); `role` is their
  *  effective role here. */
 export type Viewer = components["schemas"]["Viewer"]
+
+export interface SharedStateResult {
+  value: unknown
+  version: number
+}
+export interface SharedStateActivity {
+  action: "add" | "update"
+  version: number
+  item_id: string
+  actor: { id: string; name: string }
+  at: string
+}
+export type SharedStateMutation =
+  | { op: "add"; initial: unknown; value: Record<string, unknown> }
+  | { op: "update"; initial: unknown; id: string; patch: Record<string, unknown> }
 /** A webhook delivery attempt. Generated from the OpenAPI spec. */
 export type Delivery = components["schemas"]["Delivery"]
 /** One line of a unified diff, as the diff endpoint's ?format=json returns it
@@ -936,6 +951,17 @@ export const api = {
   // stream agree on ONE viewer per browser (see lib/guest-id).
   heartbeat: (id: string): Promise<{ viewers: Viewer[] }> =>
     f(`/v1/artifacts/${id}/presence${guestQuery()}`, opts({})).then(j),
+
+  sharedState: (id: string, key: string): Promise<SharedStateResult> =>
+    f(`/v1/artifacts/${id}/state/${encodeURIComponent(key)}`, opts()).then(j),
+  mutateSharedState: (
+    id: string,
+    key: string,
+    mutation: SharedStateMutation,
+  ): Promise<SharedStateResult> =>
+    f(`/v1/artifacts/${id}/state/${encodeURIComponent(key)}`, opts(mutation)).then(j),
+  sharedStateActivity: (id: string, key: string): Promise<{ activity: SharedStateActivity[] }> =>
+    f(`/v1/artifacts/${id}/state/${encodeURIComponent(key)}/activity`, opts()).then(j),
 
   favorite: (id: string, on: boolean): Promise<{ favorite: boolean }> =>
     f(`/v1/artifacts/${id}/favorite`, { ...opts(), method: on ? "PUT" : "DELETE" }).then(j),

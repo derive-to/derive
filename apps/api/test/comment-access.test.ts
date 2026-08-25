@@ -87,6 +87,64 @@ describe("comment access via the general-access link", () => {
     expect((await setAccess(shortId, "viewer")).ok).toBe(true)
     expect((await comment(shortId, as(bob.email))).status).toBe(403)
   })
+
+  it("lets commenters interact with shared state and stamps their identity server-side", async () => {
+    await app.request("/v1/me", { headers: as(alice.email) })
+    const shortId = (await (await publishAs(app, "<h1>bugs</h1>", {}, as(alice.email))).json())
+      .short_id
+    expect((await setAccess(shortId, "commenter")).ok).toBe(true)
+    const mutate = (body: unknown, headers: Record<string, string>) =>
+      app.request(`/v1/artifacts/${shortId}/state/bugs`, jsonAs(headers, body))
+
+    const added = await mutate(
+      {
+        op: "add",
+        initial: [],
+        value: { title: "Voting is stale", votes: 0 },
+        actor: { id: alice.id, name: "Alice" },
+      },
+      as(bob.email),
+    )
+    expect(added.status).toBe(200)
+    const addBody = (await added.json()) as {
+      value: { id: string; title: string; votes: number }[]
+      version: number
+    }
+    expect(addBody).toMatchObject({ version: 1, value: [{ title: "Voting is stale", votes: 0 }] })
+    const itemId = addBody.value[0]?.id
+    if (!itemId) throw new Error("shared-state add did not mint an item id")
+
+    const voted = await mutate(
+      {
+        op: "update",
+        initial: [],
+        id: itemId,
+        patch: { votes: { __derive_increment: 1 } },
+      },
+      as(bob.email),
+    )
+    expect(voted.status).toBe(200)
+    expect(await voted.json()).toMatchObject({ version: 2, value: [{ id: itemId, votes: 1 }] })
+
+    // State is artifact-readable, but the attributed ledger stays collaborator-only.
+    const publicRead = await app.request(`/v1/artifacts/${shortId}/state/bugs`)
+    expect(publicRead.status).toBe(200)
+    expect(await publicRead.json()).toMatchObject({ version: 2, value: [{ votes: 1 }] })
+    const activity = await app.request(`/v1/artifacts/${shortId}/state/bugs/activity`, {
+      headers: as(bob.email),
+    })
+    expect((await activity.json()).activity).toMatchObject([
+      { action: "update", item_id: itemId, actor: { id: bob.id, name: "Bob" } },
+      { action: "add", item_id: itemId, actor: { id: bob.id, name: "Bob" } },
+    ])
+
+    expect((await mutate({ op: "add", initial: [], value: {} }, {})).status).toBe(403)
+    expect((await app.request(`/v1/artifacts/${shortId}/state/bugs/activity`)).status).toBe(403)
+    expect((await setAccess(shortId, "viewer")).ok).toBe(true)
+    expect(
+      (await mutate({ op: "add", initial: [], value: { title: "no" } }, as(bob.email))).status,
+    ).toBe(403)
+  })
 })
 
 // Workspace seat access (the team-draft default): a member reaches the doc at

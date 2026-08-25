@@ -29,12 +29,15 @@ export function useArtifactLive(opts: {
   /** A review round changed (requested / sent back) — the review card
    *  refetches, so an agent's re-request appears live instead of on reload. */
   onReview?: () => void
+  /** A persisted mini-app collection changed; forward its authoritative value
+   * into the sandboxed artifact through the host bridge. */
+  onSharedState?: (update: { key: string; value: unknown; version: number }) => void
   /** The stream (re)connected after a coverage gap — a hidden tab returning (its
    *  stream was closed) or an EventSource auto-reconnect. Events during the gap
    *  were never replayed, so refetch silently instead of trusting the cache. */
   onResync?: () => void
 }) {
-  const { shortId, selfId, onComment, onVersion, onReview, onResync } = opts
+  const { shortId, selfId, onComment, onVersion, onReview, onSharedState, onResync } = opts
   const [viewers, setViewers] = useState<Viewer[]>([])
   // The live-stream "reconnecting" cue: `connected` is false whenever the browser is offline OR
   // the stream isn't confirmed live — so a dropped connection reads as reconnecting instead of a
@@ -98,6 +101,21 @@ export function useArtifactLive(opts: {
       ev.addEventListener("review.requested", onReview)
       ev.addEventListener("review.sent_back", onReview)
     }
+    if (onSharedState) {
+      ev.addEventListener("artifact.state.updated", (e) => {
+        try {
+          const update = JSON.parse((e as MessageEvent).data) as {
+            key?: unknown
+            value?: unknown
+            version?: unknown
+          }
+          if (typeof update.key === "string" && typeof update.version === "number")
+            onSharedState({ key: update.key, value: update.value, version: update.version })
+        } catch {
+          /* ignore malformed frames */
+        }
+      })
+    }
     ev.addEventListener("presence", (e) => {
       try {
         setViewers((JSON.parse((e as MessageEvent).data).viewers as Viewer[]) ?? [])
@@ -113,7 +131,17 @@ export function useArtifactLive(opts: {
       }
     })
     return () => ev.close()
-  }, [shortId, onComment, onVersion, onReview, onResync, paintFrame, visible, online])
+  }, [
+    shortId,
+    onComment,
+    onVersion,
+    onReview,
+    onSharedState,
+    onResync,
+    paintFrame,
+    visible,
+    online,
+  ])
 
   // Announce we're viewing (anon shows up by their server handle — Google-Docs
   // style) and keep the heartbeat alive (TTL 45s). Paused while the tab is

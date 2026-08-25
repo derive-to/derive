@@ -423,6 +423,16 @@ export function Artifact({ template = false }: { template?: boolean }) {
     [load, shortId],
   )
 
+  // useArtifactLive is declared before the iframe bridge below. A stable relay
+  // closes that hook-order gap without reconnecting SSE on every render.
+  const sharedPostRef = useRef<(update: { key: string; value: unknown; version: number }) => void>(
+    () => {},
+  )
+  const onSharedStateLive = useCallback(
+    (update: { key: string; value: unknown; version: number }) => sharedPostRef.current(update),
+    [],
+  )
+
   // Presence, live multiplayer cursors, the SSE stream, and view recording — see
   // use-artifact-live. The page feeds pointer moves in (from the iframe bridge
   // below) and reads `viewers` + the `cursorLayer` overlay ref back out.
@@ -435,6 +445,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
     onComment: refetchComments,
     onVersion: onVersionLive,
     onReview,
+    onSharedState: onSharedStateLive,
     onResync: load,
   })
 
@@ -522,6 +533,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
       else window.open(u.href, "_blank", "noopener,noreferrer")
     },
   })
+  sharedPostRef.current = (update) => post({ type: "shared-updated", ...update })
 
   useEffect(() => {
     post({ type: "review-mode", on: visualPin })

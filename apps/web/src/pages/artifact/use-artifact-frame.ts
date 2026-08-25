@@ -1,6 +1,6 @@
 import type { Dispatch, SetStateAction } from "react"
 import { useCallback, useEffect, useRef, useState } from "react"
-import type { Comment } from "@/api"
+import { api, type Comment, type SharedStateMutation } from "@/api"
 import { bareHotkey } from "@/lib/hotkey"
 import { groupThreads } from "./lib/layout"
 import {
@@ -191,6 +191,55 @@ export function useArtifactFrame(p: {
         return
       }
       if (d.source !== "derive") return
+      // The opaque-origin artifact cannot carry the viewer's cookies, so its tiny
+      // shared-state SDK relays requests through this authenticated host page.
+      if (
+        (d.type === "shared-open" || d.type === "shared-mutate" || d.type === "shared-activity") &&
+        typeof d.requestId === "string" &&
+        typeof d.key === "string"
+      ) {
+        // Artifact code is untrusted. Without a browser-owned activation check, a
+        // page could mutate on load and falsely attribute the write to every
+        // commenter who merely viewed it. Real clicks/keys inside the iframe
+        // activate the ancestor window long enough for their synchronous request.
+        const activation = navigator.userActivation
+        if (d.type === "shared-mutate" && activation && !activation.isActive) {
+          post({
+            type: "shared-result",
+            requestId: d.requestId,
+            key: d.key,
+            ok: false,
+            error: "Interact with the artifact before changing shared state.",
+          })
+          return
+        }
+        const request =
+          d.type === "shared-open"
+            ? api.sharedState(shortId, d.key)
+            : d.type === "shared-activity"
+              ? api.sharedStateActivity(shortId, d.key)
+              : api.mutateSharedState(shortId, d.key, d.mutation as SharedStateMutation)
+        void request
+          .then((result) =>
+            post({
+              type: "shared-result",
+              requestId: d.requestId,
+              key: d.key,
+              ok: true,
+              ...result,
+            }),
+          )
+          .catch((error: unknown) =>
+            post({
+              type: "shared-result",
+              requestId: d.requestId,
+              key: d.key,
+              ok: false,
+              error: error instanceof Error ? error.message : "shared-state request failed",
+            }),
+          )
+        return
+      }
       // The injected client recognised a deck the artifact never announced. An
       // artifact that speaks for itself always wins: once a protocol message has
       // arrived, the sniff is ignored for the life of this document, so a deck can
@@ -298,6 +347,8 @@ export function useArtifactFrame(p: {
     onEsc,
     onOpenExternal,
     updateGeom,
+    post,
+    shortId,
   ])
 
   // Two-way hover: emphasize the matching highlight in the doc when a comment
@@ -449,6 +500,9 @@ export function useArtifactFrame(p: {
       updateGeom({ scrollY: 0, docH: 0, viewH: 0 })
       setAnchorTops({})
       setFrameReady((n) => n + 1)
+      // The head-injected shared-state SDK queues requests until this handshake,
+      // so a very fast iframe cannot post before the host listener exists.
+      post({ type: "shared-ready" })
     },
     post,
     scrollBy,

@@ -47,6 +47,7 @@ import { realtimeRoutes } from "./routes/realtime"
 import { reviewRoutes } from "./routes/review"
 import { reworkRoutes } from "./routes/rework"
 import { sessionRoutes } from "./routes/session"
+import { sharedStateRoutes } from "./routes/shared-state"
 import { sharingRoutes } from "./routes/sharing"
 import { siteRoutes } from "./routes/site"
 import { slackRoutes } from "./routes/slack"
@@ -421,6 +422,7 @@ export function createApp(deps: AppDeps): Hono {
     workspaceRoutes,
     agentRoutes,
     artifactRoutes,
+    sharedStateRoutes,
     assetRoutes,
     attributionRoutes,
     blobRoutes,
