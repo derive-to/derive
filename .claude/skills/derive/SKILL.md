@@ -44,7 +44,7 @@ unavailable, or project policy forbids publishing.
 | Upload or embed an image/font asset | `derive://skills/assets` | `stage`, `publish`, `read` |
 | Review, feedback, requests, or waiting | `derive://skills/loop` | `catch_up`, `read`, `comment`, `publish` |
 | Query a live workspace data agent | `derive://skills/contexts` | `find`, `use` |
-| Author, inspect, or run a workflow graph or bounded loop | remote `derive://skills/workflows`; stdio `derive://guide/workflows` | `read`, `publish`; remote `use` to run |
+| Author, inspect, or run a graph/loop Context | remote `derive://skills/workflows`; stdio `derive://guide/workflows` | `find`, `read`, `publish`; remote `use` on the root Context |
 | Save resumable working state | `derive://skills/checkpoint` | `checkpoint` |
 | Tag or collect library work | `derive://skills/organize` | `organize`, `find` |
 
@@ -174,6 +174,6 @@ artifact interaction, not secrets, server-side compute, or a general application
 The local stdio compatibility server exposes `list_workspaces`, `list_artifacts`,
 `search`, `read`, `catch_up`, `comment`, `organize`, and `publish`. It supports the
 basic loop, library organization, and per-call workspace routing, but lacks the remote
-server's staging, contexts, and checkpoint capabilities. It can inspect and publish workflow
-artifacts, but workflow context execution requires the remote server's `use` tool. Read
+server's staging, contexts, and checkpoint capabilities. It can inspect and publish typed
+manifests, but graph/loop Context execution requires the remote server's `use` tool. Read
 [references/compatibility.md](references/compatibility.md) before using that surface.

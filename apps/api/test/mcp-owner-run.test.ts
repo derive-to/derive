@@ -66,7 +66,7 @@ describe.skipIf(process.env.DERIVE_TEST_DB === "pg")("MCP owner-run + create_con
     // so it does not inherit that fixture's workspace plan — without one, every give here is a
     // 402 and the owner-run path never gets exercised.
     void connectPoolPlan(meta, "ws_main")
-    return { app, meta }
+    return { app, meta, path }
   }
   type App = ReturnType<typeof ownerApp>["app"]
 
@@ -251,6 +251,169 @@ describe.skipIf(process.env.DERIVE_TEST_DB === "pg")("MCP owner-run + create_con
     for (const m of agentTurns) expect(m.author_id).toBe("u_admin")
     // The context's created agent never served: the claim + answers were owner-run.
     expect(agentTurns.some((m) => m.author_id === created.agent_id)).toBe(false)
+  })
+
+  it("a non-owner local caller drives a pinned graph through the existing use surface", async () => {
+    const { app, meta, path } = ownerApp("composite-local-driver")
+    const { created: leaf } = await setupContext(app, "Writer")
+    await meta.setContextAskPolicy(leaf.context_id, "workspace")
+    const graph = {
+      schema: "derive.agent-manifest/v2",
+      kind: "graph",
+      purpose: "Build a cited brief",
+      title: "Brief builder",
+      labels: { build: "Build" },
+      diagram: {
+        id: "brief",
+        entry: "build",
+        nodes: [
+          {
+            id: "build",
+            kind: "context",
+            context_ref: "Writer",
+            instruction: "Build the cited brief.",
+            result: "A cited brief",
+            terminal: true,
+          },
+        ],
+        routes: [],
+        scenarios: [
+          {
+            id: "expected",
+            kind: "expected",
+            path: ["build"],
+            outcome: "The cited brief is ready",
+          },
+          {
+            id: "failure",
+            kind: "failure",
+            path: ["build"],
+            outcome: "The failure remains visible",
+          },
+        ],
+      },
+    }
+    const content = `<!doctype html><h1>Brief builder</h1><script type="application/derive-facts" data-fact="agent-manifest">${JSON.stringify(graph)}</script>`
+    const published = await call(app, "tok_full", "publish", {
+      title: "Brief builder manifest",
+      filename: "graph.html",
+      content,
+    })
+    const created = await call(app, "tok_full", "automate", {
+      action: "create_context",
+      name: "Brief builder",
+      manifest_short_id: published.short_id,
+    })
+    await meta.setContextAskPolicy(created.context_id, "workspace")
+
+    const opened = await call(app, "tok_editor", "use", {
+      context: "Brief builder",
+      instruction: "Build this for the August launch.",
+      dedupe_key: "launch-brief",
+      wait: 0,
+    })
+    expect(opened).toMatchObject({
+      state: "working",
+      context: "Brief builder",
+      execution: {
+        schema: "derive.local-workflow-run/v1",
+        mode: "local",
+        root_instruction: "Build this for the August launch.",
+        manifest: { version: 1, kind: "graph", source: "agent-manifest-v2" },
+        diagram: { id: "brief", entry: "build" },
+      },
+    })
+    expect(opened.execution.node_dedupe_key).toContain(`${opened.session_id}:v1`)
+
+    // A same-key retry joins the root instead of creating a second graph run.
+    const joined = await call(app, "tok_editor", "use", {
+      context: "Brief builder",
+      instruction: "Build this for the August launch.",
+      dedupe_key: "launch-brief",
+      wait: 0,
+    })
+    expect(joined.session_id).toBe(opened.session_id)
+
+    // The local driver calls the ordinary leaf context; that child is still a
+    // normal queued session with its own access and runner contract.
+    const child = await call(app, "tok_editor", "use", {
+      context: "Writer",
+      instruction: opened.execution.diagram.nodes[0].instruction,
+      dedupe_key: `${opened.session_id}:v1:build:1`,
+      wait: 0,
+    })
+    expect(child.state).toBe("open")
+
+    const tick = await call(app, "tok_editor", "use", {
+      session_id: opened.session_id,
+      answer: `Build node is running in ${child.session_id}.`,
+      progress: true,
+    })
+    expect(tick.state).toBe("working")
+
+    // A composite root is not ordinary registered-runner work, and workspace
+    // ownership does not let a different human hijack the local caller's run.
+    const graphAgentToken = "dk_agt_graph_agent_token"
+    await meta.rotateAgentToken(created.agent_id, "ws_main", sha256(graphAgentToken))
+    const registeredHijack = await callRaw(app, graphAgentToken, "use", {
+      session_id: opened.session_id,
+      answer: "registered runner hijack",
+    })
+    expect(registeredHijack.isError).toBe(true)
+    const ownerHijack = await callRaw(app, "tok_full", "use", {
+      session_id: opened.session_id,
+      answer: "owner hijack",
+    })
+    expect(ownerHijack.isError).toBe(true)
+    expect((await meta.getSession(opened.session_id))?.state).toBe("working")
+
+    // A later manifest version does not rewrite this run: checks and settlement
+    // continue against the immutable v1 envelope already returned.
+    const revised = await call(app, "tok_full", "publish", {
+      short_id: published.short_id,
+      filename: "graph.html",
+      content: content.replace("Build the cited brief.", "Build a revised brief."),
+    })
+    expect(revised.version).toBe(2)
+    const pinned = await call(app, "tok_editor", "use", {
+      session_id: opened.session_id,
+      wait: 0,
+    })
+    expect(pinned.execution.manifest.version).toBe(1)
+    expect(pinned.execution.diagram.nodes[0].instruction).toBe("Build the cited brief.")
+
+    const settled = await call(app, "tok_editor", "use", {
+      session_id: opened.session_id,
+      answer: "The August launch brief is complete.",
+      state: "answered",
+    })
+    expect(settled.state).toBe("answered")
+    const transcript = await meta.listSessionMessages(opened.session_id)
+    expect(transcript.filter((m) => m.author_kind === "agent").at(-1)?.author_id).toBe("u_editor")
+
+    // A local harness can disappear mid-run. Once its heartbeat is stale, the
+    // asker's next check gets an explicit terminal failure instead of an eternal spinner.
+    const abandoned = await call(app, "tok_editor", "use", {
+      context: "Brief builder",
+      instruction: "Exercise abandoned-run recovery.",
+      dedupe_key: "abandoned-brief",
+      wait: 0,
+    })
+    const raw = new Database(path)
+    raw
+      .prepare(`UPDATE context_session SET updated_at = ? WHERE id = ?`)
+      .run(new Date(Date.now() - 11 * 60 * 1000).toISOString(), abandoned.session_id)
+    raw.close()
+    const recovered = await call(app, "tok_editor", "use", {
+      session_id: abandoned.session_id,
+      wait: 0,
+    })
+    expect(recovered.state).toBe("failed")
+    expect(recovered.answer.body_md).toContain("stopped reporting")
+    expect(recovered.answer.meta).toMatchObject({
+      outcome: "failed",
+      reason: "local_harness_abandoned",
+    })
   })
 
   it("non-owner grants fall through to the give path unchanged", async () => {

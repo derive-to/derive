@@ -1,4 +1,5 @@
 import {
+  AGENT_MANIFEST_CONTENT_TYPE,
   type AnyDocEdit,
   type ArtifactRecord,
   artifactUrl,
@@ -491,7 +492,12 @@ export const artifactRoutes = (ctx: AppContext) => {
         viewerId:
           isOperator || (collectionId && collectionAccess) ? undefined : (memberKey ?? undefined),
         archived: archivedOnly ? ("only" as const) : ("exclude" as const),
-        ...(excludeWorkflows ? { excludeContentType: LINKED_BUNDLE_CONTENT_TYPE } : {}),
+        ...(excludeWorkflows
+          ? {
+              excludeContentTypes: [LINKED_BUNDLE_CONTENT_TYPE, AGENT_MANIFEST_CONTENT_TYPE],
+              excludeContextManifests: true,
+            }
+          : {}),
       }
       // THE COLD BOOT'S CRITICAL PATH. After the rest of this PR, nothing is queued in
       // front of this request any more — the first card paints 43ms after it lands — so

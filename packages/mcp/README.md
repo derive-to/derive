@@ -3,7 +3,7 @@
 The local stdio compatibility server for [Derive](https://derive.to). It gives an
 MCP-compatible agent a smaller artifact and review surface for clients that cannot connect to a
 Derive instance's remote `/mcp` endpoint. Use the remote endpoint for the complete tool surface,
-including workspace contexts and workflow execution.
+including single, graph, and loop Context execution.
 
 ## Prefer the remote server
 
@@ -62,8 +62,8 @@ interactive clients. Treat static tokens as credentials and never commit them.
 - `publish`: create an artifact or save a revision; publishes live.
 - `organize`: inspect or update tags, collections, and archive state.
 
-The stdio server does not expose `stage`, `use`, or `checkpoint`. In particular, it can read and
-publish workflow artifacts but cannot execute their workspace-context nodes. Read
+The stdio server does not expose `stage`, `use`, or `checkpoint`. It can read and publish typed
+agent manifests but cannot execute graph/loop Contexts. Read
 `derive://guide/workflows` for the execution boundary and remote OAuth setup. The canonical
 [Derive skill](SKILL.md) contains the complete operating instructions.
 

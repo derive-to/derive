@@ -1,11 +1,17 @@
 import { refRouter } from "@derive/broker"
 import {
+  AGENT_MANIFEST_FACT,
   type ArtifactRecord,
+  agentManifestForContext,
+  agentManifestSelectorFromConfig,
+  agentManifestsOf,
+  type CompositeAgentManifest,
   type ContextAskerRecord,
   type ContextRecord,
   decodeCursor,
   effectiveRole,
   encodeCursor,
+  LINKED_BUNDLE_FACT,
   maxRole,
   newId,
   normalizeSelector,
@@ -53,7 +59,9 @@ import { canPayForAgent, NO_PAYER_MESSAGE } from "../lib/payer"
 import { RUN_LEASE_MS } from "../lib/run-lifecycle"
 import { type DeltaStream, makeDeltaStream } from "../lib/session-stream"
 import { runSessionTurn } from "../lib/session-turn"
+import { visibleArtifactIds } from "../lib/visibility"
 import { log } from "../log"
+import { WorkflowDefinition, WorkflowPreview } from "../schemas"
 
 /**
  * Contexts (askable agent setups) + sessions (ask-conversations with one).
@@ -709,6 +717,28 @@ export const contextRoutes = (ctx: AppContext) => {
         .nullable()
         .optional()
         .describe("The manifest artifact's current version; null if it can't be resolved."),
+      kind: z
+        .enum(["single", "graph", "loop"])
+        .nullable()
+        .describe(
+          "The normalized agent-manifest kind. Null only when the manifest is missing or its kind cannot be trusted.",
+        ),
+      manifest_status: z
+        .enum(["ready", "needs-changes", "missing"])
+        .describe("Whether this context's current pinned definition is runnable."),
+      manifest_source: z
+        .enum(["agent-manifest-v2", "workflow-v1", "implicit-single"])
+        .nullable()
+        .describe("Which immutable source contract produced the normalized manifest."),
+      manifest_errors: z
+        .array(z.string())
+        .describe("Exact authoring blockers. Empty when manifest_status is ready."),
+      node_count: z.number().int().nonnegative().describe("Composite node count; zero for single."),
+      loop_count: z
+        .number()
+        .int()
+        .nonnegative()
+        .describe("Bounded loop-policy count; zero for single and graph."),
     })
     .openapi("ContextInfo")
 
@@ -1078,11 +1108,70 @@ export const contextRoutes = (ctx: AppContext) => {
   /** The cheap, always-safe slice of a manifest: a one-line description and how many
    *  skills it pins. Same inputs the console's directory row and header eyebrow need;
    *  computed once here so list and get can't drift on what "description" means. */
-  const manifestSummary = (md: string | null, manifestVersion: number | null) => ({
-    description: md ? manifestDescription(md) : null,
-    skills_count: md ? parseManifestSkillPins(md).length : 0,
-    manifest_version: manifestVersion,
+  const manifestSummary = (
+    x: ContextRecord,
+    md: string | null,
+    contentType: string | null,
+    manifestVersion: number | null,
+  ) => {
+    if (md === null)
+      return {
+        description: null,
+        skills_count: 0,
+        manifest_version: manifestVersion,
+        kind: null,
+        manifest_status: "missing" as const,
+        manifest_source: null,
+        manifest_errors: ["The manifest artifact or its current version could not be read."],
+        node_count: 0,
+        loop_count: 0,
+      }
+    const candidate = agentManifestForContext(
+      md,
+      contentType ?? "text/markdown",
+      agentManifestSelectorFromConfig(x.config),
+    )
+    const composite =
+      candidate.manifest?.kind === "graph" || candidate.manifest?.kind === "loop"
+        ? candidate.manifest
+        : null
+    return {
+      description: composite?.purpose ?? manifestDescription(md),
+      skills_count: parseManifestSkillPins(md).length,
+      manifest_version: manifestVersion,
+      kind: candidate.kind,
+      manifest_status: candidate.manifest ? ("ready" as const) : ("needs-changes" as const),
+      manifest_source: candidate.source,
+      manifest_errors: candidate.errors,
+      node_count: composite?.diagram.nodes.length ?? 0,
+      loop_count: composite?.diagram.loops?.length ?? 0,
+    }
+  }
+
+  const compositeDefinition = (manifest: CompositeAgentManifest) => ({
+    schema: "derive.workflow/v1" as const,
+    purpose: manifest.purpose,
+    diagrams: [manifest.diagram],
+    ...(manifest.forbidden ? { forbidden: manifest.forbidden } : {}),
   })
+
+  const manifestWorkflowDetail = (
+    x: ContextRecord,
+    md: string | null,
+    contentType: string | null,
+  ) => {
+    if (md === null) return {}
+    const candidate = agentManifestForContext(
+      md,
+      contentType ?? "text/markdown",
+      agentManifestSelectorFromConfig(x.config),
+    )
+    if (candidate.manifest?.kind !== "graph" && candidate.manifest?.kind !== "loop") return {}
+    return {
+      ...(candidate.preview ? { workflow_preview: candidate.preview } : {}),
+      workflow_definition: compositeDefinition(candidate.manifest),
+    }
+  }
 
   /** A session's context + manifest, or null when either half is gone. */
   const contextOf = async (s: SessionRecord) => {
@@ -1129,6 +1218,237 @@ export const contextRoutes = (ctx: AppContext) => {
     }
     return { profile_short_id: resolved.profileId ?? null, members }
   }
+
+  const importConfig = (shortId: string, version: number, diagramId?: string) =>
+    JSON.stringify({
+      ...(diagramId ? { legacy_diagram_id: diagramId } : {}),
+      imported_from: { short_id: shortId, version },
+    })
+
+  const importName = (base: string, used: Set<string>): string => {
+    const clean = base.trim().slice(0, 80) || "Imported workflow"
+    if (!used.has(clean)) {
+      used.add(clean)
+      return clean
+    }
+    for (let n = 2; n < 10_000; n++) {
+      const suffix = ` (${n})`
+      const next = `${clean.slice(0, 80 - suffix.length)}${suffix}`
+      if (!used.has(next)) {
+        used.add(next)
+        return next
+      }
+    }
+    throw new Error("could not allocate a unique imported workflow name")
+  }
+
+  // Adopt old graph/loop artifacts into the Context identity model. This is an
+  // explicit, idempotent management action rather than a background migration:
+  // dry-run is inspectable, every created row points at immutable existing bytes,
+  // and re-running it creates nothing. Invalid definitions are imported too so
+  // they remain visible under Workflows with their exact blockers instead of being
+  // stranded in Library or silently dropped.
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/v1/workflows/import",
+      tags: ["Contexts"],
+      summary: "Dry-run or import unbound graph/loop manifests as contexts.",
+      request: {
+        body: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: z.object({ dry_run: z.boolean() }),
+            },
+          },
+        },
+      },
+      responses: {
+        200: {
+          description: "The deterministic import plan and, when requested, created contexts.",
+          content: {
+            "application/json": {
+              schema: z.object({
+                dry_run: z.boolean(),
+                imported: z.number().int().nonnegative(),
+                skipped: z.number().int().nonnegative(),
+                failed: z.number().int().nonnegative(),
+                truncated: z.boolean(),
+                items: z.array(
+                  z.object({
+                    manifest_short_id: z.string(),
+                    manifest_version: z.number().int().positive(),
+                    diagram_id: z.string().nullable(),
+                    title: z.string(),
+                    kind: z.enum(["graph", "loop"]),
+                    status: z.enum(["would-import", "imported", "already-imported", "failed"]),
+                    context_id: z.string().optional(),
+                    errors: z.array(z.string()),
+                  }),
+                ),
+              }),
+            },
+          },
+        },
+      },
+    }),
+    async (c) => {
+      const owner = await managementPrincipal(c)
+      if (!owner) return bail(fail(c, 401, "unauthenticated"))
+      const org = await requireWorkspace(c, "publish")
+      if (org instanceof Response) return bail(org)
+      const body = await readJson(c, z.object({ dry_run: z.boolean() }))
+      if (body instanceof Response) return bail(body)
+
+      const cap = 201
+      const [legacyCandidates, v2Candidates, existing] = await Promise.all([
+        meta.listFactAcrossArtifacts(org, LINKED_BUNDLE_FACT, { limit: cap }),
+        meta.listFactAcrossArtifacts(org, AGENT_MANIFEST_FACT, { limit: cap }),
+        meta.listContexts(org),
+      ])
+      const allowed = await visibleArtifactIds(
+        meta,
+        [...new Set([...legacyCandidates, ...v2Candidates].map((row) => row.id))],
+        { orgId: org, viewerId: owner },
+      )
+      const legacyRows = legacyCandidates.filter((row) => allowed.has(row.id))
+      const v2Rows = v2Candidates.filter((row) => allowed.has(row.id))
+      const truncated = legacyRows.length >= cap || v2Rows.length >= cap
+      // One artifact may carry both facts. De-duplicate before capping so a duplicate
+      // cannot consume a slot and hide a later v2 manifest from the deterministic plan.
+      const ids = [...new Set([...legacyRows, ...v2Rows].map((row) => row.id))].slice(0, cap - 1)
+      const usedNames = new Set(existing.map((item) => item.name))
+      const items: Array<{
+        manifest_short_id: string
+        manifest_version: number
+        diagram_id: string | null
+        title: string
+        kind: "graph" | "loop"
+        status: "would-import" | "imported" | "already-imported" | "failed"
+        context_id?: string
+        errors: string[]
+      }> = []
+
+      for (const id of ids) {
+        const artifact = await meta.getArtifactById(id)
+        if (
+          !artifact ||
+          artifact.org_id !== org ||
+          artifact.current_version === 0 ||
+          !(await authorize(c, "share", artifact))
+        )
+          continue
+        const version = await meta.getVersion(artifact.id, artifact.current_version)
+        const source = version ? await sourceText(version) : null
+        if (source === null) continue
+        const candidates = agentManifestsOf(
+          source,
+          artifact.current_content_type ?? "text/html",
+        ).candidates.filter(
+          (candidate): candidate is typeof candidate & { kind: "graph" | "loop" } =>
+            candidate.kind === "graph" || candidate.kind === "loop",
+        )
+        for (const candidate of candidates) {
+          const selector = candidate.legacy_diagram_id ?? null
+          const already = existing.find(
+            (context) =>
+              context.manifest_artifact_id === artifact.id &&
+              (agentManifestSelectorFromConfig(context.config) === selector ||
+                (candidates.length === 1 &&
+                  agentManifestSelectorFromConfig(context.config) === null)),
+          )
+          const title =
+            candidate.title ??
+            (selector ? `${artifact.title || "Workflow"} · ${selector}` : artifact.title) ??
+            "Imported workflow"
+          if (already) {
+            items.push({
+              manifest_short_id: artifact.short_id,
+              manifest_version: artifact.current_version,
+              diagram_id: selector,
+              title: already.name,
+              kind: candidate.kind,
+              status: "already-imported",
+              context_id: already.id,
+              errors: candidate.errors,
+            })
+            continue
+          }
+          const name = importName(title, usedNames)
+          if (body.dry_run) {
+            items.push({
+              manifest_short_id: artifact.short_id,
+              manifest_version: artifact.current_version,
+              diagram_id: selector,
+              title: name,
+              kind: candidate.kind,
+              status: "would-import",
+              errors: candidate.errors,
+            })
+            continue
+          }
+          try {
+            const made = await createContextCore(meta, {
+              orgId: org,
+              userId: owner,
+              name,
+              manifestArtifactId: artifact.id,
+              config: importConfig(
+                artifact.short_id,
+                artifact.current_version,
+                selector ?? undefined,
+              ),
+            })
+            existing.push(made.context)
+            items.push({
+              manifest_short_id: artifact.short_id,
+              manifest_version: artifact.current_version,
+              diagram_id: selector,
+              title: name,
+              kind: candidate.kind,
+              status: "imported",
+              context_id: made.context.id,
+              errors: candidate.errors,
+            })
+          } catch (error) {
+            items.push({
+              manifest_short_id: artifact.short_id,
+              manifest_version: artifact.current_version,
+              diagram_id: selector,
+              title: name,
+              kind: candidate.kind,
+              status: "failed",
+              errors: [
+                ...candidate.errors,
+                error instanceof Error ? error.message : "context import failed",
+              ],
+            })
+          }
+        }
+      }
+      const imported = items.filter((item) => item.status === "imported").length
+      const skipped = items.filter((item) => item.status === "already-imported").length
+      const failed = items.filter((item) => item.status === "failed").length
+      log.info("workflow_manifest_import", {
+        org,
+        dry_run: body.dry_run,
+        candidates: items.length,
+        imported,
+        skipped,
+        failed,
+        truncated,
+      })
+      return c.json({
+        dry_run: body.dry_run,
+        imported,
+        skipped,
+        failed,
+        truncated,
+        items,
+      })
+    },
+  )
 
   // Create a context: wire an agent to a manifest artifact. Editor+ in the
   // workspace, and share-standing on the manifest (creating a context exposes the
@@ -1215,9 +1535,16 @@ export const contextRoutes = (ctx: AppContext) => {
           connectionIds: b.connection_ids,
           returnAgentToken: true,
         })
+        const md = await manifestBody(manifest)
         return c.json(
           {
             ...contextJson(made.context, manifest.short_id),
+            ...manifestSummary(
+              made.context,
+              md,
+              manifest.current_content_type,
+              manifest.current_version,
+            ),
             ...(made.agentToken ? { agent_token: made.agentToken } : {}),
           },
           201,
@@ -1268,7 +1595,12 @@ export const contextRoutes = (ctx: AppContext) => {
           const md = manifest ? await manifestBody(manifest) : null
           return {
             ...contextJson(x, x.manifest_short_id),
-            ...manifestSummary(md, manifest?.current_version ?? null),
+            ...manifestSummary(
+              x,
+              md,
+              manifest?.current_content_type ?? null,
+              manifest?.current_version ?? null,
+            ),
           }
         }),
       )
@@ -1322,6 +1654,12 @@ export const contextRoutes = (ctx: AppContext) => {
                   .number()
                   .optional()
                   .describe("How many sessions the runner may work at once. Human branch only."),
+                workflow_preview: WorkflowPreview.optional().describe(
+                  "The normalized graph/loop preview. Descriptive only; reading never starts execution.",
+                ),
+                workflow_definition: WorkflowDefinition.optional().describe(
+                  "The validated graph/loop policy for this context's selected manifest entry.",
+                ),
               }),
             },
           },
@@ -1340,7 +1678,11 @@ export const contextRoutes = (ctx: AppContext) => {
       const manifest = await meta.getArtifactById(x.manifest_artifact_id)
       const allowed = agent ? agent.id === x.agent_id : await canAskContext(c, x)
       if (!allowed) return bail(fail(c, 404, "not found"))
-      if (!manifest) return c.json(contextJson(x, null))
+      if (!manifest)
+        return c.json({
+          ...contextJson(x, null),
+          ...manifestSummary(x, null, null, null),
+        })
       // One fetch of the manifest's current source, shared by both branches below —
       // the runner's system prompt and the console's package are the same document,
       // read once.
@@ -1348,7 +1690,8 @@ export const contextRoutes = (ctx: AppContext) => {
       const md = v ? await sourceText(v) : null
       const base = {
         ...contextJson(x, manifest.short_id),
-        ...manifestSummary(md, manifest.current_version),
+        ...manifestSummary(x, md, manifest.current_content_type, manifest.current_version),
+        ...manifestWorkflowDetail(x, md, manifest.current_content_type),
       }
       // The runner's own config fetch: its system prompt is the manifest's current
       // source, so a manifest edit reconfigures the runner with no deploy. The resolved
@@ -1657,6 +2000,36 @@ export const contextRoutes = (ctx: AppContext) => {
       if (!x || !(await canAskContext(c, x))) return bail(fail(c, 404, "not found"))
       const manifest = await meta.getArtifactById(x.manifest_artifact_id)
       if (!manifest) return bail(fail(c, 404, "not found"))
+      const manifestSource = await manifestBody(manifest)
+      const candidate =
+        manifestSource === null
+          ? null
+          : agentManifestForContext(
+              manifestSource,
+              manifest.current_content_type ?? "text/markdown",
+              agentManifestSelectorFromConfig(x.config),
+            )
+      // Composite contexts are coordinated by the local OAuth MCP caller. Putting one
+      // into the ordinary REST ask queue would strand it behind the managed leaf runner
+      // and make the UI claim a run had started when no compatible executor could ever
+      // claim it. Refuse before reading the ask body or spending/creating anything.
+      if (candidate?.kind === "graph" || candidate?.kind === "loop") {
+        if (!candidate.manifest)
+          return bail(
+            fail(
+              c,
+              409,
+              `This ${candidate.kind} context needs changes before it can run: ${candidate.errors.slice(0, 8).join("; ")}`,
+            ),
+          )
+        return bail(
+          fail(
+            c,
+            409,
+            `This ${candidate.kind} context runs from a local agent over the remote Derive MCP. Call use({context: ${JSON.stringify(x.name)}, instruction: "…"}); browser asks are not queued.`,
+          ),
+        )
+      }
       const b = await readJson(
         c,
         z.object({

@@ -1,68 +1,63 @@
 import { describe, expect, it } from "vitest"
-import type { WorkflowDirectoryItem } from "@/api"
-import { workflowDirectoryEntries, workflowItemsForView } from "./index"
+import type { ContextInfo } from "@/api"
+import { workflowContextsForView } from "./index"
 
-const item = (shortId: string, kinds: WorkflowDirectoryItem["kinds"]): WorkflowDirectoryItem => ({
-  short_id: shortId,
-  title: shortId,
-  purpose: "Test the directory",
-  version: 1,
-  updated_at: "2026-08-24T12:00:00.000Z",
-  kinds,
-  diagram_count: 1,
-  node_count: 2,
-  execution: kinds.includes("workflow") ? "ready" : "descriptive",
+const context = (id: string, kind: ContextInfo["kind"], createdAt: string): ContextInfo => ({
+  id,
+  name: id,
+  agent_id: `agent-${id}`,
+  manifest_short_id: `manifest-${id}`,
+  created_by: "user-1",
+  created_at: createdAt,
+  runner_seen_at: null,
+  ask_policy: "workspace",
+  connection_ids: [],
+  kind,
+  manifest_status: kind ? "ready" : "needs-changes",
+  manifest_source: kind === "single" ? "implicit-single" : "agent-manifest-v2",
+  manifest_errors: kind ? [] : ["Unknown manifest kind"],
+  node_count: kind === "single" ? 0 : 2,
+  loop_count: kind === "loop" ? 1 : 0,
 })
 
-describe("Workflows directory", () => {
-  const graph = item("graph123", ["workflow", "graph"])
-  const loop = item("loop1234", ["loop"])
-  const both = item("both1234", ["graph", "loop"])
+describe("Workflows context directory", () => {
+  const single = context("single", "single", "2026-08-24T11:00:00.000Z")
+  const graph = context("graph", "graph", "2026-08-24T13:00:00.000Z")
+  const loop = context("loop", "loop", "2026-08-24T12:00:00.000Z")
+  const invalid = context("invalid", null, "2026-08-24T14:00:00.000Z")
+  const all = [single, graph, loop, invalid]
 
-  it("keeps graph and loop views separate without duplicating a combined bundle in All", () => {
-    const items = [graph, loop, both]
-    expect(workflowItemsForView(items, "graphs").map((entry) => entry.short_id)).toEqual([
-      "graph123",
-      "both1234",
+  it("shows one context-backed record per workflow in newest-first order", () => {
+    expect(workflowContextsForView(all, "all").map((item) => item.id)).toEqual([
+      "invalid",
+      "graph",
+      "loop",
+      "single",
     ])
-    expect(workflowItemsForView(items, "loops").map((entry) => entry.short_id)).toEqual([
-      "loop1234",
-      "both1234",
-    ])
-    expect(items).toHaveLength(3)
   })
 
-  it("mixes contexts and bundles into one newest-first default directory", () => {
-    const entries = workflowDirectoryEntries(
-      [
-        {
-          id: "context-1",
-          name: "Researcher",
-          agent_id: "agent-1",
-          manifest_short_id: "manifest1",
-          created_by: "user-1",
-          created_at: "2026-08-24T11:30:00.000Z",
-          runner_seen_at: null,
-          ask_policy: "workspace",
-          connection_ids: [],
-        },
-      ],
-      [graph, { ...loop, updated_at: "2026-08-24T11:00:00.000Z" }],
+  it("filters Contexts, Graphs, and Loops by normalized manifest kind", () => {
+    expect(workflowContextsForView(all, "contexts").map((item) => item.id)).toEqual(["single"])
+    expect(workflowContextsForView(all, "graphs").map((item) => item.id)).toEqual(["graph"])
+    expect(workflowContextsForView(all, "loops").map((item) => item.id)).toEqual(["loop"])
+  })
+
+  it("keeps an invalid unknown-kind context visible in All instead of silently dropping it", () => {
+    expect(workflowContextsForView(all, "all")).toContainEqual(invalid)
+    expect(workflowContextsForView(all, "graphs")).not.toContainEqual(invalid)
+  })
+
+  it("stays deterministic for a large mixed directory", () => {
+    const items = Array.from({ length: 1_000 }, (_, index) =>
+      context(
+        `context-${String(index).padStart(4, "0")}`,
+        index % 3 === 0 ? "single" : index % 3 === 1 ? "graph" : "loop",
+        new Date(Date.UTC(2026, 7, 24, 12, 0, index)).toISOString(),
+      ),
     )
-    expect(entries.map((entry) => entry.kind)).toEqual(["bundle", "context", "bundle"])
-  })
-
-  it("keeps a large mixed directory deterministic without duplicating bundles", () => {
-    const items = Array.from({ length: 1_000 }, (_, index) => ({
-      ...item(`bundle-${String(index).padStart(4, "0")}`, index % 2 ? ["graph"] : ["loop"]),
-      updated_at: new Date(Date.UTC(2026, 7, 24, 12, 0, index)).toISOString(),
-    }))
-    const entries = workflowDirectoryEntries([], items)
-
+    const entries = workflowContextsForView(items, "all")
     expect(entries).toHaveLength(1_000)
-    expect(entries[0]).toMatchObject({ kind: "bundle", item: { short_id: "bundle-0999" } })
-    expect(
-      new Set(entries.map((entry) => entry.kind === "bundle" && entry.item.short_id)).size,
-    ).toBe(1_000)
+    expect(entries[0]?.id).toBe("context-0999")
+    expect(new Set(entries.map((item) => item.id)).size).toBe(1_000)
   })
 })

@@ -1,56 +1,44 @@
 ---
 name: workflows
-summary: graphs and loops via contexts (publish, use)
+summary: typed graph/loop Contexts: author, preview, run
 order: 5.5
 ---
-# Graphs and bounded loops
+# Typed graph and loop Contexts
 
-Use this when a person asks for a workflow, graph, loop, multi-context plan, approval path, or a
-clear account of what will happen before work runs. Do not turn an ordinary one-step artifact into
-a graph.
+Use this when a person asks for a workflow, graph, bounded loop, approval path, or multi-Context
+agent system. Do not turn an ordinary one-step task into a graph.
 
-Derive is the persistent working layer. The connected Codex, Claude, or other approved harness
-executes. Reuse the existing context `use` primitive; never invent a second graph-run tool family,
-queue, lease model, progress protocol, or artifact store.
+## Mental model
 
-## One Preview gate
+- **Workflows** is the product area.
+- **Context** is the only runnable address.
+- A Context pins one `derive.agent-manifest/v2` with kind `single`, `graph`, or `loop`.
+- Graph and Loop are agent-system shapes, not separate artifact or scheduler entities.
+- Derive stores immutable definitions, access, sessions, progress, results, and receipts. The
+  connected Claude, Codex, or other local OAuth MCP client coordinates graph/loop work.
 
-Preview includes explanation, structural validation, scenario checks, and repair guidance. Do not
-ask for separate Explain, Validate, and Preview approvals. Present one result: **Ready to run** or
-**Needs changes**. Only explicit run intent starts context sessions; authored human gates still
-pause sensitive actions later.
+Use the existing `use` tool. Never invent a graph-run tool family, server scheduler, second queue,
+or parallel state model.
 
 ## Author
 
-1. Extract the outcome, evidence of completion, contexts/roles, external effects, loop bounds, and
-   decisions that really need a person. Ask only questions whose answers change safety or behavior.
-2. Choose the smallest useful shape: linear handoff, fan-out/join, approval, router, or bounded
-   evaluator–optimizer loop.
-3. Publish one ordinary HTML linked bundle with two facts generated from the same model:
-   - `bundle-manifest` remains the visible topology and #799 authored working state.
-   - `workflow-definition` adds context bindings, route conditions, bounds, effects, gates,
-     forbidden actions, and scenarios.
-4. Join the facts only by stable diagram/node IDs. Every visible node and edge must have exactly one
-   matching workflow node and route.
-   This is **same IDs, different jobs**. A graph may start with `members:[]`; add actual context
-   result artifacts later. Never invent a placeholder artifact id.
-5. Before any publish or `use` call, compile the facts in memory and present one Preview: what will
-   happen, possible branches, human pauses, bounds, external effects, forbidden actions, scenarios,
-   and either **Ready to run** or the exact blockers. Repair in memory until Ready.
-6. Publish the Ready workflow artifact and subsequent Derive result/state updates by default; do
-   not add a second approval merely because the action is a Derive publish. Treat workflow
-   advisories as defense-in-depth blockers and repair them before run. Inspect the rendered
-   artifact. Add a human gate only when the person requests one or an effect is consequential
-   outside Derive.
-
-The companion fact has this shape:
+Create one HTML manifest artifact with an `agent-manifest` fact. A composite manifest owns exactly
+one diagram, so one Context always has one unambiguous entry contract. `bundle-manifest` is an
+optional visible projection using the same stable diagram/node IDs; it never controls routing.
 
 ```json
 {
-  "schema": "derive.workflow/v1",
-  "purpose": "Build and publish a weekly brief",
-  "forbidden": ["Publish outside the current Derive workspace", "Continue past loop bounds"],
-  "diagrams": [{
+  "schema": "derive.agent-manifest/v2",
+  "kind": "loop",
+  "purpose": "Build and publish a reviewed weekly brief",
+  "title": "Weekly brief",
+  "labels": {
+    "research": "Research signals",
+    "evaluate": "Quality check",
+    "publish": "Publish brief"
+  },
+  "forbidden": ["Publish outside this workspace", "Continue past loop bounds"],
+  "diagram": {
     "id": "weekly-brief",
     "entry": "research",
     "nodes": [
@@ -65,7 +53,7 @@ The companion fact has this shape:
         "id": "evaluate",
         "kind": "context",
         "context_ref": "brief-quality-checker",
-        "instruction": "Evaluate the brief against its stated evidence and clarity bar; return ready or revise.",
+        "instruction": "Return ready or revise with evidence.",
         "result": "A grounded ready-or-revise decision",
         "routing": "one"
       },
@@ -73,14 +61,14 @@ The companion fact has this shape:
         "id": "publish",
         "kind": "context",
         "context_ref": "brief-publisher",
-        "instruction": "Publish the ready brief to the current Derive workspace.",
+        "instruction": "Publish the ready brief.",
         "result": "A published Derive artifact",
         "terminal": true,
         "effects": [{
           "kind": "write",
           "description": "Publish the weekly brief to Derive",
           "gate": "none",
-          "idempotency": "Publish one version for this workflow node attempt"
+          "idempotency": "One version for this node attempt"
         }]
       }
     ],
@@ -92,7 +80,7 @@ The companion fact has this shape:
     "loops": [{
       "id": "brief-repair",
       "nodes": ["research", "evaluate"],
-      "goal": "Reach the stated quality bar",
+      "goal": "Reach the evidence and clarity bar",
       "evaluate": "Check evidence, clarity, and scope",
       "stop": {
         "max_attempts": 2,
@@ -103,65 +91,66 @@ The companion fact has this shape:
     }],
     "scenarios": [
       {"id":"expected","kind":"expected","path":["research","evaluate","publish"],"outcome":"Ready brief is published"},
-      {"id":"failure","kind":"failure","path":["research"],"outcome":"Failed session is visible and the run stops"},
-      {"id":"revision","kind":"expected","path":["research","evaluate","research","evaluate","publish"],"outcome":"One bounded revision lands before publication"}
+      {"id":"failure","kind":"failure","path":["research"],"outcome":"Failure remains visible"},
+      {"id":"revision","kind":"expected","path":["research","evaluate","research","evaluate","publish"],"outcome":"One bounded revision lands"}
     ]
-  }]
+  }
 }
 ```
 
+Run `derive workflow sync <file>` after topology edits. It projects nodes/routes into the visible
+bundle while preserving labels and working state, then runs the one Preview gate. New CLI
+scaffolds write v2; existing `derive.workflow/v1` artifacts remain readable and importable.
+
 ## Preview invariants
 
-- `context` nodes require `context_ref`, `instruction`, and `result`; use `terminal:true` when the
-  context result ends the diagram. Multiple routes require `routing:"all"` for unconditional
-  fan-out or `routing:"one"` for conditional choice with one fallback.
-- `human` nodes require a typed `decision`, at least two `options`, and `resume`.
-- `terminal` nodes require `result`.
-- Every diagram declares an `entry`; all nodes are reachable from it and at least one is terminal.
-  Human routes match their options exactly and omit fallback; context fan-out and branching are
-  explicit through `routing`.
-- Effects are `read`, `write`, `message`, `spend`, or `access`. Derive artifact publication and
-  state updates normally use `gate:"none"` with an idempotency contract. Reserve a `human` gate
-  for explicitly requested review or consequential effects outside Derive.
-- Every directed cycle has a loop with a goal, evaluator, integer `max_attempts` (1–100), optional
-  stagnation/time/cost limits, and `human_stop`.
-- Every diagram has an expected scenario. Context work adds a failure scenario; human work adds a
-  human scenario covering each human node. Paths start at the declared entry and use real visible
-  routes; non-failure paths end at a terminal node.
-- Preview distinguishes guaranteed policy from illustrative paths; it does not promise exact model
-  or tool behavior.
+- Return one result: **Ready to run** or **Needs changes**. Preview starts no sessions.
+- `context` nodes require `context_ref`, `instruction`, and `result`; `human` nodes require a
+  decision, at least two distinct options, and resume instruction; terminal work declares result.
+- One entry; all nodes reachable; at least one terminal; no routes out of terminals.
+- Multiple unconditional routes use `routing:"all"`. Conditional choice uses `routing:"one"`,
+  unique normalized predicates, and exactly one fallback.
+- `kind:"graph"` is acyclic and carries no loop policy. `kind:"loop"` has a cycle covered by an
+  evaluator, integer attempt/stagnation bounds, optional time/cost bounds, and human stop.
+- External effects are explicit. Non-read effects require either a named human gate or an
+  idempotency contract. Silence never implies approval, completion, or a need for help.
+- Scenarios cover the expected path, context failure, and each human interruption.
 
-## Run through contexts
+## Run
 
-When the person explicitly says to run, begin at the diagram's declared `entry`, then start one
-context session per ready node attempt:
+Only explicit user intent starts a run. Call the root Context once:
 
 ```text
 use({
-  context: node.context_ref,
-  instruction: render(node.instruction, inputs),
-  dedupe_key: `${workflowArtifact}:${diagram}:${node}:${attempt}`
+  context: "Weekly brief",
+  instruction: "Build the brief for the August launch",
+  dedupe_key: "august-launch-weekly-brief"
 })
 ```
 
-Collect it with `use({session_id, wait:50})`. A follow-up continues the same attempt with
-`use({session_id, instruction})`; retry or refinement starts a new attempt/session.
+For graph/loop Contexts, `use` returns `derive.local-workflow-run/v1`: the exact manifest version,
+root instruction, diagram, bounds, forbidden actions, node dedupe template, and report contract.
+That root session starts `working` and is driven only by the OAuth human who opened it.
 
-Project session truth into the authored graph:
+Then:
 
-- `open` → `waiting` (queued; no inferred help)
-- `working` → `active`
-- `answered` → `done`; add `result_artifact_id` to bundle members and point `node.member` at its
-  local member id, then evaluate routes
-- `escalated` → `waiting` with explicit `help.question` and resume action
-- `failed` → declared retry or `blocked`
-- `closed` → stopped deliberately
+1. Walk only nodes that are ready under the returned pinned diagram.
+2. For each context-node attempt, call ordinary `use({context: node.context_ref, instruction,
+   dedupe_key})`. A check/follow-up reuses its `session_id`; a retry increments the attempt.
+3. Report honest root progress with `use({session_id: root, answer, progress:true})`.
+4. Stop at human/effect gates and ask the person explicitly. Never infer a choice from silence.
+5. Settle the root with `answer`, optional `result_artifact_id`, and state
+   `answered|escalated|failed`.
 
-Publish each result artifact and graph-state transition back to the same Derive workflow as normal
-run bookkeeping. Do this by default with version/idempotency protection; it does not need a fresh
-human approval.
+The root remains pinned if the Context publishes a newer manifest mid-run. If the local harness
+stops reporting, Derive fails the abandoned root explicitly; it never fabricates success.
 
-An effect's `approval_ref` reuses that human node's decision; do not ask again when the approved
-decision and the described effect match. Stop at a terminal result, exhausted loop/time/cost/stagnation bound, unresolved human gate,
-terminal failure, or the person's stop request. Keep state explicit; silence or elapsed time never
-implies low confidence, urgency, or a need for human help.
+## Migration and compatibility
+
+Workflows lists Contexts and filters by single, graph, or loop. “Move existing” performs a dry
+run, preserves artifact URLs/history, imports each legacy diagram as a Context, keeps invalid
+items visible with blockers, and is safe to repeat. The old artifact facts remain a read-only
+compatibility source until a later cleanup.
+
+The local stdio MCP can inspect and publish manifests but does not expose `use`; it must refuse
+execution and direct the person to the remote OAuth MCP at `https://derive.to/mcp`.

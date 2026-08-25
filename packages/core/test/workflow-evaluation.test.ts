@@ -1,6 +1,11 @@
 import {
+  AGENT_MANIFEST_FACT,
+  AGENT_MANIFEST_SCHEMA,
+  agentManifestForContext,
+  agentManifestsOf,
   LINKED_BUNDLE_SCHEMA,
   type LinkedBundleManifest,
+  validateAgentManifest,
   validateWorkflowDefinition,
   WORKFLOW_DEFINITION_SCHEMA,
 } from "@derive/core"
@@ -299,5 +304,128 @@ describe("workflow production evaluation — 18 focused policy cases", () => {
         )
       }),
     ).toContain('WF-10 diagram "brief" needs a failure scenario')
+  })
+})
+
+const fact = (slot: string, value: unknown) =>
+  `<script type="application/derive-facts" data-fact="${slot}">${JSON.stringify(value)}</script>`
+
+const explicitManifest = (kind: "graph" | "loop" = "graph") => ({
+  schema: AGENT_MANIFEST_SCHEMA,
+  kind,
+  purpose: "Build and approve a brief",
+  title: "Reviewed brief",
+  diagram: definition().diagrams[0],
+  labels: { draft: "Draft", review: "Review", publish: "Publish", stop: "Stop" },
+})
+
+describe("typed agent manifest normalization", () => {
+  it("adapts an ordinary Markdown context as a single manifest without rewriting it", () => {
+    const source = "# Researcher\n\nAnswer with cited evidence."
+    const read = agentManifestsOf(source, "text/markdown")
+    expect(read.errors).toEqual([])
+    expect(read.candidates).toHaveLength(1)
+    expect(read.candidates[0]).toMatchObject({
+      kind: "single",
+      source: "implicit-single",
+      manifest: { kind: "single", instructions: source },
+    })
+  })
+
+  it("accepts an explicit v2 single manifest", () => {
+    const checked = validateAgentManifest({
+      schema: AGENT_MANIFEST_SCHEMA,
+      kind: "single",
+      purpose: "Answer support questions",
+      instructions: "Use the support handbook and cite it.",
+    })
+    expect(checked.errors).toEqual([])
+    expect(checked.manifest?.kind).toBe("single")
+    expect(checked.preview).toBeNull()
+  })
+
+  it("accepts one explicit v2 graph and produces a ready preview", () => {
+    const checked = validateAgentManifest(explicitManifest())
+    expect(checked.errors).toEqual([])
+    expect(checked.manifest?.kind).toBe("graph")
+    expect(checked.preview?.status).toBe("ready")
+    expect(checked.preview?.diagrams[0]?.title).toBe("Reviewed brief")
+  })
+
+  it("refuses a graph manifest that declares loop policy", () => {
+    const value = explicitManifest()
+    value.diagram.loops = [
+      {
+        id: "unneeded",
+        nodes: ["draft"],
+        goal: "Repeat",
+        evaluate: "Check",
+        stop: { max_attempts: 2, human_stop: "Stop" },
+      },
+    ]
+    expect(validateAgentManifest(value).errors).toContain(
+      "AM-04 graph manifest must be acyclic and must not declare loop policies",
+    )
+  })
+
+  it("refuses a loop manifest without a bounded loop", () => {
+    expect(validateAgentManifest(explicitManifest("loop")).errors).toContain(
+      "AM-04 loop manifest requires at least one bounded loop policy",
+    )
+  })
+
+  it("gives an explicit v2 fact precedence over legacy workflow facts", () => {
+    const single = {
+      schema: AGENT_MANIFEST_SCHEMA,
+      kind: "single",
+      purpose: "Leaf",
+      instructions: "Do one thing.",
+    }
+    const source = `<!doctype html><body>${fact(AGENT_MANIFEST_FACT, single)}${fact("bundle-manifest", manifest())}${fact("workflow-definition", definition())}</body>`
+    const read = agentManifestsOf(source)
+    expect(read.candidates).toHaveLength(1)
+    expect(read.candidates[0]).toMatchObject({ source: "agent-manifest-v2", kind: "single" })
+  })
+
+  it("adapts every valid legacy workflow diagram without mutating the source", () => {
+    const source = `<!doctype html><body>${fact("bundle-manifest", manifest())}${fact("workflow-definition", definition())}</body>`
+    const read = agentManifestsOf(source)
+    expect(read.errors).toEqual([])
+    expect(read.candidates).toHaveLength(1)
+    expect(read.candidates[0]).toMatchObject({
+      source: "workflow-v1",
+      kind: "graph",
+      legacy_diagram_id: "brief",
+      manifest: { title: "Reviewed brief" },
+    })
+    expect(source).toContain("derive.workflow/v1")
+  })
+
+  it("requires an explicit selector for a legacy multi-diagram context", () => {
+    const linked = manifest()
+    const workflow = definition()
+    linked.diagrams?.push({
+      ...linked.diagrams[0],
+      id: "second",
+      title: "Second flow",
+      nodes: linked.diagrams[0]?.nodes.map((node) => ({ ...node })) ?? [],
+      edges: linked.diagrams[0]?.edges.map((edge) => ({ ...edge })) ?? [],
+    })
+    workflow.diagrams.push({ ...workflow.diagrams[0], id: "second" })
+    const source = `<!doctype html><body>${fact("bundle-manifest", linked)}${fact("workflow-definition", workflow)}</body>`
+    expect(agentManifestForContext(source).errors).toContain(
+      "AM-02 context manifest contains multiple diagrams and requires an explicit selector",
+    )
+    expect(agentManifestForContext(source, "text/html", "second").manifest).toMatchObject({
+      kind: "graph",
+      diagram: { id: "second" },
+    })
+  })
+
+  it("reports malformed explicit JSON instead of falling back to single", () => {
+    const source = `<!doctype html><body><script type="application/derive-facts" data-fact="${AGENT_MANIFEST_FACT}">{</script></body>`
+    const read = agentManifestsOf(source)
+    expect(read.candidates[0]?.errors).toEqual(["AM-01 agent-manifest is not valid JSON"])
+    expect(read.candidates[0]?.manifest).toBeNull()
   })
 })

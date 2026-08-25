@@ -144,6 +144,7 @@ import {
   lte,
   ne,
   notExists,
+  notInArray,
   or,
   type SQL,
   sql,
@@ -249,6 +250,18 @@ export function artifactListConditions(
     )
     if (notExcluded) conds.push(notExcluded)
   }
+  if (opts?.excludeContentTypes?.length) {
+    const notExcluded = or(
+      isNull(art.current_content_type),
+      notInArray(art.current_content_type, opts.excludeContentTypes),
+    )
+    if (notExcluded) conds.push(notExcluded)
+  }
+  if (opts?.excludeContextManifests)
+    conds.push(sql`NOT EXISTS (
+      SELECT 1 FROM context cx
+      WHERE cx.manifest_artifact_id = ${art.id}
+    )`)
   // One bound parameter whatever the tag's population. Table named literally: sqlite, D1,
   // and pg all call it artifact_tag.
   if (opts?.tag)

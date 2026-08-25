@@ -236,6 +236,13 @@ export interface ListArtifactsOpts {
   /** Exclude one stored content type. The web Library uses this to give linked workflow
    *  bundles their own product home without changing artifact discovery for agents. */
   excludeContentType?: string
+  /** Exclude several stored content types in the store query. Used by Library so legacy
+   *  workflow bundles and typed graph/loop manifests live in Workflows without post-page
+   *  filtering (which would corrupt keyset pagination). */
+  excludeContentTypes?: string[]
+  /** Exclude artifacts currently bound as a Context's manifest. Workflows owns those
+   *  runnable definitions; Library should not duplicate them after adoption. */
+  excludeContextManifests?: boolean
 }
 
 /** The browse sidebar's summary — see `ArtifactQueryStore.workspaceSummary`. */

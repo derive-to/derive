@@ -3,6 +3,7 @@ export const MARKDOWN_CONTENT_TYPE = "text/markdown"
 export const DECK_CONTENT_TYPE = "text/x-derive-deck"
 const VIDEO_HTML_CONTENT_TYPE = "text/x-derive-video"
 export const LINKED_BUNDLE_HTML_CONTENT_TYPE = "text/x-derive-linked-bundle"
+export const AGENT_MANIFEST_HTML_CONTENT_TYPE = "text/x-derive-agent-manifest"
 
 const baseType = (contentType: string): string => contentType.split(";")[0]?.trim() ?? ""
 
@@ -13,6 +14,7 @@ export const isHtmlLike = (contentType: string): boolean =>
     DECK_CONTENT_TYPE,
     VIDEO_HTML_CONTENT_TYPE,
     LINKED_BUNDLE_HTML_CONTENT_TYPE,
+    AGENT_MANIFEST_HTML_CONTENT_TYPE,
   ].includes(baseType(contentType))
 
 /** Stored types that contain Markdown. Parameters such as `charset=utf-8` are
@@ -22,6 +24,9 @@ export const isMarkdownLike = (contentType: string): boolean =>
 
 /** Types that may carry author-declared facts. Decks receive derived structure only. */
 export const isAuthoredFactType = (contentType: string): boolean =>
-  [HTML_CONTENT_TYPE, MARKDOWN_CONTENT_TYPE, LINKED_BUNDLE_HTML_CONTENT_TYPE].includes(
-    baseType(contentType),
-  )
+  [
+    HTML_CONTENT_TYPE,
+    MARKDOWN_CONTENT_TYPE,
+    LINKED_BUNDLE_HTML_CONTENT_TYPE,
+    AGENT_MANIFEST_HTML_CONTENT_TYPE,
+  ].includes(baseType(contentType))

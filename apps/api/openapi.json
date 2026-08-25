@@ -2882,6 +2882,54 @@
             "type": "number",
             "nullable": true,
             "description": "The manifest artifact's current version; null if it can't be resolved."
+          },
+          "kind": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "single",
+              "graph",
+              "loop",
+              null
+            ],
+            "description": "The normalized agent-manifest kind. Null only when the manifest is missing or its kind cannot be trusted."
+          },
+          "manifest_status": {
+            "type": "string",
+            "enum": [
+              "ready",
+              "needs-changes",
+              "missing"
+            ],
+            "description": "Whether this context's current pinned definition is runnable."
+          },
+          "manifest_source": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "agent-manifest-v2",
+              "workflow-v1",
+              "implicit-single",
+              null
+            ],
+            "description": "Which immutable source contract produced the normalized manifest."
+          },
+          "manifest_errors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Exact authoring blockers. Empty when manifest_status is ready."
+          },
+          "node_count": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Composite node count; zero for single."
+          },
+          "loop_count": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Bounded loop-policy count; zero for single and graph."
           }
         },
         "required": [
@@ -2893,7 +2941,13 @@
           "created_at",
           "runner_seen_at",
           "ask_policy",
-          "connection_ids"
+          "connection_ids",
+          "kind",
+          "manifest_status",
+          "manifest_source",
+          "manifest_errors",
+          "node_count",
+          "loop_count"
         ]
       },
       "BrandprintConfig": {
@@ -8659,6 +8713,129 @@
         }
       }
     },
+    "/v1/workflows/import": {
+      "post": {
+        "tags": [
+          "Contexts"
+        ],
+        "summary": "Dry-run or import unbound graph/loop manifests as contexts.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "dry_run": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "dry_run"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The deterministic import plan and, when requested, created contexts.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "dry_run": {
+                      "type": "boolean"
+                    },
+                    "imported": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "skipped": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "failed": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "truncated": {
+                      "type": "boolean"
+                    },
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "manifest_short_id": {
+                            "type": "string"
+                          },
+                          "manifest_version": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "exclusiveMinimum": true
+                          },
+                          "diagram_id": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "graph",
+                              "loop"
+                            ]
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "would-import",
+                              "imported",
+                              "already-imported",
+                              "failed"
+                            ]
+                          },
+                          "context_id": {
+                            "type": "string"
+                          },
+                          "errors": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        "required": [
+                          "manifest_short_id",
+                          "manifest_version",
+                          "diagram_id",
+                          "title",
+                          "kind",
+                          "status",
+                          "errors"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "dry_run",
+                    "imported",
+                    "skipped",
+                    "failed",
+                    "truncated",
+                    "items"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/contexts": {
       "post": {
         "tags": [
@@ -8810,6 +8987,26 @@
                         "max_concurrency": {
                           "type": "number",
                           "description": "How many sessions the runner may work at once. Human branch only."
+                        },
+                        "workflow_preview": {
+                          "allOf": [
+                            {
+                              "$ref": "#/components/schemas/WorkflowPreview"
+                            },
+                            {
+                              "description": "The normalized graph/loop preview. Descriptive only; reading never starts execution."
+                            }
+                          ]
+                        },
+                        "workflow_definition": {
+                          "allOf": [
+                            {
+                              "$ref": "#/components/schemas/WorkflowDefinition"
+                            },
+                            {
+                              "description": "The validated graph/loop policy for this context's selected manifest entry."
+                            }
+                          ]
                         }
                       }
                     }

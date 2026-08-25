@@ -43,6 +43,14 @@ describe("contexts: create + wire an agent to a manifest", () => {
 
     const list = await (await app.request("/v1/contexts", { headers: as(owner.email) })).json()
     expect(list.contexts).toHaveLength(1)
+    const library = await (
+      await app.request("/v1/artifacts?limit=100&exclude_workflows=true", {
+        headers: as(owner.email),
+      })
+    ).json()
+    expect(
+      library.artifacts.map((artifact: { short_id: string }) => artifact.short_id),
+    ).not.toContain(manifestShortId)
   })
 
   it("a commenter cannot create a context (workspace publish gate)", async () => {
@@ -55,6 +63,154 @@ describe("contexts: create + wire an agent to a manifest", () => {
       }),
     )
     expect(res.status).toBe(403)
+  })
+
+  it("adopts every legacy diagram and keeps an invalid one visible with blockers", async () => {
+    const purpose = "Coordinate a release"
+    const graph = {
+      id: "announce",
+      entry: "done",
+      nodes: [{ id: "done", kind: "terminal", result: "Announcement ready" }],
+      routes: [],
+      scenarios: [
+        {
+          id: "expected",
+          kind: "expected",
+          path: ["done"],
+          outcome: "Announcement is ready",
+        },
+      ],
+    }
+    const loop = {
+      id: "repair",
+      entry: "check",
+      nodes: [
+        {
+          id: "check",
+          kind: "context",
+          context_ref: "quality-checker",
+          instruction: "Return ready or revise.",
+          result: "A quality decision",
+          routing: "one",
+        },
+        { id: "done", kind: "terminal", result: "Release is ready" },
+      ],
+      routes: [
+        { from: "check", to: "check", when: "revise", fallback: true },
+        { from: "check", to: "done", when: "ready" },
+      ],
+      loops: [
+        {
+          id: "quality-repair",
+          nodes: ["check"],
+          goal: "Reach ready",
+          evaluate: "Check release quality",
+          stop: {
+            max_attempts: 2,
+            stagnation_limit: 1,
+            human_stop: "The release owner stops",
+          },
+        },
+      ],
+      scenarios: [
+        {
+          id: "expected",
+          kind: "expected",
+          path: ["check", "done"],
+          outcome: "Release is ready",
+        },
+        {
+          id: "failure",
+          kind: "failure",
+          path: ["check"],
+          outcome: "Failure remains visible",
+        },
+        {
+          id: "revision",
+          kind: "expected",
+          path: ["check", "check", "done"],
+          outcome: "One repair lands",
+        },
+      ],
+    }
+    const visible = {
+      schema: "derive.linked-bundle/v1",
+      purpose,
+      members: [],
+      diagrams: [
+        {
+          id: "announce",
+          title: "Announcement",
+          type: "graph",
+          nodes: [{ id: "done", label: "Done" }],
+          edges: [],
+        },
+        {
+          id: "repair",
+          title: "Repair",
+          type: "loop",
+          nodes: [
+            { id: "check", label: "Check" },
+            { id: "done", label: "Done" },
+          ],
+          edges: [
+            { from: "check", to: "check", label: "revise" },
+            { from: "check", to: "done", label: "ready" },
+          ],
+        },
+      ],
+    }
+    const source = `<!doctype html><script type="application/derive-facts" data-fact="bundle-manifest">${JSON.stringify(visible)}</script><script type="application/derive-facts" data-fact="workflow-definition">${JSON.stringify({ schema: "derive.workflow/v1", purpose, diagrams: [graph, loop] })}</script>`
+    const multiId = (await (await publishAs(app, source, {}, as(owner.email))).json()).short_id
+
+    const invalidVisible = {
+      schema: "derive.linked-bundle/v1",
+      purpose: "Broken graph",
+      members: [],
+      diagrams: [
+        {
+          id: "broken",
+          title: "Broken graph",
+          type: "graph",
+          nodes: [{ id: "missing", label: "Missing definition" }],
+          edges: [],
+        },
+      ],
+    }
+    const invalidDefinition = {
+      schema: "derive.workflow/v1",
+      purpose: "Broken graph",
+      diagrams: [{ id: "broken", entry: "missing", nodes: [], routes: [], scenarios: [] }],
+    }
+    const invalidSource = `<!doctype html><script type="application/derive-facts" data-fact="bundle-manifest">${JSON.stringify(invalidVisible)}</script><script type="application/derive-facts" data-fact="workflow-definition">${JSON.stringify(invalidDefinition)}</script>`
+    const invalidId = (await (await publishAs(app, invalidSource, {}, as(owner.email))).json())
+      .short_id
+
+    const imported = await (
+      await app.request("/v1/workflows/import", jsonAs(as(owner.email), { dry_run: false }))
+    ).json()
+    expect(
+      imported.items
+        .filter((item: { manifest_short_id: string }) => item.manifest_short_id === multiId)
+        .map((item: { diagram_id: string; kind: string; status: string }) => ({
+          diagram_id: item.diagram_id,
+          kind: item.kind,
+          status: item.status,
+        })),
+    ).toEqual([
+      { diagram_id: "announce", kind: "graph", status: "imported" },
+      { diagram_id: "repair", kind: "loop", status: "imported" },
+    ])
+    const invalid = imported.items.find(
+      (item: { manifest_short_id: string }) => item.manifest_short_id === invalidId,
+    )
+    expect(invalid).toMatchObject({ status: "imported", kind: "graph", diagram_id: "broken" })
+    expect(invalid.errors.length).toBeGreaterThan(0)
+    const detail = await (
+      await app.request(`/v1/contexts/${invalid.context_id}`, { headers: as(owner.email) })
+    ).json()
+    expect(detail).toMatchObject({ kind: "graph", manifest_status: "needs-changes" })
+    expect(detail.manifest_errors.length).toBeGreaterThan(0)
   })
 })
 
@@ -823,6 +979,227 @@ describe("contexts: the manifest package (skills, pin health, repos, description
     expect(x.manifest).toBeUndefined()
     expect(x.skills).toBeUndefined()
     expect(x.repos).toBeUndefined()
+  })
+})
+
+describe("contexts: typed single, graph, and loop manifest projections", () => {
+  const owner: TestUser = { id: "u_tm_own", email: "tmown@derive.test", name: "Owner" }
+  const { app } = makeAuthedApp("contexts-typed-manifest", [owner])
+
+  const agentManifestHtml = (value: unknown) =>
+    `<!doctype html><h1>Build brief</h1><script type="application/derive-facts" data-fact="agent-manifest">${JSON.stringify(value)}</script>`
+
+  it("create, list, and detail all expose the same ready graph identity", async () => {
+    await app.request("/v1/me", { headers: as(owner.email) })
+    const manifest = {
+      schema: "derive.agent-manifest/v2",
+      kind: "graph",
+      purpose: "Build a cited brief",
+      title: "Brief builder",
+      labels: { build: "Build the brief" },
+      diagram: {
+        id: "brief",
+        entry: "build",
+        nodes: [
+          {
+            id: "build",
+            kind: "context",
+            context_ref: "writer",
+            instruction: "Build the cited brief.",
+            result: "A cited brief",
+            terminal: true,
+          },
+        ],
+        routes: [],
+        scenarios: [
+          {
+            id: "expected",
+            kind: "expected",
+            path: ["build"],
+            outcome: "The cited brief is ready",
+          },
+          {
+            id: "failure",
+            kind: "failure",
+            path: ["build"],
+            outcome: "The failure is visible",
+          },
+        ],
+      },
+    }
+    const shortId = (
+      await (await publishAs(app, agentManifestHtml(manifest), {}, as(owner.email))).json()
+    ).short_id
+    const created = await app.request(
+      "/v1/contexts",
+      jsonAs(as(owner.email), { name: "Brief builder", manifest_short_id: shortId }),
+    )
+    expect(created.status).toBe(201)
+    const context = await created.json()
+    expect(context).toMatchObject({
+      kind: "graph",
+      manifest_status: "ready",
+      manifest_source: "agent-manifest-v2",
+      manifest_errors: [],
+      node_count: 1,
+      loop_count: 0,
+      description: "Build a cited brief",
+    })
+
+    const list = await (await app.request("/v1/contexts", { headers: as(owner.email) })).json()
+    expect(list.contexts[0]).toMatchObject({
+      id: context.id,
+      kind: "graph",
+      manifest_status: "ready",
+      node_count: 1,
+    })
+
+    const detail = await (
+      await app.request(`/v1/contexts/${context.id}`, { headers: as(owner.email) })
+    ).json()
+    expect(detail.workflow_preview).toMatchObject({
+      status: "ready",
+      purpose: "Build a cited brief",
+    })
+    expect(detail.workflow_definition).toMatchObject({
+      schema: "derive.workflow/v1",
+      diagrams: [{ id: "brief", entry: "build" }],
+    })
+
+    const browserRun = await app.request(
+      `/v1/contexts/${context.id}/sessions`,
+      jsonAs(as(owner.email), { body_md: "Build this in the browser." }),
+    )
+    expect(browserRun.status).toBe(409)
+    expect(await browserRun.text()).toContain("runs from a local agent over the remote Derive MCP")
+    const sessions = await (
+      await app.request(`/v1/contexts/${context.id}/sessions`, { headers: as(owner.email) })
+    ).json()
+    expect(sessions.sessions).toEqual([])
+  })
+
+  it("keeps a malformed typed manifest visible but refuses to call it ready", async () => {
+    const shortId = (
+      await (
+        await publishAs(
+          app,
+          agentManifestHtml({
+            schema: "derive.agent-manifest/v2",
+            kind: "loop",
+            purpose: "Repair until good",
+            title: "Repair loop",
+            diagram: { id: "repair", entry: "missing", nodes: [], routes: [], scenarios: [] },
+          }),
+          {},
+          as(owner.email),
+        )
+      ).json()
+    ).short_id
+    const created = await (
+      await app.request(
+        "/v1/contexts",
+        jsonAs(as(owner.email), { name: "Broken repair", manifest_short_id: shortId }),
+      )
+    ).json()
+    expect(created.kind).toBe("loop")
+    expect(created.manifest_status).toBe("needs-changes")
+    expect(created.manifest_errors).toEqual(
+      expect.arrayContaining(["AM-04 loop manifest requires at least one bounded loop policy"]),
+    )
+    expect(created.workflow_preview).toBeUndefined()
+  })
+
+  it("dry-runs and idempotently adopts a legacy graph artifact as a context", async () => {
+    const purpose = "Publish a release note"
+    const diagram = {
+      id: "release",
+      entry: "draft",
+      nodes: [
+        {
+          id: "draft",
+          kind: "context",
+          context_ref: "writer",
+          instruction: "Draft the release note.",
+          result: "A release note",
+          terminal: true,
+        },
+      ],
+      routes: [],
+      scenarios: [
+        {
+          id: "expected",
+          kind: "expected",
+          path: ["draft"],
+          outcome: "The release note is ready",
+        },
+        {
+          id: "failure",
+          kind: "failure",
+          path: ["draft"],
+          outcome: "The failure remains visible",
+        },
+      ],
+    }
+    const source = `<!doctype html><h1>Legacy graph</h1>
+      <script type="application/derive-facts" data-fact="bundle-manifest">${JSON.stringify({
+        schema: "derive.linked-bundle/v1",
+        purpose,
+        members: [],
+        diagrams: [
+          {
+            id: "release",
+            title: "Release note",
+            type: "graph",
+            nodes: [{ id: "draft", label: "Draft" }],
+            edges: [],
+          },
+        ],
+      })}</script>
+      <script type="application/derive-facts" data-fact="workflow-definition">${JSON.stringify({
+        schema: "derive.workflow/v1",
+        purpose,
+        diagrams: [diagram],
+      })}</script>`
+    const shortId = (await (await publishAs(app, source, {}, as(owner.email))).json()).short_id
+
+    const beforeDryRun = await (
+      await app.request("/v1/contexts", { headers: as(owner.email) })
+    ).json()
+    const dry = await (
+      await app.request("/v1/workflows/import", jsonAs(as(owner.email), { dry_run: true }))
+    ).json()
+    expect(
+      dry.items.find((item: { manifest_short_id: string }) => item.manifest_short_id === shortId),
+    ).toMatchObject({ status: "would-import", kind: "graph", diagram_id: "release" })
+    const afterDryRun = await (
+      await app.request("/v1/contexts", { headers: as(owner.email) })
+    ).json()
+    expect(afterDryRun.contexts.map((item: { id: string }) => item.id)).toEqual(
+      beforeDryRun.contexts.map((item: { id: string }) => item.id),
+    )
+
+    const imported = await (
+      await app.request("/v1/workflows/import", jsonAs(as(owner.email), { dry_run: false }))
+    ).json()
+    const made = imported.items.find(
+      (item: { manifest_short_id: string }) => item.manifest_short_id === shortId,
+    )
+    expect(made).toMatchObject({ status: "imported", kind: "graph", diagram_id: "release" })
+    expect(made.context_id).toMatch(/^ctx_/)
+
+    const repeated = await (
+      await app.request("/v1/workflows/import", jsonAs(as(owner.email), { dry_run: false }))
+    ).json()
+    expect(
+      repeated.items.find(
+        (item: { manifest_short_id: string }) => item.manifest_short_id === shortId,
+      ),
+    ).toMatchObject({ status: "already-imported", context_id: made.context_id })
+
+    const list = await (await app.request("/v1/contexts", { headers: as(owner.email) })).json()
+    expect(
+      list.contexts.find((context: { id: string }) => context.id === made.context_id),
+    ).toMatchObject({ kind: "graph", manifest_source: "workflow-v1", manifest_status: "ready" })
   })
 })
 

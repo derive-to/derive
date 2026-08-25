@@ -9,6 +9,8 @@
 // context/session that isn't yours to run returns null and `use` falls through to the
 // give path, and every other grant's surface is unchanged.
 import {
+  agentManifestForContext,
+  agentManifestSelectorFromConfig,
   type ContextRecord,
   capRole,
   newId,
@@ -18,6 +20,7 @@ import {
   type SessionState,
 } from "@derive/core"
 import { parseManifestSkillPins, type StalePin, stalePins } from "../lib/manifest-pins"
+import { log } from "../log"
 import type { ToolContext } from "../mcp-tool-context"
 import { clipSessionText, ENTRY_MAX, err, json } from "../mcp-util"
 
@@ -62,6 +65,40 @@ export async function runnerDispatch(
   // The agent turn's author: the registered agent, or the owner-run human — the
   // transcript says who actually did the work.
   const runnerId = registered ? agent.id : (actingFor?.id ?? agent.id)
+
+  // Read the exact pinned definition before deciding who may report. Composite roots
+  // are never ordinary registered-runner work: only the OAuth human who opened one
+  // may drive it. Keeping classification separate makes that exclusion apply to
+  // registered agents and owner-run humans alike.
+  const isCompositeSession = async (s: SessionRecord, x: ContextRecord): Promise<boolean> => {
+    if (s.context_version === null) return false
+    const artifact = await ctx.meta.getArtifactById(x.manifest_artifact_id)
+    const version = artifact ? await ctx.meta.getVersion(artifact.id, s.context_version) : null
+    const source = version ? await ctx.sourceText(version) : null
+    if (!artifact || !version || source === null) return false
+    const candidate = agentManifestForContext(
+      source,
+      version.content_type,
+      agentManifestSelectorFromConfig(x.config),
+    )
+    return candidate.manifest?.kind === "graph" || candidate.manifest?.kind === "loop"
+  }
+
+  const drivesComposite = async (
+    s: SessionRecord,
+    x: ContextRecord,
+    composite: boolean,
+  ): Promise<boolean> => {
+    if (
+      !composite ||
+      registered ||
+      !actingFor ||
+      s.asker_id !== actingFor.id ||
+      !tc.inGrant(x.org_id)
+    )
+      return false
+    return ctx.canUserAskContext(actingFor.id, x)
+  }
 
   // A claimed session's lease — how long it holds `working` before re-serve (crash /
   // reboot). From the context's max_run_ms, clamped like the REST queue's leaseFor, plus a
@@ -299,8 +336,24 @@ export async function runnerDispatch(
   if (session_id && answer !== undefined) {
     const s = await ctx.meta.getSession(session_id)
     const x = s?.context_id ? await ctx.meta.getContext(s.context_id) : null
-    if (s && x && (registered ? x.agent_id === agent.id : await ownerRunsOrg(tc, x.org_id)))
-      return runnerAnswer(s, x, { body: answer, progress, state, result_artifact_id, answers })
+    if (s && x) {
+      const composite = await isCompositeSession(s, x)
+      const allowed = composite
+        ? await drivesComposite(s, x, composite)
+        : registered
+          ? x.agent_id === agent.id
+          : await ownerRunsOrg(tc, x.org_id)
+      if (allowed) {
+        if (composite)
+          log.info("composite_context_report", {
+            org: x.org_id,
+            context_id: x.id,
+            session_id: s.id,
+            report: progress === true && !state ? "progress" : (state ?? "answered"),
+          })
+        return runnerAnswer(s, x, { body: answer, progress, state, result_artifact_id, answers })
+      }
+    }
   }
   // PULL your queued work: a context you run + NO instruction (a give always has one, so a
   // bare context can only mean "I'm the agent — hand me my sessions").

@@ -429,6 +429,41 @@ describe("linked bundles", () => {
     ).not.toContain(published.short_id)
   })
 
+  it("keeps pure typed graph manifests out of Library without requiring a legacy bundle", async () => {
+    const manifest = {
+      schema: "derive.agent-manifest/v2",
+      kind: "graph",
+      purpose: "Publish a release note",
+      title: "Release note",
+      diagram: {
+        id: "release",
+        entry: "done",
+        nodes: [{ id: "done", kind: "terminal", result: "Release note published" }],
+        routes: [],
+        scenarios: [
+          {
+            id: "expected",
+            kind: "expected",
+            path: ["done"],
+            outcome: "Release note is published",
+          },
+        ],
+      },
+    }
+    const source = `<!doctype html><html><body><script type="application/derive-facts" data-fact="agent-manifest">${JSON.stringify(manifest)}</script></body></html>`
+    const published = await (
+      await upload("release.html", source, { title: "Release graph" })
+    ).json()
+    expect(published.current_content_type).toBe("text/x-derive-agent-manifest")
+
+    const library = await (
+      await app.request("/v1/artifacts?limit=100&exclude_workflows=true")
+    ).json()
+    expect(
+      library.artifacts.map((artifact: { short_id: string }) => artifact.short_id),
+    ).not.toContain(published.short_id)
+  })
+
   it("resolves readable members and leaves missing ones explicit", async () => {
     const member = await (await upload("brief.md", "# Brief", { title: "Product brief" })).json()
     const manifest = {

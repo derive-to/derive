@@ -1,7 +1,15 @@
-import { type ContextRecord, newId, type SessionRecord } from "@derive/core"
+import {
+  agentManifestForContext,
+  agentManifestSelectorFromConfig,
+  type ContextRecord,
+  newId,
+  type SessionRecord,
+} from "@derive/core"
 import { z } from "zod"
+import { isAbandoned } from "../lib/abandoned-turn"
 import { metaForWire } from "../lib/context-builder-card"
 import { canPayForAgent, NO_PAYER_MESSAGE } from "../lib/payer"
+import { log } from "../log"
 import type { ToolContext } from "../mcp-tool-context"
 import { ANSWER_MAX, clipSessionText, ENTRY_MAX, err, json, runnerOnline } from "../mcp-util"
 import { ownerRunsOrg, runnerDispatch } from "./use-runner"
@@ -30,7 +38,7 @@ export function registerUseTool(tc: ToolContext): void {
     "use",
     {
       description:
-        "Give a context WORK (rate-limited): `context`+`instruction` opens a session, `session_id`+`instruction` follows up, `session_id` alone checks. Real runs take minutes, so a still-working response is NORMAL — re-call until it settles. See derive://skills/contexts.",
+        "Give a Context work: `context`+`instruction` opens; graph/loop Contexts return a pinned local envelope. `session_id`+`instruction` follows up, `session_id` alone checks, and the opening OAuth caller reports composite progress/result with `answer`. Runs take minutes. See derive://skills/contexts and derive://skills/workflows.",
       // Opens/advances a session (a write — messages accumulate, budget is spent) but
       // deletes nothing; a session can be followed up or checked, never destroyed from
       // here. Not idempotent by default (each open mints a new session — `dedupe_key` is
@@ -153,6 +161,22 @@ export function registerUseTool(tc: ToolContext): void {
         return r.ok ? null : err(`Rate limit exceeded — retry in ${r.retryAfter}s.`)
       }
 
+      const pinnedManifest = async (x: ContextRecord, version: number) => {
+        const artifact = await ctx.meta.getArtifactById(x.manifest_artifact_id)
+        if (!artifact) return null
+        const row = await ctx.meta.getVersion(artifact.id, version)
+        const source = row ? await ctx.sourceText(row) : null
+        if (source === null) return null
+        return {
+          artifact,
+          candidate: agentManifestForContext(
+            source,
+            row?.content_type ?? artifact.current_content_type ?? "text/markdown",
+            agentManifestSelectorFromConfig(x.config),
+          ),
+        }
+      }
+
       // Every mode ends here: wait out the runner while the session is NOT settled,
       // returning EARLY on a progress tick (a Maker job streams — don't block to
       // timeout), then shape the reply from a FRESH read. The event is only a wake,
@@ -193,6 +217,31 @@ export function registerUseTool(tc: ToolContext): void {
           if (e.type === "session.progress" && e.session_id === s.id) break
         }
 
+        // A local graph driver can disappear just like an attended model turn. A later
+        // check must turn that silence into an explicit failure instead of returning
+        // `working` forever. Honest progress ticks refresh updated_at and keep a live
+        // long run out of this path.
+        if (isAbandoned(s.state, s.updated_at ?? s.created_at, Date.now())) {
+          await ctx.meta.addSessionMessage(
+            {
+              id: newId("sm"),
+              session_id: s.id,
+              author_kind: "agent",
+              author_id: "derive",
+              body_md:
+                "This local run stopped reporting before it finished, so Derive marked it failed. Start a new run to retry from a fresh pinned manifest.",
+              meta: JSON.stringify({ outcome: "failed", reason: "local_harness_abandoned" }),
+            },
+            "failed",
+          )
+          ctx.bus.publish(`u:${s.asker_id}`, {
+            type: "session.settled",
+            session_id: s.id,
+            state: "failed",
+          })
+          s = (await ctx.meta.getSession(s.id)) ?? s
+        }
+
         const transcript = await ctx.meta.listSessionMessages(s.id)
         const lastAgent = transcript.filter((m) => m.author_kind === "agent").at(-1)
         // The last agent message is the ANSWER once settled, or the latest PROGRESS
@@ -208,6 +257,14 @@ export function registerUseTool(tc: ToolContext): void {
         const resultUrl = s.result_artifact_id
           ? `${base}/artifacts/${s.result_artifact_id}`
           : undefined
+        const pinned =
+          s.context_version === null ? null : await pinnedManifest(x, s.context_version)
+        const composite =
+          pinned?.candidate.manifest?.kind === "graph" ||
+          pinned?.candidate.manifest?.kind === "loop"
+            ? pinned.candidate.manifest
+            : null
+        const rootInstruction = transcript.find((m) => m.author_kind === "asker")?.body_md ?? ""
         // A queue with no live runner is a dead end for most askers — but its OWNER can
         // just serve it (owner-run), so steer them there instead of telling them to wait.
         // Registered agents keep the wait text: their bare use({context}) pull only
@@ -220,7 +277,9 @@ export function registerUseTool(tc: ToolContext): void {
                 ? `Queued, and no runner is polling this context's queue — but you own this workspace, so you can serve it yourself: use({context: "${x.name}"}) with no instruction pulls the queued work (see derive://skills/contexts).`
                 : "Queued, but the context's runner looks OFFLINE — it answers when it comes back. Re-call use with this session_id later."
             : s.state === "working"
-              ? "In progress — the runner is working. Re-call use with this session_id (+ wait) to keep watching; the result link fills in as it goes."
+              ? composite
+                ? "Local execution is active. Walk the pinned diagram, use leaf contexts for node attempts, and report progress or the terminal result back to this session."
+                : "In progress — the runner is working. Re-call use with this session_id (+ wait) to keep watching; the result link fills in as it goes."
               : s.state === "escalated"
                 ? "The runner escalated this to a human — a draft went to review. Check back later."
                 : s.state === "failed"
@@ -233,6 +292,37 @@ export function registerUseTool(tc: ToolContext): void {
           context: x.name,
           state: s.state,
           ...(resultUrl ? { result_url: resultUrl } : {}),
+          ...(composite && pinned
+            ? {
+                execution: {
+                  schema: "derive.local-workflow-run/v1",
+                  mode: "local",
+                  context_id: x.id,
+                  context: x.name,
+                  manifest: {
+                    short_id: pinned.artifact.short_id,
+                    version: s.context_version,
+                    schema: composite.schema,
+                    kind: composite.kind,
+                    source: pinned.candidate.source,
+                  },
+                  purpose: composite.purpose,
+                  title: composite.title,
+                  root_instruction: rootInstruction,
+                  diagram: composite.diagram,
+                  forbidden: composite.forbidden ?? [],
+                  node_dedupe_key: `${s.id}:v${s.context_version}:<node-id>:<attempt>`,
+                  report:
+                    "Call use({session_id, answer, progress:true}) for an honest progress tick; settle with answer, optional result_artifact_id, and state answered|escalated|failed.",
+                  rules: [
+                    "Call only single contexts from context nodes in this v2 contract.",
+                    "Keep each node attempt on one child session; a retry increments attempt.",
+                    "Honor exact routes, loop bounds, forbidden actions, and human/effect gates.",
+                    "Never infer completion, approval, or help from silence.",
+                  ],
+                },
+              }
+            : {}),
           ...(answerRow
             ? {
                 answer: {
@@ -336,11 +426,65 @@ export function registerUseTool(tc: ToolContext): void {
         return err(`Context "${hit.x.name}" has lost its manifest and can't be asked.`)
       const capped = await overAskCap()
       if (capped) return capped
+      const normalized = await pinnedManifest(hit.x, hit.manifest.current_version)
+      if (!normalized)
+        return err(
+          `Context "${hit.x.name}" manifest v${hit.manifest.current_version} can't be read.`,
+        )
+      if (!normalized.candidate.manifest)
+        return err(
+          `Context "${hit.x.name}" needs changes before it can run:\n- ${normalized.candidate.errors.slice(0, 8).join("\n- ")}`,
+        )
       // Idempotency: a same-key ask still in flight JOINS the existing session
       // rather than opening a new one — a double "run for brand X" never runs twice.
       if (dedupe_key) {
         const inflight = await ctx.meta.findInflightSession(hit.x.id, actingFor.id, dedupe_key)
         if (inflight) return reply(inflight, hit.x, false)
+      }
+      // A composite context is driven by THIS local MCP caller. It gets a pinned
+      // parent session and a structured execution envelope instead of entering a
+      // registered runner's queue. Leaf node work still goes through ordinary
+      // `use(single)` calls, so there is no scheduler or second execution surface.
+      if (
+        normalized.candidate.manifest.kind === "graph" ||
+        normalized.candidate.manifest.kind === "loop"
+      ) {
+        let opened: SessionRecord
+        try {
+          opened = await ctx.meta.createSession({
+            id: newId("ses"),
+            context_id: hit.x.id,
+            org_id: hit.x.org_id,
+            asker_id: actingFor.id,
+            context_version: hit.manifest.current_version,
+            dedupe_key,
+          })
+        } catch (e) {
+          const winner = dedupe_key
+            ? await ctx.meta.findInflightSession(hit.x.id, actingFor.id, dedupe_key)
+            : null
+          if (winner) return reply(winner, hit.x, false)
+          throw e
+        }
+        await ctx.meta.addSessionMessage(
+          {
+            id: newId("sm"),
+            session_id: opened.id,
+            author_kind: "asker",
+            author_id: actingFor.id,
+            body_md: instruction,
+          },
+          "working",
+        )
+        log.info("composite_context_opened", {
+          org: hit.x.org_id,
+          context_id: hit.x.id,
+          session_id: opened.id,
+          kind: normalized.candidate.manifest.kind,
+          manifest_version: hit.manifest.current_version,
+          deduped: false,
+        })
+        return reply((await ctx.meta.getSession(opened.id)) ?? opened, hit.x, false)
       }
       // PAYER guard, mirroring the REST ask (routes/contexts.ts): the asker pays, then
       // owner-lend, then the pool. After the dedupe join for the same reason — joining an

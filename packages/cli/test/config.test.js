@@ -120,7 +120,7 @@ describe("scaffold", () => {
     )
     const workflowSkill = readFileSync(join(d, ".agents/skills/derive-workflows/SKILL.md"), "utf8")
     expect(workflowSkill).toContain("name: derive-workflows")
-    expect(workflowSkill).toContain("Preview includes structural validation")
+    expect(workflowSkill).toContain("one `derive.agent-manifest/v2` fact")
   })
 
   it("installs the agent on-ramp alone and never clobbers an existing config", () => {

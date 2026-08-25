@@ -237,6 +237,9 @@ describe("parseFacts — content type gating", () => {
     expect(parseFacts(slot("bundle-manifest", "{}"), "text/x-derive-linked-bundle").facts).toEqual([
       expect.objectContaining({ slot: "bundle-manifest", json: "{}" }),
     ])
+    expect(parseFacts(slot("agent-manifest", "{}"), "text/x-derive-agent-manifest").facts).toEqual([
+      expect.objectContaining({ slot: "agent-manifest", json: "{}" }),
+    ])
   })
 
   it("finds no facts in a non-html, non-markdown type", () => {

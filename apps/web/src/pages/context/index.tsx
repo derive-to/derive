@@ -83,6 +83,15 @@ export function Contexts() {
 export function ContextRow({ context: x }: { context: ContextInfo }) {
   const status = runnerStatus(x.runner_seen_at)
   const runnerLabel = status.online ? "ready" : status.away ? "away" : "offline"
+  const composite = x.kind === "graph" || x.kind === "loop"
+  const icon = x.kind === "graph" || x.kind === "loop" ? x.kind : "context"
+  const ready = x.manifest_status === "ready"
+  const stateLabel = composite ? (ready ? "ready" : "needs changes") : runnerLabel
+  const stateTitle = composite
+    ? ready
+      ? `Validated ${x.kind} manifest. Runs are driven by a local harness.`
+      : x.manifest_errors.join("\n") || "This manifest needs changes before it can run."
+    : status.title
   return (
     <Link
       to="/contexts/$id"
@@ -94,30 +103,53 @@ export function ContextRow({ context: x }: { context: ContextInfo }) {
         aria-hidden="true"
         className={cn(
           "absolute inset-y-0 left-0 w-1",
-          status.online ? "bg-success" : status.away ? "bg-warning" : "bg-muted-foreground/35",
+          composite
+            ? ready
+              ? "bg-share"
+              : "bg-warning"
+            : status.online
+              ? "bg-success"
+              : status.away
+                ? "bg-warning"
+                : "bg-muted-foreground/35",
         )}
       />
       <div className="flex min-w-0 items-center gap-2">
-        <Icon name="context" className="shrink-0 text-muted-foreground" />
+        <Icon name={icon} className="shrink-0 text-muted-foreground" />
         <span className="min-w-0 truncate text-sm font-medium text-foreground">{x.name}</span>
+        <span className="shrink-0 rounded-md border border-border bg-muted/35 px-1.5 py-0.5 font-mono text-2xs capitalize text-muted-foreground">
+          {x.kind ?? "unknown"}
+        </span>
         <span
           className={cn(
             "ml-auto flex shrink-0 items-center gap-1.5 rounded-md border px-1.5 py-0.5 font-mono text-2xs",
-            status.online
-              ? "border-success/20 bg-success/10 text-success"
-              : status.away
-                ? "border-warning/20 bg-warning/10 text-warning"
-                : "border-border bg-muted/45 text-muted-foreground",
+            composite
+              ? ready
+                ? "border-share/20 bg-share/10 text-share"
+                : "border-warning/20 bg-warning/10 text-warning"
+              : status.online
+                ? "border-success/20 bg-success/10 text-success"
+                : status.away
+                  ? "border-warning/20 bg-warning/10 text-warning"
+                  : "border-border bg-muted/45 text-muted-foreground",
           )}
-          title={status.title}
+          title={stateTitle}
         >
           <span
             className={cn(
               "size-1.5 rounded-full",
-              status.online ? "bg-success" : status.away ? "bg-warning" : "bg-muted-foreground/50",
+              composite
+                ? ready
+                  ? "bg-share"
+                  : "bg-warning"
+                : status.online
+                  ? "bg-success"
+                  : status.away
+                    ? "bg-warning"
+                    : "bg-muted-foreground/50",
             )}
           />
-          {runnerLabel}
+          {stateLabel}
         </span>
       </div>
       {x.description && (
@@ -136,6 +168,12 @@ export function ContextRow({ context: x }: { context: ContextInfo }) {
         {x.skills_count ? (
           <span className="rounded-md border border-border bg-muted/35 px-1.5 py-0.5 text-muted-foreground">
             {x.skills_count} {x.skills_count === 1 ? "skill" : "skills"}
+          </span>
+        ) : null}
+        {composite && (ready || x.node_count > 0) ? (
+          <span className="rounded-md border border-border bg-muted/35 px-1.5 py-0.5 text-muted-foreground">
+            {x.node_count} {x.node_count === 1 ? "node" : "nodes"}
+            {x.loop_count ? ` · ${x.loop_count} ${x.loop_count === 1 ? "bound" : "bounds"}` : ""}
           </span>
         ) : null}
         {x.connection_ids.length ? (

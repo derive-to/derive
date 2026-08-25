@@ -118,12 +118,6 @@ export const libraryArtifactsQuery = (params: LibraryParams) =>
     // persisted-restore cost of a deep scroll needs bidirectional cursors first.
   })
 
-export const workflowsQuery = () =>
-  queryOptions({
-    queryKey: ["workflows"] as const,
-    queryFn: () => api.listWorkflows(),
-  })
-
 // Artifacts that need YOUR feedback: an open comment thread you're tagged in or have
 // commented on. Read as a COUNT for the home's quiet triage line (the full list is the
 // /feedback feed, an infinite libraryArtifactsQuery({ scope: "needs_feedback" })). Kept a

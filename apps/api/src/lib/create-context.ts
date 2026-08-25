@@ -11,6 +11,8 @@ export interface CreateContextCoreInput {
   maxRunMs?: number
   maxConcurrency?: number
   connectionIds?: string[]
+  /** Server-owned context metadata (for example an imported legacy diagram selector). */
+  config?: string | null
 }
 
 export interface CreateContextCoreResult {
@@ -74,6 +76,7 @@ export async function createContextCore(
       max_run_ms: input.maxRunMs ?? null,
       ...(input.maxConcurrency !== undefined ? { max_concurrency: input.maxConcurrency } : {}),
       connection_ids: input.connectionIds?.length ? JSON.stringify(input.connectionIds) : null,
+      config: input.config ?? null,
     })
     return {
       context,

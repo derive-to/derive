@@ -1,63 +1,72 @@
-# Context-session runtime
+# Local graph/loop Context runtime
 
-Read this only when the person explicitly asks to run a previewed workflow.
+Read this only when the person explicitly asks to run a preview-ready graph or loop Context.
 
-## Boundary
+## Open the root
 
-The current Codex, Claude, or approved agent session is the harness. Derive stores the graph,
-authored state, artifacts, review, and context sessions. Do not create a second scheduler or MCP
-run API.
+Use the remote OAuth MCP and the existing tool:
 
-## One node attempt
+```text
+use({
+  context: "Weekly brief",
+  instruction: "Build the brief for the August launch",
+  dedupe_key: "august-launch-weekly-brief"
+})
+```
 
-For a ready context node, open one context session with a deterministic attempt key:
+The response's `derive.local-workflow-run/v1` envelope is the run contract: exact manifest/version,
+root instruction, diagram, forbidden actions, node dedupe template, and reporting instructions.
+Do not reload the Context's current manifest mid-run. A later published version applies only to a
+new root session.
+
+## Drive nodes
+
+Begin at `diagram.entry`. A node becomes ready only through explicit satisfied routes, resolved
+human/effect gates, and remaining bounds.
+
+For one context-node attempt:
 
 ```text
 use({
   context: node.context_ref,
-  instruction: render(node.instruction, inputs),
-  dedupe_key: `${workflowArtifact}:${diagram}:${node}:${attempt}`
+  instruction: render(node.instruction, root_instruction, prior_results),
+  dedupe_key: `${rootSession}:v${manifestVersion}:${nodeId}:${attempt}`
 })
 ```
 
-Then collect progress or settlement through the returned session:
+- Check with `use({session_id, wait:50})`.
+- Follow up on the same attempt with `use({session_id, instruction})`.
+- Retry/refinement opens a new child session with the next attempt number.
+- Parallelize only independent nodes with no shared mutable effect.
+
+Map only explicit child truth: `open` waiting, `working` active, `answered` done, `escalated`
+human-waiting, `failed` declared retry or block, `closed` stopped. Never infer state from prose,
+silence, elapsed time, or canvas styling.
+
+## Report the root
 
 ```text
-use({ session_id, wait: 50 })
+use({session_id: root, answer: "Research done; evaluation running.", progress: true})
 ```
 
-A follow-up continues this attempt: `use({session_id, instruction})`. A retry or quality
-iteration starts a new session with the next attempt number. Never reuse one session across loop
-attempts; never create a new session for a mere check or follow-up.
+At terminal result:
 
-## Project session truth
+```text
+use({
+  session_id: root,
+  answer: "The reviewed brief is published.",
+  result_artifact_id: "abc123",
+  state: "answered"
+})
+```
 
-| Context session | Authored graph state | Harness action |
-| --- | --- | --- |
-| `open` | `waiting` | Keep the node queued; do not infer a person is needed. |
-| `working` | `active` | Carry progress and any bound result artifact into the node note/member. |
-| `answered` | `done` | Add `result_artifact_id` to bundle members, point `node.member` at its local id, then route. |
-| `escalated` | `waiting` + explicit `help` | Pause with the exact question and resume event. |
-| `failed` | `blocked` or a declared retry | Apply the authored failure/loop policy; never retry forever. |
-| `closed` | stopped | End deliberately and explain why. |
-
-Publish each result artifact and graph-state transition back to the same Derive workflow as normal
-run bookkeeping. Do this by default with version/idempotency protection; it does not need a fresh
-human approval.
-
-Update only explicit authored fields. Silence, inactivity, low confidence, or an unavailable
-artifact does not mean a person is needed.
-
-## Ready-node rule
-
-A diagram begins only at its declared `entry`. After that, a node is ready only when every
-required predecessor has settled on a route whose condition is satisfied, no referenced human
-approval is unresolved, and starting it would stay inside loop/effect policy.
-Parallelize only nodes that do not share mutable state. When uncertain, run sequentially and say
-why.
+Use `escalated` only for an explicit human decision/help request and `failed` for a terminal error
+or exhausted policy. Progress keeps a long root alive; if the harness disappears, a later check
+turns abandonment into an explicit failure.
 
 ## Stop
 
-Stop when a terminal result is reached, a loop bound/stagnation/time/cost limit is exhausted, a
-human gate is waiting, a terminal failure occurs, or the person asks to stop. Report the current
-artifact, completed nodes, remaining work, and any exact help request.
+Stop at terminal result, terminal failure, exhausted attempt/stagnation/time/cost bound, unresolved
+human/effect gate, forbidden action, or user stop. Report completed nodes, child sessions/results,
+remaining work, and the exact reason. Stdio has no `use`; refuse execution and connect the remote
+endpoint rather than pretending.

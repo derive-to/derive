@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router"
-import { contextsQuery, workflowsQuery } from "../lib/queries"
+import { contextsQuery } from "../lib/queries"
 import { requireOnboarded } from "../lib/route-guards"
 import {
   WORKFLOW_VIEWS,
@@ -18,7 +18,6 @@ export const Route = createFileRoute("/workflows/")({
   }),
   loader: ({ context }) => {
     void context.queryClient.ensureQueryData(contextsQuery()).catch(() => {})
-    void context.queryClient.ensureQueryData(workflowsQuery()).catch(() => {})
   },
   pendingComponent: WorkflowsPending,
   component: Workflows,

@@ -1,8 +1,10 @@
 // Standalone workflow preview compiler for the published CLI. The CLI deliberately has
 // no @derive/core runtime dependency, so this validates the same public
-// derive.workflow/v1 contract from the two facts embedded in one HTML artifact.
+// derive.agent-manifest/v2 contract (plus legacy derive.workflow/v1) from the
+// facts embedded in one HTML artifact.
 
 export const WORKFLOW_DEFINITION_SCHEMA = "derive.workflow/v1"
+export const AGENT_MANIFEST_SCHEMA = "derive.agent-manifest/v2"
 const MAX_FACT_BYTES = 32 * 1024
 
 const object = (value) => value !== null && typeof value === "object" && !Array.isArray(value)
@@ -41,15 +43,67 @@ export function factJson(source, slot) {
 const titleFromId = (id) =>
   id.replaceAll(/[-_]+/g, " ").replace(/^./, (letter) => letter.toUpperCase())
 
+/** Normalize the new one-diagram agent manifest into the established workflow
+ * validator's input. The CLI stays dependency-free, so this narrow adapter mirrors
+ * the core envelope checks; contract-parity tests keep the two surfaces locked. */
+const definitionFactOf = (source) => {
+  const agent = factJson(source, "agent-manifest")
+  if (agent.error) return { value: null, errors: [`AM-01 ${agent.error}`], source: "v2" }
+  if (agent.value !== null) {
+    const errors = []
+    const value = agent.value
+    if (!object(value))
+      return {
+        value: null,
+        errors: ["AM-01 agent-manifest must be an object"],
+        source: "v2",
+      }
+    if (value.schema !== AGENT_MANIFEST_SCHEMA)
+      errors.push(`AM-01 schema must be "${AGENT_MANIFEST_SCHEMA}"`)
+    const kind = value.kind === "graph" || value.kind === "loop" ? value.kind : null
+    if (!kind) errors.push('AM-01 workflow manifest kind must be "graph" or "loop"')
+    const purpose = text(value.purpose)
+    const title = text(value.title)
+    if (!purpose) errors.push("AM-01 purpose is required")
+    if (!title) errors.push("AM-02 graph/loop manifest requires a title")
+    if (!object(value.diagram)) errors.push("AM-02 graph/loop manifest requires one diagram")
+    const loops =
+      object(value.diagram) && Array.isArray(value.diagram.loops) ? value.diagram.loops : []
+    if (kind === "graph" && loops.length)
+      errors.push("AM-04 graph manifest must be acyclic and must not declare loop policies")
+    if (kind === "loop" && loops.length === 0)
+      errors.push("AM-04 loop manifest requires at least one bounded loop policy")
+    return {
+      value:
+        errors.length || !purpose || !object(value.diagram)
+          ? null
+          : {
+              schema: WORKFLOW_DEFINITION_SCHEMA,
+              purpose,
+              diagrams: [value.diagram],
+              ...(Array.isArray(value.forbidden) ? { forbidden: value.forbidden } : {}),
+            },
+      errors,
+      source: "v2",
+    }
+  }
+  const legacy = factJson(source, "workflow-definition")
+  return {
+    value: legacy.value,
+    errors: legacy.error ? [`WF-01 ${legacy.error}`] : [],
+    source: "legacy",
+  }
+}
+
 /** Make the visible graph's topology a projection of the runnable definition.
  * Existing labels, node state, and review metadata survive by stable id; only
  * nodes and edges are reconciled. This removes the most error-prone two-fact edit
  * while keeping the visible bundle rich enough to carry live human state. */
 export function syncWorkflowSource(source) {
-  const definitionFact = factJson(source, "workflow-definition")
-  if (definitionFact.error) throw new Error(definitionFact.error)
+  const definitionFact = definitionFactOf(source)
+  if (definitionFact.errors.length) throw new Error(definitionFact.errors.join("; "))
   if (!object(definitionFact.value) || !Array.isArray(definitionFact.value.diagrams))
-    throw new Error("workflow-definition is missing or invalid")
+    throw new Error("agent-manifest or workflow-definition is missing or invalid")
   const bundleFact = factJson(source, "bundle-manifest")
   if (bundleFact.error) throw new Error(bundleFact.error)
   const existing = object(bundleFact.value) ? bundleFact.value : {}
@@ -663,11 +717,11 @@ export function previewWorkflowSource(source) {
   const errors = []
   const warnings = []
   const linkedFact = factJson(source, "bundle-manifest")
-  const workflowFact = factJson(source, "workflow-definition")
+  const workflowFact = definitionFactOf(source)
   if (linkedFact.error) errors.push(`WF-02 ${linkedFact.error}`)
-  if (workflowFact.error) errors.push(`WF-01 ${workflowFact.error}`)
-  if (!workflowFact.value && !workflowFact.error)
-    errors.push("WF-01 no workflow-definition fact found")
+  errors.push(...workflowFact.errors)
+  if (!workflowFact.value && workflowFact.errors.length === 0)
+    errors.push("WF-01 no agent-manifest or workflow-definition fact found")
   const bundle = validateBundle(linkedFact.value, errors)
   const definition = workflowFact.value
     ? validateDefinition(workflowFact.value, bundle, errors)

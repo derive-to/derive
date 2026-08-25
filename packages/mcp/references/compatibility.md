@@ -14,13 +14,13 @@ Prefer the remote Streamable HTTP MCP. It is the authoritative Derive agent surf
 | Cross-workspace selection | `list_workspaces` + `workspace` | `list_workspaces` + per-tool `workspace` |
 | Live workspace contexts | `find` + `use` | Not available |
 | Resumable agent state | `checkpoint` | Not available |
-| Workflow execution procedure | Generated handoff + `derive://skills/workflows` | `derive://guide/workflows` (guidance only) |
-| Execute workflow context nodes | `use` | Not available |
+| Graph/loop Context procedure | Root `use` envelope + `derive://skills/workflows` | `derive://guide/workflows` (guidance only) |
+| Execute graph/loop Contexts | `use({context,instruction})`, then child `use` calls | Not available |
 
 On stdio, read `derive://guide` before the first write. If the client cannot read MCP
 resources, call `read` with `derive://guide` as the `short_id`.
 
 Do not call a remote-only tool by guessing its name when only stdio is connected.
 Explain the limitation and offer the remote OAuth setup when the requested job needs it.
-For workflow execution, use the exact handoff in `derive://guide/workflows`: stdio can read and
-publish the durable workflow artifact, but it must not pretend to run context nodes.
+For graph/loop execution, use the exact handoff in `derive://guide/workflows`: stdio can read and
+publish the typed manifest, but it must not pretend to run Context nodes.

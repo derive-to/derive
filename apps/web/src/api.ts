@@ -89,8 +89,6 @@ export type VersionSession = components["schemas"]["VersionSession"]
  *  from the OpenAPI spec (apps/api/openapi.json). `my_role` is `Role | null`;
  *  workspace_access/link_role/listed are the v2 access enums (see access-model.md). */
 export type Artifact = components["schemas"]["Artifact"]
-/** One graph/loop bundle in the workspace's Workflows directory. */
-export type WorkflowDirectoryItem = components["schemas"]["WorkflowDirectoryItem"]
 /** An abuse report against an artifact. Generated from the OpenAPI spec. */
 export type Report = components["schemas"]["Report"]
 /** A collection: a shareable group of artifacts, tagged with its item count and origin
@@ -400,6 +398,9 @@ export type ContextInfo = components["schemas"]["ContextInfo"]
  *  agent, its raw manifest source instead. Generated from the OpenAPI spec. */
 export type ContextDetail =
   paths["/v1/contexts/{id}"]["get"]["responses"][200]["content"]["application/json"]
+/** Dry-run/import result for adopting legacy graph and loop artifacts as contexts. */
+export type WorkflowImportResult =
+  paths["/v1/workflows/import"]["post"]["responses"][200]["content"]["application/json"]
 export type ManifestSkillInfo = components["schemas"]["ManifestSkillInfo"]
 /** One artifact a context produced, grouped across every run that bound it. Generated
  *  from the OpenAPI spec. */
@@ -785,8 +786,6 @@ export const api = {
   }> => {
     return f(artifactsListPath(params), opts(undefined, init)).then(j)
   },
-  listWorkflows: (): Promise<{ items: WorkflowDirectoryItem[]; truncated: boolean }> =>
-    f("/v1/workflows", opts()).then(j),
   // The batched boot read: exactly the four bodies below (tags summary, collections,
   // workspace settings, notifications), one authenticated request. The client seeds
   // the four individual query caches from it — see lib/bootstrap.ts. Typed against the
@@ -1093,6 +1092,8 @@ export const api = {
 
   // Contexts + sessions (the ask loop; see routes/contexts.ts server-side).
   listContexts: (): Promise<{ contexts: ContextInfo[] }> => f("/v1/contexts", opts()).then(j),
+  importWorkflows: (dryRun: boolean): Promise<WorkflowImportResult> =>
+    f("/v1/workflows/import", opts({ dry_run: dryRun })).then(j),
   getContext: (id: string): Promise<ContextDetail> => f(`/v1/contexts/${id}`, opts()).then(j),
   // agent_id omitted → the server auto-mints a MANAGED agent for this context and
   // returns its bearer as agent_token, exactly once on this response.

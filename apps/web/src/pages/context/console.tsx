@@ -51,6 +51,7 @@ import { mdToHtml } from "../artifact/lib/markdown"
 import { ConsolePending, ContextRowsSkeleton } from "./context-skeleton"
 import { ANSWER_PROSE, answerMdToHtml } from "./lib/answer-md"
 import { runnerStatus } from "./runner-status"
+import { ContextWorkflowDefinition } from "./workflow-definition"
 
 // The context console: a context's HOME, not a bare chat widget — what it is (the
 // manifest), what it can do (the skills it pins), where it runs (its owner's own
@@ -124,6 +125,10 @@ export function contextNowSummary(sessions: Session[]): ContextNowSummary {
   return { working, waiting, needsReview, failed, headline }
 }
 
+export function localRunSnippet(contextName: string): string {
+  return `use({\n  context: ${JSON.stringify(contextName)},\n  instruction: "Describe the outcome you want"\n})`
+}
+
 function Console({ id }: { id: string }) {
   const { me } = useAuth()
   const qc = useQueryClient()
@@ -162,6 +167,10 @@ function Console({ id }: { id: string }) {
   // Controlled tabs so the Activity view can hand a session to Chat, and the rail's
   // "see manifest" link can hand off to the Manifest tab.
   const [tab, setTab] = useState("chat")
+  useEffect(() => {
+    if (context?.kind === "graph" || context?.kind === "loop")
+      setTab((current) => (current === "chat" ? "definition" : current))
+  }, [context?.kind])
   const mine = (sessions ?? []).filter((s) => s.asker_id === me?.id)
   const active = picked === "new" ? null : (picked ?? mine[0]?.id ?? null)
   const isOwner = !!context && context.created_by === me?.id
@@ -203,19 +212,34 @@ function Console({ id }: { id: string }) {
   const skillsCount = context.skills?.length ?? context.skills_count ?? 0
   const sourcesCount = context.connection_ids.length
   const budgetMin = context.max_run_ms ? Math.round(context.max_run_ms / 60_000) : null
+  const composite = context.kind === "graph" || context.kind === "loop"
+  const contextIcon = context.kind === "graph" || context.kind === "loop" ? context.kind : "context"
 
   return (
-    <PageShell width="wide" className="flex flex-col gap-5">
+    <PageShell width="canvas" className="flex flex-col gap-5">
       <div className="flex flex-col gap-1.5">
         <div className="flex flex-wrap items-center gap-3">
-          <Icon name="context" className="text-muted-foreground" />
+          <Icon name={contextIcon} className="text-muted-foreground" />
           <h1 className="font-serif text-2xl font-medium tracking-tight text-foreground">
             {context.name}
           </h1>
-          <RunnerLiveness seenAt={context.runner_seen_at} />
+          {composite ? (
+            <span
+              className={cn(
+                "rounded-md border px-2 py-1 font-mono text-2xs",
+                context.manifest_status === "ready"
+                  ? "border-share/20 bg-share/10 text-share"
+                  : "border-warning/20 bg-warning/10 text-warning",
+              )}
+            >
+              {context.manifest_status === "ready" ? "ready" : "needs changes"}
+            </span>
+          ) : (
+            <RunnerLiveness seenAt={context.runner_seen_at} />
+          )}
         </div>
         <Eyebrow>
-          context
+          {context.kind ?? "context"}
           {context.manifest_version != null && <> · manifest v{context.manifest_version}</>}
           {" · "}
           {skillsCount} {skillsCount === 1 ? "skill" : "skills"}
@@ -245,8 +269,13 @@ function Console({ id }: { id: string }) {
 
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList variant="line">
+          {composite && (
+            <TabsTrigger value="definition" data-testid="console-tab-definition">
+              Definition
+            </TabsTrigger>
+          )}
           <TabsTrigger value="chat" data-testid="console-tab-chat">
-            Chat
+            {composite ? "Run" : "Chat"}
           </TabsTrigger>
           <TabsTrigger value="manifest" data-testid="console-tab-manifest">
             Manifest
@@ -261,97 +290,142 @@ function Console({ id }: { id: string }) {
           )}
         </TabsList>
 
+        {composite && (
+          <TabsContent value="definition" className="pt-4">
+            <ContextWorkflowDefinition context={context} />
+          </TabsContent>
+        )}
+
         <TabsContent
           value="chat"
           className="flex flex-col gap-4 pt-4 lg:flex-row lg:items-start lg:gap-6"
         >
-          <div className="flex min-w-0 flex-1 flex-col gap-4">
-            {/* A failed sessions load mustn't masquerade as "no conversations yet" — say so and
-                let them retry (they can still ask a fresh question below). */}
-            {sessionsFailed && !sessions && (
-              <LoadError
-                layout="inline"
-                title="Couldn’t load your conversations"
-                description="You can still message it below, or try again."
-                testId="console-sessions-retry"
-                onRetry={() => refetchSessions()}
-              />
-            )}
-            {mine.length > 0 && (
-              <div className="flex flex-wrap items-center gap-1.5">
-                {/* Recent conversations only — the full history is the owner's
-                    Activity view, not a chat surface's job. */}
-                {mine.slice(0, 6).map((s) => (
+          {composite ? (
+            picked && picked !== "new" ? (
+              <div className="min-w-0 flex-1 rounded-xl border bg-card p-5">
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-3 border-b pb-4">
+                  <div>
+                    <SectionEyebrow>Local run record</SectionEyebrow>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      Progress and the terminal report from the opening MCP client.
+                    </p>
+                  </div>
                   <Button
-                    key={s.id}
-                    variant={s.id === active ? "secondary" : "ghost"}
+                    variant="outline"
                     size="sm"
-                    data-testid="console-session-pick"
-                    onClick={() => setPicked(s.id)}
-                    className="text-muted-foreground data-[here=true]:text-foreground"
-                    data-here={s.id === active}
+                    onClick={() => setPicked(null)}
+                    data-testid="context-run-another"
                   >
-                    {ago(s.created_at)}
-                    <StateBadge state={s.state} />
+                    Run another
                   </Button>
-                ))}
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  data-testid="console-new-session"
-                  onClick={() => setPicked("new")}
-                  className="text-muted-foreground"
-                >
-                  <Icon name="plus" /> New chat
-                </Button>
+                </div>
+                <SessionThread
+                  sessionId={picked}
+                  contextId={id}
+                  contextName={context.name}
+                  readOnly
+                  onClosed={() =>
+                    qc.invalidateQueries({ queryKey: contextSessionsQuery(id).queryKey })
+                  }
+                />
               </div>
-            )}
-            {active ? (
-              <SessionThread
-                sessionId={active}
-                contextId={id}
-                contextName={context.name}
-                onClosed={() =>
-                  qc.invalidateQueries({ queryKey: contextSessionsQuery(id).queryKey })
-                }
-              />
             ) : (
-              <ChatComposer
-                contextId={id}
-                contextName={context.name}
-                tryChips={tryChipsFrom(context.manifest?.md)}
-                onAsked={(s) => {
-                  setPicked(s.id)
-                  qc.invalidateQueries({ queryKey: contextSessionsQuery(id).queryKey })
-                }}
-              />
-            )}
-          </div>
-
-          <div className="flex w-full flex-col gap-3 lg:w-72 lg:flex-none">
-            <RunnerCard
-              context={context}
-              isOwner={isOwner}
-              rotatedToken={rotatedToken}
-              onRotate={() => rotateToken.mutate()}
-              rotating={rotateToken.isPending}
-              onCopy={() => {
-                if (!rotatedToken) return
-                void copyText(rotatedToken, { success: "Key copied" })
-              }}
-              onDoneRotate={() => setRotatedToken(null)}
-            />
-            {skillsCount > 0 && (
-              <SkillsCard skills={context.skills ?? []} onSeeManifest={() => setTab("manifest")} />
-            )}
-            {sourcesCount > 0 && <SourcesCard count={sourcesCount} />}
-            {isOwner && (
-              <div className="rounded-xl border bg-card p-3.5">
-                <SectionEyebrow className="mb-2.5">Access</SectionEyebrow>
-                <ContextAccess id={id} name={context.name} policy={context.ask_policy} />
+              <LocalRunCard context={context} />
+            )
+          ) : (
+            <>
+              <div className="flex min-w-0 flex-1 flex-col gap-4">
+                {/* A failed sessions load mustn't masquerade as "no conversations yet" — say so and
+                let them retry (they can still ask a fresh question below). */}
+                {sessionsFailed && !sessions && (
+                  <LoadError
+                    layout="inline"
+                    title="Couldn’t load your conversations"
+                    description="You can still message it below, or try again."
+                    testId="console-sessions-retry"
+                    onRetry={() => refetchSessions()}
+                  />
+                )}
+                {mine.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {/* Recent conversations only — the full history is the owner's
+                    Activity view, not a chat surface's job. */}
+                    {mine.slice(0, 6).map((s) => (
+                      <Button
+                        key={s.id}
+                        variant={s.id === active ? "secondary" : "ghost"}
+                        size="sm"
+                        data-testid="console-session-pick"
+                        onClick={() => setPicked(s.id)}
+                        className="text-muted-foreground data-[here=true]:text-foreground"
+                        data-here={s.id === active}
+                      >
+                        {ago(s.created_at)}
+                        <StateBadge state={s.state} />
+                      </Button>
+                    ))}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      data-testid="console-new-session"
+                      onClick={() => setPicked("new")}
+                      className="text-muted-foreground"
+                    >
+                      <Icon name="plus" /> New chat
+                    </Button>
+                  </div>
+                )}
+                {active ? (
+                  <SessionThread
+                    sessionId={active}
+                    contextId={id}
+                    contextName={context.name}
+                    onClosed={() =>
+                      qc.invalidateQueries({ queryKey: contextSessionsQuery(id).queryKey })
+                    }
+                  />
+                ) : (
+                  <ChatComposer
+                    contextId={id}
+                    contextName={context.name}
+                    tryChips={tryChipsFrom(context.manifest?.md)}
+                    onAsked={(s) => {
+                      setPicked(s.id)
+                      qc.invalidateQueries({ queryKey: contextSessionsQuery(id).queryKey })
+                    }}
+                  />
+                )}
               </div>
-            )}
-          </div>
+
+              <div className="flex w-full flex-col gap-3 lg:w-72 lg:flex-none">
+                <RunnerCard
+                  context={context}
+                  isOwner={isOwner}
+                  rotatedToken={rotatedToken}
+                  onRotate={() => rotateToken.mutate()}
+                  rotating={rotateToken.isPending}
+                  onCopy={() => {
+                    if (!rotatedToken) return
+                    void copyText(rotatedToken, { success: "Key copied" })
+                  }}
+                  onDoneRotate={() => setRotatedToken(null)}
+                />
+                {skillsCount > 0 && (
+                  <SkillsCard
+                    skills={context.skills ?? []}
+                    onSeeManifest={() => setTab("manifest")}
+                  />
+                )}
+                {sourcesCount > 0 && <SourcesCard count={sourcesCount} />}
+                {isOwner && (
+                  <div className="rounded-xl border bg-card p-3.5">
+                    <SectionEyebrow className="mb-2.5">Access</SectionEyebrow>
+                    <ContextAccess id={id} name={context.name} policy={context.ask_policy} />
+                  </div>
+                )}
+              </div>
+            </>
+          )}
         </TabsContent>
 
         <TabsContent value="manifest" className="pt-4">
@@ -450,6 +524,74 @@ function ContextOutputCard({
   )
 }
 
+function LocalRunCard({ context }: { context: ContextDetail }) {
+  if (context.manifest_status !== "ready") {
+    return (
+      <div className="min-w-0 flex-1 rounded-xl border border-warning/20 bg-warning/5 p-5">
+        <SectionEyebrow>Run blocked</SectionEyebrow>
+        <h2 className="mt-2 text-lg font-semibold tracking-tight text-foreground">
+          Fix the manifest before this can run
+        </h2>
+        <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
+          Derive will not create a root session or hand an invalid definition to a local harness.
+        </p>
+        {context.manifest_errors.length > 0 && (
+          <ul className="mt-4 flex flex-col gap-1.5 text-sm text-warning">
+            {context.manifest_errors.map((error) => (
+              <li key={error} className="break-words">
+                {error}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    )
+  }
+  const snippet = localRunSnippet(context.name)
+  return (
+    <div className="grid min-w-0 flex-1 gap-4 lg:grid-cols-[minmax(0,1fr)_18rem]">
+      <div className="min-w-0 rounded-xl border bg-card p-5">
+        <SectionEyebrow>Run from Claude, Codex, or another MCP client</SectionEyebrow>
+        <h2 className="mt-2 text-lg font-semibold tracking-tight text-foreground">
+          Your local agent coordinates this {context.kind}
+        </h2>
+        <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
+          Connect the remote Derive MCP, then give this Context an instruction. Derive pins the
+          definition, records progress, and keeps every child Context attempt in Activity.
+        </p>
+        <pre className="mt-4 overflow-x-auto rounded-lg border bg-muted/35 p-3 text-xs leading-relaxed text-foreground">
+          <code>{snippet}</code>
+        </pre>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <Button
+            type="button"
+            size="sm"
+            data-testid="context-copy-local-run"
+            onClick={() => void copyText(snippet, { success: "Run call copied" })}
+          >
+            <CopyIcon className="size-3.5" /> Copy run call
+          </Button>
+          <a
+            href="https://derive.to/mcp"
+            className="inline-flex h-8 items-center rounded-md border px-3 text-xs font-medium text-foreground hover:bg-muted"
+          >
+            Remote MCP endpoint
+          </a>
+        </div>
+      </div>
+      <div className="rounded-xl border bg-card p-4">
+        <SectionEyebrow>Execution boundary</SectionEyebrow>
+        <ul className="mt-3 space-y-2 text-xs text-muted-foreground">
+          <li>• The exact manifest version stays pinned for the full run.</li>
+          <li>• Each graph node calls its named child Context through ordinary use.</li>
+          <li>• Loop bounds, human gates, routes, and effects remain authoritative.</li>
+          <li>• Closing this page does not interrupt the local harness.</li>
+        </ul>
+      </div>
+    </div>
+  )
+}
+
 function ContextStatusWorkspace({
   context,
   sessions,
@@ -467,6 +609,8 @@ function ContextStatusWorkspace({
 }) {
   const summary = contextNowSummary(sessions)
   const runner = runnerStatus(context.runner_seen_at)
+  const composite = context.kind === "graph" || context.kind === "loop"
+  const compositeReady = composite && context.manifest_status === "ready"
   const latest = sessions[0]
   return (
     <section
@@ -476,31 +620,51 @@ function ContextStatusWorkspace({
       <div className="rounded-xl border bg-card p-4">
         <Eyebrow>Now</Eyebrow>
         <h2 className="mt-2 text-base font-semibold tracking-tight text-foreground">
-          {summary.headline}
+          {composite && !compositeReady
+            ? "Fix the manifest before this can run."
+            : composite && sessions.length === 0
+              ? "Ready to run from your local agent."
+              : summary.headline}
         </h2>
         <div className="mt-3 flex flex-wrap items-center gap-1.5 font-mono text-2xs">
-          <span
-            className={cn(
-              "inline-flex items-center gap-1.5 rounded-md border px-1.5 py-0.5",
-              runner.online
-                ? "border-success/20 bg-success/10 text-success"
-                : runner.away
-                  ? "border-warning/20 bg-warning/10 text-warning"
-                  : "border-border bg-muted/45 text-muted-foreground",
-            )}
-          >
+          {composite ? (
             <span
               className={cn(
-                "size-1.5 rounded-full",
-                runner.online
-                  ? "bg-success"
-                  : runner.away
-                    ? "bg-warning"
-                    : "bg-muted-foreground/50",
+                "inline-flex items-center gap-1.5 rounded-md border px-1.5 py-0.5",
+                compositeReady
+                  ? "border-share/20 bg-share/10 text-share"
+                  : "border-warning/20 bg-warning/10 text-warning",
               )}
-            />
-            {runner.online ? "runner ready" : runner.away ? "runner away" : "runner offline"}
-          </span>
+            >
+              <span
+                className={cn("size-1.5 rounded-full", compositeReady ? "bg-share" : "bg-warning")}
+              />
+              {compositeReady ? "local harness" : "definition blocked"}
+            </span>
+          ) : (
+            <span
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-md border px-1.5 py-0.5",
+                runner.online
+                  ? "border-success/20 bg-success/10 text-success"
+                  : runner.away
+                    ? "border-warning/20 bg-warning/10 text-warning"
+                    : "border-border bg-muted/45 text-muted-foreground",
+              )}
+            >
+              <span
+                className={cn(
+                  "size-1.5 rounded-full",
+                  runner.online
+                    ? "bg-success"
+                    : runner.away
+                      ? "bg-warning"
+                      : "bg-muted-foreground/50",
+                )}
+              />
+              {runner.online ? "runner ready" : runner.away ? "runner away" : "runner offline"}
+            </span>
+          )}
           {summary.working ? (
             <span className="rounded-md border border-insights/20 bg-insights/10 px-1.5 py-0.5 text-insights">
               {summary.working} working
@@ -1195,11 +1359,13 @@ function SessionThread({
   sessionId,
   contextId,
   contextName,
+  readOnly = false,
   onClosed,
 }: {
   sessionId: string
   contextId: string
   contextName: string
+  readOnly?: boolean
   onClosed: () => void
 }) {
   const { me } = useAuth()
@@ -1366,7 +1532,11 @@ function SessionThread({
         )}
       </div>
 
-      {session.state === "closed" ? (
+      {readOnly ? (
+        <p className="border-t pt-3 text-sm text-muted-foreground">
+          Continue or settle this root run from the OAuth MCP client that opened it.
+        </p>
+      ) : session.state === "closed" ? (
         <p className="border-t pt-3 text-sm text-muted-foreground">This conversation is closed.</p>
       ) : isMine ? (
         <div className="flex flex-col gap-2 border-t pt-3">

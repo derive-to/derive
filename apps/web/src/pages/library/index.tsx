@@ -355,18 +355,22 @@ function LibraryBody({ view }: { view: LibraryView }) {
   // Only the counts the server can state authoritatively (preloaded summary / the
   // collection's own count) get a number; the follow/shared/feedback feeds show none
   // rather than a misleading "loaded-so-far" count that grows as you scroll.
+  // The general summary still counts Context manifest artifacts, which intentionally
+  // no longer live in this feed. Use the filtered feed only when its final page proves
+  // the count is complete; a large paginated library shows no number instead of a lie.
+  const completeVisibleCount = feed.data && hasNextPage === false ? items.length : undefined
   const headingCount = isSearching
     ? items.length
     : filter.kind === "all"
-      ? summary?.total
+      ? completeVisibleCount
       : filter.kind === "favorites"
-        ? summary?.favorites
+        ? completeVisibleCount
         : filter.kind === "mine"
-          ? summary?.mine
+          ? completeVisibleCount
           : filter.kind === "archived"
             ? summary?.archived
             : filter.kind === "collection"
-              ? activeCollection?.count
+              ? completeVisibleCount
               : undefined
 
   // The page's one primary action, and it is STABLE: it does not blink out while you

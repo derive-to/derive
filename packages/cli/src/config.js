@@ -1139,7 +1139,7 @@ const starterWorkflow = (title) => {
       {
         id: "build-and-publish",
         title: "Build and publish",
-        type: "graph",
+        type: "loop",
         nodes: [
           { id: "draft", label: "Draft", state: "pending" },
           { id: "evaluate", label: "Quality check", state: "pending" },
@@ -1153,88 +1153,93 @@ const starterWorkflow = (title) => {
       },
     ],
   }
-  const workflow = {
-    schema: "derive.workflow/v1",
+  const manifest = {
+    schema: "derive.agent-manifest/v2",
+    kind: "loop",
     purpose,
+    title: "Build and publish",
+    labels: {
+      draft: "Draft",
+      evaluate: "Quality check",
+      publish: "Publish",
+    },
     forbidden: ["Publish outside the current Derive workspace", "Continue past loop bounds"],
-    diagrams: [
-      {
-        id: "build-and-publish",
-        entry: "draft",
-        nodes: [
-          {
-            id: "draft",
-            kind: "context",
-            context_ref: "draft-builder",
-            instruction: `Create a reviewable ${title} draft.`,
-            result: `A complete ${title} draft`,
-          },
-          {
-            id: "evaluate",
-            kind: "context",
-            context_ref: "quality-checker",
-            instruction: `Evaluate the ${title} draft against its stated outcome and return either ready or revise with specific evidence.`,
-            result: "A grounded ready-or-revise decision",
-            routing: "one",
-          },
-          {
-            id: "publish",
-            kind: "context",
-            context_ref: "artifact-publisher",
-            instruction: "Publish the ready draft to the current Derive workspace.",
-            result: `A published ${title}`,
-            terminal: true,
-            effects: [
-              {
-                kind: "write",
-                description: `Publish ${title} to Derive`,
-                gate: "none",
-                idempotency: "Publish one version for this workflow node attempt",
-              },
-            ],
-          },
-        ],
-        routes: [
-          { from: "draft", to: "evaluate", when: "always" },
-          { from: "evaluate", to: "draft", when: "revise", fallback: true },
-          { from: "evaluate", to: "publish", when: "ready" },
-        ],
-        loops: [
-          {
-            id: "bounded-improvement",
-            nodes: ["draft", "evaluate"],
-            goal: "Reach the stated quality bar",
-            evaluate: "The quality checker evaluates accuracy, clarity, and scope",
-            stop: {
-              max_attempts: 2,
-              stagnation_limit: 1,
-              max_minutes: 20,
-              human_stop: "The person stops or changes the work",
+    diagram: {
+      id: "build-and-publish",
+      entry: "draft",
+      nodes: [
+        {
+          id: "draft",
+          kind: "context",
+          context_ref: "draft-builder",
+          instruction: `Create a reviewable ${title} draft.`,
+          result: `A complete ${title} draft`,
+        },
+        {
+          id: "evaluate",
+          kind: "context",
+          context_ref: "quality-checker",
+          instruction: `Evaluate the ${title} draft against its stated outcome and return either ready or revise with specific evidence.`,
+          result: "A grounded ready-or-revise decision",
+          routing: "one",
+        },
+        {
+          id: "publish",
+          kind: "context",
+          context_ref: "artifact-publisher",
+          instruction: "Publish the ready draft to the current Derive workspace.",
+          result: `A published ${title}`,
+          terminal: true,
+          effects: [
+            {
+              kind: "write",
+              description: `Publish ${title} to Derive`,
+              gate: "none",
+              idempotency: "Publish one version for this workflow node attempt",
             },
+          ],
+        },
+      ],
+      routes: [
+        { from: "draft", to: "evaluate", when: "always" },
+        { from: "evaluate", to: "draft", when: "revise", fallback: true },
+        { from: "evaluate", to: "publish", when: "ready" },
+      ],
+      loops: [
+        {
+          id: "bounded-improvement",
+          nodes: ["draft", "evaluate"],
+          goal: "Reach the stated quality bar",
+          evaluate: "The quality checker evaluates accuracy, clarity, and scope",
+          stop: {
+            max_attempts: 2,
+            stagnation_limit: 1,
+            max_minutes: 20,
+            human_stop: "The person stops or changes the work",
           },
-        ],
-        scenarios: [
-          {
-            id: "expected",
-            kind: "expected",
-            path: ["draft", "evaluate", "publish"],
-            outcome: `${title} meets the quality bar and is published`,
-          },
-          {
-            id: "context-failure",
-            kind: "failure",
-            path: ["draft"],
-            outcome: "The failed context session stays visible and the run stops",
-          },
-          {
-            id: "revision",
-            kind: "expected",
-            path: ["draft", "evaluate", "draft", "evaluate", "publish"],
-            outcome: "One bounded revision lands before publication",
-          },
-        ],
-      },
-    ],
+        },
+      ],
+      scenarios: [
+        {
+          id: "expected",
+          kind: "expected",
+          path: ["draft", "evaluate", "publish"],
+          outcome: `${title} meets the quality bar and is published`,
+        },
+        {
+          id: "context-failure",
+          kind: "failure",
+          path: ["draft"],
+          outcome: "The failed context session stays visible and the run stops",
+        },
+        {
+          id: "revision",
+          kind: "expected",
+          path: ["draft", "evaluate", "draft", "evaluate", "publish"],
+          outcome: "One bounded revision lands before publication",
+        },
+      ],
+    },
   }
   const fact = (value) => JSON.stringify(value, null, 2).replaceAll("<", "\\u003c")
   return `<!doctype html>
@@ -1256,8 +1261,8 @@ const starterWorkflow = (title) => {
 </head>
 <body>
   <h1>${title}</h1>
-  <p class="sub">A graph-first Derive workflow. The visible graph and runnable definition use
-  the same stable IDs for different jobs.</p>
+  <p class="sub">A loop Context manifest. The visible graph and runnable definition use the
+  same stable IDs for different jobs.</p>
   <div class="flow">
     <div class="node"><b>Draft</b><br>One context produces a complete result.</div><div class="arrow">→</div>
     <div class="node"><b>Quality check</b><br>Another context returns ready or revise.</div><div class="arrow">→</div>
@@ -1269,9 +1274,9 @@ const starterWorkflow = (title) => {
 <script type="application/derive-facts" data-fact="bundle-manifest">
 ${fact(bundle)}
 </script>
-<!-- Edit workflow behavior in this fact. The workflow sync command projects its topology above. -->
-<script type="application/derive-facts" data-fact="workflow-definition">
-${fact(workflow)}
+<!-- Edit agent behavior in this fact. The workflow sync command projects its topology above. -->
+<script type="application/derive-facts" data-fact="agent-manifest">
+${fact(manifest)}
 </script>
 </body>
 </html>

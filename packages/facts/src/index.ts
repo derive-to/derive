@@ -83,7 +83,11 @@ const LEGACY_FENCE_LANGS = ["derive-data"]
  * subtype explicit here; importing @derive/core would invert the package dependency. */
 const isHtmlSourceType = (contentType: string): boolean => {
   const ct = contentType.toLowerCase()
-  return ct.includes("html") || ct === "text/x-derive-linked-bundle"
+  return (
+    ct.includes("html") ||
+    ct === "text/x-derive-linked-bundle" ||
+    ct === "text/x-derive-agent-manifest"
+  )
 }
 const NAME_ATTRS = [FACT_NAME_ATTR, "data-slot"]
 

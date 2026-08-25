@@ -548,10 +548,15 @@ export function runStoreContract(
     it("can exclude one current content type from a listing", async () => {
       const ordinary = await store.createArtifact(newArtifact({ title: "Ordinary page" }))
       const workflow = await store.createArtifact(newArtifact({ title: "Workflow bundle" }))
+      const manifest = await store.createArtifact(newArtifact({ title: "Typed agent manifest" }))
       await store.addVersion(ordinary.id, newVersion({ content_type: "text/html" }))
       await store.addVersion(
         workflow.id,
         newVersion({ content_type: "text/x-derive-linked-bundle" }),
+      )
+      await store.addVersion(
+        manifest.id,
+        newVersion({ content_type: "text/x-derive-agent-manifest" }),
       )
 
       const listed = await store.listArtifacts({
@@ -560,6 +565,35 @@ export function runStoreContract(
       })
       expect(listed.map((artifact) => artifact.id)).toContain(ordinary.id)
       expect(listed.map((artifact) => artifact.id)).not.toContain(workflow.id)
+
+      const typedListed = await store.listArtifacts({
+        orgId: ORG,
+        excludeContentTypes: ["text/x-derive-linked-bundle", "text/x-derive-agent-manifest"],
+      })
+      expect(typedListed.map((artifact) => artifact.id)).toContain(ordinary.id)
+      expect(typedListed.map((artifact) => artifact.id)).not.toContain(workflow.id)
+      expect(typedListed.map((artifact) => artifact.id)).not.toContain(manifest.id)
+
+      const contextManifest = await store.createArtifact(
+        newArtifact({ title: "Single Context manifest" }),
+      )
+      await store.addVersion(contextManifest.id, newVersion({ content_type: "text/markdown" }))
+      await store.createContext({
+        id: uuid(),
+        org_id: ORG,
+        name: `context_${uuid().slice(0, 8)}`,
+        agent_id: uuid(),
+        manifest_artifact_id: contextManifest.id,
+        created_by: "amy",
+      })
+      const withoutContextManifests = await store.listArtifacts({
+        orgId: ORG,
+        excludeContextManifests: true,
+      })
+      expect(withoutContextManifests.map((artifact) => artifact.id)).toContain(ordinary.id)
+      expect(withoutContextManifests.map((artifact) => artifact.id)).not.toContain(
+        contextManifest.id,
+      )
     })
 
     it("setAccess changes the access triple (and sets/clears the password lock)", async () => {

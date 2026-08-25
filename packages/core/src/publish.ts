@@ -1,4 +1,6 @@
 import { unzipSync } from "fflate"
+import { agentManifestsOf } from "./agent-manifest"
+import { AGENT_MANIFEST_HTML_CONTENT_TYPE } from "./content-types"
 import { isDeckDocument } from "./decks"
 import { newId, newShortId, refFor, slugify } from "./ids"
 import { LINKED_BUNDLE_CONTENT_TYPE, linkedBundleOf } from "./linked-bundle"
@@ -221,6 +223,13 @@ async function storeContent(
     }
   }
   const text = new TextDecoder().decode(bytes)
+  const isAgentManifest = (contentType: string): boolean => {
+    const read = agentManifestsOf(text, contentType)
+    return (
+      read.candidates[0]?.source === "agent-manifest-v2" &&
+      (read.candidates[0]?.kind === "graph" || read.candidates[0]?.kind === "loop")
+    )
+  }
   let contentType: string
   if (looksLikeHtmlDocument(text)) {
     // A full HTML document is HTML even when committed with a .md name (common for
@@ -238,9 +247,11 @@ async function storeContent(
       ? VIDEO_CONTENT_TYPE
       : isDeckDocument(text)
         ? "text/x-derive-deck"
-        : linkedBundleOf(text)?.manifest
-          ? LINKED_BUNDLE_CONTENT_TYPE
-          : "text/html"
+        : isAgentManifest("text/html")
+          ? AGENT_MANIFEST_HTML_CONTENT_TYPE
+          : linkedBundleOf(text)?.manifest
+            ? LINKED_BUNDLE_CONTENT_TYPE
+            : "text/html"
   } else if (/\.(md|markdown)$/i.test(filename)) {
     // Markdown stays markdown even when it talks about decks at length — the decks
     // skill and this repo's own docs quote the protocol and slide markup verbatim.
@@ -254,7 +265,11 @@ async function storeContent(
   } else if (/\.html?$/i.test(filename)) {
     // An HTML fragment (no doctype, so the sniff above missed it) saved with an
     // .html name — keep it HTML so the markup renders, not shows as escaped text.
-    contentType = linkedBundleOf(text)?.manifest ? LINKED_BUNDLE_CONTENT_TYPE : "text/html"
+    contentType = isAgentManifest("text/html")
+      ? AGENT_MANIFEST_HTML_CONTENT_TYPE
+      : linkedBundleOf(text)?.manifest
+        ? LINKED_BUNDLE_CONTENT_TYPE
+        : "text/html"
   } else {
     // Plaintext / unknown extension (.txt, no extension, …): render as markdown.
     // It's the safer, more readable default — sanitized and HTML-escaped through the

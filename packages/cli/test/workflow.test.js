@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
+import { agentManifestsOf } from "../../core/src/agent-manifest"
 import { previewWorkflow as previewCoreWorkflow } from "../../core/src/workflow"
 import {
   factJson,
@@ -141,6 +142,14 @@ describe("workflow preview", () => {
     expect(init.status).toBe(0)
     expect(init.stdout).toContain("derive workflow sync workflow.html")
 
+    const source = readFileSync(join(dir, "workflow.html"), "utf8")
+    expect(factJson(source, "agent-manifest").value).toMatchObject({
+      schema: "derive.agent-manifest/v2",
+      kind: "loop",
+      diagram: { id: "build-and-publish" },
+    })
+    expect(factJson(source, "workflow-definition").value).toBeNull()
+
     const preview = spawnSync(process.execPath, [bin, "workflow", "preview", "workflow.html"], {
       cwd: dir,
       encoding: "utf8",
@@ -251,6 +260,34 @@ describe("workflow preview", () => {
     expect(formatWorkflowPreview(preview)).toContain("Context sessions on explicit run")
     expect(formatWorkflowPreview(preview)).toContain("Research signals → signal-researcher")
     expect(formatWorkflowPreview(preview)).toContain("Cannot do")
+  })
+
+  it("previews the v2 typed manifest with exact core parity and gives it precedence", () => {
+    const legacy = workflowPage()
+    const linked = factJson(legacy, "bundle-manifest").value
+    const definition = factJson(legacy, "workflow-definition").value
+    const manifest = {
+      schema: "derive.agent-manifest/v2",
+      kind: "loop",
+      purpose: definition.purpose,
+      title: linked.diagrams[0].title,
+      labels: Object.fromEntries(linked.diagrams[0].nodes.map((node) => [node.id, node.label])),
+      forbidden: definition.forbidden,
+      diagram: definition.diagrams[0],
+    }
+    const source = legacy.replace(
+      /<script type="application\/derive-facts" data-fact="workflow-definition">[\s\S]*?<\/script>/,
+      `<script type="application/derive-facts" data-fact="agent-manifest">${JSON.stringify(manifest)}</script>`,
+    )
+    const cli = previewWorkflowSource(source)
+    const core = agentManifestsOf(source).candidates[0].preview
+    expect(cli).toEqual(core)
+
+    const invalidV2Wins = source.replace('"kind":"loop"', '"kind":"single"')
+    expect(previewWorkflowSource(invalidV2Wins)).toMatchObject({
+      status: "needs-changes",
+      errors: expect.arrayContaining([expect.stringContaining("AM-01")]),
+    })
   })
 
   it("returns one Needs changes result instead of a separate validation gate", () => {

@@ -4636,6 +4636,66 @@ export interface paths {
         };
         trace?: never;
     };
+    "/v1/workflows/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Dry-run or import unbound graph/loop manifests as contexts. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        dry_run: boolean;
+                    };
+                };
+            };
+            responses: {
+                /** @description The deterministic import plan and, when requested, created contexts. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            dry_run: boolean;
+                            imported: number;
+                            skipped: number;
+                            failed: number;
+                            truncated: boolean;
+                            items: {
+                                manifest_short_id: string;
+                                manifest_version: number;
+                                diagram_id: string | null;
+                                title: string;
+                                /** @enum {string} */
+                                kind: "graph" | "loop";
+                                /** @enum {string} */
+                                status: "would-import" | "imported" | "already-imported" | "failed";
+                                context_id?: string;
+                                errors: string[];
+                            }[];
+                        };
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/contexts": {
         parameters: {
             query?: never;
@@ -4742,6 +4802,8 @@ export interface paths {
                             max_run_ms?: number | null;
                             /** @description How many sessions the runner may work at once. Human branch only. */
                             max_concurrency?: number;
+                            workflow_preview?: components["schemas"]["WorkflowPreview"] & unknown;
+                            workflow_definition?: components["schemas"]["WorkflowDefinition"] & unknown;
                         };
                     };
                 };
@@ -7415,6 +7477,27 @@ export interface components {
             skills_count?: number;
             /** @description The manifest artifact's current version; null if it can't be resolved. */
             manifest_version?: number | null;
+            /**
+             * @description The normalized agent-manifest kind. Null only when the manifest is missing or its kind cannot be trusted.
+             * @enum {string|null}
+             */
+            kind: "single" | "graph" | "loop" | null;
+            /**
+             * @description Whether this context's current pinned definition is runnable.
+             * @enum {string}
+             */
+            manifest_status: "ready" | "needs-changes" | "missing";
+            /**
+             * @description Which immutable source contract produced the normalized manifest.
+             * @enum {string|null}
+             */
+            manifest_source: "agent-manifest-v2" | "workflow-v1" | "implicit-single" | null;
+            /** @description Exact authoring blockers. Empty when manifest_status is ready. */
+            manifest_errors: string[];
+            /** @description Composite node count; zero for single. */
+            node_count: number;
+            /** @description Bounded loop-policy count; zero for single and graph. */
+            loop_count: number;
         };
         BrandprintConfig: {
             /** @description The workspace brand-profile artifact (an HTML page carrying theme tokens), when set; null otherwise. Not in `members` — it is the headline read, not a note. */

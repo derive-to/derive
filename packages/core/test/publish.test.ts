@@ -228,6 +228,33 @@ describe("publish: single file", () => {
     expect(version.content_type).toBe("text/x-derive-linked-bundle")
   })
 
+  it("classifies a typed graph manifest separately even without a legacy bundle", async () => {
+    const manifest = {
+      schema: "derive.agent-manifest/v2",
+      kind: "graph",
+      purpose: "Publish a release note",
+      title: "Release note",
+      diagram: {
+        id: "release",
+        entry: "done",
+        nodes: [{ id: "done", kind: "terminal", result: "Release note published" }],
+        routes: [],
+        scenarios: [
+          {
+            id: "expected",
+            kind: "expected",
+            path: ["done"],
+            outcome: "Release note is published",
+          },
+        ],
+      },
+    }
+    const body = `<!doctype html><html><body><script type="application/derive-facts" data-fact="agent-manifest">${JSON.stringify(manifest)}</script></body></html>`
+    const { artifact, version } = await publish(makeMeta(), makeBlobs(), file(body))
+    expect(artifact.kind).toBe("file")
+    expect(version.content_type).toBe("text/x-derive-agent-manifest")
+  })
+
   it("honors explicit title, access, and author", async () => {
     const { artifact, version } = await publish(
       makeMeta(),
