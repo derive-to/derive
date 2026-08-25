@@ -1,4 +1,4 @@
-import { GalleryHorizontalEnd, Maximize2, MousePointer2Off, Zap } from "lucide-react"
+import { ChevronDown, GalleryHorizontalEnd, Maximize2, MousePointer2Off, Zap } from "lucide-react"
 import { useState } from "react"
 import type { CollectionGrant, LinkRole, Listed, Role, WorkspaceAccess } from "@/api"
 import { Icon } from "@/components/icons"
@@ -104,7 +104,33 @@ export function ArtifactTopBar(props: {
             counterpart to the filled Share. Only someone who can publish sees it.
             It is no longer the only way in (`e`, or Edit on a selection), but it
             stays: it's what tells a first-time reader the document is editable. */}
-        {props.showInlineEdit && (
+        {props.showInlineEdit && props.showArrange ? (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="ghost"
+                size="sm"
+                title="Edit"
+                data-testid="artifact-edit-menu"
+                aria-label="Edit options"
+                aria-pressed={props.arrangeOpen}
+                className={cn(props.arrangeOpen && "bg-accent text-foreground")}
+              >
+                <Icon name="pencil" size={16} className="text-muted-foreground" />
+                {props.inlineEditLabel}
+                <ChevronDown className="size-3.5 text-muted-foreground" aria-hidden />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start">
+              <DropdownMenuItem data-testid="artifact-inline-edit" onSelect={props.onInlineEdit}>
+                <Icon name="pencil" size={16} /> Edit content
+              </DropdownMenuItem>
+              <DropdownMenuItem data-testid="artifact-arrange-slides" onSelect={props.onArrange}>
+                <GalleryHorizontalEnd className="size-4" /> Organize slides
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : props.showInlineEdit ? (
           <Button
             variant="ghost"
             size="sm"
@@ -115,21 +141,7 @@ export function ArtifactTopBar(props: {
             <Icon name="pencil" size={16} className="text-muted-foreground" />
             {props.inlineEditLabel}
           </Button>
-        )}
-        {props.showArrange && (
-          <Button
-            variant="ghost"
-            size="sm"
-            title="Add, reorder, duplicate, or remove slides"
-            data-testid="artifact-arrange-slides"
-            aria-pressed={props.arrangeOpen}
-            className={cn(props.arrangeOpen && "bg-accent text-foreground")}
-            onClick={props.onArrange}
-          >
-            <GalleryHorizontalEnd className="size-4 text-muted-foreground" />
-            Arrange slides
-          </Button>
-        )}
+        ) : null}
         {isGuest ? (
           <Button
             variant="default"

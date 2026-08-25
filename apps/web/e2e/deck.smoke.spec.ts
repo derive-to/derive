@@ -70,6 +70,8 @@ test.describe("deck", () => {
     owner: page,
   }) => {
     const shortId = await seedDeck(page)
+    await expect(page.getByTestId("artifact-arrange-slides")).toHaveCount(0)
+    await page.getByTestId("artifact-edit-menu").click()
     await page.getByTestId("artifact-arrange-slides").click()
     await expect(page.getByTestId("deck-organizer")).toBeVisible()
     await expect(page.getByTestId("deck-slide-card-1")).toContainText("New deck")
@@ -122,6 +124,7 @@ test.describe("deck", () => {
     // A phone gets a bottom sheet with persistent finger-sized move controls. Adding
     // another row must scroll the list, never flex-compress the cards into each other.
     await page.setViewportSize({ width: 390, height: 844 })
+    await page.getByTestId("artifact-edit-menu").click()
     await page.getByTestId("artifact-arrange-slides").click()
     await expect(page.getByTestId("deck-slide-down-1")).toBeVisible()
     await page.getByTestId("deck-add-slide").click()
@@ -163,6 +166,7 @@ test.describe("deck", () => {
     await comment("General note.")
 
     await openArtifact(page, shortId)
+    await page.getByTestId("artifact-edit-menu").click()
     await page.getByTestId("artifact-arrange-slides").click()
     await page.getByTestId("deck-slide-card-2").hover()
     await page.getByTestId("deck-slide-up-2").click()
@@ -347,6 +351,7 @@ test.describe("deck", () => {
     // hit-testable) and refuses to click. A real click lands fine: the client peels
     // those overlays before it resolves what the pointer is over, which is the
     // whole reason editing a deck works at all.
+    await owner.getByTestId("artifact-edit-menu").click()
     await owner.getByTestId("artifact-inline-edit").click()
     await expect(owner.getByTestId("inline-edit-bar")).toBeVisible()
     await doc(owner).locator("#s2").click({ force: true })
