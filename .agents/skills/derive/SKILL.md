@@ -124,14 +124,17 @@ credentials, or a custom backend for this case:
 </script>
 ```
 
-Viewers read and receive live updates. Signed-in commenters can add/update and call
-`bugs.activity()` for attributed history; they do not need source-edit rights. Derive
-stamps the actor from the signed-in principal, so never put identity in the item or
-mutation. When the user explicitly asks for anyone with the URL to participate, publish
-with `link_role: commenter`; an unsigned visitor signs in before a write can be
-attributed. Keep the state deliberately small: each stable key is one array of JSON
-objects (2,000 items / 256 KB). Use this primitive for artifact interaction, not secrets,
-server-side compute, or a general application backend.
+Viewers read and receive live updates. Signed-in commenters can add, apply atomic
+`+1`/`-1` counter interactions, and call `bugs.activity()` for attributed history;
+arbitrary field replacement requires edit rights. They do not need source-edit rights
+for ordinary interactions. Derive stamps the actor from the signed-in principal, so
+never put identity in the item or mutation. When the user explicitly asks for anyone
+with the URL to participate, publish with `link_role: commenter`; an unsigned visitor
+signs in before a write can be attributed. Keep the state deliberately small: at most
+16 stable keys, each one array of JSON objects (2,000 items / 256 KB). Await
+`bugs.ready` when the UI must distinguish loading or load failure from an empty initial
+value. Use a new versioned key for an incompatible data shape. Use this primitive for
+artifact interaction, not secrets, server-side compute, or a general application backend.
 
 ## Non-negotiable rules
 

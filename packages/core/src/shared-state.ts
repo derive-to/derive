@@ -2,8 +2,10 @@
  * API, and stores. Shared state is a collection primitive, not a generic app
  * backend: one key owns one bounded array of JSON objects. */
 export const SHARED_STATE_KEY_PATTERN = "^[A-Za-z][A-Za-z0-9_-]{0,63}$"
+export const SHARED_STATE_MAX_KEYS = 16
 export const SHARED_STATE_MAX_ITEMS = 2_000
 export const SHARED_STATE_MAX_BYTES = 256 * 1024
+export const SHARED_STATE_ACTIVITY_LIMIT = 50
 
 const SHARED_STATE_KEY = new RegExp(SHARED_STATE_KEY_PATTERN)
 

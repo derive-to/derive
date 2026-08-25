@@ -98,6 +98,30 @@ describe("comment access via the general-access link", () => {
     const mutate = (body: unknown, headers: Record<string, string>) =>
       app.request(`/v1/artifacts/${shortId}/state/bugs`, jsonAs(headers, body))
 
+    expect(
+      (
+        await mutate(
+          {
+            op: "add",
+            initial: [
+              { id: "same", title: "one" },
+              { id: "same", title: "two" },
+            ],
+            value: { title: "no" },
+          },
+          as(bob.email),
+        )
+      ).status,
+    ).toBe(400)
+    expect(
+      (
+        await mutate(
+          { op: "add", initial: [], value: { id: "caller-picked", title: "no" } },
+          as(bob.email),
+        )
+      ).status,
+    ).toBe(400)
+
     const added = await mutate(
       {
         op: "add",
@@ -166,12 +190,54 @@ describe("comment access via the general-access link", () => {
       { action: "add", item_id: itemId, actor: { id: bob.id, name: "Bob" } },
     ])
 
+    // Comment rights enable the intended public interaction vocabulary, not an
+    // arbitrary HTTP patch that bypasses the artifact's controls.
+    expect(
+      (
+        await mutate(
+          { op: "update", initial: [], id: itemId, patch: { title: "vandalized" } },
+          as(bob.email),
+        )
+      ).status,
+    ).toBe(403)
+    const ownerUpdate = await mutate(
+      { op: "update", initial: [], id: itemId, patch: { status: "triaged" } },
+      as(alice.email),
+    )
+    expect(ownerUpdate.status).toBe(200)
+    expect(await ownerUpdate.json()).toMatchObject({
+      version: 5,
+      value: [{ id: itemId, title: "Voting is stale", votes: 3, status: "triaged" }],
+    })
+
     expect((await mutate({ op: "add", initial: [], value: {} }, {})).status).toBe(403)
     expect((await app.request(`/v1/artifacts/${shortId}/state/bugs/activity`)).status).toBe(403)
     expect((await setAccess(shortId, "viewer")).ok).toBe(true)
     expect(
       (await mutate({ op: "add", initial: [], value: { title: "no" } }, as(bob.email))).status,
     ).toBe(403)
+  })
+
+  it("bounds the number of shared keys one artifact can allocate", async () => {
+    await app.request("/v1/me", { headers: as(alice.email) })
+    const shortId = (await (await publishAs(app, "<h1>bounded</h1>", {}, as(alice.email))).json())
+      .short_id
+    expect((await setAccess(shortId, "commenter")).ok).toBe(true)
+    for (let i = 0; i < 16; i++) {
+      const response = await app.request(
+        `/v1/artifacts/${shortId}/state/k${i}`,
+        jsonAs(as(bob.email), { op: "add", initial: [], value: { n: i } }),
+      )
+      expect(response.status).toBe(200)
+    }
+    const over = await app.request(
+      `/v1/artifacts/${shortId}/state/overflow`,
+      jsonAs(as(bob.email), { op: "add", initial: [], value: { n: 17 } }),
+    )
+    expect(over.status).toBe(413)
+    expect(await over.json()).toMatchObject({
+      error: "shared state is limited to 16 keys per artifact",
+    })
   })
 
   it("explains when a production-backed preview is waiting for the new tables", async () => {

@@ -122,6 +122,7 @@ import {
   mergeRunMeta,
   parseRunMeta,
   runCounter,
+  SHARED_STATE_ACTIVITY_LIMIT,
   sortFields,
   WORKSPACE_FACT_ROW_CAP,
 } from "@derive/core"
@@ -586,6 +587,15 @@ export function makeRepos(db: SqliteDb) {
       .where(and(eq(sharedState.artifact_id, artifactId), eq(sharedState.key, key)))
       .get()) ?? null
 
+  const countSharedStateKeys = async (artifactId: string): Promise<number> => {
+    const row = await db
+      .select({ n: count() })
+      .from(sharedState)
+      .where(eq(sharedState.artifact_id, artifactId))
+      .get()
+    return Number(row?.n ?? 0)
+  }
+
   const putSharedState = async (write: SharedStateWrite): Promise<SharedStateRecord | null> => {
     const { expected_version, ...values } = write
     if (expected_version === 0) {
@@ -620,6 +630,16 @@ export function makeRepos(db: SqliteDb) {
 
   const appendSharedStateActivity = async (a: NewSharedStateActivity): Promise<void> => {
     await db.insert(sharedStateActivity).values(a).run()
+    await db
+      .delete(sharedStateActivity)
+      .where(
+        and(
+          eq(sharedStateActivity.artifact_id, a.artifact_id),
+          eq(sharedStateActivity.key, a.key),
+          lte(sharedStateActivity.version, a.version - SHARED_STATE_ACTIVITY_LIMIT),
+        ),
+      )
+      .run()
   }
   const listSharedStateActivity = async (
     artifactId: string,
@@ -4997,6 +5017,7 @@ export function makeRepos(db: SqliteDb) {
     getArtifactById,
     getArtifactsByIds,
     getSharedState,
+    countSharedStateKeys,
     putSharedState,
     appendSharedStateActivity,
     listSharedStateActivity,

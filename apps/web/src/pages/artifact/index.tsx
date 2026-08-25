@@ -426,13 +426,16 @@ export function Artifact({ template = false }: { template?: boolean }) {
 
   // useArtifactLive is declared before the iframe bridge below. A stable relay
   // closes that hook-order gap without reconnecting SSE on every render.
-  const sharedPostRef = useRef<(update: { key: string; value: unknown; version: number }) => void>(
-    () => {},
-  )
+  const sharedPostRef = useRef<(message: Record<string, unknown>) => void>(() => {})
   const onSharedStateLive = useCallback(
-    (update: { key: string; value: unknown; version: number }) => sharedPostRef.current(update),
+    (update: { key: string; value: unknown; version: number }) =>
+      sharedPostRef.current({ type: "shared-updated", ...update }),
     [],
   )
+  const onLiveResync = useCallback(() => {
+    load()
+    sharedPostRef.current({ type: "shared-resync" })
+  }, [load])
 
   // Presence, live multiplayer cursors, the SSE stream, and view recording — see
   // use-artifact-live. The page feeds pointer moves in (from the iframe bridge
@@ -447,7 +450,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
     onVersion: onVersionLive,
     onReview,
     onSharedState: onSharedStateLive,
-    onResync: load,
+    onResync: onLiveResync,
   })
 
   // The whole postMessage channel with the sandboxed iframe: text selection,
@@ -534,7 +537,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
       else window.open(u.href, "_blank", "noopener,noreferrer")
     },
   })
-  sharedPostRef.current = (update) => post({ type: "shared-updated", ...update })
+  sharedPostRef.current = post
 
   useEffect(() => {
     post({ type: "review-mode", on: visualPin })

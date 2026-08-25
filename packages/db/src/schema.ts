@@ -154,7 +154,7 @@ export const sharedStateActivity = sqliteTable(
     actor_name: text("actor_name").notNull(),
     created_at: text("created_at").notNull().default(now),
   },
-  (t) => [index("shared_state_activity_key_version").on(t.artifact_id, t.key, t.version)],
+  (t) => [uniqueIndex("shared_state_activity_key_version").on(t.artifact_id, t.key, t.version)],
 )
 
 export const version = sqliteTable(

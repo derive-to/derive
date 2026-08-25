@@ -136,6 +136,7 @@ import {
   mergeRunMeta,
   parseRunMeta,
   runCounter,
+  SHARED_STATE_ACTIVITY_LIMIT,
   WORKSPACE_FACT_ROW_CAP,
 } from "@derive/core"
 import {
@@ -732,6 +733,14 @@ export class PgMetaStore implements MetaStore {
     return rows[0] ?? null
   }
 
+  async countSharedStateKeys(artifactId: string): Promise<number> {
+    const rows = await this.db
+      .select({ n: count() })
+      .from(sharedState)
+      .where(eq(sharedState.artifact_id, artifactId))
+    return Number(rows[0]?.n ?? 0)
+  }
+
   async putSharedState(write: SharedStateWrite): Promise<SharedStateRecord | null> {
     const { expected_version, ...values } = write
     if (expected_version === 0) {
@@ -764,6 +773,15 @@ export class PgMetaStore implements MetaStore {
 
   async appendSharedStateActivity(a: NewSharedStateActivity): Promise<void> {
     await this.db.insert(sharedStateActivity).values(a)
+    await this.db
+      .delete(sharedStateActivity)
+      .where(
+        and(
+          eq(sharedStateActivity.artifact_id, a.artifact_id),
+          eq(sharedStateActivity.key, a.key),
+          lte(sharedStateActivity.version, a.version - SHARED_STATE_ACTIVITY_LIMIT),
+        ),
+      )
   }
 
   async listSharedStateActivity(

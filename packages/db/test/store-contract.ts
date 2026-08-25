@@ -7,7 +7,7 @@ import type {
   SortMode,
   SubscriptionRecord,
 } from "@derive/core"
-import { DEFAULT_ORG_SETTINGS, maxRole } from "@derive/core"
+import { DEFAULT_ORG_SETTINGS, maxRole, SHARED_STATE_ACTIVITY_LIMIT } from "@derive/core"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
 /**
@@ -624,6 +624,7 @@ export function runStoreContract(
     it("compare-and-swaps JSON collections and keeps attributed activity", async () => {
       const a = await store.createArtifact(newArtifact())
       expect(await store.getSharedState(a.id, "bugs")).toBeNull()
+      expect(await store.countSharedStateKeys(a.id)).toBe(0)
       const first = await store.putSharedState({
         id: uuid(),
         artifact_id: a.id,
@@ -635,6 +636,7 @@ export function runStoreContract(
         updated_at: "2026-01-01T00:00:00.000Z",
       })
       expect(first).toMatchObject({ version: 1, updated_by_id: "amy" })
+      expect(await store.countSharedStateKeys(a.id)).toBe(1)
 
       // A stale writer cannot overwrite the row that won.
       expect(
@@ -675,6 +677,44 @@ export function runStoreContract(
       expect(await store.listSharedStateActivity(a.id, "bugs", 10)).toMatchObject([
         { action: "update", item_id: "b1", actor_id: "bob" },
       ])
+      await expect(
+        store.appendSharedStateActivity({
+          id: uuid(),
+          artifact_id: a.id,
+          key: "bugs",
+          version: 2,
+          action: "update",
+          item_id: "b1",
+          actor_id: "amy",
+          actor_name: "Amy",
+          created_at: "2026-01-01T00:00:02.000Z",
+        }),
+      ).rejects.toThrow()
+    })
+
+    it("retains only the bounded recent activity feed", async () => {
+      const a = await store.createArtifact(newArtifact())
+      for (let version = 1; version <= SHARED_STATE_ACTIVITY_LIMIT + 2; version++) {
+        await store.appendSharedStateActivity({
+          id: uuid(),
+          artifact_id: a.id,
+          key: "votes",
+          version,
+          action: "update",
+          item_id: "b1",
+          actor_id: "amy",
+          actor_name: "Amy",
+          created_at: new Date(Date.UTC(2026, 0, 1, 0, 0, version)).toISOString(),
+        })
+      }
+      const rows = await store.listSharedStateActivity(
+        a.id,
+        "votes",
+        SHARED_STATE_ACTIVITY_LIMIT + 10,
+      )
+      expect(rows).toHaveLength(SHARED_STATE_ACTIVITY_LIMIT)
+      expect(rows[0]?.version).toBe(SHARED_STATE_ACTIVITY_LIMIT + 2)
+      expect(rows.at(-1)?.version).toBe(3)
     })
   })
 

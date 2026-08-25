@@ -2293,9 +2293,11 @@ export interface NewSharedStateActivity {
 
 export interface SharedStateStore {
   getSharedState(artifactId: string, key: string): Promise<SharedStateRecord | null>
+  countSharedStateKeys(artifactId: string): Promise<number>
   /** Insert when expected_version is 0, otherwise update only the matching
    * version. Null means another interaction won the race and the caller retries. */
   putSharedState(write: SharedStateWrite): Promise<SharedStateRecord | null>
+  /** Append one attributed version and retain the bounded recent activity feed. */
   appendSharedStateActivity(activity: NewSharedStateActivity): Promise<void>
   listSharedStateActivity(
     artifactId: string,

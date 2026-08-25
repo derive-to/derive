@@ -1,8 +1,10 @@
 import {
   isSharedStateKey,
   newId,
+  SHARED_STATE_ACTIVITY_LIMIT,
   SHARED_STATE_MAX_BYTES,
   SHARED_STATE_MAX_ITEMS,
+  SHARED_STATE_MAX_KEYS,
   type SharedStateAction,
   type SharedStateMutation,
 } from "@derive/core"
@@ -37,15 +39,22 @@ const collection = (value: unknown, mintMissingIds: boolean): Item[] | string =>
   if (value.length > SHARED_STATE_MAX_ITEMS)
     return `shared state is limited to ${SHARED_STATE_MAX_ITEMS} items`
   const items: Item[] = []
+  const ids = new Set<string>()
   for (const item of value) {
     if (!item || typeof item !== "object" || Array.isArray(item))
       return "every shared-state item must be an object"
     const object = item as Record<string, unknown>
     for (const key of Object.keys(object))
       if (RESERVED_FIELDS.has(key) && key !== "id") return `field "${key}" is reserved`
-    if (typeof object.id === "string") items.push(object as Item)
-    else if (mintMissingIds) items.push({ ...object, id: newId("item") })
-    else return "every stored shared-state item must have an id"
+    let normalized: Item
+    if (!Object.hasOwn(object, "id") && mintMissingIds)
+      normalized = { ...object, id: newId("item") }
+    else if (typeof object.id === "string" && object.id.length >= 1 && object.id.length <= 128)
+      normalized = object as Item
+    else return "every shared-state item id must be a 1-128 character string"
+    if (ids.has(normalized.id)) return "shared-state item ids must be unique"
+    ids.add(normalized.id)
+    items.push(normalized)
   }
   return items
 }
@@ -65,7 +74,7 @@ const apply = (
 ): { value: Item[]; itemId: string } | string => {
   if (body.op === "add") {
     for (const key of Object.keys(body.value))
-      if (RESERVED_FIELDS.has(key) && key !== "id") return `field "${key}" is reserved`
+      if (RESERVED_FIELDS.has(key)) return `field "${key}" is reserved`
     if (items.length >= SHARED_STATE_MAX_ITEMS)
       return `shared state is limited to ${SHARED_STATE_MAX_ITEMS} items`
     return { value: [...items, { ...body.value, id: addId }], itemId: addId }
@@ -89,11 +98,27 @@ const publicState = (row: { json: string; version: number } | null) => ({
   version: row?.version ?? 0,
 })
 
+// A public commenter may create an item or apply the tiny atomic counter gesture
+// the server understands. Arbitrary field replacement is source-level authority:
+// hiding a control in artifact HTML is not authorization because callers can use
+// the HTTP endpoint directly.
+const commenterMutation = (body: MutationBody): boolean => {
+  if (body.op === "add") return true
+  const values = Object.values(body.patch)
+  return (
+    values.length > 0 &&
+    values.every((value) => {
+      const by = incrementBy(value)
+      return by === -1 || by === 1
+    })
+  )
+}
+
 /** Persistent JSON collections for mini-app artifacts. Reads follow artifact
- * visibility; mutations deliberately reuse COMMENT permission, so collaborators
- * can interact without receiving source-edit rights. */
+ * visibility. Adds and atomic counter gestures reuse COMMENT permission;
+ * arbitrary field replacement follows PUBLISH permission. */
 export const sharedStateRoutes = (ctx: AppContext) => {
-  const { meta, bus, requireArtifact, actingUser } = ctx
+  const { meta, bus, requireArtifact, authorize, actingUser, limited, commentLimiter } = ctx
   const app = new Hono()
 
   app.get("/v1/artifacts/:shortId/state/:key", async (c) => {
@@ -109,7 +134,7 @@ export const sharedStateRoutes = (ctx: AppContext) => {
     if (artifact instanceof Response) return artifact
     const key = c.req.param("key")
     if (!isSharedStateKey(key)) return fail(c, 400, "invalid shared-state key")
-    const rows = await meta.listSharedStateActivity(artifact.id, key, 50)
+    const rows = await meta.listSharedStateActivity(artifact.id, key, SHARED_STATE_ACTIVITY_LIMIT)
     return c.json({
       activity: rows.map((row) => ({
         action: row.action,
@@ -128,12 +153,27 @@ export const sharedStateRoutes = (ctx: AppContext) => {
     if (!isSharedStateKey(key)) return fail(c, 400, "invalid shared-state key")
     const body = await readJson(c, Mutation)
     if (body instanceof Response) return body
+    if (!commenterMutation(body) && !(await authorize(c, "publish", artifact)))
+      return fail(c, 403, "changing shared-state fields requires edit access")
+    const rateLimited = await limited(c, commentLimiter)
+    if (rateLimited) return rateLimited
     const actor = (await actingUser(c)) ?? { id: "system", name: "automation" }
     const stateId = newId("state")
     const itemId = body.op === "add" ? newId("item") : body.id
 
     for (let attempt = 0; attempt < CAS_ATTEMPTS; attempt++) {
-      const current = await meta.getSharedState(artifact.id, key)
+      let current = await meta.getSharedState(artifact.id, key)
+      if (!current && (await meta.countSharedStateKeys(artifact.id)) >= SHARED_STATE_MAX_KEYS) {
+        // A same-key create may have won between the first read and the count. It
+        // should become an ordinary CAS update, not a false capacity rejection.
+        current = await meta.getSharedState(artifact.id, key)
+        if (!current)
+          return fail(
+            c,
+            413,
+            `shared state is limited to ${SHARED_STATE_MAX_KEYS} keys per artifact`,
+          )
+      }
       let parsed: unknown
       try {
         parsed = current ? JSON.parse(current.json) : body.initial

@@ -122,7 +122,7 @@ export const sharedStateActivity = pgTable(
     actor_name: text("actor_name").notNull(),
     created_at: text("created_at").notNull().$defaultFn(isoNow),
   },
-  (t) => [index("shared_state_activity_key_version").on(t.artifact_id, t.key, t.version)],
+  (t) => [uniqueIndex("shared_state_activity_key_version").on(t.artifact_id, t.key, t.version)],
 )
 
 export const version = pgTable(

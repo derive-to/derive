@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS shared_state_activity (
   actor_id TEXT NOT NULL,
   actor_name TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  UNIQUE (artifact_id, key, version),
   FOREIGN KEY (artifact_id) REFERENCES artifact(id)
 );
 
@@ -713,8 +714,6 @@ CREATE TABLE IF NOT EXISTS view_read (
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
     PRIMARY KEY (artifact_id, viewer)
   );
-
-CREATE INDEX IF NOT EXISTS shared_state_activity_key_version ON shared_state_activity (artifact_id, key, version);
 
 CREATE INDEX IF NOT EXISTS invitation_org_email ON invitation (org_id, email);
 

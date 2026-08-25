@@ -42,6 +42,7 @@ export const SHARED_STATE_CLIENT_JS = `(function () {
     state.version = version;
     notify(state);
   }
+  function open(key) { return request("shared-open", key); }
 
   function shared(key, initial) {
     if (!keyPattern.test(key)) throw new Error("invalid shared-state key");
@@ -72,7 +73,11 @@ export const SHARED_STATE_CLIENT_JS = `(function () {
     Object.defineProperty(handle, "value", { get: function () { return state.value; } });
     state.handle = handle;
     states[key] = state;
-    request("shared-open", key).catch(function () { /* initial remains usable offline */ });
+    var readyRequest = open(key);
+    Object.defineProperty(handle, "ready", { value: readyRequest, enumerable: true });
+    // Keep the local initial value usable when nobody awaits readiness, while still
+    // exposing the original rejected promise to apps that want an honest error state.
+    readyRequest.catch(function () {});
     return handle;
   }
 
@@ -81,6 +86,12 @@ export const SHARED_STATE_CLIENT_JS = `(function () {
     var data = event.data;
     if (!data || data.source !== "derive-host") return;
     if (data.type === "shared-ready") { flush(); return; }
+    if (data.type === "shared-resync") {
+      Object.keys(states).forEach(function (key) {
+        open(key).catch(function () { /* the next resync or interaction can recover */ });
+      });
+      return;
+    }
     if (data.type === "shared-updated") {
       accept(data.key, data.value, data.version);
       return;
