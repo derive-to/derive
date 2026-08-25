@@ -2684,7 +2684,10 @@ export class PgMetaStore implements MetaStore {
                 where ci.artifact_id = a.id and cm.user_id = ${userId} and cm.role <> 'owner'
              ) as portable_artifact_roles
         from artifact a
-       where a.short_id = any(${ids})
+       where a.short_id in (${sql.join(
+         ids.map((id) => sql`${id}`),
+         sql`, `,
+       )})
     `)
     const rows =
       (
