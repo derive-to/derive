@@ -3565,24 +3565,21 @@ interface ElReg {
   /** Serialize a block as inline markup: text escaped, editor spans as real tags,
    *  anything else contributing its text only (the server refuses a span that
    *  crosses the document's own markup anyway, and this keeps that refusal clean). */
+  const serializeFmtNode = (n: Node): string => {
+    if (n.nodeType === 3) return escapeText(n.nodeValue ?? "")
+    if (n.nodeType !== 1) return ""
+    const e = n as Element
+    const kind = e.getAttribute(FMT_ATTR)
+    const inner = serializeFmt(e)
+    if (kind === "b") return `<b>${inner}</b>`
+    if (kind === "i") return `<i>${inner}</i>`
+    if (kind === "br") return "<br>"
+    if (kind === "a") return `<a href="${escapeText(e.getAttribute(HREF_ATTR) || "")}">${inner}</a>`
+    return inner
+  }
   const serializeFmt = (el: Node): string => {
     let out = ""
-    for (let n = el.firstChild; n; n = n.nextSibling) {
-      if (n.nodeType === 3) {
-        out += escapeText(n.nodeValue ?? "")
-        continue
-      }
-      if (n.nodeType !== 1) continue
-      const e = n as Element
-      const kind = e.getAttribute(FMT_ATTR)
-      const inner = serializeFmt(e)
-      if (kind === "b") out += `<b>${inner}</b>`
-      else if (kind === "i") out += `<i>${inner}</i>`
-      else if (kind === "br") out += "<br>"
-      else if (kind === "a")
-        out += `<a href="${escapeText(e.getAttribute(HREF_ATTR) || "")}">${inner}</a>`
-      else out += inner
-    }
+    for (let n = el.firstChild; n; n = n.nextSibling) out += serializeFmtNode(n)
     return out
   }
   const escapeText = (s: string): string =>
@@ -3674,9 +3671,43 @@ interface ElReg {
      PRE-edit text (which is what the stored source still holds), so a block that
      already contains markup is refused by the server's tag-crossing guard rather
      than mangled here — with a message that names the source editor. */
+  const targetedFormatEdit = (t: EditTarget): WireEdit | null => {
+    const base = editBase
+    if (!base) return null
+    const formatted = t.el.querySelectorAll(`[${FMT_ATTR}]`)
+    if (formatted.length !== 1) return null
+    const target = formatted[0] as Element
+    // A selection containing authored elements cannot be faithfully represented by
+    // the tiny formatting allowlist. Refuse it instead of flattening those elements.
+    if (target.querySelector(`*:not([${FMT_ATTR}])`)) return null
+    const exact = target.textContent ?? ""
+    if (!exact.trim()) return null
+    const matches: { node: number; at: number }[] = []
+    for (let i = 0; i < t.origValues.length; i++) {
+      const value = t.origValues[i] as string
+      for (let at = value.indexOf(exact); at >= 0; at = value.indexOf(exact, at + 1))
+        matches.push({ node: i, at })
+    }
+    if (matches.length !== 1) return null
+    const match = matches[0] as { node: number; at: number }
+    const start = (t.origStarts[match.node] as number) + match.at
+    return {
+      quote: {
+        exact,
+        prefix: base.text.slice(Math.max(0, start - 40), start),
+        suffix: base.text.slice(start + exact.length, start + exact.length + 40),
+      },
+      new_html: serializeFmtNode(target),
+    }
+  }
   const blockHtmlEdit = (t: EditTarget): WireEdit | null => {
     const base = editBase
     if (!base) return null
+    const targeted = targetedFormatEdit(t)
+    if (targeted) return targeted
+    // Whole-block serialization intentionally knows only editor-authored formatting.
+    // If the original block already carried elements, flattening it would lose source.
+    if (t.structSig) return null
     const exact = t.origValues.join("\n")
     if (!exact.trim()) return null
     const start = t.origStarts[0] ?? 0

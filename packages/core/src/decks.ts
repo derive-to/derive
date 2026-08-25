@@ -8,7 +8,7 @@
 // The authoring guide is derive://skills/decks; the starter is deck-template.html.
 
 import { EditError } from "./doc-text"
-import { attrValue, classTokens, elementEnd, type HtmlTag, tags } from "./html-tags"
+import { attrValue, attrValues, classTokens, elementEnd, type HtmlTag, tags } from "./html-tags"
 
 /** HTML comments hold prose ABOUT decks (including this repo's own annotated starter) and
  *  render nothing, so they must never make a page look like a deck. Stripped before any
@@ -46,7 +46,7 @@ const SLIDE_CANDIDATE = /<(?:section|div|article|li)\b([^>]*)>/gi
  *  slide, which inflated the count and made the slicer refuse the deck outright. Found by
  *  running this over real published decks rather than fixtures. */
 export const isSlideAttrs = (attrs: string): boolean =>
-  /data-derive-slide\s*=/i.test(attrs) ||
+  attrValues(attrs, "data-derive-slide").length > 0 ||
   classTokens(attrs).some((t) => t.toLowerCase() === "slide")
 
 /** How many slide elements this HTML actually contains. */
@@ -106,10 +106,18 @@ const SLIDE_TAGS = new Set(["section", "div", "article", "li"])
 
 /** The `data-derive-slide` value on an opening tag, when it carries a numeric one. */
 const idOf = (attrs: string): number | null => {
-  const m = attrs.match(/data-derive-slide\s*=\s*["']?(-?\d+)/i)
-  if (!m?.[1]) return null
-  const n = Number(m[1])
-  return Number.isInteger(n) ? n : null
+  const values = attrValues(attrs, "data-derive-slide")
+  if (values.length > 1)
+    throw new EditError(
+      "A slide has more than one data-derive-slide attribute, so its identity is ambiguous. Edit the source directly.",
+    )
+  const raw = values[0]
+  if (raw === undefined) return null
+  if (!/^-?\d+$/.test(raw) || !Number.isSafeInteger(Number(raw)))
+    throw new EditError(
+      `Slide identity ${JSON.stringify(raw)} must be one whole, safely representable integer. Edit the source directly.`,
+    )
+  return Number(raw)
 }
 
 /** One slide element's exact span in the source. */
@@ -167,16 +175,20 @@ export const MAX_SLIDE_OPS = 200
 
 /** Give every slide a stable identity, minting only for the ones that lack it. Existing
  *  values are never touched: they are what comment threads are pinned to. */
-const stamped = (texts: string[], ids: (number | null)[]): string[] => {
+const stamped = (texts: string[], ids: (number | null)[]): { text: string; id: number }[] => {
   let next = Math.max(-1, ...ids.filter((v): v is number => v !== null)) + 1
   return texts.map((text, i) => {
-    if (ids[i] !== null) return text
+    const existing = ids[i]
+    if (existing !== null && existing !== undefined) return { text, id: existing }
     const id = next++
     // Insert into the opening tag, just past the tag name.
     const m = /^<([a-zA-Z][a-zA-Z0-9-]*)/.exec(text)
-    return m
-      ? `${text.slice(0, m[0].length)} data-derive-slide="${id}"${text.slice(m[0].length)}`
-      : text
+    return {
+      text: m
+        ? `${text.slice(0, m[0].length)} data-derive-slide="${id}"${text.slice(m[0].length)}`
+        : text,
+      id,
+    }
   })
 }
 
@@ -290,8 +302,8 @@ export const applySlideOps = (html: string, ops: SlideOp[]): string => {
   const items = stamped(
     spans.map((s) => html.slice(s.start, s.end)),
     ids,
-  ).map((text, i) => ({ text, id: ids[i] }))
-  let nextId = Math.max(-1, ...known) + 1
+  )
+  let nextId = Math.max(-1, ...items.map((item) => item.id)) + 1
 
   const at = (n: unknown, label: string, max: number): number => {
     if (typeof n !== "number" || !Number.isInteger(n) || n < 1 || n > max)

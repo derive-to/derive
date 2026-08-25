@@ -78,15 +78,14 @@ const flexPattern = (s: string): string => escapeRe(s).replace(/\s+/g, "\\s+")
 
 /** The one context pattern both the lenient (highlight) and strict (edit) matchers
  *  compile: prefix + (exact) + suffix, whitespace-flexible, exact captured so the
- *  `d` (indices) flag exposes its span directly. Null when there is no context at
- *  all, or the pattern fails to compile. Kept as the single builder so the join
- *  grammar (`\s+` at each seam) cannot drift between the read and write sides. */
+ *  `d` (indices) flag exposes its span directly. Prefix and suffix are adjacent
+ *  source slices, so their own whitespace supplies any flexible separator; adding
+ *  whitespace at the seams would make punctuation-adjacent context impossible to
+ *  match. Null when there is no context at all, or the pattern fails to compile. */
 const contextPattern = (q: string, pre: string, suf: string, flags: string): RegExp | null => {
   if (!pre && !suf) return null
   try {
-    const joinPre = pre ? `${flexPattern(pre)}\\s+` : ""
-    const joinSuf = suf ? `\\s+${flexPattern(suf)}` : ""
-    return new RegExp(`${joinPre}(${flexPattern(q)})${joinSuf}`, flags)
+    return new RegExp(`${flexPattern(pre)}(${flexPattern(q)})${flexPattern(suf)}`, flags)
   } catch {
     return null
   }
@@ -110,7 +109,7 @@ export function findQuoteWithContext(
 ): { start: number; end: number } | null {
   const q = exact.trim()
   if (!q) return null
-  const re = contextPattern(q, (prefix ?? "").trim(), (suffix ?? "").trim(), "d")
+  const re = contextPattern(q, prefix ?? "", suffix ?? "", "d")
   if (re) {
     const m = re.exec(text) as CaptureMatch | null
     const gi = m?.indices?.[1]
@@ -143,7 +142,7 @@ export function findQuoteContextUnique(
 ): { span: { start: number; end: number } | null; matches: number } {
   const q = exact.trim()
   if (!q) return { span: null, matches: 0 }
-  const re = contextPattern(q, (prefix ?? "").trim(), (suffix ?? "").trim(), "dg")
+  const re = contextPattern(q, prefix ?? "", suffix ?? "", "dg")
   if (!re) return { span: null, matches: 0 }
   const first = re.exec(text) as CaptureMatch | null
   const gi = first?.indices?.[1]

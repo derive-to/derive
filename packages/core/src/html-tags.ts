@@ -90,8 +90,18 @@ export const classTokens = (attrs: string): string[] => {
 
 /** An attribute's value from raw attribute text, or null. */
 export const attrValue = (attrs: string, name: string): string | null => {
-  const m = attrs.match(new RegExp(`\\b${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, "i"))
-  return m ? (m[1] ?? m[2] ?? m[3] ?? null) : null
+  return attrValues(attrs, name)[0] ?? null
+}
+
+/** Every authored value for one attribute. Structural editing callers use this to
+ *  reject duplicate identity attributes instead of silently trusting the first one
+ *  while leaving a conflicting second value in the source. */
+export const attrValues = (attrs: string, name: string): string[] => {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  const re = new RegExp(`(?:^|\\s)${escaped}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, "gi")
+  const values: string[] = []
+  for (let m = re.exec(attrs); m; m = re.exec(attrs)) values.push(m[1] ?? m[2] ?? m[3] ?? "")
+  return values
 }
 
 /** The offset just past the element opened by `tags[i]`, tracking same-name nesting, or
