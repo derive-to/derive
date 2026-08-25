@@ -1,0 +1,29 @@
+{
+  "schema": "derive.editing-dogfood/v1",
+  "workspace": "ws_k3hiv72wp0fs1yep",
+  "bundle_short_id": "nqprdyu7",
+  "production_base": "https://derive.to/artifacts/",
+  "preview_path": "/artifacts/<short-id>",
+  "fixtures": [
+    {
+      "surface": "markdown",
+      "short_id": "j2lgxpun",
+      "source": "markdown.md"
+    },
+    {
+      "surface": "html",
+      "short_id": "zgx0023w",
+      "source": "authored-html.html"
+    },
+    {
+      "surface": "deck",
+      "short_id": "zzo6cka5",
+      "source": "deck.html"
+    },
+    {
+      "surface": "video",
+      "short_id": "c33m28i1",
+      "source": "video.html"
+    }
+  ]
+}
