@@ -44,6 +44,7 @@ interface ElWire {
   before?: string
   after?: string
   slide?: number
+  slide_identity?: string
   snapshot?: unknown
 }
 
@@ -57,6 +58,7 @@ interface Anchor {
   prefix?: string
   suffix?: string
   slide?: number
+  slide_identity?: string
   el?: ElWire
   quiet?: boolean
 }
@@ -1381,6 +1383,33 @@ interface ElReg {
     if (slides.every(shown)) return null
     return { i: activeSlide(slides), total: slides.length }
   }
+  let lastOutline = ""
+  const postDeckOutline = () => {
+    // Bound what crosses the frame boundary. A hostile page can claim a billion slides;
+    // Derive still needs a responsive host even when that page's own DOM is unreasonable.
+    const slides = slideEls().slice(0, 500)
+    if (slides.length < 2) return
+    const explicit = slides.map((slide) => {
+      const value = slide.getAttribute("data-derive-slide")
+      return value !== null && /^-?\d+$/.test(value) ? Number(value) : null
+    })
+    let nextIdentity =
+      Math.max(-1, ...explicit.filter((value): value is number => value !== null)) + 1
+    const outline = slides.map((slide, i) => {
+      const heading = slide.querySelector("[data-slide-title],h1,h2,h3")
+      const raw = (heading?.textContent || slide.textContent || "").replace(/\s+/g, " ").trim()
+      return {
+        // Predict the server's first-arrange stamping for class-only decks. Comments made
+        // before that save then keep the same identity after slides move.
+        id: slide.getAttribute("data-derive-slide") || String(nextIdentity++),
+        label: raw.slice(0, 90) || `Untitled slide ${i + 1}`,
+      }
+    })
+    const key = JSON.stringify(outline)
+    if (key === lastOutline) return
+    lastOutline = key
+    post({ type: "deck-outline", slides: outline })
+  }
   let lastSniff = ""
   const postDeckSniff = () => {
     const d = sniffDeck()
@@ -1414,6 +1443,7 @@ interface ElReg {
       if (activeSlide(now) !== to)
         for (let i = 0; i < now.length; i++) (now[i] as Element).classList.toggle("on", i === to)
       postDeckSniff()
+      postDeckOutline()
     })
   }
   /* A slide flip is a class or style change, which fires no scroll, resize or load —
@@ -1425,6 +1455,7 @@ interface ElReg {
     try {
       const mo = new MutationObserver(() => {
         postDeckSniff()
+        postDeckOutline()
         // The slide changed under an open edit session — re-mask (see below).
         if (editOn) maskOffscreenSlides()
       })
@@ -1782,14 +1813,20 @@ interface ElReg {
          phrase on two slides can't collide), then fall back to a whole-document
          search if the text moved off that slide. Builds a Range (no DOM mutation) from
          the resolved span; the highlight is painted from every range together, below. */
-      const slide = a.slide != null ? slides[a.slide] : undefined
+      const identityAt = a.slide_identity
+        ? slides.findIndex(
+            (candidate) => candidate.getAttribute("data-derive-slide") === a.slide_identity,
+          )
+        : -1
+      const preferredAt = identityAt >= 0 ? identityAt : a.slide
+      const slide = preferredAt != null ? slides[preferredAt] : undefined
       let range: Range | null = null
       let where: number | null = null
-      if (a.slide != null && slide) {
+      if (preferredAt != null && slide) {
         const span = findIn(slide, a)
         if (span) {
           range = rangeAt(slide, span.start, span.end)
-          where = a.slide
+          where = preferredAt
         }
       }
       if (!range) {
@@ -1867,7 +1904,11 @@ interface ElReg {
     // (and again on the settle passes, for one built by a script of its own).
     watchSlides()
     postDeckSniff()
-    setTimeout(postDeckSniff, 400)
+    postDeckOutline()
+    setTimeout(() => {
+      postDeckSniff()
+      postDeckOutline()
+    }, 400)
     if (videoRoot()) showVideoScene(videoAt)
   })
   /* The artifact's OWN scripts can mutate the DOM after load (a chart library renders,
