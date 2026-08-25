@@ -3,6 +3,7 @@ import {
   type ArtifactRecord,
   hasArtifactStanding,
   isDerivedFactName,
+  SHARED_STATE_CLIENT_JS,
 } from "@derive/core"
 import type { Context } from "hono"
 import { Hono } from "hono"
@@ -44,6 +45,16 @@ export const rawRoutes = (ctx: AppContext) => {
   // without stranding old behavior in already-viewed artifacts.
   app.get("/raw/derive-client.js", (c) =>
     c.body(ANCHOR_CLIENT_JS, 200, {
+      "Content-Type": "text/javascript; charset=utf-8",
+      "Cache-Control": "public, max-age=300",
+    }),
+  )
+
+  // Loaded synchronously near the start of embedded artifact HTML so the
+  // artifact's own scripts can call derive.shared immediately. Short-cached for
+  // the same reason as the anchor client: published HTML is immutable, runtimes are not.
+  app.get("/raw/derive-shared.js", (c) =>
+    c.body(SHARED_STATE_CLIENT_JS, 200, {
       "Content-Type": "text/javascript; charset=utf-8",
       "Cache-Control": "public, max-age=300",
     }),

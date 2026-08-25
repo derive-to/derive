@@ -65,6 +65,7 @@ import type {
   NewRun,
   NewSession,
   NewSessionMessage,
+  NewSharedStateActivity,
   NewSignupAttribution,
   NewSlackSubscription,
   NewTemplateLibrary,
@@ -90,6 +91,9 @@ import type {
   SessionMessageRecord,
   SessionRecord,
   SessionState,
+  SharedStateActivityRecord,
+  SharedStateRecord,
+  SharedStateWrite,
   SignupAttributionRecord,
   SlackAuthorFilter,
   SlackInstallRecord,
@@ -118,6 +122,7 @@ import {
   mergeRunMeta,
   parseRunMeta,
   runCounter,
+  SHARED_STATE_ACTIVITY_LIMIT,
   sortFields,
   WORKSPACE_FACT_ROW_CAP,
 } from "@derive/core"
@@ -184,6 +189,8 @@ import {
   reviewRound,
   run,
   sessionMessage,
+  sharedState,
+  sharedStateActivity,
   signupAttribution,
   slackInstall,
   slackSubscription,
@@ -353,6 +360,8 @@ export function artifactListOrder(
 /** The drizzle schema object — shared by the better-sqlite3 and D1 drivers. */
 export const schema = {
   artifact,
+  sharedState,
+  sharedStateActivity,
   version,
   versionData,
   comment,
@@ -404,6 +413,8 @@ export const schema = {
 const _schemaExhaustive: Exhaustive<typeof schema> = true
 const _schemaShapes: Shapes<typeof schema> = {
   artifact: true,
+  sharedState: true,
+  sharedStateActivity: true,
   version: true,
   versionData: true,
   comment: true,
@@ -564,6 +575,84 @@ export function makeRepos(db: SqliteDb) {
     (await db.select().from(artifact).where(eq(artifact.id, id)).get()) ?? null
   const getArtifactsByIds = async (ids: string[]): Promise<ArtifactRecord[]> =>
     ids.length === 0 ? [] : db.select().from(artifact).where(inArray(artifact.id, ids)).all()
+
+  // ---- Artifact shared state --------------------------------------------
+  const getSharedState = async (
+    artifactId: string,
+    key: string,
+  ): Promise<SharedStateRecord | null> =>
+    (await db
+      .select()
+      .from(sharedState)
+      .where(and(eq(sharedState.artifact_id, artifactId), eq(sharedState.key, key)))
+      .get()) ?? null
+
+  const countSharedStateKeys = async (artifactId: string): Promise<number> => {
+    const row = await db
+      .select({ n: count() })
+      .from(sharedState)
+      .where(eq(sharedState.artifact_id, artifactId))
+      .get()
+    return Number(row?.n ?? 0)
+  }
+
+  const putSharedState = async (write: SharedStateWrite): Promise<SharedStateRecord | null> => {
+    const { expected_version, ...values } = write
+    if (expected_version === 0) {
+      const inserted = await db
+        .insert(sharedState)
+        .values({ ...values, version: 1 })
+        .onConflictDoNothing()
+        .returning()
+        .get()
+      return (inserted as SharedStateRecord | undefined) ?? null
+    }
+    const updated = await db
+      .update(sharedState)
+      .set({
+        json: values.json,
+        version: expected_version + 1,
+        updated_by_id: values.updated_by_id,
+        updated_by_name: values.updated_by_name,
+        updated_at: values.updated_at,
+      })
+      .where(
+        and(
+          eq(sharedState.artifact_id, values.artifact_id),
+          eq(sharedState.key, values.key),
+          eq(sharedState.version, expected_version),
+        ),
+      )
+      .returning()
+      .get()
+    return (updated as SharedStateRecord | undefined) ?? null
+  }
+
+  const appendSharedStateActivity = async (a: NewSharedStateActivity): Promise<void> => {
+    await db.insert(sharedStateActivity).values(a).run()
+    await db
+      .delete(sharedStateActivity)
+      .where(
+        and(
+          eq(sharedStateActivity.artifact_id, a.artifact_id),
+          eq(sharedStateActivity.key, a.key),
+          lte(sharedStateActivity.version, a.version - SHARED_STATE_ACTIVITY_LIMIT),
+        ),
+      )
+      .run()
+  }
+  const listSharedStateActivity = async (
+    artifactId: string,
+    key: string,
+    limit: number,
+  ): Promise<SharedStateActivityRecord[]> =>
+    db
+      .select()
+      .from(sharedStateActivity)
+      .where(and(eq(sharedStateActivity.artifact_id, artifactId), eq(sharedStateActivity.key, key)))
+      .orderBy(desc(sharedStateActivity.version))
+      .limit(limit)
+      .all()
 
   const createArtifact = async (a: NewArtifact): Promise<ArtifactRecord> => {
     await db.insert(artifact).values(a).run()
@@ -4812,6 +4901,8 @@ export function makeRepos(db: SqliteDb) {
     // Artifact-SCOPED webhooks only; a workspace-wide one has a null artifact_id and
     // survives. Found by scripts/check-delete-cascade.mjs.
     await db.delete(webhook).where(eq(webhook.artifact_id, id)).run()
+    await db.delete(sharedStateActivity).where(eq(sharedStateActivity.artifact_id, id)).run()
+    await db.delete(sharedState).where(eq(sharedState.artifact_id, id)).run()
     await db.delete(versionData).where(eq(versionData.artifact_id, id)).run()
     await db.delete(version).where(eq(version.artifact_id, id)).run()
     await db.delete(comment).where(eq(comment.artifact_id, id)).run()
@@ -4925,6 +5016,11 @@ export function makeRepos(db: SqliteDb) {
     artifactWithSettings,
     getArtifactById,
     getArtifactsByIds,
+    getSharedState,
+    countSharedStateKeys,
+    putSharedState,
+    appendSharedStateActivity,
+    listSharedStateActivity,
     addVersion,
     replaceCurrentVersion,
     listVersions,

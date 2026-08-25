@@ -41,6 +41,7 @@ const expectSandbox = (res: Response, cache: string = IMMUTABLE) => {
 }
 
 const SCRIPT = "/raw/derive-client.js" // the appended anchor client (SELECTION_SCRIPT)
+const SHARED = "/raw/derive-shared.js"
 
 describe("serveContent — single-file artifacts", () => {
   it("serves an HTML file with the anchor client and the sandbox headers", async () => {
@@ -57,6 +58,10 @@ describe("serveContent — single-file artifacts", () => {
     const body = await res.text()
     expect(body).toContain("<h1>Hi</h1>")
     expect(body).toContain(SCRIPT)
+    // The shared-state API is available before any artifact-authored script runs;
+    // the DOM-dependent anchor client deliberately remains appended at the end.
+    expect(body).toContain(SHARED)
+    expect(body.indexOf(SHARED)).toBeLessThan(body.indexOf("<h1>Hi</h1>"))
     expectSandbox(res)
   })
 
@@ -73,6 +78,7 @@ describe("serveContent — single-file artifacts", () => {
     const body = await res.text()
     expect(body).toContain("<h1")
     expect(body).toContain(SCRIPT)
+    expect(body).toContain(SHARED)
   })
 
   it("self-heals a blob mislabeled markdown that is actually a full HTML document", async () => {
@@ -149,6 +155,7 @@ describe("serveContent — bundles", () => {
     const body = await res.text()
     expect(body).toBe("a{color:red}")
     expect(body).not.toContain(SCRIPT)
+    expect(body).not.toContain(SHARED)
   })
 
   it("404s an unknown bundle path, still with the sandbox headers", async () => {

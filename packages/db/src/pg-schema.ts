@@ -24,6 +24,7 @@ import type {
   RunStatus,
   SessionMessageAuthor,
   SessionState,
+  SharedStateAction,
   SlackAuthorFilter,
   SlackScopeKind,
   SlackThreadSurface,
@@ -88,6 +89,41 @@ export const artifact = pgTable("artifact", {
   // deleted; the copy survives). Nullable, no default — ADD COLUMN IF NOT EXISTS clean.
   derived_from: text("derived_from"),
 })
+
+export const sharedState = pgTable(
+  "shared_state",
+  {
+    id: text("id").primaryKey(),
+    artifact_id: text("artifact_id")
+      .notNull()
+      .references(() => artifact.id),
+    key: text("key").notNull(),
+    json: text("json").notNull(),
+    version: integer("version").notNull(),
+    updated_by_id: text("updated_by_id").notNull(),
+    updated_by_name: text("updated_by_name").notNull(),
+    updated_at: text("updated_at").notNull().$defaultFn(isoNow),
+  },
+  (t) => [uniqueIndex("shared_state_key").on(t.artifact_id, t.key)],
+)
+
+export const sharedStateActivity = pgTable(
+  "shared_state_activity",
+  {
+    id: text("id").primaryKey(),
+    artifact_id: text("artifact_id")
+      .notNull()
+      .references(() => artifact.id),
+    key: text("key").notNull(),
+    version: integer("version").notNull(),
+    action: text("action").$type<SharedStateAction>().notNull(),
+    item_id: text("item_id").notNull(),
+    actor_id: text("actor_id").notNull(),
+    actor_name: text("actor_name").notNull(),
+    created_at: text("created_at").notNull().$defaultFn(isoNow),
+  },
+  (t) => [uniqueIndex("shared_state_activity_key_version").on(t.artifact_id, t.key, t.version)],
+)
 
 export const version = pgTable(
   "version",
@@ -967,6 +1003,8 @@ const PG_TIMESTAMP_DEFAULT = `to_char((now() at time zone 'utc'), 'YYYY-MM-DD"T"
 // Drizzle tables, in FK-dependency order (a referenced table is created first).
 const TABLES = [
   artifact,
+  sharedState,
+  sharedStateActivity,
   version,
   versionData,
   comment,
