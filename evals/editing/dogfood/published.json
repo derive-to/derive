@@ -1,28 +1,30 @@
 {
   "schema": "derive.editing-dogfood/v1",
-  "workspace": "ws_k3hiv72wp0fs1yep",
-  "bundle_short_id": "nqprdyu7",
+  "workspace": "ws_664l6ag4wao3ka0a",
+  "workspace_name": "Zero Prime",
+  "bundle_short_id": "nj1s3mcj",
+  "program_bundle_short_id": "kp7wl0cm",
   "production_base": "https://derive.to/artifacts/",
   "preview_path": "/artifacts/<short-id>",
   "fixtures": [
     {
       "surface": "markdown",
-      "short_id": "j2lgxpun",
+      "short_id": "nt94dw1c",
       "source": "markdown.md"
     },
     {
       "surface": "html",
-      "short_id": "zgx0023w",
+      "short_id": "fuc6k3nl",
       "source": "authored-html.html"
     },
     {
       "surface": "deck",
-      "short_id": "zzo6cka5",
+      "short_id": "x6exg9dl",
       "source": "deck.html"
     },
     {
       "surface": "video",
-      "short_id": "c33m28i1",
+      "short_id": "e0ued3u5",
       "source": "video.html"
     }
   ]

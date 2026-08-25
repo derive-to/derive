@@ -9,7 +9,11 @@ They complement the 109-case always-on regression pass and 112-case full corpus.
 completed with no new reproducible P0–P2 editing bug across Markdown, HTML, deck/video, API, and
 browser lanes.
 
-Shared bundle: `https://derive.to/artifacts/nqprdyu7`
+Workspace: **Zero Prime** (`ws_664l6ag4wao3ka0a`)
+
+Shared bundle: `https://derive.to/artifacts/nj1s3mcj`
+
+Reliability loop: `https://derive.to/artifacts/kp7wl0cm`
 
 ```text
 https://derive.to/artifacts/<short-id>
