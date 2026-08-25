@@ -304,6 +304,13 @@ describe("editing eval — Markdown source preservation", () => {
     expect(applyQuoteEdits(source, MD, [qe("target", "changed")])).toMatch(/changed$/)
     expect(performance.now() - start).toBeLessThan(1500)
   })
+
+  it("[MD-031] normalizes rendered CRLF inside a prefixed code fence", () => {
+    const source = "> ```ts\r\n> one\r\n> two\r\n> ```"
+    expect(applyQuoteEdits(source, MD, [qe("one\ntwo", "changed")])).toBe(
+      "> ```ts\r\n> changed\r\n> ```",
+    )
+  })
 })
 
 describe("editing eval — HTML projection, topology, and injection", () => {
@@ -569,6 +576,40 @@ describe("editing eval — HTML projection, topology, and injection", () => {
       expect(() => applyQuoteEdits(source, HTML, [qe(hidden, "X")])).toThrow(/wasn't found/)
     }
   })
+
+  it("[HTML-028] closes an optional list item after leaving its nested list scope", () => {
+    const source = "<ul><li hidden>h<ul><li>nested</ul><li>outer-visible</ul><p>tail</p>"
+    expect(pageTextParts(source).text).toMatch(/outer-visible.*tail/)
+    expect(applyQuoteEdits(source, HTML, [qe("outer-visible", "X")])).toBe(
+      "<ul><li hidden>h<ul><li>nested</ul><li>X</ul><p>tail</p>",
+    )
+  })
+
+  it("[HTML-029] ends unclosed foreign metadata at an authored ancestor close", () => {
+    for (const [source, hidden] of [
+      ["<svg><g><desc>hidden</svg><p>visible</p>", "hidden"],
+      ["<svg><g><metadata>meta</svg><p>visible</p>", "meta"],
+      ["<math><semantics><annotation>ann</math><p>visible</p>", "ann"],
+      [
+        '<math><semantics><annotation-xml encoding="application/xml">xml</math><p>visible</p>',
+        "xml",
+      ],
+    ] as const) {
+      expect(pageTextParts(source).text).toMatch(/visible/)
+      expect(pageTextParts(source).text).not.toContain(hidden)
+      expect(applyQuoteEdits(source, HTML, [qe("visible", "X")])).toMatch(/<p>X<\/p>$/)
+    }
+  })
+
+  it("[HTML-030] keeps apparent tags literal inside RAWTEXT and RCDATA elements", () => {
+    for (const name of ["xmp", "listing", "textarea"]) {
+      const source = `<${name}>hello <b>world</b></${name}><p>tail</p>`
+      expect(pageTextParts(source).text).toContain("hello <b>world</b>")
+      expect(applyQuoteEdits(source, HTML, [qe("hello <b>world</b>", "X")])).toBe(
+        `<${name}>X</${name}><p>tail</p>`,
+      )
+    }
+  })
 })
 
 describe("editing eval — deck identity and structural operations", () => {
@@ -777,6 +818,17 @@ describe("editing eval — deck identity and structural operations", () => {
   it("[DECK-021] refuses document-wide duplicate DOM ids before structural edits", () => {
     const source = deck(['<div id="same">A</div>', '<div id="same">B</div>'])
     expect(() => applySlideOps(source, [{ op: "duplicate", at: 1 }])).toThrow(/repeats a DOM id/)
+  })
+
+  it("[DECK-022] rewrites entity-encoded CSS fragment ids on copied slides", () => {
+    const source = deck([
+      '<svg><linearGradient id="grad&amp;x"></linearGradient>' +
+        '<rect style="fill:url(#grad&amp;x)"></rect></svg>',
+      "B",
+    ])
+    expect(applySlideOps(source, [{ op: "duplicate", at: 1 }])).toContain(
+      "url(#grad&amp;x--derive-copy-12)",
+    )
   })
 })
 

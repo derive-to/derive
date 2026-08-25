@@ -2,7 +2,7 @@ import { DecodingMode, decodeHTML, EntityDecoder, htmlDecodeTree } from "entitie
 import { findQuoteWithContext } from "./anchor-shared"
 import { isHtmlLike } from "./content-types"
 import { elementResolvesIn, parseElementSelector } from "./element-anchor"
-import { elementEnd, hasAttr, tags } from "./html-tags"
+import { elementEnd, hasAttr, RAW_TEXT_ELEMENTS, RCDATA_ELEMENTS, tags } from "./html-tags"
 import { MENTION_NON_PROSE_TAGS } from "./mention-shared"
 import type { CommentState } from "./ports"
 
@@ -122,7 +122,17 @@ export interface PageTextParts {
   segments: PageTextSegment[]
 }
 
-const INVISIBLE_NAMES = ["script", "style", "noscript", "template", "head", "title", "iframe"]
+const INVISIBLE_NAMES = [
+  "script",
+  "style",
+  "noscript",
+  "template",
+  "head",
+  "title",
+  "iframe",
+  "noembed",
+  "noframes",
+]
 const SVG_INVISIBLE_NAMES = new Set(["desc", "metadata"])
 const MATH_INVISIBLE_NAMES = new Set(["annotation", "annotation-xml"])
 
@@ -194,6 +204,22 @@ const pushTextRun = (
   return tLen
 }
 
+/** Append a RAWTEXT run without decoding character references. */
+const pushLiteralRun = (
+  out: PageTextSegment[],
+  parts: string[],
+  tLen: number,
+  raw: string,
+  rFrom: number,
+  rTo: number,
+): number => {
+  if (rTo <= rFrom) return tLen
+  const text = raw.slice(rFrom, rTo)
+  out.push({ kind: "text", tStart: tLen, tEnd: tLen + text.length, rStart: rFrom, rEnd: rTo })
+  parts.push(text)
+  return tLen + text.length
+}
+
 /**
  * The page-text projection WITH its offset map: visible text plus, per run, where
  * it came from in the raw source. One linear indexOf-driven scan (no lazy-quantifier
@@ -219,8 +245,29 @@ export function pageTextParts(
   const parsedTags = tags(html)
   const tagEnds = new Map(parsedTags.map((tag) => [tag.start, tag.end]))
   const invisibleEnds = new Map<number, number>()
+  const literalRanges: { start: number; end: number; entities: boolean }[] = []
   for (let i = 0; i < parsedTags.length; i++) {
     const tag = parsedTags[i]
+    if (
+      tag &&
+      !tag.closing &&
+      !tag.selfClosing &&
+      (RAW_TEXT_ELEMENTS.has(tag.name) || RCDATA_ELEMENTS.has(tag.name))
+    ) {
+      const end = elementEnd(parsedTags, i)
+      const close = parsedTags.find(
+        (candidate) =>
+          candidate.start >= tag.end &&
+          candidate.closing &&
+          candidate.name === tag.name &&
+          candidate.end === end,
+      )
+      literalRanges.push({
+        start: tag.end,
+        end: close?.start ?? html.length,
+        entities: RCDATA_ELEMENTS.has(tag.name),
+      })
+    }
     const foreignMetadata =
       (tag?.namespace === "svg" && SVG_INVISIBLE_NAMES.has(tag.name)) ||
       (tag?.namespace === "math" && MATH_INVISIBLE_NAMES.has(tag.name))
@@ -270,7 +317,20 @@ export function pageTextParts(
   let tLen = 0
   let last = 0 // start of the pending text run
   let from = 0 // "<" search cursor
+  let literalIndex = 0
   for (;;) {
+    while (literalRanges[literalIndex] && (literalRanges[literalIndex]?.end ?? 0) <= from)
+      literalIndex++
+    const literal = literalRanges[literalIndex]
+    if (literal && from === literal.start) {
+      tLen = literal.entities
+        ? pushTextRun(segments, parts, tLen, html, literal.start, literal.end)
+        : pushLiteralRun(segments, parts, tLen, html, literal.start, literal.end)
+      last = literal.end
+      from = literal.end
+      literalIndex++
+      continue
+    }
     const i = findRaw("<", from)
     if (i < 0) break
     const end = stripTokenAt(i)

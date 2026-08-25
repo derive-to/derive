@@ -320,7 +320,7 @@ const rewriteCopiedDomIds = (html: string, slideId: number, used: Set<string>): 
       return nextValue
     }
     return value.replace(
-      /url\(\s*((?:["'])|(?:&(?:quot|apos|#(?:34|39)|#x(?:22|27));))?#([^\s)"'&]+)\1\s*\)/gi,
+      /url\(\s*((?:["'])|(?:&(?:quot|apos|#(?:34|39)|#x(?:22|27));))?#([^\s)"']+?)\1\s*\)/gi,
       (whole, _quote, ref: string) => {
         const decoded = cssUnescapeIdentifier(ref)
         const next = rewritten.get(decoded)

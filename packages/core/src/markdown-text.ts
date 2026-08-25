@@ -161,8 +161,9 @@ export function markdownTextParts(source: string): MarkdownTextParts {
    *  source. Anchor on its first real line before checking the one plausible exact
    *  start, avoiding a failed suffix-wide search for every sibling. */
   const exactStartAtAnchor = (raw: string, anchor: number, from: number, limit: number): number => {
-    if (!raw || anchor < 0) return -1
+    if (!raw) return -1
     if (source.startsWith(raw, from) && from + raw.length <= limit) return from
+    if (anchor < 0) return -1
     const first = firstAuthoredLine(raw)
     if (!first) return -1
     const candidate = anchor - first.offset
@@ -200,7 +201,10 @@ export function markdownTextParts(source: string): MarkdownTextParts {
    *  prefixed bodies stay line-local so an edit cannot erase their structural
    *  `>` or list indentation. */
   const mapCode = (token: MarkdownToken, rangeStart: number, rangeEnd: number, block: number) => {
-    const body = token.text ?? ""
+    // Marked can preserve CRLF bytes in code token text, while the browser exposes
+    // every rendered line break as `\n`. Normalize only the projection; the line-
+    // local source map below still owns the original CRLF and container prefixes.
+    const body = (token.text ?? "").replace(/\r\n?/g, "\n")
     if (!body) {
       pushGap(rangeStart, rangeEnd, block, "structural")
       return
@@ -484,11 +488,20 @@ export function markdownTextParts(source: string): MarkdownTextParts {
   }
 
   let cursor = 0
-  for (const token of top) {
+  for (let tokenIndex = 0; tokenIndex < top.length; tokenIndex++) {
+    const token = top[tokenIndex] as MarkdownToken
     const raw = token.raw ?? ""
-    const at = locate(raw, cursor, source.length)
-    if (at < 0) continue
-    const end = at + raw.length
+    const currentAnchor = firstSourceAnchor(token, cursor, source.length)
+    const located = exactStartAtAnchor(raw, currentAnchor, cursor, source.length)
+    let nextAnchor = -1
+    for (let next = tokenIndex + 1; next < top.length && nextAnchor < 0; next++)
+      nextAnchor = firstSourceAnchor(
+        top[next] as MarkdownToken,
+        currentAnchor >= 0 ? currentAnchor + 1 : cursor,
+        source.length,
+      )
+    const at = located < 0 ? cursor : located
+    const end = located < 0 ? (nextAnchor >= 0 ? nextAnchor : source.length) : located + raw.length
     const block = blockSeq++
     pushGap(cursor, at, block)
     const inline = Array.isArray(token.tokens) ? token.tokens : []

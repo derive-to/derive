@@ -22,6 +22,8 @@ export interface HtmlTag {
   selfClosing: boolean
   /** Parsing namespace selected by the browser for this element. */
   namespace: "html" | "svg" | "math"
+  /** Open elements this close token pops, including malformed descendants. */
+  closedOpenStarts: readonly number[]
   /** Raw attribute text between the name and the closing `>`. */
   attrs: string
   /** Offset of the opening `<`. */
@@ -51,6 +53,18 @@ const VOID_ELEMENTS = new Set([
   "track",
   "wbr",
 ])
+
+/** Elements whose bodies keep apparent tags as text until their own close token. */
+export const RAW_TEXT_ELEMENTS = new Set([
+  "script",
+  "style",
+  "xmp",
+  "iframe",
+  "noembed",
+  "noframes",
+  "listing",
+])
+export const RCDATA_ELEMENTS = new Set(["title", "textarea"])
 
 const HEAD_CONTENT = new Set([
   "base",
@@ -221,7 +235,7 @@ export const tags = (html: string): HtmlTag[] => {
   const lower = html.toLowerCase()
   let i = 0
   type Namespace = "html" | "svg" | "math"
-  const open: { name: string; namespace: Namespace; attrs: string }[] = []
+  const open: { name: string; namespace: Namespace; attrs: string; start: number }[] = []
 
   const namespaceFor = (name: string): Namespace => {
     const parent = open.at(-1)
@@ -273,6 +287,8 @@ export const tags = (html: string): HtmlTag[] => {
     const attrs = html.slice(lt + m[0].length, j)
     const syntacticSlash = attrs.trimEnd().endsWith("/")
     const namespace = namespaceFor(name)
+    const matching = closing ? open.findLastIndex((tag) => tag.name === name) : -1
+    const closedOpenStarts = matching >= 0 ? open.slice(matching).map((tag) => tag.start) : []
     // In HTML, a trailing slash closes only void or foreign-content elements;
     // `<section/>` is still an open section. Expose browser-effective structure
     // so every downstream slicer and source mapper agrees with the DOM.
@@ -283,17 +299,17 @@ export const tags = (html: string): HtmlTag[] => {
       closing,
       selfClosing,
       namespace,
+      closedOpenStarts,
       attrs,
       start: lt,
       end: j + 1,
     })
     if (closing) {
-      const matching = open.findLastIndex((tag) => tag.name === name)
       if (matching >= 0) open.length = matching
-    } else if (!selfClosing) open.push({ name, namespace, attrs })
+    } else if (!selfClosing) open.push({ name, namespace, attrs, start: lt })
     i = j + 1
     // Raw-text elements: their content is text, so skip straight past the close tag.
-    if (!closing && (name === "script" || name === "style")) {
+    if (!closing && (RAW_TEXT_ELEMENTS.has(name) || RCDATA_ELEMENTS.has(name))) {
       const close = rawTextCloseStart(lower, name, i)
       if (close < 0) break
       i = close
@@ -344,6 +360,8 @@ export const elementEnd = (all: HtmlTag[], i: number): number => {
   const scopeContainers = optionalScopeContainers(open.name)
   for (let k = i + 1; k < all.length; k++) {
     const tag = all[k] as HtmlTag
+    if (open.namespace !== "html" && tag.closedOpenStarts.includes(open.start))
+      return tag.name === open.name ? tag.end : tag.start
     if (scopeContainers?.has(tag.name)) {
       if (!tag.closing && !tag.selfClosing) optionalScopeDepth++
       else if (tag.closing && optionalScopeDepth > 0) {
@@ -351,7 +369,8 @@ export const elementEnd = (all: HtmlTag[], i: number): number => {
         continue
       }
     }
-    if (depth === 1 && optionalScopeDepth === 0 && implicitlyCloses(open, tag)) return tag.start
+    if (optionalScopeDepth > 0) continue
+    if (depth === 1 && implicitlyCloses(open, tag)) return tag.start
     if (tag.name !== open.name || tag.selfClosing) continue
     depth += tag.closing ? -1 : 1
     if (depth === 0) return tag.end

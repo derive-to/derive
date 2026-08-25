@@ -348,6 +348,16 @@
       "cadence": "extended"
     },
     {
+      "id": "MD-031",
+      "lane": "core",
+      "surface": "markdown",
+      "risk": "P1",
+      "oracle": "rendered-newline-and-exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "CRLF line endings inside prefixed code fences map through normalized rendered newlines",
+      "cadence": "regression"
+    },
+    {
       "id": "HTML-001",
       "lane": "core",
       "surface": "html",
@@ -618,6 +628,36 @@
       "cadence": "regression"
     },
     {
+      "id": "HTML-028",
+      "lane": "core",
+      "surface": "html",
+      "risk": "P1",
+      "oracle": "browser-parity-and-exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "nested list scope does not prevent an outer hidden item's optional end",
+      "cadence": "regression"
+    },
+    {
+      "id": "HTML-029",
+      "lane": "core",
+      "surface": "html",
+      "risk": "P1",
+      "oracle": "browser-parity-and-safe-refusal",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "unclosed foreign metadata ends when an authored ancestor close repairs the tree",
+      "cadence": "regression"
+    },
+    {
+      "id": "HTML-030",
+      "lane": "core",
+      "surface": "html",
+      "risk": "P1",
+      "oracle": "browser-parity-and-exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "apparent tags inside RAWTEXT and RCDATA bodies remain literal editable text",
+      "cadence": "regression"
+    },
+    {
       "id": "DECK-001",
       "lane": "core",
       "surface": "deck",
@@ -825,6 +865,16 @@
       "oracle": "safe-refusal",
       "source": "packages/core/test/editing-eval.test.ts",
       "covers": "structural editing refuses pre-existing document-wide duplicate DOM ids",
+      "cadence": "regression"
+    },
+    {
+      "id": "DECK-022",
+      "lane": "core",
+      "surface": "deck",
+      "risk": "P2",
+      "oracle": "unique-identity-and-reference-integrity",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "duplicated slides rewrite entity-encoded CSS fragment ids",
       "cadence": "regression"
     },
     {
