@@ -962,6 +962,37 @@ export function Artifact({ template = false }: { template?: boolean }) {
   // so a desktop→mobile resize with a persisted "hidden" can't strand a phone.
   const effectivePanel = isMobile && commentsAvailable ? "open" : panel
 
+  const toggleDeckEdit = () => {
+    if (inlineEdit.active) {
+      inlineEdit.requestExit()
+      return
+    }
+    if (deckOrganizer.open) {
+      if (deckOrganizer.dirty) {
+        deckOrganizer.requestClose()
+        return
+      }
+      deckOrganizer.requestClose()
+    }
+    inlineEdit.start()
+  }
+
+  const toggleDeckArrange = () => {
+    if (deckOrganizer.open) {
+      deckOrganizer.requestClose()
+      return
+    }
+    if (inlineEdit.active) {
+      if (inlineEdit.dirty) {
+        inlineEdit.requestExit()
+        return
+      }
+      inlineEdit.done()
+    }
+    setPanel("hidden")
+    deckOrganizer.start()
+  }
+
   // Build the document once; public, guest, and workbench layouts share this surface.
   const documentEl = (
     <ArtifactDocument
@@ -1016,6 +1047,14 @@ export function Artifact({ template = false }: { template?: boolean }) {
       presentOverlay={present.overlay}
       controlsIdle={present.idle}
       onPresent={present.toggle}
+      deckEditing={inlineEdit.active}
+      deckArranging={deckOrganizer.open}
+      onDeckEdit={isDeckLike && canEditDoc ? toggleDeckEdit : undefined}
+      onDeckArrange={
+        isDeckLike && !!deck && deck.slides.length >= 2 && canEditDoc
+          ? toggleDeckArrange
+          : undefined
+      }
       readOnlyView={isAnon || isGuest}
     />
   )
@@ -1270,26 +1309,10 @@ export function Artifact({ template = false }: { template?: boolean }) {
               // and arrow keys flipping slides under the caret) is handled in the
               // frame: while a caret is in a block, the page's keyboard is off.
               showInlineEdit={
-                canEditDoc && !inlineEdit.active && !deckOrganizer.open && !bundleWorkspaceActive
+                canEditDoc && !isDeckLike && !inlineEdit.active && !bundleWorkspaceActive
               }
               inlineEditLabel="Edit"
               onInlineEdit={() => inlineEdit.start()}
-              showArrange={
-                isDeckLike &&
-                !!deck &&
-                deck.slides.length >= 2 &&
-                canEditDoc &&
-                !inlineEdit.active &&
-                !bundleWorkspaceActive
-              }
-              arrangeOpen={deckOrganizer.open}
-              onArrange={() => {
-                if (deckOrganizer.open) deckOrganizer.requestClose()
-                else {
-                  setPanel("hidden")
-                  deckOrganizer.start()
-                }
-              }}
               isDeck={isDeckLike}
               videoMoment={video ? { scene: video.id, timeMs: video.elapsedMs } : undefined}
               canLock={canLock}

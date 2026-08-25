@@ -70,9 +70,9 @@ test.describe("deck", () => {
     owner: page,
   }) => {
     const shortId = await seedDeck(page)
-    await expect(page.getByTestId("artifact-arrange-slides")).toHaveCount(0)
-    await page.getByTestId("artifact-edit-menu").click()
-    await page.getByTestId("artifact-arrange-slides").click()
+    await expect(page.getByTestId("artifact-edit-menu")).toHaveCount(0)
+    await expect(page.getByTestId("artifact-inline-edit")).toHaveCount(0)
+    await page.getByTestId("deck-arrange").click()
     await expect(page.getByTestId("deck-organizer")).toBeVisible()
     await expect(page.getByTestId("deck-slide-card-1")).toContainText("New deck")
     await expect(page.getByTestId("deck-slide-card-2")).toContainText(
@@ -124,8 +124,7 @@ test.describe("deck", () => {
     // A phone gets a bottom sheet with persistent finger-sized move controls. Adding
     // another row must scroll the list, never flex-compress the cards into each other.
     await page.setViewportSize({ width: 390, height: 844 })
-    await page.getByTestId("artifact-edit-menu").click()
-    await page.getByTestId("artifact-arrange-slides").click()
+    await page.getByTestId("deck-arrange").click()
     await expect(page.getByTestId("deck-slide-down-1")).toBeVisible()
     await page.getByTestId("deck-add-slide").click()
     const overlap = await page.getByTestId(/^deck-slide-card-/).evaluateAll((cards) =>
@@ -166,8 +165,7 @@ test.describe("deck", () => {
     await comment("General note.")
 
     await openArtifact(page, shortId)
-    await page.getByTestId("artifact-edit-menu").click()
-    await page.getByTestId("artifact-arrange-slides").click()
+    await page.getByTestId("deck-arrange").click()
     await page.getByTestId("deck-slide-card-2").hover()
     await page.getByTestId("deck-slide-up-2").click()
     await page.getByTestId("deck-arrange-save").click()
@@ -345,14 +343,13 @@ test.describe("deck", () => {
     await owner.getByTestId("deck-next").click()
     await expect(owner.getByTestId("deck-position")).toHaveText("2 / 3")
 
-    // Enter the mode from the header, then click the slide on screen to arm it.
+    // Enter the mode directly from the deck bar, then click the slide on screen to arm it.
     // `force` because Playwright's actionability check sees the NEXT slide stacked
     // on top of this one (a deck hides slides with opacity, which leaves them
     // hit-testable) and refuses to click. A real click lands fine: the client peels
     // those overlays before it resolves what the pointer is over, which is the
     // whole reason editing a deck works at all.
-    await owner.getByTestId("artifact-edit-menu").click()
-    await owner.getByTestId("artifact-inline-edit").click()
+    await owner.getByTestId("deck-edit").click()
     await expect(owner.getByTestId("inline-edit-bar")).toBeVisible()
     await doc(owner).locator("#s2").click({ force: true })
     await owner.keyboard.press("End")
@@ -376,6 +373,29 @@ test.describe("deck", () => {
     await expect(owner.getByTestId("deck-bar")).toContainText("Esc to exit")
     await owner.keyboard.press("Escape")
     await expect(owner.getByTestId("deck-bar")).not.toContainText("Esc to exit")
+  })
+
+  test("deck edit and rearrange are direct actions in the deck bar", async ({ owner }) => {
+    await seedDeck(owner)
+
+    // A deck has no second authoring entrance in the artifact header.
+    await expect(owner.getByTestId("artifact-inline-edit")).toHaveCount(0)
+    await expect(owner.getByTestId("artifact-edit-menu")).toHaveCount(0)
+    await expect(owner.getByTestId("deck-edit")).toBeVisible()
+    await expect(owner.getByTestId("deck-arrange")).toBeVisible()
+
+    await owner.getByTestId("deck-edit").click()
+    await expect(owner.getByTestId("inline-edit-bar")).toBeVisible()
+    // Rearrange remains available while content editing is active.
+    await expect(owner.getByTestId("deck-arrange")).toBeVisible()
+
+    await owner.getByTestId("deck-arrange").click()
+    await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+    await expect(owner.getByTestId("deck-organizer")).toBeVisible()
+
+    await owner.getByTestId("deck-edit").click()
+    await expect(owner.getByTestId("deck-organizer")).toBeHidden()
+    await expect(owner.getByTestId("inline-edit-bar")).toBeVisible()
   })
 
   /**

@@ -1,4 +1,4 @@
-import { ChevronDown, GalleryHorizontalEnd, Maximize2, MousePointer2Off, Zap } from "lucide-react"
+import { Maximize2, MousePointer2Off, Zap } from "lucide-react"
 import { useState } from "react"
 import type { CollectionGrant, LinkRole, Listed, Role, WorkspaceAccess } from "@/api"
 import { Icon } from "@/components/icons"
@@ -51,9 +51,6 @@ export function ArtifactTopBar(props: {
    *  button ahead of Share. The ⋯ "Edit source" item stays the raw fallback. */
   showInlineEdit: boolean
   inlineEditLabel: string
-  /** Current editable deck: open the host-owned visual slide organizer. */
-  showArrange: boolean
-  arrangeOpen: boolean
   /** This artifact is a slide deck — offer Present (fullscreen) in the ⋯ menu. */
   isDeck: boolean
   videoMoment?: { scene: string; timeMs: number }
@@ -76,7 +73,6 @@ export function ArtifactTopBar(props: {
   onHistory: () => void
   onStartEdit: () => void
   onInlineEdit: () => void
-  onArrange: () => void
   onToggleComments: () => void
   onPresent: () => void
   /** Open this artifact's current source as an independent draft. */
@@ -104,33 +100,7 @@ export function ArtifactTopBar(props: {
             counterpart to the filled Share. Only someone who can publish sees it.
             It is no longer the only way in (`e`, or Edit on a selection), but it
             stays: it's what tells a first-time reader the document is editable. */}
-        {props.showInlineEdit && props.showArrange ? (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant="ghost"
-                size="sm"
-                title="Edit"
-                data-testid="artifact-edit-menu"
-                aria-label="Edit options"
-                aria-pressed={props.arrangeOpen}
-                className={cn(props.arrangeOpen && "bg-accent text-foreground")}
-              >
-                <Icon name="pencil" size={16} className="text-muted-foreground" />
-                {props.inlineEditLabel}
-                <ChevronDown className="size-3.5 text-muted-foreground" aria-hidden />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start">
-              <DropdownMenuItem data-testid="artifact-inline-edit" onSelect={props.onInlineEdit}>
-                <Icon name="pencil" size={16} /> Edit content
-              </DropdownMenuItem>
-              <DropdownMenuItem data-testid="artifact-arrange-slides" onSelect={props.onArrange}>
-                <GalleryHorizontalEnd className="size-4" /> Organize slides
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        ) : props.showInlineEdit ? (
+        {props.showInlineEdit ? (
           <Button
             variant="ghost"
             size="sm"

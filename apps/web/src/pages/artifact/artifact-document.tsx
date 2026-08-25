@@ -49,6 +49,10 @@ export function ArtifactDocument({
   presentOverlay = false,
   controlsIdle = false,
   onPresent,
+  deckEditing = false,
+  deckArranging = false,
+  onDeckEdit,
+  onDeckArrange,
   readOnlyView = false,
 }: {
   shown: number
@@ -93,6 +97,11 @@ export function ArtifactDocument({
   /** No input for a beat: the presentation controls fade out of the way. */
   controlsIdle?: boolean
   onPresent?: () => void
+  /** Deck-local authoring actions live in the presentation bar beside navigation. */
+  deckEditing?: boolean
+  deckArranging?: boolean
+  onDeckEdit?: () => void
+  onDeckArrange?: () => void
   /** Public and guest readers cannot diff or restore an older version. */
   readOnlyView?: boolean
 }) {
@@ -188,6 +197,10 @@ export function ArtifactDocument({
                   onPrev={onDeckPrev}
                   onNext={onDeckNext}
                   onPresent={onPresent}
+                  editing={deckEditing}
+                  arranging={deckArranging}
+                  onEdit={onDeckEdit}
+                  onArrange={onDeckArrange}
                 />
               )}
               {video && (
