@@ -74,6 +74,7 @@ describe("serve-web: SPA vs API path contract", () => {
       "/templates",
       "/templates/weekly-review-abc123",
       "/users/maya",
+      "/workflows",
     ])
       expect(isSpaPath(path)).toBe(true)
     for (const path of [

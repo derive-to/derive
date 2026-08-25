@@ -173,6 +173,12 @@ describe("workflow production evaluation — 18 focused policy cases", () => {
     )
   })
 
+  it("09b requires human options to be distinct", () => {
+    expect(errorsAfter((v) => (v.diagrams[0].nodes[1].options = ["publish", "PUBLISH"]))).toContain(
+      'WF-07 human node "review" requires distinct options',
+    )
+  })
+
   it("10 requires human routes to match authored options exactly", () => {
     expect(errorsAfter((v) => (v.diagrams[0].routes[2].when = "later"))).toEqual(
       expect.arrayContaining([expect.stringContaining("routes must match its options exactly")]),
@@ -207,7 +213,27 @@ describe("workflow production evaluation — 18 focused policy cases", () => {
         v.diagrams[0].nodes[0].routing = "one"
         v.diagrams[0].routes.push({ from: "draft", to: "stop", when: "fail" })
       }),
-    ).toContain('WF-02 routing:"one" node "draft" requires conditions and exactly one fallback')
+    ).toContain(
+      'WF-02 routing:"one" node "draft" requires unique conditions and exactly one fallback',
+    )
+  })
+
+  it("14b rejects duplicate predicates for routing one", () => {
+    expect(
+      errorsAfter((v) => {
+        v.diagrams[0].nodes[0].routing = "one"
+        v.diagrams[0].routes[0].when = "ready"
+        v.diagrams[0].routes.push({ from: "draft", to: "stop", when: "READY" })
+        v.diagrams[0].routes.push({
+          from: "draft",
+          to: "publish",
+          when: "otherwise",
+          fallback: true,
+        })
+      }),
+    ).toContain(
+      'WF-02 routing:"one" node "draft" requires unique conditions and exactly one fallback',
+    )
   })
 
   it("15 rejects unreachable nodes", () => {
@@ -246,6 +272,22 @@ describe("workflow production evaluation — 18 focused policy cases", () => {
         ]
       }),
     ).toContain('WF-04 loop "repair" max_attempts must be an integer from 1 to 100')
+  })
+
+  it("17b requires an integer stagnation limit", () => {
+    expect(
+      errorsAfter((v) => {
+        v.diagrams[0].loops = [
+          {
+            id: "repair",
+            nodes: ["draft", "review"],
+            goal: "Reach approval",
+            evaluate: "Check the review decision",
+            stop: { max_attempts: 2, stagnation_limit: 0.5, human_stop: "The person stops" },
+          },
+        ]
+      }),
+    ).toContain('WF-04 loop "repair" stagnation_limit must be an integer')
   })
 
   it("18 requires a context-failure scenario", () => {

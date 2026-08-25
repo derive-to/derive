@@ -64,7 +64,9 @@ const BOOT_FRAME = `(function(){try{var p=location.pathname;var authed=localStor
  *  and the real call cannot disagree; boot-fetch.test.ts pins the pairing end to end. */
 export const BOOT_START_URLS = {
   bootstrap: `${API_BASE}/v1/bootstrap`,
-  homeList: API_BASE + artifactsListPath({ limit: LIBRARY_PAGE, sort: DEFAULT_SORT }),
+  homeList:
+    API_BASE +
+    artifactsListPath({ limit: LIBRARY_PAGE, sort: DEFAULT_SORT, excludeWorkflows: true }),
 } as const
 
 // Third pre-paint sibling, and the only one that touches the network: START the boot's

@@ -86,6 +86,8 @@ export type VersionSession = components["schemas"]["VersionSession"]
  *  from the OpenAPI spec (apps/api/openapi.json). `my_role` is `Role | null`;
  *  workspace_access/link_role/listed are the v2 access enums (see access-model.md). */
 export type Artifact = components["schemas"]["Artifact"]
+/** One graph/loop bundle in the workspace's Workflows directory. */
+export type WorkflowDirectoryItem = components["schemas"]["WorkflowDirectoryItem"]
 /** An abuse report against an artifact. Generated from the OpenAPI spec. */
 export type Report = components["schemas"]["Report"]
 /** A collection: a shareable group of artifacts, tagged with its item count and origin
@@ -450,6 +452,7 @@ export const artifactsListPath = (params?: {
   favorite?: boolean
   author?: string
   scope?: "shared" | "following" | "needs_feedback" | "mine" | "archived"
+  excludeWorkflows?: boolean
   cursor?: string
   limit?: number
   sort?: SortMode
@@ -460,6 +463,7 @@ export const artifactsListPath = (params?: {
   if (params?.favorite) qs.set("favorite", "true")
   if (params?.author) qs.set("author", params.author)
   if (params?.scope) qs.set("scope", params.scope)
+  if (params?.excludeWorkflows) qs.set("exclude_workflows", "true")
   if (params?.cursor) qs.set("cursor", params.cursor)
   if (params?.limit) qs.set("limit", String(params.limit))
   if (params?.sort) qs.set("sort", params.sort)
@@ -758,6 +762,8 @@ export const api = {
        *  visibility included — the library's "Created by me" filter.
        *  "archived" → the reversible archive shelf. */
       scope?: "shared" | "following" | "needs_feedback" | "mine" | "archived"
+      /** Keep linked graph/loop bundles in the Workflows product area. */
+      excludeWorkflows?: boolean
       cursor?: string
       limit?: number
       /** Grid order. Omit to get the route's default, created-desc (the library always sends
@@ -774,6 +780,8 @@ export const api = {
   }> => {
     return f(artifactsListPath(params), opts(undefined, init)).then(j)
   },
+  listWorkflows: (): Promise<{ items: WorkflowDirectoryItem[]; truncated: boolean }> =>
+    f("/v1/workflows", opts()).then(j),
   // The batched boot read: exactly the four bodies below (tags summary, collections,
   // workspace settings, notifications), one authenticated request. The client seeds
   // the four individual query caches from it — see lib/bootstrap.ts. Typed against the

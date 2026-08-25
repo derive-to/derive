@@ -95,12 +95,8 @@ export function NewArtifact() {
       publishing.current = true
       if (search.next === "context") {
         nav({
-          to: "/contexts",
-          search: {
-            manifest: a.short_id,
-            name: search.contextName,
-            origin: search.contextName,
-          },
+          to: "/workflows",
+          search: { view: "contexts" },
         })
       } else {
         nav({ to: "/artifacts/$ref", params: { ref: refFor(a) } })

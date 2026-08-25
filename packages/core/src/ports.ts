@@ -232,6 +232,9 @@ export interface ListArtifactsOpts {
    *  column — e.g. `derive/skill` for a workspace's skills — so a typed listing
    *  filters in the store instead of paging the whole library. */
   contentType?: string
+  /** Exclude one stored content type. The web Library uses this to give linked workflow
+   *  bundles their own product home without changing artifact discovery for agents. */
+  excludeContentType?: string
 }
 
 /** The browse sidebar's summary — see `ArtifactQueryStore.workspaceSummary`. */

@@ -121,7 +121,7 @@ function NavItem({
   icon: IconName
   label: string
   count?: number
-  to: "/following" | "/contexts" | "/templates" | "/chat"
+  to: "/following" | "/workflows" | "/templates" | "/chat"
   active: boolean
   testId?: string
 }) {
@@ -349,7 +349,7 @@ export function NavRail() {
   // Feeds are routes now; the home library reads "active > All" only when no collection
   // filter narrows it. (A ?query= search doesn't change which feed you're in.)
   const isAll = onLibrary && !search.collection
-  const onContexts = loc.pathname.startsWith("/contexts")
+  const onWorkflows = loc.pathname.startsWith("/workflows") || loc.pathname.startsWith("/contexts")
   const onTemplates = loc.pathname.startsWith("/templates")
   const onSettings = loc.pathname.startsWith("/settings")
   const onChat = loc.pathname.startsWith("/chat")
@@ -388,7 +388,6 @@ export function NavRail() {
               <FilterItem
                 icon="all"
                 label="Library"
-                count={summary?.total}
                 search={{}}
                 active={isAll}
                 testId="sidebar-all"
@@ -401,11 +400,11 @@ export function NavRail() {
                 testId="nav-templates"
               />
               <NavItem
-                icon="context"
-                label="Contexts"
-                to="/contexts"
-                active={onContexts}
-                testId="nav-contexts"
+                icon="workflow"
+                label="Workflows"
+                to="/workflows"
+                active={onWorkflows}
+                testId="nav-workflows"
               />
               {/* CHAT CLOSES THE TIER. A real route, like every other row here — it goes straight
                   to the full conversation (history, Stop, model choice) instead of the palette's

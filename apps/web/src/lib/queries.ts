@@ -95,7 +95,12 @@ export const libraryArtifactsQuery = (params: LibraryParams) =>
     queryKey: ["artifacts", params] as const,
     queryFn: ({ pageParam, signal }) =>
       api.listArtifacts(
-        { ...params, cursor: pageParam || undefined, limit: LIBRARY_PAGE },
+        {
+          ...params,
+          cursor: pageParam || undefined,
+          limit: LIBRARY_PAGE,
+          excludeWorkflows: params.scope !== "archived",
+        },
         { signal },
       ),
     initialPageParam: "",
@@ -111,6 +116,12 @@ export const libraryArtifactsQuery = (params: LibraryParams) =>
     // previous-cursor twin), so a page cap would drop the TOP pages on a deep scroll
     // with no way to refetch them — the list would visibly lose its head. Bounding the
     // persisted-restore cost of a deep scroll needs bidirectional cursors first.
+  })
+
+export const workflowsQuery = () =>
+  queryOptions({
+    queryKey: ["workflows"] as const,
+    queryFn: () => api.listWorkflows(),
   })
 
 // Artifacts that need YOUR feedback: an open comment thread you're tagged in or have

@@ -27,6 +27,7 @@ import { Route as ChatRouteImport } from './routes/chat'
 import { Route as BrandprintRouteImport } from './routes/brandprint'
 import { Route as ArchivedRouteImport } from './routes/archived'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as WorkflowsIndexRouteImport } from './routes/workflows.index'
 import { Route as TemplatesIndexRouteImport } from './routes/templates.index'
 import { Route as TemplateLibrariesIndexRouteImport } from './routes/template-libraries.index'
 import { Route as SettingsIndexRouteImport } from './routes/settings.index'
@@ -132,6 +133,11 @@ const ArchivedRoute = ArchivedRouteImport.update({
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const WorkflowsIndexRoute = WorkflowsIndexRouteImport.update({
+  id: '/workflows/',
+  path: '/workflows/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const TemplatesIndexRoute = TemplatesIndexRouteImport.update({
@@ -248,6 +254,7 @@ export interface FileRoutesByFullPath {
   '/settings/': typeof SettingsIndexRoute
   '/template-libraries/': typeof TemplateLibrariesIndexRoute
   '/templates/': typeof TemplatesIndexRoute
+  '/workflows/': typeof WorkflowsIndexRoute
   '/invite/a/$token': typeof InviteATokenRoute
   '/invite/c/$token': typeof InviteCTokenRoute
 }
@@ -283,6 +290,7 @@ export interface FileRoutesByTo {
   '/settings': typeof SettingsIndexRoute
   '/template-libraries': typeof TemplateLibrariesIndexRoute
   '/templates': typeof TemplatesIndexRoute
+  '/workflows': typeof WorkflowsIndexRoute
   '/invite/a/$token': typeof InviteATokenRoute
   '/invite/c/$token': typeof InviteCTokenRoute
 }
@@ -320,6 +328,7 @@ export interface FileRoutesById {
   '/settings/': typeof SettingsIndexRoute
   '/template-libraries/': typeof TemplateLibrariesIndexRoute
   '/templates/': typeof TemplatesIndexRoute
+  '/workflows/': typeof WorkflowsIndexRoute
   '/invite/a/$token': typeof InviteATokenRoute
   '/invite/c/$token': typeof InviteCTokenRoute
 }
@@ -358,6 +367,7 @@ export interface FileRouteTypes {
     | '/settings/'
     | '/template-libraries/'
     | '/templates/'
+    | '/workflows/'
     | '/invite/a/$token'
     | '/invite/c/$token'
   fileRoutesByTo: FileRoutesByTo
@@ -393,6 +403,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/template-libraries'
     | '/templates'
+    | '/workflows'
     | '/invite/a/$token'
     | '/invite/c/$token'
   id:
@@ -429,6 +440,7 @@ export interface FileRouteTypes {
     | '/settings/'
     | '/template-libraries/'
     | '/templates/'
+    | '/workflows/'
     | '/invite/a/$token'
     | '/invite/c/$token'
   fileRoutesById: FileRoutesById
@@ -464,6 +476,7 @@ export interface RootRouteChildren {
   ContextsIndexRoute: typeof ContextsIndexRoute
   TemplateLibrariesIndexRoute: typeof TemplateLibrariesIndexRoute
   TemplatesIndexRoute: typeof TemplatesIndexRoute
+  WorkflowsIndexRoute: typeof WorkflowsIndexRoute
   InviteATokenRoute: typeof InviteATokenRoute
   InviteCTokenRoute: typeof InviteCTokenRoute
 }
@@ -594,6 +607,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/workflows/': {
+      id: '/workflows/'
+      path: '/workflows'
+      fullPath: '/workflows/'
+      preLoaderRoute: typeof WorkflowsIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/templates/': {
@@ -756,6 +776,7 @@ const rootRouteChildren: RootRouteChildren = {
   ContextsIndexRoute: ContextsIndexRoute,
   TemplateLibrariesIndexRoute: TemplateLibrariesIndexRoute,
   TemplatesIndexRoute: TemplatesIndexRoute,
+  WorkflowsIndexRoute: WorkflowsIndexRoute,
   InviteATokenRoute: InviteATokenRoute,
   InviteCTokenRoute: InviteCTokenRoute,
 }

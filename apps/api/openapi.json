@@ -1757,6 +1757,70 @@
           "grantedAt"
         ]
       },
+      "WorkflowDirectoryItem": {
+        "type": "object",
+        "properties": {
+          "short_id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string",
+            "nullable": true
+          },
+          "purpose": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 0,
+            "exclusiveMinimum": true
+          },
+          "updated_at": {
+            "type": "string"
+          },
+          "kinds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "workflow",
+                "graph",
+                "loop"
+              ]
+            },
+            "minItems": 1,
+            "description": "Authored capabilities present on the current version. workflow means its execution definition validates; graph and loop come from bundle diagrams."
+          },
+          "diagram_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "node_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "execution": {
+            "type": "string",
+            "enum": [
+              "ready",
+              "needs-changes",
+              "descriptive"
+            ],
+            "description": "ready is validated execution intent; needs-changes carries an invalid definition; descriptive has presentation diagrams only."
+          }
+        },
+        "required": [
+          "short_id",
+          "title",
+          "purpose",
+          "version",
+          "updated_at",
+          "kinds",
+          "diagram_count",
+          "node_count",
+          "execution"
+        ]
+      },
       "BulkSummary": {
         "type": "object",
         "properties": {
@@ -5010,6 +5074,41 @@
         "responses": {
           "204": {
             "description": "The grant was revoked (idempotent)."
+          }
+        }
+      }
+    },
+    "/v1/workflows": {
+      "get": {
+        "tags": [
+          "Artifacts"
+        ],
+        "summary": "List the active workspace's visible workflow, graph, and loop bundles.",
+        "responses": {
+          "200": {
+            "description": "Visible workflow directory entries, newest-authored fact first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/WorkflowDirectoryItem"
+                      }
+                    },
+                    "truncated": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "truncated"
+                  ]
+                }
+              }
+            }
           }
         }
       }

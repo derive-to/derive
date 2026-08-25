@@ -46,11 +46,13 @@ import {
   Maximize,
   MessageCircle,
   Minimize,
+  Network,
   PanelLeft,
   Pencil,
   Pin,
   Plus,
   Redo2,
+  Repeat2,
   Search,
   Settings,
   Share2,
@@ -83,6 +85,9 @@ const REG = {
   derive: GitFork,
   // Brandprint — the brand's fingerprint.
   brandprint: Fingerprint,
+  workflow: GitFork,
+  graph: Network,
+  loop: Repeat2,
   search: Search,
   settings: Settings,
   // pod / workspace

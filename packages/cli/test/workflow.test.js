@@ -327,6 +327,25 @@ describe("workflow Preview parity with core", () => {
     ],
     ["missing entry", (source) => source.replace('"entry":"research"', '"entry":"missing"')],
     [
+      "duplicate routing-one predicates",
+      (source) => {
+        const workflow = factJson(source, "workflow-definition").value
+        workflow.diagrams[0].nodes[0].routing = "one"
+        workflow.diagrams[0].routes[0].when = "ready"
+        workflow.diagrams[0].routes.push({ from: "research", to: "publish", when: "READY" })
+        workflow.diagrams[0].routes.push({
+          from: "research",
+          to: "review",
+          when: "otherwise",
+          fallback: true,
+        })
+        return source.replace(
+          /(<script type="application\/derive-facts" data-fact="workflow-definition">)[\s\S]*?(<\/script>)/,
+          (_match, open, close) => `${open}${JSON.stringify(workflow)}${close}`,
+        )
+      },
+    ],
+    [
       "oversized workflow fact",
       (source) =>
         source.replace('"forbidden":[', `"padding":"${"x".repeat(33 * 1024)}","forbidden":[`),

@@ -545,6 +545,23 @@ export function runStoreContract(
       expect(await store.listArtifacts({ ids: [] })).toEqual([])
     })
 
+    it("can exclude one current content type from a listing", async () => {
+      const ordinary = await store.createArtifact(newArtifact({ title: "Ordinary page" }))
+      const workflow = await store.createArtifact(newArtifact({ title: "Workflow bundle" }))
+      await store.addVersion(ordinary.id, newVersion({ content_type: "text/html" }))
+      await store.addVersion(
+        workflow.id,
+        newVersion({ content_type: "text/x-derive-linked-bundle" }),
+      )
+
+      const listed = await store.listArtifacts({
+        orgId: ORG,
+        excludeContentType: "text/x-derive-linked-bundle",
+      })
+      expect(listed.map((artifact) => artifact.id)).toContain(ordinary.id)
+      expect(listed.map((artifact) => artifact.id)).not.toContain(workflow.id)
+    })
+
     it("setAccess changes the access triple (and sets/clears the password lock)", async () => {
       const a = await store.createArtifact(
         newArtifact({ workspace_access: "none", link_role: "none", listed: "none" }),
@@ -2555,7 +2572,7 @@ export function runStoreContract(
     it("collectionsOverview matches listCollections for the same org", async () => {
       const org = `org_${uuid()}`
       await store.setWorkspace(org, "Overview")
-      const col = await store.createCollection({
+      const _col = await store.createCollection({
         id: uuid(),
         org_id: org,
         title: "Planning",

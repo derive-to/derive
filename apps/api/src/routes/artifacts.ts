@@ -21,6 +21,7 @@ import {
   isHtmlLike,
   isMarkdownBundle,
   LINKED_BUNDLE_CONTENT_TYPE,
+  LINKED_BUNDLE_FACT,
   type LinkedBundleManifest,
   maxRole,
   missingBlobAdvisory,
@@ -42,6 +43,7 @@ import {
   sortKeyOf,
   toJson,
   toMarkdown,
+  WORKFLOW_DEFINITION_FACT,
   type WorkflowDefinition,
   type WorkflowPreview,
   type WorkspaceAccess,
@@ -109,9 +111,10 @@ import {
   workspaceSearchReport,
 } from "../lib/search"
 import { normalizeTags, parseTagsField } from "../lib/tags"
+import { visibleArtifacts } from "../lib/visibility"
 import { parseLinkedWorkflowFacts } from "../lib/workflow-facts"
 import { log } from "../log"
-import { Artifact } from "../schemas"
+import { Artifact, WorkflowDirectoryItem } from "../schemas"
 
 // Bundle asset types the /content route serves with their real Content-Type. Not
 // image/svg+xml: an SVG is a scriptable document when a browser navigates to it
@@ -183,6 +186,103 @@ export const artifactRoutes = (ctx: AppContext) => {
   } = ctx
   const app = new OpenAPIHono<BlankEnv>()
 
+  // The workspace Workflows front door. Contexts retain their own endpoint because they
+  // are live agent setups; this indexes the authored graph/loop bundles that share the
+  // same product area. Facts are read from CURRENT immutable versions, then narrowed
+  // through the ordinary artifact visibility gate before any title or purpose is returned.
+  app.openapi(
+    createRoute({
+      method: "get",
+      path: "/v1/workflows",
+      tags: ["Artifacts"],
+      summary: "List the active workspace's visible workflow, graph, and loop bundles.",
+      responses: {
+        200: {
+          description: "Visible workflow directory entries, newest-authored fact first.",
+          content: {
+            "application/json": {
+              schema: z.object({
+                items: z.array(WorkflowDirectoryItem),
+                truncated: z.boolean(),
+              }),
+            },
+          },
+        },
+      },
+    }),
+    async (c) => {
+      const me = await currentUser(c)
+      const agent = me ? null : await agentFor(c)
+      const operator = isToken(c)
+      if (!me && !agent && !operator) return bail(fail(c, 401, "unauthenticated"))
+
+      const org = await activeWorkspace(c)
+      const memberId = me?.id ?? agent?.created_by ?? agent?.id
+      const baselineRole = memberId ? ((await membershipOf(c, org, memberId))?.role ?? null) : null
+      const publicOnly = !(operator || baselineRole !== null)
+
+      // Over-fetch before the visibility cut so a run of inaccessible private bundles does
+      // not make a reader's directory look empty. This is intentionally a bounded first
+      // version of the directory; `truncated` keeps the cap honest until it needs cursors.
+      const factCap = 201
+      const bundleRows = await meta.listFactAcrossArtifacts(org, LINKED_BUNDLE_FACT, {
+        limit: factCap,
+      })
+      const candidates = bundleRows.slice(0, 200)
+      const visible = await visibleArtifacts(
+        meta,
+        candidates.map((row) => row.id),
+        { orgId: org, viewerId: operator ? undefined : memberId, publicOnly },
+      )
+      const visibleIds = new Set(
+        visible
+          .filter((artifact) => artifact.current_content_type === LINKED_BUNDLE_CONTENT_TYPE)
+          .map((artifact) => artifact.id),
+      )
+      const workflowRows = await meta.listFactAcrossArtifacts(org, WORKFLOW_DEFINITION_FACT, {
+        limit: factCap,
+      })
+      const workflowByArtifact = new Map(workflowRows.map((row) => [row.id, row]))
+
+      const items = candidates.flatMap((row) => {
+        if (!visibleIds.has(row.id)) return []
+        const workflowRow = workflowByArtifact.get(row.id)
+        const parsed = parseLinkedWorkflowFacts([
+          { slot: LINKED_BUNDLE_FACT, json: row.json },
+          ...(workflowRow ? [{ slot: WORKFLOW_DEFINITION_FACT, json: workflowRow.json }] : []),
+        ])
+        if (!parsed.manifest) return []
+
+        const diagrams = parsed.manifest.diagrams ?? []
+        const kinds = [
+          ...(parsed.definition ? (["workflow"] as const) : []),
+          ...(diagrams.some((diagram) => diagram.type === "graph") ? (["graph"] as const) : []),
+          ...(diagrams.some((diagram) => diagram.type === "loop") ? (["loop"] as const) : []),
+        ]
+        if (!kinds.length) return []
+        return [
+          {
+            short_id: row.short_id,
+            title: row.title,
+            purpose: parsed.manifest.purpose,
+            version: row.n,
+            updated_at: row.at,
+            kinds,
+            diagram_count: diagrams.length,
+            node_count: diagrams.reduce((sum, diagram) => sum + diagram.nodes.length, 0),
+            execution: parsed.definition
+              ? ("ready" as const)
+              : parsed.workflowFound
+                ? ("needs-changes" as const)
+                : ("descriptive" as const),
+          },
+        ]
+      })
+
+      return c.json({ items, truncated: bundleRows.length > 200 || workflowRows.length > 200 })
+    },
+  )
+
   // Keyset-paginated (?sort=&cursor=&limit=N; the cursor is keyed on the active sort —
   // see sortKeyOf), with optional server-side ?query= (artifact title, tag, or
   // collection-title search), ?tag=, and ?favorite=true. Returns { artifacts,
@@ -247,6 +347,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       // ?author=<github login> narrows to artifacts whose current author is that login.
       const author = c.req.query("author")?.trim().slice(0, 100) || undefined
       const archivedOnly = c.req.query("scope") === "archived"
+      const excludeWorkflows = c.req.query("exclude_workflows") === "true"
 
       // The FAVORITES FEED needs the star list before the list query, because it narrows
       // by it. Every other listing only needs to know which rows on the page it got back
@@ -384,6 +485,7 @@ export const artifactRoutes = (ctx: AppContext) => {
         viewerId:
           isOperator || (collectionId && collectionAccess) ? undefined : (memberKey ?? undefined),
         archived: archivedOnly ? ("only" as const) : ("exclude" as const),
+        ...(excludeWorkflows ? { excludeContentType: LINKED_BUNDLE_CONTENT_TYPE } : {}),
       }
       // THE COLD BOOT'S CRITICAL PATH. After the rest of this PR, nothing is queued in
       // front of this request any more — the first card paints 43ms after it lands — so

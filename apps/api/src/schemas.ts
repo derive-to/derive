@@ -175,6 +175,31 @@ export const WorkflowDefinition = z
   })
   .openapi("WorkflowDefinition")
 
+/** One entry in the workspace's Workflows directory. Contexts have their own lifecycle
+ * and endpoint; this shape indexes the authored graph/loop bundles that sit beside them. */
+export const WorkflowDirectoryItem = z
+  .object({
+    short_id: z.string(),
+    title: z.string().nullable(),
+    purpose: z.string(),
+    version: z.number().int().positive(),
+    updated_at: z.string(),
+    kinds: z
+      .array(z.enum(["workflow", "graph", "loop"]))
+      .min(1)
+      .describe(
+        "Authored capabilities present on the current version. workflow means its execution definition validates; graph and loop come from bundle diagrams.",
+      ),
+    diagram_count: z.number().int().nonnegative(),
+    node_count: z.number().int().nonnegative(),
+    execution: z
+      .enum(["ready", "needs-changes", "descriptive"])
+      .describe(
+        "ready is validated execution intent; needs-changes carries an invalid definition; descriptive has presentation diagrams only.",
+      ),
+  })
+  .openapi("WorkflowDirectoryItem")
+
 /** A collection that grants access to an artifact, as the share dialog discloses it: a
  *  workspace-open collection reaches every workspace seat at their role; an invite-only
  *  one reaches its explicit members. The artifact's own access fields never see this

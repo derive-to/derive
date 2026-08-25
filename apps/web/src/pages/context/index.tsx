@@ -80,7 +80,7 @@ export function Contexts() {
   )
 }
 
-function ContextRow({ context: x }: { context: ContextInfo }) {
+export function ContextRow({ context: x }: { context: ContextInfo }) {
   const status = runnerStatus(x.runner_seen_at)
   const runnerLabel = status.online ? "ready" : status.away ? "away" : "offline"
   return (

@@ -235,6 +235,13 @@ export function artifactListConditions(
   // Typed listings (a workspace's skills) filter on the denormalized content type
   // here rather than paging the library and filtering in memory.
   if (opts?.contentType) conds.push(eq(art.current_content_type, opts.contentType))
+  if (opts?.excludeContentType) {
+    const notExcluded = or(
+      isNull(art.current_content_type),
+      ne(art.current_content_type, opts.excludeContentType),
+    )
+    if (notExcluded) conds.push(notExcluded)
+  }
   // One bound parameter whatever the tag's population. Table named literally: sqlite, D1,
   // and pg all call it artifact_tag.
   if (opts?.tag)

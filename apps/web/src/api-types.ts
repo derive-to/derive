@@ -1299,6 +1299,45 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/workflows": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List the active workspace's visible workflow, graph, and loop bundles. */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Visible workflow directory entries, newest-authored fact first. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            items: components["schemas"]["WorkflowDirectoryItem"][];
+                            truncated: boolean;
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/artifacts": {
         parameters: {
             query?: never;
@@ -6993,6 +7032,22 @@ export interface components {
             /** @description The OAuth scopes this agent was granted */
             scopes: string[];
             grantedAt: string;
+        };
+        WorkflowDirectoryItem: {
+            short_id: string;
+            title: string | null;
+            purpose: string;
+            version: number;
+            updated_at: string;
+            /** @description Authored capabilities present on the current version. workflow means its execution definition validates; graph and loop come from bundle diagrams. */
+            kinds: ("workflow" | "graph" | "loop")[];
+            diagram_count: number;
+            node_count: number;
+            /**
+             * @description ready is validated execution intent; needs-changes carries an invalid definition; descriptive has presentation diagrams only.
+             * @enum {string}
+             */
+            execution: "ready" | "needs-changes" | "descriptive";
         };
         BulkSummary: {
             /** @description Artifacts the operation applied to. */

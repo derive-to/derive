@@ -253,6 +253,8 @@ export const validateWorkflowDefinition = (
         if (!decision) errors.push(`WF-07 human node "${id ?? nodeIndex}" requires decision`)
         if (!options || options.length < 2)
           errors.push(`WF-07 human node "${id ?? nodeIndex}" requires at least two options`)
+        else if (new Set(options.map((option) => option.toLowerCase())).size !== options.length)
+          errors.push(`WF-07 human node "${id ?? nodeIndex}" requires distinct options`)
         if (!resume) errors.push(`WF-07 human node "${id ?? nodeIndex}" requires resume`)
       }
       if (kind === "terminal" && !result)
@@ -407,12 +409,16 @@ export const validateWorkflowDefinition = (
         )
           errors.push(`WF-02 routing:"all" node "${from}" requires only always routes`)
       } else if (choices.length > 1 && node?.routing === "one") {
+        const conditions = choices
+          .filter((route) => !route.fallback)
+          .map((route) => route.when.toLowerCase())
         if (
           choices.some((route) => route.when.toLowerCase() === "always") ||
-          choices.filter((route) => route.fallback).length !== 1
+          choices.filter((route) => route.fallback).length !== 1 ||
+          new Set(conditions).size !== conditions.length
         )
           errors.push(
-            `WF-02 routing:"one" node "${from}" requires conditions and exactly one fallback`,
+            `WF-02 routing:"one" node "${from}" requires unique conditions and exactly one fallback`,
           )
       } else if (choices.length > 1) {
         errors.push(`WF-02 context node "${from}" with multiple routes requires routing`)
@@ -471,6 +477,8 @@ export const validateWorkflowDefinition = (
         errors.push(`WF-04 loop "${id ?? loopIndex}" max_attempts must be an integer from 1 to 100`)
       if (stagnationLimit && maxAttempts && stagnationLimit > maxAttempts)
         errors.push(`WF-04 loop "${id ?? loopIndex}" stagnation_limit exceeds max_attempts`)
+      if (stagnationLimit && !Number.isInteger(stagnationLimit))
+        errors.push(`WF-04 loop "${id ?? loopIndex}" stagnation_limit must be an integer`)
       if (!humanStop) errors.push(`WF-04 loop "${id ?? loopIndex}" requires human_stop`)
       if (id && loopNodes?.length && goal && evaluate && maxAttempts && humanStop)
         loops.push({

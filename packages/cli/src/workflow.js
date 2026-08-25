@@ -294,6 +294,11 @@ function validateDefinition(value, bundle, errors) {
         errors.push(
           `WF-07 human node "${nodeId ?? nodeIndex}" requires decision, at least two options, and resume`,
         )
+      else if (
+        kind === "human" &&
+        new Set(options.map((option) => option.toLowerCase())).size !== options.length
+      )
+        errors.push(`WF-07 human node "${nodeId ?? nodeIndex}" requires distinct options`)
       if (kind === "terminal" && !result)
         errors.push(`WF-02 terminal node "${nodeId ?? nodeIndex}" requires result`)
 
@@ -438,12 +443,16 @@ function validateDefinition(value, bundle, errors) {
         )
           errors.push(`WF-02 routing:"all" node "${from}" requires only always routes`)
       } else if (choices.length > 1 && node?.routing === "one") {
+        const conditions = choices
+          .filter((route) => !route.fallback)
+          .map((route) => route.when.toLowerCase())
         if (
           choices.some((route) => route.when.toLowerCase() === "always") ||
-          choices.filter((route) => route.fallback).length !== 1
+          choices.filter((route) => route.fallback).length !== 1 ||
+          new Set(conditions).size !== conditions.length
         )
           errors.push(
-            `WF-02 routing:"one" node "${from}" requires conditions and exactly one fallback`,
+            `WF-02 routing:"one" node "${from}" requires unique conditions and exactly one fallback`,
           )
       } else if (choices.length > 1) {
         errors.push(`WF-02 context node "${from}" with multiple routes requires routing`)
@@ -494,6 +503,8 @@ function validateDefinition(value, bundle, errors) {
         )
       if (stagnationLimit && maxAttempts && stagnationLimit > maxAttempts)
         errors.push(`WF-04 loop "${loopId ?? loopIndex}" stagnation_limit exceeds max_attempts`)
+      if (stagnationLimit && !Number.isInteger(stagnationLimit))
+        errors.push(`WF-04 loop "${loopId ?? loopIndex}" stagnation_limit must be an integer`)
       for (const node of loopNodes ?? [])
         if (!nodeIds.has(node))
           errors.push(`WF-04 loop "${loopId ?? loopIndex}" references unknown node "${node}"`)

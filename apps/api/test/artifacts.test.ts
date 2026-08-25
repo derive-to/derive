@@ -404,6 +404,28 @@ describe("linked bundles", () => {
       to: "review",
       when: "always",
     })
+
+    const directory = await (await app.request("/v1/workflows")).json()
+    expect(directory.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          short_id: published.short_id,
+          title: "Signal workflow",
+          purpose: manifest.purpose,
+          kinds: ["workflow", "graph"],
+          diagram_count: 1,
+          node_count: 4,
+          execution: "ready",
+        }),
+      ]),
+    )
+
+    const library = await (
+      await app.request("/v1/artifacts?limit=100&exclude_workflows=true")
+    ).json()
+    expect(
+      library.artifacts.map((artifact: { short_id: string }) => artifact.short_id),
+    ).not.toContain(published.short_id)
   })
 
   it("resolves readable members and leaves missing ones explicit", async () => {

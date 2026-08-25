@@ -29,6 +29,7 @@ const SPA_EXACT = new Set([
   "/templates",
   "/unlisted",
   "/welcome",
+  "/workflows",
 ])
 
 const oneSegment =
