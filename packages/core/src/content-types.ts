@@ -15,6 +15,11 @@ export const isHtmlLike = (contentType: string): boolean =>
     LINKED_BUNDLE_HTML_CONTENT_TYPE,
   ].includes(baseType(contentType))
 
+/** Stored types that contain Markdown. Parameters such as `charset=utf-8` are
+ * metadata, not a different editing language. */
+export const isMarkdownLike = (contentType: string): boolean =>
+  baseType(contentType) === MARKDOWN_CONTENT_TYPE
+
 /** Types that may carry author-declared facts. Decks receive derived structure only. */
 export const isAuthoredFactType = (contentType: string): boolean =>
   [HTML_CONTENT_TYPE, MARKDOWN_CONTENT_TYPE, LINKED_BUNDLE_HTML_CONTENT_TYPE].includes(

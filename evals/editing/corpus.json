@@ -1,0 +1,509 @@
+{
+  "schema": "derive.editing-eval/v1",
+  "lanes": {
+    "core": {
+      "tier": "fast",
+      "command": [
+        "pnpm",
+        "--filter",
+        "@derive/core",
+        "exec",
+        "vitest",
+        "run",
+        "test/editing-eval.test.ts"
+      ]
+    },
+    "api": {
+      "tier": "fast",
+      "command": [
+        "pnpm",
+        "--filter",
+        "@derive/api",
+        "exec",
+        "vitest",
+        "run",
+        "test/editing-eval.test.ts"
+      ]
+    },
+    "browser": {
+      "tier": "full",
+      "command": [
+        "pnpm",
+        "--filter",
+        "@derive/web",
+        "exec",
+        "playwright",
+        "test",
+        "e2e/deep/editing.deep.spec.ts",
+        "--project=editing-deep"
+      ]
+    }
+  },
+  "scenarios": [
+    {
+      "id": "MD-001",
+      "lane": "core",
+      "surface": "markdown",
+      "risk": "P0",
+      "oracle": "exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "two consecutive bold subtitle runs"
+    },
+    {
+      "id": "MD-002",
+      "lane": "core",
+      "surface": "markdown",
+      "risk": "P0",
+      "oracle": "exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "formatted context pins a repeated accented word"
+    },
+    {
+      "id": "MD-003",
+      "lane": "core",
+      "surface": "markdown",
+      "risk": "P1",
+      "oracle": "exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "nested strong and emphasis boundary repair"
+    },
+    {
+      "id": "MD-004",
+      "lane": "core",
+      "surface": "markdown",
+      "risk": "P1",
+      "oracle": "exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "link destination remains source-only"
+    },
+    {
+      "id": "MD-005",
+      "lane": "core",
+      "surface": "markdown",
+      "risk": "P1",
+      "oracle": "exact-source-and-refusal",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "entities escapes and code spans are indivisible"
+    },
+    {
+      "id": "MD-006",
+      "lane": "core",
+      "surface": "markdown",
+      "risk": "P1",
+      "oracle": "exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "RTL emoji combining marks and CJK"
+    },
+    {
+      "id": "MD-007",
+      "lane": "core",
+      "surface": "markdown",
+      "risk": "P0",
+      "oracle": "exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "rendered selections in GFM table list quote and task blocks"
+    },
+    {
+      "id": "MD-008",
+      "lane": "core",
+      "surface": "markdown",
+      "risk": "P0",
+      "oracle": "safe-refusal",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "cross-block selection refuses"
+    },
+    {
+      "id": "MD-009",
+      "lane": "core",
+      "surface": "markdown",
+      "risk": "P1",
+      "oracle": "safe-refusal",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "raw HTML boundary refuses while inner text edits"
+    },
+    {
+      "id": "MD-010",
+      "lane": "core",
+      "surface": "markdown",
+      "risk": "P0",
+      "oracle": "atomic-no-change",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "late failure cancels a multi-edit batch"
+    },
+    {
+      "id": "MD-011",
+      "lane": "core",
+      "surface": "markdown",
+      "risk": "P0",
+      "oracle": "safe-refusal",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "overlapping edits refuse"
+    },
+    {
+      "id": "MD-012",
+      "lane": "core",
+      "surface": "markdown",
+      "risk": "P2",
+      "oracle": "bounded-runtime",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "large repeated inline syntax remains bounded"
+    },
+    {
+      "id": "MD-013",
+      "lane": "core",
+      "surface": "markdown",
+      "risk": "P0",
+      "oracle": "safe-refusal",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "selection crossing an image seam cannot delete the image"
+    },
+    {
+      "id": "MD-014",
+      "lane": "core",
+      "surface": "markdown",
+      "risk": "P1",
+      "oracle": "valid-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "mixed underscore and asterisk emphasis delimiters are not merged"
+    },
+    {
+      "id": "MD-015",
+      "lane": "core",
+      "surface": "markdown",
+      "risk": "P1",
+      "oracle": "typed-content-type",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "Markdown MIME parameters use the rendered-source mapper"
+    },
+
+    {
+      "id": "HTML-001",
+      "lane": "core",
+      "surface": "html",
+      "risk": "P0",
+      "oracle": "exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "nested inline wrappers repair at both edges"
+    },
+    {
+      "id": "HTML-002",
+      "lane": "core",
+      "surface": "html",
+      "risk": "P0",
+      "oracle": "safe-refusal",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "selection across structural elements refuses"
+    },
+    {
+      "id": "HTML-003",
+      "lane": "core",
+      "surface": "html",
+      "risk": "P1",
+      "oracle": "exact-source-and-refusal",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "decoded entities are indivisible"
+    },
+    {
+      "id": "HTML-004",
+      "lane": "core",
+      "surface": "html",
+      "risk": "P0",
+      "oracle": "invisible-source-unchanged",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "script style noscript and comments never match"
+    },
+    {
+      "id": "HTML-005",
+      "lane": "core",
+      "surface": "html",
+      "risk": "P0",
+      "oracle": "escaped-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "typed text cannot inject markup"
+    },
+    {
+      "id": "HTML-006",
+      "lane": "core",
+      "surface": "html",
+      "risk": "P0",
+      "oracle": "sanitized-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "format markup allowlist strips active content"
+    },
+    {
+      "id": "HTML-007",
+      "lane": "core",
+      "surface": "html",
+      "risk": "P1",
+      "oracle": "exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "formatted context pins repeated cards"
+    },
+    {
+      "id": "HTML-008",
+      "lane": "core",
+      "surface": "html",
+      "risk": "P1",
+      "oracle": "exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "RTL emoji and adjacent tags"
+    },
+    {
+      "id": "HTML-009",
+      "lane": "core",
+      "surface": "html",
+      "risk": "P1",
+      "oracle": "safe-refusal",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "malformed and non-text boundaries refuse"
+    },
+    {
+      "id": "HTML-010",
+      "lane": "core",
+      "surface": "html",
+      "risk": "P2",
+      "oracle": "bounded-runtime",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "hostile unclosed markup remains bounded"
+    },
+
+    {
+      "id": "DECK-001",
+      "lane": "core",
+      "surface": "deck",
+      "risk": "P0",
+      "oracle": "exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "context pins repeated text to one slide"
+    },
+    {
+      "id": "DECK-002",
+      "lane": "core",
+      "surface": "deck",
+      "risk": "P0",
+      "oracle": "safe-refusal",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "text selection cannot merge slides"
+    },
+    {
+      "id": "DECK-003",
+      "lane": "core",
+      "surface": "deck",
+      "risk": "P0",
+      "oracle": "identity-and-order",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "sequential move duplicate delete operations"
+    },
+    {
+      "id": "DECK-004",
+      "lane": "core",
+      "surface": "deck",
+      "risk": "P1",
+      "oracle": "stable-identity",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "class-only slides get stable identities"
+    },
+    {
+      "id": "DECK-005",
+      "lane": "core",
+      "surface": "deck",
+      "risk": "P0",
+      "oracle": "safe-refusal",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "orphan content between slides refuses"
+    },
+    {
+      "id": "DECK-006",
+      "lane": "core",
+      "surface": "deck",
+      "risk": "P0",
+      "oracle": "safe-refusal",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "duplicate slide identities refuse"
+    },
+    {
+      "id": "DECK-007",
+      "lane": "core",
+      "surface": "deck",
+      "risk": "P1",
+      "oracle": "unrelated-bytes",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "deck shell scripts styles and comments stay byte-identical"
+    },
+
+    {
+      "id": "VIDEO-001",
+      "lane": "core",
+      "surface": "video",
+      "risk": "P0",
+      "oracle": "identity-and-order",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "scene update duplicate move and delete"
+    },
+    {
+      "id": "VIDEO-002",
+      "lane": "core",
+      "surface": "video",
+      "risk": "P1",
+      "oracle": "sanitized-source-and-refusal",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "timing transition caption and id bounds"
+    },
+    {
+      "id": "VIDEO-003",
+      "lane": "core",
+      "surface": "video",
+      "risk": "P0",
+      "oracle": "safe-refusal",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "nested duplicate and orphan scene structures refuse"
+    },
+    {
+      "id": "VIDEO-004",
+      "lane": "core",
+      "surface": "video",
+      "risk": "P0",
+      "oracle": "safe-refusal",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "invalid directions unknown operations and no-op scene batches refuse"
+    },
+
+    {
+      "id": "ELEMENT-001",
+      "lane": "core",
+      "surface": "element",
+      "risk": "P1",
+      "oracle": "exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "repeated element selector changes only intended tag"
+    },
+    {
+      "id": "ELEMENT-002",
+      "lane": "core",
+      "surface": "element",
+      "risk": "P1",
+      "oracle": "css-preservation",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "CSS strings functions data URLs and custom properties survive"
+    },
+    {
+      "id": "ELEMENT-003",
+      "lane": "core",
+      "surface": "element",
+      "risk": "P0",
+      "oracle": "safe-refusal",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "stale selector bounds no-op and malformed payloads refuse"
+    },
+
+    {
+      "id": "PIPE-001",
+      "lane": "api",
+      "surface": "pipeline",
+      "risk": "P0",
+      "oracle": "conflict-no-version",
+      "source": "apps/api/test/editing-eval.test.ts",
+      "covers": "stale base version refuses before materialization"
+    },
+    {
+      "id": "PIPE-002",
+      "lane": "api",
+      "surface": "pipeline",
+      "risk": "P0",
+      "oracle": "atomic-source",
+      "source": "apps/api/test/editing-eval.test.ts",
+      "covers": "quote plus resize materialize atomically"
+    },
+    {
+      "id": "PIPE-003",
+      "lane": "api",
+      "surface": "pipeline",
+      "risk": "P0",
+      "oracle": "atomic-source",
+      "source": "apps/api/test/editing-eval.test.ts",
+      "covers": "quote plus scene operations materialize atomically"
+    },
+    {
+      "id": "PIPE-004",
+      "lane": "api",
+      "surface": "pipeline",
+      "risk": "P1",
+      "oracle": "typed-filename",
+      "source": "apps/api/test/editing-eval.test.ts",
+      "covers": "Markdown and HTML retain content type"
+    },
+    {
+      "id": "PIPE-005",
+      "lane": "api",
+      "surface": "pipeline",
+      "risk": "P0",
+      "oracle": "safe-refusal",
+      "source": "apps/api/test/editing-eval.test.ts",
+      "covers": "mixed edit semantics and oversized batches refuse"
+    },
+    {
+      "id": "PIPE-006",
+      "lane": "api",
+      "surface": "pipeline",
+      "risk": "P0",
+      "oracle": "no-op-no-version",
+      "source": "apps/api/test/editing-eval.test.ts",
+      "covers": "slide operations that cancel refuse publication"
+    },
+
+    {
+      "id": "BROWSER-MD-001",
+      "lane": "browser",
+      "surface": "browser",
+      "risk": "P0",
+      "oracle": "stored-source",
+      "source": "apps/web/e2e/deep/editing.deep.spec.ts",
+      "covers": "Markdown selection across bold runs saves"
+    },
+    {
+      "id": "BROWSER-MD-002",
+      "lane": "browser",
+      "surface": "browser",
+      "risk": "P0",
+      "oracle": "stored-source-and-render",
+      "source": "apps/web/e2e/deep/editing.deep.spec.ts",
+      "covers": "rendered GFM list selection maps back through emphasis"
+    },
+    {
+      "id": "BROWSER-HTML-001",
+      "lane": "browser",
+      "surface": "browser",
+      "risk": "P0",
+      "oracle": "stored-source",
+      "source": "apps/web/e2e/deep/editing.deep.spec.ts",
+      "covers": "HTML multi-block text format resize undo redo save"
+    },
+    {
+      "id": "BROWSER-DECK-001",
+      "lane": "browser",
+      "surface": "browser",
+      "risk": "P0",
+      "oracle": "stored-source-and-position",
+      "source": "apps/web/e2e/deep/editing.deep.spec.ts",
+      "covers": "deck text edit preserves navigation and slide identity"
+    },
+    {
+      "id": "BROWSER-DECK-OPS-001",
+      "lane": "browser",
+      "surface": "pipeline",
+      "risk": "P0",
+      "oracle": "status-version-source",
+      "source": "apps/web/e2e/deep/editing.deep.spec.ts",
+      "covers": "real versions route duplicates slides and refuses no-op publication"
+    },
+    {
+      "id": "BROWSER-CONCURRENCY-001",
+      "lane": "browser",
+      "surface": "browser",
+      "risk": "P0",
+      "oracle": "conflict-no-version",
+      "source": "apps/web/e2e/deep/editing.deep.spec.ts",
+      "covers": "concurrent publish rejects stale inline save"
+    }
+  ]
+}

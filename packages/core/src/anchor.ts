@@ -105,7 +105,11 @@ export function decodeEntities(s: string): string {
         body[1] === "x" || body[1] === "X"
           ? Number.parseInt(body.slice(2), 16)
           : Number.parseInt(body.slice(1), 10)
-      return Number.isFinite(cp) ? String.fromCodePoint(cp) : whole
+      if (!Number.isFinite(cp)) return whole
+      // Match the browser's scalar-value behavior without letting malformed input
+      // reach String.fromCodePoint (which throws for out-of-range values).
+      if (cp === 0 || cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff)) return "�"
+      return String.fromCodePoint(cp)
     }
     return NAMED[body] ?? whole
   })
@@ -213,10 +217,10 @@ const pushTextRun = (
  *
  * Strip rules, tried in order at each "<" (the order the old regexes resolved to):
  * an invisible block (script/style/noscript, attrs to the FIRST ">", closed by the
- * first literal "</name>", case-insensitive), else a comment ("<!--" to the first
- * "-->"), else a bare tag (1+ non-">" chars before ">"); a "<" matching none stays
- * literal text. Each stripped construct collapses to one space; entities in text
- * runs decode via {@link decodeEntities}.
+ * first literal "</name>", case-insensitive, or running to EOF when unclosed), else
+ * a comment ("<!--" to the first "-->", or EOF), else a bare tag (1+ non-">" chars
+ * before ">"); a "<" matching none stays literal text. Each stripped construct
+ * collapses to one space; entities in text runs decode via {@link decodeEntities}.
  */
 export function pageTextParts(
   html: string,
@@ -233,6 +237,9 @@ export function pageTextParts(
     if (lower.startsWith("<!--", i)) {
       const close = findRaw("-->", i + 4)
       if (close >= 0) return close + 3
+      // Browsers treat the rest of the document as commented. Exposing it as
+      // editable prose would let the server target text the reader cannot see.
+      return html.length
     }
     // <script|style|noscript ...> ... </same>
     for (const name of omitContentsOf) {
@@ -243,7 +250,9 @@ export function pageTextParts(
       if (open < 0) continue
       const close = findLower(`</${name}>`, open + 1)
       if (close >= 0) return close + name.length + 3
-      // No closer: this alternative fails; fall through to the bare-tag rule.
+      // Raw-text elements run to EOF when unclosed. Hide the remainder just as the
+      // browser does; never offer script/style bytes as visible editable prose.
+      return html.length
     }
     // <[^>]+>
     const gt = findRaw(">", i + 1)

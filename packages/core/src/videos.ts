@@ -123,12 +123,17 @@ const boundedInteger = (value: unknown, min: number, max: number, label: string)
 }
 
 const setAttr = (tag: string, name: string, value: string): string => {
+  const escaped = value
+    .replaceAll("&", "&amp;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
   const re = new RegExp(`(\\s${name}\\s*=\\s*)(?:"[^"]*"|'[^']*'|[^\\s>]+)`, "i")
   const found = re.exec(tag)
   if (found)
-    return `${tag.slice(0, found.index)}${found[1]}"${value}"${tag.slice(found.index + found[0].length)}`
+    return `${tag.slice(0, found.index)}${found[1]}"${escaped}"${tag.slice(found.index + found[0].length)}`
   const close = tag.lastIndexOf(">")
-  return close < 0 ? tag : `${tag.slice(0, close)} ${name}="${value}"${tag.slice(close)}`
+  return close < 0 ? tag : `${tag.slice(0, close)} ${name}="${escaped}"${tag.slice(close)}`
 }
 
 const freshId = (scenes: VideoScene[]): string => {
@@ -181,6 +186,10 @@ export const applySceneEdits = (html: string, edits: SceneEdit[]): string => {
       const copy = setAttr(out.slice(scene.start, scene.end), "data-derive-scene", freshId(scenes))
       out = `${out.slice(0, scene.end)}\n${copy}${out.slice(scene.end)}`
     } else if (raw.op === "scene-move") {
+      if (raw.direction !== "previous" && raw.direction !== "next")
+        throw new EditError(
+          `Scene move direction ${JSON.stringify(raw.direction)} is invalid — use "previous" or "next".`,
+        )
       const to = raw.direction === "previous" ? at - 1 : at + 1
       if (to < 0 || to >= scenes.length) continue
       const other = scenes[to] as VideoScene
@@ -191,7 +200,12 @@ export const applySceneEdits = (html: string, edits: SceneEdit[]): string => {
       const a = out.slice(first.start, first.end)
       const b = out.slice(second.start, second.end)
       out = out.slice(0, first.start) + b + between + a + out.slice(second.end)
-    }
+    } else
+      throw new EditError(
+        `Unknown scene operation ${JSON.stringify((raw as { op?: unknown }).op)}.`,
+      )
   }
+  if (out === html)
+    throw new EditError("Those scene edits leave the video exactly as it is; nothing to publish.")
   return out
 }

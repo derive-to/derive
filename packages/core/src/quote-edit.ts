@@ -7,19 +7,23 @@
 //   1. STRICT resolution. Painting a highlight may fall back to "the first place the
 //      words appear"; an EDIT must not — the context match must be UNIQUE, and a
 //      context miss is only accepted when the exact text is globally unambiguous.
-//   2. RAW offsets. For HTML the quote matches the page-text projection, so the
-//      resolved span is mapped back to raw-source offsets through the projection's
-//      own segment map (`pageTextParts` — the ONE implementation both sides read),
-//      Safe inline markup is repaired around the replacement; structural boundaries
-//      and decoded-entity splits are refused, never guessed.
+//   2. RAW offsets. HTML and Markdown quotes match their rendered-text projections,
+//      then map back to raw-source offsets through segment maps. Safe inline markup
+//      is repaired around the replacement; structural boundaries and decoded-entity
+//      splits are refused, never guessed.
 //
 // Like `applyEdits`, the batch is atomic: any failure applies NOTHING.
 
 import { type PageTextSegment, pageTextParts } from "./anchor"
 import { clip, findQuoteContextUnique, findQuoteMatches } from "./anchor-shared"
-import { isHtmlLike } from "./content-types"
+import { isHtmlLike, isMarkdownLike } from "./content-types"
 import { type DocEdit, EditError } from "./doc-text"
 import type { ElementEdit } from "./element-edit"
+import {
+  type MarkdownInlineWrapper,
+  type MarkdownTextSegment,
+  markdownTextParts,
+} from "./markdown-text"
 import { escapeHtml, sanitizeInline } from "./md"
 import type { SceneEdit } from "./videos"
 
@@ -245,7 +249,13 @@ const inlineBoundaryRepair = (
           break
         }
       }
-      if (open >= 0) stack.splice(open, 1)
+      if (open >= 0) {
+        if (open !== stack.length - 1)
+          throw new EditError(
+            `${label} failed: the source has malformed HTML nesting around the selection.`,
+          )
+        stack.pop()
+      }
     } else if (!parsed.selfClosing) {
       stack.push({ name, raw, at })
     }
@@ -338,23 +348,157 @@ const spanToRaw = (
   return repair ?? { rStart, rEnd, before: "", after: "" }
 }
 
+const sameMarkdownWrapper = (a: MarkdownInlineWrapper, b: MarkdownInlineWrapper): boolean =>
+  a.at === b.at ||
+  (a.kind !== "link" && a.kind === b.kind && a.open === b.open && a.close === b.close)
+
+/** Markdown's equivalent of inlineBoundaryRepair. Marked has already identified
+ *  the formatting/link wrapper ranges. Close a wrapper active only at the left
+ *  edge, reopen one active only at the right edge, and consume empty delimiters
+ *  when the selection covers a whole run. Adjacent runs of the same emphasis kind
+ *  count as shared formatting, so editing across two bold subtitle lines retains
+ *  one valid bold wrapper rather than shedding their style. */
+const markdownBoundaryRepair = (
+  src: string,
+  rStart: number,
+  rEnd: number,
+  wrappers: MarkdownInlineWrapper[],
+): { rStart: number; rEnd: number; before: string; after: string } => {
+  const atStart = wrappers
+    .filter((wrapper) => wrapper.contentStart <= rStart && rStart < wrapper.contentEnd)
+    .sort((a, b) => a.at - b.at || b.end - a.end)
+  const atEnd = wrappers
+    .filter((wrapper) => wrapper.contentStart < rEnd && rEnd <= wrapper.contentEnd)
+    .sort((a, b) => a.at - b.at || b.end - a.end)
+  let common = 0
+  while (
+    common < atStart.length &&
+    common < atEnd.length &&
+    sameMarkdownWrapper(
+      atStart[common] as MarkdownInlineWrapper,
+      atEnd[common] as MarkdownInlineWrapper,
+    )
+  )
+    common++
+  const startOnly = atStart.slice(common)
+  const endOnly = atEnd.slice(common)
+
+  let adjustedStart = rStart
+  let consumedStart = 0
+  for (let i = startOnly.length - 1; i >= 0; i--) {
+    const wrapper = startOnly[i] as MarkdownInlineWrapper
+    if (wrapper.contentStart !== adjustedStart) break
+    adjustedStart = wrapper.at
+    consumedStart++
+  }
+  let adjustedEnd = rEnd
+  let consumedEnd = 0
+  for (let i = endOnly.length - 1; i >= 0; i--) {
+    const wrapper = endOnly[i] as MarkdownInlineWrapper
+    if (wrapper.contentEnd !== adjustedEnd) break
+    adjustedEnd = wrapper.end
+    consumedEnd++
+  }
+
+  const closers = startOnly
+    .slice(0, startOnly.length - consumedStart)
+    .reverse()
+    .map((wrapper) => wrapper.close)
+    .join("")
+  const openers = endOnly
+    .slice(0, endOnly.length - consumedEnd)
+    .map((wrapper) => wrapper.open)
+    .join("")
+
+  // Markdown emphasis delimiters cannot open immediately before whitespace or
+  // close immediately after it. Move edge whitespace outside repaired wrappers.
+  let leading = ""
+  if (closers) {
+    let at = adjustedStart
+    while (at > 0 && /\s/.test(src[at - 1] as string)) at--
+    leading = src.slice(at, adjustedStart)
+    adjustedStart = at
+  }
+  let trailing = ""
+  if (openers) {
+    let at = adjustedEnd
+    while (at < src.length && /\s/.test(src[at] as string)) at++
+    trailing = src.slice(adjustedEnd, at)
+    adjustedEnd = at
+  }
+  return {
+    rStart: adjustedStart,
+    rEnd: adjustedEnd,
+    before: closers + leading,
+    after: trailing + openers,
+  }
+}
+
+const markdownSpanToRaw = (
+  src: string,
+  segments: MarkdownTextSegment[],
+  wrappers: MarkdownInlineWrapper[],
+  start: number,
+  end: number,
+  label: string,
+): { rStart: number; rEnd: number; before: string; after: string } => {
+  const firstIdx = segmentIndexAt(segments, start)
+  const lastIdx = segmentIndexAt(segments, end - 1)
+  if (firstIdx < 0 || lastIdx < 0)
+    throw new EditError(`${label} failed: the matched text fell outside the document.`)
+  const first = segments[firstIdx] as MarkdownTextSegment
+  const last = segments[lastIdx] as MarkdownTextSegment
+  if (first.block !== last.block)
+    throw new EditError(`${label} failed: the selection crosses a Markdown block boundary.`)
+  if (first.kind === "entity" && start > first.tStart)
+    throw new EditError(
+      `${label} failed: the edit would split an escaped or encoded character. Select the whole character.`,
+    )
+  if (last.kind === "entity" && end < last.tEnd)
+    throw new EditError(
+      `${label} failed: the edit would split an escaped or encoded character. Select the whole character.`,
+    )
+  let crossesMarkup = false
+  for (let i = firstIdx; i <= lastIdx; i++) {
+    const segment = segments[i] as MarkdownTextSegment
+    if (segment.kind !== "gap") continue
+    if (segment.boundary === "html")
+      throw new EditError(`${label} failed: the selection crosses raw HTML in the Markdown source.`)
+    if (segment.boundary === "structural")
+      throw new EditError(
+        `${label} failed: the selection crosses a structural Markdown boundary such as an image.`,
+      )
+    crossesMarkup = true
+  }
+  const rStart = first.kind === "entity" ? first.rStart : first.rStart + (start - first.tStart)
+  const rEnd = last.kind === "entity" ? last.rEnd : last.rStart + (end - last.tStart)
+  return crossesMarkup
+    ? markdownBoundaryRepair(src, rStart, rEnd, wrappers)
+    : { rStart, rEnd, before: "", after: "" }
+}
+
 /**
  * Apply quote-scoped edits to `src` atomically. Every quote is resolved against the
- * ORIGINAL source (markdown: the source itself; HTML/deck: the page-text projection,
- * mapped back to raw offsets through its segment map), spans are checked for
- * overlap, and the splices land back-to-front — so one batch's edits can never
- * shift each other's targets. Any failure throws `EditError` (with which edit and
- * why) and applies nothing, matching `applyEdits`' contract.
+ * ORIGINAL source projection (rendered text for HTML and Markdown, literal source
+ * for other content types), mapped back to raw offsets through its segment map.
+ * Spans are checked for overlap and spliced back-to-front, so one batch's edits can
+ * never shift each other's targets. Any failure throws `EditError` (with which edit
+ * and why) and applies nothing, matching `applyEdits`' contract.
  */
 export function applyQuoteEdits(src: string, contentType: string, edits: QuoteEdit[]): string {
   if (!edits.length) return src
   const isHtml = isHtmlLike(contentType || "")
   let text = src
   let segments: PageTextSegment[] | null = null
+  let markdown: { segments: MarkdownTextSegment[]; wrappers: MarkdownInlineWrapper[] } | undefined
   if (isHtml) {
     const parts = pageTextParts(src)
     text = parts.text
     segments = parts.segments
+  } else if (isMarkdownLike(contentType)) {
+    const parts = markdownTextParts(src)
+    text = parts.text
+    markdown = { segments: parts.segments, wrappers: parts.wrappers }
   }
 
   const spans: {
@@ -393,7 +537,9 @@ export function applyQuoteEdits(src: string, contentType: string, edits: QuoteEd
     }
     const raw = segments
       ? spanToRaw(src, segments, span.start, span.end, label)
-      : { rStart: span.start, rEnd: span.end, before: "", after: "" }
+      : markdown
+        ? markdownSpanToRaw(src, markdown.segments, markdown.wrappers, span.start, span.end, label)
+        : { rStart: span.start, rEnd: span.end, before: "", after: "" }
     // Markup, only where markup is the language. On markdown the source IS what the
     // author writes, so formatting is `**bold**` typed as text; splicing tags there
     // would put literal HTML in someone's prose.

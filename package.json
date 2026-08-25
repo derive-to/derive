@@ -53,6 +53,8 @@
     "typecheck:tsc": "pnpm -r typecheck:tsc",
     "test": "pnpm -r test",
     "test:coverage": "pnpm -r test:coverage",
+    "test:editing": "node scripts/run-editing-eval.mjs",
+    "test:editing:full": "node scripts/run-editing-eval.mjs --full",
     "test:pg": "bash scripts/test-pg.sh",
     "lint": "biome lint",
     "lint:tokens": "node scripts/check-design-tokens.mjs",

@@ -166,16 +166,20 @@ export const MAX_SLIDE_OPS = 200
 
 /** Give every slide a stable identity, minting only for the ones that lack it. Existing
  *  values are never touched: they are what comment threads are pinned to. */
-const stamped = (texts: string[], ids: (number | null)[]): string[] => {
+const stamped = (texts: string[], ids: (number | null)[]): { text: string; id: number }[] => {
   let next = Math.max(-1, ...ids.filter((v): v is number => v !== null)) + 1
   return texts.map((text, i) => {
-    if (ids[i] !== null) return text
+    const existing = ids[i]
+    if (existing !== null && existing !== undefined) return { text, id: existing }
     const id = next++
     // Insert into the opening tag, just past the tag name.
     const m = /^<([a-zA-Z][a-zA-Z0-9-]*)/.exec(text)
-    return m
-      ? `${text.slice(0, m[0].length)} data-derive-slide="${id}"${text.slice(m[0].length)}`
-      : text
+    return {
+      text: m
+        ? `${text.slice(0, m[0].length)} data-derive-slide="${id}"${text.slice(m[0].length)}`
+        : text,
+      id,
+    }
   })
 }
 
@@ -239,8 +243,8 @@ export const applySlideOps = (html: string, ops: SlideOp[]): string => {
   const items = stamped(
     spans.map((s) => html.slice(s.start, s.end)),
     ids,
-  ).map((text, i) => ({ text, id: ids[i] }))
-  let nextId = Math.max(-1, ...known) + 1
+  )
+  let nextId = Math.max(-1, ...items.map((item) => item.id)) + 1
 
   const at = (n: unknown, label: string, max: number): number => {
     if (typeof n !== "number" || !Number.isInteger(n) || n < 1 || n > max)
