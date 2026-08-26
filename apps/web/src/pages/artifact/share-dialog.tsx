@@ -290,7 +290,11 @@ export function ShareButton({
   const copyLink = async () => {
     // The toast carries the reach too: the note under the button is easy to miss at
     // the moment that matters, which is the click right before pasting into an email.
-    const reach = linkReachNote(lRole, wsAccess, collectionOpen)
+    const reach = linkReachNote(lRole, wsAccess, {
+      collectionOpen,
+      collectionShared: grants.length > 0,
+      locked: hasLock,
+    })
     const success = reach ? `Link copied — ${reach.toLowerCase()}` : "Link copied"
     if (await copyLinkToClipboard(shareUrl, { success })) {
       // The getting-started checklist's "share a link" step completes here — the
@@ -639,7 +643,11 @@ export function ShareButton({
           <ShareCopyLinkButton
             copied={copiedLink}
             testPrefix="share"
-            reach={linkReachNote(lRole, wsAccess, collectionOpen)}
+            reach={linkReachNote(lRole, wsAccess, {
+              collectionOpen,
+              collectionShared: grants.length > 0,
+              locked: hasLock,
+            })}
             onCopy={copyLink}
           >
             {momentUrl && (

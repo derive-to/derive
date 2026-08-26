@@ -2003,7 +2003,7 @@ export interface paths {
         put?: never;
         /**
          * Ask the people who can share an artifact to grant you access.
-         * @description Always 202, whether or not the artifact exists and whether or not anything was sent — the response must not reveal which. Requires a signed-in account, since a grant needs an identity to attach to.
+         * @description 202 for every outcome once the caller is authenticated and the body validates — missing artifact, no access, already readable, or already asked. The response deliberately does not reveal which.
          */
         post: {
             parameters: {
@@ -2014,7 +2014,14 @@ export interface paths {
                 };
                 cookie?: never;
             };
-            requestBody?: never;
+            requestBody?: {
+                content: {
+                    "application/json": {
+                        /** @description Optional message to the approvers: who you are, why you need it. */
+                        note?: string;
+                    };
+                };
+            };
             responses: {
                 /** @description The request was accepted. Says nothing about what followed. */
                 202: {
@@ -2027,6 +2034,20 @@ export interface paths {
                             ok: true;
                         };
                     };
+                };
+                /** @description The note is longer than the limit. */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not signed in — a grant needs an identity to attach to. */
+                403: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
                 };
             };
         };

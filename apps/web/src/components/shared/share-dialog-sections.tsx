@@ -42,8 +42,8 @@ export const accessSummary = (
 }
 
 /**
- * What the URL on the clipboard does for the person it gets pasted to — null when
- * the link itself grants access and there is nothing to warn about.
+ * What the URL on the clipboard does for the person it gets pasted to — null only
+ * when the link genuinely opens for anyone, unaided.
  *
  * This is deliberately NOT accessSummary. That one answers "who can open this
  * artifact", counting grants a recipient may not have: a workspace seat, a roster
@@ -52,14 +52,22 @@ export const accessSummary = (
  * this" reads as open while the copied link is INERT for the outsider being emailed
  * it. The sender learns nothing until the recipient reports a 404, or doesn't.
  * Sharing outward has a working path (invite by email); this is what points at it.
+ *
+ * `locked` is the second silent failure and belongs to the same question: a world
+ * link with a password opens for nobody who wasn't also sent the password, and the
+ * copy affordance is the last place to say so before the paste.
  */
 export const linkReachNote = (
   linkRole: LinkRole,
   workspaceAccess: WorkspaceAccess,
-  collectionOpen = false,
+  opts: { collectionOpen?: boolean; collectionShared?: boolean; locked?: boolean } = {},
 ): string | null => {
-  if (linkRole !== "none") return null
-  if (workspaceAccess === "member" || collectionOpen) return "Only workspace members can open it."
+  if (linkRole !== "none") return opts.locked ? "They'll need the password too." : null
+  if (workspaceAccess === "member" || opts.collectionOpen)
+    return "Only workspace members can open it."
+  // An artifact reachable through a collection is not "only the people you add" —
+  // saying so would contradict the access section four inches above it.
+  if (opts.collectionShared) return "Only people you add, or who reach it via a collection."
   return "Only the people you add can open it."
 }
 

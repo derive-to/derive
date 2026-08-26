@@ -1,5 +1,6 @@
 import type { RateLimit } from "@cloudflare/workers-types"
 import type { Context, Next } from "hono"
+import { ACCESS_REQUEST_WINDOW_MS } from "./access-request"
 
 /** A rate-limit verdict for one request: within the cap, and seconds to retry if not. */
 export type RateLimitVerdict = { ok: boolean; retryAfter: number }
@@ -68,6 +69,12 @@ export interface RateLimiters {
    *  dedupe, and a plain actor key would let one asker's second artifact silence
    *  the first. Deliberately long (hours, not a minute). */
   accessRequest: Limiter
+  /** The MAIL bar for access requests, per asker. Separate from `invite` on purpose:
+   *  one invite request sends one email, while one access request fans out to every
+   *  approver, so they cannot share a budget sized for the former. Keeping it off the
+   *  invite counter also stops an asker from reading their own consumed invite budget
+   *  as a signal about someone else's artifact. */
+  accessRequestMail: Limiter
   /** Anonymous draft publishes (POST /v1/drafts) — the one unauthenticated write
    *  that creates durable state, so it gets its own tight long-window cap on top
    *  of the general publish limiter. Keyed by IP (there is no principal). */
@@ -100,7 +107,10 @@ export function inMemoryRateLimiters(
     // runaway ask loop does — each ask is a model run on someone's runner.
     ask: inMemoryLimiter(60_000, opts.askRate ?? 10),
     // One notified ask per artifact per asker per 6 hours (ACCESS_REQUEST_WINDOW_MS).
-    accessRequest: inMemoryLimiter(6 * 3_600_000, 1),
+    accessRequest: inMemoryLimiter(ACCESS_REQUEST_WINDOW_MS, 1),
+    // 3 asks/min/asker x MAX_ACCESS_APPROVERS recipients — the same order of magnitude
+    // of mail as the invite cap (10/min, one email each), rather than ten times it.
+    accessRequestMail: inMemoryLimiter(60_000, 3),
     // 12 anonymous drafts per hour per IP: an agent iterating on a page never sees
     // it; a bulk-hosting abuser does. The general publish limiter still applies.
     draftPublish: inMemoryLimiter(3_600_000, 12),

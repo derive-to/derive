@@ -104,9 +104,13 @@ describe("access request", () => {
   const editor: TestUser = { id: "u_ar_editor", email: "editor@ar.test", name: "Editor" }
   const viewer: TestUser = { id: "u_ar_viewer", email: "viewer@ar.test", name: "Viewer" }
   const stranger: TestUser = { id: "u_ar_stranger", email: "stranger@ar.test", name: "Stranger" }
+  // A second asker keeps the indistinguishability probe off the first asker's spent
+  // dedupe window; the curator owns a workspace of their own for the collection case.
+  const second: TestUser = { id: "u_ar_second", email: "second@ar.test", name: "Second" }
+  const curator: TestUser = { id: "u_ar_curator", email: "curator@ar.test", name: "Curator" }
   const { app, meta } = makeAuthedApp(
     "access-request",
-    [owner, editor, viewer, stranger],
+    [owner, editor, viewer, stranger, second, curator],
     undefined,
     {
       isolated: true,
@@ -155,9 +159,13 @@ describe("access request", () => {
         actor: "Stranger",
         artifact_short_id: shortId,
       })
-      // The approver needs an address to grant to, and the note to judge it by.
-      expect(n.preview).toContain("stranger@ar.test")
+      // The approver needs something to grant TO, and the note to judge it by. The
+      // address is also flagged unproven: signup is open and sign-in never requires
+      // verification, so an unverified address is a string the asker typed — an
+      // approver told to "add dana@partner-co.example" on the strength of it would be
+      // granting a stranger a colleague's access.
       expect(n.preview).toContain("Sent this by a teammate")
+      expect(n.preview).toContain("unverified email")
     }
     // A viewer seat can read the artifact but cannot share it — asking them to
     // approve is noise they can do nothing about.
@@ -166,11 +174,19 @@ describe("access request", () => {
     expect((await bell(stranger.email)).unread).toBe(0)
   })
 
+  // Deliberately uses a DIFFERENT asker from the test above, so the forbidden call
+  // reaches the full fan-out (approvers, notifications, mail) instead of returning at
+  // the dedupe. Comparing two cheap early exits would pass while the expensive branch
+  // leaked. Headers are compared too: an earlier draft called `limited()` here, which
+  // writes Retry-After into the Hono context, and the header rode out on the 202.
   it("answers a missing artifact exactly as it answers a forbidden one", async () => {
-    const forbidden = await ask(shortId, stranger.email)
-    const missing = await ask("zzzz9999", stranger.email)
+    const forbidden = await ask(shortId, second.email)
+    const missing = await ask("zzzz9999", second.email)
     expect(missing.status).toBe(forbidden.status)
     expect(await missing.text()).toBe(await forbidden.text())
+    const headers = (r: Response) =>
+      [...r.headers].filter(([k]) => k !== "date" && k !== "x-request-id").sort()
+    expect(headers(missing)).toEqual(headers(forbidden))
   })
 
   it("does not re-notify while an ask is still fresh", async () => {
@@ -197,5 +213,57 @@ describe("access request", () => {
     expect(
       (await app.request(`/v1/artifacts/${shortId}`, { headers: as(stranger.email) })).status,
     ).toBe(200)
+  })
+  // A collection is the third grant that can confer `share`, and the one an approver
+  // roster built from artifact members + workspace seats alone silently misses. The
+  // curator here holds NO artifact_member row and NO seat in the owner's workspace —
+  // an editor role on a collection holding the artifact is their only standing, and it
+  // is enough to grant. Stub the collection lookup in accessApprovers and this fails.
+  it("reaches an approver who can only grant through a collection", async () => {
+    const invited = (
+      await (
+        await publishAs(
+          app,
+          "<h1>curated</h1>",
+          { title: "Curated", workspace_access: "none", link_role: "none", listed: "none" },
+          as(owner.email),
+        )
+      ).json()
+    ).short_id
+    const spaces = await (await app.request("/v1/workspaces", { headers: as(owner.email) })).json()
+    const collection = await (
+      await app.request(
+        "/v1/collections",
+        jsonAs(as(owner.email), {
+          title: "Reading list",
+          org_id: (spaces.workspaces[0] as { id: string }).id,
+        }),
+      )
+    ).json()
+    expect(
+      (
+        await app.request(`/v1/collections/${collection.id}/items/${invited}`, {
+          ...jsonAs(as(owner.email), {}),
+          method: "PUT",
+        })
+      ).status,
+    ).toBe(200)
+    expect(
+      (
+        await app.request(`/v1/collections/${collection.id}/members`, {
+          ...jsonAs(as(owner.email), { email: curator.email, role: "editor" }),
+          method: "PUT",
+        })
+      ).status,
+    ).toBe(201)
+
+    // Precondition: the curator really can grant it, so being asked is actionable.
+    expect(
+      (await app.request(`/v1/artifacts/${invited}`, { headers: as(curator.email) })).status,
+    ).toBe(200)
+
+    const before = (await bell(curator.email)).unread
+    expect((await ask(invited, stranger.email)).status).toBe(202)
+    expect((await bell(curator.email)).unread).toBe(before + 1)
   })
 })

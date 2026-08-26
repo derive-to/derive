@@ -893,9 +893,11 @@ export const api = {
     f(`/v1/artifacts/${id}/members/${userId}`, { method: "DELETE", credentials: "include" }).then(
       () => undefined,
     ),
-  // Ask whoever can share this artifact to grant access. Resolves 202 whether or not
-  // the artifact exists and whether or not anything was sent — the server refuses to
-  // distinguish, so the caller must not promise the UI more than "we passed it on".
+  // Ask whoever can share this artifact to grant access. Resolves 202 for every
+  // outcome once authenticated — missing, forbidden, already readable, already asked —
+  // because the server refuses to distinguish them. So the caller must not promise the
+  // UI more than "we passed it on". Rejects only when not signed in (403) or when the
+  // note is over ACCESS_REQUEST_NOTE_MAX (400).
   requestArtifactAccess: (id: string, note?: string): Promise<{ ok: true }> =>
     f(`/v1/artifacts/${id}/access-request`, opts(note ? { note } : {})).then(j),
 

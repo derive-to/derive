@@ -23,6 +23,12 @@ const NEEDS: Record<Action, Role> = {
 }
 
 export const ROLES: readonly Role[] = ["viewer", "commenter", "editor", "owner"]
+
+/** How much a stranger asking for access may write to the people who can grant it.
+ *  Lives here, not on either side of the wire, because the input that enforces it and
+ *  the schema that rejects it are in different apps — kept apart, raising one turns
+ *  the other into a silent 400. */
+export const ACCESS_REQUEST_NOTE_MAX = 280
 export const isRole = (v: unknown): v is Role => typeof v === "string" && v in RANK
 
 /** Does this role permit this action? */

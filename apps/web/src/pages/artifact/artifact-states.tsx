@@ -5,7 +5,16 @@ import { EmptyState } from "@/components/shared/empty-state"
 import { StatusPanel } from "@/components/shared/status-panel"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { useAuth } from "@/ctx"
 import { useApiMutation } from "@/lib/use-api-mutation"
+
+/** Mirrors ACCESS_REQUEST_NOTE_MAX in @derive/core, which the route enforces. Copied
+ *  rather than imported because clients must not pull core in at runtime (the
+ *  clients-no-core-at-runtime boundary). The machine-checked copy is `maxLength` on the
+ *  access-request body in apps/api/openapi.json — locked by the spec snapshot test and
+ *  regenerated into api-types.ts — so a server-side change shows up in a reviewable
+ *  diff. Drift here costs a silent 400 on a note the input accepted. */
+const NOTE_MAX = 280
 
 /** Full-page states the artifact route renders instead of the doc. The loading
  *  frame is the shape-matched WorkbenchSkeleton (workbench-skeleton.tsx), not a
@@ -23,6 +32,7 @@ import { useApiMutation } from "@/lib/use-api-mutation"
  * degrades to the old dead end.
  */
 export function ArtifactNotFound({ shortId, onBack }: { shortId?: string; onBack: () => void }) {
+  const { me } = useAuth()
   const [asking, setAsking] = useState(false)
   const [note, setNote] = useState("")
   const [sent, setSent] = useState(false)
@@ -39,7 +49,7 @@ export function ArtifactNotFound({ shortId, onBack }: { shortId?: string; onBack
       title={sent ? "Request sent" : "Artifact not found"}
       description={
         sent
-          ? "If this artifact exists and someone can grant access, they’ve been asked. You’ll get an email if they say yes."
+          ? "If this artifact exists and someone can grant access, they’ve been asked. Try this page again once they’ve had a chance to answer."
           : "It doesn’t exist, or you don’t have access to it."
       }
       action={
@@ -53,14 +63,14 @@ export function ArtifactNotFound({ shortId, onBack }: { shortId?: string; onBack
               <Input
                 autoFocus
                 data-testid="artifact-access-note"
-                maxLength={280}
+                maxLength={NOTE_MAX}
                 value={note}
                 placeholder="Add a note (optional) — who you are, why you need it"
                 onChange={(e) => setNote(e.target.value)}
               />
             )}
             <div className="flex justify-center gap-2">
-              {shortId && (
+              {shortId && me && (
                 <Button
                   data-testid="artifact-access-request"
                   disabled={requestAccess.isPending}
