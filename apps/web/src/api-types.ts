@@ -4136,7 +4136,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List recent runs and materialized step attempts for a workflow artifact. */
+        /** List recent runs and their durable step receipts for a workflow artifact. */
         get: {
             parameters: {
                 query?: {
@@ -4180,6 +4180,8 @@ export interface paths {
                                     kind: "context" | "human" | "terminal";
                                     /** @enum {string} */
                                     status: "queued" | "running" | "waiting" | "succeeded" | "failed" | "cancelled";
+                                    selectedRoutes: string[] | null;
+                                    routeBasis: string | null;
                                     resultArtifactId: string | null;
                                     createdAt: string;
                                     startedAt: string | null;

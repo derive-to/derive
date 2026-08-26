@@ -21,6 +21,18 @@ import { notifyMentions } from "../lib/mentions"
 import { notifyCommentBells } from "../lib/notify-comment"
 import { parseLinkedWorkflowFacts } from "../lib/workflow-facts"
 
+const parseWorkflowSelectedRoutes = (value: string | null): string[] | null => {
+  if (!value) return null
+  try {
+    const parsed: unknown = JSON.parse(value)
+    return Array.isArray(parsed) && parsed.every((route) => typeof route === "string")
+      ? parsed
+      : null
+  } catch {
+    return null
+  }
+}
+
 /** The canned agent-request endpoints — Rework, generate-profile, and the fill and
  *  save-as-skill pairs (each pair: a GET returning the instruction for copy-paste, a
  *  POST delivering it). Thin wrappers over the existing @mention-to-inbox path: each
@@ -171,6 +183,8 @@ export const reworkRoutes = (ctx: AppContext) => {
     attempt: z.number().int(),
     kind: z.enum(["context", "human", "terminal"]),
     status: z.enum(["queued", "running", "waiting", "succeeded", "failed", "cancelled"]),
+    selectedRoutes: z.array(z.string()).nullable(),
+    routeBasis: z.string().nullable(),
     resultArtifactId: z.string().nullable(),
     createdAt: z.string(),
     startedAt: z.string().nullable(),
@@ -313,7 +327,7 @@ export const reworkRoutes = (ctx: AppContext) => {
       method: "get",
       path: "/v1/artifacts/{shortId}/workflow-runs",
       tags: ["Artifacts"],
-      summary: "List recent runs and materialized step attempts for a workflow artifact.",
+      summary: "List recent runs and their durable step receipts for a workflow artifact.",
       request: {
         params: z.object({ shortId: z.string() }),
         query: z.object({
@@ -363,6 +377,8 @@ export const reworkRoutes = (ctx: AppContext) => {
             attempt: attempt.attempt,
             kind: attempt.kind,
             status: attempt.status,
+            selectedRoutes: parseWorkflowSelectedRoutes(attempt.selected_routes),
+            routeBasis: attempt.route_basis,
             resultArtifactId: attempt.result_artifact_id,
             createdAt: attempt.created_at,
             startedAt: attempt.started_at,
