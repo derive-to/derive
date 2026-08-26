@@ -458,6 +458,96 @@ test.describe("render fidelity — pinning what the sandbox CSP permits", () => 
     await expect(page.getByTestId("render-retry")).toHaveCount(0)
   })
 
+  test("a dismissed degraded warning returns after a full reload", async ({ owner: page }) => {
+    const html = readFileSync(join(FIXTURES, "startup-fail-soft.html"), "utf8")
+    const shortId = await publishArtifact(page, "index.html", html, "text/html")
+    await page.goto(`/artifacts/${shortId}`)
+    await expect(page.getByTestId("render-degraded")).toBeVisible()
+    await page.getByTestId("render-degraded-dismiss").click()
+    await expect(page.getByTestId("render-degraded")).toHaveCount(0)
+    await page.reload()
+    await expect(page.getByTestId("render-degraded")).toBeVisible()
+    await expect(page.frameLocator('iframe[title="index"]').locator("#rows tr")).toHaveCount(30)
+  })
+
+  test("Retry on a degraded artifact creates one fresh usable iframe", async ({ owner: page }) => {
+    const html = readFileSync(join(FIXTURES, "startup-fail-soft.html"), "utf8")
+    const shortId = await publishArtifact(page, "index.html", html, "text/html")
+    await page.goto(`/artifacts/${shortId}`)
+    const artifact = page.frameLocator('iframe[title="index"]')
+    await artifact.locator("#control").click()
+    await expect(artifact.locator("#count")).toHaveText("1")
+    await page.getByTestId("render-retry").click()
+    await expect(page.locator('iframe[title="index"]')).toHaveCount(1)
+    await expect(page.getByTestId("render-degraded")).toBeVisible()
+    await expect(artifact.locator("#count")).toHaveText("0")
+    await artifact.locator("#control").click()
+    await expect(artifact.locator("#count")).toHaveText("1")
+  })
+
+  test("two blocked Retry attempts never duplicate recovery or iframes", async ({
+    owner: page,
+  }) => {
+    const html = readFileSync(join(FIXTURES, "startup-blocked.html"), "utf8")
+    const shortId = await publishArtifact(page, "index.html", html, "text/html")
+    await page.goto(`/artifacts/${shortId}`)
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await expect(page.getByText("Artifact script stopped")).toBeVisible()
+      await page.getByTestId("render-retry").click()
+      await expect(page.locator('iframe[title="index"]')).toHaveCount(1)
+      await expect(page.getByTestId("render-retry")).toHaveCount(1)
+      await expect(page.getByText("Preview didn’t load")).toHaveCount(0)
+    }
+  })
+
+  test("navigating from Blocked to a clean sibling clears blocking recovery", async ({
+    owner: page,
+  }) => {
+    const blocked = await publishArtifact(
+      page,
+      "index.html",
+      readFileSync(join(FIXTURES, "startup-blocked.html"), "utf8"),
+      "text/html",
+    )
+    const clean = await publishArtifact(
+      page,
+      "index.html",
+      readFileSync(join(FIXTURES, "startup-threshold-80.html"), "utf8"),
+      "text/html",
+    )
+    await page.goto(`/artifacts/${blocked}`)
+    await expect(page.getByText("Artifact script stopped")).toBeVisible()
+    await page.goto(`/artifacts/${clean}`)
+    await expect(page.getByTestId("render-retry")).toHaveCount(0)
+    const artifact = page.frameLocator('iframe[title="index"]')
+    await artifact.locator("#control").click({ timeout: 5_000 })
+    await expect(artifact.locator("#control")).toHaveAttribute("data-clicked", "true")
+  })
+
+  test("navigating from Degraded to a clean sibling clears the warning rail", async ({
+    owner: page,
+  }) => {
+    const degraded = await publishArtifact(
+      page,
+      "index.html",
+      readFileSync(join(FIXTURES, "startup-fail-soft.html"), "utf8"),
+      "text/html",
+    )
+    const clean = await publishArtifact(
+      page,
+      "index.html",
+      readFileSync(join(FIXTURES, "startup-open-details-ready.html"), "utf8"),
+      "text/html",
+    )
+    await page.goto(`/artifacts/${degraded}`)
+    await expect(page.getByTestId("render-degraded")).toBeVisible()
+    await page.goto(`/artifacts/${clean}`)
+    await expect(page.getByTestId("render-degraded")).toHaveCount(0)
+    const artifact = page.frameLocator('iframe[title="index"]')
+    await artifact.locator("#control").click({ timeout: 5_000 })
+    await expect(artifact.locator("#count")).toHaveText("1")
+  })
+
   test("tier 1: a fully self-contained artifact renders with zero console errors, inline script executes", async ({
     owner: page,
   }) => {
