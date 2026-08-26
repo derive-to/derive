@@ -41,10 +41,46 @@ export function factJson(source, slot) {
 const titleFromId = (id) =>
   id.replaceAll(/[-_]+/g, " ").replace(/^./, (letter) => letter.toUpperCase())
 
-/** Make the visible graph's topology a projection of the runnable definition.
- * Existing labels, node state, and review metadata survive by stable id; only
- * nodes and edges are reconciled. This removes the most error-prone two-fact edit
- * while keeping the visible bundle rich enough to carry live human state. */
+/** Project the runnable loop policy into the visible linked graph's compact string contract.
+ * A workflow may have several bounded cycles in one diagram, while the presentation fact has
+ * one policy block, so multiple policies are labelled and joined instead of silently picking one. */
+const visibleLoopPolicy = (definition) => {
+  const loops = (Array.isArray(definition.loops) ? definition.loops : []).filter(object)
+  if (!loops.length) return { type: "graph" }
+  const prefix = (loop, value) =>
+    loops.length > 1 && text(loop.id) ? `${text(loop.id)}: ${value}` : value
+  const goals = loops.flatMap((loop) => {
+    const value = text(loop.goal)
+    return value ? [prefix(loop, value)] : []
+  })
+  const evaluations = loops.flatMap((loop) => {
+    const value = text(loop.evaluate)
+    return value ? [prefix(loop, value)] : []
+  })
+  const stops = loops.flatMap((loop) => {
+    const stop = object(loop.stop) ? loop.stop : null
+    if (!stop) return []
+    const parts = []
+    if (positive(stop.max_attempts)) parts.push(`at most ${stop.max_attempts} attempts`)
+    if (positive(stop.stagnation_limit))
+      parts.push(`${stop.stagnation_limit} stagnant attempt limit`)
+    if (positive(stop.max_minutes)) parts.push(`${stop.max_minutes} minute limit`)
+    if (positive(stop.max_cost_usd)) parts.push(`$${stop.max_cost_usd} cost limit`)
+    const human = text(stop.human_stop)
+    if (human) parts.push(`human stop: ${human}`)
+    return parts.length ? [prefix(loop, parts.join(", "))] : []
+  })
+  return {
+    type: "loop",
+    ...(goals.length ? { goal: goals.join("; ") } : {}),
+    ...(evaluations.length ? { evaluate: evaluations.join("; ") } : {}),
+    ...(stops.length ? { stop: stops.join("; ") } : {}),
+  }
+}
+
+/** Make the visible graph's topology and loop policy a projection of the runnable definition.
+ * Existing labels, node state, and review metadata survive by stable id. This removes the most
+ * error-prone two-fact edits while keeping the visible bundle rich enough for live human state. */
 export function syncWorkflowSource(source) {
   const definitionFact = factJson(source, "workflow-definition")
   if (definitionFact.error) throw new Error(definitionFact.error)
@@ -60,6 +96,15 @@ export function syncWorkflowSource(source) {
   )
   const diagrams = definitionFact.value.diagrams.filter(object).map((definition) => {
     const old = oldDiagrams.get(definition.id)
+    // Topology and loop policy come from the runnable definition. Labels, state, tier,
+    // confidence and review metadata stay authored in the visible fact. Remove stale policy
+    // keys before spreading so a loop changed back into a graph cannot retain loop advisories.
+    const preserved = { ...(old ?? {}) }
+    delete preserved.type
+    delete preserved.goal
+    delete preserved.evaluate
+    delete preserved.stop
+    const policy = visibleLoopPolicy(definition)
     const oldNodes = new Map(
       (Array.isArray(old?.nodes) ? old.nodes : []).filter(object).map((node) => [node.id, node]),
     )
@@ -69,15 +114,10 @@ export function syncWorkflowSource(source) {
         .map((edge) => [edgeKey(edge.from, edge.to), edge]),
     )
     return {
-      ...(old ?? {}),
+      ...preserved,
       id: definition.id,
       title: text(old?.title) ?? titleFromId(definition.id),
-      type:
-        old?.type === "loop" || old?.type === "graph"
-          ? old.type
-          : Array.isArray(definition.loops) && definition.loops.length
-            ? "loop"
-            : "graph",
+      ...policy,
       nodes: (Array.isArray(definition.nodes) ? definition.nodes : [])
         .filter(object)
         .map((node) => ({

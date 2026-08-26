@@ -255,6 +255,49 @@ test("settings destinations and their retired paths resolve", async ({ owner }) 
   await expect(owner.getByTestId("toggle-github-preview-link")).toHaveCount(0)
 })
 
+test("an automation can select a standard workspace integration as a source", async ({ owner }) => {
+  // The GitHub callback is the only production writer for this row and cannot be exercised
+  // against the local smoke app without a real GitHub App. Intercept only the two read scopes the
+  // picker composes; the rendered form and its selection state remain the real application.
+  await owner.route("**/v1/connections?*", async (route) => {
+    const url = new URL(route.request().url())
+    if (url.searchParams.get("mine") === "1") {
+      await route.fulfill({ json: { connections: [] } })
+      return
+    }
+    if (url.searchParams.get("scope") === "workspace") {
+      await route.fulfill({
+        json: {
+          connections: [
+            {
+              id: "conn_github_smoke",
+              user_id: "integration-installer",
+              broker: "none",
+              toolkit: "github",
+              scope: "workspace",
+              kind: "github_app",
+              base_url: "https://api.github.com",
+              scopes_label: "derive-to",
+              status: "active",
+              created_at: "2026-08-24T00:00:00.000Z",
+            },
+          ],
+        },
+      })
+      return
+    }
+    await route.continue()
+  })
+
+  await owner.goto("/settings/automations")
+  await owner.getByTestId("automation-add-source").click()
+  const github = owner.getByTestId("automation-source-conn_github_smoke")
+  await expect(github).toContainText("GitHub · derive-to")
+  await expect(github).toContainText("Integration")
+  await github.click()
+  await expect(owner.getByText("GitHub · derive-to", { exact: true })).toBeVisible()
+})
+
 test("Archived lives inside the Library filter rather than the primary rail", async ({ owner }) => {
   await owner.goto("/")
   await expect(owner.getByTestId("nav-archived")).toHaveCount(0)

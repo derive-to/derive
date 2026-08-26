@@ -112,7 +112,7 @@ describe.skipIf(process.env.DERIVE_TEST_DB === "pg")("MCP owner-run + create_con
   ): Promise<any> => JSON.parse((await callRaw(app, token, name, args)).text)
 
   // Publish a manifest and create the context over MCP, all on the owner grant.
-  const setupContext = async (app: App, name = "QA") => {
+  const setupContext = async (app: App, name = "QA", connectionIds?: string[]) => {
     const manifest = await call(app, "tok_full", "publish", {
       title: `${name} manifest`,
       content: `# ${name} manifest\nRun the checks.`,
@@ -123,13 +123,27 @@ describe.skipIf(process.env.DERIVE_TEST_DB === "pg")("MCP owner-run + create_con
       manifest_short_id: manifest.short_id,
       max_run_ms: 120_000,
       max_concurrency: 2,
+      ...(connectionIds ? { connection_ids: connectionIds } : {}),
     })
     return { manifest, created }
   }
 
   it("create_context wires the context, persists knobs, and returns no token", async () => {
     const { app, meta } = ownerApp("own-create")
-    const { created } = await setupContext(app)
+    const github = await meta.createConnection({
+      id: "conn_owner_run_github",
+      org_id: "ws_main",
+      user_id: "u_admin",
+      scope: "workspace",
+      kind: "github_app",
+      broker: "none",
+      toolkit: "github",
+      broker_ref: "44001",
+      base_url: "https://api.github.com",
+      scopes_label: "derive-to",
+      status: "active",
+    })
+    const { created } = await setupContext(app, "QA", [github.id])
     expect(created.context_id).toBeTruthy()
     expect(created.agent_id).toBeTruthy()
     expect(created.ask_policy).toBe("invited")
@@ -140,7 +154,9 @@ describe.skipIf(process.env.DERIVE_TEST_DB === "pg")("MCP owner-run + create_con
       org_id: "ws_main",
       max_run_ms: 120_000,
       max_concurrency: 2,
+      connection_ids: JSON.stringify([github.id]),
     })
+    expect(created.connection_ids).toEqual([github.id])
     // The auto-minted agent is managed, editor-capped, attributed to the grantor.
     const agents = await meta.listAgents("ws_main")
     expect(agents.find((a) => a.id === created.agent_id)).toMatchObject({

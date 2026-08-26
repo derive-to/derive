@@ -178,6 +178,16 @@ describe("workflow preview", () => {
       "review->research",
       "review->publish",
     ])
+    // The definition is the one authoring source for behavior too. A Ready sync must not leave
+    // the visible linked graph warning that its loop policy is missing at publish time.
+    expect(visible).toMatchObject({
+      type: "loop",
+      goal: "Reach an approvable brief",
+      evaluate: "Check evidence, clarity, and scope",
+    })
+    expect(visible.stop).toContain("at most 2 attempts")
+    expect(visible.stop).toContain("20 minute limit")
+    expect(visible.stop).toContain("human stop: The product lead stops or changes the brief")
     expect(previewWorkflowSource(synced.source).status).toBe("ready")
   })
 

@@ -119,7 +119,9 @@ export function registerAutomateTool(tc: ToolContext): void {
           .array(z.string().max(64))
           .max(20)
           .optional()
-          .describe("create: connected sources the run may call. An unbound id is refused by id."),
+          .describe(
+            "create/create_context: connected sources the run or context may call. An unbound id is refused by id.",
+          ),
         automation_id: z
           .string()
           .max(64)
@@ -292,6 +294,18 @@ export function registerAutomateTool(tc: ToolContext): void {
         if (!input.name || !input.manifest_short_id)
           return json({ error: "create_context needs name + manifest_short_id" })
         if (!tc.ownerId) return json({ error: "create_context needs a grant with a known user" })
+        // A context should be testable directly with the same hands its automation will use.
+        // Apply the ordinary bind policy before minting anything, so a guessed/foreign id cannot
+        // become a context capability and a refusal leaves no orphaned managed agent behind.
+        if (input.connection_ids?.length) {
+          const bindErr = await connectionBindError(
+            meta,
+            org,
+            { userId: tc.ownerId, canManage: true },
+            input.connection_ids,
+          )
+          if (bindErr) return json({ error: bindErr })
+        }
         const reached = await tc.reach(input.manifest_short_id)
         if (!reached || "error" in reached || reached.a.org_id !== org)
           return json({ error: "no such manifest artifact in this workspace" })
@@ -319,12 +333,14 @@ export function registerAutomateTool(tc: ToolContext): void {
             manifestArtifactId: reached.a.id,
             maxRunMs: input.max_run_ms,
             maxConcurrency: input.max_concurrency,
+            connectionIds: input.connection_ids,
           })
           return json({
             context_id: made.context.id,
             name: made.context.name,
             agent_id: made.agentId,
             ask_policy: made.context.ask_policy,
+            connection_ids: input.connection_ids ?? [],
             skills_count: pins.length,
             ...(bodyMentionsSkills
               ? {

@@ -94,7 +94,8 @@ lapses. The next pull serves it again.
 
 `automate` with `action: "create_context"` wires a new context in one call: `name` +
 `manifest_short_id` (the context's instruction artifact in this workspace), optional
-`max_run_ms` (per-run budget) and `max_concurrency`. Its agent auto-mints managed; the token is
-not returned because an MCP transcript is a bad place for a standing secret. As an owner, you run the
-context directly via owner-run, and a dedicated runner's token comes from REST when needed.
+`max_run_ms` (per-run budget), `max_concurrency`, and `connection_ids` for the exact sources it may
+use. Its agent auto-mints managed; the token is not returned because an MCP transcript is a bad
+place for a standing secret. As an owner, you run the context directly via owner-run, and a
+dedicated runner's token comes from REST when needed.
 New contexts start `ask_policy: "invited"` (creator-only); widen who may ask from the console.
