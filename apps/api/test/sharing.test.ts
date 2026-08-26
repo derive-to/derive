@@ -1,4 +1,5 @@
 import { beforeAll, describe, expect, it } from "vitest"
+import { MAX_ACCESS_APPROVERS } from "../src/lib/access-request"
 import { inMemoryLimiter, inMemoryRateLimiters } from "../src/lib/rate-limit"
 import { as, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
@@ -180,7 +181,11 @@ describe("access request", () => {
     // A viewer seat can read the artifact but cannot share it — asking them to
     // approve is noise they can do nothing about.
     expect((await bell(viewer.email)).unread).toBe(0)
-    // And the asker never notifies themselves.
+    // The asker gets no bell of their own. NOTE: this passes whether or not the route
+    // filters the asker out of its own recipient list — a stranger holds no share grant,
+    // so they were never a candidate. The filter matters only for an owner whose grant
+    // is workspace-bound while their active workspace is elsewhere; that path is
+    // exercised by the ordering test below, which puts the asker's own id in the roster.
     expect((await bell(stranger.email)).unread).toBe(0)
   })
 
@@ -340,6 +345,74 @@ describe("access request", () => {
       })
       expect(await shape(real)).toEqual(await shape(fake))
       expect(real.headers.get("retry-after")).toBeNull()
+    })
+  })
+  // accessApprovers ranks owners and artifact-level grants ahead of plain workspace
+  // seats, and MAX_ACCESS_APPROVERS cuts the tail. That ranking is only real if it
+  // survives resolution: getUsers is a WHERE id IN (…) with no ORDER BY, so mapping its
+  // rows straight into the cut discards the sort and drops whoever the query plan put
+  // last. The owner's id here sorts AFTER every editor's, so a lost ordering drops
+  // exactly the person most able to grant. Reverse the sort in accessApprovers, or drop
+  // the re-indexing in the route, and this fails.
+  describe("who gets asked when there are more approvers than slots", () => {
+    const holder: TestUser = { id: "u_zz_ord_owner", email: "zz-owner@ord.test", name: "Owner" }
+    const asker: TestUser = { id: "u_ord_asker", email: "asker@ord.test", name: "Asker" }
+    const seats: TestUser[] = Array.from({ length: 6 }, (_, i) => ({
+      id: `u_aa_ord_ed${i}`,
+      email: `ed${i}@ord.test`,
+      name: `Editor ${i}`,
+    }))
+    const { app: ord, meta: ordMeta } = makeAuthedApp(
+      "access-request-order",
+      [holder, asker, ...seats],
+      undefined,
+      { isolated: true },
+    )
+
+    it("asks the owner before a workspace seat, and never the asker", async () => {
+      const spaces = await (
+        await ord.request("/v1/workspaces", { headers: as(holder.email) })
+      ).json()
+      const org = (spaces.workspaces[0] as { id: string }).id
+      for (const [i, seat] of seats.entries())
+        await ordMeta.setMembership({
+          id: `m_ord_${i}`,
+          org_id: org,
+          user_id: seat.id,
+          role: "editor",
+        })
+      const sid = (
+        await (
+          await publishAs(
+            ord,
+            "<h1>d</h1>",
+            { title: "Ranked", workspace_access: "member", link_role: "none", listed: "none" },
+            as(holder.email),
+          )
+        ).json()
+      ).short_id
+
+      expect(
+        (
+          await ord.request(`/v1/artifacts/${sid}/access-request`, {
+            ...jsonAs(as(asker.email), {}),
+            method: "POST",
+          })
+        ).status,
+      ).toBe(202)
+
+      const unread = async (email: string) =>
+        (
+          (await (await ord.request("/v1/notifications", { headers: as(email) })).json()) as {
+            unread: number
+          }
+        ).unread
+      expect(await unread(holder.email)).toBe(1)
+      // The cut is real: six editors, five slots, one of them taken by the owner.
+      const notifiedSeats = (await Promise.all(seats.map((seat) => unread(seat.email)))).filter(
+        Boolean,
+      ).length
+      expect(notifiedSeats).toBe(MAX_ACCESS_APPROVERS - 1)
     })
   })
 })

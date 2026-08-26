@@ -215,8 +215,18 @@ export const sharingRoutes = (ctx: AppContext) => {
         // of the list. PRE_RESOLVE_CAP keeps the getUsers argument bounded on a large
         // workspace without letting the real cap eat unresolvable ids.
         const approvers = await accessApprovers(meta, artifact)
-        const recipients = (await meta.getUsers(approvers))
-          .filter((u) => u.id !== me.id)
+        // Re-impose accessApprovers' order. `getUsers` is a WHERE id IN (…) with no
+        // ORDER BY on any driver, so it hands rows back in whatever order the plan
+        // produced — which threw the ranking away entirely and made the cut arbitrary:
+        // the artifact's own owner sorts first and was dropped whenever their id
+        // happened to sort late. Worse, "arbitrary" is not even stable, so a retry could
+        // fan out to a different five.
+        const byId = new Map((await meta.getUsers(approvers)).map((u) => [u.id, u]))
+        const recipients = approvers
+          .flatMap((id) => {
+            const u = byId.get(id)
+            return u && u.id !== me.id ? [u] : []
+          })
           .slice(0, MAX_ACCESS_APPROVERS)
         // Bail BEFORE spending the dedupe token. getUsers swallows its own errors and
         // returns [] by contract, so an empty roster can mean "nobody can grant" or "the

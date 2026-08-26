@@ -68,7 +68,13 @@ export interface RateLimiters {
    *  `<userId>:<shortId>`, NOT by the actor alone — the point is per-artifact
    *  dedupe, and a plain actor key would let one asker's second artifact silence
    *  the first. Hours in process; 1/60s on the edge, whose native period caps at a
-   *  minute (see ACCESS_REQUEST_WINDOW_MS). */
+   *  minute (see ACCESS_REQUEST_WINDOW_MS).
+   *
+   *  The long window is the one shape `inMemoryLimiter`'s sweep handles badly: it only
+   *  drops already-expired keys, so a self-host holding more than the 10k sweep floor in distinct
+   *  (asker, artifact) pairs inside one window scans without freeing. Bounded in
+   *  practice by the mail bar above it, and irrelevant on the edge, where the native
+   *  binding owns the counting. */
   accessRequest: Limiter
   /** The MAIL bar for access requests, per asker. Separate from `invite` on purpose:
    *  one invite request sends one email, while one access request fans out to every
