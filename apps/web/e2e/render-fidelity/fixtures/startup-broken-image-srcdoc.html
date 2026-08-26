@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8" /><title>Broken image srcdoc</title></head>
+  <body>
+    <iframe
+      title="Broken image placeholder"
+      srcdoc="<!doctype html><img src='https://unreachable.invalid/missing.png' alt=''>"
+      style="width: 800px; height: 600px"
+    ></iframe>
+    <script>throw new Error("bootstrap failed beside broken image")</script>
+  </body>
+</html>

@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8" /><title>Cleared loaded iframe</title></head>
+  <body>
+    <iframe
+      id="generated"
+      title="Cleared visualization"
+      src="data:text/html,%3Ch1%3ETemporary%20visualization%3C%2Fh1%3E"
+      style="width: 800px; height: 600px; border: 0"
+    ></iframe>
+    <script>
+      document.getElementById("generated").addEventListener("load", () => {
+        document.getElementById("generated").removeAttribute("src")
+        setTimeout(() => { throw new Error("bootstrap failed after frame was cleared") }, 0)
+      }, { once: true })
+    </script>
+  </body>
+</html>

@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8" /><title>Unreachable cross-origin iframe</title></head>
+  <body>
+    <iframe
+      title="Unreachable generated visualization"
+      src="https://unreachable.invalid/generated-visualization.html"
+      style="width: 800px; height: 600px; border: 0"
+    ></iframe>
+    <script>throw new Error("bootstrap failed beside unreachable iframe")</script>
+  </body>
+</html>
