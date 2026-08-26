@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Hidden readiness marker</title>
+  </head>
+  <body>
+    <div data-derive-ready hidden></div>
+    <main>Loading…</main>
+    <script>
+      throw new Error("intentional failure after a hidden readiness marker")
+    </script>
+  </body>
+</html>

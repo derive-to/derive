@@ -194,6 +194,78 @@ test.describe("render fidelity — pinning what the sandbox CSP permits", () => 
     }
   })
 
+  for (const scenario of [
+    { fixture: "startup-hidden-marker.html", label: "hidden readiness marker" },
+    { fixture: "startup-hidden-rich-content.html", label: "hidden rich content" },
+    { fixture: "startup-script-source-only.html", label: "script source text" },
+  ]) {
+    test(`${scenario.label} cannot turn a bootstrap failure into Ready`, async ({
+      owner: page,
+    }) => {
+      const html = readFileSync(join(FIXTURES, scenario.fixture), "utf8")
+      const shortId = await publishArtifact(page, "index.html", html, "text/html")
+
+      await page.goto(`/artifacts/${shortId}`)
+      await expect(page.getByText("Artifact script stopped")).toBeVisible()
+      await expect(page.getByTestId("render-degraded")).toHaveCount(0)
+      await expect(page.getByTestId("render-retry")).toHaveCount(1)
+    })
+  }
+
+  test("nested iframe cannot forge the direct artifact runtime protocol", async ({
+    owner: page,
+  }) => {
+    const html = readFileSync(join(FIXTURES, "startup-nested-frame-spoof.html"), "utf8")
+    const shortId = await publishArtifact(page, "index.html", html, "text/html")
+
+    await page.goto(`/artifacts/${shortId}`)
+    const artifact = page.frameLocator('iframe[title="index"]')
+    await expect(
+      artifact.getByRole("heading", { name: "Direct artifact frame remains authoritative" }),
+    ).toBeVisible()
+    await page.waitForTimeout(1_000)
+    await expect(page.getByTestId("render-degraded")).toHaveCount(0)
+    await expect(page.getByText("Artifact script stopped")).toHaveCount(0)
+    await artifact.locator("#control").click()
+    await expect(artifact.locator("#count")).toHaveText("1")
+  })
+
+  test("a distinct post-ready failure reopens recovery after dismissal", async ({
+    browser,
+    owner: page,
+  }) => {
+    const html = readFileSync(join(FIXTURES, "startup-sequential-errors.html"), "utf8")
+    const shortId = await publishArtifact(page, "index.html", html, "text/html")
+
+    await page.goto(`/artifacts/${shortId}`)
+    await expect(page.getByTestId("render-degraded")).toBeVisible()
+    await page.getByTestId("render-degraded-dismiss").click()
+    await expect(page.getByTestId("render-degraded")).toHaveCount(0)
+
+    const artifact = page.frameLocator('iframe[title="index"]')
+    await artifact.locator("#throw-control").click()
+    await expect(page.getByTestId("render-degraded")).toBeVisible()
+    await expect(
+      page.getByText("A script failed after meaningful content", { exact: false }),
+    ).toBeVisible()
+    await artifact.locator("#working-control").click()
+    await expect(artifact.locator("#count")).toHaveText("1")
+
+    const mobileContext = await browser.newContext({ viewport: { width: 390, height: 844 } })
+    const mobile = await mobileContext.newPage()
+    try {
+      await mobile.goto(`/artifacts/${shortId}`)
+      await expect(mobile.getByTestId("render-degraded")).toContainText("resource-error")
+      await mobile.getByTestId("render-degraded-dismiss").click()
+      const mobileArtifact = mobile.frameLocator('iframe[title="index"]')
+      await mobileArtifact.locator("#throw-control").click()
+      await expect(mobile.getByTestId("render-degraded")).toContainText("script-error")
+      await expect(mobile.getByTestId("render-degraded")).not.toContainText("resource-error")
+    } finally {
+      await mobileContext.close()
+    }
+  })
+
   test("tier 1: a fully self-contained artifact renders with zero console errors, inline script executes", async ({
     owner: page,
   }) => {

@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Hidden rich content</title>
+  </head>
+  <body>
+    <table hidden>
+      <tbody>
+        <tr><td>This row is not rendered.</td></tr>
+      </tbody>
+    </table>
+    <main>Loading…</main>
+    <script>
+      throw new Error("intentional failure after a hidden table")
+    </script>
+  </body>
+</html>

@@ -230,6 +230,7 @@ export function RenderStage({
       {/* A warning must never obscure authored content. Keep degraded recovery in
           the stage flow, outside the iframe/cursor coordinate system. */}
       {phase === "ready" &&
+        runtimeError &&
         runtimeFailure &&
         disposition === "degraded" &&
         incidentInstance !== dismissedIncident && (
@@ -245,8 +246,9 @@ export function RenderStage({
               <p className="hidden text-xs text-muted-foreground sm:block">
                 {runtimeFailure.description}
               </p>
-              <p className="mt-0.5 hidden font-mono text-3xs text-muted-foreground sm:block">
-                Reference: {incidentReference}
+              <p className="mt-0.5 truncate font-mono text-3xs text-muted-foreground">
+                {runtimeError.code}
+                <span className="hidden sm:inline"> · Reference: {incidentReference}</span>
               </p>
             </div>
             <div className="flex shrink-0 items-center gap-1">

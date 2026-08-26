@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Sequential post-ready failures</title>
+  </head>
+  <body>
+    <main data-derive-ready>
+      <h1>Useful content survives distinct failures</h1>
+      <p>The optional resource warning can be dismissed before a later script failure occurs.</p>
+      <button id="throw-control" type="button">Trigger distinct script failure</button>
+      <button id="working-control" type="button">
+        Working control · <span id="count">0</span>
+      </button>
+    </main>
+    <img src="/missing-sequential-optional.png" alt="" />
+    <script>
+      document.getElementById("throw-control").addEventListener("click", () => {
+        throw new Error("intentional second post-ready failure")
+      })
+      document.getElementById("working-control").addEventListener("click", () => {
+        const count = document.getElementById("count")
+        count.textContent = String(Number(count.textContent) + 1)
+      })
+    </script>
+  </body>
+</html>

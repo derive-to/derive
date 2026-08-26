@@ -18,19 +18,44 @@ export const SHARED_STATE_CLIENT_JS = `(function () {
 
   // The load event is too late to be the only readiness signal. Image error handlers run
   // while the document is still loading, after an app may already have painted a
-  // complete table or dashboard. Treat an explicit author marker, a semantic root,
-  // or a non-trivial body as meaningful content so an optional failure cannot hide
-  // a usable artifact behind the host's startup card.
+  // complete table or dashboard. Treat an explicit author marker, visible rich content,
+  // or a non-trivial visible body as meaningful so an optional failure cannot hide a
+  // usable artifact behind the host's startup card. Hidden nodes and source text never
+  // count: they give the viewer nothing usable to preserve.
+  function isVisiblyRendered(element) {
+    if (!element || element.hidden) return false;
+    try {
+      if (element.getAttribute && element.getAttribute("aria-hidden") === "true") return false;
+      if (typeof window.getComputedStyle === "function") {
+        var style = window.getComputedStyle(element);
+        if (style && (
+          style.display === "none" ||
+          style.visibility === "hidden" ||
+          style.visibility === "collapse" ||
+          style.opacity === "0"
+        )) return false;
+      }
+      if (typeof element.getClientRects === "function" && element.getClientRects().length === 0)
+        return false;
+    } catch (_) { /* structural checks and visible text remain as fallbacks */ }
+    return true;
+  }
   function hasMeaningfulContent() {
     try {
       var doc = window.document, body = doc && doc.body;
       if (!body) return false;
-      if (body.querySelector && body.querySelector("[data-derive-ready]")) return true;
-      var richContent = body.querySelectorAll
-        ? body.querySelectorAll("table,canvas,svg,video").length
-        : 0;
-      var text = String(body.innerText || body.textContent || "").replace(/\\s+/g, "");
-      return Number(body.childElementCount || 0) > 0 && (richContent > 0 || text.length >= 80);
+      var marker = body.querySelector && body.querySelector("[data-derive-ready]");
+      if (isVisiblyRendered(marker)) return true;
+      var rich = body.querySelectorAll ? body.querySelectorAll("table,canvas,svg,video") : [];
+      var richContent = false;
+      for (var i = 0; i < Number(rich.length || 0); i += 1) {
+        if (isVisiblyRendered(rich[i])) { richContent = true; break; }
+      }
+      // innerText is layout-aware and omits script/style/hidden descendants. Falling
+      // back to textContent made a long inline script look like visible authored copy.
+      var visibleText = typeof body.innerText === "string" ? body.innerText : "";
+      var text = String(visibleText).replace(/\\s+/g, "");
+      return Number(body.childElementCount || 0) > 0 && (richContent || text.length >= 80);
     } catch (_) {
       return false;
     }

@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Nested frame protocol spoof</title>
+  </head>
+  <body>
+    <main data-derive-ready>
+      <h1>Direct artifact frame remains authoritative</h1>
+      <p>A nested child cannot forge a runtime failure in the surrounding Derive viewer.</p>
+      <button id="control" type="button">Working control · <span id="count">0</span></button>
+      <iframe
+        title="Untrusted nested child"
+        srcdoc="<script>setTimeout(function(){parent.parent.postMessage({source:'derive',type:'runtime-error',code:'script-error',phase:'loading'},'*')},400)<\/script>"
+      ></iframe>
+    </main>
+    <script>
+      document.getElementById("control").addEventListener("click", () => {
+        const count = document.getElementById("count")
+        count.textContent = String(Number(count.textContent) + 1)
+      })
+    </script>
+  </body>
+</html>

@@ -204,6 +204,55 @@ describe("shared-state contract", () => {
     expect(sent.at(-1)).toMatchObject({ code: "script-error", phase: "loading" })
   })
 
+  it("excludes hidden markers, hidden rich nodes, and source text from readiness", () => {
+    type BrowserListener = (event: Record<string, unknown>) => void
+    const sent: RuntimeMessage[] = []
+    const listeners = new Map<string, BrowserListener>()
+    const parent = { postMessage: (message: RuntimeMessage) => sent.push(message) }
+    const hidden = { hidden: true }
+    const frame = {
+      derive: undefined as DeriveRuntime | undefined,
+      document: {
+        body: {
+          childElementCount: 3,
+          innerText: "Loading…",
+          textContent:
+            "A deliberately long inline script source that exceeds the old readiness threshold but renders nothing useful to a viewer.",
+          querySelector: () => hidden,
+          querySelectorAll: () => ({ 0: hidden, length: 1 }),
+        },
+      },
+      addEventListener: (type: string, listener: BrowserListener) => listeners.set(type, listener),
+      dispatchEvent: () => true,
+    }
+    const CustomEventStub = class {
+      constructor(
+        readonly type: string,
+        readonly init?: unknown,
+      ) {}
+    }
+    const load = Function("window", "parent", "CustomEvent", SHARED_STATE_CLIENT_JS) as (
+      frame: typeof frame,
+      parent: typeof parent,
+      event: typeof CustomEventStub,
+    ) => void
+    load(frame, parent, CustomEventStub)
+
+    listeners.get("error")?.({ error: { message: "boot failed" }, message: "boot failed" })
+    listeners.get("message")?.({
+      source: parent,
+      data: { source: "derive-host", type: "shared-ready" },
+    })
+    expect(sent).toEqual([
+      {
+        source: "derive",
+        type: "runtime-error",
+        code: "script-error",
+        phase: "loading",
+      },
+    ])
+  })
+
   it("loads state, emits an atomic update, and applies the host result", async () => {
     const sent: RuntimeMessage[] = []
     let receive: MessageListener = () => {
