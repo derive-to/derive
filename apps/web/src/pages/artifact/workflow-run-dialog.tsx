@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { ApiError, api, type DirUser } from "@/api"
 import { Eyebrow } from "@/components/shared/section-eyebrow"
 import { Button } from "@/components/ui/button"
@@ -30,6 +30,7 @@ export function WorkflowRunDialog({
   open: boolean
   onOpenChange: (open: boolean) => void
 }) {
+  const queryClient = useQueryClient()
   const { data, error, isError, refetch } = useQuery({
     queryKey: ["workflow-run-prompt", shortId, diagramId] as const,
     queryFn: () => api.workflowRunPrompt(shortId, diagramId),
@@ -39,7 +40,10 @@ export function WorkflowRunDialog({
   const handoffReady = !!data && !isError
   const run = useApiMutation<{ runId: string; prompt: string; requestId?: string }, AgentTarget>({
     mutationFn: (agent) => api.runWorkflow(shortId, { agentId: agent.id, diagramId }),
-    success: (_result, agent) => queuedFor("Workflow", agent.name),
+    success: (_result, agent) => {
+      void queryClient.invalidateQueries({ queryKey: ["workflow-runs", shortId, diagramId] })
+      queuedFor("Workflow", agent.name)
+    },
     errorToast: false,
     onError: (error) => {
       if (error instanceof ApiError && error.code === "alreadyQueued") toast(ALREADY_QUEUED)
@@ -52,6 +56,7 @@ export function WorkflowRunDialog({
   const copyRun = useApiMutation<{ runId: string; prompt: string }, void>({
     mutationFn: () => api.runWorkflow(shortId, { diagramId, delivery: "copy" }),
     success: (result) => {
+      void queryClient.invalidateQueries({ queryKey: ["workflow-runs", shortId, diagramId] })
       void copyText(result.prompt, { success: "Prompt copied. Paste it into your agent." })
     },
     errorToast: false,

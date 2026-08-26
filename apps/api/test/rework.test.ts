@@ -319,6 +319,59 @@ describe("workflow run: explicit local-agent handoff", () => {
       status: "queued",
     })
     expect(run?.reason).toBe("agent-request")
+
+    const running = await meta.transitionWorkflowRun(
+      started.runId,
+      artifact?.org_id ?? "",
+      { status: "queued", stateRevision: 0 },
+      {
+        status: "running",
+        at: "2026-08-26T18:00:00.000Z",
+        actualExecution: "local",
+        executorId: agent.id,
+      },
+    )
+    expect(running).not.toBeNull()
+    const waiting = await meta.createWorkflowStepAttempt(artifact?.org_id ?? "", {
+      id: "wfsa_visible_human",
+      workflow_run_id: started.runId,
+      node_id: "review",
+      attempt: 1,
+      kind: "human",
+    })
+    await meta.transitionWorkflowStepAttempt(
+      waiting.id,
+      started.runId,
+      artifact?.org_id ?? "",
+      { status: "queued", stateRevision: 0 },
+      { status: "waiting", at: "2026-08-26T18:01:00.000Z" },
+    )
+
+    const historyRes = await app.request(
+      `/v1/artifacts/${published.short_id}/workflow-runs?diagram=brief`,
+      { headers: as(editor.email) },
+    )
+    expect(historyRes.status).toBe(200)
+    expect(await historyRes.json()).toMatchObject({
+      runs: [
+        {
+          id: started.runId,
+          diagramId: "brief",
+          workflowVersion: 1,
+          status: "running",
+          requestedExecution: "local",
+          actualExecution: "local",
+          attempts: [
+            {
+              nodeId: "review",
+              attempt: 1,
+              kind: "human",
+              status: "waiting",
+            },
+          ],
+        },
+      ],
+    })
   })
 
   it("copy starts a distinct pinned run without requiring a registered agent", async () => {

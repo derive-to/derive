@@ -7722,6 +7722,194 @@
         }
       }
     },
+    "/v1/artifacts/{shortId}/workflow-runs": {
+      "get": {
+        "tags": [
+          "Artifacts"
+        ],
+        "summary": "List recent runs and materialized step attempts for a workflow artifact.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": false,
+            "name": "diagram",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 20
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Recent version-pinned workflow runs, newest first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "runs": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "diagramId": {
+                            "type": "string"
+                          },
+                          "workflowVersion": {
+                            "type": "integer"
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "queued",
+                              "running",
+                              "waiting",
+                              "succeeded",
+                              "failed",
+                              "cancelled"
+                            ]
+                          },
+                          "reason": {
+                            "type": "string"
+                          },
+                          "requestedExecution": {
+                            "type": "string",
+                            "enum": [
+                              "any",
+                              "local",
+                              "hosted"
+                            ]
+                          },
+                          "actualExecution": {
+                            "type": "string",
+                            "nullable": true,
+                            "enum": [
+                              "local",
+                              "hosted",
+                              null
+                            ]
+                          },
+                          "createdAt": {
+                            "type": "string"
+                          },
+                          "startedAt": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "finishedAt": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "attempts": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "id": {
+                                  "type": "string"
+                                },
+                                "nodeId": {
+                                  "type": "string"
+                                },
+                                "attempt": {
+                                  "type": "integer"
+                                },
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "context",
+                                    "human",
+                                    "terminal"
+                                  ]
+                                },
+                                "status": {
+                                  "type": "string",
+                                  "enum": [
+                                    "queued",
+                                    "running",
+                                    "waiting",
+                                    "succeeded",
+                                    "failed",
+                                    "cancelled"
+                                  ]
+                                },
+                                "resultArtifactId": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "createdAt": {
+                                  "type": "string"
+                                },
+                                "startedAt": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "finishedAt": {
+                                  "type": "string",
+                                  "nullable": true
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "nodeId",
+                                "attempt",
+                                "kind",
+                                "status",
+                                "resultArtifactId",
+                                "createdAt",
+                                "startedAt",
+                                "finishedAt"
+                              ]
+                            }
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "diagramId",
+                          "workflowVersion",
+                          "status",
+                          "reason",
+                          "requestedExecution",
+                          "actualExecution",
+                          "createdAt",
+                          "startedAt",
+                          "finishedAt",
+                          "attempts"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "runs"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/artifacts/{shortId}/rework": {
       "post": {
         "tags": [

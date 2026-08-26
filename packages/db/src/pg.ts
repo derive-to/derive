@@ -5277,6 +5277,25 @@ export class PgMetaStore implements MetaStore {
       .limit(1)
     return rows[0] ?? null
   }
+  async listWorkflowRuns(
+    workflowArtifactId: string,
+    orgId: string,
+    opts: { diagramId?: string; limit?: number } = {},
+  ): Promise<WorkflowRunRecord[]> {
+    const limit = Math.max(1, Math.min(opts.limit ?? 20, 100))
+    return this.db
+      .select()
+      .from(workflowRun)
+      .where(
+        and(
+          eq(workflowRun.workflow_artifact_id, workflowArtifactId),
+          eq(workflowRun.org_id, orgId),
+          opts.diagramId ? eq(workflowRun.diagram_id, opts.diagramId) : undefined,
+        ),
+      )
+      .orderBy(desc(workflowRun.created_at), desc(workflowRun.id))
+      .limit(limit)
+  }
   async transitionWorkflowRun(
     id: string,
     orgId: string,

@@ -4129,6 +4129,76 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/artifacts/{shortId}/workflow-runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List recent runs and materialized step attempts for a workflow artifact. */
+        get: {
+            parameters: {
+                query?: {
+                    diagram?: string;
+                    limit?: number;
+                };
+                header?: never;
+                path: {
+                    shortId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Recent version-pinned workflow runs, newest first. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            runs: {
+                                id: string;
+                                diagramId: string;
+                                workflowVersion: number;
+                                /** @enum {string} */
+                                status: "queued" | "running" | "waiting" | "succeeded" | "failed" | "cancelled";
+                                reason: string;
+                                /** @enum {string} */
+                                requestedExecution: "any" | "local" | "hosted";
+                                /** @enum {string|null} */
+                                actualExecution: "local" | "hosted" | null;
+                                createdAt: string;
+                                startedAt: string | null;
+                                finishedAt: string | null;
+                                attempts: {
+                                    id: string;
+                                    nodeId: string;
+                                    attempt: number;
+                                    /** @enum {string} */
+                                    kind: "context" | "human" | "terminal";
+                                    /** @enum {string} */
+                                    status: "queued" | "running" | "waiting" | "succeeded" | "failed" | "cancelled";
+                                    resultArtifactId: string | null;
+                                    createdAt: string;
+                                    startedAt: string | null;
+                                    finishedAt: string | null;
+                                }[];
+                            }[];
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/artifacts/{shortId}/rework": {
         parameters: {
             query?: never;

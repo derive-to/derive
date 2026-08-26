@@ -1117,7 +1117,9 @@ export function LinkedBundleWorkspace({
         <main className="min-w-0">
           {view === "preview" && workflowPreview ? (
             <WorkflowPreview
+              shortId={shortId}
               preview={workflowPreview}
+              showRuns={canComment}
               onRun={canComment ? setRunDiagram : undefined}
             />
           ) : view === "now" ? (

@@ -41,6 +41,82 @@ test("publish, comment, resolve, and find it in the library", async ({ owner }) 
   await expect(owner.getByTestId(`artifact-card-open-${shortId}`)).toBeVisible()
 })
 
+test("starting a workflow creates a visible, version-pinned run", async ({ owner }) => {
+  const manifest = {
+    schema: "derive.linked-bundle/v1",
+    purpose: "Keep internal docs aligned with code changes.",
+    members: [],
+    diagrams: [
+      {
+        id: "docs-update",
+        title: "Update internal docs",
+        type: "graph",
+        nodes: [
+          {
+            id: "update-docs",
+            label: "Update docs",
+            state: "pending",
+            note: "Inspect the code change and publish the necessary documentation update.",
+          },
+        ],
+        edges: [],
+      },
+    ],
+  }
+  const workflow = {
+    schema: "derive.workflow/v1",
+    purpose: manifest.purpose,
+    diagrams: [
+      {
+        id: "docs-update",
+        entry: "update-docs",
+        nodes: [
+          {
+            id: "update-docs",
+            kind: "context",
+            context_ref: "docs-updater",
+            instruction: "Inspect the supplied code change and update the affected internal docs.",
+            result: "A published documentation update grounded in the code change",
+            terminal: true,
+          },
+        ],
+        routes: [],
+        scenarios: [
+          {
+            id: "expected",
+            kind: "expected",
+            path: ["update-docs"],
+            outcome: "The internal docs reflect the code change",
+          },
+          {
+            id: "failure",
+            kind: "failure",
+            path: ["update-docs"],
+            outcome: "The failed attempt remains visible without changing the docs",
+          },
+        ],
+      },
+    ],
+  }
+  const html =
+    `<!doctype html><html><body><h1>Internal docs update</h1>` +
+    `<script type="application/derive-facts" data-fact="bundle-manifest">${JSON.stringify(manifest)}</script>` +
+    `<script type="application/derive-facts" data-fact="workflow-definition">${JSON.stringify(workflow)}</script>` +
+    `</body></html>`
+  const shortId = await publishArtifact(owner, "workflow.html", html, "text/html")
+
+  await owner.goto(`/artifacts/${shortId}`)
+  await expect(owner.getByTestId("workflow-preview")).toBeVisible()
+  await expect(owner.getByText("No runs yet.", { exact: false })).toBeVisible()
+  await owner.getByTestId("workflow-run-docs-update").click()
+  await owner.getByTestId("workflow-run-copy").click()
+
+  const runs = owner.getByTestId("workflow-runs")
+  await expect(runs.getByText("Queued", { exact: true })).toBeVisible()
+  await expect(runs.getByText("v1 · local copy", { exact: false })).toBeVisible()
+  await expect(runs.getByText("Waiting for an agent to claim this run.")).toBeVisible()
+})
+
 test("a cached screenshot still becomes a visible library thumbnail", async ({ owner }) => {
   const shortId = await publishArtifact(owner, "cached-thumb.md", "# Cached thumbnail")
 

@@ -1,6 +1,7 @@
 import type { Artifact } from "@/api"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
+import { WorkflowRunHistory } from "./workflow-run-history"
 
 type WorkflowPreviewValue = NonNullable<Artifact["workflow_preview"]>
 type PreviewDiagram = WorkflowPreviewValue["diagrams"][number]
@@ -147,10 +148,14 @@ const ScenarioChecks = ({ scenarios }: { scenarios: PreviewDiagram["scenarios"] 
 }
 
 const DiagramPreview = ({
+  shortId,
   diagram,
+  showRuns,
   onRun,
 }: {
+  shortId: string
   diagram: PreviewDiagram
+  showRuns: boolean
   onRun?: (diagramId: string) => void
 }) => (
   <article
@@ -179,6 +184,7 @@ const DiagramPreview = ({
       <RunConsiderations diagram={diagram} />
     </div>
     <ScenarioChecks scenarios={diagram.scenarios} />
+    {showRuns ? <WorkflowRunHistory shortId={shortId} diagramId={diagram.id} /> : null}
   </article>
 )
 
@@ -186,10 +192,14 @@ const DiagramPreview = ({
  * than a configuration form: a teammate can understand the workflow cold, then
  * inspect live state or the exact graph only when they need to. */
 export function WorkflowPreview({
+  shortId,
   preview,
+  showRuns,
   onRun,
 }: {
+  shortId: string
   preview: WorkflowPreviewValue
+  showRuns: boolean
   onRun?: (diagramId: string) => void
 }) {
   const ready = preview.status === "ready"
@@ -273,7 +283,13 @@ export function WorkflowPreview({
       </section>
 
       {preview.diagrams.map((diagram) => (
-        <DiagramPreview key={diagram.id} diagram={diagram} onRun={ready ? onRun : undefined} />
+        <DiagramPreview
+          key={diagram.id}
+          shortId={shortId}
+          diagram={diagram}
+          showRuns={showRuns}
+          onRun={ready ? onRun : undefined}
+        />
       ))}
 
       {preview.cannot_do.length ? (

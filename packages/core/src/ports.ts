@@ -2164,6 +2164,11 @@ export interface AgentStore {
 export interface WorkflowRunStore {
   createWorkflowRun(run: NewWorkflowRun): Promise<WorkflowRunRecord>
   getWorkflowRun(id: string, orgId: string): Promise<WorkflowRunRecord | null>
+  listWorkflowRuns(
+    workflowArtifactId: string,
+    orgId: string,
+    opts?: { diagramId?: string; limit?: number },
+  ): Promise<WorkflowRunRecord[]>
   transitionWorkflowRun(
     id: string,
     orgId: string,
