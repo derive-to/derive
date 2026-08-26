@@ -33,7 +33,10 @@ pause sensitive actions later.
 4. Join the facts only by stable diagram/node IDs. Every visible node and edge must have exactly one
    matching workflow node and route.
    This is **same IDs, different jobs**. A graph may start with `members:[]`; add actual context
-   result artifacts later. Never invent a placeholder artifact id.
+   result artifacts later. Never invent a placeholder artifact id. As the authoring agent, generate
+   one concise, editable `note` for every visible node. Describe what happens in plain language,
+   using the matching workflow `instruction` and `result` as source material. Do not make people
+   reconstruct the note from owner, output, routing, or approval metadata.
 5. Before any publish or `use` call, compile the facts in memory and present one Preview: what will
    happen, possible branches, human pauses, bounds, external effects, forbidden actions, scenarios,
    and either **Ready to run** or the exact blockers. Repair in memory until Ready.

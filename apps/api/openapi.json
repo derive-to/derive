@@ -924,6 +924,30 @@
                     "type": "string"
                   }
                 },
+                "node_details": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "node_id": {
+                        "type": "string"
+                      },
+                      "instruction": {
+                        "type": "string",
+                        "nullable": true
+                      },
+                      "result": {
+                        "type": "string",
+                        "nullable": true
+                      }
+                    },
+                    "required": [
+                      "node_id",
+                      "instruction",
+                      "result"
+                    ]
+                  }
+                },
                 "context_sessions": {
                   "type": "array",
                   "items": {
@@ -986,6 +1010,7 @@
                 "will_pause",
                 "can_repeat",
                 "side_effects",
+                "node_details",
                 "context_sessions",
                 "scenarios"
               ]

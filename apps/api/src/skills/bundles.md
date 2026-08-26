@@ -114,12 +114,17 @@ Node state is optional and explicitly authored: `pending`, `active`, `waiting`, 
 Never infer it from prose or a version count. When a node names a member, set
 `basis_version` to the member version the state was based on. If that artifact later moves
 past the basis, Derive shows “artifact updated” until an agent or editor reconciles the
-state. `note` is a short explanation of what the state means right now. A diagram may set a
+state. `note` is one editable, plain-language description of what happens at the node. When an
+agent creates or revises a diagram, it generates a concise note for every visible node by default,
+using the node's job and any workflow instruction/result as source material. In older or manually
+authored workflow bundles, the note panel falls back to the matching workflow `instruction`, then
+`result`; Preview calls out a node only when all three are empty. A diagram may set a
 default `tier` (`utility`, `fast`, `balanced`, `expert`, or `frontier`); a node's `tier`
 overrides it. `role` names the node's responsibility, not a person or a concrete model.
 
 For an `active`, `waiting`, or `blocked` node, use `confidence:{level,basis}` when a
-confidence judgment materially affects the next decision. Use
+confidence judgment materially affects the next decision. These fields remain workflow state and
+do not belong in the human-facing note panel. Use
 `help:{needed,question?,can_continue?}` when outside input would help: ask one concise
 question and say what can proceed in parallel. These are handoff cues, not a task tracker:
 author or refresh them only at meaningful transitions (activation, a new wait/blocker,

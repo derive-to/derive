@@ -1,23 +1,25 @@
 import { describe, expect, it } from "vitest"
 import type { Artifact, Comment } from "@/api"
 import { linkedBundleManifestProblem, linkedBundleManifestSource } from "./linked-bundle-editor"
+import { linkedBundleNodeNoteEdit } from "./linked-bundle-node-note-editor"
+import {
+  linkedBundleCurrentNodes,
+  linkedBundleInitialView,
+  linkedBundleNowHeadline,
+  linkedBundleNowSummary,
+} from "./linked-bundle-now-workspace"
 import {
   linkedBundleCommentCounts,
   linkedBundleEffectiveTier,
   linkedBundleReviewTarget,
 } from "./linked-bundle-panel"
-import { linkedBundleReconciliationEdit } from "./linked-bundle-reconcile"
 import {
   linkedBundleAnchor,
-  linkedBundleCurrentNodes,
   linkedBundleEdgePath,
   linkedBundleFitScale,
   linkedBundleFocusedElements,
-  linkedBundleInitialView,
   linkedBundleLayout,
   linkedBundleNodeFreshness,
-  linkedBundleNowHeadline,
-  linkedBundleNowSummary,
 } from "./linked-bundle-workspace"
 
 type Diagram = NonNullable<NonNullable<Artifact["linked_bundle"]>["diagrams"]>[number]
@@ -284,79 +286,30 @@ describe("linked bundle review map", () => {
   })
 })
 
-describe("linked bundle reconciliation", () => {
+describe("linked bundle node note editing", () => {
   const source = `<!doctype html><html><body>
-<script type="application/derive-facts" data-fact="bundle-manifest">{"schema":"derive.linked-bundle/v1","purpose":"Review launch","members":[{"id":"brief","ref":"abc","label":"Brief"}],"diagrams":[{"id":"graph","title":"Graph","type":"graph","nodes":[{"id":"brief","label":"Brief","member":"brief","state":"active","basis_version":4}],"edges":[]}]}</script>
+<script type="application/derive-facts" data-fact="bundle-manifest">{"schema":"derive.linked-bundle/v1","purpose":"Review launch","members":[{"id":"brief","ref":"abc","label":"Brief"}],"diagrams":[{"id":"graph","title":"Graph","type":"graph","nodes":[{"id":"brief","label":"Brief","member":"brief","state":"active","basis_version":4,"role":"Decision owner","confidence":{"level":"high","basis":"Reviewed"},"help":{"needed":true,"question":"Approve?"}}],"edges":[]}]}</script>
 </body></html>`
 
-  it("updates only explicit authored node state in the inert manifest", () => {
-    const edit = linkedBundleReconciliationEdit(source, "graph", "brief", {
-      state: "done",
-      basisVersion: 7,
-      note: "Reviewed by a human",
-    })
+  it("updates only the note and preserves workflow state", () => {
+    const edit = linkedBundleNodeNoteEdit(source, "graph", "brief", "Reviewed by a human")
     expect(edit?.exact).toContain('"state":"active"')
-    expect(edit?.serialized).toContain(
-      '"state":"done","basis_version":7,"note":"Reviewed by a human"',
-    )
-  })
-
-  it("serializes optional role, confidence, and help details only when authored", () => {
-    const edit = linkedBundleReconciliationEdit(source, "graph", "brief", {
-      state: "waiting",
-      role: "Decision owner",
-      confidence: { level: "high", basis: "Reviewed the current brief" },
-      help: {
-        needed: true,
-        question: "Approve the launch date?",
-        canContinue: "Prepare the rollout plan",
-      },
-    })
-    expect(edit?.serialized).toContain('"state":"waiting"')
+    expect(edit?.serialized).toContain('"basis_version":4')
     expect(edit?.serialized).toContain('"role":"Decision owner"')
-    expect(edit?.serialized).toContain(
-      '"confidence":{"level":"high","basis":"Reviewed the current brief"}',
-    )
-    expect(edit?.serialized).toContain(
-      '"help":{"needed":true,"question":"Approve the launch date?","can_continue":"Prepare the rollout plan"}',
-    )
+    expect(edit?.serialized).toContain('"confidence":{"level":"high","basis":"Reviewed"}')
+    expect(edit?.serialized).toContain('"help":{"needed":true,"question":"Approve?"}')
+    expect(edit?.serialized).toContain('"note":"Reviewed by a human"')
   })
 
-  it("removes optional node details when they are left unset", () => {
-    const sourceWithDetails = source.replace(
-      '"state":"active","basis_version":4',
-      '"state":"active","basis_version":4,"role":"Old role","confidence":{"level":"low","basis":"Old basis"},"help":{"needed":true,"question":"Old question"}',
-    )
-    const edit = linkedBundleReconciliationEdit(sourceWithDetails, "graph", "brief", {
-      state: "done",
-    })
-    expect(edit?.serialized).not.toContain('"role"')
-    expect(edit?.serialized).not.toContain('"confidence"')
-    expect(edit?.serialized).not.toContain('"help"')
-  })
-
-  it("stores a no-help marker without stale question details", () => {
-    const edit = linkedBundleReconciliationEdit(source, "graph", "brief", {
-      state: "active",
-      help: { needed: false },
-    })
-    expect(edit?.serialized).toContain('"help":{"needed":false}')
-    expect(edit?.serialized).not.toContain('"question"')
-    expect(edit?.serialized).not.toContain('"can_continue"')
-  })
-
-  it("does not infer pending state when editing another optional detail", () => {
-    const sourceWithoutState = source.replace(',"state":"active","basis_version":4', "")
-    const edit = linkedBundleReconciliationEdit(sourceWithoutState, "graph", "brief", {
-      role: "Decision owner",
-    })
+  it("removes only the note when it is cleared", () => {
+    const withNote = source.replace('"state":"active"', '"note":"Old note","state":"active"')
+    const edit = linkedBundleNodeNoteEdit(withNote, "graph", "brief", "  ")
+    expect(edit?.serialized).not.toContain('"note"')
+    expect(edit?.serialized).toContain('"state":"active"')
     expect(edit?.serialized).toContain('"role":"Decision owner"')
-    expect(edit?.serialized).not.toContain('"state"')
   })
 
   it("fails closed when the requested node is not in the manifest", () => {
-    expect(
-      linkedBundleReconciliationEdit(source, "graph", "missing", { state: "pending" }),
-    ).toBeNull()
+    expect(linkedBundleNodeNoteEdit(source, "graph", "missing", "A note")).toBeNull()
   })
 })

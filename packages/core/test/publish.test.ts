@@ -320,6 +320,23 @@ describe("workflow preview contract", () => {
         },
       ],
     })
+    expect(preview.diagrams[0]?.node_details).toEqual(
+      expect.arrayContaining([
+        {
+          node_id: "research",
+          instruction: "Produce this week's evidence-backed brief.",
+          result: "A cited draft brief",
+        },
+        {
+          node_id: "review",
+          instruction: null,
+          result: null,
+        },
+      ]),
+    )
+    expect(preview.warnings).toContain(
+      "Preview advisory: 1 node has no note or workflow description (Product review). Add a short node.note so it is easy to understand.",
+    )
     expect(preview.cannot_do).toEqual(["Publish without approval"])
     expect(workflowDefinitionOf(workflowPage())?.errors).toEqual([])
   })

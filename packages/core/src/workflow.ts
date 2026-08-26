@@ -91,6 +91,12 @@ export interface WorkflowPreviewDiagram {
   will_pause: string[]
   can_repeat: string[]
   side_effects: string[]
+  /** Minimal workflow text used when an older visible node has no authored note. */
+  node_details: Array<{
+    node_id: string
+    instruction: string | null
+    result: string | null
+  }>
   context_sessions: Array<{
     node_id: string
     label: string
@@ -684,12 +690,27 @@ const previewWorkflowValidation = (
       cannot_do: [],
     }
   const visibleByDiagram = new Map((linked?.diagrams ?? []).map((diagram) => [diagram.id, diagram]))
+  const detailWarnings = validation.definition.diagrams.flatMap((diagram) => {
+    const visible = visibleByDiagram.get(diagram.id)
+    const visibleNodes = new Map((visible?.nodes ?? []).map((node) => [node.id, node]))
+    const empty = diagram.nodes.filter(
+      (node) => !visibleNodes.get(node.id)?.note && !node.instruction && !node.result,
+    )
+    if (!empty.length) return []
+    const labels = empty
+      .slice(0, 3)
+      .map((node) => nodeLabel(visibleNodes.get(node.id), node.id))
+      .join(", ")
+    return [
+      `Preview advisory: ${empty.length} node${empty.length === 1 ? " has" : "s have"} no note or workflow description (${labels}${empty.length > 3 ? ", …" : ""}). Add a short node.note so ${empty.length === 1 ? "it is" : "they are"} easy to understand.`,
+    ]
+  })
   return {
     status: "ready",
     execution_started: false,
     purpose: validation.definition.purpose,
     errors: [],
-    warnings: validation.warnings,
+    warnings: [...validation.warnings, ...detailWarnings],
     diagrams: validation.definition.diagrams.map((diagram) => {
       const visible = visibleByDiagram.get(diagram.id)
       const nodes = new Map((visible?.nodes ?? []).map((node) => [node.id, node]))
@@ -726,6 +747,11 @@ const previewWorkflowValidation = (
                 `${effect.description} — ${effect.gate === "human" ? `authorized at ${nodeLabel(nodes.get(effect.approval_ref ?? ""), effect.approval_ref ?? "human gate")}` : `replay-safe: ${effect.idempotency ?? "declared"}`}`,
             ),
         ),
+        node_details: diagram.nodes.map((node) => ({
+          node_id: node.id,
+          instruction: node.instruction ?? null,
+          result: node.result ?? null,
+        })),
         context_sessions: diagram.nodes
           .filter(
             (node): node is WorkflowNodeDefinition & { context_ref: string } =>

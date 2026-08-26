@@ -17,6 +17,10 @@ Think **same IDs, different jobs**: `bundle-manifest` is what people see; `workf
 what the harness needs. A graph may begin with `members:[]`. Add real result artifacts to members
 and set `node.member` only after a context returns one—never use a fake placeholder id.
 
+The authoring agent writes one concise `note` for every visible node. Generate it from that node's
+job, instruction, and result, but phrase it as a standalone description a person can edit. Workflow
+metadata remains available to the harness; the note is the only explanation the detail panel needs.
+
 ```html
 <script type="application/derive-facts" data-fact="bundle-manifest">
 {
@@ -28,9 +32,9 @@ and set `node.member` only after a context returns one—never use a fake placeh
     "title": "Weekly signal brief",
     "type": "graph",
     "nodes": [
-      {"id":"research","label":"Research signals","state":"pending"},
-      {"id":"evaluate","label":"Quality check","state":"pending"},
-      {"id":"publish","label":"Publish brief","state":"pending"}
+      {"id":"research","label":"Research signals","state":"pending","note":"Find and organize the strongest evidence for this week's brief."},
+      {"id":"evaluate","label":"Quality check","state":"pending","note":"Check the draft against the evidence and clarity bar, then choose ready or revise."},
+      {"id":"publish","label":"Publish brief","state":"pending","note":"Publish the approved brief to the current Derive workspace."}
     ],
     "edges": [
       {"from":"research","to":"evaluate","label":"draft ready"},

@@ -207,7 +207,7 @@ function validateBundle(value, errors) {
         else nodeIds.add(nodeId)
         if (member && !memberIds.has(member))
           errors.push(`WF-02 bundle-manifest node "${nodeId ?? nodeIndex}" names unknown member`)
-        return { id: nodeId, label }
+        return { id: nodeId, label, note: text(node.note) }
       })
       const edges = rawEdges.filter(object).map((edge, edgeIndex) => {
         const from = localId(edge.from)
@@ -673,6 +673,21 @@ export function previewWorkflowSource(source) {
     }
 
   const visibleById = new Map(bundle.diagrams.map((diagram) => [diagram.id, diagram]))
+  for (const diagram of definition.diagrams) {
+    const visible = visibleById.get(diagram.id)
+    const visibleNodes = new Map((visible?.nodes ?? []).map((node) => [node.id, node]))
+    const empty = diagram.nodes.filter(
+      (node) => !visibleNodes.get(node.id)?.note && !node.instruction && !node.result,
+    )
+    if (!empty.length) continue
+    const labels = empty
+      .slice(0, 3)
+      .map((node) => visibleNodes.get(node.id)?.label ?? node.id)
+      .join(", ")
+    warnings.push(
+      `Preview advisory: ${empty.length} node${empty.length === 1 ? " has" : "s have"} no note or workflow description (${labels}${empty.length > 3 ? ", …" : ""}). Add a short node.note so ${empty.length === 1 ? "it is" : "they are"} easy to understand.`,
+    )
+  }
   return {
     status: "ready",
     execution_started: false,
@@ -707,6 +722,11 @@ export function previewWorkflowSource(source) {
                 `${effect.description} — ${effect.gate === "human" ? `authorized at ${label(effect.approval_ref ?? "human gate")}` : `replay-safe: ${effect.idempotency}`}`,
             ),
         ),
+        node_details: diagram.nodes.map((node) => ({
+          node_id: node.id,
+          instruction: node.instruction ?? null,
+          result: node.result ?? null,
+        })),
         context_sessions: diagram.nodes
           .filter((node) => node.kind === "context" && node.context_ref)
           .map((node) => {

@@ -6747,6 +6747,11 @@ export interface components {
                 will_pause: string[];
                 can_repeat: string[];
                 side_effects: string[];
+                node_details: {
+                    node_id: string;
+                    instruction: string | null;
+                    result: string | null;
+                }[];
                 context_sessions: {
                     node_id: string;
                     label: string;
