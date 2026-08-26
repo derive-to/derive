@@ -96,6 +96,36 @@ const workflowAttemptStatusForSession = (session: SessionRecord): WorkflowStepAt
   }
 }
 
+const validateHumanEffectGate = (
+  pinned: PinnedNode,
+  ref: WorkflowUseRef,
+  attempts: readonly WorkflowStepAttemptRecord[],
+): string | null => {
+  const effects = (pinned.node.effects ?? []).filter((effect) => effect.gate === "human")
+  const approvalRefs = new Set(
+    effects
+      .map((effect) => effect.approval_ref)
+      .filter((approvalRef): approvalRef is string => !!approvalRef),
+  )
+  for (const approvalRef of approvalRefs) {
+    const approvals = attempts.filter(
+      (attempt) =>
+        attempt.node_id === approvalRef &&
+        attempt.status === "succeeded" &&
+        selectedRouteIncludes(attempt, pinned.node.id),
+    ).length
+    if (approvals >= ref.attempt) continue
+    const approvalReusable = effects
+      .filter((effect) => effect.approval_ref === approvalRef)
+      .every((effect) => !!effect.idempotency)
+    if (approvals > 0 && approvalReusable) continue
+    if (approvals > 0)
+      return `Workflow node "${pinned.node.id}" attempt ${ref.attempt} cannot reuse approval from "${approvalRef}" because its human-gated effect has no idempotency contract. Start a new run for fresh approval.`
+    return `Workflow node "${pinned.node.id}" requires approval from "${approvalRef}" before its effect can run.`
+  }
+  return null
+}
+
 const validateNewAttempt = (
   pinned: PinnedNode,
   ref: WorkflowUseRef,
@@ -112,15 +142,16 @@ const validateNewAttempt = (
   if (prior) {
     if (!workflowStatusIsTerminal(prior.status))
       return `Workflow node "${pinned.node.id}" already has an active attempt.`
-    if (prior.status === "failed" || prior.status === "cancelled") return null
+    if (prior.status === "failed" || prior.status === "cancelled")
+      return validateHumanEffectGate(pinned, ref, attempts)
   }
   if (attempts.length === 0)
     return pinned.node.id === pinned.entry
-      ? null
+      ? validateHumanEffectGate(pinned, ref, attempts)
       : `Workflow diagram must begin at entry node "${pinned.entry}".`
-  return attempts.some((attempt) => selectedRouteIncludes(attempt, pinned.node.id))
-    ? null
-    : `Workflow node "${pinned.node.id}" has not been selected by a completed route.`
+  if (!attempts.some((attempt) => selectedRouteIncludes(attempt, pinned.node.id)))
+    return `Workflow node "${pinned.node.id}" has not been selected by a completed route.`
+  return validateHumanEffectGate(pinned, ref, attempts)
 }
 
 const validateContextTarget = (

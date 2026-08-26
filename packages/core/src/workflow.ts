@@ -339,12 +339,18 @@ export const validateWorkflowDefinition = (
     const humanNodeIds = new Set(
       nodes.filter((node) => node.kind === "human").map((node) => node.id),
     )
-    for (const node of nodes)
-      for (const effect of node.effects ?? [])
-        if (effect.gate === "human" && !humanNodeIds.has(effect.approval_ref ?? ""))
+    for (const node of nodes) {
+      const humanGatedEffects = (node.effects ?? []).filter((effect) => effect.gate === "human")
+      if (humanGatedEffects.length > 0 && node.kind !== "context")
+        errors.push(
+          `WF-05 node "${node.id}" human-gated effect requires a context node so approval is checked before execution`,
+        )
+      for (const effect of humanGatedEffects)
+        if (!humanNodeIds.has(effect.approval_ref ?? ""))
           errors.push(
             `WF-05 node "${node.id}" effect approval_ref must name a human node in the diagram`,
           )
+    }
 
     if (!Array.isArray(rawDiagram.routes))
       errors.push(`WF-02 diagrams[${diagramIndex}].routes must be an array`)
@@ -383,6 +389,23 @@ export const validateWorkflowDefinition = (
         errors.push(`WF-02 non-terminal node "${node.id}" has no outgoing route`)
       else if ((node.kind === "terminal" || node.terminal) && outgoing.has(node.id))
         errors.push(`WF-02 terminal node "${node.id}" must not have an outgoing route`)
+    for (const node of nodes) {
+      const incoming = routes.filter((route) => route.to === node.id)
+      const approvalRefs = new Set(
+        (node.effects ?? [])
+          .filter(
+            (effect): effect is WorkflowEffect & { approval_ref: string } =>
+              effect.gate === "human" && !!effect.approval_ref,
+          )
+          .map((effect) => effect.approval_ref),
+      )
+      for (const approvalRef of approvalRefs) {
+        if (incoming.length !== 1 || incoming[0]?.from !== approvalRef)
+          errors.push(
+            `WF-05 node "${node.id}" human-gated effect must be reached directly and only from approval node "${approvalRef}"`,
+          )
+      }
+    }
     if (!nodes.some((node) => node.kind === "terminal" || node.terminal))
       errors.push(`WF-02 diagram "${diagramId ?? diagramIndex}" requires a terminal node`)
     const routesBySource = new Map<string, WorkflowRouteDefinition[]>()
@@ -861,7 +884,7 @@ export const workflowRunInstruction = ({
     "Preview that exact definition again before opening a context session. Stop and report the blockers if it Needs changes.",
     `Open each ready context node with use({context, instruction, workflow:{run_id:"${runId}", node_id:"<node-id>", attempt:<n>}}). Derive assigns the exact ${runId}:<node-id>:<attempt> dedupe key; a retry increments the attempt number.`,
     `After evaluating an attempt, record its decision and authored destinations with use({workflow:{run_id:"${runId}", node_id:"<node-id>", attempt:<n>, status:"succeeded", selected_routes:["<next-node>"], route_basis:"<why>"}}). Pass finish_run on the terminal receipt.`,
-    "Preserve the authored routes, loop bounds, forbidden actions, and human decisions. A human-gated effect can run only after its referenced decision returned the matching option; silence never authorizes it.",
+    "Preserve the authored routes, loop bounds, forbidden actions, and human decisions. Open a human-gated effect context only after its referenced decision returned the matching option. Each approval authorizes one attempt; reuse it only when every gated effect declares idempotency. Otherwise stop and start a new run for fresh approval. Silence never authorizes it.",
     "Project only explicit session truth back into the visible graph. Derive stores the graph, artifacts, review, and receipts; this agent is the harness that performs the work.",
   ].join("\n\n")
 }

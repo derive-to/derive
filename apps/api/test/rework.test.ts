@@ -298,6 +298,7 @@ describe("workflow run: explicit local-agent handoff", () => {
     const started = (await runRes.json()) as { requestId: string; runId: string; prompt: string }
     expect(started.prompt).toContain(`${published.short_id}@v1`)
     expect(started.prompt).toContain(`Run id: ${started.runId}`)
+    expect(started.prompt).toContain("Each approval authorizes one attempt")
     expect(started.prompt).toContain(
       `read({short_id:"${published.short_id}", version:1, data:"workflow-definition"})`,
     )
