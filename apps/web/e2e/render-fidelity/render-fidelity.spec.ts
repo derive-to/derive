@@ -45,7 +45,11 @@ test.describe("render fidelity — pinning what the sandbox CSP permits", () => 
     await page.goto(`/artifacts/${shortId}`)
     await expect(page.getByText("Artifact script stopped")).toBeVisible()
     await expect(page.getByTestId("render-degraded")).toHaveCount(0)
-    await expect(page.getByTestId("render-retry")).toBeVisible()
+    // The generic 15s stuck-preview timer must not add an overlapping second
+    // recovery card after the specific runtime failure already owns this state.
+    await page.waitForTimeout(16_000)
+    await expect(page.getByText("Preview didn’t load")).toHaveCount(0)
+    await expect(page.getByTestId("render-retry")).toHaveCount(1)
 
     const publicContext = await browser.newContext()
     const publicPage = await publicContext.newPage()

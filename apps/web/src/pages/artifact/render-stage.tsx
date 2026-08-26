@@ -172,10 +172,17 @@ export function RenderStage({
   // Arm the stuck-boot timeout while booting; clear it only after meaningful paint.
   // No src yet means no load in flight — don't count seed-wait time against the render.
   useEffect(() => {
-    if (phase !== "booting" || rawSrc == null) return
+    // A specific blocking runtime error already owns recovery. Do not let the
+    // generic timeout later mount a second, overlapping Try again control.
+    if (
+      phase !== "booting" ||
+      rawSrc == null ||
+      (runtimeError && isBlockingRuntimeError(runtimeError))
+    )
+      return
     const t = setTimeout(() => setPhase("failed"), BOOT_TIMEOUT_MS)
     return () => clearTimeout(t)
-  }, [phase, rawSrc])
+  }, [phase, rawSrc, runtimeError])
 
   const handleLoad = () => {
     onFrameLoad?.()
@@ -334,7 +341,7 @@ export function RenderStage({
         )}
 
         {/* Failure — an explicit terminal state with Retry, never a blank frame. */}
-        {phase === "failed" && (
+        {phase === "failed" && disposition !== "blocked" && (
           <div className="absolute inset-0 grid place-items-center bg-background p-6">
             <StatusPanel
               tone="danger"
