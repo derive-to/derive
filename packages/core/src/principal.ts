@@ -42,14 +42,14 @@ export const principalOwnerId = (p: Principal): string | null =>
 
 /**
  * The ACTING identity for authorship bylines: an agent authors as ITSELF (never spoofing a
- * person), a human as themselves (public handle preferred over email). Null for anonymous
+ * person), a human as themselves (public handle preferred over profile name/email). Null for anonymous
  * or the static token (no authored byline).
  */
 export const principalActor = (p: Principal): { id: string; name: string } | null =>
   p.kind === "agent"
     ? { id: p.agent.id, name: p.agent.name }
     : p.kind === "human"
-      ? { id: p.user.id, name: p.user.name ?? p.user.username ?? p.user.email }
+      ? { id: p.user.id, name: p.user.username ?? p.user.name ?? p.user.email }
       : null
 
 /** Is this an authenticated principal (token, agent, or human) rather than an anonymous

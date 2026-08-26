@@ -66,6 +66,7 @@ import { PublicViewer } from "./public-viewer"
 import { Presence } from "./rail-deck"
 import { ReviewCard } from "./review-card"
 import type { ArtifactSearch } from "./route-config"
+import { SharedStateAuthDialog } from "./shared-state-auth-dialog"
 import { SourceEditor } from "./source-editor"
 import { type ComposerState, parseAnchor, type Sel } from "./types"
 import { useArtifactFrame } from "./use-artifact-frame"
@@ -174,6 +175,14 @@ export function Artifact({ template = false }: { template?: boolean }) {
     refetchIntervalInBackground: false,
   })
   const isAnon = !me
+  const [sharedStateAuthOpen, setSharedStateAuthOpen] = useState(false)
+  const [sharedStateReturnTo, setSharedStateReturnTo] = useState(`${selfBase}/${ref}`)
+  const requireSharedStateAuth = useCallback(() => {
+    // Read at the moment of the gated gesture so query/deep-link state is exact,
+    // even if the artifact SPA-navigated since this component mounted.
+    setSharedStateReturnTo(artifactLoginSearch(window.location).return_to)
+    setSharedStateAuthOpen(true)
+  }, [])
   // List rows do not carry caller membership. Defer guest-only behavior until
   // the detail response resolves rather than briefly rendering the wrong controls.
   const isGuest = !!me && !seeded && art?.is_workspace_member === false
@@ -480,6 +489,8 @@ export function Artifact({ template = false }: { template?: boolean }) {
     comments,
     shortId,
     version,
+    authenticated: !!me,
+    onSharedStateAuthRequired: requireSharedStateAuth,
     hoverThread,
     activeThread,
     onPointerMove: live.onPointerMove,
@@ -1159,23 +1170,37 @@ export function Artifact({ template = false }: { template?: boolean }) {
   // chrome is absent — the API gates every write for anon anyway.
   if (isAnon)
     return (
-      <PublicViewer
-        art={art}
-        shown={shown}
-        returnTo={`${selfBase}/${ref}`}
-        viewers={live.viewers}
-        selfId={guestPresenceId()}
-        isMobile={isMobile}
-        template={template}
-      >
-        {primaryEl}
-      </PublicViewer>
+      <>
+        <SharedStateAuthDialog
+          open={sharedStateAuthOpen}
+          onOpenChange={setSharedStateAuthOpen}
+          returnTo={sharedStateReturnTo}
+          artifactId={art.short_id}
+        />
+        <PublicViewer
+          art={art}
+          shown={shown}
+          returnTo={`${selfBase}/${ref}`}
+          viewers={live.viewers}
+          selfId={guestPresenceId()}
+          isMobile={isMobile}
+          template={template}
+        >
+          {primaryEl}
+        </PublicViewer>
+      </>
     )
 
   const unsaved = unsavedEditsCopy(inlineEdit.dirty)
 
   return (
     <ActionsCtx.Provider value={actions}>
+      <SharedStateAuthDialog
+        open={sharedStateAuthOpen}
+        onOpenChange={setSharedStateAuthOpen}
+        returnTo={sharedStateReturnTo}
+        artifactId={art.short_id}
+      />
       <LinkedBundleEditor
         shortId={shortId}
         version={art.current_version}

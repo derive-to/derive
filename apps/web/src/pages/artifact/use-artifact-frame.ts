@@ -1,6 +1,6 @@
 import type { Dispatch, SetStateAction } from "react"
 import { useCallback, useEffect, useRef, useState } from "react"
-import { api, type Comment, type SharedStateMutation } from "@/api"
+import { ApiError, api, type Comment, type SharedStateMutation } from "@/api"
 import { bareHotkey } from "@/lib/hotkey"
 import { groupThreads } from "./lib/layout"
 import {
@@ -79,6 +79,10 @@ export function useArtifactFrame(p: {
    *  false to refuse (unsaved edits — the confirm belongs on the page, not in
    *  front of a room). */
   onPresent?: () => boolean
+  /** Shared-state writes require an attributable account. The host owns the auth
+   *  prompt so every mini-app gets the same flow without embedding auth UI. */
+  authenticated: boolean
+  onSharedStateAuthRequired: () => void
 }) {
   const {
     comments,
@@ -220,6 +224,20 @@ export function useArtifactFrame(p: {
         typeof d.requestId === "string" &&
         typeof d.key === "string"
       ) {
+        const authRequired = () => {
+          p.onSharedStateAuthRequired()
+          post({
+            type: "shared-result",
+            requestId: d.requestId,
+            key: d.key,
+            ok: false,
+            error: "Sign in to interact with this artifact.",
+          })
+        }
+        if (d.type === "shared-mutate" && !p.authenticated) {
+          authRequired()
+          return
+        }
         // Artifact code is untrusted. Without a browser-owned activation check, a
         // page could mutate on load and falsely attribute the write to every
         // commenter who merely viewed it. Real clicks/keys inside the iframe
@@ -251,15 +269,21 @@ export function useArtifactFrame(p: {
               ...result,
             }),
           )
-          .catch((error: unknown) =>
+          .catch((error: unknown) => {
+            // A session can expire while the artifact stays open. Treat that the
+            // same as a signed-out first visit and preserve the exact deep link.
+            if (error instanceof ApiError && error.status === 401) {
+              authRequired()
+              return
+            }
             post({
               type: "shared-result",
               requestId: d.requestId,
               key: d.key,
               ok: false,
               error: error instanceof Error ? error.message : "shared-state request failed",
-            }),
-          )
+            })
+          })
         return
       }
       if (d.type === "deck-outline") {
@@ -391,6 +415,8 @@ export function useArtifactFrame(p: {
     onOpenComments,
     onEsc,
     onOpenExternal,
+    p.authenticated,
+    p.onSharedStateAuthRequired,
     updateGeom,
     post,
     shortId,
