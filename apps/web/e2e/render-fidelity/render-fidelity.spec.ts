@@ -35,6 +35,68 @@ async function withErrorCapture(page: Page, fn: () => Promise<void>): Promise<st
 }
 
 test.describe("render fidelity — pinning what the sandbox CSP permits", () => {
+  test("viewer fails closed when a script throws before meaningful content", async ({
+    browser,
+    owner: page,
+  }) => {
+    const html = readFileSync(join(FIXTURES, "startup-blocked.html"), "utf8")
+    const shortId = await publishArtifact(page, "index.html", html, "text/html")
+
+    await page.goto(`/artifacts/${shortId}`)
+    await expect(page.getByText("Artifact script stopped")).toBeVisible()
+    await expect(page.getByTestId("render-degraded")).toHaveCount(0)
+    await expect(page.getByTestId("render-retry")).toBeVisible()
+
+    const publicContext = await browser.newContext()
+    const publicPage = await publicContext.newPage()
+    try {
+      await publicPage.goto(`/artifacts/${shortId}`)
+      await expect(publicPage.getByText("This artifact couldn’t start")).toBeVisible()
+      await expect(publicPage.getByTestId("render-degraded")).toHaveCount(0)
+    } finally {
+      await publicContext.close()
+    }
+  })
+
+  test("viewer fails soft when an optional fallback throws after meaningful content", async ({
+    browser,
+    owner: page,
+  }) => {
+    const html = readFileSync(join(FIXTURES, "startup-fail-soft.html"), "utf8")
+    const shortId = await publishArtifact(page, "index.html", html, "text/html")
+
+    const wrapperErrors = await withErrorCapture(page, () => page.goto(`/artifacts/${shortId}`))
+    expect(wrapperErrors).toEqual([])
+    await expect(page.getByTestId("render-degraded")).toBeVisible()
+    await expect(page.getByText("This artifact couldn’t start")).toHaveCount(0)
+
+    const frame = page.locator('iframe[title="index"]')
+    await expect(frame).toBeVisible()
+    const artifact = page.frameLocator('iframe[title="index"]')
+    await expect(artifact.locator("#rows tr")).toHaveCount(30)
+    await artifact.locator("#control").click()
+    await expect(artifact.locator("#count")).toHaveText("1")
+    await page.getByTestId("render-degraded-dismiss").click()
+    await expect(page.getByTestId("render-degraded")).toHaveCount(0)
+    await expect(artifact.locator("#rows tr")).toHaveCount(30)
+
+    // The public wrapper has its own chrome/layout path. Exercise the same shared
+    // artifact anonymously so a workbench-only fix cannot masquerade as complete.
+    const publicContext = await browser.newContext({ viewport: { width: 390, height: 844 } })
+    const publicPage = await publicContext.newPage()
+    try {
+      await publicPage.goto(`/artifacts/${shortId}`)
+      await expect(publicPage.getByTestId("render-degraded")).toBeVisible()
+      await expect(publicPage.getByText("This artifact couldn’t start")).toHaveCount(0)
+      const publicArtifact = publicPage.frameLocator('iframe[title="index"]')
+      await expect(publicArtifact.locator("#rows tr")).toHaveCount(30)
+      await publicArtifact.locator("#control").click()
+      await expect(publicArtifact.locator("#count")).toHaveText("1")
+    } finally {
+      await publicContext.close()
+    }
+  })
+
   test("tier 1: a fully self-contained artifact renders with zero console errors, inline script executes", async ({
     owner: page,
   }) => {

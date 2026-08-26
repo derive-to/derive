@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest"
-import { runtimeFailureCopy, type UpdateCueState, updateCue } from "./render-stage"
+import {
+  runtimeDisposition,
+  runtimeFailureCopy,
+  type UpdateCueState,
+  updateCue,
+} from "./render-stage"
+import { mergeRuntimeError } from "./types"
 
 // The soft "Updated · vN" cue's decision, pinned after it shipped a phantom: the render
 // stage stays mounted while the sibling switcher pages between artifacts, and a bare
@@ -55,17 +61,31 @@ describe("updateCue", () => {
 
 describe("runtimeFailureCopy", () => {
   it("gives editors the sandbox-storage repair without exposing exception details", () => {
-    const copy = runtimeFailureCopy("sandbox-storage", true)
+    const copy = runtimeFailureCopy("sandbox-storage", "blocked", true)
     expect(copy.title).toContain("Browser storage")
     expect(copy.description).toContain("derive.shared")
     expect(copy.description).not.toContain("SecurityError")
   })
 
   it("keeps reader-facing failures neutral", () => {
-    expect(runtimeFailureCopy("sandbox-storage", false)).toEqual({
+    expect(runtimeFailureCopy("sandbox-storage", "blocked", false)).toEqual({
       title: "This artifact couldn’t start",
       description: "Its author needs to update it for Derive’s secure sandbox.",
     })
-    expect(runtimeFailureCopy("script-error", false).description).not.toContain("stack")
+    expect(runtimeFailureCopy("script-error", "blocked", false).description).not.toContain("stack")
+  })
+
+  it("keeps optional and post-ready failures visible with neutral reader copy", () => {
+    expect(runtimeDisposition({ code: "resource-error", phase: "loading" })).toBe("degraded")
+    expect(runtimeDisposition({ code: "script-error", phase: "ready" })).toBe("degraded")
+    expect(runtimeDisposition({ code: "script-error", phase: "loading" })).toBe("blocked")
+    expect(runtimeFailureCopy("script-error", "degraded", false).title).toContain("unavailable")
+  })
+
+  it("never lets a queued optional warning downgrade a bootstrap failure", () => {
+    const blocked = { code: "script-error", phase: "loading" } as const
+    const optional = { code: "resource-error", phase: "ready" } as const
+    expect(mergeRuntimeError(blocked, optional)).toBe(blocked)
+    expect(mergeRuntimeError(optional, blocked)).toBe(blocked)
   })
 })

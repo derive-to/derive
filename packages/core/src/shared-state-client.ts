@@ -13,7 +13,28 @@ export const SHARED_STATE_CLIENT_JS = `(function () {
   var states = Object.create(null), pending = Object.create(null), queued = [], seq = 0;
   var keyPattern = new RegExp(${JSON.stringify(SHARED_STATE_KEY_PATTERN)});
   var ready = false;
-  var booting = true;
+  var contentReady = false;
+  var reported = Object.create(null);
+
+  // The load event is too late to be the only readiness signal. Image error handlers run
+  // while the document is still loading, after an app may already have painted a
+  // complete table or dashboard. Treat an explicit author marker, a semantic root,
+  // or a non-trivial body as meaningful content so an optional failure cannot hide
+  // a usable artifact behind the host's startup card.
+  function hasMeaningfulContent() {
+    try {
+      var doc = window.document, body = doc && doc.body;
+      if (!body) return false;
+      if (body.querySelector && body.querySelector("[data-derive-ready]")) return true;
+      var richContent = body.querySelectorAll
+        ? body.querySelectorAll("table,canvas,svg,video").length
+        : 0;
+      var text = String(body.innerText || body.textContent || "").replace(/\\s+/g, "");
+      return Number(body.childElementCount || 0) > 0 && (richContent > 0 || text.length >= 80);
+    } catch (_) {
+      return false;
+    }
+  }
 
   function runtimeErrorCode(error, message) {
     var text = String(message || (error && error.message) || "").toLowerCase();
@@ -21,17 +42,44 @@ export const SHARED_STATE_CLIENT_JS = `(function () {
       ? "sandbox-storage"
       : "script-error";
   }
-  function reportBootError(error, message) {
-    if (!booting) return;
-    send({ type: "runtime-error", code: runtimeErrorCode(error, message) });
+  function announceReady() {
+    if (contentReady || !hasMeaningfulContent()) return;
+    contentReady = true;
+    send({ type: "runtime-ready" });
+  }
+  function reportRuntimeError(error, message, target) {
+    var tag = target && typeof target.tagName === "string" ? target.tagName.toLowerCase() : "";
+    var resource = target && target !== window && !!tag;
+    // A required external script that never loaded is a bootstrap failure. Other
+    // resource failures are non-critical by default; if they truly prevent paint,
+    // the host's no-content timeout still supplies the blocking recovery state.
+    var code = resource
+      ? (tag === "script" ? "script-error" : "resource-error")
+      : runtimeErrorCode(error, message);
+    announceReady();
+    var phase = contentReady ? "ready" : "loading";
+    var key = code + ":" + phase;
+    if (reported[key]) return;
+    reported[key] = true;
+    send({ type: "runtime-error", code: code, phase: phase });
   }
   window.addEventListener("error", function (event) {
-    reportBootError(event.error, event.message);
-  });
+    reportRuntimeError(event.error, event.message, event.target);
+  }, true);
   window.addEventListener("unhandledrejection", function (event) {
-    reportBootError(event.reason, "");
+    reportRuntimeError(event.reason, "", null);
   });
-  window.addEventListener("load", function () { booting = false; });
+  window.addEventListener("DOMContentLoaded", announceReady);
+  window.addEventListener("load", announceReady);
+  try {
+    if (typeof MutationObserver === "function") {
+      var observer = new MutationObserver(function () {
+        announceReady();
+        if (contentReady) observer.disconnect();
+      });
+      observer.observe(window.document.documentElement, { childList: true, subtree: true });
+    }
+  } catch (_) { /* the lifecycle events remain as the compatibility path */ }
 
   function send(message) {
     message.source = "derive";

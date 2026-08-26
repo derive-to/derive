@@ -475,6 +475,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
     anchorTops,
     subscribeGeom,
     runtimeError,
+    runtimeReady,
   } = useArtifactFrame({
     // Paint the open thread anchors in the doc; a click focuses the thread.
     comments,
@@ -1037,6 +1038,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
       presentWrapRef={presentWrap}
       cursor={live.cursor}
       runtimeError={runtimeError}
+      runtimeReady={runtimeReady}
       canFixRuntimeError={canPublish}
       onScrollDoc={scrollBy}
       // A frame (re)load while inline editing means the edit session's document is

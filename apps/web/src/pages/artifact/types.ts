@@ -75,7 +75,26 @@ export type FrameGeom = { scrollY: number; docH: number; viewH: number }
 /** A safe, deliberately coarse boot failure reported by the first-injected artifact
  * runtime. Never carries authored source, stack traces, or exception text across the
  * sandbox boundary. */
-export type ArtifactRuntimeError = "sandbox-storage" | "script-error"
+export type ArtifactRuntimeErrorCode = "resource-error" | "sandbox-storage" | "script-error"
+export type ArtifactRuntimePhase = "loading" | "ready"
+export type ArtifactRuntimeError = {
+  code: ArtifactRuntimeErrorCode
+  phase: ArtifactRuntimePhase
+}
+
+export const isBlockingRuntimeError = (error: ArtifactRuntimeError): boolean =>
+  error.code !== "resource-error" && error.phase === "loading"
+
+/** Errors can queue before the iframe handshake and flush together. Never let a
+ * later optional warning downgrade a bootstrap failure that already blocked. */
+export const mergeRuntimeError = (
+  current: ArtifactRuntimeError | null,
+  incoming: ArtifactRuntimeError,
+): ArtifactRuntimeError => {
+  if (current && isBlockingRuntimeError(current) && !isBlockingRuntimeError(incoming))
+    return current
+  return incoming
+}
 
 // The active text selection reported by the sandboxed artifact frame — the W3C
 // selector plus its geometry, used to place the new-comment composer and its
