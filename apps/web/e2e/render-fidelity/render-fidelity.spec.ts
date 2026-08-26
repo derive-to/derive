@@ -35,6 +35,23 @@ async function withErrorCapture(page: Page, fn: () => Promise<void>): Promise<st
 }
 
 test.describe("render fidelity — pinning what the sandbox CSP permits", () => {
+  test("an iframe-based visualization with an authored CSP reaches Ready", async ({
+    owner: page,
+  }) => {
+    const html = readFileSync(join(FIXTURES, "startup-csp-visualization-shell.html"), "utf8")
+    const shortId = await publishArtifact(page, "index.html", html, "text/html")
+
+    const errors = await withErrorCapture(page, () => page.goto(`/artifacts/${shortId}`))
+    expect(errors).toEqual([])
+    await expect(page.getByTestId("render-degraded")).toHaveCount(0)
+    await expect(page.getByText("This artifact couldn’t start")).toHaveCount(0)
+    const artifact = page.frameLocator('iframe[title="index"]')
+    const generated = artifact.frameLocator('iframe[title="Generated visualization"]')
+    await expect(
+      generated.getByRole("heading", { name: "Generated visualization remains visible" }),
+    ).toBeVisible()
+  })
+
   test("viewer fails closed when a script throws before meaningful content", async ({
     browser,
     owner: page,

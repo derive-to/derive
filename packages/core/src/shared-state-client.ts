@@ -106,7 +106,7 @@ export const SHARED_STATE_CLIENT_JS = `(function () {
           if (isVisiblyRendered(markers[m])) return true;
         }
         var rich = roots[r].querySelectorAll
-          ? roots[r].querySelectorAll("table,canvas,svg,video,img") : [];
+          ? roots[r].querySelectorAll("table,canvas,svg,video,img,iframe[src],iframe[srcdoc]") : [];
         for (var i = 0; i < Number(rich.length || 0); i += 1) {
           if (isVisiblyRendered(rich[i])) { richContent = true; break; }
         }
@@ -127,14 +127,29 @@ export const SHARED_STATE_CLIENT_JS = `(function () {
       ? "sandbox-storage"
       : "script-error";
   }
+  function isPlatformScript(source) {
+    var value = String(source || "");
+    var suffixAt = value.search(/[?#]/);
+    var bare = suffixAt < 0 ? value : value.slice(0, suffixAt);
+    var shared = "/raw/derive-shared.js";
+    var client = "/raw/derive-client.js";
+    var beacon = "https://static.cloudflareinsights.com/beacon.min.js";
+    return bare.slice(-shared.length) === shared || bare.slice(-client.length) === client ||
+      bare === beacon || bare.indexOf(beacon + "/") === 0;
+  }
   function announceReady() {
     if (contentReady || !hasMeaningfulContent()) return;
     contentReady = true;
     send({ type: "runtime-ready" });
   }
-  function reportRuntimeError(error, message, target) {
+  function reportRuntimeError(error, message, target, filename) {
     var tag = target && typeof target.tagName === "string" ? target.tagName.toLowerCase() : "";
     var resource = target && target !== window && !!tag;
+    // These scripts are injected by Derive or its hosting edge, not supplied by the
+    // artifact. Their failure may affect viewer chrome, but it is never an author error.
+    // In particular, do not put a healthy script-free document behind a repair banner.
+    var source = resource && target && typeof target.src === "string" ? target.src : filename;
+    if (isPlatformScript(source)) return;
     // A required external script that never loaded is a bootstrap failure. Other
     // resource failures are non-critical by default; if they truly prevent paint,
     // the host's no-content timeout still supplies the blocking recovery state.
@@ -149,7 +164,7 @@ export const SHARED_STATE_CLIENT_JS = `(function () {
     send({ type: "runtime-error", code: code, phase: phase });
   }
   window.addEventListener("error", function (event) {
-    reportRuntimeError(event.error, event.message, event.target);
+    reportRuntimeError(event.error, event.message, event.target, event.filename);
   }, true);
   window.addEventListener("unhandledrejection", function (event) {
     reportRuntimeError(event.reason, "", null);
@@ -346,8 +361,7 @@ export const SHARED_STATE_CLIENT_JS = `(function () {
  * this client uses a short cache so runtime fixes reach already-published work. */
 export const SHARED_STATE_SCRIPT = `<script src="/raw/derive-shared.js"></script>`
 
-/** Put the SDK before an artifact's own scripts without moving the existing
- * end-of-document anchor client (which needs the DOM to be fully parsed). */
+/** Find the end of an opening document tag without parsing untrusted HTML. */
 const openingTagEnd = (html: string, name: "head" | "html"): number => {
   const source = html.toLowerCase()
   const token = `<${name}`
@@ -362,6 +376,33 @@ const openingTagEnd = (html: string, name: "head" | "html"): number => {
   return -1
 }
 
+const runtimeInsertionPoint = (html: string): number => {
+  const head = openingTagEnd(html, "head")
+  if (head < 0) return openingTagEnd(html, "html")
+
+  // Preserve a leading charset declaration. Browsers only inspect the first 1024
+  // bytes for it, while a meta CSP must still follow the platform runtime tags.
+  let cursor = head
+  while (cursor < html.length) {
+    const whitespace = html.slice(cursor).match(/^\s+/)?.[0]
+    if (whitespace) {
+      cursor += whitespace.length
+      continue
+    }
+    if (html.startsWith("<!--", cursor)) {
+      const commentEnd = html.indexOf("-->", cursor + 4)
+      if (commentEnd < 0) break
+      cursor = commentEnd + 3
+      continue
+    }
+    break
+  }
+  if (html.slice(cursor, cursor + 5).toLowerCase() !== "<meta") return head
+  const metaEnd = html.indexOf(">", cursor + 5)
+  if (metaEnd < 0) return head
+  return /\bcharset\s*=/i.test(html.slice(cursor, metaEnd + 1)) ? metaEnd + 1 : head
+}
+
 const doctypeEnd = (html: string): number => {
   const token = "<!doctype"
   const start = html.toLowerCase().indexOf(token)
@@ -370,10 +411,14 @@ const doctypeEnd = (html: string): number => {
   return end < 0 ? -1 : end + 1
 }
 
-export const injectSharedStateScript = (html: string): string => {
-  const points = [openingTagEnd(html, "head"), openingTagEnd(html, "html"), doctypeEnd(html)]
+/** Insert platform runtime tags before any authored head content, including meta CSP. */
+export const injectArtifactRuntimeScripts = (html: string, scripts: string): string => {
+  const points = [runtimeInsertionPoint(html), doctypeEnd(html)]
   for (const at of points) {
-    if (at >= 0) return `${html.slice(0, at)}${SHARED_STATE_SCRIPT}${html.slice(at)}`
+    if (at >= 0) return `${html.slice(0, at)}${scripts}${html.slice(at)}`
   }
-  return SHARED_STATE_SCRIPT + html
+  return scripts + html
 }
+
+export const injectSharedStateScript = (html: string): string =>
+  injectArtifactRuntimeScripts(html, SHARED_STATE_SCRIPT)
