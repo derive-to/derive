@@ -27,11 +27,11 @@ export const sessionRoutes = (ctx: AppContext) => {
     deps,
     isMember,
     isToken,
+    requireArtifact,
     requireUser,
     currentUser,
     ensureMembership,
     activeWorkspace,
-    authorize,
     actorFor,
     analyticsOn,
   } = ctx
@@ -688,8 +688,8 @@ export const sessionRoutes = (ctx: AppContext) => {
       const q = (c.req.query("query") ?? "").trim().toLowerCase()
 
       const shortId = c.req.query("artifact")
-      const found = shortId ? await meta.getByShortId(shortId) : null
-      const artifact = found && (await authorize(c, "read", found)) ? found : null
+      const found = shortId ? await requireArtifact(c, "read", { shortId }) : null
+      const artifact = found && !(found instanceof Response) ? found : null
       const org = artifact ? artifact.org_id : await activeWorkspace(c)
 
       const ids = new Set<string>()

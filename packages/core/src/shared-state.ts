@@ -11,15 +11,24 @@ const SHARED_STATE_KEY = new RegExp(SHARED_STATE_KEY_PATTERN)
 
 export const isSharedStateKey = (key: string): boolean => SHARED_STATE_KEY.test(key)
 
-export type SharedStateAction = "add" | "update"
+export type SharedStateAction = "add" | "update" | "set_mine"
 
 export type SharedStateMutation =
   | { op: "add"; initial: unknown; value: Record<string, unknown> }
   | { op: "update"; initial: unknown; id: string; patch: Record<string, unknown> }
+  | {
+      op: "set_mine"
+      initial: unknown
+      slot: string
+      value: Record<string, unknown> | null
+    }
 
 export interface SharedStateResult {
   value: unknown
   version: number
+  /** Item ids owned by the caller, keyed by the artifact-defined slot. The
+   * server never exposes another actor's ownership metadata. */
+  mine: Record<string, string>
 }
 
 export interface SharedStateActivity {

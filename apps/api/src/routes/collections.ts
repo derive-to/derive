@@ -473,7 +473,7 @@ export const collectionRoutes = (ctx: AppContext) => {
     async (c) => {
       const col = await requireCollection(c, "publish")
       if (col instanceof Response) return bail(col)
-      const art = await meta.getByShortId(c.req.param("shortId"))
+      const art = await ctx.resolveArtifact(c, c.req.param("shortId"))
       // Adding to a collection re-shares the artifact (the collection's members inherit
       // a role on it), so the caller must be able to SHARE the artifact — not merely
       // read it (a viewer can't reshape access) but not necessarily own it either.
@@ -532,9 +532,9 @@ export const collectionRoutes = (ctx: AppContext) => {
       },
     }),
     async (c) => {
-      const art = await meta.getByShortId(c.req.param("shortId"))
-      if (!art || art.current_version === 0 || !(await authorize(c, "read", art)))
-        return bail(fail(c, 404, "not found"))
+      const art = await ctx.requireArtifact(c, "read")
+      if (art instanceof Response || art.current_version === 0)
+        return bail(art instanceof Response ? art : fail(c, 404, "not found"))
       const empty = { suggestions: [] as { id: string; score: number }[] }
       // Members only — the same rule as GET /v1/collections, so this can't become a side
       // channel that enumerates a workspace's collections off a public artifact.
@@ -628,7 +628,7 @@ export const collectionRoutes = (ctx: AppContext) => {
       if (allowedCols.length === 0) return bail(fail(c, 403, "forbidden"))
       const summary = await bulkArtifactOp(
         body.shortIds,
-        (ids) => meta.getByShortIds(ids),
+        (ids) => ctx.resolveArtifacts(c, ids),
         (a) => authorize(c, "share", a),
         async (a) => {
           // Same-workspace guard mirrors the single add-item route: a foreign-workspace

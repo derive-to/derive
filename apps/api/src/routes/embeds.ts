@@ -43,7 +43,8 @@ import { unfurlInfoFor } from "../lib/unfurl-info"
  * org/password artifacts never leak a title — they get a generic locked card.
  */
 export const embedRoutes = (ctx: AppContext) => {
-  const { meta, authorize, actorFor, blobs, effectiveWhiteLabel, sourceText } = ctx
+  const { meta, resolveArtifacts, authorize, actorFor, blobs, effectiveWhiteLabel, sourceText } =
+    ctx
   const baseUrl = ctx.deps.baseUrl
   const rawBase = ctx.deps.sandboxOrigin ?? baseUrl
   const app = new Hono()
@@ -72,11 +73,10 @@ export const embedRoutes = (ctx: AppContext) => {
   // Resolve `:ref` → an artifact the *request actor* may read. `null` means "render
   // a generic card" (missing, removed, or gated to an anonymous crawler).
   const readable = async (c: Context, ref: string): Promise<ArtifactRecord | null> => {
-    let artifact: ArtifactRecord | null = null
-    for (const id of candidateShortIds(ref)) {
-      artifact = await meta.getByShortId(id)
-      if (artifact) break
-    }
+    const candidates = candidateShortIds(ref)
+    const resolved = await resolveArtifacts(c, candidates)
+    const byShortId = new Map(resolved.map((artifact) => [artifact.short_id, artifact]))
+    const artifact = candidates.map((id) => byShortId.get(id)).find(Boolean) ?? null
     if (!artifact || artifact.removed_at) return null
     return (await authorize(c, "read", artifact)) ? artifact : null
   }

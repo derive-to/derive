@@ -34,12 +34,11 @@ export const BULK_MAX = 500
 // that is NOT Postgres — R2 reads, a hosted-tier subrequest — and on the Node/self-host
 // tier it parallelises database work too.
 //
-// It does NOT parallelise Postgres on the hosted edge, and the comment here used to claim
-// it did ("enough to keep a 50-item set from serializing a few hundred DB round-trips").
-// The edge opens one pg.Client per invocation (see edge-pg.ts) and node-postgres queues
-// everything on it, so eight workers issuing queries produce eight queued queries, not
-// eight concurrent ones. Reducing the NUMBER of round trips is the only lever; `resolve`
-// is now batched out of the loop entirely for that reason.
+// It does NOT parallelise Postgres on the hosted edge. The edge opens one pg.Client per
+// invocation (see edge-pg.ts) and node-postgres queues everything on it, so eight workers
+// issuing queries produce eight queued queries, not eight concurrent ones. Reducing the
+// NUMBER of round trips is the lever: callers pass `resolveArtifacts`, which batches both
+// artifact rows and signed-in-human grants and seeds the ordinary request actor cache.
 const CONCURRENCY = 8
 
 /**
@@ -51,12 +50,10 @@ const CONCURRENCY = 8
  * (`authorize(c, action, a)`) unchanged.
  *
  * `resolveAll` takes the whole id set because resolving one artifact per id was one round
- * trip per id — up to BULK_MAX of them, ~80ms each, before any work happened. Authorization
- * and the writes themselves remain per-artifact by design: authz is a per-artifact question
- * (a selection routinely mixes docs you own with ones you only read) and the writes are
- * genuinely distinct rows. Those are the remaining per-item cost, and batching authz would
- * mean priming the request's actor cache from a multi-artifact grants query — a bigger,
- * auth-sensitive change than this one.
+ * trip per id — up to BULK_MAX of them, ~80ms each, before any work happened. It is also
+ * where the API batches grants and primes its per-request actor cache; `allow` still asks
+ * the normal per-artifact policy question, but pays no per-item read for a signed-in human.
+ * Writes remain distinct because each item may be skipped or fail independently.
  */
 export async function bulkArtifactOp<A>(
   shortIds: string[],

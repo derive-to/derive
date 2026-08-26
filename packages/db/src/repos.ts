@@ -630,6 +630,7 @@ export function makeRepos(db: SqliteDb) {
 
   const appendSharedStateActivity = async (a: NewSharedStateActivity): Promise<void> => {
     await db.insert(sharedStateActivity).values(a).run()
+    if (a.version <= SHARED_STATE_ACTIVITY_LIMIT) return
     await db
       .delete(sharedStateActivity)
       .where(

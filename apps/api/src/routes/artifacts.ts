@@ -168,7 +168,9 @@ export const artifactRoutes = (ctx: AppContext) => {
     authorize,
     authorizeStanding,
     authorizeUserStanding,
+    resolveArtifact,
     requireArtifact,
+    resolveArtifacts,
     workspaceCan,
     collectionRole,
     limited,
@@ -1379,9 +1381,9 @@ export const artifactRoutes = (ctx: AppContext) => {
   // path has an extra /search segment, so it can't collide the way the bare
   // /v1/artifacts/search route above can) but stays next to it for cohesion.
   app.get("/v1/artifacts/:shortId/search", async (c) => {
-    const artifact = await meta.getByShortId(c.req.param("shortId"))
-    if (!artifact || artifact.current_version === 0 || !(await authorize(c, "read", artifact)))
-      return fail(c, 404, "not found")
+    const artifact = await requireArtifact(c, "read")
+    if (artifact instanceof Response) return artifact
+    if (artifact.current_version === 0) return fail(c, 404, "not found")
     if (artifact.removed_at) return fail(c, 410, TOMBSTONE)
     const { query, re, where, ctxLines, cap } = parseSearchParams(c)
     if (!query) return fail(c, 400, "`query` is required")
@@ -1678,7 +1680,10 @@ export const artifactRoutes = (ctx: AppContext) => {
         if (manifest) {
           workflowPreview = facts.preview
           try {
-            const resolved = await meta.getByShortIds(manifest.members.map((member) => member.ref))
+            const resolved = await resolveArtifacts(
+              c,
+              manifest.members.map((member) => member.ref),
+            )
             const byRef = new Map(resolved.map((member) => [member.short_id, member]))
             const [readableRows, commentSignals] = await Promise.all([
               Promise.all(
@@ -1878,7 +1883,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       },
     }),
     async (c) => {
-      const artifact = await meta.getByShortId(c.req.param("shortId"))
+      const artifact = await resolveArtifact(c, c.req.param("shortId"))
       if (!artifact) return bail(fail(c, 404, "not found"))
       if (!(await authorizeStanding(c, "share", artifact))) return bail(fail(c, 403, "forbidden"))
       const b = await readJson(
@@ -1954,7 +1959,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       },
     }),
     async (c) => {
-      const artifact = await meta.getByShortId(c.req.param("shortId"))
+      const artifact = await resolveArtifact(c, c.req.param("shortId"))
       if (!artifact) return bail(fail(c, 404, "not found"))
       if (!(await authorizeStanding(c, "publish", artifact))) return bail(fail(c, 403, "forbidden"))
       const b = await readJson(c, z.object({ locked: z.boolean() }))
@@ -2017,7 +2022,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       const timestamp = body.archived ? new Date().toISOString() : null
       const summary = await bulkArtifactOp(
         body.shortIds,
-        (ids) => meta.getByShortIds(ids),
+        (ids) => resolveArtifacts(c, ids),
         async (a) => {
           if (body.archived && a.removed_at) return false
           return authorize(c, "publish", a)
@@ -2054,7 +2059,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       },
     }),
     async (c) => {
-      const artifact = await meta.getByShortId(c.req.param("shortId"))
+      const artifact = await resolveArtifact(c, c.req.param("shortId"))
       if (!artifact) return bail(fail(c, 404, "not found"))
       // Publish rights, the same bar as editing the words — a rename is an edit
       // everyone can see. A LOCKED artifact is still renamable: the lock is about
@@ -2124,7 +2129,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       if (body instanceof Response) return bail(body)
       const summary = await bulkArtifactOp(
         body.shortIds,
-        (ids) => meta.getByShortIds(ids),
+        (ids) => resolveArtifacts(c, ids),
         (a) => authorize(c, "manage", a),
         (a) => deleteArtifactAndUnindex(meta, search, a.id, a.org_id),
       )
@@ -2490,9 +2495,9 @@ export const artifactRoutes = (ctx: AppContext) => {
   // public-link reader: it reveals no roster and no new handle oracle, only which
   // visible document tokens are real collaborators eligible for a mention.
   app.get("/v1/artifacts/:shortId/mentions", async (c) => {
-    const artifact = await meta.getByShortId(c.req.param("shortId"))
-    if (!artifact || artifact.current_version === 0 || !(await authorize(c, "read", artifact)))
-      return fail(c, 404, "not found")
+    const artifact = await requireArtifact(c, "read")
+    if (artifact instanceof Response) return artifact
+    if (artifact.current_version === 0) return fail(c, 404, "not found")
     if (artifact.removed_at) return fail(c, 410, TOMBSTONE)
     const version = await meta.getVersion(artifact.id, artifact.current_version)
     if (!version) return fail(c, 404, "version not found")
@@ -2518,9 +2523,9 @@ export const artifactRoutes = (ctx: AppContext) => {
   // part. X-Derive-* response headers double as a capability probe for older
   // clients that predate these params (self-hosted stdio server parity).
   app.get("/v1/artifacts/:shortId/content", async (c) => {
-    const artifact = await meta.getByShortId(c.req.param("shortId"))
-    if (!artifact || artifact.current_version === 0 || !(await authorize(c, "read", artifact)))
-      return fail(c, 404, "not found")
+    const artifact = await requireArtifact(c, "read")
+    if (artifact instanceof Response) return artifact
+    if (artifact.current_version === 0) return fail(c, 404, "not found")
     if (artifact.removed_at) return fail(c, 410, TOMBSTONE)
     const vq = c.req.query("v")
     const v = vq ? Number(vq) : artifact.current_version
@@ -2663,9 +2668,9 @@ export const artifactRoutes = (ctx: AppContext) => {
   // Line diff between two versions. Defaults to (current-1 → current).
   // ?format=json returns the structured ops; otherwise unified-style text.
   app.get("/v1/artifacts/:shortId/diff", async (c) => {
-    const artifact = await meta.getByShortId(c.req.param("shortId"))
-    if (!artifact || artifact.current_version === 0 || !(await authorize(c, "read", artifact)))
-      return fail(c, 404, "not found")
+    const artifact = await requireArtifact(c, "read")
+    if (artifact instanceof Response) return artifact
+    if (artifact.current_version === 0) return fail(c, 404, "not found")
     const cur = artifact.current_version
     const from = c.req.query("from") ? Number(c.req.query("from")) : Math.max(1, cur - 1)
     const to = c.req.query("to") ? Number(c.req.query("to")) : cur

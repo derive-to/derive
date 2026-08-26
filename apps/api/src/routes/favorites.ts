@@ -8,7 +8,16 @@ import { normalizeTags } from "../lib/tags"
 
 /** Favorites (personal stars) + tags (workspace browse metadata + suggestions). */
 export const favoriteRoutes = (ctx: AppContext) => {
-  const { meta, search, sourceText, currentUser, requireUser, requireArtifact, authorize } = ctx
+  const {
+    meta,
+    search,
+    sourceText,
+    currentUser,
+    requireUser,
+    requireArtifact,
+    resolveArtifacts,
+    authorize,
+  } = ctx
   const app = new OpenAPIHono<BlankEnv>()
 
   // What comes back from tag-suggestions: the artifact's current tags, tags to consider
@@ -137,7 +146,7 @@ export const favoriteRoutes = (ctx: AppContext) => {
       if (add.length === 0) return c.json({ ok: 0, skipped: 0, failed: 0 })
       const summary = await bulkArtifactOp(
         body.shortIds,
-        (ids) => meta.getByShortIds(ids),
+        (ids) => resolveArtifacts(c, ids),
         (a) => authorize(c, "publish", a),
         async (a) => {
           const current = (await meta.tagsForArtifacts([a.id]))[a.id] ?? []
@@ -176,7 +185,7 @@ export const favoriteRoutes = (ctx: AppContext) => {
       if (body instanceof Response) return bail(body)
       const summary = await bulkArtifactOp(
         body.shortIds,
-        (ids) => meta.getByShortIds(ids),
+        (ids) => resolveArtifacts(c, ids),
         (a) => authorize(c, "read", a),
         (a) => (body.favorite ? meta.setFavorite(a.id, me.id) : meta.removeFavorite(a.id, me.id)),
       )
