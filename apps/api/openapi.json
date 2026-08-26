@@ -7592,7 +7592,7 @@
         "tags": [
           "Artifacts"
         ],
-        "summary": "Get the explicit handoff prompt for a validated workflow diagram.",
+        "summary": "Preview a validated workflow handoff without starting it.",
         "parameters": [
           {
             "schema": {
@@ -7614,7 +7614,7 @@
         ],
         "responses": {
           "200": {
-            "description": "A copyable prompt for any local agent harness. Previewing it does not start execution.",
+            "description": "A summary of the pinned definition that would be used. No run record is created.",
             "content": {
               "application/json": {
                 "schema": {
@@ -7653,7 +7653,7 @@
         "tags": [
           "Artifacts"
         ],
-        "summary": "Queue a validated workflow diagram for a registered local agent.",
+        "summary": "Start a version-pinned workflow run for a local harness.",
         "parameters": [
           {
             "schema": {
@@ -7677,6 +7677,13 @@
                   "diagramId": {
                     "type": "string",
                     "minLength": 1
+                  },
+                  "delivery": {
+                    "type": "string",
+                    "enum": [
+                      "agent",
+                      "copy"
+                    ]
                   }
                 },
                 "required": [
@@ -7688,19 +7695,25 @@
         },
         "responses": {
           "201": {
-            "description": "The validated workflow handoff landed in the selected agent's pull inbox. Derive does not execute the workflow itself.",
+            "description": "A fresh run record and pinned instruction. Agent delivery also returns the inbox request id.",
             "content": {
               "application/json": {
                 "schema": {
                   "type": "object",
                   "properties": {
+                    "runId": {
+                      "type": "string"
+                    },
+                    "prompt": {
+                      "type": "string"
+                    },
                     "requestId": {
-                      "type": "string",
-                      "description": "The request comment's thread id."
+                      "type": "string"
                     }
                   },
                   "required": [
-                    "requestId"
+                    "runId",
+                    "prompt"
                   ]
                 }
               }

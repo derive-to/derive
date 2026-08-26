@@ -260,6 +260,58 @@ CREATE TABLE IF NOT EXISTS run (
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 
+CREATE TABLE IF NOT EXISTS workflow_run (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  workflow_artifact_id TEXT NOT NULL,
+  workflow_version INTEGER NOT NULL,
+  workflow_blob_key TEXT NOT NULL,
+  workflow_content_type TEXT NOT NULL,
+  diagram_id TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'queued',
+  state_revision INTEGER NOT NULL DEFAULT 0,
+  reason TEXT NOT NULL,
+  initiated_by TEXT,
+  request_id TEXT,
+  assigned_agent_id TEXT,
+  executor_id TEXT,
+  requested_execution TEXT NOT NULL DEFAULT 'any',
+  actual_execution TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL,
+  started_at TEXT,
+  finished_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS workflow_step_attempt (
+  id TEXT PRIMARY KEY,
+  workflow_run_id TEXT NOT NULL,
+  node_id TEXT NOT NULL,
+  attempt INTEGER NOT NULL,
+  kind TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'queued',
+  state_revision INTEGER NOT NULL DEFAULT 0,
+  context_id TEXT,
+  context_manifest_artifact_id TEXT,
+  context_version INTEGER,
+  context_blob_key TEXT,
+  context_content_type TEXT,
+  session_id TEXT,
+  decision TEXT,
+  selected_routes TEXT,
+  route_basis TEXT,
+  result_artifact_id TEXT,
+  output TEXT,
+  error TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL,
+  started_at TEXT,
+  finished_at TEXT,
+  UNIQUE (workflow_run_id, node_id, attempt),
+  UNIQUE (session_id),
+  FOREIGN KEY (workflow_run_id) REFERENCES workflow_run(id)
+);
+
 CREATE TABLE IF NOT EXISTS plan (
   id TEXT PRIMARY KEY,
   org_id TEXT NOT NULL,
@@ -714,6 +766,12 @@ CREATE TABLE IF NOT EXISTS view_read (
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
     PRIMARY KEY (artifact_id, viewer)
   );
+
+CREATE INDEX IF NOT EXISTS workflow_run_org_created ON workflow_run (org_id, created_at);
+
+CREATE INDEX IF NOT EXISTS workflow_run_definition ON workflow_run (workflow_artifact_id, workflow_version, diagram_id, created_at);
+
+CREATE INDEX IF NOT EXISTS workflow_step_attempt_run ON workflow_step_attempt (workflow_run_id, created_at);
 
 CREATE INDEX IF NOT EXISTS invitation_org_email ON invitation (org_id, email);
 

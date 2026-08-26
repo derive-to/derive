@@ -1,10 +1,11 @@
 import { MAX_FACT_BYTES, parseFacts } from "./facts"
 import { type LinkedBundleManifest, type LinkedBundleNode, linkedBundleOf } from "./linked-bundle"
+import type { WorkflowStepKind } from "./workflow-run"
 
 export const WORKFLOW_DEFINITION_FACT = "workflow-definition"
 export const WORKFLOW_DEFINITION_SCHEMA = "derive.workflow/v1"
 
-export type WorkflowNodeKind = "context" | "human" | "terminal"
+export type WorkflowNodeKind = WorkflowStepKind
 export type WorkflowEffectKind = "read" | "write" | "message" | "spend" | "access"
 
 export interface WorkflowEffect {
@@ -835,13 +836,32 @@ export const previewWorkflow = (source: string): WorkflowPreview => {
   return previewWorkflowValidation(validation, linked)
 }
 
-/** A self-contained handoff for any approved local harness. Derive stores the
- * workflow and its receipts; the addressed agent performs the work through the
+export interface WorkflowRunTarget {
+  shortId: string
+  version: number
+  diagramId: string
+  runId: string
+  baseUrl: string
+}
+
+/** A version-pinned handoff for an authorized local harness. Derive stores the
+ * workflow and run receipts; the addressed agent performs the work through the
  * existing context-session contract. */
-export const workflowRunInstruction = (shortId: string, diagramId: string): string =>
-  `Read Derive artifact ${shortId} and run workflow diagram "${diagramId}". This is explicit run intent. ` +
-  "Use its workflow-definition as the policy and Preview it again before opening any context " +
-  "session; stop and report the blockers if it Needs changes. Use the existing Derive context " +
-  "sessions for ready context nodes, preserve the authored loop bounds and human gates, and " +
-  "project only explicit session truth back into the visible graph. Derive stores the graph, " +
-  "artifacts, review, and receipts; this agent is the harness that performs the work."
+export const workflowRunInstruction = ({
+  shortId,
+  version,
+  diagramId,
+  runId,
+  baseUrl,
+}: WorkflowRunTarget): string => {
+  const origin = baseUrl.replace(/\/$/, "")
+  return [
+    `Run Derive workflow ${shortId}@v${version}, diagram "${diagramId}". Run id: ${runId}. This is explicit run intent.`,
+    `Read the pinned policy with read({short_id:"${shortId}", version:${version}, data:"workflow-definition"}) and the visible graph with data:"bundle-manifest"; never substitute the current head. Raw equivalents live under ${origin}/raw/${shortId}/v/${version}/data/.`,
+    "Preview that exact definition again before opening a context session. Stop and report the blockers if it Needs changes.",
+    `Open each ready context node with use({context, instruction, workflow:{run_id:"${runId}", node_id:"<node-id>", attempt:<n>}}). Derive assigns the exact ${runId}:<node-id>:<attempt> dedupe key; a retry increments the attempt number.`,
+    `After evaluating an attempt, record its decision and authored destinations with use({workflow:{run_id:"${runId}", node_id:"<node-id>", attempt:<n>, status:"succeeded", selected_routes:["<next-node>"], route_basis:"<why>"}}). Pass finish_run on the terminal receipt.`,
+    "Preserve the authored routes, loop bounds, forbidden actions, and human decisions. A human-gated effect can run only after its referenced decision returned the matching option; silence never authorizes it.",
+    "Project only explicit session truth back into the visible graph. Derive stores the graph, artifacts, review, and receipts; this agent is the harness that performs the work.",
+  ].join("\n\n")
+}

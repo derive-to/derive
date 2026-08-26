@@ -1,17 +1,17 @@
 ---
 name: derive-workflows
-description: Build, explain, preview, repair, or run Derive graphs and bounded loops. Use when someone wants an agent workflow, graph, loop, approval path, multi-context plan, or a clear account of what will happen before work runs. Skip ordinary one-step artifact creation.
+description: Build, explain, preview, repair, or run Derive graphs and bounded loops. Use when someone wants an agent workflow, graph, loop, human-decision path, multi-context plan, or a clear account of what will happen before work runs. Skip ordinary one-step artifact creation.
 ---
 
 # Derive workflows
 
-Turn an outcome into a graph people can understand and an approved local harness can run.
+Turn an outcome into a graph people can understand and an authorized local harness can run.
 Derive is the persistent working layer; Codex, Claude, or another harness does the work.
 
 ## One user-facing gate
 
 Preview includes structural validation and scenario checks. Never create separate Explain,
-Validate, and Preview approvals. Present one result: **Ready to run** or **Needs changes**.
+Validate, and Preview steps. Present one result: **Ready to run** or **Needs changes**.
 Only explicit run intent starts context sessions. Authored human gates inside the workflow still
 pause sensitive actions later.
 
@@ -20,7 +20,7 @@ pause sensitive actions later.
 1. Start from the outcome, evidence of completion, actors, external effects, loop limits, and
    decisions that genuinely need a person. Ask only questions whose answers materially change
    safety or behavior.
-2. Reuse the smallest shape that fits: linear handoff, fan-out/join, approval, router, or bounded
+2. Reuse the smallest shape that fits: linear handoff, fan-out/join, human decision, router, or bounded
    evaluator–optimizer loop. Do not add a graph to a one-step task.
 3. Start cold with `derive init <dir> --template workflow --title "<outcome>"`, or repair the
    existing artifact in place. Author the runnable topology in `workflow-definition`: context
@@ -38,7 +38,7 @@ pause sensitive actions later.
    `derive workflow preview <file>` when you only need a read-only check. Preview is validation.
 6. Publish the artifact. Keep #799's Now view legible; precise bindings and policies belong in
    Advanced/source, not in the cold-start briefing. Publishing the workflow, its result artifacts,
-   and honest run-state updates to Derive is the default—not a reason to ask for another approval.
+   and honest run-state updates to Derive is the default—not a reason to ask for another decision.
 
 ## Run
 
@@ -62,7 +62,7 @@ silence or elapsed time.
   stop.
 - Derive artifact publication and run-state updates use an idempotency contract and proceed by
   default. A consequential write/message/spend/access effect outside Derive reuses a named human
-  approval unless the person has explicitly authorized autonomous execution.
+  decision unless the person has explicitly authorized autonomous execution.
 - Scenarios cover the expected route, a context failure, and every human interrupt.
 - Preview distinguishes guaranteed policy from illustrative paths; it never promises exact model
   or tool behavior.

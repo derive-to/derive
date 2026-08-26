@@ -34,7 +34,7 @@ metadata remains available to the harness; the note is the only explanation the 
     "nodes": [
       {"id":"research","label":"Research signals","state":"pending","note":"Find and organize the strongest evidence for this week's brief."},
       {"id":"evaluate","label":"Quality check","state":"pending","note":"Check the draft against the evidence and clarity bar, then choose ready or revise."},
-      {"id":"publish","label":"Publish brief","state":"pending","note":"Publish the approved brief to the current Derive workspace."}
+      {"id":"publish","label":"Publish brief","state":"pending","note":"Publish the ready brief to the current Derive workspace."}
     ],
     "edges": [
       {"from":"research","to":"evaluate","label":"draft ready"},
@@ -129,7 +129,8 @@ Effects are `read`, `write`, `message`, `spend`, or `access`. Every effect names
 `description` and `gate` (`none` or `human`). Publishing artifacts and run-state updates to Derive
 normally uses `gate:"none"` with `idempotency`; do not add a human gate merely because publishing
 is a write. A human-gated effect names the existing human node that authorizes it with
-`approval_ref`; reserve it for requested review or consequential effects outside Derive. Add
+`approval_ref` (the field references an authored human decision, not artifact approval); reserve
+it for requested review or consequential effects outside Derive. Add
 `compensation` when undo behavior exists.
 
 ## Loops and scenarios

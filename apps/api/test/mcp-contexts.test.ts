@@ -1,7 +1,9 @@
+import { newId } from "@derive/core"
 import { describe, expect, it } from "vitest"
 import { createInProcessBackplane } from "../src/bus"
 import { sha256 } from "../src/lib/crypto"
 import { inMemoryRateLimiters } from "../src/lib/rate-limit"
+import { bindWorkflowContextSession } from "../src/lib/workflow-coordination"
 import { as, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
 // The MCP ask surface after the 15→10 consolidation: `find` surfaces the askable
@@ -107,9 +109,126 @@ const setup = async (name: string, deps?: Record<string, unknown>) => {
     cx,
     manifestShortId: manifest.short_id as string,
     answeringToken: answering.token as string,
+    ownerAgentId: ownerBot.id as string,
     ownerToken: ownerBot.token as string,
   }
 }
+
+const workflowHtml = (contextRef: string) => `<!doctype html><html><body>
+<a href="#research">Research</a>
+<script type="application/derive-facts" data-fact="bundle-manifest">${JSON.stringify({
+  schema: "derive.linked-bundle/v1",
+  purpose: "Run one research context",
+  members: [],
+  diagrams: [
+    {
+      id: "research-once",
+      title: "Research once",
+      type: "graph",
+      nodes: [{ id: "research", label: "Research", note: "Produce the requested research" }],
+      edges: [],
+    },
+  ],
+})}</script>
+<script type="application/derive-facts" data-fact="workflow-definition">${JSON.stringify({
+  schema: "derive.workflow/v1",
+  purpose: "Run one research context",
+  diagrams: [
+    {
+      id: "research-once",
+      entry: "research",
+      nodes: [
+        {
+          id: "research",
+          kind: "context",
+          context_ref: contextRef,
+          instruction: "Produce the requested research.",
+          result: "A research result",
+          terminal: true,
+        },
+      ],
+      routes: [],
+      scenarios: [
+        {
+          id: "expected",
+          kind: "expected",
+          path: ["research"],
+          outcome: "Research completes",
+        },
+        {
+          id: "failure",
+          kind: "failure",
+          path: ["research"],
+          outcome: "The failed session is visible",
+        },
+      ],
+    },
+  ],
+})}</script></body></html>`
+
+const fanOutWorkflowHtml = (contextRef: string) => `<!doctype html><html><body>
+<a href="#research">Research</a><a href="#publish">Publish</a><a href="#archive">Archive</a>
+<script type="application/derive-facts" data-fact="bundle-manifest">${JSON.stringify({
+  schema: "derive.linked-bundle/v1",
+  purpose: "Research, then publish and archive",
+  members: [],
+  diagrams: [
+    {
+      id: "research-fan-out",
+      title: "Research fan-out",
+      type: "graph",
+      nodes: [
+        { id: "research", label: "Research", note: "Produce the research" },
+        { id: "publish", label: "Publish", note: "Publish the result" },
+        { id: "archive", label: "Archive", note: "Archive the result" },
+      ],
+      edges: [
+        { from: "research", to: "publish", label: "always" },
+        { from: "research", to: "archive", label: "always" },
+      ],
+    },
+  ],
+})}</script>
+<script type="application/derive-facts" data-fact="workflow-definition">${JSON.stringify({
+  schema: "derive.workflow/v1",
+  purpose: "Research, then publish and archive",
+  diagrams: [
+    {
+      id: "research-fan-out",
+      entry: "research",
+      nodes: [
+        {
+          id: "research",
+          kind: "context",
+          context_ref: contextRef,
+          instruction: "Produce the research.",
+          result: "A research result",
+          routing: "all",
+        },
+        { id: "publish", kind: "terminal", result: "Published result" },
+        { id: "archive", kind: "terminal", result: "Archived result" },
+      ],
+      routes: [
+        { from: "research", to: "publish", when: "always" },
+        { from: "research", to: "archive", when: "always" },
+      ],
+      scenarios: [
+        {
+          id: "expected",
+          kind: "expected",
+          path: ["research", "publish"],
+          outcome: "The result is published and archived",
+        },
+        {
+          id: "failure",
+          kind: "failure",
+          path: ["research"],
+          outcome: "The failed session is visible",
+        },
+      ],
+    },
+  ],
+})}</script></body></html>`
 
 describe("find — ask-scoped context discovery", () => {
   it("shows only what the acting human may ask; invited admits via the roster", async () => {
@@ -200,6 +319,284 @@ const answerAs = (app: App, token: string, sessionId: string, body: Record<strin
   })
 
 describe("use — open, check, and the grant edges", () => {
+  it("binds an assigned agent's context session to a pinned workflow attempt and receipt", async () => {
+    const { app, meta, cx, ownerAgentId, ownerToken, answeringToken } =
+      await setup("mcx-workflow-run")
+    expect(
+      (
+        await app.request(
+          `/v1/contexts/${cx.id}/access`,
+          jsonAs(as(dev.email), { ask_policy: "workspace" }),
+        )
+      ).status,
+    ).toBe(200)
+    const workflow = await (
+      await publishAs(
+        app,
+        workflowHtml(cx.id),
+        { title: "Research workflow", contentType: "text/html" },
+        as(owner.email),
+      )
+    ).json()
+    const startedResponse = await app.request(
+      `/v1/artifacts/${workflow.short_id}/workflow-run`,
+      jsonAs(as(owner.email), { agentId: ownerAgentId, diagramId: "research-once" }),
+    )
+    expect(startedResponse.status).toBe(201)
+    const started = (await startedResponse.json()) as { runId: string }
+
+    const invalidNode = await callRaw(app, ownerToken, "use", {
+      context: cx.id,
+      instruction: "This must not create a session.",
+      workflow: { run_id: started.runId, node_id: "missing", attempt: 1 },
+      wait: 0,
+    })
+    expect(invalidNode.isError).toBe(true)
+    expect(await meta.listSessions(cx.id)).toHaveLength(0)
+
+    const opened = await call(app, ownerToken, "use", {
+      context: cx.id,
+      instruction: "Research Acme.",
+      workflow: { run_id: started.runId, node_id: "research", attempt: 1 },
+      wait: 0,
+    })
+    expect(opened.workflow).toMatchObject({
+      run_id: started.runId,
+      node_id: "research",
+      attempt: 1,
+      status: "waiting",
+    })
+    const joined = await call(app, ownerToken, "use", {
+      context: cx.id,
+      instruction: "Research Acme.",
+      workflow: { run_id: started.runId, node_id: "research", attempt: 1 },
+      wait: 0,
+    })
+    expect(joined.session_id).toBe(opened.session_id)
+    expect(
+      (
+        await answerAs(app, answeringToken, opened.session_id, {
+          body_md: "Acme research complete.",
+          state: "answered",
+          result_artifact_id: workflow.short_id,
+        })
+      ).status,
+    ).toBe(201)
+    const mismatchedFinal = await callRaw(app, ownerToken, "use", {
+      workflow: {
+        run_id: started.runId,
+        node_id: "research",
+        attempt: 1,
+        status: "succeeded",
+        selected_routes: [],
+        finish_run: "failed",
+      },
+    })
+    expect(mismatchedFinal.isError).toBe(true)
+    expect(mismatchedFinal.text).toContain("must match")
+    const finalReceipt = {
+      run_id: started.runId,
+      node_id: "research",
+      attempt: 1,
+      status: "succeeded" as const,
+      selected_routes: [],
+      route_basis: "Terminal context answered",
+      finish_run: "succeeded" as const,
+    }
+    expect(await call(app, ownerToken, "use", { workflow: finalReceipt })).toMatchObject({
+      run_status: "succeeded",
+      attempt_status: "succeeded",
+    })
+    expect(await call(app, ownerToken, "use", { workflow: finalReceipt })).toMatchObject({
+      run_status: "succeeded",
+      attempt_status: "succeeded",
+    })
+    const conflictingRetry = await callRaw(app, ownerToken, "use", {
+      workflow: { ...finalReceipt, route_basis: "A different receipt" },
+    })
+    expect(conflictingRetry.isError).toBe(true)
+    expect(conflictingRetry.text).toContain("already succeeded")
+    const orgId = (await meta.listWorkspaces(owner.id))[0]?.id ?? ""
+    expect(await meta.getWorkflowRun(started.runId, orgId)).toMatchObject({
+      assigned_agent_id: ownerAgentId,
+      executor_id: ownerAgentId,
+      actual_execution: "local",
+      status: "succeeded",
+    })
+    expect(await meta.getWorkflowStepAttemptBySession(opened.session_id, orgId)).toMatchObject({
+      node_id: "research",
+      attempt: 1,
+      result_artifact_id: workflow.short_id,
+      status: "succeeded",
+    })
+  })
+
+  it("pins the manifest version carried by the context session", async () => {
+    const { app, meta, cx, manifestShortId, ownerAgentId } = await setup("mcx-workflow-pin")
+    const workflow = await (
+      await publishAs(
+        app,
+        workflowHtml(cx.id),
+        { title: "Research workflow", contentType: "text/html" },
+        as(owner.email),
+      )
+    ).json()
+    const startedResponse = await app.request(
+      `/v1/artifacts/${workflow.short_id}/workflow-run`,
+      jsonAs(as(owner.email), { agentId: ownerAgentId, diagramId: "research-once" }),
+    )
+    expect(startedResponse.status).toBe(201)
+    const started = (await startedResponse.json()) as { runId: string }
+    const originalManifest = await meta.getByShortId(manifestShortId)
+    if (!originalManifest) throw new Error("missing context manifest")
+    const originalVersion = await meta.getVersion(
+      originalManifest.id,
+      originalManifest.current_version,
+    )
+    if (!originalVersion) throw new Error("missing context manifest version")
+    const orgId = originalManifest.org_id
+    const session = await meta.createSession({
+      id: newId("ses"),
+      context_id: cx.id,
+      org_id: orgId,
+      asker_id: owner.id,
+      context_version: originalVersion.n,
+    })
+    expect(
+      (
+        await publishAs(
+          app,
+          "# Analytics manifest v2",
+          { title: "Analytics manifest" },
+          as(dev.email),
+          manifestShortId,
+        )
+      ).status,
+    ).toBe(201)
+    const currentManifest = await meta.getByShortId(manifestShortId)
+    if (!currentManifest) throw new Error("missing updated context manifest")
+    const context = await meta.getContext(cx.id)
+    if (!context) throw new Error("missing context")
+
+    const bound = await bindWorkflowContextSession({
+      meta,
+      ref: { run_id: started.runId, node_id: "research", attempt: 1 },
+      orgId,
+      context,
+      manifest: currentManifest,
+      session,
+      executorId: ownerAgentId,
+      at: session.created_at,
+    })
+    if (typeof bound === "string") throw new Error(bound)
+    expect(bound).toMatchObject({
+      context_version: originalVersion.n,
+      context_blob_key: originalVersion.blob_key,
+    })
+    expect(bound.context_version).not.toBe(currentManifest.current_version)
+  })
+
+  it("enforces entry, authored fan-out, and completion before succeeding a run", async () => {
+    const { app, cx, ownerAgentId, ownerToken, answeringToken } =
+      await setup("mcx-workflow-routing")
+    expect(
+      (
+        await app.request(
+          `/v1/contexts/${cx.id}/access`,
+          jsonAs(as(dev.email), { ask_policy: "workspace" }),
+        )
+      ).status,
+    ).toBe(200)
+    const workflow = await (
+      await publishAs(
+        app,
+        fanOutWorkflowHtml(cx.id),
+        { title: "Fan-out workflow", contentType: "text/html" },
+        as(owner.email),
+      )
+    ).json()
+    const startedResponse = await app.request(
+      `/v1/artifacts/${workflow.short_id}/workflow-run`,
+      jsonAs(as(owner.email), { agentId: ownerAgentId, diagramId: "research-fan-out" }),
+    )
+    expect(startedResponse.status).toBe(201)
+    const started = (await startedResponse.json()) as { runId: string }
+
+    const outOfOrder = await callRaw(app, ownerToken, "use", {
+      workflow: {
+        run_id: started.runId,
+        node_id: "publish",
+        attempt: 1,
+        status: "succeeded",
+        selected_routes: [],
+        finish_run: "succeeded",
+      },
+    })
+    expect(outOfOrder.isError).toBe(true)
+    expect(outOfOrder.text).toContain('begin at entry node "research"')
+
+    const opened = await call(app, ownerToken, "use", {
+      context: cx.id,
+      instruction: "Research Acme.",
+      workflow: { run_id: started.runId, node_id: "research", attempt: 1 },
+      wait: 0,
+    })
+    expect(
+      (
+        await answerAs(app, answeringToken, opened.session_id, {
+          body_md: "Research complete.",
+          state: "answered",
+        })
+      ).status,
+    ).toBe(201)
+    const incompleteFanOut = await callRaw(app, ownerToken, "use", {
+      workflow: {
+        run_id: started.runId,
+        node_id: "research",
+        attempt: 1,
+        status: "succeeded",
+        selected_routes: ["publish"],
+      },
+    })
+    expect(incompleteFanOut.isError).toBe(true)
+    expect(incompleteFanOut.text).toContain("select every authored route")
+    expect(
+      await call(app, ownerToken, "use", {
+        workflow: {
+          run_id: started.runId,
+          node_id: "research",
+          attempt: 1,
+          status: "succeeded",
+          selected_routes: ["publish", "archive"],
+        },
+      }),
+    ).toMatchObject({ attempt_status: "succeeded", run_status: "running" })
+    const prematureFinish = await callRaw(app, ownerToken, "use", {
+      workflow: {
+        run_id: started.runId,
+        node_id: "publish",
+        attempt: 1,
+        status: "succeeded",
+        selected_routes: [],
+        finish_run: "succeeded",
+      },
+    })
+    expect(prematureFinish.isError).toBe(true)
+    expect(prematureFinish.text).toContain('Selected workflow node "archive" has not started')
+    expect(
+      await call(app, ownerToken, "use", {
+        workflow: {
+          run_id: started.runId,
+          node_id: "archive",
+          attempt: 1,
+          status: "succeeded",
+          selected_routes: [],
+          finish_run: "succeeded",
+        },
+      }),
+    ).toMatchObject({ attempt_status: "succeeded", run_status: "succeeded" })
+  })
+
   it("opens a session as the acting human; the console sees it as theirs", async () => {
     const { app, cx, ownerToken } = await setup("mcx-ask-open")
     expect(

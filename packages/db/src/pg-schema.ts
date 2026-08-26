@@ -33,6 +33,10 @@ import type {
   TemplateLibraryScope,
   VersionSource,
   WebhookKind,
+  WorkflowRequestedExecution,
+  WorkflowRunStatus,
+  WorkflowStepAttemptStatus,
+  WorkflowStepKind,
   WorkspaceAccess,
 } from "@derive/core"
 import { getTableConfig, index, integer, pgTable, text, uniqueIndex } from "drizzle-orm/pg-core"
@@ -268,6 +272,81 @@ export const run = pgTable("run", {
   meta: text("meta"),
   created_at: text("created_at").notNull().$defaultFn(isoNow),
 })
+
+// One start of a version-pinned Workflow diagram.
+export const workflowRun = pgTable(
+  "workflow_run",
+  {
+    id: text("id").primaryKey(),
+    org_id: text("org_id").notNull(),
+    workflow_artifact_id: text("workflow_artifact_id").notNull(),
+    workflow_version: integer("workflow_version").notNull(),
+    workflow_blob_key: text("workflow_blob_key").notNull(),
+    workflow_content_type: text("workflow_content_type").notNull(),
+    diagram_id: text("diagram_id").notNull(),
+    status: text("status").$type<WorkflowRunStatus>().notNull().default("queued"),
+    state_revision: integer("state_revision").notNull().default(0),
+    reason: text("reason").notNull(),
+    initiated_by: text("initiated_by"),
+    request_id: text("request_id"),
+    assigned_agent_id: text("assigned_agent_id"),
+    executor_id: text("executor_id"),
+    requested_execution: text("requested_execution")
+      .$type<WorkflowRequestedExecution>()
+      .notNull()
+      .default("any"),
+    actual_execution: text("actual_execution").$type<"local" | "hosted">(),
+    created_at: text("created_at").notNull().$defaultFn(isoNow),
+    updated_at: text("updated_at").notNull(),
+    started_at: text("started_at"),
+    finished_at: text("finished_at"),
+  },
+  (t) => [
+    index("workflow_run_org_created").on(t.org_id, t.created_at),
+    index("workflow_run_definition").on(
+      t.workflow_artifact_id,
+      t.workflow_version,
+      t.diagram_id,
+      t.created_at,
+    ),
+  ],
+)
+
+export const workflowStepAttempt = pgTable(
+  "workflow_step_attempt",
+  {
+    id: text("id").primaryKey(),
+    workflow_run_id: text("workflow_run_id")
+      .notNull()
+      .references(() => workflowRun.id),
+    node_id: text("node_id").notNull(),
+    attempt: integer("attempt").notNull(),
+    kind: text("kind").$type<WorkflowStepKind>().notNull(),
+    status: text("status").$type<WorkflowStepAttemptStatus>().notNull().default("queued"),
+    state_revision: integer("state_revision").notNull().default(0),
+    context_id: text("context_id"),
+    context_manifest_artifact_id: text("context_manifest_artifact_id"),
+    context_version: integer("context_version"),
+    context_blob_key: text("context_blob_key"),
+    context_content_type: text("context_content_type"),
+    session_id: text("session_id"),
+    decision: text("decision"),
+    selected_routes: text("selected_routes"),
+    route_basis: text("route_basis"),
+    result_artifact_id: text("result_artifact_id"),
+    output: text("output"),
+    error: text("error"),
+    created_at: text("created_at").notNull().$defaultFn(isoNow),
+    updated_at: text("updated_at").notNull(),
+    started_at: text("started_at"),
+    finished_at: text("finished_at"),
+  },
+  (t) => [
+    uniqueIndex("workflow_step_attempt_number").on(t.workflow_run_id, t.node_id, t.attempt),
+    uniqueIndex("workflow_step_attempt_session").on(t.session_id),
+    index("workflow_step_attempt_run").on(t.workflow_run_id, t.created_at),
+  ],
+)
 
 // A bring-your-own plan (WO2): see schema.ts.
 export const plan = pgTable("plan", {
@@ -1019,6 +1098,8 @@ const TABLES = [
   agentMention,
   automation,
   run,
+  workflowRun,
+  workflowStepAttempt,
   plan,
   connection,
   invitation,

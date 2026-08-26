@@ -10,9 +10,9 @@ A linked bundle is an ordinary single-file HTML artifact with one authored
 loop/graph diagrams. Every member remains an independent artifact with its own URL,
 versions, comments, and permissions.
 
-Derive presents and coordinates the bundle. It does not execute a loop, schedule a graph,
-score work, or create run records. The agent or external harness does the work and updates
-the member artifacts normally.
+Derive presents the bundle and stores version-pinned run receipts. It does not execute a loop,
+schedule a graph, or score work. The agent or external harness performs the work through context
+sessions and updates the member artifacts normally.
 
 ## Build one
 
@@ -183,7 +183,8 @@ Then read and revise only the relevant member artifacts. During a self-improveme
 
 1. Execute the user's loop in the agent/harness.
 2. Update the real output/evidence artifacts as they improve.
-3. Use their existing version histories instead of iteration artifacts or run records.
+3. Use their existing version histories instead of creating one artifact per iteration; the
+   workflow run ledger carries execution history.
 4. Update the bundle only when its purpose, membership, or diagrams change.
 5. Keep review comments on the artifact they concern; use the bundle for orientation and
    whole-system decisions.

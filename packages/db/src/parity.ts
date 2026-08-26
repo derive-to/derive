@@ -52,6 +52,8 @@ import type {
   VersionDataRecord,
   VersionRecord,
   WebhookRecord,
+  WorkflowRunRecord,
+  WorkflowStepAttemptRecord,
   WorkspaceRecord,
 } from "@derive/core"
 
@@ -79,6 +81,8 @@ export interface TypedTables {
   agentMention: AgentMentionRecord
   automation: AutomationRecord
   run: RunRecord
+  workflowRun: WorkflowRunRecord
+  workflowStepAttempt: WorkflowStepAttemptRecord
   plan: PlanRecord
   connection: ConnectionRecord
   artifactInvite: ArtifactInviteRecord

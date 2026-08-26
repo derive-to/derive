@@ -5,18 +5,18 @@ order: 5.5
 ---
 # Graphs and bounded loops
 
-Use this when a person asks for a workflow, graph, loop, multi-context plan, approval path, or a
+Use this when a person asks for a workflow, graph, loop, multi-context plan, human-decision path, or a
 clear account of what will happen before work runs. Do not turn an ordinary one-step artifact into
 a graph.
 
-Derive is the persistent working layer. The connected Codex, Claude, or other approved harness
-executes. Reuse the existing context `use` primitive; never invent a second graph-run tool family,
-queue, lease model, progress protocol, or artifact store.
+Derive is the persistent working layer. The connected Codex, Claude, or other authorized harness
+executes. Reuse the existing context `use` primitive; the workflow run ledger coordinates and
+records that work without becoming a second executor, queue, lease model, or artifact store.
 
 ## One Preview gate
 
 Preview includes explanation, structural validation, scenario checks, and repair guidance. Do not
-ask for separate Explain, Validate, and Preview approvals. Present one result: **Ready to run** or
+ask for separate Explain, Validate, and Preview steps. Present one result: **Ready to run** or
 **Needs changes**. Only explicit run intent starts context sessions; authored human gates still
 pause sensitive actions later.
 
@@ -24,7 +24,7 @@ pause sensitive actions later.
 
 1. Extract the outcome, evidence of completion, contexts/roles, external effects, loop bounds, and
    decisions that really need a person. Ask only questions whose answers change safety or behavior.
-2. Choose the smallest useful shape: linear handoff, fan-out/join, approval, router, or bounded
+2. Choose the smallest useful shape: linear handoff, fan-out/join, human decision, router, or bounded
    evaluator–optimizer loop.
 3. Publish one ordinary HTML linked bundle with two facts generated from the same model:
    - `bundle-manifest` remains the visible topology and #799 authored working state.
@@ -36,12 +36,12 @@ pause sensitive actions later.
    result artifacts later. Never invent a placeholder artifact id. As the authoring agent, generate
    one concise, editable `note` for every visible node. Describe what happens in plain language,
    using the matching workflow `instruction` and `result` as source material. Do not make people
-   reconstruct the note from owner, output, routing, or approval metadata.
+   reconstruct the note from owner, output, routing, or gate metadata.
 5. Before any publish or `use` call, compile the facts in memory and present one Preview: what will
    happen, possible branches, human pauses, bounds, external effects, forbidden actions, scenarios,
    and either **Ready to run** or the exact blockers. Repair in memory until Ready.
 6. Publish the Ready workflow artifact and subsequent Derive result/state updates by default; do
-   not add a second approval merely because the action is a Derive publish. Treat workflow
+   not add a human gate merely because the action is a Derive publish. Treat workflow
    advisories as defense-in-depth blockers and repair them before run. Inspect the rendered
    artifact. Add a human gate only when the person requests one or an effect is consequential
    outside Derive.
@@ -136,19 +136,37 @@ The companion fact has this shape:
 
 ## Run through contexts
 
-When the person explicitly says to run, begin at the diagram's declared `entry`, then start one
-context session per ready node attempt:
+When the person explicitly says to run, use the fresh run id from the handoff. Begin at the
+diagram's declared `entry`, then start one context session per ready node attempt:
 
 ```text
 use({
   context: node.context_ref,
   instruction: render(node.instruction, inputs),
-  dedupe_key: `${workflowArtifact}:${diagram}:${node}:${attempt}`
+  workflow: {run_id: run.id, node_id: node.id, attempt}
 })
 ```
 
-Collect it with `use({session_id, wait:50})`. A follow-up continues the same attempt with
-`use({session_id, instruction})`; retry or refinement starts a new attempt/session.
+Derive assigns the exact `${run.id}:${node.id}:${attempt}` dedupe key. Collect it with
+`use({session_id, wait:50})`. A mid-run follow-up continues that session; after it settles, retry
+or refinement starts a new numbered attempt/session.
+
+After evaluating the answer, record the authored route receipt before opening the next node:
+
+```text
+use({workflow:{
+  run_id: run.id,
+  node_id: node.id,
+  attempt,
+  status: "succeeded",
+  selected_routes: [nextNode.id],
+  route_basis: "The context returned ready"
+}})
+```
+
+Human and terminal nodes use the same receipt shape without a context session. A human receipt's
+`decision` must be one of that node's authored options. Pass `finish_run:"succeeded"` (or the
+matching failure/cancellation state) on the final receipt.
 
 Project session truth into the authored graph:
 
@@ -162,9 +180,10 @@ Project session truth into the authored graph:
 
 Publish each result artifact and graph-state transition back to the same Derive workflow as normal
 run bookkeeping. Do this by default with version/idempotency protection; it does not need a fresh
-human approval.
+human decision.
 
-An effect's `approval_ref` reuses that human node's decision; do not ask again when the approved
+An effect's `approval_ref` is the workflow-definition field that references an authored human
+decision; it is unrelated to the removed artifact-approval lifecycle. Do not ask again when that
 decision and the described effect match. Stop at a terminal result, exhausted loop/time/cost/stagnation bound, unresolved human gate,
 terminal failure, or the person's stop request. Keep state explicit; silence or elapsed time never
 implies low confidence, urgency, or a need for human help.

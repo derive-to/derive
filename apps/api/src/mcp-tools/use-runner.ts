@@ -18,6 +18,7 @@ import {
   type SessionState,
 } from "@derive/core"
 import { parseManifestSkillPins, type StalePin, stalePins } from "../lib/manifest-pins"
+import { syncWorkflowContextSession } from "../lib/workflow-coordination"
 import type { ToolContext } from "../mcp-tool-context"
 import { clipSessionText, ENTRY_MAX, err, json } from "../mcp-util"
 
@@ -107,6 +108,7 @@ export async function runnerDispatch(
     const room = Math.max(0, (x.max_concurrency ?? 1) - working)
     const sessions =
       room === 0 ? [] : await ctx.meta.claimPendingSessions(x.id, Math.min(10, room), leaseFor(x))
+    await Promise.all(sessions.map((session) => syncWorkflowContextSession(ctx.meta, session)))
     // Stale-pin check, only when work was actually claimed (never on idle polls —
     // a serve loop polls every few seconds and this reads the manifest). The
     // manifest's skill pins are the right versioning model, but the bump is manual
@@ -209,6 +211,8 @@ export async function runnerDispatch(
       },
       sstate,
     )
+    const updatedSession = await ctx.meta.getSession(s.id)
+    if (updatedSession) await syncWorkflowContextSession(ctx.meta, updatedSession)
     // Wake the asker's use({wait}): progress streams; a terminal state collects the answer.
     // The stale race keeps it `open` and wakes neither (the runner still owes).
     if (isProgress) {

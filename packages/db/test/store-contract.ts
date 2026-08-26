@@ -4,6 +4,7 @@ import type {
   NewArtifact,
   NewRun,
   NewVersion,
+  NewWorkflowStepAttempt,
   SortMode,
   SubscriptionRecord,
 } from "@derive/core"
@@ -2653,7 +2654,7 @@ export function runStoreContract(
     it("collectionsOverview matches listCollections for the same org", async () => {
       const org = `org_${uuid()}`
       await store.setWorkspace(org, "Overview")
-      const col = await store.createCollection({
+      await store.createCollection({
         id: uuid(),
         org_id: org,
         title: "Planning",
@@ -4487,6 +4488,459 @@ export function runStoreContract(
       const runs = await store.listRuns(ORG, 50)
       expect(runs.every((r) => r.org_id === ORG)).toBe(true)
       expect(runs.length).toBeGreaterThan(0)
+    })
+
+    it("workflow runs pin exact bytes and transition through a workspace-scoped CAS", async () => {
+      const accepted = "2026-08-25T20:00:00.000Z"
+      const started = "2026-08-25T20:01:00.000Z"
+      const waiting = "2026-08-25T20:02:00.000Z"
+      const resumed = "2026-08-25T20:03:00.000Z"
+      const finished = "2026-08-25T20:04:00.000Z"
+      const workflow = await store.createWorkflowRun({
+        id: uuid(),
+        org_id: ORG,
+        workflow_artifact_id: `art_${uuid()}`,
+        workflow_version: 7,
+        workflow_blob_key: `blob_${uuid()}`,
+        workflow_content_type: "text/x-derive-linked-bundle",
+        diagram_id: "weekly-brief",
+        reason: "manual:u1",
+        initiated_by: "u1",
+        requested_execution: "hosted",
+        created_at: accepted,
+      })
+      expect(workflow).toMatchObject({
+        status: "queued",
+        state_revision: 0,
+        workflow_version: 7,
+        workflow_blob_key: expect.stringMatching(/^blob_/),
+        actual_execution: null,
+        started_at: null,
+        finished_at: null,
+      })
+      expect(await store.getWorkflowRun(workflow.id, ORG)).toMatchObject({
+        diagram_id: "weekly-brief",
+      })
+      expect(await store.getWorkflowRun(workflow.id, `org_${uuid()}`)).toBeNull()
+
+      expect(
+        await store.transitionWorkflowRun(
+          workflow.id,
+          ORG,
+          { status: "queued", stateRevision: 0 },
+          {
+            status: "running",
+            at: started,
+            actualExecution: "local",
+            executorId: "runner-hosted",
+          },
+        ),
+      ).toBeNull()
+      expect(
+        await store.transitionWorkflowRun(
+          workflow.id,
+          ORG,
+          { status: "queued", stateRevision: 0 },
+          {
+            status: "running",
+            at: started,
+            executorId: "runner-hosted",
+          },
+        ),
+      ).toBeNull()
+      expect(
+        await store.transitionWorkflowRun(
+          workflow.id,
+          `org_${uuid()}`,
+          { status: "queued", stateRevision: 0 },
+          {
+            status: "running",
+            at: started,
+            actualExecution: "hosted",
+            executorId: "runner-hosted",
+          },
+        ),
+      ).toBeNull()
+      const running = await store.transitionWorkflowRun(
+        workflow.id,
+        ORG,
+        { status: "queued", stateRevision: 0 },
+        {
+          status: "running",
+          at: started,
+          actualExecution: "hosted",
+          executorId: "runner-hosted",
+        },
+      )
+      expect(running).toMatchObject({
+        status: "running",
+        state_revision: 1,
+        actual_execution: "hosted",
+        executor_id: "runner-hosted",
+        started_at: started,
+        updated_at: started,
+      })
+      expect(
+        await store.transitionWorkflowRun(
+          workflow.id,
+          ORG,
+          { status: "queued", stateRevision: 0 },
+          {
+            status: "running",
+            at: started,
+            actualExecution: "hosted",
+            executorId: "runner-hosted",
+          },
+        ),
+      ).toBeNull()
+
+      expect(
+        await store.transitionWorkflowRun(
+          workflow.id,
+          ORG,
+          { status: "running", stateRevision: 1 },
+          {
+            status: "waiting",
+            at: waiting,
+            actualExecution: "local",
+            executorId: "runner-hosted",
+          },
+        ),
+      ).toBeNull()
+      expect(
+        await store.transitionWorkflowRun(
+          workflow.id,
+          ORG,
+          { status: "running", stateRevision: 1 },
+          {
+            status: "waiting",
+            at: waiting,
+            actualExecution: "hosted",
+            executorId: "runner-hosted",
+          },
+        ),
+      ).toMatchObject({ status: "waiting", state_revision: 2, finished_at: null })
+      expect(
+        await store.transitionWorkflowRun(
+          workflow.id,
+          ORG,
+          { status: "waiting", stateRevision: 2 },
+          { status: "running", at: resumed },
+        ),
+      ).toBeNull()
+      expect(
+        await store.transitionWorkflowRun(
+          workflow.id,
+          ORG,
+          { status: "waiting", stateRevision: 2 },
+          {
+            status: "running",
+            at: resumed,
+            actualExecution: "hosted",
+            executorId: "runner-hosted",
+          },
+        ),
+      ).toMatchObject({ status: "running", state_revision: 3, started_at: started })
+      const activeAttempt = await store.createWorkflowStepAttempt(ORG, {
+        id: uuid(),
+        workflow_run_id: workflow.id,
+        node_id: "publish",
+        attempt: 1,
+        kind: "terminal",
+      })
+      expect(
+        await store.transitionWorkflowRun(
+          workflow.id,
+          ORG,
+          { status: "running", stateRevision: 3 },
+          {
+            status: "succeeded",
+            at: finished,
+            actualExecution: "hosted",
+            executorId: "runner-hosted",
+          },
+        ),
+      ).toBeNull()
+      const runningAttempt = await store.transitionWorkflowStepAttempt(
+        activeAttempt.id,
+        workflow.id,
+        ORG,
+        { status: "queued", stateRevision: 0 },
+        { status: "running", at: resumed },
+      )
+      expect(runningAttempt).not.toBeNull()
+      expect(
+        await store.transitionWorkflowStepAttempt(
+          activeAttempt.id,
+          workflow.id,
+          ORG,
+          { status: "running", stateRevision: runningAttempt?.state_revision ?? -1 },
+          { status: "succeeded", at: finished },
+        ),
+      ).not.toBeNull()
+      // Revision fencing closes the running → waiting → running ABA race.
+      expect(
+        await store.transitionWorkflowRun(
+          workflow.id,
+          ORG,
+          { status: "running", stateRevision: 1 },
+          {
+            status: "failed",
+            at: finished,
+            actualExecution: "hosted",
+            executorId: "runner-hosted",
+          },
+        ),
+      ).toBeNull()
+      const done = await store.transitionWorkflowRun(
+        workflow.id,
+        ORG,
+        {
+          status: "running",
+          stateRevision: 3,
+        },
+        {
+          status: "succeeded",
+          at: finished,
+          actualExecution: "hosted",
+          executorId: "runner-hosted",
+        },
+      )
+      expect(done).toMatchObject({
+        status: "succeeded",
+        state_revision: 4,
+        finished_at: finished,
+      })
+      await expect(
+        store.createWorkflowStepAttempt(ORG, {
+          id: uuid(),
+          workflow_run_id: workflow.id,
+          node_id: "late-node",
+          attempt: 1,
+          kind: "terminal",
+        }),
+      ).rejects.toThrow("already terminal")
+      expect(
+        await store.transitionWorkflowRun(
+          workflow.id,
+          ORG,
+          { status: "succeeded", stateRevision: 4 },
+          { status: "running", at: finished },
+        ),
+      ).toBeNull()
+
+      await expect(
+        store.createWorkflowRun({
+          id: uuid(),
+          org_id: ORG,
+          workflow_artifact_id: `art_${uuid()}`,
+          workflow_version: 0,
+          workflow_blob_key: `blob_${uuid()}`,
+          workflow_content_type: "text/html",
+          diagram_id: "invalid",
+          reason: "manual:u1",
+        }),
+      ).rejects.toThrow("complete version pin")
+    })
+
+    it("workflow step attempts keep context pins, human decisions, and route receipts", async () => {
+      const workflow = await store.createWorkflowRun({
+        id: uuid(),
+        org_id: ORG,
+        workflow_artifact_id: `art_${uuid()}`,
+        workflow_version: 3,
+        workflow_blob_key: `blob_${uuid()}`,
+        workflow_content_type: "text/html",
+        diagram_id: "research",
+        reason: "manual:u1",
+      })
+      await store.transitionWorkflowRun(
+        workflow.id,
+        ORG,
+        { status: "queued", stateRevision: 0 },
+        {
+          status: "running",
+          at: "2026-08-25T20:58:00.000Z",
+          actualExecution: "local",
+          executorId: "u1",
+        },
+      )
+      const contextId = `ctx_${uuid()}`
+      const sessionId = `ses_${uuid()}`
+      const manifestArtifactId = `art_${uuid()}`
+      const contextBlobKey = `blob_${uuid()}`
+      const contextAttempt = await store.createWorkflowStepAttempt(ORG, {
+        id: uuid(),
+        workflow_run_id: workflow.id,
+        node_id: "research",
+        attempt: 1,
+        kind: "context",
+        context_id: contextId,
+        context_manifest_artifact_id: manifestArtifactId,
+        context_version: 9,
+        context_blob_key: contextBlobKey,
+        context_content_type: "text/markdown",
+        session_id: sessionId,
+        created_at: "2026-08-25T20:59:00.000Z",
+      })
+      expect(contextAttempt).toMatchObject({
+        status: "queued",
+        state_revision: 0,
+        context_version: 9,
+      })
+      await expect(
+        store.createWorkflowStepAttempt(ORG, {
+          id: uuid(),
+          workflow_run_id: workflow.id,
+          node_id: "research",
+          attempt: 1,
+          kind: "context",
+          context_id: contextId,
+          context_manifest_artifact_id: manifestArtifactId,
+          context_version: 9,
+          context_blob_key: contextBlobKey,
+          context_content_type: "text/markdown",
+        }),
+      ).rejects.toThrow()
+      await expect(
+        store.createWorkflowStepAttempt(ORG, {
+          id: uuid(),
+          workflow_run_id: workflow.id,
+          node_id: "research",
+          attempt: 2,
+          kind: "context",
+          context_id: contextId,
+          context_manifest_artifact_id: manifestArtifactId,
+          context_version: 9,
+          context_blob_key: contextBlobKey,
+          context_content_type: "text/markdown",
+          session_id: sessionId,
+        }),
+      ).rejects.toThrow()
+      await expect(
+        store.createWorkflowStepAttempt(ORG, {
+          id: uuid(),
+          workflow_run_id: workflow.id,
+          node_id: "research",
+          attempt: 0,
+          kind: "context",
+          context_id: contextId,
+          context_manifest_artifact_id: manifestArtifactId,
+          context_version: 9,
+          context_blob_key: contextBlobKey,
+          context_content_type: "text/markdown",
+        }),
+      ).rejects.toThrow("positive integer")
+      await expect(
+        store.createWorkflowStepAttempt(ORG, {
+          id: uuid(),
+          workflow_run_id: workflow.id,
+          node_id: "incomplete",
+          attempt: 1,
+          kind: "context",
+        } as NewWorkflowStepAttempt),
+      ).rejects.toThrow("complete version pin")
+      await expect(
+        store.createWorkflowStepAttempt(`org_${uuid()}`, {
+          id: uuid(),
+          workflow_run_id: workflow.id,
+          node_id: "publication-decision",
+          attempt: 1,
+          kind: "human",
+        }),
+      ).rejects.toThrow("workflow run not found")
+
+      const started = "2026-08-25T21:00:00.000Z"
+      const finished = "2026-08-25T21:01:00.000Z"
+      expect(
+        await store.transitionWorkflowStepAttempt(
+          contextAttempt.id,
+          `wfr_${uuid()}`,
+          ORG,
+          { status: "queued", stateRevision: 0 },
+          { status: "running", at: started },
+        ),
+      ).toBeNull()
+      expect(
+        await store.transitionWorkflowStepAttempt(
+          contextAttempt.id,
+          workflow.id,
+          `org_${uuid()}`,
+          { status: "queued", stateRevision: 0 },
+          { status: "running", at: started },
+        ),
+      ).toBeNull()
+      expect(
+        await store.transitionWorkflowStepAttempt(
+          contextAttempt.id,
+          workflow.id,
+          ORG,
+          { status: "queued", stateRevision: 0 },
+          { status: "running", at: started, sessionId },
+        ),
+      ).toMatchObject({ status: "running", state_revision: 1, started_at: started })
+      const settled = await store.transitionWorkflowStepAttempt(
+        contextAttempt.id,
+        workflow.id,
+        ORG,
+        { status: "running", stateRevision: 1 },
+        {
+          status: "succeeded",
+          at: finished,
+          decision: JSON.stringify({ outcome: "ready" }),
+          selectedRoutes: JSON.stringify(["publication-decision", "archive"]),
+          routeBasis: "typed outcome: ready",
+          resultArtifactId: `art_${uuid()}`,
+          output: JSON.stringify({ summary: "Evidence collected" }),
+        },
+      )
+      expect(settled).toMatchObject({
+        status: "succeeded",
+        state_revision: 2,
+        finished_at: finished,
+        selected_routes: JSON.stringify(["publication-decision", "archive"]),
+      })
+
+      const human = await store.createWorkflowStepAttempt(ORG, {
+        id: uuid(),
+        workflow_run_id: workflow.id,
+        node_id: "publication-decision",
+        attempt: 1,
+        kind: "human",
+        created_at: "2026-08-25T21:02:00.000Z",
+      })
+      expect(
+        await store.transitionWorkflowStepAttempt(
+          human.id,
+          workflow.id,
+          ORG,
+          { status: "queued", stateRevision: 0 },
+          { status: "waiting", at: started },
+        ),
+      ).toMatchObject({ status: "waiting", state_revision: 1, started_at: started })
+      expect(
+        await store.transitionWorkflowStepAttempt(
+          human.id,
+          workflow.id,
+          ORG,
+          { status: "waiting", stateRevision: 1 },
+          {
+            status: "succeeded",
+            at: finished,
+            decision: JSON.stringify({ option: "publish", actor: "u1" }),
+            selectedRoutes: JSON.stringify(["publish"]),
+            routeBasis: "u1 selected publish",
+          },
+        ),
+      ).toMatchObject({ status: "succeeded", decision: expect.stringContaining("publish") })
+
+      const attempts = await store.listWorkflowStepAttempts(workflow.id, ORG)
+      expect(attempts.map((row) => row.node_id)).toEqual(["research", "publication-decision"])
+      expect(await store.listWorkflowStepAttempts(workflow.id, `org_${uuid()}`)).toEqual([])
+      expect(await store.getWorkflowStepAttemptBySession(sessionId, ORG)).toMatchObject({
+        id: contextAttempt.id,
+      })
+      expect(await store.getWorkflowStepAttemptBySession(sessionId, `org_${uuid()}`)).toBeNull()
     })
 
     it("finishRun is a strict running → terminal transition (guards the ledger)", async () => {
