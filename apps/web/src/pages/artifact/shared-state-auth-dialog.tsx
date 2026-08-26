@@ -36,18 +36,12 @@ export function SharedStateAuthDialog({
         </DialogHeader>
         <DialogFooter>
           <Button asChild variant="outline" data-testid="shared-state-sign-in">
-            <Link
-              to="/login"
-              search={{ return_to: returnTo, ...source }}
-            >
+            <Link to="/login" search={{ return_to: returnTo, ...source }}>
               Sign in
             </Link>
           </Button>
           <Button asChild data-testid="shared-state-sign-up">
-            <Link
-              to="/login"
-              search={{ signup: true, return_to: returnTo, ...source }}
-            >
+            <Link to="/login" search={{ signup: true, return_to: returnTo, ...source }}>
               Create free account
             </Link>
           </Button>
