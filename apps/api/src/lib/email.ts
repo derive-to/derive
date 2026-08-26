@@ -279,6 +279,44 @@ export const buildShareEmail = (
   return { subject, html, text }
 }
 
+/**
+ * The inverse of buildShareEmail: someone who cannot open the artifact is asking to.
+ *
+ * The address is the payload, not a courtesy — the approver grants BY email through
+ * the share dialog, and an asker who has never been in the workspace is otherwise
+ * unresolvable. The link opens the artifact (which the approver CAN read); Share is
+ * one click from there, which is why this deliberately mints no approve-token of its
+ * own: a one-click grant from an inbox is a capability sitting in a mailbox, and the
+ * existing dialog already does the job with the approver's live rights behind it.
+ */
+export const buildAccessRequestEmail = (
+  baseUrl: string,
+  artifact: ArtifactRecord,
+  input: { askerName: string; askerEmail: string; note: string | null },
+): { subject: string; html: string; text: string } => {
+  const title = artifact.title ?? artifact.short_id
+  const link = `${baseUrl.replace(/\/$/, "")}/artifacts/${artifact.short_id}`
+  const subject = `${input.askerName} is asking for access to ${title}`
+  const noteHtml = input.note
+    ? `<blockquote style="margin:16px 0;padding:0 0 0 12px;border-left:3px solid #eee;color:#444">${escapeHtml(input.note)}</blockquote>`
+    : ""
+  const html = `<!doctype html><html><body style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#1a1a1a;line-height:1.5">
+  <p><strong>${escapeHtml(input.askerName)}</strong> (${escapeHtml(input.askerEmail)}) asked for access to <a href="${escapeHtml(link)}">${escapeHtml(title)}</a>.</p>
+  ${noteHtml}
+  <p><a href="${escapeHtml(link)}" style="display:inline-block;background:#111;color:#fff;padding:8px 16px;border-radius:6px;text-decoration:none">Open and share it</a></p>
+  <p style="color:#666;font-size:13px">To grant access, open the artifact and add ${escapeHtml(input.askerEmail)} from the Share dialog. Ignoring this email grants nothing.</p>
+  <hr style="border:none;border-top:1px solid #eee;margin:24px 0"/>
+  <p style="color:#999;font-size:12px">You're receiving this because you can share this artifact.</p>
+  </body></html>`
+  const text = [
+    `${input.askerName} (${input.askerEmail}) asked for access to ${title}.`,
+    ...(input.note ? [`\n"${input.note}"`] : []),
+    `\nOpen and share it: ${link}`,
+    `\nTo grant access, add ${input.askerEmail} from the Share dialog. Ignoring this email grants nothing.`,
+  ].join("\n")
+  return { subject, html, text }
+}
+
 export interface CommentEmailInput {
   author: string
   body: string

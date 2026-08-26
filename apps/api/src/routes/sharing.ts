@@ -12,8 +12,13 @@ import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { Context } from "hono"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
+import {
+  ACCESS_REQUEST_NOTE_MAX,
+  accessApprovers,
+  accessRequestPreview,
+} from "../lib/access-request"
 import { mintToken, sha256 } from "../lib/crypto"
-import { buildArtifactInviteEmail, buildShareEmail } from "../lib/email"
+import { buildAccessRequestEmail, buildArtifactInviteEmail, buildShareEmail } from "../lib/email"
 import { bail, fail, readJson } from "../lib/http"
 import {
   emailMismatch409,
@@ -42,6 +47,7 @@ export const sharingRoutes = (ctx: AppContext) => {
     requireArtifact,
     bus,
     inviteLimiter,
+    accessRequestLimiter,
     limited,
   } = ctx
   const app = new OpenAPIHono<BlankEnv>()
@@ -99,6 +105,103 @@ export const sharingRoutes = (ctx: AppContext) => {
     const artifact = await meta.getArtifactById(inv.artifact_id)
     return artifact ? { inv, artifact } : null
   }
+
+  // ---- Asking for access (the way out of the indistinguishable 404) ----
+  //
+  // A signed-in stranger who opens an artifact they cannot read gets a bare 404 that
+  // is deliberately identical to one for an artifact that does not exist (see
+  // routes/artifacts.ts) — otherwise anyone could walk the short-id space and learn
+  // which documents are real. Offering "request access" only where there is something
+  // to request would hand back exactly that oracle, so this route resolves it the way
+  // a password-reset form does: EVERY call is accepted identically, and only the side
+  // effects differ. Missing artifact, forbidden artifact, requests already sent,
+  // nobody able to grant, caller who can already read — all answer 202 with the same
+  // body. Nothing in the response, its timing aside, distinguishes them.
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/v1/artifacts/{shortId}/access-request",
+      tags: ["Sharing"],
+      summary: "Ask the people who can share an artifact to grant you access.",
+      description:
+        "Always 202, whether or not the artifact exists and whether or not anything was sent — the response must not reveal which. Requires a signed-in account, since a grant needs an identity to attach to.",
+      request: { params: z.object({ shortId: z.string() }) },
+      responses: {
+        202: {
+          description: "The request was accepted. Says nothing about what followed.",
+          content: { "application/json": { schema: z.object({ ok: z.literal(true) }) } },
+        },
+      },
+    }),
+    async (c) => {
+      const me = await requireUser(c)
+      if (me instanceof Response) return bail(me)
+      const b = await readJson(
+        c,
+        z.object({ note: z.string().max(ACCESS_REQUEST_NOTE_MAX).optional() }),
+      )
+      if (b instanceof Response) return bail(b)
+      const note = b.note?.trim() ? b.note.trim() : null
+      // The single exit. Every early return below funnels through it so no branch can
+      // accidentally grow a distinguishable response.
+      const accepted = () => c.json({ ok: true as const }, 202)
+
+      const shortId = c.req.param("shortId")
+      const artifact = shortId ? await meta.getByShortId(shortId) : null
+      if (!artifact || artifact.removed_at) return accepted()
+      // Nothing to ask for — and answering differently here would tell a caller
+      // whether their existing grant covers an artifact they cannot see listed.
+      const actor = await actorFor(c, artifact)
+      if (can(actor, "read", artifact.workspace_access, artifact.link_role)) return accepted()
+
+      // Two independent caps. The per-(asker, artifact) window is the dedupe: a
+      // stranger refreshing a dead page must not mail the approvers twice. The invite
+      // limiter is the mail bar every address-touching route shares.
+      if (!(await accessRequestLimiter(`${me.id}:${artifact.short_id}`)).ok) return accepted()
+      if (await limited(c, inviteLimiter)) return accepted()
+
+      const approvers = await accessApprovers(meta, artifact)
+      const recipients = (await meta.getUsers(approvers)).filter((u) => u.id !== me.id)
+      if (!recipients.length) return accepted()
+
+      const preview = accessRequestPreview(me.email, note)
+      const rows = recipients.map((u) => ({
+        id: newId("n"),
+        user_id: u.id,
+        actor: me.name ?? me.email,
+        kind: "access_request" as const,
+        artifact_id: artifact.id,
+        artifact_short_id: artifact.short_id,
+        artifact_title: artifact.title,
+        // No comment thread to anchor to, same as a share — the bell opens the artifact.
+        thread_id: "",
+        comment_id: "",
+        preview,
+      }))
+      await meta.createNotifications(rows)
+      for (const row of rows)
+        bus.publish(`u:${row.user_id}`, {
+          type: "notification",
+          notification: { ...row, read: 0, created_at: new Date().toISOString() },
+        })
+      // Email on the same workspace gate as the other notification mail. A bell alone
+      // is not enough here: the approver may not open Derive for days, and the asker is
+      // stuck looking at a 404 until one of them acts.
+      if ((await meta.getOrgSettings(artifact.org_id)).emailNotifications)
+        for (const u of recipients)
+          if (u.email)
+            await enqueueChannelDelivery(meta, "email", "artifact.access_requested", {
+              to: u.email,
+              toName: u.name ?? undefined,
+              ...buildAccessRequestEmail(deps.baseUrl, artifact, {
+                askerName: me.name ?? me.email,
+                askerEmail: me.email,
+                note,
+              }),
+            })
+      return accepted()
+    },
+  )
 
   app.openapi(
     createRoute({

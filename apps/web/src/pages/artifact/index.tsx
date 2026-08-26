@@ -863,7 +863,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
     // dead-end. This is what made the outage look like a permanent failure.
     const status = error instanceof ApiError ? error.status : undefined
     return status === 404 || status === 403 ? (
-      <ArtifactNotFound onBack={() => nav({ to: "/" })} />
+      <ArtifactNotFound shortId={shortId} onBack={() => nav({ to: "/" })} />
     ) : (
       <ArtifactLoadError onRetry={() => refetch()} onBack={() => nav({ to: "/" })} />
     )

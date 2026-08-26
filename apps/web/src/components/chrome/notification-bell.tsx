@@ -188,11 +188,16 @@ export function NotificationBell() {
                             ? "history"
                             : n.kind === "share"
                               ? "share"
-                              : "comments"
+                              : n.kind === "access_request"
+                                ? "lock"
+                                : "comments"
                       }
                       size={16}
                       className={cn(
                         "mt-0.5",
+                        // An access request is addressed to you and blocks someone
+                        // until you act, so it takes the brand ink like a mention —
+                        // unlike the passive share/follow/publish notices.
                         n.kind === "follow" || n.kind === "publish" || n.kind === "share"
                           ? "text-muted-foreground"
                           : "text-primary",
@@ -220,6 +225,11 @@ export function NotificationBell() {
                           {n.artifact_title ? <strong>{n.artifact_title}</strong> : "an artifact"}
                           {" with you"}
                         </>
+                      ) : n.kind === "access_request" ? (
+                        <>
+                          asked for access to{" "}
+                          {n.artifact_title ? <strong>{n.artifact_title}</strong> : "an artifact"}
+                        </>
                       ) : (
                         <>
                           {n.kind === "mention" ? "mentioned you" : "commented"}
@@ -234,7 +244,9 @@ export function NotificationBell() {
                     </span>
                     {/* The preview is a snippet for mention/comment; for follow/publish the
                       main line already says it all, so skip the duplicate. */}
-                    {(n.kind === "mention" || n.kind === "comment") && (
+                    {(n.kind === "mention" ||
+                      n.kind === "comment" ||
+                      n.kind === "access_request") && (
                       <span className="my-px block truncate text-sm text-muted-foreground">
                         {n.preview}
                       </span>

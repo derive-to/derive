@@ -377,6 +377,13 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
           // strict surfaces. Native periods cap at 60s, so the in-process tier's
           // hour-long window can't be expressed here; the burst cap is the bound.
           draftPublish: nativeLimiter(env.RL_STRICT, 60, "draft-publish"),
+          // Same 60s ceiling as the other long-window limiters: the in-process tier's
+          // 6-hour per-(asker, artifact) suppression degrades to a burst cap here, so an
+          // asker refreshing a dead page could re-notify once a minute. The `invite`
+          // limiter above is the real mail bar and applies to this route too, and an
+          // access request only ever reaches people who already hold share rights on the
+          // artifact — never an arbitrary address, unlike an invite.
+          accessRequest: nativeLimiter(env.RL_STRICT, 60, "access-request"),
         },
         // Deliver freshly enqueued events now: poke the outbox DO so its alarm fires,
         // riding waitUntil so the subrequest isn't cancelled when the response is sent.

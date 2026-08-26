@@ -3322,8 +3322,19 @@ export interface UserProfile {
 /** `mention`/`comment`/`share` are artifact-anchored. `follow` (someone followed you)
  *  and `publish` (someone you follow published) are the social kinds — `follow` carries
  *  no artifact (its artifact_* fields are ""), `publish` points at the new artifact.
- *  `review` is the /derive loop: your agent published and asked for your review. */
-export type NotificationKind = "mention" | "comment" | "share" | "follow" | "publish" | "review"
+ *  `review` is the /derive loop: your agent published and asked for your review.
+ *  `access_request` is the inverse of `share`: someone who CANNOT open the artifact is
+ *  asking you to grant it, so it reaches only recipients who hold `share` on it. Its
+ *  preview carries the asker's address and note — the approver has no other way to
+ *  reach a person the roster has never heard of. */
+export type NotificationKind =
+  | "mention"
+  | "comment"
+  | "share"
+  | "follow"
+  | "publish"
+  | "review"
+  | "access_request"
 export interface NotificationRecord {
   id: string
   user_id: string

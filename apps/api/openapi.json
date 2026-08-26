@@ -2190,9 +2190,10 @@
               "share",
               "follow",
               "publish",
-              "review"
+              "review",
+              "access_request"
             ],
-            "description": "What happened: mention, comment, share, follow, publish, or review"
+            "description": "What happened: mention, comment, share, follow, publish, review, or access_request (someone who cannot open the artifact is asking you to grant it)"
           },
           "artifact_id": {
             "type": "string"
@@ -5463,6 +5464,48 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/AssetRef"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/access-request": {
+      "post": {
+        "tags": [
+          "Sharing"
+        ],
+        "summary": "Ask the people who can share an artifact to grant you access.",
+        "description": "Always 202, whether or not the artifact exists and whether or not anything was sent — the response must not reveal which. Requires a signed-in account, since a grant needs an identity to attach to.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "The request was accepted. Says nothing about what followed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean",
+                      "enum": [
+                        true
+                      ]
+                    }
+                  },
+                  "required": [
+                    "ok"
+                  ]
                 }
               }
             }

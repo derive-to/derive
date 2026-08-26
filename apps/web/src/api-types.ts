@@ -1992,6 +1992,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/artifacts/{shortId}/access-request": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ask the people who can share an artifact to grant you access.
+         * @description Always 202, whether or not the artifact exists and whether or not anything was sent — the response must not reveal which. Requires a signed-in account, since a grant needs an identity to attach to.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    shortId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The request was accepted. Says nothing about what followed. */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            /** @enum {boolean} */
+                            ok: true;
+                        };
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/artifacts/{shortId}/members": {
         parameters: {
             query?: never;
@@ -7240,10 +7284,10 @@ export interface components {
             /** @description Who triggered it; for follow/publish this is the person's @handle */
             actor: string;
             /**
-             * @description What happened: mention, comment, share, follow, publish, or review
+             * @description What happened: mention, comment, share, follow, publish, review, or access_request (someone who cannot open the artifact is asking you to grant it)
              * @enum {string}
              */
-            kind: "mention" | "comment" | "share" | "follow" | "publish" | "review";
+            kind: "mention" | "comment" | "share" | "follow" | "publish" | "review" | "access_request";
             artifact_id: string;
             /** @description The artifact's public short id for links; empty for follows (no anchor) */
             artifact_short_id: string;
