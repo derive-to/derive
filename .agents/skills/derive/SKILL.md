@@ -24,8 +24,9 @@ unavailable, or project policy forbids publishing.
 
 1. Confirm Derive tools are connected. The current remote surface is:
    <!-- tools:start -->
-   `automate`, `catch_up`, `checkpoint`, `clear_queue`, `comment`, `find`,
-   `list_workspaces`, `organize`, `publish`, `read`, `stage`, `use`.
+   `automate`, `browse_library`, `catch_up`, `checkpoint`, `clear_queue`, `comment`,
+   `find`, `list_automations`, `list_workspaces`, `organize`, `publish`, `read`,
+   `shelve`, `stage`, `use`.
    <!-- tools:end -->
    An installed copy of this file goes stale. `list_workspaces` reports what the server
    serves right now, and is the answer when the two disagree.
@@ -45,7 +46,7 @@ unavailable, or project policy forbids publishing.
 | Review, feedback, requests, or waiting | `derive://skills/loop` | `catch_up`, `read`, `comment`, `publish` |
 | Query a live workspace data agent | `derive://skills/contexts` | `find`, `use` |
 | Save resumable working state | `derive://skills/checkpoint` | `checkpoint` |
-| Tag or collect library work | `derive://skills/organize` | `organize`, `find` |
+| Tag, collect, retire, or delete library work | `derive://skills/organize` | `browse_library`, `organize`, `shelve`, `find` |
 
 Workspace-specific procedures may also be published as skills. Discover them with
 `find({skills:true})`, then `read` the relevant one before acting.

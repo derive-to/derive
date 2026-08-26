@@ -116,17 +116,24 @@ describe("remote MCP endpoint (/mcp)", () => {
     // list_artifacts/list_contexts; stage merges stage_asset/stage_publish;
     // catch_up absorbs check_requests as its no-short_id queue; use replaces ask;
     // setup_brandprint folds into publish (derive://brandprint/profile).
+    // Two of those ten then split along the read/write line, which annotations are
+    // declared on: organize became browse_library / organize / shelve, and automate
+    // became list_automations / automate. Consolidation is still the rule — this is the
+    // one carve-out, because a parameter cannot change a tool's annotation.
     expect(names.sort()).toEqual([
       "automate",
+      "browse_library",
       "catch_up",
       "checkpoint",
       "clear_queue",
       "comment",
       "find",
+      "list_automations",
       "list_workspaces",
       "organize",
       "publish",
       "read",
+      "shelve",
       "stage",
       "use",
     ])
@@ -138,10 +145,27 @@ describe("remote MCP endpoint (/mcp)", () => {
     // carry the true hint WITH an `ack` parameter that cleared handled requests, excused
     // as "otherwise pure state-reading, and re-acking is idempotent" — but idempotent is
     // not read-only, and directory review reads this annotation literally.
-    type ListedTool = { name: string; annotations?: { readOnlyHint?: boolean } }
+    type ListedTool = {
+      name: string
+      annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean }
+    }
     const listed = (list.parsed?.result as { tools?: ListedTool[] } | undefined)?.tools ?? []
     const readOnly = listed.filter((t) => t.annotations?.readOnlyHint === true).map((t) => t.name)
-    expect(readOnly.sort()).toEqual(["catch_up", "find", "list_workspaces", "read"])
+    expect(readOnly.sort()).toEqual([
+      "browse_library",
+      "catch_up",
+      "find",
+      "list_automations",
+      "list_workspaces",
+      "read",
+    ])
+    // And the other half of the split, which is the whole reason it exists: `shelve` is
+    // the ONLY tool declaring itself destructive. `organize` used to, because permanent
+    // deletion shared its surface, so tagging an artifact prompted like destroying one.
+    const destructive = listed
+      .filter((t) => t.annotations?.destructiveHint === true)
+      .map((t) => t.name)
+    expect(destructive.sort()).toEqual(["shelve"])
     // Consolidated away — folded into find / catch_up / comment / publish / stage / use.
     for (const gone of [
       "whoami",
@@ -1162,7 +1186,7 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(read).not.toContain("\\n")
   })
 
-  it("organize: publish tags, overview vocabulary, apply, find tag filter, inspect+suggest", async () => {
+  it("library: publish tags, browse the vocabulary, apply, find tag filter, inspect", async () => {
     const { app, token } = appWithGrant(dir, "organize", "openid derive:read derive:publish")
     // Auto-tag on publish.
     const a = JSON.parse(
@@ -1178,8 +1202,8 @@ describe("remote MCP endpoint (/mcp)", () => {
       toolText(await call(app, token, "publish", { title: "Notes", content: "# Notes\n\nbody" })),
     ).short_id
 
-    // organize() with no args → the workspace overview: vocabulary + collections.
-    const overview = JSON.parse(toolText(await call(app, token, "organize")))
+    // browse_library() with no args → the workspace overview: vocabulary + collections.
+    const overview = JSON.parse(toolText(await call(app, token, "browse_library")))
     expect(overview.vocabulary.find((t: { tag: string }) => t.tag === "planning")?.count).toBe(1)
     expect(Array.isArray(overview.collections)).toBe(true)
 
@@ -1195,14 +1219,17 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(tagged.tagged.updated).toBe(1)
     expect(tagged.tagged.results[0].tags.sort()).toEqual(["notes", "planning"])
 
-    // organize({short_ids:[a]}) inspects: current tags + collections + vocabulary (+ suggestions).
-    const inspect = JSON.parse(toolText(await call(app, token, "organize", { short_ids: [a] })))
+    // The read is its own tool: browse_library({short_ids:[a]}) inspects current tags +
+    // collections + vocabulary (+ suggestions), and never writes.
+    const inspect = JSON.parse(
+      toolText(await call(app, token, "browse_library", { short_ids: [a] })),
+    )
     expect(inspect.artifacts[0].tags.sort()).toEqual(["planning", "q3"])
     expect(inspect.artifacts[0].collections).toEqual([])
     expect(inspect.vocabulary.map((t: { tag: string }) => t.tag)).toContain("notes")
   })
 
-  it("organize: folds artifacts into a collection by name, then lists membership", async () => {
+  it("library: folds artifacts into a collection by name, then lists membership", async () => {
     const { app, token } = appWithGrant(dir, "collect", "openid derive:read derive:publish")
     const a = JSON.parse(
       toolText(await call(app, token, "publish", { title: "One", content: "# One\n\nbody" })),
@@ -1218,13 +1245,29 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(res.collected.collection.title).toBe("Q3 Work")
 
     // The overview lists the collection with its count; inspecting an artifact shows membership.
-    const overview = JSON.parse(toolText(await call(app, token, "organize")))
+    const overview = JSON.parse(toolText(await call(app, token, "browse_library")))
     const col = overview.collections.find(
       (c: { title: string; count: number }) => c.title === "Q3 Work",
     )
     expect(col?.count).toBe(2)
-    const inspect = JSON.parse(toolText(await call(app, token, "organize", { short_ids: [a] })))
+    const inspect = JSON.parse(
+      toolText(await call(app, token, "browse_library", { short_ids: [a] })),
+    )
     expect(inspect.artifacts[0].collections).toContain(col.id)
+
+    // The write tool will not quietly serve the read: `short_ids` with no verb is refused
+    // by name, so the split holds at the argument level and not only in the description.
+    // The refusal names `shelve` too, because a client whose schema predates the split
+    // still offers `state` on `organize` and zod strips it before the handler runs — an
+    // attempt to DELETE arrives here looking exactly like an attempt to read, and must not
+    // be answered with "go read".
+    const noVerb = toolText(await call(app, token, "organize", { short_ids: [a] }))
+    expect(noVerb).toContain("browse_library")
+    expect(noVerb).toContain("shelve")
+    const strippedState = toolText(
+      await call(app, token, "organize", { short_ids: [a], state: "deleted" }),
+    )
+    expect(strippedState).toContain("shelve")
   })
 
   it("reaches a public artifact outside the grant at viewer: read and lineage only", async () => {

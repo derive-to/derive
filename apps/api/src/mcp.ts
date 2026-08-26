@@ -25,7 +25,12 @@
 // instructions carry only a one-line index of them. The mcp-surface-budget test guards
 // the thinness.
 //
-// TEN tools, one per intent — WORKSPACES (list_workspaces), FIND (find: BROWSE the
+// ONE TOOL PER INTENT — and where an intent spans reading and writing, one per SIDE of
+// that line, because MCP annotations are per-tool and clients act on them (the library is
+// browse_library / organize / shelve; automations are list_automations and automate). The
+// count is deliberately not written here: this comment claimed TEN while the server served
+// twelve. surface-coherence.test.ts compares the served list against SKILL.md, which is
+// the copy worth keeping honest. WORKSPACES (list_workspaces), FIND (find: BROWSE the
 // library, GREP one artifact, or SEARCH the workspace — plus the askable contexts,
 // all discriminated by argument), READ content (read), CATCH UP on state/feedback/
 // history AND pull the WORK QUEUE (catch_up: with a short_id it's one artifact's
@@ -45,13 +50,22 @@
 // `query`/`short_id`/`tag`. A new capability is a parameter on an existing tool, not a
 // new tool — every extra tool costs the agent a slot to understand and choose between.
 //
+// ONE CARVE-OUT: a parameter may not carry a tool across the read/write line. Annotations
+// (readOnlyHint, destructiveHint) are declared per tool, and annotation-honouring clients
+// auto-approve reads and prompt for destructive writes — so a tool that reads on one
+// argument and permanently deletes on another has to declare itself destructive over both,
+// and the read pays a prompt it never earned. Splitting there buys back the common path.
+// Nothing else earns a new tool.
+//
 // STRUCTURE — buildServer stays thin: it constructs the McpServer, registers the
 // resources (skills + Brandprint conventions), resolves the Brandprint, writes the
 // `instructions`, and fetches the pending-request inbox. It then builds `base`, makes the
 // per-request ToolContext (mcp-tool-context.ts), and calls one register<Name>Tool per
 // tool IN ORDER — each lives in its own mcp-tools/<name>.ts, sourcing shared refs from
-// the context and pure helpers from mcp-util.ts. The registration ORDER here is load-
-// bearing: the surface-budget test and clients depend on tool order.
+// the context and pure helpers from mcp-util.ts. The exception is a read/write pair split
+// off one intent: those share a file AND a handler, because they are one body of rules
+// wearing two schemas (organize.ts holds three, automate.ts two). The registration ORDER
+// here is load-bearing: the surface-budget test and clients depend on tool order.
 
 import {
   AGENT_INBOX_PAGE,
@@ -75,7 +89,7 @@ import type { AppContext } from "./context"
 import { resolveActorBrandprint } from "./lib/brandprint"
 import type { Sandbox } from "./lib/code-sandbox"
 import { makeToolContext, type ToolContext, type ToolContextBase } from "./mcp-tool-context"
-import { registerAutomateTool } from "./mcp-tools/automate"
+import { registerAutomateTool, registerListAutomationsTool } from "./mcp-tools/automate"
 import { registerCallTool } from "./mcp-tools/call"
 import { registerCatchUpTool } from "./mcp-tools/catch-up"
 import { registerCheckpointTool } from "./mcp-tools/checkpoint"
@@ -84,7 +98,11 @@ import { registerCodeTool } from "./mcp-tools/code"
 import { registerCommentTool } from "./mcp-tools/comment"
 import { registerFindTool } from "./mcp-tools/find"
 import { registerListWorkspacesTool } from "./mcp-tools/list-workspaces"
-import { registerOrganizeTool } from "./mcp-tools/organize"
+import {
+  registerBrowseLibraryTool,
+  registerOrganizeTool,
+  registerShelveTool,
+} from "./mcp-tools/organize"
 import { registerPublishTool } from "./mcp-tools/publish"
 import { registerReadTool } from "./mcp-tools/read"
 import { registerStageTool } from "./mcp-tools/stage"
@@ -559,7 +577,13 @@ export function registerToolSurface(
   if (wanted("list_workspaces")) registerListWorkspacesTool(tc, () => [...names].sort())
   if (wanted("find")) registerFindTool(tc)
   if (wanted("read")) registerReadTool(tc)
-  if (wanted("organize")) registerOrganizeTool(tc)
+  // A read/write pair is gated as ONE name, so a caller naming it gets a coherent set
+  // rather than a write with no read (or the reverse).
+  if (wanted("organize")) {
+    registerBrowseLibraryTool(tc)
+    registerOrganizeTool(tc)
+    registerShelveTool(tc)
+  }
   if (wanted("catch_up")) registerCatchUpTool(tc)
   if (wanted("clear_queue")) registerClearQueueTool(tc)
   if (wanted("comment")) registerCommentTool(tc)
@@ -567,7 +591,10 @@ export function registerToolSurface(
   if (wanted("publish")) registerPublishTool(tc)
   if (wanted("checkpoint")) registerCheckpointTool(tc)
   if (wanted("use")) registerUseTool(tc)
-  if (wanted("automate")) registerAutomateTool(tc)
+  if (wanted("automate")) {
+    registerListAutomationsTool(tc)
+    registerAutomateTool(tc)
+  }
   // OPT-IN, not `wanted`. `wanted` is true whenever `only` is absent, which is exactly how an
   // external MCP client is registered — so the ordinary form would hand `call` to every client
   // holding a grant. What it reaches is the WORKSPACE's connected credentials, and an external
