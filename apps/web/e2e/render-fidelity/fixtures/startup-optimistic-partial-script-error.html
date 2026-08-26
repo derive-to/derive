@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Partial document before script error</title>
+  </head>
+  <body>
+    <main data-derive-ready>
+      <h1>Content painted before one script failed</h1>
+      <button id="control" type="button" onclick="this.dataset.clicked='true'">Still usable</button>
+      <script>throw new Error("optional enhancement failed")</script>
+    </main>
+  </body>
+</html>

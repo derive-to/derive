@@ -220,6 +220,13 @@ export function useArtifactFrame(p: {
       if (d.type === "runtime-ready") {
         runtimeReadyRef.current = true
         setRuntimeReady(true)
+        // A loading-phase error can arrive while HTML is still parsing, before
+        // useful siblings have geometry. If the same document later proves it has
+        // meaningful content, preserve that content and downgrade the incident to
+        // a warning instead of leaving the earlier recovery overlay in its way.
+        setRuntimeError((current) =>
+          current?.phase === "loading" ? { ...current, phase: "ready" } : current,
+        )
         return
       }
       if (
