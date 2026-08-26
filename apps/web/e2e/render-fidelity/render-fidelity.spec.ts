@@ -373,6 +373,55 @@ test.describe("render fidelity — pinning what the sandbox CSP permits", () => 
     await expect(page.getByTestId("render-retry")).toHaveCount(1)
   })
 
+  test("a visible second readiness marker wins over a hidden first marker", async ({
+    owner: page,
+  }) => {
+    const html = readFileSync(join(FIXTURES, "startup-visible-second-marker.html"), "utf8")
+    const shortId = await publishArtifact(page, "index.html", html, "text/html")
+
+    await page.goto(`/artifacts/${shortId}`)
+    await expect(page.getByTestId("render-degraded")).toBeVisible()
+    const artifact = page.frameLocator('iframe[title="index"]')
+    await artifact.locator("#control").click()
+    await expect(artifact.locator("#count")).toHaveText("1")
+  })
+
+  for (const scenario of [
+    { fixture: "startup-hidden-shadow-host.html", label: "an opacity-zero shadow host" },
+    { fixture: "startup-hidden-loaded-image.html", label: "a hidden loaded image" },
+    { fixture: "startup-broken-sized-image.html", label: "a broken image with layout dimensions" },
+  ]) {
+    test(`${scenario.label} cannot satisfy readiness`, async ({ owner: page }) => {
+      const html = readFileSync(join(FIXTURES, scenario.fixture), "utf8")
+      const shortId = await publishArtifact(page, "index.html", html, "text/html")
+
+      await page.goto(`/artifacts/${shortId}`)
+      await expect(page.getByText("Artifact script stopped")).toBeVisible()
+      await expect(page.getByTestId("render-degraded")).toHaveCount(0)
+      await expect(page.getByTestId("render-retry")).toHaveCount(1)
+    })
+  }
+
+  test("attribute-only visibility after timeout self-recovers to Ready", async ({
+    owner: page,
+  }) => {
+    const html = readFileSync(
+      join(FIXTURES, "startup-attribute-visible-after-timeout.html"),
+      "utf8",
+    )
+    const shortId = await publishArtifact(page, "index.html", html, "text/html")
+
+    await page.goto(`/artifacts/${shortId}`)
+    await expect(page.getByText("Preview didn’t load")).toBeVisible({ timeout: 16_000 })
+    const artifact = page.frameLocator('iframe[title="index"]')
+    await expect(
+      artifact.getByRole("heading", { name: "Attribute-only recovery reached Ready" }),
+    ).toBeVisible({ timeout: 5_000 })
+    await expect(page.getByText("Preview didn’t load")).toHaveCount(0)
+    await artifact.locator("#control").click()
+    await expect(artifact.locator("#count")).toHaveText("1")
+  })
+
   test("tier 1: a fully self-contained artifact renders with zero console errors, inline script executes", async ({
     owner: page,
   }) => {

@@ -162,7 +162,12 @@ export const SHARED_STATE_CLIENT_JS = `(function () {
         announceReady();
         if (contentReady) observer.disconnect();
       });
-      observer.observe(window.document.documentElement, { childList: true, subtree: true });
+      observer.observe(window.document.documentElement, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ["style", "class", "hidden", "aria-hidden", "open"]
+      });
     }
   } catch (_) { /* the lifecycle events remain as the compatibility path */ }
 
