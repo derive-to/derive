@@ -9,7 +9,9 @@ import { createApp } from "../src/app"
 import { sha256 } from "../src/lib/crypto"
 import { as, jsonAs, makeAuthedApp, type TestUser } from "./helpers"
 
-// Reversible archive and legacy tombstone state transitions exposed by `organize`.
+// The lifecycle half of the library surface: reversible archive, the legacy tombstone
+// state, and permanent deletion — all on `shelve`, the one tool declaring itself
+// destructive. Tags and collections are `organize`; the reads are `browse_library`.
 
 const owner: TestUser = { id: "u_shelf", email: "shelf@derive.test", name: "Owner" }
 type App = ReturnType<typeof makeAuthedApp>["app"]
@@ -59,7 +61,22 @@ const setup = async (name: string) => {
   return { app, meta, token: bot.token as string }
 }
 
-describe("organize state — retire an artifact and put it back", () => {
+describe("shelve state — retire an artifact and put it back", () => {
+  it("never answers with a library read, whatever `state` it is handed", async () => {
+    // The core reads `state` for its lifecycle branch and treats a falsy one as "no verb",
+    // falling through to the read path — which through THIS tool would hand back the
+    // library read that browse_library exists to serve, from the one surface declaring
+    // itself destructive. The schema's min(1) is what stops that, so it gets a test.
+    const { app, token } = await setup("shelve-never-reads")
+    const pub = await call(app, token, "publish", {
+      title: "Leak probe",
+      content: "# Leak probe\n\nbody",
+    })
+    const empty = await callRaw(app, token, "shelve", { short_ids: [pub.short_id], state: "" })
+    expect(empty.isError).toBe(true)
+    expect(empty.text).not.toContain("vocabulary")
+  })
+
   it("archives reversibly: hidden from normal discovery, still readable, and findable on the archive shelf", async () => {
     const { app, meta, token } = await setup("archive-roundtrip")
     const pub = await call(app, token, "publish", {
@@ -67,13 +84,13 @@ describe("organize state — retire an artifact and put it back", () => {
       content: "# Transient probe\n\nbody",
     })
 
-    const gone = await call(app, token, "organize", {
+    const gone = await call(app, token, "shelve", {
       short_ids: [pub.short_id],
       state: "archived",
     })
     expect(gone.state.changed).toBe(1)
     expect(gone.state.undo).toMatchObject({
-      tool: "organize",
+      tool: "shelve",
       arguments: { short_ids: [pub.short_id], state: "live" },
     })
     expect((await meta.getByShortId(pub.short_id))?.archived_at).toBeTruthy()
@@ -84,7 +101,7 @@ describe("organize state — retire an artifact and put it back", () => {
     const shelf = await call(app, token, "find", { archived: true })
     expect(JSON.stringify(shelf)).toContain(pub.short_id)
 
-    const back = await call(app, token, "organize", {
+    const back = await call(app, token, "shelve", {
       short_ids: [pub.short_id],
       state: "live",
     })
@@ -101,7 +118,7 @@ describe("organize state — retire an artifact and put it back", () => {
     const art = await meta.getByShortId(pub.short_id)
     if (!art) throw new Error("artifact missing")
 
-    const gone = await call(app, token, "organize", {
+    const gone = await call(app, token, "shelve", {
       short_ids: [pub.short_id],
       state: "removed",
     })
@@ -113,11 +130,11 @@ describe("organize state — retire an artifact and put it back", () => {
 
     // The way back is handed over at the moment it might be wanted, as a runnable call.
     expect(gone.state.undo).toMatchObject({
-      tool: "organize",
+      tool: "shelve",
       arguments: { short_ids: [pub.short_id], state: "live" },
     })
 
-    const back = await call(app, token, "organize", { short_ids: [pub.short_id], state: "live" })
+    const back = await call(app, token, "shelve", { short_ids: [pub.short_id], state: "live" })
     expect(back.state.changed).toBe(1)
     expect((await meta.getByShortId(pub.short_id))?.removed_at).toBeNull()
     // ...and its undo points the other way, so the pair is symmetric.
@@ -130,19 +147,19 @@ describe("organize state — retire an artifact and put it back", () => {
     // Readable to begin with.
     expect((await callRaw(app, token, "read", { short_id: pub.short_id })).isError).toBe(false)
 
-    await call(app, token, "organize", { short_ids: [pub.short_id], state: "removed" })
+    await call(app, token, "shelve", { short_ids: [pub.short_id], state: "removed" })
     const afterRemove = await callRaw(app, token, "read", { short_id: pub.short_id })
     expect(afterRemove.isError).toBe(true)
 
     // Restoring makes it readable again: the whole point of pairing the directions.
-    await call(app, token, "organize", { short_ids: [pub.short_id], state: "live" })
+    await call(app, token, "shelve", { short_ids: [pub.short_id], state: "live" })
     expect((await callRaw(app, token, "read", { short_id: pub.short_id })).isError).toBe(false)
   })
 
   it("skips artifacts the caller can't edit instead of failing the batch", async () => {
     const { app, meta, token } = await setup("shelve-skip")
     const mine = await call(app, token, "publish", { title: "Mine", content: "# Mine\n\nbody" })
-    const out = await call(app, token, "organize", {
+    const out = await call(app, token, "shelve", {
       short_ids: [mine.short_id, "zzzzzzzz"],
       state: "removed",
     })
@@ -176,7 +193,7 @@ describe("organize state — retire an artifact and put it back", () => {
       detail: "abuse",
     })
 
-    const tryBack = await call(app, token, "organize", {
+    const tryBack = await call(app, token, "shelve", {
       short_ids: [pub.short_id],
       state: "live",
     })
@@ -226,8 +243,8 @@ describe("organize state — retire an artifact and put it back", () => {
       vi.useRealTimers()
     }
 
-    await call(app, token, "organize", { short_ids: [pub.short_id], state: "removed" })
-    const back = await call(app, token, "organize", { short_ids: [pub.short_id], state: "live" })
+    await call(app, token, "shelve", { short_ids: [pub.short_id], state: "removed" })
+    const back = await call(app, token, "shelve", { short_ids: [pub.short_id], state: "live" })
     expect(back.state.changed).toBe(1)
     expect(back.state.moderation_hold).toBeUndefined()
   })
@@ -255,7 +272,7 @@ describe("organize state — retire an artifact and put it back", () => {
       created_by: owner.id,
     })
 
-    const gone = await call(app, token, "organize", {
+    const gone = await call(app, token, "shelve", {
       short_ids: [man.short_id],
       state: "removed",
     })
@@ -366,7 +383,7 @@ describe("organize state:'deleted' — the permanent one", () => {
     expect(await meta.getByShortId(a.short_id)).toBeTruthy()
 
     const out = await toolJson(
-      await call(app, token, "organize", { short_ids: [a.short_id], state: "deleted" }),
+      await call(app, token, "shelve", { short_ids: [a.short_id], state: "deleted" }),
     )
     expect(out.state.deleted).toBe(1)
     // Gone from the store, not merely tombstoned.
@@ -399,7 +416,7 @@ describe("organize state:'deleted' — the permanent one", () => {
       viewer_kind: "anon",
     })
     const out = await toolJson(
-      await call(app, token, "organize", { short_ids: [a.short_id], state: "deleted" }),
+      await call(app, token, "shelve", { short_ids: [a.short_id], state: "deleted" }),
     )
     expect(out.state.deleted).toBe(1)
     expect(await meta.getByShortId(a.short_id)).toBeNull()
@@ -412,7 +429,7 @@ describe("organize state:'deleted' — the permanent one", () => {
     const a = await publish(app, token, "Keeper")
 
     const out = await toolJson(
-      await call(app, token, "organize", { short_ids: [a.short_id], state: "deleted" }),
+      await call(app, token, "shelve", { short_ids: [a.short_id], state: "deleted" }),
     )
     expect(out.state.deleted).toBe(0)
     expect(out.state.needs_manage).toEqual([a.short_id])
@@ -426,7 +443,7 @@ describe("organize state:'deleted' — the permanent one", () => {
     const { app, token, meta } = appWithGrant("orgdelshelf", "openid derive:read derive:publish")
     const a = await publish(app, token, "Shelvable")
     const out = await toolJson(
-      await call(app, token, "organize", { short_ids: [a.short_id], state: "removed" }),
+      await call(app, token, "shelve", { short_ids: [a.short_id], state: "removed" }),
     )
     expect(out.state.changed).toBe(1)
     expect(out.state.undo).toMatchObject({ arguments: { state: "live" } })
@@ -441,7 +458,7 @@ describe("organize state:'deleted' — the permanent one", () => {
     const a = await publish(app, token, "One")
     const b = await publish(app, token, "Two")
     const out = await toolJson(
-      await call(app, token, "organize", {
+      await call(app, token, "shelve", {
         short_ids: [a.short_id, b.short_id, "nosuchid"],
         state: "deleted",
       }),

@@ -132,10 +132,44 @@ import { CORE_SKILLS } from "../src/skills-reference.gen"
 // requires is conditional), find.query (the literal-search rule, which reads as advice
 // until you see one keyword instead of a question), and read.section (four addressing
 // schemes sharing one string). 431 characters for the four. Measured 9,565 of 9,750.
-const TOOL_DESCRIPTIONS_BUDGET = 3_200
-const PARAM_DESCRIPTIONS_BUDGET = 9_750
-const SURFACE_BUDGET = 12_750
-const INSTRUCTIONS_BUDGET = 2_400
+// RAISED 3,200 -> 3,400 / 9,750 -> 9,900 / 12,750 -> 13,250 (2026-08-26), for the
+// read/write split of the library and automation surfaces: `organize` became
+// browse_library + organize + shelve, and `automate` became list_automations + automate.
+// +414 characters of tool description and +138 of param.
+//
+// This raise buys back approval prompts rather than prose. MCP annotations are declared
+// per TOOL, and annotation-honouring clients auto-approve a readOnly tool while prompting
+// for a destructive one. `organize` carried permanent deletion (state:'deleted') on the
+// same surface that read the tag vocabulary, so it had to declare destructiveHint over all
+// of it, and browsing tags prompted exactly as hard as destroying an artifact. `automate`
+// had the milder version: `list` sat beside create/run_now, so a read was reachable only
+// through a tool declaring itself a write. Neither could be fixed by a parameter, which is
+// the carve-out mcp.ts states next to the rule it qualifies.
+//
+// Reclaim was attempted first, per the rule above, and paid for part of it: the skill
+// steer came off the two descriptions whose responses already teach the procedure
+// (browse_library, list_automations), and the three new ones were tightened. What
+// remains is structural: three routing clauses ("Retiring or deleting is `shelve`",
+// "Creating and running them is `automate`", "Listing them is `list_automations`") that
+// exist ONLY because the surface split, and two extra copies of the shared `workspace`
+// description. Cutting the routing clauses would save 110 characters and recreate exactly
+// the dead ends #783 closed: an agent that wants to delete calls `organize`, finds no
+// `state`, and has nothing telling it where the verb went.
+//
+// INSTRUCTIONS 2,400 -> 2,500 in the same change. The instructions carry a one-line index
+// of the core skills, and two of those lines name their tools — so a split that renames
+// one tool into three lengthens the index whether or not a word of procedure changes. Both
+// summaries were tightened first (organize's dropped "the tag vocabulary" and the "and",
+// paying for two of the three names it now has to list). What is left is the names
+// themselves: an index that still said "(organize)" would be pointing at a third of the
+// surface it describes. Note main sat at 2,396 of 2,400 before this, so the ceiling was
+// already spent; this raise restores headroom rather than consuming the last of it.
+// Measured: descriptions 3,356 of 3,400; params 9,868 of 9,900; total 13,224 of 13,250;
+// instructions 2,424 of 2,500.
+const TOOL_DESCRIPTIONS_BUDGET = 3_400
+const PARAM_DESCRIPTIONS_BUDGET = 9_900
+const SURFACE_BUDGET = 13_250
+const INSTRUCTIONS_BUDGET = 2_500
 
 /** No single tool may sprawl: one sentence of routing, the one thing that silently breaks,
  *  and a pointer to its skill. */

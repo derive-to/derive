@@ -175,17 +175,27 @@ describe("the schedule tick obeys the gate", () => {
   })
 })
 
-// THE GATE STATE IS PART OF THE LIST, over MCP. `automate {action:"list"}` stays deliberately
-// UNGATED (the beta flag binds the lanes that create or run work, never reads) — but a bare
-// `count: 0` in a gated workspace reads exactly like "none created yet", so an agent only
+// THE GATE STATE IS PART OF THE LIST, over MCP. `list_automations` stays deliberately
+// UNGATED by the beta flag (it binds the lanes that create or run work, never reads) — but a
+// bare `count: 0` in a gated workspace reads exactly like "none created yet", so an agent only
 // discovered `automateBeta` when its create was refused. The list now says which it is.
-describe("automate list over MCP reports the gate state", () => {
+//
+// The read is its own tool so it can declare readOnlyHint. `automate` refuses
+// `action:"list"` by name rather than serving it, which the last case here pins: a client
+// holding a cached schema gets pointed at the read, not handed it through a tool that
+// declares itself a write.
+describe("listing automations over MCP reports the gate state", () => {
   const owner: TestUser = { id: "u_gate_mcp", email: "gatemcp@derive.test", name: "Owner" }
 
   type App = ReturnType<typeof makeAuthedApp>["app"]
 
   // A direct tools/call over the stateless /mcp endpoint (mcp-contexts' shape).
-  const callAutomate = async (app: App, token: string, args: Record<string, unknown>) => {
+  const callTool = async (
+    app: App,
+    token: string,
+    tool: string,
+    args: Record<string, unknown> = {},
+  ) => {
     const res = await app.request("/mcp", {
       method: "POST",
       headers: {
@@ -197,7 +207,7 @@ describe("automate list over MCP reports the gate state", () => {
         jsonrpc: "2.0",
         id: 1,
         method: "tools/call",
-        params: { name: "automate", arguments: args },
+        params: { name: tool, arguments: args },
       }),
     })
     const ct = res.headers.get("content-type") ?? ""
@@ -234,7 +244,7 @@ describe("automate list over MCP reports the gate state", () => {
     const { app, meta, raw } = await setup("gate-mcp-list-off")
     // One automation stood up while the beta is on (makeAuthedApp's seed), so the gated
     // list below proves rows still come back — the flag closed the lanes, not the read.
-    const made = await callAutomate(app, raw, {
+    const made = await callTool(app, raw, "automate", {
       action: "create",
       trigger: { kind: "manual" },
       instruction: "Keep the roadmap current",
@@ -243,11 +253,18 @@ describe("automate list over MCP reports the gate state", () => {
     const current = await meta.getOrgSettings("default")
     if (current) await meta.setOrgSettings("default", { ...current, automateBeta: false })
 
-    const r = await callAutomate(app, raw, { action: "list" })
+    const r = await callTool(app, raw, "list_automations")
     expect(r.count).toBe(1)
     expect(r.automations).toHaveLength(1)
     expect(r.automations_enabled).toBe(false)
     // The note names the flag, so the agent learns create/run_now will fail BEFORE trying.
     expect(r.note).toContain("automateBeta")
+
+    // A client holding `action:"list"` in a cached schema is refused BY NAME. Serving it
+    // would put the read back inside the tool that declares itself a write, leaving the
+    // split in the description and nowhere else.
+    const stale = await callTool(app, raw, "automate", { action: "list" })
+    expect(stale.error).toContain("list_automations")
+    expect(stale.count).toBeUndefined()
   })
 })

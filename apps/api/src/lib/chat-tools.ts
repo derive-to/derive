@@ -43,8 +43,8 @@ import { AGENT_WRITES_OFF } from "./agent-writes"
  * the analytics context" — the four things people actually open a chat to do.
  *
  * OUT, deliberately: `stage` (an out-of-band upload workflow for a shell, meaningless mid-turn),
- * `list_workspaces` + `organize` + `checkpoint` (the workspace is pinned and there is no agent
- * state to save), `comment` (a chat turn talking into a document's comment threads is a
+ * `list_workspaces` + the library tools + `checkpoint` (the workspace is pinned and there is
+ * no agent state to save), `comment` (a chat turn talking into a document's comment threads is a
  * different feature with its own notification fan-out), `automate` (a different bet behind its
  * own flag), `derive_code` (it exists to collapse many approvals into one, which is a problem
  * attended chat does not have).
@@ -96,7 +96,9 @@ const SKILL_FOR_TOOL: Record<string, readonly string[]> = {
   call: ["sources"],
   comment: ["loop"],
   catch_up: ["loop"],
+  browse_library: ["organize"],
   organize: ["organize"],
+  shelve: ["organize"],
   checkpoint: ["checkpoint"],
 }
 

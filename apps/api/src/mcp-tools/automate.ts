@@ -31,8 +31,12 @@ import { json } from "../mcp-util"
 
 /** The automate actions. A growth point — see lib/open-choice.ts for why it isn't an enum.
  *  Adding one here is the WHOLE change: the schema description and the server-side check
- *  both read this, so they cannot disagree about what is valid. */
-const AUTOMATE_ACTIONS = ["create", "list", "run_now", "record", "create_context"] as const
+ *  both read this, so they cannot disagree about what is valid.
+ *
+ *  `list` is absent deliberately — reading is `list_automations`, which is what lets this
+ *  tool declare itself a write. A caller still passing it is answered by name below, not
+ *  by badChoice's generic refusal. */
+const AUTOMATE_ACTIONS = ["create", "run_now", "record", "create_context"] as const
 
 const TRIGGER = z.object({
   kind: z.enum(["manual", "schedule", "event"]),
@@ -41,18 +45,109 @@ const TRIGGER = z.object({
   on: z.string().optional(),
 })
 
+// Two tools over the automation surface, split by ANNOTATION: clients gate on
+// readOnlyHint, so a read sharing a tool with create/run_now is a read the client prompts
+// for. They share the two gates below, so the split cannot drift into a permission
+// difference nobody chose.
+
+/**
+ * The owner gate, the same rule the REST surface applies: standing jobs are a manage
+ * decision, and this surface spends the workspace's model budget on a clock. A commenter
+ * grant reads, never wires. Returns the refusal string, or null to proceed.
+ *
+ * The refusal names WHICH lever is short — scope vs seat (see lib/scope-gap.ts) — because
+ * they need opposite fixes and guessing wrong sends an agent hunting for a second
+ * credential. Listing is gated too: it always was, and splitting a surface is not the
+ * moment to quietly widen a permission.
+ */
+async function ownerRefusal(tc: ToolContext): Promise<string | null> {
+  if (tc.agent.role === "owner") return null
+  // The RAW membership, not agent.role — that one is already capped BY the scope, so
+  // passing it would report a seat gap on every scope gap and send the caller to an admin
+  // with nothing to fix. Read only on this refusal path.
+  const seat = tc.ownerId
+    ? await tc.ctx.meta.getMembership(tc.defaultOrg, tc.ownerId).catch(() => null)
+    : null
+  return (
+    scopeGapMessage({
+      action: "manage",
+      scopeRole: tc.scopeForCap,
+      memberRole: seat?.role ?? tc.agent.role,
+      registered: tc.registered,
+      baseUrl: tc.ctx.deps.baseUrl,
+    }) ?? "automations need a manage-level (owner) grant"
+  )
+}
+
+/**
+ * The beta gate, the same rule the REST surface applies (routes/automations.ts): the
+ * `automateBeta` opt-in ships OFF and binds the lanes that CREATE or RUN work, never the
+ * reads. Fails CLOSED on a settings read error, matching the cron tick and hosted dispatch.
+ */
+async function automateOff(tc: ToolContext): Promise<boolean> {
+  return !(await tc.ctx.meta
+    .getOrgSettings(tc.defaultOrg)
+    .then((s) => s?.automateBeta === true)
+    .catch(() => false))
+}
+
+/** READ. The automations this workspace holds, and whether automations are on for it. */
+export function registerListAutomationsTool(tc: ToolContext): void {
+  const { server, ctx, defaultOrg } = tc
+  server.registerTool(
+    "list_automations",
+    {
+      description:
+        "The workspace's automations, and whether automations are on for it. Creating and running them is `automate`.",
+      annotations: {
+        title: "List automations",
+        readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: false,
+      },
+      inputSchema: {},
+    },
+    async () => {
+      const refusal = await ownerRefusal(tc)
+      if (refusal) return json({ error: refusal })
+      // The gate state rides along with the read: a bare `count: 0` in a gated workspace
+      // reads as "none yet", and the agent would only learn the flag exists when its create
+      // is refused. Saying so here is what lets it plan.
+      const [rows, off] = await Promise.all([ctx.meta.listAutomations(defaultOrg), automateOff(tc)])
+      return json({
+        count: rows.length,
+        automations_enabled: !off,
+        ...(off
+          ? {
+              note:
+                "automations are not enabled for this workspace (automateBeta) — create and " +
+                "run_now will be refused until an owner turns them on in workspace settings.",
+            }
+          : {}),
+        automations: rows.map((a) => ({
+          id: a.id,
+          instruction: a.instruction.slice(0, 140),
+          context_id: a.context_id,
+          provider: automationProvider(a),
+          enabled: a.enabled === 1,
+        })),
+      })
+    },
+  )
+}
+
 export function registerAutomateTool(tc: ToolContext): void {
-  const { server, ctx, agent, defaultOrg, scopeForCap, registered } = tc
+  const { server, ctx, agent, defaultOrg } = tc
   const meta = ctx.meta
   server.registerTool(
     "automate",
     {
       description:
-        "Scheduled and triggered work: create/list/run_now an automation, record an outcome, or create_context. See derive://skills/loop.",
-      // Not read-only (create/run_now/record/create_context all write); no action here
-      // deletes or disables an existing automation or context — there is no such action
-      // in this tool — so it isn't destructive. Every effect (rows in the automations/
-      // runs/contexts tables, a minted managed agent) is Derive's own backend.
+        "Scheduled and triggered work: create or run_now an automation, record an outcome, or create_context. Listing them is `list_automations`. See derive://skills/loop.",
+      // Every action here writes, which is now true of the whole tool — the read moved to
+      // list_automations. Not destructive: no action deletes or disables an existing
+      // automation or context, and every effect (rows in the automations/runs/contexts
+      // tables, a minted managed agent) is Derive's own backend.
       annotations: {
         title: "Manage automations",
         readOnlyHint: false,
@@ -176,79 +271,24 @@ export function registerAutomateTool(tc: ToolContext): void {
       },
     },
     async (input) => {
+      // Cached schemas still carry `list`. Answering by name costs one string and points at
+      // the tool that serves it; badChoice would only say the value is not one of four.
+      // Refused rather than quietly served — a read reachable through the tool that declares
+      // itself a write is a split that exists in the description and nowhere else.
+      if (input.action === "list")
+        return json({ error: "listing automations is the `list_automations` tool" })
+
       const wrongAction = badChoice("action", input.action, AUTOMATE_ACTIONS)
       if (wrongAction) return json({ error: wrongAction })
-      // Same gate as the REST surface: standing jobs are a manage decision, and this tool
-      // spends the workspace's model budget on a clock. A commenter grant reads, never wires.
-      // The refusal names WHICH lever is short — scope vs seat (see lib/scope-gap.ts) —
-      // because they need opposite fixes and guessing wrong sends an agent hunting for a
-      // second credential.
-      if (agent.role !== "owner") {
-        // The RAW membership, not agent.role — that one is already capped BY the scope,
-        // so passing it would report a seat gap on every scope gap and send the caller to
-        // an admin with nothing to fix. Read only on this refusal path.
-        const seat = tc.ownerId
-          ? await meta.getMembership(defaultOrg, tc.ownerId).catch(() => null)
-          : null
-        return json({
-          error:
-            scopeGapMessage({
-              action: "manage",
-              scopeRole: scopeForCap,
-              memberRole: seat?.role ?? agent.role,
-              registered,
-              baseUrl: ctx.deps.baseUrl,
-            }) ?? "automations need a manage-level (owner) grant",
-        })
-      }
+      const refusal = await ownerRefusal(tc)
+      if (refusal) return json({ error: refusal })
       const org = defaultOrg
-
-      // THE BETA GATE, the same rule the REST surface applies (routes/automations.ts,
-      // `automateOff`): `automateBeta` is the workspace's own opt-in, ships OFF, and binds the
-      // lanes that CREATE or RUN work — never reads or deletes. It appeared nowhere in this
-      // file, so an agent over MCP could stand up an automation and fire it in a workspace
-      // where `POST /v1/automations/:id/run` 404s. The gate held the front door and left this
-      // one open.
-      //
-      // A refusal string rather than a 404: this is a tool result an agent is already reading,
-      // and "no such surface" is useless to something that just called it. Fails CLOSED on a
-      // settings read error, matching the cron tick and hosted dispatch.
-      const automateOff = async (): Promise<boolean> =>
-        !(await meta
-          .getOrgSettings(org)
-          .then((s) => s?.automateBeta === true)
-          .catch(() => false))
-      if ((input.action === "create" || input.action === "run_now") && (await automateOff()))
+      if ((input.action === "create" || input.action === "run_now") && (await automateOff(tc)))
         return json({
           error:
             "automations are not enabled for this workspace (automateBeta). An owner can turn " +
             "them on in workspace settings.",
         })
-
-      if (input.action === "list") {
-        // Deliberately NOT gated (reads stay open), but the gate state rides along: a bare
-        // `count: 0` in a gated workspace reads as "none yet", and the agent only learns the
-        // flag exists when its create is refused. Saying so here is what lets it plan.
-        const [rows, off] = await Promise.all([meta.listAutomations(org), automateOff()])
-        return json({
-          count: rows.length,
-          automations_enabled: !off,
-          ...(off
-            ? {
-                note:
-                  "automations are not enabled for this workspace (automateBeta) — create and " +
-                  "run_now will be refused until an owner turns them on in workspace settings.",
-              }
-            : {}),
-          automations: rows.map((a) => ({
-            id: a.id,
-            instruction: a.instruction.slice(0, 140),
-            context_id: a.context_id,
-            provider: automationProvider(a),
-            enabled: a.enabled === 1,
-          })),
-        })
-      }
 
       if (input.action === "run_now") {
         if (!input.automation_id) return json({ error: "run_now needs automation_id" })

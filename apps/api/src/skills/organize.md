@@ -1,23 +1,29 @@
 ---
 name: organize
-summary: make the library findable: browse the tag vocabulary + collections, and tag or collect artifacts (organize)
+summary: make the library findable: browse tags + collections, tag, collect, retire, delete (browse_library, organize, shelve)
 order: 8
 ---
 # Organizing the library (tags + collections)
 
-`organize` is the library's findability layer: browse TAGS (lightweight labels) and
-COLLECTIONS (a set treated as a unit), in one tool. Tag freely and reuse the vocabulary. A
-well-tagged library is findable. Reach for a collection only when a set is a real unit, not
-for plain findability. Tags can also be set at publish time via publish's `tags` param.
+The library's findability layer is TAGS (lightweight labels) and COLLECTIONS (a set treated
+as a unit), across three tools that share one set of rules:
 
-## Read mode
+- **`browse_library`** reads. It never writes, so a client can run it without asking you.
+- **`organize`** tags and collects. Reversible: nothing it does loses an artifact.
+- **`shelve`** retires, restores, and deletes. The one destructive verb on the library.
+
+Tag freely and reuse the vocabulary. A well-tagged library is findable. Reach for a
+collection only when a set is a real unit, not for plain findability. Tags can also be set at
+publish time via publish's `tags` param.
+
+## Reading (`browse_library`)
 
 - **No `short_ids`:** returns the workspace's tag vocabulary (tag → count) and its
   collections. Call this BEFORE tagging so you reuse an existing tag over a near-duplicate.
 - **With `short_ids`:** returns those artifacts' current tags + collections, plus
   `suggested` tags drawn from the most semantically-similar docs (when a single id is given).
 
-## Write mode (pass `short_ids` plus any of these)
+## Tagging and collecting (`organize`: `short_ids` plus any of these)
 
 - **`add`:** add to the existing tags without removing any.
 - **`remove`:** remove these tags.
@@ -27,9 +33,9 @@ for plain findability. Tags can also be set at publish time via publish's `tags`
 Tags are normalized (trimmed, lowercased, deduped, capped 20). Each artifact is authorized on
 its own; ones you can't edit come back as `skipped`, never failing the batch.
 
-## Cleaning up after yourself (`state`)
+## Cleaning up after yourself (`shelve`)
 
-The same tool retires, restores, and deletes, so restoring is not a separate workflow to
+One tool retires, restores, and deletes, so restoring is not a separate workflow to
 discover. Pass `short_ids` plus `state`:
 
 - **`state:'archived'`:** hide it from ordinary library views and search while keeping
