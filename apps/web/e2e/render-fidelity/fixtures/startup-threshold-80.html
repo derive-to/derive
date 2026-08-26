@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Exact readiness threshold</title></head>
+<body>
+  <p id="copy">AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA</p>
+  <button id="control" type="button" aria-label="Increment" style="width:44px;height:44px"></button>
+  <script>
+    document.querySelector("#control").addEventListener("click", (event) => {
+      event.currentTarget.dataset.clicked = "true"
+    })
+  </script>
+</body>
+</html>

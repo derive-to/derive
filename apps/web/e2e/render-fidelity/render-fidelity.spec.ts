@@ -334,6 +334,45 @@ test.describe("render fidelity — pinning what the sandbox CSP permits", () => 
     await expect(page.getByTestId("render-degraded")).toContainText("script-error")
   })
 
+  for (const scenario of [
+    { fixture: "startup-opacity-ancestor.html", label: "an opacity-zero ancestor" },
+    { fixture: "startup-clipped-rich-content.html", label: "a zero-area clipping ancestor" },
+    { fixture: "startup-collapsed-details.html", label: "collapsed details" },
+  ]) {
+    test(`${scenario.label} cannot expose hidden descendants as Ready`, async ({ owner: page }) => {
+      const html = readFileSync(join(FIXTURES, scenario.fixture), "utf8")
+      const shortId = await publishArtifact(page, "index.html", html, "text/html")
+
+      await page.goto(`/artifacts/${shortId}`)
+      await expect(page.getByText("Artifact script stopped")).toBeVisible()
+      await expect(page.getByTestId("render-degraded")).toHaveCount(0)
+      await expect(page.getByTestId("render-retry")).toHaveCount(1)
+    })
+  }
+
+  test("exactly 80 visible non-whitespace characters reaches Ready", async ({ owner: page }) => {
+    const html = readFileSync(join(FIXTURES, "startup-threshold-80.html"), "utf8")
+    const shortId = await publishArtifact(page, "index.html", html, "text/html")
+
+    await page.goto(`/artifacts/${shortId}`)
+    const artifact = page.frameLocator('iframe[title="index"]')
+    await artifact.locator("#control").click({ timeout: 5_000 })
+    await expect(artifact.locator("#control")).toHaveAttribute("data-clicked", "true")
+    await expect(page.getByTestId("render-retry")).toHaveCount(0)
+  })
+
+  test("79 visible non-whitespace characters plus an error stays Blocked", async ({
+    owner: page,
+  }) => {
+    const html = readFileSync(join(FIXTURES, "startup-threshold-79-error.html"), "utf8")
+    const shortId = await publishArtifact(page, "index.html", html, "text/html")
+
+    await page.goto(`/artifacts/${shortId}`)
+    await expect(page.getByText("Artifact script stopped")).toBeVisible()
+    await expect(page.getByTestId("render-degraded")).toHaveCount(0)
+    await expect(page.getByTestId("render-retry")).toHaveCount(1)
+  })
+
   test("tier 1: a fully self-contained artifact renders with zero console errors, inline script executes", async ({
     owner: page,
   }) => {

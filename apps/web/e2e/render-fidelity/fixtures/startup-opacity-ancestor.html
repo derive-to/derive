@@ -1,0 +1,10 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Transparent ancestor is not ready</title></head>
+<body>
+  <div style="opacity:0">
+    <main data-derive-ready><table><tbody><tr><td>Invisible readiness</td></tr></tbody></table></main>
+  </div>
+  <script>throw new Error("bootstrap failed before anything visible")</script>
+</body>
+</html>

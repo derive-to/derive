@@ -25,15 +25,43 @@ export const SHARED_STATE_CLIENT_JS = `(function () {
   function isVisiblyRendered(element) {
     if (!element || element.hidden) return false;
     try {
-      if (element.getAttribute && element.getAttribute("aria-hidden") === "true") return false;
-      if (typeof window.getComputedStyle === "function") {
-        var style = window.getComputedStyle(element);
-        if (style && (
-          style.display === "none" ||
-          style.visibility === "hidden" ||
-          style.visibility === "collapse" ||
-          style.opacity === "0"
-        )) return false;
+      var elementRect = typeof element.getBoundingClientRect === "function"
+        ? element.getBoundingClientRect() : null;
+      var current = element;
+      while (current) {
+        if (current.hidden ||
+            (current.getAttribute && current.getAttribute("aria-hidden") === "true")) return false;
+        var tag = String(current.tagName || "").toLowerCase();
+        if (tag === "details" && !current.open) {
+          var summary = current.querySelector && current.querySelector(":scope > summary");
+          if (!summary || (element !== summary && !(summary.contains && summary.contains(element))))
+            return false;
+        }
+        if (typeof window.getComputedStyle === "function") {
+          var style = window.getComputedStyle(current);
+          if (style && (
+            style.display === "none" ||
+            style.visibility === "hidden" ||
+            style.visibility === "collapse" ||
+            Number(style.opacity) <= 0
+          )) return false;
+          var clips = style && /hidden|clip|scroll|auto/.test(
+            String(style.overflow || "") + " " +
+            String(style.overflowX || "") + " " + String(style.overflowY || "")
+          );
+          if (clips && typeof current.getBoundingClientRect === "function") {
+            var clipRect = current.getBoundingClientRect();
+            if (Number(clipRect.width || 0) <= 0 || Number(clipRect.height || 0) <= 0)
+              return false;
+            if (elementRect && (
+              elementRect.right <= clipRect.left || elementRect.left >= clipRect.right ||
+              elementRect.bottom <= clipRect.top || elementRect.top >= clipRect.bottom
+            )) return false;
+          }
+        }
+        var rootNode = !current.parentElement && current.getRootNode
+          ? current.getRootNode() : null;
+        current = current.parentElement || (rootNode && rootNode.host) || null;
       }
       if (typeof element.getClientRects === "function") {
         var rects = element.getClientRects();
