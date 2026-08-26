@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8" /><title>Missing optional module</title></head>
+  <body>
+    <main data-derive-ready>
+      <h1>Base document survives an enhancement module failure</h1>
+      <button id="control" type="button">Continue</button>
+      <script type="module" src="https://unreachable.invalid/enhancement.js"></script>
+    </main>
+  </body>
+</html>

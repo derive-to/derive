@@ -47,7 +47,7 @@ export const SHARED_STATE_CLIENT_JS = `(function () {
   // or a non-trivial visible body as meaningful so an optional failure cannot hide a
   // usable artifact behind the host's startup card. Hidden nodes and source text never
   // count: they give the viewer nothing usable to preserve.
-  function isVisiblyRendered(element) {
+  function isVisiblyRendered(element, allowUnpaintedMedia) {
     if (!element || element.hidden) return false;
     try {
       var elementRect = typeof element.getBoundingClientRect === "function"
@@ -88,9 +88,11 @@ export const SHARED_STATE_CLIENT_JS = `(function () {
           ? current.getRootNode() : null;
         current = current.parentElement || (rootNode && rootNode.host) || null;
       }
+      var mediaTag = String(element.tagName || "").toLowerCase();
+      var optimisticMedia = !!allowUnpaintedMedia && (mediaTag === "img" || mediaTag === "svg");
       if (typeof element.getClientRects === "function") {
         var rects = element.getClientRects();
-        if (!rects.length) return false;
+        if (!rects.length && !optimisticMedia) return false;
         var hasArea = false;
         for (var r = 0; r < rects.length; r += 1) {
           if (Number(rects[r].width || 0) > 0 && Number(rects[r].height || 0) > 0) {
@@ -98,9 +100,9 @@ export const SHARED_STATE_CLIENT_JS = `(function () {
             break;
           }
         }
-        if (!hasArea) return false;
+        if (!hasArea && !optimisticMedia) return false;
       }
-      if (String(element.tagName || "").toLowerCase() === "img" &&
+      if (mediaTag === "img" && !optimisticMedia &&
           (!element.complete || Number(element.naturalWidth || 0) <= 0 ||
            Number(element.naturalHeight || 0) <= 0)) return false;
     } catch (_) { /* structural checks and visible text remain as fallbacks */ }
@@ -155,7 +157,11 @@ export const SHARED_STATE_CLIENT_JS = `(function () {
       var rich = body.querySelectorAll
         ? body.querySelectorAll("table,canvas,svg,video,img,iframe") : [];
       for (var i = 0; i < Number(rich.length || 0); i += 1) {
-        if (isVisiblyRendered(rich[i])) return true;
+        // Authored image/SVG markup is optimistic content even when one media
+        // payload fails or reports unusual geometry. CSS-hidden descendants still
+        // fail the ancestor checks above; this only prevents a media oddity from
+        // suppressing the rest of an otherwise loadable document.
+        if (isVisiblyRendered(rich[i], true)) return true;
       }
       var visibleText = typeof body.innerText === "string" ? body.innerText : "";
       var text = String(visibleText).replace(/\\s+/g, "");
@@ -222,7 +228,7 @@ export const SHARED_STATE_CLIENT_JS = `(function () {
         for (var i = 0; i < Number(rich.length || 0); i += 1) {
           var tag = String(rich[i] && rich[i].tagName || "").toLowerCase();
           if (tag === "iframe" && !meaningfulIframe(rich[i])) continue;
-          if (isVisiblyRendered(rich[i])) { richContent = true; break; }
+          if (isVisiblyRendered(rich[i], true)) { richContent = true; break; }
         }
       }
       // innerText is layout-aware and omits script/style/hidden descendants. Falling
