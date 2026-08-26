@@ -206,6 +206,110 @@ describe("shared-state contract", () => {
     expect(sent.at(-1)).toMatchObject({ code: "script-error", phase: "loading" })
   })
 
+  it("treats a visible embedded document as meaningful content", () => {
+    type BrowserListener = (event: Record<string, unknown>) => void
+    const sent: RuntimeMessage[] = []
+    const listeners = new Map<string, BrowserListener>()
+    const parent = { postMessage: (message: RuntimeMessage) => sent.push(message) }
+    const embedded = {
+      hidden: false,
+      tagName: "IFRAME",
+      parentElement: null,
+      getBoundingClientRect: () => ({
+        top: 0,
+        right: 800,
+        bottom: 600,
+        left: 0,
+        width: 800,
+        height: 600,
+      }),
+      getClientRects: () => ({ 0: { width: 800, height: 600 }, length: 1 }),
+      getAttribute: () => null,
+      getRootNode: () => null,
+    }
+    const frame = {
+      derive: undefined as DeriveRuntime | undefined,
+      getComputedStyle: () => ({ display: "block", visibility: "visible", opacity: "1" }),
+      document: {
+        body: {
+          childElementCount: 1,
+          innerText: "",
+          querySelectorAll: (selector: string) =>
+            selector.includes("iframe") ? { 0: embedded, length: 1 } : { length: 0 },
+        },
+      },
+      addEventListener: (type: string, listener: BrowserListener) => listeners.set(type, listener),
+      dispatchEvent: () => true,
+    }
+    const CustomEventStub = class {
+      constructor(
+        readonly type: string,
+        readonly init?: unknown,
+      ) {}
+    }
+    const load = Function("window", "parent", "CustomEvent", SHARED_STATE_CLIENT_JS) as (
+      frame: typeof frame,
+      parent: typeof parent,
+      event: typeof CustomEventStub,
+    ) => void
+    load(frame, parent, CustomEventStub)
+
+    listeners.get("load")?.({})
+    listeners.get("message")?.({
+      source: parent,
+      data: { source: "derive-host", type: "shared-ready" },
+    })
+    expect(sent).toEqual([{ source: "derive", type: "runtime-ready" }])
+  })
+
+  it("does not attribute platform script failures to the artifact author", () => {
+    type BrowserListener = (event: Record<string, unknown>) => void
+    const sent: RuntimeMessage[] = []
+    const listeners = new Map<string, BrowserListener>()
+    const parent = { postMessage: (message: RuntimeMessage) => sent.push(message) }
+    const frame = {
+      derive: undefined as DeriveRuntime | undefined,
+      document: { body: null },
+      addEventListener: (type: string, listener: BrowserListener) => listeners.set(type, listener),
+      dispatchEvent: () => true,
+    }
+    const CustomEventStub = class {
+      constructor(
+        readonly type: string,
+        readonly init?: unknown,
+      ) {}
+    }
+    const load = Function("window", "parent", "CustomEvent", SHARED_STATE_CLIENT_JS) as (
+      frame: typeof frame,
+      parent: typeof parent,
+      event: typeof CustomEventStub,
+    ) => void
+    load(frame, parent, CustomEventStub)
+
+    for (const src of [
+      "https://raw.derive.page/raw/derive-client.js",
+      "https://static.cloudflareinsights.com/beacon.min.js/v-test",
+    ]) {
+      listeners.get("error")?.({
+        error: null,
+        message: "Failed to load platform script",
+        target: { tagName: "SCRIPT", src },
+        filename: src,
+      })
+      listeners.get("error")?.({
+        error: { message: "Platform script threw" },
+        message: "Platform script threw",
+        target: frame,
+        filename: src,
+      })
+    }
+    listeners.get("message")?.({
+      source: parent,
+      data: { source: "derive-host", type: "shared-ready" },
+    })
+    expect(sent).toEqual([])
+  })
+
   it("excludes hidden markers, hidden rich nodes, and source text from readiness", () => {
     type BrowserListener = (event: Record<string, unknown>) => void
     const sent: RuntimeMessage[] = []

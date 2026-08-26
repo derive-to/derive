@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'unsafe-inline' https://unpkg.com; style-src 'unsafe-inline'; frame-src 'self'; object-src 'none'; base-uri 'none'"
+    />
+    <title>Visualization shell with authored CSP</title>
+    <style>
+      html,
+      body,
+      iframe {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        border: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <iframe
+      sandbox="allow-scripts"
+      title="Generated visualization"
+      srcdoc="&lt;!doctype html&gt;&lt;html&gt;&lt;body&gt;&lt;h1&gt;Generated visualization remains visible&lt;/h1&gt;&lt;/body&gt;&lt;/html&gt;"
+    ></iframe>
+  </body>
+</html>

@@ -435,8 +435,10 @@ export function mentionText(html: string): string {
 // scripts/build-anchor-client.mjs; CI keeps the generated file in sync (check-anchor-client).
 export { ANCHOR_CLIENT_JS } from "./anchor-client.gen"
 
-/** The tag appended to served artifact HTML; resolves on any host. */
-export const SELECTION_SCRIPT = `<script src="/raw/derive-client.js"></script>`
+/** The DOM-dependent artifact client. Full HTML artifacts inject this at the start of
+ * the document so an authored meta CSP cannot block Derive's own runtime; `defer` keeps
+ * execution after parsing. Generated markdown can safely leave the same tag in <body>. */
+export const SELECTION_SCRIPT = `<script defer src="/raw/derive-client.js"></script>`
 
 /**
  * Page content for anchor resolution. A bare string treats it as BOTH the markup

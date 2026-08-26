@@ -40,7 +40,7 @@ const expectSandbox = (res: Response, cache: string = IMMUTABLE) => {
   expect(res.headers.get("cache-control")).toBe(cache)
 }
 
-const SCRIPT = "/raw/derive-client.js" // the appended anchor client (SELECTION_SCRIPT)
+const SCRIPT = "/raw/derive-client.js"
 const SHARED = "/raw/derive-shared.js"
 
 describe("serveContent — single-file artifacts", () => {
@@ -58,11 +58,31 @@ describe("serveContent — single-file artifacts", () => {
     const body = await res.text()
     expect(body).toContain("<h1>Hi</h1>")
     expect(body).toContain(SCRIPT)
-    // The shared-state API is available before any artifact-authored script runs;
-    // the DOM-dependent anchor client deliberately remains appended at the end.
+    // Both platform runtimes are available even when an authored meta CSP follows.
+    // The DOM-dependent client is deferred until parsing completes.
     expect(body).toContain(SHARED)
     expect(body.indexOf(SHARED)).toBeLessThan(body.indexOf("<h1>Hi</h1>"))
+    expect(body.indexOf(SCRIPT)).toBeLessThan(body.indexOf("<h1>Hi</h1>"))
+    expect(body).toContain('<script defer src="/raw/derive-client.js"></script>')
     expectSandbox(res)
+  })
+
+  it("loads Derive's runtimes before an authored meta CSP", async () => {
+    const authoredCsp = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src https://unpkg.com">`
+    const res = await serveContent(
+      ctx(),
+      blobStore({
+        k: `<!doctype html><html><head>${authoredCsp}</head><body><h1>Visible</h1></body></html>`,
+      }),
+      { blob_key: "k", content_type: "text/html" },
+      "CSP document",
+      "/",
+      "",
+    )
+    const body = await res.text()
+    expect(body.indexOf("charset=utf-8")).toBeLessThan(body.indexOf(SHARED))
+    expect(body.indexOf(SHARED)).toBeLessThan(body.indexOf(authoredCsp))
+    expect(body.indexOf(SCRIPT)).toBeLessThan(body.indexOf(authoredCsp))
   })
 
   it("renders markdown to HTML", async () => {
@@ -78,6 +98,7 @@ describe("serveContent — single-file artifacts", () => {
     const body = await res.text()
     expect(body).toContain("<h1")
     expect(body).toContain(SCRIPT)
+    expect(body.match(/\/raw\/derive-client\.js/g)).toHaveLength(1)
     expect(body).toContain(SHARED)
   })
 

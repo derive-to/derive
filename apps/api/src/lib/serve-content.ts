@@ -1,6 +1,7 @@
 import {
   type BlobStore,
   type BundleManifest,
+  injectArtifactRuntimeScripts,
   injectSharedStateScript,
   isBundleContentType,
   looksLikeHtmlDocument,
@@ -10,6 +11,7 @@ import {
   reflowHtml,
   renderMarkdown,
   SELECTION_SCRIPT,
+  SHARED_STATE_SCRIPT,
 } from "@derive/core"
 import type { Context } from "hono"
 import { IMMUTABLE_CACHE, RAW_HEADERS, rewriteAbsoluteUrls, toBody } from "./http"
@@ -43,7 +45,7 @@ export const serveContent = async (
    *  serve the document exactly as authored. Never applied to markdown-rendered output,
    *  which is already responsive. */
   reflow = true,
-  /** Append the anchor client (selection → comment, hover chips, live cursors).
+  /** Inject the anchor client (selection → comment, hover chips, live cursors).
    *  It only functions embedded in the app viewer — it talks to the host via
    *  parent.postMessage — so standalone serving (vanity/draft hosts, which are
    *  never iframed by the app) passes false: on a top-level page the client's
@@ -65,11 +67,16 @@ export const serveContent = async (
   // other read.
   const wantsMarks = ["1", "true"].includes(c.req.query("marks") ?? "")
   const marks = wantsMarks ? MARKS_SCRIPT : ""
-  const anchorClient = anchors ? SELECTION_SCRIPT : ""
+  const withRuntime = anchors
+    ? (doc: string) => injectArtifactRuntimeScripts(doc, SHARED_STATE_SCRIPT + SELECTION_SCRIPT)
+    : (doc: string) => doc
+  // renderMarkdown already carries SELECTION_SCRIPT in its generated shell, so it
+  // needs only the early shared-state runtime. Injecting the full pair would execute
+  // the anchor client twice.
   const withSharedState = anchors ? injectSharedStateScript : (doc: string) => doc
-  // Produce the final HTML body for a document: auto-reflow, then append the anchor
-  // client (for comment anchoring + live cursors) and, when asked, the marks overlay.
-  const htmlBody = (doc: string): string => withSharedState(rf(doc)) + anchorClient + marks + append
+  // Runtime scripts precede authored meta CSP and execute in parse-safe order. Marks and
+  // route-specific chrome remain appended because they are optional DOM enhancements.
+  const htmlBody = (doc: string): string => withRuntime(rf(doc)) + marks + append
   let path = rawPath
   if (isBundleContentType(content.content_type)) {
     const manifestBytes = await blobs.get(content.blob_key)
@@ -91,7 +98,7 @@ export const serveContent = async (
       const rewritten = rewriteAbsoluteUrls(new TextDecoder().decode(data), prefix.slice(0, -1))
       // Bundle pages get the anchor client too — comments stick everywhere.
       const out = entry.type.startsWith("text/html")
-        ? withSharedState(rf(rewritten)) + anchorClient + marks + append
+        ? withRuntime(rf(rewritten)) + marks + append
         : rewritten
       return c.body(out, 200, { ...headers, "Content-Type": entry.type })
     }
