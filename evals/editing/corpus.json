@@ -248,6 +248,146 @@
       "cadence": "regression"
     },
     {
+      "id": "MD-021",
+      "lane": "core",
+      "surface": "markdown",
+      "risk": "P1",
+      "oracle": "exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "fenced code nested in blockquotes and lists maps to authored source",
+      "cadence": "regression"
+    },
+    {
+      "id": "MD-022",
+      "lane": "core",
+      "surface": "markdown",
+      "risk": "P1",
+      "oracle": "exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "significant inline-code whitespace maps as a whole payload",
+      "cadence": "regression"
+    },
+    {
+      "id": "MD-023",
+      "lane": "core",
+      "surface": "markdown",
+      "risk": "P0",
+      "oracle": "exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "fenced code body lookup cannot target an identical info string",
+      "cadence": "regression"
+    },
+    {
+      "id": "MD-024",
+      "lane": "core",
+      "surface": "markdown",
+      "risk": "P1",
+      "oracle": "exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "multi-line prefixed fenced code preserves rendered newline mapping",
+      "cadence": "regression"
+    },
+    {
+      "id": "MD-025",
+      "lane": "core",
+      "surface": "markdown",
+      "risk": "P1",
+      "oracle": "exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "blockquote-list-blockquote nested inline text remains addressable",
+      "cadence": "regression"
+    },
+    {
+      "id": "MD-026",
+      "lane": "core",
+      "surface": "markdown",
+      "risk": "P1",
+      "oracle": "exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "arbitrary supported blockquote and list recursion remains addressable",
+      "cadence": "regression"
+    },
+    {
+      "id": "MD-027",
+      "lane": "core",
+      "surface": "markdown",
+      "risk": "P1",
+      "oracle": "exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "every list sibling inside a blockquote receives a source map",
+      "cadence": "regression"
+    },
+    {
+      "id": "MD-028",
+      "lane": "core",
+      "surface": "markdown",
+      "risk": "P1",
+      "oracle": "exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "later fenced-code siblings inside a blockquote remain editable",
+      "cadence": "regression"
+    },
+    {
+      "id": "MD-029",
+      "lane": "core",
+      "surface": "markdown",
+      "risk": "P1",
+      "oracle": "exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "formatted leaves survive four alternating container levels",
+      "cadence": "regression"
+    },
+    {
+      "id": "MD-030",
+      "lane": "core",
+      "surface": "markdown",
+      "risk": "P2",
+      "oracle": "bounded-runtime-and-exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "ten thousand list siblings inside a blockquote remain near-linear and editable",
+      "cadence": "extended"
+    },
+    {
+      "id": "MD-031",
+      "lane": "core",
+      "surface": "markdown",
+      "risk": "P1",
+      "oracle": "rendered-newline-and-exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "CRLF line endings inside prefixed code fences map through normalized rendered newlines",
+      "cadence": "regression"
+    },
+    {
+      "id": "MD-032",
+      "lane": "core",
+      "surface": "markdown",
+      "risk": "P1",
+      "oracle": "rendered-newline-and-exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "multiline list continuation text remains one editable block across prefixed newlines",
+      "cadence": "regression"
+    },
+    {
+      "id": "MD-033",
+      "lane": "core",
+      "surface": "markdown",
+      "risk": "P1",
+      "oracle": "exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "later paragraph siblings inside a list item receive independent source maps",
+      "cadence": "regression"
+    },
+    {
+      "id": "MD-034",
+      "lane": "core",
+      "surface": "markdown",
+      "risk": "P1",
+      "oracle": "exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "fenced-code siblings after list-item prose receive independent source maps",
+      "cadence": "regression"
+    },
+    {
       "id": "HTML-001",
       "lane": "core",
       "surface": "html",
@@ -388,6 +528,196 @@
       "cadence": "regression"
     },
     {
+      "id": "HTML-015",
+      "lane": "core",
+      "surface": "html",
+      "risk": "P0",
+      "oracle": "safe-refusal",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "plain-text replacement cannot delete authored links or metadata",
+      "cadence": "regression"
+    },
+    {
+      "id": "HTML-016",
+      "lane": "core",
+      "surface": "html",
+      "risk": "P0",
+      "oracle": "projection-and-exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "nested templates hidden attributes and legacy comments match browser visibility",
+      "cadence": "regression"
+    },
+    {
+      "id": "HTML-017",
+      "lane": "core",
+      "surface": "html",
+      "risk": "P1",
+      "oracle": "exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "sanitized links preserve entity-backed query separators",
+      "cadence": "regression"
+    },
+    {
+      "id": "HTML-018",
+      "lane": "core",
+      "surface": "html",
+      "risk": "P0",
+      "oracle": "safe-refusal",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "unterminated quoted attributes never project source bytes as visible text",
+      "cadence": "regression"
+    },
+    {
+      "id": "HTML-019",
+      "lane": "core",
+      "surface": "html",
+      "risk": "P1",
+      "oracle": "exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "boolean-hidden void elements do not hide following prose",
+      "cadence": "regression"
+    },
+    {
+      "id": "HTML-020",
+      "lane": "core",
+      "surface": "html",
+      "risk": "P1",
+      "oracle": "safe-sanitization",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "protocol-relative external links cannot bypass the inline URL policy",
+      "cadence": "regression"
+    },
+    {
+      "id": "HTML-021",
+      "lane": "core",
+      "surface": "html",
+      "risk": "P1",
+      "oracle": "browser-parity-and-exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "implicit head closure leaves following body content editable",
+      "cadence": "regression"
+    },
+    {
+      "id": "HTML-022",
+      "lane": "core",
+      "surface": "html",
+      "risk": "P1",
+      "oracle": "browser-parity-and-exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "omitted list-item ends do not let hidden items swallow visible siblings",
+      "cadence": "regression"
+    },
+    {
+      "id": "HTML-023",
+      "lane": "core",
+      "surface": "html",
+      "risk": "P1",
+      "oracle": "browser-parity-and-exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "omitted table-row ends do not let hidden rows swallow visible siblings",
+      "cadence": "regression"
+    },
+    {
+      "id": "HTML-024",
+      "lane": "core",
+      "surface": "html",
+      "risk": "P1",
+      "oracle": "browser-parity-and-exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "omitted hidden colgroup ends before visible table body content",
+      "cadence": "regression"
+    },
+    {
+      "id": "HTML-025",
+      "lane": "core",
+      "surface": "html",
+      "risk": "P1",
+      "oracle": "browser-parity-and-exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "hidden thead closes at the table end so following prose stays editable",
+      "cadence": "regression"
+    },
+    {
+      "id": "HTML-026",
+      "lane": "core",
+      "surface": "html",
+      "risk": "P1",
+      "oracle": "browser-parity-and-safe-refusal",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "SVG and MathML integration-point descendants use HTML self-closing semantics",
+      "cadence": "regression"
+    },
+    {
+      "id": "HTML-027",
+      "lane": "core",
+      "surface": "html",
+      "risk": "P1",
+      "oracle": "browser-parity-and-safe-refusal",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "SVG description or metadata and MathML annotations stay outside editable text",
+      "cadence": "regression"
+    },
+    {
+      "id": "HTML-028",
+      "lane": "core",
+      "surface": "html",
+      "risk": "P1",
+      "oracle": "browser-parity-and-exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "nested list scope does not prevent an outer hidden item's optional end",
+      "cadence": "regression"
+    },
+    {
+      "id": "HTML-029",
+      "lane": "core",
+      "surface": "html",
+      "risk": "P1",
+      "oracle": "browser-parity-and-safe-refusal",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "unclosed foreign metadata ends when an authored ancestor close repairs the tree",
+      "cadence": "regression"
+    },
+    {
+      "id": "HTML-030",
+      "lane": "core",
+      "surface": "html",
+      "risk": "P1",
+      "oracle": "browser-parity-and-exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "apparent tags inside XMP raw text remain literal editable text",
+      "cadence": "regression"
+    },
+    {
+      "id": "HTML-031",
+      "lane": "core",
+      "surface": "html",
+      "risk": "P1",
+      "oracle": "browser-parity-and-exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "listing descendants parse as ordinary markup in modern browsers",
+      "cadence": "regression"
+    },
+    {
+      "id": "HTML-032",
+      "lane": "core",
+      "surface": "html",
+      "risk": "P1",
+      "oracle": "browser-parity-and-safe-refusal",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "textarea control values stay outside page-text editing",
+      "cadence": "regression"
+    },
+    {
+      "id": "HTML-033",
+      "lane": "core",
+      "surface": "html",
+      "risk": "P1",
+      "oracle": "browser-parity-and-exact-source",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "adjacent inline elements project a zero-width browser text seam",
+      "cadence": "regression"
+    },
+    {
       "id": "DECK-001",
       "lane": "core",
       "surface": "deck",
@@ -475,6 +805,136 @@
       "oracle": "safe-refusal",
       "source": "packages/core/test/editing-eval.test.ts",
       "covers": "duplicate identity attributes on one slide refuse",
+      "cadence": "regression"
+    },
+    {
+      "id": "DECK-010",
+      "lane": "core",
+      "surface": "deck",
+      "risk": "P0",
+      "oracle": "classifier-slicer-parity",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "quoted greater-than attributes do not split slide tags",
+      "cadence": "regression"
+    },
+    {
+      "id": "DECK-011",
+      "lane": "core",
+      "surface": "deck",
+      "risk": "P1",
+      "oracle": "safe-classification",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "ambiguous duplicate slide identity cannot enable deck structural editing",
+      "cadence": "regression"
+    },
+    {
+      "id": "DECK-012",
+      "lane": "core",
+      "surface": "deck",
+      "risk": "P1",
+      "oracle": "classifier-slicer-parity",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "comment-like JavaScript cannot hide a valid deck protocol marker",
+      "cadence": "regression"
+    },
+    {
+      "id": "DECK-013",
+      "lane": "core",
+      "surface": "deck",
+      "risk": "P2",
+      "oracle": "safe-classification",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "unannounced-deck advice refuses structurally ambiguous slides",
+      "cadence": "regression"
+    },
+    {
+      "id": "DECK-014",
+      "lane": "core",
+      "surface": "deck",
+      "risk": "P1",
+      "oracle": "classifier-slicer-parity",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "comment-like quoted attributes cannot hide a valid protocol marker",
+      "cadence": "regression"
+    },
+    {
+      "id": "DECK-015",
+      "lane": "core",
+      "surface": "deck",
+      "risk": "P1",
+      "oracle": "browser-parity-and-safe-classification",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "non-void self-closing slide syntax cannot masquerade as valid structure",
+      "cadence": "regression"
+    },
+    {
+      "id": "DECK-016",
+      "lane": "core",
+      "surface": "deck",
+      "risk": "P1",
+      "oracle": "unique-identity-and-reference-integrity",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "duplicated slides rewrite nested DOM ids and ARIA or SVG references",
+      "cadence": "regression"
+    },
+    {
+      "id": "DECK-017",
+      "lane": "core",
+      "surface": "deck",
+      "risk": "P1",
+      "oracle": "browser-parity-and-safe-classification",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "self-closing slide syntax inside SVG HTML integration points cannot masquerade as valid structure",
+      "cadence": "regression"
+    },
+    {
+      "id": "DECK-018",
+      "lane": "core",
+      "surface": "deck",
+      "risk": "P1",
+      "oracle": "unique-identity-and-reference-integrity",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "duplicated slides rewrite standard HTML IDREFs and quoted CSS fragment URLs",
+      "cadence": "regression"
+    },
+    {
+      "id": "DECK-019",
+      "lane": "core",
+      "surface": "deck",
+      "risk": "P1",
+      "oracle": "unique-identity-and-reference-integrity",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "duplicated slides rewrite SVG animation timing references",
+      "cadence": "regression"
+    },
+    {
+      "id": "DECK-020",
+      "lane": "core",
+      "surface": "deck",
+      "risk": "P2",
+      "oracle": "unique-identity-and-reference-integrity",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "duplicated slides preserve CSS escapes while rewriting fragment ids",
+      "cadence": "regression"
+    },
+    {
+      "id": "DECK-021",
+      "lane": "core",
+      "surface": "deck",
+      "risk": "P2",
+      "oracle": "safe-refusal",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "structural editing refuses pre-existing document-wide duplicate DOM ids",
+      "cadence": "regression"
+    },
+    {
+      "id": "DECK-022",
+      "lane": "core",
+      "surface": "deck",
+      "risk": "P2",
+      "oracle": "unique-identity-and-reference-integrity",
+      "source": "packages/core/test/editing-eval.test.ts",
+      "covers": "duplicated slides rewrite entity-encoded CSS fragment ids",
       "cadence": "regression"
     },
     {
@@ -675,6 +1135,26 @@
       "oracle": "status-version-source",
       "source": "apps/web/e2e/deep/editing.deep.spec.ts",
       "covers": "real versions route duplicates slides and refuses no-op publication",
+      "cadence": "regression"
+    },
+    {
+      "id": "BROWSER-VIDEO-001",
+      "lane": "browser",
+      "surface": "video",
+      "risk": "P0",
+      "oracle": "active-identity-and-stored-order",
+      "source": "apps/web/e2e/deep/editing.deep.spec.ts",
+      "covers": "moving a video scene preserves the active scene by stable identity",
+      "cadence": "regression"
+    },
+    {
+      "id": "BROWSER-VIDEO-002",
+      "lane": "browser",
+      "surface": "video",
+      "risk": "P1",
+      "oracle": "active-identity-and-atomic-discard",
+      "source": "apps/web/e2e/deep/editing.deep.spec.ts",
+      "covers": "undo and discard restore a deleted active scene and its stable identity",
       "cadence": "regression"
     },
     {

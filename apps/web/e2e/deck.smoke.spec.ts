@@ -71,7 +71,7 @@ test.describe("deck", () => {
   }) => {
     const shortId = await seedDeck(page)
     await expect(page.getByTestId("artifact-edit-menu")).toHaveCount(0)
-    await expect(page.getByTestId("artifact-inline-edit")).toHaveCount(0)
+    await expect(page.getByTestId("artifact-inline-edit")).toBeVisible()
     await page.getByTestId("deck-arrange").click()
     await expect(page.getByTestId("deck-organizer")).toBeVisible()
     await expect(page.getByTestId("deck-slide-card-1")).toContainText("New deck")
@@ -378,8 +378,9 @@ test.describe("deck", () => {
   test("deck edit and rearrange are direct actions in the deck bar", async ({ owner }) => {
     await seedDeck(owner)
 
-    // A deck has no second authoring entrance in the artifact header.
-    await expect(owner.getByTestId("artifact-inline-edit")).toHaveCount(0)
+    // The shared artifact Edit affordance and the deck bar's contextual actions
+    // intentionally coexist; both enter the same source-backed edit session.
+    await expect(owner.getByTestId("artifact-inline-edit")).toBeVisible()
     await expect(owner.getByTestId("artifact-edit-menu")).toHaveCount(0)
     await expect(owner.getByTestId("deck-edit")).toBeVisible()
     await expect(owner.getByTestId("deck-arrange")).toBeVisible()

@@ -2138,9 +2138,10 @@ export const artifactRoutes = (ctx: AppContext) => {
   )
 
   // Move to a different workspace you belong to. Owner-only (the `manage` gate —
-  // same as delete). No role requirement on the destination: you can move into a
-  // workspace where you're just a viewer/editor. A future org-level "block
-  // cross-workspace moves" policy is a single guard here, not a new subsystem.
+  // same as delete). A linked bundle is one user-visible artifact even though its
+  // members are independently stored artifacts, so moving its shell recursively
+  // carries every member that still lives beside it. Cross-workspace refs remain
+  // refs: they were already intentionally external to the bundle's workspace.
   app.openapi(
     createRoute({
       method: "post",
@@ -2161,31 +2162,79 @@ export const artifactRoutes = (ctx: AppContext) => {
       const b = await readJson(c, z.object({ targetOrgId: z.string().min(1) }))
       if (b instanceof Response) return bail(b)
       if (b.targetOrgId === artifact.org_id) return bail(fail(c, 400, "already in that workspace"))
-      const me = await currentUser(c)
+      // Resolve the human behind either a browser session or an owner-scoped API
+      // capability. `actingUser` would return the OAuth client id for the latter,
+      // which is not the id stored in workspace memberships.
+      const me = await actingHuman(c)
       if (!me) return bail(fail(c, 401, "unauthenticated"))
       if (!(await meta.getMembership(b.targetOrgId, me.id)))
         return bail(fail(c, 403, "you're not a member of that workspace"))
-      // A bound custom domain routes by artifact_id; moving orgs out from under it
-      // would silently break live traffic, so refuse rather than cascade.
-      if ((await meta.getArtifactDomains(artifact.id)).length > 0)
-        return bail(fail(c, 409, "remove the custom domain before moving this artifact"))
-      await meta.moveArtifactOrg(artifact.id, b.targetOrgId)
+
+      // DFS post-order gives us leaves before their bundle shells. Mark a node as
+      // seen before following its refs so authored cycles cannot recurse forever;
+      // the same set also collapses members linked from more than one parent.
+      const sourceOrgId = artifact.org_id
+      const seen = new Set<string>()
+      const moving: ArtifactRecord[] = []
+      const collect = async (candidate: ArtifactRecord): Promise<void> => {
+        if (seen.has(candidate.id)) return
+        seen.add(candidate.id)
+        if (candidate.current_content_type === LINKED_BUNDLE_CONTENT_TYPE) {
+          const facts = parseLinkedWorkflowFacts(
+            await meta.getVersionData(candidate.id, candidate.current_version),
+          )
+          if (facts.manifest) {
+            const members = await meta.getByShortIds(
+              facts.manifest.members.map((member) => member.ref),
+            )
+            for (const member of members)
+              if (!member.removed_at && member.org_id === sourceOrgId) await collect(member)
+          }
+        }
+        moving.push(candidate)
+      }
+      await collect(artifact)
+
+      // Preflight the complete graph before changing any row. Moving a shell but
+      // refusing one of its children recreates the exact orphaning this cascade is
+      // designed to prevent.
+      for (const candidate of moving) {
+        if (!(await authorize(c, "manage", candidate)))
+          return bail(fail(c, 403, `you can't move linked artifact ${candidate.short_id}`))
+        // A bound custom domain routes by artifact_id; moving orgs out from under it
+        // would silently break live traffic, so refuse the whole graph.
+        if ((await meta.getArtifactDomains(candidate.id)).length > 0)
+          return bail(
+            fail(
+              c,
+              409,
+              `remove the custom domain before moving linked artifact ${candidate.short_id}`,
+            ),
+          )
+      }
+
+      for (const candidate of moving) await meta.moveArtifactOrg(candidate.id, b.targetOrgId)
       // moveArtifactOrg re-scopes the FTS row in the DB; the dense vector lives outside it, so
       // re-embed under the new org here — otherwise it keeps its old org_id metadata and vanishes
       // from the new workspace's semantic search until the next publish. Best-effort.
       if (search) {
-        try {
-          const v = await meta.getVersion(artifact.id, artifact.current_version)
-          if (v)
-            await indexArtifactVersion(
-              meta,
-              blobs,
-              { ...artifact, org_id: b.targetOrgId },
-              v,
-              search,
-            )
-        } catch (err) {
-          log.error("dense re-index after move failed", { artifact: artifact.id, err: String(err) })
+        for (const candidate of moving) {
+          try {
+            const v = await meta.getVersion(candidate.id, candidate.current_version)
+            if (v)
+              await indexArtifactVersion(
+                meta,
+                blobs,
+                { ...candidate, org_id: b.targetOrgId },
+                v,
+                search,
+              )
+          } catch (err) {
+            log.error("dense re-index after move failed", {
+              artifact: candidate.id,
+              err: String(err),
+            })
+          }
         }
       }
       return c.json({ org_id: b.targetOrgId })

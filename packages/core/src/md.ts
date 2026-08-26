@@ -99,20 +99,25 @@ const inlineSanitizer = new FilterXSS({
   onTagAttr: (tag, name, value) => {
     if (tag !== "a" || name !== "href") return ""
     const v = value.trim()
+    const decoded = decodeEntities(v)
     // Browsers remove ASCII tabs/newlines while parsing URLs, so inspect a more
     // conservative normalized spelling. Otherwise `java&#9;script:` passes this
     // check and becomes `javascript:` when the document is opened.
-    const schemeInput = [...decodeEntities(v)]
+    const schemeInput = [...decoded]
       .filter((char) => {
         const code = char.charCodeAt(0)
         return code > 0x20 && code !== 0x7f
       })
       .join("")
-    // Relative and in-page links are fine; an absolute one must be a scheme a
-    // reader can follow, spelled out rather than pattern-matched.
+    // Network-path references are external URLs, not relative paths: `//host`
+    // (and browser-normalized backslash variants) inherit the page's scheme while
+    // switching origin, so they must not bypass the explicit scheme allowlist.
+    if (/^[\\/]{2}/.test(schemeInput)) return ""
+    // An absolute link must use a scheme a reader can follow, spelled out rather
+    // than pattern-matched.
     const scheme = /^[a-z][a-z0-9+.-]*:/i.exec(schemeInput)?.[0]?.toLowerCase()
     if (scheme && scheme !== "http:" && scheme !== "https:" && scheme !== "mailto:") return ""
-    return `href="${escapeHtml(v)}"`
+    return `href="${escapeHtml(decoded)}"`
   },
 })
 export const sanitizeInline = (html: string): string => inlineSanitizer.process(html)

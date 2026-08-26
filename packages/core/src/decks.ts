@@ -21,21 +21,48 @@ import { attrValue, attrValues, classTokens, elementEnd, type HtmlTag, tags } fr
  *  UNTERMINATED comment left the rest of the document visible to the regex, while a
  *  browser treats everything after it as commented out, so markup a reader never sees
  *  could still be counted as slides. */
-const withoutComments = (html: string): string => {
+const withoutCommentsInText = (html: string): string => {
   let out = ""
   let i = 0
   for (;;) {
     const start = html.indexOf("<!--", i)
     if (start === -1) return out + html.slice(i)
     out += html.slice(i, start)
-    const end = html.indexOf("-->", start + 4)
+    const ordinary = html.indexOf("-->", start + 4)
+    const legacy = html.indexOf("--!>", start + 4)
+    const end = ordinary < 0 ? legacy : legacy < 0 ? ordinary : Math.min(ordinary, legacy)
     if (end === -1) return out // unterminated: the rest of the document is inside it
-    i = end + 3
+    i = end + (html.startsWith("--!>", end) ? 4 : 3)
   }
 }
 
-/** A container tag that MIGHT be a slide — the cheap linear scan; `isSlideAttrs` decides. */
-const SLIDE_CANDIDATE = /<(?:section|div|article|li)\b([^>]*)>/gi
+/** Remove real HTML comments while preserving parsed tags and raw script/style
+ *  elements verbatim. In raw text and quoted attributes, `<!--` is data rather
+ *  than an HTML comment opener; treating it as one can hide a valid protocol post. */
+const withoutComments = (html: string): string => {
+  const all = tags(html)
+  const protectedRanges: { start: number; end: number }[] = all.map((tag) => ({
+    start: tag.start,
+    end: tag.end,
+  }))
+  for (let i = 0; i < all.length; i++) {
+    const open = all[i]
+    if (!open || open.closing || (open.name !== "script" && open.name !== "style")) continue
+    const end = elementEnd(all, i)
+    protectedRanges.push({ start: open.start, end: end < 0 ? html.length : end })
+  }
+  if (!protectedRanges.length) return withoutCommentsInText(html)
+  protectedRanges.sort((a, b) => a.start - b.start || b.end - a.end)
+  let out = ""
+  let cursor = 0
+  for (const range of protectedRanges) {
+    if (range.start < cursor) continue
+    out += withoutCommentsInText(html.slice(cursor, range.start))
+    out += html.slice(range.start, range.end)
+    cursor = range.end
+  }
+  return out + withoutCommentsInText(html.slice(cursor))
+}
 
 /** Is this opening tag a slide? It carries the stable `data-derive-slide` index, or `slide`
  *  as a WHOLE class token.
@@ -51,9 +78,9 @@ export const isSlideAttrs = (attrs: string): boolean =>
 
 /** How many slide elements this HTML actually contains. */
 export const countSlideElements = (html: string): number => {
-  const src = withoutComments(html)
   let n = 0
-  for (const m of src.matchAll(SLIDE_CANDIDATE)) if (isSlideAttrs(m[1] ?? "")) n++
+  for (const tag of tags(html))
+    if (!tag.closing && SLIDE_TAGS.has(tag.name) && isSlideAttrs(tag.attrs)) n++
   return n
 }
 
@@ -69,8 +96,17 @@ const DECK_MIN_SLIDES = 2
 /** A deck: it announces itself AND has slides to announce. Both halves are required —
  *  the protocol name alone appears in any document about decks (this file included), and
  *  slides alone are just sections. */
-export const isDeckDocument = (html: string): boolean =>
-  speaksDeckProtocol(html) && countSlideElements(html) >= DECK_MIN_SLIDES
+export const isDeckDocument = (html: string): boolean => {
+  if (!speaksDeckProtocol(html) || countSlideElements(html) < DECK_MIN_SLIDES) return false
+  // Classification enables structural editing in the UI, so it must not advertise
+  // a deck whose slide structure the organizer will immediately refuse. Keep this
+  // predicate non-throwing because it also runs while sniffing arbitrary uploads.
+  try {
+    return sliceSlides(html).length >= DECK_MIN_SLIDES
+  } catch {
+    return false
+  }
+}
 
 /** Slides built without the protocol: the page paginates itself and silently forfeits the
  *  deck bar, Present mode, and slide-pinned comments. Three, so an ordinary page with a
@@ -78,8 +114,14 @@ export const isDeckDocument = (html: string): boolean =>
 const ADVISE_MIN_SLIDES = 3
 
 /** True when a page is plainly a deck attempt that never announced itself. */
-export const isUnannouncedDeck = (html: string): boolean =>
-  !speaksDeckProtocol(html) && countSlideElements(html) >= ADVISE_MIN_SLIDES
+export const isUnannouncedDeck = (html: string): boolean => {
+  if (speaksDeckProtocol(html) || countSlideElements(html) < ADVISE_MIN_SLIDES) return false
+  try {
+    return sliceSlides(html).length >= ADVISE_MIN_SLIDES
+  } catch {
+    return false
+  }
+}
 
 // ── Structural slide operations ────────────────────────────────────────────────
 //
@@ -206,12 +248,119 @@ const withId = (text: string, id: number): string => {
 const inactiveClasses = (classes: string[]): string[] =>
   classes.filter((name) => !["on", "active", "is-active", "current"].includes(name.toLowerCase()))
 
+const IDREF_LIST_ATTRS = new Set([
+  "aria-controls",
+  "aria-describedby",
+  "aria-details",
+  "aria-errormessage",
+  "aria-flowto",
+  "aria-labelledby",
+  "aria-owns",
+  "headers",
+  "itemref",
+])
+const IDREF_ATTRS = new Set(["aria-activedescendant", "contextmenu", "for", "form", "list"])
+const FRAGMENT_ATTRS = new Set(["href", "usemap", "xlink:href"])
+const SVG_TIMING_ATTRS = new Set(["begin", "end"])
+
+const cssUnescapeIdentifier = (value: string): string =>
+  value.replace(
+    /\\(?:([0-9a-f]{1,6})(?:\r\n|[ \n\r\t\f])?|(\r\n|[\n\r\f])|(.))/gis,
+    (_whole, hex: string | undefined, newline: string | undefined, escaped: string | undefined) => {
+      if (hex) {
+        const cp = Number.parseInt(hex, 16)
+        return cp === 0 || cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff)
+          ? "�"
+          : String.fromCodePoint(cp)
+      }
+      return newline ? "" : (escaped ?? "")
+    },
+  )
+
+const domIds = (html: string): string[] =>
+  tags(html).flatMap((tag) => (tag.closing ? [] : attrValues(tag.attrs, "id")))
+
+/** A duplicated slide is a new DOM subtree, so authored IDs inside it must also be
+ *  new. Rewrite the IDREF attributes browsers and assistive technology resolve,
+ *  plus fragment/url references used by SVG. Attribute spelling and quote style
+ *  stay unchanged; only values that point at an ID from this slide move. */
+const rewriteCopiedDomIds = (html: string, slideId: number, used: Set<string>): string => {
+  const originals = domIds(html)
+  if (new Set(originals).size !== originals.length)
+    throw new EditError(
+      "This slide repeats a DOM id inside itself, so duplicating it would leave ambiguous references. Give its elements unique ids first.",
+    )
+  const rewritten = new Map<string, string>()
+  for (const original of originals) {
+    let candidate = `${original}--derive-copy-${slideId}`
+    let n = 2
+    while (used.has(candidate)) candidate = `${original}--derive-copy-${slideId}-${n++}`
+    rewritten.set(original, candidate)
+    used.add(candidate)
+  }
+  if (!rewritten.size) return html
+
+  const rewriteValue = (name: string, value: string): string => {
+    const lower = name.toLowerCase()
+    if (lower === "id") return rewritten.get(value) ?? value
+    if (IDREF_ATTRS.has(lower)) return rewritten.get(value) ?? value
+    if (IDREF_LIST_ATTRS.has(lower))
+      return value.replace(/\S+/g, (token) => rewritten.get(token) ?? token)
+    if (FRAGMENT_ATTRS.has(lower) && value.startsWith("#"))
+      return `#${rewritten.get(value.slice(1)) ?? value.slice(1)}`
+    if (SVG_TIMING_ATTRS.has(lower)) {
+      let nextValue = value
+      for (const [original, next] of rewritten) {
+        const escaped = original.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+        nextValue = nextValue.replace(
+          new RegExp(`(^|;)(\\s*)${escaped}(?=\\.)`, "g"),
+          (_whole, boundary: string, space: string) => `${boundary}${space}${next}`,
+        )
+      }
+      return nextValue
+    }
+    return value.replace(
+      /url\(\s*((?:["'])|(?:&(?:quot|apos|#(?:34|39)|#x(?:22|27));))?#([^\s)"']+?)\1\s*\)/gi,
+      (whole, _quote, ref: string) => {
+        const decoded = cssUnescapeIdentifier(ref)
+        const next = rewritten.get(decoded)
+        const encoded = next?.startsWith(decoded) ? ref + next.slice(decoded.length) : next
+        return encoded ? whole.replace(`#${ref}`, `#${encoded}`) : whole
+      },
+    )
+  }
+
+  const attr = /([^\s"'<>/=]+)(\s*=\s*)(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/g
+  let out = ""
+  let cursor = 0
+  for (const tag of tags(html)) {
+    if (tag.closing) continue
+    out += html.slice(cursor, tag.start)
+    const raw = html
+      .slice(tag.start, tag.end)
+      .replace(
+        attr,
+        (whole, name: string, equals: string, double: string, single: string, bare: string) => {
+          const value = double ?? single ?? bare ?? ""
+          const next = rewriteValue(name, value)
+          if (next === value) return whole
+          if (double !== undefined) return `${name}${equals}"${next}"`
+          if (single !== undefined) return `${name}${equals}'${next}'`
+          return `${name}${equals}${next}`
+        },
+      )
+    out += raw
+    cursor = tag.end
+  }
+  return out + html.slice(cursor)
+}
+
 /** A newly-created slide is never the live one merely because its source was. Deck
  *  runtimes commonly persist `on`/`active` on the first slide in authored source; copying
  *  that state would paint two slides at once after reload. Only the OUTER slide's class
  *  list is touched, and content/style classes remain byte-for-byte. */
-const inactiveCopy = (text: string, id: number): string => {
-  const copied = withId(text, id)
+const inactiveCopy = (text: string, id: number, usedDomIds: Set<string>): string => {
+  const copied = rewriteCopiedDomIds(withId(text, id), id, usedDomIds)
   const open = tags(copied).find((tag) => !tag.closing && SLIDE_TAGS.has(tag.name))
   if (!open) return copied
   const opening = copied
@@ -304,6 +453,12 @@ export const applySlideOps = (html: string, ops: SlideOp[]): string => {
     ids,
   )
   let nextId = Math.max(-1, ...items.map((item) => item.id)) + 1
+  const authoredDomIds = domIds(html)
+  if (new Set(authoredDomIds).size !== authoredDomIds.length)
+    throw new EditError(
+      "This deck repeats a DOM id, so its document-wide references are already ambiguous. Give every element a unique id before arranging slides.",
+    )
+  const usedDomIds = new Set(authoredDomIds)
 
   const at = (n: unknown, label: string, max: number): number => {
     if (typeof n !== "number" || !Number.isInteger(n) || n < 1 || n > max)
@@ -333,7 +488,7 @@ export const applySlideOps = (html: string, ops: SlideOp[]): string => {
       const src = items[pos - 1] as { text: string; id: number | null }
       // The copy is a NEW slide: it must not inherit the original's identity, or every
       // thread pinned to the original would claim both.
-      items.splice(pos, 0, { text: inactiveCopy(src.text, nextId), id: nextId })
+      items.splice(pos, 0, { text: inactiveCopy(src.text, nextId, usedDomIds), id: nextId })
       nextId++
     } else if (op?.op === "insert") {
       // `at` is the position the new slide will occupy, so unlike the other ops it may

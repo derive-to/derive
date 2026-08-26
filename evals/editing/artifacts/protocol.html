@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Luna Editing Improvement Protocol</title><style>
+:root{--ink:#171717;--paper:#f2f0ea;--panel:#fff;--line:#cfc9bd;--violet:#5d39c7;--mint:#c9ffdc;--yellow:#fff27b;--red:#e4553e;--muted:#68645e}*{box-sizing:border-box}body{margin:0;background:linear-gradient(135deg,#ece8ff 0,#f2f0ea 42%,#e5f4eb 100%);color:var(--ink);font:15px/1.5 ui-sans-serif,system-ui,-apple-system,sans-serif}.wrap{max-width:1120px;margin:auto;padding:52px 28px 80px}h1{font-size:clamp(42px,8vw,82px);line-height:.92;letter-spacing:-.065em;margin:12px 0 22px;max-width:900px}.eyebrow{font:700 12px ui-monospace,monospace;color:var(--violet);letter-spacing:.14em;text-transform:uppercase}.lead{font-size:20px;color:var(--muted);max-width:800px}.policy{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin:34px 0}.card{background:rgba(255,255,255,.86);border:1px solid var(--line);border-radius:18px;padding:20px;box-shadow:0 10px 30px rgba(30,20,60,.06)}.card h2{font-size:15px;text-transform:uppercase;letter-spacing:.07em;margin:0 0 10px}.card.goal{border-top:7px solid var(--violet)}.card.eval{border-top:7px solid #179a61}.card.stop{border-top:7px solid var(--red)}.loop{display:grid;grid-template-columns:repeat(7,1fr);gap:10px;align-items:stretch;margin:18px 0}.node{position:relative;min-height:150px;background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:17px 14px}.node b{display:block;font-size:14px;margin-bottom:8px}.node .n{font:700 11px ui-monospace,monospace;color:var(--violet);display:block;margin-bottom:18px}.node:not(:last-child):after{content:"→";position:absolute;right:-17px;top:60px;z-index:2;font-size:22px;color:var(--violet)}.return{border:2px dashed var(--violet);padding:11px 18px;border-radius:99px;text-align:center;margin:12px auto 34px;max-width:650px;background:#f9f7ff}.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.card h3{margin:0 0 10px;font-size:22px;letter-spacing:-.03em}pre{overflow:auto;background:#191821;color:#f7f5ff;padding:18px;border-radius:12px;font:12px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace}.roles{display:grid;gap:9px}.role{display:grid;grid-template-columns:140px 1fr;gap:12px;border-bottom:1px solid var(--line);padding:9px 0}.badge{font:700 11px ui-monospace,monospace;background:var(--yellow);border-radius:6px;padding:6px 8px;width:max-content}.note{margin-top:14px;background:var(--mint);padding:16px 18px;border-radius:14px;border:1px solid #87c69e}@media(max-width:900px){.loop{grid-template-columns:1fr 1fr}.node:after{display:none}}@media(max-width:650px){.policy,.grid,.loop{grid-template-columns:1fr}.wrap{padding:34px 18px}.role{grid-template-columns:1fr}}
+</style></head><body><main class="wrap">
+<div class="eyebrow">self-improving test system · operating contract</div><h1>Luna explores. Deterministic tests decide.</h1><p class="lead">The loop separates generative adversarial discovery from reproducible judgment. Luna agents search for counterexamples; only minimized, deterministic failures can change code or enter the permanent corpus.</p>
+<section class="policy">
+  <article class="card goal"><h2>Goal</h2><p>Make every source-backed edit preserve user intent, authored structure, identity, unrelated bytes, and version history across Markdown, HTML, decks, videos, and browser persistence.</p></article>
+  <article class="card eval"><h2>Evaluate</h2><p>Run the risk-weighted corpus through core, API, and browser lanes; compare exact source/state or require explicit safe refusal; then run <code>pnpm verify</code>.</p></article>
+  <article class="card stop"><h2>Stop</h2><p>One complete Markdown + HTML + deck/video Luna exploration round produces no new reproducible P0–P2 defect, all three lanes stay green, and the exact repository verification gate passes.</p></article>
+</section>
+<h2 style="font-size:28px;letter-spacing:-.04em">One improvement cycle</h2>
+<section class="loop" aria-label="Self-improvement loop">
+  <article class="node"><span class="n">01</span><b>Generate attacks</b><small>Three surface-specialist Luna agents mutate context, syntax, identity, order, and timing.</small></article>
+  <article class="node"><span class="n">02</span><b>Reproduce</b><small>Translate the candidate into a runnable operation against current code.</small></article>
+  <article class="node"><span class="n">03</span><b>Minimize</b><small>Shrink source and operation sequence while retaining the failure.</small></article>
+  <article class="node"><span class="n">04</span><b>Classify oracle</b><small>Choose exact source, identity, version, sanitization, bounded runtime, or safe refusal.</small></article>
+  <article class="node"><span class="n">05</span><b>Patch narrowly</b><small>Repair the responsible mapper/operation; preserve adjacent authored behavior.</small></article>
+  <article class="node"><span class="n">06</span><b>Promote</b><small>Add a stable ID and literal test declaration to the permanent corpus.</small></article>
+  <article class="node"><span class="n">07</span><b>Evaluate gates</b><small>Core → API → real browser → exact repository verification.</small></article>
+</section>
+<div class="return">↺ New regressions and uncovered seams feed the next Luna exploration round</div>
+<section class="grid">
+  <article class="card"><h3>Agent roles</h3><div class="roles">
+    <div class="role"><span class="badge">Luna · MD</span><span>Rendered/source projections, Unicode, delimiter seams, GFM nesting, and code policy.</span></div>
+    <div class="role"><span class="badge">Luna · HTML</span><span>Entities, hidden text, malformed trees, authored markup, sanitization, and selection.</span></div>
+    <div class="role"><span class="badge">Luna · Deck</span><span>Identity, order, scene/slide operations, comments, video tracks, and persistence races.</span></div>
+    <div class="role"><span class="badge">Runner</span><span>Literal-test inventory, deterministic execution, timing, and lane-level result schema.</span></div>
+    <div class="role"><span class="badge">Implementer</span><span>Reproduce, minimize, patch, regression promotion, and proof of non-regression.</span></div>
+    <div class="role"><span class="badge">Browser</span><span>Drive real selection and save flows; assert UI/server convergence under races.</span></div>
+  </div></article>
+  <article class="card"><h3>Finding contract</h3><p>An agent may propose anything; the loop accepts only evidence with an explicit oracle and reproducible operation sequence.</p><pre>{
+  "id": "candidate-html-entity-01",
+  "surface": "html",
+  "risk": "P0",
+  "source": "&lt;p&gt;...authored source...&lt;/p&gt;",
+  "operations": [{"kind":"replace","quote":"…"}],
+  "expected": {"oracle":"exact-source-or-refusal"},
+  "observed": {"mutation":"…"},
+  "reproduces": true
+}</pre></article>
+  <article class="card"><h3>Promotion rules</h3><ol><li>The bug reproduces on the current branch.</li><li>The test fails for the intended reason before the patch.</li><li>The smallest meaningful source still fails.</li><li>The oracle observes persisted truth—not just a toast or screenshot.</li><li>The stable scenario ID is declared literally and registered in the manifest.</li><li>Unrelated authored source/state is asserted when preservation is the risk.</li></ol></article>
+  <article class="card"><h3>Guardrails against false confidence</h3><ul><li>Do not let source-shaped DOM stand in for rendered Markdown.</li><li>Place preservation assertions in the same authored block.</li><li>Exercise real REST routes, not only core helpers.</li><li>Validate malformed, unknown, and no-op operations explicitly.</li><li>Control race ordering; never depend on scheduler luck.</li><li>Use wall-clock bounds only as a smoke oracle, not a performance contract.</li></ul></article>
+</section>
+<div class="note"><b>Execution boundary:</b> Derive holds the reviewable policy, evidence, and corpus map. The CLI/harness and agents execute the loop; the artifact itself does not autonomously run code.</div>
+</main></body></html>

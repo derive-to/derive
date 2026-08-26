@@ -1537,6 +1537,13 @@ interface ElReg {
     videoStarted = performance.now()
     postVideoSniff()
   }
+  const activeVideoSceneId = (): string | undefined => videoScenes()[videoAt]?.dataset.deriveScene
+  const restoreActiveVideoScene = (id: string | undefined) => {
+    const scenes = videoScenes()
+    if (!scenes.length) return
+    const byId = id ? scenes.findIndex((scene) => scene.dataset.deriveScene === id) : -1
+    showVideoScene(byId >= 0 ? byId : Math.min(videoAt, scenes.length - 1))
+  }
   const stopVideoClock = () => {
     if (videoTimer) cancelAnimationFrame(videoTimer)
     videoTimer = 0
@@ -1611,6 +1618,8 @@ interface ElReg {
     wire: WireSceneEdit
     undo: () => void
     redo: () => void
+    activeBefore: string | undefined
+    activeAfter: string | undefined
   }
   const videoSceneById = (id: string): HTMLElement | null =>
     videoScenes().find((scene) => scene.dataset.deriveScene === id) ?? null
@@ -1619,6 +1628,7 @@ interface ElReg {
     const scene = videoSceneById(wire.id)
     const root = videoRoot()
     if (!scene || !root) return
+    const activeId = activeVideoSceneId()
     let undoScene = () => {}
     let redoScene = () => {}
     if (wire.op === "scene-update") {
@@ -1670,12 +1680,17 @@ interface ElReg {
       redoScene = () => scene.remove()
       undoScene = () => root.insertBefore(scene, originalNext)
     }
-    const entry = { wire, undo: undoScene, redo: redoScene }
     redoScene()
+    restoreActiveVideoScene(activeId)
+    const entry = {
+      wire,
+      undo: undoScene,
+      redo: redoScene,
+      activeBefore: activeId,
+      activeAfter: activeVideoSceneId(),
+    }
     sceneEdits.push(entry)
     remember({ kind: "scene", entry, activeAfter: false })
-    videoAt = Math.max(0, Math.min(videoAt, videoScenes().length - 1))
-    showVideoScene(videoAt)
     postDirty()
   }
 
@@ -2371,12 +2386,13 @@ interface ElReg {
       if (entry.activeAfter) {
         entry.entry.redo()
         if (!sceneEdits.includes(entry.entry)) sceneEdits.push(entry.entry)
+        restoreActiveVideoScene(entry.entry.activeAfter)
       } else {
         entry.entry.undo()
         sceneEdits = sceneEdits.filter((candidate) => candidate !== entry.entry)
+        restoreActiveVideoScene(entry.entry.activeBefore)
       }
       to.push({ ...entry, activeAfter: !entry.activeAfter })
-      showVideoScene(Math.min(videoAt, videoScenes().length - 1))
     } else if (!document.contains(entry.el)) return
     else if (entry.kind === "html") {
       to.push({ kind: "html", el: entry.el, html: entry.el.innerHTML })
@@ -3066,8 +3082,9 @@ interface ElReg {
   }
   const restoreEdits = () => {
     const restoredScenes = sceneEdits.length > 0
+    const activeSceneId = restoredScenes ? sceneEdits[0]?.activeBefore : undefined
     for (let i = sceneEdits.length - 1; i >= 0; i--) sceneEdits[i]?.undo()
-    if (restoredScenes) showVideoScene(Math.min(videoAt, videoScenes().length - 1))
+    if (restoredScenes) restoreActiveVideoScene(activeSceneId)
     for (const t of editTargets) {
       if (document.contains(t.el)) {
         if (concatText(t.el) !== t.origConcat) {

@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Authored HTML editing dogfood</title>
+<style>
+:root{color-scheme:light;--ink:#18201b;--paper:#f3f1e8;--card:#fffdf7;--line:#d5cebc;--accent:#6b44d4}*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.55 system-ui,sans-serif}main{max-width:860px;margin:auto;padding:48px 22px 80px}h1{font-size:44px;line-height:1;letter-spacing:-.05em}article{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:20px;margin:14px 0}h2{margin:0 0 8px;font-size:20px}.expect{color:#5f6862}.target{margin:15px 0 0;padding:12px 14px;border-left:4px solid var(--accent);background:#f2effd}code{font-family:ui-monospace,monospace}
+</style>
+</head>
+<body><main>
+<h1>Authored HTML editing dogfood</h1>
+<p>Use a fresh version per card. Save must preserve authored tags, attributes, and invisible source.</p>
+
+<article><h2>A · Protected authored metadata</h2><p>Select the entire target line and type one replacement word.</p><p class="expect">Expect: refuse; neither the link nor the annotation attribute may disappear.</p><p class="target"><a href="/jobs">ORBIT-LINK</a> <mark data-note="keep">ORBIT-NOTE</mark></p></article>
+
+<article><h2>B · Hidden void element</h2><p>Edit the visible token after the hidden control.</p><p class="expect">Expect: the token is editable; the input remains untouched.</p><input hidden name="dogfood-control"><p class="target">VOID-TAIL-19</p></article>
+
+<template><template><p>TEMPLATE-INNER-SECRET</p></template><p>TEMPLATE-OUTER-SECRET</p></template>
+<article><h2>C · Nested inert markup</h2><p>The two template secrets above must never appear in the editable text snapshot.</p><p class="target">TEMPLATE-VISIBLE-31</p></article>
+
+<article><h2>D · Entity-backed link</h2><p>Format the target as a link to <code>https://derive.to?x=1&amp;y=2</code>.</p><p class="expect">Expect: one encoded query separator in source, never a double escape.</p><p class="target">QUERY-LINK-17</p></article>
+
+<!-- ordinary invisible comment --><article><h2>E · Comment boundary</h2><p>Edit the tail token normally.</p><p class="target">COMMENT-TAIL-23</p></article>
+
+<article data-threshold="score > 80"><h2>F · Quoted greater-than attribute</h2><p>Edit the target; the containing attribute must remain intact.</p><p class="target">QUOTED-GT-29</p></article>
+
+<article><h2>G · Hidden table metadata</h2><p>Edit the visible cell after the hidden column group.</p><p class="expect">Expect: table metadata stays hidden; the cell and tail remain editable. The omitted-end variant is pinned by HTML-024.</p><table><colgroup hidden><col></colgroup><tbody><tr><td class="target">TABLE-VISIBLE-43</td></tr></tbody></table><p>TABLE-TAIL-47</p></article>
+
+<svg width="0" height="0" aria-hidden="true"><foreignObject><div hidden/><p>FOREIGNOBJECT-HIDDEN-53</p></foreignObject></svg>
+<math hidden><mtext><div hidden/><p>MATHML-HIDDEN-59</p></mtext></math>
+<article><h2>H · Foreign HTML integration points</h2><p>Search the editable snapshot for the two hidden tokens authored just above.</p><p class="expect">Expect: neither token is selectable; a slash does not close a non-void HTML element inside <code>foreignObject</code> or <code>mtext</code>.</p><p class="target">INTEGRATION-VISIBLE-61</p></article>
+
+<svg width="0" height="0" aria-hidden="true"><desc>SVG-DESC-HIDDEN-67</desc><metadata>SVG-METADATA-HIDDEN-71</metadata></svg>
+<math><semantics><mi>x</mi><annotation>MATH-ANNOTATION-HIDDEN-73</annotation><annotation-xml encoding="application/xml">MATH-XML-HIDDEN-79</annotation-xml></semantics></math>
+<article><h2>I · Foreign metadata</h2><p>Search the editable snapshot for the SVG descriptions and MathML annotations authored above.</p><p class="expect">Expect: all four metadata tokens are absent, while ordinary SVG text and the first MathML semantic child remain readable.</p><p class="target">FOREIGN-METADATA-VISIBLE-83</p></article>
+
+<article><h2>J · Legacy text parsing and controls</h2><p>Edit the visible words in the listing as one span, then try selecting the textarea value through page Edit mode.</p><p class="expect">Expect: listing markup behaves normally; the XMP tag bytes are literal visible text; the textarea value is not offered as page text.</p><listing class="target">LISTING <b>NORMAL-89</b></listing><xmp class="target">XMP <b>LITERAL-97</b></xmp><textarea readonly>TEXTAREA-CONTROL-101</textarea></article>
+
+<article><h2>K · Zero-width inline seams</h2><p>Select the target across all three adjacent inline elements and replace it with one token.</p><p class="expect">Expect: no synthetic spaces; the three elements are one browser-visible text run and repair to one valid paragraph.</p><p class="target"><span>INLINE</span><b>SEAM</b><i>107</i></p></article>
+</main></body></html>
