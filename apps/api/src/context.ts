@@ -1559,26 +1559,83 @@ export function buildContext(deps: AppDeps) {
     return effectiveRole({ ...actor, unlocked: false }, col.workspace_access, "none")
   }
 
+  // Resolve one artifact and its caller-specific grants together, priming actorFor for
+  // whichever policy decision follows. This also serves standing-only routes, which must
+  // not be squeezed through the ordinary world-link-aware guard below.
+  const resolveArtifact = async (c: Context, shortId: string): Promise<ArtifactRecord | null> => {
+    // Postgres can resolve the artifact and a signed-in human's complete grant set
+    // in one statement. Start active-workspace validation beside it, then seed
+    // actorFor with the same grants; stores without the combined read keep the
+    // original path. This is only a query consolidation — can() remains the one
+    // authorization decision and actorFor ignores preloaded grants for agents.
+    const viewer = shortId && meta.artifactWithGrants ? await currentUser(c) : null
+    const combined =
+      shortId && viewer && meta.artifactWithGrants
+        ? (await Promise.all([meta.artifactWithGrants(shortId, viewer.id), activeWorkspace(c)]))[0]
+        : undefined
+    const a = shortId
+      ? combined !== undefined
+        ? combined?.artifact
+        : await meta.getByShortId(shortId)
+      : null
+    if (!a) return null
+    await actorFor(
+      c,
+      a,
+      combined && viewer
+        ? {
+            userId: viewer.id,
+            orgRole: combined.orgRole,
+            artifactRoles: combined.artifactRoles,
+            portableArtifactRoles: combined.portableArtifactRoles,
+          }
+        : undefined,
+    )
+    return a
+  }
+
   // ---- Route guard helpers: the return-or-Response idiom (mirrors `limited`), so a
   // route opens with `const x = await require*(c); if (x instanceof Response) return x`.
   // Resolve the :shortId artifact and gate it. Default: 404 for BOTH missing and
   // unauthorized, so a gated artifact you can't read is indistinguishable from one
   // that isn't there (existence never leaks) — right for `read`. Pass
   // `{ split: true }` for actions where the caller SHOULD learn "it exists but you
-  // can't <action> it" (comment/publish/share/manage) — 404 missing, 403
-  // unauthorized. Returns the artifact, or the Response to return.
+  // can't <action> it" (comment/publish/share/manage) — 404 missing, 403 unauthorized.
   const requireArtifact = async (
     c: Context,
     action: Action,
-    opts?: { split?: boolean },
+    opts?: { split?: boolean; shortId?: string },
   ): Promise<ArtifactRecord | Response> => {
-    const shortId = c.req.param("shortId")
-    const a = shortId ? await meta.getByShortId(shortId) : null
+    const shortId = opts?.shortId ?? c.req.param("shortId")
+    const a = shortId ? await resolveArtifact(c, shortId) : null
     if (!a) return fail(c, 404, "not found")
-    if (!(await authorize(c, action, a))) {
+    const actor = await actorFor(c, a)
+    if (!can(actor, action, a.workspace_access, a.link_role)) {
       return opts?.split ? fail(c, 403, "forbidden") : fail(c, 404, "not found")
     }
     return a
+  }
+  /** Resolve many artifacts and seed the existing per-request actor cache from one
+   * Postgres statement. Stores and principals without the fast path keep the ordinary
+   * batched artifact read; `authorize` remains the sole policy decision. */
+  const resolveArtifacts = async (c: Context, shortIds: string[]): Promise<ArtifactRecord[]> => {
+    const ids = [...new Set(shortIds)]
+    const viewer = ids.length && meta.artifactsWithGrants ? await currentUser(c) : null
+    if (!viewer || !meta.artifactsWithGrants) return meta.getByShortIds(ids)
+    const combined = (
+      await Promise.all([meta.artifactsWithGrants(ids, viewer.id), activeWorkspace(c)])
+    )[0]
+    await Promise.all(
+      combined.map((row) =>
+        actorFor(c, row.artifact, {
+          userId: viewer.id,
+          orgRole: row.orgRole,
+          artifactRoles: row.artifactRoles,
+          portableArtifactRoles: row.portableArtifactRoles,
+        }),
+      ),
+    )
+    return combined.map((row) => row.artifact)
   }
   // The caller's active-workspace org id, or the 403 to return — collapses the
   // `workspaceCan` + `activeWorkspace` pair every workspace-scoped route opens with.
@@ -1742,7 +1799,9 @@ export function buildContext(deps: AppDeps) {
     collectionRole,
     collectionStandingRole,
     sourceText,
+    resolveArtifact,
     requireArtifact,
+    resolveArtifacts,
     requireWorkspace,
     requireUser,
     requireDirectHuman,

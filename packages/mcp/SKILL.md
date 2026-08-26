@@ -113,36 +113,37 @@ credentials, or a custom backend for this case:
 
 **The artifact sandbox has no browser storage.** `localStorage`, `sessionStorage`,
 IndexedDB, and cookies are unavailable and a direct access can throw before the first
-render. Use an in-memory variable for per-visit UI state; use `derive.shared` for small
-shared state. Do not describe an in-memory guard as strict one-person-one-vote.
+render. Use `derive.shared` for shared and actor-scoped state instead.
 
 ```html
 <script>
   const bugs = derive.shared("bugs", [])
-  let interactedThisVisit = false
+  const reactions = derive.shared("bug_reactions", [])
   bugs.onChange(render)
+  reactions.onChange(render)
 
   // Call writes from a click or keyboard handler.
   async function report(title) { await bugs.add({ title, votes: 0 }) }
   async function vote(id, by) {
-    if (interactedThisVisit) return
-    await bugs.update(id, { votes: derive.increment(by) })
-    interactedThisVisit = true
+    await reactions.setMine(id, { bugId: id, value: by })
   }
+  function myVote(id) { return reactions.mine(id)?.value ?? 0 }
 </script>
 ```
 
 Viewers read and receive live updates. Signed-in commenters can add, apply atomic
-`+1`/`-1` counter interactions, and call `bugs.activity()` for attributed history;
-arbitrary field replacement requires edit rights. They do not need source-edit rights
-for ordinary interactions. Derive stamps the actor from the signed-in principal, so
-never put identity in the item or mutation. When the user explicitly asks for anyone
-with the URL to participate, publish with `link_role: commenter`; an unsigned visitor
-signs in before a write can be attributed. Keep the state deliberately small: at most
-16 stable keys, each one array of JSON objects (2,000 items / 256 KB). Await
-`bugs.ready` when the UI must distinguish loading or load failure from an empty initial
-value. Use a new versioned key for an incompatible data shape. Use this primitive for
-artifact interaction, not secrets, server-side compute, or a general application backend.
+`+1`/`-1` counter interactions, set one durable value per actor and slot with
+`setMine(slot, value)`, and call `activity()` for attributed history. `mine(slot)` returns
+that actor's current item after `ready`; setting the value to `null` removes it. `setMine`
+updates the local handle optimistically and rolls back plus resyncs if the write fails. Derive
+stamps and enforces identity server-side, so never put identity in an item or mutation.
+Arbitrary field replacement requires edit rights. When the user explicitly asks for
+anyone with the URL to participate, publish with `link_role: commenter`; an unsigned
+visitor signs in before a write can be attributed. Keep the state deliberately small: at
+most 16 stable keys, each one array of JSON objects (2,000 items / 256 KB). Await `ready`
+when the UI must distinguish loading or load failure from an empty initial value. Use a
+new versioned key for an incompatible data shape. Use this primitive for artifact
+interaction, not secrets, server-side compute, or a general application backend.
 
 ## Non-negotiable rules
 

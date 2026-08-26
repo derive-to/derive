@@ -1206,6 +1206,24 @@ export interface CollectionStore {
     portableArtifactRoles: Role[]
   } | null>
 
+  /**
+   * Batched `getByShortIds` + grants for bulk/list flows. This is the plural twin of
+   * `artifactWithGrants`: each returned row carries exactly the grants that
+   * `artifactGrants` would return for that artifact and user. Missing short ids are
+   * simply absent, matching `getByShortIds`.
+   */
+  artifactsWithGrants?(
+    shortIds: string[],
+    userId: string,
+  ): Promise<
+    Array<{
+      artifact: ArtifactRecord
+      orgRole: Role | null
+      artifactRoles: Role[]
+      portableArtifactRoles: Role[]
+    }>
+  >
+
   // ---- Folders (organize a collection's artifacts; inherit its access, grant nothing) --
   createFolder(f: NewFolder): Promise<FolderRecord>
   /** The folders belonging to a collection. Name order is a view concern. */

@@ -7,7 +7,7 @@ import { bail, fail, readJson, VIEW_DEDUP_MS } from "../lib/http"
 /** View recording (de-duped, owner self-views excluded) + per-artifact stats. The
  *  Analytics response schema is the single source for the web client's type. */
 export const analyticsRoutes = (ctx: AppContext) => {
-  const { meta, analyticsOn, currentUser, actorFor, anonViewerId, requireArtifact, authorize } = ctx
+  const { meta, analyticsOn, currentUser, actorFor, anonViewerId, requireArtifact } = ctx
   const app = new OpenAPIHono<BlankEnv>()
 
   const Analytics = z
@@ -71,9 +71,9 @@ export const analyticsRoutes = (ctx: AppContext) => {
     }),
     async (c) => {
       if (!analyticsOn) return c.body(null, 204)
-      const artifact = await meta.getByShortId(c.req.param("shortId"))
-      if (!artifact || artifact.current_version === 0 || !(await authorize(c, "read", artifact)))
-        return bail(fail(c, 404, "not found"))
+      const artifact = await requireArtifact(c, "read")
+      if (artifact instanceof Response || artifact.current_version === 0)
+        return bail(artifact instanceof Response ? artifact : fail(c, 404, "not found"))
       // The owner's own opens aren't audience — don't count them (Notion/Docs do
       // the same). `manage` requires the owner role, so this is exactly "is owner";
       // editors/commenters/viewers and anonymous openers still count.

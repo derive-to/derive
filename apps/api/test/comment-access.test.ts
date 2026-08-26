@@ -218,6 +218,113 @@ describe("comment access via the general-access link", () => {
     ).toBe(403)
   })
 
+  it("keeps one server-owned value per actor slot across refreshes and races", async () => {
+    await app.request("/v1/me", { headers: as(alice.email) })
+    const shortId = (await (await publishAs(app, "<h1>responses</h1>", {}, as(alice.email))).json())
+      .short_id
+    expect((await setAccess(shortId, "commenter")).ok).toBe(true)
+    const path = `/v1/artifacts/${shortId}/state/responses`
+    const setMine = (
+      slot: string,
+      value: Record<string, unknown> | null,
+      headers: Record<string, string>,
+    ) => app.request(path, jsonAs(headers, { op: "set_mine", initial: [], slot, value }))
+
+    const first = await setMine("answer", { option: "a" }, as(bob.email))
+    expect(first.status).toBe(200)
+    const firstBody = (await first.json()) as {
+      value: { id: string; option: string }[]
+      version: number
+      mine: Record<string, string>
+    }
+    const bobItem = firstBody.value[0]?.id
+    if (!bobItem) throw new Error("set_mine did not mint an item id")
+    expect(firstBody).toEqual({
+      value: [{ id: bobItem, option: "a" }],
+      version: 1,
+      mine: { answer: bobItem },
+    })
+    expect(JSON.stringify(firstBody)).not.toContain("__derive_")
+    expect(
+      (
+        await app.request(
+          path,
+          jsonAs(as(alice.email), {
+            op: "update",
+            initial: [],
+            id: bobItem,
+            patch: { option: { __derive_increment: 1 } },
+          }),
+        )
+      ).status,
+    ).toBe(400)
+
+    // A fresh page load restores only the caller's ownership map. Other viewers
+    // receive the same aggregate values without learning who owns each record.
+    await expect(
+      (await app.request(path, { headers: as(bob.email) })).json(),
+    ).resolves.toMatchObject({ mine: { answer: bobItem } })
+    await expect(
+      (await app.request(path, { headers: as(alice.email) })).json(),
+    ).resolves.toMatchObject({ mine: {} })
+    await expect((await app.request(path)).json()).resolves.toEqual({
+      value: [{ id: bobItem, option: "a" }],
+      version: 1,
+      mine: {},
+    })
+
+    const replaced = await setMine("answer", { option: "b" }, as(bob.email))
+    expect(await replaced.json()).toEqual({
+      value: [{ id: bobItem, option: "b" }],
+      version: 2,
+      mine: { answer: bobItem },
+    })
+
+    // Two tabs racing for the same actor slot may replace one another, but they
+    // can never create two records for that actor.
+    const raced = await Promise.all([
+      setMine("answer", { option: "c" }, as(bob.email)),
+      setMine("answer", { option: "d" }, as(bob.email)),
+    ])
+    expect(raced.every((response) => response.status === 200)).toBe(true)
+    const afterRace = (await (await app.request(path, { headers: as(bob.email) })).json()) as {
+      value: { id: string; option: string }[]
+      mine: Record<string, string>
+    }
+    expect(afterRace.value).toHaveLength(1)
+    expect(afterRace.value[0]?.id).toBe(bobItem)
+    expect(afterRace.mine).toEqual({ answer: bobItem })
+
+    const aliceSet = await setMine("answer", { option: "a" }, as(alice.email))
+    const aliceBody = (await aliceSet.json()) as {
+      value: { id: string; option: string }[]
+      mine: Record<string, string>
+    }
+    const aliceItem = aliceBody.mine.answer
+    expect(aliceItem).toBeTruthy()
+    expect(aliceItem).not.toBe(bobItem)
+    expect(aliceBody.value).toHaveLength(2)
+
+    const cleared = await setMine("answer", null, as(bob.email))
+    expect(await cleared.json()).toMatchObject({ value: [{ id: aliceItem }], mine: {} })
+    const clearAgain = await setMine("answer", null, as(bob.email))
+    expect(await clearAgain.json()).toMatchObject({ value: [{ id: aliceItem }], mine: {} })
+
+    const activity = await app.request(`${path}/activity`, { headers: as(bob.email) })
+    expect((await activity.json()).activity).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ action: "set_mine", actor: { id: bob.id, name: "Bob" } }),
+        expect.objectContaining({ action: "set_mine", actor: { id: alice.id, name: "Alice" } }),
+      ]),
+    )
+
+    expect(
+      (await setMine("answer", { __derive_actor_id: alice.id, option: "spoofed" }, as(bob.email)))
+        .status,
+    ).toBe(400)
+    expect((await setMine("answer", { option: "no" }, {})).status).toBe(403)
+  })
+
   it("bounds the number of shared keys one artifact can allocate", async () => {
     await app.request("/v1/me", { headers: as(alice.email) })
     const shortId = (await (await publishAs(app, "<h1>bounded</h1>", {}, as(alice.email))).json())

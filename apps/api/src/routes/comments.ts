@@ -23,7 +23,6 @@ export const commentRoutes = (ctx: AppContext) => {
   const {
     deps,
     meta,
-    blobs,
     bus,
     notify,
     background,
@@ -31,7 +30,6 @@ export const commentRoutes = (ctx: AppContext) => {
     privateOwnerId,
     anonLocked,
     requireArtifact,
-    authorize,
     limited,
     commentLimiter,
     sourceText,
@@ -95,8 +93,8 @@ export const commentRoutes = (ctx: AppContext) => {
   ): Promise<
     { ok: true; artifact: ArtifactRecord; cm: CommentRecord } | { ok: false; error: Response }
   > => {
-    const artifact = await meta.getByShortId(c.req.param("shortId") ?? "")
-    if (!artifact) return { ok: false, error: fail(c, 404, "not found") }
+    const artifact = await requireArtifact(c, "comment", { split: true })
+    if (artifact instanceof Response) return { ok: false, error: artifact }
     const cm = await meta.getComment(c.req.param("commentId") ?? "")
     if (!cm || cm.artifact_id !== artifact.id)
       return { ok: false, error: fail(c, 404, "not found") }
@@ -130,9 +128,9 @@ export const commentRoutes = (ctx: AppContext) => {
       },
     }),
     async (c) => {
-      const artifact = await meta.getByShortId(c.req.param("shortId"))
-      if (!artifact || artifact.current_version === 0) return bail(fail(c, 404, "not found"))
-      if (!(await authorize(c, "comment", artifact))) return bail(fail(c, 403, "forbidden"))
+      const artifact = await requireArtifact(c, "comment", { split: true })
+      if (artifact instanceof Response) return bail(artifact)
+      if (artifact.current_version === 0) return bail(fail(c, 404, "not found"))
       const rl = await limited(c, commentLimiter)
       if (rl) return bail(rl)
       const body = await readJson(
@@ -357,7 +355,6 @@ export const commentRoutes = (ctx: AppContext) => {
       const r = await loadComment(c)
       if (!r.ok) return bail(r.error)
       const { artifact, cm } = r
-      if (!(await authorize(c, "comment", artifact))) return bail(fail(c, 403, "forbidden"))
       const body = await readJson(
         c,
         z.object({ emoji: z.string().refine((e) => REACTIONS.includes(e), "unknown reaction") }),
@@ -398,7 +395,6 @@ export const commentRoutes = (ctx: AppContext) => {
       const r = await loadComment(c)
       if (!r.ok) return bail(r.error)
       const { artifact, cm } = r
-      if (!(await authorize(c, "comment", artifact))) return bail(fail(c, 403, "forbidden"))
       const acting = await actingUser(c)
       if (acting && !ownsComment(cm, acting)) return bail(fail(c, 403, "forbidden"))
       const body = await readJson(
@@ -447,7 +443,6 @@ export const commentRoutes = (ctx: AppContext) => {
       const r = await loadComment(c)
       if (!r.ok) return bail(r.error)
       const { artifact, cm } = r
-      if (!(await authorize(c, "comment", artifact))) return bail(fail(c, 403, "forbidden"))
       const acting = await actingUser(c)
       if (acting && !ownsComment(cm, acting)) return bail(fail(c, 403, "forbidden"))
       const md = parseMeta(cm.meta)

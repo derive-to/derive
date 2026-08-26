@@ -95,8 +95,10 @@ export const contextRoutes = (ctx: AppContext) => {
     deps,
     limited,
     managementPrincipal,
+    requireArtifact,
     requireUser,
     requireWorkspace,
+    resolveArtifacts,
     sourceText,
     workspaceCan,
   } = ctx
@@ -1157,8 +1159,10 @@ export const contextRoutes = (ctx: AppContext) => {
         )
         if (bindErr) return bail(fail(c, 400, bindErr))
       }
-      const manifest = await meta.getByShortId(b.manifest_short_id)
-      if (!manifest || manifest.org_id !== org || !(await authorize(c, "share", manifest)))
+      const manifest = await requireArtifact(c, "share", {
+        shortId: b.manifest_short_id,
+      })
+      if (manifest instanceof Response || manifest.org_id !== org)
         return bail(fail(c, 404, "no such artifact"))
       try {
         const made = await createContextCore(meta, {
@@ -1649,12 +1653,11 @@ export const contextRoutes = (ctx: AppContext) => {
       if (subject) {
         // Ask-access to the CONTEXT is not read-access to the DOCUMENT. Re-check the
         // artifact separately, or a session becomes a way to read anything by naming it.
-        const target = await meta.getByShortId(subject.id)
+        const target = await requireArtifact(c, "read", { shortId: subject.id })
         if (
-          !target ||
+          target instanceof Response ||
           target.current_version === 0 ||
-          target.org_id !== (await activeWorkspace(c)) ||
-          !(await authorize(c, "read", target))
+          target.org_id !== (await activeWorkspace(c))
         )
           return bail(fail(c, 404, "not found"))
       }
@@ -2277,11 +2280,13 @@ export const contextRoutes = (ctx: AppContext) => {
       if (!x || !(await canAskContext(c, x))) return bail(fail(c, 404, "not found"))
       const rows = await meta.contextOutputs(x.id)
       if (rows.length === 0) return c.json({ outputs: [] })
-      // ONE batched resolve for every short id (not a fetch per row), then the SANCTIONED
-      // per-artifact gate — `getByShortIds` is a raw resolve with no visibility knowledge,
-      // exactly like getByShortId, so authorize() is what keeps this honest. Same pairing
-      // the bulk routes use (see bulkArtifactOp in routes/favorites.ts).
-      const resolved = await meta.getByShortIds(rows.map((r) => r.short_id))
+      // ONE batched resolve for every short id (not a fetch per row), including this human's
+      // grants where the store supports it. The SANCTIONED per-artifact authorize() decision
+      // remains unchanged; its actor inputs are simply already in the request cache.
+      const resolved = await resolveArtifacts(
+        c,
+        rows.map((r) => r.short_id),
+      )
       const byShortId = new Map(resolved.map((a) => [a.short_id, a]))
       const readable = new Map(
         (

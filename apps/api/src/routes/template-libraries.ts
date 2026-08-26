@@ -33,13 +33,13 @@ export const templateLibraryRoutes = (ctx: AppContext) => {
   const {
     activeWorkspace,
     agentFor,
-    authorize,
     currentUser,
     deps,
     isToken,
     limited,
     meta,
     publishLimiter,
+    requireArtifact,
     sourceText,
     workspaceCan,
   } = ctx
@@ -381,9 +381,8 @@ export const templateLibraryRoutes = (ctx: AppContext) => {
       // paste `decision-memo-ab12cd34@v4` from the address bar without first
       // extracting the id; its explicit source_version still wins if supplied.
       const sourceRef = parseRef(body.source_short_id)
-      const source = await meta.getByShortId(sourceRef.shortId)
-      if (!source || source.removed_at || !(await authorize(c, "read", source)))
-        return bail(fail(c, 404, "not found"))
+      const source = await requireArtifact(c, "read", { shortId: sourceRef.shortId })
+      if (source instanceof Response || source.removed_at) return bail(fail(c, 404, "not found"))
       const versionNumber = body.source_version ?? sourceRef.version ?? source.current_version
       const version = await meta.getVersion(source.id, versionNumber)
       if (!version) return bail(fail(c, 404, "not found"))

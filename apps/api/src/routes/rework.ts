@@ -30,7 +30,8 @@ import { parseLinkedWorkflowFacts } from "../lib/workflow-facts"
  *  publishes per its grant: a publish-capable agent posts directly, a lower grant
  *  answers in comments — no special case here. */
 export const reworkRoutes = (ctx: AppContext) => {
-  const { meta, bus, background, notify, actingUser, authorize, limited, commentLimiter } = ctx
+  const { meta, bus, background, notify, actingUser, requireArtifact, limited, commentLimiter } =
+    ctx
   const app = new OpenAPIHono<BlankEnv>()
 
   type Acting = Exclude<Awaited<ReturnType<AppContext["actingUser"]>>, null>
@@ -68,9 +69,9 @@ export const reworkRoutes = (ctx: AppContext) => {
   // consumed by fill and save-as-skill, `threadId` by save-as-skill only; the other
   // endpoints ignore them. Returns a ready-to-bail Response on any failed gate.
   const requestContext = async (c: Context, shortId: string) => {
-    const artifact = await meta.getByShortId(shortId)
-    if (!artifact || artifact.current_version === 0) return fail(c, 404, "not found")
-    if (!(await authorize(c, "comment", artifact))) return fail(c, 403, "forbidden")
+    const artifact = await requireArtifact(c, "comment", { split: true, shortId })
+    if (artifact instanceof Response) return artifact
+    if (artifact.current_version === 0) return fail(c, 404, "not found")
     const acting = await actingUser(c)
     if (!acting) return fail(c, 401, "sign in to send an agent request")
     const rl = await limited(c, commentLimiter)
@@ -254,9 +255,9 @@ export const reworkRoutes = (ctx: AppContext) => {
       },
     }),
     async (c) => {
-      const artifact = await meta.getByShortId(c.req.param("shortId"))
-      if (!artifact || artifact.current_version === 0) return bail(fail(c, 404, "not found"))
-      if (!(await authorize(c, "comment", artifact))) return bail(fail(c, 403, "forbidden"))
+      const artifact = await requireArtifact(c, "comment", { split: true })
+      if (artifact instanceof Response) return bail(artifact)
+      if (artifact.current_version === 0) return bail(fail(c, 404, "not found"))
       if (!(await actingUser(c))) return bail(fail(c, 401, "sign in to run this workflow"))
       const ready = await requireReadyWorkflow(c, artifact, c.req.query("diagram") ?? "")
       if (ready instanceof Response) return bail(ready)
@@ -440,9 +441,9 @@ export const reworkRoutes = (ctx: AppContext) => {
       },
     }),
     async (c) => {
-      const artifact = await meta.getByShortId(c.req.param("shortId"))
-      if (!artifact || artifact.current_version === 0) return bail(fail(c, 404, "not found"))
-      if (!(await authorize(c, "comment", artifact))) return bail(fail(c, 403, "forbidden"))
+      const artifact = await requireArtifact(c, "comment", { split: true })
+      if (artifact instanceof Response) return bail(artifact)
+      if (artifact.current_version === 0) return bail(fail(c, 404, "not found"))
       const acting = await actingUser(c)
       if (!acting) return bail(fail(c, 401, "sign in to capture a skill"))
       const threadId = c.req.query("threadId")
@@ -551,9 +552,9 @@ export const reworkRoutes = (ctx: AppContext) => {
       },
     }),
     async (c) => {
-      const artifact = await meta.getByShortId(c.req.param("shortId"))
-      if (!artifact || artifact.current_version === 0) return bail(fail(c, 404, "not found"))
-      if (!(await authorize(c, "comment", artifact))) return bail(fail(c, 403, "forbidden"))
+      const artifact = await requireArtifact(c, "comment", { split: true })
+      if (artifact instanceof Response) return bail(artifact)
+      if (artifact.current_version === 0) return bail(fail(c, 404, "not found"))
       const acting = await actingUser(c)
       if (!acting) return bail(fail(c, 401, "sign in to fill from a template"))
       const source = await requireSource(c, artifact)
