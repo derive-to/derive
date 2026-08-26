@@ -346,6 +346,30 @@ describe("workflow run: explicit local-agent handoff", () => {
       { status: "queued", stateRevision: 0 },
       { status: "waiting", at: "2026-08-26T18:01:00.000Z" },
     )
+    const waitingHistoryRes = await app.request(
+      `/v1/artifacts/${published.short_id}/workflow-runs?diagram=brief`,
+      { headers: as(editor.email) },
+    )
+    expect(waitingHistoryRes.status).toBe(200)
+    expect(await waitingHistoryRes.json()).toMatchObject({
+      runs: [
+        {
+          attempts: [{ nodeId: "review", selectedRoutes: null, routeBasis: null }],
+        },
+      ],
+    })
+    await meta.transitionWorkflowStepAttempt(
+      waiting.id,
+      started.runId,
+      artifact?.org_id ?? "",
+      { status: "waiting", stateRevision: 1 },
+      {
+        status: "succeeded",
+        at: "2026-08-26T18:02:00.000Z",
+        selectedRoutes: JSON.stringify(["publish"]),
+        routeBasis: "The reviewer approved the draft.",
+      },
+    )
 
     const historyRes = await app.request(
       `/v1/artifacts/${published.short_id}/workflow-runs?diagram=brief`,
@@ -366,7 +390,9 @@ describe("workflow run: explicit local-agent handoff", () => {
               nodeId: "review",
               attempt: 1,
               kind: "human",
-              status: "waiting",
+              status: "succeeded",
+              selectedRoutes: ["publish"],
+              routeBasis: "The reviewer approved the draft.",
             },
           ],
         },

@@ -7727,7 +7727,7 @@
         "tags": [
           "Artifacts"
         ],
-        "summary": "List recent runs and materialized step attempts for a workflow artifact.",
+        "summary": "List recent runs and their durable step receipts for a workflow artifact.",
         "parameters": [
           {
             "schema": {
@@ -7854,6 +7854,17 @@
                                     "cancelled"
                                   ]
                                 },
+                                "selectedRoutes": {
+                                  "type": "array",
+                                  "nullable": true,
+                                  "items": {
+                                    "type": "string"
+                                  }
+                                },
+                                "routeBasis": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
                                 "resultArtifactId": {
                                   "type": "string",
                                   "nullable": true
@@ -7876,6 +7887,8 @@
                                 "attempt",
                                 "kind",
                                 "status",
+                                "selectedRoutes",
+                                "routeBasis",
                                 "resultArtifactId",
                                 "createdAt",
                                 "startedAt",
