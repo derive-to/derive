@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8" /><title>Authored about blank iframe</title></head>
+  <body>
+    <script>
+      const frame = document.createElement("iframe")
+      frame.title = "Authored in-memory visualization"
+      frame.src = "about:blank"
+      frame.style.cssText = "width: 800px; height: 600px"
+      frame.addEventListener("load", () => {
+        frame.contentDocument.body.innerHTML = "<h1>In-memory visualization remains visible</h1>"
+        throw new Error("optional enhancement failed after in-memory paint")
+      }, { once: true })
+      document.body.append(frame)
+    </script>
+  </body>
+</html>
