@@ -35,21 +35,53 @@ export const SHARED_STATE_CLIENT_JS = `(function () {
           style.opacity === "0"
         )) return false;
       }
-      if (typeof element.getClientRects === "function" && element.getClientRects().length === 0)
-        return false;
+      if (typeof element.getClientRects === "function") {
+        var rects = element.getClientRects();
+        if (!rects.length) return false;
+        var hasArea = false;
+        for (var r = 0; r < rects.length; r += 1) {
+          if (Number(rects[r].width || 0) > 0 && Number(rects[r].height || 0) > 0) {
+            hasArea = true;
+            break;
+          }
+        }
+        if (!hasArea) return false;
+      }
+      if (String(element.tagName || "").toLowerCase() === "img" &&
+          (!element.complete || Number(element.naturalWidth || 0) <= 0 ||
+           Number(element.naturalHeight || 0) <= 0)) return false;
     } catch (_) { /* structural checks and visible text remain as fallbacks */ }
     return true;
+  }
+  function runtimeRoots(body) {
+    var roots = [body];
+    for (var at = 0; at < roots.length; at += 1) {
+      var root = roots[at];
+      var elements = root && root.querySelectorAll ? root.querySelectorAll("*") : [];
+      for (var i = 0; i < Number(elements.length || 0); i += 1) {
+        var shadow = elements[i] && elements[i].shadowRoot;
+        if (shadow && roots.indexOf(shadow) < 0) roots.push(shadow);
+      }
+    }
+    return roots;
   }
   function hasMeaningfulContent() {
     try {
       var doc = window.document, body = doc && doc.body;
       if (!body) return false;
-      var marker = body.querySelector && body.querySelector("[data-derive-ready]");
-      if (isVisiblyRendered(marker)) return true;
-      var rich = body.querySelectorAll ? body.querySelectorAll("table,canvas,svg,video") : [];
       var richContent = false;
-      for (var i = 0; i < Number(rich.length || 0); i += 1) {
-        if (isVisiblyRendered(rich[i])) { richContent = true; break; }
+      var roots = runtimeRoots(body);
+      for (var r = 0; r < roots.length && !richContent; r += 1) {
+        var markers = roots[r].querySelectorAll
+          ? roots[r].querySelectorAll("[data-derive-ready]") : [];
+        for (var m = 0; m < Number(markers.length || 0); m += 1) {
+          if (isVisiblyRendered(markers[m])) return true;
+        }
+        var rich = roots[r].querySelectorAll
+          ? roots[r].querySelectorAll("table,canvas,svg,video,img") : [];
+        for (var i = 0; i < Number(rich.length || 0); i += 1) {
+          if (isVisiblyRendered(rich[i])) { richContent = true; break; }
+        }
       }
       // innerText is layout-aware and omits script/style/hidden descendants. Falling
       // back to textContent made a long inline script look like visible authored copy.

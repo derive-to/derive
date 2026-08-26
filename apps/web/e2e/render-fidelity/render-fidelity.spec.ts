@@ -266,6 +266,74 @@ test.describe("render fidelity — pinning what the sandbox CSP permits", () => 
     }
   })
 
+  test("visible meaningful content in an open shadow root reaches Ready", async ({
+    owner: page,
+  }) => {
+    const html = readFileSync(join(FIXTURES, "startup-shadow-ready.html"), "utf8")
+    const shortId = await publishArtifact(page, "index.html", html, "text/html")
+
+    await page.goto(`/artifacts/${shortId}`)
+    await expect(page.getByText("Loading preview…")).toHaveCount(0, { timeout: 5_000 })
+    const artifact = page.frameLocator('iframe[title="index"]')
+    await expect(artifact.locator("#host").locator("h1")).toHaveText("Shadow dashboard is ready")
+    await artifact.locator("#host").locator("#control").click()
+    await expect(artifact.locator("#host").locator("#count")).toHaveText("1")
+  })
+
+  test("a successfully loaded standalone image reaches Ready", async ({ owner: page }) => {
+    const html = readFileSync(join(FIXTURES, "startup-loaded-image-ready.html"), "utf8")
+    const shortId = await publishArtifact(page, "index.html", html, "text/html")
+
+    await page.goto(`/artifacts/${shortId}`)
+    await expect(page.getByText("Loading preview…")).toHaveCount(0, { timeout: 5_000 })
+    const artifact = page.frameLocator('iframe[title="index"]')
+    await expect(artifact.locator("#proof")).toBeVisible()
+    await artifact.locator("#control").click()
+    await expect(artifact.locator("#count")).toHaveText("1")
+  })
+
+  test("zero-area SVG cannot turn a bootstrap failure into Ready", async ({ owner: page }) => {
+    const html = readFileSync(join(FIXTURES, "startup-zero-area-svg.html"), "utf8")
+    const shortId = await publishArtifact(page, "index.html", html, "text/html")
+
+    await page.goto(`/artifacts/${shortId}`)
+    await expect(page.getByText("Artifact script stopped")).toBeVisible()
+    await expect(page.getByTestId("render-degraded")).toHaveCount(0)
+    await expect(page.getByTestId("render-retry")).toHaveCount(1)
+  })
+
+  test("meaningful paint after the generic timeout self-recovers to Ready", async ({
+    owner: page,
+  }) => {
+    const html = readFileSync(join(FIXTURES, "startup-post-timeout-ready.html"), "utf8")
+    const shortId = await publishArtifact(page, "index.html", html, "text/html")
+
+    await page.goto(`/artifacts/${shortId}`)
+    await expect(page.getByText("Preview didn’t load")).toBeVisible({ timeout: 16_000 })
+    const artifact = page.frameLocator('iframe[title="index"]')
+    await expect(
+      artifact.getByRole("heading", { name: "Late content recovered automatically" }),
+    ).toBeVisible({ timeout: 5_000 })
+    await expect(page.getByText("Preview didn’t load")).toHaveCount(0)
+    await artifact.locator("#control").click()
+    await expect(artifact.locator("#count")).toHaveText("1")
+  })
+
+  test("degraded dismissal is scoped to one artifact instance", async ({ owner: page }) => {
+    const html = readFileSync(join(FIXTURES, "startup-fail-soft.html"), "utf8")
+    const firstId = await publishArtifact(page, "index.html", html, "text/html")
+    const secondId = await publishArtifact(page, "index.html", html, "text/html")
+
+    await page.goto(`/artifacts/${firstId}`)
+    await expect(page.getByTestId("render-degraded")).toBeVisible()
+    await page.getByTestId("render-degraded-dismiss").click()
+    await expect(page.getByTestId("render-degraded")).toHaveCount(0)
+
+    await page.goto(`/artifacts/${secondId}`)
+    await expect(page.getByTestId("render-degraded")).toBeVisible()
+    await expect(page.getByTestId("render-degraded")).toContainText("script-error")
+  })
+
   test("tier 1: a fully self-contained artifact renders with zero console errors, inline script executes", async ({
     owner: page,
   }) => {

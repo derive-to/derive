@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Open shadow-root readiness</title></head>
+<body>
+  <main id="host"></main>
+  <script>
+    const root = document.querySelector("#host").attachShadow({ mode: "open" })
+    root.innerHTML = `
+      <style>table{border-collapse:collapse}td{padding:6px;border:1px solid #ddd}button{margin-top:12px}</style>
+      <h1>Shadow dashboard is ready</h1>
+      <table><tbody><tr><td>Visible shadow row</td><td>Ready</td></tr></tbody></table>
+      <button id="control" type="button">Working control · <span id="count">0</span></button>
+    `
+    root.querySelector("#control").addEventListener("click", () => {
+      const count = root.querySelector("#count")
+      count.textContent = String(Number(count.textContent) + 1)
+    })
+  </script>
+</body>
+</html>
