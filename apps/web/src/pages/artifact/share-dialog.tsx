@@ -18,6 +18,7 @@ import { Eyebrow, SectionEyebrow } from "@/components/shared/section-eyebrow"
 import {
   accessIcon,
   accessSummary,
+  linkReachNote,
   ShareAccessSection,
   ShareCopyLinkButton,
   SharePeopleSection,
@@ -287,7 +288,11 @@ export function ShareButton({
   }
   const setPassword = (password: string) => void applyAccess(currentTripleWithPassword(password))
   const copyLink = async () => {
-    if (await copyLinkToClipboard(shareUrl, { success: "Link copied" })) {
+    // The toast carries the reach too: the note under the button is easy to miss at
+    // the moment that matters, which is the click right before pasting into an email.
+    const reach = linkReachNote(lRole, wsAccess, collectionOpen)
+    const success = reach ? `Link copied — ${reach.toLowerCase()}` : "Link copied"
+    if (await copyLinkToClipboard(shareUrl, { success })) {
       // The getting-started checklist's "share a link" step completes here — the
       // one gesture that means "I sent this to someone" (see chrome/getting-started).
       try {
@@ -631,8 +636,12 @@ export function ShareButton({
         {/* Footer: the universal action on the left, distribution mechanics folded
             behind a quiet disclosure on the right. */}
         <div className="flex items-center justify-between border-t border-border pt-4">
-          <div className="flex gap-1.5">
-            <ShareCopyLinkButton copied={copiedLink} testPrefix="share" onCopy={copyLink} />
+          <ShareCopyLinkButton
+            copied={copiedLink}
+            testPrefix="share"
+            reach={linkReachNote(lRole, wsAccess, collectionOpen)}
+            onCopy={copyLink}
+          >
             {momentUrl && (
               <Button
                 data-testid="share-moment-copy"
@@ -643,7 +652,7 @@ export function ShareButton({
                 Copy current moment
               </Button>
             )}
-          </div>
+          </ShareCopyLinkButton>
           <Button
             data-testid="share-more-toggle"
             variant="ghost"
