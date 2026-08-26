@@ -67,7 +67,8 @@ export interface RateLimiters {
    *  refreshing a dead page from mailing the approvers twice. Keyed by
    *  `<userId>:<shortId>`, NOT by the actor alone — the point is per-artifact
    *  dedupe, and a plain actor key would let one asker's second artifact silence
-   *  the first. Deliberately long (hours, not a minute). */
+   *  the first. Hours in process; 1/60s on the edge, whose native period caps at a
+   *  minute (see ACCESS_REQUEST_WINDOW_MS). */
   accessRequest: Limiter
   /** The MAIL bar for access requests, per asker. Separate from `invite` on purpose:
    *  one invite request sends one email, while one access request fans out to every
@@ -106,7 +107,8 @@ export function inMemoryRateLimiters(
     // 10 asks per minute per acting human: a human-paced agent never sees it; a
     // runaway ask loop does — each ask is a model run on someone's runner.
     ask: inMemoryLimiter(60_000, opts.askRate ?? 10),
-    // One notified ask per artifact per asker per 6 hours (ACCESS_REQUEST_WINDOW_MS).
+    // One notified ask per artifact per asker per ACCESS_REQUEST_WINDOW_MS. In-process
+    // only — the edge swaps this whole set for native bindings; see worker.ts.
     accessRequest: inMemoryLimiter(ACCESS_REQUEST_WINDOW_MS, 1),
     // 3 asks/min/asker x MAX_ACCESS_APPROVERS recipients — the same order of magnitude
     // of mail as the invite cap (10/min, one email each), rather than ten times it.

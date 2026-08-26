@@ -1,4 +1,5 @@
 import { beforeAll, describe, expect, it } from "vitest"
+import { inMemoryLimiter, inMemoryRateLimiters } from "../src/lib/rate-limit"
 import { as, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
 // Sharing an artifact with someone should land in their notification bell, the
@@ -108,12 +109,21 @@ describe("access request", () => {
   // dedupe window; the curator owns a workspace of their own for the collection case.
   const second: TestUser = { id: "u_ar_second", email: "second@ar.test", name: "Second" }
   const curator: TestUser = { id: "u_ar_curator", email: "curator@ar.test", name: "Curator" }
+  // rateLimit MUST be on: `accessRequestMailLimiter` is null without it, so the whole
+  // mail-bar branch — the one that used to leak Retry-After onto the 202 — would be
+  // dead code and the header assertion below would pass against the bug. The mail bar
+  // is widened so this suite's own asks aren't throttled; exhausting it deliberately is
+  // its own app, further down.
   const { app, meta } = makeAuthedApp(
     "access-request",
     [owner, editor, viewer, stranger, second, curator],
     undefined,
     {
       isolated: true,
+      deps: {
+        rateLimit: true,
+        rateLimiters: { ...inMemoryRateLimiters(), accessRequestMail: inMemoryLimiter(60_000, 50) },
+      },
     },
   )
 
@@ -257,13 +267,79 @@ describe("access request", () => {
       ).status,
     ).toBe(201)
 
-    // Precondition: the curator really can grant it, so being asked is actionable.
+    // Precondition: the curator can actually GRANT it, so being asked is actionable.
+    // Asserting a 200 read would not show that — a viewer-role collection member reads
+    // it too and can do nothing about a request.
     expect(
-      (await app.request(`/v1/artifacts/${invited}`, { headers: as(curator.email) })).status,
-    ).toBe(200)
+      (
+        await app.request(`/v1/artifacts/${invited}/members`, {
+          ...jsonAs(as(curator.email), { email: "nobody@ar.test", role: "viewer" }),
+          method: "PUT",
+        })
+      ).status,
+    ).toBe(201)
 
     const before = (await bell(curator.email)).unread
     expect((await ask(invited, stranger.email)).status).toBe(202)
     expect((await bell(curator.email)).unread).toBe(before + 1)
+  })
+  // The regression that started this: `limited()` writes Retry-After into the Hono
+  // context before returning its 429, and Hono seeds every later response from the same
+  // header object — so dropping the 429 and returning 202 still shipped the header. It
+  // only appeared once the bar was actually spent, and only on the exists-and-forbidden
+  // branch, which made it a one-request existence oracle.
+  describe("with the mail bar spent", () => {
+    const asker: TestUser = { id: "u_arx_asker", email: "asker@arx.test", name: "Asker" }
+    const holder: TestUser = { id: "u_arx_holder", email: "holder@arx.test", name: "Holder" }
+    const { app: rl } = makeAuthedApp("access-request-rl", [asker, holder], undefined, {
+      isolated: true,
+      deps: {
+        rateLimit: true,
+        // BOTH mail-ish limiters are set to a single token. The bug this pins wrote
+        // Retry-After via `limited(c, inviteLimiter)`; pinning it means whichever
+        // limiter the implementation reaches for must actually be spent, or the 429
+        // that writes the header never happens and the test passes against the bug.
+        rateLimiters: {
+          ...inMemoryRateLimiters(),
+          accessRequestMail: inMemoryLimiter(60_000, 1),
+          invite: inMemoryLimiter(60_000, 1),
+        },
+      },
+    })
+    const probe = (id: string) =>
+      rl.request(`/v1/artifacts/${id}/access-request`, {
+        ...jsonAs(as(asker.email), {}),
+        method: "POST",
+      })
+
+    it("answers a real forbidden artifact byte-for-byte like a fabricated id", async () => {
+      const publish = async (title: string) =>
+        (
+          await (
+            await publishAs(
+              rl,
+              "<h1>d</h1>",
+              { title, workspace_access: "member", link_role: "none", listed: "none" },
+              as(holder.email),
+            )
+          ).json()
+        ).short_id
+      const [first, second] = [await publish("First"), await publish("Second")]
+
+      // The burn MUST be a real forbidden artifact. Under the bug the mail token was
+      // only spent past the read gate, so probing a fabricated id spends nothing and
+      // the 429 that writes Retry-After never fires — a fabricated burn would let this
+      // test pass against the very bug it exists to pin.
+      await probe(first)
+      const real = await probe(second)
+      const fake = await probe("zzzz9999")
+      const shape = async (r: Response) => ({
+        status: r.status,
+        body: await r.text(),
+        headers: [...r.headers].filter(([k]) => k !== "date" && k !== "x-request-id").sort(),
+      })
+      expect(await shape(real)).toEqual(await shape(fake))
+      expect(real.headers.get("retry-after")).toBeNull()
+    })
   })
 })

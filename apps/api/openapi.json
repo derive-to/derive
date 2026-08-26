@@ -5530,7 +5530,7 @@
           "400": {
             "description": "The note is longer than the limit."
           },
-          "403": {
+          "401": {
             "description": "Not signed in — a grant needs an identity to attach to."
           }
         }

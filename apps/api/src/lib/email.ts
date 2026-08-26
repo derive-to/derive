@@ -288,12 +288,16 @@ export const buildShareEmail = (
  *
  * The identifier. The grant instruction names the `@handle` where there is one — it is
  * unique and bound to the account, so granting to it cannot land on someone else —
- * falling back to the address otherwise. Separately, and regardless of the handle, an
- * unverified address is labelled as such: signup is open, sign-in is never gated on
- * verification, and a handle is derived at signup rather than claimed, so neither is
- * evidence that this person controls the mailbox. Telling an owner to "add
- * dana@partner-co.example" without that caveat is how a stranger gets granted a
- * colleague's access.
+ * falling back to the address where the account has none. Separately, and regardless of
+ * the handle, an unverified address is labelled as such: signup is open, sign-in is
+ * never gated on verification, and a handle is DERIVED from the signup address rather
+ * than claimed, so neither is evidence that this person controls the mailbox.
+ *
+ * What that buys is one specific thing: an owner is never told to grant to an address
+ * on the strength of an unproven claim to it. It does NOT stop someone choosing a
+ * misleading display name or handle — the name still rides the subject line uncaveated,
+ * the same exposure the invite email already carries. The caveat makes the claim
+ * checkable; it does not make impersonation impossible.
  *
  * The link opens the artifact (which the approver CAN read); Share is one click from
  * there. That is why this mints no approve-token of its own — a one-click grant from

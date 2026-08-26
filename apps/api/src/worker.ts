@@ -130,8 +130,9 @@ export interface Env {
   RUN_QUEUE?: { send: (body: unknown) => Promise<void> }
   // Native per-colo rate-limit bindings (limit + 60s window declared in wrangler.toml
   // [[ratelimits]]). The edge counts against these instead of an in-process Map so a cap
-  // holds across isolates within a location. RL_STRICT is shared by the two tight 3/60
-  // surfaces (unlock + oauth-register), namespaced by key so their counts stay separate.
+  // holds across isolates within a location. RL_STRICT is shared by the tight 3/60
+  // surfaces (auth-email, unlock, oauth-register, draft-publish, access-request mail),
+  // namespaced by key so their counts stay separate.
   RL_AUTH: RateLimit
   RL_WRITE: RateLimit
   RL_PUBLISH: RateLimit

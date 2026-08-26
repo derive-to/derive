@@ -30,15 +30,21 @@ export { ACCESS_REQUEST_NOTE_MAX }
  * ignore the bell. `author_id` is likewise not a special case; the author appears
  * here through their owner row like anyone else.
  *
- * Capped, because the fan-out is an email each. The cap is what makes the ORDER
- * load-bearing: neither `listMemberships` nor `listArtifactMembers` has an ORDER BY,
- * so slicing the raw concatenation would cut an arbitrary set — and a different
- * arbitrary set on the next call, fanning one person's request out to fresh
- * strangers each time. Sorting by (grant closeness, role rank, user id) makes the
- * cut stable across calls and biased toward the people most attached to the
- * document.
+ * Returns an ORDERED list, bounded but not cut to the final size: the caller resolves
+ * the ids to accounts and drops the asker before applying MAX_ACCESS_APPROVERS, so a
+ * dangling row or the asker's own entry cannot eat a delivery slot. The order is
+ * load-bearing for that cut — neither `listMemberships` nor `listArtifactMembers` has
+ * an ORDER BY, so slicing a raw concatenation would take an arbitrary set, and a
+ * different arbitrary set next time, fanning one person's request out to fresh
+ * strangers on every retry. Sorting by (grant closeness, role rank, user id) makes it
+ * stable and biased toward the people most attached to the document.
  */
 export const MAX_ACCESS_APPROVERS = 5
+
+/** How many ids this returns for the caller to resolve. Bounds the `getUsers` argument
+ *  on a large workspace while leaving enough headroom that unresolvable rows and the
+ *  asker's own entry cannot starve the real cap. */
+export const PRE_RESOLVE_CAP = 50
 
 type ApproverStore = Pick<
   MetaStore,
@@ -72,13 +78,20 @@ export const accessApprovers = async (
 
   for (const s of shares) add(s.user_id, s.role, 0)
   if (artifact.workspace_access === "member") for (const m of memberships) add(m.user_id, m.role, 1)
-  for (const collection of await meta.getCollections(collectionIds)) {
+  const collections = await meta.getCollections(collectionIds)
+  // Concurrent, not a loop of awaits: this runs on the exists-and-forbidden branch,
+  // whose duration is already the loudest thing about the route, and a serial trip per
+  // collection would make that branch's latency scale with a property of the artifact.
+  const collectionMembers = await Promise.all(
+    collections.map((collection) => meta.listCollectionMembers(collection.id)),
+  )
+  collections.forEach((collection, i) => {
     // A collection's creator owns it, with or without an explicit member row.
     add(collection.created_by, "owner", 0)
     if (collection.workspace_access === "member")
       for (const m of memberships) add(m.user_id, m.role, 1)
-    for (const cm of await meta.listCollectionMembers(collection.id)) add(cm.user_id, cm.role, 0)
-  }
+    for (const cm of collectionMembers[i] ?? []) add(cm.user_id, cm.role, 0)
+  })
 
   return [...best]
     .filter(([, g]) => roleAllows(g.role, "share"))
@@ -88,16 +101,20 @@ export const accessApprovers = async (
         ROLES.indexOf(b.role) - ROLES.indexOf(a.role) ||
         (aId < bId ? -1 : aId > bId ? 1 : 0),
     )
-    .slice(0, MAX_ACCESS_APPROVERS)
+    .slice(0, PRE_RESOLVE_CAP)
     .map(([id]) => id)
 }
 
 /** How long one asker's request for one artifact suppresses the next. Long, because
  *  a second email adds nothing an approver did not already have — the first is still
  *  sitting in their inbox — and a stranger refreshing a dead page is the likeliest
- *  way this gets clicked twice. The edge tier cannot express a window this long (its
- *  native limiter caps the period at 60s), so RL_ACCESS_REQUEST approximates it at
- *  1/60s; see worker.ts. */
+ *  way this gets clicked twice.
+ *
+ *  This value applies to the in-process tier only — Node, self-host, dev, tests. The
+ *  edge replaces the whole limiter set with native bindings whose period is capped at
+ *  60s, so on Workers (which is what production runs) the real suppression is
+ *  RL_ACCESS_REQUEST's 1/60s, not this. Six hours is the intent; one minute is what a
+ *  hosted deployment enforces. */
 export const ACCESS_REQUEST_WINDOW_MS = 6 * 60 * 60 * 1000
 
 /** An account display name is free text the asker chose, and it rides an email
@@ -132,7 +149,10 @@ export const askerRef = (asker: Asker): string =>
   asker.username ? `@${asker.username}` : asker.email
 
 export const askerName = (asker: Asker): string =>
-  (asker.name ?? asker.email).slice(0, ACCESS_REQUEST_NAME_MAX)
+  // By code point, not code unit: a plain slice can cut an emoji in half and leave a
+  // lone surrogate, and this string reaches an email subject line and a stored
+  // notification row.
+  [...(asker.name ?? asker.email)].slice(0, ACCESS_REQUEST_NAME_MAX).join("")
 
 /** The bell line: who to grant to, whether to believe the address, then why. */
 export const accessRequestPreview = (asker: Asker, note: string | null): string => {

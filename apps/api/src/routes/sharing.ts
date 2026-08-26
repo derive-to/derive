@@ -17,6 +17,7 @@ import {
   accessApprovers,
   accessRequestPreview,
   askerName,
+  MAX_ACCESS_APPROVERS,
 } from "../lib/access-request"
 import { mintToken, sha256 } from "../lib/crypto"
 import { buildAccessRequestEmail, buildArtifactInviteEmail, buildShareEmail } from "../lib/email"
@@ -31,6 +32,7 @@ import {
 import { resolveUserRef } from "../lib/resolve-user"
 import { armInviteAdmission } from "../lib/signup-policy"
 import { enqueueSlackShareDm } from "../lib/slack-dm"
+import { log } from "../log"
 import { ArtifactMember, roleEnum } from "../schemas"
 import { enqueueChannelDelivery } from "../webhooks"
 
@@ -166,7 +168,7 @@ export const sharingRoutes = (ctx: AppContext) => {
           content: { "application/json": { schema: z.object({ ok: z.literal(true) }) } },
         },
         400: { description: "The note is longer than the limit." },
-        403: { description: "Not signed in — a grant needs an identity to attach to." },
+        401: { description: "Not signed in — a grant needs an identity to attach to." },
       },
     }),
     async (c) => {
@@ -189,24 +191,37 @@ export const sharingRoutes = (ctx: AppContext) => {
       if (accessRequestMailLimiter && !(await accessRequestMailLimiter(`id:${me.id}`)).ok)
         return accepted()
 
-      const shortId = c.req.param("shortId")
-      const artifact = shortId ? await meta.getByShortId(shortId) : null
-      if (!artifact || artifact.removed_at) return accepted()
-      // Nothing to ask for. Answering differently here would also tell a caller
-      // whether a grant they hold covers an artifact they cannot see listed.
-      const actor = await actorFor(c, artifact)
-      if (can(actor, "read", artifact.workspace_access, artifact.link_role)) return accepted()
-
-      // Everything past here can touch the store, and a throw would surface as a 500 —
-      // which IS distinguishable, since the one-query miss branch above can barely
-      // fail. Funnel it back into the same 202.
+      // Inside the try from here on. The read gate is not the cheap half: `actorFor`
+      // resolves grants through a four-arm union plus the collection lookup, so it is
+      // one of the heaviest calls on the route and it runs ONLY when the artifact
+      // exists. Leaving it outside meant a fault that reached the grants query but not
+      // the single-table getByShortId — schema drift on a preview deploy, a statement
+      // timeout — turned a real artifact into a 500 and a fabricated one into a 202.
+      // That is the same oracle in a louder voice.
       try {
+        const shortId = c.req.param("shortId")
+        const artifact = shortId ? await meta.getByShortId(shortId) : null
+        if (!artifact || artifact.removed_at) return accepted()
+        // Nothing to ask for. Answering differently here would also tell a caller
+        // whether a grant they hold covers an artifact they cannot see listed.
+        const actor = await actorFor(c, artifact)
+        if (can(actor, "read", artifact.workspace_access, artifact.link_role)) return accepted()
+
+        // Resolve and filter BEFORE the cap. Slicing ids would spend slots on rows that
+        // resolve to nothing (a deleted account leaves its artifact_member row behind)
+        // and on the asker themselves — who sorts FIRST when their own grant is
+        // workspace-bound and their active workspace is elsewhere, so the sole owner of
+        // an artifact could ask for access and knock the only other approver off the end
+        // of the list. PRE_RESOLVE_CAP keeps the getUsers argument bounded on a large
+        // workspace without letting the real cap eat unresolvable ids.
         const approvers = await accessApprovers(meta, artifact)
-        const recipients = (await meta.getUsers(approvers)).filter((u) => u.id !== me.id)
+        const recipients = (await meta.getUsers(approvers))
+          .filter((u) => u.id !== me.id)
+          .slice(0, MAX_ACCESS_APPROVERS)
         // Bail BEFORE spending the dedupe token. getUsers swallows its own errors and
         // returns [] by contract, so an empty roster can mean "nobody can grant" or "the
-        // store blinked" — and burning the 6-hour window on the second would tell the
-        // asker "Request sent" and then silently swallow every retry until it expired.
+        // store blinked" — and burning the window on the second would tell the asker
+        // "Request sent" and then silently swallow every retry until it expired.
         if (!recipients.length) return accepted()
         if (!(await accessRequestLimiter(`${me.id}:${artifact.short_id}`)).ok) return accepted()
 
@@ -247,9 +262,16 @@ export const sharingRoutes = (ctx: AppContext) => {
                 }),
               ),
           )
-      } catch {
-        // Deliberately swallowed: the asker learns nothing either way, and the
-        // observability middleware has already logged the request.
+      } catch (err) {
+        // The RESPONSE is swallowed on purpose — the asker must not learn from a 500
+        // what the 202 refuses to tell them. The ERROR is not: past the dedupe consume
+        // this is a request that reported "sent" and sent nothing, and the asker is
+        // suppressed until the window expires. The access log only records a 202, so
+        // without this line the failure is invisible to everyone, including the asker.
+        log.error("access request failed", {
+          short_id: c.req.param("shortId"),
+          error: err instanceof Error ? err.message : String(err),
+        })
       }
       return accepted()
     },

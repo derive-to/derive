@@ -2043,7 +2043,7 @@ export interface paths {
                     content?: never;
                 };
                 /** @description Not signed in — a grant needs an identity to attach to. */
-                403: {
+                401: {
                     headers: {
                         [name: string]: unknown;
                     };
