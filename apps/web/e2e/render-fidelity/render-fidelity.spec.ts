@@ -422,6 +422,42 @@ test.describe("render fidelity — pinning what the sandbox CSP permits", () => 
     await expect(artifact.locator("#count")).toHaveText("1")
   })
 
+  for (const scenario of [
+    { fixture: "startup-aria-hidden-ancestor.html", label: "an aria-hidden ancestor" },
+    { fixture: "startup-visibility-hidden-ancestor.html", label: "a visibility-hidden ancestor" },
+    { fixture: "startup-display-none-ancestor.html", label: "a display-none ancestor" },
+  ]) {
+    test(`${scenario.label} keeps descendant rich content Blocked`, async ({ owner: page }) => {
+      const html = readFileSync(join(FIXTURES, scenario.fixture), "utf8")
+      const shortId = await publishArtifact(page, "index.html", html, "text/html")
+      await page.goto(`/artifacts/${shortId}`)
+      await expect(page.getByText("Artifact script stopped")).toBeVisible()
+      await expect(page.getByTestId("render-degraded")).toHaveCount(0)
+      await expect(page.getByTestId("render-retry")).toHaveCount(1)
+    })
+  }
+
+  test("an open details table reaches Ready and remains usable", async ({ owner: page }) => {
+    const html = readFileSync(join(FIXTURES, "startup-open-details-ready.html"), "utf8")
+    const shortId = await publishArtifact(page, "index.html", html, "text/html")
+    await page.goto(`/artifacts/${shortId}`)
+    const artifact = page.frameLocator('iframe[title="index"]')
+    await artifact.locator("#control").click({ timeout: 5_000 })
+    await expect(artifact.locator("#count")).toHaveText("1")
+    await expect(page.getByTestId("render-retry")).toHaveCount(0)
+  })
+
+  test("a loaded image inside an open shadow root reaches Ready", async ({ owner: page }) => {
+    const html = readFileSync(join(FIXTURES, "startup-shadow-image-ready.html"), "utf8")
+    const shortId = await publishArtifact(page, "index.html", html, "text/html")
+    await page.goto(`/artifacts/${shortId}`)
+    const artifact = page.frameLocator('iframe[title="index"]')
+    await expect(artifact.locator("#host").locator("#proof")).toBeVisible()
+    await artifact.locator("#host").locator("#control").click({ timeout: 5_000 })
+    await expect(artifact.locator("#host").locator("#count")).toHaveText("1")
+    await expect(page.getByTestId("render-retry")).toHaveCount(0)
+  })
+
   test("tier 1: a fully self-contained artifact renders with zero console errors, inline script executes", async ({
     owner: page,
   }) => {

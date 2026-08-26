@@ -1,0 +1,4 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Open details readiness</title></head><body>
+<details open><summary>Visible details</summary><table><tbody><tr><td>Open row</td><td>Ready</td></tr></tbody></table><button id="control" type="button">Working control · <span id="count">0</span></button></details>
+<script>document.querySelector("#control").addEventListener("click",()=>{const c=document.querySelector("#count");c.textContent=String(Number(c.textContent)+1)})</script>
+</body></html>
