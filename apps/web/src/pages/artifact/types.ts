@@ -82,6 +82,18 @@ export type ArtifactRuntimeError = {
   phase: ArtifactRuntimePhase
 }
 
+/** Normalize runtime messages from both current and immutable legacy artifacts.
+ * Once the host has observed meaningful content, a missing or stale loading phase
+ * can no longer describe a startup failure: Ready is monotonic for this document. */
+export const normalizeRuntimeError = (
+  code: ArtifactRuntimeErrorCode,
+  phase: unknown,
+  contentReady: boolean,
+): ArtifactRuntimeError => ({
+  code,
+  phase: contentReady || phase === "ready" ? "ready" : "loading",
+})
+
 export const isBlockingRuntimeError = (error: ArtifactRuntimeError): boolean =>
   error.code !== "resource-error" && error.phase === "loading"
 

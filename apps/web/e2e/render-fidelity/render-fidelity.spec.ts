@@ -97,6 +97,99 @@ test.describe("render fidelity — pinning what the sandbox CSP permits", () => 
     }
   })
 
+  test("Ready never returns to Blocked for a late legacy loading-phase error", async ({
+    owner: page,
+  }) => {
+    const html = readFileSync(join(FIXTURES, "startup-stale-loading-error.html"), "utf8")
+    const shortId = await publishArtifact(page, "index.html", html, "text/html")
+
+    await page.goto(`/artifacts/${shortId}`)
+    await expect(page.getByTestId("render-degraded")).toBeVisible()
+    await expect(page.getByText("Artifact script stopped")).toHaveCount(0)
+    const artifact = page.frameLocator('iframe[title="index"]')
+    await expect(
+      artifact.getByRole("heading", { name: "Useful content reached Ready" }),
+    ).toBeVisible()
+    await artifact.locator("#control").click()
+    await expect(artifact.locator("#count")).toHaveText("1")
+  })
+
+  test("viewer waits through iframe load, then degrades after delayed meaningful paint", async ({
+    browser,
+    owner: page,
+  }) => {
+    const html = readFileSync(join(FIXTURES, "startup-delayed-ready.html"), "utf8")
+    const shortId = await publishArtifact(page, "index.html", html, "text/html")
+
+    await page.goto(`/artifacts/${shortId}`)
+    await expect(page.getByText("Loading preview…")).toBeVisible()
+    await expect(page.getByTestId("render-degraded")).toHaveCount(0)
+    await expect(page.getByTestId("render-degraded")).toBeVisible()
+    const artifact = page.frameLocator('iframe[title="index"]')
+    await expect(artifact.locator("#rows tr")).toHaveCount(30)
+    await artifact.locator("#control").click()
+    await expect(artifact.locator("#count")).toHaveText("1")
+
+    const publicContext = await browser.newContext({ viewport: { width: 390, height: 844 } })
+    const publicPage = await publicContext.newPage()
+    try {
+      await publicPage.goto(`/artifacts/${shortId}`)
+      await expect(publicPage.getByText("Loading preview…")).toBeVisible()
+      await expect(publicPage.getByTestId("render-degraded")).toBeVisible()
+      const publicArtifact = publicPage.frameLocator('iframe[title="index"]')
+      await expect(publicArtifact.locator("#rows tr")).toHaveCount(30)
+    } finally {
+      await publicContext.close()
+    }
+  })
+
+  for (const action of ["throw", "reject"] as const) {
+    test(`post-ready ${action} failure degrades without replacing useful controls`, async ({
+      owner: page,
+    }) => {
+      const html = readFileSync(join(FIXTURES, "startup-post-ready-actions.html"), "utf8")
+      const shortId = await publishArtifact(page, "index.html", html, "text/html")
+
+      await page.goto(`/artifacts/${shortId}`)
+      const artifact = page.frameLocator('iframe[title="index"]')
+      await expect(
+        artifact.getByRole("heading", { name: "Useful controls reached Ready" }),
+      ).toBeVisible()
+      await artifact.locator(`#${action}-control`).click()
+      await expect(page.getByTestId("render-degraded")).toBeVisible()
+      await expect(page.getByText("Artifact script stopped")).toHaveCount(0)
+      await artifact.locator("#working-control").click()
+      await expect(artifact.locator("#count")).toHaveText("1")
+    })
+  }
+
+  test("pre-content storage and required-script failures keep editor repair guidance", async ({
+    owner: page,
+  }) => {
+    const cases = [
+      {
+        fixture: "startup-storage-blocked.html",
+        title: "Browser storage isn’t available here",
+        repair: "derive.shared",
+      },
+      {
+        fixture: "startup-required-script-blocked.html",
+        title: "Artifact script stopped",
+        repair: "Check the source and republish",
+      },
+    ]
+
+    for (const scenario of cases) {
+      const html = readFileSync(join(FIXTURES, scenario.fixture), "utf8")
+      const shortId = await publishArtifact(page, "index.html", html, "text/html")
+      await page.goto(`/artifacts/${shortId}`)
+      await expect(page.getByText(scenario.title)).toBeVisible()
+      await expect(page.getByText(scenario.repair, { exact: false })).toBeVisible()
+      await expect(page.getByTestId("render-degraded")).toHaveCount(0)
+      await expect(page.getByTestId("render-retry")).toBeVisible()
+    }
+  })
+
   test("tier 1: a fully self-contained artifact renders with zero console errors, inline script executes", async ({
     owner: page,
   }) => {

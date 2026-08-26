@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Delayed meaningful paint</title>
+    <style>
+      body { margin: 0; padding: 24px; font: 16px/1.5 system-ui, sans-serif; }
+      main { max-width: 720px; margin: auto; }
+      table { width: 100%; border-collapse: collapse; }
+      td { border-bottom: 1px solid #ddd; padding: 6px; }
+      button { margin-top: 16px; padding: 8px 12px; }
+    </style>
+  </head>
+  <body>
+    <main id="app">Loading…<img src="/missing-optional-startup-logo.png" alt="" /></main>
+    <script>
+      setTimeout(() => {
+        const app = document.querySelector("#app")
+        app.innerHTML = `
+          <h1>Delayed content is usable</h1>
+          <p>The iframe loaded before this meaningful table appeared.</p>
+          <table><tbody id="rows"></tbody></table>
+          <button id="control" type="button">Working control · <span id="count">0</span></button>
+        `
+        const rows = app.querySelector("#rows")
+        for (let i = 1; i <= 30; i += 1) {
+          const row = document.createElement("tr")
+          row.innerHTML = `<td>Delayed row ${i}</td><td>Ready</td>`
+          rows.append(row)
+        }
+        let count = 0
+        app.querySelector("#control").addEventListener("click", () => {
+          count += 1
+          app.querySelector("#count").textContent = String(count)
+        })
+      }, 1500)
+    </script>
+  </body>
+</html>

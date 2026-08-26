@@ -5,7 +5,7 @@ import {
   type UpdateCueState,
   updateCue,
 } from "./render-stage"
-import { mergeRuntimeError } from "./types"
+import { isBlockingRuntimeError, mergeRuntimeError, normalizeRuntimeError } from "./types"
 
 // The soft "Updated · vN" cue's decision, pinned after it shipped a phantom: the render
 // stage stays mounted while the sibling switcher pages between artifacts, and a bare
@@ -87,5 +87,22 @@ describe("runtimeFailureCopy", () => {
     const optional = { code: "resource-error", phase: "ready" } as const
     expect(mergeRuntimeError(blocked, optional)).toBe(blocked)
     expect(mergeRuntimeError(optional, blocked)).toBe(blocked)
+  })
+
+  it("treats legacy errors as startup failures only before meaningful content", () => {
+    const beforeReady = normalizeRuntimeError("script-error", undefined, false)
+    expect(beforeReady.phase).toBe("loading")
+    expect(isBlockingRuntimeError(beforeReady)).toBe(true)
+
+    const afterReady = normalizeRuntimeError("script-error", undefined, true)
+    expect(afterReady.phase).toBe("ready")
+    expect(isBlockingRuntimeError(afterReady)).toBe(false)
+  })
+
+  it("makes the Ready boundary monotonic even for a stale explicit loading phase", () => {
+    expect(normalizeRuntimeError("script-error", "loading", true)).toEqual({
+      code: "script-error",
+      phase: "ready",
+    })
   })
 })
