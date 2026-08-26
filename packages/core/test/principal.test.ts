@@ -46,7 +46,7 @@ describe("principalActor — the authorship byline identity", () => {
     })
   })
   it("a human authors as themselves, preferring handle over email", () => {
-    expect(principalActor(human)).toEqual({ id: "u1", name: "Ada" })
+    expect(principalActor(human)).toEqual({ id: "u1", name: "ada" })
     expect(
       principalActor({
         kind: "human",

@@ -21,10 +21,20 @@ import {
 // signed-in caller reaching purely via the link rises to commenter when the link allows
 // it. Mirrors the access matrix in SECURITY.md.
 describe("comment access via the general-access link", () => {
-  const alice: TestUser = { id: "u_ca_alice", email: "alice@ca.test", name: "Alice" }
+  const alice: TestUser = {
+    id: "u_ca_alice",
+    email: "alice@ca.test",
+    name: "Alice",
+    username: "alice-handle",
+  }
   // Bob is signed in but reaches Alice's artifact purely via the link (his own isolated
   // workspace → no membership, no share): the "signed in via link" column.
-  const bob: TestUser = { id: "u_ca_bob", email: "bob@ca.test", name: "Bob" }
+  const bob: TestUser = {
+    id: "u_ca_bob",
+    email: "bob@ca.test",
+    name: "Bob",
+    username: "bob-handle",
+  }
   const { app } = makeAuthedApp("comment-access", [alice, bob], undefined, {
     isolated: true,
   })
@@ -127,7 +137,7 @@ describe("comment access via the general-access link", () => {
         op: "add",
         initial: [],
         value: { title: "Voting is stale", votes: 0 },
-        actor: { id: alice.id, name: "Alice" },
+        actor: { id: alice.id, name: "alice-handle" },
       },
       as(bob.email),
     )
@@ -186,8 +196,8 @@ describe("comment access via the general-access link", () => {
     expect((await activity.json()).activity).toMatchObject([
       { action: "update", item_id: itemId },
       { action: "update", item_id: itemId },
-      { action: "update", item_id: itemId, actor: { id: bob.id, name: "Bob" } },
-      { action: "add", item_id: itemId, actor: { id: bob.id, name: "Bob" } },
+      { action: "update", item_id: itemId, actor: { id: bob.id, name: "bob-handle" } },
+      { action: "add", item_id: itemId, actor: { id: bob.id, name: "bob-handle" } },
     ])
 
     // Comment rights enable the intended public interaction vocabulary, not an
@@ -313,8 +323,14 @@ describe("comment access via the general-access link", () => {
     const activity = await app.request(`${path}/activity`, { headers: as(bob.email) })
     expect((await activity.json()).activity).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ action: "set_mine", actor: { id: bob.id, name: "Bob" } }),
-        expect.objectContaining({ action: "set_mine", actor: { id: alice.id, name: "Alice" } }),
+        expect.objectContaining({
+          action: "set_mine",
+          actor: { id: bob.id, name: "bob-handle" },
+        }),
+        expect.objectContaining({
+          action: "set_mine",
+          actor: { id: alice.id, name: "alice-handle" },
+        }),
       ]),
     )
 
