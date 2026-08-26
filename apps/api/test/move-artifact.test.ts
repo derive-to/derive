@@ -13,6 +13,15 @@ const workspaceCookie = (res: Response): string => {
   return match ? `derive_ws=${match[1]}` : ""
 }
 
+const linkedBundle = (refs: string[]): string =>
+  `<!doctype html><html><body>${refs
+    .map((ref) => `<a href="/artifacts/${ref}">${ref}</a>`)
+    .join("")}<script type="application/derive-facts" data-fact="bundle-manifest">${JSON.stringify({
+    schema: "derive.linked-bundle/v1",
+    purpose: "Exercise recursive workspace moves",
+    members: refs.map((ref, i) => ({ id: `member-${i}`, ref, label: `Member ${i}` })),
+  })}</script></body></html>`
+
 describe("move an artifact to a different workspace", () => {
   // ana is the Admin/owner of "default"; ben is an editor there (makeAuthedApp's
   // default team seeding: users[0] = owner, the rest = defaultRole).
@@ -120,5 +129,105 @@ describe("move an artifact to a different workspace", () => {
       jsonAs(as(ana.email), { targetOrgId: "acme2" }),
     )
     expect(blocked.status).toBe(409)
+  })
+
+  it("recursively moves a linked bundle graph once, survives cycles, and leaves external refs alone", async () => {
+    const leaf = await (await publishAs(app, "# Leaf", {}, as(ana.email))).json()
+    const shared = await (await publishAs(app, "# Shared", {}, as(ana.email))).json()
+    const external = await (await publishAs(app, "# External", {}, as(ana.email))).json()
+
+    await meta.setWorkspace("move-external", "Move external")
+    await meta.setMembership({
+      id: "m_ana_move_external",
+      org_id: "move-external",
+      user_id: ana.id,
+      role: "owner",
+    })
+    expect(
+      (
+        await app.request(
+          `/v1/artifacts/${external.short_id}/move`,
+          jsonAs(as(ana.email), { targetOrgId: "move-external" }),
+        )
+      ).status,
+    ).toBe(200)
+
+    const nested = await (
+      await publishAs(app, linkedBundle([leaf.short_id, shared.short_id]), {}, as(ana.email))
+    ).json()
+    const root = await (
+      await publishAs(
+        app,
+        linkedBundle([nested.short_id, shared.short_id, external.short_id]),
+        {},
+        as(ana.email),
+      )
+    ).json()
+    // Re-publish the nested shell with a back-edge to the root. The traversal must
+    // terminate, and the shared leaf reached from both shells must move only once.
+    expect(
+      (
+        await publishAs(
+          app,
+          linkedBundle([leaf.short_id, shared.short_id, root.short_id]),
+          {},
+          as(ana.email),
+          nested.short_id,
+        )
+      ).status,
+    ).toBe(201)
+
+    await meta.setWorkspace("move-target", "Move target")
+    await meta.setMembership({
+      id: "m_ana_move_target",
+      org_id: "move-target",
+      user_id: ana.id,
+      role: "editor",
+    })
+    const moved = await app.request(
+      `/v1/artifacts/${root.short_id}/move`,
+      jsonAs(as(ana.email), { targetOrgId: "move-target" }),
+    )
+    expect(moved.status).toBe(200)
+
+    for (const shortId of [root.short_id, nested.short_id, leaf.short_id, shared.short_id])
+      expect((await meta.getByShortId(shortId))?.org_id).toBe("move-target")
+    expect((await meta.getByShortId(external.short_id))?.org_id).toBe("move-external")
+  })
+
+  it("preflights every linked member so a blocked descendant leaves the whole graph untouched", async () => {
+    const leaf = await (await publishAs(app, "# Domain leaf", {}, as(ana.email))).json()
+    const nested = await (
+      await publishAs(app, linkedBundle([leaf.short_id]), {}, as(ana.email))
+    ).json()
+    const root = await (
+      await publishAs(app, linkedBundle([nested.short_id]), {}, as(ana.email))
+    ).json()
+    const leafArtifact = await meta.getByShortId(leaf.short_id)
+    if (!leafArtifact) throw new Error("missing linked leaf")
+    await meta.setDomain({
+      host: "linked-leaf.move-test.derive.to",
+      artifact_id: leafArtifact.id,
+      org_id: "default",
+      kind: "subdomain",
+    })
+
+    await meta.setWorkspace("move-preflight-target", "Move preflight target")
+    await meta.setMembership({
+      id: "m_ana_move_preflight_target",
+      org_id: "move-preflight-target",
+      user_id: ana.id,
+      role: "owner",
+    })
+    const blocked = await app.request(
+      `/v1/artifacts/${root.short_id}/move`,
+      jsonAs(as(ana.email), { targetOrgId: "move-preflight-target" }),
+    )
+    expect(blocked.status).toBe(409)
+    expect(await blocked.json()).toMatchObject({
+      error: expect.stringContaining(leaf.short_id),
+    })
+    for (const shortId of [root.short_id, nested.short_id, leaf.short_id])
+      expect((await meta.getByShortId(shortId))?.org_id).toBe("default")
   })
 })

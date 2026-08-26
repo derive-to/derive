@@ -174,8 +174,9 @@ export function MoveToWorkspaceDialog({
         <DialogHeader>
           <DialogTitle>Move to workspace</DialogTitle>
           <DialogDescription>
-            Moves this artifact into another workspace you belong to. Comments, versions, and
-            history come with it; it leaves any collections here.
+            Moves this artifact and any same-workspace linked bundle members into another workspace
+            you belong to. Comments, versions, and history come with them; they leave any
+            collections here.
           </DialogDescription>
         </DialogHeader>
         {options.length === 0 ? (
