@@ -2,27 +2,42 @@ import { type ContextRecord, newId, type SessionRecord } from "@derive/core"
 import { z } from "zod"
 import { metaForWire } from "../lib/context-builder-card"
 import { canPayForAgent, NO_PAYER_MESSAGE } from "../lib/payer"
+import {
+  bindWorkflowContextSession,
+  prepareWorkflowContextUse,
+  recordWorkflowReceipt,
+  syncWorkflowContextSession,
+} from "../lib/workflow-coordination"
 import type { ToolContext } from "../mcp-tool-context"
 import { ANSWER_MAX, clipSessionText, ENTRY_MAX, err, json, runnerOnline } from "../mcp-util"
 import { ownerRunsOrg, runnerDispatch } from "./use-runner"
 
 // USE A CONTEXT — query a workspace's live data agents ------------------------
-// Contexts are askable agent setups (a registered agent wired to a manifest, answering
-// through an owner-run runner). `use` is the agent-side surface, acting FOR the
-// connection's on-behalf human: the human's own ask-grant (membership + ask_policy/
-// roster, re-checked per call via canUserAskContext) is the ONLY gate, so an agent can
-// reach exactly what its human can, and nothing more. Discovery is `find` (contexts ride
-// the browse/search results); a connection with no known human is refused at call time.
-// Management lives on `automate` (create_context), owner grants only; rewire/delete
-// deliberately stay REST. (askableContexts / runnerOnline live in mcp-tool-context /
-// mcp-util — shared with find's context rows.)
+// Ordinary calls act for the connection's human and are limited by that person's live
+// context grant. A registered agent assigned to a workflow run acts for the run's human
+// initiator, preserving the same grant and payer checks. Discovery remains on `find`;
+// context management remains on `automate` and REST.
 
 const NO_HUMAN =
   "Using a context opens a session on a human's behalf, and this connection has no acting human. " +
   "Reconnect with an OAuth login (or a token registered by a user) to use one."
 
+const workflowInput = z.object({
+  run_id: z.string().trim().min(1),
+  node_id: z.string().trim().min(1),
+  attempt: z.coerce.number().int().min(1),
+  status: z.enum(["succeeded", "failed", "cancelled"]).optional(),
+  decision: z.unknown().optional(),
+  selected_routes: z.array(z.string().trim().min(1).max(200)).max(50).optional(),
+  route_basis: z.string().trim().min(1).max(2_000).optional(),
+  output: z.unknown().optional(),
+  error: z.string().trim().min(1).max(20_000).optional(),
+  finish_run: z.enum(["succeeded", "failed", "cancelled"]).optional(),
+})
+
 export function registerUseTool(tc: ToolContext): void {
-  const { server, ctx, actingFor, askableContexts, inGrant, resolveWs, wsArg } = tc
+  const { server, ctx, agent, actingFor, registered, askableContexts, inGrant, resolveWs, wsArg } =
+    tc
 
   // (Listing the askable contexts now lives in `find` — they ride the browse/search rows.)
 
@@ -30,7 +45,7 @@ export function registerUseTool(tc: ToolContext): void {
     "use",
     {
       description:
-        "Give a context WORK (rate-limited): `context`+`instruction` opens a session, `session_id`+`instruction` follows up, `session_id` alone checks. Real runs take minutes, so a still-working response is NORMAL — re-call until it settles. See derive://skills/contexts.",
+        "Give a context work or check its session. `workflow` binds a pinned run attempt or records its routing receipt. See derive://skills/contexts and derive://skills/workflows.",
       // Opens/advances a session (a write — messages accumulate, budget is spent) but
       // deletes nothing; a session can be followed up or checked, never destroyed from
       // here. Not idempotent by default (each open mints a new session — `dedupe_key` is
@@ -107,6 +122,11 @@ export function registerUseTool(tc: ToolContext): void {
           .string()
           .optional()
           .describe("RUN mode: the requester-message id this addresses."),
+        workflow: workflowInput
+          .optional()
+          .describe(
+            "Bind a context session to a run attempt, or pass status to record its receipt.",
+          ),
         workspace: wsArg,
       },
     },
@@ -121,6 +141,7 @@ export function registerUseTool(tc: ToolContext): void {
       state,
       result_artifact_id,
       answers,
+      workflow,
       workspace,
     }) => {
       // RUN MODE — dispatched by ownership: a registered agent on a context it is the
@@ -143,13 +164,82 @@ export function registerUseTool(tc: ToolContext): void {
         })
         if (ran) return ran
       }
-      if (!actingFor) return err(NO_HUMAN)
+      const workflowPrincipal = async (runId: string, resolvedOrgId?: string) => {
+        let orgId = resolvedOrgId
+        if (!orgId) {
+          const target = await resolveWs(workspace)
+          if ("error" in target) return target.error
+          orgId = target.org
+        }
+        const run = await ctx.meta.getWorkflowRun(runId, orgId)
+        if (!run) return "No such workflow run in this workspace."
+        const ownsManualRun = !!actingFor && run.initiated_by === actingFor.id
+        const isAssignedAgent = registered && run.assigned_agent_id === agent.id
+        if (!ownsManualRun && !isAssignedAgent)
+          return "This connection is not the executor assigned to that workflow run."
+        if (!run.initiated_by)
+          return "This workflow run has no human initiator to authorize contexts."
+        return {
+          run,
+          orgId,
+          askerId: run.initiated_by,
+          executorId: isAssignedAgent ? agent.id : run.initiated_by,
+        }
+      }
+      if (
+        workflow &&
+        !workflow.status &&
+        (workflow.decision !== undefined ||
+          workflow.selected_routes !== undefined ||
+          workflow.route_basis !== undefined ||
+          workflow.output !== undefined ||
+          workflow.error !== undefined ||
+          workflow.finish_run !== undefined)
+      )
+        return err("Workflow receipt fields require `status`.")
+      if (workflow?.status) {
+        if (
+          context ||
+          session_id ||
+          instruction ||
+          answer ||
+          progress !== undefined ||
+          state ||
+          result_artifact_id ||
+          answers ||
+          dedupe_key ||
+          wait !== undefined
+        )
+          return err("Record a workflow receipt without context-session or runner fields.")
+        const principal = await workflowPrincipal(workflow.run_id)
+        if (typeof principal === "string") return err(principal)
+        const recorded = await recordWorkflowReceipt({
+          meta: ctx.meta,
+          receipt: { ...workflow, status: workflow.status },
+          orgId: principal.orgId,
+          executorId: principal.executorId,
+          at: new Date().toISOString(),
+        })
+        if (typeof recorded === "string") return err(recorded)
+        return json({
+          workflow_run_id: recorded.run.id,
+          run_status: recorded.run.status,
+          node_id: recorded.attempt.node_id,
+          attempt: recorded.attempt.attempt,
+          attempt_status: recorded.attempt.status,
+        })
+      }
+      if (workflow && !context)
+        return err(
+          "Bind workflow run/node/attempt while opening its context, or pass status to record a receipt.",
+        )
+      if (!actingFor && !workflow) return err(NO_HUMAN)
       // Session WRITES are capped per acting human — each one triggers a model
       // run on the context owner's runner, so a looping agent is the realistic
       // flood. The check mode is a read and stays uncapped.
-      const overAskCap = async () => {
+      const overAskCap = async (askerId: string) => {
         if (!ctx.askLimiter) return null
-        const r = await ctx.askLimiter(`id:${actingFor.id}`)
+        const r = await ctx.askLimiter(`id:${askerId}`)
         return r.ok ? null : err(`Rate limit exceeded — retry in ${r.retryAfter}s.`)
       }
 
@@ -169,7 +259,7 @@ export function registerUseTool(tc: ToolContext): void {
           const release = new AbortController()
           const woke = ctx.bus
             .waitFor(
-              `u:${actingFor.id}`,
+              `u:${s.asker_id}`,
               ["session.settled", "session.progress"],
               left,
               release.signal,
@@ -189,10 +279,12 @@ export function registerUseTool(tc: ToolContext): void {
           if (isSettled(s.state)) break
           if (!e) break // timed out — s holds one last fresh read
           // A progress tick for OUR session: return it now (the runner is streaming).
-          // A wake for a DIFFERENT session loops on and waits out the remainder.
+          // A wake for a different session loops and waits out the remainder.
           if (e.type === "session.progress" && e.session_id === s.id) break
         }
 
+        await syncWorkflowContextSession(ctx.meta, s)
+        const workflowAttempt = await ctx.meta.getWorkflowStepAttemptBySession(s.id, s.org_id)
         const transcript = await ctx.meta.listSessionMessages(s.id)
         const lastAgent = transcript.filter((m) => m.author_kind === "agent").at(-1)
         // The last agent message is the ANSWER once settled, or the latest PROGRESS
@@ -232,6 +324,16 @@ export function registerUseTool(tc: ToolContext): void {
           session_id: s.id,
           context: x.name,
           state: s.state,
+          ...(workflowAttempt
+            ? {
+                workflow: {
+                  run_id: workflowAttempt.workflow_run_id,
+                  node_id: workflowAttempt.node_id,
+                  attempt: workflowAttempt.attempt,
+                  status: workflowAttempt.status,
+                },
+              }
+            : {}),
           ...(resultUrl ? { result_url: resultUrl } : {}),
           ...(answerRow
             ? {
@@ -271,6 +373,14 @@ export function registerUseTool(tc: ToolContext): void {
           )
         const found = await ctx.meta.getSession(session_id)
         const linked = found?.context_id ? await ctx.meta.getContext(found.context_id) : null
+        const workflowAttempt = found
+          ? await ctx.meta.getWorkflowStepAttemptBySession(found.id, found.org_id)
+          : null
+        const workflowRun = workflowAttempt
+          ? await ctx.meta.getWorkflowRun(workflowAttempt.workflow_run_id, found?.org_id ?? "")
+          : null
+        const assignedAgent = registered && workflowRun?.assigned_agent_id === agent.id
+        const askerId = assignedAgent ? workflowRun?.initiated_by : actingFor?.id
         // Ownership + the LIVE grant, re-checked per call (a human removed from
         // the workspace/roster loses ask-through-agent the moment they lose
         // ask-directly), and the OAuth grant's workspace clamp. Any miss reads
@@ -278,9 +388,10 @@ export function registerUseTool(tc: ToolContext): void {
         const allowed =
           !!found &&
           !!linked &&
-          found.asker_id === actingFor.id &&
+          !!askerId &&
+          found.asker_id === askerId &&
           inGrant(linked.org_id) &&
-          (await ctx.canUserAskContext(actingFor.id, linked))
+          (await ctx.canUserAskContext(askerId, linked))
         if (!found || !linked || !allowed)
           return err(
             `No session "${session_id}" you can reach. find (a context row) shows your open sessions.`,
@@ -290,7 +401,11 @@ export function registerUseTool(tc: ToolContext): void {
           return err(
             "That session is closed — open a new one by passing `context` + `instruction`.",
           )
-        const capped = await overAskCap()
+        if (workflowAttempt && isSettled(found.state))
+          return err(
+            "A settled workflow context session is immutable; start the next attempt instead.",
+          )
+        const capped = await overAskCap(askerId)
         if (capped) return capped
         // A follow-up mid-run must NOT vacate an active claim, and reopening must not race a
         // concurrent settle. appendFollowupReopen does both in one atomic compare-and-set: a
@@ -303,7 +418,7 @@ export function registerUseTool(tc: ToolContext): void {
           id: newId("sm"),
           session_id: found.id,
           author_kind: "asker",
-          author_id: actingFor.id,
+          author_id: askerId,
           body_md: instruction,
         })
         // Re-read: the follow-up flipped the session (working stays working; else open).
@@ -319,7 +434,13 @@ export function registerUseTool(tc: ToolContext): void {
         return err("Opening a session needs an `instruction` — 'with this context, do this'.")
       const t = await resolveWs(workspace)
       if ("error" in t) return err(t.error)
-      const rows = await askableContexts(t.org, actingFor.id)
+      const principal = workflow ? await workflowPrincipal(workflow.run_id, t.org) : null
+      if (typeof principal === "string") return err(principal)
+      const askerId = principal?.askerId ?? actingFor?.id
+      if (!askerId) return err(NO_HUMAN)
+      if (principal && principal.orgId !== t.org)
+        return err("The workflow run and context must be in the same workspace.")
+      const rows = await askableContexts(t.org, askerId)
       const ref = context.trim()
       const hit =
         rows.find((r) => r.x.id === ref) ??
@@ -334,13 +455,48 @@ export function registerUseTool(tc: ToolContext): void {
         )
       if (!hit.manifest)
         return err(`Context "${hit.x.name}" has lost its manifest and can't be asked.`)
-      const capped = await overAskCap()
+      const manifest = hit.manifest
+      if (workflow && principal) {
+        const invalidTarget = await prepareWorkflowContextUse({
+          meta: ctx.meta,
+          ref: workflow,
+          orgId: principal.orgId,
+          context: hit.x,
+          manifest,
+        })
+        if (typeof invalidTarget === "string") return err(invalidTarget)
+      }
+      const capped = await overAskCap(askerId)
       if (capped) return capped
+      const workflowDedupe = workflow
+        ? `${workflow.run_id}:${workflow.node_id}:${workflow.attempt}`
+        : undefined
+      if (workflowDedupe && dedupe_key && dedupe_key !== workflowDedupe)
+        return err(`Workflow attempts use the exact dedupe_key "${workflowDedupe}".`)
+      const effectiveDedupe = workflowDedupe ?? dedupe_key
+      const bindSession = async (session: SessionRecord): Promise<string | null> => {
+        if (!workflow || !principal) return null
+        const bound = await bindWorkflowContextSession({
+          meta: ctx.meta,
+          ref: workflow,
+          orgId: principal.orgId,
+          context: hit.x,
+          manifest,
+          session,
+          executorId: principal.executorId,
+          at: session.created_at,
+        })
+        return typeof bound === "string" ? bound : null
+      }
       // Idempotency: a same-key ask still in flight JOINS the existing session
       // rather than opening a new one — a double "run for brand X" never runs twice.
-      if (dedupe_key) {
-        const inflight = await ctx.meta.findInflightSession(hit.x.id, actingFor.id, dedupe_key)
-        if (inflight) return reply(inflight, hit.x, false)
+      if (effectiveDedupe) {
+        const inflight = await ctx.meta.findInflightSession(hit.x.id, askerId, effectiveDedupe)
+        if (inflight) {
+          const bindError = await bindSession(inflight)
+          if (bindError) return err(bindError)
+          return reply(inflight, hit.x, false)
+        }
       }
       // PAYER guard, mirroring the REST ask (routes/contexts.ts): the asker pays, then
       // owner-lend, then the pool. After the dedupe join for the same reason — joining an
@@ -349,7 +505,7 @@ export function registerUseTool(tc: ToolContext): void {
         !(await canPayForAgent(ctx.meta, {
           orgId: hit.x.org_id,
           agentId: hit.x.agent_id,
-          initiator: { userId: actingFor.id, source: "asker" },
+          initiator: { userId: askerId, source: "asker" },
         }))
       )
         return err(NO_PAYER_MESSAGE)
@@ -359,17 +515,21 @@ export function registerUseTool(tc: ToolContext): void {
           id: newId("ses"),
           context_id: hit.x.id,
           org_id: hit.x.org_id,
-          asker_id: actingFor.id,
-          context_version: hit.manifest.current_version,
-          dedupe_key,
+          asker_id: askerId,
+          context_version: manifest.current_version,
+          dedupe_key: effectiveDedupe,
         })
       } catch (e) {
         // Lost the create race to this asker's own concurrent same-key ask — the partial
         // unique index rejected us; join the winner. Rethrow anything else.
-        const winner = dedupe_key
-          ? await ctx.meta.findInflightSession(hit.x.id, actingFor.id, dedupe_key)
+        const winner = effectiveDedupe
+          ? await ctx.meta.findInflightSession(hit.x.id, askerId, effectiveDedupe)
           : null
-        if (winner) return reply(winner, hit.x, false)
+        if (winner) {
+          const bindError = await bindSession(winner)
+          if (bindError) return err(bindError)
+          return reply(winner, hit.x, false)
+        }
         throw e
       }
       await ctx.meta.addSessionMessage(
@@ -377,11 +537,16 @@ export function registerUseTool(tc: ToolContext): void {
           id: newId("sm"),
           session_id: opened.id,
           author_kind: "asker",
-          author_id: actingFor.id,
+          author_id: askerId,
           body_md: instruction,
         },
         "open",
       )
+      const bindError = await bindSession(opened)
+      if (bindError) {
+        await ctx.meta.setSessionState(opened.id, "closed")
+        return err(bindError)
+      }
       return reply(opened, hit.x, false)
     },
   )

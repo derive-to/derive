@@ -5,6 +5,14 @@
 import type { LinkRole, Listed, Role, WorkspaceAccess } from "./roles"
 import type { SharedStateAction } from "./shared-state"
 import type { SortMode } from "./sort"
+import type {
+  WorkflowExecutionLane,
+  WorkflowRequestedExecution,
+  WorkflowRunStatus,
+  WorkflowStepAttemptStatus,
+  WorkflowStepKind,
+  WorkflowTransitionGuard,
+} from "./workflow-run"
 
 export interface BlobStore {
   /** Content-addressed put; returns the sha256 hex key. Idempotent. */
@@ -2152,6 +2160,37 @@ export interface AgentStore {
   ackAgentMention(agentId: string, id: string): Promise<boolean>
 }
 
+/** Durable workflow coordination. Automation runs and context sessions remain separate records. */
+export interface WorkflowRunStore {
+  createWorkflowRun(run: NewWorkflowRun): Promise<WorkflowRunRecord>
+  getWorkflowRun(id: string, orgId: string): Promise<WorkflowRunRecord | null>
+  transitionWorkflowRun(
+    id: string,
+    orgId: string,
+    expected: WorkflowTransitionGuard,
+    transition: WorkflowRunTransition,
+  ): Promise<WorkflowRunRecord | null>
+  createWorkflowStepAttempt(
+    orgId: string,
+    attempt: NewWorkflowStepAttempt,
+  ): Promise<WorkflowStepAttemptRecord>
+  getWorkflowStepAttemptBySession(
+    sessionId: string,
+    orgId: string,
+  ): Promise<WorkflowStepAttemptRecord | null>
+  listWorkflowStepAttempts(
+    workflowRunId: string,
+    orgId: string,
+  ): Promise<WorkflowStepAttemptRecord[]>
+  transitionWorkflowStepAttempt(
+    id: string,
+    workflowRunId: string,
+    orgId: string,
+    expected: WorkflowTransitionGuard,
+    transition: WorkflowStepAttemptTransition,
+  ): Promise<WorkflowStepAttemptRecord | null>
+}
+
 export interface ModerationStore {
   // ---- Moderation: abuse reports, takedown, audit log --------------------
   createReport(r: NewReport): Promise<ReportRecord>
@@ -2338,6 +2377,7 @@ export interface MetaStore
     TemplateLibraryStore,
     DirectoryStore,
     AgentStore,
+    WorkflowRunStore,
     ModerationStore,
     AssetStore,
     SharedStateStore {}
@@ -2625,6 +2665,134 @@ export interface NewRun {
   finished_at?: string | null
   cost_micro_usd?: number | null
   meta?: string | null
+}
+
+/** One execution of an exact Workflow definition and diagram. */
+export interface WorkflowRunRecord {
+  id: string
+  org_id: string
+  workflow_artifact_id: string
+  workflow_version: number
+  workflow_blob_key: string
+  workflow_content_type: string
+  diagram_id: string
+  status: WorkflowRunStatus
+  /** Incremented on every transition to fence stale executors across waiting/resume cycles. */
+  state_revision: number
+  reason: string
+  initiated_by: string | null
+  /** Inbox request that delivered this run, when it was assigned to a registered agent. */
+  request_id: string | null
+  /** Registered agent selected at handoff; null for copy/manual execution. */
+  assigned_agent_id: string | null
+  /** User or registered-agent principal that first claimed execution. */
+  executor_id: string | null
+  requested_execution: WorkflowRequestedExecution
+  /** The lane that first started the run. */
+  actual_execution: WorkflowExecutionLane | null
+  created_at: string
+  updated_at: string
+  started_at: string | null
+  finished_at: string | null
+}
+
+export interface NewWorkflowRun {
+  id: string
+  org_id: string
+  workflow_artifact_id: string
+  workflow_version: number
+  workflow_blob_key: string
+  workflow_content_type: string
+  diagram_id: string
+  reason: string
+  initiated_by?: string | null
+  request_id?: string | null
+  assigned_agent_id?: string | null
+  requested_execution?: WorkflowRequestedExecution
+  created_at?: string
+}
+
+export interface WorkflowRunTransition {
+  status: WorkflowRunStatus
+  at: string
+  /** Required when starting or advancing a claimed run. */
+  actualExecution?: WorkflowExecutionLane
+  /** Required when starting or advancing a claimed run. */
+  executorId?: string
+}
+
+/** One materialized attempt of a Workflow node. */
+export interface WorkflowStepAttemptRecord {
+  id: string
+  workflow_run_id: string
+  node_id: string
+  attempt: number
+  kind: WorkflowStepKind
+  status: WorkflowStepAttemptStatus
+  state_revision: number
+  context_id: string | null
+  context_manifest_artifact_id: string | null
+  context_version: number | null
+  context_blob_key: string | null
+  context_content_type: string | null
+  session_id: string | null
+  /** JSON-encoded human choice or agent outcome used for routing. */
+  decision: string | null
+  /** JSON-encoded destination node ids selected by the router. */
+  selected_routes: string | null
+  /** Explanation captured when the route was selected. */
+  route_basis: string | null
+  /** Primary result artifact short id, when the node produced one. */
+  result_artifact_id: string | null
+  /** JSON-encoded node output. */
+  output: string | null
+  error: string | null
+  created_at: string
+  updated_at: string
+  started_at: string | null
+  finished_at: string | null
+}
+
+interface NewWorkflowStepAttemptBase {
+  id: string
+  workflow_run_id: string
+  node_id: string
+  attempt: number
+  created_at?: string
+}
+
+export type NewWorkflowStepAttempt = NewWorkflowStepAttemptBase &
+  (
+    | {
+        kind: "context"
+        context_id: string
+        context_manifest_artifact_id: string
+        context_version: number
+        context_blob_key: string
+        context_content_type: string
+        session_id?: string
+      }
+    | {
+        kind: "human" | "terminal"
+        context_id?: never
+        context_manifest_artifact_id?: never
+        context_version?: never
+        context_blob_key?: never
+        context_content_type?: never
+        session_id?: never
+      }
+  )
+
+export interface WorkflowStepAttemptTransition {
+  status: WorkflowStepAttemptStatus
+  at: string
+  sessionId?: string | null
+  decision?: string | null
+  selectedRoutes?: string | null
+  routeBasis?: string | null
+  resultArtifactId?: string | null
+  output?: string | null
+  error?: string | null
 }
 
 /** What a plan pays for: the model (thinking) or the tool broker (hands). */
@@ -3001,9 +3169,9 @@ export interface NewContextAsker {
 /** A session's lifecycle. `state` also encodes whose turn it is: `open` means the
  *  runner owes a reply (the queue predicate); `working` = a runner has claimed and
  *  is answering it (leased, so overlapping runners don't double-run); an asker
- *  follow-up on an `answered` session flips it back to `open`. `escalated` = the
- *  runner filed its draft for the owner's approval; `failed` = the run crashed
- *  (surfaced, never auto-retried); `closed` = the asker or owner ended it. */
+ *  follow-up on an `answered` session flips it back to `open`. `escalated` means the
+ *  runner needs explicit human input before it can continue; `failed` = the run
+ *  crashed (surfaced, never auto-retried); `closed` = the asker or owner ended it. */
 export type SessionState = "open" | "working" | "answered" | "escalated" | "failed" | "closed"
 
 /** Who wrote a session message: the human asking, or the context's agent. */

@@ -200,7 +200,7 @@ describe("workflow run: explicit local-agent handoff", () => {
           ],
           edges: [
             { from: "draft", to: "review", label: "ready" },
-            { from: "review", to: "publish", label: "approve" },
+            { from: "review", to: "publish", label: "publish" },
             { from: "review", to: "stop", label: "stop" },
           ],
         },
@@ -224,15 +224,15 @@ describe("workflow run: explicit local-agent handoff", () => {
             {
               id: "review",
               kind: "human",
-              decision: "Approve the brief",
-              options: ["approve", "stop"],
-              resume: "The reviewer approves or stops",
+              decision: "Choose whether to publish the brief",
+              options: ["publish", "stop"],
+              resume: "The reviewer chooses publish or stop",
             },
             {
               id: "publish",
               kind: "context",
               context_ref: "publisher",
-              instruction: "Publish the approved brief.",
+              instruction: "Publish the reviewed brief.",
               result: "A published brief",
               terminal: true,
             },
@@ -240,7 +240,7 @@ describe("workflow run: explicit local-agent handoff", () => {
           ],
           routes: [
             { from: "draft", to: "review", when: "always" },
-            ...(broken ? [] : [{ from: "review", to: "publish", when: "approve" }]),
+            ...(broken ? [] : [{ from: "review", to: "publish", when: "publish" }]),
             { from: "review", to: "stop", when: "stop" },
           ],
           scenarios: [
@@ -248,7 +248,7 @@ describe("workflow run: explicit local-agent handoff", () => {
               id: "expected",
               kind: "expected",
               path: ["draft", "review", "publish"],
-              outcome: "The approved brief is published",
+              outcome: "The reviewed brief is published",
             },
             {
               id: "failure",
@@ -272,8 +272,8 @@ describe("workflow run: explicit local-agent handoff", () => {
     )
   }
 
-  it("GET explains the handoff without running; POST queues that same policy for the agent", async () => {
-    const { app } = makeAuthedApp("workflow-run", [owner, editor], "editor")
+  it("GET previews without running; POST pins a fresh run and queues its instruction", async () => {
+    const { app, meta } = makeAuthedApp("workflow-run", [owner, editor], "editor")
     const published = await (
       await publishAs(app, workflowHtml(), { title: "Workflow" }, as(owner.email))
     ).json()
@@ -286,8 +286,8 @@ describe("workflow run: explicit local-agent handoff", () => {
     expect(promptRes.status).toBe(200)
     const prompt = (await promptRes.json()) as { prompt: string; diagram: { title: string } }
     expect(prompt.diagram.title).toBe("Reviewed brief")
-    expect(prompt.prompt).toContain("explicit run intent")
-    expect(prompt.prompt).toContain("this agent is the harness")
+    expect(prompt.prompt).toContain(`${published.short_id}@v1`)
+    expect(prompt.prompt).toContain("Starting it creates a fresh run record")
     expect(await inboxBodies(app, agent.token)).toHaveLength(0)
 
     const runRes = await app.request(
@@ -295,9 +295,53 @@ describe("workflow run: explicit local-agent handoff", () => {
       jsonAs(as(editor.email), { agentId: agent.id, diagramId: "brief" }),
     )
     expect(runRes.status).toBe(201)
+    const started = (await runRes.json()) as { requestId: string; runId: string; prompt: string }
+    expect(started.prompt).toContain(`${published.short_id}@v1`)
+    expect(started.prompt).toContain(`Run id: ${started.runId}`)
+    expect(started.prompt).toContain(
+      `read({short_id:"${published.short_id}", version:1, data:"workflow-definition"})`,
+    )
+    expect(started.prompt).toContain(`workflow:{run_id:"${started.runId}"`)
     const queued = await inboxBodies(app, agent.token)
     expect(queued).toHaveLength(1)
-    expect(queued[0]?.body).toContain(prompt.prompt)
+    expect(queued[0]?.body).toContain(started.prompt)
+    const artifact = await meta.getByShortId(published.short_id)
+    expect(artifact).not.toBeNull()
+    const run = await meta.getWorkflowRun(started.runId, artifact?.org_id ?? "")
+    expect(run).toMatchObject({
+      workflow_artifact_id: artifact?.id,
+      workflow_version: 1,
+      diagram_id: "brief",
+      initiated_by: editor.id,
+      request_id: started.requestId,
+      assigned_agent_id: agent.id,
+      requested_execution: "local",
+      status: "queued",
+    })
+    expect(run?.reason).toBe("agent-request")
+  })
+
+  it("copy starts a distinct pinned run without requiring a registered agent", async () => {
+    const { app, meta } = makeAuthedApp("workflow-copy-run", [owner, editor], "editor")
+    const published = await (
+      await publishAs(app, workflowHtml(), { title: "Workflow" }, as(owner.email))
+    ).json()
+    const res = await app.request(
+      `/v1/artifacts/${published.short_id}/workflow-run`,
+      jsonAs(as(editor.email), { diagramId: "brief", delivery: "copy" }),
+    )
+    expect(res.status).toBe(201)
+    const started = (await res.json()) as { runId: string; prompt: string; requestId?: string }
+    expect(started.requestId).toBeUndefined()
+    expect(started.prompt).toContain(`Run id: ${started.runId}`)
+    const artifact = await meta.getByShortId(published.short_id)
+    const run = await meta.getWorkflowRun(started.runId, artifact?.org_id ?? "")
+    expect(run).toMatchObject({
+      reason: "manual:copy",
+      initiated_by: editor.id,
+      request_id: null,
+      assigned_agent_id: null,
+    })
   })
 
   it("refuses a workflow whose Preview needs changes", async () => {
@@ -312,7 +356,7 @@ describe("workflow run: explicit local-agent handoff", () => {
     expect(res.status).toBe(409)
     const body = (await res.json()) as { code: string; errors: string[] }
     expect(body.code).toBe("needsChanges")
-    expect(body.errors.join("\n")).toContain('missing "approve"')
+    expect(body.errors.join("\n")).toContain('missing "publish"')
   })
 })
 

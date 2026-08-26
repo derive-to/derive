@@ -4055,7 +4055,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get the explicit handoff prompt for a validated workflow diagram. */
+        /** Preview a validated workflow handoff without starting it. */
         get: {
             parameters: {
                 query: {
@@ -4069,7 +4069,7 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description A copyable prompt for any local agent harness. Previewing it does not start execution. */
+                /** @description A summary of the pinned definition that would be used. No run record is created. */
                 200: {
                     headers: {
                         [name: string]: unknown;
@@ -4087,7 +4087,7 @@ export interface paths {
             };
         };
         put?: never;
-        /** Queue a validated workflow diagram for a registered local agent. */
+        /** Start a version-pinned workflow run for a local harness. */
         post: {
             parameters: {
                 query?: never;
@@ -4102,19 +4102,22 @@ export interface paths {
                     "application/json": {
                         agentId?: string;
                         diagramId: string;
+                        /** @enum {string} */
+                        delivery?: "agent" | "copy";
                     };
                 };
             };
             responses: {
-                /** @description The validated workflow handoff landed in the selected agent's pull inbox. Derive does not execute the workflow itself. */
+                /** @description A fresh run record and pinned instruction. Agent delivery also returns the inbox request id. */
                 201: {
                     headers: {
                         [name: string]: unknown;
                     };
                     content: {
                         "application/json": {
-                            /** @description The request comment's thread id. */
-                            requestId: string;
+                            runId: string;
+                            prompt: string;
+                            requestId?: string;
                         };
                     };
                 };

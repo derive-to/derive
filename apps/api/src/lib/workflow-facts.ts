@@ -3,7 +3,9 @@ import {
   type LinkedBundleManifest,
   previewWorkflowJson,
   validateLinkedBundle,
+  validateWorkflowDefinition,
   WORKFLOW_DEFINITION_FACT,
+  type WorkflowDefinition,
   type WorkflowPreview,
 } from "@derive/core"
 
@@ -14,6 +16,7 @@ export interface LinkedWorkflowFacts {
   workflowFound: boolean
   manifest: LinkedBundleManifest | null
   bundleErrors: string[]
+  definition?: WorkflowDefinition | null
   preview?: WorkflowPreview
 }
 
@@ -50,11 +53,23 @@ export const parseLinkedWorkflowFacts = (rows: FactRow[]): LinkedWorkflowFacts =
       bundleErrors: checked.errors,
     }
 
+  let workflowValue: unknown
+  if (workflowRow) {
+    try {
+      workflowValue = JSON.parse(workflowRow.json)
+    } catch {
+      workflowValue = null
+    }
+  }
+  const workflowValidation = workflowRow
+    ? validateWorkflowDefinition(workflowValue, checked.manifest)
+    : undefined
   return {
     bundleFound: true,
     workflowFound: !!workflowRow,
     manifest: checked.manifest,
     bundleErrors: checked.errors,
+    ...(workflowValidation ? { definition: workflowValidation.definition } : {}),
     ...(workflowRow ? { preview: previewWorkflowJson(workflowRow.json, checked.manifest) } : {}),
   }
 }

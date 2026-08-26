@@ -30,8 +30,17 @@ import { parseLinkedWorkflowFacts } from "../lib/workflow-facts"
  *  publishes per its grant: a publish-capable agent posts directly, a lower grant
  *  answers in comments — no special case here. */
 export const reworkRoutes = (ctx: AppContext) => {
-  const { meta, bus, background, notify, actingUser, requireArtifact, limited, commentLimiter } =
-    ctx
+  const {
+    meta,
+    bus,
+    background,
+    notify,
+    actingUser,
+    requireArtifact,
+    limited,
+    commentLimiter,
+    deps,
+  } = ctx
   const app = new OpenAPIHono<BlankEnv>()
 
   type Acting = Exclude<Awaited<ReturnType<AppContext["actingUser"]>>, null>
@@ -81,6 +90,7 @@ export const reworkRoutes = (ctx: AppContext) => {
       z.object({
         agentId: z.string().optional(),
         diagramId: z.string().optional(),
+        delivery: z.enum(["agent", "copy"]).optional(),
         note: z.string().max(500).optional(),
         threadId: z.string().optional(),
       }),
@@ -91,6 +101,7 @@ export const reworkRoutes = (ctx: AppContext) => {
       acting,
       agentId: body.agentId,
       diagramId: body.diagramId,
+      delivery: body.delivery,
       note: body.note,
       threadId: body.threadId,
     }
@@ -182,24 +193,28 @@ export const reworkRoutes = (ctx: AppContext) => {
   // One queued ask per (agent, artifact): the inbox is a pull queue, so re-firing while
   // the last request still waits would stack an identical row for the agent to do twice.
   // Returns the 409 instead of posting; once the agent acks, firing again is allowed.
+  const requestAlreadyQueued = async (agent: AgentRecord, artifact: ArtifactRecord) =>
+    (await meta.listPendingAgentMentions(agent.id, AGENT_INBOX_PAGE)).some(
+      (mention) => mention.artifact_short_id === artifact.short_id,
+    )
+
   const postRequest = async (
     c: Context,
     artifact: ArtifactRecord,
     acting: Acting,
     agent: AgentRecord,
     instruction: string,
+    requestId = newId("c"),
   ): Promise<string | Response> => {
-    const queued = await meta.listPendingAgentMentions(agent.id, AGENT_INBOX_PAGE)
-    if (queued.some((m) => m.artifact_short_id === artifact.short_id))
+    if (await requestAlreadyQueued(agent, artifact))
       return fail(c, 409, `a request for this artifact is already queued for ${agent.name}`, {
         code: "alreadyQueued",
       })
-    const id = newId("c")
     const mentions = [{ id: agent.id, name: agent.name }]
     const created = await meta.createComment({
-      id,
+      id: requestId,
       artifact_id: artifact.id,
-      thread_id: id,
+      thread_id: requestId,
       base_version: artifact.current_version,
       path: null,
       anchor: null,
@@ -234,7 +249,7 @@ export const reworkRoutes = (ctx: AppContext) => {
       method: "get",
       path: "/v1/artifacts/{shortId}/workflow-run",
       tags: ["Artifacts"],
-      summary: "Get the explicit handoff prompt for a validated workflow diagram.",
+      summary: "Preview a validated workflow handoff without starting it.",
       request: {
         params: z.object({ shortId: z.string() }),
         query: z.object({ diagram: z.string().min(1) }),
@@ -242,7 +257,7 @@ export const reworkRoutes = (ctx: AppContext) => {
       responses: {
         200: {
           description:
-            "A copyable prompt for any local agent harness. Previewing it does not start execution.",
+            "A summary of the pinned definition that would be used. No run record is created.",
           content: {
             "application/json": {
               schema: z.object({
@@ -262,7 +277,7 @@ export const reworkRoutes = (ctx: AppContext) => {
       const ready = await requireReadyWorkflow(c, artifact, c.req.query("diagram") ?? "")
       if (ready instanceof Response) return bail(ready)
       return c.json({
-        prompt: workflowRunInstruction(artifact.short_id, ready.id),
+        prompt: `Workflow ${artifact.short_id}@v${artifact.current_version}, diagram "${ready.id}", is Ready to run. Starting it creates a fresh run record and version-pinned instruction.`,
         diagram: { id: ready.id, title: ready.title },
       })
     },
@@ -273,40 +288,105 @@ export const reworkRoutes = (ctx: AppContext) => {
       method: "post",
       path: "/v1/artifacts/{shortId}/workflow-run",
       tags: ["Artifacts"],
-      summary: "Queue a validated workflow diagram for a registered local agent.",
+      summary: "Start a version-pinned workflow run for a local harness.",
       request: {
         params: z.object({ shortId: z.string() }),
         body: {
           required: true,
           content: {
             "application/json": {
-              schema: z.object({ agentId: z.string().optional(), diagramId: z.string().min(1) }),
+              schema: z.object({
+                agentId: z.string().optional(),
+                diagramId: z.string().min(1),
+                delivery: z.enum(["agent", "copy"]).optional(),
+              }),
             },
           },
         },
       },
-      responses: requestCreated(
-        "The validated workflow handoff landed in the selected agent's pull inbox. Derive does not execute the workflow itself.",
-      ),
+      responses: {
+        201: {
+          description:
+            "A fresh run record and pinned instruction. Agent delivery also returns the inbox request id.",
+          content: {
+            "application/json": {
+              schema: z.object({
+                runId: z.string(),
+                prompt: z.string(),
+                requestId: z.string().optional(),
+              }),
+            },
+          },
+        },
+      },
     }),
     async (c) => {
       const rc = await requestContext(c, c.req.param("shortId"))
       if (rc instanceof Response) return bail(rc)
-      const { artifact, acting, agentId, diagramId } = rc
+      const { artifact, acting, agentId, diagramId, delivery } = rc
       if (!diagramId) return bail(fail(c, 400, "diagramId is required"))
       const ready = await requireReadyWorkflow(c, artifact, diagramId)
       if (ready instanceof Response) return bail(ready)
+      const version = await meta.getVersion(artifact.id, artifact.current_version)
+      if (!version) return bail(fail(c, 409, "the workflow version is unavailable"))
+      const runId = newId("wfr")
+      const prompt = workflowRunInstruction({
+        shortId: artifact.short_id,
+        version: version.n,
+        diagramId: ready.id,
+        runId,
+        baseUrl: deps.baseUrl,
+      })
+      const createRun = (reason: string, assignment?: { requestId: string; agentId: string }) =>
+        meta.createWorkflowRun({
+          id: runId,
+          org_id: artifact.org_id,
+          workflow_artifact_id: artifact.id,
+          workflow_version: version.n,
+          workflow_blob_key: version.blob_key,
+          workflow_content_type: version.content_type,
+          diagram_id: ready.id,
+          reason,
+          initiated_by: acting.id,
+          request_id: assignment?.requestId,
+          assigned_agent_id: assignment?.agentId,
+          requested_execution: "local",
+        })
+      if (delivery === "copy") {
+        await createRun("manual:copy")
+        return c.json({ runId, prompt }, 201)
+      }
       const agent = pickAgent(c, await meta.listAgents(artifact.org_id), agentId)
       if (agent instanceof Response) return bail(agent)
-      const requestId = await postRequest(
-        c,
-        artifact,
-        acting,
-        agent,
-        workflowRunInstruction(artifact.short_id, ready.id),
-      )
-      if (requestId instanceof Response) return bail(requestId)
-      return c.json({ requestId }, 201)
+      if (await requestAlreadyQueued(agent, artifact))
+        return bail(
+          fail(c, 409, `a request for this artifact is already queued for ${agent.name}`, {
+            code: "alreadyQueued",
+          }),
+        )
+      const requestId = newId("c")
+      const createdRun = await createRun("agent-request", { requestId, agentId: agent.id })
+      const cancelQueuedRun = async () => {
+        const cancelled = await meta.transitionWorkflowRun(
+          createdRun.id,
+          createdRun.org_id,
+          { status: "queued", stateRevision: createdRun.state_revision },
+          { status: "cancelled", at: new Date().toISOString() },
+        )
+        if (!cancelled) throw new Error("workflow run changed before inbox delivery failed")
+      }
+      let posted: string | Response
+      try {
+        posted = await postRequest(c, artifact, acting, agent, prompt, requestId)
+      } catch (error) {
+        await cancelQueuedRun()
+        throw error
+      }
+      if (posted instanceof Response) {
+        await cancelQueuedRun()
+        return bail(posted)
+      }
+      return c.json({ requestId, runId, prompt }, 201)
     },
   )
 

@@ -73,6 +73,8 @@ import type {
   NewVersion,
   NewVersionData,
   NewWebhook,
+  NewWorkflowRun,
+  NewWorkflowStepAttempt,
   NotificationRecord,
   OAuthGrant,
   OAuthGrantSummary,
@@ -111,12 +113,19 @@ import type {
   VersionDataRecord,
   VersionRecord,
   WebhookRecord,
+  WorkflowRunRecord,
+  WorkflowRunTransition,
+  WorkflowStepAttemptRecord,
+  WorkflowStepAttemptTransition,
+  WorkflowTransitionGuard,
   WorkspaceAccess,
   WorkspaceRecord,
 } from "@derive/core"
 import {
   DEFAULT_ORG_SETTINGS,
   GLOBAL_FOLLOW_ORG,
+  isValidWorkflowRunDefinitionPin,
+  isValidWorkflowStepContextPin,
   LINKS_FACT,
   maxRole,
   mergeRunMeta,
@@ -125,6 +134,9 @@ import {
   SHARED_STATE_ACTIVITY_LIMIT,
   sortFields,
   WORKSPACE_FACT_ROW_CAP,
+  workflowRunCanTransition,
+  workflowStatusIsTerminal,
+  workflowStepCanTransition,
 } from "@derive/core"
 import {
   and,
@@ -144,6 +156,7 @@ import {
   lte,
   ne,
   notExists,
+  notInArray,
   or,
   type SQL,
   sql,
@@ -204,6 +217,8 @@ import {
   versionData,
   webhook,
   webhookDelivery,
+  workflowRun,
+  workflowStepAttempt,
   workspace,
 } from "./schema"
 
@@ -380,6 +395,8 @@ export const schema = {
   agentMention,
   automation,
   run,
+  workflowRun,
+  workflowStepAttempt,
   plan,
   connection,
   artifactInvite,
@@ -431,6 +448,8 @@ const _schemaShapes: Shapes<typeof schema> = {
   agentMention: true,
   automation: true,
   run: true,
+  workflowRun: true,
+  workflowStepAttempt: true,
   plan: true,
   connection: true,
   invitation: true,
@@ -4213,6 +4232,251 @@ export function makeRepos(db: SqliteDb) {
         .get()) ?? null
     )
   }
+  const createWorkflowRun = async (r: NewWorkflowRun): Promise<WorkflowRunRecord> => {
+    if (!isValidWorkflowRunDefinitionPin(r))
+      throw new Error("workflow run requires a complete version pin")
+    const createdAt = r.created_at ?? new Date().toISOString()
+    return (await db
+      .insert(workflowRun)
+      .values({ ...r, created_at: createdAt, updated_at: createdAt })
+      .returning()
+      .get()) as WorkflowRunRecord
+  }
+  const getWorkflowRun = async (id: string, orgId: string): Promise<WorkflowRunRecord | null> =>
+    ((await db
+      .select()
+      .from(workflowRun)
+      .where(and(eq(workflowRun.id, id), eq(workflowRun.org_id, orgId)))
+      .get()) as WorkflowRunRecord | undefined) ?? null
+  const transitionWorkflowRun = async (
+    id: string,
+    orgId: string,
+    expected: WorkflowTransitionGuard,
+    transition: WorkflowRunTransition,
+  ): Promise<WorkflowRunRecord | null> => {
+    if (!workflowRunCanTransition(expected.status, transition.status)) return null
+    if (!Number.isInteger(expected.stateRevision) || expected.stateRevision < 0) return null
+    const firstStart = expected.status === "queued" && transition.status === "running"
+    const lane = transition.actualExecution
+    const executorId = transition.executorId
+    if (firstStart && (!lane || !executorId)) return null
+    if (expected.status === "queued" && !firstStart && (lane || executorId)) return null
+    if (expected.status !== "queued" && (!lane || !executorId)) return null
+    return (
+      ((await db
+        .update(workflowRun)
+        .set({
+          status: transition.status,
+          state_revision: sql`${workflowRun.state_revision} + 1`,
+          updated_at: transition.at,
+          ...(transition.status === "running"
+            ? { started_at: sql`coalesce(${workflowRun.started_at}, ${transition.at})` }
+            : {}),
+          ...(workflowStatusIsTerminal(transition.status) ? { finished_at: transition.at } : {}),
+          ...(firstStart ? { actual_execution: lane, executor_id: executorId } : {}),
+        })
+        .where(
+          and(
+            eq(workflowRun.id, id),
+            eq(workflowRun.org_id, orgId),
+            eq(workflowRun.status, expected.status),
+            eq(workflowRun.state_revision, expected.stateRevision),
+            workflowStatusIsTerminal(transition.status)
+              ? notExists(
+                  db
+                    .select({ id: workflowStepAttempt.id })
+                    .from(workflowStepAttempt)
+                    .where(
+                      and(
+                        eq(workflowStepAttempt.workflow_run_id, workflowRun.id),
+                        notInArray(workflowStepAttempt.status, [
+                          "succeeded",
+                          "failed",
+                          "cancelled",
+                        ]),
+                      ),
+                    ),
+                )
+              : undefined,
+            firstStart && lane && executorId
+              ? or(
+                  eq(workflowRun.requested_execution, "any"),
+                  eq(workflowRun.requested_execution, lane),
+                )
+              : lane && executorId
+                ? and(
+                    eq(workflowRun.actual_execution, lane),
+                    eq(workflowRun.executor_id, executorId),
+                  )
+                : undefined,
+          ),
+        )
+        .returning()
+        .get()) as WorkflowRunRecord | undefined) ?? null
+    )
+  }
+  const createWorkflowStepAttempt = async (
+    orgId: string,
+    a: NewWorkflowStepAttempt,
+  ): Promise<WorkflowStepAttemptRecord> => {
+    if (!Number.isInteger(a.attempt) || a.attempt < 1)
+      throw new Error("workflow step attempt must be a positive integer")
+    if (!a.node_id.trim()) throw new Error("workflow step attempt requires a node id")
+    if (!isValidWorkflowStepContextPin(a))
+      throw new Error("workflow context attempts require a complete version pin")
+    const createdAt = a.created_at ?? new Date().toISOString()
+    const context = a.kind === "context" ? a : null
+    const created = (await db
+      .insert(workflowStepAttempt)
+      .select(
+        db
+          .select({
+            id: sql<string>`${a.id}`.as("id"),
+            workflow_run_id: workflowRun.id,
+            node_id: sql<string>`${a.node_id}`.as("node_id"),
+            attempt: sql<number>`${a.attempt}`.as("attempt"),
+            kind: sql<typeof a.kind>`${a.kind}`.as("kind"),
+            status: sql<"queued">`'queued'`.as("status"),
+            state_revision: sql<number>`0`.as("state_revision"),
+            context_id: sql<string | null>`${context?.context_id ?? null}`.as("context_id"),
+            context_manifest_artifact_id: sql<
+              string | null
+            >`${context?.context_manifest_artifact_id ?? null}`.as("context_manifest_artifact_id"),
+            context_version: sql<number | null>`${context?.context_version ?? null}`.as(
+              "context_version",
+            ),
+            context_blob_key: sql<string | null>`${context?.context_blob_key ?? null}`.as(
+              "context_blob_key",
+            ),
+            context_content_type: sql<string | null>`${context?.context_content_type ?? null}`.as(
+              "context_content_type",
+            ),
+            session_id: sql<string | null>`${context?.session_id ?? null}`.as("session_id"),
+            decision: sql<null>`null`.as("decision"),
+            selected_routes: sql<null>`null`.as("selected_routes"),
+            route_basis: sql<null>`null`.as("route_basis"),
+            result_artifact_id: sql<null>`null`.as("result_artifact_id"),
+            output: sql<null>`null`.as("output"),
+            error: sql<null>`null`.as("error"),
+            created_at: sql<string>`${createdAt}`.as("created_at"),
+            updated_at: sql<string>`${createdAt}`.as("updated_at"),
+            started_at: sql<null>`null`.as("started_at"),
+            finished_at: sql<null>`null`.as("finished_at"),
+          })
+          .from(workflowRun)
+          .where(
+            and(
+              eq(workflowRun.id, a.workflow_run_id),
+              eq(workflowRun.org_id, orgId),
+              notInArray(workflowRun.status, ["succeeded", "failed", "cancelled"]),
+            ),
+          ),
+      )
+      .returning()
+      .get()) as WorkflowStepAttemptRecord | undefined
+    if (created) return created
+    const parent = await getWorkflowRun(a.workflow_run_id, orgId)
+    if (!parent) throw new Error("workflow run not found")
+    throw new Error("workflow run is already terminal")
+  }
+  const getWorkflowStepAttemptBySession = async (
+    sessionId: string,
+    orgId: string,
+  ): Promise<WorkflowStepAttemptRecord | null> =>
+    ((await db
+      .select()
+      .from(workflowStepAttempt)
+      .where(
+        and(
+          eq(workflowStepAttempt.session_id, sessionId),
+          inArray(
+            workflowStepAttempt.workflow_run_id,
+            db
+              .select({ id: workflowRun.id })
+              .from(workflowRun)
+              .where(eq(workflowRun.org_id, orgId)),
+          ),
+        ),
+      )
+      .get()) as WorkflowStepAttemptRecord | undefined) ?? null
+  const listWorkflowStepAttempts = async (
+    workflowRunId: string,
+    orgId: string,
+  ): Promise<WorkflowStepAttemptRecord[]> =>
+    (await db
+      .select()
+      .from(workflowStepAttempt)
+      .where(
+        and(
+          eq(workflowStepAttempt.workflow_run_id, workflowRunId),
+          inArray(
+            workflowStepAttempt.workflow_run_id,
+            db
+              .select({ id: workflowRun.id })
+              .from(workflowRun)
+              .where(eq(workflowRun.org_id, orgId)),
+          ),
+        ),
+      )
+      .orderBy(
+        asc(workflowStepAttempt.created_at),
+        asc(workflowStepAttempt.node_id),
+        asc(workflowStepAttempt.attempt),
+        asc(workflowStepAttempt.id),
+      )
+      .all()) as WorkflowStepAttemptRecord[]
+  const transitionWorkflowStepAttempt = async (
+    id: string,
+    workflowRunId: string,
+    orgId: string,
+    expected: WorkflowTransitionGuard,
+    transition: WorkflowStepAttemptTransition,
+  ): Promise<WorkflowStepAttemptRecord | null> => {
+    if (!workflowStepCanTransition(expected.status, transition.status)) return null
+    if (!Number.isInteger(expected.stateRevision) || expected.stateRevision < 0) return null
+    const starts = transition.status === "running" || transition.status === "waiting"
+    return (
+      ((await db
+        .update(workflowStepAttempt)
+        .set({
+          status: transition.status,
+          state_revision: sql`${workflowStepAttempt.state_revision} + 1`,
+          updated_at: transition.at,
+          ...(starts
+            ? { started_at: sql`coalesce(${workflowStepAttempt.started_at}, ${transition.at})` }
+            : {}),
+          ...(workflowStatusIsTerminal(transition.status) ? { finished_at: transition.at } : {}),
+          ...(transition.sessionId !== undefined ? { session_id: transition.sessionId } : {}),
+          ...(transition.decision !== undefined ? { decision: transition.decision } : {}),
+          ...(transition.selectedRoutes !== undefined
+            ? { selected_routes: transition.selectedRoutes }
+            : {}),
+          ...(transition.routeBasis !== undefined ? { route_basis: transition.routeBasis } : {}),
+          ...(transition.resultArtifactId !== undefined
+            ? { result_artifact_id: transition.resultArtifactId }
+            : {}),
+          ...(transition.output !== undefined ? { output: transition.output } : {}),
+          ...(transition.error !== undefined ? { error: transition.error } : {}),
+        })
+        .where(
+          and(
+            eq(workflowStepAttempt.id, id),
+            eq(workflowStepAttempt.workflow_run_id, workflowRunId),
+            eq(workflowStepAttempt.status, expected.status),
+            eq(workflowStepAttempt.state_revision, expected.stateRevision),
+            inArray(
+              workflowStepAttempt.workflow_run_id,
+              db
+                .select({ id: workflowRun.id })
+                .from(workflowRun)
+                .where(eq(workflowRun.org_id, orgId)),
+            ),
+          ),
+        )
+        .returning()
+        .get()) as WorkflowStepAttemptRecord | undefined) ?? null
+    )
+  }
   const createPlan = async (p: NewPlan): Promise<PlanRecord> =>
     (await db.insert(plan).values(p).returning().get()) as PlanRecord
   const getPlan = async (id: string): Promise<PlanRecord | null> =>
@@ -5275,6 +5539,13 @@ export function makeRepos(db: SqliteDb) {
     latestRunForAutomation,
     findCoalescibleRun,
     appendRunPayload,
+    createWorkflowRun,
+    getWorkflowRun,
+    transitionWorkflowRun,
+    createWorkflowStepAttempt,
+    getWorkflowStepAttemptBySession,
+    listWorkflowStepAttempts,
+    transitionWorkflowStepAttempt,
     createPlan,
     getPlan,
     listPlans,

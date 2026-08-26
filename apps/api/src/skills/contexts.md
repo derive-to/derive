@@ -52,6 +52,10 @@ for Acme"); it always names the target.
   this"). Optionally pass a `dedupe_key`: a second give with the same key while one is still in
   flight joins the existing session instead of starting a duplicate. A repeated "do it for brand
   X" never runs twice.
+- **IN A WORKFLOW:** pass `workflow:{run_id,node_id,attempt}` on GIVE. Derive binds the context
+  session to that exact step attempt and assigns its run-scoped dedupe key. After settlement, the
+  workflow harness records the authored route as described in `derive://skills/workflows`; a retry
+  starts the next attempt rather than reopening the settled session.
 - **Follow up:** `use({ session_id, instruction })` (it already knows its context; do not pass
   `context`).
 - **CHECK / RESUME**: `use({ session_id })` alone reads the latest state + transcript.

@@ -37,7 +37,7 @@ export function WorkflowRunDialog({
   })
   const previewChanged = error instanceof ApiError && error.code === "needsChanges"
   const handoffReady = !!data && !isError
-  const run = useApiMutation<{ requestId: string }, AgentTarget>({
+  const run = useApiMutation<{ runId: string; prompt: string; requestId?: string }, AgentTarget>({
     mutationFn: (agent) => api.runWorkflow(shortId, { agentId: agent.id, diagramId }),
     success: (_result, agent) => queuedFor("Workflow", agent.name),
     errorToast: false,
@@ -49,18 +49,22 @@ export function WorkflowRunDialog({
     },
     onSuccess: () => onOpenChange(false),
   })
-  const copy = () => {
-    if (!data) return
-    void copyText(data.prompt, { success: "Prompt copied. Paste it into your agent." })
-  }
+  const copyRun = useApiMutation<{ runId: string; prompt: string }, void>({
+    mutationFn: () => api.runWorkflow(shortId, { diagramId, delivery: "copy" }),
+    success: (result) => {
+      void copyText(result.prompt, { success: "Prompt copied. Paste it into your agent." })
+    },
+    errorToast: false,
+    onError: () => toast.error("Couldn’t start this workflow. Try again."),
+  })
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Run with your agent</DialogTitle>
           <DialogDescription>
-            Your approved Codex, Claude, or other agent runs the context sessions. Derive keeps the
-            graph, artifacts, review, and receipts—it is not the runtime.
+            Your Codex, Claude, or other agent runs the context sessions. Derive keeps the graph,
+            artifacts, review, and receipts—it is not the runtime.
           </DialogDescription>
         </DialogHeader>
         <div
@@ -86,15 +90,15 @@ export function WorkflowRunDialog({
             as="div"
             className="flex items-center justify-between border-b border-border-soft py-1 pr-1 pl-3"
           >
-            Prompt for any agent
+            Run preview
             <Button
               variant="ghost"
               size="sm"
               data-testid="workflow-run-copy"
-              disabled={!data}
-              onClick={copy}
+              disabled={!data || copyRun.isPending}
+              onClick={() => copyRun.mutate()}
             >
-              Copy
+              {copyRun.isPending ? "Starting…" : "Start & copy"}
             </Button>
           </Eyebrow>
           {isError ? (
@@ -118,8 +122,8 @@ export function WorkflowRunDialog({
           )}
         </div>
         <p className="text-xs leading-relaxed text-muted-foreground">
-          A registered agent receives this in its pull inbox and starts the next time it checks in.
-          Copy works with any local harness.
+          Start & copy creates a fresh run for a Derive-connected local harness. A registered agent
+          receives the same instruction in its pull inbox and starts when it checks in.
         </p>
         <DialogFooter>
           <AgentMenu
