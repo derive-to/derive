@@ -2190,9 +2190,10 @@
               "share",
               "follow",
               "publish",
-              "review"
+              "review",
+              "access_request"
             ],
-            "description": "What happened: mention, comment, share, follow, publish, or review"
+            "description": "What happened: mention, comment, share, follow, publish, review, or access_request (someone who cannot open the artifact is asking you to grant it)"
           },
           "artifact_id": {
             "type": "string"
@@ -5466,6 +5467,71 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/v1/artifacts/{shortId}/access-request": {
+      "post": {
+        "tags": [
+          "Sharing"
+        ],
+        "summary": "Ask the people who can share an artifact to grant you access.",
+        "description": "202 for every outcome once the caller is authenticated and the body validates — missing artifact, no access, already readable, or already asked. The response deliberately does not reveal which.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "note": {
+                    "type": "string",
+                    "maxLength": 280,
+                    "description": "Optional message to the approvers: who you are, why you need it."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "The request was accepted. Says nothing about what followed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean",
+                      "enum": [
+                        true
+                      ]
+                    }
+                  },
+                  "required": [
+                    "ok"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The note is longer than the limit."
+          },
+          "401": {
+            "description": "Not signed in — a grant needs an identity to attach to."
           }
         }
       }

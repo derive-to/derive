@@ -69,8 +69,10 @@ export const Notification = z
     user_id: z.string().describe("The recipient this notification belongs to"),
     actor: z.string().describe("Who triggered it; for follow/publish this is the person's @handle"),
     kind: z
-      .enum(["mention", "comment", "share", "follow", "publish", "review"])
-      .describe("What happened: mention, comment, share, follow, publish, or review"),
+      .enum(["mention", "comment", "share", "follow", "publish", "review", "access_request"])
+      .describe(
+        "What happened: mention, comment, share, follow, publish, review, or access_request (someone who cannot open the artifact is asking you to grant it)",
+      ),
     artifact_id: z.string(),
     artifact_short_id: z
       .string()

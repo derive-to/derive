@@ -37,6 +37,7 @@ const NON_CONFIG = new Set([
   "AI",
   "RL_AUTH",
   "RL_INVITE",
+  "RL_ACCESS_REQUEST",
   "RL_WRITE",
   "RL_PUBLISH",
   "RL_COMMENT",

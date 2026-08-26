@@ -11,6 +11,7 @@ import {
 import {
   accessIcon,
   accessSummary,
+  linkReachNote,
   ShareAccessSection,
   ShareCopyLinkButton,
   SharePeopleSection,
@@ -273,6 +274,7 @@ export function ShareCollectionDialog({
           <ShareCopyLinkButton
             copied={copied}
             testPrefix="collection-share"
+            reach={linkReachNote(linkRole, wsAccess, { locked: hasLock })}
             onCopy={() => copy(shareUrl)}
           />
         </div>

@@ -8,6 +8,7 @@
 import { type ArtifactRecord, artifactUrl, type DeliveryRecord, escapeHtml } from "@derive/core"
 import { log } from "../log"
 import type { ChannelSendResult } from "../webhooks"
+import { type Asker, askerName, askerRef } from "./access-request"
 import { commentDeepLink } from "./comments"
 import { type ReviewChange, type ReviewSummary, reviewDeltaLabel } from "./review-summary"
 import { truncate } from "./text"
@@ -276,6 +277,68 @@ export const buildShareEmail = (
   const text = [`${input.sharedBy} shared ${title} with you.`, `\nOpen in Derive: ${link}`].join(
     "\n",
   )
+  return { subject, html, text }
+}
+
+/**
+ * The inverse of buildShareEmail: someone who cannot open the artifact is asking to.
+ *
+ * Two things this is careful about, because the email is an INSTRUCTION to grant
+ * access and it is composed almost entirely of strings the asker chose.
+ *
+ * The identifier. The grant instruction names the `@handle` where there is one — it is
+ * unique and bound to the account, so granting to it cannot land on someone else —
+ * falling back to the address where the account has none. Separately, and regardless of
+ * the handle, an unverified address is labelled as such: signup is open, sign-in is
+ * never gated on verification, and a handle is DERIVED from the signup address rather
+ * than claimed, so neither is evidence that this person controls the mailbox.
+ *
+ * What that buys is one specific thing: an owner is never told to grant to an address
+ * on the strength of an unproven claim to it. It does NOT stop someone choosing a
+ * misleading display name or handle — the name still rides the subject line uncaveated,
+ * the same exposure the invite email already carries. The caveat makes the claim
+ * checkable; it does not make impersonation impossible.
+ *
+ * The link opens the artifact (which the approver CAN read); Share is one click from
+ * there. That is why this mints no approve-token of its own — a one-click grant from
+ * an inbox is a capability sitting in a mailbox, and the existing dialog does the job
+ * with the approver's live rights behind it.
+ */
+export const buildAccessRequestEmail = (
+  baseUrl: string,
+  artifact: ArtifactRecord,
+  input: { asker: Asker; note: string | null },
+): { subject: string; html: string; text: string } => {
+  const title = artifact.title ?? artifact.short_id
+  const link = `${baseUrl.replace(/\/$/, "")}/artifacts/${artifact.short_id}`
+  const who = askerName(input.asker)
+  const ref = askerRef(input.asker)
+  const proven = input.asker.emailVerified
+  const subject = `${who} is asking for access to ${title}`
+  const noteHtml = input.note
+    ? `<blockquote style="margin:16px 0;padding:0 0 0 12px;border-left:3px solid #eee;color:#444">${escapeHtml(input.note)}</blockquote>`
+    : ""
+  const caveat = proven
+    ? ""
+    : `<p style="color:#8a3b1e;font-size:13px">Derive has not verified that this person controls ${escapeHtml(input.asker.email)}. Check with them another way before granting.</p>`
+  const html = `<!doctype html><html><body style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#1a1a1a;line-height:1.5">
+  <p><strong>${escapeHtml(who)}</strong> (${escapeHtml(ref)}${ref === input.asker.email ? "" : ` · ${escapeHtml(input.asker.email)}`}) asked for access to <a href="${escapeHtml(link)}">${escapeHtml(title)}</a>.</p>
+  ${noteHtml}
+  ${caveat}
+  <p><a href="${escapeHtml(link)}" style="display:inline-block;background:#111;color:#fff;padding:8px 16px;border-radius:6px;text-decoration:none">Open and share it</a></p>
+  <p style="color:#666;font-size:13px">To grant access, open the artifact and add ${escapeHtml(ref)} from the Share dialog. Ignoring this email grants nothing.</p>
+  <hr style="border:none;border-top:1px solid #eee;margin:24px 0"/>
+  <p style="color:#999;font-size:12px">You're receiving this because you can share this artifact.</p>
+  </body></html>`
+  const text = [
+    `${who} (${ref}) asked for access to ${title}.`,
+    ...(input.note ? [`\n"${input.note}"`] : []),
+    ...(proven
+      ? []
+      : [`\nDerive has not verified that this person controls ${input.asker.email}.`]),
+    `\nOpen and share it: ${link}`,
+    `\nTo grant access, add ${ref} from the Share dialog. Ignoring this email grants nothing.`,
+  ].join("\n")
   return { subject, html, text }
 }
 

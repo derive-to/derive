@@ -194,8 +194,9 @@ namespace_id = "1004"
   limit = 60
   period = 60
 
-# Shared by the two tight 3/60 surfaces (unlock + oauth registration); the worker
-# namespaces the key per surface so their counts stay separate.
+# Shared by the tight 3/60 surfaces (auth-email, unlock, oauth registration,
+# draft-publish, access-request mail); the worker namespaces the key per surface so
+# their counts stay separate.
 [[ratelimits]]
 name = "RL_STRICT"
 namespace_id = "1005"
@@ -210,6 +211,16 @@ name = "RL_INVITE"
 namespace_id = "1007"
   [ratelimits.simple]
   limit = 10
+  period = 60
+
+# Access-request dedupe: one notified ask per (asker, artifact). The in-process tier
+# suppresses for 6 hours; native periods cap at 60s, so this is the tightest the edge
+# can express. The MAIL bar for the same route rides RL_STRICT (3/60), namespaced.
+[[ratelimits]]
+name = "RL_ACCESS_REQUEST"
+namespace_id = "1008"
+  [ratelimits.simple]
+  limit = 1
   period = 60
 
 # Retry/crash backstop for webhook delivery: the outbox DO self-reschedules while busy

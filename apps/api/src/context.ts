@@ -399,6 +399,13 @@ export function buildContext(deps: AppDeps) {
   const unlockLimiter = deps.rateLimit ? limiters.unlock : null
   const inviteLimiter = deps.rateLimit ? limiters.invite : null
   const askLimiter = deps.rateLimit ? limiters.ask : null
+  // NOT gated on deps.rateLimit, unlike every limiter above it. Those are abuse
+  // controls a self-host may reasonably run without; this one is the dedupe that keeps
+  // an approver from being emailed twice because a stranger refreshed a dead page, and
+  // that is product behaviour, not policing. Left switchable it would be off exactly
+  // where it matters most: self-host, dev, and every test.
+  const accessRequestLimiter = limiters.accessRequest
+  const accessRequestMailLimiter = deps.rateLimit ? limiters.accessRequestMail : null
 
   // Fan an event to subscribed webhooks (enqueues to the outbox; the drainer
   // delivers). Awaited so the row is durable before we respond, but never fatal.
@@ -1725,6 +1732,8 @@ export function buildContext(deps: AppDeps) {
     unlockLimiter,
     inviteLimiter,
     askLimiter,
+    accessRequestLimiter,
+    accessRequestMailLimiter,
     notify,
     notifyRender,
     background,

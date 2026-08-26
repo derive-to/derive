@@ -41,6 +41,36 @@ export const accessSummary = (
   return "Only invited people can open this."
 }
 
+/**
+ * What the URL on the clipboard does for the person it gets pasted to — null only
+ * when the link genuinely opens for anyone, unaided.
+ *
+ * This is deliberately NOT accessSummary. That one answers "who can open this
+ * artifact", counting grants a recipient may not have: a workspace seat, a roster
+ * entry. Copy Link sits next to it and answers a different question, and the two
+ * diverge exactly where a share silently fails — "Everyone in the workspace can open
+ * this" reads as open while the copied link is INERT for the outsider being emailed
+ * it. The sender learns nothing until the recipient reports a 404, or doesn't.
+ * Sharing outward has a working path (invite by email); this is what points at it.
+ *
+ * `locked` is the second silent failure and belongs to the same question: a world
+ * link with a password opens for nobody who wasn't also sent the password, and the
+ * copy affordance is the last place to say so before the paste.
+ */
+export const linkReachNote = (
+  linkRole: LinkRole,
+  workspaceAccess: WorkspaceAccess,
+  opts: { collectionOpen?: boolean; collectionShared?: boolean; locked?: boolean } = {},
+): string | null => {
+  if (linkRole !== "none") return opts.locked ? "They'll need the password too." : null
+  if (workspaceAccess === "member" || opts.collectionOpen)
+    return "Only workspace members can open it."
+  // An artifact reachable through a collection is not "only the people you add" —
+  // saying so would contradict the access section four inches above it.
+  if (opts.collectionShared) return "Only people you add, or who reach it via a collection."
+  return "Only the people you add can open it."
+}
+
 export function ShareAccessSection({
   canManage,
   pending,
@@ -316,19 +346,41 @@ export function SharePeopleSection({
   )
 }
 
+/** The copy affordance, plus the reach note under it. `reach` comes from
+ *  `linkReachNote` on the dialog's LIVE access draft, not the artifact's loaded
+ *  fields, so widening access in the dialog silences the note in the same gesture. */
 export function ShareCopyLinkButton({
   copied,
   testPrefix,
+  reach,
+  children,
   onCopy,
 }: {
   copied: boolean
   testPrefix: ShareTestPrefix
+  reach?: string | null
+  /** Sibling copy actions that share the row above the note. */
+  children?: ReactNode
   onCopy: () => void
 }) {
   return (
-    <Button data-testid={`${testPrefix}-url-copy`} variant="outline" size="sm" onClick={onCopy}>
-      <Icon name={copied ? "check" : "link"} />
-      {copied ? "Copied" : "Copy link"}
-    </Button>
+    <div className="flex flex-col gap-1.5">
+      <div className="flex gap-1.5">
+        <Button data-testid={`${testPrefix}-url-copy`} variant="outline" size="sm" onClick={onCopy}>
+          <Icon name={copied ? "check" : "link"} />
+          {copied ? "Copied" : "Copy link"}
+        </Button>
+        {children}
+      </div>
+      {reach && (
+        <p
+          data-testid={`${testPrefix}-url-reach`}
+          className="flex items-center gap-1.5 text-xs text-muted-foreground"
+        >
+          <Icon name="lock" className="size-3" />
+          {reach}
+        </p>
+      )}
+    </div>
   )
 }

@@ -130,14 +130,16 @@ export interface Env {
   RUN_QUEUE?: { send: (body: unknown) => Promise<void> }
   // Native per-colo rate-limit bindings (limit + 60s window declared in wrangler.toml
   // [[ratelimits]]). The edge counts against these instead of an in-process Map so a cap
-  // holds across isolates within a location. RL_STRICT is shared by the two tight 3/60
-  // surfaces (unlock + oauth-register), namespaced by key so their counts stay separate.
+  // holds across isolates within a location. RL_STRICT is shared by the tight 3/60
+  // surfaces (auth-email, unlock, oauth-register, draft-publish, access-request mail),
+  // namespaced by key so their counts stay separate.
   RL_AUTH: RateLimit
   RL_WRITE: RateLimit
   RL_PUBLISH: RateLimit
   RL_COMMENT: RateLimit
   RL_STRICT: RateLimit
   RL_INVITE: RateLimit
+  RL_ACCESS_REQUEST: RateLimit
   // The static-assets binding: lets the Worker read the SPA shell to inject unfurl
   // meta into /artifacts/:ref (the share URL). Declared in wrangler.toml `[assets] binding`.
   ASSETS: Fetcher
@@ -377,6 +379,17 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
           // strict surfaces. Native periods cap at 60s, so the in-process tier's
           // hour-long window can't be expressed here; the burst cap is the bound.
           draftPublish: nativeLimiter(env.RL_STRICT, 60, "draft-publish"),
+          // The in-process tier suppresses a repeat ask for 6 hours; native periods cap
+          // at 60s, so the edge approximates that at 1/60s with its own binding rather
+          // than riding RL_STRICT (3/60s), which would let a stranger refreshing a dead
+          // page re-notify three times a minute.
+          accessRequest: nativeLimiter(env.RL_ACCESS_REQUEST, 60, "access-request"),
+          // The mail bar, at the same 3/60s as the in-process tier. Deliberately NOT the
+          // invite binding: one invite sends one email, one access request fans out to
+          // MAX_ACCESS_APPROVERS, so sharing that budget would multiply the real mail
+          // ceiling by the fan-out. RL_STRICT is already 3/60; the prefix keeps its count
+          // separate from unlock / oauth-register / draft-publish.
+          accessRequestMail: nativeLimiter(env.RL_STRICT, 60, "access-request-mail"),
         },
         // Deliver freshly enqueued events now: poke the outbox DO so its alarm fires,
         // riding waitUntil so the subrequest isn't cancelled when the response is sent.
