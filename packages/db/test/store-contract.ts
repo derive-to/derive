@@ -4,6 +4,7 @@ import type {
   NewArtifact,
   NewRun,
   NewVersion,
+  NewWorkflowRun,
   NewWorkflowStepAttempt,
   SortMode,
   SubscriptionRecord,
@@ -4741,6 +4742,46 @@ export function runStoreContract(
           reason: "manual:u1",
         }),
       ).rejects.toThrow("complete version pin")
+    })
+
+    it("lists workflow runs newest first, scoped to the artifact, workspace, and diagram", async () => {
+      const artifactId = `art_${uuid()}`
+      const create = (id: string, createdAt: string, over: Partial<NewWorkflowRun> = {}) =>
+        store.createWorkflowRun({
+          id,
+          org_id: ORG,
+          workflow_artifact_id: artifactId,
+          workflow_version: 2,
+          workflow_blob_key: `blob_${uuid()}`,
+          workflow_content_type: "text/html",
+          diagram_id: "brief",
+          reason: "manual:copy",
+          created_at: createdAt,
+          ...over,
+        })
+      const older = await create(`wfr_${uuid()}`, "2026-08-25T20:00:00.000Z")
+      const newer = await create(`wfr_${uuid()}`, "2026-08-25T20:02:00.000Z")
+      const otherDiagram = await create(`wfr_${uuid()}`, "2026-08-25T20:03:00.000Z", {
+        diagram_id: "release",
+      })
+      await create(`wfr_${uuid()}`, "2026-08-25T20:04:00.000Z", {
+        workflow_artifact_id: `art_${uuid()}`,
+      })
+      await create(`wfr_${uuid()}`, "2026-08-25T20:05:00.000Z", {
+        org_id: `org_${uuid()}`,
+      })
+
+      expect((await store.listWorkflowRuns(artifactId, ORG)).map((run) => run.id)).toEqual([
+        otherDiagram.id,
+        newer.id,
+        older.id,
+      ])
+      expect(
+        (await store.listWorkflowRuns(artifactId, ORG, { diagramId: "brief", limit: 1 })).map(
+          (run) => run.id,
+        ),
+      ).toEqual([newer.id])
+      expect(await store.listWorkflowRuns(artifactId, `org_${uuid()}`)).toEqual([])
     })
 
     it("workflow step attempts keep context pins, human decisions, and route receipts", async () => {

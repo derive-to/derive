@@ -4248,6 +4248,26 @@ export function makeRepos(db: SqliteDb) {
       .from(workflowRun)
       .where(and(eq(workflowRun.id, id), eq(workflowRun.org_id, orgId)))
       .get()) as WorkflowRunRecord | undefined) ?? null
+  const listWorkflowRuns = async (
+    workflowArtifactId: string,
+    orgId: string,
+    opts: { diagramId?: string; limit?: number } = {},
+  ): Promise<WorkflowRunRecord[]> => {
+    const limit = Math.max(1, Math.min(opts.limit ?? 20, 100))
+    return (await db
+      .select()
+      .from(workflowRun)
+      .where(
+        and(
+          eq(workflowRun.workflow_artifact_id, workflowArtifactId),
+          eq(workflowRun.org_id, orgId),
+          opts.diagramId ? eq(workflowRun.diagram_id, opts.diagramId) : undefined,
+        ),
+      )
+      .orderBy(desc(workflowRun.created_at), desc(workflowRun.id))
+      .limit(limit)
+      .all()) as WorkflowRunRecord[]
+  }
   const transitionWorkflowRun = async (
     id: string,
     orgId: string,
@@ -5541,6 +5561,7 @@ export function makeRepos(db: SqliteDb) {
     appendRunPayload,
     createWorkflowRun,
     getWorkflowRun,
+    listWorkflowRuns,
     transitionWorkflowRun,
     createWorkflowStepAttempt,
     getWorkflowStepAttemptBySession,

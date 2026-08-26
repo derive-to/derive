@@ -165,6 +165,31 @@ export const reworkRoutes = (ctx: AppContext) => {
     return diagram
   }
 
+  const workflowAttemptSummary = z.object({
+    id: z.string(),
+    nodeId: z.string(),
+    attempt: z.number().int(),
+    kind: z.enum(["context", "human", "terminal"]),
+    status: z.enum(["queued", "running", "waiting", "succeeded", "failed", "cancelled"]),
+    resultArtifactId: z.string().nullable(),
+    createdAt: z.string(),
+    startedAt: z.string().nullable(),
+    finishedAt: z.string().nullable(),
+  })
+  const workflowRunSummary = z.object({
+    id: z.string(),
+    diagramId: z.string(),
+    workflowVersion: z.number().int(),
+    status: z.enum(["queued", "running", "waiting", "succeeded", "failed", "cancelled"]),
+    reason: z.string(),
+    requestedExecution: z.enum(["any", "local", "hosted"]),
+    actualExecution: z.enum(["local", "hosted"]).nullable(),
+    createdAt: z.string(),
+    startedAt: z.string().nullable(),
+    finishedAt: z.string().nullable(),
+    attempts: z.array(workflowAttemptSummary),
+  })
+
   // Pick the addressee: the named agent, else the workspace's sole one.
   const pickAgent = (
     c: Context,
@@ -279,6 +304,71 @@ export const reworkRoutes = (ctx: AppContext) => {
       return c.json({
         prompt: `Workflow ${artifact.short_id}@v${artifact.current_version}, diagram "${ready.id}", is Ready to run. Starting it creates a fresh run record and version-pinned instruction.`,
         diagram: { id: ready.id, title: ready.title },
+      })
+    },
+  )
+
+  app.openapi(
+    createRoute({
+      method: "get",
+      path: "/v1/artifacts/{shortId}/workflow-runs",
+      tags: ["Artifacts"],
+      summary: "List recent runs and materialized step attempts for a workflow artifact.",
+      request: {
+        params: z.object({ shortId: z.string() }),
+        query: z.object({
+          diagram: z.string().min(1).optional(),
+          limit: z.coerce.number().int().min(1).max(20).optional(),
+        }),
+      },
+      responses: {
+        200: {
+          description: "Recent version-pinned workflow runs, newest first.",
+          content: {
+            "application/json": {
+              schema: z.object({ runs: z.array(workflowRunSummary) }),
+            },
+          },
+        },
+      },
+    }),
+    async (c) => {
+      const artifact = await requireArtifact(c, "comment", { split: true })
+      if (artifact instanceof Response) return bail(artifact)
+      if (artifact.current_version === 0) return bail(fail(c, 404, "not found"))
+      if (!(await actingUser(c))) return bail(fail(c, 401, "sign in to view workflow runs"))
+      const query = c.req.valid("query")
+      const runs = await meta.listWorkflowRuns(artifact.id, artifact.org_id, {
+        diagramId: query.diagram,
+        limit: query.limit ?? 10,
+      })
+      const attempts = await Promise.all(
+        runs.map((run) => meta.listWorkflowStepAttempts(run.id, artifact.org_id)),
+      )
+      return c.json({
+        runs: runs.map((run, index) => ({
+          id: run.id,
+          diagramId: run.diagram_id,
+          workflowVersion: run.workflow_version,
+          status: run.status,
+          reason: run.reason,
+          requestedExecution: run.requested_execution,
+          actualExecution: run.actual_execution,
+          createdAt: run.created_at,
+          startedAt: run.started_at,
+          finishedAt: run.finished_at,
+          attempts: (attempts[index] ?? []).map((attempt) => ({
+            id: attempt.id,
+            nodeId: attempt.node_id,
+            attempt: attempt.attempt,
+            kind: attempt.kind,
+            status: attempt.status,
+            resultArtifactId: attempt.result_artifact_id,
+            createdAt: attempt.created_at,
+            startedAt: attempt.started_at,
+            finishedAt: attempt.finished_at,
+          })),
+        })),
       })
     },
   )
