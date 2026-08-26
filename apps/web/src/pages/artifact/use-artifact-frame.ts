@@ -8,6 +8,8 @@ import {
   type ArtifactRuntimeError,
   type Deck,
   type FrameGeom,
+  mergeRuntimeError,
+  normalizeRuntimeError,
   type Panel,
   parseAnchor,
   type Selection,
@@ -96,6 +98,11 @@ export function useArtifactFrame(p: {
   onVisualPinRef.current = p.onVisualPin
   const presentWrap = useRef<HTMLDivElement>(null)
   const [frameReady, setFrameReady] = useState(0)
+  const [runtimeReady, setRuntimeReady] = useState(false)
+  // The message listener must make the blocking decision synchronously. React state
+  // is intentionally not in its closure, so keep the document's monotonic Ready
+  // boundary in a ref as well as exposing it for rendering.
+  const runtimeReadyRef = useRef(false)
   const [runtimeError, setRuntimeError] = useState<ArtifactRuntimeError | null>(null)
   const [sel, setSel] = useState<Selection>(null)
   const [inDoc, setInDoc] = useState<Record<string, boolean>>({})
@@ -206,11 +213,20 @@ export function useArtifactFrame(p: {
         return
       }
       if (d.source !== "derive") return
+      if (d.type === "runtime-ready") {
+        runtimeReadyRef.current = true
+        setRuntimeReady(true)
+        return
+      }
       if (
         d.type === "runtime-error" &&
-        (d.code === "sandbox-storage" || d.code === "script-error")
+        (d.code === "resource-error" || d.code === "sandbox-storage" || d.code === "script-error")
       ) {
-        setRuntimeError(d.code)
+        // Legacy runtimes omit phase and stale queued messages may still say
+        // loading. They fail closed before readiness, but can never revoke a Ready
+        // boundary the host has already observed for this document.
+        const incoming = normalizeRuntimeError(d.code, d.phase, runtimeReadyRef.current)
+        setRuntimeError((current) => mergeRuntimeError(current, incoming))
         return
       }
       // The opaque-origin artifact cannot carry the viewer's cookies, so its tiny
@@ -466,6 +482,9 @@ export function useArtifactFrame(p: {
     setSel(null)
     setLandedSlides({})
     setAnchorConf({})
+    runtimeReadyRef.current = false
+    setRuntimeReady(false)
+    setRuntimeError(null)
   }, [shortId, version])
   // A slide flip toggles element visibility without a scroll or resize, so the
   // frame won't re-measure on its own — ping it to re-report highlight rects so the
@@ -547,6 +566,8 @@ export function useArtifactFrame(p: {
     // (pins go unlocated/invisible until the new doc reports) instead of pinning
     // stale cards over the new document.
     onFrameLoad: () => {
+      runtimeReadyRef.current = false
+      setRuntimeReady(false)
       setRuntimeError(null)
       updateGeom({ scrollY: 0, docH: 0, viewH: 0 })
       setAnchorTops({})
@@ -570,5 +591,6 @@ export function useArtifactFrame(p: {
     anchorTops,
     subscribeGeom,
     runtimeError,
+    runtimeReady,
   }
 }

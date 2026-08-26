@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Visible second marker</title></head>
+<body>
+  <div data-derive-ready hidden>Hidden first marker</div>
+  <main data-derive-ready>
+    <button id="control" type="button">Working control · <span id="count">0</span></button>
+  </main>
+  <script>
+    document.querySelector("#control").addEventListener("click", () => {
+      const count = document.querySelector("#count")
+      count.textContent = String(Number(count.textContent) + 1)
+    })
+    throw new Error("post-ready script failure")
+  </script>
+</body>
+</html>

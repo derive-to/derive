@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Post-ready action failures</title>
+  </head>
+  <body>
+    <main data-derive-ready>
+      <h1>Useful controls reached Ready</h1>
+      <p>The document stays available when one later interaction fails.</p>
+      <button id="throw-control" type="button">Throw from click handler</button>
+      <button id="reject-control" type="button">Reject from click handler</button>
+      <button id="working-control" type="button">
+        Working control · <span id="count">0</span>
+      </button>
+    </main>
+    <script>
+      document.getElementById("throw-control").addEventListener("click", () => {
+        throw new Error("intentional post-ready click failure")
+      })
+      document.getElementById("reject-control").addEventListener("click", () => {
+        void Promise.reject(new Error("intentional post-ready rejection"))
+      })
+      document.getElementById("working-control").addEventListener("click", () => {
+        const count = document.getElementById("count")
+        count.textContent = String(Number(count.textContent) + 1)
+      })
+    </script>
+  </body>
+</html>

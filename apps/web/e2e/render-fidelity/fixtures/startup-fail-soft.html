@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Startup fail-soft regression fixture</title>
+<style>
+  body { margin: 0; background: #f8f6f0; color: #18181b; font: 14px/1.45 system-ui, sans-serif; }
+  main { max-width: 720px; margin: 0 auto; padding: 28px 20px; }
+  h1 { margin: 0 0 6px; font-size: 24px; }
+  p { color: #666; }
+  table { width: 100%; border-collapse: collapse; background: white; }
+  td { border-top: 1px solid #e5e5e5; padding: 7px 9px; }
+  img { width: 22px; height: 22px; border-radius: 50%; }
+  button { margin-top: 16px; padding: 8px 12px; }
+</style>
+</head>
+<body>
+<main data-derive-ready>
+  <h1>Thirty usable advertiser rows</h1>
+  <p>The optional logo fails after the meaningful table has rendered.</p>
+  <table><tbody id="rows"></tbody></table>
+  <button id="control" type="button">Working control · <span id="count">0</span></button>
+</main>
+<script>
+  const rows = document.getElementById("rows");
+  for (let i = 1; i <= 30; i += 1) {
+    const row = document.createElement("tr");
+    row.innerHTML = `<td>Advertiser ${i}</td><td>Ready</td>`;
+    rows.appendChild(row);
+  }
+  document.getElementById("control").addEventListener("click", () => {
+    const count = document.getElementById("count");
+    count.textContent = String(Number(count.textContent) + 1);
+  });
+</script>
+<!-- Exact incident shape: the image is optional, but its fallback removes itself
+     before touching parentElement and throws after the table is already usable. -->
+<img
+  src="/missing-optional-logo.png"
+  alt=""
+  onerror="this.remove(); this.parentElement.textContent = 'AA'"
+/>
+</body>
+</html>

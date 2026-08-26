@@ -3,11 +3,13 @@ import { AppBoot } from "./components/shared/app-boot"
 import { RouteError, RouteNotFound } from "./components/shared/route-error"
 import { PENDING } from "./lib/pending"
 import { queryClient } from "./lib/query-client"
+import { installViewTransitionErrorHandling } from "./lib/view-transition"
 import { routeTree } from "./routeTree.gen"
 
 // TanStack Start calls getRouter() to build the client router. Route tree is
 // generated from src/routes/* by the Start vite plugin.
 export function getRouter() {
+  installViewTransitionErrorHandling()
   return createRouter({
     routeTree,
     scrollRestoration: true,

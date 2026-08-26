@@ -13,7 +13,113 @@ export const SHARED_STATE_CLIENT_JS = `(function () {
   var states = Object.create(null), pending = Object.create(null), queued = [], seq = 0;
   var keyPattern = new RegExp(${JSON.stringify(SHARED_STATE_KEY_PATTERN)});
   var ready = false;
-  var booting = true;
+  var contentReady = false;
+  var reported = Object.create(null);
+
+  // The load event is too late to be the only readiness signal. Image error handlers run
+  // while the document is still loading, after an app may already have painted a
+  // complete table or dashboard. Treat an explicit author marker, visible rich content,
+  // or a non-trivial visible body as meaningful so an optional failure cannot hide a
+  // usable artifact behind the host's startup card. Hidden nodes and source text never
+  // count: they give the viewer nothing usable to preserve.
+  function isVisiblyRendered(element) {
+    if (!element || element.hidden) return false;
+    try {
+      var elementRect = typeof element.getBoundingClientRect === "function"
+        ? element.getBoundingClientRect() : null;
+      var current = element;
+      while (current) {
+        if (current.hidden ||
+            (current.getAttribute && current.getAttribute("aria-hidden") === "true")) return false;
+        var tag = String(current.tagName || "").toLowerCase();
+        if (tag === "details" && !current.open) {
+          var summary = current.querySelector && current.querySelector(":scope > summary");
+          if (!summary || (element !== summary && !(summary.contains && summary.contains(element))))
+            return false;
+        }
+        if (typeof window.getComputedStyle === "function") {
+          var style = window.getComputedStyle(current);
+          if (style && (
+            style.display === "none" ||
+            style.visibility === "hidden" ||
+            style.visibility === "collapse" ||
+            Number(style.opacity) <= 0
+          )) return false;
+          var clips = style && /hidden|clip|scroll|auto/.test(
+            String(style.overflow || "") + " " +
+            String(style.overflowX || "") + " " + String(style.overflowY || "")
+          );
+          if (clips && typeof current.getBoundingClientRect === "function") {
+            var clipRect = current.getBoundingClientRect();
+            if (Number(clipRect.width || 0) <= 0 || Number(clipRect.height || 0) <= 0)
+              return false;
+            if (elementRect && (
+              elementRect.right <= clipRect.left || elementRect.left >= clipRect.right ||
+              elementRect.bottom <= clipRect.top || elementRect.top >= clipRect.bottom
+            )) return false;
+          }
+        }
+        var rootNode = !current.parentElement && current.getRootNode
+          ? current.getRootNode() : null;
+        current = current.parentElement || (rootNode && rootNode.host) || null;
+      }
+      if (typeof element.getClientRects === "function") {
+        var rects = element.getClientRects();
+        if (!rects.length) return false;
+        var hasArea = false;
+        for (var r = 0; r < rects.length; r += 1) {
+          if (Number(rects[r].width || 0) > 0 && Number(rects[r].height || 0) > 0) {
+            hasArea = true;
+            break;
+          }
+        }
+        if (!hasArea) return false;
+      }
+      if (String(element.tagName || "").toLowerCase() === "img" &&
+          (!element.complete || Number(element.naturalWidth || 0) <= 0 ||
+           Number(element.naturalHeight || 0) <= 0)) return false;
+    } catch (_) { /* structural checks and visible text remain as fallbacks */ }
+    return true;
+  }
+  function runtimeRoots(body) {
+    var roots = [body];
+    for (var at = 0; at < roots.length; at += 1) {
+      var root = roots[at];
+      var elements = root && root.querySelectorAll ? root.querySelectorAll("*") : [];
+      for (var i = 0; i < Number(elements.length || 0); i += 1) {
+        var shadow = elements[i] && elements[i].shadowRoot;
+        if (shadow && roots.indexOf(shadow) < 0) roots.push(shadow);
+      }
+    }
+    return roots;
+  }
+  function hasMeaningfulContent() {
+    try {
+      var doc = window.document, body = doc && doc.body;
+      if (!body) return false;
+      var richContent = false;
+      var roots = runtimeRoots(body);
+      for (var r = 0; r < roots.length && !richContent; r += 1) {
+        var markers = roots[r].querySelectorAll
+          ? roots[r].querySelectorAll("[data-derive-ready]") : [];
+        for (var m = 0; m < Number(markers.length || 0); m += 1) {
+          if (isVisiblyRendered(markers[m])) return true;
+        }
+        var rich = roots[r].querySelectorAll
+          ? roots[r].querySelectorAll("table,canvas,svg,video,img") : [];
+        for (var i = 0; i < Number(rich.length || 0); i += 1) {
+          if (isVisiblyRendered(rich[i])) { richContent = true; break; }
+        }
+      }
+      // innerText is layout-aware and omits script/style/hidden descendants. Falling
+      // back to textContent made a long inline script look like visible authored copy.
+      var visibleText = typeof body.innerText === "string" ? body.innerText : "";
+      var text = String(visibleText).replace(/\\s+/g, "");
+      return Number(body.childElementCount || 0) > 0 && (richContent || text.length >= 80);
+    } catch (_) {
+      return false;
+    }
+  }
 
   function runtimeErrorCode(error, message) {
     var text = String(message || (error && error.message) || "").toLowerCase();
@@ -21,17 +127,49 @@ export const SHARED_STATE_CLIENT_JS = `(function () {
       ? "sandbox-storage"
       : "script-error";
   }
-  function reportBootError(error, message) {
-    if (!booting) return;
-    send({ type: "runtime-error", code: runtimeErrorCode(error, message) });
+  function announceReady() {
+    if (contentReady || !hasMeaningfulContent()) return;
+    contentReady = true;
+    send({ type: "runtime-ready" });
+  }
+  function reportRuntimeError(error, message, target) {
+    var tag = target && typeof target.tagName === "string" ? target.tagName.toLowerCase() : "";
+    var resource = target && target !== window && !!tag;
+    // A required external script that never loaded is a bootstrap failure. Other
+    // resource failures are non-critical by default; if they truly prevent paint,
+    // the host's no-content timeout still supplies the blocking recovery state.
+    var code = resource
+      ? (tag === "script" ? "script-error" : "resource-error")
+      : runtimeErrorCode(error, message);
+    announceReady();
+    var phase = contentReady ? "ready" : "loading";
+    var key = code + ":" + phase;
+    if (reported[key]) return;
+    reported[key] = true;
+    send({ type: "runtime-error", code: code, phase: phase });
   }
   window.addEventListener("error", function (event) {
-    reportBootError(event.error, event.message);
-  });
+    reportRuntimeError(event.error, event.message, event.target);
+  }, true);
   window.addEventListener("unhandledrejection", function (event) {
-    reportBootError(event.reason, "");
+    reportRuntimeError(event.reason, "", null);
   });
-  window.addEventListener("load", function () { booting = false; });
+  window.addEventListener("DOMContentLoaded", announceReady);
+  window.addEventListener("load", announceReady);
+  try {
+    if (typeof MutationObserver === "function") {
+      var observer = new MutationObserver(function () {
+        announceReady();
+        if (contentReady) observer.disconnect();
+      });
+      observer.observe(window.document.documentElement, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ["style", "class", "hidden", "aria-hidden", "open"]
+      });
+    }
+  } catch (_) { /* the lifecycle events remain as the compatibility path */ }
 
   function send(message) {
     message.source = "derive";

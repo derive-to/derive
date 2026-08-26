@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Attribute-only late visibility</title></head>
+<body>
+  <main id="app" style="opacity:0">
+    <h1>Attribute-only recovery reached Ready</h1>
+    <table><tbody><tr><td>Late visible row</td><td>Ready</td></tr></tbody></table>
+    <button id="control" type="button">Working control · <span id="count">0</span></button>
+  </main>
+  <script>
+    const app = document.querySelector("#app")
+    app.querySelector("#control").addEventListener("click", () => {
+      const count = app.querySelector("#count")
+      count.textContent = String(Number(count.textContent) + 1)
+    })
+    setTimeout(() => { app.style.opacity = "1" }, 16500)
+  </script>
+</body>
+</html>

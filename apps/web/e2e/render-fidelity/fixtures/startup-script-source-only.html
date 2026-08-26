@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Script source is not content</title>
+  </head>
+  <body>
+    <script>
+      const sourceTextMustNeverCountAsVisibleContent =
+        "This deliberately long JavaScript source exceeds the visible-text readiness threshold while rendering absolutely nothing for the viewer."
+      throw new Error(sourceTextMustNeverCountAsVisibleContent)
+    </script>
+  </body>
+</html>

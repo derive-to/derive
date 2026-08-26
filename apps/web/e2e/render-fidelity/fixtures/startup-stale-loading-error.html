@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Late legacy error</title>
+    <style>
+      body { margin: 0; padding: 24px; font: 16px/1.5 system-ui, sans-serif; }
+      main { max-width: 720px; margin: auto; }
+      button { padding: 8px 12px; }
+    </style>
+  </head>
+  <body>
+    <main data-derive-ready>
+      <h1>Useful content reached Ready</h1>
+      <p>The host must not return this frame to Blocked when an old runtime reports a late startup phase.</p>
+      <button id="control" type="button">Working control · <span id="count">0</span></button>
+    </main>
+    <script>
+      let count = 0
+      document.querySelector("#control").addEventListener("click", () => {
+        count += 1
+        document.querySelector("#count").textContent = String(count)
+      })
+      setTimeout(() => {
+        parent.postMessage({ source: "derive", type: "runtime-error", code: "script-error" }, "*")
+      }, 600)
+    </script>
+  </body>
+</html>

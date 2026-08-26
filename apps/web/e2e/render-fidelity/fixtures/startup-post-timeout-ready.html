@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Post-timeout readiness</title></head>
+<body>
+  <main id="app">Loading…</main>
+  <script>
+    setTimeout(() => {
+      const app = document.querySelector("#app")
+      app.innerHTML = `
+        <h1>Late content recovered automatically</h1>
+        <table><tbody><tr><td>Late row</td><td>Ready</td></tr></tbody></table>
+        <button id="control" type="button">Working control · <span id="count">0</span></button>
+      `
+      app.querySelector("#control").addEventListener("click", () => {
+        const count = app.querySelector("#count")
+        count.textContent = String(Number(count.textContent) + 1)
+      })
+    }, 16500)
+  </script>
+</body>
+</html>

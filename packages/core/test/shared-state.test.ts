@@ -58,13 +58,16 @@ describe("shared-state contract", () => {
     expect(injected.indexOf(SHARED_STATE_SCRIPT)).toBeLessThan(injected.indexOf("boot()"))
   })
 
-  it("relays a source-free boot error before authored scripts can fail silently", () => {
+  it("keeps a source-free boot error blocking after iframe load without content", () => {
     type BrowserListener = (event: Record<string, unknown>) => void
     const sent: RuntimeMessage[] = []
     const listeners = new Map<string, BrowserListener>()
     const parent = { postMessage: (message: RuntimeMessage) => sent.push(message) }
     const frame = {
       derive: undefined as DeriveRuntime | undefined,
+      document: {
+        body: null,
+      },
       addEventListener: (type: string, listener: BrowserListener) => listeners.set(type, listener),
       dispatchEvent: () => true,
     }
@@ -88,11 +91,168 @@ describe("shared-state contract", () => {
       source: parent,
       data: { source: "derive-host", type: "shared-ready" },
     })
-    expect(sent).toEqual([{ source: "derive", type: "runtime-error", code: "sandbox-storage" }])
+    expect(sent).toEqual([
+      {
+        source: "derive",
+        type: "runtime-error",
+        code: "sandbox-storage",
+        phase: "loading",
+      },
+    ])
 
     listeners.get("load")?.({})
     listeners.get("error")?.({ error: { message: "late click handler failed" } })
-    expect(sent).toHaveLength(1) // only first-render failures replace the artifact
+    expect(sent.at(-1)).toMatchObject({
+      source: "derive",
+      type: "runtime-error",
+      code: "script-error",
+      phase: "loading",
+    })
+  })
+
+  it("classifies a fallback exception after meaningful paint as fail-soft", () => {
+    type BrowserListener = (event: Record<string, unknown>) => void
+    const sent: RuntimeMessage[] = []
+    const listeners = new Map<string, BrowserListener>()
+    const parent = { postMessage: (message: RuntimeMessage) => sent.push(message) }
+    const frame = {
+      derive: undefined as DeriveRuntime | undefined,
+      document: {
+        body: {
+          childElementCount: 1,
+          innerText:
+            "Thirty rendered rows remain useful even when an optional logo fallback fails. ".repeat(
+              2,
+            ),
+          querySelector: () => null,
+          querySelectorAll: () => ({ length: 1 }),
+        },
+      },
+      addEventListener: (type: string, listener: BrowserListener) => listeners.set(type, listener),
+      dispatchEvent: () => true,
+    }
+    const CustomEventStub = class {
+      constructor(
+        readonly type: string,
+        readonly init?: unknown,
+      ) {}
+    }
+    const load = Function("window", "parent", "CustomEvent", SHARED_STATE_CLIENT_JS) as (
+      frame: typeof frame,
+      parent: typeof parent,
+      event: typeof CustomEventStub,
+    ) => void
+    load(frame, parent, CustomEventStub)
+
+    listeners.get("error")?.({
+      error: { message: "Cannot set properties of null" },
+      message: "Cannot set properties of null",
+      target: frame,
+    })
+    listeners.get("message")?.({
+      source: parent,
+      data: { source: "derive-host", type: "shared-ready" },
+    })
+    expect(sent).toEqual([
+      {
+        source: "derive",
+        type: "runtime-ready",
+      },
+      {
+        source: "derive",
+        type: "runtime-error",
+        code: "script-error",
+        phase: "ready",
+      },
+    ])
+  })
+
+  it("does not mistake an empty semantic app shell for meaningful content", () => {
+    type BrowserListener = (event: Record<string, unknown>) => void
+    const sent: RuntimeMessage[] = []
+    const listeners = new Map<string, BrowserListener>()
+    const parent = { postMessage: (message: RuntimeMessage) => sent.push(message) }
+    const frame = {
+      derive: undefined as DeriveRuntime | undefined,
+      document: {
+        body: {
+          childElementCount: 1,
+          innerText: "Loading…",
+          querySelector: () => null,
+          querySelectorAll: () => ({ length: 0 }),
+        },
+      },
+      addEventListener: (type: string, listener: BrowserListener) => listeners.set(type, listener),
+      dispatchEvent: () => true,
+    }
+    const CustomEventStub = class {
+      constructor(
+        readonly type: string,
+        readonly init?: unknown,
+      ) {}
+    }
+    const load = Function("window", "parent", "CustomEvent", SHARED_STATE_CLIENT_JS) as (
+      frame: typeof frame,
+      parent: typeof parent,
+      event: typeof CustomEventStub,
+    ) => void
+    load(frame, parent, CustomEventStub)
+
+    listeners.get("error")?.({ error: { message: "boot failed" }, message: "boot failed" })
+    listeners.get("message")?.({
+      source: parent,
+      data: { source: "derive-host", type: "shared-ready" },
+    })
+    expect(sent.at(-1)).toMatchObject({ code: "script-error", phase: "loading" })
+  })
+
+  it("excludes hidden markers, hidden rich nodes, and source text from readiness", () => {
+    type BrowserListener = (event: Record<string, unknown>) => void
+    const sent: RuntimeMessage[] = []
+    const listeners = new Map<string, BrowserListener>()
+    const parent = { postMessage: (message: RuntimeMessage) => sent.push(message) }
+    const hidden = { hidden: true }
+    const frame = {
+      derive: undefined as DeriveRuntime | undefined,
+      document: {
+        body: {
+          childElementCount: 3,
+          innerText: "Loading…",
+          textContent:
+            "A deliberately long inline script source that exceeds the old readiness threshold but renders nothing useful to a viewer.",
+          querySelector: () => hidden,
+          querySelectorAll: () => ({ 0: hidden, length: 1 }),
+        },
+      },
+      addEventListener: (type: string, listener: BrowserListener) => listeners.set(type, listener),
+      dispatchEvent: () => true,
+    }
+    const CustomEventStub = class {
+      constructor(
+        readonly type: string,
+        readonly init?: unknown,
+      ) {}
+    }
+    const load = Function("window", "parent", "CustomEvent", SHARED_STATE_CLIENT_JS) as (
+      frame: typeof frame,
+      parent: typeof parent,
+      event: typeof CustomEventStub,
+    ) => void
+    load(frame, parent, CustomEventStub)
+
+    listeners.get("error")?.({ error: { message: "boot failed" }, message: "boot failed" })
+    listeners.get("message")?.({
+      source: parent,
+      data: { source: "derive-host", type: "shared-ready" },
+    })
+    expect(sent).toEqual([
+      {
+        source: "derive",
+        type: "runtime-error",
+        code: "script-error",
+        phase: "loading",
+      },
+    ])
   })
 
   it("loads state, emits an atomic update, and applies the host result", async () => {
@@ -103,6 +263,9 @@ describe("shared-state contract", () => {
     const parent = { postMessage: (message: RuntimeMessage) => sent.push(message) }
     const frame = {
       derive: undefined as DeriveRuntime | undefined,
+      document: {
+        body: null,
+      },
       addEventListener: (type: string, listener: MessageListener) => {
         if (type === "message") receive = listener
       },

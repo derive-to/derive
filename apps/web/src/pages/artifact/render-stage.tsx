@@ -4,10 +4,14 @@ import { Spinner } from "@/components/shared/spinner"
 import { StatusPanel } from "@/components/shared/status-panel"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
-import type { ArtifactRuntimeError } from "./types"
+import {
+  type ArtifactRuntimeError,
+  type ArtifactRuntimeErrorCode,
+  isBlockingRuntimeError,
+} from "./types"
 
-// How long we wait for the sandboxed render to fire `load` before calling it a
-// failed boot. A cache-warm artifact paints in well under a second; this only
+// How long we wait for the sandboxed render to report meaningful content before
+// calling it a failed boot. A cache-warm artifact paints in well under a second; this only
 // catches a genuinely stuck/broken render so the viewer never stares at a blank
 // white frame (NN/g #1 — visibility of system status; the render's own failure
 // must be legible, not indistinguishable from "still loading").
@@ -53,11 +57,34 @@ export const updateCue = (
 
 /** Public copy stays source-free; editors get the one actionable repair for the
  * storage case. The runtime sends only this coarse code, never exception text. */
+export type RuntimeDisposition = "blocked" | "degraded"
+
+/** Resource failures are optional by default. Script/storage failures block only
+ * before meaningful content exists; after ready they degrade without replacing the
+ * last good frame. This is the viewer's small, explicit startup state machine. */
+export const runtimeDisposition = (error: ArtifactRuntimeError): RuntimeDisposition =>
+  isBlockingRuntimeError(error) ? "blocked" : "degraded"
+
 export const runtimeFailureCopy = (
-  error: ArtifactRuntimeError,
+  code: ArtifactRuntimeErrorCode,
+  disposition: RuntimeDisposition,
   canFix: boolean,
 ): { title: string; description: string } => {
-  if (error === "sandbox-storage")
+  if (disposition === "degraded")
+    return canFix
+      ? {
+          title: "Preview kept running after an artifact error",
+          description:
+            code === "resource-error"
+              ? "An optional image, font, or stylesheet failed to load. The rendered content is still available."
+              : "A script failed after meaningful content appeared. The rendered content is still available; check the source before republishing.",
+        }
+      : {
+          title: "Some preview features may be unavailable",
+          description:
+            "The artifact is still visible. You can retry if something looks incomplete.",
+        }
+  if (code === "sandbox-storage")
     return canFix
       ? {
           title: "Browser storage isn’t available here",
@@ -89,6 +116,7 @@ export function RenderStage({
   wrapRef,
   onFrameLoad,
   runtimeError,
+  runtimeReady = false,
   canFixRuntimeError = false,
   banner,
   overlays,
@@ -115,6 +143,8 @@ export function RenderStage({
   onFrameLoad?: () => void
   /** A source-free boot failure relayed by the first-injected sandbox runtime. */
   runtimeError?: ArtifactRuntimeError | null
+  /** The injected runtime found meaningful content, not merely an iframe load. */
+  runtimeReady?: boolean
   /** Editors get repair guidance; readers see a neutral failure. */
   canFixRuntimeError?: boolean
   /** A strip above the render (the past-version banner). */
@@ -130,27 +160,46 @@ export function RenderStage({
   // Boot/failure state is per-source: a new rawSrc (version swap, retry) resets it.
   const [phase, setPhase] = useState<"booting" | "ready" | "failed">("booting")
   const [attempt, setAttempt] = useState(0)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: rawSrc identifies a new iframe document and intentionally resets its startup state.
   useEffect(() => {
     setPhase("booting")
-  }, [])
+  }, [rawSrc])
 
-  // Arm the stuck-boot timeout while booting; clear it the moment the frame loads.
+  useEffect(() => {
+    if (runtimeReady) setPhase("ready")
+  }, [runtimeReady])
+
+  // Arm the stuck-boot timeout while booting; clear it only after meaningful paint.
   // No src yet means no load in flight — don't count seed-wait time against the render.
   useEffect(() => {
-    if (phase !== "booting" || rawSrc == null) return
+    // A specific blocking runtime error already owns recovery. Do not let the
+    // generic timeout later mount a second, overlapping Try again control.
+    if (
+      phase !== "booting" ||
+      rawSrc == null ||
+      (runtimeError && isBlockingRuntimeError(runtimeError))
+    )
+      return
     const t = setTimeout(() => setPhase("failed"), BOOT_TIMEOUT_MS)
     return () => clearTimeout(t)
-  }, [phase, rawSrc])
+  }, [phase, rawSrc, runtimeError])
 
   const handleLoad = () => {
-    setPhase("ready")
     onFrameLoad?.()
   }
   const retry = () => {
     setPhase("booting")
     setAttempt((n) => n + 1)
   }
-  const runtimeFailure = runtimeError ? runtimeFailureCopy(runtimeError, canFixRuntimeError) : null
+  const disposition = runtimeError ? runtimeDisposition(runtimeError) : null
+  const runtimeFailure = runtimeError
+    ? runtimeFailureCopy(runtimeError.code, disposition ?? "blocked", canFixRuntimeError)
+    : null
+  const incidentReference = runtimeError
+    ? `${subject}${version == null ? "" : `-v${version}`}-${runtimeError.code}`
+    : null
+  const incidentInstance = incidentReference ? `${incidentReference}-${attempt}` : null
+  const [dismissedIncident, setDismissedIncident] = useState<string | null>(null)
 
   // "Updated" cue: when the shown version steps up IN PLACE (a peer published a new
   // version of the document being watched), flash a soft, non-blocking badge instead
@@ -178,6 +227,46 @@ export function RenderStage({
   return (
     <div className={cn("relative flex min-h-0 flex-1 flex-col", className)}>
       {banner}
+      {/* A warning must never obscure authored content. Keep degraded recovery in
+          the stage flow, outside the iframe/cursor coordinate system. */}
+      {phase === "ready" &&
+        runtimeError &&
+        runtimeFailure &&
+        disposition === "degraded" &&
+        incidentInstance !== dismissedIncident && (
+          <div
+            role="status"
+            aria-live="polite"
+            data-testid="render-degraded"
+            className="flex shrink-0 items-center gap-3 border-b border-warning/30 bg-card px-3 py-2"
+          >
+            <Icon name="report" className="size-4 shrink-0 text-warning" strokeWidth={1.75} />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium text-foreground">{runtimeFailure.title}</p>
+              <p className="hidden text-xs text-muted-foreground sm:block">
+                {runtimeFailure.description}
+              </p>
+              <p className="mt-0.5 truncate font-mono text-3xs text-muted-foreground">
+                {runtimeError.code}
+                <span className="hidden sm:inline"> · Reference: {incidentReference}</span>
+              </p>
+            </div>
+            <div className="flex shrink-0 items-center gap-1">
+              <Button variant="outline" size="sm" data-testid="render-retry" onClick={retry}>
+                Try again
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label="Dismiss preview warning"
+                data-testid="render-degraded-dismiss"
+                onClick={() => setDismissedIncident(incidentInstance)}
+              >
+                <Icon name="close" size={14} />
+              </Button>
+            </div>
+          </div>
+        )}
       {/* The render fills edge-to-edge; the content card's rounded overflow-hidden
           clips it, and the header above carries its top edge. bg-background (the app
           canvas, NEVER bg-white) is the backdrop the boot state paints on — so a dark
@@ -254,7 +343,7 @@ export function RenderStage({
         )}
 
         {/* Failure — an explicit terminal state with Retry, never a blank frame. */}
-        {phase === "failed" && (
+        {phase === "failed" && disposition !== "blocked" && (
           <div className="absolute inset-0 grid place-items-center bg-background p-6">
             <StatusPanel
               tone="danger"
@@ -274,7 +363,7 @@ export function RenderStage({
         {/* The iframe can load successfully while an authored script fails during
             first render. The early runtime relay makes that terminal state explicit
             instead of leaving the artifact's own loading copy on screen forever. */}
-        {phase === "ready" && runtimeFailure && (
+        {runtimeFailure && disposition === "blocked" && (
           <div className="absolute inset-0 z-20 grid place-items-center bg-background p-6">
             <StatusPanel
               tone="danger"

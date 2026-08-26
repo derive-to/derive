@@ -34,6 +34,7 @@ export function ArtifactDocument({
   presentWrapRef,
   cursor,
   runtimeError,
+  runtimeReady = false,
   canFixRuntimeError = false,
   onScrollDoc,
   onFrameLoad,
@@ -79,6 +80,8 @@ export function ArtifactDocument({
   presentWrapRef: RefObject<HTMLDivElement | null>
   cursor: CursorLayerHandle
   runtimeError?: ArtifactRuntimeError | null
+  /** True only after the sandbox runtime observes meaningful rendered content. */
+  runtimeReady?: boolean
   canFixRuntimeError?: boolean
   onScrollDoc: (dy: number) => void
   onFrameLoad: () => void
@@ -172,6 +175,7 @@ export function ArtifactDocument({
           wrapRef={presentWrapRef}
           onFrameLoad={onFrameLoad}
           runtimeError={runtimeError}
+          runtimeReady={runtimeReady}
           canFixRuntimeError={canFixRuntimeError}
           overlay={presentOverlay}
           presenting={presenting}
