@@ -2203,7 +2203,7 @@
           },
           "actor": {
             "type": "string",
-            "description": "Who triggered it; for follow/publish this is the person's @handle"
+            "description": "Who triggered it — a person's display name (their handle when they have none)"
           },
           "kind": {
             "type": "string",

@@ -87,9 +87,10 @@ describe("people follow", () => {
     const amyProfile = await (await app.request("/v1/users/amy", { headers: as(bob.email) })).json()
     expect(amyProfile.user.followed_by_me).toBe(true)
 
-    // amy sees a "follow" notification from bob (by his handle).
+    // amy sees a "follow" notification from bob — by his display name, like every other
+    // byline; his handle rides in `preview` for the bell's profile link.
     const notifs = await (await app.request("/v1/notifications", { headers: as(amy.email) })).json()
-    expect(notifs.notifications[0]).toMatchObject({ kind: "follow", actor: "bob" })
+    expect(notifs.notifications[0]).toMatchObject({ kind: "follow", actor: "Bob", preview: "bob" })
 
     // Unfollow removes it (and the follower count drops back).
     const del = await app.request("/v1/follows", {

@@ -93,7 +93,10 @@ export function NotificationBell() {
     }
     // A follow notification has no artifact — open the follower's profile instead.
     if (n.kind === "follow") {
-      nav({ to: "/users/$handle", params: { handle: n.actor } })
+      // The handle rides in `preview` (older rows carried the row's text there, and their
+      // `actor` was the handle itself).
+      const handle = n.preview && !/\s/.test(n.preview) ? n.preview : n.actor
+      nav({ to: "/users/$handle", params: { handle } })
       return
     }
     nav({

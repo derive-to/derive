@@ -67,7 +67,9 @@ export const Notification = z
   .object({
     id: z.string(),
     user_id: z.string().describe("The recipient this notification belongs to"),
-    actor: z.string().describe("Who triggered it; for follow/publish this is the person's @handle"),
+    actor: z
+      .string()
+      .describe("Who triggered it — a person's display name (their handle when they have none)"),
     kind: z
       .enum(["mention", "comment", "share", "follow", "publish", "review", "access_request"])
       .describe(

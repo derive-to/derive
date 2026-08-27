@@ -88,7 +88,14 @@ describe("agents: @mention → pull inbox → ack", () => {
 })
 
 describe("agents: the record says who did the work", () => {
-  const owner: TestUser = { id: "u_ag_rec", email: "agrec@derive.test", name: "Owner" }
+  // A handle AND a display name: the comment is written from the handle (principalActor),
+  // and must still read by the display name, like the person's versions do.
+  const owner: TestUser = {
+    id: "u_ag_rec",
+    email: "agrec@derive.test",
+    name: "Owner",
+    username: "owner-handle",
+  }
   const { app } = makeAuthedApp("agents-record", [owner], "owner")
 
   it("an agent's publish, ask, comment and resolve are recorded as the agent's, on the person's behalf", async () => {
@@ -139,7 +146,7 @@ describe("agents: the record says who did the work", () => {
         jsonAs(as(owner.email), { body_md: "Is §3 right?" }),
       )
     ).json()
-    expect(theirs.author_kind).toBe("user")
+    expect(theirs).toMatchObject({ author: "Owner", author_kind: "user" })
     const agents = await (
       await app.request(
         `/v1/artifacts/${shortId}/comments`,
@@ -170,5 +177,20 @@ describe("agents: the record says who did the work", () => {
       by_kind: "agent",
       version: 3,
     })
+
+    // A person's own resolve reads by their display name too — healed from the live record.
+    const byHand = await app.request(
+      `/v1/artifacts/${shortId}/comments/${agents.id}/resolve`,
+      jsonAs(as(owner.email), { state: "resolved" }),
+    )
+    expect(byHand.status).toBe(200)
+    const mine = (
+      await (
+        await app.request(`/v1/artifacts/${shortId}/comments?state=resolved`, {
+          headers: as(owner.email),
+        })
+      ).json()
+    ).comments.find((c: { id: string }) => c.id === agents.id)
+    expect(mine.resolution).toMatchObject({ by: "Owner", by_id: owner.id, by_kind: "user" })
   })
 })

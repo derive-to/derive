@@ -7316,7 +7316,7 @@ export interface components {
             id: string;
             /** @description The recipient this notification belongs to */
             user_id: string;
-            /** @description Who triggered it; for follow/publish this is the person's @handle */
+            /** @description Who triggered it — a person's display name (their handle when they have none) */
             actor: string;
             /**
              * @description What happened: mention, comment, share, follow, publish, review, or access_request (someone who cannot open the artifact is asking you to grant it)
