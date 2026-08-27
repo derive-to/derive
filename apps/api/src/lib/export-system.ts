@@ -106,6 +106,10 @@ export const buildExportEmail = (input: {
   alt: string
   version: number
 }) => {
+  // Keep untrusted artifact titles from becoming transport-level header input.
+  // Cloudflare already flattens the subject at its adapter boundary, but the
+  // self-hosted Resend adapter consumes this shared message directly.
+  const subjectTitle = input.title.replace(/[\r\n]+/g, " ").trim()
   const title = escapeHtml(input.title)
   const note = input.note
     ? `<p style="margin:0 0 20px;color:#333">${escapeHtml(input.note)}</p>`
@@ -120,7 +124,7 @@ export const buildExportEmail = (input: {
   ]
     .filter(Boolean)
     .join("\n\n")
-  return { to: input.to, subject: `${input.title} · Derive`, html, text }
+  return { to: input.to, subject: `${subjectTitle} · Derive`, html, text }
 }
 
 const base64 = (bytes: Uint8Array): string => {

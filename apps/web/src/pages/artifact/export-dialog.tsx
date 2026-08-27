@@ -36,6 +36,12 @@ const LABELS: Record<ExportKind, string> = {
 const active = (job: ExportJob) =>
   job.status === "pending" || job.status === "rendering" || job.status === "failed"
 
+/** Fast client-side feedback only; the API remains authoritative. This mirrors the
+ * browser's email input shape while keeping the dialog's button from bypassing
+ * native validation through a plain onClick handler. */
+export const isValidExportRecipient = (value: string): boolean =>
+  /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim())
+
 export function ExportButton({
   shortId,
   version,
@@ -52,6 +58,7 @@ export function ExportButton({
   const [slot, setSlot] = useState("")
   const [publicImage, setPublicImage] = useState(false)
   const [attachPdf, setAttachPdf] = useState(false)
+  const recipientInvalid = !!recipient.trim() && !isValidExportRecipient(recipient)
   const jobs = useQuery({
     queryKey: ["exports", shortId],
     queryFn: () => api.listExports(shortId),
@@ -143,10 +150,21 @@ export function ExportButton({
                   id="export-recipient"
                   type="email"
                   data-testid="export-recipient"
+                  aria-invalid={recipientInvalid}
+                  aria-describedby={recipientInvalid ? "export-recipient-error" : undefined}
                   value={recipient}
                   onChange={(e) => setRecipient(e.target.value)}
                   placeholder="person@example.com"
                 />
+                {recipientInvalid && (
+                  <p
+                    id="export-recipient-error"
+                    className="mt-1 text-xs text-destructive"
+                    data-testid="export-recipient-error"
+                  >
+                    Enter a valid email address.
+                  </p>
+                )}
               </div>
               <div>
                 <label className="mb-1.5 block text-sm font-medium" htmlFor="export-note">
@@ -203,7 +221,7 @@ export function ExportButton({
             onClick={start}
             disabled={
               create.isPending ||
-              (kind === "email" && !recipient.trim()) ||
+              (kind === "email" && (!recipient.trim() || recipientInvalid)) ||
               ((kind === "chart_json" || kind === "chart_csv") && !slot.trim())
             }
           >
