@@ -33,6 +33,9 @@ export type VersionRow = {
   at: string
   /** The actor — the agent's name when one produced the versions on the author's behalf. */
   by: string
+  /** The actor's stable identity when the record has one (an agent id, a person's handle):
+   *  turns fold by it, so a rename never splits one person and a shared name never joins two. */
+  byId: string | null
   agent: boolean
   /** The version range this row covers (a session folds several). */
   from: number
@@ -50,6 +53,7 @@ export type ReviewRequestRow = {
   at: string
   /** The requester's recorded name; null on a row the server could not name. */
   by: string | null
+  byId: string | null
   agent: boolean
   version: number
   note: string | null
@@ -60,6 +64,7 @@ export type ReviewSentBackRow = {
   id: string
   at: string
   by: string | null
+  byId: string | null
   agent: boolean
   version: number
   note: string | null
@@ -69,6 +74,7 @@ export type ReplyRow = {
   id: string
   at: string
   by: string
+  byId: string | null
   agent: boolean
   threadId: string
   threadAuthor: string
@@ -80,6 +86,7 @@ export type ResolvedRow = {
   at: string
   /** The resolver's recorded name; null when the record has none (a Slack click). */
   by: string | null
+  byId: string | null
   agent: boolean
   threadId: string
   threadAuthor: string
@@ -96,6 +103,7 @@ export type TurnItem = {
   /** The newest row's time — the stamp the line carries. */
   until: string
   by: string | null
+  byId: string | null
   /** The actor is an agent (acting on someone's behalf). */
   agent: boolean
   /** Never empty — a turn is made from its first row. */
@@ -161,6 +169,7 @@ function versionRows(versions: Version[]): VersionRow[] {
     id: `v-${v.n}`,
     at: v.created_at,
     by: v.agent?.name ?? v.author,
+    byId: v.agent?.id ?? (v.handle ? `@${v.handle}` : null),
     agent: !!v.agent,
     from: v.n,
     to: v.n,
@@ -182,6 +191,7 @@ function reviewRows(rounds: ReviewRound[]) {
       id: `rr-${r.id}`,
       at: r.created_at,
       by: r.requested_by_name,
+      byId: r.requested_by,
       agent: r.requested_by_kind === "agent",
       version: r.version,
       note: pending ? r.note : null,
@@ -193,6 +203,8 @@ function reviewRows(rounds: ReviewRound[]) {
         id: `rs-${r.id}`,
         at: r.resolved_at,
         by: r.resolved_by_name,
+        // The round keeps the answerer's name, not their id.
+        byId: null,
         // Only a person answers a round (the route insists on one).
         agent: false,
         version: r.version,
@@ -225,6 +237,7 @@ function threadRows(
         id: `r-${c.id}`,
         at: c.created_at,
         by: c.author,
+        byId: c.author_id ?? null,
         agent: c.author_kind === "agent",
         threadId: root.thread_id,
         threadAuthor: root.author,
@@ -238,6 +251,7 @@ function threadRows(
         id: `x-${root.thread_id}`,
         at: res.at,
         by: res.by,
+        byId: res.by_id,
         agent: res.by_kind === "agent",
         threadId: root.thread_id,
         threadAuthor: root.author,
@@ -260,18 +274,21 @@ function mergeVersions(into: VersionRow, row: VersionRow): void {
 }
 
 /** Fold consecutive rows by one actor on one day into a turn. A row with no actor (a
- *  round or a resolve the record could not name) rides with the turn before it. An actor
- *  is a name AND a kind: a person who shares an agent's name is not that agent. The
- *  viewer's last visit is a boundary too: what happened since must start its own turn,
- *  or it folds into one that sits before the "New" marker and is never new. */
+ *  round or a resolve the record could not name) rides with the turn before it. Actors
+ *  match by identity when both rows carry one, else by name AND kind (a person who shares
+ *  an agent's name is not that agent). The viewer's last visit is a boundary too: what
+ *  happened since must start its own turn, or it folds into one that sits before the
+ *  "New" marker and is never new. */
 function foldTurns(rows: ActivityRow[], lastSeen: number | null): TurnItem[] {
   const turns: TurnItem[] = []
   let cur: TurnItem | null = null
   const seen = (iso: string) => lastSeen != null && ms(iso) <= lastSeen
   for (const row of rows) {
+    const sameActor = (a: TurnItem, b: ActivityRow) =>
+      a.byId && b.byId ? a.byId === b.byId : a.by === b.by && a.agent === b.agent
     const joins =
       cur !== null &&
-      (row.by === null || (cur.by === row.by && cur.agent === row.agent)) &&
+      (row.by === null || sameActor(cur, row)) &&
       dayKey(cur.at) === dayKey(row.at) &&
       seen(cur.at) === seen(row.at)
     if (joins && cur) {
@@ -286,6 +303,7 @@ function foldTurns(rows: ActivityRow[], lastSeen: number | null): TurnItem[] {
         at: row.at,
         until: row.at,
         by: row.by,
+        byId: row.byId,
         agent: row.agent,
         rows: [row],
       }

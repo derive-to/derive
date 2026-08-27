@@ -333,6 +333,22 @@ describe("buildStream", () => {
     expect(countUnread(items)).toBe(1)
   })
 
+  it("folds by identity: one person renamed stays one turn, two people sharing a name stay apart", () => {
+    const versions = [
+      { ...version(1, "Mert", at(0, 9), "One"), handle: "mert" },
+      // The same person, renamed between publishes.
+      { ...version(2, "Mert O.", at(0, 10), "Two"), handle: "mert" },
+      // Someone else who happens to share the first name.
+      { ...version(3, "Mert", at(0, 11), "Three"), handle: "other-mert" },
+    ]
+    const turns = buildStream({ ...base, versions, comments: [] }).filter(
+      (it) => it.type === "turn",
+    )
+    expect(
+      turns.map((t) => t.rows.map((r) => (r.kind === "version" ? `v${r.from}-${r.to}` : r.kind))),
+    ).toEqual([["v1-2"], ["v3-3"]])
+  })
+
   it("knows the viewer by id, so their own reply under a different byline is not news", () => {
     const seen = new Date(at(0, 12)).getTime()
     const comments = [
@@ -422,6 +438,7 @@ describe("leadRow / phrase / hasDetail", () => {
         id: "",
         at: "",
         by: "",
+        byId: null,
         agent: false,
         from: 9,
         to: 11,
@@ -436,6 +453,7 @@ describe("leadRow / phrase / hasDetail", () => {
         id: "",
         at: "",
         by: "",
+        byId: null,
         agent: false,
         from: 4,
         to: 4,
@@ -450,6 +468,7 @@ describe("leadRow / phrase / hasDetail", () => {
         id: "",
         at: "",
         by: null,
+        byId: null,
         agent: false,
         version: 3,
         note: null,
@@ -461,6 +480,7 @@ describe("leadRow / phrase / hasDetail", () => {
         id: "",
         at: "",
         by: "Noor",
+        byId: null,
         agent: false,
         threadId: "t",
         threadAuthor: "Ada",
@@ -473,6 +493,7 @@ describe("leadRow / phrase / hasDetail", () => {
         id: "",
         at: "",
         by: "Claude Code",
+        byId: CLAUDE.id,
         agent: true,
         threadId: "t",
         threadAuthor: "Ada",

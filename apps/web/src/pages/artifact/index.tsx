@@ -1639,7 +1639,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
               rounds={review?.rounds ?? []}
               pendingRound={review?.pending ?? null}
               meId={me?.id ?? ""}
-              meName={me?.name ?? me?.email ?? ""}
+              meName={me?.name ?? me?.username ?? me?.email ?? ""}
               lastSeen={seen.lastSeen}
               onGoToVersion={goToVersion}
               onSendBack={(note) => sendBack.mutate(note)}

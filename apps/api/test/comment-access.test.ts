@@ -100,7 +100,7 @@ describe("comment access via the general-access link", () => {
     expect((await comment(shortId, as(bob.email))).status).toBe(403)
   })
 
-  it("lets commenters interact with shared state and stamps their identity server-side", async () => {
+  it("lets commenters interact with shared state and stamps their identity server-side (by display name — the one byline rule)", async () => {
     await app.request("/v1/me", { headers: as(alice.email) })
     const shortId = (await (await publishAs(app, "<h1>bugs</h1>", {}, as(alice.email))).json())
       .short_id
@@ -137,7 +137,7 @@ describe("comment access via the general-access link", () => {
         op: "add",
         initial: [],
         value: { title: "Voting is stale", votes: 0 },
-        actor: { id: alice.id, name: "alice-handle" },
+        actor: { id: alice.id, name: "Alice" },
       },
       as(bob.email),
     )
@@ -196,8 +196,8 @@ describe("comment access via the general-access link", () => {
     expect((await activity.json()).activity).toMatchObject([
       { action: "update", item_id: itemId },
       { action: "update", item_id: itemId },
-      { action: "update", item_id: itemId, actor: { id: bob.id, name: "bob-handle" } },
-      { action: "add", item_id: itemId, actor: { id: bob.id, name: "bob-handle" } },
+      { action: "update", item_id: itemId, actor: { id: bob.id, name: "Bob" } },
+      { action: "add", item_id: itemId, actor: { id: bob.id, name: "Bob" } },
     ])
 
     // Comment rights enable the intended public interaction vocabulary, not an
@@ -325,11 +325,11 @@ describe("comment access via the general-access link", () => {
       expect.arrayContaining([
         expect.objectContaining({
           action: "set_mine",
-          actor: { id: bob.id, name: "bob-handle" },
+          actor: { id: bob.id, name: "Bob" },
         }),
         expect.objectContaining({
           action: "set_mine",
-          actor: { id: alice.id, name: "alice-handle" },
+          actor: { id: alice.id, name: "Alice" },
         }),
       ]),
     )

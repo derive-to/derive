@@ -42,14 +42,27 @@ export const principalOwnerId = (p: Principal): string | null =>
 
 /**
  * The ACTING identity for authorship bylines: an agent authors as ITSELF (never spoofing a
- * person), a human as themselves (public handle preferred over profile name/email). Null for anonymous
- * or the static token (no authored byline).
+ * person), a human as themselves. Null for anonymous or the static token (no authored byline).
+ *
+ * A person's byline is their DISPLAY NAME — `name`, else the handle, else the email — the one
+ * rule every surface follows (a version's healed byline, `actingHuman`, `requireDirectHuman`,
+ * lib/author.ts bylinesFrom). This used to prefer the handle, which is why one person read as
+ * "Mert" on their versions and "mert-testing" on their comments, reactions, resolves, share
+ * and follow notifications, Slack footers and the audit log. The handle rides along as
+ * `handle` for the one legacy check that still matches by name (routes/comments.ts
+ * ownsComment, for rows written before comments kept an author id).
  */
-export const principalActor = (p: Principal): { id: string; name: string } | null =>
+export const principalActor = (
+  p: Principal,
+): { id: string; name: string; handle: string | null } | null =>
   p.kind === "agent"
-    ? { id: p.agent.id, name: p.agent.name }
+    ? { id: p.agent.id, name: p.agent.name, handle: null }
     : p.kind === "human"
-      ? { id: p.user.id, name: p.user.username ?? p.user.name ?? p.user.email }
+      ? {
+          id: p.user.id,
+          name: p.user.name ?? p.user.username ?? p.user.email,
+          handle: p.user.username ?? null,
+        }
       : null
 
 /** Is this an authenticated principal (token, agent, or human) rather than an anonymous

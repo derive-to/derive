@@ -10,9 +10,11 @@ import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { Context } from "hono"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
+import { resolveUserBylines } from "../lib/author"
 import { commentCreatedAction } from "../lib/comment-actions"
 import { commentJson, parseMentions, parseMeta, REACTIONS } from "../lib/comments"
 import { bail, fail, readJson } from "../lib/http"
+import { principalKind } from "../lib/principal-kind"
 import { resolveThreadAction } from "../lib/thread-actions"
 import { Mention as MentionSchema } from "../schemas"
 
@@ -133,8 +135,29 @@ export const commentRoutes = (ctx: AppContext) => {
   // renaming your profile to a victim's name must not grant edit/delete rights.
   // Legacy rows (author_id null, written before this column) fall back to the
   // name match so their authors don't lose access.
-  const ownsComment = (cm: CommentRecord, acting: { id: string; name: string }): boolean =>
-    cm.author_id ? cm.author_id === acting.id : cm.author === acting.name
+  // The live display names behind these rows' people — authors, and whoever settled a
+  // thread — so a byline reads the same here as on a version (see commentJson).
+  const bylinesFor = async (rows: CommentRecord[]) =>
+    resolveUserBylines(
+      meta,
+      rows.flatMap((cm) => {
+        const md = parseMeta(cm.meta)
+        return [cm.author_id, md.resolved?.by_id].filter(
+          (id): id is string => !!id && principalKind(id) === "user",
+        )
+      }),
+    )
+  const commentOut = async (cm: CommentRecord) => commentJson(cm, undefined, await bylinesFor([cm]))
+
+  // By id. A legacy row (no author_id) matches by the byline it was written with — the
+  // display name now, the handle before principalActor changed rule — so both are tried.
+  const ownsComment = (
+    cm: CommentRecord,
+    acting: { id: string; name: string; handle?: string | null },
+  ): boolean =>
+    cm.author_id
+      ? cm.author_id === acting.id
+      : cm.author === acting.name || (!!acting.handle && cm.author === acting.handle)
 
   // Create a comment (new thread) or a reply (pass thread_id).
   app.openapi(
@@ -257,7 +280,7 @@ export const commentRoutes = (ctx: AppContext) => {
           { mentions, actorId: acting?.id ?? null, onBehalfOf: await privateOwnerId(c) },
         ),
       )
-      return c.json(commentJson(created), 201)
+      return c.json(await commentOut(created), 201)
     },
   )
 
@@ -303,9 +326,10 @@ export const commentRoutes = (ctx: AppContext) => {
       // anchor content once (tag-stripping HTML for text-quote matching) and reuse it.
       const raw = cur ? await sourceText(cur) : null
       const content = raw === null ? null : anchorContentFor(raw, cur?.content_type ?? "")
+      const bylines = await bylinesFor(comments)
       return c.json({
         comments: comments.map((cm) =>
-          commentJson(cm, content === null ? true : isAnchored(cm.anchor, content)),
+          commentJson(cm, content === null ? true : isAnchored(cm.anchor, content), bylines),
         ),
       })
     },
@@ -397,7 +421,7 @@ export const commentRoutes = (ctx: AppContext) => {
       md.reactions = reactions
       const updated = await meta.updateComment(cm.id, { meta: JSON.stringify(md) })
       bus.publish(artifact.id, { type: "comment.reacted", thread_id: cm.thread_id })
-      return c.json(commentJson(updated ?? cm))
+      return c.json(await commentOut(updated ?? cm))
     },
   )
 
@@ -439,7 +463,7 @@ export const commentRoutes = (ctx: AppContext) => {
         meta: JSON.stringify(md),
       })
       bus.publish(artifact.id, { type: "comment.updated", thread_id: cm.thread_id })
-      return c.json(commentJson(updated ?? cm))
+      return c.json(await commentOut(updated ?? cm))
     },
   )
 
@@ -490,7 +514,7 @@ export const commentRoutes = (ctx: AppContext) => {
       // two deletes race here, both may run this; deleteThread is idempotent.
       if (live.length === 0) await meta.deleteThread(artifact.id, cm.thread_id)
       bus.publish(artifact.id, { type: "comment.updated", thread_id: cm.thread_id })
-      return c.json(commentJson({ ...cm, meta: JSON.stringify(md) }))
+      return c.json(await commentOut({ ...cm, meta: JSON.stringify(md) }))
     },
   )
 
