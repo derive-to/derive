@@ -6700,6 +6700,11 @@ export interface components {
                 author_gh_id?: string | null;
                 /** @description Committer's Derive @handle; null unless they signed in with GitHub. */
                 handle?: string | null;
+                /** @description The agent that produced this version on the author's behalf; null for the person's own publish. */
+                agent?: {
+                    id: string;
+                    name: string;
+                } | null;
                 /** @description Version (commit) message; null when none given. */
                 message: string | null;
                 /** @description Optional version label; null when unnamed. */
@@ -6852,6 +6857,8 @@ export interface components {
             /** @description How many versions this session groups. */
             count: number;
             author: string;
+            /** @description The agent that produced the session on the author's behalf; null for the person's own edits. */
+            agent_name: string | null;
             /** @description Session label; null when unnamed. */
             name: string | null;
             /** @description Timestamp of the newest version in the group. */
@@ -7371,6 +7378,13 @@ export interface components {
             version: number;
             /** @description Who asked for the review (usually the agent that published). */
             requested_by: string;
+            /** @description The requester's name when the round opened (a row from before the name was kept is named from the directory, while the agent exists). */
+            requested_by_name: string | null;
+            /**
+             * @description What kind of principal asked, from the recorded id.
+             * @enum {string}
+             */
+            requested_by_kind: "user" | "agent";
             /** @description The person asked to answer this round. */
             requested_for: string;
             /**
@@ -7400,6 +7414,24 @@ export interface components {
             body_md: string;
             /** @description Author's display name; "anonymous" for an anonymous poster. */
             author: string;
+            /** @description Stable id of the author — a user id, an agent id, or "derive" for the built-in chat agent; null for anonymous or legacy rows. */
+            author_id?: string | null;
+            /**
+             * @description What kind of principal wrote it, from the recorded id.
+             * @enum {string}
+             */
+            author_kind: "user" | "agent" | "anonymous";
+            /** @description On a resolved thread's root: who settled it, when, and by which version. */
+            resolution?: {
+                at: string;
+                /** @description The resolver's display name at the time. */
+                by: string | null;
+                by_id: string | null;
+                /** @enum {string|null} */
+                by_kind: "user" | "agent" | null;
+                /** @description The version whose publish resolved the thread; null for a hand resolve. */
+                version: number | null;
+            } | null;
             /**
              * @description Thread state: open, resolved, or outdated (the quoted text changed).
              * @enum {string}

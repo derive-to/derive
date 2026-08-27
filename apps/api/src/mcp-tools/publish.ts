@@ -727,8 +727,11 @@ export function registerPublishTool(tc: ToolContext): void {
             message,
             author: agent.name,
             // Attributed to the human the agent acts for — their profile, their
-            // followers' feed (same as the HTTP publish route).
+            // followers' feed (same as the HTTP publish route). The agent itself is the
+            // recorded ACTOR, so the activity record reads as its work.
             authorId: actingFor?.id ?? null,
+            agentId: agent.id,
+            agentName: agent.name,
             source: "mcp",
             // New artifacts land in the TARGETED workspace (the default unless a
             // `workspace` was named), never wider than asked (the workspace's
@@ -777,6 +780,7 @@ export function registerPublishTool(tc: ToolContext): void {
             onBehalf: actingFor?.id ?? null,
             resolves: addresses ?? [],
             actorId: agent.id,
+            actorName: agent.name,
           },
         )
         // Tag at publish time — the one-step "auto-tag on create". `tags` given ⇒ set them

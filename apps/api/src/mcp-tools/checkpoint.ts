@@ -157,6 +157,8 @@ export function registerCheckpointTool(tc: ToolContext): void {
             message: state.trim().slice(0, 80),
             author: agent.name,
             authorId: actingFor?.id ?? null,
+            agentId: agent.id,
+            agentName: agent.name,
             source: "mcp",
             name: `layer ${stamp.slice(0, 16)}Z`,
             orgId: targetOrg,

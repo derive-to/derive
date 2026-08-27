@@ -1,10 +1,19 @@
-import { type Dispatch, type ReactNode, type RefObject, type SetStateAction, useRef } from "react"
-import type { Comment, DirUser, Mention } from "@/api"
+import {
+  type Dispatch,
+  type ReactNode,
+  type RefObject,
+  type SetStateAction,
+  useRef,
+  useState,
+} from "react"
+import type { Artifact, Comment, DirUser, Mention, ReviewRound } from "@/api"
 import { Icon } from "@/components/icons"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
+import { ActivityPanel } from "./activity-panel"
 import { type RailTab, RailTabs } from "./artifact-chat"
-import { MobileComments, OpenPanel } from "./comment-panels"
+import { MobileComments } from "./comment-panels"
+import { buildStream, type Lens } from "./lib/activity"
 import { CommentScopeProvider } from "./lib/comment-scope"
 import { type CommentTree, CommentTreeProvider } from "./lib/comment-tree"
 import { quoteChipClass } from "./quote-chip"
@@ -14,13 +23,12 @@ import {
   type ComposerState,
   type FrameGeom,
   type Panel,
-  type PinItem,
   type Selection,
   selLabel,
 } from "./types"
 
 /**
- * All the comment surfaces for an artifact, in one place: the desktop margin aside,
+ * All the comment surfaces for an artifact, in one place: the desktop activity rail,
  * the phone slide-up sheet, and the floating "comment on the selection" affordance.
  * Hidden entirely for an anonymous visitor (read-only). The page owns the state +
  * mutations and threads them in.
@@ -49,7 +57,24 @@ export function ArtifactComments(p: {
   /** May the caller create comments here (commenter+)? Gates every write affordance;
    *  reading stays open to any authenticated viewer. */
   canComment: boolean
-  reviewCard?: ReactNode
+  /** The suggestion / locked one-liners shown above the stream. */
+  hints?: ReactNode
+  /** What the activity stream is built from besides the comments: the versions (and
+   *  the server's time-clustered sessions), the review rounds, and the reader's last
+   *  visit. The page owns the version jump and the send-back write. */
+  versions: Artifact["versions"]
+  sessions?: Artifact["sessions"]
+  currentVersion: number
+  rounds: ReviewRound[]
+  pendingRound: ReviewRound | null
+  meId: string
+  meName: string
+  lastSeen: number | null
+  onGoToVersion: (n: number) => void
+  onSendBack: (note?: string) => void
+  sendingBack: boolean
+  /** Doc-absolute tops of the open anchored threads — "follow the document". */
+  anchorTops: Record<string, number>
   /** Phones only: px the comment sheet occupies at the viewport bottom, so the page
    *  can reserve that under the document (0 when the sheet is closed). */
   onSheetHeight?: (px: number) => void
@@ -62,16 +87,14 @@ export function ArtifactComments(p: {
   onEditSelection?: () => void
   panel: Panel
   asideWidth: number
+  /** Every comment on the artifact — the stream groups them into threads itself. */
+  comments: Comment[]
   openCount: number
-  /** The rendered document's iframe — the pin layer and selection pill measure
-   *  their live position against it. */
+  /** The rendered document's iframe — the selection pill measures its live
+   *  position against it. */
   frameRef: RefObject<HTMLIFrameElement | null>
   /** Imperative scroll-geometry feed (see use-artifact-frame). */
   subscribeGeom: (cb: (g: FrameGeom) => void) => () => void
-  onScrollDoc: (dy: number) => void
-  pinned: PinItem[]
-  general: Comment[][]
-  resolved: Comment[][]
   openThreads: Comment[][]
   activeThread: string | null
   hoverThread: string | null
@@ -101,14 +124,41 @@ export function ArtifactComments(p: {
 }) {
   const { isMobile, isAnon, canComment, panel, sel } = p
   const hasRailTabs = !!p.mapEnabled || !!p.chatBeta || !!p.inspectEnabled
+  // THE STREAM, built once for both surfaces: the versions (grouped by the server's
+  // sessions), the threads, the review rounds, and — after the reader's last visit —
+  // the replies. The lens is rail state like `rail` itself.
+  const [lens, setLens] = useState<Lens>("all")
+  // Who did what is in the records themselves (a version's agent, a comment's author
+  // kind, a round's requester) — nothing here is looked up by name.
+  const items = buildStream({
+    versions: p.versions,
+    sessions: p.sessions,
+    comments: p.comments,
+    rounds: p.rounds,
+    meId: p.meId,
+    me: p.meName,
+    lastSeen: p.lastSeen,
+    lens,
+    now: Date.now(),
+  })
   // Focus primer: tapping "Comment" focuses this synchronously, inside the tap
   // gesture, so iOS raises the keyboard; the composer's autofocus then takes over
   // and the keyboard stays up. (iOS won't open the keyboard for a focus that lands
   // after the React commit, outside the gesture — that's why the box came up with
   // no keyboard.)
   const primer = useRef<HTMLTextAreaElement>(null)
+  // The phone sheet's "New": a live composer state is what opens its composer bar.
   const newGeneral = () => {
     p.setComposer({ anchor: null, docTop: null })
+    p.setActiveThread(null)
+  }
+  // The desktop rail's "New": its composer is always there, so this only drops a parked
+  // quote and the active thread. A parked empty composer would hide the selection menu
+  // (which yields while a composer is live) until Escape — the old drawer needed the
+  // parked state to show a card; the docked composer does not.
+  const newGeneralDesktop = () => {
+    p.setComposer(null)
+    p.setSel(null)
     p.setActiveThread(null)
   }
   const cancelNew = () => {
@@ -117,7 +167,7 @@ export function ArtifactComments(p: {
   }
 
   // The interaction state + handlers every card reads directly (see CommentTree),
-  // instead of drilling them through OpenPanel / PinnedZone / the sheet — so a card
+  // instead of drilling them through the rail / the stream / the sheet — so a card
   // render site is just `<CommentCard thread={t} />`. This is a STRUCTURAL fold, not a
   // re-render optimization: the page rebuilds most of these handlers each render (they
   // close over changing deck/comment data), so the value is intentionally a fresh object
@@ -160,8 +210,8 @@ export function ArtifactComments(p: {
         {!isMobile && !isAnon && (
           <aside
             className={cn(
-              // overflow-clip: focus scrolling must never shift this box — the pin
-              // layer's transform math assumes its ancestors stay put.
+              // overflow-clip: focus scrolling must never shift this box — the stream
+              // owns its own scroll container.
               "flex min-h-0 shrink-0 grow-0 flex-col overflow-clip bg-card transition-[width,flex-basis] duration-state",
               panel !== "hidden" && "border-l border-border",
             )}
@@ -169,8 +219,9 @@ export function ArtifactComments(p: {
           >
             {/* The strip sits INSIDE the aside, above whichever body is showing — the same
                 control the mobile peek bar renders, just at the top of a column instead of
-                the top of a sheet. */}
-            {panel !== "hidden" && hasRailTabs && p.rail && p.onRail && (
+                the top of a sheet. The activity body takes the strip INTO its own header
+                row (one row, not a strip over a heading that repeats the tab's name). */}
+            {panel !== "hidden" && hasRailTabs && p.rail && p.rail !== "comments" && p.onRail && (
               <div className="flex shrink-0 items-center border-b border-border px-2 py-1.5">
                 <RailTabs
                   tab={p.rail}
@@ -189,24 +240,40 @@ export function ArtifactComments(p: {
             ) : panel !== "hidden" && p.rail === "inspect" && p.inspectEnabled ? (
               p.inspectPanel
             ) : panel !== "hidden" ? (
-              <OpenPanel
-                editing={p.editing}
+              <ActivityPanel
+                tabs={
+                  hasRailTabs && p.rail && p.onRail ? (
+                    <RailTabs
+                      tab={p.rail}
+                      commentCount={p.openCount}
+                      mapEnabled={p.mapEnabled}
+                      chatEnabled={p.chatBeta}
+                      inspectEnabled={p.inspectEnabled}
+                      onTab={p.onRail}
+                    />
+                  ) : undefined
+                }
+                items={items}
                 openCount={p.openCount}
-                frameRef={p.frameRef}
-                subscribeGeom={p.subscribeGeom}
-                onScrollDoc={p.onScrollDoc}
-                pinned={p.pinned}
-                general={p.general}
-                resolved={p.resolved}
+                currentVersion={p.currentVersion}
+                pendingRound={p.pendingRound}
+                lens={lens}
+                onLens={setLens}
                 composer={p.composer}
-                onHide={() => p.setPanel("hidden")}
-                onNewGeneral={newGeneral}
+                onNewGeneral={newGeneralDesktop}
                 onSubmitNew={p.submitNew}
                 onCancelNew={cancelNew}
+                onHide={() => p.setPanel("hidden")}
                 visualPinAvailable={p.visualPinAvailable}
                 visualPinActive={p.visualPinActive}
                 onToggleVisualPin={p.onToggleVisualPin}
-                reviewCard={p.reviewCard}
+                hints={p.hints}
+                editing={p.editing}
+                onGoToVersion={p.onGoToVersion}
+                onSendBack={p.onSendBack}
+                sendingBack={p.sendingBack}
+                anchorTops={p.anchorTops}
+                subscribeGeom={p.subscribeGeom}
               />
             ) : null}
           </aside>
@@ -219,12 +286,15 @@ export function ArtifactComments(p: {
             editing={p.editing}
             open={panel === "open"}
             openThreads={p.openThreads}
-            resolved={p.resolved}
+            items={items}
+            currentVersion={p.currentVersion}
+            pendingRound={p.pendingRound}
+            onGoToVersion={p.onGoToVersion}
+            onSendBack={p.onSendBack}
             composer={p.composer}
             onNewGeneral={newGeneral}
             onSubmitNew={p.submitNew}
             onCancelNew={cancelNew}
-            reviewCard={p.reviewCard}
             onHeightChange={p.onSheetHeight}
             // The peek bar IS the tab strip on a phone: always docked, so comments never
             // lose their entry point and chat is one thumb-reach away.

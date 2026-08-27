@@ -4,11 +4,10 @@ import type { Comment, Mention } from "@/api"
 /**
  * The comment-tree interaction context — the active/hover/anchored STATE and the
  * per-thread HANDLERS every comment card needs, provided once by ArtifactComments and
- * read directly by CommentCard (and by PinnedZone for its layout math). Before this,
- * these eight values were prop-drilled unchanged through OpenPanel → PinnedZone /
- * CollapsibleThreadSection / MobileComments to reach each card; the intermediate layers
- * now forward nothing. Cards self-compute `active`/`hovered`/`present` from the state
- * here, so a card render site is just `<CommentCard thread={t} />`.
+ * read directly by CommentCard and the activity stream. Before this, these eight values
+ * were prop-drilled unchanged through every panel layer to reach each card; the
+ * intermediate layers now forward nothing. Cards self-compute `active`/`hovered`/
+ * `present` from the state here, so a card render site is just `<CommentCard thread={t} />`.
  */
 export interface CommentTree {
   /** The thread currently expanded (its card shows the full thread + reply box). */

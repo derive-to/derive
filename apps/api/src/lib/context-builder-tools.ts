@@ -17,6 +17,7 @@ import {
   storedCardFromMeta,
 } from "./context-builder-card"
 import { ContextConflictError, createContextCore } from "./create-context"
+import { DERIVE_AGENT_NAME, DERIVE_AUTHOR_ID } from "./principal-kind"
 
 export type { BuilderCard, ContextDraft, StoredBuilderCard } from "./context-builder-card"
 
@@ -108,6 +109,9 @@ export const buildContextBuilderTools = (
         orgId: who.org,
         title: `${draft.name} — context instructions`,
         authorId: who.user.id,
+        // Written by the built-in agent on the asker's behalf, like a chat edit.
+        agentId: DERIVE_AUTHOR_ID,
+        agentName: DERIVE_AGENT_NAME,
         source: "api",
       })
       publishedArtifactId = published.artifact.id

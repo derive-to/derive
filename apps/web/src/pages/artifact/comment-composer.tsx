@@ -16,6 +16,7 @@ import { workspaceSettingsQuery } from "@/lib/queries"
 const DERIVE_MENTION_ID = "derive"
 
 import { Icon } from "@/components/icons"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Kbd } from "@/components/ui/kbd"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
@@ -468,10 +469,14 @@ export function MentionField({
 
 export function Composer({
   quote,
+  answering,
   onSubmit,
   onCancel,
 }: {
   quote: string | null
+  /** The pending review round this text answers (the phone sheet's send-back): the
+   *  verb becomes "Send back", and an empty note is a valid answer. */
+  answering?: { by: string | null; version: number } | null
   onSubmit: (t: string, mentions: Mention[]) => void
   onCancel: () => void
 }) {
@@ -481,13 +486,23 @@ export function Composer({
   const [text, setText] = useState("")
   const [mentions, setMentions] = useState<Mention[]>([])
   const submit = (resolved: Mention[]) => {
-    if (text.trim()) onSubmit(text, resolved)
+    if (answering || text.trim()) onSubmit(text, resolved)
   }
   return (
     <div
       data-testid="comment-composer"
       className="overflow-hidden rounded-lg border border-border bg-card shadow-[var(--shadow)]"
     >
+      {answering && (
+        <div className="px-3 pt-2.5">
+          <Badge variant="brand" className="max-w-full">
+            <Icon name="review" />
+            <span className="truncate">
+              Answering {answering.by ? `${answering.by}'s` : "the"} review of v{answering.version}
+            </span>
+          </Badge>
+        </div>
+      )}
       {quote && (
         // Inset with the card's padding (the reference is context, not a banner).
         // Phones get a longer multi-line preview of what you're commenting on; the
@@ -518,7 +533,11 @@ export function Composer({
           onSubmit={submit}
           onCancel={onCancel}
           placeholder={
-            quote ? "Comment on the selection… (@ to mention)" : "Add a comment… (@ to mention)"
+            answering
+              ? 'Answers, asks, or "good to go — ship it"'
+              : quote
+                ? "Comment on the selection… (@ to mention)"
+                : "Add a comment… (@ to mention)"
           }
         />
         {/* The send is right-aligned and compact (a full-width filled bar made the
@@ -535,11 +554,11 @@ export function Composer({
           <Button
             variant="default"
             size="sm"
-            disabled={!text.trim()}
-            data-testid="composer-submit"
+            disabled={!answering && !text.trim()}
+            data-testid={answering ? "review-send-back" : "composer-submit"}
             onClick={() => submit(mentions.filter((m) => text.includes(`@${m.name}`)))}
           >
-            Comment
+            {answering ? "Send back" : "Comment"}
           </Button>
         </div>
       </div>

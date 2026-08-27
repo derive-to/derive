@@ -10,7 +10,7 @@ import type { CommentActions } from "./comment-actions"
 import { toggleReaction } from "./lib/reactions"
 import type { ComposerState, Sel, Selection } from "./types"
 
-type Me = { name?: string | null; email?: string | null } | null
+type Me = { id?: string; name?: string | null; email?: string | null } | null
 
 /**
  * Every mutating action the artifact page drives: editing (publish a version / submit a
@@ -142,6 +142,7 @@ export function useArtifactActions(p: {
       anchor: opts?.anchor ? JSON.stringify(opts.anchor) : null,
       body_md: text,
       author: me?.name ?? me?.email ?? "You",
+      author_kind: "user",
       state: "open",
       created_at: new Date().toISOString(),
       reactions: {},
@@ -227,6 +228,7 @@ export function useArtifactActions(p: {
     onSuccess: () => refetchComments(),
   })
   const actions: CommentActions = {
+    meId: me?.id ?? "",
     meName: me?.name ?? me?.email ?? "",
     react: (commentId, emoji) => react.mutate({ commentId, emoji }),
     edit: (commentId, body) => editComment.mutate({ commentId, body }),

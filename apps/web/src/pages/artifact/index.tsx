@@ -18,6 +18,7 @@ import {
   artifactQuery,
   commentsQuery,
   rawArtifactUrl,
+  reviewQuery,
   workspaceSettingsQuery,
   workspacesQuery,
 } from "@/lib/queries"
@@ -48,6 +49,7 @@ import { DerivedFromBanner } from "./derived-from-banner"
 import { EditBar } from "./edit-bar"
 import { FloatingControl } from "./floating-control"
 import { InlineMentionMenu } from "./inline-mention-menu"
+import { buildStream, countUnread } from "./lib/activity"
 import { canCommentWithRole } from "./lib/comment-access"
 import { bucketThreads } from "./lib/layout"
 import { artifactLoginSearch } from "./lib/login-return"
@@ -64,11 +66,11 @@ import { parseRef, refFor } from "./parse-ref"
 import { PasswordGate } from "./password-gate"
 import { PublicViewer } from "./public-viewer"
 import { Presence } from "./rail-deck"
-import { ReviewCard } from "./review-card"
 import type { ArtifactSearch } from "./route-config"
 import { SharedStateAuthDialog } from "./shared-state-auth-dialog"
 import { SourceEditor } from "./source-editor"
 import { type ComposerState, parseAnchor, type Sel } from "./types"
+import { useActivitySeen } from "./use-activity-seen"
 import { useArtifactFrame } from "./use-artifact-frame"
 import { useArtifactLive } from "./use-artifact-live"
 import { useArtifactRoute } from "./use-artifact-route"
@@ -245,6 +247,12 @@ export function Artifact({ template = false }: { template?: boolean }) {
     ...artifactAgentsQuery(shortId),
     enabled: !!me && art?.is_workspace_member === true,
   })
+  // The review rounds the activity rail renders — and the pending one its composer
+  // answers. Members who can act only, like the card this replaced.
+  const { data: review } = useQuery({
+    ...reviewQuery(shortId),
+    enabled: commentsAvailable && !isGuest,
+  })
   const { data: workspaces } = useQuery({ ...workspacesQuery(), enabled: isGuest })
   // A password artifact returns 401 until the visitor unlocks it — show the
   // password prompt rather than the not-found state or a bounce to login.
@@ -361,21 +369,27 @@ export function Artifact({ template = false }: { template?: boolean }) {
   const [hoverThread, setHoverThread] = useState<string | null>(null)
   // The open/hidden comments panel, with its persistence + `c`/Esc hotkeys.
   const { panel, setPanel } = useCommentsPanel(() => setComposer(null))
+  // The reader's last visit to this artifact's activity — the rail's "New" marker and
+  // the header toggle's unread dot measure against it; closing the rail advances it.
+  const seen = useActivitySeen(shortId, panel === "open")
 
   // Server-truth refetch after a write or an SSE ping (defined up here so the
   // realtime hook + the iframe message bridge below can both lean on them).
   const load = useCallback(() => {
     qc.invalidateQueries({ queryKey: artifactQuery(shortId).queryKey })
     qc.invalidateQueries({ queryKey: commentsQuery(shortId).queryKey })
+    // A publish can open a review round in the same request; refresh the rounds with it.
+    qc.invalidateQueries({ queryKey: reviewQuery(shortId).queryKey })
   }, [qc, shortId])
   const refetchComments = useCallback(() => {
     qc.invalidateQueries({ queryKey: commentsQuery(shortId).queryKey })
   }, [qc, shortId])
 
-  // Round churn (requested / sent back / approved) bumps a tick the review card
-  // refetches on — an agent's re-request appears live, never behind a reload.
-  const [reviewTick, setReviewTick] = useState(0)
-  const onReview = useCallback(() => setReviewTick((t) => t + 1), [])
+  // Round churn (requested / sent back) invalidates the review query the activity
+  // rail renders — an agent's re-request appears live, never behind a reload.
+  const onReview = useCallback(() => {
+    qc.invalidateQueries({ queryKey: reviewQuery(shortId).queryKey })
+  }, [qc, shortId])
 
   // A version published while we're LOOKING refetches (the unpinned render swaps
   // in place) and gets a cue, so the repaint reads as an update, not a glitch:
@@ -804,6 +818,12 @@ export function Artifact({ template = false }: { template?: boolean }) {
         params: { ref: refFor({ short_id: copy.short_id, title: copy.title }) },
       }),
   })
+  // Send back: the human's answers to the pending review round (the rail's composer in
+  // its answering mode). The note IS the answer — "good to go" is the go-signal.
+  const sendBack = useApiMutation({
+    mutationFn: (note?: string) => api.sendBackReview(shortId, note),
+    invalidate: [reviewQuery(shortId).queryKey],
+  })
   const lockMut = useApiMutation({
     mutationFn: (next: boolean) => api.setLocked(shortId, next),
     optimistic: (next, client) => {
@@ -964,7 +984,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
   // reported geometry. Pins carry DOC-ABSOLUTE Ys; the pin layer maps them to the
   // screen imperatively, so this (and the page) never recomputes on scroll.
   const docLive = !editing && view === "preview"
-  const { openThreads, resolvedThreads, pinned, general, openCount } = bucketThreads({
+  const { openThreads, openCount } = bucketThreads({
     comments,
     docLive,
     deck,
@@ -972,6 +992,32 @@ export function Artifact({ template = false }: { template?: boolean }) {
     landedSlides,
     anchorTops,
   })
+
+  // What's new since the reader's last visit — the header toggle's ink dot while the
+  // rail is closed (open, the rail shows its own "New" marker).
+  const unread = countUnread(
+    buildStream({
+      versions: art.versions,
+      sessions: art.sessions,
+      comments,
+      rounds: review?.rounds ?? [],
+      me: me?.name ?? undefined,
+      lastSeen: seen.lastSeen,
+      lens: "all",
+      now: Date.now(),
+    }),
+  )
+  // Jump to a version: the current one is the bare address, any other is @vN. Shared by
+  // the history drawer and the activity rail's version rows.
+  const goToVersion = (n: number) => {
+    const base = refFor({ short_id: shortId, title: art.title })
+    nav({
+      to: selfRoute,
+      params: { ref: n === art.current_version ? base : `${base}@v${n}` },
+      // Same artifact, different version — preserve the ?collection context.
+      search: (s) => s,
+    })
+  }
 
   // Activating a thread from the panel: on a deck, first flip to the slide it
   // lives on so its highlight is visible, then open it.
@@ -1255,15 +1301,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
           <HistoryDrawer
             art={art}
             shown={shown}
-            goTo={(n) => {
-              const base = refFor({ short_id: shortId, title: art.title })
-              nav({
-                to: selfRoute,
-                params: { ref: n === art.current_version ? base : `${base}@v${n}` },
-                // Same artifact, different version — preserve the ?collection context.
-                search: (s) => s,
-              })
-            }}
+            goTo={goToVersion}
             open
             onOpenChange={(o) => setSurface(o ? "history" : null)}
           />
@@ -1335,6 +1373,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
               isMobile={isMobile}
               panelOpen={panel === "open"}
               openCount={openCount}
+              unread={panel === "open" ? 0 : unread}
               isGuest={isGuest}
               isCopying={copyMut.isPending}
               commentsAvailable={commentsAvailable}
@@ -1571,11 +1610,10 @@ export function Artifact({ template = false }: { template?: boolean }) {
               isMobile={isMobile}
               isAnon={isAnon}
               canComment={canComment}
-              reviewCard={
-                // Top of the comments rail, not its own pane; members who can act only.
+              hints={
+                // Above the stream; members who can act only.
                 !isGuest && canComment ? (
                   <>
-                    <ReviewCard shortId={shortId} refreshKey={reviewTick} />
                     {/* The one line that replaces the edit affordance for people who
                         cannot publish here: comments are the suggestion channel. */}
                     {!canPublish ? (
@@ -1597,6 +1635,18 @@ export function Artifact({ template = false }: { template?: boolean }) {
                 ) : undefined
               }
               onSheetHeight={setSheetInset}
+              versions={art.versions}
+              sessions={art.sessions}
+              currentVersion={art.current_version}
+              rounds={review?.rounds ?? []}
+              pendingRound={review?.pending ?? null}
+              meId={me?.id ?? ""}
+              meName={me?.name ?? me?.email ?? ""}
+              lastSeen={seen.lastSeen}
+              onGoToVersion={goToVersion}
+              onSendBack={(note) => sendBack.mutate(note)}
+              sendingBack={sendBack.isPending}
+              anchorTops={anchorTops}
               docLive={docLive}
               editing={inlineEdit.active}
               // The selection bar's Edit verb: opens the mode with the caret already
@@ -1607,13 +1657,10 @@ export function Artifact({ template = false }: { template?: boolean }) {
               }
               panel={effectivePanel}
               asideWidth={asideWidth}
+              comments={comments}
               openCount={openCount}
               frameRef={frame}
               subscribeGeom={subscribeGeom}
-              onScrollDoc={scrollBy}
-              pinned={pinned}
-              general={general}
-              resolved={resolvedThreads}
               openThreads={openThreads}
               activeThread={activeThread}
               hoverThread={hoverThread}

@@ -1,4 +1,5 @@
 import type { ArtifactRecord, CommentRecord, MetaStore } from "@derive/core"
+import { DERIVE_AUTHOR_ID, type PrincipalKind, principalKind } from "./principal-kind"
 
 /** A deep link to a comment thread on an artifact — channel-neutral and shared by the email
  *  and Slack notification builders. Normalizes a trailing slash on baseUrl. */
@@ -38,7 +39,7 @@ export const REACTIONS = ["👍", "❤️", "🎉", "😄", "👀", "🙏", "�
  *  for it — deliberately ONE string, so "who was mentioned" and "who replied" are the same
  *  identity in both directions. Not an agent record: no seat, no owner, nothing to provision,
  *  which is what makes the built-in agent the zero-setup path. */
-export const DERIVE_AUTHOR_ID = "derive"
+export { DERIVE_AUTHOR_ID } from "./principal-kind"
 export const DERIVE_MENTION_ID = DERIVE_AUTHOR_ID
 
 /** Does this comment ask Derive to answer? A mention of the reserved id, and not from Derive
@@ -70,6 +71,18 @@ export type CommentMeta = {
   // Likewise for the connected Slack App: a comment that came FROM a Slack thread
   // reply (so it isn't echoed back), or the Slack message ts a Derive comment produced.
   slack?: { ts: string; channel: string }
+  /** On the ROOT comment: who settled the thread, when, and by which version when a publish
+   *  did it (`resolves`). Cleared on reopen. The record the activity stream reads
+   *  "Claude Code resolved Ada's thread" from. */
+  resolved?: ThreadResolution
+}
+
+export interface ThreadResolution {
+  at: string
+  by: string | null
+  by_id: string | null
+  by_kind: PrincipalKind | null
+  version: number | null
 }
 
 export const parseMeta = (m: string | null): CommentMeta => {
@@ -103,8 +116,17 @@ export function commentJson(cm: CommentRecord, anchored?: boolean) {
   const { meta, ...rest } = cm
   const md = parseMeta(meta)
   const deleted = !!md.deleted
+  // The author's kind, from the recorded id — a reader never has to guess it from the name.
+  // Rows before `author_id` existed are people (agents came later).
+  const author_kind: PrincipalKind | "anonymous" = cm.author_id
+    ? (principalKind(cm.author_id) ?? "user")
+    : cm.author === "anonymous"
+      ? "anonymous"
+      : "user"
   return {
     ...rest,
+    author_kind,
+    resolution: md.resolved ?? null,
     body_md: deleted ? "" : cm.body_md,
     reactions: md.reactions ?? {},
     edited: !!md.edited_at,

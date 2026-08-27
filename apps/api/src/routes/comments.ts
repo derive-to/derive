@@ -57,6 +57,30 @@ export const commentRoutes = (ctx: AppContext) => {
         .string()
         .describe("Comment body in Markdown; blanked when the comment is deleted."),
       author: z.string().describe('Author\'s display name; "anonymous" for an anonymous poster.'),
+      author_id: z
+        .string()
+        .nullable()
+        .optional()
+        .describe(
+          'Stable id of the author — a user id, an agent id, or "derive" for the built-in chat agent; null for anonymous or legacy rows.',
+        ),
+      author_kind: z
+        .enum(["user", "agent", "anonymous"])
+        .describe("What kind of principal wrote it, from the recorded id."),
+      resolution: z
+        .object({
+          at: z.string(),
+          by: z.string().nullable().describe("The resolver's display name at the time."),
+          by_id: z.string().nullable(),
+          by_kind: z.enum(["user", "agent"]).nullable(),
+          version: z
+            .number()
+            .nullable()
+            .describe("The version whose publish resolved the thread; null for a hand resolve."),
+        })
+        .nullable()
+        .optional()
+        .describe("On a resolved thread's root: who settled it, when, and by which version."),
       state: z
         .enum(["open", "resolved", "outdated"])
         .describe("Thread state: open, resolved, or outdated (the quoted text changed)."),
@@ -322,15 +346,16 @@ export const commentRoutes = (ctx: AppContext) => {
       const body = await readJson(c, z.object({ state: z.string().optional() }))
       if (body instanceof Response) return bail(body)
       const state: "open" | "resolved" = body.state === "open" ? "open" : "resolved"
-      // requireArtifact already established the caller; this only reads their display name for
-      // the Slack card's footer, so a miss degrades to an unattributed "resolved".
+      // requireArtifact already established the caller; this only reads who they are for the
+      // thread's record and the Slack card's footer, so a miss degrades to an unattributed
+      // "resolved".
       const actor = await actingUser(c)
       const updated = await resolveThreadAction(
         { meta, bus, notify, baseUrl: deps.baseUrl },
         artifact,
         cm.thread_id,
         state,
-        actor?.name ?? undefined,
+        actor ? { id: actor.id, name: actor.name } : undefined,
       )
       return c.json({ thread_id: cm.thread_id, state, updated })
     },

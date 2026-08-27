@@ -41,4 +41,8 @@ export const STORAGE_KEYS = {
   // The checklist's "shared a link" step: set by the share dialog's copy-link
   // action (per-browser; the server signals cover connect + first publish).
   sharedLink: "derive.shared-link",
+  // The viewer's last visit to an artifact's activity rail, suffixed with the artifact's
+  // short id — the datum for the stream's "New" marker and the header's unread dot
+  // (see pages/artifact/use-activity-seen). Per-browser, like the theme.
+  activitySeen: "derive.activity.seen",
 } as const

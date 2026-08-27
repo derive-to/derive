@@ -37,7 +37,7 @@ test.describe("templates", () => {
     // The card's title is the template's own address; signed in, that is the workbench.
     await page.getByTestId(`template-open-${shortId}`).click()
     await expect(page).toHaveURL(new RegExp(`/templates/.*${shortId}`))
-    await expect(page.getByText("Comments", { exact: true })).toBeVisible()
+    await expect(page.getByTestId("activity-stream")).toBeVisible()
 
     await page.goto("/templates")
     await page.getByTestId(`template-copy-${shortId}`).click()

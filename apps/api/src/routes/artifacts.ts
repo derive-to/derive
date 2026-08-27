@@ -94,6 +94,7 @@ import {
   toBody,
   workspaceAccessOf,
 } from "../lib/http"
+import { agentName } from "../lib/principal-kind"
 import { PUBLISH_TARGET_CREATE, verifyPublishToken } from "../lib/publish-token"
 import { agentPushFanout, openReviewRound } from "../lib/review-request"
 import {
@@ -578,6 +579,9 @@ export const artifactRoutes = (ctx: AppContext) => {
       // member row (the same supported state deleteUserData leaves behind). Only
       // ever null together with `draft`, and only for a CREATE.
       user: { id: string; name: string | null } | null
+      // The agent that minted the staged upload URL (the hosted MCP flow), when one did:
+      // the version is recorded as that agent's work on the user's behalf.
+      agent?: { id: string; name: string } | null
       // Present on the draft path: forces the draft access shape (link-viewable,
       // nothing else — the URL is the whole product until it's claimed) and stamps
       // the expiry. Client-supplied access fields are ignored: an anonymous caller
@@ -891,6 +895,12 @@ export const artifactRoutes = (ctx: AppContext) => {
             ? (tokenUser?.name ?? undefined)
             : (human?.name ?? actor?.name ?? str(body["author"])),
           authorId: onBehalf,
+          // THE ACTOR: the agent principal behind this request (a registered agent, an
+          // OAuth client, the CLI), or the agent that minted a staged upload URL. A
+          // person's own session publish records none. `author`/`author_id` stay the
+          // person's — this is who did the work, for the activity record.
+          agentId: agentPrincipal?.id ?? tokenAuth?.agent?.id ?? null,
+          agentName: agentPrincipal?.name ?? tokenAuth?.agent?.name ?? null,
           // The surface stamp: a stage_publish token IS the MCP flow's upload leg, an
           // agent principal (OAuth bearer / dk_agt_ token, incl. the CLI) is the API,
           // and a plain session publish is the web app.
@@ -954,10 +964,11 @@ export const artifactRoutes = (ctx: AppContext) => {
           isNew: !shortId,
           onBehalf,
           resolves: toResolve,
-          // The ACTING principal — an agent's own id, not the human it acts for. `onBehalf`
-          // (and therefore version.author_id) is deliberately the human, so it can't classify
-          // who actually published.
-          actorId: agentPrincipal?.id ?? actor?.id ?? null,
+          // The ACTING principal — an agent's own id (a bearer's, or the one that minted a
+          // staged upload URL), not the human it acts for. `onBehalf` (and therefore
+          // version.author_id) is deliberately the human, so it can't classify who published.
+          actorId: agentPrincipal?.id ?? tokenAuth?.agent?.id ?? actor?.id ?? null,
+          actorName: agentPrincipal?.name ?? tokenAuth?.agent?.name ?? actor?.name ?? null,
         },
       )
       // Tag at publish time — the one-step "auto-tag on create/version" hook. `tags` is a
@@ -992,8 +1003,11 @@ export const artifactRoutes = (ctx: AppContext) => {
             artifact,
             {
               reviewer,
-              requestedById: actor?.id ?? "agent",
-              requestedByName: actor?.name ?? "An agent",
+              // The asker is the AGENT behind the publish: the bearer's principal (actor)
+              // or the one that minted a staged upload URL — never the person the round
+              // is for.
+              requestedById: tokenAuth?.agent?.id ?? actor?.id ?? "agent",
+              requestedByName: tokenAuth?.agent?.name ?? actor?.name ?? "An agent",
               version: version.n,
               note: str(body["review_note"]) ?? null,
               actorId: agentPrincipal?.id ?? actor?.id ?? null,
@@ -1139,9 +1153,15 @@ export const artifactRoutes = (ctx: AppContext) => {
       return fail(c, 403, "this token cannot publish to that artifact")
     }
     const [dir] = await meta.getUsers([claim.userId])
+    // The minting agent, when the token names one — its current name, from wherever its
+    // kind keeps it (an OAuth client is not an agents-table row).
+    const minter = claim.agentId
+      ? { id: claim.agentId, name: (await agentName(meta, claim.agentId)) ?? "An agent" }
+      : null
     return handlePublish(c, shortId, {
       org: claim.orgId,
       user: { id: claim.userId, name: dir?.name ?? null },
+      agent: minter,
     })
   }
   app.post("/v1/artifacts/t/:token", (c) => tokenPublish(c))
@@ -2319,6 +2339,8 @@ export const artifactRoutes = (ctx: AppContext) => {
       const src = await meta.getVersion(artifact.id, body.version)
       if (!src) return bail(fail(c, 404, `no version ${body.version}`))
       const me = await currentUser(c)
+      // An agent restoring on someone's behalf is the version's actor, like any publish.
+      const agent = await agentFor(c)
       const version = await meta.addVersion(artifact.id, {
         id: newId("v"),
         blob_key: src.blob_key,
@@ -2328,6 +2350,8 @@ export const artifactRoutes = (ctx: AppContext) => {
         size_bytes: src.size_bytes,
         author: me ? (me.name ?? me.username ?? me.email) : "anonymous",
         author_id: me?.id ?? null,
+        agent_id: agent?.id ?? null,
+        agent_name: agent?.name ?? null,
         // A restore is a web-surface action, whatever surface made the original.
         source: "web",
         message: `Restored v${src.n}`,
