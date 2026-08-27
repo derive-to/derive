@@ -27,7 +27,7 @@ name: PR preview
 # deliberate: a preview you cannot sign into, or that shows an empty library, cannot tell you
 # whether a change is right. It is also why this never runs for a fork — see the `if` below.
 # What it does NOT share is anything that would let it act as production: no routes, no cron,
-# no queue consumer, no OG renderer, no vanity-subdomain base (scripts/preview-config.mjs
+# no queue consumer, no ordinary-preview sweep, no vanity-subdomain base (scripts/preview-config.mjs
 # enforces each one and fails the build if any survives).
 #
 # A PREVIEW SERVES ARTIFACT HTML ON ITS OWN ORIGIN. DERIVE_SANDBOX_URL is unset here, because
@@ -92,6 +92,19 @@ jobs:
           node apps/api/scripts/preview-config.mjs "$NAME" "$URL" > apps/api/wrangler.preview.toml
           echo "name=$NAME" >> "$GITHUB_OUTPUT"
           echo "url=$URL" >> "$GITHUB_OUTPUT"
+
+      # The preview reads the shared Postgres database, so an export route cannot be
+      # dogfooded until its additive table/column schema exists there. Use the same
+      # idempotent reconciler as production rather than a preview-only migration path.
+      # This workflow is same-repo-only because it already carries production bindings
+      # and secrets; schema is applied before code so a failed apply cannot ship a Worker
+      # that queries a shape which does not exist.
+      - name: Apply additive app schema
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          : "${DATABASE_URL:?DATABASE_URL is unset — refusing to deploy preview code against a stale schema}"
+          pnpm --filter @derive/api exec tsx scripts/apply-pg-schema.ts --app-only
 
       # Retried, for the reason the production deploy in ci.yml is retried: Cloudflare
       # answers `Received a malformed response from the API` on a healthy upload often
@@ -210,8 +223,9 @@ jobs:
               `Deployed from \`${context.sha.slice(0, 7)}\` as \`${process.env.PREVIEW_NAME}\`.\n\n` +
               `It shares **production's database** — sign in with your real account, and treat ` +
               `anything you change here as changed for real. It has no routes, no cron, no ` +
-              `queue consumer and no OG renderer, so it cannot serve derive.to, run scheduled ` +
-              `work, or write images onto real artifacts.\n\n` +
+              `queue consumer or ordinary-preview sweep, so it cannot serve derive.to, run ` +
+              `scheduled work, or overwrite real artifacts' social-card images. Browser ` +
+              `Rendering is enabled only for export jobs scoped to this exact preview origin.\n\n` +
               `Unlike production it serves artifact HTML on **its own origin** (that is what ` +
               `makes frame-side changes visible here). Storage is still sandboxed away, but ` +
               `untrusted HTML and the sign-in form share a hostname — treat this URL as you ` +

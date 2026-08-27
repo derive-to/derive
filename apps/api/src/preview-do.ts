@@ -20,6 +20,11 @@ const TICK_MS = 1_500
 // A poke schedules the first drain almost immediately, so a new event delivers
 // in ~this long rather than waiting up to a cron tick.
 const POKE_DELAY_MS = 250
+// Preview deployments have no cron (by design), so one delayed idle probe is the
+// bounded backstop for a failed export whose retry is not due on the immediate
+// drain tick. It stops after one empty probe instead of polling forever.
+const EXPORT_RETRY_PROBE_MS = 60_000
+const EXPORT_IDLE_PROBE = "export-idle-probe"
 
 /** The env the render DO needs: datastore bindings (Postgres when HYPERDRIVE is
  *  bound, else D1), the R2 blob bucket, the Browser Rendering binding, and the
@@ -32,6 +37,22 @@ export interface PreviewRendererEnv {
   BASE_URL?: string
   DERIVE_SANDBOX_URL?: string
   DERIVE_AUTH_SECRET?: string
+  /** When true this deployment drains only renderer-scoped export jobs. It must
+   *  never sweep or claim ordinary preview jobs from the shared database. */
+  DERIVE_EXPORTS_ONLY?: string
+}
+
+export const previewRendererWorkMode = (
+  env: Pick<PreviewRendererEnv, "DERIVE_EXPORTS_ONLY">,
+): "full" | "exports-only" => (env.DERIVE_EXPORTS_ONLY === "true" ? "exports-only" : "full")
+
+export const exportOnlyAlarmDecision = (
+  claimed: number,
+  idleProbeArmed: boolean,
+): { delayMs: number | null; idleProbeArmed: boolean } => {
+  if (claimed > 0) return { delayMs: TICK_MS, idleProbeArmed: false }
+  if (!idleProbeArmed) return { delayMs: EXPORT_RETRY_PROBE_MS, idleProbeArmed: true }
+  return { delayMs: null, idleProbeArmed: false }
 }
 
 /**
@@ -59,6 +80,12 @@ export class PreviewRenderer {
   // Arm the alarm only when none is pending — an alarm already set will fire
   // within a tick.
   async fetch(_req: Request): Promise<Response> {
+    if (previewRendererWorkMode(this.env) === "exports-only") {
+      // A fresh export should not wait behind the delayed retry probe.
+      await this.state.storage.delete(EXPORT_IDLE_PROBE)
+      await this.state.storage.setAlarm(Date.now() + POKE_DELAY_MS)
+      return new Response("ok")
+    }
     const pending = await this.state.storage.getAlarm()
     if (pending === null) await this.state.storage.setAlarm(Date.now() + POKE_DELAY_MS)
     return new Response("ok")
@@ -79,9 +106,6 @@ export class PreviewRenderer {
           "preview renderer: BASE_URL unset, defaulting to https://derive.to — set BASE_URL for non-prod deploys",
         )
       const baseUrl = this.env.BASE_URL ?? "https://derive.to"
-      // Sweep first so a never-rendered version (pre-pipeline publish, or a path
-      // that missed the enqueue) is claimed by the very tick that finds it.
-      await sweepMissingRenders(opened.store)
       const deps = {
         meta: opened.store,
         blobs,
@@ -90,9 +114,23 @@ export class PreviewRenderer {
         sandboxOrigin: this.env.DERIVE_SANDBOX_URL,
         secret: this.env.DERIVE_AUTH_SECRET ?? "",
       }
-      const claimed = await runRenderTick(deps)
+      let claimed = 0
+      if (previewRendererWorkMode(this.env) === "full") {
+        // Sweep first so a never-rendered version (pre-pipeline publish, or a path
+        // that missed the enqueue) is claimed by the very tick that finds it.
+        await sweepMissingRenders(opened.store)
+        claimed = await runRenderTick(deps)
+      }
       const exportsClaimed = await runExportTick(deps)
-      if (claimed + exportsClaimed > 0) await this.state.storage.setAlarm(Date.now() + TICK_MS)
+      if (previewRendererWorkMode(this.env) === "exports-only") {
+        const idleProbe = (await this.state.storage.get<boolean>(EXPORT_IDLE_PROBE)) === true
+        const next = exportOnlyAlarmDecision(exportsClaimed, idleProbe)
+        if (next.idleProbeArmed) await this.state.storage.put(EXPORT_IDLE_PROBE, true)
+        else await this.state.storage.delete(EXPORT_IDLE_PROBE)
+        if (next.delayMs !== null) await this.state.storage.setAlarm(Date.now() + next.delayMs)
+      } else if (claimed + exportsClaimed > 0) {
+        await this.state.storage.setAlarm(Date.now() + TICK_MS)
+      }
     } catch {
       await this.state.storage.setAlarm(Date.now() + TICK_MS)
     } finally {

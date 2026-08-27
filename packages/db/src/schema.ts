@@ -291,6 +291,7 @@ export const exportJob = sqliteTable(
     requested_by: text("requested_by").notNull(),
     kind: text("kind").$type<ExportKind>().notNull(),
     profile: text("profile").notNull(),
+    renderer_scope: text("renderer_scope").notNull().default(""),
     options_json: text("options_json").notNull().default("{}"),
     input_hash: text("input_hash").notNull(),
     status: text("status").$type<ExportJobStatus>().notNull().default("pending"),

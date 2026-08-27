@@ -2382,7 +2382,12 @@ export class PgMetaStore implements MetaStore {
       .orderBy(desc(exportJob.created_at))
       .limit(limit) as Promise<ExportJobRecord[]>
   }
-  claimDueExportJobs(now: string, limit: number, leaseUntil: string): Promise<ExportJobRecord[]> {
+  claimDueExportJobs(
+    now: string,
+    limit: number,
+    leaseUntil: string,
+    rendererScope: string,
+  ): Promise<ExportJobRecord[]> {
     const due = this.db
       .select({ id: exportJob.id })
       .from(exportJob)
@@ -2393,6 +2398,7 @@ export class PgMetaStore implements MetaStore {
             eq(exportJob.status, "rendering"),
             eq(exportJob.status, "failed"),
           ),
+          eq(exportJob.renderer_scope, rendererScope),
           lte(exportJob.next_attempt_at, now),
         ),
       )

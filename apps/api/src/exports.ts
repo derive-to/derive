@@ -1,6 +1,7 @@
 import { artifactUrl, type ExportJobRecord } from "@derive/core"
 import {
   buildExportEmail,
+  buildQaEmailCapture,
   csvFromJson,
   type ExportOptions,
   imageBackedPptx,
@@ -234,6 +235,15 @@ const processJob = async (deps: RenderTickDeps, job: ExportJobRecord): Promise<v
     version: job.version_n,
   })
   if ((await deps.meta.getExportJob(job.id))?.status === "cancelled") return
+  if (options.qaCapture) {
+    const capture = buildQaEmailCapture({
+      message: msg,
+      cidImage: publicImage ? undefined : png,
+      attachments: attachments.map(({ filename, contentType }) => ({ filename, contentType })),
+    })
+    await output(deps, job, capture, "text/html")
+    return
+  }
   await enqueueCoalescedChannelDelivery(
     deps.meta,
     `wd_export_${job.id}`,
@@ -253,7 +263,12 @@ export const runExportTick = async (
 ): Promise<number> => {
   const now = new Date()
   const leaseUntil = new Date(now.getTime() + CLAIM_LEASE_MS).toISOString()
-  const due = await deps.meta.claimDueExportJobs(now.toISOString(), limit, leaseUntil)
+  const due = await deps.meta.claimDueExportJobs(
+    now.toISOString(),
+    limit,
+    leaseUntil,
+    deps.baseUrl.replace(/\/$/, ""),
+  )
   for (const job of due) {
     try {
       await processJob(deps, job)

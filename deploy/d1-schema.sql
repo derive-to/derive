@@ -169,6 +169,7 @@ CREATE TABLE IF NOT EXISTS export_job (
   requested_by TEXT NOT NULL,
   kind TEXT NOT NULL,
   profile TEXT NOT NULL,
+  renderer_scope TEXT NOT NULL DEFAULT '',
   options_json TEXT NOT NULL DEFAULT '{}',
   input_hash TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'pending',
@@ -830,7 +831,7 @@ CREATE INDEX IF NOT EXISTS delivery_due ON webhook_delivery (status, next_attemp
 
 CREATE INDEX IF NOT EXISTS render_job_due ON render_job (status, next_attempt_at);
 
-CREATE INDEX IF NOT EXISTS export_job_due ON export_job (status, next_attempt_at);
+CREATE INDEX IF NOT EXISTS export_job_due ON export_job (renderer_scope, status, next_attempt_at);
 
 CREATE INDEX IF NOT EXISTS export_job_artifact ON export_job (artifact_id, created_at);
 

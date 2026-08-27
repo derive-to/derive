@@ -1744,6 +1744,7 @@ export function makeRepos(db: SqliteDb) {
     now: string,
     limit: number,
     leaseUntil: string,
+    rendererScope: string,
   ): Promise<ExportJobRecord[]> => {
     const due = db
       .select({ id: exportJob.id })
@@ -1755,6 +1756,7 @@ export function makeRepos(db: SqliteDb) {
             eq(exportJob.status, "rendering"),
             eq(exportJob.status, "failed"),
           ),
+          eq(exportJob.renderer_scope, rendererScope),
           lte(exportJob.next_attempt_at, now),
         ),
       )

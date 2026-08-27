@@ -57,6 +57,7 @@ export interface ExportJob {
   updated_at: string
   download_url: string | null
   public_url: string | null
+  preview_url: string | null
 }
 /** Parse a Me.brandprint / SessionUser.brandprint JSON string; null if absent/malformed. */
 export const parseBrandprint = (raw: string | null | undefined): Brandprint | null => {

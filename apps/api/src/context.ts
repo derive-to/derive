@@ -340,6 +340,14 @@ export interface AppDeps {
   pokeWebhooks?: () => void
   /** Enqueue + drain preview renders (true when a renderer is configured). */
   renderPreviews?: boolean
+  /** Accept browser-backed exports. Kept separate from preview rendering so a PR
+   *  deployment can render only jobs explicitly scoped to its own origin without
+   *  sweeping or overwriting production preview images in the shared database. */
+  renderExports?: boolean
+  /** Production-safe PR-preview seam: email jobs are restricted to the reserved
+   *  .test TLD and materialized as private HTML captures instead of entering the
+   *  notification outbox. Never set on a production deployment. */
+  qaEmailCapture?: boolean
   /** Wake the preview worker after enqueuing (Workers: poke the PreviewRenderer DO). */
   pokePreviews?: () => void
   /**

@@ -272,6 +272,18 @@ export function ExportButton({
                         <a href={job.download_url}>Download</a>
                       </Button>
                     )}
+                    {job.preview_url && (
+                      <Button
+                        data-testid={`export-preview-${job.id}`}
+                        size="xs"
+                        variant="outline"
+                        asChild
+                      >
+                        <a href={job.preview_url} target="_blank" rel="noreferrer">
+                          Preview email
+                        </a>
+                      </Button>
+                    )}
                     {job.public_url && (
                       <Button
                         data-testid={`export-image-${job.id}`}

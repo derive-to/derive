@@ -380,6 +380,9 @@ export interface ExportJobRecord {
   requested_by: string
   kind: ExportKind
   profile: string
+  /** Exact deployment origin allowed to claim this job. PR previews share the
+   * production database, so an unscoped queue would let main render branch work. */
+  renderer_scope: string
   options_json: string
   input_hash: string
   status: ExportJobStatus
@@ -403,6 +406,7 @@ export interface NewExportJob {
   requested_by: string
   kind: ExportKind
   profile: string
+  renderer_scope: string
   options_json: string
   input_hash: string
   expires_at?: string | null
@@ -775,7 +779,12 @@ export interface ArtifactStore {
   enqueueExportJob(j: NewExportJob): Promise<ExportJobRecord>
   getExportJob(id: string): Promise<ExportJobRecord | null>
   listExportJobs(artifactId: string, requestedBy: string, limit: number): Promise<ExportJobRecord[]>
-  claimDueExportJobs(now: string, limit: number, leaseUntil: string): Promise<ExportJobRecord[]>
+  claimDueExportJobs(
+    now: string,
+    limit: number,
+    leaseUntil: string,
+    rendererScope: string,
+  ): Promise<ExportJobRecord[]>
   updateExportJob(
     id: string,
     fields: Partial<

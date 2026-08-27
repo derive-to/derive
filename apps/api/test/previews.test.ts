@@ -14,11 +14,13 @@ import { unzipSync } from "fflate"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import {
   buildExportEmail,
+  buildQaEmailCapture,
   csvFromJson,
   exportInputHash,
   imageBackedPptx,
   normalizeExportOptions,
 } from "../src/lib/export-system"
+import { exportOnlyAlarmDecision, previewRendererWorkMode } from "../src/preview-do"
 import {
   assertNavigationOk,
   assertRenderedDocumentOk,
@@ -30,6 +32,17 @@ import {
 } from "../src/previews"
 
 describe("export contracts", () => {
+  it("makes export-only renderer isolation explicit and fail-closed on the exact flag", () => {
+    expect(previewRendererWorkMode({ DERIVE_EXPORTS_ONLY: "true" })).toBe("exports-only")
+    expect(previewRendererWorkMode({ DERIVE_EXPORTS_ONLY: "false" })).toBe("full")
+    expect(previewRendererWorkMode({})).toBe("full")
+  })
+
+  it("gives export-only previews one bounded delayed retry probe, then goes idle", () => {
+    expect(exportOnlyAlarmDecision(1, false)).toEqual({ delayMs: 1_500, idleProbeArmed: false })
+    expect(exportOnlyAlarmDecision(0, false)).toEqual({ delayMs: 60_000, idleProbeArmed: true })
+    expect(exportOnlyAlarmDecision(0, true)).toEqual({ delayMs: null, idleProbeArmed: false })
+  })
   it("normalizes bounded view state before hashing an immutable request", async () => {
     const options = normalizeExportOptions({ region: "  #chart  ", note: ` ${"x".repeat(3_000)} ` })
     expect(options.region).toBe("#chart")
@@ -38,6 +51,7 @@ describe("export contracts", () => {
       artifactId: "a1",
       version: 2,
       requestedBy: "u1",
+      rendererScope: "https://preview.test",
       kind: "chart_png",
       options: { region: " #chart " },
     })
@@ -45,10 +59,21 @@ describe("export contracts", () => {
       artifactId: "a1",
       version: 2,
       requestedBy: "u1",
+      rendererScope: "https://preview.test",
       kind: "chart_png",
       options: { region: "#chart" },
     })
     expect(a).toBe(b)
+    expect(
+      await exportInputHash({
+        artifactId: "a1",
+        version: 2,
+        requestedBy: "u1",
+        rendererScope: "https://other-preview.test",
+        kind: "chart_png",
+        options: { region: "#chart" },
+      }),
+    ).not.toBe(a)
   })
 
   it("exports only declared tabular JSON to CSV", () => {
@@ -75,6 +100,17 @@ describe("export contracts", () => {
     expect(email.html).toContain('src="cid:derive-export"')
     expect(email.html).toContain('alt="Revenue by month"')
     expect(email.text).toContain("Open: https://derive.test/artifacts/a")
+    const capture = new TextDecoder().decode(
+      buildQaEmailCapture({
+        message: email,
+        cidImage: new Uint8Array([1, 2, 3]),
+        attachments: [{ filename: "derive-export.png", contentType: "image/png" }],
+      }),
+    )
+    expect(capture).toContain("QA capture · no email was sent")
+    expect(capture).toContain("data:image/png;base64,AQID")
+    expect(capture).toContain("Plain-text alternative")
+    expect(capture).not.toContain("cid:derive-export")
 
     const pptx = unzipSync(
       imageBackedPptx([new Uint8Array([1, 2]), new Uint8Array([3, 4])], "artifact v3"),

@@ -27,16 +27,8 @@
 //                         a preview's hosted runs simply stay queued. Hosted execution is OFF on
 //                         previews, visibly, rather than silently delegated to production.
 //   [[containers]]        not needed on the loop substrate, and skips a multi-minute image build.
-//   [browser] + PREVIEW_RENDERER
-//                         the OG/preview screenshotter. Its sweep (versionsMissingPreview)
-//                         is scoped by a row LIMIT and nothing else, so a preview's renderer
-//                         picks up arbitrary PRODUCTION versions and writes preview_key +
-//                         the full/marked variants back into the shared database. That was
-//                         survivable while previews screenshotted production's own bytes;
-//                         once a preview serves /raw/* itself (below) it would overwrite
-//                         real artifacts' cards with the BRANCH's rendering — and the sweep
-//                         only re-enqueues versions with NO preview, so a bad-but-present
-//                         image is never repaired. A preview does not need OG images.
+//   [[send_email]]        a PR preview must never have a live notification transport. Email
+//                         exports use the strongly-gated .test capture seam instead.
 //   DERIVE_SUBDOMAIN_BASE the *.derive.page vanity host. A preview has no route for it, so a
 //                         draft minted here would write a live `domain` row into production's
 //                         table and then be served by PRODUCTION — the opposite of the
@@ -108,7 +100,7 @@ const DROP = new Set([
   "[[queues.consumers]]",
   "[[queues.producers]]",
   "[[containers]]",
-  "[browser]",
+  "[[send_email]]",
 ])
 const headerOf = (b) => b.find((l) => /^\[\[?[a-zA-Z]/.test(l))?.trim() ?? null
 
@@ -120,16 +112,16 @@ for (const b of blocks) {
   // The container's DO binding and its migration go with the container itself.
   if (h === "[[durable_objects.bindings]]" && body.includes('name = "RUN_CONTAINER"')) continue
   if (h === "[[migrations]]" && body.includes('new_sqlite_classes = ["RunContainer"]')) continue
-  // Same for the preview renderer: no binding, no browser, nothing to sweep with.
-  // (Its migration STAYS — the class is still declared in the script, and dropping an
-  // applied migration is what wrangler refuses.)
-  if (h === "[[durable_objects.bindings]]" && body.includes('name = "PREVIEW_RENDERER"')) continue
   kept.push(b)
 }
 
 let out = kept.map((b) => b.join("\n")).join("\n")
 out = out.replace(/^name = "derive"$/m, `name = "${name}"`)
 out = out.replace(/^BASE_URL = "https:\/\/derive\.to"$/m, `BASE_URL = "${baseUrl}"`)
+out = out.replace(
+  `BASE_URL = "${baseUrl}"`,
+  `BASE_URL = "${baseUrl}"\nDERIVE_EXPORTS_ONLY = "true"\nDERIVE_QA_EMAIL_CAPTURE = "true"`,
+)
 // Serve /raw/* from THIS preview instead of 302-ing it to production's sandbox origin —
 // otherwise the in-iframe client the preview injects is production's, not the branch's.
 // See the header comment for why that is safe here and what it costs.
@@ -189,13 +181,22 @@ must(
   out.includes("DERIVE_SUBDOMAIN_BASE intentionally unset for previews"),
   "DERIVE_SUBDOMAIN_BASE was not unset (did wrangler.toml's formatting change?) — drafts minted on the preview would write domain rows into production",
 )
+must(/^\[browser\]/m.test(out), "the browser binding was lost — exports would return 503")
 must(
-  !/^\[browser\]/m.test(out),
-  "the browser binding survived — the preview would render OG images into production",
+  out.includes('name = "PREVIEW_RENDERER"'),
+  "the preview-renderer DO was lost — browser-backed exports would never drain",
 )
 must(
-  !out.includes('name = "PREVIEW_RENDERER"'),
-  "the preview-renderer DO survived — its sweep is limit-scoped, so it would overwrite production artifacts' images with this branch's rendering",
+  out.includes('DERIVE_EXPORTS_ONLY = "true"'),
+  "export-only isolation was not enabled — the preview could sweep production preview rows",
+)
+must(
+  out.includes('DERIVE_QA_EMAIL_CAPTURE = "true"'),
+  "the .test-only email capture seam was not enabled",
+)
+must(
+  !/^\[\[send_email\]\]/m.test(out),
+  "live email transport survived — a preview must not send mail",
 )
 must(
   out.includes(`BASE_URL = "${baseUrl}"`),

@@ -20,6 +20,8 @@ export interface ExportOptions {
   note?: string
   attachPdf?: boolean
   title?: string
+  /** Internal-only PR-preview guard. Never accepted from the public request schema. */
+  qaCapture?: boolean
 }
 
 export const profileFor = (kind: ExportKind): string =>
@@ -43,12 +45,20 @@ export const normalizeExportOptions = (input: ExportOptions): ExportOptions => (
   ...(input.note?.trim() ? { note: input.note.trim().slice(0, 2_000) } : {}),
   ...(input.attachPdf !== undefined ? { attachPdf: input.attachPdf } : {}),
   ...(input.title?.trim() ? { title: input.title.trim().slice(0, 240) } : {}),
+  ...(input.qaCapture === true ? { qaCapture: true } : {}),
 })
+
+/** RFC-reserved test TLD. A preview capture can never address a deliverable mailbox. */
+export const isQaEmailRecipient = (value: string): boolean => {
+  const domain = value.trim().toLowerCase().split("@").at(-1)
+  return !!domain && domain.endsWith(".test")
+}
 
 export const exportInputHash = async (input: {
   artifactId: string
   version: number
   requestedBy: string
+  rendererScope: string
   kind: ExportKind
   options: ExportOptions
 }): Promise<string> =>
@@ -58,6 +68,7 @@ export const exportInputHash = async (input: {
         input.artifactId,
         input.version,
         input.requestedBy,
+        input.rendererScope,
         input.kind,
         normalizeExportOptions(input.options),
       ]),
@@ -110,6 +121,39 @@ export const buildExportEmail = (input: {
     .filter(Boolean)
     .join("\n\n")
   return { to: input.to, subject: `${input.title} · Derive`, html, text }
+}
+
+const base64 = (bytes: Uint8Array): string => {
+  let binary = ""
+  for (let i = 0; i < bytes.length; i += 0x8000)
+    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
+  return btoa(binary)
+}
+
+/** Private, browser-renderable evidence for PR previews. This is deliberately an
+ * artifact capture, not an email transport: CID content is embedded as a data URL,
+ * attachments are inventoried, and no row ever enters the notification outbox. */
+export const buildQaEmailCapture = (input: {
+  message: ReturnType<typeof buildExportEmail>
+  cidImage?: Uint8Array
+  attachments: Array<{ filename: string; contentType: string }>
+}): Uint8Array => {
+  const html = input.cidImage
+    ? input.message.html.replaceAll(
+        "cid:derive-export",
+        `data:image/png;base64,${base64(input.cidImage)}`,
+      )
+    : input.message.html
+  const attachmentRows = input.attachments.length
+    ? input.attachments
+        .map(
+          (item) =>
+            `<li><strong>${escapeHtml(item.filename)}</strong> · ${escapeHtml(item.contentType)}</li>`,
+        )
+        .join("")
+    : "<li>None (hosted image mode)</li>"
+  const capture = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Derive QA email capture</title></head><body style="margin:0;background:#e9e9e9;font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#181818"><section style="padding:16px 20px;background:#fff4cc;border-bottom:1px solid #e2cf7a"><strong>QA capture · no email was sent</strong><div style="margin-top:6px;font-size:13px">To: ${escapeHtml(input.message.to)} · Subject: ${escapeHtml(input.message.subject)}</div><details style="margin-top:8px"><summary>Plain-text alternative</summary><pre style="white-space:pre-wrap">${escapeHtml(input.message.text)}</pre></details><details><summary>Attachment manifest</summary><ul>${attachmentRows}</ul></details></section>${html}</body></html>`
+  return new TextEncoder().encode(capture)
 }
 
 const xml = (value: string): string => escapeHtml(value).replaceAll("'", "&apos;")

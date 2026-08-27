@@ -100,7 +100,7 @@ const TINY_PNG = new Uint8Array([
 
 const SECRET = "og-secret"
 
-const makeApp = (name: string) => {
+const makeApp = (name: string, extraDeps: Partial<AppDeps> = {}) => {
   const dbPath = join(dir, `${name}.db`)
   const meta = new SqliteMetaStore(dbPath)
   const blobs = new FsBlobStore(join(dir, `blobs-${name}`))
@@ -110,6 +110,7 @@ const makeApp = (name: string) => {
     baseUrl: "http://derive.test",
     token: TOKEN,
     encryptionKey: SECRET,
+    ...extraDeps,
   })
   return { app, meta, blobs }
 }
@@ -131,6 +132,7 @@ describe("durable export delivery", () => {
       requested_by: "test-user",
       kind: "email",
       profile: "email-hero",
+      renderer_scope: "http://derive.test",
       options_json: JSON.stringify({ recipient: "qa@example.test", title: "Pinned fixture" }),
       input_hash: "email-retry-input",
     })
@@ -199,6 +201,7 @@ describe("durable export delivery", () => {
         requested_by: "test-user",
         kind: "page_pdf",
         profile: "page-pdf",
+        renderer_scope: "http://derive.test",
         options_json: "{}",
         input_hash: `${id}-input`,
         expires_at: expiresAt,

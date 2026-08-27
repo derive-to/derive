@@ -4,6 +4,7 @@ import type { AppContext } from "../context"
 import {
   EXPORT_KINDS,
   exportInputHash,
+  isQaEmailRecipient,
   normalizeExportOptions,
   profileFor,
 } from "../lib/export-system"
@@ -39,6 +40,10 @@ const jobJson = (baseUrl: string, job: Awaited<ReturnType<AppContext["meta"]["ge
     public_url: job.public_asset_hash
       ? `${baseUrl}/blob/${job.public_asset_hash}.${job.output_type === "image/png" ? "png" : "bin"}`
       : null,
+    preview_url:
+      job.status === "ready" && job.kind === "email" && job.output_type === "text/html"
+        ? `${baseUrl}/v1/exports/${job.id}/preview`
+        : null,
   }
 }
 
@@ -77,18 +82,25 @@ export const exportRoutes = (ctx: AppContext) => {
       const versionN = body.version ?? artifact.current_version
       const version = await meta.getVersion(artifact.id, versionN)
       if (!version) return bail(fail(c, 404, "version not found"))
-      const options = normalizeExportOptions({ ...body, title: artifact.title ?? undefined })
+      const qaCapture = body.kind === "email" && deps.qaEmailCapture === true
+      const options = normalizeExportOptions({
+        ...body,
+        title: artifact.title ?? undefined,
+        ...(qaCapture ? { qaCapture: true } : {}),
+      })
       if ((body.kind === "chart_json" || body.kind === "chart_csv") && !options.dataSlot)
         return bail(fail(c, 400, "dataSlot is required for declared data export"))
       if (body.kind === "email" && !options.recipient)
         return bail(fail(c, 400, "recipient is required for email export"))
+      if (qaCapture && options.recipient && !isQaEmailRecipient(options.recipient))
+        return bail(fail(c, 400, "preview email capture requires a recipient under .test"))
       if (
         (body.kind === "deck_pdf" || body.kind === "deck_pptx") &&
         version.content_type !== "text/x-derive-deck"
       )
         return bail(fail(c, 400, "deck export requires a Derive deck"))
       const requiresBrowser = !["chart_json", "chart_csv"].includes(body.kind)
-      if (requiresBrowser && !deps.renderPreviews)
+      if (requiresBrowser && !(deps.renderExports ?? deps.renderPreviews))
         return bail(fail(c, 503, "export rendering is not configured"))
       const estimatedBytes = body.kind === "deck_pptx" ? 25 * 1024 * 1024 : 5 * 1024 * 1024
       if (await overStorage(artifact.org_id, estimatedBytes))
@@ -102,6 +114,7 @@ export const exportRoutes = (ctx: AppContext) => {
         artifactId: artifact.id,
         version: versionN,
         requestedBy: user.id,
+        rendererScope: deps.baseUrl.replace(/\/$/, ""),
         kind: body.kind,
         options,
       })
@@ -113,6 +126,7 @@ export const exportRoutes = (ctx: AppContext) => {
         requested_by: user.id,
         kind: body.kind,
         profile: profileFor(body.kind),
+        renderer_scope: deps.baseUrl.replace(/\/$/, ""),
         options_json: JSON.stringify(options),
         input_hash: inputHash,
         expires_at: new Date(Date.now() + 30 * 24 * 3600_000).toISOString(),
@@ -165,6 +179,30 @@ export const exportRoutes = (ctx: AppContext) => {
       "Content-Disposition": `${info.disposition}; filename="${name}-v${job.version_n}.${info.ext}"`,
       "Cache-Control": "private, max-age=31536000, immutable",
       "X-Content-Type-Options": "nosniff",
+    })
+  })
+
+  app.get("/v1/exports/:id/preview", async (c) => {
+    const found = await ownJob(c)
+    if (found instanceof Response) return found
+    const { job } = found
+    if (
+      job.kind !== "email" ||
+      job.status !== "ready" ||
+      !job.output_key ||
+      job.output_type !== "text/html"
+    )
+      return fail(c, 409, "email capture is not ready")
+    const data = await blobs.get(job.output_key)
+    if (!data) return fail(c, 500, "email capture blob missing")
+    return c.body(toBody(data), 200, {
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Length": String(data.byteLength),
+      "Content-Security-Policy":
+        "sandbox; default-src 'none'; img-src data: https:; style-src 'unsafe-inline'",
+      "Cache-Control": "private, no-store",
+      "X-Content-Type-Options": "nosniff",
+      "X-Frame-Options": "DENY",
     })
   })
 

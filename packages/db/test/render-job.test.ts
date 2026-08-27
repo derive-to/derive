@@ -35,6 +35,7 @@ describe("export_job queue", () => {
       requested_by: "u1",
       kind: "page_pdf" as const,
       profile: "page-pdf",
+      renderer_scope: "https://preview.test",
       options_json: "{}",
       input_hash: "f".repeat(64),
     }
@@ -44,10 +45,11 @@ describe("export_job queue", () => {
 
     const now = "2999-01-01T00:00:00.000Z"
     const lease = "2999-01-01T00:01:00.000Z"
-    const claimed = await meta.claimDueExportJobs(now, 10, lease)
+    expect(await meta.claimDueExportJobs(now, 10, lease, "https://derive.test")).toHaveLength(0)
+    const claimed = await meta.claimDueExportJobs(now, 10, lease, "https://preview.test")
     expect(claimed).toHaveLength(1)
     expect(claimed[0]).toMatchObject({ id: "ex1", version_n: 7, status: "rendering", attempts: 1 })
-    expect(await meta.claimDueExportJobs(now, 10, lease)).toHaveLength(0)
+    expect(await meta.claimDueExportJobs(now, 10, lease, "https://preview.test")).toHaveLength(0)
 
     await meta.updateExportJob("ex1", {
       status: "ready",
@@ -56,7 +58,9 @@ describe("export_job queue", () => {
       output_bytes: 42,
       updated_at: now,
     })
-    expect(await meta.claimDueExportJobs("2999-01-01T00:02:00.000Z", 10, lease)).toHaveLength(0)
+    expect(
+      await meta.claimDueExportJobs("2999-01-01T00:02:00.000Z", 10, lease, "https://preview.test"),
+    ).toHaveLength(0)
     expect(await meta.getExportJob("ex1")).toMatchObject({
       status: "ready",
       output_key: "a".repeat(64),

@@ -30,6 +30,10 @@ const NON_CONFIG = new Set([
   "WEBHOOK_OUTBOX",
   "PREVIEW_RENDERER",
   "BROWSER",
+  // Injected only by scripts/preview-config.mjs for same-repo PR deployments. These
+  // are deployment-isolation invariants, not self-host operator configuration.
+  "DERIVE_EXPORTS_ONLY",
+  "DERIVE_QA_EMAIL_CAPTURE",
   // Hosted automation runs (experimental): the per-run container + the dispatch queue.
   // Declared in wrangler.toml [[containers]] / [[queues]], never as env.
   "RUN_CONTAINER",
