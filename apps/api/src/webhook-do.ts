@@ -109,7 +109,12 @@ export class WebhookOutbox {
     const env = this.env
     return {
       ...(env.SEND_EMAIL && env.EMAIL_FROM
-        ? { email: emailDeliverySender(cloudflareEmailSender(env.SEND_EMAIL, env.EMAIL_FROM)) }
+        ? {
+            email: emailDeliverySender(
+              cloudflareEmailSender(env.SEND_EMAIL, env.EMAIL_FROM),
+              env.BUCKET ? new R2BlobStore(env.BUCKET) : undefined,
+            ),
+          }
         : {}),
       slack_app: makeSlackSender(store, env.DERIVE_AUTH_SECRET),
       slack_dm: makeSlackDmSender(store, env.DERIVE_AUTH_SECRET),

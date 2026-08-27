@@ -1,0 +1,273 @@
+import { unzipSync } from "fflate"
+import { describe, expect, it } from "vitest"
+import { runExportTick } from "../src/exports"
+import {
+  buildExportEmail,
+  csvFromJson,
+  type ExportKind,
+  exportInputHash,
+  imageBackedPptx,
+  isQaEmailRecipient,
+  normalizeExportOptions,
+} from "../src/lib/export-system"
+import { as, makeAuthedApp, publishAs, type TestUser } from "./helpers"
+
+const owner: TestUser = {
+  id: "expanded-export-owner",
+  email: "expanded-export-owner@test.dev",
+  name: "Expanded Export Owner",
+}
+
+const makeFixture = (name: string) =>
+  makeAuthedApp(name, [owner], undefined, {
+    deps: { renderExports: true, qaEmailCapture: true },
+  })
+
+const postExport = (
+  target: ReturnType<typeof makeFixture>["app"],
+  shortId: string,
+  body: Record<string, unknown>,
+) =>
+  target.request(`/v1/artifacts/${shortId}/exports`, {
+    method: "POST",
+    headers: { ...as(owner.email), "content-type": "application/json" },
+    body: JSON.stringify(body),
+  })
+
+describe("expanded export and email dogfood contracts", () => {
+  it("C09 rejects unsupported format pairings and incomplete requests precisely", async () => {
+    const { app } = makeFixture("expanded-format-matrix")
+    const artifact = await (
+      await publishAs(
+        app,
+        "<h1>Ordinary page</h1>",
+        { title: "Format matrix", workspace_access: "none" },
+        as(owner.email),
+      )
+    ).json()
+
+    for (const kind of ["deck_pdf", "deck_pptx"] satisfies ExportKind[]) {
+      const response = await postExport(app, artifact.short_id, { kind })
+      expect(response.status).toBe(400)
+      expect(await response.text()).toContain("requires a Derive deck")
+    }
+    for (const kind of ["chart_json", "chart_csv"] satisfies ExportKind[]) {
+      const response = await postExport(app, artifact.short_id, { kind })
+      expect(response.status).toBe(400)
+      expect(await response.text()).toContain("dataSlot is required")
+    }
+    const missingRecipient = await postExport(app, artifact.short_id, { kind: "email" })
+    expect(missingRecipient.status).toBe(400)
+    expect(await missingRecipient.text()).toContain("recipient is required")
+    expect((await postExport(app, artifact.short_id, { kind: "not-a-format" })).status).toBe(400)
+  })
+
+  it("C12 normalizes awkward Unicode input without changing its immutable key accidentally", async () => {
+    const normalized = normalizeExportOptions({
+      recipient: "  QA+Résumé@EXAMPLE.TEST ",
+      region: "  #売上-chart  ",
+      dataSlot: "  الإيرادات  ",
+      title: "  Résumé 東京 — مرحبًا  ",
+      note: `  ${"🧪".repeat(1_100)}  `,
+    })
+    expect(normalized).toMatchObject({
+      recipient: "qa+résumé@example.test",
+      region: "#売上-chart",
+      dataSlot: "الإيرادات",
+      title: "Résumé 東京 — مرحبًا",
+    })
+    expect(normalized.note?.length).toBe(2_000)
+
+    const base = {
+      artifactId: "a-unicode",
+      version: 7,
+      requestedBy: "u-owner",
+      rendererScope: "https://preview.test",
+      kind: "email" as const,
+    }
+    expect(
+      await exportInputHash({
+        ...base,
+        options: { recipient: " QA+Résumé@EXAMPLE.TEST ", title: " Résumé 東京 — مرحبًا " },
+      }),
+    ).toBe(
+      await exportInputHash({
+        ...base,
+        options: { recipient: "qa+résumé@example.test", title: "Résumé 東京 — مرحبًا" },
+      }),
+    )
+  })
+
+  it("C12 serializes quotes, newlines, Unicode, sparse columns and nested values losslessly", () => {
+    expect(
+      csvFromJson([
+        { label: "Résumé, 東京", note: "line 1\nline 2", value: 4, meta: { unit: "€" } },
+        { label: 'She said "yes"', value: null, extra: "مرحبا" },
+      ]),
+    ).toBe(
+      'label,note,value,meta,extra\r\n"Résumé, 東京","line 1\nline 2",4,"{""unit"":""€""}",\r\n"She said ""yes""",,,,مرحبا',
+    )
+  })
+
+  it("C14 coalesces normalized replays but separates formats, recipients and hosting modes", async () => {
+    const base = {
+      artifactId: "a1",
+      version: 3,
+      requestedBy: "u1",
+      rendererScope: "https://preview.test",
+    }
+    const hash = (kind: ExportKind, options: Parameters<typeof exportInputHash>[0]["options"]) =>
+      exportInputHash({ ...base, kind, options })
+    expect(await hash("chart_png", { region: " #chart " })).toBe(
+      await hash("chart_png", { region: "#chart" }),
+    )
+    expect(await hash("chart_png", { region: "#chart" })).not.toBe(
+      await hash("page_pdf", { region: "#chart" }),
+    )
+    expect(await hash("email", { recipient: "one@example.test", publicImage: false })).not.toBe(
+      await hash("email", { recipient: "one@example.test", publicImage: true }),
+    )
+    expect(await hash("email", { recipient: "one@example.test" })).not.toBe(
+      await hash("email", { recipient: "two@example.test" }),
+    )
+  })
+
+  it("C14 atomically coalesces simultaneous identical requests", async () => {
+    const { app } = makeFixture("expanded-concurrent-replay")
+    const artifact = await (
+      await publishAs(
+        app,
+        '<script type="application/derive+json" data-name="series">[{"x":1}]</script>',
+        { title: "Concurrent replay", workspace_access: "none" },
+        as(owner.email),
+      )
+    ).json()
+    const responses = await Promise.all(
+      Array.from({ length: 12 }, () =>
+        postExport(app, artifact.short_id, { kind: "chart_json", dataSlot: "series" }),
+      ),
+    )
+    expect(new Set(responses.map((response) => response.status))).toEqual(new Set([202]))
+    const jobs = await Promise.all(responses.map((response) => response.json()))
+    expect(new Set(jobs.map((job) => job.id))).toHaveLength(1)
+  })
+
+  it("C16/C17 keeps hostile email static, compact, readable, escaped and header-safe", () => {
+    const title = 'Résumé 東京\r\nBcc: attacker@example.com <script>alert("x")</script>'
+    const email = buildExportEmail({
+      to: "qa@example.test",
+      title,
+      note: '<img src=x onerror=alert(1)> مرحبًا & "quoted"',
+      openUrl: "https://derive.test/artifacts/a?x=1&y=2",
+      imageUrl: "cid:derive-export",
+      alt: 'Revenue <svg onload="bad">',
+      version: 9,
+    })
+    expect(email.subject).not.toMatch(/[\r\n]/)
+    expect(email.html).not.toContain("<script>")
+    expect(email.html).not.toContain("<img src=x")
+    expect(email.html).toContain("&lt;script&gt;")
+    expect(email.html).toContain("Résumé 東京")
+    expect(email.html).toContain("مرحبًا")
+    expect(email.html).toContain("Open in Derive")
+    expect(email.text).toContain("Open: https://derive.test/artifacts/a?x=1&y=2")
+    expect(new TextEncoder().encode(email.html).byteLength).toBeLessThan(20_000)
+  })
+
+  it("C17 limits preview capture to the reserved .test namespace", () => {
+    for (const address of ["qa@example.test", "QA@SUB.EXAMPLE.TEST", "user@xn--x.test"])
+      expect(isQaEmailRecipient(address)).toBe(true)
+    for (const address of ["qa@example.com", "qa@test.example.com", "qa@example.testing", ""])
+      expect(isQaEmailRecipient(address)).toBe(false)
+  })
+
+  it("C13 switches an oversized PDF attachment to a safe artifact link", async () => {
+    const { app, meta, ctx } = makeFixture("expanded-large-email")
+    const artifact = await (
+      await publishAs(
+        app,
+        "<h1>Large attachment</h1>",
+        { title: "Large attachment", workspace_access: "none" },
+        as(owner.email),
+      )
+    ).json()
+    const accepted = await postExport(app, artifact.short_id, {
+      kind: "email",
+      recipient: "qa@example.test",
+      attachPdf: true,
+    })
+    expect(accepted.status).toBe(202)
+    const job = await accepted.json()
+    expect(
+      await runExportTick({
+        meta,
+        blobs: ctx.blobs,
+        renderer: {
+          screenshot: async () => new Uint8Array([1, 2, 3]),
+          pdf: async () => new Uint8Array(8 * 1024 * 1024 + 1),
+        },
+        baseUrl: "http://derive.test",
+        secret: "expanded-large-email-secret",
+      }),
+    ).toBe(1)
+    const capture = await app.request(`/v1/exports/${job.id}/preview`, {
+      headers: as(owner.email),
+    })
+    expect(capture.status).toBe(200)
+    const html = await capture.text()
+    expect(html).toContain("exceeded the safe email attachment limit")
+    expect(html).toContain("derive-export.png")
+    expect(html).not.toContain("derive-export.pdf")
+  })
+
+  it("C18 replays CID and hosted delivery independently without duplicate jobs", async () => {
+    const { app } = makeFixture("expanded-email-replay")
+    const artifact = await (
+      await publishAs(
+        app,
+        "<h1>Email replay</h1>",
+        { title: "Email replay", workspace_access: "none" },
+        as(owner.email),
+      )
+    ).json()
+    const cid = () =>
+      postExport(app, artifact.short_id, {
+        kind: "email",
+        recipient: "qa@example.test",
+        publicImage: false,
+      })
+    const hosted = () =>
+      postExport(app, artifact.short_id, {
+        kind: "email",
+        recipient: "qa@example.test",
+        publicImage: true,
+      })
+    const [cidA, cidB, hostedA, hostedB] = await Promise.all([cid(), cid(), hosted(), hosted()])
+    const [a, b, c, d] = await Promise.all([
+      cidA.json(),
+      cidB.json(),
+      hostedA.json(),
+      hostedB.json(),
+    ])
+    expect(a.id).toBe(b.id)
+    expect(c.id).toBe(d.id)
+    expect(a.id).not.toBe(c.id)
+  })
+
+  it("C12/C06 keeps Unicode provenance XML-safe in an exact 16:9 PPTX package", () => {
+    const pptx = unzipSync(
+      imageBackedPptx(
+        [new Uint8Array([1]), new Uint8Array([2]), new Uint8Array([3])],
+        "Résumé 東京 & مرحبًا <v2> 'quoted'",
+      ),
+    )
+    const text = new TextDecoder()
+    const core = text.decode(pptx["docProps/core.xml"])
+    const presentation = text.decode(pptx["ppt/presentation.xml"])
+    expect(core).toContain("Résumé 東京 &amp; مرحبًا &lt;v2&gt; &apos;quoted&apos;")
+    expect(presentation).toContain('type="screen16x9"')
+    expect(
+      Object.keys(pptx).filter((path) => /^ppt\/slides\/slide\d+\.xml$/.test(path)),
+    ).toHaveLength(3)
+  })
+})

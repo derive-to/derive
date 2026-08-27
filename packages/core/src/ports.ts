@@ -353,6 +353,65 @@ export interface NewRenderJob {
   version_n: number
 }
 
+/** Durable user-requested exports. Preview rendering remains on RenderJobRecord; exports
+ * share its renderer/worker but carry an explicit profile, immutable version, requester,
+ * storage policy and output metadata. */
+export type ExportKind =
+  | "page_pdf"
+  | "chart_png"
+  | "chart_json"
+  | "chart_csv"
+  | "email"
+  | "deck_pdf"
+  | "deck_pptx"
+export type ExportJobStatus =
+  | "pending"
+  | "rendering"
+  | "ready"
+  | "failed"
+  | "dead"
+  | "cancelled"
+  | "expired"
+export interface ExportJobRecord {
+  id: string
+  artifact_id: string
+  version_n: number
+  org_id: string
+  requested_by: string
+  kind: ExportKind
+  profile: string
+  /** Exact deployment origin allowed to claim this job. PR previews share the
+   * production database, so an unscoped queue would let main render branch work. */
+  renderer_scope: string
+  options_json: string
+  input_hash: string
+  status: ExportJobStatus
+  attempts: number
+  last_error: string | null
+  error_class: string | null
+  next_attempt_at: string
+  output_key: string | null
+  output_type: string | null
+  output_bytes: number | null
+  public_asset_hash: string | null
+  created_at: string
+  updated_at: string
+  expires_at: string | null
+}
+export interface NewExportJob {
+  id: string
+  artifact_id: string
+  version_n: number
+  org_id: string
+  requested_by: string
+  kind: ExportKind
+  profile: string
+  renderer_scope: string
+  options_json: string
+  input_hash: string
+  expires_at?: string | null
+}
+
 export interface VersionRecord {
   id: string
   artifact_id: string
@@ -724,6 +783,35 @@ export interface ArtifactStore {
       last_error: string | null
       next_attempt_at: string
     },
+  ): Promise<void>
+  // ---- Export-job queue --------------------------------------------------
+  /** Insert idempotently by input_hash and return the existing/new row. */
+  enqueueExportJob(j: NewExportJob): Promise<ExportJobRecord>
+  getExportJob(id: string): Promise<ExportJobRecord | null>
+  listExportJobs(artifactId: string, requestedBy: string, limit: number): Promise<ExportJobRecord[]>
+  claimDueExportJobs(
+    now: string,
+    limit: number,
+    leaseUntil: string,
+    rendererScope: string,
+  ): Promise<ExportJobRecord[]>
+  updateExportJob(
+    id: string,
+    fields: Partial<
+      Pick<
+        ExportJobRecord,
+        | "status"
+        | "attempts"
+        | "last_error"
+        | "error_class"
+        | "next_attempt_at"
+        | "output_key"
+        | "output_type"
+        | "output_bytes"
+        | "public_asset_hash"
+        | "updated_at"
+      >
+    >,
   ): Promise<void>
 }
 

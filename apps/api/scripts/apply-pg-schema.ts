@@ -42,6 +42,15 @@ const url = u.toString()
 const store = await PgMetaStore.create(url, (e) => console.error("pool error:", e.message))
 console.log("app schema applied")
 
+// PR previews need the additive app schema their exact build queries, but must not
+// reconcile unrelated auth or vector infrastructure ahead of production. This is
+// the same PgMetaStore schema path, only with a deliberately narrower stopping point.
+if (process.argv.includes("--app-only")) {
+  await store.close()
+  console.log("app-only schema apply complete")
+  process.exit(0)
+}
+
 // An instance upgrading from a build that still carries the v1
 // `visibility`/`general_role` columns runs deploy/drop-v1-access.sql separately,
 // which folds those values into the access fields before dropping them.

@@ -202,7 +202,7 @@ specialized deployments, but are intentionally not covered by the built-in backu
 | `DERIVE_CROSS_SITE` | `false` | `true` for `SameSite=None; Secure` cookies (split deploy only) |
 | `DERIVE_TOKEN` | (none) | Static bearer token for CI/agents. One of the two ways to write (the other is a sign-in session); anonymous callers are always read-only (public/link artifacts), never owners. |
 | `DERIVE_WEB_DIR` | (auto) | Override the bundled SPA path |
-| `DERIVE_PREVIEWS` | `false` | `true` to enable server-side Playwright screenshot generation for share cards (Docker image bundles Chromium; bare-Node hosts must run `playwright install --with-deps chromium` once) |
+| `DERIVE_PREVIEWS` | `false` | `true` to enable the shared Playwright worker for share-card previews and PDF, chart, email-image, and deck exports (Docker bundles Chromium; bare-Node hosts must run `playwright install --with-deps chromium` once) |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | (none) | Google sign-in |
 | `OIDC_ISSUER` / `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` / `OIDC_PROVIDER_ID` | (none) | Enterprise SSO |
 | `SLACK_CLIENT_ID` / `SLACK_CLIENT_SECRET` / `SLACK_SIGNING_SECRET` | (none) | Optional Slack app (all three required). Create it from **Settings → Integrations → Set up Slack app**; connect from Settings → Integrations. Bot tokens are encrypted at rest with `DERIVE_AUTH_SECRET`. |
@@ -212,8 +212,11 @@ specialized deployments, but are intentionally not covered by the built-in backu
 
 ### Preview screenshots (optional)
 
-Set `DERIVE_PREVIEWS=true` to enable server-side screenshot generation for artifact
-share cards (Open Graph images, link unfurls).
+Set `DERIVE_PREVIEWS=true` to enable the server-side browser worker used by artifact
+share cards and exports. Export requests are durable and version-pinned; PDF, chart PNG,
+email-image, deck PDF, and image-backed PPTX jobs use the same leased queue and browser
+adapter as Open Graph previews. JSON and CSV exports read declared version facts and do
+not require a browser.
 
 - **Docker image**: Chromium is already bundled. Set the environment variable. No extra
   steps are needed.
@@ -229,7 +232,16 @@ share cards (Open Graph images, link unfurls).
   origin the Node process can reach itself on). Without it the renderer cannot build the
   absolute URL and previews will not be generated.
 
-Preview rendering runs in the same Node process as the API (no sidecar needed).
+Preview and export rendering run in the same Node process as the API (no sidecar needed).
+On a scaled deployment, all replicas may enable the worker: database leases prevent two
+replicas from completing the same job. For the smallest operational footprint, enable it
+on one API replica and leave it off on the others. Every replica must share the same
+`DATABASE_URL`, `OBJECT_STORE_URL`, `DERIVE_AUTH_SECRET`, and `BASE_URL`.
+
+Generated private outputs remain access-gated in the shared blob store. A hosted email
+image becomes public only when the sender explicitly chooses that option; the worker then
+adds the existing asset allowlist row and serves the content-addressed URL with immutable
+cache headers. The default email path uses a private CID attachment instead.
 
 ### OAuth / SSO (optional)
 

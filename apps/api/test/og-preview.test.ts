@@ -6,12 +6,13 @@
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import type { NewRenderJob } from "@derive/core"
+import { type BlobStore, INTERNAL_DELIVERY, type NewRenderJob } from "@derive/core"
 import { SqliteMetaStore } from "@derive/db/sqlite"
 import { FsBlobStore } from "@derive/storage/fs"
 import { afterAll, describe, expect, it } from "vitest"
 import { createApp } from "../src/app"
 import type { AppDeps } from "../src/context"
+import { runExportTick } from "../src/exports"
 import { OG_TOKEN_TTL_MS, signOgToken, verifyOgToken } from "../src/lib/og-token"
 import { signPreviewToken, verifyPreviewToken } from "../src/lib/preview-token"
 
@@ -99,7 +100,7 @@ const TINY_PNG = new Uint8Array([
 
 const SECRET = "og-secret"
 
-const makeApp = (name: string) => {
+const makeApp = (name: string, extraDeps: Partial<AppDeps> = {}) => {
   const dbPath = join(dir, `${name}.db`)
   const meta = new SqliteMetaStore(dbPath)
   const blobs = new FsBlobStore(join(dir, `blobs-${name}`))
@@ -109,9 +110,144 @@ const makeApp = (name: string) => {
     baseUrl: "http://derive.test",
     token: TOKEN,
     encryptionKey: SECRET,
+    ...extraDeps,
   })
   return { app, meta, blobs }
 }
+
+describe("durable export delivery", () => {
+  it("does not duplicate email when completion fails after the outbox enqueue", async () => {
+    const { app, meta, blobs } = makeApp("export-email-idempotency")
+    const { short_id, current_version } = await publish(app, "<h1>Email fixture</h1>", {
+      visibility: "public",
+      title: "Pinned fixture",
+    })
+    const artifact = await meta.getByShortId(short_id)
+    if (!artifact) throw new Error("artifact not found after publish")
+    await meta.enqueueExportJob({
+      id: "ej_email_retry",
+      artifact_id: artifact.id,
+      version_n: current_version,
+      org_id: artifact.org_id,
+      requested_by: "test-user",
+      kind: "email",
+      profile: "email-hero",
+      renderer_scope: "http://derive.test",
+      options_json: JSON.stringify({ recipient: "qa@example.test", title: "Pinned fixture" }),
+      input_hash: "email-retry-input",
+    })
+
+    // The email image is stored first; fail the second write, which is the durable
+    // export-result write after the stable-id outbox row has been enqueued.
+    let puts = 0
+    const flakyBlobs: BlobStore = {
+      get: (key) => blobs.get(key),
+      put: async (bytes) => {
+        puts += 1
+        if (puts === 2) throw new Error("simulated result-store outage")
+        return blobs.put(bytes)
+      },
+    }
+    const deps = {
+      meta,
+      blobs: flakyBlobs,
+      renderer: { screenshot: async () => TINY_PNG },
+      baseUrl: "http://derive.test",
+      secret: SECRET,
+    }
+    expect(await runExportTick(deps)).toBe(1)
+    expect((await meta.getExportJob("ej_email_retry"))?.status).toBe("failed")
+    const [delivery] = await meta.recentDeliveries(INTERNAL_DELIVERY, 10)
+    expect(delivery?.id).toBe("wd_export_ej_email_retry")
+    expect(JSON.parse(delivery?.payload ?? "{}")).toMatchObject({
+      to: "qa@example.test",
+      attachments: [{ contentId: "derive-export" }],
+    })
+
+    // Model the sender winning before the export lease recovers. The retry must
+    // observe the stable delivered row and finish without inserting another email.
+    if (!delivery) throw new Error("email delivery was not enqueued")
+    await meta.updateDelivery(delivery.id, {
+      status: "delivered",
+      attempts: 1,
+      last_error: null,
+      next_attempt_at: new Date().toISOString(),
+    })
+    await meta.updateExportJob("ej_email_retry", {
+      status: "failed",
+      next_attempt_at: new Date(0).toISOString(),
+      updated_at: new Date().toISOString(),
+    })
+    expect(await runExportTick(deps)).toBe(1)
+    expect((await meta.getExportJob("ej_email_retry"))?.status).toBe("ready")
+    const deliveries = await meta.recentDeliveries(INTERNAL_DELIVERY, 10)
+    expect(deliveries).toHaveLength(1)
+    expect(deliveries[0]?.status).toBe("delivered")
+  })
+
+  it("bounds poison retries and skips cancelled or expired work", async () => {
+    const { app, meta, blobs } = makeApp("export-failure-bounds")
+    const { short_id, current_version } = await publish(app, "<h1>Failure fixture</h1>", {
+      visibility: "public",
+    })
+    const artifact = await meta.getByShortId(short_id)
+    if (!artifact) throw new Error("artifact not found after publish")
+    const enqueue = (id: string, expiresAt: string | null = null) =>
+      meta.enqueueExportJob({
+        id,
+        artifact_id: artifact.id,
+        version_n: current_version,
+        org_id: artifact.org_id,
+        requested_by: "test-user",
+        kind: "page_pdf",
+        profile: "page-pdf",
+        renderer_scope: "http://derive.test",
+        options_json: "{}",
+        input_hash: `${id}-input`,
+        expires_at: expiresAt,
+      })
+    const deps = {
+      meta,
+      blobs,
+      renderer: {
+        screenshot: async () => TINY_PNG,
+        pdf: async () => {
+          throw new Error("renderer crashed at page 2")
+        },
+      },
+      baseUrl: "http://derive.test",
+      secret: SECRET,
+    }
+
+    await enqueue("ej_poison")
+    for (let attempt = 1; attempt <= 4; attempt += 1) {
+      expect(await runExportTick(deps, 1)).toBe(1)
+      const job = await meta.getExportJob("ej_poison")
+      expect(job?.attempts).toBe(attempt)
+      expect(job?.status).toBe(attempt === 4 ? "dead" : "failed")
+      if (attempt < 4)
+        await meta.updateExportJob("ej_poison", {
+          status: "failed",
+          next_attempt_at: new Date(0).toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+    }
+    expect((await meta.getExportJob("ej_poison"))?.last_error).toBe("renderer crashed at page 2")
+
+    await enqueue("ej_cancelled")
+    await meta.updateExportJob("ej_cancelled", {
+      status: "cancelled",
+      updated_at: new Date().toISOString(),
+    })
+    expect(await runExportTick(deps, 1)).toBe(0)
+    expect((await meta.getExportJob("ej_cancelled"))?.attempts).toBe(0)
+
+    await enqueue("ej_expired", new Date(0).toISOString())
+    expect(await runExportTick(deps, 1)).toBe(1)
+    expect((await meta.getExportJob("ej_expired"))?.status).toBe("expired")
+    expect(await meta.recentDeliveries(INTERNAL_DELIVERY, 10)).toHaveLength(0)
+  })
+})
 
 /** Upload an artifact via the API and return its short_id + current_version. */
 const publish = async (

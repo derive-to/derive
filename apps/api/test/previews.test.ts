@@ -10,7 +10,23 @@ import type {
   VersionRecord,
 } from "@derive/core"
 import { sha256Hex } from "@derive/core"
+import { unzipSync } from "fflate"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import {
+  DECK_LAST_SLIDE_ATTRIBUTE,
+  DECK_PRINT_CSS,
+  markFinalDeckSlideForPrint,
+  prepareDeckPrint,
+} from "../src/lib/deck-print"
+import {
+  buildExportEmail,
+  buildQaEmailCapture,
+  csvFromJson,
+  exportInputHash,
+  imageBackedPptx,
+  normalizeExportOptions,
+} from "../src/lib/export-system"
+import { exportOnlyAlarmDecision, previewRendererWorkMode } from "../src/preview-do"
 import {
   assertNavigationOk,
   assertRenderedDocumentOk,
@@ -20,6 +36,143 @@ import {
   startPreviewWorker,
   sweepMissingRenders,
 } from "../src/previews"
+
+describe("export contracts", () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it("marks the actual final deck slide even when deck chrome follows it", async () => {
+    const attrs = [new Set<string>(), new Set<string>(), new Set<string>()]
+    const nodes = attrs.map((attributes) => ({
+      removeAttribute: (name: string) => attributes.delete(name),
+      setAttribute: (name: string) => attributes.add(name),
+    }))
+    const chrome = { role: "counter" }
+    vi.stubGlobal("document", {
+      querySelectorAll: () => nodes,
+      body: { children: [...nodes, chrome] },
+    })
+
+    expect(
+      markFinalDeckSlideForPrint({
+        selector: "[data-derive-slide], .slide",
+        attribute: DECK_LAST_SLIDE_ATTRIBUTE,
+      }),
+    ).toBe(3)
+    expect(attrs.map((attributes) => attributes.has(DECK_LAST_SLIDE_ATTRIBUTE))).toEqual([
+      false,
+      false,
+      true,
+    ])
+    expect(DECK_PRINT_CSS).toContain(
+      `[${DECK_LAST_SLIDE_ATTRIBUTE}]{page-break-after:auto!important;break-after:auto!important}`,
+    )
+
+    let installedCss = ""
+    expect(
+      await prepareDeckPrint(
+        async (callback, input) => callback(input),
+        async (css) => {
+          installedCss = css
+        },
+      ),
+    ).toBe(3)
+    expect(installedCss).toBe(DECK_PRINT_CSS)
+  })
+
+  it("makes export-only renderer isolation explicit and fail-closed on the exact flag", () => {
+    expect(previewRendererWorkMode({ DERIVE_EXPORTS_ONLY: "true" })).toBe("exports-only")
+    expect(previewRendererWorkMode({ DERIVE_EXPORTS_ONLY: "false" })).toBe("full")
+    expect(previewRendererWorkMode({})).toBe("full")
+  })
+
+  it("gives export-only previews one bounded delayed retry probe, then goes idle", () => {
+    expect(exportOnlyAlarmDecision(1, false)).toEqual({ delayMs: 1_500, idleProbeArmed: false })
+    expect(exportOnlyAlarmDecision(0, false)).toEqual({ delayMs: 60_000, idleProbeArmed: true })
+    expect(exportOnlyAlarmDecision(0, true)).toEqual({ delayMs: null, idleProbeArmed: false })
+  })
+  it("normalizes bounded view state before hashing an immutable request", async () => {
+    const options = normalizeExportOptions({ region: "  #chart  ", note: ` ${"x".repeat(3_000)} ` })
+    expect(options.region).toBe("#chart")
+    expect(options.note).toHaveLength(2_000)
+    const a = await exportInputHash({
+      artifactId: "a1",
+      version: 2,
+      requestedBy: "u1",
+      rendererScope: "https://preview.test",
+      kind: "chart_png",
+      options: { region: " #chart " },
+    })
+    const b = await exportInputHash({
+      artifactId: "a1",
+      version: 2,
+      requestedBy: "u1",
+      rendererScope: "https://preview.test",
+      kind: "chart_png",
+      options: { region: "#chart" },
+    })
+    expect(a).toBe(b)
+    expect(
+      await exportInputHash({
+        artifactId: "a1",
+        version: 2,
+        requestedBy: "u1",
+        rendererScope: "https://other-preview.test",
+        kind: "chart_png",
+        options: { region: "#chart" },
+      }),
+    ).not.toBe(a)
+  })
+
+  it("exports only declared tabular JSON to CSV", () => {
+    expect(
+      csvFromJson([
+        { label: "A, B", value: 4 },
+        { label: "C", value: 7 },
+      ]),
+    ).toBe('label,value\r\n"A, B",4\r\nC,7')
+    expect(() => csvFromJson([1, 2, 3])).toThrow(/declared tabular fact/)
+  })
+
+  it("builds script-free, images-off-readable email and a complete image-backed PPTX", () => {
+    const email = buildExportEmail({
+      to: "qa@example.test",
+      title: "Revenue <script>alert(1)</script>",
+      note: "Pinned chart",
+      openUrl: "https://derive.test/artifacts/a",
+      imageUrl: "cid:derive-export",
+      alt: "Revenue by month",
+      version: 3,
+    })
+    expect(email.html).not.toContain("<script>")
+    expect(email.html).toContain('src="cid:derive-export"')
+    expect(email.html).toContain('alt="Revenue by month"')
+    expect(email.text).toContain("Open: https://derive.test/artifacts/a")
+    const capture = new TextDecoder().decode(
+      buildQaEmailCapture({
+        message: email,
+        cidImage: new Uint8Array([1, 2, 3]),
+        attachments: [{ filename: "derive-export.png", contentType: "image/png" }],
+      }),
+    )
+    expect(capture).toContain("QA capture · no email was sent")
+    expect(capture).toContain("data:image/png;base64,AQID")
+    expect(capture).toContain("Plain-text alternative")
+    expect(capture).not.toContain("cid:derive-export")
+
+    const pptx = unzipSync(
+      imageBackedPptx([new Uint8Array([1, 2]), new Uint8Array([3, 4])], "artifact v3"),
+    )
+    expect(Object.keys(pptx)).toEqual(
+      expect.arrayContaining([
+        "ppt/slides/slide1.xml",
+        "ppt/slides/slide2.xml",
+        "ppt/media/image1.png",
+        "ppt/media/image2.png",
+      ]),
+    )
+    expect(new TextDecoder().decode(pptx["docProps/core.xml"])).toContain("artifact v3")
+  })
+})
 
 // ---------------------------------------------------------------------------
 // Fake BlobStore (content-addressed, Map-backed)

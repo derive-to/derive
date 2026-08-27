@@ -29,6 +29,7 @@ import type {
   ContextRecord,
   DeliveryRecord,
   DomainRecord,
+  ExportJobRecord,
   FolderRecord,
   FollowRecord,
   GitHubAppRecord,
@@ -71,6 +72,7 @@ export interface TypedTables {
   webhook: WebhookRecord
   webhookDelivery: DeliveryRecord
   renderJob: RenderJobRecord
+  exportJob: ExportJobRecord
   membership: MembershipRecord
   workspace: WorkspaceRecord
   artifactMember: ArtifactMemberRecord

@@ -1992,6 +1992,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/artifacts/{shortId}/exports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create an immutable, version-pinned export or static email job. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    shortId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": {
+                        /** @enum {string} */
+                        kind: "page_pdf" | "chart_png" | "chart_json" | "chart_csv" | "email" | "deck_pdf" | "deck_pptx";
+                        version?: number;
+                        region?: string;
+                        dataSlot?: string;
+                        publicImage?: boolean;
+                        /** Format: email */
+                        recipient?: string;
+                        note?: string;
+                        attachPdf?: boolean;
+                    };
+                };
+            };
+            responses: {
+                /** @description Export accepted. */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/artifacts/{shortId}/access-request": {
         parameters: {
             query?: never;

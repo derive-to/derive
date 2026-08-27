@@ -1,5 +1,7 @@
+import { INTERNAL_DELIVERY } from "@derive/core"
 import { zipSync } from "fflate"
 import { describe, expect, it, vi } from "vitest"
+import { runExportTick } from "../src/exports"
 import {
   app,
   as,
@@ -19,6 +21,192 @@ describe("version sessions", () => {
     const a = await (await app.request(`/v1/artifacts/${short_id}`)).json()
     expect(a.versions[1].name).toBe("Final draft")
     expect(a.versions[0].name).toBeNull()
+  })
+})
+
+describe("version-pinned export requests", () => {
+  const owner: TestUser = { id: "export-owner", email: "export-owner@test.dev", name: "Owner" }
+  const outsider: TestUser = {
+    id: "export-outsider",
+    email: "export-outsider@test.dev",
+    name: "Outsider",
+  }
+  const { app: exportApp } = makeAuthedApp("exports-routes", [owner, outsider])
+  const captureOwner: TestUser = {
+    id: "export-capture-owner",
+    email: "export-capture-owner@test.dev",
+    name: "Capture Owner",
+  }
+  const {
+    app: captureApp,
+    meta: captureMeta,
+    ctx: captureCtx,
+  } = makeAuthedApp("exports-email-capture", [captureOwner], undefined, {
+    deps: { renderExports: true, qaEmailCapture: true },
+  })
+
+  it("captures reserved-.test email privately and never touches the real outbox", async () => {
+    const created = await (
+      await publishAs(
+        captureApp,
+        "<h1>Email capture fixture</h1>",
+        { title: "Capture fixture", workspace_access: "none" },
+        as(captureOwner.email),
+      )
+    ).json()
+    const send = (recipient: string) =>
+      captureApp.request(`/v1/artifacts/${created.short_id}/exports`, {
+        method: "POST",
+        headers: { ...as(captureOwner.email), "content-type": "application/json" },
+        body: JSON.stringify({ kind: "email", recipient, attachPdf: true }),
+      })
+    const rejected = await send("real@example.com")
+    expect(rejected.status).toBe(400)
+    expect(await rejected.text()).toContain("recipient under .test")
+
+    const accepted = await send("qa@example.test")
+    expect(accepted.status).toBe(202)
+    const queued = await accepted.json()
+    expect(
+      await runExportTick({
+        meta: captureMeta,
+        blobs: captureCtx.blobs,
+        renderer: {
+          screenshot: async () => new Uint8Array([1, 2, 3]),
+          pdf: async () => new TextEncoder().encode("%PDF-1.7 fixture"),
+        },
+        baseUrl: "http://derive.test",
+        secret: "capture-test-secret",
+      }),
+    ).toBe(1)
+    expect(await captureMeta.recentDeliveries(INTERNAL_DELIVERY, 10)).toHaveLength(0)
+
+    const capture = await captureApp.request(`/v1/exports/${queued.id}/preview`, {
+      headers: as(captureOwner.email),
+    })
+    expect(capture.status).toBe(200)
+    expect(capture.headers.get("content-security-policy")).toContain("sandbox")
+    expect(capture.headers.get("cache-control")).toBe("private, no-store")
+    const html = await capture.text()
+    expect(html).toContain("QA capture · no email was sent")
+    expect(html).toContain("data:image/png;base64,AQID")
+    expect(html).toContain("derive-export.pdf")
+  })
+
+  it("bounds concurrent export work and rejects an estimated over-quota render", async () => {
+    const created = await (
+      await publishAs(
+        captureApp,
+        "<h1>Rate fixture</h1>",
+        { title: "Rate fixture", workspace_access: "none" },
+        as(captureOwner.email),
+      )
+    ).json()
+    const request = (note: string) =>
+      captureApp.request(`/v1/artifacts/${created.short_id}/exports`, {
+        method: "POST",
+        headers: { ...as(captureOwner.email), "content-type": "application/json" },
+        body: JSON.stringify({ kind: "email", recipient: "qa@example.test", note }),
+      })
+    for (let i = 0; i < 5; i += 1) expect((await request(`capture-${i}`)).status).toBe(202)
+    const limited = await request("capture-over-limit")
+    expect(limited.status).toBe(429)
+    expect(await limited.text()).toContain("too many active exports")
+
+    const quotaOwner: TestUser = {
+      id: "export-quota-owner",
+      email: "export-quota-owner@test.dev",
+      name: "Quota Owner",
+    }
+    const { app: quotaExportApp } = makeAuthedApp("exports-render-quota", [quotaOwner], undefined, {
+      deps: { renderExports: true, maxBytes: 1024 },
+      noPlan: true,
+    })
+    const quotaArtifact = await (
+      await publishAs(quotaExportApp, "x", { workspace_access: "none" }, as(quotaOwner.email))
+    ).json()
+    const over = await quotaExportApp.request(`/v1/artifacts/${quotaArtifact.short_id}/exports`, {
+      method: "POST",
+      headers: { ...as(quotaOwner.email), "content-type": "application/json" },
+      body: JSON.stringify({ kind: "page_pdf" }),
+    })
+    expect(over.status).toBe(413)
+    expect(await over.text()).toContain("out of storage")
+  })
+
+  it("pins a version and deduplicates a replay without enabling a renderer", async () => {
+    const created = await (
+      await publishAs(
+        exportApp,
+        '<script type="application/derive+json" data-name="series">[{"month":"Jan","value":4}]</script>',
+        { title: "Export fixture", workspace_access: "none" },
+        as(owner.email),
+      )
+    ).json()
+    const request = () =>
+      exportApp.request(`/v1/artifacts/${created.short_id}/exports`, {
+        method: "POST",
+        headers: { ...as(owner.email), "content-type": "application/json" },
+        body: JSON.stringify({ kind: "chart_json", version: 1, dataSlot: "series" }),
+      })
+    const first = await request()
+    const replay = await request()
+    expect(first.status).toBe(202)
+    expect(replay.status).toBe(202)
+    const a = await first.json()
+    const b = await replay.json()
+    expect(a).toMatchObject({ version: 1, kind: "chart_json", status: "pending" })
+    expect(b.id).toBe(a.id)
+  })
+
+  it("does not reveal a private export surface to another workspace member", async () => {
+    const created = await (
+      await publishAs(
+        exportApp,
+        "private",
+        { title: "Private export", workspace_access: "none" },
+        as(owner.email),
+      )
+    ).json()
+    const response = await exportApp.request(`/v1/artifacts/${created.short_id}/exports`, {
+      method: "POST",
+      headers: { ...as(outsider.email), "content-type": "application/json" },
+      body: JSON.stringify({ kind: "chart_json", dataSlot: "series" }),
+    })
+    expect(response.status).toBe(403)
+  })
+
+  it("lets an explicit viewer export readable truth, then rechecks access on download", async () => {
+    const created = await (
+      await publishAs(
+        exportApp,
+        '<script type="application/derive+json" data-name="series">[{"month":"Jan","value":4}]</script>',
+        { title: "Shared export", workspace_access: "none" },
+        as(owner.email),
+      )
+    ).json()
+    const share = await exportApp.request(`/v1/artifacts/${created.short_id}/members`, {
+      ...jsonAs(as(owner.email), { email: outsider.email, role: "viewer" }),
+      method: "PUT",
+    })
+    expect(share.status).toBe(201)
+    const requested = await exportApp.request(`/v1/artifacts/${created.short_id}/exports`, {
+      method: "POST",
+      headers: { ...as(outsider.email), "content-type": "application/json" },
+      body: JSON.stringify({ kind: "chart_json", version: 1, dataSlot: "series" }),
+    })
+    expect(requested.status).toBe(202)
+    const job = await requested.json()
+
+    const revoke = await exportApp.request(
+      `/v1/artifacts/${created.short_id}/members/${outsider.id}`,
+      { method: "DELETE", headers: as(owner.email) },
+    )
+    expect(revoke.status).toBe(204)
+    const direct = await exportApp.request(`/v1/exports/${job.id}/download`, {
+      headers: as(outsider.email),
+    })
+    expect(direct.status).toBe(404)
   })
 })
 

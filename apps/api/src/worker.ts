@@ -199,6 +199,12 @@ export interface Env {
   STRIPE_WEBHOOK_SECRET?: string
   // ISO instant after which free-tier boundaries enforce; unset = beta grace.
   DERIVE_BILLING_ENFORCE_AT?: string
+  /** PR-preview isolation: keep Browser Rendering available for export jobs while
+   *  disabling the unscoped ordinary-preview sweep and queue. */
+  DERIVE_EXPORTS_ONLY?: string
+  /** PR-preview email seam. The route additionally enforces reserved .test recipients,
+   *  and the export worker writes a private capture without touching the outbox. */
+  DERIVE_QA_EMAIL_CAPTURE?: string
 }
 
 /** The public site over the SITE service binding, when this deployment binds one:
@@ -397,7 +403,9 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
         // Enable preview rendering only when the Browser Rendering binding is present
         // (hosted Workers). When BROWSER is unbound (self-host / D1-only / local dev),
         // renderPreviews is false so no jobs are enqueued.
-        renderPreviews: !!env.BROWSER,
+        renderPreviews: !!env.BROWSER && env.DERIVE_EXPORTS_ONLY !== "true",
+        renderExports: !!env.BROWSER && !!env.PREVIEW_RENDERER,
+        qaEmailCapture: env.DERIVE_QA_EMAIL_CAPTURE === "true",
         pokePreviews: () => void edgeWaitUntil(pokePreviewRenderer(env)),
         // Hosted runs: nudge the dispatch queue so an interactive run starts in seconds
         // instead of on the next minute's cron. Best-effort by construction — the sweep is

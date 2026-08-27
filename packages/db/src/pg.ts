@@ -30,6 +30,7 @@ import type {
   DeliveryStatus,
   DomainRecord,
   DomainStatus,
+  ExportJobRecord,
   FolderRecord,
   FollowKind,
   FollowRecord,
@@ -63,6 +64,7 @@ import type {
   NewContextAsker,
   NewDelivery,
   NewDomain,
+  NewExportJob,
   NewFolder,
   NewFollow,
   NewInvitation,
@@ -198,6 +200,7 @@ import {
   contextAsker,
   contextSession,
   domain,
+  exportJob,
   folder,
   follow,
   githubApp,
@@ -260,6 +263,7 @@ export const schema = {
   comment,
   webhook,
   webhookDelivery,
+  exportJob,
   renderJob,
   membership,
   workspace,
@@ -316,6 +320,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   webhook: true,
   webhookDelivery: true,
   renderJob: true,
+  exportJob: true,
   membership: true,
   workspace: true,
   artifactMember: true,
@@ -2351,6 +2356,71 @@ export class PgMetaStore implements MetaStore {
     },
   ): Promise<void> {
     await this.db.update(renderJob).set(fields).where(eq(renderJob.id, id))
+  }
+
+  async enqueueExportJob(j: NewExportJob): Promise<ExportJobRecord> {
+    await this.db.insert(exportJob).values(j).onConflictDoNothing({ target: exportJob.input_hash })
+    const rows = await this.db
+      .select()
+      .from(exportJob)
+      .where(eq(exportJob.input_hash, j.input_hash))
+    return one(rows) as ExportJobRecord
+  }
+  async getExportJob(id: string): Promise<ExportJobRecord | null> {
+    const rows = await this.db.select().from(exportJob).where(eq(exportJob.id, id)).limit(1)
+    return (rows[0] as ExportJobRecord | undefined) ?? null
+  }
+  listExportJobs(
+    artifactId: string,
+    requestedBy: string,
+    limit: number,
+  ): Promise<ExportJobRecord[]> {
+    return this.db
+      .select()
+      .from(exportJob)
+      .where(and(eq(exportJob.artifact_id, artifactId), eq(exportJob.requested_by, requestedBy)))
+      .orderBy(desc(exportJob.created_at))
+      .limit(limit) as Promise<ExportJobRecord[]>
+  }
+  claimDueExportJobs(
+    now: string,
+    limit: number,
+    leaseUntil: string,
+    rendererScope: string,
+  ): Promise<ExportJobRecord[]> {
+    const due = this.db
+      .select({ id: exportJob.id })
+      .from(exportJob)
+      .where(
+        and(
+          or(
+            eq(exportJob.status, "pending"),
+            eq(exportJob.status, "rendering"),
+            eq(exportJob.status, "failed"),
+          ),
+          eq(exportJob.renderer_scope, rendererScope),
+          lte(exportJob.next_attempt_at, now),
+        ),
+      )
+      .orderBy(asc(exportJob.next_attempt_at))
+      .limit(limit)
+      .for("update", { skipLocked: true })
+    return this.db
+      .update(exportJob)
+      .set({
+        status: "rendering",
+        attempts: sql`${exportJob.attempts} + 1`,
+        next_attempt_at: leaseUntil,
+        updated_at: now,
+      })
+      .where(inArray(exportJob.id, due))
+      .returning() as Promise<ExportJobRecord[]>
+  }
+  async updateExportJob(
+    id: string,
+    fields: Parameters<MetaStore["updateExportJob"]>[1],
+  ): Promise<void> {
+    await this.db.update(exportJob).set(fields).where(eq(exportJob.id, id))
   }
 
   // ---- Permissions: membership + per-artifact shares ---------------------

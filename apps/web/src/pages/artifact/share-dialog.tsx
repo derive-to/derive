@@ -41,6 +41,7 @@ import { artifactQuery, workspaceQuery } from "@/lib/queries"
 import { STORAGE_KEYS } from "@/lib/storage-keys"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { ShareCollectionDialog } from "@/pages/library/share-collection-dialog"
+import { ExportButton } from "./export-dialog"
 
 // Access is ONE primary question — who can open this — projected from the v2
 // triple (workspace_access, link_role, listed; see access-model.md). Each segment
@@ -71,6 +72,7 @@ type AccessDraft = {
  */
 export function ShareButton({
   shortId,
+  version,
   myRole,
   workspaceAccess,
   linkRole,
@@ -81,6 +83,8 @@ export function ShareButton({
   videoMoment,
 }: {
   shortId: string
+  /** The version currently visible in the workbench. */
+  version: number
   myRole?: Role | null
   /** The v2 access triple (see access-model.md). */
   workspaceAccess?: WorkspaceAccess
@@ -661,17 +665,24 @@ export function ShareButton({
               </Button>
             )}
           </ShareCopyLinkButton>
-          <Button
-            data-testid="share-more-toggle"
-            variant="ghost"
-            size="sm"
-            aria-expanded={more}
-            onClick={() => setMore((v) => !v)}
-            className="text-muted-foreground"
-          >
-            Embed &amp; domains
-            <Icon name={more ? "caret-up" : "caret"} />
-          </Button>
+          <div className="flex items-center gap-1.5">
+            <ExportButton
+              shortId={shortId}
+              version={version}
+              isDeck={art?.current_content_type === "text/x-derive-deck"}
+            />
+            <Button
+              data-testid="share-more-toggle"
+              variant="ghost"
+              size="sm"
+              aria-expanded={more}
+              onClick={() => setMore((v) => !v)}
+              className="text-muted-foreground"
+            >
+              Embed &amp; domains
+              <Icon name={more ? "caret-up" : "caret"} />
+            </Button>
+          </div>
         </div>
 
         {more && (

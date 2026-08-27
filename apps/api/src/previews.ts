@@ -7,9 +7,13 @@
  * dispatch. Both Node (node.ts) and the Cloudflare Worker DO import this file,
  * so it must run on both runtimes without modification.
  */
-import type { BlobStore, MetaStore } from "@derive/core"
+import type { MetaStore } from "@derive/core"
+import { runExportTick } from "./exports"
 import { signPreviewToken } from "./lib/preview-token"
+import type { RenderTickDeps, ScreenshotOpts } from "./lib/renderer"
 import { log } from "./log"
+
+export type { PdfOpts, Renderer, RenderTickDeps, ScreenshotOpts } from "./lib/renderer"
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -56,20 +60,6 @@ export const FULL_PAGE_SCALE = 0.5
 // ---------------------------------------------------------------------------
 // Interfaces
 // ---------------------------------------------------------------------------
-
-export interface ScreenshotOpts {
-  width: number
-  height: number
-  fullPage?: boolean
-  timeoutMs: number
-  /** Device pixel density. Defaults to 1. Below 1 the same page renders to proportionally
-   *  fewer pixels, which is what actually bounds a full-page shot — see FULL_PAGE_SCALE. */
-  deviceScaleFactor?: number
-}
-
-export interface Renderer {
-  screenshot(url: string, opts: ScreenshotOpts): Promise<Uint8Array>
-}
 
 /**
  * Refuse to screenshot an error page.
@@ -120,15 +110,6 @@ export const assertRenderedDocumentOk = (
   throw new Error(
     `navigation rendered a ${body} service response; refusing to screenshot an error page (${url.replace(/\/pv\/[^/]+\//, "/pv/<redacted>/")})`,
   )
-}
-
-export interface RenderTickDeps {
-  meta: MetaStore
-  blobs: BlobStore
-  renderer: Renderer
-  baseUrl: string
-  sandboxOrigin?: string
-  secret: string
 }
 
 export interface PreviewWorker {
@@ -406,6 +387,8 @@ export const startPreviewWorker = (deps: RenderTickDeps, intervalMs = 1500): Pre
       // Cheap when there's nothing missing (one bounded SELECT on a local DB).
       await sweepMissingRenders(deps.meta)
       await runRenderTick(deps)
+      // Older test doubles and rolling workers may not have the additive export port yet.
+      if (typeof deps.meta.claimDueExportJobs === "function") await runExportTick(deps)
     } catch (err) {
       // A bad tick must not kill the loop, but it must not vanish either —
       // otherwise a persistently-failing render queue is invisible.

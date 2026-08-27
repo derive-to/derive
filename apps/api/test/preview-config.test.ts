@@ -29,17 +29,18 @@ describe("preview-config", () => {
     expect(out).toContain("DERIVE_SANDBOX_URL intentionally unset for previews")
   })
 
-  it("strips the OG renderer, whose sweep is limit-scoped and writes to the shared database", () => {
-    // versionsMissingPreview(limit) has no org or artifact scope, so a preview's
-    // renderer picks up arbitrary PRODUCTION versions. Harmless while previews
-    // screenshotted production's bytes; once a preview serves /raw/* itself it
-    // would overwrite real artifacts' cards with the branch's rendering — and the
-    // sweep never revisits a version that already has an image.
-    expect(out).not.toMatch(/^\[browser\]/m)
-    expect(out).not.toContain('name = "PREVIEW_RENDERER"')
+  it("keeps Browser Rendering in export-only mode without enabling the shared preview sweep", () => {
+    expect(out).toMatch(/^\[browser\]/m)
+    expect(out).toContain('name = "PREVIEW_RENDERER"')
+    expect(out).toContain('DERIVE_EXPORTS_ONLY = "true"')
+    expect(out).toContain('DERIVE_QA_EMAIL_CAPTURE = "true"')
     // The DO's migration stays: the class is still declared in the script, and
     // dropping an applied migration is what wrangler refuses.
     expect(out).toContain('new_sqlite_classes = ["PreviewRenderer"]')
+  })
+
+  it("removes the live mail transport; QA email is a reserved-.test capture", () => {
+    expect(out).not.toMatch(/^\[\[send_email\]\]/m)
   })
 
   it("unsets the vanity-subdomain base, which a preview has no route for", () => {
@@ -53,5 +54,6 @@ describe("preview-config", () => {
     expect(out).not.toContain("[[routes]]")
     expect(out).not.toContain("[triggers]")
     expect(out).not.toContain("queues.consumers")
+    expect(out).not.toContain("queues.producers")
   })
 })
