@@ -122,7 +122,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           for attempt in 1 2 3; do
-            if pnpm --filter @derive/api exec wrangler deploy --config wrangler.preview.toml; then
+            if pnpm --filter @derive/api exec wrangler deploy --config wrangler.preview.toml --var BUILD_SHA:"$GITHUB_SHA"; then
               exit 0
             fi
             echo "::warning::preview deploy failed (attempt $attempt/3); retrying" >&2
@@ -185,11 +185,15 @@ jobs:
         run: |
           URL="${{ steps.cfg.outputs.url }}"
           for i in $(seq 1 10); do
-            code=$(curl -s -o /dev/null -w '%{http_code}' "$URL/healthz" || true)
-            [ "$code" = "200" ] && break
+            health=$(curl -s --max-time 15 "$URL/healthz" || true)
+            build=$(printf '%s' "$health" | sed -n 's/.*"build":"\([^"]*\)".*/\1/p')
+            [ "$build" = "$GITHUB_SHA" ] && break
             sleep 6
           done
-          [ "$code" = "200" ] || { echo "preview never served /healthz (last: $code)"; exit 1; }
+          [ "$build" = "$GITHUB_SHA" ] || {
+            echo "preview never served exact build $GITHUB_SHA (last: ${health:0:120})"
+            exit 1
+          }
           # Assert the BODY, not just the status. /readyz is only meaningful if it reached the
           # worker: with SPA not-found handling the asset handler answers 200 + index.html for
           # any path missing from run_worker_first, so a status-only check reports healthy for
