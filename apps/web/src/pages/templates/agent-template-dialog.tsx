@@ -18,8 +18,7 @@ const exampleBrief = (target: AgentTemplateTarget) => {
   const namedInputs = target.inputs?.slice(0, 3).map((input) => input.name.toLowerCase()) ?? []
   if (namedInputs.length)
     return `What are you making? Include ${namedInputs.join(", ")}, plus anything your agent should know.`
-  if (target.kind === "context")
-    return "What should this context help your team’s agents know or do?"
+  if (target.kind === "context") return "What should this Agent help your team know or do?"
   if (target.category === "Deck")
     return "Describe the story, audience, and outcome you want from this deck."
   return "Describe what you want to make, who it is for, and what a strong result should accomplish."

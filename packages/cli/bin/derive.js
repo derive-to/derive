@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // derive — scaffold, publish, and continue work against a Derive server.
-//   derive init [dir] [--template md|html|workflow|slides|site|skill|context] [--title t]
+//   derive init [dir] [--template md|html|workflow|slides|site|skill|agent] [--title t]
 //   derive onboard [dir] [--update]       add/update artifact-first instructions + agent setup
 //   derive agent setup [dir] [--update]   install/update Codex/Claude skills + MCP config
 //   derive login [--local] [--server url] [--workspace w] [--pick] [--add] [--sync] [--manage]
@@ -29,8 +29,8 @@
 //   derive status [--id] [--json]          the review round state + open threads
 //   derive send-back [--id] [--note m]     open the page to send your answers back (a browser gesture)
 //   derive doctor [--server url] [--token t]  report which optional features are configured
-//   derive runner serve|once|doctor|install   run a context's answer daemon, or drain once (npx-able anywhere)
-//   derive context push|dev                ship a context dir as its manifest / tune it live
+//   derive runner serve|once|doctor|install   run an Agent's answer daemon, or drain once (npx-able anywhere)
+//   derive agent push|dev                  ship an Agent dir as its manifest / tune it live
 //   derive workflow sync|preview [file] [--json] sync the visible graph, then explain + validate
 import { spawn } from "node:child_process"
 import { createHash, randomBytes } from "node:crypto"
@@ -158,7 +158,7 @@ function requireNoTargetError(r) {
 if (cmd === "init") {
   const dir = positional[0] ?? "."
   const template = flags.template ?? "md"
-  if (!TEMPLATES.includes(template)) {
+  if (!TEMPLATES.includes(template) && template !== "context") {
     console.error(`error: unknown template "${template}". Choose: ${TEMPLATES.join(", ")}`)
     process.exit(1)
   }
@@ -169,8 +169,8 @@ if (cmd === "init") {
   const meta = [CONFIG_FILE, "derive.schema.json", "AGENTS.md", "CLAUDE.md", ".gitignore"]
   const entry = created.find((f) => !meta.includes(f) && !f.startsWith(".")) ?? "the entry"
   const next =
-    template === "context"
-      ? "derive context push"
+    template === "agent" || template === "context"
+      ? "derive agent push"
       : template === "workflow"
         ? "derive workflow sync workflow.html"
         : "derive publish"
@@ -304,8 +304,8 @@ async function doOAuthLogin(server, loginFlags) {
   const b64url = (b) =>
     b.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")
   const redirect = `${server}/oauth/cli-callback`
-  // derive:manage (opt-in via --manage) lets `derive context push` mint the
-  // answering agent and create the context. Opt-in, not default: it raises a
+  // derive:manage (opt-in via --manage) lets `derive agent push` mint the
+  // execution connection and create the Agent's context record. Opt-in, not default: it raises a
   // leaked token's blast radius from editor to your full workspace authority,
   // so only sessions that actually manage contexts should carry it.
   const scope =
@@ -759,10 +759,10 @@ if (cmd === "doctor") {
 }
 
 // ---- derive runner (serve / doctor / install) -------------------------------
-// The context runner as a CLI verb: `derive runner serve <ctx>` on any machine
+// The Agent runner as a CLI verb: `derive runner serve <ctx>` on any machine
 // with Node. Config: flags win over env (DERIVE_SERVER/TOKEN/CONTEXT, RUNNER_*);
 // --token-file keeps the secret out of service-unit command lines; --env-file
-// loads a context's own secrets (KEY=VALUE) before anything reads them.
+// loads the Agent's own secrets (KEY=VALUE) before anything reads them.
 if (cmd === "runner") {
   const sub = positional.shift()
   if (!["serve", "once", "run", "doctor", "install"].includes(sub ?? "")) {
@@ -858,20 +858,23 @@ if (cmd === "runner") {
   }
 }
 
-// ---- derive context (push / dev) --------------------------------------------
-// A context is a directory: MANIFEST.md (the runner's system prompt),
-// references/, .mcp.json (the context's tools), .env (stays local, always).
-// `push` ships that directory as the context's manifest bundle; the first push
-// also mints the answering agent and creates the context, so afterwards a push
-// is just a new manifest version — the context's pointer never moves. `dev`
+// ---- derive agent (push / dev) ----------------------------------------------
+// An Agent is a directory: MANIFEST.md (the runner's system prompt), references/,
+// .mcp.json (its tools), and .env (stays local, always). The API and derive.json
+// keep their context names as a compatibility contract.
+// `push` ships that directory as the Agent's manifest bundle; the first push
+// also mints the answering principal and creates the context record, so afterwards
+// a push is just a new manifest version — the context's pointer never moves. `dev`
 // answers real sessions with the WORKING TREE manifest: edit, save, next
 // answer uses it, push when it behaves.
-if (cmd === "context") {
+if (cmd === "agent" || cmd === "context") {
   const sub = positional.shift()
   if (!["push", "dev"].includes(sub ?? "")) {
     console.error(`usage:
-  derive context push [dir]    publish the context dir (minus .env*); first push wires agent + context
-  derive context dev  [dir]    run the answer loop on the working-tree manifest [--mock] [--context ctx_id]`)
+  derive agent push [dir]    publish the Agent dir (minus .env*); first push wires its connection
+  derive agent dev  [dir]    run the answer loop on the working-tree manifest [--mock] [--context ctx_id]
+
+  Legacy alias: derive context push|dev`)
     process.exit(1)
   }
   const dir = positional[0] ?? "."
@@ -884,14 +887,14 @@ if (cmd === "context") {
   }
   if (!cfg?.context) {
     console.error(
-      `error: ${join(dir, CONFIG_FILE)} has no "context" block — scaffold one with \`derive init --template context\``,
+      `error: ${join(dir, CONFIG_FILE)} has no "context" block — scaffold one with \`derive init --template agent\``,
     )
     process.exit(1)
   }
   const p = resolvePublish(flags, cfg)
   p.token = flags.token ?? process.env.DERIVE_TOKEN ?? (await freshToken(p.server, p.accountId))
   const target = join(dir, cfg.entry ?? "context")
-  const name = cfg.context.name ?? cfg.title ?? "My context"
+  const name = cfg.context.name ?? cfg.title ?? "My Agent"
   const tokenFile = join(dir, ".derive", "agent-token")
 
   if (sub === "push") {
@@ -966,7 +969,7 @@ if (cmd === "context") {
         })
         ctxId = created.id
         writeContextConfig(dir, { id: ctxId })
-        console.log(`✓ context "${name}" (${ctxId})`)
+        console.log(`✓ Agent "${name}" (${ctxId})`)
       }
       // The manifest's roster is the ask roster — an invite-only manifest (no
       // workspace access) means only its owner can open a session.
@@ -975,7 +978,7 @@ if (cmd === "context") {
           `  invite-only — share the manifest (Share dialog, or --visibility org) so teammates can ask`,
         )
       console.log(
-        `\nRun it:\n  derive runner serve ${ctxId} --token-file ${tokenFile} --cwd ${target}\nTune it:\n  derive context dev`,
+        `\nRun it:\n  derive runner serve ${ctxId} --token-file ${tokenFile} --cwd ${target}\nTune it:\n  derive agent dev`,
       )
     } catch (e) {
       console.error(`error: ${e.message}`)
@@ -988,7 +991,7 @@ if (cmd === "context") {
   const ctxId = flags.context ?? cfg.context.id
   if (!ctxId) {
     console.error(
-      "error: no context id — `derive context push` once (it pins context.id), or pass --context",
+      "error: no Agent id — `derive agent push` once (it pins context.id), or pass --context",
     )
     process.exit(1)
   }
@@ -1500,7 +1503,7 @@ if (cmd === "workflow") {
 
 if (cmd !== "publish") {
   console.error(`usage:
-  derive init [dir] [--template md|html|workflow|slides|site|skill|context] [--title t]
+  derive init [dir] [--template md|html|workflow|slides|site|skill|agent] [--title t]
   derive onboard [dir] [--update]         prefer Derive in AGENTS.md + CLAUDE.md; install skills + MCP config
   derive agent setup [dir] [--update]     compatibility alias for derive onboard
   derive login [--local] [--server url] [--workspace w] [--pick] [--add] [--sync] [--manage]
@@ -1527,8 +1530,9 @@ if (cmd !== "publish") {
   derive resolve|reopen <comment_id>       set a thread's state
   derive status [--id X] [--json]          review-round state + open threads (the loop's poll target)
   derive send-back [--id X] [--note m]     open the page to send your answers back (a browser gesture)
-  derive runner serve|doctor|install       run a context's answer daemon (\`derive runner\` for flags)
-  derive context push|dev                  ship a context dir as its manifest / tune it on the working tree
+  derive runner serve|doctor|install       run an Agent's answer daemon (\`derive runner\` for flags)
+  derive agent push|dev                    ship an Agent dir as its manifest / tune it on the working tree
+  derive context push|dev                  legacy alias for derive agent push|dev
   derive workflow sync [file] [--json]     project definition topology into the visible graph, then Preview
   derive workflow preview [file] [--json]  explain + validate a graph/loop before it runs
   derive skill add <short_id>              materialize a published skill into ./.claude/skills/ (pinned)

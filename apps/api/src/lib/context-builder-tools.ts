@@ -28,14 +28,14 @@ export interface BuilderToolSurface extends ChatToolSurface {
 const DRAFT_TOOL: LoopTool = {
   name: "draft_manifest",
   description:
-    "Record the drafted context as a card for the person to review. Call again when they request a revision.",
+    "Record the drafted Agent as a card for the person to review. Call again when they request a revision.",
   params: jsonSchemaOf(ContextDraftSchema),
 }
 
 const CREATE_TOOL: LoopTool = {
   name: "create_context_from_draft",
   description:
-    "Create the context from the last confirmed draft. Drafts carry across turns; only draft again to change one.",
+    "Create the Agent from the last confirmed draft. Drafts carry across turns; only draft again to change one.",
   params: jsonSchemaOf(z.object({})),
 }
 
@@ -46,9 +46,9 @@ const PAUSED =
 
 const manifestDocument = (draft: ContextDraft): Uint8Array =>
   new TextEncoder().encode(
-    `<!-- This document is the instruction set for the "${draft.name}" context in Derive.\n` +
-      "     Agents read it to learn what the context knows and how it should answer.\n" +
-      "     Edit it like any document; the context uses the newest version. -->\n\n" +
+    `<!-- This document is the instruction set for the "${draft.name}" Agent in Derive.\n` +
+      "     It reads this to learn what it knows and how it should answer.\n" +
+      "     Edit it like any document; the Agent uses the newest version. -->\n\n" +
       draft.manifest_md,
   )
 

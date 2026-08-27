@@ -44,7 +44,7 @@ export function NewContextForm({
         ...(agentId ? { agent_id: agentId } : {}),
         manifest_short_id: manifest.trim(),
       }),
-    success: "Context created",
+    success: "Agent created",
     onSuccess: (ctx) => {
       const created = name.trim()
       setName("")
@@ -56,7 +56,7 @@ export function NewContextForm({
       }
       // Carry the user straight into the console they just made — asking the first
       // question is the point, not admiring a new row in the directory.
-      nav({ to: "/contexts/$id", params: { id: ctx.id } })
+      nav({ to: "/agents/$id", params: { id: ctx.id } })
     },
   })
   const submit = () => {
@@ -68,7 +68,7 @@ export function NewContextForm({
       <div className="flex flex-wrap items-center gap-2">
         <Input
           data-testid="context-create-name"
-          aria-label="Context name"
+          aria-label="Agent name"
           placeholder="Name (e.g. Analytics)"
           value={name}
           onChange={(e) => setName(e.target.value)}
@@ -122,7 +122,7 @@ export function NewContextForm({
                 <span className="text-2xs text-muted-foreground">
                   Save it where the runner reads it (e.g.{" "}
                   <code className="font-mono">.derive/agent-token</code>), then{" "}
-                  <code className="font-mono">derive runner serve</code> answers this context.
+                  <code className="font-mono">derive runner serve</code> answers this Agent.
                 </span>
               </div>
             }
@@ -143,7 +143,7 @@ export function NewContextForm({
                   onClick={() => {
                     const id = minted.contextId
                     setMinted(null)
-                    nav({ to: "/contexts/$id", params: { id } })
+                    nav({ to: "/agents/$id", params: { id } })
                   }}
                 >
                   Done

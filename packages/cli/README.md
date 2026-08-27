@@ -76,9 +76,9 @@ derive workflow preview workflow.html --json
 ```
 
 A ready preview exits `0`. A preview with blockers exits `1` and names the `WF-*` repairs. Preview
-does not execute nodes, call tools, or mutate external systems. It lists the context sessions that
-an explicit run would open; the connected Codex or Claude harness runs approved work through those
-existing Derive context sessions.
+does not execute nodes, call tools, or mutate external systems. It lists the Agent sessions that
+an explicit run would open; the connected Codex or Claude harness runs the work through those
+existing Derive sessions.
 
 ## Hosted and self-hosted servers
 
@@ -117,8 +117,8 @@ the complete contract.
 
 ## More commands
 
-The CLI also manages accounts and workspaces, pulls artifact source, scaffolds skills
-and contexts, and runs context workers. `derive --help` is the current command index;
+The CLI also manages accounts and workspaces, pulls artifact source, scaffolds skills and Agents,
+and runs Agent workers. `derive --help` is the current command index;
 the [Derive documentation](https://docs.derive.to/)
 explains the surrounding workflows.
 

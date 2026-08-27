@@ -68,7 +68,7 @@ export function WorkflowRunDialog({
         <DialogHeader>
           <DialogTitle>Run with your agent</DialogTitle>
           <DialogDescription>
-            Your Codex, Claude, or other agent runs the context sessions. Derive keeps the graph,
+            Your Codex, Claude, or other runner executes the Agent steps. Derive keeps the graph,
             artifacts, review, and receipts—it is not the runtime.
           </DialogDescription>
         </DialogHeader>
@@ -127,7 +127,7 @@ export function WorkflowRunDialog({
           )}
         </div>
         <p className="text-xs leading-relaxed text-muted-foreground">
-          Start & copy creates a fresh run for a Derive-connected local harness. A registered agent
+          Start & copy creates a fresh run for a Derive-connected local harness. An Agent connection
           receives the same instruction in its pull inbox and starts when it checks in.
         </p>
         <DialogFooter>
