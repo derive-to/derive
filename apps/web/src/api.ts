@@ -34,14 +34,10 @@ export interface Brandprint {
   useWorkspaceBrandprint?: boolean
 }
 
-export type ExportKind =
-  | "page_pdf"
-  | "chart_png"
-  | "chart_json"
-  | "chart_csv"
-  | "email"
-  | "deck_pdf"
-  | "deck_pptx"
+export type CreateExportInput = NonNullable<
+  paths["/v1/artifacts/{shortId}/exports"]["post"]["requestBody"]
+>["content"]["application/json"]
+export type ExportKind = CreateExportInput["kind"]
 export interface ExportJob {
   id: string
   artifact_id: string
@@ -830,19 +826,8 @@ export const api = {
       if (!r.ok) throw new Error(`HTTP ${r.status}`)
       return r.text()
     }),
-  createExport: (
-    id: string,
-    input: {
-      kind: ExportKind
-      version?: number
-      region?: string
-      dataSlot?: string
-      publicImage?: boolean
-      recipient?: string
-      note?: string
-      attachPdf?: boolean
-    },
-  ): Promise<ExportJob> => f(`/v1/artifacts/${id}/exports`, opts(input)).then(j),
+  createExport: (id: string, input: CreateExportInput): Promise<ExportJob> =>
+    f(`/v1/artifacts/${id}/exports`, opts(input)).then(j),
   listExports: (id: string): Promise<{ jobs: ExportJob[] }> =>
     f(`/v1/artifacts/${id}/exports`, opts()).then(j),
   exportStatus: (id: string): Promise<ExportJob> => f(`/v1/exports/${id}`, opts()).then(j),

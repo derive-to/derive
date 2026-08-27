@@ -1,5 +1,6 @@
 import { chromium } from "playwright"
 import { prepareDeckPrint } from "./lib/deck-print"
+import { prepareDeckCapture, selectDeckSlide, settleExportPage } from "./lib/export-render"
 import {
   assertNavigationOk,
   assertRenderedDocumentOk,
@@ -7,27 +8,6 @@ import {
   type Renderer,
   type ScreenshotOpts,
 } from "./previews"
-
-const settle = async (page: import("playwright").Page, exportMode: boolean): Promise<void> => {
-  if (!exportMode) return
-  await page.addStyleTag({
-    content:
-      "*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}[data-derive-export-transient],[data-derive-chrome],[role=tooltip]{display:none!important}[data-derive-export-region]{break-inside:avoid!important;page-break-inside:avoid!important}",
-  })
-  await page.evaluate(async () => {
-    await document.fonts?.ready
-    await Promise.all(
-      [...document.images].map((img) =>
-        img.complete ? Promise.resolve() : img.decode().catch(() => undefined),
-      ),
-    )
-  })
-  await page
-    .waitForFunction(() => document.documentElement.dataset.deriveExportReady === "true", null, {
-      timeout: 3_000,
-    })
-    .catch(() => undefined)
-}
 
 const open = async (page: import("playwright").Page, url: string, timeoutMs: number) => {
   const res = await page.goto(url, { waitUntil: "networkidle", timeout: timeoutMs })
@@ -55,7 +35,11 @@ export const playwrightRenderer = (): Renderer => ({
       })
       const page = await context.newPage()
       await open(page, url, opts.timeoutMs)
-      await settle(page, !!opts.exportMode)
+      if (opts.exportMode)
+        await settleExportPage(
+          (callback, input) => page.evaluate(callback, input),
+          (content) => page.addStyleTag({ content }),
+        )
       const buf = opts.selector
         ? await page.locator(opts.selector).first().screenshot({ type: "png" })
         : await page.screenshot({ type: "png", fullPage: !!opts.fullPage })
@@ -69,7 +53,10 @@ export const playwrightRenderer = (): Renderer => ({
     try {
       const page = await browser.newPage({ viewport: { width: 1280, height: 720 } })
       await open(page, url, opts.timeoutMs)
-      await settle(page, true)
+      await settleExportPage(
+        (callback, input) => page.evaluate(callback, input),
+        (content) => page.addStyleTag({ content }),
+      )
       if (opts.deck) {
         await prepareDeckPrint(
           (callback, input) => page.evaluate(callback, input),
@@ -96,23 +83,17 @@ export const playwrightRenderer = (): Renderer => ({
     try {
       const page = await browser.newPage({ viewport: { width: 1280, height: 720 } })
       await open(page, url, timeoutMs)
-      await settle(page, true)
-      await page.addStyleTag({
-        content:
-          "html,body{margin:0!important;width:1280px!important;height:720px!important;overflow:hidden!important}.stage{position:fixed!important;inset:0!important;transform:none!important;width:1280px!important;height:720px!important;border-radius:0!important}.zone,.rail,.count{display:none!important}",
-      })
-      const slides = page.locator("[data-derive-slide], .slide")
-      const count = await slides.count()
+      await settleExportPage(
+        (callback, input) => page.evaluate(callback, input),
+        (content) => page.addStyleTag({ content }),
+      )
+      const count = await prepareDeckCapture(
+        (callback, input) => page.evaluate(callback, input),
+        (content) => page.addStyleTag({ content }),
+      )
       const out: Uint8Array[] = []
       for (let i = 0; i < count; i++) {
-        await page.evaluate((at) => {
-          const all = [...document.querySelectorAll<HTMLElement>("[data-derive-slide], .slide")]
-          all.forEach((slide, n) => {
-            slide.style.setProperty("opacity", n === at ? "1" : "0", "important")
-            slide.style.setProperty("visibility", n === at ? "visible" : "hidden", "important")
-            slide.style.setProperty("transform", "none", "important")
-          })
-        }, i)
+        await selectDeckSlide((callback, input) => page.evaluate(callback, input), i)
         out.push(new Uint8Array(await page.screenshot({ type: "png" })))
       }
       return out

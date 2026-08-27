@@ -3,8 +3,10 @@ import {
   buildExportEmail,
   buildQaEmailCapture,
   csvFromJson,
+  EXPORT_LIMITS,
   type ExportOptions,
   imageBackedPptx,
+  isDataExport,
 } from "./lib/export-system"
 import { imageDimensions } from "./lib/image"
 import { signPreviewToken } from "./lib/preview-token"
@@ -13,7 +15,6 @@ import { log } from "./log"
 import { enqueueCoalescedChannelDelivery } from "./webhooks"
 
 export const EXPORT_CLAIM_LIMIT = 2
-const MAX_EXPORT_BYTES = 25 * 1024 * 1024
 const RETRY_BASE_MS = 5_000
 const CLAIM_LEASE_MS = 120_000
 const MAX_ATTEMPTS = 4
@@ -37,7 +38,8 @@ const output = async (
 ): Promise<string> => {
   const live = await deps.meta.getExportJob(job.id)
   if (live?.status === "cancelled") return ""
-  if (bytes.byteLength > MAX_EXPORT_BYTES) throw new Error("export exceeds the 25MB output limit")
+  if (bytes.byteLength > EXPORT_LIMITS.maxOutputBytes)
+    throw new Error("export exceeds the 25MB output limit")
   const key = await deps.blobs.put(bytes)
   if (publicAsset) {
     const size = type === "image/png" ? imageDimensions(bytes) : null
@@ -116,7 +118,7 @@ const processJob = async (deps: RenderTickDeps, job: ExportJobRecord): Promise<v
     return
   }
 
-  if (job.kind === "chart_json" || job.kind === "chart_csv") {
+  if (isDataExport(job.kind)) {
     if (!options.dataSlot) throw new Error("declared dataSlot is required")
     const row = (await deps.meta.getVersionData(artifact.id, job.version_n, options.dataSlot))[0]
     if (!row) throw new Error(`declared data slot not found: ${options.dataSlot}`)
@@ -210,7 +212,7 @@ const processJob = async (deps: RenderTickDeps, job: ExportJobRecord): Promise<v
     if (!deps.renderer.pdf) throw new Error("PDF rendering is not supported by this renderer")
     const pdf = await deps.renderer.pdf(url, { timeoutMs: RENDER_TIMEOUT_MS })
     const pdfKey = await deps.blobs.put(pdf)
-    if (pdf.byteLength <= 8 * 1024 * 1024)
+    if (pdf.byteLength <= EXPORT_LIMITS.maxEmailPdfAttachmentBytes)
       attachments.push({
         filename: "derive-export.pdf",
         contentType: "application/pdf",

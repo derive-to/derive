@@ -1,5 +1,6 @@
 import puppeteer, { type BrowserWorker } from "@cloudflare/puppeteer"
 import { prepareDeckPrint } from "./lib/deck-print"
+import { prepareDeckCapture, selectDeckSlide, settleExportPage } from "./lib/export-render"
 import {
   assertNavigationOk,
   assertRenderedDocumentOk,
@@ -7,41 +8,6 @@ import {
   type Renderer,
   type ScreenshotOpts,
 } from "./previews"
-
-type CfPage = Awaited<ReturnType<Awaited<ReturnType<typeof puppeteer.launch>>["newPage"]>>
-
-const settle = async (page: CfPage, exportMode: boolean): Promise<void> => {
-  if (!exportMode) return
-  await page.addStyleTag({
-    content:
-      "*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}[data-derive-export-transient],[data-derive-chrome],[role=tooltip]{display:none!important}[data-derive-export-region]{break-inside:avoid!important;page-break-inside:avoid!important}",
-  })
-  await page.evaluate(async () => {
-    const g = globalThis as unknown as {
-      document: {
-        fonts?: { ready: Promise<unknown> }
-        images: ArrayLike<{ complete: boolean; decode(): Promise<void> }>
-      }
-    }
-    await g.document.fonts?.ready
-    await Promise.all(
-      Array.from(g.document.images).map((img) =>
-        img.complete ? Promise.resolve() : img.decode().catch(() => undefined),
-      ),
-    )
-  })
-  await page
-    .waitForFunction(
-      () => {
-        const g = globalThis as unknown as {
-          document: { documentElement: { dataset: Record<string, string> } }
-        }
-        return g.document.documentElement.dataset.deriveExportReady === "true"
-      },
-      { timeout: 3_000 },
-    )
-    .catch(() => undefined)
-}
 
 /**
  * A Renderer backed by Cloudflare Browser Rendering. One warm browser per DO
@@ -78,7 +44,11 @@ export const cfBrowserRenderer = (binding: BrowserWorker): Renderer => ({
         }),
         url,
       )
-      await settle(page, !!opts.exportMode)
+      if (opts.exportMode)
+        await settleExportPage(
+          (callback, input) => page.evaluate(callback, input),
+          (content) => page.addStyleTag({ content }),
+        )
       const buf = opts.selector
         ? ((await (await page.$(opts.selector))?.screenshot({ type: "png" })) as
             | Uint8Array
@@ -99,7 +69,10 @@ export const cfBrowserRenderer = (binding: BrowserWorker): Renderer => ({
         await page.goto(url, { waitUntil: "networkidle0", timeout: opts.timeoutMs }),
         url,
       )
-      await settle(page, true)
+      await settleExportPage(
+        (callback, input) => page.evaluate(callback, input),
+        (content) => page.addStyleTag({ content }),
+      )
       if (opts.deck)
         await prepareDeckPrint(
           (callback, input) => page.evaluate(callback, input),
@@ -124,28 +97,17 @@ export const cfBrowserRenderer = (binding: BrowserWorker): Renderer => ({
         await page.goto(url, { waitUntil: "networkidle0", timeout: timeoutMs }),
         url,
       )
-      await settle(page, true)
-      await page.addStyleTag({
-        content:
-          "html,body{margin:0!important;width:1280px!important;height:720px!important;overflow:hidden!important}.stage{position:fixed!important;inset:0!important;transform:none!important;width:1280px!important;height:720px!important;border-radius:0!important}.zone,.rail,.count{display:none!important}",
-      })
-      const count = await page.$$eval("[data-derive-slide], .slide", (nodes) => nodes.length)
+      await settleExportPage(
+        (callback, input) => page.evaluate(callback, input),
+        (content) => page.addStyleTag({ content }),
+      )
+      const count = await prepareDeckCapture(
+        (callback, input) => page.evaluate(callback, input),
+        (content) => page.addStyleTag({ content }),
+      )
       const out: Uint8Array[] = []
       for (let i = 0; i < count; i++) {
-        await page.$$eval(
-          "[data-derive-slide], .slide",
-          (nodes, at) => {
-            for (const [n, node] of nodes.entries()) {
-              const style = (
-                node as unknown as { style: { setProperty(a: string, b: string, c: string): void } }
-              ).style
-              style.setProperty("opacity", n === at ? "1" : "0", "important")
-              style.setProperty("visibility", n === at ? "visible" : "hidden", "important")
-              style.setProperty("transform", "none", "important")
-            }
-          },
-          i,
-        )
+        await selectDeckSlide((callback, input) => page.evaluate(callback, input), i)
         out.push((await page.screenshot({ type: "png" })) as Uint8Array)
       }
       return out

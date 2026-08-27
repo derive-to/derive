@@ -12,6 +12,41 @@ export const EXPORT_KINDS = [
 ] as const
 export type ExportKind = (typeof EXPORT_KINDS)[number]
 
+const MIB = 1024 * 1024
+
+export const EXPORT_LIMITS = {
+  maxOutputBytes: 25 * MIB,
+  maxEmailPdfAttachmentBytes: 8 * MIB,
+  maxActiveJobsPerArtifact: 5,
+  estimatedBytes: {
+    page_pdf: 5 * MIB,
+    chart_png: 5 * MIB,
+    chart_json: 5 * MIB,
+    chart_csv: 5 * MIB,
+    email: 5 * MIB,
+    deck_pdf: 5 * MIB,
+    deck_pptx: 25 * MIB,
+  } satisfies Record<ExportKind, number>,
+} as const
+
+const EXPORT_PROFILES = {
+  page_pdf: "page-pdf",
+  chart_png: "chart",
+  chart_json: "data-json",
+  chart_csv: "data-csv",
+  email: "email-hero",
+  deck_pdf: "deck-pdf",
+  deck_pptx: "deck-pptx",
+} as const satisfies Record<ExportKind, string>
+
+export const isDataExport = (kind: ExportKind): boolean =>
+  kind === "chart_json" || kind === "chart_csv"
+
+export const isDeckExport = (kind: ExportKind): boolean =>
+  kind === "deck_pdf" || kind === "deck_pptx"
+
+export const requiresBrowserExport = (kind: ExportKind): boolean => !isDataExport(kind)
+
 export interface ExportOptions {
   region?: string
   dataSlot?: string
@@ -24,16 +59,7 @@ export interface ExportOptions {
   qaCapture?: boolean
 }
 
-export const profileFor = (kind: ExportKind): string =>
-  ({
-    page_pdf: "page-pdf",
-    chart_png: "chart",
-    chart_json: "data-json",
-    chart_csv: "data-csv",
-    email: "email-hero",
-    deck_pdf: "deck-pdf",
-    deck_pptx: "deck-pptx",
-  })[kind]
+export const profileFor = (kind: ExportKind): string => EXPORT_PROFILES[kind]
 
 export const normalizeExportOptions = (input: ExportOptions): ExportOptions => ({
   ...(input.region?.trim() ? { region: input.region.trim().slice(0, 200) } : {}),

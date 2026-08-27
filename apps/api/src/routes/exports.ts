@@ -3,10 +3,14 @@ import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
 import {
   EXPORT_KINDS,
+  EXPORT_LIMITS,
   exportInputHash,
+  isDataExport,
+  isDeckExport,
   isQaEmailRecipient,
   normalizeExportOptions,
   profileFor,
+  requiresBrowserExport,
 } from "../lib/export-system"
 import { bail, fail, toBody } from "../lib/http"
 
@@ -88,28 +92,24 @@ export const exportRoutes = (ctx: AppContext) => {
         title: artifact.title ?? undefined,
         ...(qaCapture ? { qaCapture: true } : {}),
       })
-      if ((body.kind === "chart_json" || body.kind === "chart_csv") && !options.dataSlot)
+      if (isDataExport(body.kind) && !options.dataSlot)
         return bail(fail(c, 400, "dataSlot is required for declared data export"))
       if (body.kind === "email" && !options.recipient)
         return bail(fail(c, 400, "recipient is required for email export"))
       if (qaCapture && options.recipient && !isQaEmailRecipient(options.recipient))
         return bail(fail(c, 400, "preview email capture requires a recipient under .test"))
-      if (
-        (body.kind === "deck_pdf" || body.kind === "deck_pptx") &&
-        version.content_type !== "text/x-derive-deck"
-      )
+      if (isDeckExport(body.kind) && version.content_type !== "text/x-derive-deck")
         return bail(fail(c, 400, "deck export requires a Derive deck"))
-      const requiresBrowser = !["chart_json", "chart_csv"].includes(body.kind)
-      if (requiresBrowser && !(deps.renderExports ?? deps.renderPreviews))
+      if (requiresBrowserExport(body.kind) && !(deps.renderExports ?? deps.renderPreviews))
         return bail(fail(c, 503, "export rendering is not configured"))
-      const estimatedBytes = body.kind === "deck_pptx" ? 25 * 1024 * 1024 : 5 * 1024 * 1024
-      if (await overStorage(artifact.org_id, estimatedBytes))
+      if (await overStorage(artifact.org_id, EXPORT_LIMITS.estimatedBytes[body.kind]))
         return bail(fail(c, 413, blockCopy.storage.message, { code: blockCopy.storage.code }))
       const recent = await meta.listExportJobs(artifact.id, user.id, 50)
       const active = recent.filter((job) =>
         ["pending", "rendering", "failed"].includes(job.status),
       ).length
-      if (active >= 5) return bail(fail(c, 429, "too many active exports; wait for one to finish"))
+      if (active >= EXPORT_LIMITS.maxActiveJobsPerArtifact)
+        return bail(fail(c, 429, "too many active exports; wait for one to finish"))
       const inputHash = await exportInputHash({
         artifactId: artifact.id,
         version: versionN,

@@ -1,8 +1,6 @@
-import { useQuery } from "@tanstack/react-query"
 import { useState } from "react"
 import { api, type ExportJob, type ExportKind } from "@/api"
 import { Icon } from "@/components/icons"
-import { StatusPanel } from "@/components/shared/status-panel"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -22,19 +20,8 @@ import {
 import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
 import { useApiMutation } from "@/lib/use-api-mutation"
-
-const LABELS: Record<ExportKind, string> = {
-  page_pdf: "Page PDF",
-  chart_png: "Chart image (PNG)",
-  chart_json: "Declared data (JSON)",
-  chart_csv: "Declared table (CSV)",
-  email: "Send as email",
-  deck_pdf: "Slide deck (PDF)",
-  deck_pptx: "Slide deck (PPTX)",
-}
-
-const active = (job: ExportJob) =>
-  job.status === "pending" || job.status === "rendering" || job.status === "failed"
+import { ExportJobList } from "./export-job-list"
+import { EXPORT_OPTIONS, exportChoices } from "./export-options"
 
 /** Fast client-side feedback only; the API remains authoritative. This mirrors the
  * browser's email input shape while keeping the dialog's button from bypassing
@@ -59,15 +46,8 @@ export function ExportButton({
   const [publicImage, setPublicImage] = useState(false)
   const [attachPdf, setAttachPdf] = useState(false)
   const recipientInvalid = !!recipient.trim() && !isValidExportRecipient(recipient)
-  const jobs = useQuery({
-    queryKey: ["exports", shortId],
-    queryFn: () => api.listExports(shortId),
-    enabled: open,
-    refetchInterval: (query) => (query.state.data?.jobs.some(active) ? 1_500 : false),
-  })
-  const choices: ExportKind[] = isDeck
-    ? ["deck_pdf", "deck_pptx", "page_pdf", "email"]
-    : ["page_pdf", "chart_png", "chart_json", "chart_csv", "email"]
+  const option = EXPORT_OPTIONS[kind]
+  const choices = exportChoices(isDeck)
 
   type CreateInput = Parameters<typeof api.createExport>[1]
   const create = useApiMutation<ExportJob, CreateInput>({
@@ -75,12 +55,6 @@ export function ExportButton({
     invalidate: [["exports", shortId]],
     success: (_, input) => (input.kind === "email" ? "Email is preparing" : "Export is preparing"),
   })
-  const cancel = useApiMutation<{ ok: true }, string>({
-    mutationFn: (id) => api.cancelExport(id),
-    invalidate: [["exports", shortId]],
-    pendingKey: (id) => id,
-  })
-
   const start = () =>
     create.mutate({
       kind,
@@ -88,8 +62,8 @@ export function ExportButton({
       ...(slot.trim() ? { dataSlot: slot.trim() } : {}),
       ...(recipient.trim() ? { recipient: recipient.trim() } : {}),
       ...(note.trim() ? { note: note.trim() } : {}),
-      ...(kind === "chart_png" || kind === "email" ? { publicImage } : {}),
-      ...(kind === "email" ? { attachPdf } : {}),
+      ...(option.supportsPublicImage ? { publicImage } : {}),
+      ...(option.email ? { attachPdf } : {}),
     })
 
   return (
@@ -115,14 +89,14 @@ export function ExportButton({
               <SelectContent>
                 {choices.map((choice) => (
                   <SelectItem key={choice} value={choice}>
-                    {LABELS[choice]}
+                    {EXPORT_OPTIONS[choice].label}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
           </div>
 
-          {(kind === "chart_json" || kind === "chart_csv") && (
+          {option.requiresDataSlot && (
             <div>
               <label className="mb-1.5 block text-sm font-medium" htmlFor="export-data-slot">
                 Declared data slot
@@ -140,7 +114,7 @@ export function ExportButton({
             </div>
           )}
 
-          {kind === "email" && (
+          {option.email && (
             <>
               <div>
                 <label className="mb-1.5 block text-sm font-medium" htmlFor="export-recipient">
@@ -209,7 +183,7 @@ export function ExportButton({
             </>
           )}
 
-          {(kind === "chart_png" || kind === "email") && (
+          {option.supportsPublicImage && (
             <p className="text-xs text-muted-foreground">
               Charts settle with motion disabled, fonts and images ready, and a bounded export-ready
               fallback.
@@ -221,115 +195,13 @@ export function ExportButton({
             onClick={start}
             disabled={
               create.isPending ||
-              (kind === "email" && (!recipient.trim() || recipientInvalid)) ||
-              ((kind === "chart_json" || kind === "chart_csv") && !slot.trim())
+              (option.email && (!recipient.trim() || recipientInvalid)) ||
+              (option.requiresDataSlot && !slot.trim())
             }
           >
-            {create.isPending ? "Starting…" : kind === "email" ? "Prepare & send" : "Create export"}
+            {create.isPending ? "Starting…" : option.email ? "Prepare & send" : "Create export"}
           </Button>
-
-          {jobs.isPending && open && (
-            <div className="text-sm text-muted-foreground" data-testid="exports-loading">
-              Loading recent exports…
-            </div>
-          )}
-          {jobs.isError && (
-            <StatusPanel
-              tone="danger"
-              layout="inline"
-              title="Couldn’t load recent exports"
-              action={
-                <Button
-                  data-testid="exports-retry"
-                  size="sm"
-                  variant="outline"
-                  onClick={() => jobs.refetch()}
-                >
-                  Try again
-                </Button>
-              }
-            />
-          )}
-          {!!jobs.data?.jobs.length && (
-            <div className="border-t border-border pt-4">
-              <div className="mb-2 text-sm font-medium">Recent exports</div>
-              <div className="flex max-h-48 flex-col gap-2 overflow-y-auto">
-                {jobs.data.jobs.map((job) => (
-                  <div
-                    key={job.id}
-                    data-testid={`export-job-${job.id}`}
-                    className="flex items-center gap-3 rounded-lg bg-secondary px-3 py-2"
-                  >
-                    <Icon
-                      name={
-                        job.status === "ready"
-                          ? "check"
-                          : job.status === "dead" || job.status === "failed"
-                            ? "report"
-                            : "history"
-                      }
-                      className="text-muted-foreground"
-                    />
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-sm">
-                        {LABELS[job.kind]} · v{job.version}
-                      </div>
-                      <div className="truncate text-xs text-muted-foreground">
-                        {job.status === "dead" || job.status === "failed"
-                          ? (job.error ?? "Export failed")
-                          : job.status}
-                      </div>
-                    </div>
-                    {job.download_url && job.kind !== "email" && (
-                      <Button
-                        data-testid={`export-download-${job.id}`}
-                        size="xs"
-                        variant="outline"
-                        asChild
-                      >
-                        <a href={job.download_url}>Download</a>
-                      </Button>
-                    )}
-                    {job.preview_url && (
-                      <Button
-                        data-testid={`export-preview-${job.id}`}
-                        size="xs"
-                        variant="outline"
-                        asChild
-                      >
-                        <a href={job.preview_url} target="_blank" rel="noreferrer">
-                          Preview email
-                        </a>
-                      </Button>
-                    )}
-                    {job.public_url && (
-                      <Button
-                        data-testid={`export-image-${job.id}`}
-                        size="xs"
-                        variant="ghost"
-                        asChild
-                      >
-                        <a href={job.public_url} target="_blank" rel="noreferrer">
-                          Image
-                        </a>
-                      </Button>
-                    )}
-                    {active(job) && (
-                      <Button
-                        data-testid={`export-cancel-${job.id}`}
-                        size="xs"
-                        variant="ghost"
-                        disabled={cancel.isPendingFor(job.id)}
-                        onClick={() => cancel.mutate(job.id)}
-                      >
-                        Cancel
-                      </Button>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+          <ExportJobList shortId={shortId} open={open} />
         </div>
       </DialogContent>
     </Dialog>
