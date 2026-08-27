@@ -13,6 +13,12 @@ import { sha256Hex } from "@derive/core"
 import { unzipSync } from "fflate"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import {
+  DECK_LAST_SLIDE_ATTRIBUTE,
+  DECK_PRINT_CSS,
+  markFinalDeckSlideForPrint,
+  prepareDeckPrint,
+} from "../src/lib/deck-print"
+import {
   buildExportEmail,
   buildQaEmailCapture,
   csvFromJson,
@@ -32,6 +38,47 @@ import {
 } from "../src/previews"
 
 describe("export contracts", () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it("marks the actual final deck slide even when deck chrome follows it", async () => {
+    const attrs = [new Set<string>(), new Set<string>(), new Set<string>()]
+    const nodes = attrs.map((attributes) => ({
+      removeAttribute: (name: string) => attributes.delete(name),
+      setAttribute: (name: string) => attributes.add(name),
+    }))
+    const chrome = { role: "counter" }
+    vi.stubGlobal("document", {
+      querySelectorAll: () => nodes,
+      body: { children: [...nodes, chrome] },
+    })
+
+    expect(
+      markFinalDeckSlideForPrint({
+        selector: "[data-derive-slide], .slide",
+        attribute: DECK_LAST_SLIDE_ATTRIBUTE,
+      }),
+    ).toBe(3)
+    expect(attrs.map((attributes) => attributes.has(DECK_LAST_SLIDE_ATTRIBUTE))).toEqual([
+      false,
+      false,
+      true,
+    ])
+    expect(DECK_PRINT_CSS).toContain(
+      `[${DECK_LAST_SLIDE_ATTRIBUTE}]{page-break-after:auto!important;break-after:auto!important}`,
+    )
+
+    let installedCss = ""
+    expect(
+      await prepareDeckPrint(
+        async (callback, input) => callback(input),
+        async (css) => {
+          installedCss = css
+        },
+      ),
+    ).toBe(3)
+    expect(installedCss).toBe(DECK_PRINT_CSS)
+  })
+
   it("makes export-only renderer isolation explicit and fail-closed on the exact flag", () => {
     expect(previewRendererWorkMode({ DERIVE_EXPORTS_ONLY: "true" })).toBe("exports-only")
     expect(previewRendererWorkMode({ DERIVE_EXPORTS_ONLY: "false" })).toBe("full")

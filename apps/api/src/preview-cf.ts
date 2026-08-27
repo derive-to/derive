@@ -1,4 +1,5 @@
 import puppeteer, { type BrowserWorker } from "@cloudflare/puppeteer"
+import { prepareDeckPrint } from "./lib/deck-print"
 import {
   assertNavigationOk,
   assertRenderedDocumentOk,
@@ -100,10 +101,10 @@ export const cfBrowserRenderer = (binding: BrowserWorker): Renderer => ({
       )
       await settle(page, true)
       if (opts.deck)
-        await page.addStyleTag({
-          content:
-            "@page{size:13.333333in 7.5in;margin:0}html,body{width:1280px!important;margin:0!important;padding:0!important;overflow:visible!important}.stage{position:static!important;transform:none!important;width:1280px!important;height:auto!important;overflow:visible!important}.slide,[data-derive-slide]{position:relative!important;inset:auto!important;display:flex!important;opacity:1!important;visibility:visible!important;transform:none!important;width:1280px!important;height:720px!important;page-break-after:always!important;break-after:page!important}.zone,.rail,.count{display:none!important}",
-        })
+        await prepareDeckPrint(
+          (callback, input) => page.evaluate(callback, input),
+          (content) => page.addStyleTag({ content }),
+        )
       await page.emulateMediaType("print")
       return (await page.pdf({
         printBackground: true,
