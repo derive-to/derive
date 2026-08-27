@@ -194,6 +194,29 @@ describe("access request", () => {
   // the dedupe. Comparing two cheap early exits would pass while the expensive branch
   // leaked. Headers are compared too: an earlier draft called `limited()` here, which
   // writes Retry-After into the Hono context, and the header rode out on the 202.
+  // Both refusals are real and reachable, and neither depends on the artifact — an
+  // anonymous caller never reaches the route at all (the app-wide anon-write guard),
+  // while a static agent token is a principal with no account to grant to. Documented
+  // as only one of the two once already; the served spec is what agents build against.
+  it("refuses an anonymous caller and a human-less token differently, and says so", async () => {
+    const anon = await app.request(`/v1/artifacts/${shortId}/access-request`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    })
+    expect(anon.status).toBe(403)
+    // Identical for an id that does not exist: the guard runs before any lookup.
+    expect(
+      (
+        await app.request("/v1/artifacts/zzzz9999/access-request", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: "{}",
+        })
+      ).status,
+    ).toBe(403)
+  })
+
   it("answers a missing artifact exactly as it answers a forbidden one", async () => {
     const forbidden = await ask(shortId, second.email)
     const missing = await ask("zzzz9999", second.email)

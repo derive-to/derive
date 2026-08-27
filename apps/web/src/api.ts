@@ -896,9 +896,12 @@ export const api = {
   // Ask whoever can share this artifact to grant access. Resolves 202 for every
   // outcome once authenticated — missing, forbidden, already readable, already asked —
   // because the server refuses to distinguish them. So the caller must not promise the
-  // UI more than "we passed it on". Rejects only when not signed in (401) or when the
-  // note is over ACCESS_REQUEST_NOTE_MAX (400) — neither depends on the artifact, so
-  // neither distinguishes a real one from a fabricated id.
+  // UI more than "we passed it on". The three refusals are 403 (no credential — the
+  // app-wide anon-write guard, before the route), 401 (a principal with no human, i.e.
+  // a static agent token) and 400 (note over ACCESS_REQUEST_NOTE_MAX). None of them
+  // depends on the artifact, so none distinguishes a real one from a fabricated id.
+  // The wall only offers this to a signed-in viewer, so 403 should not be reachable
+  // from the UI.
   requestArtifactAccess: (id: string, note?: string): Promise<{ ok: true }> =>
     f(`/v1/artifacts/${id}/access-request`, opts(note ? { note } : {})).then(j),
 

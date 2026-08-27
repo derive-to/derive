@@ -168,7 +168,14 @@ export const sharingRoutes = (ctx: AppContext) => {
           content: { "application/json": { schema: z.object({ ok: z.literal(true) }) } },
         },
         400: { description: "The note is longer than the limit." },
-        401: { description: "Not signed in — a grant needs an identity to attach to." },
+        401: {
+          description:
+            "Authenticated as a principal with no human behind it (a static agent token). A grant needs an account to attach to.",
+        },
+        403: {
+          description:
+            "No credential at all. Anonymous writes to /v1/* are refused app-wide, before this route is reached.",
+        },
       },
     }),
     async (c) => {

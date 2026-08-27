@@ -2042,8 +2042,15 @@ export interface paths {
                     };
                     content?: never;
                 };
-                /** @description Not signed in — a grant needs an identity to attach to. */
+                /** @description Authenticated as a principal with no human behind it (a static agent token). A grant needs an account to attach to. */
                 401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description No credential at all. Anonymous writes to /v1/* are refused app-wide, before this route is reached. */
+                403: {
                     headers: {
                         [name: string]: unknown;
                     };
