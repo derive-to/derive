@@ -67,9 +67,9 @@ and publish the next version at the same URL.
 The content, version history, and comments stay with each artifact. A teammate or another agent
 can open the same URL and see what changed without reconstructing the work from a chat.
 
-A workspace can also run **contexts**: agents that answer questions from connected data and
-publish cited results to the same library. Their results use the same URLs, versions, comments,
-and access controls as other artifacts.
+A workspace can also keep **Agents**: reusable workers with instructions, skills, sources,
+permissions, and an execution connection. They answer questions, take on work, and publish results
+to the same artifact library.
 
 Derive is Fair Source and self-hostable. Run it as one container on your own infrastructure or
 use the hosted app.
@@ -124,10 +124,10 @@ shared with you, and organize related artifacts in collections.
 
 Also included:
 
-- **Portable context.** Content, versions, and comments stay with the artifact so another person
+- **Portable work.** Content, versions, and comments stay with the artifact so another person
   or agent can continue the work.
-- **Contexts.** Ask an agent questions about connected data and publish cited answers with the
-  workspace's access controls.
+- **Agents.** Reuse the same instructions, skills, sources, permissions, and run history across
+  questions and delegated work.
 - **Checkpoints.** Save the state of ongoing work in a page that a later session can open.
 - **Sandboxed viewer.** Artifacts run on an opaque origin, isolated from cookies and other artifacts.
 - **Flexible storage.** Use SQLite and local disk, or Postgres and S3/R2 at scale.
@@ -219,7 +219,7 @@ apps/web          web UI (TanStack Start, SPA mode, static bundle)
 packages/core     domain: ports, publish, markdown render, viewer shell
 packages/db       MetaStore: sqlite (default) · postgres · d1
 packages/storage  BlobStore: fs (default) · s3/r2
-packages/cli      derive init (md/html/slides) · derive publish <file|dir> · derive runner serve (host a context)
+packages/cli      derive init (md/html/slides) · derive publish <file|dir> · derive runner serve (run an Agent)
 packages/mcp      Local compatibility MCP: eight agent tools + derive://guide
 ```
 

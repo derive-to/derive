@@ -16,10 +16,8 @@ export function ContextRowsSkeleton() {
   )
 }
 
-// Shape-matched pending frame for the /contexts route: the header block + card
-// silhouettes, so the cold-load window reads as "contexts, loading" rather than the
-// generic app boot or a blank flash.
-export function ContextsPending() {
+// Match the directory layout during its initial query.
+export function AgentsPending() {
   return (
     <PageShell className="flex flex-col gap-6">
       <div className="flex flex-col gap-1">

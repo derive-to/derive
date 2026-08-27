@@ -469,7 +469,7 @@ export const defaultConfig = (title = "My artifact", entry = "index.md") => ({
   id: null,
 })
 
-export const TEMPLATES = ["md", "html", "workflow", "slides", "site", "skill", "context"]
+export const TEMPLATES = ["md", "html", "workflow", "slides", "site", "skill", "agent"]
 
 /** Read derive.json from `dir`, or null if absent. Throws on malformed JSON. */
 export function loadConfig(dir = ".") {
@@ -636,11 +636,9 @@ const STARTERS = {
       "skill/references/example.md": STARTER_SKILL_REFERENCE,
     }),
   },
-  // A Derive context: one directory that is the runner's whole world — MANIFEST.md
-  // (the system prompt), references/ (docs the model reads from disk), .mcp.json
-  // (the context's data-source tools), and .env (secrets — stays local, always).
-  // `derive context push` ships everything in it except .env*.
-  context: {
+  // Agent projects contain instructions, local references, MCP configuration, and an
+  // ignored environment file. `derive agent push` excludes `.env*`.
+  agent: {
     entry: "context",
     files: (t) => ({
       "context/MANIFEST.md": starterManifest(t),
@@ -649,8 +647,7 @@ const STARTERS = {
       "context/.env.example": STARTER_CONTEXT_ENV,
       ".gitignore": CONTEXT_GITIGNORE,
     }),
-    // The context block pins the server-side wiring (context id, agent id) the
-    // way `id` pins the artifact — filled in by the first `derive context push`.
+    // The persisted key remains `context` for derive.json compatibility.
     extend: (config, title) => ({ ...config, context: { id: null, agent_id: null, name: title } }),
   },
 }
@@ -662,7 +659,9 @@ const STARTERS = {
  * locations, plus each client's project MCP config.
  */
 export function scaffoldFiles(title = "My artifact", template = "md") {
-  const t = STARTERS[template] ?? STARTERS.md
+  // Accept the original template name without advertising it in new help output.
+  const canonicalTemplate = template === "context" ? "agent" : template
+  const t = STARTERS[canonicalTemplate] ?? STARTERS.md
   const config = t.extend
     ? t.extend(defaultConfig(title, t.entry), title)
     : defaultConfig(title, t.entry)
@@ -797,11 +796,12 @@ export const DERIVE_SCHEMA = {
     },
     context: {
       type: "object",
-      description: "Context wiring (context projects only); ids are set by the first push.",
+      description:
+        "Agent wiring (stored under the compatibility key `context`); ids are set by the first push.",
       properties: {
         id: { type: ["string", "null"], description: "Context id (ctx_…)." },
-        agent_id: { type: ["string", "null"], description: "The answering agent's id (ag_…)." },
-        name: { type: "string", description: "Context name shown to askers." },
+        agent_id: { type: ["string", "null"], description: "Execution connection id (ag_…)." },
+        name: { type: "string", description: "Agent name shown to askers." },
       },
     },
   },
@@ -1047,18 +1047,18 @@ the query used when a number came from one.
 
 const STARTER_CONTEXT_REFERENCE = `# Reference
 
-Files here travel with \`derive context push\` (versioned alongside the manifest)
+Files here travel with \`derive agent push\` (versioned alongside the manifest)
 and sit in the runner's working directory — the manifest should point at them by
 relative path. Schema notes, metric definitions, worked examples: the long tail
 that would bloat MANIFEST.md lives here.
 `
 
-const STARTER_CONTEXT_ENV = `# Secrets the context's MCP servers need (see .mcp.json). Copy to .env and fill
+const STARTER_CONTEXT_ENV = `# Secrets the Agent's MCP servers need (see .mcp.json). Copy to .env and fill
 # in — .env stays on this machine: push excludes it and .gitignore covers it.
 # EXAMPLE_API_KEY=
 `
 
-const CONTEXT_GITIGNORE = `# Secrets never leave the machine: .env holds the context's credentials, .derive/
+const CONTEXT_GITIGNORE = `# Secrets never leave the machine: .env holds the Agent's credentials, .derive/
 # holds the agent token minted by the first push. repos/ is the runner's clone
 # workspace — pointer state, never source.
 context/.env
@@ -1224,7 +1224,7 @@ const starterWorkflow = (title) => {
             id: "context-failure",
             kind: "failure",
             path: ["draft"],
-            outcome: "The failed context session stays visible and the run stops",
+            outcome: "The failed Agent session stays visible and the run stops",
           },
           {
             id: "revision",
@@ -1259,11 +1259,11 @@ const starterWorkflow = (title) => {
   <p class="sub">A graph-first Derive workflow. The visible graph and runnable definition use
   the same stable IDs for different jobs.</p>
   <div class="flow">
-    <div class="node"><b>Draft</b><br>One context produces a complete result.</div><div class="arrow">→</div>
-    <div class="node"><b>Quality check</b><br>Another context returns ready or revise.</div><div class="arrow">→</div>
+    <div class="node"><b>Draft</b><br>One Agent produces a complete result.</div><div class="arrow">→</div>
+    <div class="node"><b>Quality check</b><br>Another Agent returns ready or revise.</div><div class="arrow">→</div>
     <div class="node"><b>Publish</b><br>The ready result is published to Derive.</div>
   </div>
-  <p class="note">The revise route is bounded to two attempts. Edit the outcome and context
+  <p class="note">The revise route is bounded to two attempts. Edit the outcome and Agent
   references below, then run <code>derive workflow sync workflow.html</code>. Sync projects the
   definition into the visible graph and runs Preview; it never starts the workflow.</p>
 <script type="application/derive-facts" data-fact="bundle-manifest">

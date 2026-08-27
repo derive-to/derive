@@ -58,7 +58,7 @@ const RunPath = ({ diagram }: { diagram: PreviewDiagram }) => (
   <section className="min-w-0">
     <h3 className="text-sm font-semibold text-foreground">The run</h3>
     <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-      One context session per step. Later steps start only when their stated condition is met.
+      One Agent session per step attempt. Later steps start only when their stated condition is met.
     </p>
     {diagram.context_sessions.length ? (
       <ol className="mt-3 grid gap-2">
@@ -93,7 +93,7 @@ const RunPath = ({ diagram }: { diagram: PreviewDiagram }) => (
       </ol>
     ) : (
       <p className="mt-3 rounded-lg border border-border-soft bg-background/45 p-3 text-xs text-muted-foreground">
-        This workflow completes without starting a context session.
+        This workflow completes without delegating a step to an Agent.
       </p>
     )}
   </section>

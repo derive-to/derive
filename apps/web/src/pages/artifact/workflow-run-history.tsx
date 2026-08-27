@@ -19,7 +19,7 @@ const statusLabel = (status: WorkflowRunSummary["status"]): string =>
 type WorkflowAttempt = WorkflowRunSummary["attempts"][number]
 
 const attemptKindLabel = (kind: WorkflowAttempt["kind"]): string => {
-  if (kind === "context") return "Context"
+  if (kind === "context") return "Agent"
   if (kind === "human") return "Human pause"
   return "Terminal"
 }

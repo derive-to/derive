@@ -336,7 +336,9 @@ export function registerAutomateTool(tc: ToolContext): void {
         if (!reached || "error" in reached || reached.a.org_id !== org)
           return json({ error: "no such manifest artifact in this workspace" })
         if (!roleAllows(reached.role, "share"))
-          return json({ error: "creating a context needs share standing on the manifest" })
+          return json({
+            error: "creating an Agent needs share standing on its instruction artifact",
+          })
         // The pin count the REST create already reports (routes/contexts.ts, skills_count):
         // skills load ONLY from the frontmatter `skills:` list (parseManifestSkillPins), and
         // a prose derive://skills/... mention does nothing — so a manifest whose body names
@@ -370,12 +372,12 @@ export function registerAutomateTool(tc: ToolContext): void {
               ? {
                   skills_hint:
                     "The manifest body mentions derive://skills/... but its frontmatter pins " +
-                    "none, so this context loads no skills. Skills must be pinned in " +
+                    "none, so this Agent loads no skills. Skills must be pinned in " +
                     "frontmatter: skills:\n  - id: <skill short_id>",
                 }
               : {}),
             note:
-              "No token is returned over MCP. You (an owner) run this context directly: " +
+              "No token is returned over MCP. You (an owner) run this Agent directly: " +
               "use({context}) pulls its queued work. A dedicated runner's token comes from " +
               "REST agent rotate.",
           })
@@ -385,7 +387,7 @@ export function registerAutomateTool(tc: ToolContext): void {
           // already succeeded and the context insert did not. Anything else — the mint itself
           // failing, say — is not a naming problem and must not be reported as one.
           if (!(err instanceof ContextConflictError)) throw err
-          return json({ error: "a context with that name already exists" })
+          return json({ error: "an Agent with that name already exists" })
         }
       }
 

@@ -54,7 +54,7 @@ const SECTIONS: { id: string; label: string; group: (typeof GROUP_ORDER)[number]
   { id: "sources", label: "Sources", group: "Workspace" },
   { id: "brandprint", label: "Brandprint", group: "Workspace" },
   { id: "webhooks", label: "Webhooks", group: "Workspace" },
-  { id: "agents", label: "Agents", group: "Workspace" },
+  { id: "agents", label: "Agent connections", group: "Workspace" },
   { id: "automations", label: "Automations", group: "Workspace" },
   { id: "domains", label: "Domains", group: "Workspace" },
   { id: "models", label: "Models", group: "Operator" },

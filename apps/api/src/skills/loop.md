@@ -94,21 +94,23 @@ there before building a `create` that will be refused.
     on inside the instruction; a run cannot infer "the report we discussed".
   - `refs` says what it acts on: artifact short ids, `{kind:"artifact",id}`, or
     `{kind:"tag",tag}` for a set. A run's write publishes as a new version of its target.
-  - `context_id` binds the run to a context, and that context's agent acts. Omit it and Derive
-    mints a managed agent for the automation.
+  - `context_id` binds the run to an Agent, and that Agent handles the work. The field keeps its
+    compatibility name; there is no separate Context product. Omit it and Derive mints a managed
+    execution connection for the automation.
   - `provider` picks the executing coding agent (`claude-code` by default, or `codex`).
 - **`run_now`** fires one by `automation_id`. A disabled automation, or one whose workspace has
   no way to pay for the run, is refused here rather than queued and dropped.
 - **`record`** logs a run this session executed LOCALLY, so it lands in the same ledger as hosted
   runs: `outcome`, an optional `note`, and `wrote` for the short_ids it published. Only
   `outcome:"failed"` marks the run failed.
-- **`create_context`** wires a new context to a manifest artifact (`name` + `manifest_short_id`),
+- **`create_context`** wires a new Agent to a manifest artifact (`name` + `manifest_short_id`),
   which needs share standing on that manifest. Skills load **only** from the manifest's
   frontmatter `skills:` list. Naming one in the body pins nothing, and the response says so
-  when it spots that mistake. The context's `dk_agt_` token is deliberately not returned here.
+  when it spots that mistake. The action and returned `context_id` keep their compatibility names.
+  The Agent execution connection's `dk_agt_` token is deliberately not returned here.
 
 `list_automations` takes no arguments and returns each automation's id, truncated instruction,
-bound context, provider and enabled flag, plus the beta-gate state described above.
+bound Agent, provider and enabled flag, plus the beta-gate state described above.
 
 Automations are not the way to answer a comment or ship one revision; that is the loop above.
 Reach for one when the same instruction should run again without anyone remembering to start it.

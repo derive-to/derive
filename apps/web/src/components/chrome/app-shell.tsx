@@ -333,7 +333,7 @@ function PageLabel({ pathname }: { pathname: string }) {
   if (pathname === "/new") return "New artifact"
   if (pathname.startsWith("/templates")) return "Templates"
   if (pathname.startsWith("/template-libraries")) return "Template library"
-  if (pathname.startsWith("/contexts")) return "Contexts"
+  if (pathname.startsWith("/agents") || pathname.startsWith("/contexts")) return "Agents"
   if (pathname === "/chat") return "Chat"
   if (pathname.startsWith("/settings")) return "Settings"
   if (pathname.startsWith("/artifacts/")) return "Artifact"

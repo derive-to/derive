@@ -507,7 +507,7 @@ test("the current page keeps its selected state under the pointer", async ({ own
   expect(await bgOf(current), "the active row changed colour on hover").toBe(currentRest)
 
   // …and the scoping didn't just disable hover everywhere: an idle row still washes.
-  const idle = owner.getByTestId("nav-contexts")
+  const idle = owner.getByTestId("nav-agents")
   const idleRest = await bgOf(idle)
   await idle.hover()
   await owner.waitForTimeout(400)

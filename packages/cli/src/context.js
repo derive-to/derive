@@ -1,6 +1,4 @@
-// Server wiring for `derive context push`: mint the answering agent and create
-// the context on first push. Both are idempotent from derive.json's point of
-// view — once the ids are pinned there, pushes are pure artifact versions.
+// First-push server wiring for an Agent. Persisted ids make later pushes artifact-only.
 import { mkdirSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 
@@ -27,8 +25,8 @@ export async function createAgent(server, token, name) {
       `this token can't manage agents (${res.status}).\n` +
         `  If you're a workspace admin: re-run \`derive login --manage\` (the manage grant is opt-in).\n` +
         `  Otherwise, wire it once in the console:\n` +
-        `    1. ${server} → Settings → Agents → New agent ("${name}", role editor); save its token to .derive/agent-token\n` +
-        `    2. ${server} → Contexts → New context → pick the agent + this manifest\n` +
+        `    1. ${server} → Settings → Agent connections → Add connection ("${name}", role editor); save its token to .derive/agent-token\n` +
+        `    2. ${server} → Agents → New agent → pick the connection + this manifest\n` +
         `    3. put the agent id in derive.json (context.agent_id) and the context id in context.id\n` +
         `  After that, every push is just a manifest version — no wiring, no console.`,
     )
@@ -52,7 +50,7 @@ export async function createContext(server, token, { name, agent_id, manifest_sh
   if (res.ok) return json
   if (res.status === 401)
     throw new Error(
-      `this token can't create contexts (401) — create it once in the console (${server} → Contexts → New, agent + manifest ${manifest_short_id}), then set context.id in derive.json`,
+      `this token can't create Agents (401) — create it once in the console (${server} → Agents → New agent, connection + manifest ${manifest_short_id}), then set context.id in derive.json`,
     )
   if (res.status === 409) {
     const list = await fetch(`${server}/v1/contexts`, {
@@ -63,10 +61,10 @@ export async function createContext(server, token, { name, agent_id, manifest_sh
     )
     if (existing) return existing
     throw new Error(
-      `a context named "${name}" already exists with a different manifest — rename in derive.json (context.name) or delete the old context`,
+      `an Agent named "${name}" already exists with a different manifest — rename it in derive.json (context.name) or delete the old Agent`,
     )
   }
-  throw new Error(`context creation failed (${res.status}): ${json.error ?? "unknown"}`)
+  throw new Error(`Agent creation failed (${res.status}): ${json.error ?? "unknown"}`)
 }
 
 /** Persist the agent token where the runner's --token-file expects it: outside
