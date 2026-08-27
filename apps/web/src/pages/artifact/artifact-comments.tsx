@@ -59,11 +59,10 @@ export function ArtifactComments(p: {
   canComment: boolean
   /** The suggestion / locked one-liners shown above the stream. */
   hints?: ReactNode
-  /** What the activity stream is built from besides the comments: the versions (and
-   *  the server's time-clustered sessions), the review rounds, and the reader's last
-   *  visit. The page owns the version jump and the send-back write. */
+  /** What the activity stream is built from besides the comments: the versions, the
+   *  review rounds, and the reader's last visit. The page owns the version jump and the
+   *  send-back write. */
   versions: Artifact["versions"]
-  sessions?: Artifact["sessions"]
   currentVersion: number
   rounds: ReviewRound[]
   pendingRound: ReviewRound | null
@@ -132,7 +131,6 @@ export function ArtifactComments(p: {
   // kind, a round's requester) — nothing here is looked up by name.
   const items = buildStream({
     versions: p.versions,
-    sessions: p.sessions,
     comments: p.comments,
     rounds: p.rounds,
     meId: p.meId,

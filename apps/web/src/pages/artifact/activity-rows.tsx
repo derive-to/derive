@@ -1,3 +1,4 @@
+import { RotateCcw } from "lucide-react"
 import type { Comment } from "@/api"
 import { Icon } from "@/components/icons"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
@@ -15,6 +16,8 @@ import {
   stamp,
   type TurnItem,
 } from "./lib/activity"
+import { useCommentScope } from "./lib/comment-scope"
+import { useCommentTree } from "./lib/comment-tree"
 import { quoteChipClass } from "./quote-chip"
 
 // The stream's line grammar: a 20px glyph column (who, or what), the sentence, and a
@@ -62,11 +65,15 @@ const clock = (iso: string) =>
 // (each a jump to that version), the review note and its Answer, the reply body.
 function DetailRow({
   row,
+  solo,
   currentVersion,
   onGoToVersion,
   onJump,
 }: {
   row: ActivityRow
+  /** The turn's only row: its line already says what this is, so only the payload
+   *  (the note, the reply) shows — never the same phrase twice. */
+  solo: boolean
   currentVersion: number
   onGoToVersion: (n: number) => void
   onJump: (threadId: string) => void
@@ -112,12 +119,14 @@ function DetailRow({
       if (row.pending) return null
       return (
         <div className="flex flex-col gap-1.5">
-          <div className={head}>
-            <Icon name="review" className="shrink-0" />
-            <span className="min-w-0 truncate">
-              Asked for your review of <span className="font-mono text-xs">v{row.version}</span>
-            </span>
-          </div>
+          {!solo && (
+            <div className={head}>
+              <Icon name="review" className="shrink-0" />
+              <span className="min-w-0 truncate">
+                Asked for your review of <span className="font-mono text-xs">v{row.version}</span>
+              </span>
+            </div>
+          )}
           {row.note && (
             <p
               className={quoteChipClass({
@@ -132,12 +141,14 @@ function DetailRow({
     case "review_sent_back":
       return (
         <div className="flex flex-col gap-1.5">
-          <div className={head}>
-            <Icon name="check" className="shrink-0 text-success" />
-            <span className="min-w-0 truncate">
-              Sent <span className="font-mono text-xs">v{row.version}</span> back
-            </span>
-          </div>
+          {!solo && (
+            <div className={head}>
+              <Icon name="check" className="shrink-0 text-success" />
+              <span className="min-w-0 truncate">
+                Sent <span className="font-mono text-xs">v{row.version}</span> back
+              </span>
+            </div>
+          )}
           {row.note && (
             <p
               className={quoteChipClass({
@@ -161,10 +172,12 @@ function DetailRow({
             FOCUS,
           )}
         >
-          <span className={head}>
-            <Icon name="comments" className="shrink-0" />
-            <span className="truncate">Replied in {row.threadAuthor}'s thread</span>
-          </span>
+          {!solo && (
+            <span className={head}>
+              <Icon name="comments" className="shrink-0" />
+              <span className="truncate">Replied in {row.threadAuthor}'s thread</span>
+            </span>
+          )}
           <span className="line-clamp-2 text-sm text-foreground [word-break:break-word]">
             {row.body}
           </span>
@@ -303,6 +316,7 @@ export function TurnRow({
               <DetailRow
                 key={r.id}
                 row={r}
+                solo={turn.rows.length === 1}
                 currentVersion={currentVersion}
                 onGoToVersion={onGoToVersion}
                 onJump={onJump}
@@ -332,8 +346,11 @@ export function ResolvedRow({
   open: boolean
   onToggle: () => void
 }) {
+  const { canComment } = useCommentScope()
+  const { onResolve } = useCommentTree()
   const root = thread[0]
   if (!root) return null
+  const res = root.resolution
   return (
     <div className="flex flex-col gap-1 py-0.5">
       <button
@@ -360,24 +377,36 @@ export function ResolvedRow({
       </button>
       {open && (
         <>
-          {/* Its settling, from the root's record — who, by which version, when. A thread
-              settled before the record was kept shows only the card. */}
-          {root.resolution && (
-            <div
-              data-testid="thread-resolution"
-              className="flex items-center gap-1.5 pl-7 text-xs text-muted-foreground"
-            >
-              <Icon name="check" size={12} className="text-success" />
-              <span className="min-w-0 truncate">
-                Resolved{root.resolution.by ? ` by ${root.resolution.by}` : ""}
-                {root.resolution.version != null ? ` in v${root.resolution.version}` : ""}
-              </span>
-              <span className="font-mono text-2xs tabular-nums">
-                {stamp(root.resolution.at, now)}
-              </span>
-            </div>
-          )}
-          <CommentCard thread={thread} />
+          {/* The record line: its settling — who, by which version, when — and the one
+              action a settled thread has. State is said here and nowhere in the card
+              below (`settled`): the card is just the conversation. */}
+          <div
+            data-testid="thread-resolution"
+            className="flex items-center gap-1.5 pl-7 text-xs text-muted-foreground"
+          >
+            <Icon name="check" size={12} className="shrink-0 text-success" />
+            <span className="min-w-0 truncate">
+              Resolved{res?.by ? ` by ${res.by}` : ""}
+              {res?.version != null ? ` in v${res.version}` : ""}
+            </span>
+            {res && (
+              <span className="shrink-0 font-mono text-2xs tabular-nums">{stamp(res.at, now)}</span>
+            )}
+            <span className="flex-1" />
+            {canComment && (
+              <Button
+                variant="ghost"
+                size="xs"
+                data-testid="comment-reopen"
+                className="-my-1 -mr-1 text-muted-foreground hover:text-foreground"
+                onClick={() => onResolve(root)}
+              >
+                <RotateCcw aria-hidden className="size-3.5" />
+                Reopen
+              </Button>
+            )}
+          </div>
+          <CommentCard thread={thread} settled />
         </>
       )}
     </div>

@@ -1,18 +1,26 @@
 import { describe, expect, it } from "vitest"
 import type { Artifact, Comment, ReviewRound } from "@/api"
-import { buildStream, countUnread, hasDetail, leadRow, phrase, sectionOf, stamp } from "./activity"
+import {
+  buildStream,
+  countUnread,
+  hasDetail,
+  leadRow,
+  phrase,
+  sectionOf,
+  stamp,
+  type TurnItem,
+} from "./activity"
 
 // A fixed clock: Aug 27, 2026, 15:00 local.
 const NOW = new Date(2026, 7, 27, 15, 0).getTime()
-const at = (daysAgo: number, hour = 12, minute = 0) => {
+const at = (daysAgo: number, hour = 12, minute = 0, second = 0) => {
   const d = new Date(NOW)
   d.setDate(d.getDate() - daysAgo)
-  d.setHours(hour, minute, 0, 0)
+  d.setHours(hour, minute, second, 0)
   return d.toISOString()
 }
 
 type Version = Artifact["versions"][number]
-type Session = NonNullable<Artifact["sessions"]>[number]
 // The byline is always the person; an agent that did the work is recorded beside it.
 const CLAUDE = { id: "agent-1", name: "Claude Code" }
 const version = (
@@ -28,15 +36,6 @@ const version = (
   name: null,
   created_at,
   agent,
-})
-const session = (
-  p: Partial<Session> & { n: number; from_n: number; created_at: string },
-): Session => ({
-  count: p.n - p.from_n + 1,
-  author: "Mert",
-  agent_name: null,
-  name: null,
-  ...p,
 })
 const comment = (
   p: Partial<Comment> & { id: string; author: string; created_at: string },
@@ -67,18 +66,14 @@ const round = (p: Partial<ReviewRound> & { id: string; created_at: string }): Re
 const base = { rounds: [], lastSeen: null, lens: "all" as const, now: NOW }
 
 describe("buildStream", () => {
-  it("makes one version row per server session, credited to the agent that did the work", () => {
+  it("folds a run of one actor's versions into one row, credited to the agent that did the work", () => {
     const versions = [
       version(1, "Mert", at(3, 10), "Create"),
       version(2, "Mert", at(3, 10, 15), "Draft", CLAUDE),
       version(3, "Mert", at(3, 10, 18), "Chart", CLAUDE),
       version(4, "Mert", at(3, 10, 24), "Tighten", CLAUDE),
     ]
-    const sessions = [
-      session({ n: 4, from_n: 2, agent_name: "Claude Code", created_at: at(3, 10, 24) }),
-      session({ n: 1, from_n: 1, created_at: at(3, 10) }),
-    ]
-    const items = buildStream({ ...base, versions, sessions, comments: [] })
+    const items = buildStream({ ...base, versions, comments: [] })
     const turns = items.filter((it) => it.type === "turn")
     expect(turns).toHaveLength(2)
     expect(turns[0]).toMatchObject({
@@ -97,7 +92,7 @@ describe("buildStream", () => {
     expect(row?.versions.map((v) => v.n)).toEqual([2, 3, 4])
   })
 
-  it("folds an actor's several sessions in one day into one publish row spanning them", () => {
+  it("folds an actor's whole day of publishes into one row spanning them", () => {
     const versions = [
       version(1, "Mert", at(0, 9), "Walkthrough"),
       version(2, "Mert", at(0, 10), "v2"),
@@ -105,12 +100,7 @@ describe("buildStream", () => {
       version(4, "Mert", at(0, 10, 30), null),
       version(5, "Mert", at(0, 11, 30), null),
     ]
-    const sessions = [
-      session({ n: 5, from_n: 5, created_at: at(0, 11, 30) }),
-      session({ n: 4, from_n: 2, created_at: at(0, 10, 30) }),
-      session({ n: 1, from_n: 1, created_at: at(0, 9) }),
-    ]
-    const [turn] = buildStream({ ...base, versions, sessions, comments: [] })
+    const [turn] = buildStream({ ...base, versions, comments: [] })
     if (turn?.type !== "turn") throw new Error("no turn")
     expect(turn.rows).toHaveLength(1)
     const row = turn.rows[0]
@@ -288,6 +278,40 @@ describe("buildStream", () => {
     expect(only.filter((it) => it.type === "turn")).toHaveLength(1)
   })
 
+  it("keeps a publish before the ask about it, whatever happened between two publishes", () => {
+    // v6 published and asked about; the person answers; v7 published and asked about.
+    // (The server's 30-minute session would cluster v6 and v7 into one — blind to the
+    // ask and the answer between them, and the ask for v6 would precede "v6".)
+    const versions = [
+      version(6, "Mert", at(0, 18, 50), "Merged and deployed", CLAUDE),
+      version(7, "Mert", at(0, 18, 53), "Lead with the live rail", CLAUDE),
+    ]
+    const rounds = [
+      round({
+        id: "rr6",
+        version: 6,
+        created_at: at(0, 18, 50, 30),
+        state: "sent_back",
+        note: "Hmm can we make this better?",
+        resolved_by_name: "Mert",
+        resolved_at: at(0, 18, 51),
+      }),
+      round({ id: "rr7", version: 7, created_at: at(0, 18, 53, 30), note: "Read your note…" }),
+    ]
+    const turns = buildStream({ ...base, versions, comments: [], rounds }).filter(
+      (it) => it.type === "turn",
+    )
+    expect(turns.map((t) => [t.by, t.rows.map((r) => r.kind)])).toEqual([
+      ["Claude Code", ["version", "review_request"]],
+      ["Mert", ["review_sent_back"]],
+      ["Claude Code", ["version", "review_request"]],
+    ])
+    const last = turns[2]?.rows[0]
+    if (last?.kind !== "version") throw new Error("not a version row")
+    expect(last.versions.map((v) => v.n)).toEqual([7])
+    expect(phrase(leadRow(turns[2] as TurnItem))).toBe("asked for review of v7")
+  })
+
   it("never folds what happened since the last visit into a turn from before it", () => {
     // A day's work: v1 at 3:40, v2–v4 by 4:47, v5 at 5:29. The viewer last looked at 5:00.
     const versions = [
@@ -297,15 +321,9 @@ describe("buildStream", () => {
       version(4, "Mert", at(0, 16, 47), null),
       version(5, "Mert", at(0, 17, 29), null),
     ]
-    const sessions = [
-      session({ n: 5, from_n: 5, created_at: at(0, 17, 29) }),
-      session({ n: 4, from_n: 2, created_at: at(0, 16, 47) }),
-      session({ n: 1, from_n: 1, created_at: at(0, 15, 40) }),
-    ]
     const items = buildStream({
       ...base,
       versions,
-      sessions,
       comments: [],
       lastSeen: new Date(at(0, 17)).getTime(),
     })

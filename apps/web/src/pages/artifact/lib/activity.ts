@@ -3,9 +3,8 @@ import { groupThreads } from "./layout"
 
 /**
  * The activity stream — the artifact rail's one chronological feed, built from the
- * records the page already holds: versions (grouped into the server's time-clustered
- * `sessions`), comment threads, and review rounds. Pure, so the grouping is unit-tested
- * like `bucketThreads` and the component only renders.
+ * records the page already holds: versions, comment threads, and review rounds. Pure, so
+ * the grouping is unit-tested like `bucketThreads` and the component only renders.
  *
  * Who did what comes from the records, never from a name: a version carries its `agent`,
  * a round its requester's name and kind, a comment its author's kind, a resolved thread
@@ -25,16 +24,12 @@ export type Lens = "all" | "comments"
 export type SectionLabel = "Today" | "Yesterday" | "Earlier"
 
 type Version = Artifact["versions"][number]
-type Session = NonNullable<Artifact["sessions"]>[number]
 
 export type VersionRow = {
   kind: "version"
   id: string
-  /** The session's END — its newest version's time. A publish row sits in the stream
-   *  where it was last touched, carries that as its stamp, and counts as new when it
-   *  was touched since the last visit. (Sessions are disjoint version ranges, so end
-   *  order is version order: two of one actor's sessions can only merge when nothing
-   *  else was published between them.) */
+  /** The first version's time — where the run of publishes began, which is where it
+   *  sits in the stream; the turn's `until` carries the last one, for its stamp. */
   at: string
   /** The actor — the agent's name when one produced the versions on the author's behalf. */
   by: string
@@ -114,8 +109,6 @@ export type StreamItem =
 
 export interface StreamInput {
   versions: Version[]
-  /** The server's time-clustered view of `versions`; absent on a list-row seed. */
-  sessions?: Session[] | null
   comments: Comment[]
   rounds: ReviewRound[]
   /** The viewer — their own replies and resolves are not news to them. Matched by id when
@@ -157,30 +150,12 @@ export function stamp(iso: string, now: number): string {
   return new Date(iso).toLocaleDateString([], { month: "short", day: "numeric" })
 }
 
-/** Version rows: one per server session (several versions by one author within the
- *  clustering window), else one per version when the record carries no sessions. */
-function versionRows(versions: Version[], sessions: Session[] | null | undefined): VersionRow[] {
-  const byN = new Map(versions.map((v) => [v.n, v]))
-  if (sessions?.length) {
-    return sessions.map((s) => {
-      const members = versions
-        .filter((v) => v.n >= s.from_n && v.n <= s.n)
-        .sort((a, b) => a.n - b.n)
-      const newest = byN.get(s.n)
-      return {
-        kind: "version",
-        id: `v-${s.n}`,
-        at: s.created_at,
-        by: s.agent_name ?? (s.author || newest?.author || ""),
-        agent: !!s.agent_name,
-        from: s.from_n,
-        to: s.n,
-        count: s.count,
-        message: newest?.message ?? s.name ?? null,
-        versions: members,
-      }
-    })
-  }
+/** One row per version. The stream does its own folding (`foldTurns`): a run of one
+ *  actor's publishes becomes one row, and ANY event between two of them — an ask, an
+ *  answer, a card — keeps them apart. The server's time-clustered `sessions` are not
+ *  used here on purpose: a session is blind to what happened between its versions, so
+ *  "asked for review of v6" would sit before a v6–v7 row that includes v6. */
+function versionRows(versions: Version[]): VersionRow[] {
   return versions.map((v) => ({
     kind: "version",
     id: `v-${v.n}`,
@@ -273,8 +248,8 @@ function threadRows(
 }
 
 /** Two publish rows by the turn's actor become one: the span widens, the versions run
- *  on in order, the newest message speaks for the range. So a day's sessions read as
- *  "published v1–v5", never "published v1 · +2" with the rest hidden in the count. */
+ *  on in order, the newest message speaks for the range. So a run of publishes reads as
+ *  "published v1–v5", never "published v1 · +4" with the rest hidden in the count. */
 function mergeVersions(into: VersionRow, row: VersionRow): void {
   into.from = Math.min(into.from, row.from)
   into.to = Math.max(into.to, row.to)
@@ -325,7 +300,7 @@ const THREAD_KINDS = new Set<ActivityRow["kind"]>(["reply", "resolved"])
 export function buildStream(input: StreamInput): StreamItem[] {
   const threads = groupThreads(input.comments)
   const rows: ActivityRow[] = [
-    ...versionRows(input.versions, input.sessions),
+    ...versionRows(input.versions),
     ...reviewRows(input.rounds),
     ...threadRows(threads, input.lastSeen, input.meId, input.me),
   ]
