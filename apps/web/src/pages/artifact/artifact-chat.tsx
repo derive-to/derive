@@ -60,10 +60,19 @@ export function ArtifactChat(props: {
   )
 }
 
-/** The small, shared vocabulary for the artifact's one right rail. Comments must remain first:
- * it is the default reading companion. Chat is optional per workspace, and Inspect is optional
- * per artifact + role — neither gets to become a parallel primary surface. */
+/** The small, shared vocabulary for the artifact's one right rail. Activity (the key is
+ * still "comments" — every caller and deep link speaks it) must remain first: it is the
+ * default reading companion, the one stream of threads and changes. Chat is optional per
+ * workspace, and Inspect is optional per artifact + role — neither gets to become a
+ * parallel primary surface. */
 export type RailTab = "comments" | "map" | "chat" | "inspect"
+
+const RAIL_LABEL: Record<RailTab, string> = {
+  comments: "Activity",
+  map: "Map",
+  chat: "Chat",
+  inspect: "Inspect",
+}
 
 /** The rail's tab strip. It stays a handful of buttons rather than a full Tabs primitive: it
  * must fit inline in the existing desktop header and mobile peek bar. The capability gates are
@@ -99,12 +108,12 @@ export function RailTabs(props: {
           onClick={() => onTab(t)}
           aria-pressed={tab === t}
           className={cn(
-            "rounded-md px-2 py-1 text-sm font-medium capitalize transition-colors",
+            "rounded-md px-2 py-1 text-sm font-medium",
             tab === t ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground",
           )}
           data-testid={`rail-tab-${t}`}
         >
-          {t}
+          {RAIL_LABEL[t]}
           {t === "comments" && commentCount > 0 ? (
             <span className="ml-1 text-xs text-muted-foreground">{commentCount}</span>
           ) : null}

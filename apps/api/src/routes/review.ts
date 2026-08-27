@@ -1,7 +1,9 @@
+import type { ReviewRoundRecord } from "@derive/core"
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
 import { bail, fail, readJson, str } from "../lib/http"
+import { agentName, principalKind } from "../lib/principal-kind"
 
 /** Review rounds: the human side of the /derive loop. An agent requests a review
  *  (on publish); the person answers in the doc and hits **Send back** — their note
@@ -20,6 +22,15 @@ export const reviewRoutes = (ctx: AppContext) => {
       requested_by: z
         .string()
         .describe("Who asked for the review (usually the agent that published)."),
+      requested_by_name: z
+        .string()
+        .nullable()
+        .describe(
+          "The requester's name when the round opened (a row from before the name was kept is named from the directory, while the agent exists).",
+        ),
+      requested_by_kind: z
+        .enum(["user", "agent"])
+        .describe("What kind of principal asked, from the recorded id."),
       requested_for: z.string().describe("The person asked to answer this round."),
       state: z
         .enum(["pending", "sent_back"])
@@ -37,6 +48,14 @@ export const reviewRoutes = (ctx: AppContext) => {
       resolved_at: z.string().nullable().describe("When it was sent back; null while pending."),
     })
     .openapi("ReviewRound")
+
+  // The wire shape: the record, plus the requester's kind read off its id, and — for a
+  // round from before the name was recorded — the directory's name while it still has one.
+  const roundJson = async (r: ReviewRoundRecord) => ({
+    ...r,
+    requested_by_name: r.requested_by_name ?? (await agentName(meta, r.requested_by)),
+    requested_by_kind: principalKind(r.requested_by) ?? "user",
+  })
 
   // The round this caller should settle: their own pending round if they were the
   // one asked, else any pending round on the artifact (single-player: the one asker
@@ -104,7 +123,7 @@ export const reviewRoutes = (ctx: AppContext) => {
         author: human.name,
         actor_id: human.id,
       })
-      return c.json({ round: updated })
+      return c.json({ round: await roundJson(updated) })
     },
   )
 
@@ -141,7 +160,10 @@ export const reviewRoutes = (ctx: AppContext) => {
         meta.listReviewRounds(artifact.id),
         pendingFor(artifact.id, me?.id ?? null),
       ])
-      return c.json({ rounds, pending: pending ?? null })
+      return c.json({
+        rounds: await Promise.all(rounds.map(roundJson)),
+        pending: pending ? await roundJson(pending) : null,
+      })
     },
   )
 

@@ -16,6 +16,9 @@ export interface VersionSession {
   /** Revisions collapsed into this session. */
   count: number
   author: string
+  /** The agent that produced the session's versions on the author's behalf, by name; null
+   *  for the person's own edits. A session never mixes an agent's edits with the person's. */
+  agent_name: string | null
   /** Named checkpoint label, or null for an ordinary time-grouped session. */
   name: string | null
   /** ISO time of the latest revision in the session. */
@@ -31,11 +34,13 @@ export const DEFAULT_VERSION_WINDOW_MS = 30 * 60_000
  * Returned newest-first for direct display.
  */
 export function groupSessions(
-  versions: Pick<VersionRecord, "n" | "author" | "name" | "created_at">[],
+  versions: (Pick<VersionRecord, "n" | "author" | "name" | "created_at"> &
+    Partial<Pick<VersionRecord, "agent_id" | "agent_name">>)[],
   windowMs: number = DEFAULT_VERSION_WINDOW_MS,
 ): VersionSession[] {
   const asc = [...versions].sort((a, b) => a.n - b.n)
-  const out: VersionSession[] = []
+  // The grouping key (agent_id) stays internal; the session carries the display name.
+  const out: (VersionSession & { agent_id: string | null })[] = []
   for (const v of asc) {
     const last = out[out.length - 1]
     const mergeable =
@@ -43,6 +48,7 @@ export function groupSessions(
       !v.name &&
       !last.name &&
       last.author === v.author &&
+      last.agent_id === (v.agent_id ?? null) &&
       Date.parse(v.created_at) - Date.parse(last.created_at) <= windowMs
     if (mergeable) {
       last.n = v.n
@@ -54,10 +60,12 @@ export function groupSessions(
         from_n: v.n,
         count: 1,
         author: v.author,
+        agent_id: v.agent_id ?? null,
+        agent_name: v.agent_id ? (v.agent_name ?? null) : null,
         name: v.name ?? null,
         created_at: v.created_at,
       })
     }
   }
-  return out.reverse()
+  return out.reverse().map(({ agent_id: _key, ...s }) => s)
 }

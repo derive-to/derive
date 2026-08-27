@@ -54,6 +54,10 @@ export interface PublishInput {
    *  people-follow surface their hand-published work. Omitted/null for historical imports and bare
    *  static-token publishes. */
   authorId?: string | null
+  /** The agent principal producing this version on `authorId`'s behalf (id + display name);
+   *  omitted for a person's own publish. Recorded as the version's actor. */
+  agentId?: string | null
+  agentName?: string | null
   /** Which surface created this version ('web' | 'mcp' | 'api', plus historical 'sync' rows);
    *  stored on the version row. Omitted for paths that don't stamp. */
   source?: VersionSource | null
@@ -300,6 +304,8 @@ export async function publish(
       author_avatar: null,
       author_gh_id: null,
       author_id: input.authorId ?? null,
+      agent_id: input.agentId ?? null,
+      agent_name: input.agentId ? (input.agentName ?? null) : null,
       source: input.source ?? null,
       message: input.message ?? null,
       name: input.name ?? null,
@@ -408,6 +414,8 @@ export const toJson = (baseUrl: string, a: ArtifactRecord, versions: VersionReco
     author_login: v.author_login,
     author_avatar: v.author_avatar,
     author_gh_id: v.author_gh_id,
+    /** The agent that produced this version on the author's behalf; null for the person's own. */
+    agent: v.agent_id ? { id: v.agent_id, name: v.agent_name ?? "Agent" } : null,
     message: v.message,
     name: v.name,
     created_at: v.created_at,

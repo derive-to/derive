@@ -142,6 +142,7 @@ export function useArtifactActions(p: {
       anchor: opts?.anchor ? JSON.stringify(opts.anchor) : null,
       body_md: text,
       author: me?.name ?? me?.email ?? "You",
+      author_kind: "user",
       state: "open",
       created_at: new Date().toISOString(),
       reactions: {},

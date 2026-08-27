@@ -1,19 +1,17 @@
-import { type ReactNode, type RefObject, useEffect, useMemo, useRef, useState } from "react"
-import type { Comment, Mention } from "@/api"
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react"
+import type { Comment, Mention, ReviewRound } from "@/api"
 import { Icon } from "@/components/icons"
-import { EmptyState } from "@/components/shared/empty-state"
 import { Count } from "@/components/shared/section-eyebrow"
 import { Button } from "@/components/ui/button"
-import { Kbd } from "@/components/ui/kbd"
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { useKeyboardInset } from "@/lib/use-keyboard-inset"
 import { cn } from "@/lib/utils"
+import { ActivityStream } from "./activity-stream"
 import { type RailTab, RailTabs } from "./artifact-chat"
 import { Composer } from "./comment-composer"
-import { CollapsibleThreadSection, CommentCard, PinnedZone } from "./comment-thread"
+import type { StreamItem } from "./lib/activity"
 import { useCommentScope } from "./lib/comment-scope"
 import { CommentTreeProvider, useCommentTree } from "./lib/comment-tree"
-import { type ComposerState, type FrameGeom, type PinItem, selLabel } from "./types"
+import { type ComposerState, selLabel } from "./types"
 
 // Touch has no hover, so the mobile sheet overrides the tree's onHover with this.
 const NO_HOVER = () => {}
@@ -22,12 +20,12 @@ const NO_HOVER = () => {}
 // the length; this just flattens whitespace so a multi-line body reads as one line).
 const teaser = (md: string) => md.replace(/\s+/g, " ").trim()
 
-// The comments panel header: the label + the open-thread count in the machine
-// count register ("Comments · 3") — quieter than a pill blob beside the title.
-function CommentsHeading({ count }: { count: number }) {
+// The sheet's header: the label + the open-thread count in the machine count
+// register ("Activity · 3") — quieter than a pill blob beside the title.
+function ActivityHeading({ count }: { count: number }) {
   return (
     <div className="flex min-w-0 flex-1 items-baseline gap-1 pl-1.5">
-      <span className="text-sm font-medium text-foreground">Comments</span>
+      <span className="text-sm font-medium text-foreground">Activity</span>
       {count > 0 && <Count>{count}</Count>}
     </div>
   )
@@ -36,7 +34,11 @@ function CommentsHeading({ count }: { count: number }) {
 export function MobileComments({
   open,
   openThreads,
-  resolved,
+  items,
+  currentVersion,
+  pendingRound,
+  onGoToVersion,
+  onSendBack,
   composer,
   onNewGeneral,
   onSubmitNew,
@@ -54,13 +56,18 @@ export function MobileComments({
   editing = false,
 }: {
   open: boolean
+  /** The open threads in stream order — the stepper and the peek preview walk these. */
   openThreads: Comment[][]
-  resolved: Comment[][]
+  /** The activity stream (see ArtifactComments); the sheet renders it in its full state. */
+  items: StreamItem[]
+  currentVersion: number
+  pendingRound: ReviewRound | null
+  onGoToVersion: (n: number) => void
+  onSendBack: (note?: string) => void
   composer: ComposerState
   onNewGeneral: () => void
   onSubmitNew: (text: string, mentions?: Mention[]) => void
   onCancelNew: () => void
-  reviewCard?: ReactNode
   /** Inline edit mode is on: selecting text edits rather than quotes it, so the
    *  empty state must not tell the reader to select text for a comment. */
   editing?: boolean
@@ -93,6 +100,14 @@ export function MobileComments({
   useEffect(() => {
     if (open) setSize("peek")
   }, [open])
+  // Answering the pending review round: the same composer bar, in its send-back mode. A
+  // selection composer opening on top takes over (the quote is the newer intent).
+  const [answering, setAnswering] = useState(false)
+  useEffect(() => {
+    if (composer) setAnswering(false)
+  }, [composer])
+  const answeringRound = answering && pendingRound ? pendingRound : null
+  const composing = !!composer || !!answeringRound
   // The keyboard's footprint, so the sheet can pin itself into the visible area
   // above it (shared with inline editing, which needs the same measurement).
   const kb = useKeyboardInset()
@@ -100,8 +115,8 @@ export function MobileComments({
   // keyboard instead of leaving it up over an empty sheet (which would keep the
   // sheet pinned/shrunk via `kb`).
   useEffect(() => {
-    if (!composer) (document.activeElement as HTMLElement | null)?.blur?.()
-  }, [composer])
+    if (!composing) (document.activeElement as HTMLElement | null)?.blur?.()
+  }, [composing])
   // Report how much of the viewport bottom the sheet occupies so the page can
   // reserve exactly that under the document — no more, no less. A static reserve
   // (the old `pb-[50vh]`) left a tall black band below the document whenever the
@@ -131,7 +146,6 @@ export function MobileComments({
     raf = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(raf)
   }, [open, onHeightChange])
-  const empty = openThreads.length === 0 && resolved.length === 0 && !composer
   // The most recent open comment — the peek bar previews it so the resting state
   // teases the live discussion instead of showing a bare "Comments" header.
   const latest = useMemo(() => {
@@ -167,7 +181,7 @@ export function MobileComments({
   const drag = useRef<{ y0: number; t0: number; dy: number } | null>(null)
   const moved = useRef(false)
   const dragStart = (e: React.PointerEvent) => {
-    if (kb || composer) return
+    if (kb || composing) return
     if ((e.target as HTMLElement).closest("button")) return // buttons keep their taps
     drag.current = { y0: e.clientY, t0: e.timeStamp, dy: 0 }
     ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
@@ -233,7 +247,7 @@ export function MobileComments({
         // keyboard; expanded hugs its comments up to half the screen (the doc
         // strip above stays visible and live — no reading mode that owns the
         // whole screen); peek is a slim bar, one line taller with a preview.
-        composer ? "max-h-[80vh]" : size === "full" ? "max-h-[50vh]" : latest ? "h-24" : "h-18.5",
+        composing ? "max-h-[80vh]" : size === "full" ? "max-h-[50vh]" : latest ? "h-24" : "h-18.5",
         open ? "translate-y-0" : "translate-y-full",
       )}
       // While the keyboard is up, lift the sheet's bottom to just above it and cap
@@ -242,7 +256,7 @@ export function MobileComments({
       style={kb ? { bottom: kb.inset, maxHeight: kb.height } : undefined}
       // Non-modal by design: the document above stays visible and interactive in
       // every state, so this is an aside, not a dialog (no focus trap, no scrim).
-      aria-label="Comments"
+      aria-label="Activity"
     >
       <div
         className="shrink-0 touch-none"
@@ -276,9 +290,9 @@ export function MobileComments({
               />
             </div>
           ) : (
-            <CommentsHeading count={openThreads.length} />
+            <ActivityHeading count={openThreads.length} />
           )}
-          {size === "full" && !composer && openThreads.length > 1 && (
+          {size === "full" && !composing && openThreads.length > 1 && (
             // Step through the discussion one thread at a time: the card scrolls
             // into view and an anchored thread scrolls the doc to its highlight.
             <div className="flex items-center gap-0.5 font-mono text-xs tabular-nums text-muted-foreground">
@@ -336,70 +350,53 @@ export function MobileComments({
         chatPanel
       ) : rail === "inspect" && inspectEnabled ? (
         inspectPanel
-      ) : composer ? (
+      ) : composing ? (
         // Composing ("half open"): just the composer, so the sheet is a compact bar
         // pinned above the keyboard with the document visible above. The list
         // reappears once you send or cancel.
         <div className="overflow-auto p-3 pb-[max(14px,env(safe-area-inset-bottom))]">
           <Composer
-            quote={selLabel(composer.anchor)}
+            quote={composer ? selLabel(composer.anchor) : null}
+            answering={
+              answeringRound
+                ? {
+                    by: answeringRound.requested_by_name,
+                    version: answeringRound.version,
+                  }
+                : null
+            }
             // After posting, open the full list so the new comment is visible (the
             // sheet would otherwise drop back to the peek bar and hide it).
             onSubmit={(text, mentions) => {
               setSize("full")
-              onSubmitNew(text, mentions)
+              if (answeringRound) {
+                onSendBack(text.trim() || undefined)
+                setAnswering(false)
+              } else onSubmitNew(text, mentions)
             }}
-            onCancel={onCancelNew}
+            onCancel={() => (answeringRound ? setAnswering(false) : onCancelNew())}
           />
         </div>
       ) : size === "full" ? (
         <CommentTreeProvider value={sheetTree}>
-          <div className="min-h-0 flex-1 overflow-auto p-3 pb-[max(14px,env(safe-area-inset-bottom))]">
-            {empty && (
-              <EmptyState
-                className="p-8"
-                icon={<Icon name="comments" strokeWidth={1.75} />}
-                title="Start the conversation."
-                description={
-                  editing
-                    ? "Selecting text edits it while you're editing. Finish or leave editing to comment on a passage."
-                    : "Select text in the artifact, or add a general comment."
-                }
-                action={
-                  canComment ? (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      data-testid="comments-sheet-empty-new"
-                      onClick={() => {
-                        setSize("full")
-                        onNewGeneral()
-                      }}
-                    >
-                      New comment
-                    </Button>
-                  ) : undefined
-                }
-              />
-            )}
-            {openThreads.map((t) => {
-              const head = t[0]
-              if (!head) return null
-              return (
-                <div key={head.thread_id} data-thread-id={head.thread_id} className="mb-2.5">
-                  <CommentCard thread={t} />
-                </div>
-              )
-            })}
-            {resolved.length > 0 && (
-              <CollapsibleThreadSection
-                label="Resolved"
-                defaultOpen={false}
-                testId="resolved-section-toggle"
-                className="mt-1"
-                threads={resolved}
-              />
-            )}
+          <div
+            data-testid="activity-stream"
+            className="flex min-h-0 flex-1 flex-col overflow-auto px-3 pb-[max(14px,env(safe-area-inset-bottom))]"
+          >
+            <ActivityStream
+              items={items}
+              currentVersion={currentVersion}
+              // Answering shows the composer bar instead of the list, so nothing here is.
+              answeringRoundId={null}
+              editing={editing}
+              emptyTestId="comments-sheet-empty-new"
+              onNewComment={() => {
+                setSize("full")
+                onNewGeneral()
+              }}
+              onGoToVersion={onGoToVersion}
+              onAnswer={() => setAnswering(true)}
+            />
           </div>
         </CommentTreeProvider>
       ) : latest ? (
@@ -418,256 +415,5 @@ export function MobileComments({
         </button>
       ) : null}
     </aside>
-  )
-}
-
-export function OpenPanel(props: {
-  openCount: number
-  frameRef: RefObject<HTMLIFrameElement | null>
-  subscribeGeom: (cb: (g: FrameGeom) => void) => () => void
-  onScrollDoc: (dy: number) => void
-  pinned: PinItem[]
-  general: Comment[][]
-  resolved: Comment[][]
-  composer: ComposerState
-  onHide: () => void
-  onNewGeneral: () => void
-  onSubmitNew: (text: string, mentions?: Mention[]) => void
-  onCancelNew: () => void
-  visualPinAvailable?: boolean
-  visualPinActive?: boolean
-  onToggleVisualPin?: () => void
-  reviewCard?: ReactNode
-  /** See MobileComments.editing. */
-  editing?: boolean
-}) {
-  const {
-    openCount,
-    frameRef,
-    subscribeGeom,
-    onScrollDoc,
-    pinned,
-    general,
-    resolved,
-    composer,
-    onHide,
-    onNewGeneral,
-    onSubmitNew,
-    onCancelNew,
-    visualPinAvailable = false,
-    visualPinActive = false,
-    onToggleVisualPin,
-    reviewCard,
-    editing = false,
-  } = props
-  const { canComment } = useCommentScope()
-  const { activeThread, onJump } = useCommentTree()
-  const generalComposer = composer && !composer.anchor
-  // Native review surfaces (for example a linked-bundle graph) have a durable
-  // semantic anchor but no iframe document coordinate. Keep that anchor and show
-  // its composer in the fixed rail instead of silently dropping it from PinnedZone.
-  const staticAnchoredComposer = composer?.anchor && composer.docTop == null ? composer : null
-  const empty = openCount === 0 && resolved.length === 0 && !composer
-
-  // Prev/Next walks the SAME top-to-bottom order the sidebar itself renders:
-  // pinned threads (sorted by their doc-absolute position) then the general
-  // drawer, in the order it lists them. Resolved threads are settled, so
-  // Prev/Next skips them — it's a tool for working through what's still open.
-  const threadOrder = [...pinned]
-    .sort((a, b) => a.desiredY - b.desiredY)
-    .map((p) => p.thread[0]?.thread_id)
-    .concat(general.map((t) => t[0]?.thread_id))
-    .filter((id): id is string => !!id)
-  const activeIndex = activeThread ? threadOrder.indexOf(activeThread) : -1
-  const canGoPrev = activeIndex > 0
-  const canGoNext = threadOrder.length > 0 && activeIndex < threadOrder.length - 1
-  const goPrev = () => {
-    const id = threadOrder[Math.max(0, activeIndex - 1)]
-    if (id) onJump(id)
-  }
-  const goNext = () => {
-    const id = threadOrder[activeIndex < 0 ? 0 : Math.min(threadOrder.length - 1, activeIndex + 1)]
-    if (id) onJump(id)
-  }
-
-  return (
-    <>
-      <div className="flex items-center gap-1 border-b border-border-soft py-1.5 pl-2.5 pr-2">
-        <CommentsHeading count={openCount} />
-        {threadOrder.length > 1 && (
-          <>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  aria-label="Previous comment"
-                  data-testid="comment-nav-prev"
-                  disabled={!canGoPrev}
-                  onClick={goPrev}
-                >
-                  <Icon name="chevron-left" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Previous comment</TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  aria-label="Next comment"
-                  data-testid="comment-nav-next"
-                  disabled={!canGoNext}
-                  onClick={goNext}
-                >
-                  <Icon name="chevron-right" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Next comment</TooltipContent>
-            </Tooltip>
-          </>
-        )}
-        {canComment &&
-          (visualPinAvailable && onToggleVisualPin ? (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant={visualPinActive ? "secondary" : "ghost"}
-                  size="icon-xs"
-                  aria-label={visualPinActive ? "Cancel visual pin" : "Pin comment to a visual"}
-                  aria-pressed={visualPinActive}
-                  data-testid="comment-visual-pin"
-                  onClick={onToggleVisualPin}
-                >
-                  <Icon name="pin" weight={visualPinActive ? "fill" : "regular"} />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                {visualPinActive ? "Cancel visual pin" : "Pin comment to a visual"}
-              </TooltipContent>
-            </Tooltip>
-          ) : null)}
-        {canComment && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                aria-label="New comment"
-                data-testid="comment-new"
-                onClick={onNewGeneral}
-              >
-                <Icon name="plus" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>New comment</TooltipContent>
-          </Tooltip>
-        )}
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              aria-label="Close comments"
-              data-testid="comments-panel-close"
-              onClick={onHide}
-            >
-              <Icon name="close" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>
-            Close comments <Kbd>c</Kbd>
-          </TooltipContent>
-        </Tooltip>
-      </div>
-
-      {/* The review card lives at the top of the comments rail — one column, not a
-          second pane crowding the document. */}
-      {reviewCard}
-
-      {/* overflow-clip (not hidden): scrollIntoView / focus-scrolling must not be
-          able to shift this box — the pin layer's transform assumes it never moves. */}
-      <div className="relative min-h-0 flex-1 overflow-clip">
-        {/* Pinned margin — cards (and a new-comment composer) float beside their
-            highlighted text, sharing one overlap-free layout. The zone measures its
-            own datum against the iframe, so nothing above it (header, review card)
-            needs measuring here. */}
-        <PinnedZone
-          pins={pinned}
-          frameRef={frameRef}
-          subscribeGeom={subscribeGeom}
-          onScrollDoc={onScrollDoc}
-          composer={composer}
-          onSubmitNew={onSubmitNew}
-          onCancelNew={onCancelNew}
-        />
-
-        {/* Empty state. */}
-        {empty && (
-          <div className="absolute inset-0 grid place-items-center p-6">
-            <EmptyState
-              className="p-0"
-              icon={<Icon name="comments" strokeWidth={1.75} />}
-              title="Start the conversation."
-              description={
-                editing
-                  ? "Selecting text edits it while you're editing. Finish or leave editing to comment on a passage."
-                  : "Select text in the artifact, or add a general comment."
-              }
-              action={
-                canComment ? (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    data-testid="comments-empty-new"
-                    onClick={onNewGeneral}
-                  >
-                    New comment
-                  </Button>
-                ) : undefined
-              }
-            />
-          </div>
-        )}
-      </div>
-
-      {/* General + resolved threads live in a scrollable footer drawer. */}
-      {(staticAnchoredComposer || generalComposer || general.length > 0 || resolved.length > 0) && (
-        <div className="max-h-[44%] shrink-0 overflow-auto border-t border-border-soft p-2.5">
-          {staticAnchoredComposer && (
-            <div className="mb-2.5">
-              <Composer
-                quote={selLabel(staticAnchoredComposer.anchor)}
-                onSubmit={onSubmitNew}
-                onCancel={onCancelNew}
-              />
-            </div>
-          )}
-          {generalComposer && (
-            <div className="mb-2.5">
-              <Composer quote={null} onSubmit={onSubmitNew} onCancel={onCancelNew} />
-            </div>
-          )}
-          {general.length > 0 && (
-            <CollapsibleThreadSection
-              label="General"
-              defaultOpen
-              testId="general-section-toggle"
-              threads={general}
-            />
-          )}
-          {resolved.length > 0 && (
-            <CollapsibleThreadSection
-              label="Resolved"
-              defaultOpen={false}
-              testId="resolved-section-toggle"
-              className="mt-1"
-              threads={resolved}
-            />
-          )}
-        </div>
-      )}
-    </>
   )
 }

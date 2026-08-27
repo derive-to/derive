@@ -84,6 +84,9 @@ export function CommentRow({
   grouped?: boolean
 }) {
   const A = useActions()
+  // An agent's voice takes the sparkles glyph in the soft ink tint — the same mark its
+  // turns carry in the activity stream, so one identity reads the same in both places.
+  const agent = c.author_kind === "agent"
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(c.body_md)
   const [open, setOpen] = useState<null | "react" | "menu">(null)
@@ -114,7 +117,9 @@ export function CommentRow({
       {!grouped && (
         <div className="mb-0.5 flex items-center gap-2">
           <Avatar className="size-5">
-            <AvatarFallback className="text-2xs">{getInitials(c.author)}</AvatarFallback>
+            <AvatarFallback className={cn("text-2xs", agent && "bg-primary/10 text-primary")}>
+              {agent ? <Icon name="sparkles" size={12} /> : getInitials(c.author)}
+            </AvatarFallback>
           </Avatar>
           <span className="min-w-0 truncate text-sm font-medium text-foreground">{c.author}</span>
           {/* Terse: "1h", not "1h ago" — repeated per row, the word is noise; the

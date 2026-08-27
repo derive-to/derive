@@ -54,6 +54,12 @@ export const VersionSession = z
     from_n: z.number().describe("Oldest version number in this grouped session."),
     count: z.number().describe("How many versions this session groups."),
     author: z.string(),
+    agent_name: z
+      .string()
+      .nullable()
+      .describe(
+        "The agent that produced the session on the author's behalf; null for the person's own edits.",
+      ),
     name: z.string().nullable().describe("Session label; null when unnamed."),
     created_at: z.string().describe("Timestamp of the newest version in the group."),
   })
@@ -234,6 +240,13 @@ export const Artifact = z
           .nullable()
           .optional()
           .describe("Committer's Derive @handle; null unless they signed in with GitHub."),
+        agent: z
+          .object({ id: z.string(), name: z.string() })
+          .nullable()
+          .optional()
+          .describe(
+            "The agent that produced this version on the author's behalf; null for the person's own publish.",
+          ),
         message: z.string().nullable().describe("Version (commit) message; null when none given."),
         name: z.string().nullable().describe("Optional version label; null when unnamed."),
         created_at: z.string(),

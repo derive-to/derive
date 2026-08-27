@@ -231,7 +231,7 @@ export function registerCommentTool(tc: ToolContext): void {
           a,
           thread,
           set_state,
-          agent.name,
+          { id: agent.id, name: agent.name },
         )
       }
       return json({

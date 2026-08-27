@@ -28,6 +28,7 @@ import type { AgentLoopInput } from "./agent-loop"
 import { DEFAULT_MAX_TURNS } from "./agent-loop"
 import { BillingBlockedError } from "./billing"
 import type { ChatToolSurface } from "./chat-tools"
+import { DERIVE_AGENT_NAME, DERIVE_AUTHOR_ID } from "./principal-kind"
 import {
   documentContext,
   documentContract,
@@ -295,6 +296,9 @@ const landInProcess =
       size_bytes: bytes.byteLength,
       author,
       author_id: input.onBehalf?.id ?? null,
+      // The built-in chat agent did the work, on the asker's behalf.
+      agent_id: DERIVE_AUTHOR_ID,
+      agent_name: DERIVE_AGENT_NAME,
       source: "api",
       message: revision.message ?? null,
       name: null,

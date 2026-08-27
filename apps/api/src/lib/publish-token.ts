@@ -54,7 +54,18 @@ export const signPublishToken = (
   userId: string,
   target: string,
   expEpochMs: number,
-): Promise<string> => signCapabilityToken(DOMAIN, secret, [orgId, userId, target], expEpochMs)
+  /** The agent that minted the URL — the version it uploads is recorded as that agent's
+   *  work on the user's behalf. Rides as a marked trailing segment, so tokens minted
+   *  before the segment existed still verify. */
+  agentId?: string | null,
+): Promise<string> =>
+  signCapabilityToken(
+    DOMAIN,
+    secret,
+    agentId ? [orgId, userId, target, `${AGENT_MARK}${agentId}`] : [orgId, userId, target],
+    expEpochMs,
+  )
+const AGENT_MARK = "agent="
 
 /**
  * Verify a publish token. Returns the workspace, the granting user, and the
@@ -65,17 +76,24 @@ export const verifyPublishToken = async (
   secret: string,
   token: string,
   nowMs: number,
-): Promise<{ orgId: string; userId: string; target: string } | null> => {
+): Promise<{ orgId: string; userId: string; target: string; agentId: string | null } | null> => {
   const claim = await verifyCapabilityToken(DOMAIN, secret, token, nowMs)
   if (!claim) return null
-  // Payload: `<orgId>.<userId>.<target>`. target and userId are dot-free (a
-  // short_id / "*" and a u_ id); split them off the right, orgId keeps the rest
-  // (defensive — ws_ ids are dot-free too, but this never truncates one).
+  // Payload: `<orgId>.<userId>.<target>[.agent=<agentId>]`. target and userId are dot-free
+  // (a short_id / "*" and a u_ id); split them off the right, orgId keeps the rest
+  // (defensive — ws_ ids are dot-free too, but this never truncates one). The agent
+  // segment is marked, so a legacy three-part token still parses.
   const parts = claim.rest.split(".")
+  const tail = parts[parts.length - 1] ?? ""
+  // Only a FOURTH part can be the agent: a three-part token's tail is its target, whatever
+  // it looks like.
+  const agentId =
+    parts.length > 3 && tail.startsWith(AGENT_MARK) ? tail.slice(AGENT_MARK.length) : null
+  if (agentId !== null) parts.pop()
   if (parts.length < 3) return null
   const target = parts[parts.length - 1]
   const userId = parts[parts.length - 2]
   const orgId = parts.slice(0, -2).join(".")
   if (!orgId || !userId || !target) return null
-  return { orgId, userId, target }
+  return { orgId, userId, target, agentId: agentId || null }
 }

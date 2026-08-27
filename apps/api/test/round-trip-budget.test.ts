@@ -431,6 +431,11 @@ describe("MCP tool calls stay within their round-trip budget", () => {
     // an empty result returns before any further read. It cannot be folded into a call already
     // being made: nothing else on this path touches slack_thread_link, and skipping it would
     // mean a card that keeps offering "Resolve thread" for a thread an agent already closed.
-    expect(resolveCalls.length).toBeLessThanOrEqual(9)
+    // 9 → 10 when a resolve started RECORDING itself (lib/thread-actions.ts
+    // recordThreadResolution): who settled the thread, when, and by which version — written
+    // onto the root comment's meta, the one row the activity stream reads "Claude Code resolved
+    // Ada's thread" from. One read of the root (already loaded by the tool's own thread check)
+    // and one meta write; without it the record says only "resolved", by nobody, at no time.
+    expect(resolveCalls.length).toBeLessThanOrEqual(10)
   })
 })

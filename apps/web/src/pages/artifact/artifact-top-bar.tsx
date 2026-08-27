@@ -42,6 +42,8 @@ export function ArtifactTopBar(props: {
   isMobile: boolean
   panelOpen: boolean
   openCount: number
+  /** Activity since the reader's last visit — the ink dot on the closed toggle. */
+  unread: number
   isGuest: boolean
   isCopying: boolean
   commentsAvailable: boolean
@@ -259,10 +261,16 @@ export function ArtifactTopBar(props: {
         <Button
           variant="ghost"
           size="sm"
-          className={cn("ml-1", props.panelOpen && "bg-accent text-foreground")}
+          className={cn("relative ml-1", props.panelOpen && "bg-accent text-foreground")}
           data-testid="artifact-show-comments"
           onClick={props.onToggleComments}
-          aria-label={props.openCount > 0 ? `Comments, ${props.openCount} open` : "Comments"}
+          aria-label={[
+            "Activity",
+            props.openCount > 0 ? `${props.openCount} open` : "",
+            !props.panelOpen && props.unread > 0 ? `${props.unread} new` : "",
+          ]
+            .filter(Boolean)
+            .join(", ")}
           aria-pressed={props.panelOpen}
         >
           <Icon name="comments" size={16} className="text-muted-foreground" />
@@ -270,6 +278,14 @@ export function ArtifactTopBar(props: {
             <span className="font-mono text-2xs tabular-nums text-muted-foreground">
               {props.openCount}
             </span>
+          )}
+          {/* Unread carries the ink dot (the bell's grammar); the count stays neutral. */}
+          {!props.panelOpen && props.unread > 0 && (
+            <span
+              aria-hidden
+              data-testid="artifact-activity-unread"
+              className="absolute top-1.5 right-1.5 size-1.5 rounded-full bg-primary"
+            />
           )}
         </Button>
       )}

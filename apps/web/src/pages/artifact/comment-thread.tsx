@@ -2,9 +2,6 @@ import {
   Box,
   Braces,
   ChartNoAxesColumn,
-  ChevronDown,
-  ChevronRight,
-  ChevronUp,
   Clapperboard,
   Image as ImageGlyph,
   Link2,
@@ -12,223 +9,21 @@ import {
   RotateCcw,
   Table2,
 } from "lucide-react"
-import { type RefObject, useCallback, useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import type { Comment, Mention } from "@/api"
 import { Icon } from "@/components/icons"
-import { Eyebrow } from "@/components/shared/section-eyebrow"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { getInitials } from "@/lib/initials"
 import { cn } from "@/lib/utils"
 import { useActions } from "./comment-actions"
-import { Composer, MentionField } from "./comment-composer"
+import { MentionField } from "./comment-composer"
 import { CommentRow } from "./comment-row"
-import { FloatingControl } from "./floating-control"
 import { useCommentScope } from "./lib/comment-scope"
 import { useCommentTree } from "./lib/comment-tree"
-import { COMPOSER_ID, layoutPins } from "./lib/layout"
 import { quoteChipClass } from "./quote-chip"
-import {
-  type ComposerState,
-  type ElementSnapshotLite,
-  type FrameGeom,
-  type PinItem,
-  parseAnchor,
-  selLabel,
-} from "./types"
-import { usePinLayer } from "./use-pin-layer"
-
-export function PinnedZone({
-  pins,
-  frameRef,
-  subscribeGeom,
-  onScrollDoc,
-  composer,
-  onSubmitNew,
-  onCancelNew,
-}: {
-  pins: PinItem[]
-  /** The rendered document's iframe — the datum (zone top vs iframe top) is
-   *  MEASURED from it, so the review card / bundle bar / past-version banner can't
-   *  silently misalign the pins the way the old assumed header-only inset did. */
-  frameRef: RefObject<HTMLIFrameElement | null>
-  subscribeGeom: (cb: (g: FrameGeom) => void) => () => void
-  onScrollDoc: (dy: number) => void
-  composer: ComposerState
-  onSubmitNew: (text: string, mentions?: Mention[]) => void
-  onCancelNew: () => void
-}) {
-  // The active/hover state drives this zone's layout math (which card is pinned to its
-  // exact Y, z-order, opacity); it comes from the tree context, same as the cards read.
-  // onJump powers the offscreen-pin pills ("N more ↓" → scroll the doc to the nearest).
-  const { activeThread, hoverThread, onJump } = useCommentTree()
-  const [heights, setHeights] = useState<Record<string, number>>({})
-  // Created lazily in the ref callback (refs run during commit, BEFORE effects —
-  // an effect-created observer would miss any card mounting in the zone's own
-  // first commit). Disconnected on unmount.
-  const obs = useRef<ResizeObserver | null>(null)
-  useEffect(() => () => obs.current?.disconnect(), [])
-  const measure = useCallback((el: HTMLDivElement | null) => {
-    if (!el) return
-    obs.current ??= new ResizeObserver((entries) => {
-      setHeights((h) => {
-        let changed = false
-        const next = { ...h }
-        for (const e of entries) {
-          const id = (e.target as HTMLElement).dataset.pin
-          if (!id) continue
-          const hh = Math.round((e.target as HTMLElement).offsetHeight)
-          if (next[id] !== hh) {
-            next[id] = hh
-            changed = true
-          }
-        }
-        return changed ? next : h
-      })
-    })
-    obs.current.observe(el)
-    return () => {
-      obs.current?.unobserve(el)
-      // Drop the unmounted pin's height so the layout snapshot never grows stale ids.
-      const id = el.dataset.pin
-      if (id)
-        setHeights((h) => {
-          if (!(id in h)) return h
-          const { [id]: _gone, ...rest } = h
-          return rest
-        })
-    }
-  }, [])
-
-  // A composer for a new anchored comment joins the same layout as a pinned
-  // item that owns priority, so neighbouring cards flow around it instead of
-  // colliding with it.
-  // Narrow once so the render below needs no non-null assertions: this is set
-  // exactly when there's an anchored composer with a resolved position.
-  const activeComposer =
-    composer?.anchor && composer.docTop != null
-      ? { docTop: composer.docTop, quote: selLabel(composer.anchor) }
-      : null
-  // Everything here is DOC-ABSOLUTE. The pin layer translates the whole stack by
-  // `datum − scrollY − offset` imperatively (see use-pin-layer), so a scroll never
-  // re-renders these cards — their translateY changes only when the layout itself
-  // does, which is exactly when the 200ms transition should fire.
-  const items = pins.flatMap((p) => {
-    const head = p.thread[0]
-    return head ? [{ id: head.thread_id, desiredY: p.desiredY }] : []
-  })
-  if (activeComposer) items.push({ id: COMPOSER_ID, desiredY: activeComposer.docTop })
-  const activeId = activeComposer ? COMPOSER_ID : activeThread
-  const pos = layoutPins(items, heights, activeId, 12)
-  const maxBottom = items.reduce(
-    (m, it) => Math.max(m, (pos[it.id] ?? it.desiredY) + (heights[it.id] ?? 116)),
-    0,
-  )
-  const minY = items.reduce((m, it) => Math.min(m, pos[it.id] ?? it.desiredY), 0)
-  const activeY = activeId != null ? (pos[activeId] ?? null) : null
-  const located: Record<string, boolean> = { [COMPOSER_ID]: true }
-  for (const p of pins) {
-    const head = p.thread[0]
-    if (head) located[head.thread_id] = p.located
-  }
-
-  const { zoneRef, layerRef, reveal, offscreen } = usePinLayer({
-    frameRef,
-    subscribeGeom,
-    onScrollDoc,
-    layout: { pos, heights, located, minY, maxBottom, activeY },
-  })
-
-  // Reveal the item the user just committed to. The composer reveals ONCE, at
-  // open: its selection is on-screen by definition (no jump accompanies it), and
-  // a delayed re-reveal would fight a user who scrolls right after opening it.
-  // Activation reveals now AND once more after the jump-to-anchor scroll settles
-  // (fastScrollTo runs 220ms) — a reveal computed mid-glide lands on stale
-  // geometry. Either way it's a one-shot nudge, not a lock: the next doc scroll
-  // unwinds any reveal offset (see use-pin-layer's clamp).
-  const composerOpen = !!activeComposer
-  useEffect(() => {
-    if (composerOpen) reveal(COMPOSER_ID)
-  }, [composerOpen, reveal])
-  useEffect(() => {
-    if (!activeThread) return
-    reveal(activeThread)
-    const t = setTimeout(() => reveal(activeThread), 350)
-    return () => clearTimeout(t)
-  }, [activeThread, reveal])
-
-  return (
-    // overflow-clip, not hidden: a clip box is not a scroll container, so focus
-    // scrolling / scrollIntoView can't silently shift it out from under the layer
-    // transform. use-pin-layer's reveal() is the sanctioned way in.
-    <div ref={zoneRef} className="absolute inset-0 overflow-clip">
-      <div ref={layerRef} className="absolute inset-x-2.5 top-0 will-change-transform">
-        {pins.map((p) => {
-          const head = p.thread[0]
-          if (!head) return null
-          const id = head.thread_id
-          const active = !activeComposer && activeThread === id
-          const y = pos[id] ?? p.desiredY
-          return (
-            <div
-              key={id}
-              ref={measure}
-              data-pin={id}
-              className="absolute inset-x-0 top-0 transition-transform duration-state"
-              style={{
-                transform: `translateY(${Math.round(y)}px)`,
-                zIndex: active ? 6 : hoverThread === id ? 4 : 2,
-                opacity: p.located ? 1 : 0,
-              }}
-            >
-              <CommentCard thread={p.thread} inLayer />
-            </div>
-          )
-        })}
-        {activeComposer && (
-          <div
-            ref={measure}
-            data-pin={COMPOSER_ID}
-            className="absolute inset-x-0 top-0 z-10 transition-transform duration-state"
-            style={{
-              transform: `translateY(${Math.round(pos[COMPOSER_ID] ?? activeComposer.docTop)}px)`,
-            }}
-          >
-            <Composer quote={activeComposer.quote} onSubmit={onSubmitNew} onCancel={onCancelNew} />
-          </div>
-        )}
-      </div>
-      {/* Comments outside the panel's view announce themselves at the edge they're
-          past (Miro/Figma edge-indicator grammar — the cursor layer's offscreen
-          peers work the same way). One click jumps the document to the nearest. */}
-      {offscreen.above && (
-        <FloatingControl
-          size="sm"
-          data-testid="pins-above-jump"
-          title="Jump to the nearest comment above"
-          onClick={() => offscreen.above && onJump(offscreen.above.id)}
-          className="absolute left-1/2 top-2 z-20 -translate-x-1/2 tabular-nums"
-        >
-          <ChevronUp aria-hidden className="size-3.5" />
-          {offscreen.above.count} more
-        </FloatingControl>
-      )}
-      {offscreen.below && (
-        <FloatingControl
-          size="sm"
-          data-testid="pins-below-jump"
-          title="Jump to the nearest comment below"
-          onClick={() => offscreen.below && onJump(offscreen.below.id)}
-          className="absolute bottom-2 left-1/2 z-20 -translate-x-1/2 tabular-nums"
-        >
-          <ChevronDown aria-hidden className="size-3.5" />
-          {offscreen.below.count} more
-        </FloatingControl>
-      )}
-    </div>
-  )
-}
+import { type ElementSnapshotLite, parseAnchor } from "./types"
 
 // A small glyph standing in for an element's role on the comment card (lucide
 // only — no emoji in chrome).
@@ -465,7 +260,9 @@ export function CommentCard({ thread, inLayer }: { thread: Comment[]; inLayer?: 
           <span className="min-w-0 flex-1 truncate">
             {requestStage === "requested"
               ? "Agent request · awaiting revision"
-              : "Revision applied"}
+              : root.resolution?.version != null
+                ? `Revision applied in v${root.resolution.version}`
+                : "Revision applied"}
           </span>
         </div>
       )}
@@ -662,52 +459,6 @@ export function CommentCard({ thread, inLayer }: { thread: Comment[]; inLayer?: 
           )}
         </>
       )}
-    </div>
-  )
-}
-
-// A collapsible group of comment cards (Resolved / General). `defaultOpen` sets the
-// initial fold — resolved threads start collapsed (out of the way), general ones open.
-export function CollapsibleThreadSection({
-  label,
-  defaultOpen,
-  testId,
-  className,
-  threads,
-}: {
-  label: string
-  defaultOpen: boolean
-  testId: string
-  className?: string
-  threads: Comment[][]
-}) {
-  const [open, setOpen] = useState(defaultOpen)
-  return (
-    <div className={className}>
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        data-testid={testId}
-        className="flex w-full items-center gap-1.5 rounded-sm px-0.5 py-1.5 text-muted-foreground outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
-      >
-        <ChevronRight
-          className={cn("size-3 shrink-0 transition-transform", open && "rotate-90")}
-          aria-hidden
-        />
-        <Eyebrow as="span" className="tabular-nums">
-          {label} ({threads.length})
-        </Eyebrow>
-      </button>
-      {open &&
-        threads.map((t) => {
-          const head = t[0]
-          if (!head) return null
-          return (
-            <div key={head.thread_id} className="mb-2.5">
-              <CommentCard thread={t} />
-            </div>
-          )
-        })}
     </div>
   )
 }

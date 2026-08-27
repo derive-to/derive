@@ -16,7 +16,15 @@ describe("groupSessions", () => {
     const sessions = groupSessions([mk(1, 0), mk(2, 10), mk(3, 20)])
     expect(sessions).toEqual([
       // n is the latest (view this one), from_n the earliest, created_at the latest.
-      { n: 3, from_n: 1, count: 3, author: "alice", name: null, created_at: at(20) },
+      {
+        n: 3,
+        from_n: 1,
+        count: 3,
+        author: "alice",
+        agent_name: null,
+        name: null,
+        created_at: at(20),
+      },
     ])
   })
 
@@ -49,7 +57,15 @@ describe("groupSessions", () => {
   it("is robust to unsorted input (groups by revision number, not array order)", () => {
     const shuffled = groupSessions([mk(3, 20), mk(1, 0), mk(2, 10)])
     expect(shuffled).toEqual([
-      { n: 3, from_n: 1, count: 3, author: "alice", name: null, created_at: at(20) },
+      {
+        n: 3,
+        from_n: 1,
+        count: 3,
+        author: "alice",
+        agent_name: null,
+        name: null,
+        created_at: at(20),
+      },
     ])
   })
 
@@ -62,9 +78,33 @@ describe("groupSessions", () => {
       mk(5, 210, "bob"),
     ])
     expect(sessions).toEqual([
-      { n: 5, from_n: 4, count: 2, author: "bob", name: null, created_at: at(210) },
-      { n: 3, from_n: 3, count: 1, author: "alice", name: null, created_at: at(200) },
-      { n: 2, from_n: 1, count: 2, author: "alice", name: null, created_at: at(5) },
+      {
+        n: 5,
+        from_n: 4,
+        count: 2,
+        author: "bob",
+        agent_name: null,
+        name: null,
+        created_at: at(210),
+      },
+      {
+        n: 3,
+        from_n: 3,
+        count: 1,
+        author: "alice",
+        agent_name: null,
+        name: null,
+        created_at: at(200),
+      },
+      {
+        n: 2,
+        from_n: 1,
+        count: 2,
+        author: "alice",
+        agent_name: null,
+        name: null,
+        created_at: at(5),
+      },
     ])
   })
 })
@@ -84,5 +124,18 @@ describe("sessions", () => {
       expect(s).toHaveLength(1) // each gap <= 30m even though span is 45m
       expect(s[0]?.count).toBe(3)
     })
+  })
+
+  it("keeps an agent's edits and the person's own apart, even under one byline", () => {
+    // An agent publishes on alice's behalf (her byline), then alice saves herself.
+    const sessions = groupSessions([
+      { ...mk(1, 0), agent_id: "ag_1", agent_name: "Claude Code" },
+      { ...mk(2, 5), agent_id: "ag_1", agent_name: "Claude Code" },
+      mk(3, 10),
+    ])
+    expect(sessions.map((s) => ({ n: s.n, count: s.count, agent_name: s.agent_name }))).toEqual([
+      { n: 3, count: 1, agent_name: null },
+      { n: 2, count: 2, agent_name: "Claude Code" },
+    ])
   })
 })
