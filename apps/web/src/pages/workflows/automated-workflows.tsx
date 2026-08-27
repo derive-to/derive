@@ -14,9 +14,11 @@ import { StatusBadge } from "@/components/shared/status-badge"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { automationsQuery, runsQuery, workspaceQuery } from "@/lib/queries"
+import { automationsQuery, runsQuery, workspaceQuery, workspaceSettingsQuery } from "@/lib/queries"
 import { ago } from "@/lib/time"
 import { useApiMutation } from "@/lib/use-api-mutation"
+import { SettingsListSkeleton } from "../settings/settings-list-skeleton"
+import { SettingsSection } from "../settings/settings-section"
 import { AutomationForm } from "./automation-form"
 import {
   runExecutionReceipt,
@@ -26,18 +28,17 @@ import {
   targetSummary,
   triggerLabel,
 } from "./automation-format"
-import { SettingsListSkeleton } from "./settings-list-skeleton"
-import { SettingsSection } from "./settings-section"
 
-export function AutomationsSection() {
+export function AutomatedWorkflows() {
   const qc = useQueryClient()
   const { data: automations, isPending, isError, refetch } = useQuery(automationsQuery())
-  // Creating / removing / activity are Admin-gated server-side; Run now needs a write seat.
-  // Read the caller's role once and render only what they can actually do — never a form
-  // whose submit is guaranteed a 403.
+  // Creating, removing, and reading activity require an Admin; Run now requires a write seat.
+  // Hide controls the API will reject.
   const { data: ws } = useQuery(workspaceQuery())
+  const { data: settings } = useQuery(workspaceSettingsQuery())
   const isAdmin = ws?.role === "owner"
   const canRun = ws?.role === "owner" || ws?.role === "editor"
+  const standingRunsEnabled = settings?.automateBeta === true
   const reload = () => {
     qc.invalidateQueries({ queryKey: automationsQuery().queryKey })
     qc.invalidateQueries({ queryKey: runsQuery().queryKey })
@@ -45,35 +46,40 @@ export function AutomationsSection() {
 
   return (
     <SettingsSection
-      title="Automations"
+      title="Single-agent workflows"
       description={
         <>
-          Ask an agent to run an instruction on demand, on a schedule, or after an event. Results
-          keep their authorship, access, and version history.
+          Give one Agent a standing instruction, then run it on demand, on a schedule, or after an
+          event. Each start creates a separate run.
         </>
       }
     >
-      {isAdmin ? (
+      {isAdmin && standingRunsEnabled ? (
         <div className="rounded-lg border bg-card p-4">
           <AutomationForm onDone={reload} />
         </div>
+      ) : isAdmin ? (
+        <p className="text-sm text-muted-foreground">
+          Standing triggers are not enabled for this workspace. Existing definitions remain visible,
+          but they cannot start a new run.
+        </p>
       ) : (
-        <AdminNote can="create automations" />
+        <AdminNote can="create workflows" />
       )}
 
       {isPending ? (
         <SettingsListSkeleton />
       ) : isError ? (
         <LoadError
-          title="Couldn’t load automations"
+          title="Couldn’t load single-agent workflows"
           testId="automations-retry"
           onRetry={() => refetch()}
         />
       ) : !automations || automations.length === 0 ? (
         <SettingsEmpty>
           {isAdmin
-            ? "No automations yet. Nothing is running on a schedule or trigger."
-            : "No automations yet."}
+            ? "No single-agent workflows yet. Nothing is running on a schedule or trigger."
+            : "No single-agent workflows yet."}
         </SettingsEmpty>
       ) : (
         <SettingsGroup>
@@ -81,7 +87,7 @@ export function AutomationsSection() {
             <AutomationRow
               key={a.id}
               automation={a}
-              canRun={canRun}
+              canRun={canRun && standingRunsEnabled}
               canRemove={isAdmin}
               onDone={reload}
             />
@@ -115,12 +121,12 @@ function AutomationRow({
   })
   const pause = useApiMutation({
     mutationFn: () => api.updateAutomation(automation.id, { enabled: !automation.enabled }),
-    success: automation.enabled ? "Automation paused" : "Automation resumed",
+    success: automation.enabled ? "Workflow paused" : "Workflow resumed",
     onSuccess: () => onDone(),
   })
   const remove = useApiMutation({
     mutationFn: () => api.deleteAutomation(automation.id),
-    success: "Automation removed",
+    success: "Workflow removed",
     onSuccess: () => onDone(),
   })
   const summary = targetSummary(automation.refs)
@@ -138,7 +144,7 @@ function AutomationRow({
           <Badge variant="outline">
             {automation.provider === "codex" ? "Codex" : "Claude Code"}
           </Badge>
-          {automation.context_id && <Badge variant="outline">Context</Badge>}
+          {automation.context_id && <Badge variant="outline">Agent</Badge>}
           <Badge variant="secondary">{triggerLabel(automation.trigger)}</Badge>
           {!automation.enabled && <Badge variant="outline">Paused</Badge>}
           <ExecutorBadge seenAt={automation.executor_seen_at ?? null} />
@@ -197,7 +203,7 @@ function AutomationRow({
               className="max-h-[calc(100dvh-2rem)] overflow-y-auto"
             >
               <DialogHeader>
-                <DialogTitle>Edit automation</DialogTitle>
+                <DialogTitle>Edit workflow</DialogTitle>
               </DialogHeader>
               {/* Remount per open so stale state never leaks between edit sessions. */}
               {editing && (
@@ -214,7 +220,7 @@ function AutomationRow({
           <ConfirmDialog
             open={confirming}
             onOpenChange={setConfirming}
-            title="Remove this automation?"
+            title="Remove this workflow?"
             description="Its queued runs are cancelled. Past runs stay in the activity."
             confirmLabel="Remove"
             onConfirm={() => remove.mutate()}

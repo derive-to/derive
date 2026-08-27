@@ -39,11 +39,9 @@ import {
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { EVENT_KINDS, SCHEDULE_PRESETS } from "./automation-format"
 
-// The automation form, shared by the Settings manager (create + edit) and the per-artifact
-// Automate dialog. Targets are first-class: one "Add target" search over documents and
-// collections, plus free tags — a doc is revised, a collection receives new editions, a tag
-// stamps (and archives) whatever the run writes. A run's write publishes as a new version of
-// its target, like every other write. Pass `automation` to edit in place (PATCH).
+// Shared by the Workflow directory and the per-artifact Automate dialog. Targets determine where
+// a run writes: artifacts receive revisions, collections receive new artifacts, and tags classify
+// and archive the artifacts a run produces. Pass `automation` to edit an existing definition.
 
 /** A chosen target plus a display label. Titles resolve lazily (see below). */
 type Target = { ref: AutomationRef; label: string }
@@ -79,24 +77,22 @@ export function AutomationForm({
   refs?: string[]
   defaultInstruction?: string
   submitLabel?: string
-  /** Present ⇒ edit this automation in place instead of creating. */
+  /** When present, edit this automation instead of creating one. */
   automation?: Automation
   /** Artifact-local creation can enqueue its proof run atomically. */
   runOnCreate?: boolean
   onDone: () => void
 }) {
   const { data: agents, isError: agentsError } = useQuery(agentsQuery())
-  // "" = auto-mint on create (the default; nobody picks an agent). Edit mode keeps
-  // the automation's existing agent. A non-empty id = run as a service agent.
+  // An empty id creates a dedicated Agent. Existing automations retain their assigned Agent.
   const [agentId, setAgentId] = useState(automation?.agent_id ?? "")
-  // The minted agent's bearer, shown exactly once; onDone waits for Done so the
-  // token's only display can't be lost to the dialog closing.
+  // A newly minted Agent's bearer is shown once. Keep the form open until it is acknowledged.
   const [mintedToken, setMintedToken] = useState<string | null>(null)
   const [instruction, setInstruction] = useState(
     automation?.instruction ?? defaultInstruction ?? "",
   )
-  // Codex is the hosted coding-agent path this flow is designed to make obvious. Existing
-  // automations retain their provider, and API clients that omit it retain the Claude default.
+  // Existing automations retain their provider. API clients that omit one retain the server's
+  // Claude default.
   const [provider, setProvider] = useState<Automation["provider"]>(automation?.provider ?? "codex")
   const [contextId, setContextId] = useState(automation?.context_id ?? "")
   const [kind, setKind] = useState<AutomationTrigger["kind"]>(automation?.trigger.kind ?? "manual")
@@ -198,10 +194,10 @@ export function AutomationForm({
         : api.createAutomation(body)
     },
     success: automation
-      ? "Automation updated"
+      ? "Workflow updated"
       : runOnCreate
-        ? "Automation created and queued"
-        : "Automation created",
+        ? "Workflow created and queued"
+        : "Workflow created",
     // Invalidate HERE, not in each caller — both the manager and the artifact dialog write
     // through this form, and a change from either must refresh both views.
     invalidate: [automationsQuery().queryKey, runsQuery().queryKey],
@@ -273,16 +269,20 @@ export function AutomationForm({
       </Field>
 
       {!contextId && (automation || (agents ?? []).some((a) => !a.managed)) && (
-        <Field label="Runs as">
+        <Field label="Execution connection">
           <Select
             value={agentId || "auto"}
             onValueChange={(v) => setAgentId(v === "auto" ? "" : v)}
           >
-            <SelectTrigger data-testid="automation-agent" aria-label="Runs as" className="w-full">
-              <SelectValue placeholder="Its own agent" />
+            <SelectTrigger
+              data-testid="automation-agent"
+              aria-label="Execution connection"
+              className="w-full"
+            >
+              <SelectValue placeholder="Dedicated connection" />
             </SelectTrigger>
             <SelectContent>
-              {!automation && <SelectItem value="auto">Its own agent (default)</SelectItem>}
+              {!automation && <SelectItem value="auto">Dedicated connection (default)</SelectItem>}
               {(agents ?? [])
                 .filter((a) => !a.managed || a.id === automation?.agent_id)
                 .map((a) => (
@@ -297,7 +297,7 @@ export function AutomationForm({
 
       <Field
         label="Runs with"
-        hint="The selected coding agent executes in Derive's isolated hosted job container."
+        hint="The selected coding agent executes through an available connected or hosted runner."
       >
         <Select value={provider} onValueChange={(v) => setProvider(v as Automation["provider"])}>
           <SelectTrigger
@@ -610,11 +610,7 @@ export function AutomationForm({
           {save.isPending
             ? "Saving…"
             : (submitLabel ??
-              (automation
-                ? "Save changes"
-                : runOnCreate
-                  ? "Create & run now"
-                  : "Create automation"))}
+              (automation ? "Save changes" : runOnCreate ? "Create & run now" : "Create workflow"))}
         </Button>
       </div>
     </div>

@@ -347,6 +347,37 @@ export function runStoreContract(
       expect((await store.listFactAcrossArtifacts(ORG, "xchecks", { limit: 1 })).length).toBe(1)
     })
 
+    it("batch-loads selected facts from current artifact versions", async () => {
+      const a = await store.createArtifact(newArtifact({ title: "Workflow A" }))
+      const old = await store.addVersion(a.id, newVersion())
+      await store.setVersionData(a.id, old.n, [
+        { id: uuid(), slot: "policy", json: '"old"', size_bytes: 5, gen: 1 },
+      ])
+      const current = await store.addVersion(a.id, newVersion())
+      await store.setVersionData(a.id, current.n, [
+        { id: uuid(), slot: "manifest", json: "{}", size_bytes: 2, gen: 1 },
+        { id: uuid(), slot: "policy", json: '"current"', size_bytes: 9, gen: 1 },
+        { id: uuid(), slot: "unrelated", json: "true", size_bytes: 4, gen: 1 },
+      ])
+      const b = await store.createArtifact(newArtifact({ title: "Workflow B" }))
+      const bv = await store.addVersion(b.id, newVersion())
+      await store.setVersionData(b.id, bv.n, [
+        { id: uuid(), slot: "policy", json: '"second"', size_bytes: 8, gen: 1 },
+      ])
+
+      const rows = await store.currentVersionDataForArtifacts([a.id, b.id], ["manifest", "policy"])
+      expect(rows).toHaveLength(3)
+      expect(rows.map((row) => [row.artifact_id, row.n, row.slot, row.json])).toEqual(
+        expect.arrayContaining([
+          [a.id, current.n, "manifest", "{}"],
+          [a.id, current.n, "policy", '"current"'],
+          [b.id, bv.n, "policy", '"second"'],
+        ]),
+      )
+      expect(await store.currentVersionDataForArtifacts([], ["policy"])).toEqual([])
+      expect(await store.currentVersionDataForArtifacts([a.id], [])).toEqual([])
+    })
+
     it("inverts $links into backlinks — candidates the caller confirms, current version only", async () => {
       // The corpus inversion. Every assertion here is a way the scan can be quietly wrong,
       // and quietly wrong is the whole risk: an index that under-reports reads exactly like

@@ -1213,6 +1213,18 @@ export class PgMetaStore implements MetaStore {
       .orderBy(desc(versionData.created_at))
       .limit(opts?.limit ?? 100)
   }
+  async currentVersionDataForArtifacts(artifactIds: string[], slots: string[]) {
+    if (!artifactIds.length || !slots.length) return []
+    return this.db
+      .select(getTableColumns(versionData))
+      .from(versionData)
+      .innerJoin(
+        artifact,
+        and(eq(artifact.id, versionData.artifact_id), eq(artifact.current_version, versionData.n)),
+      )
+      .where(and(inArray(versionData.artifact_id, artifactIds), inArray(versionData.slot, slots)))
+      .orderBy(asc(versionData.artifact_id), asc(versionData.slot))
+  }
   // The BACKLINK scan: the inversion of $links. Same join as above, two more predicates.
   //
   // The LIKE NARROWS, the caller CONFIRMS by parsing — a substring match is not proof (the

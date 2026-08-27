@@ -540,6 +540,12 @@ export const agentsQuery = () =>
     queryFn: () => api.listAgents().then((r) => r.agents),
   })
 
+export const workflowsQuery = () =>
+  queryOptions({
+    queryKey: ["workflows"] as const,
+    queryFn: () => api.listWorkflows().then((r) => r.workflows),
+  })
+
 // Automations (standing agent jobs) + runs (their executions — the activity ledger).
 // Invalidated on create / delete / run-now.
 export const automationsQuery = () =>

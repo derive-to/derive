@@ -106,7 +106,16 @@ test("starting a workflow creates a visible, version-pinned run", async ({ owner
     `</body></html>`
   const shortId = await publishArtifact(owner, "workflow.html", html, "text/html")
 
-  await owner.goto(`/artifacts/${shortId}`)
+  await owner.goto("/settings/automations")
+  await expect(owner).toHaveURL(/\/workflows$/)
+  await expect(owner.getByTestId("nav-workflows")).toHaveAttribute("aria-current", "page")
+  const directoryRow = owner
+    .getByTestId("workflow-row")
+    .filter({ hasText: "Keep internal docs aligned with code changes." })
+  await expect(directoryRow).toContainText("Keep internal docs aligned with code changes.")
+  await expect(directoryRow).toContainText("1 Agent step")
+  await directoryRow.click()
+  await expect(owner).toHaveURL(new RegExp(`/artifacts/.+${shortId}`))
   await expect(owner.getByTestId("workflow-preview")).toBeVisible()
   await expect(owner.getByText("No runs yet.", { exact: false })).toBeVisible()
   await owner.getByTestId("workflow-run-docs-update").click()

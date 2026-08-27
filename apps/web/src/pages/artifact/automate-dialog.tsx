@@ -8,13 +8,10 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { workspaceQuery } from "@/lib/queries"
-import { AutomationForm } from "../settings/automation-form"
+import { AutomationForm } from "../workflows/automation-form"
 
-// The per-artifact automate flow: create an automation scoped to THIS artifact (its short id
-// rides along as a ref, and the instruction is seeded to "keep this current"). Same form as
-// Settings → Automations, framed for one doc. Creation is workspace-Admin-gated server-side
-// (the menu item shows for any doc owner), so a non-Admin gets an honest note, not a form
-// whose submit is guaranteed a 403.
+// Creates a single-Agent workflow scoped to this artifact and seeds its instruction. The API
+// requires a workspace Admin, so other artifact owners see the same permission boundary here.
 export function AutomateDialog({
   shortId,
   title,
@@ -40,7 +37,7 @@ export function AutomateDialog({
           <DialogTitle>Automate this artifact</DialogTitle>
           <DialogDescription>
             Ask an agent to keep {title ? `“${title}”` : "this artifact"} current on a schedule,
-            after an event, or on demand. Manage it later in Settings → Automations.
+            after an event, or on demand. Manage it later under Workflows.
           </DialogDescription>
         </DialogHeader>
         {isAdmin ? (
@@ -51,7 +48,7 @@ export function AutomateDialog({
             onDone={() => onOpenChange(false)}
           />
         ) : (
-          <AdminNote can="create automations" />
+          <AdminNote can="create workflows" />
         )}
       </DialogContent>
     </Dialog>

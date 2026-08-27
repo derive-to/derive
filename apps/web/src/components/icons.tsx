@@ -79,6 +79,7 @@ const REG = {
   collection: Folder,
   repo: FolderGit2,
   context: Bot,
+  workflow: GitFork,
   templates: LayoutTemplate,
   derive: GitFork,
   // Brandprint — the brand's fingerprint.

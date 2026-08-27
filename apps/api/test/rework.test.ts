@@ -272,6 +272,73 @@ describe("workflow run: explicit local-agent handoff", () => {
     )
   }
 
+  it("lists current visible workflow definitions without starting them", async () => {
+    const { app, meta } = makeAuthedApp("workflow-directory", [owner, editor], "editor")
+    const ready = await (
+      await publishAs(app, workflowHtml(), { title: "Weekly brief" }, as(owner.email))
+    ).json()
+    const broken = await (
+      await publishAs(app, workflowHtml(true), { title: "Broken brief" }, as(owner.email))
+    ).json()
+    const hidden = await (
+      await publishAs(app, workflowHtml(), { title: "Owner only" }, as(owner.email))
+    ).json()
+    const readyArtifact = await meta.getByShortId(ready.short_id)
+    const brokenArtifact = await meta.getByShortId(broken.short_id)
+    const hiddenArtifact = await meta.getByShortId(hidden.short_id)
+    expect(readyArtifact).not.toBeNull()
+    expect(brokenArtifact).not.toBeNull()
+    expect(hiddenArtifact).not.toBeNull()
+    await meta.setAccess(readyArtifact?.id ?? "", "member", "workspace", "none", null)
+    await meta.setAccess(brokenArtifact?.id ?? "", "member", "workspace", "none", null)
+    await meta.setAccess(hiddenArtifact?.id ?? "", "none", "none", "viewer", null)
+
+    const res = await app.request("/v1/workflows", { headers: as(editor.email) })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as {
+      workflows: Array<{
+        shortId: string
+        title: string
+        version: number
+        purpose: string | null
+        status: "ready" | "needs-changes"
+        diagrams: Array<{
+          id: string
+          title: string
+          agentSteps: number
+          humanPauses: number
+          branches: number
+          loops: number
+        }>
+      }>
+    }
+    expect(body.workflows.map((workflow) => workflow.shortId)).toEqual([
+      broken.short_id,
+      ready.short_id,
+    ])
+    expect(body.workflows.find((workflow) => workflow.shortId === ready.short_id)).toMatchObject({
+      title: "Weekly brief",
+      version: 1,
+      purpose: "Review and publish a brief.",
+      status: "ready",
+      diagrams: [
+        {
+          id: "brief",
+          title: "Reviewed brief",
+          agentSteps: 2,
+          humanPauses: 1,
+          branches: 2,
+          loops: 0,
+        },
+      ],
+    })
+    expect(body.workflows.find((workflow) => workflow.shortId === broken.short_id)).toMatchObject({
+      title: "Broken brief",
+      status: "needs-changes",
+    })
+    expect(body.workflows.some((workflow) => workflow.shortId === hidden.short_id)).toBe(false)
+  })
+
   it("GET previews without running; POST pins a fresh run and queues its instruction", async () => {
     const { app, meta } = makeAuthedApp("workflow-run", [owner, editor], "editor")
     const published = await (
