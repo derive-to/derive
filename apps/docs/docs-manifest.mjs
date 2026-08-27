@@ -65,7 +65,7 @@ export const docsSections = [
         source: "apps/docs/content/hosted-runs.md",
         slug: "concepts/hosted-runs",
         title: "Hosted runs",
-        description: "How scheduled and interactive context runs execute safely.",
+        description: "How scheduled and interactive Agent runs execute safely.",
       },
     ],
   },

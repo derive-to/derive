@@ -514,7 +514,7 @@ test("Inspect appears only inside an editor's HTML edit session", async ({ owner
 
   const tabs = owner.getByTestId("rail-tabs").getByRole("button")
   await expect(tabs).toHaveCount(2)
-  await expect(tabs).toHaveText(["comments", "chat"])
+  await expect(tabs).toHaveText(["Activity", "Chat"])
   await expect(owner.getByTestId("rail-tab-comments")).toHaveAttribute("aria-pressed", "true")
   await expect(owner.getByTestId("rail-tab-inspect")).toHaveCount(0)
 
@@ -523,7 +523,7 @@ test("Inspect appears only inside an editor's HTML edit session", async ({ owner
 
   await owner.getByTestId("artifact-inline-edit").click()
   await expect(owner.getByTestId("inline-edit-bar")).toBeVisible()
-  await expect(tabs).toHaveText(["comments", "chat", "inspect"])
+  await expect(tabs).toHaveText(["Activity", "Chat", "Inspect"])
   await expect(owner.getByTestId("rail-tab-inspect")).toHaveAttribute("aria-pressed", "true")
   await expect(owner.getByTestId("artifact-inspect-choose")).toContainText(
     "Choose content in the document",
@@ -543,7 +543,7 @@ test("Inspect appears only inside an editor's HTML edit session", async ({ owner
   // promises an element operation that cannot be represented in Markdown source.
   const markdownId = await publishArtifact(owner, "rail.md", "# A markdown doc", "text/markdown")
   await openArtifact(owner, markdownId)
-  await expect(owner.getByTestId("rail-tabs").getByRole("button")).toHaveText(["comments", "chat"])
+  await expect(owner.getByTestId("rail-tabs").getByRole("button")).toHaveText(["Activity", "Chat"])
   await expect(owner.getByTestId("rail-tab-inspect")).toHaveCount(0)
 })
 

@@ -34,7 +34,8 @@ test("publish, comment, resolve, and find it in the library", async ({ owner }) 
   await addComment(owner, "Looks good, shipping.")
   await activateThread(owner, "Looks good, shipping.")
   await owner.getByTestId("comment-resolve").click()
-  await expect(owner.getByText(/Resolved \(\d+\)/)).toBeVisible()
+  // A settled thread folds to one line in the activity stream.
+  await expect(owner.getByTestId(/^resolved-thread-/)).toBeVisible()
 
   // Re-fetch the library home so it picks up the freshly published artifact.
   await owner.goto("/")
@@ -506,7 +507,7 @@ test("the current page keeps its selected state under the pointer", async ({ own
   expect(await bgOf(current), "the active row changed colour on hover").toBe(currentRest)
 
   // …and the scoping didn't just disable hover everywhere: an idle row still washes.
-  const idle = owner.getByTestId("nav-contexts")
+  const idle = owner.getByTestId("nav-agents")
   const idleRest = await bgOf(idle)
   await idle.hover()
   await owner.waitForTimeout(400)

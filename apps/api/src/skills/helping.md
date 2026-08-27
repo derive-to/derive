@@ -35,7 +35,8 @@ Read this when the question is about DERIVE, not about the workspace's contents.
 | `/shared` | Documents other people gave them access to. |
 | `/following` | Recent work by the people they follow. |
 | `/feedback` | Documents waiting on their review or reply. |
-| `/contexts` | Packaged agents: a named setup somebody can ask, with its own access. |
+| `/agents` | Reusable Agents: what each one knows, can do, may access, and where it runs. |
+| `/contexts` | Legacy links redirect to the matching Agent. |
 | `/people` | Who is in the workspace, and who they follow. |
 | `/new` | Write or paste a new document (Markdown or HTML) and publish it. |
 | `/welcome` | How to connect an agent over MCP, and how to publish from the CLI. Reachable any time. |
@@ -61,7 +62,7 @@ Read this when the question is about DERIVE, not about the workspace's contents.
 | `/settings/sources` | Connect an MCP server so an agent can read from it. |
 | `/settings/brandprint` | The workspace's brand: what published pages look like. |
 | `/settings/webhooks` | Send Derive events to a URL. |
-| `/settings/agents` | Register an agent, mint or rotate its token. |
+| `/settings/agents` | Manage Agent execution connections and rotate their tokens. |
 | `/settings/automations` | Scheduled or triggered agent work. |
 | `/settings/domains` | Serve published pages on a custom domain. |
 | `/settings/reports` | Content reports, when there are open ones. Admin only. |
@@ -98,9 +99,9 @@ an agent or the CLI (`derive publish`) after connecting at `/welcome`.
 **Connect an agent (MCP).** `/welcome` has the setup for whichever agent they use. That is also
 how the CLI is authorised.
 
-**Connect a source.** `/settings/sources`, add the MCP server's URL. An agent working for them can
-then read from it. This is different from `/settings/agents`, which is about agents that act IN
-Derive.
+**Connect a source.** `/settings/sources`, add the MCP server's URL. An Agent may then use it when
+its permissions allow. This is different from `/settings/agents`, which manages the execution
+connections that act in Derive.
 
 **Make a collection.** The + beside Collections in the sidebar. Then drag documents in, or use the
 organize control on a document.
@@ -148,9 +149,11 @@ on that same screen. Derive can also send direct messages. Each person controls 
 - **Thread:** a comment anchored to a passage. Open until somebody resolves it.
 - **Collection:** a folder of documents. A document can be in several.
 - **Tag:** a workspace-wide label for finding things across collections.
-- **Context:** a packaged agent, with a name, a reusable setup, and its own access.
-- **Agent:** a registered principal that acts for a person, with its own token, capped by that
-  person's seat.
+- **Agent:** a reusable worker: its instructions, knowledge, skills, sources, permissions,
+  execution connection, and activity history.
+- **Agent connection:** the registered principal and token an Agent's runner uses to act in Derive.
+- **Context:** the compatibility name used by the current API and workflow schema for an Agent
+  definition. People should not need this term to use the product.
 - **Automation:** agent work on a schedule or a trigger.
 - **Brandprint:** the workspace's design and writing guidance for published work.
 - **Source:** a connected MCP server an agent can read from.

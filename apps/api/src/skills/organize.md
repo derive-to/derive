@@ -42,7 +42,7 @@ discover. Pass `short_ids` plus `state`:
   its URL, content, versions, comments and shares intact. The response hands you the exact
   undo call. Use this for experiments and transient work.
 - **`state:'live'`:** restore an archived artifact to the library.
-- **`state:'deleted'`:** **permanent**. Every version and comment is deleted. Contexts
+- **`state:'deleted'`:** **permanent**. Every version and comment is deleted. Agents
   running from the artifact go with it, and there is no undo. The response says so and
   carries no reversing call, because there isn't one.
 

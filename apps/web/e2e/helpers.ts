@@ -72,7 +72,7 @@ export async function publishArtifact(
 // deterministic "artifact view is interactive" gate every comment test needs.
 export async function openArtifact(page: Page, shortId: string): Promise<void> {
   await page.goto(`/artifacts/${shortId}`)
-  await expect(page.getByText("Comments", { exact: true })).toBeVisible()
+  await expect(page.getByTestId("activity-stream")).toBeVisible()
 }
 
 // Post a top-level comment through the composer (all test-id driven) and wait

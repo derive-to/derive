@@ -152,7 +152,7 @@ export const askerName = (asker: Asker): string =>
   // By code point, not code unit: a plain slice can cut an emoji in half and leave a
   // lone surrogate, and this string reaches an email subject line and a stored
   // notification row.
-  [...(asker.name ?? asker.email)].slice(0, ACCESS_REQUEST_NAME_MAX).join("")
+  [...(asker.name ?? asker.username ?? asker.email)].slice(0, ACCESS_REQUEST_NAME_MAX).join("")
 
 /** The bell line: who to grant to, whether to believe the address, then why. */
 export const accessRequestPreview = (asker: Asker, note: string | null): string => {

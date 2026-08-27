@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process"
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -208,8 +209,8 @@ describe("scaffold", () => {
     )
   })
 
-  it("scaffolds a context: manifest + references + tools + env hygiene", () => {
-    const files = scaffoldFiles("Analytics", "context")
+  it("scaffolds an Agent: manifest + references + tools + env hygiene", () => {
+    const files = scaffoldFiles("Analytics", "agent")
     const names = Object.keys(files)
     expect(names).toContain("context/MANIFEST.md")
     expect(names).toContain("context/references/example.md")
@@ -224,6 +225,24 @@ describe("scaffold", () => {
     const cfg = JSON.parse(files[CONFIG_FILE])
     expect(cfg.entry).toBe("context")
     expect(cfg.context).toEqual({ id: null, agent_id: null, name: "Analytics" })
+  })
+
+  it("keeps the context template as a compatibility alias", () => {
+    expect(scaffoldFiles("Analytics", "context")).toEqual(scaffoldFiles("Analytics", "agent"))
+  })
+
+  it("uses Agent as the command name and keeps context as a compatibility alias", () => {
+    const d = tmp()
+    const bin = join(import.meta.dirname, "..", "bin", "derive.js")
+    const run = (noun) => spawnSync(process.execPath, [bin, noun, "push", d], { encoding: "utf8" })
+
+    const agent = run("agent")
+    const context = run("context")
+
+    expect(agent.status).toBe(1)
+    expect(agent.stderr).toContain('has no "context" block')
+    expect(context.status).toBe(1)
+    expect(context.stderr).toContain('has no "context" block')
   })
 })
 

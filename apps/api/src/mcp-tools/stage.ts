@@ -29,6 +29,7 @@ const ACCESS_ACTION: Record<ApiTokenAccess, Action> = {
 }
 export function registerStageTool(tc: ToolContext): void {
   const {
+    agent,
     server,
     ctx,
     ownerId,
@@ -247,7 +248,9 @@ export function registerStageTool(tc: ToolContext): void {
       if (await agentWritesOff(ctx.meta, org)) return err(AGENT_WRITES_OFF)
       const expiresAt = Date.now() + PUBLISH_TOKEN_TTL_MS
       const targetName = short_id ?? PUBLISH_TARGET_CREATE
-      const tok = await signPublishToken(secret, org, ownerId, targetName, expiresAt)
+      // The agent minting the URL rides in the token: the version uploaded through it is
+      // recorded as this agent's work on the owner's behalf (see handlePublish).
+      const tok = await signPublishToken(secret, org, ownerId, targetName, expiresAt, agent.id)
       const base = ctx.deps.baseUrl.replace(/\/$/, "")
       const uploadUrl = short_id
         ? `${base}/v1/artifacts/${short_id}/versions/t/${tok}`

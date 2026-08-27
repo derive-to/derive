@@ -451,9 +451,34 @@ variants.
   **Share** leads as the page's single primary (everything else ghost), then the favorited
   **star** (glanceable ink state), then a single sectioned **⋯** (view modes → organize →
   activity → manage; Collections opens as a dialog from it) — then the terminal
-  **Comments** toggle hugging the panel it opens. Everything that used to crowd the row
+  **Activity** toggle hugging the panel it opens (an ink dot on it while closed means
+  something happened since your last visit). Everything that used to crowd the row
   (Present / Insights / History / Edit / Lock / Report / Collections) now
   lives behind the ⋯ — the render is the hero, the chrome recedes.
+- **Activity rail** — the artifact's one right rail is ONE chronological stream, not a
+  comments list with a history drawer beside it: comment threads are the cards (the only
+  bordered surface in the rail — they are independently interactive), and everything
+  else is one line. Consecutive actions by one actor on one day fold into a *turn*
+  ("Ada published v9–v11 · +2"): a 20px glyph column (the actor's initials, the soft-ink
+  sparkles for an agent), the sentence leading with what matters most (the pending ask,
+  else the publish), a mono `+N` outside the ellipsis, a chevron that opens the rows and
+  their detail (the version list, the review note, the reply body), and a mono stamp
+  pinned right so it never orphan-wraps. Stamps are relative today and yesterday and
+  absolute before that, so only Today / Yesterday / Earlier get an eyebrow. A resolved
+  thread folds to one line (✓ · author · first words) that opens to the muted card.
+  Replies since the reader's last visit get a row of their own so recency is never buried
+  in an old card. The **"New" marker** is the rail's one ink line (the reader's last visit,
+  per browser; closing the rail advances it), and "follow the document" marks the thread
+  whose highlight is in the document's viewport with a 2px ink rule. Three levels and
+  nothing else: the stream, the docked **composer** (one input — what a message is attached
+  to is a chip above it: the quoted selection, or the review round being answered, with a
+  *secondary* Send back; the page's one filled primary stays Share), and the head (count,
+  thread stepping, one lens menu — All / Comments only + Follow the document — and close;
+  the ⋯ menu's Version history drawer stays the roomy version surface). The phone sheet
+  renders the same stream; its composer bar answers a round in place. A pending
+  review is a turn in the stream (its note shown in full with Answer — the one exception to
+  one line) and a chip on the composer, never a card pinned above everything. Pure grouping lives in `pages/artifact/lib/activity.ts` (`buildStream`),
+  unit-tested; the components only render.
 - **Live cursors** — peers' cursors are a slim arrow tinted by their **identity**: a stable,
   distinct tint from the shared identity palette (`colorForName`, the same palette avatar
   tints draw from), keyed on the peer's stable **id** — not their display name, which

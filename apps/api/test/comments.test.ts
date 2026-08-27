@@ -72,18 +72,25 @@ describe("comments + the loop", () => {
     expect(
       (await (await app.request(`/v1/artifacts/${shortId}/comments?state=open`)).json()).comments,
     ).toHaveLength(0)
-    expect(
-      (await (await app.request(`/v1/artifacts/${shortId}/comments?state=resolved`)).json())
-        .comments,
-    ).toHaveLength(2)
+    const settled = (
+      await (await app.request(`/v1/artifacts/${shortId}/comments?state=resolved`)).json()
+    ).comments
+    expect(settled).toHaveLength(2)
+    // The root records its settling — when, and (a hand resolve) no version.
+    const root = settled.find((c: { id: string }) => c.id === rootId)
+    expect(root.resolution).toMatchObject({ version: null })
+    expect(typeof root.resolution.at).toBe("string")
 
     await app.request(
       `/v1/artifacts/${shortId}/comments/${rootId}/resolve`,
       json({ state: "open" }),
     )
-    expect(
-      (await (await app.request(`/v1/artifacts/${shortId}/comments?state=open`)).json()).comments,
-    ).toHaveLength(2)
+    const reopened = (
+      await (await app.request(`/v1/artifacts/${shortId}/comments?state=open`)).json()
+    ).comments
+    expect(reopened).toHaveLength(2)
+    // Reopening clears the record: it never claims a resolve the state contradicts.
+    expect(reopened.find((c: { id: string }) => c.id === rootId).resolution).toBeNull()
   })
 
   it("resolves threads on republish via the resolves field", async () => {
@@ -101,6 +108,11 @@ describe("comments + the loop", () => {
     expect(
       (await (await app.request(`/v1/artifacts/${sid}/comments?state=open`)).json()).comments,
     ).toHaveLength(0)
+    // …and the thread records which version settled it.
+    const [root] = (
+      await (await app.request(`/v1/artifacts/${sid}/comments?state=resolved`)).json()
+    ).comments
+    expect(root.resolution).toMatchObject({ version: 2 })
   })
 
   it("validates body and 404s unknown artifacts", async () => {

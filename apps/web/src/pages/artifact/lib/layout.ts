@@ -1,60 +1,10 @@
 import type { Comment } from "@/api"
 import { type PinItem, parseAnchor } from "../types"
 
-// Pure geometry + grouping for the comment margin. The anchor MODEL (Sel, ParsedAnchor,
-// parseAnchor, ElementWire) lives in `../types`; this file only arranges threads.
-
-export const COMPOSER_ID = "__composer__"
+// Pure grouping for the comment threads. The anchor MODEL (Sel, ParsedAnchor,
+// parseAnchor, ElementWire) lives in `../types`; this file only sorts threads.
 
 export const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n))
-
-// Place pinned thread cards beside their highlights without overlap: stack from
-// the top honouring each desired Y + a gap, then if a card is active, pin it to
-// its exact Y and push its neighbours out of the way (above and below).
-export function layoutPins(
-  items: { id: string; desiredY: number }[],
-  heights: Record<string, number>,
-  activeId: string | null,
-  gap: number,
-): Record<string, number> {
-  const sorted = [...items].sort((a, b) => a.desiredY - b.desiredY)
-  const h = (id: string) => heights[id] ?? 116
-  const pos: Record<string, number> = {}
-  let prevBottom = -1e9
-  for (const it of sorted) {
-    const y = Math.max(it.desiredY, prevBottom + gap)
-    pos[it.id] = y
-    prevBottom = y + h(it.id)
-  }
-  const idx = activeId ? sorted.findIndex((s) => s.id === activeId) : -1
-  const act = idx >= 0 ? sorted[idx] : undefined
-  if (act) {
-    pos[act.id] = act.desiredY
-    let limit = act.desiredY
-    for (let i = idx - 1; i >= 0; i--) {
-      const it = sorted[i]
-      if (!it) continue
-      let p = pos[it.id] ?? it.desiredY
-      if (p + h(it.id) + gap > limit) {
-        p = limit - gap - h(it.id)
-        pos[it.id] = p
-      }
-      limit = p
-    }
-    let top = act.desiredY + h(act.id)
-    for (let i = idx + 1; i < sorted.length; i++) {
-      const it = sorted[i]
-      if (!it) continue
-      let p = pos[it.id] ?? it.desiredY
-      if (p < top + gap) {
-        p = top + gap
-        pos[it.id] = p
-      }
-      top = p + h(it.id)
-    }
-  }
-  return pos
-}
 
 export function groupThreads(comments: Comment[]): Comment[][] {
   const map = new Map<string, Comment[]>()
@@ -139,64 +89,4 @@ export function bucketThreads(p: BucketInput): ThreadBuckets {
     }
   }
   return { openThreads, resolvedThreads, pinned, general, openCount: openThreads.length }
-}
-
-/* === Pin-layer local offset (pure math; the imperative half lives in use-pin-layer) ===
-   Cards sit at doc-absolute Ys inside a layer translated by `datum − scrollY − offset`.
-   `offset` is the panel's own scroll-like term: positive shifts cards up (revealing a
-   dense cluster buried below the panel), negative shifts them down (revealing cards
-   anchored in the doc's first pixels, which start above the zone because the zone sits
-   `−datum` below the iframe's top — a comment on the title is unreachable otherwise). */
-
-/** A wheel delta in pixels: line-mode (Firefox mice) and page-mode deltas scaled. */
-export const normalizeWheel = (deltaY: number, deltaMode: number, pageH: number): number =>
-  deltaMode === 1 ? deltaY * 16 : deltaMode === 2 ? deltaY * pageH : deltaY
-
-/**
- * The offset's legal range at the current geometry.
- * - max reveals the bottom of the relaxed stack (`maxBottom` doc-absolute).
- * - min goes negative in exactly two cases:
- *   (a) the doc is at its top — mid-document, wheel-up must scroll the doc
- *       (forwarding), not slide cards down; at the top there is nothing left to
- *       forward, so the remaining gesture may reveal the above-zone band
- *       (`minY + datum` = the topmost card's zone-local Y at scrollY 0);
- *   (b) the ACTIVE item (an open composer, the selected thread) sits above the
- *       zone's top at the current scroll — its reveal must survive the
- *       clamp-on-notify, or a composer opened on a selection near the viewport's
- *       top would be clipped away by the very next scroll message.
- */
-export function pinOffsetBounds(p: {
-  /** Topmost card's layout Y (doc-absolute). */
-  minY: number
-  /** Bottom of the lowest card in the relaxed stack (doc-absolute). */
-  maxBottom: number
-  /** The active item's layout Y (doc-absolute), if any. */
-  activeY: number | null
-  datum: number
-  scrollY: number
-  zoneH: number
-}): { min: number; max: number } {
-  return {
-    min: Math.min(
-      0,
-      p.scrollY <= 1 ? p.minY + p.datum : 0,
-      p.activeY != null ? p.activeY + p.datum - p.scrollY : 0,
-    ),
-    max: Math.max(0, p.maxBottom + p.datum - p.scrollY - p.zoneH),
-  }
-}
-
-/**
- * Split a wheel delta: the part the local offset absorbs (bounded) and the remainder
- * forwarded to the document. Splitting one event is deliberate — today's all-or-nothing
- * hand-off dropped the tail of the tick that exhausted the local room.
- */
-export function consumeWheel(
-  offset: number,
-  delta: number,
-  min: number,
-  max: number,
-): { offset: number; forward: number } {
-  const next = clamp(offset + delta, min, max)
-  return { offset: next, forward: delta - (next - offset) }
 }

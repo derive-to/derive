@@ -146,14 +146,16 @@ export const followRoutes = (ctx: AppContext) => {
         await meta.createNotification({
           id: newId("ntf"),
           user_id: r.followedUserId,
-          actor: me.username ?? me.name ?? "Someone",
+          actor: me.name ?? me.username ?? "Someone",
           kind: "follow",
           artifact_id: "",
           artifact_short_id: "",
           artifact_title: null,
           thread_id: "",
           comment_id: "",
-          preview: "started following you",
+          // The follower's handle, for the bell's profile link (the row's text is the bell's
+          // own). `actor` is the display name, like every other notification's.
+          preview: me.username ?? "",
         })
       }
       return c.json({ follow }, 201)

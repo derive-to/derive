@@ -44,27 +44,31 @@ export function AgentsSection({ meId }: { meId: string }) {
 
   return (
     <SettingsSection
-      title="Workspace agents"
-      description="Register an agent so teammates can @mention it and send it work. Choose what it can do."
+      title="Agent connections"
+      description="Connections let Claude, Codex, or another runner act in this workspace. Agents get one automatically; add one here only to reuse or @mention a runner."
     >
       <AgentWritesRow />
 
-      <NewAgent onCreated={reload} />
+      <NewAgentConnection onCreated={reload} />
 
       {isPending ? (
         <SettingsListSkeleton />
       ) : isError ? (
-        <LoadError title="Couldn’t load agents" testId="agents-retry" onRetry={() => refetch()} />
+        <LoadError
+          title="Couldn’t load agent connections"
+          testId="agents-retry"
+          onRetry={() => refetch()}
+        />
       ) : !agents || agents.filter((a) => !a.managed).length === 0 ? (
         <SettingsEmpty>
-          No agents yet. A registered agent can be @mentioned in any thread.
+          No reusable connections yet. New Agents get a dedicated connection automatically.
         </SettingsEmpty>
       ) : (
         <SettingsGroup>
           {agents
             .filter((a) => !a.managed)
             .map((a) => (
-              <AgentRow
+              <AgentConnectionRow
                 key={a.id}
                 agent={a}
                 meId={meId}
@@ -146,14 +150,14 @@ function AgentWritesRow() {
   )
 }
 
-function NewAgent({ onCreated }: { onCreated: () => void }) {
+function NewAgentConnection({ onCreated }: { onCreated: () => void }) {
   const [name, setName] = useState("")
   const [role, setRole] = useState<Role>("commenter")
   const [created, setCreated] = useState<{ name: string; token: string } | null>(null)
 
   const create = useApiMutation({
     mutationFn: () => api.createAgent(name.trim(), role),
-    success: (a) => `Agent ${a.name} created`,
+    success: (a) => `Connection ${a.name} created`,
     onSuccess: (a) => {
       setCreated({ name: a.name, token: a.token })
       setName("")
@@ -164,21 +168,21 @@ function NewAgent({ onCreated }: { onCreated: () => void }) {
     <div className="flex flex-col gap-3">
       <AddForm
         onSubmit={() => create.mutate()}
-        submitLabel="Add agent"
+        submitLabel="Add connection"
         submitTestId="agent-add"
         pending={create.isPending}
         disabled={!name.trim()}
       >
         <Input
           data-testid="agent-name"
-          aria-label="Agent name"
-          placeholder="Agent name (e.g. Claude)"
+          aria-label="Connection name"
+          placeholder="Connection name (e.g. Claude Code)"
           value={name}
           onChange={(e) => setName(e.target.value)}
           className="min-w-45 flex-1"
         />
         <Select value={role} onValueChange={(v) => setRole(v as Role)}>
-          <SelectTrigger data-testid="agent-role" aria-label="Agent role" className="w-46">
+          <SelectTrigger data-testid="agent-role" aria-label="Connection role" className="w-46">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -205,7 +209,7 @@ function NewAgent({ onCreated }: { onCreated: () => void }) {
   )
 }
 
-function AgentRow({
+function AgentConnectionRow({
   agent,
   meId,
   hasPersonalPlan,

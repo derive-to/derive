@@ -75,7 +75,7 @@ test("capture comment panel states", async ({ owner: page }) => {
   // Dark theme: the real theme store, then reload so the provider applies it.
   await page.evaluate(() => localStorage.setItem("derive_theme", "dark"))
   await page.reload()
-  await expect(page.getByText("Comments", { exact: true })).toBeVisible()
+  await expect(page.getByTestId("activity-stream")).toBeVisible()
   await page.waitForTimeout(1200)
   await page.getByText("This intro reads a bit long").first().click()
   await expect(page.getByTestId("comment-resolve")).toBeVisible()
@@ -83,11 +83,13 @@ test("capture comment panel states", async ({ owner: page }) => {
   await shoot("active-dark")
   await page.keyboard.press("Escape")
 
-  // Composer open on a selection (light again).
+  // Composer open on a selection (light again). "New comment" first: the docked
+  // composer must not park a state that hides the selection menu afterwards.
   await page.evaluate(() => localStorage.setItem("derive_theme", "light"))
   await page.reload()
-  await expect(page.getByText("Comments", { exact: true })).toBeVisible()
+  await expect(page.getByTestId("activity-stream")).toBeVisible()
   await page.waitForTimeout(1200)
+  await page.getByTestId("comment-new").click()
   const frame = page.frames().find((f) => f.url().includes("/raw/"))
   if (!frame) throw new Error("no frame")
   await frame.evaluate(() => {

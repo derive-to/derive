@@ -27,6 +27,7 @@ import { type Summarizer, sanitizeSummary, summaryInput } from "../summarizer"
 import { publishSweepEvents } from "./anchor-sweep"
 import { fanOutNewContentMentions } from "./content-mentions"
 import { indexArtifactVersion, isTextType } from "./search"
+import { recordThreadResolution } from "./thread-actions"
 
 /** The realtime + render + re-anchor core shared by every version bump (publish, restore):
  *  announce the new version so open tabs live-reload, enqueue its preview
@@ -345,6 +346,9 @@ export interface AfterPublishOpts {
    *  every agent publish look human and sent it to the "people only" channels while the
    *  "agents only" ones got nothing. Null for a headless publish. */
   actorId?: string | null
+  /** The acting principal's display name, recorded with `actorId` on every thread this
+   *  publish resolves. */
+  actorName?: string | null
 }
 
 /**
@@ -380,6 +384,17 @@ export const afterPublish = async (
   const resolved: string[] = []
   for (const threadId of opts.resolves ?? []) {
     await meta.setThreadState(artifact.id, threadId, "resolved")
+    await recordThreadResolution(
+      meta,
+      artifact.id,
+      threadId,
+      "resolved",
+      // The id alone is still a record (a headless publish has neither).
+      opts.actorId || opts.actorName
+        ? { id: opts.actorId ?? null, name: opts.actorName ?? null }
+        : null,
+      version.n,
+    )
     bus.publish(artifact.id, { type: "comment.resolved", thread_id: threadId, state: "resolved" })
     resolved.push(threadId)
   }

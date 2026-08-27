@@ -1391,7 +1391,8 @@ export const slackRoutes = (ctx: AppContext) => {
             artifact,
             threadId,
             op,
-            who,
+            // A Slack identity Derive can't map to a user: the name alone is the record.
+            who ? { id: null, name: who } : undefined,
           )
           // …and repaint this channel immediately so the clicker sees the button change now
           // rather than on the next outbox tick. Optimistic: the durable update above is what

@@ -31,6 +31,7 @@ import { Route as TemplatesIndexRouteImport } from './routes/templates.index'
 import { Route as TemplateLibrariesIndexRouteImport } from './routes/template-libraries.index'
 import { Route as SettingsIndexRouteImport } from './routes/settings.index'
 import { Route as ContextsIndexRouteImport } from './routes/contexts.index'
+import { Route as AgentsIndexRouteImport } from './routes/agents.index'
 import { Route as UsersHandleRouteImport } from './routes/users.$handle'
 import { Route as TemplatesRefRouteImport } from './routes/templates.$ref'
 import { Route as TemplateLibrariesIdRouteImport } from './routes/template-libraries.$id'
@@ -41,6 +42,8 @@ import { Route as ContextsIdRouteImport } from './routes/contexts.$id'
 import { Route as CollectionsIdRouteImport } from './routes/collections.$id'
 import { Route as ClaimTokenRouteImport } from './routes/claim.$token'
 import { Route as ArtifactsRefRouteImport } from './routes/artifacts.$ref'
+import { Route as AgentsNewRouteImport } from './routes/agents.new'
+import { Route as AgentsIdRouteImport } from './routes/agents.$id'
 import { Route as InviteCTokenRouteImport } from './routes/invite.c.$token'
 import { Route as InviteATokenRouteImport } from './routes/invite.a.$token'
 
@@ -154,6 +157,11 @@ const ContextsIndexRoute = ContextsIndexRouteImport.update({
   path: '/contexts/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AgentsIndexRoute = AgentsIndexRouteImport.update({
+  id: '/agents/',
+  path: '/agents/',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const UsersHandleRoute = UsersHandleRouteImport.update({
   id: '/users/$handle',
   path: '/users/$handle',
@@ -204,6 +212,16 @@ const ArtifactsRefRoute = ArtifactsRefRouteImport.update({
   path: '/artifacts/$ref',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AgentsNewRoute = AgentsNewRouteImport.update({
+  id: '/agents/new',
+  path: '/agents/new',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AgentsIdRoute = AgentsIdRouteImport.update({
+  id: '/agents/$id',
+  path: '/agents/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const InviteCTokenRoute = InviteCTokenRouteImport.update({
   id: '/invite/c/$token',
   path: '/invite/c/$token',
@@ -234,6 +252,8 @@ export interface FileRoutesByFullPath {
   '/showcase': typeof ShowcaseRoute
   '/unlisted': typeof UnlistedRoute
   '/welcome': typeof WelcomeRoute
+  '/agents/$id': typeof AgentsIdRoute
+  '/agents/new': typeof AgentsNewRoute
   '/artifacts/$ref': typeof ArtifactsRefRoute
   '/claim/$token': typeof ClaimTokenRoute
   '/collections/$id': typeof CollectionsIdRoute
@@ -244,6 +264,7 @@ export interface FileRoutesByFullPath {
   '/template-libraries/$id': typeof TemplateLibrariesIdRoute
   '/templates/$ref': typeof TemplatesRefRoute
   '/users/$handle': typeof UsersHandleRoute
+  '/agents/': typeof AgentsIndexRoute
   '/contexts/': typeof ContextsIndexRoute
   '/settings/': typeof SettingsIndexRoute
   '/template-libraries/': typeof TemplateLibrariesIndexRoute
@@ -269,6 +290,8 @@ export interface FileRoutesByTo {
   '/showcase': typeof ShowcaseRoute
   '/unlisted': typeof UnlistedRoute
   '/welcome': typeof WelcomeRoute
+  '/agents/$id': typeof AgentsIdRoute
+  '/agents/new': typeof AgentsNewRoute
   '/artifacts/$ref': typeof ArtifactsRefRoute
   '/claim/$token': typeof ClaimTokenRoute
   '/collections/$id': typeof CollectionsIdRoute
@@ -279,6 +302,7 @@ export interface FileRoutesByTo {
   '/template-libraries/$id': typeof TemplateLibrariesIdRoute
   '/templates/$ref': typeof TemplatesRefRoute
   '/users/$handle': typeof UsersHandleRoute
+  '/agents': typeof AgentsIndexRoute
   '/contexts': typeof ContextsIndexRoute
   '/settings': typeof SettingsIndexRoute
   '/template-libraries': typeof TemplateLibrariesIndexRoute
@@ -306,6 +330,8 @@ export interface FileRoutesById {
   '/showcase': typeof ShowcaseRoute
   '/unlisted': typeof UnlistedRoute
   '/welcome': typeof WelcomeRoute
+  '/agents/$id': typeof AgentsIdRoute
+  '/agents/new': typeof AgentsNewRoute
   '/artifacts/$ref': typeof ArtifactsRefRoute
   '/claim/$token': typeof ClaimTokenRoute
   '/collections/$id': typeof CollectionsIdRoute
@@ -316,6 +342,7 @@ export interface FileRoutesById {
   '/template-libraries/$id': typeof TemplateLibrariesIdRoute
   '/templates/$ref': typeof TemplatesRefRoute
   '/users/$handle': typeof UsersHandleRoute
+  '/agents/': typeof AgentsIndexRoute
   '/contexts/': typeof ContextsIndexRoute
   '/settings/': typeof SettingsIndexRoute
   '/template-libraries/': typeof TemplateLibrariesIndexRoute
@@ -344,6 +371,8 @@ export interface FileRouteTypes {
     | '/showcase'
     | '/unlisted'
     | '/welcome'
+    | '/agents/$id'
+    | '/agents/new'
     | '/artifacts/$ref'
     | '/claim/$token'
     | '/collections/$id'
@@ -354,6 +383,7 @@ export interface FileRouteTypes {
     | '/template-libraries/$id'
     | '/templates/$ref'
     | '/users/$handle'
+    | '/agents/'
     | '/contexts/'
     | '/settings/'
     | '/template-libraries/'
@@ -379,6 +409,8 @@ export interface FileRouteTypes {
     | '/showcase'
     | '/unlisted'
     | '/welcome'
+    | '/agents/$id'
+    | '/agents/new'
     | '/artifacts/$ref'
     | '/claim/$token'
     | '/collections/$id'
@@ -389,6 +421,7 @@ export interface FileRouteTypes {
     | '/template-libraries/$id'
     | '/templates/$ref'
     | '/users/$handle'
+    | '/agents'
     | '/contexts'
     | '/settings'
     | '/template-libraries'
@@ -415,6 +448,8 @@ export interface FileRouteTypes {
     | '/showcase'
     | '/unlisted'
     | '/welcome'
+    | '/agents/$id'
+    | '/agents/new'
     | '/artifacts/$ref'
     | '/claim/$token'
     | '/collections/$id'
@@ -425,6 +460,7 @@ export interface FileRouteTypes {
     | '/template-libraries/$id'
     | '/templates/$ref'
     | '/users/$handle'
+    | '/agents/'
     | '/contexts/'
     | '/settings/'
     | '/template-libraries/'
@@ -452,6 +488,8 @@ export interface RootRouteChildren {
   ShowcaseRoute: typeof ShowcaseRoute
   UnlistedRoute: typeof UnlistedRoute
   WelcomeRoute: typeof WelcomeRoute
+  AgentsIdRoute: typeof AgentsIdRoute
+  AgentsNewRoute: typeof AgentsNewRoute
   ArtifactsRefRoute: typeof ArtifactsRefRoute
   ClaimTokenRoute: typeof ClaimTokenRoute
   CollectionsIdRoute: typeof CollectionsIdRoute
@@ -461,6 +499,7 @@ export interface RootRouteChildren {
   TemplateLibrariesIdRoute: typeof TemplateLibrariesIdRoute
   TemplatesRefRoute: typeof TemplatesRefRoute
   UsersHandleRoute: typeof UsersHandleRoute
+  AgentsIndexRoute: typeof AgentsIndexRoute
   ContextsIndexRoute: typeof ContextsIndexRoute
   TemplateLibrariesIndexRoute: typeof TemplateLibrariesIndexRoute
   TemplatesIndexRoute: typeof TemplatesIndexRoute
@@ -624,6 +663,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ContextsIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/agents/': {
+      id: '/agents/'
+      path: '/agents'
+      fullPath: '/agents/'
+      preLoaderRoute: typeof AgentsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/users/$handle': {
       id: '/users/$handle'
       path: '/users/$handle'
@@ -694,6 +740,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ArtifactsRefRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/agents/new': {
+      id: '/agents/new'
+      path: '/agents/new'
+      fullPath: '/agents/new'
+      preLoaderRoute: typeof AgentsNewRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/agents/$id': {
+      id: '/agents/$id'
+      path: '/agents/$id'
+      fullPath: '/agents/$id'
+      preLoaderRoute: typeof AgentsIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/invite/c/$token': {
       id: '/invite/c/$token'
       path: '/invite/c/$token'
@@ -744,6 +804,8 @@ const rootRouteChildren: RootRouteChildren = {
   ShowcaseRoute: ShowcaseRoute,
   UnlistedRoute: UnlistedRoute,
   WelcomeRoute: WelcomeRoute,
+  AgentsIdRoute: AgentsIdRoute,
+  AgentsNewRoute: AgentsNewRoute,
   ArtifactsRefRoute: ArtifactsRefRoute,
   ClaimTokenRoute: ClaimTokenRoute,
   CollectionsIdRoute: CollectionsIdRoute,
@@ -753,6 +815,7 @@ const rootRouteChildren: RootRouteChildren = {
   TemplateLibrariesIdRoute: TemplateLibrariesIdRoute,
   TemplatesRefRoute: TemplatesRefRoute,
   UsersHandleRoute: UsersHandleRoute,
+  AgentsIndexRoute: AgentsIndexRoute,
   ContextsIndexRoute: ContextsIndexRoute,
   TemplateLibrariesIndexRoute: TemplateLibrariesIndexRoute,
   TemplatesIndexRoute: TemplatesIndexRoute,

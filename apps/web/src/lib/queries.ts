@@ -354,6 +354,18 @@ export const commentsQuery = (shortId: string) =>
     queryFn: () => api.listComments(shortId).then((r) => r.comments),
   })
 
+// The artifact's review rounds (the /derive loop): the pending one the reader should
+// settle plus the history. The activity rail renders both; the SSE review.* events
+// invalidate it, so an agent's re-request appears live rather than behind a reload.
+export const reviewQuery = (shortId: string) =>
+  queryOptions({
+    queryKey: ["review", shortId] as const,
+    queryFn: () => api.getReview(shortId),
+    // Always confirm on mount: the pending round arms the rail's composer, and a persisted
+    // copy restored across a reload can predate a publish that opened (or settled) one.
+    staleTime: 0,
+  })
+
 /** The URL the sandboxed viewer loads for an artifact's rendered bytes. ONE builder,
  *  shared by the viewer and by the test that pins its shape, because there used to be
  *  two that disagreed. The token is the frame's proof of access (an opaque origin cannot

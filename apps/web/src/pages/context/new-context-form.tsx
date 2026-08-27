@@ -14,10 +14,8 @@ import {
 import { copyText } from "@/lib/clipboard"
 import { useApiMutation } from "@/lib/use-api-mutation"
 
-// THE EXPERT DOOR — for someone who already has a manifest written (by hand, or by an
-// agent that published one) and just wants to register it, no interview needed. Reached
-// only through the builder page's "I already have a manifest" toggle; the guided
-// conversation (builder.tsx) is the front door everyone else walks through.
+// Advanced creation path for an instruction artifact that has already been published.
+// The guided builder owns the default flow.
 export function NewContextForm({
   agents,
   onCreated,
@@ -30,8 +28,8 @@ export function NewContextForm({
   // an existing service agent — an opt-in the roster's presence (admins) reveals.
   const [agentId, setAgentId] = useState("")
   const [manifest, setManifest] = useState("")
-  // The minted agent's bearer, shown exactly once; navigation waits for Done so
-  // the only display of the token is never lost to an instant redirect.
+  // Creating a dedicated connection may return a bearer once. Defer navigation until
+  // the user dismisses the reveal.
   const [minted, setMinted] = useState<{ contextId: string; name: string; token: string } | null>(
     null,
   )
@@ -44,7 +42,7 @@ export function NewContextForm({
         ...(agentId ? { agent_id: agentId } : {}),
         manifest_short_id: manifest.trim(),
       }),
-    success: "Context created",
+    success: "Agent created",
     onSuccess: (ctx) => {
       const created = name.trim()
       setName("")
@@ -54,9 +52,8 @@ export function NewContextForm({
         setMinted({ contextId: ctx.id, name: created, token: ctx.agent_token })
         return
       }
-      // Carry the user straight into the console they just made — asking the first
-      // question is the point, not admiring a new row in the directory.
-      nav({ to: "/contexts/$id", params: { id: ctx.id } })
+      // Open the new Agent directly when no credential reveal is required.
+      nav({ to: "/agents/$id", params: { id: ctx.id } })
     },
   })
   const submit = () => {
@@ -68,7 +65,7 @@ export function NewContextForm({
       <div className="flex flex-wrap items-center gap-2">
         <Input
           data-testid="context-create-name"
-          aria-label="Context name"
+          aria-label="Agent name"
           placeholder="Name (e.g. Analytics)"
           value={name}
           onChange={(e) => setName(e.target.value)}
@@ -107,7 +104,7 @@ export function NewContextForm({
           Create
         </Button>
       </div>
-      {/* Shown exactly once, warning tone — same contract as agent registration. */}
+      {/* Runner credentials are revealed once. */}
       {minted && (
         <div data-testid="context-agent-token">
           <StatusPanel
@@ -122,7 +119,7 @@ export function NewContextForm({
                 <span className="text-2xs text-muted-foreground">
                   Save it where the runner reads it (e.g.{" "}
                   <code className="font-mono">.derive/agent-token</code>), then{" "}
-                  <code className="font-mono">derive runner serve</code> answers this context.
+                  <code className="font-mono">derive runner serve</code> answers this Agent.
                 </span>
               </div>
             }
@@ -143,7 +140,7 @@ export function NewContextForm({
                   onClick={() => {
                     const id = minted.contextId
                     setMinted(null)
-                    nav({ to: "/contexts/$id", params: { id } })
+                    nav({ to: "/agents/$id", params: { id } })
                   }}
                 >
                   Done

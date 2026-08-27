@@ -25,6 +25,23 @@ describe("publish token", () => {
       orgId: "ws_a",
       userId: "u_1",
       target: "*",
+      agentId: null,
+    })
+  })
+
+  it("carries the minting agent, so the upload it redeems is credited to it", async () => {
+    const tok = await signPublishToken(secret, "ws_a", "u_1", "report", 10_000, "agt_1")
+    expect(await verifyPublishToken(secret, tok, 5_000)).toEqual({
+      orgId: "ws_a",
+      userId: "u_1",
+      target: "report",
+      agentId: "agt_1",
+    })
+    // A target that happens to look like the agent segment is still a target.
+    const odd = await signPublishToken(secret, "ws_a", "u_1", "agent=x", 10_000)
+    expect(await verifyPublishToken(secret, odd, 5_000)).toMatchObject({
+      target: "agent=x",
+      agentId: null,
     })
   })
 

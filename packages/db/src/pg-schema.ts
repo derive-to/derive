@@ -150,6 +150,10 @@ export const version = pgTable(
     author_gh_id: text("author_gh_id"),
     // The Derive user who published this version; null for imports/anon/legacy.
     author_id: text("author_id"),
+    // The agent that produced this version on that user's behalf (id + snapshotted name);
+    // null for a person's own publish. `author` stays the person's byline. See VersionRecord.
+    agent_id: text("agent_id"),
+    agent_name: text("agent_name"),
     // Which surface created this version ('web' | 'mcp' | 'api'; historical rows may carry
     // 'sync') — the onboarding/analytics stamp. Mirrors schema.ts.
     source: text("source").$type<VersionSource>(),
@@ -895,6 +899,8 @@ export const reviewRound = pgTable(
       .references(() => artifact.id),
     version: integer("version").notNull(),
     requested_by: text("requested_by").notNull(),
+    // Snapshot name of the requester, so history stays legible after the agent is gone.
+    requested_by_name: text("requested_by_name"),
     requested_for: text("requested_for").notNull(),
     state: text("state").$type<ReviewRoundState>().notNull().default("pending"),
     note: text("note"),

@@ -371,6 +371,12 @@ describe("remote MCP endpoint (/mcp)", () => {
     const up = await app.request(new URL(staged.upload_url).pathname, { method: "POST", body: fd })
     expect(up.status).toBe(201)
     expect((await up.json()).published).toBe(2)
+    // The URL remembers the agent that minted it: the version is recorded as its work.
+    const v2 = (await meta.listVersions((await meta.getByShortId(shortId))?.id ?? "")).find(
+      (v) => v.n === 2,
+    )
+    expect(v2?.agent_id).toMatch(/^oauth:/)
+    expect(typeof v2?.agent_name).toBe("string")
   })
 
   it("publish rejects oversized inline content, steering to stage target:'doc'", async () => {

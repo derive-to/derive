@@ -427,6 +427,13 @@ export interface VersionRecord {
   author_gh_id: string | null
   /** The Derive user who published this version; null for imports/anon/legacy. */
   author_id: string | null
+  /** The agent principal that produced this version ON BEHALF of `author_id` — a registered
+   *  agent, an OAuth client, or the built-in Derive chat agent ("derive") — with its name
+   *  snapshotted so the record stays legible after the agent is gone. Null for a person's own
+   *  publish. `author` stays the person's byline (authored work is theirs); this is the
+   *  actor, for the activity record. */
+  agent_id: string | null
+  agent_name: string | null
   /** Which surface created this version — the onboarding/analytics stamp. Null for
    *  versions predating the column and for paths that don't stamp (restore, PR preview). */
   source: VersionSource | null
@@ -512,6 +519,9 @@ export interface NewVersion {
   author_gh_id?: string | null
   /** The Derive user who published this version; null/omitted for imports/anon. */
   author_id?: string | null
+  /** The agent that produced it on that user's behalf; omitted for a person's own publish. */
+  agent_id?: string | null
+  agent_name?: string | null
   /** Which surface created this version; omitted for paths that don't stamp. */
   source?: VersionSource | null
   message: string | null
@@ -3166,6 +3176,9 @@ export interface ReviewRoundRecord {
   version: number
   /** Stable id of the requester (the agent). */
   requested_by: string
+  /** Snapshot name of the requester, retained so the record stays legible after the
+   *  agent is gone. Null on rows written before the column. */
+  requested_by_name: string | null
   /** The user asked to review (the grant owner for an OAuth agent). */
   requested_for: string
   state: ReviewRoundState
@@ -3184,6 +3197,7 @@ export interface NewReviewRound {
   artifact_id: string
   version: number
   requested_by: string
+  requested_by_name?: string | null
   requested_for: string
   note?: string | null
 }

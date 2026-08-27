@@ -182,6 +182,10 @@ export const version = sqliteTable(
     author_gh_id: text("author_gh_id"),
     // The Derive user who published this version; null for imports/anon/legacy.
     author_id: text("author_id"),
+    // The agent that produced this version on that user's behalf (id + snapshotted name);
+    // null for a person's own publish. `author` stays the person's byline. See VersionRecord.
+    agent_id: text("agent_id"),
+    agent_name: text("agent_name"),
     // Which surface created this version ('web' | 'mcp' | 'api'; historical rows may carry
     // 'sync') — the onboarding/analytics stamp. Null for pre-column/non-stamping paths.
     source: text("source").$type<VersionSource>(),
@@ -1111,6 +1115,8 @@ export const reviewRound = sqliteTable(
     version: integer("version").notNull(),
     // Stable id of the agent (or user) that requested the review.
     requested_by: text("requested_by").notNull(),
+    // Snapshot name of the requester, so history stays legible after the agent is gone.
+    requested_by_name: text("requested_by_name"),
     // The user asked to review (the grant owner for an OAuth agent).
     requested_for: text("requested_for").notNull(),
     state: text("state").$type<ReviewRoundState>().notNull().default("pending"),

@@ -40,7 +40,7 @@ function UpgradeDialogBody({ reason }: { reason: PaywallReason }) {
   const isAdmin = ws?.role === "owner"
   const admins = (ws?.members ?? [])
     .filter((m) => m.role === "owner")
-    .map((m) => m.name ?? m.handle ?? "a workspace admin")
+    .map((m) => m.name ?? (m.handle ? `@${m.handle}` : "a workspace admin"))
 
   const checkout = useCheckout()
 

@@ -86,3 +86,111 @@ describe("agents: @mention → pull inbox → ack", () => {
     expect((await app.request("/v1/agent/inbox", { headers: as(owner.email) })).status).toBe(401)
   })
 })
+
+describe("agents: the record says who did the work", () => {
+  // A handle AND a display name: the comment is written from the handle (principalActor),
+  // and must still read by the display name, like the person's versions do.
+  const owner: TestUser = {
+    id: "u_ag_rec",
+    email: "agrec@derive.test",
+    name: "Owner",
+    username: "owner-handle",
+  }
+  const { app } = makeAuthedApp("agents-record", [owner], "owner")
+
+  it("an agent's publish, ask, comment and resolve are recorded as the agent's, on the person's behalf", async () => {
+    await app.request("/v1/me", { headers: as(owner.email) })
+    const reg = await (
+      await app.request(
+        "/v1/agents",
+        jsonAs(as(owner.email), { name: "Claude Code", role: "editor" }),
+      )
+    ).json()
+    const shortId = (await (await publishAs(app, "<h1>v1</h1>", {}, as(owner.email))).json())
+      .short_id
+    const pub = await publishAs(
+      app,
+      "<h1>v2</h1>",
+      { request_review: "true", review_note: "Check §3." },
+      bearer(reg.token),
+      shortId,
+    )
+    expect(pub.status).toBe(201)
+
+    // The byline stays the person's (authored work is theirs); the actor is the agent.
+    const art = await (
+      await app.request(`/v1/artifacts/${shortId}`, { headers: as(owner.email) })
+    ).json()
+    const byN = (n: number) => art.versions.find((v: { n: number }) => v.n === n)
+    expect(byN(1).agent).toBeNull()
+    expect(byN(2)).toMatchObject({ author: "Owner", agent: { id: reg.id, name: "Claude Code" } })
+    expect(art.sessions.find((s: { n: number }) => s.n === 2)).toMatchObject({
+      from_n: 2,
+      agent_name: "Claude Code",
+    })
+
+    // The round names its asker, by name and kind.
+    const review = await (
+      await app.request(`/v1/artifacts/${shortId}/review`, { headers: as(owner.email) })
+    ).json()
+    expect(review.pending).toMatchObject({
+      requested_by: reg.id,
+      requested_by_name: "Claude Code",
+      requested_by_kind: "agent",
+    })
+
+    // A comment carries its author's kind, from the recorded id.
+    const theirs = await (
+      await app.request(
+        `/v1/artifacts/${shortId}/comments`,
+        jsonAs(as(owner.email), { body_md: "Is §3 right?" }),
+      )
+    ).json()
+    expect(theirs).toMatchObject({ author: "Owner", author_kind: "user" })
+    const agents = await (
+      await app.request(
+        `/v1/artifacts/${shortId}/comments`,
+        jsonAs(bearer(reg.token), { body_md: "Fixed in the next version." }),
+      )
+    ).json()
+    expect(agents).toMatchObject({ author: "Claude Code", author_id: reg.id, author_kind: "agent" })
+
+    // A publish that names the thread in `resolves` records itself as the resolver.
+    const fix = await publishAs(
+      app,
+      "<h1>v3</h1>",
+      { resolves: theirs.id },
+      bearer(reg.token),
+      shortId,
+    )
+    expect(fix.status).toBe(201)
+    const settled = (
+      await (
+        await app.request(`/v1/artifacts/${shortId}/comments?state=resolved`, {
+          headers: as(owner.email),
+        })
+      ).json()
+    ).comments
+    expect(settled.find((c: { id: string }) => c.id === theirs.id).resolution).toMatchObject({
+      by: "Claude Code",
+      by_id: reg.id,
+      by_kind: "agent",
+      version: 3,
+    })
+
+    // A person's own resolve reads by their display name too — healed from the live record.
+    const byHand = await app.request(
+      `/v1/artifacts/${shortId}/comments/${agents.id}/resolve`,
+      jsonAs(as(owner.email), { state: "resolved" }),
+    )
+    expect(byHand.status).toBe(200)
+    const mine = (
+      await (
+        await app.request(`/v1/artifacts/${shortId}/comments?state=resolved`, {
+          headers: as(owner.email),
+        })
+      ).json()
+    ).comments.find((c: { id: string }) => c.id === agents.id)
+    expect(mine.resolution).toMatchObject({ by: "Owner", by_id: owner.id, by_kind: "user" })
+  })
+})

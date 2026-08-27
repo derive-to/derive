@@ -182,7 +182,9 @@ export const realtimeRoutes = (ctx: AppContext) => {
       const me = await currentUser(c)
       const gid = guestViewerId(c)
       const id = me?.id ?? gid
-      const name = me ? (me.username ?? "someone") : anonName(gid)
+      // A person's display name, the byline every other surface uses — the facepile and
+      // cursor flags sit beside the activity rail, and must not call the same person "@ada".
+      const name = me ? (me.name ?? me.username ?? "someone") : anonName(gid)
       bus.publish(artifact.id, {
         type: "cursor",
         id,

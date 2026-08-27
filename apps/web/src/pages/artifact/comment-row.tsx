@@ -84,11 +84,15 @@ export function CommentRow({
   grouped?: boolean
 }) {
   const A = useActions()
+  // An agent's voice takes the sparkles glyph in the soft ink tint — the same mark its
+  // turns carry in the activity stream, so one identity reads the same in both places.
+  const agent = c.author_kind === "agent"
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(c.body_md)
   const [open, setOpen] = useState<null | "react" | "menu">(null)
   const [confirmDelete, setConfirmDelete] = useState(false)
-  const mine = !!A.meName && c.author === A.meName
+  // By id when the row has one (the server's own rule), by name only for legacy rows.
+  const mine = c.author_id ? c.author_id === A.meId : !!A.meName && c.author === A.meName
   const reactions = c.reactions ?? {}
 
   if (c.deleted)
@@ -112,9 +116,12 @@ export function CommentRow({
       )}
     >
       {!grouped && (
-        <div className="mb-0.5 flex items-center gap-2">
+        // Right padding keeps the name and stamp clear of the action slot at the line's end.
+        <div className="mb-0.5 flex items-center gap-2 pr-14">
           <Avatar className="size-5">
-            <AvatarFallback className="text-2xs">{getInitials(c.author)}</AvatarFallback>
+            <AvatarFallback className={cn("text-2xs", agent && "bg-primary/10 text-primary")}>
+              {agent ? <Icon name="sparkles" size={12} /> : getInitials(c.author)}
+            </AvatarFallback>
           </Avatar>
           <span className="min-w-0 truncate text-sm font-medium text-foreground">{c.author}</span>
           {/* Terse: "1h", not "1h ago" — repeated per row, the word is noise; the
@@ -234,11 +241,15 @@ export function CommentRow({
           // dead toolbar when the row remounts under a stationary pointer (the
           // comments refetch after an edit) — :hover isn't re-applied to a
           // replaced node until the mouse moves.
-          // Straddles ITS row's top edge (each row is its own hover group), so
-          // the actions visibly belong to the message under the pointer; flat
-          // card language (bg-card + hairline), not popover chrome.
+          // Sits INSIDE its row, at the header line's end (each row is its own hover
+          // group), so the actions visibly belong to the message under the pointer and
+          // no clipped container — the card's rounded edge, the reply list's scroll —
+          // can cut it off, and nothing above the row is ever covered. A grouped
+          // follow-up has no header line, so there the plate rides its first line of
+          // text on hover. Flat card language (bg-card + hairline), not popover chrome.
           className={cn(
-            "-top-2 absolute right-3 z-6 flex rounded-md bg-card ring-1 ring-border",
+            "absolute top-1.5 right-2 z-6 flex rounded-md bg-card ring-1 ring-border",
+            grouped && "top-0",
             reveal(!!open),
           )}
           onClick={(e) => e.stopPropagation()}

@@ -10,7 +10,12 @@ import type { CommentActions } from "./comment-actions"
 import { toggleReaction } from "./lib/reactions"
 import type { ComposerState, Sel, Selection } from "./types"
 
-type Me = { name?: string | null; email?: string | null } | null
+type Me = {
+  id?: string
+  name?: string | null
+  username?: string | null
+  email?: string | null
+} | null
 
 /**
  * Every mutating action the artifact page drives: editing (publish a version / submit a
@@ -141,7 +146,10 @@ export function useArtifactActions(p: {
       path: null,
       anchor: opts?.anchor ? JSON.stringify(opts.anchor) : null,
       body_md: text,
-      author: me?.name ?? me?.email ?? "You",
+      // The server's byline rule (name, else handle, else email), so the optimistic row
+      // reads exactly as the saved one will.
+      author: me?.name ?? me?.username ?? me?.email ?? "You",
+      author_kind: "user",
       state: "open",
       created_at: new Date().toISOString(),
       reactions: {},
@@ -200,7 +208,9 @@ export function useArtifactActions(p: {
       const rollback = snapshot(client, commentsKey)
       client.setQueryData<Comment[]>(commentsKey, (cs) =>
         (cs ?? []).map((c) =>
-          c.id === commentId ? toggleReaction(c, emoji, me?.name ?? me?.email ?? "anonymous") : c,
+          c.id === commentId
+            ? toggleReaction(c, emoji, me?.name ?? me?.username ?? me?.email ?? "anonymous")
+            : c,
         ),
       )
       return rollback
@@ -227,7 +237,8 @@ export function useArtifactActions(p: {
     onSuccess: () => refetchComments(),
   })
   const actions: CommentActions = {
-    meName: me?.name ?? me?.email ?? "",
+    meId: me?.id ?? "",
+    meName: me?.name ?? me?.username ?? me?.email ?? "",
     react: (commentId, emoji) => react.mutate({ commentId, emoji }),
     edit: (commentId, body) => editComment.mutate({ commentId, body }),
     remove: (commentId) => removeComment.mutate(commentId),

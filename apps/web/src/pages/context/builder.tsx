@@ -45,7 +45,7 @@ function AgentDoor() {
   )
 }
 
-export function ContextBuilderPage() {
+export function AgentBuilderPage() {
   useDocumentTitle(BUILDER_COPY.pageTitle)
   const qc = useQueryClient()
   const [showExpert, setShowExpert] = useState(false)

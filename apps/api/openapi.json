@@ -289,6 +289,23 @@
                   "nullable": true,
                   "description": "Committer's Derive @handle; null unless they signed in with GitHub."
                 },
+                "agent": {
+                  "type": "object",
+                  "nullable": true,
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "name"
+                  ],
+                  "description": "The agent that produced this version on the author's behalf; null for the person's own publish."
+                },
                 "message": {
                   "type": "string",
                   "nullable": true,
@@ -779,6 +796,11 @@
           "author": {
             "type": "string"
           },
+          "agent_name": {
+            "type": "string",
+            "nullable": true,
+            "description": "The agent that produced the session on the author's behalf; null for the person's own edits."
+          },
           "name": {
             "type": "string",
             "nullable": true,
@@ -794,6 +816,7 @@
           "from_n",
           "count",
           "author",
+          "agent_name",
           "name",
           "created_at"
         ]
@@ -2180,7 +2203,7 @@
           },
           "actor": {
             "type": "string",
-            "description": "Who triggered it; for follow/publish this is the person's @handle"
+            "description": "Who triggered it — a person's display name (their handle when they have none)"
           },
           "kind": {
             "type": "string",
@@ -2369,6 +2392,19 @@
             "type": "string",
             "description": "Who asked for the review (usually the agent that published)."
           },
+          "requested_by_name": {
+            "type": "string",
+            "nullable": true,
+            "description": "The requester's name when the round opened (a row from before the name was kept is named from the directory, while the agent exists)."
+          },
+          "requested_by_kind": {
+            "type": "string",
+            "enum": [
+              "user",
+              "agent"
+            ],
+            "description": "What kind of principal asked, from the recorded id."
+          },
           "requested_for": {
             "type": "string",
             "description": "The person asked to answer this round."
@@ -2405,6 +2441,8 @@
           "artifact_id",
           "version",
           "requested_by",
+          "requested_by_name",
+          "requested_by_kind",
           "requested_for",
           "state",
           "note",
@@ -2444,6 +2482,60 @@
           "author": {
             "type": "string",
             "description": "Author's display name; \"anonymous\" for an anonymous poster."
+          },
+          "author_id": {
+            "type": "string",
+            "nullable": true,
+            "description": "Stable id of the author — a user id, an agent id, or \"derive\" for the built-in chat agent; null for anonymous or legacy rows."
+          },
+          "author_kind": {
+            "type": "string",
+            "enum": [
+              "user",
+              "agent",
+              "anonymous"
+            ],
+            "description": "What kind of principal wrote it, from the recorded id."
+          },
+          "resolution": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "at": {
+                "type": "string"
+              },
+              "by": {
+                "type": "string",
+                "nullable": true,
+                "description": "The resolver's display name at the time."
+              },
+              "by_id": {
+                "type": "string",
+                "nullable": true
+              },
+              "by_kind": {
+                "type": "string",
+                "nullable": true,
+                "enum": [
+                  "user",
+                  "agent",
+                  null
+                ]
+              },
+              "version": {
+                "type": "number",
+                "nullable": true,
+                "description": "The version whose publish resolved the thread; null for a hand resolve."
+              }
+            },
+            "required": [
+              "at",
+              "by",
+              "by_id",
+              "by_kind",
+              "version"
+            ],
+            "description": "On a resolved thread's root: who settled it, when, and by which version."
           },
           "state": {
             "type": "string",
@@ -2500,6 +2592,7 @@
           "anchor",
           "body_md",
           "author",
+          "author_kind",
           "state",
           "created_at"
         ]

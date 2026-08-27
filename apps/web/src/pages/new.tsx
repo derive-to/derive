@@ -95,7 +95,7 @@ export function NewArtifact() {
       publishing.current = true
       if (search.next === "context") {
         nav({
-          to: "/contexts",
+          to: "/agents",
           search: {
             manifest: a.short_id,
             name: search.contextName,

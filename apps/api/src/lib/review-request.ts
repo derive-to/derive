@@ -69,6 +69,7 @@ export const openReviewRound = async (
     artifact_id: artifact.id,
     version: input.version,
     requested_by: input.requestedById,
+    requested_by_name: input.requestedByName,
     requested_for: input.reviewer,
     ...(input.note !== undefined ? { note: input.note } : {}),
   })

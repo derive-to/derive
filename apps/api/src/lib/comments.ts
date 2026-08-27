@@ -1,4 +1,6 @@
 import type { ArtifactRecord, CommentRecord, MetaStore } from "@derive/core"
+import type { UserByline } from "./author"
+import { DERIVE_AUTHOR_ID, type PrincipalKind, principalKind } from "./principal-kind"
 
 /** A deep link to a comment thread on an artifact — channel-neutral and shared by the email
  *  and Slack notification builders. Normalizes a trailing slash on baseUrl. */
@@ -38,7 +40,7 @@ export const REACTIONS = ["👍", "❤️", "🎉", "😄", "👀", "🙏", "�
  *  for it — deliberately ONE string, so "who was mentioned" and "who replied" are the same
  *  identity in both directions. Not an agent record: no seat, no owner, nothing to provision,
  *  which is what makes the built-in agent the zero-setup path. */
-export const DERIVE_AUTHOR_ID = "derive"
+export { DERIVE_AUTHOR_ID } from "./principal-kind"
 export const DERIVE_MENTION_ID = DERIVE_AUTHOR_ID
 
 /** Does this comment ask Derive to answer? A mention of the reserved id, and not from Derive
@@ -70,6 +72,18 @@ export type CommentMeta = {
   // Likewise for the connected Slack App: a comment that came FROM a Slack thread
   // reply (so it isn't echoed back), or the Slack message ts a Derive comment produced.
   slack?: { ts: string; channel: string }
+  /** On the ROOT comment: who settled the thread, when, and by which version when a publish
+   *  did it (`resolves`). Cleared on reopen. The record the activity stream reads
+   *  "Claude Code resolved Ada's thread" from. */
+  resolved?: ThreadResolution
+}
+
+export interface ThreadResolution {
+  at: string
+  by: string | null
+  by_id: string | null
+  by_kind: PrincipalKind | null
+  version: number | null
 }
 
 export const parseMeta = (m: string | null): CommentMeta => {
@@ -99,12 +113,36 @@ export function parseMentions(input: unknown): Mention[] {
 }
 
 /** Wire shape for a comment: meta unpacked into clean fields; deleted bodies blanked. */
-export function commentJson(cm: CommentRecord, anchored?: boolean) {
+/**
+ * The wire shape of a comment. `bylines` (lib/author.ts resolveUserBylines) heals a PERSON's
+ * byline — the author's, and a resolution's "by" — to their live display name, the same rule
+ * a version's byline follows: the stored string is a denormalized cache written from the
+ * principal (which prefers the public handle), so without this one person read as "Mert" on
+ * their versions and "mert-testing" on their comments. Agents keep their recorded names.
+ */
+export function commentJson(
+  cm: CommentRecord,
+  anchored?: boolean,
+  bylines: Record<string, UserByline> = {},
+) {
   const { meta, ...rest } = cm
   const md = parseMeta(meta)
   const deleted = !!md.deleted
+  const live = (id: string | null | undefined) => (id ? bylines[id]?.name : undefined) || null
+  // The author's kind, from the recorded id — a reader never has to guess it from the name.
+  // Rows before `author_id` existed are people (agents came later).
+  const author_kind: PrincipalKind | "anonymous" = cm.author_id
+    ? (principalKind(cm.author_id) ?? "user")
+    : cm.author === "anonymous"
+      ? "anonymous"
+      : "user"
   return {
     ...rest,
+    author: live(cm.author_id) ?? cm.author,
+    author_kind,
+    resolution: md.resolved
+      ? { ...md.resolved, by: live(md.resolved.by_id) ?? md.resolved.by }
+      : null,
     body_md: deleted ? "" : cm.body_md,
     reactions: md.reactions ?? {},
     edited: !!md.edited_at,
