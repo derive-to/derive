@@ -1640,6 +1640,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
               currentVersion={art.current_version}
               rounds={review?.rounds ?? []}
               pendingRound={review?.pending ?? null}
+              meId={me?.id ?? ""}
               meName={me?.name ?? me?.email ?? ""}
               lastSeen={seen.lastSeen}
               onGoToVersion={goToVersion}

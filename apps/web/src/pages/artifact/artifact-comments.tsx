@@ -67,6 +67,7 @@ export function ArtifactComments(p: {
   currentVersion: number
   rounds: ReviewRound[]
   pendingRound: ReviewRound | null
+  meId: string
   meName: string
   lastSeen: number | null
   onGoToVersion: (n: number) => void
@@ -134,6 +135,7 @@ export function ArtifactComments(p: {
     sessions: p.sessions,
     comments: p.comments,
     rounds: p.rounds,
+    meId: p.meId,
     me: p.meName,
     lastSeen: p.lastSeen,
     lens,

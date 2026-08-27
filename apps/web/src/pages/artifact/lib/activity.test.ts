@@ -92,9 +92,36 @@ describe("buildStream", () => {
       agent: true,
       rows: [{ kind: "version", from: 2, to: 4, count: 3, message: "Tighten" }],
     })
-    // The expanded list runs newest-first.
+    // The expanded list reads down like the stream: oldest first, current last.
     const row = (turns[1] as { rows: { versions: Version[] }[] }).rows[0]
-    expect(row?.versions.map((v) => v.n)).toEqual([4, 3, 2])
+    expect(row?.versions.map((v) => v.n)).toEqual([2, 3, 4])
+  })
+
+  it("folds an actor's several sessions in one day into one publish row spanning them", () => {
+    const versions = [
+      version(1, "Mert", at(0, 9), "Walkthrough"),
+      version(2, "Mert", at(0, 10), "v2"),
+      version(3, "Mert", at(0, 10, 10), "v3"),
+      version(4, "Mert", at(0, 10, 30), null),
+      version(5, "Mert", at(0, 11, 30), null),
+    ]
+    const sessions = [
+      session({ n: 5, from_n: 5, created_at: at(0, 11, 30) }),
+      session({ n: 4, from_n: 2, created_at: at(0, 10, 30) }),
+      session({ n: 1, from_n: 1, created_at: at(0, 9) }),
+    ]
+    const [turn] = buildStream({ ...base, versions, sessions, comments: [] })
+    if (turn?.type !== "turn") throw new Error("no turn")
+    expect(turn.rows).toHaveLength(1)
+    const row = turn.rows[0]
+    if (row.kind !== "version") throw new Error("not a version row")
+    expect(phrase(row)).toBe("published v1–v5")
+    expect(row.count).toBe(5)
+    expect(row.versions.map((v) => v.n)).toEqual([1, 2, 3, 4, 5])
+    // The newest session with a message speaks for the range.
+    expect(row.message).toBe("v3")
+    // The line's stamp is the last thing that happened.
+    expect(turn.until).toBe(at(0, 11, 30))
   })
 
   it("breaks a turn at a comment card, so before and after read as separate stories", () => {
@@ -259,6 +286,59 @@ describe("buildStream", () => {
       lens: "comments",
     })
     expect(only.filter((it) => it.type === "turn")).toHaveLength(1)
+  })
+
+  it("never folds what happened since the last visit into a turn from before it", () => {
+    // A day's work: v1 at 3:40, v2–v4 by 4:47, v5 at 5:29. The viewer last looked at 5:00.
+    const versions = [
+      version(1, "Mert", at(0, 15, 40), "Walkthrough"),
+      version(2, "Mert", at(0, 16, 17), "v2"),
+      version(3, "Mert", at(0, 16, 26), "v3"),
+      version(4, "Mert", at(0, 16, 47), null),
+      version(5, "Mert", at(0, 17, 29), null),
+    ]
+    const sessions = [
+      session({ n: 5, from_n: 5, created_at: at(0, 17, 29) }),
+      session({ n: 4, from_n: 2, created_at: at(0, 16, 47) }),
+      session({ n: 1, from_n: 1, created_at: at(0, 15, 40) }),
+    ]
+    const items = buildStream({
+      ...base,
+      versions,
+      sessions,
+      comments: [],
+      lastSeen: new Date(at(0, 17)).getTime(),
+    })
+    expect(items.map((it) => it.type)).toEqual(["turn", "unread", "turn"])
+    const turns = items.filter((it) => it.type === "turn")
+    expect(turns.map((t) => phrase(leadRow(t)))).toEqual(["published v1–v4", "published v5"])
+    expect(countUnread(items)).toBe(1)
+  })
+
+  it("knows the viewer by id, so their own reply under a different byline is not news", () => {
+    const seen = new Date(at(0, 12)).getTime()
+    const comments = [
+      comment({ id: "t1", author: "Ada", created_at: at(3, 9) }),
+      // The viewer's handle, not their display name — the record's id still says it's them.
+      comment({
+        id: "c2",
+        thread_id: "t1",
+        author: "mert-testing",
+        author_id: "u1",
+        created_at: at(0, 14),
+      }),
+      // A legacy row with no id falls back to the name.
+      comment({ id: "c3", thread_id: "t1", author: "Mert", created_at: at(0, 15) }),
+    ]
+    const items = buildStream({
+      ...base,
+      versions: [],
+      comments,
+      lastSeen: seen,
+      meId: "u1",
+      me: "Mert",
+    })
+    expect(items.filter((it) => it.type === "turn")).toHaveLength(0)
   })
 
   it("has no marker and nothing new on a first visit", () => {

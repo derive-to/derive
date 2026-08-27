@@ -30,6 +30,11 @@ type Session = NonNullable<Artifact["sessions"]>[number]
 export type VersionRow = {
   kind: "version"
   id: string
+  /** The session's END — its newest version's time. A publish row sits in the stream
+   *  where it was last touched, carries that as its stamp, and counts as new when it
+   *  was touched since the last visit. (Sessions are disjoint version ranges, so end
+   *  order is version order: two of one actor's sessions can only merge when nothing
+   *  else was published between them.) */
   at: string
   /** The actor — the agent's name when one produced the versions on the author's behalf. */
   by: string
@@ -40,7 +45,8 @@ export type VersionRow = {
   count: number
   /** The newest version's message, else the session's checkpoint name. */
   message: string | null
-  /** The versions in the range, newest first — the expanded list. */
+  /** The versions in the range, oldest first — the expanded list reads down the way the
+   *  stream does, so the current version is its last line. */
   versions: Version[]
 }
 export type ReviewRequestRow = {
@@ -112,7 +118,9 @@ export interface StreamInput {
   sessions?: Session[] | null
   comments: Comment[]
   rounds: ReviewRound[]
-  /** The viewer's own display name — their own replies and resolves are not news to them. */
+  /** The viewer — their own replies and resolves are not news to them. Matched by id when
+   *  the record has one, by name for rows written before ids were kept. */
+  meId?: string
   me?: string
   /** The viewer's last visit (ms since epoch); null = no marker, nothing is "new". */
   lastSeen: number | null
@@ -157,7 +165,7 @@ function versionRows(versions: Version[], sessions: Session[] | null | undefined
     return sessions.map((s) => {
       const members = versions
         .filter((v) => v.n >= s.from_n && v.n <= s.n)
-        .sort((a, b) => b.n - a.n)
+        .sort((a, b) => a.n - b.n)
       const newest = byN.get(s.n)
       return {
         kind: "version",
@@ -225,15 +233,18 @@ function reviewRows(rounds: ReviewRound[]) {
 function threadRows(
   threads: Comment[][],
   lastSeen: number | null,
+  meId?: string,
   me?: string,
 ): (ReplyRow | ResolvedRow)[] {
   if (lastSeen == null) return []
+  const isMe = (id: string | null | undefined, name: string | null) =>
+    id ? id === meId : !!name && name === me
   const rows: (ReplyRow | ResolvedRow)[] = []
   for (const t of threads) {
     const root = t[0]
     if (!root) continue
     for (const c of t.slice(1)) {
-      if (c.deleted || ms(c.created_at) <= lastSeen || c.author === me) continue
+      if (c.deleted || ms(c.created_at) <= lastSeen || isMe(c.author_id, c.author)) continue
       rows.push({
         kind: "reply",
         id: `r-${c.id}`,
@@ -246,7 +257,7 @@ function threadRows(
       })
     }
     const res = root.state === "resolved" ? root.resolution : null
-    if (res && ms(res.at) > lastSeen && res.by !== me)
+    if (res && ms(res.at) > lastSeen && !isMe(res.by_id, res.by))
       rows.push({
         kind: "resolved",
         id: `x-${root.thread_id}`,
@@ -261,19 +272,37 @@ function threadRows(
   return rows
 }
 
+/** Two publish rows by the turn's actor become one: the span widens, the versions run
+ *  on in order, the newest message speaks for the range. So a day's sessions read as
+ *  "published v1–v5", never "published v1 · +2" with the rest hidden in the count. */
+function mergeVersions(into: VersionRow, row: VersionRow): void {
+  into.from = Math.min(into.from, row.from)
+  into.to = Math.max(into.to, row.to)
+  into.count += row.count
+  into.versions = [...into.versions, ...row.versions].sort((a, b) => a.n - b.n)
+  const spoken = [...into.versions].reverse().find((v) => v.message)
+  into.message = spoken?.message ?? row.message ?? into.message
+}
+
 /** Fold consecutive rows by one actor on one day into a turn. A row with no actor (a
  *  round or a resolve the record could not name) rides with the turn before it. An actor
- *  is a name AND a kind: a person who shares an agent's name is not that agent. */
-function foldTurns(rows: ActivityRow[]): TurnItem[] {
+ *  is a name AND a kind: a person who shares an agent's name is not that agent. The
+ *  viewer's last visit is a boundary too: what happened since must start its own turn,
+ *  or it folds into one that sits before the "New" marker and is never new. */
+function foldTurns(rows: ActivityRow[], lastSeen: number | null): TurnItem[] {
   const turns: TurnItem[] = []
   let cur: TurnItem | null = null
+  const seen = (iso: string) => lastSeen != null && ms(iso) <= lastSeen
   for (const row of rows) {
     const joins =
       cur !== null &&
       (row.by === null || (cur.by === row.by && cur.agent === row.agent)) &&
-      dayKey(cur.at) === dayKey(row.at)
+      dayKey(cur.at) === dayKey(row.at) &&
+      seen(cur.at) === seen(row.at)
     if (joins && cur) {
-      cur.rows.push(row)
+      const publish = row.kind === "version" ? cur.rows.find((r) => r.kind === "version") : null
+      if (publish && row.kind === "version") mergeVersions(publish, row)
+      else cur.rows.push(row)
       cur.until = row.at
     } else {
       cur = {
@@ -298,7 +327,7 @@ export function buildStream(input: StreamInput): StreamItem[] {
   const rows: ActivityRow[] = [
     ...versionRows(input.versions, input.sessions),
     ...reviewRows(input.rounds),
-    ...threadRows(threads, input.lastSeen, input.me),
+    ...threadRows(threads, input.lastSeen, input.meId, input.me),
   ]
   const lensRows = input.lens === "comments" ? rows.filter((r) => THREAD_KINDS.has(r.kind)) : rows
   const threadItems: ThreadItem[] = threads.flatMap((t) => {
@@ -316,7 +345,7 @@ export function buildStream(input: StreamInput): StreamItem[] {
   const items: (ThreadItem | TurnItem)[] = []
   let run: ActivityRow[] = []
   const flush = () => {
-    if (run.length) items.push(...foldTurns(run))
+    if (run.length) items.push(...foldTurns(run, input.lastSeen))
     run = []
   }
   for (const m of merged) {
