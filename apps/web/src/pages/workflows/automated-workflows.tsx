@@ -14,11 +14,11 @@ import { StatusBadge } from "@/components/shared/status-badge"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Skeleton } from "@/components/ui/skeleton"
 import { automationsQuery, runsQuery, workspaceQuery, workspaceSettingsQuery } from "@/lib/queries"
 import { ago } from "@/lib/time"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { SettingsListSkeleton } from "../settings/settings-list-skeleton"
-import { SettingsSection } from "../settings/settings-section"
 import { AutomationForm } from "./automation-form"
 import {
   runExecutionReceipt,
@@ -32,29 +32,42 @@ import {
 export function AutomatedWorkflows() {
   const qc = useQueryClient()
   const { data: automations, isPending, isError, refetch } = useQuery(automationsQuery())
-  // Creating, removing, and reading activity require an Admin; Run now requires a write seat.
-  // Hide controls the API will reject.
-  const { data: ws } = useQuery(workspaceQuery())
-  const { data: settings } = useQuery(workspaceSettingsQuery())
+  const workspace = useQuery(workspaceQuery())
+  const settingsQuery = useQuery(workspaceSettingsQuery())
+  const { data: ws } = workspace
+  const { data: settings } = settingsQuery
   const isAdmin = ws?.role === "owner"
   const canRun = ws?.role === "owner" || ws?.role === "editor"
   const standingRunsEnabled = settings?.automateBeta === true
+  const accessPending = workspace.isPending || settingsQuery.isPending
+  const accessError = workspace.isError || settingsQuery.isError
+  const retryAccess = () => {
+    void Promise.all([workspace.refetch(), settingsQuery.refetch()])
+  }
   const reload = () => {
     qc.invalidateQueries({ queryKey: automationsQuery().queryKey })
     qc.invalidateQueries({ queryKey: runsQuery().queryKey })
   }
 
   return (
-    <SettingsSection
-      title="Single-agent workflows"
-      description={
-        <>
+    <section className="flex flex-col gap-4">
+      <div className="flex flex-col gap-1">
+        <h2 className="text-base font-semibold text-foreground">Single-agent workflows</h2>
+        <p className="text-sm text-muted-foreground">
           Give one Agent a standing instruction, then run it on demand, on a schedule, or after an
           event. Each start creates a separate run.
-        </>
-      }
-    >
-      {isAdmin && standingRunsEnabled ? (
+        </p>
+      </div>
+      {accessPending ? (
+        <Skeleton className="h-20 w-full rounded-lg" />
+      ) : accessError ? (
+        <LoadError
+          title="Couldn’t load workflow permissions"
+          testId="workflow-permissions-retry"
+          layout="inline"
+          onRetry={retryAccess}
+        />
+      ) : isAdmin && standingRunsEnabled ? (
         <div className="rounded-lg border bg-card p-4">
           <AutomationForm onDone={reload} />
         </div>
@@ -97,7 +110,7 @@ export function AutomatedWorkflows() {
 
       {/* The runs endpoint is Admin-gated: don't issue a query that can only 403. */}
       {isAdmin && <Activity />}
-    </SettingsSection>
+    </section>
   )
 }
 
@@ -280,9 +293,7 @@ function RunExecution({ meta }: { meta: string | null }) {
   )
 }
 
-/** Why a run is where it is: retries spent, when it will next be tried, and what went wrong
- *  last time. Renders nothing for the ordinary case (a first-try run that just worked), so the
- *  activity list stays quiet until there is something an operator would actually want to know. */
+/** Retry details are omitted for ordinary first-attempt runs. */
 function RunTimeline({ timeline }: { timeline?: Run["timeline"] }) {
   if (!timeline) return null
   const { retries, waiting_until, last_error } = timeline
@@ -299,9 +310,6 @@ function RunTimeline({ timeline }: { timeline?: Run["timeline"] }) {
   )
 }
 
-/** What the run actually wrote, from meta.writes[] — each write linked to its artifact,
- *  the verb (created/revised) shown. Parsing lives in runWrites (unit-tested);
- *  absent or empty writes render nothing (asks and failed runs). */
 function RunWrites({ meta }: { meta: string | null }) {
   const writes = runWrites(meta)
   if (writes.length === 0) return null
@@ -337,10 +345,7 @@ function RunStatus({ status }: { status: Run["status"] }) {
   )
 }
 
-/** Honesty over silence (the Buzz rule): an automation whose agent has no executor
- *  polling for runs is INERT, and the row must say so instead of looking configured.
- *  Quiet when live — the badge only appears when something's wrong. Thresholds match
- *  the context console's RunnerLiveness. */
+/** Warn when no executor has polled recently. Thresholds match RunnerLiveness. */
 function ExecutorBadge({ seenAt }: { seenAt: string | null }) {
   const age = seenAt ? Date.now() - new Date(seenAt).getTime() : Number.POSITIVE_INFINITY
   if (seenAt && age < 600_000) return null

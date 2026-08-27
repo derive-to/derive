@@ -76,11 +76,11 @@ tools with. That re-pin is the one part of this flow no library does for us.
 
 ## Using one
 
-Bind the source to an automation: Settings → Automations, the Sources field. Only active sources
-are offered. A run sees the tools of the sources bound to *that automation* and nothing else, and
+Bind the source to a single-agent workflow under **Workflows**, using the Sources field. Only active
+sources are offered. A run sees the tools bound to *that workflow* and nothing else, and
 the credential is resolved server-side at call time, so the model never holds it.
 
-Sources can be bound when you create an automation and changed afterwards.
+Sources can be bound when you create a single-agent workflow and changed afterwards.
 
 ### A run that reads from a source publishes like any other
 

@@ -109,6 +109,13 @@ test("starting a workflow creates a visible, version-pinned run", async ({ owner
   await owner.goto("/settings/automations")
   await expect(owner).toHaveURL(/\/workflows$/)
   await expect(owner.getByTestId("nav-workflows")).toHaveAttribute("aria-current", "page")
+  await expect(owner.getByRole("heading", { level: 1, name: "Workflows" })).toHaveCount(1)
+  await expect(
+    owner.getByRole("heading", { level: 2, name: "Coordinated workflows" }),
+  ).toBeVisible()
+  await expect(
+    owner.getByRole("heading", { level: 2, name: "Single-agent workflows" }),
+  ).toBeVisible()
   const directoryRow = owner
     .getByTestId("workflow-row")
     .filter({ hasText: "Keep internal docs aligned with code changes." })

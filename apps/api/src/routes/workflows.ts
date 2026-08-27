@@ -82,13 +82,15 @@ export const workflowRoutes = (ctx: AppContext) => {
       const rows = candidates.filter((row) => visible.has(row.id)).slice(0, 50)
       const data = await meta.currentVersionDataForArtifacts(
         rows.map((row) => row.id),
-        [LINKED_BUNDLE_FACT, WORKFLOW_DEFINITION_FACT],
+        [LINKED_BUNDLE_FACT],
       )
-      const byArtifact = new Map<string, { slot: string; json: string }[]>()
+      const byArtifact = new Map<string, { slot: string; json: string }[]>(
+        rows.map((row) => [row.id, [{ slot: WORKFLOW_DEFINITION_FACT, json: row.json }]]),
+      )
       for (const fact of data) {
-        const facts = byArtifact.get(fact.artifact_id) ?? []
+        const facts = byArtifact.get(fact.artifact_id)
+        if (!facts) continue
         facts.push({ slot: fact.slot, json: fact.json })
-        byArtifact.set(fact.artifact_id, facts)
       }
 
       return c.json({

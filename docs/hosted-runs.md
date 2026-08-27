@@ -73,10 +73,10 @@ counts live in the run's meta blob, so they survive re-dispatch and show up in t
 
 `GET /v1/workspace/runs` returns each run with a derived `timeline` (nothing extra is stored):
 `phase`, `waiting_until` (a queued run that isn't due yet — a schedule or a retry backoff),
-`queued_ms` / `ran_ms`, `retries`, `last_error`, `outcome`, and `writes`. Settings → Automations
-renders the parts an operator asks about — retries spent, when it will next be tried, and what
-went wrong last time — and stays silent for the ordinary first-try success. This is what makes
-"my automation isn't doing anything" answerable without reading server logs.
+`queued_ms` / `ran_ms`, `retries`, `last_error`, `outcome`, and `writes`. Workflows →
+Single-agent workflows renders the parts an operator asks about — retries spent, when it will next
+be tried, and what went wrong last time — and stays silent for the ordinary first-try success.
+This is what makes "my automation isn't doing anything" answerable without reading server logs.
 
 ### The credential
 

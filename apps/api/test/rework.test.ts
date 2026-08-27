@@ -283,15 +283,27 @@ describe("workflow run: explicit local-agent handoff", () => {
     const hidden = await (
       await publishAs(app, workflowHtml(), { title: "Owner only" }, as(owner.email))
     ).json()
+    const shared = await (
+      await publishAs(app, workflowHtml(), { title: "Shared workflow" }, as(owner.email))
+    ).json()
     const readyArtifact = await meta.getByShortId(ready.short_id)
     const brokenArtifact = await meta.getByShortId(broken.short_id)
     const hiddenArtifact = await meta.getByShortId(hidden.short_id)
+    const sharedArtifact = await meta.getByShortId(shared.short_id)
     expect(readyArtifact).not.toBeNull()
     expect(brokenArtifact).not.toBeNull()
     expect(hiddenArtifact).not.toBeNull()
+    expect(sharedArtifact).not.toBeNull()
     await meta.setAccess(readyArtifact?.id ?? "", "member", "workspace", "none", null)
     await meta.setAccess(brokenArtifact?.id ?? "", "member", "workspace", "none", null)
     await meta.setAccess(hiddenArtifact?.id ?? "", "none", "none", "viewer", null)
+    await meta.setAccess(sharedArtifact?.id ?? "", "none", "none", "none", null)
+    await meta.setArtifactMember({
+      id: "am_workflow_directory_shared",
+      artifact_id: sharedArtifact?.id ?? "",
+      user_id: editor.id,
+      role: "viewer",
+    })
 
     const res = await app.request("/v1/workflows", { headers: as(editor.email) })
     expect(res.status).toBe(200)
@@ -313,6 +325,7 @@ describe("workflow run: explicit local-agent handoff", () => {
       }>
     }
     expect(body.workflows.map((workflow) => workflow.shortId)).toEqual([
+      shared.short_id,
       broken.short_id,
       ready.short_id,
     ])
@@ -335,6 +348,10 @@ describe("workflow run: explicit local-agent handoff", () => {
     expect(body.workflows.find((workflow) => workflow.shortId === broken.short_id)).toMatchObject({
       title: "Broken brief",
       status: "needs-changes",
+    })
+    expect(body.workflows.find((workflow) => workflow.shortId === shared.short_id)).toMatchObject({
+      title: "Shared workflow",
+      status: "ready",
     })
     expect(body.workflows.some((workflow) => workflow.shortId === hidden.short_id)).toBe(false)
   })

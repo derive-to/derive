@@ -4,6 +4,7 @@ import type { WorkflowDirectoryItem } from "@/api"
 import { Icon } from "@/components/icons"
 import { ListRow } from "@/components/shared/list-row"
 import { LoadError } from "@/components/shared/load-error"
+import { PageHeader } from "@/components/shared/page-header"
 import { PageShell } from "@/components/shared/page-shell"
 import { StatusBadge } from "@/components/shared/status-badge"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -45,15 +46,15 @@ export function Workflows() {
 
   return (
     <PageShell className="flex flex-col gap-10">
-      <header className="flex flex-col gap-1">
-        <h1 className="font-serif text-2xl font-medium tracking-tight text-foreground">
-          Workflows
-        </h1>
-        <p className="max-w-2xl text-pretty text-sm text-muted-foreground">
-          Reusable work. A workflow may coordinate several steps or give one Agent a standing
-          instruction. Every start creates a fresh run.
-        </p>
-      </header>
+      <PageHeader
+        title="Workflows"
+        subtitle={
+          <>
+            Reusable work. A workflow may coordinate several steps or give one Agent a standing
+            instruction. Every start creates a fresh run.
+          </>
+        }
+      />
 
       <section className="flex flex-col gap-4" data-testid="workflow-directory">
         <div className="flex flex-col gap-1">
