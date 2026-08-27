@@ -366,6 +366,34 @@ describe("workflow preview contract", () => {
     )
   })
 
+  it("requires a human-gated effect to sit directly behind its approval node", () => {
+    const source = workflowPage((workflow) => {
+      const diagram = (workflow.diagrams as Array<Record<string, unknown>>)[0]
+      if (!diagram) return
+      const routes = diagram.routes as Array<Record<string, unknown>>
+      const approvalRoute = routes.find((route) => route.to === "publish")
+      if (approvalRoute) approvalRoute.from = "research"
+    })
+
+    expect(workflowDefinitionOf(source)?.errors).toContain(
+      'WF-05 node "publish" human-gated effect must be reached directly and only from approval node "review"',
+    )
+  })
+
+  it("requires a context node for a human-gated effect", () => {
+    const source = workflowPage((workflow) => {
+      const diagram = (workflow.diagrams as Array<Record<string, unknown>>)[0]
+      if (!diagram) return
+      const nodes = diagram.nodes as Array<Record<string, unknown>>
+      const publishNode = nodes.find((node) => node.id === "publish")
+      if (publishNode) publishNode.kind = "terminal"
+    })
+
+    expect(workflowDefinitionOf(source)?.errors).toContain(
+      'WF-05 node "publish" human-gated effect requires a context node so approval is checked before execution',
+    )
+  })
+
   it("blocks drift between visible edges and executable routes", () => {
     const source = workflowPage((workflow) => {
       const diagram = (workflow.diagrams as Array<Record<string, unknown>>)[0]

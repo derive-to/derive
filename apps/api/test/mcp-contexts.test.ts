@@ -230,6 +230,94 @@ const fanOutWorkflowHtml = (contextRef: string) => `<!doctype html><html><body>
   ],
 })}</script></body></html>`
 
+const gatedEffectWorkflowHtml = (
+  contextRef: string,
+  idempotent: boolean,
+) => `<!doctype html><html><body>
+<a href="#review">Review</a><a href="#publish">Publish</a><a href="#stop">Stop</a>
+<script type="application/derive-facts" data-fact="bundle-manifest">${JSON.stringify({
+  schema: "derive.linked-bundle/v1",
+  purpose: "Approve one external publish",
+  members: [],
+  diagrams: [
+    {
+      id: "approved-publish",
+      title: "Approved publish",
+      type: "graph",
+      nodes: [
+        { id: "review", label: "Review", note: "Approve or stop the publish" },
+        { id: "publish", label: "Publish", note: "Publish after approval" },
+        { id: "stop", label: "Stop", note: "Stop without publishing" },
+      ],
+      edges: [
+        { from: "review", to: "publish", label: "approve" },
+        { from: "review", to: "stop", label: "stop" },
+      ],
+    },
+  ],
+})}</script>
+<script type="application/derive-facts" data-fact="workflow-definition">${JSON.stringify({
+  schema: "derive.workflow/v1",
+  purpose: "Approve one external publish",
+  diagrams: [
+    {
+      id: "approved-publish",
+      entry: "review",
+      nodes: [
+        {
+          id: "review",
+          kind: "human",
+          decision: "Approve or stop the publish",
+          options: ["approve", "stop"],
+          resume: "The reviewer chooses",
+        },
+        {
+          id: "publish",
+          kind: "context",
+          context_ref: contextRef,
+          instruction: "Publish the approved content outside Derive.",
+          result: "The approved content is published",
+          terminal: true,
+          effects: [
+            {
+              kind: "write",
+              description: "Publish outside Derive",
+              gate: "human",
+              approval_ref: "review",
+              ...(idempotent ? { idempotency: "One external publish per workflow run" } : {}),
+            },
+          ],
+        },
+        { id: "stop", kind: "terminal", result: "Stopped without publishing" },
+      ],
+      routes: [
+        { from: "review", to: "publish", when: "approve" },
+        { from: "review", to: "stop", when: "stop" },
+      ],
+      scenarios: [
+        {
+          id: "expected",
+          kind: "expected",
+          path: ["review", "publish"],
+          outcome: "The approved content is published",
+        },
+        {
+          id: "human",
+          kind: "human",
+          path: ["review", "stop"],
+          outcome: "The reviewer stops the publish",
+        },
+        {
+          id: "failure",
+          kind: "failure",
+          path: ["review", "publish"],
+          outcome: "The failed publish attempt remains visible",
+        },
+      ],
+    },
+  ],
+})}</script></body></html>`
+
 describe("find — ask-scoped context discovery", () => {
   it("shows only what the acting human may ask; invited admits via the roster", async () => {
     const { app, cx, manifestShortId, ownerToken } = await setup("mcx-list")
@@ -595,6 +683,104 @@ describe("use — open, check, and the grant edges", () => {
         },
       }),
     ).toMatchObject({ attempt_status: "succeeded", run_status: "succeeded" })
+  })
+
+  it("requires idempotency before reusing approval for an effect retry", async () => {
+    const { app, meta, cx, ownerAgentId, ownerToken, answeringToken } = await setup(
+      "mcx-workflow-effect-gate",
+    )
+    expect(
+      (
+        await app.request(
+          `/v1/contexts/${cx.id}/access`,
+          jsonAs(as(dev.email), { ask_policy: "workspace" }),
+        )
+      ).status,
+    ).toBe(200)
+    const publishWorkflow = async (idempotent: boolean) => {
+      const response = await publishAs(
+        app,
+        gatedEffectWorkflowHtml(cx.id, idempotent),
+        { title: idempotent ? "Replay-safe publish" : "Single approved publish" },
+        as(owner.email),
+      )
+      expect(response.status).toBe(201)
+      return ((await response.json()) as { short_id: string }).short_id
+    }
+    const start = async (shortId: string) => {
+      const response = await app.request(
+        `/v1/artifacts/${shortId}/workflow-run`,
+        jsonAs(as(owner.email), { agentId: ownerAgentId, diagramId: "approved-publish" }),
+      )
+      expect(response.status).toBe(201)
+      return ((await response.json()) as { runId: string }).runId
+    }
+    const approve = (runId: string) =>
+      call(app, ownerToken, "use", {
+        workflow: {
+          run_id: runId,
+          node_id: "review",
+          attempt: 1,
+          status: "succeeded",
+          decision: "approve",
+          selected_routes: ["publish"],
+        },
+      })
+    const failFirstPublish = async (runId: string) => {
+      const opened = await call(app, ownerToken, "use", {
+        context: cx.id,
+        instruction: "Publish the approved content outside Derive.",
+        workflow: { run_id: runId, node_id: "publish", attempt: 1 },
+        wait: 0,
+      })
+      expect(
+        (
+          await answerAs(app, answeringToken, opened.session_id, {
+            body_md: "The external publish failed.",
+            state: "failed",
+          })
+        ).status,
+      ).toBe(201)
+      await call(app, ownerToken, "use", {
+        workflow: {
+          run_id: runId,
+          node_id: "publish",
+          attempt: 1,
+          status: "failed",
+          selected_routes: [],
+        },
+      })
+    }
+
+    const guardedRun = await start(await publishWorkflow(false))
+    await approve(guardedRun)
+    await failFirstPublish(guardedRun)
+    const unsafeRetry = await callRaw(app, ownerToken, "use", {
+      context: cx.id,
+      instruction: "Retry the external publish.",
+      workflow: { run_id: guardedRun, node_id: "publish", attempt: 2 },
+      wait: 0,
+    })
+    expect(unsafeRetry.isError).toBe(true)
+    expect(unsafeRetry.text).toContain('cannot reuse approval from "review"')
+    expect(unsafeRetry.text).toContain("Start a new run for fresh approval")
+    expect(await meta.listSessions(cx.id)).toHaveLength(1)
+
+    const replaySafeRun = await start(await publishWorkflow(true))
+    await approve(replaySafeRun)
+    await failFirstPublish(replaySafeRun)
+    const replayed = await call(app, ownerToken, "use", {
+      context: cx.id,
+      instruction: "Retry the external publish.",
+      workflow: { run_id: replaySafeRun, node_id: "publish", attempt: 2 },
+      wait: 0,
+    })
+    expect(replayed.workflow).toMatchObject({
+      run_id: replaySafeRun,
+      node_id: "publish",
+      attempt: 2,
+      status: "waiting",
+    })
   })
 
   it("opens a session as the acting human; the console sees it as theirs", async () => {

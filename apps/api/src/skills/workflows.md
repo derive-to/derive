@@ -125,7 +125,9 @@ The companion fact has this shape:
   explicit through `routing`.
 - Effects are `read`, `write`, `message`, `spend`, or `access`. Derive artifact publication and
   state updates normally use `gate:"none"` with an idempotency contract. Reserve a `human` gate
-  for explicitly requested review or consequential effects outside Derive.
+  for explicitly requested review or consequential effects outside Derive. A human-gated effect
+  belongs on a context node so Derive can check approval before opening the session. That node must
+  sit directly and only behind its `approval_ref` human node.
 - Every directed cycle has a loop with a goal, evaluator, integer `max_attempts` (1–100), optional
   stagnation/time/cost limits, and `human_stop`.
 - Every diagram has an expected scenario. Context work adds a failure scenario; human work adds a
@@ -183,7 +185,10 @@ run bookkeeping. Do this by default with version/idempotency protection; it does
 human decision.
 
 An effect's `approval_ref` is the workflow-definition field that references an authored human
-decision; it is unrelated to the removed artifact-approval lifecycle. Do not ask again when that
-decision and the described effect match. Stop at a terminal result, exhausted loop/time/cost/stagnation bound, unresolved human gate,
-terminal failure, or the person's stop request. Keep state explicit; silence or elapsed time never
-implies low confidence, urgency, or a need for human help.
+decision; it is unrelated to the removed artifact-approval lifecycle. Derive checks that decision
+before opening the selected effect context. One approval authorizes one attempt. A retry may reuse
+it only when every human-gated effect on the node declares an idempotency contract; otherwise stop
+and start a new run for fresh approval. Stop at a terminal result, exhausted
+loop/time/cost/stagnation bound, unresolved human gate, terminal failure, or the person's stop
+request. Keep state explicit; silence or elapsed time never implies low confidence, urgency, or a
+need for human help.
