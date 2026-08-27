@@ -33,6 +33,31 @@ export interface Brandprint {
    *  workspace's own settings never carry this field. */
   useWorkspaceBrandprint?: boolean
 }
+
+export type ExportKind =
+  | "page_pdf"
+  | "chart_png"
+  | "chart_json"
+  | "chart_csv"
+  | "email"
+  | "deck_pdf"
+  | "deck_pptx"
+export interface ExportJob {
+  id: string
+  artifact_id: string
+  version: number
+  kind: ExportKind
+  profile: string
+  status: "pending" | "rendering" | "ready" | "failed" | "dead" | "cancelled" | "expired"
+  attempts: number
+  error: string | null
+  error_class: string | null
+  bytes: number | null
+  created_at: string
+  updated_at: string
+  download_url: string | null
+  public_url: string | null
+}
 /** Parse a Me.brandprint / SessionUser.brandprint JSON string; null if absent/malformed. */
 export const parseBrandprint = (raw: string | null | undefined): Brandprint | null => {
   if (!raw) return null
@@ -804,6 +829,24 @@ export const api = {
       if (!r.ok) throw new Error(`HTTP ${r.status}`)
       return r.text()
     }),
+  createExport: (
+    id: string,
+    input: {
+      kind: ExportKind
+      version?: number
+      region?: string
+      dataSlot?: string
+      publicImage?: boolean
+      recipient?: string
+      note?: string
+      attachPdf?: boolean
+    },
+  ): Promise<ExportJob> => f(`/v1/artifacts/${id}/exports`, opts(input)).then(j),
+  listExports: (id: string): Promise<{ jobs: ExportJob[] }> =>
+    f(`/v1/artifacts/${id}/exports`, opts()).then(j),
+  exportStatus: (id: string): Promise<ExportJob> => f(`/v1/exports/${id}`, opts()).then(j),
+  cancelExport: (id: string): Promise<{ ok: true }> =>
+    f(`/v1/exports/${id}/cancel`, opts({})).then(j),
   // Render a markdown draft to the exact published HTML, for the live editor
   // preview (markdown only; HTML drafts preview in-browser).
   renderPreview: (source: string, title: string | null): Promise<{ html: string }> =>

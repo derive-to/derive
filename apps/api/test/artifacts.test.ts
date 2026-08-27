@@ -22,6 +22,91 @@ describe("version sessions", () => {
   })
 })
 
+describe("version-pinned export requests", () => {
+  const owner: TestUser = { id: "export-owner", email: "export-owner@test.dev", name: "Owner" }
+  const outsider: TestUser = {
+    id: "export-outsider",
+    email: "export-outsider@test.dev",
+    name: "Outsider",
+  }
+  const { app: exportApp } = makeAuthedApp("exports-routes", [owner, outsider])
+
+  it("pins a version and deduplicates a replay without enabling a renderer", async () => {
+    const created = await (
+      await publishAs(
+        exportApp,
+        '<script type="application/derive+json" data-name="series">[{"month":"Jan","value":4}]</script>',
+        { title: "Export fixture", workspace_access: "none" },
+        as(owner.email),
+      )
+    ).json()
+    const request = () =>
+      exportApp.request(`/v1/artifacts/${created.short_id}/exports`, {
+        method: "POST",
+        headers: { ...as(owner.email), "content-type": "application/json" },
+        body: JSON.stringify({ kind: "chart_json", version: 1, dataSlot: "series" }),
+      })
+    const first = await request()
+    const replay = await request()
+    expect(first.status).toBe(202)
+    expect(replay.status).toBe(202)
+    const a = await first.json()
+    const b = await replay.json()
+    expect(a).toMatchObject({ version: 1, kind: "chart_json", status: "pending" })
+    expect(b.id).toBe(a.id)
+  })
+
+  it("does not reveal a private export surface to another workspace member", async () => {
+    const created = await (
+      await publishAs(
+        exportApp,
+        "private",
+        { title: "Private export", workspace_access: "none" },
+        as(owner.email),
+      )
+    ).json()
+    const response = await exportApp.request(`/v1/artifacts/${created.short_id}/exports`, {
+      method: "POST",
+      headers: { ...as(outsider.email), "content-type": "application/json" },
+      body: JSON.stringify({ kind: "chart_json", dataSlot: "series" }),
+    })
+    expect(response.status).toBe(403)
+  })
+
+  it("lets an explicit viewer export readable truth, then rechecks access on download", async () => {
+    const created = await (
+      await publishAs(
+        exportApp,
+        '<script type="application/derive+json" data-name="series">[{"month":"Jan","value":4}]</script>',
+        { title: "Shared export", workspace_access: "none" },
+        as(owner.email),
+      )
+    ).json()
+    const share = await exportApp.request(`/v1/artifacts/${created.short_id}/members`, {
+      ...jsonAs(as(owner.email), { email: outsider.email, role: "viewer" }),
+      method: "PUT",
+    })
+    expect(share.status).toBe(201)
+    const requested = await exportApp.request(`/v1/artifacts/${created.short_id}/exports`, {
+      method: "POST",
+      headers: { ...as(outsider.email), "content-type": "application/json" },
+      body: JSON.stringify({ kind: "chart_json", version: 1, dataSlot: "series" }),
+    })
+    expect(requested.status).toBe(202)
+    const job = await requested.json()
+
+    const revoke = await exportApp.request(
+      `/v1/artifacts/${created.short_id}/members/${outsider.id}`,
+      { method: "DELETE", headers: as(owner.email) },
+    )
+    expect(revoke.status).toBe(204)
+    const direct = await exportApp.request(`/v1/exports/${job.id}/download`, {
+      headers: as(outsider.email),
+    })
+    expect(direct.status).toBe(404)
+  })
+})
+
 describe("inline edit version coalescing", () => {
   const owner: TestUser = { id: "inline-owner", email: "inline-owner@test.dev", name: "Owner" }
   const editor: TestUser = {

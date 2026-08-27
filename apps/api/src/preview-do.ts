@@ -7,6 +7,7 @@ import type {
 } from "@cloudflare/workers-types"
 import { R2BlobStore } from "@derive/storage"
 import { tickStore } from "./edge-pg"
+import { runExportTick } from "./exports"
 import { log } from "./log"
 import { cfBrowserRenderer } from "./preview-cf"
 import { runRenderTick, sweepMissingRenders } from "./previews"
@@ -81,15 +82,17 @@ export class PreviewRenderer {
       // Sweep first so a never-rendered version (pre-pipeline publish, or a path
       // that missed the enqueue) is claimed by the very tick that finds it.
       await sweepMissingRenders(opened.store)
-      const claimed = await runRenderTick({
+      const deps = {
         meta: opened.store,
         blobs,
         renderer,
         baseUrl,
         sandboxOrigin: this.env.DERIVE_SANDBOX_URL,
         secret: this.env.DERIVE_AUTH_SECRET ?? "",
-      })
-      if (claimed > 0) await this.state.storage.setAlarm(Date.now() + TICK_MS)
+      }
+      const claimed = await runRenderTick(deps)
+      const exportsClaimed = await runExportTick(deps)
+      if (claimed + exportsClaimed > 0) await this.state.storage.setAlarm(Date.now() + TICK_MS)
     } catch {
       await this.state.storage.setAlarm(Date.now() + TICK_MS)
     } finally {

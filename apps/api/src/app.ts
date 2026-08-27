@@ -32,6 +32,7 @@ import { connectionRoutes } from "./routes/connections"
 import { contextRoutes } from "./routes/contexts"
 import { domainRoutes } from "./routes/domains"
 import { embedRoutes } from "./routes/embeds"
+import { exportRoutes } from "./routes/exports"
 import { favoriteRoutes } from "./routes/favorites"
 import { folderRoutes } from "./routes/folders"
 import { followRoutes } from "./routes/follows"
@@ -430,6 +431,7 @@ export function createApp(deps: AppDeps): Hono {
     artifactRoutes,
     sharedStateRoutes,
     assetRoutes,
+    exportRoutes,
     attributionRoutes,
     blobRoutes,
     sharingRoutes,

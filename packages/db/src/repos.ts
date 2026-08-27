@@ -25,6 +25,7 @@ import type {
   DeliveryStatus,
   DomainRecord,
   DomainStatus,
+  ExportJobRecord,
   FolderRecord,
   FollowKind,
   FollowRecord,
@@ -35,6 +36,7 @@ import type {
   ListArtifactsOpts,
   Listed,
   MembershipRecord,
+  MetaStore,
   ModelCredentialRecord,
   NewAgent,
   NewAgentMention,
@@ -53,6 +55,7 @@ import type {
   NewContextAsker,
   NewDelivery,
   NewDomain,
+  NewExportJob,
   NewFolder,
   NewFollow,
   NewInvitation,
@@ -185,6 +188,7 @@ import {
   contextAsker,
   contextSession,
   domain,
+  exportJob,
   folder,
   follow,
   githubApp,
@@ -383,6 +387,7 @@ export const schema = {
   webhook,
   webhookDelivery,
   renderJob,
+  exportJob,
   membership,
   workspace,
   artifactMember,
@@ -438,6 +443,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   webhook: true,
   webhookDelivery: true,
   renderJob: true,
+  exportJob: true,
   membership: true,
   workspace: true,
   artifactMember: true,
@@ -1705,6 +1711,71 @@ export function makeRepos(db: SqliteDb) {
     },
   ): Promise<void> => {
     await db.update(renderJob).set(fields).where(eq(renderJob.id, id)).run()
+  }
+
+  // ---- Export-job queue --------------------------------------------------
+  const enqueueExportJob = async (j: NewExportJob): Promise<ExportJobRecord> => {
+    await db.insert(exportJob).values(j).onConflictDoNothing({ target: exportJob.input_hash }).run()
+    const row = await db
+      .select()
+      .from(exportJob)
+      .where(eq(exportJob.input_hash, j.input_hash))
+      .get()
+    if (!row) throw new Error("export job insert did not produce a row")
+    return row as ExportJobRecord
+  }
+  const getExportJob = async (id: string): Promise<ExportJobRecord | null> =>
+    ((await db.select().from(exportJob).where(eq(exportJob.id, id)).get()) as
+      | ExportJobRecord
+      | undefined) ?? null
+  const listExportJobs = async (
+    artifactId: string,
+    requestedBy: string,
+    limit: number,
+  ): Promise<ExportJobRecord[]> =>
+    (await db
+      .select()
+      .from(exportJob)
+      .where(and(eq(exportJob.artifact_id, artifactId), eq(exportJob.requested_by, requestedBy)))
+      .orderBy(desc(exportJob.created_at))
+      .limit(limit)
+      .all()) as ExportJobRecord[]
+  const claimDueExportJobs = async (
+    now: string,
+    limit: number,
+    leaseUntil: string,
+  ): Promise<ExportJobRecord[]> => {
+    const due = db
+      .select({ id: exportJob.id })
+      .from(exportJob)
+      .where(
+        and(
+          or(
+            eq(exportJob.status, "pending"),
+            eq(exportJob.status, "rendering"),
+            eq(exportJob.status, "failed"),
+          ),
+          lte(exportJob.next_attempt_at, now),
+        ),
+      )
+      .orderBy(asc(exportJob.next_attempt_at))
+      .limit(limit)
+    return (await db
+      .update(exportJob)
+      .set({
+        status: "rendering",
+        attempts: sql`${exportJob.attempts} + 1`,
+        next_attempt_at: leaseUntil,
+        updated_at: now,
+      })
+      .where(inArray(exportJob.id, due))
+      .returning()) as ExportJobRecord[]
+  }
+  const updateExportJob = async (
+    id: string,
+    fields: Parameters<MetaStore["updateExportJob"]>[1],
+  ): Promise<void> => {
+    await db.update(exportJob).set(fields).where(eq(exportJob.id, id)).run()
   }
 
   // ---- Workspace membership ----------------------------------------------
@@ -5367,6 +5438,11 @@ export function makeRepos(db: SqliteDb) {
     versionsMissingPreview,
     claimDueRenderJobs,
     updateRenderJob,
+    enqueueExportJob,
+    getExportJob,
+    listExportJobs,
+    claimDueExportJobs,
+    updateExportJob,
     getMembership,
     listMemberships,
     listMembershipsForOrgs,

@@ -1321,6 +1321,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
           {!isAnon && !seeded && (
             <ArtifactTopBar
               shortId={shortId}
+              version={shown}
               artifactTitle={art.title ?? undefined}
               orgId={art.org_id}
               myRole={art.my_role}

@@ -11,6 +11,8 @@ import type {
   DeliveryStatus,
   DomainKind,
   DomainStatus,
+  ExportJobStatus,
+  ExportKind,
   FollowKind,
   LinkRole,
   Listed,
@@ -278,6 +280,34 @@ export const renderJob = sqliteTable("render_job", {
   next_attempt_at: text("next_attempt_at").notNull().default(now),
   created_at: text("created_at").notNull().default(now),
 })
+
+export const exportJob = sqliteTable(
+  "export_job",
+  {
+    id: text("id").primaryKey(),
+    artifact_id: text("artifact_id").notNull(),
+    version_n: integer("version_n").notNull(),
+    org_id: text("org_id").notNull(),
+    requested_by: text("requested_by").notNull(),
+    kind: text("kind").$type<ExportKind>().notNull(),
+    profile: text("profile").notNull(),
+    options_json: text("options_json").notNull().default("{}"),
+    input_hash: text("input_hash").notNull(),
+    status: text("status").$type<ExportJobStatus>().notNull().default("pending"),
+    attempts: integer("attempts").notNull().default(0),
+    last_error: text("last_error"),
+    error_class: text("error_class"),
+    next_attempt_at: text("next_attempt_at").notNull().default(now),
+    output_key: text("output_key"),
+    output_type: text("output_type"),
+    output_bytes: integer("output_bytes"),
+    public_asset_hash: text("public_asset_hash"),
+    created_at: text("created_at").notNull().default(now),
+    updated_at: text("updated_at").notNull().default(now),
+    expires_at: text("expires_at"),
+  },
+  (t) => [uniqueIndex("export_job_input").on(t.input_hash)],
+)
 
 // The run ledger: one row per hosted/owner agent invocation — the durable
 // An automation: a standing agent job — WHO (agent), WHEN (trigger, open-ended
@@ -1311,6 +1341,7 @@ const TABLES = [
   webhook,
   webhookDelivery,
   renderJob,
+  exportJob,
   membership,
   workspace,
   artifactMember,

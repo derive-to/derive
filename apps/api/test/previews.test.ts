@@ -10,7 +10,15 @@ import type {
   VersionRecord,
 } from "@derive/core"
 import { sha256Hex } from "@derive/core"
+import { unzipSync } from "fflate"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import {
+  buildExportEmail,
+  csvFromJson,
+  exportInputHash,
+  imageBackedPptx,
+  normalizeExportOptions,
+} from "../src/lib/export-system"
 import {
   assertNavigationOk,
   assertRenderedDocumentOk,
@@ -20,6 +28,68 @@ import {
   startPreviewWorker,
   sweepMissingRenders,
 } from "../src/previews"
+
+describe("export contracts", () => {
+  it("normalizes bounded view state before hashing an immutable request", async () => {
+    const options = normalizeExportOptions({ region: "  #chart  ", note: ` ${"x".repeat(3_000)} ` })
+    expect(options.region).toBe("#chart")
+    expect(options.note).toHaveLength(2_000)
+    const a = await exportInputHash({
+      artifactId: "a1",
+      version: 2,
+      requestedBy: "u1",
+      kind: "chart_png",
+      options: { region: " #chart " },
+    })
+    const b = await exportInputHash({
+      artifactId: "a1",
+      version: 2,
+      requestedBy: "u1",
+      kind: "chart_png",
+      options: { region: "#chart" },
+    })
+    expect(a).toBe(b)
+  })
+
+  it("exports only declared tabular JSON to CSV", () => {
+    expect(
+      csvFromJson([
+        { label: "A, B", value: 4 },
+        { label: "C", value: 7 },
+      ]),
+    ).toBe('label,value\r\n"A, B",4\r\nC,7')
+    expect(() => csvFromJson([1, 2, 3])).toThrow(/declared tabular fact/)
+  })
+
+  it("builds script-free, images-off-readable email and a complete image-backed PPTX", () => {
+    const email = buildExportEmail({
+      to: "qa@example.test",
+      title: "Revenue <script>alert(1)</script>",
+      note: "Pinned chart",
+      openUrl: "https://derive.test/artifacts/a",
+      imageUrl: "cid:derive-export",
+      alt: "Revenue by month",
+      version: 3,
+    })
+    expect(email.html).not.toContain("<script>")
+    expect(email.html).toContain('src="cid:derive-export"')
+    expect(email.html).toContain('alt="Revenue by month"')
+    expect(email.text).toContain("Open: https://derive.test/artifacts/a")
+
+    const pptx = unzipSync(
+      imageBackedPptx([new Uint8Array([1, 2]), new Uint8Array([3, 4])], "artifact v3"),
+    )
+    expect(Object.keys(pptx)).toEqual(
+      expect.arrayContaining([
+        "ppt/slides/slide1.xml",
+        "ppt/slides/slide2.xml",
+        "ppt/media/image1.png",
+        "ppt/media/image2.png",
+      ]),
+    )
+    expect(new TextDecoder().decode(pptx["docProps/core.xml"])).toContain("artifact v3")
+  })
+})
 
 // ---------------------------------------------------------------------------
 // Fake BlobStore (content-addressed, Map-backed)

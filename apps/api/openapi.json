@@ -5471,6 +5471,83 @@
         }
       }
     },
+    "/v1/artifacts/{shortId}/exports": {
+      "post": {
+        "tags": [
+          "Exports"
+        ],
+        "summary": "Create an immutable, version-pinned export or static email job.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "shortId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "page_pdf",
+                      "chart_png",
+                      "chart_json",
+                      "chart_csv",
+                      "email",
+                      "deck_pdf",
+                      "deck_pptx"
+                    ]
+                  },
+                  "version": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "exclusiveMinimum": true
+                  },
+                  "region": {
+                    "type": "string",
+                    "maxLength": 200
+                  },
+                  "dataSlot": {
+                    "type": "string",
+                    "maxLength": 120
+                  },
+                  "publicImage": {
+                    "type": "boolean"
+                  },
+                  "recipient": {
+                    "type": "string",
+                    "maxLength": 320,
+                    "format": "email"
+                  },
+                  "note": {
+                    "type": "string",
+                    "maxLength": 2000
+                  },
+                  "attachPdf": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "kind"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Export accepted."
+          }
+        }
+      }
+    },
     "/v1/artifacts/{shortId}/access-request": {
       "post": {
         "tags": [

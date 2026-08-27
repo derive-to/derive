@@ -5,7 +5,13 @@
 // pre-rendered at enqueue time (the drainer has no request context) and this sender
 // just transports the finished message.
 
-import { type ArtifactRecord, artifactUrl, type DeliveryRecord, escapeHtml } from "@derive/core"
+import {
+  type ArtifactRecord,
+  artifactUrl,
+  type BlobStore,
+  type DeliveryRecord,
+  escapeHtml,
+} from "@derive/core"
 import { log } from "../log"
 import type { ChannelSendResult } from "../webhooks"
 import { type Asker, askerName, askerRef } from "./access-request"
@@ -20,11 +26,31 @@ export interface EmailMsg {
   subject: string
   html: string
   text: string
+  attachments?: Array<{
+    filename: string
+    contentType: string
+    blobKey: string
+    contentId?: string
+  }>
+  /** Transport-only bytes resolved from attachment blob keys by the outbox drainer. */
+  resolvedAttachments?: Array<{
+    filename: string
+    contentType: string
+    content: Uint8Array
+    contentId?: string
+  }>
 }
 
 export interface EmailSender {
   /** Send one message. Throws on a transport failure so the outbox retries. */
   send(msg: EmailMsg): Promise<void>
+}
+
+const base64 = (bytes: Uint8Array): string => {
+  let binary = ""
+  for (let i = 0; i < bytes.length; i += 0x8000)
+    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
+  return btoa(binary)
 }
 
 /** Self-host / local default: record the email to the logger instead of sending. Makes
@@ -51,6 +77,12 @@ export const resendEmailSender = (apiKey: string, from: string): EmailSender => 
         subject: msg.subject,
         html: msg.html,
         text: msg.text,
+        attachments: msg.resolvedAttachments?.map((a) => ({
+          filename: a.filename,
+          content: base64(a.content),
+          content_type: a.contentType,
+          ...(a.contentId ? { content_id: a.contentId } : {}),
+        })),
       }),
     })
     if (!res.ok) throw new Error(`resend HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`)
@@ -60,9 +92,19 @@ export const resendEmailSender = (apiKey: string, from: string): EmailSender => 
 /** Adapt an `EmailSender` into a `ChannelSenders["email"]` entry: parse the outbox
  *  row's pre-rendered payload and transport it. */
 export const emailDeliverySender =
-  (sender: EmailSender) =>
+  (sender: EmailSender, blobs?: BlobStore) =>
   async (d: DeliveryRecord): Promise<ChannelSendResult> => {
     const msg = JSON.parse(d.payload) as EmailMsg
+    if (msg.attachments?.length) {
+      if (!blobs) throw new Error("email attachments require blob storage")
+      msg.resolvedAttachments = await Promise.all(
+        msg.attachments.map(async (a) => {
+          const content = await blobs.get(a.blobKey)
+          if (!content) throw new Error(`email attachment blob missing: ${a.blobKey}`)
+          return { ...a, content }
+        }),
+      )
+    }
     await sender.send(msg)
     return { ok: true, status: "sent" }
   }

@@ -358,6 +358,7 @@ const channelSenders: ChannelSenders = {
     cfg.resendApiKey && cfg.emailFrom
       ? resendEmailSender(cfg.resendApiKey, cfg.emailFrom)
       : logEmailSender(),
+    blobs,
   ),
   // Slack App posting (bot token decrypted with the auth secret per delivery): the
   // comment thread mirror and per-user DMs (agent completions, mentions, review requests, shares).

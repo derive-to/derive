@@ -161,6 +161,31 @@ CREATE TABLE IF NOT EXISTS render_job (
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 
+CREATE TABLE IF NOT EXISTS export_job (
+  id TEXT PRIMARY KEY,
+  artifact_id TEXT NOT NULL,
+  version_n INTEGER NOT NULL,
+  org_id TEXT NOT NULL,
+  requested_by TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  profile TEXT NOT NULL,
+  options_json TEXT NOT NULL DEFAULT '{}',
+  input_hash TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  attempts INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT,
+  error_class TEXT,
+  next_attempt_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  output_key TEXT,
+  output_type TEXT,
+  output_bytes INTEGER,
+  public_asset_hash TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  expires_at TEXT,
+  UNIQUE (input_hash)
+);
+
 CREATE TABLE IF NOT EXISTS membership (
   id TEXT PRIMARY KEY,
   org_id TEXT NOT NULL,
@@ -804,6 +829,10 @@ CREATE INDEX IF NOT EXISTS view_artifact_time ON view (artifact_id, created_at);
 CREATE INDEX IF NOT EXISTS delivery_due ON webhook_delivery (status, next_attempt_at);
 
 CREATE INDEX IF NOT EXISTS render_job_due ON render_job (status, next_attempt_at);
+
+CREATE INDEX IF NOT EXISTS export_job_due ON export_job (status, next_attempt_at);
+
+CREATE INDEX IF NOT EXISTS export_job_artifact ON export_job (artifact_id, created_at);
 
 CREATE INDEX IF NOT EXISTS notification_user_time ON notification (user_id, created_at);
 

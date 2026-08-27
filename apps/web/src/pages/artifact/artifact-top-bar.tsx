@@ -23,6 +23,8 @@ import { ShareButton } from "./share-dialog"
  * guests receive copy and only the collaboration granted by the link. */
 export function ArtifactTopBar(props: {
   shortId: string
+  /** The immutable version currently shown; export must follow the reader, not HEAD. */
+  version: number
   /** Feeds the collections picker's "similar title" suggestions. */
   artifactTitle?: string
   /** The artifact's current workspace — threaded to the move dialog so it can
@@ -125,6 +127,7 @@ export function ArtifactTopBar(props: {
         ) : (
           <ShareButton
             shortId={shortId}
+            version={props.version}
             myRole={props.myRole}
             workspaceAccess={props.workspaceAccess}
             linkRole={props.linkRole}
