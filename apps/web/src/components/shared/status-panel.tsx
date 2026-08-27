@@ -66,7 +66,7 @@ export function StatusPanel({
         <div className="flex min-w-0 flex-1 flex-col gap-2.5">
           <div className="flex flex-col gap-1 text-sm">
             <p className={cn("font-medium", TONES[tone].title)}>{title}</p>
-            {description && <p className="text-pretty text-muted-foreground">{description}</p>}
+            {description && <div className="text-pretty text-muted-foreground">{description}</div>}
           </div>
           {action && <div>{action}</div>}
         </div>
@@ -92,7 +92,9 @@ export function StatusPanel({
           </div>
         )}
         <p className={cn("font-medium", TONES[tone].title)}>{title}</p>
-        {description && <p className="max-w-sm text-pretty text-muted-foreground">{description}</p>}
+        {description && (
+          <div className="max-w-sm text-pretty text-muted-foreground">{description}</div>
+        )}
       </div>
       {action && <div>{action}</div>}
     </div>
