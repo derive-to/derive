@@ -165,10 +165,8 @@ function Console({ id }: { id: string }) {
   const mine = (sessions ?? []).filter((s) => s.asker_id === me?.id)
   const active = picked === "new" ? null : (picked ?? mine[0]?.id ?? null)
   const isOwner = !!context && context.created_by === me?.id
-  // Rotate the Agent's execution-connection token — the recovery path for a lost runner token
-  // (managed agents are hidden from the Settings roster, so this is their only
-  // credential surface). Admin-gated server-side; a non-admin owner gets a loud
-  // 403 toast, never a silent no-op. Shown exactly once, like every token.
+  // Managed connections are absent from Settings, so their runner token is rotated here.
+  // The API enforces admin access and returns the replacement token once.
   const [rotatedToken, setRotatedToken] = useState<string | null>(null)
   const rotateToken = useApiMutation({
     mutationFn: () => api.rotateAgent(context?.agent_id ?? ""),
@@ -584,11 +582,8 @@ function ContextStatusWorkspace({
   )
 }
 
-// Who may ASK — the Agent's own workspace-scoped grant, built to feel like the
-// artifact Share dialog (same modal, segment toggle, roster, PersonSearchInput)
-// with the "Anyone"/world-link segment REMOVED by design: a context is a
-// data-access grant, not a document, and must never be reachable outside its
-// workspace. Two segments, both workspace-bounded.
+// Agent access reuses the artifact sharing controls but omits public-link access.
+// An Agent may expose connected workspace data even when its instruction artifact is public.
 const CONTEXT_SEGMENTS: { value: "invited" | "workspace"; label: string; icon: IconName }[] = [
   { value: "invited", label: "Invited", icon: "lock" },
   { value: "workspace", label: "Workspace", icon: "workspace" },
@@ -734,8 +729,8 @@ function ContextAccess({
   )
 }
 
-// Whether the Agent's runner is alive, derived from the queue poll's stamp
-// (runner_seen_at) — no heartbeat protocol. Thresholds follow the write path:
+// Runner availability is derived from the queue poll timestamp; there is no separate heartbeat.
+// Thresholds follow the write path:
 // the runner polls ~5s but the server stamps at most once a minute, so online
 // = seen within 90s (throttle + grace); within 10 minutes reads as recently
 // seen; anything older (or never) is offline.
@@ -1582,9 +1577,7 @@ function MessageRow({ m, contextName }: { m: SessionMessage; contextName: string
   )
 }
 
-// The owner's view: every session on this Agent, most recent first. Paged rather than
-// capped — a context that has been running for months has a record longer than one page,
-// and "the last 50" is not the record.
+// Owners can page through the complete session history, newest first.
 function ActivityList({
   sessions,
   onOpen,

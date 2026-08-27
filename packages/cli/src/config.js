@@ -636,10 +636,8 @@ const STARTERS = {
       "skill/references/example.md": STARTER_SKILL_REFERENCE,
     }),
   },
-  // A Derive Agent: one directory that is the runner's whole world — MANIFEST.md
-  // (the system prompt), references/ (docs the model reads from disk), .mcp.json
-  // (the Agent's data-source tools), and .env (secrets — stays local, always).
-  // `derive agent push` ships everything in it except .env*.
+  // Agent projects contain instructions, local references, MCP configuration, and an
+  // ignored environment file. `derive agent push` excludes `.env*`.
   agent: {
     entry: "context",
     files: (t) => ({
@@ -649,8 +647,7 @@ const STARTERS = {
       "context/.env.example": STARTER_CONTEXT_ENV,
       ".gitignore": CONTEXT_GITIGNORE,
     }),
-    // The context block is the compatibility contract for server-side ids. The
-    // first `derive agent push` fills it in.
+    // The persisted key remains `context` for derive.json compatibility.
     extend: (config, title) => ({ ...config, context: { id: null, agent_id: null, name: title } }),
   },
 }
@@ -662,8 +659,7 @@ const STARTERS = {
  * locations, plus each client's project MCP config.
  */
 export function scaffoldFiles(title = "My artifact", template = "md") {
-  // `context` was the original public template name. Keep old scripts working
-  // while new help and scaffolds use Agent.
+  // Accept the original template name without advertising it in new help output.
   const canonicalTemplate = template === "context" ? "agent" : template
   const t = STARTERS[canonicalTemplate] ?? STARTERS.md
   const config = t.extend

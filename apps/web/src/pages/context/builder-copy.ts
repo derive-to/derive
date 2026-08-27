@@ -1,9 +1,5 @@
-// The copy a first-timer meets on their way to an Agent: the builder page itself (composer,
-// empty state, the chat/agent/expert doors, the card the conversation produces) and the status
-// lines the directory and console show them once it exists. Centralised because it carries a
-// rule: none of it may lean on the vocabulary a first-timer has no reason to know yet —
-// "manifest", "short id", "runner token", "serve" — the words that describe HOW an Agent is
-// built rather than what it does.
+// Shared copy for Agent creation and the status surfaces that follow it. Keep storage and
+// runner terms out of the guided path; they describe implementation, not the Agent's job.
 export const BUILDER_COPY = {
   pageTitle: "New agent",
   intro: "Describe what this Agent should know or do, as if you were briefing a teammate.",

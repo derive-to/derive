@@ -16,9 +16,7 @@ export function ContextRowsSkeleton() {
   )
 }
 
-// Shape-matched pending frame for the /agents route: the header block + card
-// silhouettes, so the cold-load window reads as "Agents, loading" rather than the
-// generic app boot or a blank flash.
+// Match the directory layout during its initial query.
 export function AgentsPending() {
   return (
     <PageShell className="flex flex-col gap-6">

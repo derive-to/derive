@@ -29,7 +29,7 @@
 //   derive status [--id] [--json]          the review round state + open threads
 //   derive send-back [--id] [--note m]     open the page to send your answers back (a browser gesture)
 //   derive doctor [--server url] [--token t]  report which optional features are configured
-//   derive runner serve|once|doctor|install   run an Agent's answer daemon, or drain once (npx-able anywhere)
+//   derive runner serve|once|doctor|install   serve queued Agent sessions, or drain once (npx-able anywhere)
 //   derive agent push|dev                  ship an Agent dir as its manifest / tune it live
 //   derive workflow sync|preview [file] [--json] sync the visible graph, then explain + validate
 import { spawn } from "node:child_process"
@@ -304,10 +304,8 @@ async function doOAuthLogin(server, loginFlags) {
   const b64url = (b) =>
     b.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")
   const redirect = `${server}/oauth/cli-callback`
-  // derive:manage (opt-in via --manage) lets `derive agent push` mint the
-  // execution connection and create the Agent's context record. Opt-in, not default: it raises a
-  // leaked token's blast radius from editor to your full workspace authority,
-  // so only sessions that actually manage contexts should carry it.
+  // Agent creation needs the optional derive:manage grant. Keep it out of ordinary
+  // login tokens because it expands their workspace authority.
   const scope =
     loginFlags.scope ??
     `openid offline_access derive:read derive:comment derive:publish${
@@ -759,8 +757,8 @@ if (cmd === "doctor") {
 }
 
 // ---- derive runner (serve / doctor / install) -------------------------------
-// The Agent runner as a CLI verb: `derive runner serve <ctx>` on any machine
-// with Node. Config: flags win over env (DERIVE_SERVER/TOKEN/CONTEXT, RUNNER_*);
+// Runner commands serve queued Agent sessions on any machine with Node. Config:
+// flags win over env (DERIVE_SERVER/TOKEN/CONTEXT, RUNNER_*);
 // --token-file keeps the secret out of service-unit command lines; --env-file
 // loads the Agent's own secrets (KEY=VALUE) before anything reads them.
 if (cmd === "runner") {
@@ -859,14 +857,9 @@ if (cmd === "runner") {
 }
 
 // ---- derive agent (push / dev) ----------------------------------------------
-// An Agent is a directory: MANIFEST.md (the runner's system prompt), references/,
-// .mcp.json (its tools), and .env (stays local, always). The API and derive.json
-// keep their context names as a compatibility contract.
-// `push` ships that directory as the Agent's manifest bundle; the first push
-// also mints the answering principal and creates the context record, so afterwards
-// a push is just a new manifest version — the context's pointer never moves. `dev`
-// answers real sessions with the WORKING TREE manifest: edit, save, next
-// answer uses it, push when it behaves.
+// Agent projects keep instructions, references, tool configuration, and local secrets in
+// one directory. `push` publishes everything except `.env*`; the first push also creates
+// the server-side Agent and execution connection. `dev` serves sessions from local files.
 if (cmd === "agent" || cmd === "context") {
   const sub = positional.shift()
   if (!["push", "dev"].includes(sub ?? "")) {
@@ -1530,7 +1523,7 @@ if (cmd !== "publish") {
   derive resolve|reopen <comment_id>       set a thread's state
   derive status [--id X] [--json]          review-round state + open threads (the loop's poll target)
   derive send-back [--id X] [--note m]     open the page to send your answers back (a browser gesture)
-  derive runner serve|doctor|install       run an Agent's answer daemon (\`derive runner\` for flags)
+  derive runner serve|doctor|install       serve queued Agent sessions (\`derive runner\` for flags)
   derive agent push|dev                    ship an Agent dir as its manifest / tune it on the working tree
   derive context push|dev                  legacy alias for derive agent push|dev
   derive workflow sync [file] [--json]     project definition topology into the visible graph, then Preview

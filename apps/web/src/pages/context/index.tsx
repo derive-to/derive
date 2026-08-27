@@ -12,8 +12,7 @@ import { cn } from "@/lib/utils"
 import { ContextRowsSkeleton } from "./context-skeleton"
 import { runnerStatus } from "./runner-status"
 
-// This is the Agent product surface. ContextInfo remains the transport type until
-// the versioned API contract changes.
+// ContextInfo is the v1 API type; this surface uses Agent terminology.
 export function Agents() {
   useDocumentTitle("Agents")
   const nav = useNavigate()

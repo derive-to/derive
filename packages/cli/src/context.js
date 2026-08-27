@@ -1,6 +1,4 @@
-// Server wiring for `derive agent push`: mint the answering principal and create
-// the context record on first push. Both are idempotent from derive.json's point of
-// view — once the ids are pinned there, pushes are pure artifact versions.
+// First-push server wiring for an Agent. Persisted ids make later pushes artifact-only.
 import { mkdirSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 

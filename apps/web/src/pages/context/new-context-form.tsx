@@ -14,10 +14,8 @@ import {
 import { copyText } from "@/lib/clipboard"
 import { useApiMutation } from "@/lib/use-api-mutation"
 
-// THE EXPERT DOOR — for someone who already has a manifest written (by hand, or by an
-// agent that published one) and just wants to register it, no interview needed. Reached
-// only through the builder page's "I already have a manifest" toggle; the guided
-// conversation (builder.tsx) is the front door everyone else walks through.
+// Advanced creation path for an instruction artifact that has already been published.
+// The guided builder owns the default flow.
 export function NewContextForm({
   agents,
   onCreated,
@@ -30,8 +28,8 @@ export function NewContextForm({
   // an existing service agent — an opt-in the roster's presence (admins) reveals.
   const [agentId, setAgentId] = useState("")
   const [manifest, setManifest] = useState("")
-  // The minted agent's bearer, shown exactly once; navigation waits for Done so
-  // the only display of the token is never lost to an instant redirect.
+  // Creating a dedicated connection may return a bearer once. Defer navigation until
+  // the user dismisses the reveal.
   const [minted, setMinted] = useState<{ contextId: string; name: string; token: string } | null>(
     null,
   )
@@ -54,8 +52,7 @@ export function NewContextForm({
         setMinted({ contextId: ctx.id, name: created, token: ctx.agent_token })
         return
       }
-      // Carry the user straight into the console they just made — asking the first
-      // question is the point, not admiring a new row in the directory.
+      // Open the new Agent directly when no credential reveal is required.
       nav({ to: "/agents/$id", params: { id: ctx.id } })
     },
   })
@@ -107,7 +104,7 @@ export function NewContextForm({
           Create
         </Button>
       </div>
-      {/* Shown exactly once, warning tone — same contract as agent registration. */}
+      {/* Runner credentials are revealed once. */}
       {minted && (
         <div data-testid="context-agent-token">
           <StatusPanel

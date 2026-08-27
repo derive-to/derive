@@ -10,7 +10,7 @@ test("new Agent opens the builder with both doors", async ({ owner }) => {
   await expect(owner.getByTestId("builder-expert-door")).toBeVisible()
 })
 
-test("the expert door reveals the classic form", async ({ owner }) => {
+test("the advanced path reveals the manifest form", async ({ owner }) => {
   await owner.goto("/agents/new")
   await owner.getByTestId("builder-expert-door").click()
   await expect(owner.getByTestId("context-create-name")).toBeVisible()

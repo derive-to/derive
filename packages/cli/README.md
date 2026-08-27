@@ -118,7 +118,7 @@ the complete contract.
 ## More commands
 
 The CLI also manages accounts and workspaces, pulls artifact source, scaffolds skills and Agents,
-and runs Agent workers. `derive --help` is the current command index;
+and serves Agent sessions. `derive --help` is the current command index;
 the [Derive documentation](https://docs.derive.to/)
 explains the surrounding workflows.
 

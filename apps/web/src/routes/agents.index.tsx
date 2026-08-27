@@ -5,8 +5,7 @@ import { Agents } from "../pages/context"
 import { AgentsPending } from "../pages/context/context-skeleton"
 import type { ContextsSearch } from "../pages/templates/types"
 
-// The product calls these reusable setups Agents. The API and query retain their
-// context names until the compatibility contract is versioned.
+// API types retain their v1 context names; the route exposes the Agent product vocabulary.
 export const Route = createFileRoute("/agents/")({
   beforeLoad: requireOnboarded,
   validateSearch: (search: Record<string, unknown>): ContextsSearch => ({
