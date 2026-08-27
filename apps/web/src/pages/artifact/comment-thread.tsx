@@ -152,7 +152,18 @@ function roleGuess(snapshot: ElementSnapshotLite | undefined, label: string): st
 // thread, a reply box, and resolve controls. Its interaction state (active/hovered/
 // present) and handlers come from the CommentTree context — the card is the leaf, so a
 // render site is just `<CommentCard thread={t} />` with no drilled props.
-export function CommentCard({ thread, inLayer }: { thread: Comment[]; inLayer?: boolean }) {
+export function CommentCard({
+  thread,
+  inLayer,
+  settled,
+}: {
+  thread: Comment[]
+  inLayer?: boolean
+  /** Rendered under the stream's record line ("Resolved by X in vN · Reopen"), which
+   *  already states the thread's state and carries its one action — so the card shows
+   *  neither: no title-bar Reopen, no status pill, just the conversation. */
+  settled?: boolean
+}) {
   const { canComment, currentSlide, landedSlides, anchorConf, agentIds } = useCommentScope()
   const { activeThread, hoverThread, inDoc, onActivate, onHover, onResolve, onReply, onJump } =
     useCommentTree()
@@ -286,7 +297,7 @@ export function CommentCard({ thread, inLayer }: { thread: Comment[]; inLayer?: 
           here made every card lead with a gray slab) and, when the thread is
           open, its ONE state action: the resolve check, quiet at rest, success
           on hover. The footer below stays purely about replying. */}
-      {(refLabel || active) && (
+      {(refLabel || (active && !settled)) && (
         <div className="flex items-center gap-1.5 px-3 pt-2.5">
           <div className="min-w-0 flex-1">
             {refLabel &&
@@ -331,7 +342,7 @@ export function CommentCard({ thread, inLayer }: { thread: Comment[]; inLayer?: 
                 </div>
               ))}
           </div>
-          {active && (
+          {active && !settled && (
             // Labeled, not icon-only: at launch, "Resolve" has to teach itself.
             // Still quiet in the title bar (ghost, muted → success on hover) —
             // the verb carries the meaning, no tooltip needed.
@@ -363,6 +374,7 @@ export function CommentCard({ thread, inLayer }: { thread: Comment[]; inLayer?: 
           active card, labeling the ordinary state. An agent request shows its
           state in the ribbon above, so the plain badge is suppressed there too. */}
       {active &&
+        !settled &&
         (() => {
           const changed = refLabel && !textPresent && !resolved && !outdated
           const statused = !requestStage && (resolved || outdated)

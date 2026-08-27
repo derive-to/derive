@@ -998,7 +998,6 @@ export function Artifact({ template = false }: { template?: boolean }) {
   const unread = countUnread(
     buildStream({
       versions: art.versions,
-      sessions: art.sessions,
       comments,
       rounds: review?.rounds ?? [],
       me: me?.name ?? undefined,
@@ -1636,7 +1635,6 @@ export function Artifact({ template = false }: { template?: boolean }) {
               }
               onSheetHeight={setSheetInset}
               versions={art.versions}
-              sessions={art.sessions}
               currentVersion={art.current_version}
               rounds={review?.rounds ?? []}
               pendingRound={review?.pending ?? null}
