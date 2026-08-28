@@ -1,5 +1,5 @@
 import { artifactUrl, type ExportJobRecord } from "@derive/core"
-import { buildRichExportEmail, parseEmailLayout } from "./lib/email-layout"
+import { buildRichExportEmail, EMAIL_LAYOUT_FACT, parseEmailLayout } from "./lib/email-layout"
 import {
   buildExportEmail,
   buildQaEmailCapture,
@@ -180,7 +180,7 @@ const processJob = async (deps: RenderTickDeps, job: ExportJobRecord): Promise<v
   }
 
   if (job.kind === "email" && options.emailMode !== "snapshot") {
-    const row = (await deps.meta.getVersionData(artifact.id, job.version_n, "email-layout"))[0]
+    const row = (await deps.meta.getVersionData(artifact.id, job.version_n, EMAIL_LAYOUT_FACT))[0]
     if (row) {
       let declared: unknown
       try {

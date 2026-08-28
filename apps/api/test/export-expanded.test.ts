@@ -1,4 +1,4 @@
-import { INTERNAL_DELIVERY } from "@derive/core"
+import { DECK_CONTENT_TYPE, INTERNAL_DELIVERY } from "@derive/core"
 import { unzipSync } from "fflate"
 import { describe, expect, it } from "vitest"
 import { runExportTick } from "../src/exports"
@@ -221,7 +221,7 @@ describe("expanded export and email dogfood contracts", () => {
     expect(html).not.toContain("derive-export.pdf")
   })
 
-  it("renders a declared email-layout as native HTML without taking a screenshot", async () => {
+  it("renders a deck's declared email-layout as native HTML without taking a screenshot", async () => {
     const { app, meta, ctx } = makeFixture("expanded-rich-html-email")
     const layout = {
       schema: "derive.email/v1",
@@ -249,11 +249,12 @@ describe("expanded export and email dogfood contracts", () => {
     const artifact = await (
       await publishAs(
         app,
-        `<h1>Pipeline pulse</h1><script type="application/derive-facts" data-fact="email-layout">${JSON.stringify(layout)}</script>`,
+        `<section class="slide" data-derive-slide="0"><h1>Pipeline pulse</h1></section><section class="slide" data-derive-slide="1"><h1>Next step</h1></section><script>parent.postMessage({source:"derive-deck",type:"state",i:0,total:2},"*")</script><script type="application/derive-facts" data-fact="email-layout">${JSON.stringify(layout)}</script>`,
         { title: "Pipeline pulse", workspace_access: "none" },
         as(owner.email),
       )
     ).json()
+    expect(artifact.current_content_type).toBe(DECK_CONTENT_TYPE)
     const accepted = await postExport(app, artifact.short_id, {
       kind: "email",
       recipient: "qa@example.test",

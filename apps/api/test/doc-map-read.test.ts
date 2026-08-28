@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { deriveFacts } from "@derive/core"
+import { DECK_CONTENT_TYPE, deriveFacts } from "@derive/core"
 import { afterAll, describe, expect, it } from "vitest"
 import { appWithGrant } from "./mcp-helpers"
 
@@ -75,6 +75,8 @@ const DECK = `<!doctype html><html><head><title>d</title><style>.slide{opacity:0
   <section class="slide" data-derive-slide="0"><h2>The problem</h2><p>one</p></section>
   <section class="slide" data-derive-slide="1"><h2>The ask</h2><p>two</p></section>
 <script>parent.postMessage({source:"derive-deck",type:"state",i:0,total:2},"*")</script>
+<script type="application/derive-facts" data-fact="email-layout">{"schema":"derive.email/v1","title":"Deck summary","blocks":[{"type":"paragraph","body":"A rich deck email."}]}</script>
+<script type="application/derive-facts" data-fact="ignored-deck-fact">{"secret":"not an operational contract"}</script>
 </body></html>`
 
 /** A published deck plus a ready MCP session. */
@@ -190,5 +192,21 @@ describe("a deck carries its derived facts", () => {
     expect(one.fact).toBe("$map")
     expect(one.data.kind).toBe("deck")
     expect((one.data.nodes as { ref: string }[]).map((n) => n.ref)).toContain("slide:1")
+  })
+
+  it("persists only the email-layout operational fact from authored deck facts", async () => {
+    const { app, token, short_id, meta } = await setup("deck-email-layout-fact")
+    const artifact = await meta.getByShortId(short_id)
+    const version = await meta.getVersion((artifact as { id: string }).id, 1)
+    expect(version?.content_type).toBe(DECK_CONTENT_TYPE)
+    expect(
+      await meta.getVersionData((artifact as { id: string }).id, 1, "email-layout"),
+    ).toHaveLength(1)
+    const layout = await readJson(app, token, { short_id, data: "email-layout" })
+    expect(layout.fact).toBe("email-layout")
+    expect(layout.data).toMatchObject({ schema: "derive.email/v1", title: "Deck summary" })
+
+    const ignored = await readTool(app, token, { short_id, data: "ignored-deck-fact" })
+    expect(ignored.text).toContain('No facts "ignored-deck-fact"')
   })
 })
