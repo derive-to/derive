@@ -184,6 +184,91 @@ describe("materializeEdits: quote-scoped edits (the inline editor's shape)", () 
     )
   })
 
+  it("applies typed text, semantic size, reorder, and removal in one atomic HTML save", async () => {
+    const html = `<section data-derive-region="story" data-derive-layout="stack">
+  <article data-derive-node="a"><h2>Old A</h2></article>
+  <article data-derive-node="b"><h2>B</h2></article>
+  <article data-derive-node="c"><h2>C</h2></article>
+</section>`
+    const deps = mkDeps({ 1: { text: html, contentType: "text/html" } })
+    const out = await materializeEdits(
+      deps,
+      fileArtifact(1),
+      [
+        { quote: { exact: "Old A" }, new_text: "New A" },
+        {
+          schema: "derive.structural-edit/v1",
+          op: "structural-size",
+          region: "story",
+          node: "a",
+          size: "full",
+        },
+        {
+          schema: "derive.structural-edit/v1",
+          op: "structural-order",
+          region: "story",
+          nodes: ["c", "a", "b"],
+        },
+        {
+          schema: "derive.structural-edit/v1",
+          op: "structural-remove",
+          region: "story",
+          node: "b",
+        },
+      ],
+      1,
+    )
+    expect(out.content).toContain("New A")
+    expect(out.content).toContain('data-derive-node="a" data-derive-size="full"')
+    expect(out.content).not.toContain('data-derive-node="b"')
+    expect(out.content.indexOf('data-derive-node="c"')).toBeLessThan(
+      out.content.indexOf('data-derive-node="a"'),
+    )
+  })
+
+  it("refuses structural edits on Markdown", async () => {
+    const deps = mkDeps({ 1: { text: "# Not HTML", contentType: "text/markdown" } })
+    await expect(
+      materializeEdits(
+        deps,
+        fileArtifact(1),
+        [
+          {
+            schema: "derive.structural-edit/v1",
+            op: "structural-remove",
+            region: "story",
+            node: "a",
+          },
+        ],
+        1,
+      ),
+    ).rejects.toThrow("Structural edits apply to HTML documents, not Markdown")
+  })
+
+  it("refuses client-authored structural restore source", async () => {
+    const html =
+      '<div data-derive-region="story" data-derive-layout="stack"><p data-derive-node="a">A</p></div>'
+    const deps = mkDeps({ 1: { text: html, contentType: "text/html" } })
+    await expect(
+      materializeEdits(
+        deps,
+        fileArtifact(1),
+        [
+          {
+            schema: "derive.structural-edit/v1",
+            op: "structural-restore",
+            region: "story",
+            node: "evil",
+            html: '<script data-derive-node="evil">alert(1)</script>',
+            before: "a",
+            after: null,
+          } as never,
+        ],
+        1,
+      ),
+    ).rejects.toThrow(EditError)
+  })
+
   it("applies canvas text and scene controls in one atomic video save", async () => {
     const html = `<main data-derive-video>
 <section data-derive-scene="opening" data-duration-ms="3500">Old headline.</section>

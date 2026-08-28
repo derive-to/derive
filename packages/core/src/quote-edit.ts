@@ -25,6 +25,7 @@ import {
   markdownTextParts,
 } from "./markdown-text"
 import { escapeHtml, sanitizeInline } from "./md"
+import type { StructuralUserEdit } from "./structural-edit"
 import type { SceneEdit } from "./videos"
 
 /** A replacement located by quote — the wire shape the inline editor sends. */
@@ -53,7 +54,7 @@ export interface QuoteEdit {
 }
 
 /** Either edit shape the edits surfaces accept. */
-export type AnyDocEdit = DocEdit | QuoteEdit | ElementEdit | SceneEdit
+export type AnyDocEdit = DocEdit | QuoteEdit | ElementEdit | StructuralUserEdit | SceneEdit
 
 const optionalString = (v: unknown): boolean => v === undefined || typeof v === "string"
 

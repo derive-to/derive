@@ -26,6 +26,10 @@ const editMessage = (edits: InlineEditInput[]): string => {
   if (edits.length !== 1 || !first) return `Inline edits (${edits.length})`
   if ("op" in first && first.op === "resize")
     return `Resized ${first.target.snapshot?.label ?? first.target.tag} to ${first.width}px`
+  if ("op" in first && first.op === "structural-size")
+    return `${first.size ? `Set ${first.node} to ${first.size}` : `Reset ${first.node} size`}`
+  if ("op" in first && first.op === "structural-order") return `Reordered ${first.region}`
+  if ("op" in first && first.op === "structural-remove") return `Removed ${first.node}`
   if ("op" in first) return `Updated video scene ${first.id}`
   if (first.new_text === undefined) return `Inline formatting: "${clip(first.quote.exact.trim())}"`
   return `Inline edit: "${clip(first.quote.exact.trim())}" → "${clip(first.new_text.trim())}"`
@@ -198,10 +202,10 @@ export function useInlineEdit(p: {
   // that check cannot do is distinguish the injected client from the artifact's OWN
   // scripts (they share the window), which is the protocol's standing model for
   // every message (select, anchor-click, deck…). The blast radius of a forged
-  // edit-edits is bounded: it can alter escaped/sanitized text or the size of one
-  // confidently-matched element in the artifact the author already controls; the save
-  // still requires this signed-in user's deliberate Save click, and the version
-  // history records the exact spans changed.
+  // edit-edits is bounded: it can alter escaped/sanitized text, a confidently-matched
+  // element's size, or direct children of an explicitly authored structural region.
+  // The save still requires this signed-in user's deliberate Save click, and the
+  // version history records the exact source change.
   // biome-ignore lint/correctness/useExhaustiveDependencies: frameRef is a stable ref object; reading .current at event time is the point.
   useEffect(() => {
     const onMsg = (e: MessageEvent) => {

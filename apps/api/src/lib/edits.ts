@@ -6,6 +6,7 @@ import {
   applyQuoteEdits,
   applySceneEdits,
   applySlideOps,
+  applyStructuralEdits,
   type DiffOp,
   type DocEdit,
   diffLines,
@@ -15,9 +16,11 @@ import {
   isHtmlLike,
   isQuoteEdit,
   isSceneEdit,
+  isStructuralUserEdit,
   type QuoteEdit,
   type SceneEdit,
   type SlideOp,
+  type StructuralUserEdit,
   toMarkdown,
   type VersionRecord,
 } from "@derive/core"
@@ -242,14 +245,22 @@ export async function materializeEdits(
   const quoteEdits: QuoteEdit[] = []
   const elementEdits: ElementEdit[] = []
   const sceneEdits: SceneEdit[] = []
+  const structuralEdits: StructuralUserEdit[] = []
   const strEdits: DocEdit[] = []
   for (const e of edits) {
     if (isQuoteEdit(e)) quoteEdits.push(e)
     else if (isElementEdit(e)) elementEdits.push(e)
     else if (isSceneEdit(e)) sceneEdits.push(e)
+    else if (isStructuralUserEdit(e)) structuralEdits.push(e)
     else strEdits.push(e as DocEdit)
   }
-  if (!quoteEdits.length && !elementEdits.length && !sceneEdits.length && !strEdits.length)
+  if (
+    !quoteEdits.length &&
+    !elementEdits.length &&
+    !sceneEdits.length &&
+    !structuralEdits.length &&
+    !strEdits.length
+  )
     throw new EditError("`edits` is empty — provide at least one edit.")
   // The two shapes resolve against DIFFERENT baselines (quotes against the stored
   // source all-at-once; old_str edits sequentially, each seeing the previous
@@ -268,6 +279,10 @@ export async function materializeEdits(
     throw new EditError(
       "`edits` mixes scene edits and old_str edits — send the two shapes as separate requests.",
     )
+  if (strEdits.length && structuralEdits.length)
+    throw new EditError(
+      "`edits` mixes structural edits and old_str edits — send the two shapes as separate requests.",
+    )
   let content = src
   if (strEdits.length) content = applyEdits(src, strEdits)
   else {
@@ -280,6 +295,14 @@ export async function materializeEdits(
       content = applyElementEdits(content, elementEdits)
     }
     if (quoteEdits.length) content = applyQuoteEdits(content, contentType ?? "", quoteEdits)
+    // Structural operations run after text and media edits. Their stable authored
+    // identities resolve against the updated source while the quote/element
+    // selectors above still see the exact base-version projection they captured.
+    if (structuralEdits.length) {
+      if (!isHtmlLike(contentType ?? "text/html"))
+        throw new EditError("Structural edits apply to HTML documents, not Markdown.")
+      content = applyStructuralEdits(content, structuralEdits).html
+    }
     // Structural scene operations run last, so duplicating a scene also carries any
     // text the person changed in it during the same atomic Save.
     if (sceneEdits.length) {
