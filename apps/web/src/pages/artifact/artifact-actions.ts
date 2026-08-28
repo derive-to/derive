@@ -141,6 +141,8 @@ export function useArtifactActions(p: {
     const tempId = `temp-${crypto.randomUUID()}`
     const optimistic: Comment = {
       id: tempId,
+      // The web knows the artifact by short_id only; the saved row carries the real id.
+      artifact_id: "",
       thread_id: opts?.threadId ?? tempId,
       base_version: p.art.current_version,
       path: null,

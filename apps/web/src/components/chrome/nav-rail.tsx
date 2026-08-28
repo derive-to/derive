@@ -28,6 +28,7 @@ import { getMonogram } from "@/lib/initials"
 import {
   collectionsQuery,
   summaryQuery,
+  workspaceActivityQuery,
   workspaceSettingsQuery,
   workspacesQuery,
 } from "@/lib/queries"
@@ -53,6 +54,34 @@ const COUNT_BADGE = "top-1.5 text-muted-foreground"
 // The row's inner glyph — icon, label, and the ink-earning count badge — shared by
 // FilterItem and NavItem below (a zero count is noise, so the badge only renders
 // once it's nonzero).
+/** The Activity page's row, beside Notifications: the count is the reviews waiting on
+ *  this person across the workspace — the one number that is an ask, not news. */
+function ActivityRow() {
+  const loc = useLocation()
+  const { me } = useAuth()
+  const { setOpenMobile } = useSidebar()
+  const { data } = useQuery({ ...workspaceActivityQuery(), enabled: !!me })
+  const waiting = me
+    ? (data?.rounds.filter((r) => r.state === "pending" && r.requested_for === me.id).length ?? 0)
+    : 0
+  const active = loc.pathname === "/activity"
+  return (
+    <SidebarMenuItem>
+      <SidebarMenuButton asChild isActive={active} tooltip="Activity">
+        <Link
+          to="/activity"
+          data-testid="menu-activity"
+          aria-current={active ? "page" : undefined}
+          onClick={() => setOpenMobile(false)}
+          className={ROW_ICON}
+        >
+          <RowGlyph icon="history" label="Activity" count={waiting || undefined} />
+        </Link>
+      </SidebarMenuButton>
+    </SidebarMenuItem>
+  )
+}
+
 function RowGlyph({ icon, label, count }: { icon: IconName; label: string; count?: number }) {
   return (
     <>
@@ -463,6 +492,7 @@ export function NavRail() {
           <SidebarGroupContent>
             <SidebarMenu>
               <NotificationBell />
+              <ActivityRow />
               <SidebarMenuItem>
                 <SidebarMenuButton asChild isActive={onSettings} tooltip="Settings">
                   <Link

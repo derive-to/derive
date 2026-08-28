@@ -568,6 +568,16 @@ export const poolCredentialsQuery = () =>
     queryFn: () => api.listPoolCredentials().then((r) => r.credentials),
   })
 
+/** The home's "Needs you" + "Recent activity", in one request so the sections paint
+ *  once (the rail's lesson). Fresh on every visit — asks settle and work lands
+ *  constantly — but the persisted copy paints a reload like a nav. */
+export const workspaceActivityQuery = () =>
+  queryOptions({
+    queryKey: ["workspace-activity"] as const,
+    queryFn: () => api.workspaceActivity(),
+    staleTime: 30_000,
+  })
+
 export const runsQuery = () =>
   queryOptions({
     queryKey: ["runs"] as const,

@@ -15,6 +15,7 @@ import { serveContent } from "./lib/serve-content"
 import { isTemplateLibrarySchemaUnavailable } from "./lib/template-library-schema"
 import { log } from "./log"
 import { mountMcp } from "./mcp"
+import { activityRoutes } from "./routes/activity"
 import { agentDiscoveryRoutes } from "./routes/agent-discovery"
 import { agentRoutes } from "./routes/agents"
 import { analyticsRoutes } from "./routes/analytics"
@@ -447,6 +448,7 @@ export function createApp(deps: AppDeps): Hono {
     bootstrapRoutes,
     moderationRoutes,
     reviewRoutes,
+    activityRoutes,
     automationRoutes,
     planRoutes,
     connectionRoutes,
