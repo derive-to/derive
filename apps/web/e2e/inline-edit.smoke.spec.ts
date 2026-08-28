@@ -39,6 +39,22 @@ body{font-family:sans-serif}.root{display:flex;flex-direction:column;gap:12px}.b
   <p id="footer" data-derive-node="footer">Recovery stays available.</p>
 </main></body></html>`
 
+const STRUCTURAL_RESIZE_DOC = `<style>
+.stage { width: 720px; transform: scale(.75); transform-origin: top left }
+.stack { width: 600px; padding: 20px; display: flex; flex-direction: column; gap: 16px }
+.stack > [data-derive-node] { min-height: 80px; padding: 16px; border: 1px solid #ccd; box-sizing: border-box }
+.stack > [data-derive-node][data-derive-size="compact"] { width: 50%; max-width: none }
+.stack > [data-derive-node][data-derive-size="standard"] { width: 75%; max-width: none }
+.stack > [data-derive-node][data-derive-size="full"] { width: 100%; max-width: none }
+.stack > [data-derive-node][data-derive-width] { width: var(--derive-structural-width); max-width: none }
+</style>
+<div class="stage">
+  <section class="stack" data-derive-ready data-derive-region="story" data-derive-layout="stack">
+    <article id="alpha" data-derive-node="alpha" data-derive-kind="card" data-derive-size="compact" style="transition: width 2s ease; color: navy">Alpha</article>
+    <article id="bravo" data-derive-node="bravo" data-derive-kind="card" data-derive-width="68" style="--derive-structural-width: 68%">Bravo</article>
+  </section>
+</div>`
+
 /** Publish an HTML artifact and open it with the workbench interactive. */
 async function seed(page: Page) {
   const shortId = await publishArtifact(page, "doc.html", DOC, "text/html")
@@ -468,6 +484,63 @@ test("nested cards and their owning group move independently, undo, and save saf
   await owner.getByTestId("inline-edit-save").click()
   await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
   expect(await contentOf(owner, shortId)).not.toContain('data-derive-node="board"')
+})
+
+test("structural resize snaps on a scaled canvas, survives history, and saves source", async ({
+  owner,
+}) => {
+  const shortId = await publishArtifact(
+    owner,
+    "structural-resize.html",
+    STRUCTURAL_RESIZE_DOC,
+    "text/html",
+  )
+  await openArtifact(owner, shortId)
+  await enterEditMode(owner)
+
+  const alpha = doc(owner).locator("#alpha")
+  const bravo = doc(owner).locator("#bravo")
+  await alpha.click()
+  const handle = doc(owner).getByRole("slider", { name: "Resize element width" })
+  await expect(handle).toBeVisible()
+  await expect(handle).toHaveAttribute("aria-valuenow", "50")
+
+  const grip = await handle.boundingBox()
+  const target = await bravo.boundingBox()
+  expect(grip).not.toBeNull()
+  expect(target).not.toBeNull()
+  if (!grip || !target) return
+  await owner.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2)
+  await owner.mouse.down()
+  await owner.mouse.move(target.x + target.width, grip.y + grip.height / 2)
+  await owner.mouse.up()
+
+  await expect(alpha).toHaveAttribute("data-derive-width", "68")
+  await expect(alpha).not.toHaveAttribute("data-derive-size")
+  await expect(handle).toHaveAttribute("aria-valuenow", "68")
+  expect(await alpha.evaluate((element) => getComputedStyle(element).transitionDuration)).toBe("2s")
+  await expect(owner.getByTestId("inline-edit-bar")).toContainText("1 unsaved change")
+
+  await owner.getByTestId("inline-edit-undo").click()
+  await expect(alpha).toHaveAttribute("data-derive-size", "compact")
+  await expect(alpha).not.toHaveAttribute("data-derive-width")
+  await expect(owner.getByTestId("inline-edit-redo")).toBeEnabled()
+  // A tap/focus with no resize is not a transaction and must not fork history.
+  await handle.click()
+  await expect(owner.getByTestId("inline-edit-redo")).toBeEnabled()
+  await owner.getByTestId("inline-edit-redo").click()
+  await expect(alpha).toHaveAttribute("data-derive-width", "68")
+
+  await owner.getByTestId("inline-edit-save").click()
+  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+  await expect(async () => {
+    const source = await contentOf(owner, shortId)
+    const opening = source.match(/<article id="alpha"[^>]*>/)?.[0]
+    expect(opening).toContain('data-derive-width="68"')
+    expect(opening).toContain("transition: width 2s ease")
+    expect(opening).toContain("--derive-structural-width: 68%")
+    expect(opening).not.toContain("data-derive-size")
+  }).toPass({ timeout: 10_000 })
 })
 
 test("set exact dimensions, constrain a box, and reset to the authored size", async ({ owner }) => {

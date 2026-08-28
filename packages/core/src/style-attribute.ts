@@ -38,13 +38,18 @@ export const styleDeclarations = (style: string): string[] => {
 
 const propertyOf = (declaration: string): string => {
   const colon = declaration.indexOf(":")
-  return colon < 0 ? "" : declaration.slice(0, colon).trim().toLowerCase()
+  return colon < 0 ? "" : declaration.slice(0, colon).trim()
 }
 
+// Ordinary CSS properties are ASCII case-insensitive. Custom properties are not:
+// `--Foo` and `--foo` are distinct variables and must never alias in source edits.
+const normalizedProperty = (property: string): string =>
+  property.startsWith("--") ? property : property.toLowerCase()
+
 export const stylePropertyValues = (style: string, property: string): string[] => {
-  const wanted = property.trim().toLowerCase()
+  const wanted = normalizedProperty(property.trim())
   return styleDeclarations(style).flatMap((declaration) => {
-    if (propertyOf(declaration) !== wanted) return []
+    if (normalizedProperty(propertyOf(declaration)) !== wanted) return []
     const colon = declaration.indexOf(":")
     return colon < 0 ? [] : [declaration.slice(colon + 1).trim()]
   })
@@ -55,10 +60,13 @@ export const updatedStyle = (
   changes: Readonly<Record<string, string | null>>,
 ): string => {
   const normalized = new Map(
-    Object.entries(changes).map(([property, value]) => [property.trim().toLowerCase(), value]),
+    Object.entries(changes).map(([property, value]) => [
+      normalizedProperty(property.trim()),
+      value,
+    ]),
   )
   const kept = styleDeclarations(style).filter((declaration) => {
-    const property = propertyOf(declaration)
+    const property = normalizedProperty(propertyOf(declaration))
     return declaration.trim() && !normalized.has(property)
   })
   for (const [property, value] of normalized) if (value !== null) kept.push(`${property}: ${value}`)

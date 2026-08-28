@@ -34,6 +34,7 @@ import {
   MIN_STRUCTURAL_WIDTH_PCT,
   STRUCTURAL_WIDTH_PROPERTY,
   snapStructuralWidth,
+  structuralResizeAxis,
 } from "./structural-width"
 
 // The element-anchor selector as it arrives from the host (mirrors core's ElementSelector).
@@ -416,6 +417,7 @@ interface ElReg {
   }
   /** Our own chords, as a table: what the handler does is readable in one place,
    *  and every one of them is a modifier chord — never a bare key. */
+  let cancelStructureResize = () => false
   const chordFor = (
     e: KeyboardEvent,
     focused: HTMLElement | null,
@@ -433,7 +435,10 @@ interface ElReg {
     // ⌘Z drives OUR stack. The native one only sees typing, and only in the block it
     // happened in — it cannot undo a bold, a link, a break, or an element resize.
     // Keep it live with no text caret because a resize grip never owns one.
-    if (editOn && k === "z" && !precisionFocused) return e.shiftKey ? redo : undo
+    if (editOn && k === "z" && !precisionFocused)
+      return () => {
+        if (!cancelStructureResize()) (e.shiftKey ? redo : undo)()
+      }
     if (!focused) return null
     // ⌘B / ⌘I never fired here at all: a plaintext-only contenteditable drops every
     // format command, so these keys did nothing in a mode that looks like an editor.
@@ -507,6 +512,11 @@ interface ElReg {
           return
         }
         if (e.key === "Escape") {
+          if (cancelStructureResize()) {
+            e.preventDefault()
+            e.stopImmediatePropagation()
+            return
+          }
           if (reviewOn) {
             e.preventDefault()
             e.stopImmediatePropagation()
@@ -657,12 +667,14 @@ interface ElReg {
     ".derive-structure-size[aria-pressed=true]{border-color:#4f46e5;background:#eef2ff;color:#3730a3}" +
     ".derive-structure-parent{border-color:#c7d2fe;color:#4338ca}" +
     ".derive-structure-resize-handle{position:absolute;right:-8px;top:50%;width:16px;height:34px;padding:0;transform:translateY(-50%);border:2px solid #4f46e5;border-radius:8px;background:#eef2ff;box-shadow:0 2px 8px rgba(15,23,42,.28);cursor:ew-resize;pointer-events:auto;touch-action:none}" +
+    ".derive-structure-resize-handle.derive-structure-resize-left{left:-8px;right:auto}" +
     ".derive-structure-resize-handle:after{content:'';position:absolute;left:5px;top:8px;width:2px;height:14px;border-left:1px solid #4f46e5;border-right:1px solid #4f46e5}" +
     ".derive-structure-resize-handle:disabled{opacity:.38;cursor:default}" +
     ".derive-structure-width-readout{position:absolute;right:-2px;bottom:-27px;display:none;min-height:21px;padding:3px 7px;border-radius:4px;background:rgba(49,46,129,.96);color:#fff;font:700 11px/15px ui-monospace,SFMono-Regular,Menlo,monospace;white-space:nowrap}" +
     ".derive-structure-box.derive-structure-resizing .derive-structure-width-readout{display:block}" +
     ".derive-structure-snap-guide{position:absolute;display:none;width:0;border-left:1px solid rgba(79,70,229,.92);box-shadow:0 0 8px rgba(79,70,229,.52);pointer-events:none;z-index:2147483643}" +
-    ".derive-structure-snap-guide:after{content:attr(data-label);position:absolute;left:7px;top:4px;padding:3px 6px;border-radius:4px;background:rgba(49,46,129,.96);color:#fff;font:700 10px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:nowrap}" +
+    ".derive-structure-snap-guide:after{content:attr(data-label);position:absolute;left:7px;top:var(--derive-structure-snap-label-y,50%);max-width:min(160px,calc(100vw - 24px));transform:translateY(-50%);overflow:hidden;text-overflow:ellipsis;padding:3px 6px;border-radius:4px;background:rgba(49,46,129,.96);color:#fff;font:700 10px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:nowrap}" +
+    ".derive-structure-snap-guide.derive-structure-snap-left:after{left:auto;right:7px}" +
     ".derive-structure-remove{border-color:#fecaca;color:#b91c1c}" +
     ".derive-structure-toast{position:fixed;left:50%;bottom:18px;display:none;align-items:center;gap:10px;transform:translateX(-50%);padding:8px 10px 8px 13px;border-radius:8px;background:#0f172a;color:#fff;box-shadow:0 8px 24px rgba(15,23,42,.3);z-index:2147483646;font:600 12px/1.2 system-ui,sans-serif;pointer-events:auto}" +
     ".derive-structure-toast button{height:26px;padding:0 8px;border:1px solid rgba(255,255,255,.35);border-radius:5px;background:transparent;color:#fff;font:700 11px/24px system-ui,sans-serif;cursor:pointer}" +
@@ -674,7 +686,7 @@ interface ElReg {
     /* On a narrow canvas the contextual controls become a predictable editing shelf.
        Root selections use two rows; a nested selection reserves a third for Parent.
        Every action stays visible without document overflow, with touch-sized targets. */
-    "@media(max-width:640px){html.derive-structure-safe body{padding-bottom:calc(var(--derive-structure-body-padding-base,0px) + 118px + env(safe-area-inset-bottom))!important}html.derive-structure-parent-safe body{padding-bottom:calc(var(--derive-structure-body-padding-base,0px) + 166px + env(safe-area-inset-bottom))!important}.derive-structure-toolbar{position:fixed;left:8px;right:8px;top:auto!important;bottom:calc(8px + env(safe-area-inset-bottom))!important;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;max-width:none;padding:6px}.derive-structure-label{display:none}.derive-structure-button{width:100%;height:44px;min-width:0;padding:0 6px;font:650 12px/42px system-ui,sans-serif}.derive-structure-grip{padding-right:8px}.derive-structure-toast{bottom:calc(118px + env(safe-area-inset-bottom));max-width:calc(100vw - 16px)}html.derive-structure-parent-safe .derive-structure-toast{bottom:calc(166px + env(safe-area-inset-bottom))}}" +
+    "@media(max-width:640px){html.derive-structure-safe body{padding-bottom:calc(var(--derive-structure-body-padding-base,0px) + 118px + env(safe-area-inset-bottom))!important}html.derive-structure-parent-safe body{padding-bottom:calc(var(--derive-structure-body-padding-base,0px) + 166px + env(safe-area-inset-bottom))!important}.derive-structure-toolbar{position:fixed;left:8px;right:8px;top:auto!important;bottom:calc(8px + env(safe-area-inset-bottom))!important;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;max-width:none;padding:6px}.derive-structure-label{display:none}.derive-structure-button{width:100%;height:44px;min-width:0;padding:0 6px;font:650 12px/42px system-ui,sans-serif}.derive-structure-grip{padding-right:8px}.derive-structure-resize-handle{right:0;width:24px;height:44px}.derive-structure-resize-handle.derive-structure-resize-left{left:0}.derive-structure-resize-handle:after{left:9px;top:13px}.derive-structure-toast{bottom:calc(118px + env(safe-area-inset-bottom));max-width:calc(100vw - 16px)}html.derive-structure-parent-safe .derive-structure-toast{bottom:calc(166px + env(safe-area-inset-bottom))}}" +
     "@media(prefers-reduced-motion:reduce){.derive-structure-dragging{transition:none!important;animation:none!important}}" +
     /* ...and again derived from the block's OWN text colour, which by definition
        contrasts with whatever the artifact painted behind it. The slate wash above
@@ -3219,7 +3231,11 @@ interface ElReg {
   structureResizeHandle.type = "button"
   structureResizeHandle.className = "derive-structure-resize-handle"
   structureResizeHandle.title = "Drag or use arrow keys to resize width"
+  structureResizeHandle.setAttribute("role", "slider")
   structureResizeHandle.setAttribute("aria-label", "Resize element width")
+  structureResizeHandle.setAttribute("aria-orientation", "horizontal")
+  structureResizeHandle.setAttribute("aria-valuemin", String(MIN_STRUCTURAL_WIDTH_PCT))
+  structureResizeHandle.setAttribute("aria-valuemax", String(MAX_STRUCTURAL_WIDTH_PCT))
   const structureWidthReadout = document.createElement("span")
   structureWidthReadout.className = "derive-structure-width-readout"
   const structureSnapGuide = document.createElement("div")
@@ -3305,8 +3321,30 @@ interface ElReg {
     const viewportWidth = window.innerWidth || document.documentElement.clientWidth
     return rect.right > 0 && rect.left < viewportWidth
   }
-  const structureWidthResizable = (node: StructureNode): boolean =>
-    getComputedStyle(node.el).transform === "none"
+  const axisAlignedTransform = (style: CSSStyleDeclaration): boolean => {
+    const rotate = style.getPropertyValue("rotate").trim()
+    if (rotate && rotate !== "none" && rotate !== "0deg") return false
+    if (!style.transform || style.transform === "none") return true
+    try {
+      const matrix = new DOMMatrixReadOnly(style.transform)
+      return Math.abs(matrix.b) < 0.0001 && Math.abs(matrix.c) < 0.0001
+    } catch (_e) {
+      return false
+    }
+  }
+  const structureWidthResizable = (node: StructureNode): boolean => {
+    const own = getComputedStyle(node.el)
+    const ownScale = own.getPropertyValue("scale").trim()
+    if (
+      own.transform !== "none" ||
+      (ownScale && ownScale !== "none" && ownScale !== "1") ||
+      !axisAlignedTransform(own)
+    )
+      return false
+    for (let current = node.el.parentElement; current; current = current.parentElement)
+      if (!axisAlignedTransform(getComputedStyle(current))) return false
+    return true
+  }
   const structureIntegrityValid = (region: StructureRegion): boolean => {
     const ownerEl = region.el.parentElement?.closest(structureNodeSelector)
     if (
@@ -3508,6 +3546,27 @@ interface ElReg {
       (Number.parseFloat(style.paddingRight) || 0)
     )
   }
+  const structureResizeAxisFor = (node: StructureNode, region: StructureRegion) => {
+    const regionStyle = getComputedStyle(region.el)
+    const nodeStyle = getComputedStyle(node.el)
+    const regionRect = region.el.getBoundingClientRect()
+    const nodeRect = node.el.getBoundingClientRect()
+    const screenScale = region.el.offsetWidth > 0 ? regionRect.width / region.el.offsetWidth : 1
+    const paddingLeft = Number.parseFloat(regionStyle.paddingLeft) || 0
+    const paddingRight = Number.parseFloat(regionStyle.paddingRight) || 0
+    const borderRight = Math.max(
+      0,
+      region.el.offsetWidth - region.el.clientWidth - region.el.clientLeft,
+    )
+    const contentLeft = regionRect.left + (region.el.clientLeft + paddingLeft) * screenScale
+    const contentRight = regionRect.right - (borderRight + paddingRight) * screenScale
+    const leftGap = Math.max(0, nodeRect.left - contentLeft)
+    const rightGap = Math.max(0, contentRight - nodeRect.right)
+    const selfAlignment = nodeStyle.alignSelf
+    const alignment =
+      selfAlignment && selfAlignment !== "auto" ? selfAlignment : regionStyle.alignItems
+    return structuralResizeAxis(leftGap, rightGap, alignment.includes("center"))
+  }
   const structureWidthName = (node: StructureNode): string =>
     structureAttribute(node.prefix, "width")
   const structureSizeName = (node: StructureNode): string => structureAttribute(node.prefix, "size")
@@ -3525,6 +3584,11 @@ interface ElReg {
     remember(structuralSizingOf(node.el, structureSizeName(node), structureWidthName(node)))
   const clearEmptyStyle = (el: HTMLElement) => {
     if (!(el.getAttribute("style") || "").trim()) el.removeAttribute("style")
+  }
+  const restoreStructureTransition = (node: StructureNode, value: string, priority: string) => {
+    if (value) node.el.style.setProperty("transition", value, priority)
+    else node.el.style.removeProperty("transition")
+    clearEmptyStyle(node.el)
   }
   const applyStructurePreset = (node: StructureNode, size: StructureSize | null) => {
     const sizeName = structureSizeName(node)
@@ -3616,7 +3680,21 @@ interface ElReg {
     structureStandard.setAttribute("aria-pressed", String(size === "standard"))
     structureFull.setAttribute("aria-pressed", String(size === "full"))
     structureWidthReadout.textContent = width === null ? size || "Auto" : `${width}%`
+    const contentWidth = structureContentWidth(region)
+    const reportedWidth =
+      width ?? (contentWidth > 0 ? Math.round((selected.el.offsetWidth / contentWidth) * 100) : 100)
+    structureResizeHandle.setAttribute("aria-valuenow", String(reportedWidth))
+    structureResizeHandle.setAttribute(
+      "aria-valuetext",
+      width === null
+        ? `${reportedWidth}%${size ? `, ${size} preset` : ", authored size"}`
+        : `${width}%, custom width`,
+    )
     structureResizeHandle.disabled = !structureWidthResizable(selected)
+    structureResizeHandle.classList.toggle(
+      "derive-structure-resize-left",
+      structureResizeAxisFor(selected, region).edge === "left",
+    )
     structureResizeHandle.title = structureResizeHandle.disabled
       ? "Transformed elements keep their authored width"
       : "Drag or use arrow keys to resize width"
@@ -3870,6 +3948,8 @@ interface ElReg {
     if (!(contentWidth > 0)) return [...candidates].map(([width, label]) => ({ width, label }))
     for (const node of connectedStructureNodes(region)) {
       if (node === selected || !structureNodeAvailable(node)) continue
+      const rect = node.el.getBoundingClientRect()
+      if (rect.bottom <= 0 || rect.top >= innerHeight) continue
       const width = Math.round((node.el.offsetWidth / contentWidth) * 100)
       if (width >= MIN_STRUCTURAL_WIDTH_PCT && width <= MAX_STRUCTURAL_WIDTH_PCT)
         candidates.set(width, `Match ${node.id}`)
@@ -3878,16 +3958,31 @@ interface ElReg {
   }
   const hideStructureSnapGuide = () => {
     structureSnapGuide.style.display = "none"
+    structureSnapGuide.style.removeProperty("--derive-structure-snap-label-y")
     structureSnapGuide.removeAttribute("data-label")
+    structureSnapGuide.classList.remove("derive-structure-snap-left")
   }
-  const showStructureSnapGuide = (node: StructureNode, region: StructureRegion, label: string) => {
+  const showStructureSnapGuide = (
+    node: StructureNode,
+    region: StructureRegion,
+    label: string,
+    edge: "left" | "right",
+  ) => {
     const nodeRect = node.el.getBoundingClientRect()
     const regionRect = region.el.getBoundingClientRect()
     structureSnapGuide.style.display = "block"
-    structureSnapGuide.style.left = `${nodeRect.right + (window.scrollX || 0)}px`
+    structureSnapGuide.style.left = `${nodeRect[edge] + (window.scrollX || 0)}px`
     structureSnapGuide.style.top = `${regionRect.top + scrollTop()}px`
     structureSnapGuide.style.height = `${regionRect.height}px`
+    const labelY = Math.min(
+      Math.max(18, nodeRect.bottom - regionRect.top + 48),
+      Math.max(18, regionRect.height - 18),
+    )
+    structureSnapGuide.style.setProperty("--derive-structure-snap-label-y", `${labelY}px`)
     structureSnapGuide.setAttribute("data-label", label)
+    // Keep the label inside the resized box/region at both edges. This also avoids
+    // clipping a 100% rail label against a narrow viewport.
+    structureSnapGuide.classList.toggle("derive-structure-snap-left", edge === "right")
   }
 
   interface StructureResizeDrag {
@@ -3899,6 +3994,10 @@ interface ElReg {
     startWidth: number
     contentWidth: number
     screenScale: number
+    edge: "left" | "right"
+    edgeMotion: -1 | 0.5 | 1
+    transition: string
+    transitionPriority: string
     candidates: StructureWidthCandidate[]
     width: number
     moved: boolean
@@ -3915,7 +4014,11 @@ interface ElReg {
     e.preventDefault()
     e.stopPropagation()
     const initial = structuralSizingOf(node.el, structureSizeName(node), structureWidthName(node))
-    remember(initial)
+    const axis = structureResizeAxisFor(node, region)
+    const transition = node.el.style.getPropertyValue("transition")
+    const transitionPriority = node.el.style.getPropertyPriority("transition")
+    node.el.style.setProperty("transition", "none", "important")
+    void node.el.offsetWidth
     const startWidth = Math.round((node.el.offsetWidth / contentWidth) * 100)
     structureResizeDrag = {
       pointerId: e.pointerId,
@@ -3926,6 +4029,10 @@ interface ElReg {
       startWidth,
       contentWidth,
       screenScale,
+      edge: axis.edge,
+      edgeMotion: axis.motion,
+      transition,
+      transitionPriority,
       candidates: structureWidthCandidates(node, region),
       width: startWidth,
       moved: false,
@@ -3942,7 +4049,8 @@ interface ElReg {
       e.preventDefault()
       const dx = e.clientX - drag.startX
       if (!drag.moved && Math.abs(dx) < 1) return
-      const raw = drag.startWidth + (dx / (drag.contentWidth * drag.screenScale)) * 100
+      const raw =
+        drag.startWidth + (dx / (drag.contentWidth * drag.screenScale * drag.edgeMotion)) * 100
       const threshold = (8 / (drag.contentWidth * drag.screenScale)) * 100
       const snapped = e.altKey
         ? { width: Math.round(raw), snappedTo: null }
@@ -3960,7 +4068,7 @@ interface ElReg {
       applyStructureWidth(drag.node, width)
       structureWidthReadout.textContent = `${width}%`
       const candidate = drag.candidates.find((item) => item.width === snapped.snappedTo)
-      if (candidate) showStructureSnapGuide(drag.node, drag.region, candidate.label)
+      if (candidate) showStructureSnapGuide(drag.node, drag.region, candidate.label, drag.edge)
       else hideStructureSnapGuide()
       if (lastDirty <= 0) {
         lastDirty = 1
@@ -3978,17 +4086,29 @@ interface ElReg {
     hideStructureSnapGuide()
     const accepted = drag.moved && structureWidthFits(drag.node, drag.region, drag.width)
     if (cancel || !accepted) {
-      const checkpoint = undoStack.pop()
-      if (checkpoint?.kind === "structural-sizing") applyStructuralSizing(checkpoint)
+      applyStructuralSizing(drag.initial)
       if (drag.moved && !cancel) showStructureToast("Authored constraints control this width")
       paintStructureUi()
       postDirty()
       return
     }
+    remember(drag.initial)
+    restoreStructureTransition(drag.node, drag.transition, drag.transitionPriority)
     markStructureChanged()
   }
   window.addEventListener("pointerup", (e) => finishStructureResize(e, false))
   window.addEventListener("pointercancel", (e) => finishStructureResize(e, true))
+  cancelStructureResize = () => {
+    const drag = structureResizeDrag
+    if (!drag) return false
+    structureResizeDrag = null
+    structureBox.classList.remove("derive-structure-resizing")
+    hideStructureSnapGuide()
+    applyStructuralSizing(drag.initial)
+    paintStructureUi()
+    postDirty()
+    return true
+  }
   structureResizeHandle.addEventListener("keydown", (e) => {
     if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return
     const node = structureSelected
@@ -4005,15 +4125,22 @@ interface ElReg {
       Math.max(MIN_STRUCTURAL_WIDTH_PCT, current + delta),
     )
     if (width === current) return
-    rememberStructureSizing(node)
+    const initial = structuralSizingOf(node.el, structureSizeName(node), structureWidthName(node))
+    const transition = node.el.style.getPropertyValue("transition")
+    const transitionPriority = node.el.style.getPropertyPriority("transition")
+    node.el.style.setProperty("transition", "none", "important")
+    void node.el.offsetWidth
     applyStructureWidth(node, width)
-    if (!structureWidthFits(node, region, width)) {
-      const checkpoint = undoStack.pop()
-      if (checkpoint?.kind === "structural-sizing") applyStructuralSizing(checkpoint)
+    const accepted = structureWidthFits(node, region, width)
+    restoreStructureTransition(node, transition, transitionPriority)
+    if (!accepted) {
+      applyStructuralSizing(initial)
       showStructureToast("Authored constraints control this width")
       paintStructureUi()
+      postDirty()
       return
     }
+    remember(initial)
     structureBox.classList.add("derive-structure-resizing")
     structureWidthReadout.textContent = `${width}%`
     window.setTimeout(() => structureBox.classList.remove("derive-structure-resizing"), 800)
@@ -4176,6 +4303,17 @@ interface ElReg {
           records.every(
             (record) =>
               record.target instanceof Element && !!record.target.closest(".derive-edit-ui"),
+          )
+        )
+          return
+        // Pointer resize owns this one style mutation and already repaints its
+        // overlay. Re-scanning every structural node on every pointer frame turns
+        // large decks into an avoidable layout loop.
+        if (
+          structureResizeDrag &&
+          records.every(
+            (record) =>
+              record.target === structureResizeDrag?.node.el && record.attributeName === "style",
           )
         )
           return
@@ -5208,9 +5346,11 @@ interface ElReg {
       )
     // The edit bar's controls, driven from the host. Same functions the keyboard
     // chords call, so a button and its shortcut can never mean different things.
-    else if (d.type === "edit-undo") undo()
-    else if (d.type === "edit-redo") redo()
-    else if (d.type === "edit-format")
+    else if (d.type === "edit-undo") {
+      if (!cancelStructureResize()) undo()
+    } else if (d.type === "edit-redo") {
+      if (!cancelStructureResize()) redo()
+    } else if (d.type === "edit-format")
       applyFmt(
         d.kind === "i" ? "i" : d.kind === "a" ? "a" : "b",
         typeof d.href === "string" ? d.href : undefined,

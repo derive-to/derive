@@ -163,10 +163,10 @@ the authored `compact`, `standard`, and `full` presets, so the deck must define 
 meaning. The canonical fixed-stage mapping changes only inline width proportions:
 
 ```css
-.slide > [data-derive-node][data-derive-size="compact"] { width: 50%; max-width: none }
-.slide > [data-derive-node][data-derive-size="standard"] { width: 75%; max-width: none }
-.slide > [data-derive-node][data-derive-size="full"] { width: 100%; max-width: none }
-.slide > [data-derive-node][data-derive-width] { width: var(--derive-structural-width); max-width: none }
+.slide > [data-derive-node][data-derive-size="compact"] { width: 50%; max-width: none; box-sizing: border-box }
+.slide > [data-derive-node][data-derive-size="standard"] { width: 75%; max-width: none; box-sizing: border-box }
+.slide > [data-derive-node][data-derive-size="full"] { width: 100%; max-width: none; box-sizing: border-box }
+.slide > [data-derive-node][data-derive-width] { width: var(--derive-structural-width); max-width: none; box-sizing: border-box }
 ```
 
 The rendered editor also offers a horizontal resize handle. It stores a bounded whole percentage

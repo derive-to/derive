@@ -9,7 +9,7 @@ import {
   type StructuralEdit,
   StructuralEditError,
 } from "../src/structural-edit"
-import { snapStructuralWidth } from "../src/structural-width"
+import { snapStructuralWidth, structuralResizeAxis } from "../src/structural-width"
 
 const op = <T extends Omit<StructuralEdit, "schema">>(edit: T): StructuralEdit =>
   ({
@@ -628,6 +628,7 @@ describe("applyStructuralEdits", () => {
       '<p data-derive-node="n" data-derive-width="50"></p>',
       '<p data-derive-node="n" style="--derive-structural-width: 50%"></p>',
       '<p data-derive-node="n" data-derive-width="50" style="--derive-structural-width: 49%"></p>',
+      '<p data-derive-node="n" data-derive-width="50" style="--DERIVE-STRUCTURAL-WIDTH: 50%"></p>',
     ])
       expect(() =>
         inspectStructuralDocument(
@@ -751,5 +752,17 @@ describe("snapStructuralWidth", () => {
   it("bounds widths and resolves ties by candidate order", () => {
     expect(snapStructuralWidth(4, [10, 50], 2)).toEqual({ width: 10, snappedTo: 10 })
     expect(snapStructuralWidth(62, [60, 64], 2)).toEqual({ width: 60, snappedTo: 60 })
+  })
+})
+
+describe("structuralResizeAxis", () => {
+  it("keeps the active handle on the moving edge", () => {
+    expect(structuralResizeAxis(0, 300)).toEqual({ edge: "right", motion: 1 })
+    expect(structuralResizeAxis(300, 0)).toEqual({ edge: "left", motion: -1 })
+    expect(structuralResizeAxis(150, 151, true)).toEqual({ edge: "right", motion: 0.5 })
+  })
+
+  it("does not infer centered alignment from equal authored margins", () => {
+    expect(structuralResizeAxis(20, 20)).toEqual({ edge: "right", motion: 1 })
   })
 })
