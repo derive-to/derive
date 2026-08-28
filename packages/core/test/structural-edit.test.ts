@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest"
+import { DECK_TEMPLATE } from "../src/deck-template.gen"
 import {
   applyStructuralEdits,
   inspectStructuralDocument,
@@ -29,6 +30,65 @@ const document = `<!doctype html>
 </main>`
 
 describe("inspectStructuralDocument", () => {
+  it("exposes the canonical deck's top-level slide elements without DOM inference", () => {
+    expect(inspectStructuralDocument(DECK_TEMPLATE)).toEqual([
+      {
+        id: "slide-0",
+        layout: "stack",
+        nodes: [
+          { id: "slide-0-label", kind: "label", size: null },
+          { id: "slide-0-title", kind: "heading", size: null },
+          { id: "slide-0-summary", kind: "text", size: null },
+          { id: "slide-0-visual", kind: "visual", size: null },
+        ],
+      },
+      {
+        id: "slide-1",
+        layout: "stack",
+        nodes: [
+          { id: "slide-1-label", kind: "label", size: null },
+          { id: "slide-1-title", kind: "heading", size: null },
+          { id: "slide-1-composition", kind: "composition", size: null },
+        ],
+      },
+      {
+        id: "slide-2",
+        layout: "stack",
+        nodes: [
+          { id: "slide-2-label", kind: "label", size: null },
+          { id: "slide-2-title", kind: "heading", size: null },
+          { id: "slide-2-composition", kind: "composition", size: null },
+        ],
+      },
+    ])
+  })
+
+  it("round-trips canonical deck element arrange, resize, and remove edits", () => {
+    const edited = applyStructuralEdits(DECK_TEMPLATE, [
+      op({
+        op: "structural-order",
+        region: "slide-0",
+        nodes: ["slide-0-visual", "slide-0-label", "slide-0-title", "slide-0-summary"],
+      }),
+      op({
+        op: "structural-size",
+        region: "slide-0",
+        node: "slide-0-visual",
+        size: "full",
+      }),
+      op({ op: "structural-remove", region: "slide-0", node: "slide-0-summary" }),
+    ])
+
+    expect(edited.html.indexOf('data-derive-node="slide-0-visual"')).toBeLessThan(
+      edited.html.indexOf('data-derive-node="slide-0-label"'),
+    )
+    expect(edited.html).toContain(
+      'data-derive-node="slide-0-visual" data-derive-kind="visual" data-derive-size="full"',
+    )
+    expect(edited.html).not.toContain('data-derive-node="slide-0-summary"')
+    expect(applyStructuralEdits(edited.html, edited.receipt.inverses).html).toBe(DECK_TEMPLATE)
+  })
+
   it("discovers only direct authored nodes and ignores fake markup in raw text", () => {
     expect(inspectStructuralDocument(document)).toEqual([
       {

@@ -115,6 +115,41 @@ afterwards have something stable to hold.
 Changes to a slide's words, styling, or images remain an ordinary
 `edits` change. `slide_ops` is for which slides exist and what order they play in.
 
+## Make top-level slide elements movable
+
+The canonical template also opts each slide into source-safe structural editing. The slide is
+the region, and only its direct authored children are nodes:
+
+```html
+<section class="slide" data-derive-slide="7"
+  data-derive-region="slide-7" data-derive-layout="stack">
+  <span data-derive-node="slide-7-label" data-derive-kind="label">Context</span>
+  <h2 data-derive-node="slide-7-title" data-derive-kind="heading">The argument</h2>
+  <div data-derive-node="slide-7-visual" data-derive-kind="visual">...</div>
+</section>
+```
+
+Keep every node id unique and stable for the life of the deck. When adding a slide, derive the
+region and node prefixes from that slide's next-unused `data-derive-slide` identity. A node owns
+its complete subtree: a chart, card group, or text-and-visual composition can stay atomic inside
+one direct child. Do not put a structural region inside a node, nest structural nodes, or leave
+meaningful text/elements between the region's nodes. Those shapes fail closed instead of guessing
+which source bytes belong to a move or removal.
+
+Reorder and remove work from these identities without serializing the preview DOM. Resizing uses
+the authored `compact`, `standard`, and `full` presets, so the deck must define their visual
+meaning. The canonical fixed-stage mapping changes only inline width proportions:
+
+```css
+.slide > [data-derive-node][data-derive-size="compact"] { width: 50%; max-width: none }
+.slide > [data-derive-node][data-derive-size="standard"] { width: 75%; max-width: none }
+.slide > [data-derive-node][data-derive-size="full"] { width: 100%; max-width: none }
+```
+
+This metadata is deliberately authored. Do not add it to an old deck by inferring cards or
+layout from runtime geometry; either make the exact source contract explicit or leave that deck's
+inner elements unsupported. Whole-slide `slide_ops` remain available either way.
+
 ## Every slide carries a visual AND words
 
 The most common way a finished deck goes flat is slides that are all text or all picture.
