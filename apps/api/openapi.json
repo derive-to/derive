@@ -5636,6 +5636,9 @@
                       "auto",
                       "snapshot"
                     ]
+                  },
+                  "preview": {
+                    "type": "boolean"
                   }
                 },
                 "required": [

@@ -2026,6 +2026,7 @@ export interface paths {
                         attachPdf?: boolean;
                         /** @enum {string} */
                         emailMode?: "auto" | "snapshot";
+                        preview?: boolean;
                     };
                 };
             };
