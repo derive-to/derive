@@ -59,6 +59,13 @@ export const updateCue = (
  * storage case. The runtime sends only this coarse code, never exception text. */
 export type RuntimeDisposition = "blocked" | "degraded"
 
+export type RuntimeDiagnostic = {
+  code: ArtifactRuntimeErrorCode
+  reference: string
+  title: string
+  description: string
+}
+
 /** Resource failures are optional by default. Script/storage failures block only
  * before meaningful content exists; after ready they degrade without replacing the
  * last good frame. This is the viewer's small, explicit startup state machine. */
@@ -73,7 +80,7 @@ export const runtimeFailureCopy = (
   if (disposition === "degraded")
     return canFix
       ? {
-          title: "Preview kept running after an artifact error",
+          title: "Non-blocking preview issue",
           description:
             code === "resource-error"
               ? "An optional image, font, or stylesheet failed to load. The rendered content is still available."
@@ -105,6 +112,24 @@ export const runtimeFailureCopy = (
         title: "This artifact couldn’t start",
         description: "Its author needs to fix a script error.",
       }
+}
+
+/** Non-blocking failures are authoring diagnostics, not viewer warnings. Keep
+ * them off the artifact surface and expose them only from the editor's Inspect
+ * rail. Blocking failures still own the render because the artifact is unusable. */
+export const runtimeDiagnosticFor = (
+  error: ArtifactRuntimeError | null | undefined,
+  subject: string,
+  version: number | undefined,
+): RuntimeDiagnostic | null => {
+  if (!error || runtimeDisposition(error) !== "degraded") return null
+  const copy = runtimeFailureCopy(error.code, "degraded", true)
+  return {
+    code: error.code,
+    reference: `${subject}${version == null ? "" : `-v${version}`}-${error.code}`,
+    title: copy.title,
+    description: copy.description,
+  }
 }
 
 export function RenderStage({
@@ -195,11 +220,6 @@ export function RenderStage({
   const runtimeFailure = runtimeError
     ? runtimeFailureCopy(runtimeError.code, disposition ?? "blocked", canFixRuntimeError)
     : null
-  const incidentReference = runtimeError
-    ? `${subject}${version == null ? "" : `-v${version}`}-${runtimeError.code}`
-    : null
-  const incidentInstance = incidentReference ? `${incidentReference}-${attempt}` : null
-  const [dismissedIncident, setDismissedIncident] = useState<string | null>(null)
 
   // "Updated" cue: when the shown version steps up IN PLACE (a peer published a new
   // version of the document being watched), flash a soft, non-blocking badge instead
@@ -227,46 +247,6 @@ export function RenderStage({
   return (
     <div className={cn("relative flex min-h-0 flex-1 flex-col", className)}>
       {banner}
-      {/* A warning must never obscure authored content. Keep degraded recovery in
-          the stage flow, outside the iframe/cursor coordinate system. */}
-      {phase === "ready" &&
-        runtimeError &&
-        runtimeFailure &&
-        disposition === "degraded" &&
-        incidentInstance !== dismissedIncident && (
-          <div
-            role="status"
-            aria-live="polite"
-            data-testid="render-degraded"
-            className="flex shrink-0 items-center gap-3 border-b border-warning/30 bg-card px-3 py-2"
-          >
-            <Icon name="report" className="size-4 shrink-0 text-warning" strokeWidth={1.75} />
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium text-foreground">{runtimeFailure.title}</p>
-              <p className="hidden text-xs text-muted-foreground sm:block">
-                {runtimeFailure.description}
-              </p>
-              <p className="mt-0.5 truncate font-mono text-3xs text-muted-foreground">
-                {runtimeError.code}
-                <span className="hidden sm:inline"> · Reference: {incidentReference}</span>
-              </p>
-            </div>
-            <div className="flex shrink-0 items-center gap-1">
-              <Button variant="outline" size="sm" data-testid="render-retry" onClick={retry}>
-                Try again
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label="Dismiss preview warning"
-                data-testid="render-degraded-dismiss"
-                onClick={() => setDismissedIncident(incidentInstance)}
-              >
-                <Icon name="close" size={14} />
-              </Button>
-            </div>
-          </div>
-        )}
       {/* The render fills edge-to-edge; the content card's rounded overflow-hidden
           clips it, and the header above carries its top edge. bg-background (the app
           canvas, NEVER bg-white) is the backdrop the boot state paints on — so a dark

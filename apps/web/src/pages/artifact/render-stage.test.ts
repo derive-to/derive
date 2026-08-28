@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
 import {
+  runtimeDiagnosticFor,
   runtimeDisposition,
   runtimeFailureCopy,
   type UpdateCueState,
@@ -75,11 +76,22 @@ describe("runtimeFailureCopy", () => {
     expect(runtimeFailureCopy("script-error", "blocked", false).description).not.toContain("stack")
   })
 
-  it("keeps optional and post-ready failures visible with neutral reader copy", () => {
+  it("classifies optional and post-ready failures as degraded", () => {
     expect(runtimeDisposition({ code: "resource-error", phase: "loading" })).toBe("degraded")
     expect(runtimeDisposition({ code: "script-error", phase: "ready" })).toBe("degraded")
     expect(runtimeDisposition({ code: "script-error", phase: "loading" })).toBe("blocked")
     expect(runtimeFailureCopy("script-error", "degraded", false).title).toContain("unavailable")
+  })
+
+  it("keeps degraded diagnostics in authoring surfaces only", () => {
+    expect(runtimeDiagnosticFor({ code: "script-error", phase: "loading" }, "memo", 3)).toBeNull()
+    expect(runtimeDiagnosticFor({ code: "script-error", phase: "ready" }, "memo", 3)).toEqual({
+      code: "script-error",
+      reference: "memo-v3-script-error",
+      title: "Non-blocking preview issue",
+      description:
+        "A script failed after meaningful content appeared. The rendered content is still available; check the source before republishing.",
+    })
   })
 
   it("never lets a queued optional warning downgrade a bootstrap failure", () => {

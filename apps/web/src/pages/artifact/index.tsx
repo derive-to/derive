@@ -66,6 +66,7 @@ import { parseRef, refFor } from "./parse-ref"
 import { PasswordGate } from "./password-gate"
 import { PublicViewer } from "./public-viewer"
 import { Presence } from "./rail-deck"
+import { runtimeDiagnosticFor } from "./render-stage"
 import type { ArtifactSearch } from "./route-config"
 import { SharedStateAuthDialog } from "./shared-state-auth-dialog"
 import { SourceEditor } from "./source-editor"
@@ -973,6 +974,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
     seeded || (rawTokenStale && !pinnedForShown) ? null : rawArtifactUrl(shortId, shown, rawToken)
   // Direct publishing is a workbench capability.
   const canPublish = !isGuest && (art.my_role === "editor" || art.my_role === "owner")
+  const runtimeDiagnostic = canPublish ? runtimeDiagnosticFor(runtimeError, shortId, shown) : null
   // md vs html drives syntax highlighting + how the live preview renders.
   const format = formatOf(art)
   // Lock: any editor can toggle it (advanced menu). While locked, nothing
@@ -1616,6 +1618,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
                     textKind={inlineEdit.tools.textKind}
                     selectedText={inlineEdit.tools.selectedText}
                     video={video}
+                    runtimeDiagnostic={runtimeDiagnostic}
                     onSceneEdit={(edit) => post({ type: "video-edit", ...edit })}
                     onUndo={inlineEdit.undo}
                     onRedo={inlineEdit.redo}

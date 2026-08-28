@@ -34,6 +34,17 @@ async function withErrorCapture(page: Page, fn: () => Promise<void>): Promise<st
   return errors
 }
 
+async function openRuntimeDiagnostics(page: Page, code: string) {
+  // A usable artifact never advertises authored runtime noise to its reader.
+  await expect(page.getByTestId("render-degraded")).toHaveCount(0)
+  await page.getByTestId("artifact-inline-edit").click()
+  const advanced = page.getByTestId("artifact-runtime-diagnostics")
+  await expect(advanced).toBeVisible()
+  await advanced.locator("summary").click()
+  await expect(advanced).toContainText(code)
+  return advanced
+}
+
 test.describe("render fidelity — pinning what the sandbox CSP permits", () => {
   test("an iframe-based visualization with an authored CSP reaches Ready", async ({
     owner: page,
@@ -41,7 +52,9 @@ test.describe("render fidelity — pinning what the sandbox CSP permits", () => 
     const html = readFileSync(join(FIXTURES, "startup-csp-visualization-shell.html"), "utf8")
     const shortId = await publishArtifact(page, "index.html", html, "text/html")
 
-    const errors = await withErrorCapture(page, () => page.goto(`/artifacts/${shortId}`))
+    const errors = await withErrorCapture(page, async () => {
+      await page.goto(`/artifacts/${shortId}`)
+    })
     expect(errors).toEqual([])
     await expect(page.getByTestId("render-degraded")).toHaveCount(0)
     await expect(page.getByText("This artifact couldn’t start")).toHaveCount(0)
@@ -86,9 +99,12 @@ test.describe("render fidelity — pinning what the sandbox CSP permits", () => 
     const html = readFileSync(join(FIXTURES, "startup-fail-soft.html"), "utf8")
     const shortId = await publishArtifact(page, "index.html", html, "text/html")
 
-    const wrapperErrors = await withErrorCapture(page, () => page.goto(`/artifacts/${shortId}`))
+    const wrapperErrors = await withErrorCapture(page, async () => {
+      await page.goto(`/artifacts/${shortId}`)
+    })
     expect(wrapperErrors).toEqual([])
-    await expect(page.getByTestId("render-degraded")).toBeVisible()
+    const diagnostics = await openRuntimeDiagnostics(page, "script-error")
+    await expect(diagnostics).toContainText("Hidden from readers")
     await expect(page.getByText("This artifact couldn’t start")).toHaveCount(0)
 
     const frame = page.locator('iframe[title="index"]')
@@ -97,8 +113,6 @@ test.describe("render fidelity — pinning what the sandbox CSP permits", () => 
     await expect(artifact.locator("#rows tr")).toHaveCount(30)
     await artifact.locator("#control").click()
     await expect(artifact.locator("#count")).toHaveText("1")
-    await page.getByTestId("render-degraded-dismiss").click()
-    await expect(page.getByTestId("render-degraded")).toHaveCount(0)
     await expect(artifact.locator("#rows tr")).toHaveCount(30)
 
     // The public wrapper has its own chrome/layout path. Exercise the same shared
@@ -107,7 +121,8 @@ test.describe("render fidelity — pinning what the sandbox CSP permits", () => 
     const publicPage = await publicContext.newPage()
     try {
       await publicPage.goto(`/artifacts/${shortId}`)
-      await expect(publicPage.getByTestId("render-degraded")).toBeVisible()
+      await expect(publicPage.getByTestId("render-degraded")).toHaveCount(0)
+      await expect(publicPage.getByTestId("artifact-runtime-diagnostics")).toHaveCount(0)
       await expect(publicPage.getByText("This artifact couldn’t start")).toHaveCount(0)
       const publicArtifact = publicPage.frameLocator('iframe[title="index"]')
       await expect(publicArtifact.locator("#rows tr")).toHaveCount(30)
@@ -125,7 +140,7 @@ test.describe("render fidelity — pinning what the sandbox CSP permits", () => 
     const shortId = await publishArtifact(page, "index.html", html, "text/html")
 
     await page.goto(`/artifacts/${shortId}`)
-    await expect(page.getByTestId("render-degraded")).toBeVisible()
+    await expect(page.getByTestId("render-degraded")).toHaveCount(0)
     await expect(page.getByText("Artifact script stopped")).toHaveCount(0)
     const artifact = page.frameLocator('iframe[title="index"]')
     await expect(
@@ -145,7 +160,7 @@ test.describe("render fidelity — pinning what the sandbox CSP permits", () => 
     await page.goto(`/artifacts/${shortId}`)
     await expect(page.getByText("Loading preview…")).toBeVisible()
     await expect(page.getByTestId("render-degraded")).toHaveCount(0)
-    await expect(page.getByTestId("render-degraded")).toBeVisible()
+    await expect(page.getByTestId("render-degraded")).toHaveCount(0)
     const artifact = page.frameLocator('iframe[title="index"]')
     await expect(artifact.locator("#rows tr")).toHaveCount(30)
     await artifact.locator("#control").click()
@@ -156,7 +171,7 @@ test.describe("render fidelity — pinning what the sandbox CSP permits", () => 
     try {
       await publicPage.goto(`/artifacts/${shortId}`)
       await expect(publicPage.getByText("Loading preview…")).toBeVisible()
-      await expect(publicPage.getByTestId("render-degraded")).toBeVisible()
+      await expect(publicPage.getByTestId("render-degraded")).toHaveCount(0)
       const publicArtifact = publicPage.frameLocator('iframe[title="index"]')
       await expect(publicArtifact.locator("#rows tr")).toHaveCount(30)
     } finally {
@@ -177,7 +192,7 @@ test.describe("render fidelity — pinning what the sandbox CSP permits", () => 
         artifact.getByRole("heading", { name: "Useful controls reached Ready" }),
       ).toBeVisible()
       await artifact.locator(`#${action}-control`).click()
-      await expect(page.getByTestId("render-degraded")).toBeVisible()
+      await expect(page.getByTestId("render-degraded")).toHaveCount(0)
       await expect(page.getByText("Artifact script stopped")).toHaveCount(0)
       await artifact.locator("#working-control").click()
       await expect(artifact.locator("#count")).toHaveText("1")
@@ -247,40 +262,22 @@ test.describe("render fidelity — pinning what the sandbox CSP permits", () => 
     await expect(artifact.locator("#count")).toHaveText("1")
   })
 
-  test("a distinct post-ready failure reopens recovery after dismissal", async ({
-    browser,
+  test("a distinct post-ready failure updates the hidden Inspect diagnostic", async ({
     owner: page,
   }) => {
     const html = readFileSync(join(FIXTURES, "startup-sequential-errors.html"), "utf8")
     const shortId = await publishArtifact(page, "index.html", html, "text/html")
 
     await page.goto(`/artifacts/${shortId}`)
-    await expect(page.getByTestId("render-degraded")).toBeVisible()
-    await page.getByTestId("render-degraded-dismiss").click()
-    await expect(page.getByTestId("render-degraded")).toHaveCount(0)
+    const diagnostics = await openRuntimeDiagnostics(page, "resource-error")
 
     const artifact = page.frameLocator('iframe[title="index"]')
     await artifact.locator("#throw-control").click()
-    await expect(page.getByTestId("render-degraded")).toBeVisible()
-    await expect(
-      page.getByText("A script failed after meaningful content", { exact: false }),
-    ).toBeVisible()
+    await expect(page.getByTestId("render-degraded")).toHaveCount(0)
+    await expect(diagnostics).toContainText("script-error")
+    await expect(diagnostics).not.toContainText("resource-error")
     await artifact.locator("#working-control").click()
     await expect(artifact.locator("#count")).toHaveText("1")
-
-    const mobileContext = await browser.newContext({ viewport: { width: 390, height: 844 } })
-    const mobile = await mobileContext.newPage()
-    try {
-      await mobile.goto(`/artifacts/${shortId}`)
-      await expect(mobile.getByTestId("render-degraded")).toContainText("resource-error")
-      await mobile.getByTestId("render-degraded-dismiss").click()
-      const mobileArtifact = mobile.frameLocator('iframe[title="index"]')
-      await mobileArtifact.locator("#throw-control").click()
-      await expect(mobile.getByTestId("render-degraded")).toContainText("script-error")
-      await expect(mobile.getByTestId("render-degraded")).not.toContainText("resource-error")
-    } finally {
-      await mobileContext.close()
-    }
   })
 
   test("visible meaningful content in an open shadow root reaches Ready", async ({
@@ -336,19 +333,17 @@ test.describe("render fidelity — pinning what the sandbox CSP permits", () => 
     await expect(artifact.locator("#count")).toHaveText("1")
   })
 
-  test("degraded dismissal is scoped to one artifact instance", async ({ owner: page }) => {
+  test("hidden diagnostics are scoped to one artifact instance", async ({ owner: page }) => {
     const html = readFileSync(join(FIXTURES, "startup-fail-soft.html"), "utf8")
     const firstId = await publishArtifact(page, "index.html", html, "text/html")
     const secondId = await publishArtifact(page, "index.html", html, "text/html")
 
     await page.goto(`/artifacts/${firstId}`)
-    await expect(page.getByTestId("render-degraded")).toBeVisible()
-    await page.getByTestId("render-degraded-dismiss").click()
     await expect(page.getByTestId("render-degraded")).toHaveCount(0)
 
     await page.goto(`/artifacts/${secondId}`)
-    await expect(page.getByTestId("render-degraded")).toBeVisible()
-    await expect(page.getByTestId("render-degraded")).toContainText("script-error")
+    await expect(page.getByTestId("render-degraded")).toHaveCount(0)
+    await openRuntimeDiagnostics(page, "script-error")
   })
 
   for (const scenario of [
@@ -397,7 +392,7 @@ test.describe("render fidelity — pinning what the sandbox CSP permits", () => 
     const shortId = await publishArtifact(page, "index.html", html, "text/html")
 
     await page.goto(`/artifacts/${shortId}`)
-    await expect(page.getByTestId("render-degraded")).toBeVisible()
+    await expect(page.getByTestId("render-degraded")).toHaveCount(0)
     const artifact = page.frameLocator('iframe[title="index"]')
     await artifact.locator("#control").click()
     await expect(artifact.locator("#count")).toHaveText("1")
@@ -475,31 +470,30 @@ test.describe("render fidelity — pinning what the sandbox CSP permits", () => 
     await expect(page.getByTestId("render-retry")).toHaveCount(0)
   })
 
-  test("a dismissed degraded warning returns after a full reload", async ({ owner: page }) => {
+  test("a non-blocking failure stays off the viewer surface after reload", async ({
+    owner: page,
+  }) => {
     const html = readFileSync(join(FIXTURES, "startup-fail-soft.html"), "utf8")
     const shortId = await publishArtifact(page, "index.html", html, "text/html")
     await page.goto(`/artifacts/${shortId}`)
-    await expect(page.getByTestId("render-degraded")).toBeVisible()
-    await page.getByTestId("render-degraded-dismiss").click()
     await expect(page.getByTestId("render-degraded")).toHaveCount(0)
     await page.reload()
-    await expect(page.getByTestId("render-degraded")).toBeVisible()
+    await expect(page.getByTestId("render-degraded")).toHaveCount(0)
     await expect(page.frameLocator('iframe[title="index"]').locator("#rows tr")).toHaveCount(30)
   })
 
-  test("Retry on a degraded artifact creates one fresh usable iframe", async ({ owner: page }) => {
+  test("a degraded artifact offers no unnecessary viewer recovery action", async ({
+    owner: page,
+  }) => {
     const html = readFileSync(join(FIXTURES, "startup-fail-soft.html"), "utf8")
     const shortId = await publishArtifact(page, "index.html", html, "text/html")
     await page.goto(`/artifacts/${shortId}`)
     const artifact = page.frameLocator('iframe[title="index"]')
     await artifact.locator("#control").click()
     await expect(artifact.locator("#count")).toHaveText("1")
-    await page.getByTestId("render-retry").click()
+    await expect(page.getByTestId("render-retry")).toHaveCount(0)
     await expect(page.locator('iframe[title="index"]')).toHaveCount(1)
-    await expect(page.getByTestId("render-degraded")).toBeVisible()
-    await expect(artifact.locator("#count")).toHaveText("0")
-    await artifact.locator("#control").click()
-    await expect(artifact.locator("#count")).toHaveText("1")
+    await expect(page.getByTestId("render-degraded")).toHaveCount(0)
   })
 
   test("two blocked Retry attempts never duplicate recovery or iframes", async ({
@@ -541,7 +535,7 @@ test.describe("render fidelity — pinning what the sandbox CSP permits", () => 
     await expect(artifact.locator("#control")).toHaveAttribute("data-clicked", "true")
   })
 
-  test("navigating from Degraded to a clean sibling clears the warning rail", async ({
+  test("navigating from Degraded to a clean sibling keeps the surface quiet", async ({
     owner: page,
   }) => {
     const degraded = await publishArtifact(
@@ -557,7 +551,7 @@ test.describe("render fidelity — pinning what the sandbox CSP permits", () => 
       "text/html",
     )
     await page.goto(`/artifacts/${degraded}`)
-    await expect(page.getByTestId("render-degraded")).toBeVisible()
+    await expect(page.getByTestId("render-degraded")).toHaveCount(0)
     await page.goto(`/artifacts/${clean}`)
     await expect(page.getByTestId("render-degraded")).toHaveCount(0)
     const artifact = page.frameLocator('iframe[title="index"]')
