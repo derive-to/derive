@@ -70,12 +70,12 @@ import type { ArtifactSearch } from "./route-config"
 import { SharedStateAuthDialog } from "./shared-state-auth-dialog"
 import { SourceEditor } from "./source-editor"
 import { type ComposerState, parseAnchor, type Sel } from "./types"
-import { useActivitySeen } from "./use-activity-seen"
 import { useArtifactFrame } from "./use-artifact-frame"
 import { useArtifactLive } from "./use-artifact-live"
 import { useArtifactRoute } from "./use-artifact-route"
 import { useCommentsPanel } from "./use-comments-panel"
 import { unsavedEditsCopy, useInlineEdit } from "./use-inline-edit"
+import { useSeenCursor } from "./use-seen-cursor"
 import { useVersionDiff } from "./use-version-diff"
 import { WorkbenchSkeleton } from "./workbench-skeleton"
 
@@ -382,9 +382,14 @@ export function Artifact({ template = false }: { template?: boolean }) {
   const [hoverThread, setHoverThread] = useState<string | null>(null)
   // The open/hidden comments panel, with its persistence + `c`/Esc hotkeys.
   const { panel, setPanel } = useCommentsPanel(() => setComposer(null))
-  // The reader's last visit to this artifact's activity — the rail's "New" marker and
-  // the header toggle's unread dot measure against it; closing the rail advances it.
-  const seen = useActivitySeen(shortId, panel === "open")
+  // The reader's position in this artifact's activity — the rail's "New" marker and the
+  // header toggle's unread dot measure against it; it advances after a visible dwell with
+  // the rail open, on each arrival while it stays open, and when the rail closes.
+  const seen = useSeenCursor(`artifact:${shortId}`, {
+    open: panel === "open",
+    enabled: !!me,
+    arrivals: (art?.versions.length ?? 0) + comments.length + (review?.rounds.length ?? 0),
+  })
 
   // Server-truth refetch after a write or an SSE ping (defined up here so the
   // realtime hook + the iframe message bridge below can both lean on them).
@@ -1014,6 +1019,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
       comments: streamReady ? comments : [],
       rounds: streamReady ? (review?.rounds ?? []) : [],
       me: me?.name ?? undefined,
+      meId: me?.id,
       lastSeen: seen.lastSeen,
       lens: "all",
       now: Date.now(),

@@ -7994,6 +7994,73 @@
         }
       }
     },
+    "/v1/seen": {
+      "get": {
+        "tags": [
+          "Activity"
+        ],
+        "summary": "Where the signed-in user last left an activity stream.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^(ws|artifact):[A-Za-z0-9_-]{1,64}$"
+            },
+            "required": true,
+            "name": "scope",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The last-seen time, or null before the first visit.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "seen_at": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "seen_at"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Activity"
+        ],
+        "summary": "Move the signed-in user's position in an activity stream.",
+        "responses": {
+          "200": {
+            "description": "What is stored after the write: forward-only unless `manual`, so a slow write never rewinds a fresher one.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "seen_at": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "seen_at"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/workflows": {
       "get": {
         "tags": [

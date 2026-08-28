@@ -403,6 +403,69 @@ describe("buildStream — workspace mode", () => {
   }
   const ws = { artifacts: DOCS, since: at(7, 0) }
 
+  it("never treats the reader's own rows as new — they wrote them", () => {
+    const seen = new Date(at(0, 12)).getTime()
+    const versions = [
+      version(1, "Mert", at(0, 10), null),
+      version(2, "Mert", at(0, 14), null),
+      version(3, "Ana", at(0, 15), null),
+    ]
+    const items = buildStream({ ...base, versions, comments: [], lastSeen: seen, me: "Mert" })
+    const turns = items.filter((it) => it.type === "turn")
+    // Mert's v2 landed after the visit but is Mert's own: it folds with v1 on the seen
+    // side (one actor, one day, one turn), and only Ana's v3 is new.
+    expect(turns.map((t) => t.type === "turn" && t.seen)).toEqual([true, false])
+    expect(countUnread(items)).toBe(1)
+  })
+
+  it("newest first, the line follows the last new item past the reader's own fresh rows, and needs something new to exist", () => {
+    const seen = new Date(at(1, 12)).getTime()
+    const versions = [
+      { ...version(1, "Ana", at(2, 9), "Old"), artifact_id: "a" },
+      { ...version(2, "Ana", at(0, 9), "New"), artifact_id: "a" },
+      { ...version(3, "Mert", at(0, 10), "Mine"), artifact_id: "b" },
+      { ...version(4, "Mert", at(0, 11), "Mine too"), artifact_id: "c" },
+    ]
+    const items = buildStream({
+      ...base,
+      versions,
+      comments: [],
+      workspace: {
+        ...ws,
+        artifacts: {
+          ...ws.artifacts,
+          b: { short_id: "b", title: "B" },
+          c: { short_id: "c", title: "C" },
+        },
+      },
+      order: "desc",
+      lastSeen: seen,
+      me: "Mert",
+    })
+    const kinds = items.map((it) => (it.type === "section" ? `section:${it.label}` : it.type))
+    // Mert's two fresh publishes are newest but seen; Ana's v2 is the new one; the line sits
+    // right under it, not between Mert's rows.
+    expect(kinds).toEqual([
+      "section:Today",
+      "turn",
+      "turn",
+      "turn",
+      "unread",
+      "section:Earlier",
+      "turn",
+    ])
+    expect(countUnread(items)).toBe(1)
+    const nothingNew = buildStream({
+      ...base,
+      versions: versions.slice(0, 1),
+      comments: [],
+      workspace: ws,
+      order: "desc",
+      lastSeen: seen,
+    })
+    expect(nothingNew.some((it) => it.type === "unread")).toBe(false)
+  })
+
   it("names the document, makes threads lines, keeps pending asks out, folds per document", () => {
     const versions = [
       { ...version(1, "Mert", at(0, 9), "One", CLAUDE), artifact_id: "a" },

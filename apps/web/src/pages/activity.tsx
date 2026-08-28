@@ -17,7 +17,7 @@ import { StreamSkeleton } from "./artifact/activity-stream"
 import { type ActivityArtifact, buildStream, stamp } from "./artifact/lib/activity"
 import { groupThreads } from "./artifact/lib/layout"
 import { refFor } from "./artifact/parse-ref"
-import { useActivitySeen } from "./artifact/use-activity-seen"
+import { useSeenCursor } from "./artifact/use-seen-cursor"
 
 /** An ask is "waiting" once it has sat this long. */
 const STALE_MS = 3 * 86_400_000
@@ -45,9 +45,15 @@ export function WorkspaceActivity() {
   const nav = useNavigate()
   const { data: workspace } = useQuery(workspaceQuery())
   const activity = useQuery({ ...workspaceActivityQuery(), enabled: !!me })
-  // The last visit is per workspace, keyed like the rail's per artifact; being on the page
-  // is "open", so leaving it (or hiding the tab) advances the marker.
-  const { lastSeen } = useActivitySeen(`ws.${workspace?.id ?? ""}`, true)
+  // The page is the surface: it is "open" whenever it is mounted. Each arrival re-arms the
+  // dwell, so what lands while the reader is here is seen too.
+  const { lastSeen } = useSeenCursor(`ws:${workspace?.id ?? ""}`, {
+    open: true,
+    enabled: !!me && !!workspace?.id,
+    arrivals: activity.data
+      ? activity.data.versions.length + activity.data.comments.length + activity.data.rounds.length
+      : 0,
+  })
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set())
   const [showAll, setShowAll] = useState<ReadonlySet<string>>(() => new Set())
 

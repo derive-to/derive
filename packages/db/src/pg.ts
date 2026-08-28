@@ -179,6 +179,7 @@ import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres"
 import { Pool } from "pg"
 import type { Exhaustive, Shapes } from "./parity"
 import {
+  activitySeen,
   agent,
   agentMention,
   artifact,
@@ -4222,6 +4223,32 @@ export class PgMetaStore implements MetaStore {
       .orderBy(desc(comment.created_at))
       .limit(opts.limit)
     return rows.map((r) => r.c)
+  }
+  async getActivitySeen(userId: string, scope: string): Promise<string | null> {
+    const rows = await this.db
+      .select({ seen_at: activitySeen.seen_at })
+      .from(activitySeen)
+      .where(and(eq(activitySeen.user_id, userId), eq(activitySeen.scope, scope)))
+      .limit(1)
+    return rows[0]?.seen_at ?? null
+  }
+  async setActivitySeen(
+    userId: string,
+    scope: string,
+    at: string,
+    opts?: { manual?: boolean },
+  ): Promise<string> {
+    const current = await this.getActivitySeen(userId, scope)
+    if (current !== null && !opts?.manual && current >= at) return current
+    const updated_at = new Date().toISOString()
+    await this.db
+      .insert(activitySeen)
+      .values({ id: crypto.randomUUID(), user_id: userId, scope, seen_at: at, updated_at })
+      .onConflictDoUpdate({
+        target: [activitySeen.user_id, activitySeen.scope],
+        set: { seen_at: at, updated_at },
+      })
+    return at
   }
   async listReviewRoundsInOrg(
     orgId: string,

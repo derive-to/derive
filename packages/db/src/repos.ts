@@ -167,6 +167,7 @@ import {
 import type { BaseSQLiteDatabase } from "drizzle-orm/sqlite-core"
 import type { Exhaustive, Shapes } from "./parity"
 import {
+  activitySeen,
   agent,
   agentMention,
   artifact,
@@ -3485,6 +3486,33 @@ export function makeRepos(db: SqliteDb) {
         .limit(opts.limit)
     ).map((r) => r.c)
   }
+  const getActivitySeen = async (userId: string, scope: string): Promise<string | null> => {
+    const row = await db
+      .select({ seen_at: activitySeen.seen_at })
+      .from(activitySeen)
+      .where(and(eq(activitySeen.user_id, userId), eq(activitySeen.scope, scope)))
+      .get()
+    return row?.seen_at ?? null
+  }
+  const setActivitySeen = async (
+    userId: string,
+    scope: string,
+    at: string,
+    opts?: { manual?: boolean },
+  ): Promise<string> => {
+    const current = await getActivitySeen(userId, scope)
+    if (current !== null && !opts?.manual && current >= at) return current
+    const updated_at = new Date().toISOString()
+    await db
+      .insert(activitySeen)
+      .values({ id: crypto.randomUUID(), user_id: userId, scope, seen_at: at, updated_at })
+      .onConflictDoUpdate({
+        target: [activitySeen.user_id, activitySeen.scope],
+        set: { seen_at: at, updated_at },
+      })
+    return at
+  }
+
   const listReviewRoundsInOrg = async (
     orgId: string,
     opts: { since: string; limit: number },
@@ -5648,6 +5676,8 @@ export function makeRepos(db: SqliteDb) {
     listVersionsInOrg,
     listCommentsInOrg,
     listReviewRoundsInOrg,
+    getActivitySeen,
+    setActivitySeen,
     resolveReviewRound,
     createContext,
     getContext,

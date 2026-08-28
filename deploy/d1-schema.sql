@@ -637,6 +637,15 @@ CREATE TABLE IF NOT EXISTS user_notification_pref (
   UNIQUE (org_id, user_id)
 );
 
+CREATE TABLE IF NOT EXISTS activity_seen (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  scope TEXT NOT NULL,
+  seen_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  UNIQUE (user_id, scope)
+);
+
 CREATE TABLE IF NOT EXISTS github_app (
   id TEXT PRIMARY KEY,
   app_id TEXT NOT NULL,

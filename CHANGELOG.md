@@ -60,6 +60,14 @@ for the recommended install and verification flow.
   dependencies reach outside the published set.
 
 ### Changed
+- **The activity "New" marker is the account's position, not the browser's.** The
+  workspace Activity page and every artifact's activity rail measure "new" against a
+  per-user, per-stream position kept on the server (`GET`/`PUT /v1/seen`), so every device
+  draws the line in the same place and a tab switch no longer erases it. The line is read
+  once per visit and held still while you read — including when you go answer one item
+  and come back; the stored position advances after a couple of seconds of visible
+  dwell, on later arrivals, and when the rail closes. Your own publishes, comments and
+  asks are never "new". The previous per-browser stamp is imported once, then dropped.
 - **MCP reads public artifacts outside the grant, read-only.** `read`, `find`'s
   in-artifact grep, and `publish`'s `derived_from` now reach any artifact whose world
   link is open (public or link-only, not password-locked, not an expired draft), at

@@ -491,8 +491,11 @@ variants.
   absolute before that, so only Today / Yesterday / Earlier get an eyebrow. A resolved
   thread folds to one line (✓ · author · first words) that opens to the muted card.
   Replies since the reader's last visit get a row of their own so recency is never buried
-  in an old card. The **"New" marker** is the rail's one ink line (the reader's last visit,
-  per browser; closing the rail advances it), and "follow the document" marks the thread
+  in an old card. The **"New" marker** is the rail's one ink line — the reader's position in
+  the stream, kept on the server per account and scope (`/v1/seen`), read once per visit and
+  held still while they read; it advances after a visible dwell, on later arrivals, and when
+  the rail closes, never because the tab was hidden, and the reader's own rows are never
+  new — and "follow the document" marks the thread
   whose highlight is in the document's viewport with a 2px ink rule. Three levels and
   nothing else: the stream, the docked **composer** (one input — what a message is attached
   to is a chip above it: the quoted selection, or the review round being answered, with a

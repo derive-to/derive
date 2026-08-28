@@ -1099,6 +1099,16 @@ export const api = {
   listRuns: (): Promise<{ runs: Run[] }> => f("/v1/workspace/runs", opts()).then(j),
   // The home's activity: versions, comments and review rounds across the workspace over a
   // window, on the artifacts the caller can see (routes/activity.ts).
+  /** Where the signed-in user last left an activity stream (`ws:<org>` | `artifact:<short_id>`). */
+  activitySeen: (scope: string): Promise<{ seen_at: string | null }> =>
+    f(`/v1/seen?scope=${encodeURIComponent(scope)}`, opts()).then(j),
+  /** Move that position: forward-only unless `manual` (a "mark new from here" rewind). */
+  setActivitySeen: (body: {
+    scope: string
+    at: string
+    manual?: boolean
+  }): Promise<{ seen_at: string | null }> =>
+    f("/v1/seen", { ...opts(body), method: "PUT" }).then(j),
   workspaceActivity: (): Promise<WorkspaceActivity> => f("/v1/workspace/activity", opts()).then(j),
 
   // Per-user model-plan credentials (the caller's own; see routes/model-credentials.ts).

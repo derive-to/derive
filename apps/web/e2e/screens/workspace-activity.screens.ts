@@ -162,6 +162,20 @@ test("capture workspace activity states", async ({ owner: page }) => {
       asAgent,
     )
   }
+  // The person has seen everything so far: their position in the workspace stream is set
+  // on the server (a manual write lands regardless of any dwell), so what follows — the
+  // thread that tags them — is what "New above" separates. The next arrival must be
+  // strictly newer than the stamp.
+  const wsRes = (await (await page.request.get("/v1/workspace")).json()) as {
+    id?: string
+    workspace?: { id: string }
+  }
+  const wsId = wsRes.workspace?.id ?? wsRes.id ?? ""
+  const seeded = await page.request.put("/v1/seen", {
+    data: { scope: `ws:${wsId}`, at: new Date().toISOString(), manual: true },
+  })
+  expect(seeded.ok()).toBeTruthy()
+  await page.waitForTimeout(1100)
   // Someone tags the person in a thread on the pricing test.
   const meRes = (await (await page.request.get("/v1/me")).json()) as {
     id?: string
@@ -190,6 +204,7 @@ test("capture workspace activity states", async ({ owner: page }) => {
           q.onsuccess = q.onerror = q.onblocked = () => r(null)
         })
   })
+  await page.evaluate(() => sessionStorage.clear())
   await page.goto("/activity")
   await expect(page.getByTestId("wa-needs-you")).toBeVisible()
   await expect(page.getByTestId("wa-recent")).toBeVisible()
