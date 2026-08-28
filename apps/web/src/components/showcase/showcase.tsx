@@ -5,7 +5,8 @@ import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { EmptyState } from "@/components/shared/empty-state"
 import { FormField } from "@/components/shared/form-field"
 import { SearchField } from "@/components/shared/search-field"
-import { Eyebrow, SectionEyebrow } from "@/components/shared/section-eyebrow"
+import { Eyebrow } from "@/components/shared/section-eyebrow"
+import { SectionHeading, SectionTitle } from "@/components/shared/section-title"
 import { Spinner } from "@/components/shared/spinner"
 import { StatusPanel } from "@/components/shared/status-panel"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
@@ -304,7 +305,7 @@ function IconGridDemo() {
   )
 }
 
-/** Separator — a hairline rule dividing a quiet action row. */
+/** Separator — the vertical rule between control groups inside a bar. */
 function SeparatorDemo() {
   return (
     <div className="flex h-5 items-center gap-3 text-sm text-muted-foreground">
@@ -752,19 +753,58 @@ function AvatarDemo() {
   )
 }
 
-/** Section label — the mono smallcaps + hairline rule + tabular count list head. */
+/** The header grammar, all levels on one canvas: a page section is a heading; a
+ *  sub-group or a day is a bare eyebrow; inside a panel the title is one step
+ *  down and the panel's edges are the only lines; a line on its own marks a
+ *  position. No label ever carries a rule. */
 function SectionLabelDemo() {
   return (
-    <div className="space-y-6">
-      <SectionEyebrow count={12} icon={<Icon name="comments" size={12} />}>
-        Needs your feedback
-      </SectionEyebrow>
-      <SectionEyebrow
-        count={128}
-        action={<span className="font-mono text-2xs text-muted-foreground">Browse all →</span>}
-      >
-        All artifacts
-      </SectionEyebrow>
+    <div className="flex flex-col gap-8">
+      <div className="flex flex-col gap-2">
+        <SectionHeading
+          count={12}
+          action={<span className="font-mono text-2xs text-muted-foreground">View all</span>}
+        >
+          Needs you
+        </SectionHeading>
+        <div className="flex flex-col">
+          <Eyebrow as="h3" className="pt-1 pb-1">
+            Reviews waiting on you
+          </Eyebrow>
+          <p className="py-1 text-sm text-muted-foreground">
+            <span className="font-medium text-foreground">Claude Code</span> asked for review of v4
+          </p>
+          <p className="py-1 text-sm text-muted-foreground">
+            <span className="font-medium text-foreground">Codex</span> asked for review of v2
+          </p>
+        </div>
+        <div className="flex flex-col">
+          <Eyebrow as="h3" className="pt-3 pb-1">
+            Yesterday
+          </Eyebrow>
+          <p className="py-1 text-sm text-muted-foreground">
+            <span className="font-medium text-foreground">Mert</span> published v3 of Q3 Growth
+            Narrative
+          </p>
+        </div>
+        <div className="flex items-center gap-2 py-2">
+          <Separator className="flex-1 bg-primary" />
+          <Eyebrow className="text-primary">New</Eyebrow>
+          <Separator className="flex-1 bg-primary" />
+        </div>
+      </div>
+      <div className="flex flex-col gap-2 rounded-xl border bg-card p-4">
+        <SectionTitle
+          count={3}
+          action={<span className="font-mono text-2xs text-muted-foreground">Manage</span>}
+        >
+          People with access
+        </SectionTitle>
+        <p className="text-sm text-muted-foreground">
+          Inside a dialog, a card or a rail the title steps down one size, and the container's edges
+          are the only lines.
+        </p>
+      </div>
     </div>
   )
 }
@@ -1253,7 +1293,10 @@ export function Showcase() {
           >
             <IconGridDemo />
           </Row>
-          <Row title="Separator" note="A hairline rule, horizontal or vertical, to divide groups.">
+          <Row
+            title="Separator"
+            note="A hairline for structure or position: a bar's edge, a table row, the unread marker, or a vertical rule between control groups inside a bar. Never between two sections, and never on a label."
+          >
             <SeparatorDemo />
           </Row>
         </Group>
@@ -1323,8 +1366,8 @@ export function Showcase() {
             <AvatarDemo />
           </Row>
           <Row
-            title="Section label"
-            note="Mono smallcaps, a hairline rule, and a tabular count head every list section."
+            title="Headings"
+            note="A page section is a heading, a sub-group or a day is a bare eyebrow, a panel's title steps down one size. No label carries a rule; a line on its own marks a position."
           >
             <SectionLabelDemo />
           </Row>

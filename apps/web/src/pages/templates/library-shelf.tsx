@@ -41,7 +41,6 @@ export function LibraryShelf({
   return (
     <section className="flex flex-col gap-5" data-testid="template-libraries">
       <PageHeader
-        className="border-y py-5"
         eyebrow="A shareable starting point"
         title="Libraries make useful work reusable."
         subtitle="Publish the version you trust. Others start from an independent copy, with source provenance intact."
@@ -87,7 +86,10 @@ export function LibraryShelf({
         </Button>
       </div>
       {libraries.isPending || libraries.isPlaceholderData ? (
-        <div className="grid min-h-64 place-items-center border-y text-sm text-muted-foreground">
+        <div
+          className="grid min-h-64 place-items-center text-sm text-muted-foreground"
+          role="status"
+        >
           {libraries.isPlaceholderData ? "Searching libraries…" : "Loading libraries…"}
         </div>
       ) : schemaPending ? (

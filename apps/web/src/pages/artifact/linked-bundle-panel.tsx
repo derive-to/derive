@@ -1,6 +1,7 @@
 import type { Artifact, Comment } from "@/api"
 import { Icon } from "@/components/icons"
-import { Count } from "@/components/shared/section-eyebrow"
+import { Count, Eyebrow } from "@/components/shared/section-eyebrow"
+import { SectionTitle } from "@/components/shared/section-title"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { parseAnchor } from "./types"
@@ -101,14 +102,12 @@ function DiagramCard({
   return (
     <section className="overflow-hidden rounded-lg border border-border bg-card">
       <div className="border-b border-border-soft px-3 py-3">
-        <div className="font-mono text-2xs uppercase tracking-[0.12em] text-muted-foreground">
-          {diagram.type}
-        </div>
-        <h3 className="mt-1 text-sm font-semibold leading-snug text-foreground">{diagram.title}</h3>
+        <Eyebrow as="div">{diagram.type}</Eyebrow>
+        <SectionTitle className="mt-1">{diagram.title}</SectionTitle>
       </div>
 
       {diagram.type === "loop" ? (
-        <div className="border-b border-border-soft bg-muted/20">
+        <div className="bg-muted/20">
           {(["goal", "evaluate", "stop"] as const).map((key) => {
             const target = linkedBundleReviewTarget(diagram.id, "policy", key)
             const value = diagram[key] ?? "Not stated"
@@ -126,10 +125,10 @@ function DiagramCard({
         </div>
       ) : null}
 
-      <div className="px-3 pb-1 pt-3 font-mono text-2xs uppercase tracking-[0.12em] text-muted-foreground">
+      <Eyebrow as="div" className="px-3 pb-1 pt-3">
         {diagram.nodes.length} {nodeKind.toLowerCase()}
         {diagram.nodes.length === 1 ? "" : "s"}
-      </div>
+      </Eyebrow>
       <div>
         {diagram.nodes.map((node) => {
           const target = linkedBundleReviewTarget(diagram.id, "node", node.id)
@@ -166,14 +165,14 @@ function DiagramCard({
       </div>
 
       {diagram.edges.length ? (
-        <details className="border-t border-border-soft">
+        <details className="pt-1">
           <summary className="cursor-pointer px-3 py-2.5 text-xs font-medium text-muted-foreground hover:text-foreground">
             {diagram.edges.length}{" "}
             {diagram.type === "loop"
               ? `transition${diagram.edges.length === 1 ? "" : "s"}`
               : `relationship${diagram.edges.length === 1 ? "" : "s"}`}
           </summary>
-          <div className="border-t border-border-soft">
+          <div>
             {diagram.edges.map((edge, index) => {
               const local = `${index}-${edge.from}-${edge.to}`
               const target = linkedBundleReviewTarget(diagram.id, "edge", local)
@@ -221,7 +220,7 @@ export function LinkedBundlePanel({
       <div className="border-b border-border px-3 py-3">
         <div className="flex items-start gap-2">
           <div className="min-w-0 flex-1">
-            <div className="text-sm font-semibold text-foreground">Bundle map</div>
+            <SectionTitle as="h2">Bundle map</SectionTitle>
             <div className="mt-1 font-mono text-2xs text-muted-foreground">
               {bundle.members.length} artifacts · {loops} loop{loops === 1 ? "" : "s"} · {graphs}{" "}
               graph{graphs === 1 ? "" : "s"}
@@ -252,12 +251,10 @@ export function LinkedBundlePanel({
       <div className="grid gap-3 p-3">
         <section className="overflow-hidden rounded-lg border border-border bg-card">
           <div className="border-b border-border-soft px-3 py-3">
-            <div className="font-mono text-2xs uppercase tracking-[0.12em] text-muted-foreground">
-              Artifacts
-            </div>
-            <h3 className="mt-1 text-sm font-semibold leading-snug text-foreground">
+            <Eyebrow as="div">Artifacts</Eyebrow>
+            <SectionTitle className="mt-1">
               {bundle.members.length} living artifact{bundle.members.length === 1 ? "" : "s"}
-            </h3>
+            </SectionTitle>
           </div>
           <div>
             {bundle.members.map((member) => {

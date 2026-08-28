@@ -1,5 +1,7 @@
 import { useState } from "react"
 import { Icon } from "@/components/icons"
+import { Eyebrow } from "@/components/shared/section-eyebrow"
+import { SectionTitle } from "@/components/shared/section-title"
 import { Button } from "@/components/ui/button"
 import { Kbd } from "@/components/ui/kbd"
 import { cn } from "@/lib/utils"
@@ -66,7 +68,7 @@ export function ArtifactInspect({
           <Icon name="edit" size={15} />
         </span>
         <div className="min-w-0">
-          <h2 className="font-medium text-foreground text-sm">Inspect</h2>
+          <SectionTitle as="h2">Inspect</SectionTitle>
           <p className="text-2xs text-muted-foreground">Editing HTML safely</p>
         </div>
       </div>
@@ -121,10 +123,10 @@ function SceneInspect({
   return (
     <div data-testid="artifact-inspect-scene" className="mt-6 space-y-5">
       <div>
-        <p className="text-2xs text-muted-foreground uppercase tracking-wide">
+        <Eyebrow as="div">
           Scene {video.i + 1} of {video.total}
-        </p>
-        <h3 className="mt-1 font-medium text-foreground text-sm">Scene timing and flow</h3>
+        </Eyebrow>
+        <SectionTitle className="mt-1">Scene timing and flow</SectionTitle>
         <p className="mt-2 text-sm leading-6 text-muted-foreground">
           Edit words directly on the canvas. Scene controls stay here in the same editing session.
         </p>
@@ -257,10 +259,10 @@ function TextInspect({
 
   return (
     <div data-testid="artifact-inspect-text" className="mt-6">
-      <p className="text-2xs text-muted-foreground uppercase tracking-wide">{kind}</p>
-      <h3 className="mt-1 font-medium text-foreground text-sm">
+      <Eyebrow as="div">{kind}</Eyebrow>
+      <SectionTitle className="mt-1">
         {canFormat ? "Format the selection" : "Edit directly in the document"}
-      </h3>
+      </SectionTitle>
       <p className="mt-2 text-sm leading-6 text-muted-foreground">
         Type where the caret is. Select words to add emphasis or a link; every change joins the same
         undo history.
@@ -269,12 +271,12 @@ function TextInspect({
       {selectedText ? (
         <blockquote
           title={selectedText}
-          className="mt-4 truncate border-border border-y py-3 text-foreground text-sm"
+          className="mt-4 truncate rounded-md bg-secondary/40 px-3 py-2.5 text-foreground text-sm"
         >
           “{selectedText}”
         </blockquote>
       ) : (
-        <p className="mt-4 border-border border-y py-3 text-xs text-muted-foreground">
+        <p className="mt-4 rounded-md bg-secondary/40 px-3 py-2.5 text-xs text-muted-foreground">
           Select words in the document to enable formatting.
         </p>
       )}
@@ -386,13 +388,13 @@ function FormatButton({
 function ChooseInspect() {
   return (
     <div data-testid="artifact-inspect-choose" className="mt-6">
-      <h3 className="font-medium text-foreground text-sm">Choose content in the document</h3>
+      <SectionTitle>Choose content in the document</SectionTitle>
       <p className="mt-2 text-sm leading-6 text-muted-foreground">
         Click text to type in place, or select an image, media element, or marked box to adjust it
         with the surrounding layout visible.
       </p>
 
-      <ul className="mt-5 space-y-3 border-border border-y py-4 text-sm">
+      <ul className="mt-5 space-y-3 text-sm">
         <InspectCapability
           title="Text"
           detail="Type inline; select words for bold, italic, or link."
@@ -431,7 +433,7 @@ function SessionControls({
 }) {
   return (
     <div className="mt-auto pt-6">
-      <div className="flex items-center justify-between gap-3 border-border border-t pt-4">
+      <div className="flex items-center justify-between gap-3">
         <div>
           <p className="font-medium text-foreground text-xs">Edit history</p>
           <p className="mt-0.5 text-2xs text-muted-foreground">Text and elements share one stack</p>

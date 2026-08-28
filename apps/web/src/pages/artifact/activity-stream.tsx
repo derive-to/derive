@@ -50,7 +50,8 @@ export function StreamSkeleton() {
 }
 
 /**
- * The stream itself — the items `buildStream` produced, rendered: day eyebrows, the one
+ * The stream itself — the items `buildStream` produced, rendered: day labels (no rule —
+ * lines mark positions, not groups), the one
  * ink "New" line, comment threads as cards (resolved ones folded to a line), every other
  * action as a one-line turn. Shared by the desktop rail and the phone sheet, so the two
  * can't drift; each surface brings its own header, composer and scroll behaviour.
@@ -118,10 +119,9 @@ export function ActivityStream({
     switch (it.type) {
       case "section":
         return (
-          <div key={it.id} className="flex items-center gap-2 pt-3 pb-1">
-            <Eyebrow>{it.label}</Eyebrow>
-            <Separator className="flex-1" />
-          </div>
+          <Eyebrow key={it.id} as="h3" className="pt-3 pb-1">
+            {it.label}
+          </Eyebrow>
         )
       case "unread":
         return (

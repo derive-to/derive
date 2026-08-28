@@ -1,6 +1,6 @@
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link, useParams } from "@tanstack/react-router"
-import { Copy as CopyIcon, Cpu, Plug, TriangleAlert } from "lucide-react"
+import { Copy as CopyIcon, TriangleAlert } from "lucide-react"
 import { useEffect, useState } from "react"
 import {
   ApiError,
@@ -17,7 +17,8 @@ import { EmptyState } from "@/components/shared/empty-state"
 import { LoadError } from "@/components/shared/load-error"
 import { PageShell } from "@/components/shared/page-shell"
 import { PersonSearchInput } from "@/components/shared/person-search-input"
-import { Eyebrow, SectionEyebrow } from "@/components/shared/section-eyebrow"
+import { Eyebrow } from "@/components/shared/section-eyebrow"
+import { SectionTitle } from "@/components/shared/section-title"
 import { Spinner } from "@/components/shared/spinner"
 import { StatusPanel } from "@/components/shared/status-panel"
 import { Badge, type badgeVariants } from "@/components/ui/badge"
@@ -345,7 +346,7 @@ function Console({ id }: { id: string }) {
             {sourcesCount > 0 && <SourcesCard count={sourcesCount} />}
             {isOwner && (
               <div className="rounded-xl border bg-card p-3.5">
-                <SectionEyebrow className="mb-2.5">Access</SectionEyebrow>
+                <SectionTitle className="mb-2.5">Access</SectionTitle>
                 <ContextAccess id={id} name={context.name} policy={context.ask_policy} />
               </div>
             )}
@@ -473,7 +474,7 @@ function ContextStatusWorkspace({
     >
       <div className="rounded-xl border bg-card p-4">
         <Eyebrow>Now</Eyebrow>
-        <h2 className="mt-2 text-base font-semibold tracking-tight text-foreground">
+        <h2 className="mt-2 text-base font-medium tracking-tight text-foreground">
           {summary.headline}
         </h2>
         <div className="mt-3 flex flex-wrap items-center gap-1.5 font-mono text-2xs">
@@ -537,7 +538,7 @@ function ContextStatusWorkspace({
       <div className="min-w-0 rounded-xl border bg-card p-4" data-testid="context-artifact-shelf">
         <div className="mb-2 flex items-baseline justify-between gap-3">
           <div>
-            <h2 className="text-sm font-semibold text-foreground">Living artifacts</h2>
+            <SectionTitle as="h2">Living artifacts</SectionTitle>
             <p className="mt-0.5 text-2xs text-muted-foreground">
               Latest results stay visible as they evolve
             </p>
@@ -652,9 +653,9 @@ function ContextAccess({
 
         <div className="flex flex-col gap-6">
           <div>
-            <SectionEyebrow action={policyMut.isPending && <Spinner className="size-3" />}>
+            <SectionTitle action={policyMut.isPending && <Spinner className="size-3" />}>
               Who can ask
-            </SectionEyebrow>
+            </SectionTitle>
             <div className="mt-2 flex flex-col">
               <AccessSegmentToggle
                 segments={CONTEXT_SEGMENTS}
@@ -673,7 +674,7 @@ function ContextAccess({
 
           {policy === "invited" && (
             <div>
-              <SectionEyebrow count={roster?.length}>Invited to ask</SectionEyebrow>
+              <SectionTitle count={roster?.length}>Invited to ask</SectionTitle>
               <form onSubmit={add} className="mt-2 flex items-center gap-2">
                 <PersonSearchInput
                   value={email}
@@ -719,7 +720,7 @@ function ContextAccess({
             </div>
           )}
 
-          <div className="flex items-center gap-2 border-t border-border-soft pt-3 text-xs text-muted-foreground">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <Icon name="lock" className="size-3.5" />
             Workspace members only. People outside this workspace cannot use the Agent.
           </div>
@@ -805,7 +806,7 @@ function RunnerCard({
       className="flex flex-col gap-2.5 rounded-xl border bg-card p-3.5"
       data-testid="rail-runner"
     >
-      <SectionEyebrow icon={<Cpu className="size-3" />}>Doing work</SectionEyebrow>
+      <SectionTitle>Doing work</SectionTitle>
       <div className="flex items-center gap-1.5 text-xs text-foreground">
         <span className={cn("size-1.5 rounded-full", dot)} aria-hidden />
         {status}
@@ -818,7 +819,8 @@ function RunnerCard({
           : "None is connected right now, so tasks wait in line and run once one is."}
       </p>
       {isOwner && (
-        <div className="flex flex-col gap-2 border-t border-border-soft pt-2.5">
+        <div className="flex flex-col gap-2">
+          <Eyebrow as="h4">Run it yourself</Eyebrow>
           <div>
             <p className="text-2xs text-muted-foreground">
               Ask it to do something in Chat above or from your own coding session:
@@ -924,7 +926,7 @@ function SkillsCard({
 }) {
   return (
     <div className="flex flex-col gap-2 rounded-xl border bg-card p-3.5" data-testid="rail-skills">
-      <SectionEyebrow>Skills · {skills.length}</SectionEyebrow>
+      <SectionTitle count={skills.length}>Skills</SectionTitle>
       <ul className="flex flex-col gap-1.5">
         {skills.slice(0, 6).map((s) => (
           <li key={s.short_id} className="flex items-center gap-2 text-sm text-foreground">
@@ -962,7 +964,7 @@ function SourcesCard({ count }: { count: number }) {
       className="flex flex-col gap-1.5 rounded-xl border bg-card p-3.5"
       data-testid="rail-sources"
     >
-      <SectionEyebrow icon={<Plug className="size-3" />}>Sources · {count}</SectionEyebrow>
+      <SectionTitle count={count}>Sources</SectionTitle>
       <p className="text-xs text-muted-foreground">
         {count === 1 ? "One connection" : `${count} connections`} this Agent may use as tools.
       </p>
@@ -1007,7 +1009,7 @@ function ManifestTab({ context }: { context: ContextDetail }) {
 
       {skills.length > 0 && (
         <div className="flex flex-col gap-2.5">
-          <SectionEyebrow
+          <SectionTitle
             action={
               staleCount > 0 ? (
                 <span className="font-mono text-2xs text-warning">
@@ -1019,7 +1021,7 @@ function ManifestTab({ context }: { context: ContextDetail }) {
             }
           >
             Skills · {skills.length}
-          </SectionEyebrow>
+          </SectionTitle>
           <div className="overflow-x-auto rounded-xl border">
             <table className="w-full text-sm">
               <thead>
@@ -1091,7 +1093,7 @@ function ManifestTab({ context }: { context: ContextDetail }) {
 
       {context.repos && context.repos.length > 0 && (
         <div className="flex flex-col gap-2">
-          <SectionEyebrow>Repos · {context.repos.length}</SectionEyebrow>
+          <SectionTitle count={context.repos.length}>Repos</SectionTitle>
           <ul className="flex flex-col gap-1">
             {context.repos.map((r) => (
               <li key={r.url} className="flex items-center gap-2 font-mono text-sm text-foreground">
@@ -1104,8 +1106,8 @@ function ManifestTab({ context }: { context: ContextDetail }) {
         </div>
       )}
 
-      <div className="border-t pt-5">
-        <SectionEyebrow className="mb-3">Document</SectionEyebrow>
+      <div className="flex flex-col gap-3">
+        <SectionTitle>Document</SectionTitle>
         <div
           className={ANSWER_PROSE}
           // biome-ignore lint/security/noDangerouslySetInnerHtml: sanitized in answerMdToHtml (xss whitelist).
@@ -1362,9 +1364,9 @@ function SessionThread({
       </div>
 
       {session.state === "closed" ? (
-        <p className="border-t pt-3 text-sm text-muted-foreground">This conversation is closed.</p>
+        <p className="text-sm text-muted-foreground">This conversation is closed.</p>
       ) : isMine ? (
-        <div className="flex flex-col gap-2 border-t pt-3">
+        <div className="flex flex-col gap-2">
           <Textarea
             data-testid="console-followup-input"
             aria-label="Follow-up"
@@ -1397,7 +1399,7 @@ function SessionThread({
           </div>
         </div>
       ) : (
-        <div className="flex items-center border-t pt-3">
+        <div className="flex items-center">
           <Button
             variant="ghost"
             size="sm"

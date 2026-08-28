@@ -2,6 +2,7 @@ import { Link } from "@tanstack/react-router"
 import type { TemplateLibrary } from "@/api"
 import { Icon } from "@/components/icons"
 import { AuthorChip } from "@/components/shared/author-chip"
+import { Eyebrow } from "@/components/shared/section-eyebrow"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -22,9 +23,7 @@ function LibraryCardContent({ library }: { library: TemplateLibrary }) {
           <Badge variant="outline" shape="pill">
             <Icon name={scopeCopy[library.scope].icon} size={12} /> {scopeCopy[library.scope].label}
           </Badge>
-          <span className="font-mono text-2xs uppercase tracking-wider text-muted-foreground">
-            {library.entry_count} starters
-          </span>
+          <Eyebrow>{library.entry_count} starters</Eyebrow>
         </div>
         <CardTitle className="font-serif text-xl tracking-tight [overflow-wrap:anywhere]">
           {library.title}

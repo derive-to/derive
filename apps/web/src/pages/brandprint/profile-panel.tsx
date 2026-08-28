@@ -3,6 +3,7 @@ import { Link } from "@tanstack/react-router"
 import { useState } from "react"
 import { API_BASE, ApiError, api, type DirUser } from "@/api"
 import { ConnectAgentButton, PromptBlock, publicUrl } from "@/components/shared/connect-agent"
+import { SectionTitle } from "@/components/shared/section-title"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { toast } from "@/components/ui/sonner"
@@ -49,7 +50,7 @@ export function ProfilePanel({ profileId }: { profileId: string }) {
       <section className="flex flex-col gap-3" data-testid="brandprint-profile-live">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h2 className="text-base font-medium text-foreground">Brand profile</h2>
+            <SectionTitle as="h2">Brand profile</SectionTitle>
             <p className="text-sm text-muted-foreground">
               Live. Every agent connected to this workspace reads it before authoring. An agent's
               change to it always opens a review round for you on the document.
@@ -129,9 +130,7 @@ function HandoffCard({ profileId, onDismiss }: { profileId: string; onDismiss?: 
         className="flex flex-col gap-1 rounded-lg border bg-secondary/40 px-4 py-3"
         data-testid="brandprint-generate-queued"
       >
-        <h2 className="text-base font-medium text-foreground">
-          Your agent is building your Brandprint
-        </h2>
+        <SectionTitle as="h2">Your agent is building your Brandprint</SectionTitle>
         <p className="text-sm text-pretty text-muted-foreground">
           The build brief is queued. The built profile will appear here after your agent's next
           session. You can leave this page open or come back later.
@@ -146,9 +145,9 @@ function HandoffCard({ profileId, onDismiss }: { profileId: string; onDismiss?: 
     >
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-base font-medium text-foreground">
+          <SectionTitle as="h2">
             {regenerating ? "Regenerate your brand profile" : "Finish with your agent"}
-          </h2>
+          </SectionTitle>
           <p className="text-sm text-pretty text-muted-foreground">
             {regenerating
               ? "Give your agent the brief again to rebuild the profile from the current sources. The new version will appear here for review."

@@ -1,5 +1,6 @@
 import type { ReactNode } from "react"
 import type { TemplateLibraryEntry } from "@/api"
+import { Eyebrow } from "@/components/shared/section-eyebrow"
 import { Badge } from "@/components/ui/badge"
 import {
   Card,
@@ -43,9 +44,9 @@ export function TemplateEntryCard({
           </p>
         ) : null}
         {entry.sections.length > 0 ? (
-          <p className="line-clamp-1 font-mono text-2xs uppercase tracking-wider text-muted-foreground [overflow-wrap:anywhere]">
+          <Eyebrow as="div" className="line-clamp-1 [overflow-wrap:anywhere]">
             {entry.sections.join(" · ")}
-          </p>
+          </Eyebrow>
         ) : null}
       </CardContent>
       <CardFooter className="mt-auto flex-wrap gap-2">{actions}</CardFooter>

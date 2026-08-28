@@ -1,5 +1,6 @@
 import { ChevronRight } from "lucide-react"
 import type { ReactNode } from "react"
+import { Eyebrow } from "@/components/shared/section-eyebrow"
 import { cn } from "@/lib/utils"
 
 // The one header a folder group wears, in both folder views (a manual collection's
@@ -52,20 +53,25 @@ export function FolderHeader({
           )}
           aria-hidden
         />
-        <span
-          className={cn(
-            "truncate font-mono",
-            path ? "text-xs" : "text-2xs uppercase tracking-wide",
-            muted ? "text-muted-foreground/70" : "text-muted-foreground",
-          )}
-        >
-          {label}
-        </span>
+        {path ? (
+          <span
+            className={cn(
+              "truncate font-mono text-xs",
+              muted ? "text-muted-foreground/70" : "text-muted-foreground",
+            )}
+          >
+            {label}
+          </span>
+        ) : (
+          <Eyebrow as="span" className={cn("truncate", muted && "text-muted-foreground/70")}>
+            {label}
+          </Eyebrow>
+        )}
         <span className="shrink-0 font-mono text-2xs tabular-nums text-muted-foreground/70">
           {count}
         </span>
       </button>
-      <span className="h-px min-w-4 flex-1 bg-border-soft" />
+      <span className="min-w-4 flex-1" />
       {trailing}
     </div>
   )

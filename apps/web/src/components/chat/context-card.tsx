@@ -81,7 +81,7 @@ export function ContextCard({ card }: { card: BuilderCard }) {
           to="/agents/$id"
           params={{ id: created.context_id }}
           data-testid="builder-context-card-open"
-          className="flex items-center gap-1 border-t border-border-soft pt-2.5 text-sm text-foreground hover:underline"
+          className="flex items-center gap-1 text-sm text-foreground hover:underline"
         >
           {BUILDER_COPY.createdPrefix} <span className="font-medium">{created.name}</span>
         </Link>

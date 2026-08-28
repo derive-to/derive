@@ -5,6 +5,7 @@ import { useRef, useState } from "react"
 import { api, type OrgSettings } from "@/api"
 import { Icon } from "@/components/icons"
 import { LoadError } from "@/components/shared/load-error"
+import { SectionTitle } from "@/components/shared/section-title"
 import { SettingRow } from "@/components/shared/setting-row"
 import { SettingsGroup } from "@/components/shared/settings-group"
 import { Badge } from "@/components/ui/badge"
@@ -632,7 +633,7 @@ function BrandprintDocs({
   })
   return (
     <div className="flex flex-col gap-2 py-3.5">
-      <p className="text-sm font-medium text-foreground">Documents</p>
+      <SectionTitle>Documents</SectionTitle>
       {isError ? (
         <p className="text-sm text-muted-foreground">
           Couldn't load the docs.{" "}

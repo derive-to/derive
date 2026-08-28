@@ -6,6 +6,7 @@ import { ChatComposer } from "@/components/chat/chat-composer"
 import { ChatThread } from "@/components/chat/chat-thread"
 import { useChatSession } from "@/components/chat/use-chat-session"
 import { Icon } from "@/components/icons"
+import { Eyebrow } from "@/components/shared/section-eyebrow"
 import { Kbd } from "@/components/ui/kbd"
 import { isInAppPath } from "@/lib/in-app-path"
 import { workspaceQuery } from "@/lib/queries"
@@ -148,7 +149,10 @@ export function PaletteAsk(props: {
           commits: it never navigates on its own, because a model deciding to move you off the
           page you were on is delightful exactly once. */}
       {destinations.length > 0 && (
-        <div className="max-h-32 shrink-0 overflow-y-auto border-t px-2 py-1.5">
+        <div className="max-h-32 shrink-0 overflow-y-auto px-2 py-1.5">
+          <Eyebrow as="div" className="px-2 pb-1">
+            Go to
+          </Eyebrow>
           {destinations.map((d) => (
             <button
               key={d.path}

@@ -9,7 +9,7 @@ export function HowItWorks() {
         later.
       </p>
 
-      <dl className="mt-5 grid divide-y border-y sm:grid-cols-3 sm:divide-x sm:divide-y-0">
+      <dl className="mt-5 grid gap-5 sm:grid-cols-3 sm:gap-8">
         <Step
           title="Publish the result"
           blurb="Give a report, plan, deck, or site a lasting URL outside the chat."
@@ -29,7 +29,7 @@ export function HowItWorks() {
 
 function Step({ title, blurb }: { title: string; blurb: string }) {
   return (
-    <div className="py-4 sm:px-5 sm:first:pl-0 sm:last:pr-0">
+    <div>
       <dt className="text-sm font-medium text-foreground">{title}</dt>
       <dd className="mt-1.5 text-base/7 text-pretty text-muted-foreground sm:text-sm/6">{blurb}</dd>
     </div>

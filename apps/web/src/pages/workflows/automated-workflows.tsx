@@ -8,6 +8,7 @@ import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { ListRow } from "@/components/shared/list-row"
 import { LoadError } from "@/components/shared/load-error"
 import { Eyebrow } from "@/components/shared/section-eyebrow"
+import { SectionHeading } from "@/components/shared/section-title"
 import { SettingsEmpty } from "@/components/shared/settings-empty"
 import { SettingsGroup } from "@/components/shared/settings-group"
 import { StatusBadge } from "@/components/shared/status-badge"
@@ -52,7 +53,7 @@ export function AutomatedWorkflows() {
   return (
     <section className="flex flex-col gap-4">
       <div className="flex flex-col gap-1">
-        <h2 className="text-base font-semibold text-foreground">Single-agent workflows</h2>
+        <SectionHeading>Single-agent workflows</SectionHeading>
         <p className="text-sm text-muted-foreground">
           Give one Agent a standing instruction, then run it on demand, on a schedule, or after an
           event. Each start creates a separate run.

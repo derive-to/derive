@@ -1,4 +1,6 @@
 import type { Artifact } from "@/api"
+import { Eyebrow } from "@/components/shared/section-eyebrow"
+import { SectionHeading, SectionTitle } from "@/components/shared/section-title"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { WorkflowRunHistory } from "./workflow-run-history"
@@ -18,16 +20,16 @@ const Section = ({
   if (!items.length) return null
   return (
     <section className="min-w-0">
-      <h3
+      <Eyebrow
+        as="h3"
         className={cn(
-          "font-mono text-2xs font-semibold uppercase tracking-[0.11em] text-muted-foreground",
           tone === "pause" && "text-warning",
           tone === "effect" && "text-insights",
           tone === "limit" && "text-destructive",
         )}
       >
         {title}
-      </h3>
+      </Eyebrow>
       <ul className="mt-2 grid gap-2">
         {items.map((item) => (
           <li key={item} className="flex min-w-0 gap-2 text-sm leading-relaxed text-foreground">
@@ -56,7 +58,7 @@ export const workflowTriggerLabel = (startsWhen: string): string => {
 
 const RunPath = ({ diagram }: { diagram: PreviewDiagram }) => (
   <section className="min-w-0">
-    <h3 className="text-sm font-semibold text-foreground">The run</h3>
+    <SectionTitle>The run</SectionTitle>
     <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
       One Agent session per step attempt. Later steps start only when their stated condition is met.
     </p>
@@ -68,12 +70,12 @@ const RunPath = ({ diagram }: { diagram: PreviewDiagram }) => (
               key={session.node_id}
               className="flex min-w-0 gap-3 rounded-lg border border-border-soft bg-background/45 p-3"
             >
-              <span className="grid size-6 shrink-0 place-items-center rounded-full bg-primary/10 font-mono text-2xs font-semibold text-primary">
+              <span className="grid size-6 shrink-0 place-items-center rounded-full bg-primary/10 font-mono text-2xs font-medium text-primary">
                 {index + 1}
               </span>
               <div className="min-w-0 flex-1">
                 <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-                  <span className="break-words text-sm font-semibold text-foreground">
+                  <span className="break-words text-sm font-medium text-foreground">
                     {session.label}
                   </span>
                   <span className="max-w-full break-all rounded-md bg-muted/60 px-1.5 py-0.5 font-mono text-2xs text-muted-foreground">
@@ -101,7 +103,7 @@ const RunPath = ({ diagram }: { diagram: PreviewDiagram }) => (
 
 const RunConsiderations = ({ diagram }: { diagram: PreviewDiagram }) => (
   <aside className="min-w-0 rounded-lg border border-border-soft bg-muted/20 p-4">
-    <h3 className="text-sm font-semibold text-foreground">Things to know</h3>
+    <SectionTitle>Things to know</SectionTitle>
     <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
       The choices, pauses, and limits that can change the path.
     </p>
@@ -124,7 +126,7 @@ const RunConsiderations = ({ diagram }: { diagram: PreviewDiagram }) => (
 const ScenarioChecks = ({ scenarios }: { scenarios: PreviewDiagram["scenarios"] }) => {
   if (!scenarios.length) return null
   return (
-    <details className="border-t border-border-soft px-4 py-3 sm:px-5">
+    <details className="px-4 pb-4 sm:px-5">
       <summary className="cursor-pointer text-xs font-medium text-foreground">
         Checks passed · {scenarios.length} scenario{scenarios.length === 1 ? "" : "s"}
       </summary>
@@ -134,9 +136,7 @@ const ScenarioChecks = ({ scenarios }: { scenarios: PreviewDiagram["scenarios"] 
             key={`${scenario.kind}-${scenario.outcome}`}
             className="rounded-lg border border-border-soft p-3"
           >
-            <div className="font-mono text-2xs uppercase text-muted-foreground">
-              {scenario.kind}
-            </div>
+            <Eyebrow as="div">{scenario.kind}</Eyebrow>
             <div className="mt-1 break-words text-xs leading-relaxed text-foreground">
               {scenario.outcome}
             </div>
@@ -164,10 +164,12 @@ const DiagramPreview = ({
   >
     <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border-soft px-4 py-3 sm:px-5">
       <div className="min-w-0">
-        <div className="font-mono text-2xs uppercase tracking-[0.12em] text-primary">Workflow</div>
-        <h2 className="mt-1 break-words text-base font-semibold text-foreground">
+        <Eyebrow as="div" className="text-primary">
+          Workflow
+        </Eyebrow>
+        <SectionTitle as="h2" className="mt-1">
           {diagram.title}
-        </h2>
+        </SectionTitle>
       </div>
       {onRun ? (
         <Button
@@ -226,7 +228,7 @@ export function WorkflowPreview({
         <div className="flex flex-wrap items-center gap-2">
           <span
             className={cn(
-              "inline-flex items-center gap-2 rounded-full border px-2.5 py-1 font-mono text-2xs font-semibold uppercase tracking-[0.08em]",
+              "inline-flex items-center gap-2 rounded-full border px-2.5 py-1 font-mono text-2xs font-medium",
               ready
                 ? "border-success/25 bg-success/10 text-success"
                 : "border-destructive/25 bg-destructive/10 text-destructive",
@@ -237,9 +239,9 @@ export function WorkflowPreview({
           </span>
           <span className="text-xs text-muted-foreground">Preview only · nothing has started</span>
         </div>
-        <h2 className="mt-3 text-lg font-semibold text-foreground">
+        <SectionHeading as="h2" className="mt-3">
           {ready ? "Review the run before it starts" : "Fix these blockers before run"}
-        </h2>
+        </SectionHeading>
         {preview.purpose ? (
           <p className="mt-1 max-w-3xl text-sm leading-relaxed text-muted-foreground">
             {preview.purpose}

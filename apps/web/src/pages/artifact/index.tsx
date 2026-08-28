@@ -1632,14 +1632,14 @@ export function Artifact({ template = false }: { template?: boolean }) {
                     {!canPublish ? (
                       <div
                         data-testid="comment-suggestion-hint"
-                        className="border-b border-border-soft px-3 py-2 text-xs text-muted-foreground"
+                        className="px-3 py-2 text-xs text-muted-foreground"
                       >
                         You can comment on this document. Select any text to suggest a change.
                       </div>
                     ) : isLocked ? (
                       <div
                         data-testid="locked-suggestion-hint"
-                        className="border-b border-border-soft px-3 py-2 text-xs text-muted-foreground"
+                        className="px-3 py-2 text-xs text-muted-foreground"
                       >
                         Changes are locked. Suggest an edit as a comment, or unlock to publish.
                       </div>

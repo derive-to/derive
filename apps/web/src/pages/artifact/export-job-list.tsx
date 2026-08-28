@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query"
 import { api } from "@/api"
 import { Icon } from "@/components/icons"
+import { SectionTitle } from "@/components/shared/section-title"
 import { StatusPanel } from "@/components/shared/status-panel"
 import { Button } from "@/components/ui/button"
 import { useApiMutation } from "@/lib/use-api-mutation"
@@ -48,8 +49,8 @@ export function ExportJobList({ shortId, open }: { shortId: string; open: boolea
   if (!jobs.data?.jobs.length) return null
 
   return (
-    <div className="border-t border-border pt-4">
-      <div className="mb-2 text-sm font-medium">Recent exports</div>
+    <div className="flex flex-col gap-2">
+      <SectionTitle count={jobs.data.jobs.length}>Recent exports</SectionTitle>
       <div className="flex max-h-48 flex-col gap-2 overflow-y-auto">
         {jobs.data.jobs.map((job) => (
           <div

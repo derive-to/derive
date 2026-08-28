@@ -1,5 +1,7 @@
 import { useMemo } from "react"
 import type { Artifact } from "@/api"
+import { Eyebrow } from "@/components/shared/section-eyebrow"
+import { SectionHeading, SectionTitle } from "@/components/shared/section-title"
 import { cn } from "@/lib/utils"
 import { type LinkedBundleWorkflowNode, linkedBundleNodeNote } from "./linked-bundle-node-details"
 import { linkedBundleNodeStateDot } from "./linked-bundle-node-state"
@@ -146,10 +148,8 @@ export function LinkedBundleNowWorkspace({
       >
         <span className="flex items-start justify-between gap-3">
           <span className="min-w-0">
-            <span className="font-mono text-2xs uppercase tracking-[0.1em] text-muted-foreground">
-              {diagram.title}
-            </span>
-            <span className="mt-1 block text-sm font-semibold text-foreground">{node.label}</span>
+            <Eyebrow as="span">{diagram.title}</Eyebrow>
+            <span className="mt-1 block text-sm font-medium text-foreground">{node.label}</span>
           </span>
           <span className="shrink-0 text-2xs text-muted-foreground">Open in Advanced →</span>
         </span>
@@ -214,8 +214,10 @@ export function LinkedBundleNowWorkspace({
   return (
     <div className="grid gap-5" data-testid="bundle-now-view">
       <section className="rounded-xl border border-border bg-card p-4 sm:p-6">
-        <div className="font-mono text-2xs uppercase tracking-[0.12em] text-primary">Now</div>
-        <h2 className="mt-2 max-w-3xl text-lg font-semibold tracking-tight text-foreground sm:text-2xl">
+        <Eyebrow as="div" className="text-primary">
+          Now
+        </Eyebrow>
+        <h2 className="mt-2 max-w-3xl text-balance text-lg font-medium tracking-tight text-foreground sm:text-2xl">
           {linkedBundleNowHeadline(summary)}
         </h2>
         <p className="mt-2 hidden max-w-3xl text-sm leading-relaxed text-muted-foreground sm:block">
@@ -251,7 +253,7 @@ export function LinkedBundleNowWorkspace({
       {diagrams.length ? (
         <section data-testid="bundle-now-topology">
           <div className="mb-2">
-            <h2 className="text-sm font-semibold text-foreground">{topologyTitle}</h2>
+            <SectionHeading>{topologyTitle}</SectionHeading>
             <p className="mt-0.5 text-xs text-muted-foreground">
               A compact view of the authored topology. Open a relationship for the full canvas.
             </p>
@@ -267,13 +269,11 @@ export function LinkedBundleNowWorkspace({
                 >
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <div>
-                      <div className="font-mono text-2xs uppercase tracking-[0.12em] text-primary">
+                      <Eyebrow as="div" className="text-primary">
                         {diagram.type} · {diagram.nodes.length}{" "}
                         {diagram.type === "loop" ? "steps" : "nodes"}
-                      </div>
-                      <h3 className="mt-1 text-sm font-semibold text-foreground">
-                        {diagram.title}
-                      </h3>
+                      </Eyebrow>
+                      <SectionTitle className="mt-1">{diagram.title}</SectionTitle>
                     </div>
                     <span className="font-mono text-2xs text-muted-foreground">
                       {diagram.edges.length}{" "}
@@ -338,7 +338,7 @@ export function LinkedBundleNowWorkspace({
       {summary.needsHelp.length ? (
         <section data-testid="bundle-now-needs-help">
           <div className="mb-2">
-            <h2 className="text-sm font-semibold text-destructive">Needs you</h2>
+            <SectionHeading>Needs you</SectionHeading>
             <p className="mt-0.5 text-xs text-muted-foreground">
               Only explicit agent help requests appear here.
             </p>
@@ -352,7 +352,7 @@ export function LinkedBundleNowWorkspace({
       {moving.length ? (
         <section>
           <div className="mb-2">
-            <h2 className="text-sm font-semibold text-foreground">Current work</h2>
+            <SectionHeading>Current work</SectionHeading>
             <p className="mt-0.5 text-xs text-muted-foreground">
               Active, waiting, and blocked work—without the graph mechanics.
             </p>
@@ -366,7 +366,7 @@ export function LinkedBundleNowWorkspace({
       {summary.next.length ? (
         <section>
           <div className="mb-2">
-            <h2 className="text-sm font-semibold text-foreground">Likely next</h2>
+            <SectionHeading>Likely next</SectionHeading>
             <p className="mt-0.5 text-xs text-muted-foreground">
               Pending work directly downstream from what is current.
             </p>
@@ -380,7 +380,7 @@ export function LinkedBundleNowWorkspace({
       {loops.length ? (
         <section>
           <div className="mb-2">
-            <h2 className="text-sm font-semibold text-foreground">Improvement attempts</h2>
+            <SectionHeading>Improvement attempts</SectionHeading>
             <p className="mt-0.5 text-xs text-muted-foreground">
               Loops read as goals, current attempts, and stop conditions here.
             </p>
@@ -398,10 +398,8 @@ export function LinkedBundleNowWorkspace({
                 >
                   <span className="flex items-start justify-between gap-3">
                     <span>
-                      <span className="font-mono text-2xs uppercase tracking-[0.1em] text-muted-foreground">
-                        Improvement loop
-                      </span>
-                      <span className="mt-1 block text-sm font-semibold text-foreground">
+                      <Eyebrow as="span">Improvement loop</Eyebrow>
+                      <span className="mt-1 block text-sm font-medium text-foreground">
                         {loop.title}
                       </span>
                     </span>
@@ -420,20 +418,18 @@ export function LinkedBundleNowWorkspace({
                   </span>
                   <dl className="mt-3 grid gap-2 text-xs sm:grid-cols-3 xl:grid-cols-1 2xl:grid-cols-3">
                     <div>
-                      <dt className="font-mono text-2xs uppercase text-muted-foreground">Goal</dt>
+                      <Eyebrow as="dt">Goal</Eyebrow>
                       <dd className="mt-1 text-foreground">{loop.goal ?? "Not stated"}</dd>
                     </div>
                     <div>
-                      <dt className="font-mono text-2xs uppercase text-muted-foreground">
-                        Current attempt
-                      </dt>
+                      <Eyebrow as="dt">Current attempt</Eyebrow>
                       <dd className="mt-1 text-foreground">
                         {current.map((node) => node.label).join(", ") ||
                           (complete ? "Completed" : "Not stated")}
                       </dd>
                     </div>
                     <div>
-                      <dt className="font-mono text-2xs uppercase text-muted-foreground">Stop</dt>
+                      <Eyebrow as="dt">Stop</Eyebrow>
                       <dd className="mt-1 text-foreground">{loop.stop ?? "Not stated"}</dd>
                     </div>
                   </dl>

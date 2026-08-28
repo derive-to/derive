@@ -6,6 +6,7 @@ import { CardGrid } from "@/components/shared/card-grid"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { EmptyState } from "@/components/shared/empty-state"
 import { SearchField } from "@/components/shared/search-field"
+import { Eyebrow } from "@/components/shared/section-eyebrow"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { useApiMutation } from "@/lib/use-api-mutation"
@@ -38,7 +39,7 @@ export function LibraryDetail({
   })
   if (detail.isPending)
     return (
-      <div className="grid min-h-64 place-items-center border-y text-sm text-muted-foreground">
+      <div className="grid min-h-64 place-items-center text-sm text-muted-foreground" role="status">
         Opening library…
       </div>
     )
@@ -71,7 +72,7 @@ export function LibraryDetail({
   )
   return (
     <section className="flex flex-col gap-5" data-testid="template-library-detail">
-      <div className="flex flex-wrap items-start gap-3 border-b pb-5">
+      <div className="flex flex-wrap items-start gap-3">
         <Button size="sm" variant="ghost" onClick={onBack} data-testid="template-library-back">
           <Icon name="chevron-left" /> Libraries
         </Button>
@@ -81,9 +82,7 @@ export function LibraryDetail({
               <Icon name={scopeCopy[library.scope].icon} size={12} />{" "}
               {scopeCopy[library.scope].label}
             </Badge>
-            <span className="font-mono text-2xs uppercase tracking-wider text-muted-foreground">
-              {library.entry_count} starters · immutable versions
-            </span>
+            <Eyebrow>{library.entry_count} starters · immutable versions</Eyebrow>
           </div>
           <h2 className="mt-3 font-serif text-3xl font-medium tracking-tight text-foreground [overflow-wrap:anywhere]">
             {library.title}

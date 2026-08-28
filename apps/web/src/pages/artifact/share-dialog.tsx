@@ -14,7 +14,8 @@ import {
   type WorkspaceAccess,
 } from "@/api"
 import { Icon } from "@/components/icons"
-import { Eyebrow, SectionEyebrow } from "@/components/shared/section-eyebrow"
+import { Eyebrow } from "@/components/shared/section-eyebrow"
+import { SectionTitle } from "@/components/shared/section-title"
 import {
   accessIcon,
   accessSummary,
@@ -487,7 +488,7 @@ export function ShareButton({
               onPasswordSet: setPassword,
             }}
             workspaceChildren={
-              <div className="mt-3 flex items-center justify-between gap-3 border-t border-border-soft pt-3">
+              <div className="mt-3 flex items-center justify-between gap-3">
                 <div className="min-w-0">
                   <div className="text-sm text-foreground">Show in the workspace library</div>
                   <div className="text-xs text-muted-foreground">
@@ -505,7 +506,7 @@ export function ShareButton({
             }
             worldChildren={
               <>
-                <div className="mt-3 flex items-center justify-between gap-3 border-t border-border-soft pt-3">
+                <div className="mt-3 flex items-center justify-between gap-3">
                   <div className="min-w-0">
                     <div className="text-sm text-foreground">List in the public directory</div>
                     <div className="text-xs text-muted-foreground">
@@ -570,9 +571,9 @@ export function ShareButton({
               not per-person rows. */}
           {grants.length > 0 && (
             <div>
-              <SectionEyebrow count={grants.length > 1 ? grants.length : undefined}>
+              <SectionTitle count={grants.length > 1 ? grants.length : undefined}>
                 Reachable through collections
-              </SectionEyebrow>
+              </SectionTitle>
               <div className="-mx-2 mt-1 flex flex-col">
                 {grants.map((g) => (
                   <div

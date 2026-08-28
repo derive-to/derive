@@ -1,5 +1,6 @@
 import { useState } from "react"
 import { api } from "@/api"
+import { Eyebrow } from "@/components/shared/section-eyebrow"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { useApiMutation } from "@/lib/use-api-mutation"
@@ -81,9 +82,7 @@ export function LinkedBundleNodeNoteEditor({
       data-testid="bundle-note-editor"
     >
       <label className="grid gap-2">
-        <span className="font-mono text-2xs uppercase tracking-[0.08em] text-muted-foreground">
-          Note
-        </span>
+        <Eyebrow as="span">Note</Eyebrow>
         <Textarea
           data-testid="bundle-note-input"
           value={note}

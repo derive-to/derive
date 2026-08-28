@@ -2,6 +2,7 @@ import { useState } from "react"
 import { type Artifact, api } from "@/api"
 import { Icon } from "@/components/icons"
 import { fieldError } from "@/components/shared/field-error"
+import { SectionHeading } from "@/components/shared/section-title"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { parseRef } from "@/pages/artifact/parse-ref"
@@ -61,7 +62,7 @@ export function DeriveSource({
       <div className="flex min-w-0 flex-col gap-2">
         <div className="flex items-center gap-2">
           <Icon name="derive" className="text-muted-foreground" />
-          <h2 className="text-base font-medium text-foreground">Start from an artifact</h2>
+          <SectionHeading>Start from an artifact</SectionHeading>
         </div>
         <p className="max-w-2xl text-base/7 text-pretty text-muted-foreground sm:text-sm/6">
           Paste a Derive link, then tell the agent what you need. It will reuse the artifact’s
