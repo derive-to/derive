@@ -209,6 +209,11 @@ describe("export contracts", () => {
     })
     expect(email.html).toContain("$12.4M")
     expect(email.html).toContain("width:100%")
+    expect(email.html).toContain("margin:0 0 10px;table-layout:fixed")
+    expect(email.html).toContain('class="derive-kpi-cell"')
+    expect(email.html).toContain(
+      "@media(max-width:360px){.derive-kpi-cell{display:block!important;width:100%!important",
+    )
     expect(email.html).toContain("−$1.4M")
     expect(email.html).toContain("Enterprise &lt;script&gt;")
     expect(email.html).not.toContain("<script>")
