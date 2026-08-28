@@ -5,7 +5,7 @@ import { Count } from "@/components/shared/section-eyebrow"
 import { Button } from "@/components/ui/button"
 import { useKeyboardInset } from "@/lib/use-keyboard-inset"
 import { cn } from "@/lib/utils"
-import { ActivityStream } from "./activity-stream"
+import { ActivityStream, StreamSkeleton } from "./activity-stream"
 import { type RailTab, RailTabs } from "./artifact-chat"
 import { Composer } from "./comment-composer"
 import type { StreamItem } from "./lib/activity"
@@ -385,6 +385,7 @@ export function MobileComments({
             data-testid="activity-stream"
             className="flex min-h-0 flex-1 flex-col overflow-auto px-3 pb-[max(14px,env(safe-area-inset-bottom))]"
           >
+            {!ready && <StreamSkeleton />}
             {ready && (
               <ActivityStream
                 items={items}
