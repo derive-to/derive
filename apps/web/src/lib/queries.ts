@@ -571,6 +571,16 @@ export const poolCredentialsQuery = () =>
 /** The home's "Needs you" + "Recent activity", in one request so the sections paint
  *  once (the rail's lesson). Fresh on every visit — asks settle and work lands
  *  constantly — but the persisted copy paints a reload like a nav. */
+/** A reader's stored position in an activity stream. Read at the start of a visit; the
+ *  visit's own snapshot (use-seen-cursor) is what the marker is drawn from, so a refetch
+ *  here never moves a line the reader is looking at. */
+export const activitySeenQuery = (scope: string) =>
+  queryOptions({
+    queryKey: ["activity-seen", scope] as const,
+    queryFn: () => api.activitySeen(scope),
+    staleTime: 30_000,
+  })
+
 export const workspaceActivityQuery = () =>
   queryOptions({
     queryKey: ["workspace-activity"] as const,

@@ -128,7 +128,14 @@ export type ActivityRow =
   | CommentedRow
   | ResolvedRow
 
-export type ThreadItem = { type: "thread"; id: string; at: string; thread: Comment[] }
+export type ThreadItem = {
+  type: "thread"
+  id: string
+  at: string
+  thread: Comment[]
+  /** On the seen side of the marker: older than the reader's visit, or their own. */
+  seen: boolean
+}
 export type TurnItem = {
   type: "turn"
   id: string
@@ -142,6 +149,8 @@ export type TurnItem = {
   /** Never empty — a turn is made from its first row. */
   rows: [ActivityRow, ...ActivityRow[]]
   artifact?: ActivityArtifact
+  /** On the seen side of the marker: older than the reader\'s visit, or their own. */
+  seen: boolean
 }
 export type StreamItem =
   | { type: "section"; id: string; label: SectionLabel }
@@ -348,10 +357,19 @@ function mergeVersions(into: VersionRow, row: VersionRow): void {
  *  an agent's name is not that agent). The viewer's last visit is a boundary too: what
  *  happened since must start its own turn, or it folds into one that sits before the
  *  "New" marker and is never new. */
-function foldTurns(rows: ActivityRow[], lastSeen: number | null): TurnItem[] {
+function foldTurns(
+  rows: ActivityRow[],
+  lastSeen: number | null,
+  meId?: string,
+  me?: string,
+): TurnItem[] {
   const turns: TurnItem[] = []
   let cur: TurnItem | null = null
-  const seen = (iso: string) => lastSeen != null && ms(iso) <= lastSeen
+  // The reader's own rows are never new — they wrote them — so they sit with the seen
+  // side. Identity by id when the row carries one, else by name; an agent is never "me".
+  const own = (row: ActivityRow) =>
+    !row.agent && (row.byId != null ? row.byId === meId : !!row.by && row.by === me)
+  const seen = (row: ActivityRow) => own(row) || (lastSeen != null && ms(row.at) <= lastSeen)
   for (const row of rows) {
     const sameActor = (a: TurnItem, b: ActivityRow) =>
       a.byId && b.byId ? a.byId === b.byId : a.by === b.by && a.agent === b.agent
@@ -362,7 +380,7 @@ function foldTurns(rows: ActivityRow[], lastSeen: number | null): TurnItem[] {
       (row.by === null || sameActor(cur, row)) &&
       sameDoc(cur, row) &&
       dayKey(cur.at) === dayKey(row.at) &&
-      seen(cur.at) === seen(row.at)
+      cur.seen === seen(row)
     if (joins && cur) {
       const publish = row.kind === "version" ? cur.rows.find((r) => r.kind === "version") : null
       if (publish && row.kind === "version") mergeVersions(publish, row)
@@ -379,6 +397,7 @@ function foldTurns(rows: ActivityRow[], lastSeen: number | null): TurnItem[] {
         agent: row.agent,
         rows: [row],
         artifact: row.artifact,
+        seen: seen(row),
       }
       turns.push(cur)
     }
@@ -410,7 +429,17 @@ export function buildStream(input: StreamInput): StreamItem[] {
     : threads.flatMap((t) => {
         const root = t[0]
         return root
-          ? [{ type: "thread" as const, id: root.thread_id, at: root.created_at, thread: t }]
+          ? [
+              {
+                type: "thread" as const,
+                id: root.thread_id,
+                at: root.created_at,
+                thread: t,
+                seen:
+                  (root.author_id != null && root.author_id === input.meId) ||
+                  (input.lastSeen != null && ms(root.created_at) <= input.lastSeen),
+              },
+            ]
           : []
       })
 
@@ -422,7 +451,7 @@ export function buildStream(input: StreamInput): StreamItem[] {
   const items: (ThreadItem | TurnItem)[] = []
   let run: ActivityRow[] = []
   const flush = () => {
-    if (run.length) items.push(...foldTurns(run, input.lastSeen))
+    if (run.length) items.push(...foldTurns(run, input.lastSeen, input.meId, input.me))
     run = []
   }
   for (const m of merged) {
@@ -435,7 +464,7 @@ export function buildStream(input: StreamInput): StreamItem[] {
   // Newest first reads down from now: the same items, reversed, and the marker sits
   // after the last new item instead of before the first.
   if (input.order === "desc") items.reverse()
-  const isNew = (it: { at: string }) => ms(it.at) > (input.lastSeen ?? 0)
+  const isNew = (it: ThreadItem | TurnItem) => !it.seen
 
   // Sections + the unread marker (before the first item newer than the last visit —
   // or, newest first, before the first item that is not). A stream that all happened
@@ -462,11 +491,11 @@ export function buildStream(input: StreamInput): StreamItem[] {
   return out
 }
 
-/** How many cards and turns sit after the unread marker. */
+/** How many threads and turns sit on the new side of the marker (none before a first
+ *  visit, when there is no marker). */
 export function countUnread(items: StreamItem[]): number {
-  const i = items.findIndex((it) => it.type === "unread")
-  if (i < 0) return 0
-  return items.slice(i + 1).filter((it) => it.type === "thread" || it.type === "turn").length
+  if (!items.some((it) => it.type === "unread")) return 0
+  return items.filter((it) => (it.type === "thread" || it.type === "turn") && !it.seen).length
 }
 
 /** The one phrase a turn line leads with: a pending ask, else the publish, else the

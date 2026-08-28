@@ -4213,6 +4213,68 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/seen": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Where the signed-in user last left an activity stream. */
+        get: {
+            parameters: {
+                query: {
+                    scope: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The last-seen time, or null before the first visit. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            seen_at: string | null;
+                        };
+                    };
+                };
+            };
+        };
+        /** Move the signed-in user's position in an activity stream. */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description What is stored after the write: forward-only unless `manual`, so a slow write never rewinds a fresher one. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            seen_at: string | null;
+                        };
+                    };
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/workflows": {
         parameters: {
             query?: never;

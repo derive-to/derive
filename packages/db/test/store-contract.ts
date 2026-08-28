@@ -2218,6 +2218,30 @@ export function runStoreContract(
       expect((await store.notificationsPage(user, 2)).unread).toBe(0)
     })
 
+    it("activity seen: null before a visit, forward-only unless manual, one row per (user, scope)", async () => {
+      const user = `u_${uuid()}`
+      const scope = `ws:org_${uuid()}`
+      expect(await store.getActivitySeen(user, scope)).toBeNull()
+      expect(await store.setActivitySeen(user, scope, "2026-08-28T10:00:00.000Z")).toBe(
+        "2026-08-28T10:00:00.000Z",
+      )
+      // Forward: a later stamp replaces; an older one (a slow write racing a fresh one) is ignored.
+      expect(await store.setActivitySeen(user, scope, "2026-08-28T11:00:00.000Z")).toBe(
+        "2026-08-28T11:00:00.000Z",
+      )
+      expect(await store.setActivitySeen(user, scope, "2026-08-28T09:00:00.000Z")).toBe(
+        "2026-08-28T11:00:00.000Z",
+      )
+      expect(await store.getActivitySeen(user, scope)).toBe("2026-08-28T11:00:00.000Z")
+      // A manual rewind ("mark new from here") does move it back.
+      expect(
+        await store.setActivitySeen(user, scope, "2026-08-28T09:00:00.000Z", { manual: true }),
+      ).toBe("2026-08-28T09:00:00.000Z")
+      // Scopes and users are independent rows.
+      expect(await store.getActivitySeen(user, `artifact:${uuid()}`)).toBeNull()
+      expect(await store.getActivitySeen(`u_${uuid()}`, scope)).toBeNull()
+    })
+
     it("automationsWithExecutors joins each automation's agent liveness, one call; a deleted/missing agent ⇒ null", async () => {
       const org = `org_${uuid()}`
       const agent = await store.createAgent({

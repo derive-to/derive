@@ -1559,6 +1559,18 @@ export interface ReviewStore {
     orgId: string,
     opts: { since: string; limit: number },
   ): Promise<ReviewRoundRecord[]>
+  /** A reader's last-seen position in an activity stream — scope `ws:<org_id>` for the
+   *  workspace feed, `artifact:<short_id>` for a rail — as an ISO time, or null before their
+   *  first visit. */
+  getActivitySeen(userId: string, scope: string): Promise<string | null>
+  /** Advance the reader's position to `at`. Forward-only — an older `at` leaves the stored
+   *  value alone — unless `manual` (a "mark new from here" rewind). Returns what is stored. */
+  setActivitySeen(
+    userId: string,
+    scope: string,
+    at: string,
+    opts?: { manual?: boolean },
+  ): Promise<string>
   /** Settle a round (`sent_back`), stamping resolved_at + note. */
   /** Settle the pending round as sent back — the loop's one settling gesture.
    *  Returns null when the round is not pending (someone else settled it first). */

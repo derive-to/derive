@@ -47,12 +47,19 @@ test("a cold reload paints the activity stream once, complete and in order", asy
   await openArtifact(page, shortId)
   await page.waitForTimeout(800)
 
-  // A last visit a minute ago arms the marker and the arrivals logic (set at document
-  // start, so the reload's own pagehide stamp can't overwrite it).
-  await page.addInitScript(
-    (id) => localStorage.setItem(`derive.activity.seen.${id}`, String(Date.now() - 60_000)),
-    shortId,
-  )
+  // A last visit a minute ago arms the marker and the arrivals logic: the position is the
+  // account's, on the server, so it is set through the API (a manual write, so it lands
+  // even if a dwell already stamped "now"). The visit snapshot is per tab session, so the
+  // reload below reads the cursor fresh.
+  const seeded = await page.request.put("/v1/seen", {
+    data: {
+      scope: `artifact:${shortId}`,
+      at: new Date(Date.now() - 60_000).toISOString(),
+      manual: true,
+    },
+  })
+  expect(seeded.ok()).toBeTruthy()
+  await page.evaluate(() => sessionStorage.clear())
   // Production latency, staggered the way the gates stagger it.
   const delay = (ms: number) => async (route: Route) => {
     await new Promise((r) => setTimeout(r, ms))
