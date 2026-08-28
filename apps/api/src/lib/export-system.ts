@@ -54,6 +54,7 @@ export interface ExportOptions {
   recipient?: string
   note?: string
   attachPdf?: boolean
+  emailMode?: "auto" | "snapshot"
   title?: string
   /** Internal-only PR-preview guard. Never accepted from the public request schema. */
   qaCapture?: boolean
@@ -70,6 +71,9 @@ export const normalizeExportOptions = (input: ExportOptions): ExportOptions => (
     : {}),
   ...(input.note?.trim() ? { note: input.note.trim().slice(0, 2_000) } : {}),
   ...(input.attachPdf !== undefined ? { attachPdf: input.attachPdf } : {}),
+  ...(input.emailMode === "auto" || input.emailMode === "snapshot"
+    ? { emailMode: input.emailMode }
+    : {}),
   ...(input.title?.trim() ? { title: input.title.trim().slice(0, 240) } : {}),
   ...(input.qaCapture === true ? { qaCapture: true } : {}),
 })
@@ -123,6 +127,13 @@ export const csvFromJson = (value: unknown): string => {
   ].join("\r\n")
 }
 
+export interface ExportEmailMessage {
+  to: string
+  subject: string
+  html: string
+  text: string
+}
+
 export const buildExportEmail = (input: {
   to: string
   title: string
@@ -131,7 +142,7 @@ export const buildExportEmail = (input: {
   imageUrl: string
   alt: string
   version: number
-}) => {
+}): ExportEmailMessage => {
   // Keep untrusted artifact titles from becoming transport-level header input.
   // Cloudflare already flattens the subject at its adapter boundary, but the
   // self-hosted Resend adapter consumes this shared message directly.
@@ -164,7 +175,7 @@ const base64 = (bytes: Uint8Array): string => {
  * artifact capture, not an email transport: CID content is embedded as a data URL,
  * attachments are inventoried, and no row ever enters the notification outbox. */
 export const buildQaEmailCapture = (input: {
-  message: ReturnType<typeof buildExportEmail>
+  message: ExportEmailMessage
   cidImage?: Uint8Array
   attachments: Array<{ filename: string; contentType: string }>
 }): Uint8Array => {
@@ -181,7 +192,7 @@ export const buildQaEmailCapture = (input: {
             `<li><strong>${escapeHtml(item.filename)}</strong> · ${escapeHtml(item.contentType)}</li>`,
         )
         .join("")
-    : "<li>None (hosted image mode)</li>"
+    : "<li>None</li>"
   const capture = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Derive QA email capture</title></head><body style="margin:0;background:#e9e9e9;font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#181818"><section style="padding:16px 20px;background:#fff4cc;border-bottom:1px solid #e2cf7a"><strong>QA capture · no email was sent</strong><div style="margin-top:6px;font-size:13px">To: ${escapeHtml(input.message.to)} · Subject: ${escapeHtml(input.message.subject)}</div><details style="margin-top:8px"><summary>Plain-text alternative</summary><pre style="white-space:pre-wrap">${escapeHtml(input.message.text)}</pre></details><details><summary>Attachment manifest</summary><ul>${attachmentRows}</ul></details></section>${html}</body></html>`
   return new TextEncoder().encode(capture)
 }

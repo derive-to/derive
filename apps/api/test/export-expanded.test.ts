@@ -220,6 +220,74 @@ describe("expanded export and email dogfood contracts", () => {
     expect(html).not.toContain("derive-export.pdf")
   })
 
+  it("renders a declared email-layout as native HTML without taking a screenshot", async () => {
+    const { app, meta, ctx } = makeFixture("expanded-rich-html-email")
+    const layout = {
+      schema: "derive.email/v1",
+      preheader: "Pipeline pulse",
+      title: "Pipeline pulse — native HTML",
+      subtitle: "Charts remain readable when images are blocked.",
+      blocks: [
+        {
+          type: "kpis",
+          items: [
+            { label: "Qualified pipeline", value: "$8.4M", delta: "+14%" },
+            { label: "Coverage", value: "3.1×" },
+          ],
+        },
+        {
+          type: "bars",
+          title: "Pipeline by segment",
+          items: [
+            { label: "Enterprise", value: 84, display: "$4.2M" },
+            { label: "Mid-market", value: 56, display: "$2.8M" },
+          ],
+        },
+      ],
+    }
+    const artifact = await (
+      await publishAs(
+        app,
+        `<h1>Pipeline pulse</h1><script type="application/derive-facts" data-fact="email-layout">${JSON.stringify(layout)}</script>`,
+        { title: "Pipeline pulse", workspace_access: "none" },
+        as(owner.email),
+      )
+    ).json()
+    const accepted = await postExport(app, artifact.short_id, {
+      kind: "email",
+      recipient: "qa@example.test",
+      emailMode: "auto",
+    })
+    expect(accepted.status).toBe(202)
+    const job = await accepted.json()
+    let screenshots = 0
+    expect(
+      await runExportTick({
+        meta,
+        blobs: ctx.blobs,
+        renderer: {
+          screenshot: async () => {
+            screenshots += 1
+            return new Uint8Array([1, 2, 3])
+          },
+        },
+        baseUrl: "http://derive.test",
+        secret: "expanded-rich-html-secret",
+      }),
+    ).toBe(1)
+    expect(screenshots).toBe(0)
+    const capture = await app.request(`/v1/exports/${job.id}/preview`, {
+      headers: as(owner.email),
+    })
+    expect(capture.status).toBe(200)
+    const html = await capture.text()
+    expect(html).toContain("Pipeline pulse — native HTML")
+    expect(html).toContain("$8.4M")
+    expect(html).toContain("Enterprise")
+    expect(html).not.toContain("data:image/png")
+    expect(html).toContain("<li>None</li>")
+  })
+
   it("C18 replays CID and hosted delivery independently without duplicate jobs", async () => {
     const { app } = makeFixture("expanded-email-replay")
     const artifact = await (

@@ -18,6 +18,7 @@ import {
   markFinalDeckSlideForPrint,
   prepareDeckPrint,
 } from "../src/lib/deck-print"
+import { buildRichExportEmail, parseEmailLayout } from "../src/lib/email-layout"
 import {
   buildExportEmail,
   buildQaEmailCapture,
@@ -171,6 +172,60 @@ describe("export contracts", () => {
       ]),
     )
     expect(new TextDecoder().decode(pptx["docProps/core.xml"])).toContain("artifact v3")
+  })
+
+  it("renders declared KPIs and charts as escaped, image-independent email HTML", () => {
+    const layout = parseEmailLayout({
+      schema: "derive.email/v1",
+      preheader: "Executive pulse",
+      title: "Revenue & pipeline",
+      subtitle: "Actual email HTML — no canvas or JavaScript",
+      blocks: [
+        {
+          type: "kpis",
+          items: [
+            { label: "ARR", value: "$12.4M", delta: "+18% YoY" },
+            { label: "Coverage", value: "3.2×" },
+          ],
+        },
+        {
+          type: "bars",
+          title: "Pipeline by segment",
+          items: [
+            { label: "Enterprise <script>", value: 72, display: "$7.2M" },
+            { label: "Mid-market", value: -14, display: "−$1.4M" },
+          ],
+        },
+      ],
+    })
+    expect(layout).not.toBeNull()
+    if (!layout) throw new Error("expected a parsed email layout")
+    const email = buildRichExportEmail({
+      to: "qa@example.test",
+      subjectTitle: "Quarterly pulse",
+      openUrl: "https://derive.test/artifacts/pulse/v/4",
+      version: 4,
+      layout,
+    })
+    expect(email.html).toContain("$12.4M")
+    expect(email.html).toContain("width:100%")
+    expect(email.html).toContain("−$1.4M")
+    expect(email.html).toContain("Enterprise &lt;script&gt;")
+    expect(email.html).not.toContain("<script>")
+    expect(email.html).not.toContain("<canvas")
+    expect(email.html).not.toContain("<img")
+    expect(email.text).toContain("Pipeline by segment")
+  })
+
+  it("rejects malformed declared layouts instead of silently changing representation", () => {
+    expect(() =>
+      parseEmailLayout({
+        schema: "derive.email/v1",
+        title: "Bad layout",
+        blocks: [{ type: "button", label: "Unsafe", url: "javascript:alert(1)" }],
+      }),
+    ).toThrow(/must use https/)
+    expect(parseEmailLayout({ schema: "some-other-contract" })).toBeNull()
   })
 })
 

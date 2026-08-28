@@ -63,6 +63,7 @@ export const exportRoutes = (ctx: AppContext) => {
     recipient: z.email().max(320).optional(),
     note: z.string().max(2_000).optional(),
     attachPdf: z.boolean().optional(),
+    emailMode: z.enum(["auto", "snapshot"]).optional(),
   })
 
   app.openapi(

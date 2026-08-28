@@ -1,4 +1,5 @@
 import { artifactUrl, type ExportJobRecord } from "@derive/core"
+import { buildRichExportEmail, parseEmailLayout } from "./lib/email-layout"
 import {
   buildExportEmail,
   buildQaEmailCapture,
@@ -168,6 +169,75 @@ const processJob = async (deps: RenderTickDeps, job: ExportJobRecord): Promise<v
       "application/vnd.openxmlformats-officedocument.presentationml.presentation",
     )
     return
+  }
+
+  if (job.kind === "email" && options.emailMode !== "snapshot") {
+    const row = (await deps.meta.getVersionData(artifact.id, job.version_n, "email-layout"))[0]
+    if (row) {
+      let declared: unknown
+      try {
+        declared = JSON.parse(row.json) as unknown
+      } catch {
+        throw new Error("declared email-layout fact is not valid JSON")
+      }
+      const layout = parseEmailLayout(declared)
+      if (!layout) throw new Error("declared email-layout fact must use derive.email/v1")
+      if (!options.recipient) throw new Error("email recipient is required")
+      const attachments: Array<{
+        filename: string
+        contentType: string
+        blobKey: string
+      }> = []
+      let pdfLinked = false
+      if (options.attachPdf) {
+        if (!deps.renderer.pdf) throw new Error("PDF rendering is not supported by this renderer")
+        const pdf = await deps.renderer.pdf(url, {
+          timeoutMs: RENDER_TIMEOUT_MS,
+          deck: version.content_type === "text/x-derive-deck",
+        })
+        const pdfKey = await deps.blobs.put(pdf)
+        if (pdf.byteLength <= EXPORT_LIMITS.maxEmailPdfAttachmentBytes)
+          attachments.push({
+            filename: "derive-export.pdf",
+            contentType: "application/pdf",
+            blobKey: pdfKey,
+          })
+        else pdfLinked = true
+      }
+      const msg = buildRichExportEmail({
+        to: options.recipient,
+        subjectTitle: options.title ?? artifact.title ?? artifact.short_id,
+        note: [
+          options.note,
+          pdfLinked
+            ? "The PDF exceeded the safe email attachment limit; open the pinned artifact in Derive."
+            : undefined,
+        ]
+          .filter((value): value is string => !!value)
+          .join("\n\n"),
+        openUrl: `${artifactUrl(deps.baseUrl, artifact)}/v/${job.version_n}`,
+        version: job.version_n,
+        layout,
+      })
+      if ((await deps.meta.getExportJob(job.id))?.status === "cancelled") return
+      if (options.qaCapture) {
+        const capture = buildQaEmailCapture({
+          message: msg,
+          attachments: attachments.map(({ filename, contentType }) => ({ filename, contentType })),
+        })
+        await output(deps, job, capture, "text/html")
+        return
+      }
+      await enqueueCoalescedChannelDelivery(
+        deps.meta,
+        `wd_export_${job.id}`,
+        "email",
+        "artifact.export",
+        { ...msg, attachments },
+      )
+      await output(deps, job, new TextEncoder().encode(msg.html), "text/html")
+      return
+    }
   }
 
   const png = await chartPng(deps, url, options)

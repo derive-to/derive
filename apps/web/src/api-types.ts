@@ -2024,6 +2024,8 @@ export interface paths {
                         recipient?: string;
                         note?: string;
                         attachPdf?: boolean;
+                        /** @enum {string} */
+                        emailMode?: "auto" | "snapshot";
                     };
                 };
             };
