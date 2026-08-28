@@ -3261,10 +3261,19 @@ interface ElReg {
         continue
       }
       const children = sourceChildren(regionEl)
+      const directNodes = Array.from(regionEl.childNodes)
+      const firstOwnedNode = directNodes.findIndex(
+        (child) => child instanceof HTMLElement && children.includes(child),
+      )
+      const unsafeComment = directNodes.some(
+        (child, index) =>
+          child.nodeType === Node.COMMENT_NODE && (firstOwnedNode < 0 || index > firstOwnedNode),
+      )
       if (
         Array.from(regionEl.childNodes).some(
           (child) => child.nodeType === Node.TEXT_NODE && !!child.nodeValue?.trim(),
         ) ||
+        unsafeComment ||
         children.some(
           (child) =>
             !child.hasAttribute(structureAttribute(prefix, "node")) ||
@@ -3476,9 +3485,18 @@ interface ElReg {
     const sizeAttribute = structureAttribute(selected.prefix, "size")
     const previous = selected.el.getAttribute(sizeAttribute)
     checkpointAttribute(selected.el, sizeAttribute)
+    // An authored width transition reports the OLD geometry for its first frame,
+    // which would make a valid explicit preset look constrained and roll it back.
+    // Suppress transitions only for this synchronous measurement, then restore the
+    // exact authored style attribute before returning to the page.
+    const authoredStyle = selected.el.getAttribute("style")
+    selected.el.style.setProperty("transition", "none", "important")
+    void selected.el.offsetWidth
     if (size === null) selected.el.removeAttribute(sizeAttribute)
     else selected.el.setAttribute(sizeAttribute, size)
     const after = selected.el.getBoundingClientRect()
+    if (authoredStyle === null) selected.el.removeAttribute("style")
+    else selected.el.setAttribute("style", authoredStyle)
     const regionStyle = getComputedStyle(region.el)
     const contentWidth =
       region.el.clientWidth -
