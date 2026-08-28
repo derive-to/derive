@@ -27,7 +27,7 @@ const NEEDS_CAP = 5
 /**
  * The Activity page's two sections — the workspace's "Needs you" and its "Recent
  * activity" — from one request (lib/queries.ts workspaceActivityQuery). Its own place,
- * beside Notifications: the Library stays the library (the grid is what that page is),
+ * beside Notifications: the Artifacts page stays the document grid,
  * the bell stays what was addressed to you, and this is what is happening.
  *
  * Needs you: the review rounds pending FOR this person across the workspace, and the open

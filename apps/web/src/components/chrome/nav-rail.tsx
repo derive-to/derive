@@ -397,8 +397,8 @@ export function NavRail() {
   const brandprintIds = useBrandprintCollectionIds()
   const visibleCollections = collections.filter((col) => !brandprintIds.has(col.id))
 
-  // Only starred collections reach the rail; the rest live in the library's Collections
-  // view. Every collection used to be listed here, which grew unbounded.
+  // Only starred collections reach the rail; the rest live in the Artifacts page's
+  // Collections view. Every collection used to be listed here, which grew unbounded.
   //
   const starredCollections = visibleCollections.filter((col) => col.starred)
 
@@ -417,7 +417,7 @@ export function NavRail() {
             <SidebarMenu>
               <FilterItem
                 icon="all"
-                label="Library"
+                label="Artifacts"
                 count={summary?.total}
                 search={{}}
                 active={isAll}

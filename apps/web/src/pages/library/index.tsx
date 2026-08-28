@@ -100,8 +100,8 @@ function LibraryBody({ view }: { view: LibraryView }) {
   // one IS the `collection` filter, so the switch would be offering you the place you
   // are already standing.
   const showCollections = view === "all" && search.view === "collections" && !search.collection
-  // Archived is a lifecycle shelf within the library, not a separate destination. It keeps
-  // the library header and controls while its route preserves deep links and loader caching.
+  // Archived is a lifecycle shelf within Artifacts, not a separate destination. It keeps
+  // the Artifacts header and controls while its route preserves deep links and loader caching.
   const onLibrarySurface = view === "all" || view === "archived"
   // Brandprint-pointed collections take artifacts through Settings, not the shelves.
   const brandprintIds = useBrandprintCollectionIds()
@@ -321,7 +321,7 @@ function LibraryBody({ view }: { view: LibraryView }) {
   }
   const { follows, unfollow } = useFollows()
 
-  const collectionAncestors = [{ label: "Library" }]
+  const collectionAncestors = [{ label: "Artifacts" }]
 
   const collectionTitle =
     activeCollection?.title ?? feed.data?.pages?.[0]?.collection?.title ?? "Collection"
@@ -349,9 +349,14 @@ function LibraryBody({ view }: { view: LibraryView }) {
                 : filter.kind === "mine"
                   ? "Created by me"
                   : collectionTitle
-  // The tab names the view — a collection, Favorites, Created by me… —
-  // while the unfiltered home stays plain "Derive".
-  useDocumentTitle(filter.kind === "all" ? null : heading)
+  // The browser title follows the visible place. Collections is a view of Artifacts;
+  // named feeds and open collections keep their own more specific title.
+  const documentTitle = showCollections
+    ? "Collections"
+    : filter.kind === "all"
+      ? "Artifacts"
+      : heading
+  useDocumentTitle(documentTitle)
   // Only the counts the server can state authoritatively (preloaded summary / the
   // collection's own count) get a number; the follow/shared/feedback feeds show none
   // rather than a misleading "loaded-so-far" count that grows as you scroll.
@@ -466,7 +471,7 @@ function LibraryBody({ view }: { view: LibraryView }) {
           <div className="flex min-h-10 flex-wrap items-center gap-1.5">
             <h1 className="flex min-w-0 items-baseline gap-2">
               <span className="truncate font-serif text-lg font-semibold tracking-tight text-foreground">
-                {onLibrarySurface ? "Library" : heading}
+                {onLibrarySurface ? "Artifacts" : heading}
               </span>
               {identityCount !== undefined && (
                 <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
@@ -506,8 +511,8 @@ function LibraryBody({ view }: { view: LibraryView }) {
               showPublish && <NewArtifactButton />
             )}
           </div>
-          {/* Artifacts and Collections are views of the library. The filter menu narrows
-              the artifact view, including its archived shelf; named activity feeds remain
+          {/* All and Collections are views of Artifacts. The filter menu narrows
+              All, including its archived shelf; named activity feeds remain
               separate routes and therefore do not render these controls. */}
           {onLibrarySurface && !search.collection ? (
             <div className="mb-5 flex items-center gap-4 border-b border-border-soft">
