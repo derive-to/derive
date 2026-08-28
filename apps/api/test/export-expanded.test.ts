@@ -1,3 +1,4 @@
+import { INTERNAL_DELIVERY } from "@derive/core"
 import { unzipSync } from "fflate"
 import { describe, expect, it } from "vitest"
 import { runExportTick } from "../src/exports"
@@ -286,6 +287,73 @@ describe("expanded export and email dogfood contracts", () => {
     expect(html).toContain("Enterprise")
     expect(html).not.toContain("data:image/png")
     expect(html).toContain("<li>None</li>")
+  })
+
+  it("renders a deck email snapshot from the first native deck image and sends PNG bytes", async () => {
+    const { app, meta, ctx } = makeAuthedApp("expanded-deck-email-snapshot", [owner], undefined, {
+      deps: { renderExports: true },
+    })
+    const deck =
+      '<!doctype html><html><head><meta name="viewport" content="width=device-width"></head><body>' +
+      '<section class="slide" data-derive-slide="0"><h1>First slide</h1></section>' +
+      '<section class="slide" data-derive-slide="1"><h1>Second slide</h1></section>' +
+      '<script>parent.postMessage({source:"derive-deck",type:"state",i:0,total:2},"*")</script>' +
+      "</body></html>"
+    const artifact = await (
+      await publishAs(
+        app,
+        deck,
+        { title: "Deck snapshot", workspace_access: "none" },
+        as(owner.email),
+      )
+    ).json()
+    const accepted = await postExport(app, artifact.short_id, {
+      kind: "email",
+      recipient: "qa@example.test",
+      emailMode: "auto",
+    })
+    expect(accepted.status).toBe(202)
+    const job = await accepted.json()
+    let screenshots = 0
+    let deckCalls = 0
+    const deckPng = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x01])
+    expect(
+      await runExportTick({
+        meta,
+        blobs: ctx.blobs,
+        renderer: {
+          screenshot: async () => {
+            screenshots += 1
+            throw new Error("generic screenshot must not render a deck email snapshot")
+          },
+          deckImages: async (url, timeoutMs) => {
+            deckCalls += 1
+            expect(url).toContain("/raw/")
+            expect(timeoutMs).toBe(20_000)
+            return [deckPng, new Uint8Array([2])]
+          },
+        },
+        baseUrl: "http://derive.test",
+        secret: "expanded-deck-email-secret",
+      }),
+    ).toBe(1)
+    expect(deckCalls).toBe(1)
+    expect(screenshots).toBe(0)
+
+    const finished = await meta.getExportJob(job.id)
+    expect(finished?.status).toBe("ready")
+    expect(finished?.output_type).toBe("image/png")
+    expect(finished?.output_key).toBeTruthy()
+    expect(await ctx.blobs.get(finished?.output_key as string)).toEqual(deckPng)
+
+    const [delivery] = await meta.recentDeliveries(INTERNAL_DELIVERY, 10)
+    expect(delivery?.id).toBe(`wd_export_${job.id}`)
+    expect(JSON.parse(delivery?.payload ?? "{}")).toMatchObject({
+      to: "qa@example.test",
+      attachments: [
+        { filename: "derive-export.png", contentType: "image/png", contentId: "derive-export" },
+      ],
+    })
   })
 
   it("C18 replays CID and hosted delivery independently without duplicate jobs", async () => {

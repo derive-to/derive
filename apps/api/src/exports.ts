@@ -82,7 +82,15 @@ const chartPng = async (
   deps: RenderTickDeps,
   url: string,
   options: ExportOptions,
+  deckSnapshot = false,
 ): Promise<Uint8Array> => {
+  if (deckSnapshot) {
+    if (!deps.renderer.deckImages)
+      throw new Error("deck rendering is not supported by this renderer")
+    const first = (await deps.renderer.deckImages(url, RENDER_TIMEOUT_MS))[0]
+    if (!first) throw new Error("deck renderer returned no slides")
+    return first
+  }
   const selector = options.region ?? "[data-derive-export-region]"
   try {
     return await deps.renderer.screenshot(url, {
@@ -240,7 +248,15 @@ const processJob = async (deps: RenderTickDeps, job: ExportJobRecord): Promise<v
     }
   }
 
-  const png = await chartPng(deps, url, options)
+  // A deck's first slide is its email snapshot. The native deck renderer preserves the slide's
+  // aspect ratio; the generic chart viewport would crop it to 1200×630. Rich email-layout jobs
+  // return above, so this only affects the snapshot fallback.
+  const png = await chartPng(
+    deps,
+    url,
+    options,
+    job.kind === "email" && version.content_type === "text/x-derive-deck",
+  )
   if (job.kind === "chart_png") {
     await output(deps, job, png, "image/png", !!options.publicImage)
     return

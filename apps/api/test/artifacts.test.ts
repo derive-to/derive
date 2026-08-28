@@ -121,6 +121,7 @@ describe("version-pinned export requests", () => {
         blobs: captureCtx.blobs,
         renderer: {
           screenshot: async () => new Uint8Array([1, 2, 3]),
+          deckImages: async () => [new Uint8Array([1, 2, 3])],
           pdf: async (_url, options) => {
             deckPdf = options.deck === true
             return new TextEncoder().encode("%PDF-1.7 deck fixture")
