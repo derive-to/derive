@@ -478,6 +478,7 @@ describe("workflow run: explicit local-agent handoff", () => {
               status: "succeeded",
               selectedRoutes: ["publish"],
               routeBasis: "The reviewer approved the draft.",
+              error: null,
             },
           ],
         },
@@ -505,6 +506,95 @@ describe("workflow run: explicit local-agent handoff", () => {
       initiated_by: editor.id,
       request_id: null,
       assigned_agent_id: null,
+    })
+  })
+
+  it("returns the recorded reason a failed step stopped", async () => {
+    const { app, meta } = makeAuthedApp("workflow-failed-run", [owner, editor], "editor")
+    const published = await (
+      await publishAs(app, workflowHtml(), { title: "Workflow" }, as(owner.email))
+    ).json()
+    const startRes = await app.request(
+      `/v1/artifacts/${published.short_id}/workflow-run`,
+      jsonAs(as(editor.email), { diagramId: "brief", delivery: "copy" }),
+    )
+    const { runId } = (await startRes.json()) as { runId: string }
+    const artifact = await meta.getByShortId(published.short_id)
+    const run = await meta.getWorkflowRun(runId, artifact?.org_id ?? "")
+    expect(run).not.toBeNull()
+    await meta.transitionWorkflowRun(
+      runId,
+      artifact?.org_id ?? "",
+      { status: "queued", stateRevision: 0 },
+      {
+        status: "running",
+        at: "2026-08-26T18:00:00.000Z",
+        actualExecution: "local",
+        executorId: editor.id,
+      },
+    )
+    const attempt = await meta.createWorkflowStepAttempt(artifact?.org_id ?? "", {
+      id: "wfsa_failed_draft",
+      workflow_run_id: runId,
+      node_id: "draft",
+      attempt: 1,
+      kind: "context",
+      context_id: "ctx_brief_writer",
+      context_manifest_artifact_id: artifact?.id ?? "",
+      context_version: 1,
+      context_blob_key: run?.workflow_blob_key ?? "",
+      context_content_type: run?.workflow_content_type ?? "text/html",
+    })
+    const running = await meta.transitionWorkflowStepAttempt(
+      attempt.id,
+      runId,
+      artifact?.org_id ?? "",
+      { status: "queued", stateRevision: 0 },
+      { status: "running", at: "2026-08-26T18:00:01.000Z" },
+    )
+    expect(running).not.toBeNull()
+    await meta.transitionWorkflowStepAttempt(
+      attempt.id,
+      runId,
+      artifact?.org_id ?? "",
+      { status: "running", stateRevision: 1 },
+      {
+        status: "failed",
+        at: "2026-08-26T18:00:02.000Z",
+        error: "The source repository was unavailable.",
+      },
+    )
+    await meta.transitionWorkflowRun(
+      runId,
+      artifact?.org_id ?? "",
+      { status: "running", stateRevision: 1 },
+      {
+        status: "failed",
+        at: "2026-08-26T18:00:02.000Z",
+        actualExecution: "local",
+        executorId: editor.id,
+      },
+    )
+
+    const historyRes = await app.request(
+      `/v1/artifacts/${published.short_id}/workflow-runs?diagram=brief`,
+      { headers: as(editor.email) },
+    )
+    expect(historyRes.status).toBe(200)
+    expect(await historyRes.json()).toMatchObject({
+      runs: [
+        {
+          id: runId,
+          status: "failed",
+          attempts: [
+            {
+              nodeId: "draft",
+              status: "failed",
+              error: "The source repository was unavailable.",
+            },
+          ],
+        },
+      ],
     })
   })
 

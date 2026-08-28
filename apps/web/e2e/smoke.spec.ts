@@ -130,8 +130,10 @@ test("starting a workflow creates a visible, version-pinned run", async ({ owner
 
   const runs = owner.getByTestId("workflow-runs")
   await expect(runs.getByText("Queued", { exact: true })).toBeVisible()
-  await expect(runs.getByText("v1 · local copy", { exact: false })).toBeVisible()
-  await expect(runs.getByText("Waiting for an agent to claim this run.")).toBeVisible()
+  await expect(runs.getByText("Update internal docs", { exact: true })).toBeVisible()
+  await expect(runs.getByText("Definition v1", { exact: true })).toBeVisible()
+  await expect(runs.getByText("Local copy", { exact: true })).toBeVisible()
+  await expect(runs.getByText("Waiting for an Agent to claim this run.")).toBeVisible()
 })
 
 test("a cached screenshot still becomes a visible library thumbnail", async ({ owner }) => {

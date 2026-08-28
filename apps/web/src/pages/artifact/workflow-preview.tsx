@@ -186,7 +186,9 @@ const DiagramPreview = ({
       <RunConsiderations diagram={diagram} />
     </div>
     <ScenarioChecks scenarios={diagram.scenarios} />
-    {showRuns ? <WorkflowRunHistory shortId={shortId} diagramId={diagram.id} /> : null}
+    {showRuns ? (
+      <WorkflowRunHistory shortId={shortId} diagramId={diagram.id} diagramTitle={diagram.title} />
+    ) : null}
   </article>
 )
 

@@ -7,6 +7,7 @@ import { AdminNote } from "@/components/shared/admin-note"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { ListRow } from "@/components/shared/list-row"
 import { LoadError } from "@/components/shared/load-error"
+import { RunReceipt } from "@/components/shared/run-receipt"
 import { Eyebrow } from "@/components/shared/section-eyebrow"
 import { SectionHeading } from "@/components/shared/section-title"
 import { SettingsEmpty } from "@/components/shared/settings-empty"
@@ -24,11 +25,12 @@ import { AutomationForm } from "./automation-form"
 import {
   runExecutionReceipt,
   runOutcome,
-  runStatusLabel,
+  runOutcomeLabel,
   runWrites,
   targetSummary,
   triggerLabel,
 } from "./automation-format"
+import { presentAutomationRun } from "./run-presentation"
 
 export function AutomatedWorkflows() {
   const qc = useQueryClient()
@@ -110,7 +112,7 @@ export function AutomatedWorkflows() {
       )}
 
       {/* The runs endpoint is Admin-gated: don't issue a query that can only 403. */}
-      {isAdmin && <Activity />}
+      {isAdmin && automations ? <RecentRuns automations={automations} /> : null}
     </section>
   )
 }
@@ -235,7 +237,7 @@ function AutomationRow({
             open={confirming}
             onOpenChange={setConfirming}
             title="Remove this workflow?"
-            description="Its queued runs are cancelled. Past runs stay in the activity."
+            description="Its queued runs are cancelled. Past runs remain visible."
             confirmLabel="Remove"
             onConfirm={() => remove.mutate()}
           />
@@ -245,51 +247,79 @@ function AutomationRow({
   )
 }
 
-function Activity() {
-  const { data: runs, isPending, isError } = useQuery(runsQuery())
+function RecentRuns({ automations }: { automations: Automation[] }) {
+  const {
+    data: runs,
+    isPending,
+    isError,
+  } = useQuery({
+    ...runsQuery(),
+    refetchInterval: (query) =>
+      query.state.data?.some((run) => run.status === "queued" || run.status === "running")
+        ? 5000
+        : false,
+  })
   if (isPending) return null
   if (isError)
-    return <p className="mt-6 text-sm text-muted-foreground">Couldn't load recent activity.</p>
+    return <p className="mt-6 text-sm text-muted-foreground">Couldn't load recent runs.</p>
   if (!runs || runs.length === 0) return null
   return (
     <div className="mt-6">
       <Eyebrow as="div" className="mb-1">
-        Recent activity
+        Recent runs
       </Eyebrow>
-      <ul className="flex flex-col">
-        {runs.slice(0, 12).map((r) => (
-          <li
-            key={r.id}
-            data-testid={`run-row-${r.id}`}
-            className="flex flex-col gap-1 border-b py-3 text-sm last:border-0"
-          >
-            <div className="flex items-center gap-3">
-              <RunStatus status={r.status} />
-              <span className="min-w-0 truncate text-muted-foreground">{r.reason}</span>
-              {runOutcome(r.meta) && <Badge variant="outline">{runOutcome(r.meta)}</Badge>}
-              <span className="ml-auto font-mono text-2xs text-muted-foreground">
-                {ago(r.created_at)}
-              </span>
-            </div>
-            <RunWrites meta={r.meta} />
-            <RunExecution meta={r.meta} />
-            <RunTimeline timeline={r.timeline} />
-          </li>
-        ))}
-      </ul>
+      <div className="grid gap-2">
+        {runs.slice(0, 12).map((run, index) => {
+          const automation = automations.find((item) => item.id === run.automation_id)
+          const presentation = presentAutomationRun(run, automation)
+          const writes = runWrites(run.meta)
+          const receipt = runExecutionReceipt(run.meta)
+          const timeline = run.timeline
+          const hasDetails = Boolean(
+            writes.length ||
+              runOutcome(run.meta) ||
+              receipt?.model ||
+              receipt?.actions ||
+              timeline?.retries ||
+              timeline?.waiting_until ||
+              timeline?.last_error,
+          )
+          return (
+            <RunReceipt
+              key={run.id}
+              id={run.id}
+              status={run.status}
+              title={presentation.title}
+              summary={presentation.summary}
+              facts={presentation.facts}
+              createdAt={run.created_at}
+              defaultOpen={index === 0 && hasDetails}
+              testId={`run-row-${run.id}`}
+            >
+              {hasDetails ? (
+                <div className="grid gap-2">
+                  <RunOutcome meta={run.meta} />
+                  <RunWrites meta={run.meta} />
+                  <RunExecution meta={run.meta} />
+                  <RunTimeline timeline={run.timeline} />
+                </div>
+              ) : undefined}
+            </RunReceipt>
+          )
+        })}
+      </div>
     </div>
   )
 }
 
 function RunExecution({ meta }: { meta: string | null }) {
   const receipt = runExecutionReceipt(meta)
-  if (!receipt) return null
+  if (!receipt || (!receipt.model && receipt.actions === 0)) return null
   return (
-    <div className="flex flex-wrap items-center gap-2 pl-1 text-2xs text-muted-foreground">
-      <span>{receipt.location === "hosted" ? "Hosted" : "Local"}</span>
-      <span>·</span>
-      <span>{receipt.provider === "codex" ? "Codex" : "Claude Code"}</span>
-      {receipt.actions > 0 && <span>· {receipt.actions} actions recorded</span>}
+    <div className="flex flex-wrap items-center gap-2 text-2xs text-muted-foreground">
+      <span className="font-medium text-foreground">Execution</span>
+      {receipt.model ? <span>{receipt.model}</span> : null}
+      {receipt.actions > 0 ? <span>{receipt.actions} actions recorded</span> : null}
     </div>
   )
 }
@@ -301,7 +331,8 @@ function RunTimeline({ timeline }: { timeline?: Run["timeline"] }) {
   const waiting = waiting_until && Date.parse(waiting_until) > Date.now() ? waiting_until : null
   if (retries === 0 && !waiting && !last_error) return null
   return (
-    <div className="flex flex-wrap items-center gap-2 pl-1 text-2xs text-muted-foreground">
+    <div className="flex flex-wrap items-center gap-2 text-2xs text-muted-foreground">
+      <span className="font-medium text-foreground">Attempts</span>
       {retries > 0 && (
         <Badge variant="outline">{retries === 1 ? "1 retry" : `${retries} retries`}</Badge>
       )}
@@ -315,7 +346,8 @@ function RunWrites({ meta }: { meta: string | null }) {
   const writes = runWrites(meta)
   if (writes.length === 0) return null
   return (
-    <div className="flex flex-wrap items-center gap-2 pl-1 text-2xs text-muted-foreground">
+    <div className="flex flex-wrap items-center gap-2 text-2xs text-muted-foreground">
+      <span className="font-medium text-foreground">Artifacts</span>
       {writes.map((w) => (
         <Link
           key={w.shortId}
@@ -330,19 +362,14 @@ function RunWrites({ meta }: { meta: string | null }) {
   )
 }
 
-function RunStatus({ status }: { status: Run["status"] }) {
-  const tone =
-    status === "succeeded"
-      ? "ok"
-      : status === "failed"
-        ? "error"
-        : status === "running"
-          ? "busy"
-          : "muted"
+function RunOutcome({ meta }: { meta: string | null }) {
+  const outcome = runOutcome(meta)
+  if (!outcome) return null
   return (
-    <StatusBadge tone={tone} shape="pill">
-      {runStatusLabel(status)}
-    </StatusBadge>
+    <div className="flex flex-wrap items-center gap-2 text-2xs text-muted-foreground">
+      <span className="font-medium text-foreground">Outcome</span>
+      <span>{runOutcomeLabel(outcome)}</span>
+    </div>
   )
 }
 
