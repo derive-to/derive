@@ -224,8 +224,27 @@ describe("shared-state contract", () => {
         height: 600,
       }),
       getClientRects: () => ({ 0: { width: 800, height: 600 }, length: 1 }),
-      getAttribute: () => null,
+      getAttribute: (name: string) =>
+        name === "srcdoc" ? "<h1>Generated report is ready</h1>" : null,
       getRootNode: () => null,
+      contentDocument: {
+        body: {
+          innerText: "Generated report is ready",
+          querySelectorAll: (selector: string) =>
+            selector.startsWith("h1")
+              ? {
+                  0: {
+                    hidden: false,
+                    tagName: "H1",
+                    parentElement: null,
+                    getClientRects: () => ({ 0: { width: 300, height: 40 }, length: 1 }),
+                    getRootNode: () => null,
+                  },
+                  length: 1,
+                }
+              : { length: 0 },
+        },
+      },
     }
     const frame = {
       derive: undefined as DeriveRuntime | undefined,

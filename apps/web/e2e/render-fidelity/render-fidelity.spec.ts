@@ -52,6 +52,349 @@ test.describe("render fidelity — pinning what the sandbox CSP permits", () => 
     ).toBeVisible()
   })
 
+  test("a dynamically assigned srcdoc frame self-recovers after the generic timeout", async ({
+    owner: page,
+  }) => {
+    const html = readFileSync(join(FIXTURES, "startup-delayed-srcdoc-frame.html"), "utf8")
+    const shortId = await publishArtifact(page, "index.html", html, "text/html")
+
+    await page.goto(`/artifacts/${shortId}`)
+    const artifact = page.frameLocator('iframe[title="index"]')
+    const generated = artifact.frameLocator('iframe[title="Delayed generated visualization"]')
+    await expect(
+      generated.getByRole("heading", { name: "Delayed visualization is ready" }),
+    ).toBeVisible({ timeout: 25_000 })
+    await expect(page.getByText("Preview didn’t load")).toHaveCount(0)
+  })
+
+  for (const [fixture, title] of [
+    ["startup-blank-iframe.html", "an about:blank iframe"],
+    ["startup-empty-srcdoc-iframe.html", "an empty srcdoc iframe"],
+  ] as const) {
+    test(`${title} cannot turn a bootstrap failure into Ready`, async ({ owner: page }) => {
+      const html = readFileSync(join(FIXTURES, fixture), "utf8")
+      const shortId = await publishArtifact(page, "index.html", html, "text/html")
+
+      await page.goto(`/artifacts/${shortId}`)
+      await expect(page.getByText("Artifact script stopped")).toBeVisible()
+      await expect(page.getByTestId("render-degraded")).toHaveCount(0)
+      await expect(page.getByTestId("render-retry")).toHaveCount(1)
+    })
+  }
+
+  test("a broken nested iframe cannot suppress its loaded outer document", async ({
+    owner: page,
+  }) => {
+    const html = readFileSync(join(FIXTURES, "startup-broken-iframe.html"), "utf8")
+    const shortId = await publishArtifact(page, "index.html", html, "text/html")
+    await page.goto(`/artifacts/${shortId}`)
+    await expect(page.locator('iframe[title="index"]')).toBeVisible()
+    await expect(page.getByText("Loading preview…")).toHaveCount(0)
+    await expect(page.getByText("Artifact script stopped")).toHaveCount(0)
+  })
+
+  test("a foreign script path cannot spoof Derive platform ownership", async ({ owner: page }) => {
+    const html = readFileSync(join(FIXTURES, "startup-platform-script-path-spoof.html"), "utf8")
+    const shortId = await publishArtifact(page, "index.html", html, "text/html")
+    await page.route("https://attacker.invalid/raw/derive-client.js", (route) => route.abort())
+
+    await page.goto(`/artifacts/${shortId}`)
+    await expect(page.getByText("Artifact script stopped")).toBeVisible()
+    await expect(page.getByText("Preview didn’t load")).toHaveCount(0)
+    await expect(page.getByTestId("render-retry")).toHaveCount(1)
+  })
+
+  test("an unreachable cross-origin iframe cannot suppress its loaded outer document", async ({
+    owner: page,
+  }) => {
+    const html = readFileSync(
+      join(FIXTURES, "startup-unreachable-cross-origin-iframe.html"),
+      "utf8",
+    )
+    const shortId = await publishArtifact(page, "index.html", html, "text/html")
+    await page.route("https://unreachable.invalid/**", (route) => route.abort())
+
+    await page.goto(`/artifacts/${shortId}`)
+    await expect(page.locator('iframe[title="index"]')).toBeVisible()
+    await expect(page.getByText("Loading preview…")).toHaveCount(0)
+    await expect(page.getByText("Artifact script stopped")).toHaveCount(0)
+  })
+
+  for (const [fixture, title] of [
+    ["startup-code-only-srcdoc-iframe.html", "code-only srcdoc"],
+    ["startup-empty-structure-srcdoc-iframe.html", "empty structural srcdoc"],
+  ] as const) {
+    test(`${title} cannot turn a bootstrap failure into Ready`, async ({ owner: page }) => {
+      const html = readFileSync(join(FIXTURES, fixture), "utf8")
+      const shortId = await publishArtifact(page, "index.html", html, "text/html")
+
+      await page.goto(`/artifacts/${shortId}`)
+      await expect(page.getByText("Artifact script stopped")).toBeVisible()
+      await expect(page.getByTestId("render-degraded")).toHaveCount(0)
+    })
+  }
+
+  test("platform script ownership accepts exact controls and rejects hostname lookalikes", async ({
+    owner: page,
+  }) => {
+    const trustedHtml = readFileSync(
+      join(FIXTURES, "startup-trusted-platform-query-script.html"),
+      "utf8",
+    )
+    const trustedId = await publishArtifact(page, "trusted.html", trustedHtml, "text/html")
+    await page.route("**/raw/derive-client.js?*", (route) => route.abort())
+    await page.goto(`/artifacts/${trustedId}`)
+    await expect(page.locator('iframe[title="trusted"]')).toBeVisible()
+    await expect(page.getByText("Loading preview…")).toHaveCount(0)
+    await expect(page.getByText("Preview didn’t load")).toHaveCount(0)
+    await expect(page.getByText("Artifact script stopped")).toHaveCount(0)
+
+    const spoofHtml = readFileSync(join(FIXTURES, "startup-cloudflare-host-spoof.html"), "utf8")
+    const spoofId = await publishArtifact(page, "spoof.html", spoofHtml, "text/html")
+    await page.route("https://static.cloudflareinsights.com.attacker.invalid/**", (route) =>
+      route.abort(),
+    )
+    await page.goto(`/artifacts/${spoofId}`)
+    await expect(page.getByText("Artifact script stopped")).toBeVisible()
+    await expect(page.getByText("Preview didn’t load")).toHaveCount(0)
+  })
+
+  test("a late successful src assignment self-recovers after the generic timeout", async ({
+    owner: page,
+  }) => {
+    const html = readFileSync(join(FIXTURES, "startup-delayed-src-frame.html"), "utf8")
+    const shortId = await publishArtifact(page, "index.html", html, "text/html")
+
+    await page.goto(`/artifacts/${shortId}`)
+    const artifact = page.frameLocator('iframe[title="index"]')
+    const generated = artifact.frameLocator('iframe[title="Delayed URL visualization"]')
+    await expect(
+      generated.getByRole("heading", { name: "Delayed URL visualization is ready" }),
+    ).toBeVisible({ timeout: 25_000 })
+    await expect(page.getByText("Preview didn’t load")).toHaveCount(0)
+  })
+
+  test("tiny srcdoc placeholder text cannot turn a bootstrap failure into Ready", async ({
+    owner: page,
+  }) => {
+    const html = readFileSync(join(FIXTURES, "startup-tiny-text-srcdoc-iframe.html"), "utf8")
+    const shortId = await publishArtifact(page, "index.html", html, "text/html")
+    await page.goto(`/artifacts/${shortId}`)
+    await expect(page.getByText("Artifact script stopped")).toBeVisible()
+    await expect(page.getByTestId("render-degraded")).toHaveCount(0)
+  })
+
+  test("a visible SVG srcdoc frame reaches Ready", async ({ owner: page }) => {
+    const html = readFileSync(join(FIXTURES, "startup-svg-srcdoc-iframe.html"), "utf8")
+    const shortId = await publishArtifact(page, "index.html", html, "text/html")
+    await page.goto(`/artifacts/${shortId}`)
+    const generated = page
+      .frameLocator('iframe[title="index"]')
+      .frameLocator('iframe[title="SVG generated visualization"]')
+    await expect(generated.locator("svg")).toBeVisible()
+    await expect(page.getByText("Preview didn’t load")).toHaveCount(0)
+  })
+
+  test("a dynamically inserted srcdoc frame self-recovers after the generic timeout", async ({
+    owner: page,
+  }) => {
+    const html = readFileSync(join(FIXTURES, "startup-delayed-inserted-srcdoc-frame.html"), "utf8")
+    const shortId = await publishArtifact(page, "index.html", html, "text/html")
+    await page.goto(`/artifacts/${shortId}`)
+    const generated = page
+      .frameLocator('iframe[title="index"]')
+      .frameLocator('iframe[title="Late inserted visualization"]')
+    await expect(
+      generated.getByRole("heading", { name: "Late inserted visualization is ready" }),
+    ).toBeVisible({ timeout: 25_000 })
+    await expect(page.getByText("Preview didn’t load")).toHaveCount(0)
+  })
+
+  test("clearing a previously loaded iframe preserves the monotonic Ready boundary", async ({
+    owner: page,
+  }) => {
+    const html = readFileSync(join(FIXTURES, "startup-cleared-loaded-iframe.html"), "utf8")
+    const shortId = await publishArtifact(page, "index.html", html, "text/html")
+    await page.goto(`/artifacts/${shortId}`)
+    await expect(page.getByTestId("render-degraded")).toBeVisible()
+    await expect(page.getByText("Artifact script stopped")).toHaveCount(0)
+  })
+
+  test("direct about:blank DOM mutation fails closed under the opaque sandbox", async ({
+    owner: page,
+  }) => {
+    const html = readFileSync(join(FIXTURES, "startup-authored-aboutblank-iframe.html"), "utf8")
+    const shortId = await publishArtifact(page, "index.html", html, "text/html")
+    await page.goto(`/artifacts/${shortId}`)
+    await expect(page.getByText("Artifact script stopped")).toBeVisible()
+    await expect(page.getByTestId("render-degraded")).toHaveCount(0)
+  })
+
+  for (const [fixture, title, route] of [
+    ["startup-entity-space-srcdoc.html", "whitespace entities", null],
+  ] as const) {
+    test(`${title} cannot turn a bootstrap failure into Ready`, async ({ owner: page }) => {
+      const html = readFileSync(join(FIXTURES, fixture), "utf8")
+      const shortId = await publishArtifact(page, "index.html", html, "text/html")
+      if (route) await page.route(route, (request) => request.abort())
+      await page.goto(`/artifacts/${shortId}`)
+      await expect(page.getByText("Artifact script stopped")).toBeVisible()
+      await expect(page.getByTestId("render-degraded")).toHaveCount(0)
+    })
+  }
+
+  for (const [fixture, title, route] of [
+    [
+      "startup-broken-image-srcdoc.html",
+      "a broken image-only srcdoc",
+      "https://unreachable.invalid/**",
+    ],
+    ["startup-zero-svg-srcdoc.html", "a zero-area SVG srcdoc", null],
+  ] as const) {
+    test(`${title} remains visible instead of blocking the document`, async ({ owner: page }) => {
+      const html = readFileSync(join(FIXTURES, fixture), "utf8")
+      const shortId = await publishArtifact(page, "index.html", html, "text/html")
+      if (route) await page.route(route, (request) => request.abort())
+      await page.goto(`/artifacts/${shortId}`)
+      await expect(page.getByText("Artifact script stopped")).toHaveCount(0)
+      await expect(page.locator('iframe[title="index"]')).toBeVisible()
+    })
+  }
+
+  test("short semantic text inside srcdoc reaches Ready", async ({ owner: page }) => {
+    const html = readFileSync(join(FIXTURES, "startup-semantic-srcdoc.html"), "utf8")
+    const shortId = await publishArtifact(page, "index.html", html, "text/html")
+    await page.goto(`/artifacts/${shortId}`)
+    const generated = page
+      .frameLocator('iframe[title="index"]')
+      .frameLocator('iframe[title="Semantic report"]')
+    await expect(generated.getByText("Report ready.")).toBeVisible()
+    await expect(page.getByText("Preview didn’t load")).toHaveCount(0)
+  })
+
+  test("a meaningful srcdoc frame inside a shadow root reaches Ready", async ({ owner: page }) => {
+    const html = readFileSync(join(FIXTURES, "startup-shadow-srcdoc.html"), "utf8")
+    const shortId = await publishArtifact(page, "index.html", html, "text/html")
+    await page.goto(`/artifacts/${shortId}`)
+    const generated = page
+      .frameLocator('iframe[title="index"]')
+      .frameLocator('iframe[title="Shadow generated visualization"]')
+    await expect(
+      generated.getByRole("heading", { name: "Shadow visualization is ready" }),
+    ).toBeVisible()
+    await expect(page.getByText("Preview didn’t load")).toHaveCount(0)
+  })
+
+  test("a successfully loaded image-only srcdoc reaches Ready", async ({ owner: page }) => {
+    const html = readFileSync(join(FIXTURES, "startup-loaded-image-srcdoc.html"), "utf8")
+    const shortId = await publishArtifact(page, "index.html", html, "text/html")
+    await page.goto(`/artifacts/${shortId}`)
+    const generated = page
+      .frameLocator('iframe[title="index"]')
+      .frameLocator('iframe[title="Loaded image visualization"]')
+    await expect(generated.getByRole("img", { name: "Blue visualization" })).toBeVisible()
+    await expect(page.getByText("Preview didn’t load")).toHaveCount(0)
+  })
+
+  test("a painted canvas inside srcdoc reaches Ready", async ({ owner: page }) => {
+    const html = readFileSync(join(FIXTURES, "startup-painted-canvas-srcdoc.html"), "utf8")
+    const shortId = await publishArtifact(page, "index.html", html, "text/html")
+    await page.goto(`/artifacts/${shortId}`)
+    const generated = page
+      .frameLocator('iframe[title="index"]')
+      .frameLocator('iframe[title="Canvas visualization"]')
+    await expect(generated.locator("canvas")).toBeVisible()
+    await expect(page.getByText("Preview didn’t load")).toHaveCount(0)
+  })
+
+  for (const [fixture, title] of [
+    ["startup-hidden-srcdoc-frame.html", "a hidden meaningful srcdoc frame"],
+    ["startup-aria-hidden-srcdoc-frame.html", "an aria-hidden meaningful srcdoc frame"],
+  ] as const) {
+    test(`${title} cannot turn a bootstrap failure into Ready`, async ({ owner: page }) => {
+      const html = readFileSync(join(FIXTURES, fixture), "utf8")
+      const shortId = await publishArtifact(page, "index.html", html, "text/html")
+      await page.goto(`/artifacts/${shortId}`)
+      await expect(page.getByText("Artifact script stopped")).toBeVisible()
+      await expect(page.getByTestId("render-degraded")).toHaveCount(0)
+    })
+  }
+
+  test("replacing a broken srcdoc after timeout self-recovers", async ({ owner: page }) => {
+    const html = readFileSync(join(FIXTURES, "startup-delayed-srcdoc-replacement.html"), "utf8")
+    const shortId = await publishArtifact(page, "index.html", html, "text/html")
+    await page.route("https://unreachable.invalid/**", (route) => route.abort())
+    await page.goto(`/artifacts/${shortId}`)
+    const generated = page
+      .frameLocator('iframe[title="index"]')
+      .frameLocator('iframe[title="Replaced visualization"]')
+    await expect(
+      generated.getByRole("heading", { name: "Replacement visualization is ready" }),
+    ).toBeVisible({ timeout: 25_000 })
+    await expect(page.getByText("Preview didn’t load")).toHaveCount(0)
+  })
+
+  for (const [fixture, frameTitle, heading] of [
+    [
+      "startup-delayed-hidden-reveal.html",
+      "Hidden then revealed visualization",
+      "Revealed visualization is ready",
+    ],
+    [
+      "startup-delayed-opacity-reveal.html",
+      "Transparent then revealed visualization",
+      "Opaque visualization is ready",
+    ],
+  ] as const) {
+    test(`${frameTitle} self-recovers after timeout`, async ({ owner: page }) => {
+      const html = readFileSync(join(FIXTURES, fixture), "utf8")
+      const shortId = await publishArtifact(page, "index.html", html, "text/html")
+      await page.goto(`/artifacts/${shortId}`)
+      const generated = page
+        .frameLocator('iframe[title="index"]')
+        .frameLocator(`iframe[title="${frameTitle}"]`)
+      await expect(generated.getByRole("heading", { name: heading })).toBeVisible({
+        timeout: 25_000,
+      })
+      await expect(page.getByText("Preview didn’t load")).toHaveCount(0)
+    })
+  }
+
+  for (const [fixture, title] of [
+    ["startup-closed-details-iframe.html", "an iframe inside closed details"],
+    ["startup-clipped-parent-iframe.html", "an iframe clipped by a zero-area parent"],
+  ] as const) {
+    test(`${title} cannot turn a bootstrap failure into Ready`, async ({ owner: page }) => {
+      const html = readFileSync(join(FIXTURES, fixture), "utf8")
+      const shortId = await publishArtifact(page, "index.html", html, "text/html")
+      await page.goto(`/artifacts/${shortId}`)
+      await expect(page.getByText("Artifact script stopped")).toBeVisible()
+      await expect(page.getByTestId("render-degraded")).toHaveCount(0)
+    })
+  }
+
+  test("Cloudflare beacon scheme and path lookalikes remain authored failures", async ({
+    owner: page,
+  }) => {
+    for (const [fixture, route] of [
+      [
+        "startup-cloudflare-scheme-spoof.html",
+        "http://static.cloudflareinsights.com/beacon.min.js",
+      ],
+      [
+        "startup-cloudflare-path-spoof.html",
+        "https://static.cloudflareinsights.com/beacon.min.js.evil",
+      ],
+    ] as const) {
+      const html = readFileSync(join(FIXTURES, fixture), "utf8")
+      const shortId = await publishArtifact(page, fixture, html, "text/html")
+      await page.route(route, (request) => request.abort())
+      await page.goto(`/artifacts/${shortId}`)
+      await expect(page.getByText("Artifact script stopped")).toBeVisible()
+      await expect(page.getByText("Preview didn’t load")).toHaveCount(0)
+    }
+  })
+
   test("viewer fails closed when a script throws before meaningful content", async ({
     browser,
     owner: page,
@@ -135,7 +478,7 @@ test.describe("render fidelity — pinning what the sandbox CSP permits", () => 
     await expect(artifact.locator("#count")).toHaveText("1")
   })
 
-  test("viewer waits through iframe load, then degrades after delayed meaningful paint", async ({
+  test("viewer shows the loaded iframe while delayed meaningful paint catches up", async ({
     browser,
     owner: page,
   }) => {
@@ -143,8 +486,7 @@ test.describe("render fidelity — pinning what the sandbox CSP permits", () => 
     const shortId = await publishArtifact(page, "index.html", html, "text/html")
 
     await page.goto(`/artifacts/${shortId}`)
-    await expect(page.getByText("Loading preview…")).toBeVisible()
-    await expect(page.getByTestId("render-degraded")).toHaveCount(0)
+    await expect(page.getByText("Loading preview…")).toHaveCount(0)
     await expect(page.getByTestId("render-degraded")).toBeVisible()
     const artifact = page.frameLocator('iframe[title="index"]')
     await expect(artifact.locator("#rows tr")).toHaveCount(30)
@@ -155,7 +497,7 @@ test.describe("render fidelity — pinning what the sandbox CSP permits", () => 
     const publicPage = await publicContext.newPage()
     try {
       await publicPage.goto(`/artifacts/${shortId}`)
-      await expect(publicPage.getByText("Loading preview…")).toBeVisible()
+      await expect(publicPage.getByText("Loading preview…")).toHaveCount(0)
       await expect(publicPage.getByTestId("render-degraded")).toBeVisible()
       const publicArtifact = publicPage.frameLocator('iframe[title="index"]')
       await expect(publicArtifact.locator("#rows tr")).toHaveCount(30)
@@ -309,14 +651,13 @@ test.describe("render fidelity — pinning what the sandbox CSP permits", () => 
     await expect(artifact.locator("#count")).toHaveText("1")
   })
 
-  test("zero-area SVG cannot turn a bootstrap failure into Ready", async ({ owner: page }) => {
+  test("zero-area SVG cannot suppress the rest of a loaded document", async ({ owner: page }) => {
     const html = readFileSync(join(FIXTURES, "startup-zero-area-svg.html"), "utf8")
     const shortId = await publishArtifact(page, "index.html", html, "text/html")
 
     await page.goto(`/artifacts/${shortId}`)
-    await expect(page.getByText("Artifact script stopped")).toBeVisible()
-    await expect(page.getByTestId("render-degraded")).toHaveCount(0)
-    await expect(page.getByTestId("render-retry")).toHaveCount(1)
+    await expect(page.getByText("Artifact script stopped")).toHaveCount(0)
+    await expect(page.locator('iframe[title="index"]')).toBeVisible()
   })
 
   test("meaningful paint after the generic timeout self-recovers to Ready", async ({
@@ -326,11 +667,12 @@ test.describe("render fidelity — pinning what the sandbox CSP permits", () => 
     const shortId = await publishArtifact(page, "index.html", html, "text/html")
 
     await page.goto(`/artifacts/${shortId}`)
-    await expect(page.getByText("Preview didn’t load")).toBeVisible({ timeout: 16_000 })
+    await expect(page.getByText("Loading preview…")).toHaveCount(0)
+    await expect(page.getByText("Preview didn’t load")).toHaveCount(0)
     const artifact = page.frameLocator('iframe[title="index"]')
     await expect(
       artifact.getByRole("heading", { name: "Late content recovered automatically" }),
-    ).toBeVisible({ timeout: 5_000 })
+    ).toBeVisible({ timeout: 20_000 })
     await expect(page.getByText("Preview didn’t load")).toHaveCount(0)
     await artifact.locator("#control").click()
     await expect(artifact.locator("#count")).toHaveText("1")
@@ -406,7 +748,6 @@ test.describe("render fidelity — pinning what the sandbox CSP permits", () => 
   for (const scenario of [
     { fixture: "startup-hidden-shadow-host.html", label: "an opacity-zero shadow host" },
     { fixture: "startup-hidden-loaded-image.html", label: "a hidden loaded image" },
-    { fixture: "startup-broken-sized-image.html", label: "a broken image with layout dimensions" },
   ]) {
     test(`${scenario.label} cannot satisfy readiness`, async ({ owner: page }) => {
       const html = readFileSync(join(FIXTURES, scenario.fixture), "utf8")
@@ -419,6 +760,17 @@ test.describe("render fidelity — pinning what the sandbox CSP permits", () => 
     })
   }
 
+  test("a broken image with authored dimensions cannot block its document", async ({
+    owner: page,
+  }) => {
+    const html = readFileSync(join(FIXTURES, "startup-broken-sized-image.html"), "utf8")
+    const shortId = await publishArtifact(page, "index.html", html, "text/html")
+    await page.goto(`/artifacts/${shortId}`)
+    await expect(page.getByText("Artifact script stopped")).toHaveCount(0)
+    await expect(page.getByTestId("render-degraded")).toBeVisible()
+    await expect(page.locator('iframe[title="index"]')).toBeVisible()
+  })
+
   test("attribute-only visibility after timeout self-recovers to Ready", async ({
     owner: page,
   }) => {
@@ -429,7 +781,8 @@ test.describe("render fidelity — pinning what the sandbox CSP permits", () => 
     const shortId = await publishArtifact(page, "index.html", html, "text/html")
 
     await page.goto(`/artifacts/${shortId}`)
-    await expect(page.getByText("Preview didn’t load")).toBeVisible({ timeout: 16_000 })
+    await expect(page.getByText("Loading preview…")).toHaveCount(0)
+    await expect(page.getByText("Preview didn’t load")).toHaveCount(0)
     const artifact = page.frameLocator('iframe[title="index"]')
     await expect(
       artifact.getByRole("heading", { name: "Attribute-only recovery reached Ready" }),
@@ -563,6 +916,190 @@ test.describe("render fidelity — pinning what the sandbox CSP permits", () => 
     const artifact = page.frameLocator('iframe[title="index"]')
     await artifact.locator("#control").click({ timeout: 5_000 })
     await expect(artifact.locator("#count")).toHaveText("1")
+  })
+
+  // Self-learning loop iteration 21: the host optimistically reveals every
+  // successfully loaded document. Descendant/media diagnostics may warn, but they
+  // must not replace partial authored content or leave the wrapper in boot chrome.
+  test("case 80: a loaded empty document exits host loading", async ({ owner: page }) => {
+    const html = readFileSync(join(FIXTURES, "startup-optimistic-empty.html"), "utf8")
+    const shortId = await publishArtifact(page, "index.html", html, "text/html")
+    await page.goto(`/artifacts/${shortId}`)
+    await expect(page.locator('iframe[title="index"]')).toBeVisible()
+    await expect(page.getByText("Loading preview…")).toHaveCount(0)
+    await expect(page.getByText("Preview didn’t load")).toHaveCount(0)
+  })
+
+  test("case 81: a broken optional image preserves useful text and controls", async ({
+    owner: page,
+  }) => {
+    const html = readFileSync(join(FIXTURES, "startup-optimistic-broken-image.html"), "utf8")
+    const shortId = await publishArtifact(page, "index.html", html, "text/html")
+    await page.route("https://unreachable.invalid/**", (route) => route.abort())
+    await page.goto(`/artifacts/${shortId}`)
+    const artifact = page.frameLocator('iframe[title="index"]')
+    await expect(artifact.getByRole("heading", { name: "Available report content" })).toBeVisible()
+    await artifact.locator("#control").click()
+    await expect(artifact.locator("#control")).toHaveAttribute("data-clicked", "true")
+    await expect(page.getByText("Artifact script stopped")).toHaveCount(0)
+  })
+
+  test("case 82: zero-area SVG geometry cannot suppress useful siblings", async ({
+    owner: page,
+  }) => {
+    const html = readFileSync(join(FIXTURES, "startup-optimistic-zero-svg.html"), "utf8")
+    const shortId = await publishArtifact(page, "index.html", html, "text/html")
+    await page.goto(`/artifacts/${shortId}`)
+    const artifact = page.frameLocator('iframe[title="index"]')
+    await expect(
+      artifact.getByRole("heading", { name: "Text survives unusual SVG geometry" }),
+    ).toBeVisible()
+    await artifact.locator("#control").click()
+    await expect(artifact.locator("#control")).toHaveAttribute("data-clicked", "true")
+    await expect(page.getByText("Loading preview…")).toHaveCount(0)
+  })
+
+  test("case 83: a partial document survives a later script failure", async ({ owner: page }) => {
+    const html = readFileSync(
+      join(FIXTURES, "startup-optimistic-partial-script-error.html"),
+      "utf8",
+    )
+    const shortId = await publishArtifact(page, "index.html", html, "text/html")
+    await page.goto(`/artifacts/${shortId}`)
+    const artifact = page.frameLocator('iframe[title="index"]')
+    await expect(
+      artifact.getByRole("heading", { name: "Content painted before one script failed" }),
+    ).toBeVisible()
+    await artifact.locator("#control").click()
+    await expect(artifact.locator("#control")).toHaveAttribute("data-clicked", "true")
+    await expect(page.getByTestId("render-degraded")).toBeVisible()
+    await expect(page.getByText("Artifact script stopped")).toHaveCount(0)
+  })
+
+  test("case 84: repeated wrapper reloads never strand a loaded document", async ({
+    owner: page,
+  }) => {
+    const html = readFileSync(join(FIXTURES, "startup-threshold-80.html"), "utf8")
+    const shortId = await publishArtifact(page, "index.html", html, "text/html")
+    await page.goto(`/artifacts/${shortId}`)
+    for (let reload = 0; reload < 5; reload += 1) {
+      await page.reload()
+      await expect(page.locator('iframe[title="index"]')).toBeVisible()
+      await expect(page.getByText("Loading preview…")).toHaveCount(0)
+      const artifact = page.frameLocator('iframe[title="index"]')
+      await artifact.locator("#control").click()
+      await expect(artifact.locator("#control")).toHaveAttribute("data-clicked", "true")
+    }
+  })
+
+  // Iteration 22 — five more optional/odd visual descendants.
+  for (const scenario of [
+    {
+      case: 85,
+      fixture: "startup-optimistic-css-background.html",
+      heading: "Report without its background",
+    },
+    {
+      case: 86,
+      fixture: "startup-optimistic-video.html",
+      heading: "Transcript remains available",
+    },
+    {
+      case: 87,
+      fixture: "startup-optimistic-malformed-svg.html",
+      heading: "Summary beside an unusual chart",
+    },
+    {
+      case: 88,
+      fixture: "startup-optimistic-broken-nested-frame.html",
+      heading: "Primary analysis remains usable",
+    },
+    {
+      case: 89,
+      fixture: "startup-optimistic-canvas.html",
+      heading: "Controls survive an empty canvas",
+    },
+  ]) {
+    test(`case ${scenario.case}: optional visual failure preserves useful siblings`, async ({
+      owner: page,
+    }) => {
+      const html = readFileSync(join(FIXTURES, scenario.fixture), "utf8")
+      const shortId = await publishArtifact(page, "index.html", html, "text/html")
+      await page.route("https://unreachable.invalid/**", (route) => route.abort())
+      await page.goto(`/artifacts/${shortId}`)
+      const artifact = page.frameLocator('iframe[title="index"]')
+      await expect(artifact.getByRole("heading", { name: scenario.heading })).toBeVisible()
+      const control = artifact.locator("#control")
+      await control.click()
+      await expect(control).toBeFocused()
+      await expect(page.getByText("Loading preview…")).toHaveCount(0)
+      await expect(page.getByText("Artifact script stopped")).toHaveCount(0)
+    })
+  }
+
+  // Iteration 23 — missing presentation dependencies plus public/mobile churn.
+  for (const scenario of [
+    {
+      case: 90,
+      fixture: "startup-optimistic-stylesheet.html",
+      heading: "Unstyled content is still content",
+    },
+    {
+      case: 91,
+      fixture: "startup-optimistic-font.html",
+      heading: "Fallback typography stays readable",
+    },
+    {
+      case: 92,
+      fixture: "startup-optimistic-picture.html",
+      heading: "Responsive image failure keeps its siblings",
+    },
+    {
+      case: 93,
+      fixture: "startup-optimistic-module.html",
+      heading: "Base document survives an enhancement module failure",
+    },
+  ]) {
+    test(`case ${scenario.case}: missing presentation dependency keeps the document`, async ({
+      owner: page,
+    }) => {
+      const html = readFileSync(join(FIXTURES, scenario.fixture), "utf8")
+      const shortId = await publishArtifact(page, "index.html", html, "text/html")
+      await page.route("https://unreachable.invalid/**", (route) => route.abort())
+      await page.goto(`/artifacts/${shortId}`)
+      const artifact = page.frameLocator('iframe[title="index"]')
+      await expect(artifact.getByRole("heading", { name: scenario.heading })).toBeVisible()
+      const control = artifact.locator("#control")
+      await control.click()
+      await expect(control).toBeFocused()
+      await expect(page.getByText("Loading preview…")).toHaveCount(0)
+      await expect(page.getByText("Artifact script stopped")).toHaveCount(0)
+    })
+  }
+
+  test("case 94: public mobile reload churn preserves partial content", async ({
+    browser,
+    owner: page,
+  }) => {
+    const html = readFileSync(join(FIXTURES, "startup-optimistic-broken-image.html"), "utf8")
+    const shortId = await publishArtifact(page, "index.html", html, "text/html")
+    const mobileContext = await browser.newContext({ viewport: { width: 390, height: 844 } })
+    const mobile = await mobileContext.newPage()
+    try {
+      await mobile.route("https://unreachable.invalid/**", (route) => route.abort())
+      await mobile.goto(`/artifacts/${shortId}`)
+      for (let reload = 0; reload < 3; reload += 1) {
+        await mobile.reload()
+        const artifact = mobile.frameLocator('iframe[title="index"]')
+        await expect(
+          artifact.getByRole("heading", { name: "Available report content" }),
+        ).toBeVisible()
+        await expect(mobile.getByText("Loading preview…")).toHaveCount(0)
+        await expect(mobile.getByText("Artifact script stopped")).toHaveCount(0)
+      }
+    } finally {
+      await mobileContext.close()
+    }
   })
 
   test("tier 1: a fully self-contained artifact renders with zero console errors, inline script executes", async ({

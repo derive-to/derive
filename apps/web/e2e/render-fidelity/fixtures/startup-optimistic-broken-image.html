@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Partial document with a broken image</title>
+  </head>
+  <body>
+    <main>
+      <h1>Available report content</h1>
+      <p>The chart image is optional; this copy and its control must remain usable.</p>
+      <button id="control" type="button" onclick="this.dataset.clicked='true'">Keep working</button>
+      <img src="https://unreachable.invalid/optional-chart.png" alt="Optional chart unavailable" />
+    </main>
+  </body>
+</html>

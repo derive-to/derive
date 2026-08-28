@@ -1,0 +1,10 @@
+<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8" /><title>Clipped parent iframe</title></head>
+  <body>
+    <div style="width: 0; height: 0; overflow: hidden">
+      <iframe style="width: 800px; height: 600px" title="Clipped visualization" srcdoc="<!doctype html><h1>Clipped report</h1>"></iframe>
+    </div>
+    <script>throw new Error("bootstrap failed beside clipped frame")</script>
+  </body>
+</html>

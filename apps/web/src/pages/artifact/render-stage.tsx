@@ -1,4 +1,4 @@
-import { type ReactNode, type RefObject, useEffect, useRef, useState } from "react"
+import { type ReactNode, type RefObject, useEffect, useLayoutEffect, useRef, useState } from "react"
 import { Icon } from "@/components/icons"
 import { Spinner } from "@/components/shared/spinner"
 import { StatusPanel } from "@/components/shared/status-panel"
@@ -141,9 +141,9 @@ export function RenderStage({
   wrapRef: RefObject<HTMLDivElement | null>
   /** Called on the iframe's own `load` (the page's bridge handshakes off it). */
   onFrameLoad?: () => void
-  /** A source-free boot failure relayed by the first-injected sandbox runtime. */
+  /** A source-free runtime failure relayed by the first-injected sandbox runtime. */
   runtimeError?: ArtifactRuntimeError | null
-  /** The injected runtime found meaningful content, not merely an iframe load. */
+  /** The injected runtime found meaningful content after the iframe loaded. */
   runtimeReady?: boolean
   /** Editors get repair guidance; readers see a neutral failure. */
   canFixRuntimeError?: boolean
@@ -161,7 +161,7 @@ export function RenderStage({
   const [phase, setPhase] = useState<"booting" | "ready" | "failed">("booting")
   const [attempt, setAttempt] = useState(0)
   // biome-ignore lint/correctness/useExhaustiveDependencies: rawSrc identifies a new iframe document and intentionally resets its startup state.
-  useEffect(() => {
+  useLayoutEffect(() => {
     setPhase("booting")
   }, [rawSrc])
 
@@ -185,6 +185,11 @@ export function RenderStage({
   }, [phase, rawSrc, runtimeError])
 
   const handleLoad = () => {
+    // A successfully loaded document is the optimistic display boundary. The
+    // injected runtime can still classify authored failures after this point, but
+    // it must not keep otherwise usable markup behind host chrome just because a
+    // descendant image/SVG is broken, zero-area, slow, or otherwise unusual.
+    setPhase("ready")
     onFrameLoad?.()
   }
   const retry = () => {
@@ -314,8 +319,8 @@ export function RenderStage({
             // trapping the gesture on a phone (research's scroll-trap fix); the frame
             // opts into its own pan only inside an explicit zoom mode. The iframe keeps
             // its own bg-white (the right default for a transparent HTML doc) but starts
-            // hidden and cross-fades in on load, so the white→content swap resolves
-            // gently over the neutral canvas instead of hard-flashing.
+            // hidden and cross-fades in once the document load completes. Runtime
+            // diagnostics may add a warning without revoking this visible boundary.
             sandbox="allow-scripts allow-forms allow-popups allow-modals allow-downloads"
             className={cn(
               "min-h-0 flex-1 touch-pan-y border-0 bg-white opacity-0 transition-opacity duration-state",
@@ -324,9 +329,9 @@ export function RenderStage({
           />
         )}
 
-        {/* Boot — a calm centered spinner over the white canvas until the render's
-            own `load` fires. Announced politely; not a full skeleton because the
-            artifact's shape is unknowable. */}
+        {/* Boot — a calm centered spinner only until the iframe document's own
+            `load` fires. Descendant readiness is deliberately not a host-level gate:
+            partial authored content is more useful than a perfect loading verdict. */}
         {phase === "booting" && (
           <div
             role="status"

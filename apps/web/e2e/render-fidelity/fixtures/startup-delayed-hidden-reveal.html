@@ -1,0 +1,8 @@
+<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8" /><title>Delayed hidden reveal</title></head>
+  <body>
+    <iframe id="generated" hidden title="Hidden then revealed visualization" srcdoc="<!doctype html><h1>Revealed visualization is ready</h1>"></iframe>
+    <script>setTimeout(() => { document.getElementById("generated").hidden = false }, 16000)</script>
+  </body>
+</html>
