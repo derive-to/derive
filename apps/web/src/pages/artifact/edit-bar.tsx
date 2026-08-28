@@ -81,7 +81,7 @@ export function EditBar({
       data-testid="inline-edit-bar"
       role="status"
       aria-live="polite"
-      className="flex shrink-0 items-center gap-2 border-border border-b bg-accent/40 py-1.5 pr-2 pl-4"
+      className="flex shrink-0 flex-wrap items-center gap-2 border-border border-b bg-accent/40 py-1.5 pr-2 pl-4 sm:flex-nowrap"
     >
       <Icon name="pencil" size={14} className="shrink-0 text-muted-foreground" />
       {/* The word is the mode's name; it drops on a phone, where the pencil and the
@@ -91,21 +91,21 @@ export function EditBar({
       {/* History, then formatting: two groups, held apart by a hairline rather than
           gaps alone, because they answer different questions. */}
       <div className="flex shrink-0 items-center gap-0.5">
-        <ToolButton
+        <HistoryButton
           testId="inline-edit-undo"
           icon="undo"
           label="Undo"
           chord="⌘Z"
-          size={toolSize}
+          touch={touch}
           disabled={!canUndo || saving}
           onClick={onUndo}
         />
-        <ToolButton
+        <HistoryButton
           testId="inline-edit-redo"
           icon="redo"
           label="Redo"
           chord="⇧⌘Z"
-          size={toolSize}
+          touch={touch}
           disabled={!canRedo || saving}
           onClick={onRedo}
         />
@@ -183,14 +183,15 @@ export function EditBar({
               : "click text to edit; select an image to replace it"
           : `${dirty} unsaved change${dirty === 1 ? "" : "s"}`}
       </span>
-      {/* …and on a phone the count still has to be visible, so it appears alone. */}
-      {dirty > 0 && (
-        <span className="shrink-0 text-2xs text-muted-foreground tabular-nums md:hidden">
-          {dirty}
-        </span>
-      )}
-
-      <div className="ml-auto flex shrink-0 items-center gap-1">
+      {/* A phone gives terminal actions their own row. This is intentionally a
+          layout change rather than horizontal scrolling: Undo must not compete
+          with the only ways to finish or abandon the session. */}
+      <div className="ml-auto flex shrink-0 items-center gap-1 max-sm:basis-full max-sm:justify-end">
+        {dirty > 0 && (
+          <span className="mr-auto text-2xs text-muted-foreground tabular-nums md:hidden">
+            {dirty} unsaved
+          </span>
+        )}
         {dirty > 0 ? (
           <>
             <Button
@@ -233,6 +234,49 @@ export function EditBar({
         )}
       </div>
     </div>
+  )
+}
+
+/** History is the escape hatch, so its verbs stay written on the surface instead
+ *  of being discoverable only by recognizing an icon or opening a tooltip. */
+function HistoryButton({
+  testId,
+  icon,
+  label,
+  chord,
+  touch,
+  disabled,
+  onClick,
+}: {
+  testId: string
+  icon: "undo" | "redo"
+  label: string
+  chord: string
+  touch: boolean
+  disabled: boolean
+  onClick: () => void
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          variant="ghost"
+          size="xs"
+          aria-label={label}
+          data-testid={testId}
+          disabled={disabled}
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={onClick}
+          className={cn(touch && "h-11", disabled && "opacity-40")}
+        >
+          <Icon name={icon} size={15} className="text-muted-foreground" />
+          <span>{label}</span>
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>
+        {label} <Kbd>{chord}</Kbd>
+      </TooltipContent>
+    </Tooltip>
   )
 }
 

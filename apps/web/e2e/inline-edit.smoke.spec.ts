@@ -244,6 +244,8 @@ test("the bar's controls: undo, redo, and a format that reaches the source", asy
   // Nothing done, nothing selected: every control is honest about having nothing to do.
   await expect(owner.getByTestId("inline-edit-undo")).toBeDisabled()
   await expect(owner.getByTestId("inline-edit-redo")).toBeDisabled()
+  await expect(owner.getByTestId("inline-edit-undo")).toContainText("Undo")
+  await expect(owner.getByTestId("inline-edit-redo")).toContainText("Redo")
   await expect(owner.getByTestId("inline-edit-bold")).toBeDisabled()
   await expect(owner.getByTestId("artifact-inspect-choose")).toBeVisible()
 
@@ -252,6 +254,8 @@ test("the bar's controls: undo, redo, and a format that reaches the source", asy
   await expect(owner.getByTestId("inline-edit-undo")).toBeEnabled()
   await expect(owner.getByTestId("artifact-inspect-text")).toContainText("Paragraph")
   await expect(owner.getByTestId("artifact-inspect-undo")).toBeEnabled()
+  await expect(owner.getByTestId("artifact-inspect-undo")).toContainText("Undo")
+  await expect(owner.getByTestId("artifact-inspect-redo")).toContainText("Redo")
 
   // Inspect and the bar drive one history stack. Undo in the rail takes the document
   // back; redo in the bar returns both the text and the rail's live state.
@@ -280,6 +284,25 @@ test("the bar's controls: undo, redo, and a format that reaches the source", asy
   expect(src.replace(/<\/?b>/g, "")).toContain("<p id=two>Second paragraph.</p>")
   // The editor's own markers never reach the document.
   expect(src).not.toContain("data-derive-fmt")
+})
+
+test("the edit bar keeps history and terminal actions reachable at phone width", async ({
+  owner,
+}) => {
+  await seed(owner)
+  await enterEditMode(owner)
+  await owner.setViewportSize({ width: 320, height: 720 })
+
+  const bar = owner.getByTestId("inline-edit-bar")
+  await expect(owner.getByTestId("inline-edit-undo").getByText("Undo")).toBeVisible()
+  await expect(owner.getByTestId("inline-edit-redo").getByText("Redo")).toBeVisible()
+  await expect(owner.getByTestId("inline-edit-done")).toBeInViewport({ ratio: 1 })
+  expect(await bar.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true)
+
+  await appendToParagraph(owner, "one", " Phone.")
+  await expect(owner.getByTestId("inline-edit-discard")).toBeInViewport({ ratio: 1 })
+  await expect(owner.getByTestId("inline-edit-save")).toBeInViewport({ ratio: 1 })
+  expect(await bar.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true)
 })
 
 test("Inspect preserves a text selection while asking for a link", async ({ owner }) => {
