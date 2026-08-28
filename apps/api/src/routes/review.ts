@@ -3,7 +3,8 @@ import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
 import { bail, fail, readJson, str } from "../lib/http"
-import { agentName, principalKind } from "../lib/principal-kind"
+import { roundJson as roundJsonFor } from "../lib/review-json"
+import { ReviewRound as ReviewRoundSchema } from "../schemas"
 
 /** Review rounds: the human side of the /derive loop. An agent requests a review
  *  (on publish); the person answers in the doc and hits **Send back** — their note
@@ -14,48 +15,9 @@ export const reviewRoutes = (ctx: AppContext) => {
   const { meta, bus, notify, currentUser, requireArtifact, requireDirectHuman } = ctx
   const app = new OpenAPIHono<BlankEnv>()
 
-  const ReviewRound = z
-    .object({
-      id: z.string(),
-      artifact_id: z.string(),
-      version: z.number().describe("The artifact version this round is reviewing."),
-      requested_by: z
-        .string()
-        .describe("Who asked for the review (usually the agent that published)."),
-      requested_by_name: z
-        .string()
-        .nullable()
-        .describe(
-          "The requester's name when the round opened (a row from before the name was kept is named from the directory, while the agent exists).",
-        ),
-      requested_by_kind: z
-        .enum(["user", "agent"])
-        .describe("What kind of principal asked, from the recorded id."),
-      requested_for: z.string().describe("The person asked to answer this round."),
-      state: z
-        .enum(["pending", "sent_back"])
-        .describe(
-          "Round state: pending, or sent_back (the answers came back — a note saying go IS the go-signal).",
-        ),
-      note: z.string().nullable().describe("Free-text note attached to the round; null if none."),
-      resolved_by_name: z
-        .string()
-        .nullable()
-        .describe(
-          "The human who settled the round; null while pending, or when the store has no name for the resolver.",
-        ),
-      created_at: z.string(),
-      resolved_at: z.string().nullable().describe("When it was sent back; null while pending."),
-    })
-    .openapi("ReviewRound")
+  const ReviewRound = ReviewRoundSchema
 
-  // The wire shape: the record, plus the requester's kind read off its id, and — for a
-  // round from before the name was recorded — the directory's name while it still has one.
-  const roundJson = async (r: ReviewRoundRecord) => ({
-    ...r,
-    requested_by_name: r.requested_by_name ?? (await agentName(meta, r.requested_by)),
-    requested_by_kind: principalKind(r.requested_by) ?? "user",
-  })
+  const roundJson = (r: ReviewRoundRecord) => roundJsonFor(meta, r)
 
   // The round this caller should settle: their own pending round if they were the
   // one asked, else any pending round on the artifact (single-player: the one asker

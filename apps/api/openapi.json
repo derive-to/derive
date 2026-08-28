@@ -2455,11 +2455,130 @@
           "resolved_at"
         ]
       },
+      "WorkspaceActivity": {
+        "type": "object",
+        "properties": {
+          "since": {
+            "type": "string",
+            "description": "The window's start (ISO)."
+          },
+          "artifacts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "short_id": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "short_id",
+                "title"
+              ]
+            },
+            "description": "The artifacts the rows below belong to — only those the viewer can read."
+          },
+          "versions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ActivityVersion"
+            }
+          },
+          "comments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Comment"
+            }
+          },
+          "rounds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReviewRound"
+            },
+            "description": "Pending rounds (any age) and rounds opened or settled in the window."
+          }
+        },
+        "required": [
+          "since",
+          "artifacts",
+          "versions",
+          "comments",
+          "rounds"
+        ]
+      },
+      "ActivityVersion": {
+        "type": "object",
+        "properties": {
+          "artifact_id": {
+            "type": "string"
+          },
+          "n": {
+            "type": "number"
+          },
+          "author": {
+            "type": "string",
+            "description": "The person's byline, healed to their live name."
+          },
+          "handle": {
+            "type": "string",
+            "nullable": true
+          },
+          "agent": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "name"
+            ],
+            "description": "The agent that produced this version on the author's behalf; null for the person's own."
+          },
+          "message": {
+            "type": "string",
+            "nullable": true
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "artifact_id",
+          "n",
+          "author",
+          "handle",
+          "agent",
+          "message",
+          "name",
+          "created_at"
+        ]
+      },
       "Comment": {
         "type": "object",
         "properties": {
           "id": {
             "type": "string"
+          },
+          "artifact_id": {
+            "type": "string",
+            "description": "The artifact the comment is on."
           },
           "thread_id": {
             "type": "string",
@@ -2590,6 +2709,7 @@
         },
         "required": [
           "id",
+          "artifact_id",
           "thread_id",
           "base_version",
           "path",
@@ -7833,6 +7953,40 @@
                     "rounds",
                     "pending"
                   ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/workspace/activity": {
+      "get": {
+        "tags": [
+          "Workspace"
+        ],
+        "summary": "Recent activity across the workspace, for the home.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 30,
+              "description": "The window in days (default 7, max 30)."
+            },
+            "required": false,
+            "description": "The window in days (default 7, max 30).",
+            "name": "days",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The window's versions, comments and review rounds, over visible artifacts.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceActivity"
                 }
               }
             }

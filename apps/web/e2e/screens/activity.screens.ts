@@ -146,6 +146,16 @@ test("capture activity rail states", async ({ owner: page }) => {
   await page.waitForTimeout(1200)
   await shoot("activity-dark")
 
+  // The Activity page: the same records as the workspace's "Needs you" (the agent's ask,
+  // the open thread) and "Recent activity" (the folded turns), newest first.
+  await page.goto("/activity")
+  await expect(page.getByTestId("wa-needs-you")).toBeVisible()
+  await expect(page.getByTestId("wa-recent")).toBeVisible()
+  await page.waitForTimeout(600)
+  await shoot("activity-page")
+  await page.goto(`/artifacts/${shortId}`)
+  await expect(page.getByTestId("activity-stream")).toBeVisible()
+
   // A phone: the same stream in the docked sheet, and a round answered from its bar.
   await page.evaluate(() => localStorage.setItem("derive_theme", "light"))
   await page.setViewportSize({ width: 390, height: 844 })

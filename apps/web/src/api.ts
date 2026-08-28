@@ -328,6 +328,7 @@ export type Mention = components["schemas"]["Mention"]
  *  the answer. `pending` = waiting; `sent_back` = they returned answers (a note that
  *  reads "good to go" is the go-signal). Generated from the OpenAPI spec. */
 export type ReviewRound = components["schemas"]["ReviewRound"]
+export type WorkspaceActivity = components["schemas"]["WorkspaceActivity"]
 
 /** A comment: threaded, anchored to a text quote, with reactions/edits/soft-delete.
  *  Generated from the OpenAPI spec. */
@@ -1096,6 +1097,9 @@ export const api = {
   runAutomation: (id: string): Promise<{ id: string; status: string }> =>
     f(`/v1/automations/${id}/run`, opts({})).then(j),
   listRuns: (): Promise<{ runs: Run[] }> => f("/v1/workspace/runs", opts()).then(j),
+  // The home's activity: versions, comments and review rounds across the workspace over a
+  // window, on the artifacts the caller can see (routes/activity.ts).
+  workspaceActivity: (): Promise<WorkspaceActivity> => f("/v1/workspace/activity", opts()).then(j),
 
   // Per-user model-plan credentials (the caller's own; see routes/model-credentials.ts).
   listModelCredentials: (): Promise<{ credentials: ModelCredentialHint[] }> =>

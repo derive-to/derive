@@ -23,7 +23,7 @@ import { quoteChipClass } from "./quote-chip"
 // The stream's line grammar: a 20px glyph column (who, or what), the sentence, and a
 // mono stamp pinned right so it can never orphan onto its own line when the sentence
 // wraps or truncates.
-const LINE = "grid grid-cols-[1.25rem_minmax(0,1fr)_auto] items-start gap-x-2"
+export const LINE = "grid grid-cols-[1.25rem_minmax(0,1fr)_auto] items-start gap-x-2"
 
 const FOCUS =
   "outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
@@ -42,7 +42,7 @@ function Stamp({ iso, now }: { iso: string; now: number }) {
 // Who did it: a 20px initials avatar (the comment-row register), the soft ink tint
 // with a sparkles glyph for an agent, and the review glyph when a round's requester
 // resolves to nobody we can name.
-function ActorGlyph({ by, agent }: { by: string | null; agent: boolean }) {
+export function ActorGlyph({ by, agent }: { by: string | null; agent: boolean }) {
   if (!by)
     return (
       <span className="grid size-5 place-items-center text-muted-foreground">
@@ -178,6 +178,23 @@ function DetailRow({
               <span className="truncate">Replied in {row.threadAuthor}'s thread</span>
             </span>
           )}
+          <span className="line-clamp-2 text-sm text-foreground [word-break:break-word]">
+            {row.body}
+          </span>
+        </button>
+      )
+    case "commented":
+      return (
+        <button
+          type="button"
+          data-testid={`activity-commented-${row.threadId}`}
+          onClick={() => onJump(row.threadId)}
+          title="Open the thread"
+          className={cn(
+            "flex w-full flex-col gap-0.5 rounded-md text-left hover:bg-secondary",
+            FOCUS,
+          )}
+        >
           <span className="line-clamp-2 text-sm text-foreground [word-break:break-word]">
             {row.body}
           </span>
