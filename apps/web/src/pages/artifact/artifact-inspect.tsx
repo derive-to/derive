@@ -5,6 +5,7 @@ import { SectionTitle } from "@/components/shared/section-title"
 import { Button } from "@/components/ui/button"
 import { Kbd } from "@/components/ui/kbd"
 import { cn } from "@/lib/utils"
+import type { RuntimeDiagnostic } from "./render-stage"
 
 type FormatKind = "b" | "i" | "a"
 
@@ -26,6 +27,7 @@ export function ArtifactInspect({
   textKind,
   selectedText,
   video,
+  runtimeDiagnostic,
   onSceneEdit,
   onUndo,
   onRedo,
@@ -50,6 +52,9 @@ export function ArtifactInspect({
     transitionMs: number
     caption: string
   } | null
+  /** Non-blocking render diagnostics stay out of the viewer and live behind the
+   * collapsed Advanced section of the editor-only Inspect rail. */
+  runtimeDiagnostic?: RuntimeDiagnostic | null
   onSceneEdit?: (edit: Record<string, unknown>) => void
   onUndo: () => void
   onRedo: () => void
@@ -87,6 +92,8 @@ export function ArtifactInspect({
         <ChooseInspect />
       )}
 
+      {runtimeDiagnostic && <RuntimeDiagnostics diagnostic={runtimeDiagnostic} />}
+
       <SessionControls
         dirty={dirty}
         saving={saving}
@@ -98,6 +105,39 @@ export function ArtifactInspect({
         onDone={onDone}
       />
     </section>
+  )
+}
+
+function RuntimeDiagnostics({ diagnostic }: { diagnostic: RuntimeDiagnostic }) {
+  return (
+    <details
+      data-testid="artifact-runtime-diagnostics"
+      className="mt-6 rounded-lg border border-border bg-secondary/20"
+    >
+      <summary className="cursor-pointer px-3 py-2.5 text-xs font-medium text-muted-foreground marker:text-muted-foreground">
+        Advanced
+      </summary>
+      <div className="space-y-3 border-t border-border px-3 py-3">
+        <div>
+          <Eyebrow as="div">Preview diagnostics</Eyebrow>
+          <p className="mt-1 text-sm font-medium text-foreground">{diagnostic.title}</p>
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">{diagnostic.description}</p>
+        </div>
+        <dl className="grid gap-2 rounded-md bg-secondary/40 p-2.5 font-mono text-3xs text-muted-foreground">
+          <div className="grid grid-cols-[4.5rem_minmax(0,1fr)] gap-2">
+            <dt>Type</dt>
+            <dd className="min-w-0 break-all text-foreground">{diagnostic.code}</dd>
+          </div>
+          <div className="grid grid-cols-[4.5rem_minmax(0,1fr)] gap-2">
+            <dt>Reference</dt>
+            <dd className="min-w-0 break-all text-foreground">{diagnostic.reference}</dd>
+          </div>
+        </dl>
+        <p className="text-3xs leading-4 text-muted-foreground">
+          Hidden from readers because the artifact reached a usable state.
+        </p>
+      </div>
+    </details>
   )
 }
 
