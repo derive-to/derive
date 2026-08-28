@@ -62,10 +62,10 @@ import { runnerStatus } from "./runner-status"
 // refetchInterval), and refetches immediately on the server's session.settled /
 // session.progress push (SessionThread) — the poll is the fallback, the push is what
 // makes a reply land without waiting out the interval.
-export function AgentConsole() {
-  const { id } = useParams({ from: "/agents/$id" })
+export function ContextConsole() {
+  const { id } = useParams({ from: "/contexts/$id" })
   // Keyed by context id: the router keeps this route's component mounted across
-  // /agents/A → /agents/B, and a `picked` session id from A must not
+  // /contexts/A → /contexts/B, and a `picked` session id from A must not
   // survive into B's console.
   return <Console key={id} id={id} />
 }
@@ -155,7 +155,7 @@ function Console({ id }: { id: string }) {
     isPending: outputsPending,
     isError: outputsFailed,
   } = useQuery(contextOutputsQuery(id))
-  // The tab names the Agent; use a stable base title while it loads or access is checked.
+  // The tab names the Context; use a stable base title while it loads or access is checked.
   useDocumentTitle(context?.name ?? null)
 
   // The session on screen: sticky once picked; defaults to the most recent.
@@ -190,8 +190,8 @@ function Console({ id }: { id: string }) {
           title={status === 404 || status === 403 ? "You don't have access" : "Couldn't load"}
           description={
             status === 404 || status === 403
-              ? "Ask the owner for access. Only invited workspace members can use this Agent."
-              : "Something went wrong loading this Agent. Try again in a moment."
+              ? "Ask the owner for access. Only invited workspace members can use this Context."
+              : "Something went wrong loading this Context. Try again in a moment."
           }
         />
       </PageShell>
@@ -214,7 +214,7 @@ function Console({ id }: { id: string }) {
           <RunnerLiveness seenAt={context.runner_seen_at} />
         </div>
         <Eyebrow>
-          Agent
+          Context
           {context.manifest_version != null && <> · manifest v{context.manifest_version}</>}
           {" · "}
           {skillsCount} {skillsCount === 1 ? "skill" : "skills"}
@@ -528,7 +528,7 @@ function ContextStatusWorkspace({
         </div>
         {latest ? (
           <p className="mt-2 text-2xs text-muted-foreground">
-            Latest activity {ago(latest.updated_at)} · Agent v{latest.context_version ?? "—"}
+            Latest activity {ago(latest.updated_at)} · Context v{latest.context_version ?? "—"}
           </p>
         ) : (
           <p className="mt-2 text-2xs text-muted-foreground">No runs yet.</p>
@@ -583,8 +583,8 @@ function ContextStatusWorkspace({
   )
 }
 
-// Agent access reuses the artifact sharing controls but omits public-link access.
-// An Agent may expose connected workspace data even when its instruction artifact is public.
+// Context access reuses the artifact sharing controls but omits public-link access.
+// A Context may expose connected workspace data even when its instruction artifact is public.
 const CONTEXT_SEGMENTS: { value: "invited" | "workspace"; label: string; icon: IconName }[] = [
   { value: "invited", label: "Invited", icon: "lock" },
   { value: "workspace", label: "Workspace", icon: "workspace" },
@@ -722,7 +722,7 @@ function ContextAccess({
 
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <Icon name="lock" className="size-3.5" />
-            Workspace members only. People outside this workspace cannot use the Agent.
+            Workspace members only. People outside this workspace cannot use the Context.
           </div>
         </div>
       </DialogContent>
@@ -812,8 +812,8 @@ function RunnerCard({
         {status}
       </div>
       <p className="text-xs text-muted-foreground">
-        Reading what this Agent knows always works. Taking on a task is different: that happens on a
-        real machine someone keeps connected.{" "}
+        Reading what this Context knows always works. Taking on a task is different: that happens on
+        a real machine someone keeps connected.{" "}
         {state.online
           ? "One is connected, so tasks usually come back within minutes."
           : "None is connected right now, so tasks wait in line and run once one is."}
@@ -966,7 +966,7 @@ function SourcesCard({ count }: { count: number }) {
     >
       <SectionTitle count={count}>Sources</SectionTitle>
       <p className="text-xs text-muted-foreground">
-        {count === 1 ? "One connection" : `${count} connections`} this Agent may use as tools.
+        {count === 1 ? "One connection" : `${count} connections`} this Context may use as tools.
       </p>
     </div>
   )
@@ -986,7 +986,7 @@ function ManifestTab({ context }: { context: ContextDetail }) {
       <EmptyState
         icon={<Icon name="context" strokeWidth={1.75} />}
         title="No manifest"
-        description="This Agent's manifest artifact can't be resolved."
+        description="This Context's manifest artifact can't be resolved."
       />
     )
   }
@@ -1085,8 +1085,8 @@ function ManifestTab({ context }: { context: ContextDetail }) {
           </div>
           <p className="text-xs text-muted-foreground">
             A pin is exact. The runner uses the pinned version, not the latest one.{" "}
-            <code className="font-mono">derive agent push</code> re-pins to current and publishes a
-            new manifest version; the runner picks it up on its next pull. No deploy.
+            <code className="font-mono">derive context push</code> re-pins to current and publishes
+            a new manifest version; the runner picks it up on its next pull. No deploy.
           </p>
         </div>
       )}
@@ -1663,7 +1663,7 @@ function OutputList({ contextId }: { contextId: string }) {
     return (
       <LoadError
         layout="inline"
-        title="Couldn’t load this Agent’s output"
+        title="Couldn’t load this Context’s output"
         description="Try again in a moment."
         testId="console-output-retry"
         onRetry={() => refetch()}

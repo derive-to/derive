@@ -45,7 +45,7 @@ export function AgentsSection({ meId }: { meId: string }) {
   return (
     <SettingsSection
       title="Agent connections"
-      description="Connections let Claude, Codex, or another runner act in this workspace. Agents get one automatically; add one here only to reuse or @mention a runner."
+      description="Connections let Claude, Codex, or another runner act in this workspace. Contexts get one automatically; add one here only to reuse or @mention a runner."
     >
       <AgentWritesRow />
 
@@ -61,7 +61,7 @@ export function AgentsSection({ meId }: { meId: string }) {
         />
       ) : !agents || agents.filter((a) => !a.managed).length === 0 ? (
         <SettingsEmpty>
-          No reusable connections yet. New Agents get a dedicated connection automatically.
+          No reusable connections yet. New Contexts get a dedicated connection automatically.
         </SettingsEmpty>
       ) : (
         <SettingsGroup>
@@ -224,7 +224,7 @@ function AgentConnectionRow({
   const [rotated, setRotated] = useState<string | null>(null)
   const remove = useApiMutation({
     mutationFn: () => api.deleteAgent(agent.id),
-    success: `Agent ${agent.name} removed`,
+    success: `Connection ${agent.name} removed`,
     onSuccess: () => onDone(),
   })
   // A credential event, never an identity event: the old bearer dies the moment

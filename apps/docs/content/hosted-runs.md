@@ -13,7 +13,7 @@ Hosted execution fits recurring work whose inputs and destination are already ex
 - refreshing a status report from connected sources;
 - rebuilding a research brief on a schedule;
 - responding to a trusted webhook or manual **Run now** action; or
-- running a packaged Agent for a person who does not have its execution connection locally.
+- running a packaged Context for a person who does not have its execution connection locally.
 
 Keep high-risk, exploratory, or repository-wide work on a runner you control until its required
 tools and review boundary are understood.

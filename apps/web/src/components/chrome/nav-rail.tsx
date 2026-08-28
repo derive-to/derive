@@ -150,7 +150,7 @@ function NavItem({
   icon: IconName
   label: string
   count?: number
-  to: "/following" | "/agents" | "/workflows" | "/templates" | "/chat"
+  to: "/following" | "/contexts" | "/workflows" | "/templates" | "/chat"
   active: boolean
   testId?: string
 }) {
@@ -378,7 +378,7 @@ export function NavRail() {
   // Feeds are routes now; the home library reads "active > All" only when no collection
   // filter narrows it. (A ?query= search doesn't change which feed you're in.)
   const isAll = onLibrary && !search.collection
-  const onAgents = loc.pathname.startsWith("/agents") || loc.pathname.startsWith("/contexts")
+  const onContexts = loc.pathname.startsWith("/contexts") || loc.pathname.startsWith("/agents")
   const onWorkflows = loc.pathname.startsWith("/workflows")
   const onTemplates = loc.pathname.startsWith("/templates")
   const onSettings = loc.pathname.startsWith("/settings")
@@ -432,10 +432,10 @@ export function NavRail() {
               />
               <NavItem
                 icon="context"
-                label="Agents"
-                to="/agents"
-                active={onAgents}
-                testId="nav-agents"
+                label="Contexts"
+                to="/contexts"
+                active={onContexts}
+                testId="nav-contexts"
               />
               <NavItem
                 icon="workflow"

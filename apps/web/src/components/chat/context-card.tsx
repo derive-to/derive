@@ -78,7 +78,7 @@ export function ContextCard({ card }: { card: BuilderCard }) {
 
       {created && (
         <Link
-          to="/agents/$id"
+          to="/contexts/$id"
           params={{ id: created.context_id }}
           data-testid="builder-context-card-open"
           className="flex items-center gap-1 text-sm text-foreground hover:underline"

@@ -160,7 +160,7 @@ function AutomationRow({
           <Badge variant="outline">
             {automation.provider === "codex" ? "Codex" : "Claude Code"}
           </Badge>
-          {automation.context_id && <Badge variant="outline">Agent</Badge>}
+          {automation.context_id && <Badge variant="outline">Context</Badge>}
           <Badge variant="secondary">{triggerLabel(automation.trigger)}</Badge>
           {!automation.enabled && <Badge variant="outline">Paused</Badge>}
           <ExecutorBadge seenAt={automation.executor_seen_at ?? null} />

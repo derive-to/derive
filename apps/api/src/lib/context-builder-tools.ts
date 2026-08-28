@@ -29,27 +29,27 @@ export interface BuilderToolSurface extends ChatToolSurface {
 const DRAFT_TOOL: LoopTool = {
   name: "draft_manifest",
   description:
-    "Record the drafted Agent as a card for the person to review. Call again when they request a revision.",
+    "Record the drafted Context as a card for the person to review. Call again when they request a revision.",
   params: jsonSchemaOf(ContextDraftSchema),
 }
 
 const CREATE_TOOL: LoopTool = {
   name: "create_context_from_draft",
   description:
-    "Create the Agent from the last confirmed draft. Drafts carry across turns; only draft again to change one.",
+    "Create the Context from the last confirmed draft. Drafts carry across turns; only draft again to change one.",
   params: jsonSchemaOf(z.object({})),
 }
 
 const CANNOT_CREATE =
   "They do not have permission to create things in this workspace, so this cannot be created for them. An Admin can change their access under Settings › Members. Tell them that plainly and do not try again."
 const PAUSED =
-  "An admin has paused agent changes in this workspace, so nothing can be created right now. Tell them nothing is lost — everything they told you is still here — and that it can be created once that is switched back on."
+  "An admin has paused Context changes in this workspace, so nothing can be created right now. Tell them nothing is lost — everything they told you is still here — and that it can be created once that is switched back on."
 
 const manifestDocument = (draft: ContextDraft): Uint8Array =>
   new TextEncoder().encode(
-    `<!-- This document is the instruction set for the "${draft.name}" Agent in Derive.\n` +
-      "     It reads this to learn what it knows and how it should answer.\n" +
-      "     Edit it like any document; the Agent uses the newest version. -->\n\n" +
+    `<!-- This document is the instruction set for the "${draft.name}" Context in Derive.\n` +
+      "     An agent reads this to learn what it knows and how it should answer.\n" +
+      "     Edit it like any document; agents using this Context read the newest version. -->\n\n" +
       draft.manifest_md,
   )
 

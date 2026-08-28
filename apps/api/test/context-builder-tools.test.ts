@@ -326,9 +326,9 @@ describe("builder session", () => {
     const artifact = await meta.getArtifactById(card.published_artifact_id)
     const version = artifact ? await meta.getVersion(artifact.id, artifact.current_version) : null
     expect(version ? await ctx.sourceText(version) : null).toBe(
-      '<!-- This document is the instruction set for the "Pricing Helper" Agent in Derive.\n' +
-        "     It reads this to learn what it knows and how it should answer.\n" +
-        "     Edit it like any document; the Agent uses the newest version. -->\n\n" +
+      '<!-- This document is the instruction set for the "Pricing Helper" Context in Derive.\n' +
+        "     An agent reads this to learn what it knows and how it should answer.\n" +
+        "     Edit it like any document; agents using this Context read the newest version. -->\n\n" +
         MANIFEST,
     )
   })

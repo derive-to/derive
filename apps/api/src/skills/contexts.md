@@ -1,25 +1,22 @@
 ---
 name: contexts
-summary: read a packaged Agent to load what it knows, or give it an instruction (find, read, use)
+summary: read a packaged Context to load what it knows, or give it an instruction (find, read, use)
 order: 6
 ---
-# Agents: load the package, or give it work
+# Contexts: load the package, or give it work
 
-An AGENT is a named, shareable worker: a manifest (what it is and how it works), the skills that
-manifest pins, its bound sources, permissions, execution connection, and run history.
-
-The product calls this an Agent. The current tool and storage contracts keep `context`,
-`context_id`, `create_context`, and `derive://skills/contexts` for compatibility. In the examples
-below, those names refer to the Agent being read or run; they are not a second product concept.
+A CONTEXT is a named, shareable package: a manifest (what this is and how to work with it), the
+skills that manifest pins, its bound sources, and its permissions. An Agent is the actor that reads
+or serves the Context; the two are deliberately separate.
 
 It has two modes, and they are equals:
 
-- **Read it:** `read({ short_id: "ctx_..." })` loads the Agent package. One call, no run, no runner
+- **Read it:** `read({ short_id: "ctx_..." })` loads the Context package. One call, no run, no runner
   needed. This is how you get ORIENTED: what the thing is, its vocabulary, its procedures.
-- **Use it:** `use({ context, instruction })` gives the Agent work, and an execution connection
-  serves that session.
+- **Use it:** `use({ context, instruction })` gives the Context an instruction, and an Agent serves
+  that session.
 
-Reach for `read` when you want to KNOW what the Agent knows, and `use` when you want a job
+Reach for `read` when you want to KNOW what the Context contains, and `use` when you want a job
 done. A cold session almost always wants `read` first: it is cheaper than asking, it returns
 the same thing every time, and it hands you the shape of the domain rather than answering one
 question about it.
@@ -37,31 +34,31 @@ So the read that orients you stays cheap, and the corpus is there when you go lo
 manifests to match: the manifest carries the model and the vocabulary, the depth lives in
 skills the manifest pins.
 
-## Discovering Agents with find
+## Discovering Contexts with find
 
-`find` (browse, or a query matching an Agent name) lists the Agents you may use in a
-workspace: id, name, whether its execution connection is online, the manifest that defines it,
-and your own still-open sessions so you can resume one. Online means its last poll was recent; that
-matters only for `use`, since reading never needs a runner. Access is granted per Agent, so what `find`
+`find` (browse, or a query matching a Context name) lists the Contexts you may use in a
+workspace: id, name, whether its Agent is online, the manifest that defines it, and your own
+still-open sessions so you can resume one. Online means its last poll was recent; that matters only
+for `use`, since reading never needs a runner. Access is granted per Context, so what `find`
 surfaces is exactly what your user may use. `read` checks the same grant, so it can
 never open a package `find` would not have shown you. Then `read` it or `use` it, by id or name.
 
 ## Giving an instruction
 
-Hand an Agent an instruction on your user's behalf, or continue an existing session. Every
-session has the same shape: **(Agent, instruction)**, meaning "with this Agent, do this." The
+Start a session with a Context on your user's behalf, or continue an existing session. Every
+session has the same shape: **(Context, instruction)**, meaning "with this Context, do this." The
 instruction is a question ("what were refunds last week?") or a task ("build the walkthrough
 for Acme"); it always names the target.
 
-- **GIVE** a new session: `use({ context, instruction })` (id or name + "with this Agent, do
+- **GIVE** a new session: `use({ context, instruction })` (id or name + "with this Context, do
   this"). Optionally pass a `dedupe_key`: a second give with the same key while one is still in
   flight joins the existing session instead of starting a duplicate. A repeated "do it for brand
   X" never runs twice.
-- **IN A WORKFLOW:** pass `workflow:{run_id,node_id,attempt}` on GIVE. Derive binds the Agent
+- **IN A WORKFLOW:** pass `workflow:{run_id,node_id,attempt}` on GIVE. Derive binds the Context
   session to that exact step attempt and assigns its run-scoped dedupe key. After settlement, the
   workflow harness records the authored route as described in `derive://skills/workflows`; a retry
   starts the next attempt rather than reopening the settled session.
-- **Follow up:** `use({ session_id, instruction })` (it already knows the Agent; do not pass
+- **Follow up:** `use({ session_id, instruction })` (it already knows its Context; do not pass
   `context`).
 - **CHECK / RESUME**: `use({ session_id })` alone reads the latest state + transcript.
 
@@ -74,16 +71,16 @@ response is NORMAL, not an error. A settled session is normally `answered`; it c
 again). Results cite artifact short ids you can then `read`. If the agent is offline,
 the session waits and runs when it comes back.
 
-## Running an Agent
+## Running a Context
 
-Two principals can execute an Agent through the same `use` tool, with no daemon: its registered
-execution connection (a Claude Code or Codex session connected with the Agent's `dk_agt_` token),
-or an owner-run session whose user holds the owner seat in the Agent's workspace. The person who
-wired it up can run it from the grant they already have, with no second token. A give always carries an
+Two principals can serve a Context through the same `use` tool, with no daemon: its registered
+Agent (a Claude Code or Codex session connected with the Context's `dk_agt_` token), or an owner-run
+session whose user holds the owner seat in the Context's workspace. The person who wired it up can
+run it from the grant they already have, with no second token. A give always carries an
 instruction, so a bare `use({ context })` means "I'm the runner. Hand me my
 work." Loop:
 
-- **PULL work:** `use({ context })` (an Agent you run, NO instruction). It atomically claims up
+- **PULL work:** `use({ context })` (a Context you serve, NO instruction). It atomically claims up
   to the next 10 waiting sessions (flips them to `working` and leases them, so two runners never
   double-run one) and returns each with its `session_id` + transcript. Nothing waiting ⇒
   `claimed: 0`.
@@ -95,16 +92,16 @@ work." Loop:
   `result_artifact_id` to bind/refresh the result page; `answers` (the requester-message id
   from your pull snapshot) so a settle can't clobber a follow-up that landed mid-run.
 
-Pulling is capped by the Agent's concurrency (default 1: you claim exactly what you work on
+Pulling is capped by the Context's concurrency (default 1: you claim exactly what you work on
 now, so a crash strands one session, not a batch). A crashed claim self-heals once its lease
 lapses. The next pull serves it again.
 
-## Creating an Agent (owners)
+## Creating a Context (owners)
 
-`automate` with `action: "create_context"` wires a new Agent in one call: `name` +
-`manifest_short_id` (the Agent's instruction artifact in this workspace), optional
-`max_run_ms` (per-run budget) and `max_concurrency`. Derive creates a managed execution connection
+`automate` with `action: "create_context"` wires a new Context in one call: `name` +
+`manifest_short_id` (the Context's instruction artifact in this workspace), optional
+`max_run_ms` (per-run budget) and `max_concurrency`. Derive creates a managed Agent connection
 automatically; its token is not returned because an MCP transcript is a bad place for a standing
-secret. As an owner, you run the Agent directly via owner-run. A dedicated execution connection's
-token comes from REST when needed. New Agents start `ask_policy: "invited"` (creator-only); widen
+secret. As an owner, you can serve the Context directly. A dedicated Agent connection's token
+comes from REST when needed. New Contexts start `ask_policy: "invited"` (creator-only); widen
 who may ask from the console.

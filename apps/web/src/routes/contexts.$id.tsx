@@ -1,10 +1,16 @@
-import { createFileRoute, redirect } from "@tanstack/react-router"
+import { createFileRoute } from "@tanstack/react-router"
+import { contextQuery, contextSessionsQuery } from "../lib/queries"
 import { requireOnboarded } from "../lib/route-guards"
+import { ContextConsole } from "../pages/context/console"
+import { ConsolePending } from "../pages/context/context-skeleton"
 
-// Context ids remain stable; only the public route vocabulary changes.
 export const Route = createFileRoute("/contexts/$id")({
-  beforeLoad: async (args) => {
-    await requireOnboarded(args)
-    throw redirect({ to: "/agents/$id", params: { id: args.params.id }, replace: true })
-  },
+  beforeLoad: requireOnboarded,
+  loader: ({ context, params }) =>
+    Promise.all([
+      context.queryClient.prefetchQuery(contextQuery(params.id)),
+      context.queryClient.prefetchInfiniteQuery(contextSessionsQuery(params.id)),
+    ]),
+  pendingComponent: ConsolePending,
+  component: ContextConsole,
 })

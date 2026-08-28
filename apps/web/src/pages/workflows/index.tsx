@@ -29,7 +29,7 @@ const workflowMeta = (workflow: WorkflowDirectoryItem): string => {
     { agentSteps: 0, humanPauses: 0, branches: 0, loops: 0 },
   )
   return [
-    countLabel(counts.agentSteps, "Agent step"),
+    countLabel(counts.agentSteps, "Context step"),
     counts.humanPauses ? countLabel(counts.humanPauses, "human pause") : "No human pauses",
     counts.loops
       ? countLabel(counts.loops, "bounded loop")
@@ -61,7 +61,7 @@ export function Workflows() {
         <div className="flex flex-col gap-1">
           <SectionHeading>Coordinated workflows</SectionHeading>
           <p className="text-sm text-muted-foreground">
-            Versioned graphs and loops made from Agent steps, branches, and human pauses.
+            Versioned graphs and loops made from Context steps, branches, and human pauses.
           </p>
         </div>
         {isPending ? (

@@ -209,8 +209,8 @@ describe("scaffold", () => {
     )
   })
 
-  it("scaffolds an Agent: manifest + references + tools + env hygiene", () => {
-    const files = scaffoldFiles("Analytics", "agent")
+  it("scaffolds a Context: manifest + references + tools + env hygiene", () => {
+    const files = scaffoldFiles("Analytics", "context")
     const names = Object.keys(files)
     expect(names).toContain("context/MANIFEST.md")
     expect(names).toContain("context/references/example.md")
@@ -227,11 +227,11 @@ describe("scaffold", () => {
     expect(cfg.context).toEqual({ id: null, agent_id: null, name: "Analytics" })
   })
 
-  it("keeps the context template as a compatibility alias", () => {
-    expect(scaffoldFiles("Analytics", "context")).toEqual(scaffoldFiles("Analytics", "agent"))
+  it("keeps the Agent template as a compatibility alias", () => {
+    expect(scaffoldFiles("Analytics", "agent")).toEqual(scaffoldFiles("Analytics", "context"))
   })
 
-  it("uses Agent as the command name and keeps context as a compatibility alias", () => {
+  it("uses Context as the command name and keeps Agent as a compatibility alias", () => {
     const d = tmp()
     const bin = join(import.meta.dirname, "..", "bin", "derive.js")
     const run = (noun) => spawnSync(process.execPath, [bin, noun, "push", d], { encoding: "utf8" })

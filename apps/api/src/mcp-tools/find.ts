@@ -38,7 +38,7 @@ import {
 // browse. Result rows are typed (artifact | match | context) so a mixed listing is
 // unambiguous. -----------------------------------------------------------------------
 const CONTEXTS_NEED_HUMAN =
-  "Agents are hidden here because this connection has no signed-in user. Reconnect with an OAuth login to see and use them."
+  "Contexts are hidden here because this connection has no signed-in user. Reconnect with an OAuth login to see and use them."
 
 /** Rows returned by a cross-artifact fact read. The store is asked for twice this many so
  *  the visibility gate has slack to drop invisible ones without shortening the answer. */

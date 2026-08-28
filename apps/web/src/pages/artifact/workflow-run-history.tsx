@@ -16,7 +16,7 @@ const terminal = new Set<WorkflowRunSummary["status"]>(["succeeded", "failed", "
 type WorkflowAttempt = WorkflowRunSummary["attempts"][number]
 
 const attemptKindLabel = (kind: WorkflowAttempt["kind"]): string => {
-  if (kind === "context") return "Agent step"
+  if (kind === "context") return "Context step"
   if (kind === "human") return "Human pause"
   return "Terminal step"
 }

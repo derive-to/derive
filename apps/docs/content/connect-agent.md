@@ -39,8 +39,9 @@ rendered output, and how to close the feedback loop without dropping human comme
 
 The remote MCP server exposes tools to find and read work, catch up on feedback, comment,
 publish revisions, stage large content and assets, organize artifacts, save checkpoints,
-and use workspace Agents. The current MCP compatibility contract calls an Agent a `context` in
-tool arguments and resource names. Every tool call remains subject to the authenticated role.
+and use workspace Contexts. A Context packages reusable instructions, skills, sources, and
+permissions; the connected agent is the actor using it. Every tool call remains subject to the
+authenticated role.
 
 Continue with the [MCP guide](/agents/mcp/) for the complete tool surface or the
 [CLI guide](/agents/cli/) for terminal and CI workflows.

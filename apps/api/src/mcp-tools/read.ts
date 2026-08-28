@@ -490,7 +490,7 @@ export function registerReadTool(tc: ToolContext): void {
       const contextPackage = async () => {
         if (!actingFor)
           return err(
-            "Agents need a signed-in user. Reconnect with an OAuth login to read or use them.",
+            "Contexts need a signed-in user. Reconnect with an OAuth login to read or use them.",
           )
         const t = await resolveWs(workspace)
         if ("error" in t) return err(t.error)
@@ -508,7 +508,7 @@ export function registerReadTool(tc: ToolContext): void {
         )
         return json({
           ...pkg,
-          how: "The Agent package, opened progressively: its instructions are loaded; skills and sources are pointers — read one by its short_id when a task needs it. To give the Agent work, use({context, instruction}). The `context` field is the compatibility name for an Agent.",
+          how: "The Context package, opened progressively: its instructions are loaded; skills and sources are pointers — read one by its short_id when a task needs it. To use the Context for work, call use({context, instruction}).",
         })
       }
       if (short_id.startsWith("ctx_")) {
@@ -516,7 +516,7 @@ export function registerReadTool(tc: ToolContext): void {
         return (
           pkg ??
           err(
-            `No Agent "${short_id}" you can reach here. Call find to list the Agents you may use.`,
+            `No Context "${short_id}" you can reach here. Call find to list the Contexts you may use.`,
           )
         )
       }
