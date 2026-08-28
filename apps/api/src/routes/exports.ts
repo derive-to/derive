@@ -52,7 +52,7 @@ const jobJson = (baseUrl: string, job: Awaited<ReturnType<AppContext["meta"]["ge
 }
 
 export const exportRoutes = (ctx: AppContext) => {
-  const { meta, blobs, requireArtifact, requireUser, overStorage, blockCopy, deps } = ctx
+  const { meta, blobs, requireArtifact, actingHuman, overStorage, blockCopy, deps } = ctx
   const app = new OpenAPIHono<BlankEnv>()
   const ExportRequest = z.object({
     kind: z.enum(EXPORT_KINDS),
@@ -79,8 +79,8 @@ export const exportRoutes = (ctx: AppContext) => {
       responses: { 202: { description: "Export accepted." } },
     }),
     async (c) => {
-      const user = await requireUser(c)
-      if (user instanceof Response) return bail(user)
+      const user = await actingHuman(c)
+      if (!user) return bail(fail(c, 401, "unauthenticated"))
       const artifact = await requireArtifact(c, "read", { split: true })
       if (artifact instanceof Response) return bail(artifact)
       const body = c.req.valid("json")
@@ -138,17 +138,17 @@ export const exportRoutes = (ctx: AppContext) => {
   )
 
   app.get("/v1/artifacts/:shortId/exports", async (c) => {
-    const user = await requireUser(c)
-    if (user instanceof Response) return user
+    const user = await actingHuman(c)
+    if (!user) return fail(c, 401, "unauthenticated")
     const artifact = await requireArtifact(c, "read", { split: true })
     if (artifact instanceof Response) return artifact
     const jobs = await meta.listExportJobs(artifact.id, user.id, 20)
     return c.json({ jobs: jobs.map((job) => jobJson(deps.baseUrl.replace(/\/$/, ""), job)) })
   })
 
-  const ownJob = async (c: Parameters<typeof requireUser>[0]) => {
-    const user = await requireUser(c)
-    if (user instanceof Response) return user
+  const ownJob = async (c: Parameters<typeof actingHuman>[0]) => {
+    const user = await actingHuman(c)
+    if (!user) return fail(c, 401, "unauthenticated")
     const job = await meta.getExportJob(c.req.param("id") ?? "")
     if (!job || job.requested_by !== user.id) return fail(c, 404, "not found")
     const artifact = await meta.getArtifactById(job.artifact_id)
