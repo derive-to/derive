@@ -7,8 +7,10 @@
  * module never serializes a browser DOM.
  */
 
+import { sliceSlides } from "./decks"
 import { EditError } from "./doc-text"
 import { attrValues, type HtmlTag, hasAttr, tags } from "./html-tags"
+import { injectArtifactRuntimeScripts } from "./shared-state-client"
 
 export const STRUCTURAL_EDIT_SCHEMA = "derive.structural-edit/v1" as const
 export const STRUCTURAL_RECEIPT_SCHEMA = "derive.structural-edit-receipt/v1" as const
@@ -80,6 +82,19 @@ export interface StructuralRegionInspection {
   id: string
   layout: "stack"
   nodes: StructuralNodeInspection[]
+}
+
+export interface StructuralBackfillSkip {
+  slide: number
+  reason: "empty" | "runtime-child" | "non-html-child" | "unowned-content" | "implicit-close"
+}
+
+export interface StructuralBackfillResult {
+  html: string
+  changed: boolean
+  regions: number
+  nodes: number
+  skipped: StructuralBackfillSkip[]
 }
 
 export class StructuralEditError extends EditError {
@@ -374,6 +389,169 @@ const setAttribute = (opening: string, name: string, value: string | null): stri
   while (insert > 0 && /\s/.test(opening.charAt(insert - 1))) insert--
   if (opening[insert - 1] === "/") insert--
   return `${opening.slice(0, insert)} ${name}="${value}"${opening.slice(insert)}`
+}
+
+const BACKFILL_STYLE = `<style data-derive-structural-backfill>
+[data-derive-region][data-derive-layout="stack"] > [data-derive-node][data-derive-size="compact"] { width: 50%; max-width: none; box-sizing: border-box }
+[data-derive-region][data-derive-layout="stack"] > [data-derive-node][data-derive-size="standard"] { width: 75%; max-width: none; box-sizing: border-box }
+[data-derive-region][data-derive-layout="stack"] > [data-derive-node][data-derive-size="full"] { width: 100%; max-width: none; box-sizing: border-box }
+</style>`
+
+const RUNTIME_CHILDREN = new Set([
+  "base",
+  "link",
+  "meta",
+  "noscript",
+  "script",
+  "style",
+  "template",
+  "title",
+])
+
+const inferredKind = (name: string): string => {
+  if (/^h[1-6]$/.test(name)) return "heading"
+  if (name === "p" || name === "blockquote" || name === "pre") return "text"
+  if (name === "ul" || name === "ol" || name === "dl") return "list"
+  if (["img", "picture", "video", "canvas", "svg", "figure"].includes(name)) return "visual"
+  if (["header", "footer", "nav", "aside"].includes(name)) return name
+  return "group"
+}
+
+/**
+ * Give legacy decks the same exact-source structural contract as newly authored
+ * decks. This is deliberately a recognizer, not a visual-layout guess:
+ *
+ * - slide identity comes from the existing deck contract (or is deterministically
+ *   stamped exactly as whole-slide rearranging already does);
+ * - only explicit direct source children become nodes;
+ * - meaningful loose text, implicit closes, and runtime-bearing children skip that
+ *   slide instead of being moved under an invented owner;
+ * - a document with any existing structural metadata is left entirely alone, so a
+ *   partial authored contract is never silently completed with different intent.
+ *
+ * The pure transform is used both for the app render and for edit materialization.
+ * That lets a legacy deck expose handles immediately while ensuring the first saved
+ * structural operation resolves against byte-identical server-authored identities.
+ */
+export const backfillLegacyDeckStructure = (html: string): StructuralBackfillResult => {
+  const allTags = tags(html)
+  if (
+    allTags.some(
+      (tag) =>
+        !tag.closing &&
+        (hasAttr(tag.attrs, "data-derive-region") || hasAttr(tag.attrs, "data-derive-node")),
+    )
+  )
+    return { html, changed: false, regions: 0, nodes: 0, skipped: [] }
+
+  const slides = sliceSlides(html)
+  if (!slides.length) return { html, changed: false, regions: 0, nodes: 0, skipped: [] }
+  const known = slides.flatMap((slide) => (slide.id === null ? [] : [slide.id]))
+  if (new Set(known).size !== known.length)
+    fail("ambiguous-target", "Two slides share one identity, so structural backfill is ambiguous.")
+  let nextSlideId = Math.max(-1, ...known) + 1
+  const slideIds = slides.map((slide) => slide.id ?? nextSlideId++)
+
+  const elements = sourceElements(html)
+  const byStart = new Map(elements.map((element) => [element.tag.start, element]))
+  const replacements: { start: number; end: number; opening: string }[] = []
+  const annotatedSlideStarts = new Set<number>()
+  const skipped: StructuralBackfillSkip[] = []
+  let regions = 0
+  let nodes = 0
+
+  for (const [index, slide] of slides.entries()) {
+    const position = index + 1
+    const slideElement = byStart.get(slide.start)
+    if (!slideElement?.explicitlyClosed || slideElement.tag.selfClosing) {
+      skipped.push({ slide: position, reason: "implicit-close" })
+      continue
+    }
+    const children = elements
+      .filter((element) => element.parentStart === slideElement.tag.start)
+      .sort((a, b) => a.tag.start - b.tag.start)
+    if (!children.length) {
+      skipped.push({ slide: position, reason: "empty" })
+      continue
+    }
+    if (children.some((child) => RUNTIME_CHILDREN.has(child.tag.name))) {
+      skipped.push({ slide: position, reason: "runtime-child" })
+      continue
+    }
+    // The interaction client deliberately works with HTMLElements: focusability,
+    // tabindex restoration, and semantic width presets are not equivalent on a
+    // direct SVG/MathML root. Keep that composition atomic behind an HTML wrapper
+    // rather than stamp a handle the client would correctly refuse.
+    if (children.some((child) => child.tag.namespace !== "html")) {
+      skipped.push({ slide: position, reason: "non-html-child" })
+      continue
+    }
+    if (children.some((child) => !child.explicitlyClosed)) {
+      skipped.push({ slide: position, reason: "implicit-close" })
+      continue
+    }
+    let cursor = slideElement.tag.end
+    let ownsEverything = true
+    for (const child of children) {
+      if (!ignorableGap(html.slice(cursor, child.tag.start))) {
+        ownsEverything = false
+        break
+      }
+      cursor = child.end
+    }
+    if (!ownsEverything || !ignorableGap(html.slice(cursor, slideElement.closeStart))) {
+      skipped.push({ slide: position, reason: "unowned-content" })
+      continue
+    }
+
+    const slideId = slideIds[index] as number
+    const regionId = `slide-${slideId}`
+    let slideOpening = html.slice(slideElement.tag.start, slideElement.tag.end)
+    if (slide.id === null)
+      slideOpening = setAttribute(slideOpening, "data-derive-slide", String(slideId))
+    slideOpening = setAttribute(slideOpening, "data-derive-region", regionId)
+    slideOpening = setAttribute(slideOpening, "data-derive-layout", "stack")
+    replacements.push({
+      start: slideElement.tag.start,
+      end: slideElement.tag.end,
+      opening: slideOpening,
+    })
+    annotatedSlideStarts.add(slideElement.tag.start)
+    for (const [childIndex, child] of children.entries()) {
+      let opening = html.slice(child.tag.start, child.tag.end)
+      opening = setAttribute(opening, "data-derive-node", `${regionId}-node-${childIndex + 1}`)
+      opening = setAttribute(opening, "data-derive-kind", inferredKind(child.tag.name))
+      replacements.push({ start: child.tag.start, end: child.tag.end, opening })
+      nodes++
+    }
+    regions++
+  }
+
+  if (!regions) return { html, changed: false, regions, nodes, skipped }
+  // Once any slide becomes structurally editable, stamp every class-only sibling's
+  // slide identity too. The deck bar prefers explicit identities when even one is
+  // present; leaving an unsafe sibling unstamped would make that real slide vanish
+  // from navigation even though it correctly remains unavailable for arranging.
+  for (const [index, slide] of slides.entries()) {
+    if (slide.id !== null || annotatedSlideStarts.has(slide.start)) continue
+    const slideElement = byStart.get(slide.start)
+    if (!slideElement) continue
+    replacements.push({
+      start: slideElement.tag.start,
+      end: slideElement.tag.end,
+      opening: setAttribute(
+        html.slice(slideElement.tag.start, slideElement.tag.end),
+        "data-derive-slide",
+        String(slideIds[index]),
+      ),
+    })
+  }
+  let out = html
+  for (const replacement of replacements.sort((a, b) => b.start - a.start))
+    out = out.slice(0, replacement.start) + replacement.opening + out.slice(replacement.end)
+  out = injectArtifactRuntimeScripts(out, BACKFILL_STYLE)
+  inspect(out)
+  return { html: out, changed: out !== html, regions, nodes, skipped }
 }
 
 const sizeEdit = (

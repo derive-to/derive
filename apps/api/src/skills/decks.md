@@ -146,9 +146,15 @@ meaning. The canonical fixed-stage mapping changes only inline width proportions
 .slide > [data-derive-node][data-derive-size="full"] { width: 100%; max-width: none }
 ```
 
-This metadata is deliberately authored. Do not add it to an old deck by inferring cards or
-layout from runtime geometry; either make the exact source contract explicit or leave that deck's
-inner elements unsupported. Whole-slide `slide_ops` remain available either way.
+The canonical template authors this metadata directly. Legacy decks get a bounded optimistic
+upgrade in Edit mode: Derive uses each exact-source slide as a region and stamps only its explicit,
+direct source children as nodes. It never infers cards or ownership from runtime geometry. A slide
+with loose text, an implicitly closed direct child, or a direct `script`, `style`, or `template`
+stays unsupported while independently safe slides remain movable. Direct SVG/MathML should sit in
+an HTML wrapper so the interaction client can focus and size that wrapper. A partial structural
+contract is never completed automatically. The effective preview and first inline save run the
+same deterministic transform, and that first save persists the stable identities plus fallback
+`compact` / `standard` / `full` width rules. Whole-slide `slide_ops` remain available either way.
 
 ## Every slide carries a visual AND words
 

@@ -310,6 +310,14 @@ export function registerPublishTool(tc: ToolContext): void {
                   .describe("Replacement for the quoted span, as plain text. Empty deletes."),
               }),
               z.object({
+                schema: z.literal("derive.structural-edit/v1"),
+                op: z.enum(["structural-size", "structural-order", "structural-remove"]),
+                region: z.string(),
+                node: z.string().optional(),
+                nodes: z.array(z.string()).optional(),
+                size: z.enum(["compact", "standard", "full"]).nullable().optional(),
+              }),
+              z.object({
                 op: z.literal("scene-update"),
                 id: z.string().describe("Stable data-derive-scene value."),
                 duration_ms: z.coerce.number().optional(),
@@ -334,9 +342,9 @@ export function registerPublishTool(tc: ToolContext): void {
           )
           .optional()
           .describe(
-            "Revise a single-file artifact without resending it. Exact-source edits cannot mix with the other shapes. Quote edits change visible text; scene-* edits change timing and structure in an HTML Video. A miss applies nothing and says why.",
+            "Revise one file with exact-source, visible-text, structural element, or video-scene edits. Safe legacy decks gain structural IDs on first inline save.",
           )
-          // WORKED EXAMPLES, not more prose. This param accepts six object shapes behind a
+          // WORKED EXAMPLES, not more prose. This param accepts multiple object shapes behind a
           // union, and a schema can say what is legal without showing which one a given job
           // wants — the gap examples exist to close. One per shape an agent actually reaches
           // for: raw-source replace, visible-text replace, and a scene op. The array nesting
@@ -348,6 +356,14 @@ export function registerPublishTool(tc: ToolContext): void {
                 {
                   quote: { exact: "4,000 events/sec", prefix: "throughput is " },
                   new_text: "6,200 events/sec",
+                },
+              ],
+              [
+                {
+                  schema: "derive.structural-edit/v1",
+                  op: "structural-order",
+                  region: "slide-2",
+                  nodes: ["slide-2-node-2", "slide-2-node-1"],
                 },
               ],
               [{ op: "scene-update", id: "intro", duration_ms: 4000, transition: "fade" }],
@@ -384,9 +400,7 @@ export function registerPublishTool(tc: ToolContext): void {
         base_version: z.coerce
           .number()
           .optional()
-          .describe(
-            "Pass the version you read; the publish errors instead of applying if the artifact moved past it.",
-          ),
+          .describe("Version read; fails if the artifact has moved."),
       },
     },
     async ({

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest"
 import { DECK_TEMPLATE } from "../src/deck-template.gen"
 import {
   applyStructuralEdits,
+  backfillLegacyDeckStructure,
   inspectStructuralDocument,
   isStructuralUserEdit,
   STRUCTURAL_EDIT_SCHEMA,
@@ -28,6 +29,133 @@ const document = `<!doctype html>
     </article>
   </section>
 </main>`
+
+const legacyDeck = `<!doctype html><html><head><style>.slide{display:none}.slide.on{display:block}</style></head><body>
+<main>
+  <section class="slide on" data-derive-slide="4">
+    <h2>First</h2>
+    <div class="composition"><p>One atomic composition</p></div>
+  </section>
+  <section class="slide">
+    <span>Context</span>
+    <figure><svg viewBox="0 0 10 10"><circle cx="5" cy="5" r="4"/></svg></figure>
+  </section>
+</main>
+<script>parent.postMessage({source:'derive-deck',type:'deck',n:2},'*')</script>
+</body></html>`
+
+describe("backfillLegacyDeckStructure", () => {
+  it("optimistically stamps safe legacy slide children with stable exact-source identities", () => {
+    const result = backfillLegacyDeckStructure(legacyDeck)
+    expect(result).toMatchObject({ changed: true, regions: 2, nodes: 4, skipped: [] })
+    expect(result.html).toContain('data-derive-slide="5"')
+    expect(result.html).toContain('data-derive-region="slide-4" data-derive-layout="stack"')
+    expect(result.html).toContain('data-derive-node="slide-4-node-1" data-derive-kind="heading"')
+    expect(result.html).toContain('data-derive-node="slide-5-node-2" data-derive-kind="visual"')
+    expect(result.html).toContain("data-derive-structural-backfill")
+    expect(inspectStructuralDocument(result.html)).toEqual([
+      {
+        id: "slide-4",
+        layout: "stack",
+        nodes: [
+          { id: "slide-4-node-1", kind: "heading", size: null },
+          { id: "slide-4-node-2", kind: "group", size: null },
+        ],
+      },
+      {
+        id: "slide-5",
+        layout: "stack",
+        nodes: [
+          { id: "slide-5-node-1", kind: "group", size: null },
+          { id: "slide-5-node-2", kind: "visual", size: null },
+        ],
+      },
+    ])
+    expect(backfillLegacyDeckStructure(result.html).html).toBe(result.html)
+  })
+
+  it("makes a legacy deck immediately reorderable, resizable, removable, and reversible", () => {
+    const backfilled = backfillLegacyDeckStructure(legacyDeck).html
+    const edited = applyStructuralEdits(backfilled, [
+      op({
+        op: "structural-order",
+        region: "slide-4",
+        nodes: ["slide-4-node-2", "slide-4-node-1"],
+      }),
+      op({
+        op: "structural-size",
+        region: "slide-4",
+        node: "slide-4-node-2",
+        size: "compact",
+      }),
+      op({
+        op: "structural-remove",
+        region: "slide-5",
+        node: "slide-5-node-1",
+      }),
+    ])
+    expect(edited.html.indexOf("slide-4-node-2")).toBeLessThan(
+      edited.html.indexOf("slide-4-node-1"),
+    )
+    expect(edited.html).toContain('data-derive-size="compact"')
+    expect(edited.html).not.toContain('data-derive-node="slide-5-node-1"')
+    expect(applyStructuralEdits(edited.html, edited.receipt.inverses).html).toBe(backfilled)
+  })
+
+  it("backfills safe slides independently and reports ambiguous ownership", () => {
+    const html = `<main>
+  <section class="slide" data-derive-slide="0"><h2>Safe</h2><p>Owned</p></section>
+  <section class="slide"><h2>Unsafe</h2>loose text<p>Not guessed</p></section>
+</main>`
+    const result = backfillLegacyDeckStructure(html)
+    expect(result).toMatchObject({
+      changed: true,
+      regions: 1,
+      nodes: 2,
+      skipped: [{ slide: 2, reason: "unowned-content" }],
+    })
+    expect(result.html).toContain('data-derive-region="slide-0"')
+    expect(result.html).toContain('<section class="slide" data-derive-slide="1">')
+    expect(result.html).not.toContain('data-derive-region="slide-1"')
+  })
+
+  it.each([
+    [
+      "a direct runtime child",
+      `<section class="slide" data-derive-slide="0"><h2>A</h2><script>boot()</script></section>
+       <section class="slide" data-derive-slide="1"><h2>B</h2><style>b{}</style></section>`,
+      "runtime-child",
+    ],
+    [
+      "implicitly closed children",
+      `<section class="slide" data-derive-slide="0"><p>A<p>B</section>
+       <section class="slide" data-derive-slide="1"><p>A<p>B</section>`,
+      "implicit-close",
+    ],
+    [
+      "a direct non-HTML child",
+      `<section class="slide" data-derive-slide="0"><svg viewBox="0 0 10 10"><circle r="4"/></svg></section>
+       <section class="slide" data-derive-slide="1"><math><mi>x</mi></math></section>`,
+      "non-html-child",
+    ],
+  ])("refuses to guess through %s", (_name, html, reason) => {
+    const result = backfillLegacyDeckStructure(html)
+    expect(result.changed).toBe(false)
+    expect(result.skipped.map((skip) => skip.reason)).toContain(reason)
+  })
+
+  it("never completes a partial authored contract with inferred intent", () => {
+    const html = `<section class="slide" data-derive-slide="0" data-derive-region="custom" data-derive-layout="stack"><h2 data-derive-node="title">A</h2></section>
+<section class="slide" data-derive-slide="1"><h2>B</h2></section>`
+    expect(backfillLegacyDeckStructure(html)).toEqual({
+      html,
+      changed: false,
+      regions: 0,
+      nodes: 0,
+      skipped: [],
+    })
+  })
+})
 
 describe("inspectStructuralDocument", () => {
   it("exposes the canonical deck's top-level slide elements without DOM inference", () => {

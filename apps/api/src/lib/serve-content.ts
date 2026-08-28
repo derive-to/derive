@@ -1,6 +1,7 @@
 import {
   type BlobStore,
   type BundleManifest,
+  backfillLegacyDeckStructure,
   injectArtifactRuntimeScripts,
   injectSharedStateScript,
   isBundleContentType,
@@ -77,6 +78,18 @@ export const serveContent = async (
   // Runtime scripts precede authored meta CSP and execute in parse-safe order. Marks and
   // route-specific chrome remain appended because they are optional DOM enhancements.
   const htmlBody = (doc: string): string => withRuntime(rf(doc)) + marks + append
+  // Legacy decks already have a source-level slide boundary. Optimistically expose
+  // their safe direct children as movable nodes in the app render; the identical
+  // pure transform is persisted by materializeEdits on the first save. A malformed
+  // or ambiguous deck remains viewable and simply receives no structural handles.
+  const withDeckStructure = (doc: string): string => {
+    if (content.content_type !== "text/x-derive-deck") return doc
+    try {
+      return backfillLegacyDeckStructure(doc).html
+    } catch {
+      return doc
+    }
+  }
   let path = rawPath
   if (isBundleContentType(content.content_type)) {
     const manifestBytes = await blobs.get(content.blob_key)
@@ -151,7 +164,7 @@ export const serveContent = async (
   // html file artifact — any path serves the document (+ selection capture)
   const ct = mimeFor(path || "index.html")
   if (ct.startsWith("text/html")) {
-    const html = await htmlBody(new TextDecoder().decode(data))
+    const html = await htmlBody(withDeckStructure(new TextDecoder().decode(data)))
     return c.body(html, 200, { ...headers, "Content-Type": ct })
   }
   return c.body(toBody(data), 200, { ...headers, "Content-Type": ct })

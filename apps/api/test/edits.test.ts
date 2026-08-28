@@ -226,6 +226,54 @@ describe("materializeEdits: quote-scoped edits (the inline editor's shape)", () 
     )
   })
 
+  it("persists optimistic legacy-deck annotations before applying structural intent", async () => {
+    const html = `<main>
+  <section class="slide" data-derive-slide="0"><h2>A</h2><p>Alpha</p></section>
+  <section class="slide" data-derive-slide="1"><h2>B</h2><p>Beta</p></section>
+</main><script>parent.postMessage({source:'derive-deck',type:'deck',n:2},'*')</script>`
+    const deps = mkDeps({ 1: { text: html, contentType: "text/x-derive-deck" } })
+    const out = await materializeEdits(
+      deps,
+      fileArtifact(1),
+      [
+        {
+          schema: "derive.structural-edit/v1",
+          op: "structural-order",
+          region: "slide-0",
+          nodes: ["slide-0-node-2", "slide-0-node-1"],
+        },
+        {
+          schema: "derive.structural-edit/v1",
+          op: "structural-size",
+          region: "slide-0",
+          node: "slide-0-node-2",
+          size: "compact",
+        },
+      ],
+      1,
+    )
+    expect(out.content).toContain('data-derive-region="slide-0"')
+    expect(out.content.indexOf("slide-0-node-2")).toBeLessThan(
+      out.content.indexOf("slide-0-node-1"),
+    )
+    expect(out.content).toContain('data-derive-size="compact"')
+    expect(out.filename).toBe("index.html")
+  })
+
+  it("does not change the exact byte baseline for raw source edits to a legacy deck", async () => {
+    const html = `<section class="slide" data-derive-slide="0"><h2>Old</h2></section>
+<section class="slide" data-derive-slide="1"><h2>B</h2></section>`
+    const deps = mkDeps({ 1: { text: html, contentType: "text/x-derive-deck" } })
+    const out = await materializeEdits(
+      deps,
+      fileArtifact(1),
+      [{ old_str: "<h2>Old</h2>", new_str: "<h2>New</h2>" }],
+      1,
+    )
+    expect(out.content).toBe(html.replace("<h2>Old</h2>", "<h2>New</h2>"))
+    expect(out.content).not.toContain("data-derive-region")
+  })
+
   it("refuses structural edits on Markdown", async () => {
     const deps = mkDeps({ 1: { text: "# Not HTML", contentType: "text/markdown" } })
     await expect(

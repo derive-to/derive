@@ -67,6 +67,27 @@ describe("serveContent — single-file artifacts", () => {
     expectSandbox(res)
   })
 
+  it("optimistically exposes safe legacy deck children as structural nodes", async () => {
+    const deck = `<main>
+  <section class="slide" data-derive-slide="0"><h2>A</h2><p>Alpha</p></section>
+  <section class="slide" data-derive-slide="1"><h2>B</h2><figure>Beta</figure></section>
+</main><script>parent.postMessage({source:'derive-deck',type:'deck',n:2},'*')</script>`
+    const res = await serveContent(
+      ctx(),
+      blobStore({ k: deck }),
+      { blob_key: "k", content_type: "text/x-derive-deck" },
+      "Legacy deck",
+      "/",
+      "",
+    )
+    const body = await res.text()
+    expect(body).toContain('data-derive-region="slide-0"')
+    expect(body).toContain('data-derive-node="slide-0-node-1"')
+    expect(body).toContain("data-derive-structural-backfill")
+    // The stored blob is immutable; this is a deterministic effective-source view.
+    expect(deck).not.toContain("data-derive-region")
+  })
+
   it("loads Derive's runtimes before an authored meta CSP", async () => {
     const authoredCsp = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src https://unpkg.com">`
     const res = await serveContent(

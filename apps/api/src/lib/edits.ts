@@ -7,6 +7,7 @@ import {
   applySceneEdits,
   applySlideOps,
   applyStructuralEdits,
+  backfillLegacyDeckStructure,
   type DiffOp,
   type DocEdit,
   diffLines,
@@ -286,8 +287,15 @@ export async function materializeEdits(
   let content = src
   if (strEdits.length) content = applyEdits(src, strEdits)
   else {
-    // Element operations resolve against the untouched base first. A resize changes
-    // attributes only, so the visible-text projection quote edits use is identical.
+    // The app render exposes the same deterministic legacy-deck annotations at
+    // serve time. Persist them on the first ordinary inline save so structural
+    // intent emitted from that render resolves against identical exact source.
+    // Raw old_str edits retain their byte-exact baseline and never trigger this.
+    if ((contentType ?? "").split(";")[0]?.trim() === "text/x-derive-deck")
+      content = backfillLegacyDeckStructure(content).html
+    // Element operations resolve against the same effective source the iframe saw
+    // (the stored base plus any deterministic legacy-deck annotations). A resize
+    // changes attributes only, so the visible-text projection quote edits use is identical.
     // This lets one Save carry typed text and resized media atomically.
     if (elementEdits.length) {
       if (!isHtmlLike(contentType ?? "text/html"))
