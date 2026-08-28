@@ -128,6 +128,11 @@ const STRUCTURAL_ATTRIBUTES = [
   "data-derive-node",
   "data-derive-kind",
   "data-derive-size",
+  "data-derive-runtime-region",
+  "data-derive-runtime-layout",
+  "data-derive-runtime-node",
+  "data-derive-runtime-kind",
+  "data-derive-runtime-size",
 ] as const
 
 const fail = (code: StructuralEditError["code"], message: string): never => {
@@ -422,11 +427,14 @@ const setAttribute = (opening: string, name: string, value: string | null): stri
   return `${opening.slice(0, insert)} ${name}="${value}"${opening.slice(insert)}`
 }
 
-const BACKFILL_STYLE = `<style data-derive-structural-backfill>
-[data-derive-region][data-derive-layout="stack"] > [data-derive-node][data-derive-size="compact"] { width: 50% !important; max-width: none !important; box-sizing: border-box !important }
-[data-derive-region][data-derive-layout="stack"] > [data-derive-node][data-derive-size="standard"] { width: 75% !important; max-width: none !important; box-sizing: border-box !important }
-[data-derive-region][data-derive-layout="stack"] > [data-derive-node][data-derive-size="full"] { width: 100% !important; max-width: none !important; box-sizing: border-box !important }
+const backfillStyle = (runtime: boolean): string => {
+  const prefix = runtime ? "data-derive-runtime" : "data-derive"
+  return `<style data-derive-structural-backfill>
+[${prefix}-region][${prefix}-layout="stack"] > [${prefix}-node][${prefix}-size="compact"] { width: 50% !important; max-width: none !important; box-sizing: border-box !important }
+[${prefix}-region][${prefix}-layout="stack"] > [${prefix}-node][${prefix}-size="standard"] { width: 75% !important; max-width: none !important; box-sizing: border-box !important }
+[${prefix}-region][${prefix}-layout="stack"] > [${prefix}-node][${prefix}-size="full"] { width: 100% !important; max-width: none !important; box-sizing: border-box !important }
 </style>`
+}
 
 const RUNTIME_CHILDREN = new Set([
   "base",
@@ -486,7 +494,12 @@ const inferredKind = (name: string): string => {
  * That lets a legacy deck expose handles immediately while ensuring the first saved
  * structural operation resolves against byte-identical server-authored identities.
  */
-export const backfillLegacyDeckStructure = (html: string): StructuralBackfillResult => {
+export const backfillLegacyDeckStructure = (
+  html: string,
+  options: { runtime?: boolean } = {},
+): StructuralBackfillResult => {
+  const runtime = options.runtime === true
+  const structuralPrefix = runtime ? "data-derive-runtime" : "data-derive"
   const allTags = tags(html)
   if (
     allTags.some(
@@ -583,8 +596,8 @@ export const backfillLegacyDeckStructure = (html: string): StructuralBackfillRes
     let slideOpening = html.slice(slideElement.tag.start, slideElement.tag.end)
     if (slide.id === null)
       slideOpening = setAttribute(slideOpening, "data-derive-slide", String(slideId))
-    slideOpening = setAttribute(slideOpening, "data-derive-region", regionId)
-    slideOpening = setAttribute(slideOpening, "data-derive-layout", "stack")
+    slideOpening = setAttribute(slideOpening, `${structuralPrefix}-region`, regionId)
+    slideOpening = setAttribute(slideOpening, `${structuralPrefix}-layout`, "stack")
     replacements.push({
       start: slideElement.tag.start,
       end: slideElement.tag.end,
@@ -593,8 +606,12 @@ export const backfillLegacyDeckStructure = (html: string): StructuralBackfillRes
     annotatedSlideStarts.add(slideElement.tag.start)
     for (const [childIndex, child] of children.entries()) {
       let opening = html.slice(child.tag.start, child.tag.end)
-      opening = setAttribute(opening, "data-derive-node", `${regionId}-node-${childIndex + 1}`)
-      opening = setAttribute(opening, "data-derive-kind", inferredKind(child.tag.name))
+      opening = setAttribute(
+        opening,
+        `${structuralPrefix}-node`,
+        `${regionId}-node-${childIndex + 1}`,
+      )
+      opening = setAttribute(opening, `${structuralPrefix}-kind`, inferredKind(child.tag.name))
       replacements.push({ start: child.tag.start, end: child.tag.end, opening })
       nodes++
     }
@@ -623,8 +640,8 @@ export const backfillLegacyDeckStructure = (html: string): StructuralBackfillRes
   let out = html
   for (const replacement of replacements.sort((a, b) => b.start - a.start))
     out = out.slice(0, replacement.start) + replacement.opening + out.slice(replacement.end)
-  out = injectArtifactRuntimeScripts(out, BACKFILL_STYLE)
-  inspect(out)
+  out = injectArtifactRuntimeScripts(out, backfillStyle(runtime))
+  if (!runtime) inspect(out)
   return { html: out, changed: out !== html, regions, nodes, skipped }
 }
 

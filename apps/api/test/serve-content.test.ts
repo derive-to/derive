@@ -81,8 +81,10 @@ describe("serveContent — single-file artifacts", () => {
       "",
     )
     const body = await res.text()
-    expect(body).toContain('data-derive-region="slide-0"')
-    expect(body).toContain('data-derive-node="slide-0-node-1"')
+    expect(body).toContain('data-derive-runtime-region="slide-0"')
+    expect(body).toContain('data-derive-runtime-node="slide-0-node-1"')
+    expect(body).not.toContain('data-derive-region="slide-0"')
+    expect(body).not.toContain('data-derive-node="slide-0-node-1"')
     expect(body).toContain("data-derive-structural-backfill")
     // The stored blob is immutable; this is a deterministic effective-source view.
     expect(deck).not.toContain("data-derive-region")

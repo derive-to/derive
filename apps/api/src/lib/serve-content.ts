@@ -85,7 +85,10 @@ export const serveContent = async (
   const withDeckStructure = (doc: string): string => {
     if (content.content_type !== "text/x-derive-deck") return doc
     try {
-      return backfillLegacyDeckStructure(doc).html
+      // Runtime-only names keep a legacy page's authored data-derive selectors and
+      // scripts inert. Save materialization stamps the canonical contract only
+      // after an accepted structural action.
+      return backfillLegacyDeckStructure(doc, { runtime: true }).html
     } catch {
       return doc
     }

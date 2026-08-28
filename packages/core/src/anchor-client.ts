@@ -2601,7 +2601,7 @@ interface ElReg {
     if (!el?.closest || el.closest(".derive-edit-ui")) return null
     // A structural node uses authored semantic presets. Offering the generic pixel
     // grip at the same time creates two conflicting size models on one element.
-    if (el.closest("[data-derive-node]")) return null
+    if (el.closest("[data-derive-node],[data-derive-runtime-node]")) return null
     // A Markdown image still gets the selection box's explicit Replace action, but
     // no resize controls: element operations are not defined for Markdown source.
     if (!elementEditsOn) {
@@ -3091,15 +3091,21 @@ interface ElReg {
   const STRUCTURE_SCHEMA = "derive.structural-edit/v1" as const
   const STRUCTURE_ID = /^[A-Za-z][A-Za-z0-9_-]{0,127}$/
   type StructureSize = "compact" | "standard" | "full"
+  type StructurePrefix = "data-derive" | "data-derive-runtime"
+  const structureAttribute = (prefix: StructurePrefix, name: string) => `${prefix}-${name}`
+  const structureNodeSelector = "[data-derive-node],[data-derive-runtime-node]"
+  const structureRegionSelector = "[data-derive-region],[data-derive-runtime-region]"
   interface StructureNode {
     el: HTMLElement
     id: string
+    prefix: StructurePrefix
     origSize: string | null
     origTabindex: string | null
   }
   interface StructureRegion {
     el: HTMLElement
     id: string
+    prefix: StructurePrefix
     nodes: StructureNode[]
     origOrder: string[]
   }
@@ -3201,28 +3207,24 @@ interface ElReg {
   const structureIntegrityValid = (region: StructureRegion): boolean => {
     if (
       !document.contains(region.el) ||
-      region.el.getAttribute("data-derive-region") !== region.id ||
-      region.el.getAttribute("data-derive-layout") !== "stack"
+      region.el.getAttribute(structureAttribute(region.prefix, "region")) !== region.id ||
+      region.el.getAttribute(structureAttribute(region.prefix, "layout")) !== "stack"
     )
       return false
     const known = new Set(region.nodes.map((node) => node.el))
     for (const node of region.nodes) {
       const removed = structureExpectedRemoved.has(node)
-      if (node.el.getAttribute("data-derive-node") !== node.id) return false
+      if (node.el.getAttribute(structureAttribute(node.prefix, "node")) !== node.id) return false
       if (!removed && node.el.parentElement !== region.el) return false
       if (removed && node.el.parentElement === region.el) return false
     }
     for (const child of Array.from(region.el.children))
-      if (
-        child instanceof HTMLElement &&
-        child.hasAttribute("data-derive-node") &&
-        !known.has(child)
-      )
+      if (child instanceof HTMLElement && child.matches(structureNodeSelector) && !known.has(child))
         return false
     return true
   }
   const structuralNodeAt = (el: Element | null): StructureNode | null => {
-    const candidate = el?.closest("[data-derive-node]")
+    const candidate = el?.closest(structureNodeSelector)
     if (!(candidate instanceof HTMLElement)) return null
     for (const region of structureRegions)
       for (const node of region.nodes)
@@ -3235,18 +3237,25 @@ interface ElReg {
     const nodeIds = new Set<string>()
     const handledNodes = new Set<Element>()
     let invalid = false
-    const candidates = document.querySelectorAll("[data-derive-region]")
+    const candidates = document.querySelectorAll(structureRegionSelector)
     for (let i = 0; i < candidates.length; i++) {
       const regionEl = candidates[i]
+      if (!(regionEl instanceof HTMLElement)) {
+        invalid = true
+        continue
+      }
+      const hasCanonical = regionEl.hasAttribute("data-derive-region")
+      const hasRuntime = regionEl.hasAttribute("data-derive-runtime-region")
+      const prefix: StructurePrefix = hasRuntime ? "data-derive-runtime" : "data-derive"
       if (
-        !(regionEl instanceof HTMLElement) ||
-        regionEl.closest("[data-derive-node]") ||
-        regionEl.getAttribute("data-derive-layout") !== "stack"
+        hasCanonical === hasRuntime ||
+        regionEl.closest(structureNodeSelector) ||
+        regionEl.getAttribute(structureAttribute(prefix, "layout")) !== "stack"
       ) {
         invalid = true
         continue
       }
-      const id = regionEl.getAttribute("data-derive-region") || ""
+      const id = regionEl.getAttribute(structureAttribute(prefix, "region")) || ""
       if (!STRUCTURE_ID.test(id) || regionIds.has(id)) {
         invalid = true
         continue
@@ -3258,7 +3267,8 @@ interface ElReg {
         ) ||
         children.some(
           (child) =>
-            !child.hasAttribute("data-derive-node") || !!child.querySelector("[data-derive-node]"),
+            !child.hasAttribute(structureAttribute(prefix, "node")) ||
+            !!child.querySelector(structureNodeSelector),
         )
       ) {
         invalid = true
@@ -3267,12 +3277,12 @@ interface ElReg {
       const nodes: StructureNode[] = []
       let valid = true
       for (const child of children) {
-        const nodeId = child.getAttribute("data-derive-node") || ""
+        const nodeId = child.getAttribute(structureAttribute(prefix, "node")) || ""
         if (!STRUCTURE_ID.test(nodeId) || nodeIds.has(nodeId)) {
           valid = false
           break
         }
-        const size = child.getAttribute("data-derive-size")
+        const size = child.getAttribute(structureAttribute(prefix, "size"))
         if (size !== null && size !== "compact" && size !== "standard" && size !== "full") {
           valid = false
           break
@@ -3282,6 +3292,7 @@ interface ElReg {
         nodes.push({
           el: child,
           id: nodeId,
+          prefix,
           origSize: size,
           origTabindex: child.getAttribute("tabindex"),
         })
@@ -3291,9 +3302,9 @@ interface ElReg {
         continue
       }
       regionIds.add(id)
-      regions.push({ el: regionEl, id, nodes, origOrder: nodes.map((node) => node.id) })
+      regions.push({ el: regionEl, id, prefix, nodes, origOrder: nodes.map((node) => node.id) })
     }
-    for (const node of document.querySelectorAll("[data-derive-node]"))
+    for (const node of document.querySelectorAll(structureNodeSelector))
       if (!handledNodes.has(node)) invalid = true
     return invalid ? [] : regions
   }
@@ -3308,7 +3319,7 @@ interface ElReg {
       const originalRemaining = region.origOrder.filter((id) => currentSet.has(id))
       if (currentIds.some((id, index) => id !== originalRemaining[index])) dirty++
       for (const node of current)
-        if (node.el.getAttribute("data-derive-size") !== node.origSize) dirty++
+        if (node.el.getAttribute(structureAttribute(node.prefix, "size")) !== node.origSize) dirty++
     }
     return dirty
   }
@@ -3348,7 +3359,7 @@ interface ElReg {
     }
     const nodes = connectedStructureNodes(region)
     const index = nodes.indexOf(selected)
-    const size = selected.el.getAttribute("data-derive-size")
+    const size = selected.el.getAttribute(structureAttribute(selected.prefix, "size"))
     structureBox.style.display = "block"
     structureBox.style.left = `${rect.left + (window.scrollX || 0)}px`
     structureBox.style.top = `${rect.top + scrollTop()}px`
@@ -3458,13 +3469,15 @@ interface ElReg {
   }
   const sizeStructure = (size: StructureSize | null) => {
     const selected = structureSelected
-    if (!selected || selected.el.getAttribute("data-derive-size") === size) return
+    if (!selected || selected.el.getAttribute(structureAttribute(selected.prefix, "size")) === size)
+      return
     const region = regionForStructureNode(selected)
     if (!region) return
-    const previous = selected.el.getAttribute("data-derive-size")
-    checkpointAttribute(selected.el, "data-derive-size")
-    if (size === null) selected.el.removeAttribute("data-derive-size")
-    else selected.el.setAttribute("data-derive-size", size)
+    const sizeAttribute = structureAttribute(selected.prefix, "size")
+    const previous = selected.el.getAttribute(sizeAttribute)
+    checkpointAttribute(selected.el, sizeAttribute)
+    if (size === null) selected.el.removeAttribute(sizeAttribute)
+    else selected.el.setAttribute(sizeAttribute, size)
     const after = selected.el.getBoundingClientRect()
     const regionStyle = getComputedStyle(region.el)
     const contentWidth =
@@ -3478,8 +3491,8 @@ interface ElReg {
     const tolerance = Math.max(2, expectedWidth * 0.02)
     if (size !== null && Math.abs(after.width - expectedWidth) > tolerance) {
       undoStack.pop()
-      if (previous === null) selected.el.removeAttribute("data-derive-size")
-      else selected.el.setAttribute("data-derive-size", previous)
+      if (previous === null) selected.el.removeAttribute(sizeAttribute)
+      else selected.el.setAttribute(sizeAttribute, previous)
       showStructureToast("Authored constraints control this size")
       paintStructureUi()
       return
@@ -3679,8 +3692,9 @@ interface ElReg {
         for (const id of region.origOrder) {
           const node = byId.get(id)
           if (!node) continue
-          if (node.origSize === null) node.el.removeAttribute("data-derive-size")
-          else node.el.setAttribute("data-derive-size", node.origSize)
+          const sizeAttribute = structureAttribute(node.prefix, "size")
+          if (node.origSize === null) node.el.removeAttribute(sizeAttribute)
+          else node.el.setAttribute(sizeAttribute, node.origSize)
           region.el.append(node.el)
         }
       }
@@ -4509,7 +4523,9 @@ interface ElReg {
           nodes: ids,
         })
       for (const node of current) {
-        const size = node.el.getAttribute("data-derive-size") as StructureSize | null
+        const size = node.el.getAttribute(
+          structureAttribute(node.prefix, "size"),
+        ) as StructureSize | null
         if (size !== node.origSize)
           edits.push({
             schema: STRUCTURE_SCHEMA,

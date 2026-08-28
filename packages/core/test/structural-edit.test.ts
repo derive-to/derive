@@ -73,6 +73,25 @@ describe("backfillLegacyDeckStructure", () => {
     expect(backfillLegacyDeckStructure(result.html).html).toBe(result.html)
   })
 
+  it("uses isolated runtime attributes without activating the canonical contract", () => {
+    const html = `<style>
+[data-derive-node] { display:none!important }
+[data-derive-region] { position:absolute;left:333px }
+[data-derive-layout="stack"] { outline:8px solid red }
+[data-derive-kind] { opacity:0 }
+</style><section class="slide" data-derive-slide="0"><h2>A</h2><p>B</p></section>`
+    const result = backfillLegacyDeckStructure(html, { runtime: true })
+    expect(result).toMatchObject({ changed: true, regions: 1, nodes: 2, skipped: [] })
+    expect(result.html).toContain('data-derive-runtime-region="slide-0"')
+    expect(result.html).toContain('data-derive-runtime-node="slide-0-node-1"')
+    expect(result.html).toContain("[data-derive-runtime-region]")
+    expect(result.html).not.toContain("<h2 data-derive-node=")
+    expect(result.html).not.toContain(
+      '<section class="slide" data-derive-slide="0" data-derive-region=',
+    )
+    expect(backfillLegacyDeckStructure(result.html, { runtime: true }).html).toBe(result.html)
+  })
+
   it("keeps legacy slides with source-owned comments out of structural editing", () => {
     const html = `<section class="slide" data-derive-slide="0">
   <!-- leading region comment is fixed -->
