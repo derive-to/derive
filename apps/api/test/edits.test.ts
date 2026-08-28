@@ -261,6 +261,24 @@ describe("materializeEdits: quote-scoped edits (the inline editor's shape)", () 
     expect(out.filename).toBe("index.html")
   })
 
+  it("does not persist a whole legacy migration for a quote-only save", async () => {
+    const html = `<main>
+  <section class="slide" data-derive-slide="0"><h2>Old title</h2><p>Body</p></section>
+  <section class="slide" data-derive-slide="1"><h2>Second</h2><p>More</p></section>
+</main>`
+    const deps = mkDeps({ 1: { text: html, contentType: "text/x-derive-deck" } })
+    const out = await materializeEdits(
+      deps,
+      fileArtifact(1),
+      [{ quote: { exact: "Old title" }, new_text: "New title" }],
+      1,
+    )
+    expect(out.content).toBe(html.replace("Old title", "New title"))
+    expect(out.content).not.toContain("data-derive-region")
+    expect(out.content).not.toContain("data-derive-node")
+    expect(out.content).not.toContain("data-derive-structural-backfill")
+  })
+
   it("materializes a mixed legacy-deck edit batch against one optimistic source", async () => {
     const html = `<main>
   <section class="slide" data-derive-slide="0"><h2>Old title</h2><img id="hero" src="hero.png" alt="Hero"><p>Remove me</p></section>

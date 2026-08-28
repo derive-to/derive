@@ -92,6 +92,7 @@ export interface StructuralBackfillSkip {
     | "browser-context-child"
     | "non-html-child"
     | "unowned-content"
+    | "comment-gap"
     | "implicit-close"
 }
 
@@ -225,6 +226,8 @@ const ignorableGap = (source: string): boolean => {
   return true
 }
 
+const hasHtmlComment = (source: string): boolean => source.includes("<!--")
+
 const inspect = (html: string): Inspection => {
   const elements = sourceElements(html)
   const elementByStart = new Map(elements.map((element) => [element.tag.start, element]))
@@ -313,15 +316,30 @@ const inspect = (html: string): Inspection => {
           "invalid-structure",
           `Structural region ${region.id} contains content outside its declared nodes.`,
         )
+      // The live editor moves/removes element nodes, while source operations own
+      // the following gap. A comment in that gap would therefore stay put in the
+      // preview but move or disappear after save. Keep leading region comments,
+      // which are outside every node chunk, but refuse comments owned by a node.
+      if (index > 0 && hasHtmlComment(gap))
+        fail(
+          "invalid-structure",
+          `Structural region ${region.id} contains a comment between structural nodes.`,
+        )
       if (index === 0) region.prefixEnd = node.element.tag.start
       const next = region.ownedNodes[index + 1]
       node.chunkEnd = next?.element.tag.start ?? region.element.closeStart
       cursor = node.element.end
     }
-    if (!ignorableGap(html.slice(cursor, region.element.closeStart)))
+    const trailingGap = html.slice(cursor, region.element.closeStart)
+    if (!ignorableGap(trailingGap))
       fail(
         "invalid-structure",
         `Structural region ${region.id} contains content outside its declared nodes.`,
+      )
+    if (hasHtmlComment(trailingGap))
+      fail(
+        "invalid-structure",
+        `Structural region ${region.id} contains a comment after its last structural node.`,
       )
     region.nodes = region.ownedNodes.map(({ id, kind, size }) => ({ id, kind, size }))
   }
@@ -493,6 +511,13 @@ export const backfillLegacyDeckStructure = (html: string): StructuralBackfillRes
 
   const elements = sourceElements(html)
   const byStart = new Map(elements.map((element) => [element.tag.start, element]))
+  const childrenByParent = new Map<number, SourceElement[]>()
+  for (const element of elements) {
+    if (element.parentStart === null) continue
+    const children = childrenByParent.get(element.parentStart)
+    if (children) children.push(element)
+    else childrenByParent.set(element.parentStart, [element])
+  }
   const replacements: { start: number; end: number; opening: string }[] = []
   const annotatedSlideStarts = new Set<number>()
   const skipped: StructuralBackfillSkip[] = []
@@ -506,9 +531,7 @@ export const backfillLegacyDeckStructure = (html: string): StructuralBackfillRes
       skipped.push({ slide: position, reason: "implicit-close" })
       continue
     }
-    const children = elements
-      .filter((element) => element.parentStart === slideElement.tag.start)
-      .sort((a, b) => a.tag.start - b.tag.start)
+    const children = childrenByParent.get(slideElement.tag.start) ?? []
     if (!children.length) {
       skipped.push({ slide: position, reason: "empty" })
       continue
@@ -535,15 +558,23 @@ export const backfillLegacyDeckStructure = (html: string): StructuralBackfillRes
     }
     let cursor = slideElement.tag.end
     let ownsEverything = true
-    for (const child of children) {
-      if (!ignorableGap(html.slice(cursor, child.tag.start))) {
+    let commentGap = false
+    for (const [childIndex, child] of children.entries()) {
+      const gap = html.slice(cursor, child.tag.start)
+      if (!ignorableGap(gap)) {
         ownsEverything = false
         break
       }
+      if (childIndex > 0 && hasHtmlComment(gap)) commentGap = true
       cursor = child.end
     }
-    if (!ownsEverything || !ignorableGap(html.slice(cursor, slideElement.closeStart))) {
+    const trailingGap = html.slice(cursor, slideElement.closeStart)
+    if (!ownsEverything || !ignorableGap(trailingGap)) {
       skipped.push({ slide: position, reason: "unowned-content" })
+      continue
+    }
+    if (commentGap || hasHtmlComment(trailingGap)) {
+      skipped.push({ slide: position, reason: "comment-gap" })
       continue
     }
 

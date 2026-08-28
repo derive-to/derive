@@ -287,11 +287,15 @@ export async function materializeEdits(
   let content = src
   if (strEdits.length) content = applyEdits(src, strEdits)
   else {
-    // The app render exposes the same deterministic legacy-deck annotations at
-    // serve time. Persist them on the first ordinary inline save so structural
-    // intent emitted from that render resolves against identical exact source.
+    // Persist optimistic legacy identities only when a structural operation needs
+    // them. A quote-only save must not turn an unrelated text edit into a whole-deck
+    // migration (and a large version diff). Element edits still use the effective
+    // source the iframe saw so their selectors remain deterministic.
     // Raw old_str edits retain their byte-exact baseline and never trigger this.
-    if ((contentType ?? "").split(";")[0]?.trim() === "text/x-derive-deck") {
+    if (
+      (structuralEdits.length || elementEdits.length) &&
+      (contentType ?? "").split(";")[0]?.trim() === "text/x-derive-deck"
+    ) {
       try {
         content = backfillLegacyDeckStructure(content).html
       } catch (error) {

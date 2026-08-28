@@ -23,7 +23,6 @@ const document = `<!doctype html>
     <article data-derive-node="card-a" data-derive-kind="card">
       <h2>A</h2><script>const fake = '<div data-derive-node="nope">'</script>
     </article>
-    <!-- follows card-a -->
     <article data-derive-node='card-b' data-derive-size='compact' title="x > y">
       <h2>B</h2>
     </article>
@@ -71,6 +70,41 @@ describe("backfillLegacyDeckStructure", () => {
         ],
       },
     ])
+    expect(backfillLegacyDeckStructure(result.html).html).toBe(result.html)
+  })
+
+  it("keeps legacy slides with source-owned comments out of structural editing", () => {
+    const html = `<section class="slide" data-derive-slide="0">
+  <!-- leading region comment is fixed -->
+  <h2>A</h2>
+  <!-- belongs to the preceding source chunk -->
+  <p>B</p>
+</section>
+<section class="slide" data-derive-slide="1"><h2>C</h2><!-- trailing source comment --></section>`
+    expect(backfillLegacyDeckStructure(html)).toEqual({
+      html,
+      changed: false,
+      regions: 0,
+      nodes: 0,
+      skipped: [
+        { slide: 1, reason: "comment-gap" },
+        { slide: 2, reason: "comment-gap" },
+      ],
+    })
+  })
+
+  it("indexes direct children once while preserving large-deck output", () => {
+    const html = Array.from(
+      { length: 1000 },
+      (_, slide) =>
+        `<section class="slide" data-derive-slide="${slide}">${Array.from(
+          { length: 8 },
+          (_, node) => `<div>Slide ${slide} node ${node}</div>`,
+        ).join("")}</section>`,
+    ).join("\n")
+    const result = backfillLegacyDeckStructure(html)
+    expect(result).toMatchObject({ changed: true, regions: 1000, nodes: 8000, skipped: [] })
+    expect(inspectStructuralDocument(result.html)).toHaveLength(1000)
     expect(backfillLegacyDeckStructure(result.html).html).toBe(result.html)
   })
 
@@ -126,8 +160,7 @@ describe("backfillLegacyDeckStructure", () => {
     const html = `<script>const fake = '<section class="slide"><i data-derive-node="fake"></i></section>'</script>
 <!-- <section class="slide"><b data-derive-node="also-fake"></b></section> -->
 <section class="slide" data-derive-slide="0" title="a > b">
-  <h2 title='x > y'>A</h2>
-  <!-- <p data-derive-node="comment-fake">no</p> -->
+  <h2 title='x > y'>A<!-- <p data-derive-node="comment-fake">no</p> --></h2>
   <div><svg viewBox="0 0 10 10"><title>Chart</title></svg><math><mi>x</mi></math><script>const close = '</section>'</script></div>
 </section>
 <section class="slide" data-derive-slide="1"><h2>B</h2><p>Body</p></section>`
@@ -470,16 +503,23 @@ describe("applyStructuralEdits", () => {
     expect(result.html.indexOf("data-derive-node='card-b'")).toBeLessThan(
       result.html.indexOf('data-derive-node="card-a"'),
     )
-    expect(result.html.indexOf("follows card-a")).toBeGreaterThan(
-      result.html.indexOf('data-derive-node="card-a"'),
-    )
     expect(applyStructuralEdits(result.html, result.receipt.inverses).html).toBe(document)
+  })
+
+  it("rejects comments owned by movable source chunks", () => {
+    const html = `<div data-derive-region="r" data-derive-layout="stack">
+  <p data-derive-node="a">A</p>
+  <!-- marker -->
+  <p data-derive-node="b">B</p>
+</div>`
+    expect(() => inspectStructuralDocument(html)).toThrow(
+      "contains a comment between structural nodes",
+    )
   })
 
   it.each(["a", "b", "c"])("removes and exactly restores the %s node", (node) => {
     const html = `<div data-derive-region="r" data-derive-layout="stack">
   <p data-derive-node="a">A</p>
-  <!-- a -->
   <p data-derive-node="b">B</p>
   <p data-derive-node="c">C</p>
 </div>`
