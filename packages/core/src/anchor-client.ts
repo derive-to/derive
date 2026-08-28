@@ -3223,6 +3223,13 @@ interface ElReg {
         return false
     return true
   }
+  const structureDocumentIntegrityValid = (): boolean => {
+    const current = Array.from(document.querySelectorAll(structureRegionSelector))
+    return (
+      current.length === structureRegions.length &&
+      structureRegions.every((region) => current.includes(region.el))
+    )
+  }
   const structuralNodeAt = (el: Element | null): StructureNode | null => {
     const candidate = el?.closest(structureNodeSelector)
     if (!(candidate instanceof HTMLElement)) return null
@@ -4517,6 +4524,7 @@ interface ElReg {
   }
   const collectStructuralEdits = (): { edits: WireStructuralEdit[]; invalid: boolean } => {
     const edits: WireStructuralEdit[] = []
+    if (!structureDocumentIntegrityValid()) return { edits, invalid: true }
     for (const region of structureRegions) {
       if (!structureIntegrityValid(region)) return { edits: [], invalid: true }
       const current = connectedStructureNodes(region)

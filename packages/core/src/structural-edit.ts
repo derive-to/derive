@@ -637,9 +637,14 @@ export const backfillLegacyDeckStructure = (
       ),
     })
   }
-  let out = html
-  for (const replacement of replacements.sort((a, b) => b.start - a.start))
-    out = out.slice(0, replacement.start) + replacement.opening + out.slice(replacement.end)
+  const parts: string[] = []
+  let cursor = 0
+  for (const replacement of replacements.sort((a, b) => a.start - b.start)) {
+    parts.push(html.slice(cursor, replacement.start), replacement.opening)
+    cursor = replacement.end
+  }
+  parts.push(html.slice(cursor))
+  let out = parts.join("")
   out = injectArtifactRuntimeScripts(out, backfillStyle(runtime))
   if (!runtime) inspect(out)
   return { html: out, changed: out !== html, regions, nodes, skipped }
