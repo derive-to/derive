@@ -1,5 +1,5 @@
 import type { QueryClient } from "@tanstack/react-query"
-import { artifactQuery, commentsQuery, meQuery } from "@/lib/queries"
+import { artifactQuery, commentsQuery, meQuery, reviewQuery } from "@/lib/queries"
 import { canCommentWithRole } from "./lib/comment-access"
 import { candidateShortIds } from "./parse-ref"
 
@@ -57,13 +57,22 @@ export const artifactRouteLoader = ({
   params: { ref: string }
 }) => {
   void (async () => {
+    // The session resolves alongside the artifact (it is never persisted, so on a reload
+    // it is NOT already in the cache — reading it synchronously here left the comments
+    // unwarmed on every cold load, and the rail painted in waves as each source landed).
+    const mePromise = queryClient.ensureQueryData(meQuery()).catch(() => null)
     for (const id of candidateShortIds(params.ref)) {
       const art = await queryClient.ensureQueryData(artifactQuery(id)).catch(() => null)
       if (art) {
-        const signedIn = queryClient.getQueryData(meQuery().queryKey)
+        const signedIn = await mePromise
         const commentsAvailable =
           art.is_workspace_member === true || canCommentWithRole(art.my_role)
-        if (signedIn && commentsAvailable) queryClient.prefetchQuery(commentsQuery(id))
+        // Everything the activity stream is built from, in flight together: the page
+        // paints the stream once, when all of it has settled (see `streamReady`).
+        if (signedIn && commentsAvailable) {
+          void queryClient.prefetchQuery(commentsQuery(id))
+          if (art.is_workspace_member === true) void queryClient.prefetchQuery(reviewQuery(id))
+        }
         return
       }
     }
