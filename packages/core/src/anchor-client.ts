@@ -2394,6 +2394,10 @@ interface ElReg {
   // The resize overlay is mounted below; history can run before/after it without
   // knowing its DOM. Reassigned once that controller exists.
   let refreshResizeUi = () => {}
+  // Structural placement history is declared later in this client. This bridge
+  // lets shared undo/redo keep its intentional-removal ledger in sync without
+  // coupling the generic history stack to structural types.
+  let syncStructuralPlacement = (_el: HTMLElement) => {}
   const remember = (entry: HistoryEntry) => {
     undoStack.push(entry)
     if (undoStack.length > UNDO_LIMIT) undoStack.shift()
@@ -2462,6 +2466,7 @@ interface ElReg {
     } else if (entry.kind === "placement") {
       to.push(placementOf(entry.el))
       applyPlacement(entry)
+      syncStructuralPlacement(entry.el)
     } else if (!document.contains(entry.el)) return
     else if (entry.kind === "html") {
       to.push({ kind: "html", el: entry.el, html: entry.el.innerHTML })
@@ -3100,6 +3105,8 @@ interface ElReg {
   }
   let structureRegions: StructureRegion[] = []
   let structureSelected: StructureNode | null = null
+  let structureExpectedRemoved = new Set<StructureNode>()
+  let structureObserver: MutationObserver | null = null
   let structureToastTimer = 0
   let structureSafeAreaOn = false
 
@@ -3166,6 +3173,53 @@ interface ElReg {
     return sourceChildren(region.el)
       .map((el) => byEl.get(el))
       .filter((node): node is StructureNode => !!node)
+  }
+  const structureNodeAvailable = (node: StructureNode): boolean => {
+    const region = regionForStructureNode(node)
+    if (!region || node.el.parentElement !== region.el || !document.contains(node.el)) return false
+    const slide = node.el.closest(".slide")
+    if (slide && document.querySelector(".slide.on") && !slide.classList.contains("on"))
+      return false
+    for (let current: Element | null = node.el; current; current = current.parentElement) {
+      const style = getComputedStyle(current)
+      if (
+        style.display === "none" ||
+        (current === node.el && style.display === "contents") ||
+        style.visibility === "hidden" ||
+        style.visibility === "collapse" ||
+        Number.parseFloat(style.opacity || "1") <= 0.001 ||
+        style.contentVisibility === "hidden" ||
+        (style.clipPath && style.clipPath !== "none")
+      )
+        return false
+    }
+    const rect = node.el.getBoundingClientRect()
+    if (!(rect.width > 0 && rect.height > 0)) return false
+    const viewportWidth = window.innerWidth || document.documentElement.clientWidth
+    return rect.right > 0 && rect.left < viewportWidth
+  }
+  const structureIntegrityValid = (region: StructureRegion): boolean => {
+    if (
+      !document.contains(region.el) ||
+      region.el.getAttribute("data-derive-region") !== region.id ||
+      region.el.getAttribute("data-derive-layout") !== "stack"
+    )
+      return false
+    const known = new Set(region.nodes.map((node) => node.el))
+    for (const node of region.nodes) {
+      const removed = structureExpectedRemoved.has(node)
+      if (node.el.getAttribute("data-derive-node") !== node.id) return false
+      if (!removed && node.el.parentElement !== region.el) return false
+      if (removed && node.el.parentElement === region.el) return false
+    }
+    for (const child of Array.from(region.el.children))
+      if (
+        child instanceof HTMLElement &&
+        child.hasAttribute("data-derive-node") &&
+        !known.has(child)
+      )
+        return false
+    return true
   }
   const structuralNodeAt = (el: Element | null): StructureNode | null => {
     const candidate = el?.closest("[data-derive-node]")
@@ -3278,7 +3332,7 @@ interface ElReg {
   const paintStructureUi = () => {
     syncStructureSafeArea()
     const selected = structureSelected
-    if (!editOn || !selected || !document.contains(selected.el)) {
+    if (!editOn || !selected || !structureNodeAvailable(selected)) {
       structureBox.style.display = "none"
       return
     }
@@ -3316,6 +3370,7 @@ interface ElReg {
   hasSelectedResize = () => !!resizeSelectedEl || !!structureSelected
 
   const selectStructure = (node: StructureNode | null) => {
+    if (node && !structureNodeAvailable(node)) node = null
     structureSelected = node
     if (node) {
       clearResizeUi()
@@ -3382,6 +3437,7 @@ interface ElReg {
     const selected = structureSelected
     if (!selected?.el.parentElement) return
     remember(placementOf(selected.el))
+    structureExpectedRemoved.add(selected)
     selected.el.remove()
     selectStructure(null)
     showStructureToast(`Removed ${selected.id}`)
@@ -3484,7 +3540,7 @@ interface ElReg {
   document.addEventListener("focusin", (e) => {
     if (!editOn) return
     const node = structuralNodeAt(asEl(e.target))
-    if (node && e.target === node.el) selectStructure(node)
+    if (node && e.target === node.el && structureNodeAvailable(node)) selectStructure(node)
   })
   document.addEventListener(
     "keydown",
@@ -3521,13 +3577,43 @@ interface ElReg {
 
   const enableStructuralEditing = () => {
     structureRegions = elementEditsOn ? scanStructureRegions() : []
-    for (const region of structureRegions)
-      for (const node of region.nodes)
-        if (!node.el.hasAttribute("tabindex")) node.el.setAttribute("tabindex", "0")
+    structureExpectedRemoved = new Set()
+    syncStructuralPlacement = (el) => {
+      for (const region of structureRegions) {
+        const node = region.nodes.find((candidate) => candidate.el === el)
+        if (!node) continue
+        if (node.el.parentElement === region.el) structureExpectedRemoved.delete(node)
+        else structureExpectedRemoved.add(node)
+        return
+      }
+    }
+    const refreshAvailability = () => {
+      for (const region of structureRegions)
+        for (const node of region.nodes)
+          node.el.setAttribute("tabindex", structureNodeAvailable(node) ? "0" : "-1")
+      if (structureSelected && !structureNodeAvailable(structureSelected)) {
+        if (document.activeElement === structureSelected.el) structureSelected.el.blur()
+        structureSelected = null
+      }
+      paintStructureUi()
+    }
+    refreshAvailability()
+    structureObserver?.disconnect()
+    if (window.MutationObserver) {
+      structureObserver = new MutationObserver(refreshAvailability)
+      structureObserver.observe(document.body || document.documentElement, {
+        attributes: true,
+        attributeFilter: ["class", "style", "hidden"],
+        childList: true,
+        subtree: true,
+      })
+    }
     structureSelected = null
     paintStructureUi()
   }
   const settleStructuralEditing = (restore: boolean) => {
+    structureObserver?.disconnect()
+    structureObserver = null
     if (restore)
       for (const region of structureRegions) {
         const byId = new Map(region.nodes.map((node) => [node.id, node]))
@@ -3545,6 +3631,8 @@ interface ElReg {
         else node.el.setAttribute("tabindex", node.origTabindex)
       }
     structureSelected = null
+    structureExpectedRemoved = new Set()
+    syncStructuralPlacement = () => {}
     structureRegions = []
     structureBox.style.display = "none"
     structureToast.style.display = "none"
@@ -4336,16 +4424,17 @@ interface ElReg {
     const qe = quoteEditFor(t.origValues.join("\n"), curVals.join("\n"), t.origStarts[0] ?? 0)
     return qe ? wireEdit({ ...qe, new_text: qe.new_text.replace(/\s*\n\s*/g, " ") }) : null
   }
-  const collectStructuralEdits = (): WireStructuralEdit[] => {
+  const collectStructuralEdits = (): { edits: WireStructuralEdit[]; invalid: boolean } => {
     const edits: WireStructuralEdit[] = []
     for (const region of structureRegions) {
+      if (!structureIntegrityValid(region)) return { edits: [], invalid: true }
       const current = connectedStructureNodes(region)
       const ids = current.map((node) => node.id)
       const present = new Set(ids)
       // Remove first. The following order is then complete for the region that
       // exists at that point, which keeps the server contract deterministic.
       for (const node of region.nodes)
-        if (!present.has(node.id))
+        if (structureExpectedRemoved.has(node) && !present.has(node.id))
           edits.push({
             schema: STRUCTURE_SCHEMA,
             op: "structural-remove",
@@ -4372,7 +4461,7 @@ interface ElReg {
           })
       }
     }
-    return edits
+    return { edits, invalid: false }
   }
   /* `uncaptured` counts blocks the user changed that produced NO edit — the host
      refuses to save a partial batch, because publishing some of the typing and
@@ -4446,7 +4535,8 @@ interface ElReg {
     for (const entry of sceneEdits) edits.push(entry.wire)
     dirty += sceneEdits.length
     const structural = collectStructuralEdits()
-    edits.push(...structural)
+    edits.push(...structural.edits)
+    if (structural.invalid) uncaptured++
     dirty += structureDirtyCount()
     return { edits, dirty, uncaptured }
   }
