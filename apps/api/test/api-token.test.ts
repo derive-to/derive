@@ -127,6 +127,43 @@ describe.skipIf(process.env.DERIVE_TEST_DB === "pg")("api token on the wire", ()
     expect(res.status).toBe(200)
   })
 
+  it("creates and retrieves a version-pinned export on behalf of its human", async () => {
+    const { app: a } = app("api-tok-export")
+    const tok = await signApiToken(SECRET, "u_api", "ws_api", "editor", "cli", Date.now() + 60_000)
+    const form = new FormData()
+    form.set(
+      "file",
+      new Blob(
+        [
+          '<script type="application/derive+json" data-name="series">[{"label":"A","value":1}]</script>',
+        ],
+        { type: "text/html" },
+      ),
+      "export.html",
+    )
+    form.set("title", "API token export")
+    const published = await a.request("/v1/artifacts", {
+      method: "POST",
+      headers: authed(tok),
+      body: form,
+    })
+    expect(published.status).toBe(201)
+    const artifact = (await published.json()) as { short_id: string }
+
+    const accepted = await a.request(`/v1/artifacts/${artifact.short_id}/exports`, {
+      method: "POST",
+      headers: { ...authed(tok), "content-type": "application/json" },
+      body: JSON.stringify({ kind: "chart_json", dataSlot: "series" }),
+    })
+    expect(accepted.status).toBe(202)
+    const job = (await accepted.json()) as { id: string; version: number }
+    expect(job.version).toBe(1)
+
+    const own = await a.request(`/v1/exports/${job.id}`, { headers: authed(tok) })
+    expect(own.status).toBe(200)
+    expect(((await own.json()) as { id: string }).id).toBe(job.id)
+  })
+
   it("a token minted BELOW the human's role can't reach past it (least privilege holds)", async () => {
     const { app: a } = app("api-tok-narrow")
     // The human is an owner; this token was minted `viewer`. Minting an agent is a
