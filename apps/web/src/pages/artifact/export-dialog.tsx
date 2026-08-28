@@ -45,6 +45,7 @@ export function ExportButton({
   const [slot, setSlot] = useState("")
   const [publicImage, setPublicImage] = useState(false)
   const [attachPdf, setAttachPdf] = useState(false)
+  const [emailMode, setEmailMode] = useState<"auto" | "snapshot">("auto")
   const recipientInvalid = !!recipient.trim() && !isValidExportRecipient(recipient)
   const option = EXPORT_OPTIONS[kind]
   const choices = exportChoices(isDeck)
@@ -63,7 +64,7 @@ export function ExportButton({
       ...(recipient.trim() ? { recipient: recipient.trim() } : {}),
       ...(note.trim() ? { note: note.trim() } : {}),
       ...(option.supportsPublicImage ? { publicImage } : {}),
-      ...(option.email ? { attachPdf } : {}),
+      ...(option.email ? { attachPdf, emailMode } : {}),
     })
 
   return (
@@ -139,6 +140,31 @@ export function ExportButton({
                     Enter a valid email address.
                   </p>
                 )}
+              </div>
+              <div>
+                <label className="mb-1.5 block text-sm font-medium" htmlFor="export-email-mode">
+                  Email body
+                </label>
+                <Select
+                  value={emailMode}
+                  onValueChange={(value) => setEmailMode(value as "auto" | "snapshot")}
+                >
+                  <SelectTrigger
+                    id="export-email-mode"
+                    className="w-full"
+                    data-testid="export-email-mode"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="auto">Rich HTML when declared (recommended)</SelectItem>
+                    <SelectItem value="snapshot">Artifact snapshot</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Uses the version&apos;s email-layout fact for email-safe text and charts, with a
+                  snapshot fallback.
+                </p>
               </div>
               <div>
                 <label className="mb-1.5 block text-sm font-medium" htmlFor="export-note">
