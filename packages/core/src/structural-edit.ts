@@ -177,8 +177,25 @@ interface Inspection {
   byRegion: Map<string, OwnedRegion>
 }
 
-const ignorableGap = (source: string): boolean =>
-  source.replace(/<!--[\s\S]*?-->/g, "").trim().length === 0
+const htmlWhitespace = (code: number): boolean =>
+  code === 0x09 || code === 0x0a || code === 0x0c || code === 0x0d || code === 0x20
+
+/** Accept only authored HTML comments and HTML whitespace between owned nodes.
+ * This is a recognizer, not a sanitizer: it never rewrites or returns the gap. */
+const ignorableGap = (source: string): boolean => {
+  let cursor = 0
+  while (cursor < source.length) {
+    if (htmlWhitespace(source.charCodeAt(cursor))) {
+      cursor++
+      continue
+    }
+    if (!source.startsWith("<!--", cursor)) return false
+    const commentEnd = source.indexOf("-->", cursor + 4)
+    if (commentEnd < 0) return false
+    cursor = commentEnd + 3
+  }
+  return true
+}
 
 const inspect = (html: string): Inspection => {
   const elements = sourceElements(html)

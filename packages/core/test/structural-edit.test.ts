@@ -103,6 +103,11 @@ describe("inspectStructuralDocument", () => {
       /content outside/,
     ],
     [
+      "comment-shaped unowned text",
+      '<div data-derive-region="r" data-derive-layout="stack">\u003c<!-- -->!--><p data-derive-node="n"></p></div>',
+      /content outside/,
+    ],
+    [
       "unowned element",
       '<div data-derive-region="r" data-derive-layout="stack"><p>surprise</p><p data-derive-node="n"></p></div>',
       /content outside/,
