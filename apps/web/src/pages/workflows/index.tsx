@@ -6,6 +6,7 @@ import { ListRow } from "@/components/shared/list-row"
 import { LoadError } from "@/components/shared/load-error"
 import { PageHeader } from "@/components/shared/page-header"
 import { PageShell } from "@/components/shared/page-shell"
+import { SectionHeading } from "@/components/shared/section-title"
 import { StatusBadge } from "@/components/shared/status-badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { workflowsQuery } from "@/lib/queries"
@@ -58,7 +59,7 @@ export function Workflows() {
 
       <section className="flex flex-col gap-4" data-testid="workflow-directory">
         <div className="flex flex-col gap-1">
-          <h2 className="text-base font-semibold text-foreground">Coordinated workflows</h2>
+          <SectionHeading>Coordinated workflows</SectionHeading>
           <p className="text-sm text-muted-foreground">
             Versioned graphs and loops made from Agent steps, branches, and human pauses.
           </p>

@@ -1,4 +1,5 @@
 import type { DirUser } from "@/api"
+import { Eyebrow } from "@/components/shared/section-eyebrow"
 import { cn } from "@/lib/utils"
 import type { InlineMentionMenuState } from "./use-inline-edit"
 
@@ -20,7 +21,9 @@ export function InlineMentionMenu({
       className="fixed z-50 w-72 overflow-hidden rounded-xl bg-popover p-1 shadow-[var(--shadow-pop)] ring-1 ring-foreground/10"
       style={{ left: menu.position.left, top: menu.position.top }}
     >
-      <div className="px-2.5 py-2 text-xs text-muted-foreground">Mention a collaborator</div>
+      <Eyebrow as="div" className="px-2.5 py-2">
+        Mention a collaborator
+      </Eyebrow>
       {menu.loading ? (
         <div className="px-2.5 py-2 text-sm text-muted-foreground">Finding people…</div>
       ) : menu.users.length ? (

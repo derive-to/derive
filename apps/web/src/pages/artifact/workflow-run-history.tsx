@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query"
 import { api, type WorkflowRunSummary } from "@/api"
+import { Eyebrow } from "@/components/shared/section-eyebrow"
 import { ago } from "@/lib/time"
 import { cn } from "@/lib/utils"
 
@@ -68,7 +69,7 @@ const WorkflowAttemptTimeline = ({ attempts }: { attempts: WorkflowAttempt[] }) 
           <div className="min-w-0">
             <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
               <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-                <span className="break-all font-mono text-xs font-semibold text-foreground">
+                <span className="break-all font-mono text-xs font-medium text-foreground">
                   {attempt.nodeId}
                 </span>
                 <span className="text-2xs text-muted-foreground">
@@ -113,31 +114,27 @@ export function WorkflowRunHistory({ shortId, diagramId }: { shortId: string; di
 
   if (query.isPending) {
     return (
-      <div className="border-t border-border-soft px-4 py-3 text-xs text-muted-foreground sm:px-5">
+      <div className="px-4 pb-4 text-xs text-muted-foreground sm:px-5" role="status">
         Checking recent runs…
       </div>
     )
   }
   if (query.isError) {
     return (
-      <div className="border-t border-border-soft px-4 py-3 text-xs text-destructive sm:px-5">
-        Couldn’t load recent runs.
-      </div>
+      <div className="px-4 pb-4 text-xs text-destructive sm:px-5">Couldn’t load recent runs.</div>
     )
   }
   if (query.data.runs.length === 0) {
     return (
-      <div className="border-t border-border-soft px-4 py-3 text-xs text-muted-foreground sm:px-5">
+      <div className="px-4 pb-4 text-xs text-muted-foreground sm:px-5">
         No runs yet. Starting this workflow creates a separate, version-pinned run.
       </div>
     )
   }
 
   return (
-    <section className="border-t border-border-soft px-4 py-3 sm:px-5" data-testid="workflow-runs">
-      <div className="font-mono text-2xs uppercase tracking-[0.12em] text-muted-foreground">
-        Recent runs
-      </div>
+    <section className="px-4 pb-4 sm:px-5" data-testid="workflow-runs">
+      <Eyebrow as="div">Recent runs</Eyebrow>
       <div className="mt-2 grid gap-2">
         {query.data.runs.map((run, index) => (
           <article

@@ -1,5 +1,7 @@
 import { Icon } from "@/components/icons"
 import { FormField } from "@/components/shared/form-field"
+import { Eyebrow } from "@/components/shared/section-eyebrow"
+import { SectionTitle } from "@/components/shared/section-title"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -56,9 +58,9 @@ function AgentTemplateDialogInner({
         aria-describedby={descriptionId}
       >
         <DialogHeader className="pr-7">
-          <p className="mb-1 font-mono text-2xs uppercase tracking-wider text-muted-foreground">
+          <Eyebrow as="div" className="mb-1">
             {target.kind === "context" ? "Context" : target.category}
-          </p>
+          </Eyebrow>
           <DialogTitle className="font-serif text-2xl tracking-tight [overflow-wrap:anywhere]">
             Use {target.title}
           </DialogTitle>
@@ -72,11 +74,8 @@ function AgentTemplateDialogInner({
             {target.description}
           </p>
           {target.sections?.length ? (
-            <div
-              className="mt-2.5 border-t pt-2.5"
-              data-testid="template-agent-inheritance-preview"
-            >
-              <p className="text-xs font-medium text-muted-foreground">Included sections</p>
+            <div className="mt-3" data-testid="template-agent-inheritance-preview">
+              <SectionTitle as="h4">Included sections</SectionTitle>
               <div className="mt-1.5 flex flex-wrap gap-1.5">
                 {target.sections.slice(0, 6).map((section) => (
                   <p
@@ -127,7 +126,7 @@ function AgentTemplateDialogInner({
 
           {showHandoff ? (
             <div className="grid gap-2" data-testid="template-agent-handoff-preview">
-              <p className="text-xs font-medium text-foreground">Prepared task</p>
+              <SectionTitle as="h4">Prepared task</SectionTitle>
               <Textarea
                 readOnly
                 value={handoff}

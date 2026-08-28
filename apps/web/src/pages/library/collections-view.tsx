@@ -3,6 +3,7 @@ import type { Collection } from "@/api"
 import { Icon } from "@/components/icons"
 import { EmptyState } from "@/components/shared/empty-state"
 import { Eyebrow } from "@/components/shared/section-eyebrow"
+import { SectionHeading } from "@/components/shared/section-title"
 import { Thumb } from "@/components/shared/thumb"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -143,7 +144,9 @@ export function CollectionsView({
         <>
           {digest.length > 0 && (
             <section data-testid="collections-digest">
-              <SectionRule label={week ? "Recent work" : "Latest activity"} />
+              <SectionHeading className="mb-3">
+                {week ? "Recent work" : "Latest activity"}
+              </SectionHeading>
               <div>
                 {digest.map((c) => (
                   <DigestEntry key={c.id} col={c} />
@@ -153,7 +156,9 @@ export function CollectionsView({
           )}
 
           <section data-testid="collections-index">
-            <SectionRule label="All collections · A–Z" />
+            <SectionHeading className="mb-3" action={<Eyebrow>A–Z</Eyebrow>}>
+              All collections
+            </SectionHeading>
             {/* The header names the columns; the columns hold. */}
             <Eyebrow as="div" className="flex h-6 items-center gap-3 border-b border-border px-1">
               <span className="min-w-0 flex-1">Name</span>
@@ -170,15 +175,6 @@ export function CollectionsView({
           </section>
         </>
       )}
-    </div>
-  )
-}
-
-function SectionRule({ label }: { label: string }) {
-  return (
-    <div className="mb-3 flex items-center gap-3">
-      <Eyebrow>{label}</Eyebrow>
-      <span className="h-px flex-1 bg-border-soft" />
     </div>
   )
 }

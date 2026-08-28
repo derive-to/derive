@@ -4,7 +4,8 @@ import { useState } from "react"
 import type { Comment, ReviewRound } from "@/api"
 import { Icon } from "@/components/icons"
 import { EmptyState } from "@/components/shared/empty-state"
-import { Eyebrow, SectionEyebrow } from "@/components/shared/section-eyebrow"
+import { Eyebrow } from "@/components/shared/section-eyebrow"
+import { SectionHeading } from "@/components/shared/section-title"
 import { StatusPanel } from "@/components/shared/status-panel"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
@@ -57,7 +58,7 @@ export function WorkspaceActivity() {
   if (activity.isPending)
     return (
       <section>
-        <SectionEyebrow>Recent activity</SectionEyebrow>
+        <SectionHeading>Recent activity</SectionHeading>
         <StreamSkeleton />
       </section>
     )
@@ -153,13 +154,15 @@ export function WorkspaceActivity() {
     )
 
   return (
-    <div className="flex flex-col gap-7" data-testid="wa-root">
+    <div className="flex flex-col gap-10" data-testid="wa-root">
       {needsCount > 0 && (
-        <section data-testid="wa-needs-you">
-          <SectionEyebrow count={needsCount}>Needs you</SectionEyebrow>
+        <section className="flex flex-col gap-2" data-testid="wa-needs-you">
+          <SectionHeading count={needsCount}>Needs you</SectionHeading>
           {asks.length > 0 && (
-            <div className="mt-1 flex flex-col">
-              <Eyebrow className="px-1.5 pt-2 pb-1">Reviews waiting on you</Eyebrow>
+            <div className="flex flex-col">
+              <Eyebrow as="h3" className="px-1.5 pt-1 pb-1">
+                Reviews waiting on you
+              </Eyebrow>
               {capped("asks", asks).map(({ round, artifact }) => (
                 <AskLine key={round.id} round={round} artifact={artifact} now={now} onOpen={open} />
               ))}
@@ -167,8 +170,10 @@ export function WorkspaceActivity() {
             </div>
           )}
           {threads.length > 0 && (
-            <div className="mt-1 flex flex-col">
-              <Eyebrow className="px-1.5 pt-2 pb-1">Open threads with you</Eyebrow>
+            <div className="flex flex-col">
+              <Eyebrow as="h3" className="px-1.5 pt-1 pb-1">
+                Open threads with you
+              </Eyebrow>
               {capped("threads", threads).map(({ root, artifact, replies }) => (
                 <ThreadLine
                   key={root.thread_id}
@@ -185,17 +190,16 @@ export function WorkspaceActivity() {
         </section>
       )}
       {turnCount > 0 && (
-        <section data-testid="wa-recent">
-          <SectionEyebrow count={turnCount}>Recent activity</SectionEyebrow>
-          <div className="mt-1 flex flex-col">
+        <section className="flex flex-col gap-2" data-testid="wa-recent">
+          <SectionHeading count={turnCount}>Recent activity</SectionHeading>
+          <div className="flex flex-col">
             {items.map((it) => {
               switch (it.type) {
                 case "section":
                   return (
-                    <div key={it.id} className="flex items-center gap-2 pt-3 pb-1">
-                      <Eyebrow>{it.label}</Eyebrow>
-                      <Separator className="flex-1" />
-                    </div>
+                    <Eyebrow key={it.id} as="h3" className="pt-4 pb-1 first:pt-1">
+                      {it.label}
+                    </Eyebrow>
                   )
                 case "unread":
                   return (
@@ -204,6 +208,7 @@ export function WorkspaceActivity() {
                       data-testid="wa-unread-marker"
                       className="flex items-center gap-2 py-2"
                     >
+                      <Separator className="flex-1 bg-primary" />
                       <Eyebrow className="text-primary">New above</Eyebrow>
                       <Separator className="flex-1 bg-primary" />
                     </div>

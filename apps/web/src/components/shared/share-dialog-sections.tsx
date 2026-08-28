@@ -4,7 +4,7 @@ import { Icon, type IconName } from "@/components/icons"
 import { AccessSegmentToggle } from "@/components/shared/access-segment-toggle"
 import { PersonSearchInput } from "@/components/shared/person-search-input"
 import { ROLE_LABELS, RoleSelect } from "@/components/shared/role-select"
-import { SectionEyebrow } from "@/components/shared/section-eyebrow"
+import { SectionTitle } from "@/components/shared/section-title"
 import { Spinner } from "@/components/shared/spinner"
 import { WorldLinkControls } from "@/components/shared/world-link-controls"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
@@ -113,9 +113,9 @@ export function ShareAccessSection({
 }) {
   return (
     <div>
-      <SectionEyebrow action={pending && <Spinner className="size-3" />}>
+      <SectionTitle action={pending && <Spinner className="size-3" />}>
         Who can open this
-      </SectionEyebrow>
+      </SectionTitle>
       {canManage ? (
         <div className="mt-2 flex flex-col">
           <AccessSegmentToggle
@@ -199,7 +199,7 @@ export function SharePeopleSection({
 }) {
   return (
     <div>
-      <SectionEyebrow count={members.length || undefined}>People with access</SectionEyebrow>
+      <SectionTitle count={members.length || undefined}>People with access</SectionTitle>
       {members.length === 0 ? (
         <p
           data-testid={`${testPrefix}-empty`}

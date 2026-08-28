@@ -7,7 +7,7 @@ import { EmptyState } from "@/components/shared/empty-state"
 import { FollowButton } from "@/components/shared/follow-button"
 import { LoadError } from "@/components/shared/load-error"
 import { SearchField } from "@/components/shared/search-field"
-import { SectionEyebrow } from "@/components/shared/section-eyebrow"
+import { SectionHeading } from "@/components/shared/section-title"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -174,9 +174,9 @@ function PeopleGroup({
 }) {
   return (
     <section>
-      <SectionEyebrow className="mb-3" count={people.length}>
+      <SectionHeading className="mb-3" count={people.length}>
         {label}
-      </SectionEyebrow>
+      </SectionHeading>
       <ul
         role="list"
         data-testid={testId}
@@ -254,7 +254,7 @@ function PersonCard({
 function ActivityPreview({ items }: { items: Artifact[] }) {
   return (
     <section>
-      <SectionEyebrow
+      <SectionHeading
         className="mb-3"
         count={items.length}
         action={
@@ -268,7 +268,7 @@ function ActivityPreview({ items }: { items: Artifact[] }) {
         }
       >
         Recent activity
-      </SectionEyebrow>
+      </SectionHeading>
       <ul
         role="list"
         data-testid="people-activity"

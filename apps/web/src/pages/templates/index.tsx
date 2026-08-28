@@ -10,6 +10,7 @@ import { PageHeader } from "@/components/shared/page-header"
 import { PageShell } from "@/components/shared/page-shell"
 import { PublicFrame } from "@/components/shared/public-frame"
 import { SearchField } from "@/components/shared/search-field"
+import { SectionHeading } from "@/components/shared/section-title"
 import { StatusPanel } from "@/components/shared/status-panel"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -104,9 +105,7 @@ export function Templates() {
   const shelfFor = (title: string, rows: TemplateArtifact[], testId: string) =>
     rows.length ? (
       <section className="flex flex-col gap-3" data-testid={testId}>
-        <h2 className="font-mono text-2xs uppercase tracking-wider text-muted-foreground">
-          {title}
-        </h2>
+        <SectionHeading count={rows.length}>{title}</SectionHeading>
         <CardGrid>
           {rows.map((template) => (
             <TemplateArtifactCard
@@ -202,10 +201,7 @@ export function Templates() {
             hotkey
           />
           {shelfState.isPending ? (
-            <div
-              className="grid min-h-64 place-items-center border-y py-12 text-center"
-              role="status"
-            >
+            <div className="grid min-h-64 place-items-center py-12 text-center" role="status">
               <div className="flex max-w-sm flex-col items-center gap-3 text-muted-foreground">
                 <Icon name="derive" size={24} className="animate-pulse" />
                 <p className="text-sm">Loading templates…</p>

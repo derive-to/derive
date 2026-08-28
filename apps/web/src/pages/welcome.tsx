@@ -245,10 +245,7 @@ function DoneRow({ children, testId }: { children: React.ReactNode; testId: stri
 // Replaced by DoneRow when the polling query sees the expected state.
 function WatchRow({ children, testId }: { children: React.ReactNode; testId: string }) {
   return (
-    <p
-      data-testid={testId}
-      className="flex items-center gap-2.5 border-t pt-4 text-sm text-muted-foreground"
-    >
+    <p data-testid={testId} className="flex items-center gap-2.5 text-sm text-muted-foreground">
       <span className="relative flex size-2">
         <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-muted-foreground opacity-50" />
         <span className="relative inline-flex size-2 rounded-full bg-muted-foreground" />

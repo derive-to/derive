@@ -1,4 +1,5 @@
 import { Icon } from "@/components/icons"
+import { Eyebrow } from "@/components/shared/section-eyebrow"
 import { Button } from "@/components/ui/button"
 import type { LinkedBundleNodeNote } from "./linked-bundle-node-details"
 
@@ -12,14 +13,14 @@ export function LinkedBundleNodeDetailsPanel({
   return (
     <div className="mt-3 rounded-lg border border-border-soft bg-background/40 p-3 text-xs">
       <div className="flex items-start justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-2 font-mono text-2xs uppercase tracking-[0.08em] text-muted-foreground">
+        <Eyebrow as="div" className="flex flex-wrap items-center gap-2">
           Note
           {note.source === "workflow" ? (
             <span className="rounded border border-border bg-muted/50 px-1.5 py-0.5 normal-case tracking-normal">
               Drafted from workflow
             </span>
           ) : null}
-        </div>
+        </Eyebrow>
         {onEdit ? (
           <Button
             variant="ghost"

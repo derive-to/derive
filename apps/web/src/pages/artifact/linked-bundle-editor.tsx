@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react"
 import { api } from "@/api"
+import { Eyebrow } from "@/components/shared/section-eyebrow"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -200,12 +201,10 @@ export function LinkedBundleEditor({
             </span>
           </DialogDescription>
         </DialogHeader>
-        <div className="grid grid-cols-5 border-y border-border bg-muted/20">
+        <div className="grid grid-cols-5 bg-muted/20">
           {stats.map(([label, value], index) => (
             <div key={label} className={index ? "border-l border-border px-4 py-3" : "px-4 py-3"}>
-              <div className="font-mono text-2xs uppercase tracking-[0.1em] text-muted-foreground">
-                {label}
-              </div>
+              <Eyebrow as="div">{label}</Eyebrow>
               <div className="mt-1 text-lg font-semibold text-foreground">
                 {loading || inspection.problem ? "—" : value}
               </div>
@@ -214,12 +213,12 @@ export function LinkedBundleEditor({
         </div>
         <div className="px-6 pt-5">
           <div className="flex items-center justify-between rounded-t-lg border border-border bg-muted/30 px-3 py-2">
-            <div className="flex items-center gap-2 font-mono text-2xs uppercase tracking-[0.1em] text-muted-foreground">
+            <Eyebrow as="div" className="flex items-center gap-2">
               JSON source
               <span className={dirty ? "text-warning" : "text-success"}>
                 {dirty ? "Unsaved changes" : `Current v${version}`}
               </span>
-            </div>
+            </Eyebrow>
             <Button
               variant="ghost"
               size="sm"

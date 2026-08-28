@@ -10,7 +10,7 @@ import { FollowButton } from "@/components/shared/follow-button"
 import { LoadError } from "@/components/shared/load-error"
 import { PageShell } from "@/components/shared/page-shell"
 import { PublicFrame } from "@/components/shared/public-frame"
-import { SectionEyebrow } from "@/components/shared/section-eyebrow"
+import { SectionHeading } from "@/components/shared/section-title"
 import { Spinner } from "@/components/shared/spinner"
 import { UsernameForm } from "@/components/shared/username-form"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
@@ -264,7 +264,7 @@ function ProfileWork({
   return (
     <section className="flex flex-col gap-3">
       <div className="flex items-center justify-between gap-3">
-        <SectionEyebrow className="flex-1">Work</SectionEyebrow>
+        <SectionHeading className="flex-1">Work</SectionHeading>
         {/* The grid/list toggle only earns its place once there's work to reshape. */}
         {!isPending && !isError && items.length > 0 && (
           <ToggleGroup

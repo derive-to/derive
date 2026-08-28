@@ -1,6 +1,6 @@
 import { CardGrid } from "@/components/shared/card-grid"
 import { PageShell } from "@/components/shared/page-shell"
-import { SectionEyebrow } from "@/components/shared/section-eyebrow"
+import { SectionHeading } from "@/components/shared/section-title"
 import { Skeleton } from "@/components/ui/skeleton"
 import { CardSkeletonCell } from "../library/library-skeleton"
 
@@ -59,10 +59,10 @@ export function ProfilePending() {
         </div>
       </section>
 
-      {/* The Work section: the real static eyebrow (always "Work") over the grid
+      {/* The Work section: the real static heading (always "Work") over the grid
           silhouette, matching ProfileWork's own `flex flex-col gap-3` section. */}
       <section className="flex flex-col gap-3">
-        <SectionEyebrow>Work</SectionEyebrow>
+        <SectionHeading>Work</SectionHeading>
         <ProfileWorkSkeleton />
       </section>
     </PageShell>

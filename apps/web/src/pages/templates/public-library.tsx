@@ -11,6 +11,7 @@ import { PageHeader } from "@/components/shared/page-header"
 import { PageShell } from "@/components/shared/page-shell"
 import { PublicFrame } from "@/components/shared/public-frame"
 import { SearchField } from "@/components/shared/search-field"
+import { Eyebrow } from "@/components/shared/section-eyebrow"
 import { StatusPanel } from "@/components/shared/status-panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -67,7 +68,6 @@ function PublicTemplateLibraryCatalogInner() {
   return (
     <PageShell width="wide" className="flex flex-col gap-8">
       <PageHeader
-        className="border-b pb-7"
         eyebrow="Public template libraries"
         title="Useful beginnings, shared openly."
         subtitle="Browse version-pinned starters from the Derive community, then tell your agent what to make with one."
@@ -82,7 +82,10 @@ function PublicTemplateLibraryCatalogInner() {
         testId="public-template-libraries-search"
       />
       {libraries.isPlaceholderData ? (
-        <div className="grid min-h-48 place-items-center border-y text-sm text-muted-foreground">
+        <div
+          className="grid min-h-48 place-items-center text-sm text-muted-foreground"
+          role="status"
+        >
           Searching libraries…
         </div>
       ) : publicLibraries.length ? (
@@ -188,14 +191,12 @@ function PublicTemplateLibraryInner({ id }: { id: string }) {
   }
   return (
     <PageShell width="wide" className="flex flex-col gap-8">
-      <section className="border-b pb-7">
+      <section>
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant="outline" shape="pill">
             <Icon name={scopeIcon} size={12} /> {scopeLabel}
           </Badge>
-          <span className="font-mono text-2xs uppercase tracking-wider text-muted-foreground">
-            {data.entry_count} pinned starters
-          </span>
+          <Eyebrow>{data.entry_count} pinned starters</Eyebrow>
         </div>
         <h1 className="mt-4 max-w-3xl font-serif text-4xl font-medium leading-tight tracking-tight text-foreground sm:text-5xl">
           {data.title}
