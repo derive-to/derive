@@ -197,9 +197,10 @@ export const parseEmailLayout = (value: unknown): EmailLayout | null => {
 
 const esc = (value: string): string => escapeHtml(value)
 const richText = (value: string): string => esc(value).replaceAll("\n", "<br>")
+const WRAP = "overflow-wrap:anywhere;word-break:break-word"
 const sectionTitle = (value?: string): string =>
   value
-    ? `<h2 style="margin:0 0 14px;font-size:18px;line-height:1.3;color:#17201d">${esc(value)}</h2>`
+    ? `<h2 style="margin:0 0 14px;font-size:18px;line-height:1.3;color:#17201d;${WRAP}">${esc(value)}</h2>`
     : ""
 const palette = ["#155f52", "#4f46e5", "#c77700", "#b42318", "#6d28d9", "#087f8c"]
 
@@ -213,7 +214,7 @@ const renderKpis = (block: Extract<EmailBlock, { type: "kpis" }>): string => {
         `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 10px;table-layout:fixed"><tr>${items
           .map(
             (item) =>
-              `<td width="33.33%" valign="top" class="derive-kpi-cell" style="padding:0 5px"><div style="border:1px solid #d9ddd7;border-radius:12px;padding:15px;background:#f8faf7"><div style="font-size:11px;line-height:1.3;text-transform:uppercase;letter-spacing:.08em;color:#66706b">${esc(item.label)}</div><div style="margin-top:7px;font-size:24px;line-height:1.1;font-weight:750;color:#17201d">${esc(item.value)}</div>${item.delta ? `<div style="margin-top:6px;font-size:12px;color:#155f52">${esc(item.delta)}</div>` : ""}</div></td>`,
+              `<td width="33.33%" valign="top" class="derive-kpi-cell" style="padding:0 5px"><div style="box-sizing:border-box;border:1px solid #d9ddd7;border-radius:12px;padding:15px;background:#f8faf7;${WRAP}"><div style="font-size:11px;line-height:1.3;text-transform:uppercase;letter-spacing:.08em;color:#66706b;${WRAP}">${esc(item.label)}</div><div style="margin-top:7px;font-size:24px;line-height:1.1;font-weight:750;color:#17201d;${WRAP}">${esc(item.value)}</div>${item.delta ? `<div style="margin-top:6px;font-size:12px;color:#155f52;${WRAP}">${esc(item.delta)}</div>` : ""}</div></td>`,
           )
           .join("")}</tr></table>`,
     )
@@ -230,24 +231,27 @@ const renderBars = (block: Extract<EmailBlock, { type: "bars" }>): string => {
     .map((item, index) => {
       const width = Math.max(2, Math.min(100, (Math.abs(item.value) / max) * 100))
       const fill = item.color ?? (item.value < 0 ? "#b42318" : palette[index % palette.length])
-      return `<tr><td width="30%" valign="middle" style="padding:7px 10px 7px 0;font-size:12px;color:#35403c">${esc(item.label)}</td><td width="52%" valign="middle" style="padding:7px 8px 7px 0"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#e9ece8;border-radius:999px"><tr><td width="${width}%" height="12" style="width:${width}%;height:12px;background:${fill};border-radius:999px;font-size:0">&nbsp;</td><td></td></tr></table></td><td width="18%" align="right" style="padding:7px 0;font-size:12px;font-weight:700;color:#17201d">${esc(item.display ?? String(item.value))}</td></tr>`
+      return `<tr><td width="30%" valign="middle" style="padding:7px 10px 7px 0;font-size:12px;color:#35403c;${WRAP}">${esc(item.label)}</td><td width="52%" valign="middle" style="padding:7px 8px 7px 0"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#e9ece8;border-radius:999px"><tr><td width="${width}%" height="12" style="width:${width}%;height:12px;background:${fill};border-radius:999px;font-size:0">&nbsp;</td><td></td></tr></table></td><td width="18%" align="right" style="padding:7px 0;font-size:12px;font-weight:700;color:#17201d;${WRAP}">${esc(item.display ?? String(item.value))}</td></tr>`
     })
     .join("")
   return `${sectionTitle(block.title)}<table role="presentation" width="100%" cellpadding="0" cellspacing="0">${rows}</table>`
 }
 
 const renderSegments = (block: Extract<EmailBlock, { type: "segments" }>): string => {
-  const total = block.items.reduce((sum, item) => sum + Math.max(0, item.value), 0) || 1
-  const cells = block.items
-    .map((item, index) => {
-      const width = Math.max(3, (Math.max(0, item.value) / total) * 100)
-      return `<td width="${width}%" height="24" style="width:${width}%;height:24px;background:${item.color ?? palette[index % palette.length]};font-size:0">&nbsp;</td>`
-    })
-    .join("")
+  const total = block.items.reduce((sum, item) => sum + Math.max(0, item.value), 0)
+  const positiveItems = block.items.filter((item) => item.value > 0)
+  const cells = positiveItems.length
+    ? positiveItems
+        .map((item, index) => {
+          const width = (item.value / total) * 100
+          return `<td width="${width}%" height="24" style="width:${width}%;height:24px;background:${item.color ?? palette[index % palette.length]};font-size:0">&nbsp;</td>`
+        })
+        .join("")
+    : '<td width="100%" height="24" style="width:100%;height:24px;background:#e9ece8;font-size:0">&nbsp;</td>'
   const legend = block.items
     .map(
       (item, index) =>
-        `<tr><td width="18" style="padding:5px 0"><span style="display:block;width:10px;height:10px;border-radius:3px;background:${item.color ?? palette[index % palette.length]}">&nbsp;</span></td><td style="padding:5px 4px;font-size:12px;color:#35403c">${esc(item.label)}</td><td align="right" style="padding:5px 0;font-size:12px;font-weight:700;color:#17201d">${esc(item.display ?? String(item.value))}</td></tr>`,
+        `<tr><td width="18" style="padding:5px 0"><span style="display:block;width:10px;height:10px;border-radius:3px;background:${item.color ?? palette[index % palette.length]}">&nbsp;</span></td><td style="padding:5px 4px;font-size:12px;color:#35403c;${WRAP}">${esc(item.label)}</td><td align="right" style="padding:5px 0;font-size:12px;font-weight:700;color:#17201d;${WRAP}">${esc(item.display ?? String(item.value))}</td></tr>`,
     )
     .join("")
   return `${sectionTitle(block.title)}<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-radius:8px;overflow:hidden"><tr>${cells}</tr></table><table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:10px">${legend}</table>`
@@ -258,23 +262,37 @@ const renderFunnel = (block: Extract<EmailBlock, { type: "funnel" }>): string =>
   const rows = block.items
     .map((item, index) => {
       const width = Math.max(26, Math.min(100, (Math.abs(item.value) / max) * 100))
-      return `<tr><td align="center" style="padding:4px 0"><table role="presentation" width="${width}%" cellpadding="0" cellspacing="0" style="width:${width}%;background:${item.color ?? palette[index % palette.length]};border-radius:8px"><tr><td align="center" style="padding:10px 8px;color:#fff;font-size:12px"><strong>${esc(item.label)}</strong>&nbsp;&nbsp;${esc(item.display ?? String(item.value))}</td></tr></table></td></tr>`
+      return `<tr><td align="center" style="padding:4px 0"><table role="presentation" width="${width}%" cellpadding="0" cellspacing="0" style="width:${width}%;background:${item.color ?? palette[index % palette.length]};border-radius:8px"><tr><td align="center" style="padding:10px 8px;color:#fff;font-size:12px;${WRAP}"><strong>${esc(item.label)}</strong>&nbsp;&nbsp;${esc(item.display ?? String(item.value))}</td></tr></table></td></tr>`
     })
     .join("")
   return `${sectionTitle(block.title)}<table role="presentation" width="100%" cellpadding="0" cellspacing="0">${rows}</table>`
 }
 
 const renderTable = (block: Extract<EmailBlock, { type: "table" }>): string => {
+  if (block.columns.length > 3) {
+    const cards = block.rows
+      .map(
+        (row) =>
+          `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 10px;table-layout:fixed;border:1px solid #d9ddd7;border-radius:10px">${row
+            .map(
+              (cell, index) =>
+                `<tr><td width="34%" valign="top" style="padding:9px 10px;border-bottom:1px solid #e6e9e6;font-size:10px;line-height:1.4;text-transform:uppercase;letter-spacing:.04em;color:#66706b;${WRAP}">${esc(block.columns[index] ?? "")}</td><td width="66%" valign="top" style="padding:9px 10px;border-bottom:1px solid #e6e9e6;font-size:12px;line-height:1.4;color:#26302c;${WRAP}">${richText(cell)}</td></tr>`,
+            )
+            .join("")}</table>`,
+      )
+      .join("")
+    return `${sectionTitle(block.title)}${cards}`
+  }
   const head = block.columns
     .map(
       (column) =>
-        `<th align="left" style="padding:9px 8px;border-bottom:1px solid #cfd5d1;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:#66706b">${esc(column)}</th>`,
+        `<th align="left" style="padding:9px 8px;border-bottom:1px solid #cfd5d1;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:#66706b;${WRAP}">${esc(column)}</th>`,
     )
     .join("")
   const rows = block.rows
     .map(
       (row) =>
-        `<tr>${row.map((cell) => `<td valign="top" style="padding:10px 8px;border-bottom:1px solid #e6e9e6;font-size:12px;line-height:1.4;color:#26302c">${richText(cell)}</td>`).join("")}</tr>`,
+        `<tr>${row.map((cell) => `<td valign="top" style="padding:10px 8px;border-bottom:1px solid #e6e9e6;font-size:12px;line-height:1.4;color:#26302c;${WRAP}">${richText(cell)}</td>`).join("")}</tr>`,
     )
     .join("")
   return `${sectionTitle(block.title)}<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="table-layout:fixed;border:1px solid #d9ddd7;border-radius:10px"> <tr>${head}</tr>${rows}</table>`
@@ -288,13 +306,13 @@ const renderCallout = (block: Extract<EmailBlock, { type: "callout" }>): string 
     critical: ["#fdecea", "#9d2018"],
   }
   const [background, foreground] = colors[block.tone]
-  return `<div style="padding:16px 18px;border-radius:12px;background:${background};color:${foreground}">${block.title ? `<div style="font-weight:750;margin-bottom:5px">${esc(block.title)}</div>` : ""}<div style="font-size:13px;line-height:1.55">${richText(block.body)}</div></div>`
+  return `<div style="padding:16px 18px;border-radius:12px;background:${background};color:${foreground};${WRAP}">${block.title ? `<div style="font-weight:750;margin-bottom:5px;${WRAP}">${esc(block.title)}</div>` : ""}<div style="font-size:13px;line-height:1.55;${WRAP}">${richText(block.body)}</div></div>`
 }
 
 const renderBlock = (block: EmailBlock): string => {
   let body = ""
   if (block.type === "paragraph")
-    body = `<p style="margin:0;font-size:14px;line-height:1.65;color:#35403c">${richText(block.body)}</p>`
+    body = `<p style="margin:0;font-size:14px;line-height:1.65;color:#35403c;${WRAP}">${richText(block.body)}</p>`
   else if (block.type === "kpis") body = renderKpis(block)
   else if (block.type === "bars") body = renderBars(block)
   else if (block.type === "segments") body = renderSegments(block)
@@ -302,7 +320,7 @@ const renderBlock = (block: EmailBlock): string => {
   else if (block.type === "table") body = renderTable(block)
   else if (block.type === "callout") body = renderCallout(block)
   else if (block.type === "button")
-    body = `<a href="${esc(block.url)}" style="display:inline-block;padding:11px 16px;border-radius:9px;background:#155f52;color:#fff;text-decoration:none;font-weight:700;font-size:13px">${esc(block.label)}</a>`
+    body = `<a href="${esc(block.url)}" style="display:inline-block;max-width:100%;box-sizing:border-box;padding:11px 16px;border-radius:9px;background:#155f52;color:#fff;text-decoration:none;font-weight:700;font-size:13px;${WRAP}">${esc(block.label)}</a>`
   else body = '<div style="height:1px;background:#e2e6e3;font-size:0">&nbsp;</div>'
   return `<tr><td style="padding:0 28px 22px">${body}</td></tr>`
 }
@@ -340,9 +358,9 @@ export const buildRichExportEmail = (input: {
   const subject = input.subjectTitle.replace(/[\r\n]+/g, " ").trim()
   const preheader = input.layout.preheader ?? input.layout.subtitle ?? input.layout.title
   const note = input.note
-    ? `<tr><td style="padding:0 28px 22px"><div style="padding:13px 15px;border-left:3px solid #c9f77b;background:#f5f8f3;color:#35403c;font-size:13px;line-height:1.5">${richText(input.note)}</div></td></tr>`
+    ? `<tr><td style="padding:0 28px 22px"><div style="padding:13px 15px;border-left:3px solid #c9f77b;background:#f5f8f3;color:#35403c;font-size:13px;line-height:1.5;${WRAP}">${richText(input.note)}</div></td></tr>`
     : ""
-  const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><style>@media(max-width:620px){.derive-shell{border-radius:0!important}.derive-pad{padding-left:18px!important;padding-right:18px!important}}@media(max-width:360px){.derive-kpi-cell{display:block!important;width:100%!important;padding:0 0 10px!important}}</style></head><body style="margin:0;background:#eef1ee;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Arial,sans-serif;color:#17201d"><div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent">${esc(preheader)}&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;</div><table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:24px 10px"><table role="presentation" width="620" cellpadding="0" cellspacing="0" class="derive-shell" style="width:100%;max-width:620px;background:#fff;border:1px solid #d9ddd7;border-radius:16px;overflow:hidden"><tr><td class="derive-pad" style="padding:26px 28px 9px"><div style="font-size:10px;text-transform:uppercase;letter-spacing:.12em;font-weight:800;color:#155f52">Derive · version ${input.version}</div><h1 style="margin:10px 0 0;font-size:28px;line-height:1.1;letter-spacing:-.03em;color:#17201d">${esc(input.layout.title)}</h1>${input.layout.subtitle ? `<p style="margin:9px 0 0;font-size:14px;line-height:1.55;color:#66706b">${richText(input.layout.subtitle)}</p>` : ""}</td></tr><tr><td style="padding:0 28px 20px"><div style="height:1px;background:#e2e6e3;font-size:0">&nbsp;</div></td></tr>${note}${input.layout.blocks.map(renderBlock).join("")}<tr><td class="derive-pad" style="padding:4px 28px 28px"><a href="${esc(input.openUrl)}" style="display:inline-block;padding:11px 16px;border-radius:9px;background:#17201d;color:#fff;text-decoration:none;font-weight:700;font-size:13px">Open in Derive</a><p style="margin:16px 0 0;color:#7b847f;font-size:11px;line-height:1.5">This email-safe rendering is pinned to version ${input.version}. It does not change access to the original.</p></td></tr></table></td></tr></table></body></html>`
+  const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><style>@media(max-width:620px){.derive-shell{border-radius:0!important}.derive-pad{padding-left:18px!important;padding-right:18px!important}}@media(max-width:420px){.derive-kpi-cell{display:block!important;width:100%!important;padding:0 0 10px!important}}</style></head><body style="margin:0;background:#eef1ee;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Arial,sans-serif;color:#17201d"><div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent">${esc(preheader)}&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;</div><table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:24px 10px"><table role="presentation" width="620" cellpadding="0" cellspacing="0" class="derive-shell" style="width:100%;max-width:620px;background:#fff;border:1px solid #d9ddd7;border-radius:16px;overflow:hidden"><tr><td class="derive-pad" style="padding:26px 28px 9px"><div style="font-size:10px;text-transform:uppercase;letter-spacing:.12em;font-weight:800;color:#155f52">Derive · version ${input.version}</div><h1 style="margin:10px 0 0;font-size:28px;line-height:1.1;letter-spacing:-.03em;color:#17201d;${WRAP}">${esc(input.layout.title)}</h1>${input.layout.subtitle ? `<p style="margin:9px 0 0;font-size:14px;line-height:1.55;color:#66706b;${WRAP}">${richText(input.layout.subtitle)}</p>` : ""}</td></tr><tr><td style="padding:0 28px 20px"><div style="height:1px;background:#e2e6e3;font-size:0">&nbsp;</div></td></tr>${note}${input.layout.blocks.map(renderBlock).join("")}<tr><td class="derive-pad" style="padding:4px 28px 28px"><a href="${esc(input.openUrl)}" style="display:inline-block;padding:11px 16px;border-radius:9px;background:#17201d;color:#fff;text-decoration:none;font-weight:700;font-size:13px">Open in Derive</a><p style="margin:16px 0 0;color:#7b847f;font-size:11px;line-height:1.5">This email-safe rendering is pinned to version ${input.version}. It does not change access to the original.</p></td></tr></table></td></tr></table></body></html>`
   const text = [
     input.layout.title,
     input.layout.subtitle,

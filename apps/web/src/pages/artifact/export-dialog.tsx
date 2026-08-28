@@ -54,9 +54,14 @@ export function ExportButton({
   const create = useApiMutation<ExportJob, CreateInput>({
     mutationFn: (input) => api.createExport(shortId, input),
     invalidate: [["exports", shortId]],
-    success: (_, input) => (input.kind === "email" ? "Email is preparing" : "Export is preparing"),
+    success: (_, input) =>
+      input.kind === "email"
+        ? input.preview
+          ? "Email preview is preparing"
+          : "Email is preparing"
+        : "Export is preparing",
   })
-  const start = () =>
+  const start = (preview = false) =>
     create.mutate({
       kind,
       version,
@@ -65,6 +70,7 @@ export function ExportButton({
       ...(note.trim() ? { note: note.trim() } : {}),
       ...(option.supportsPublicImage ? { publicImage } : {}),
       ...(option.email ? { attachPdf, emailMode } : {}),
+      ...(option.email && preview ? { preview: true } : {}),
     })
 
   return (
@@ -216,17 +222,35 @@ export function ExportButton({
             </p>
           )}
 
-          <Button
-            data-testid="export-create"
-            onClick={start}
-            disabled={
-              create.isPending ||
-              (option.email && (!recipient.trim() || recipientInvalid)) ||
-              (option.requiresDataSlot && !slot.trim())
-            }
-          >
-            {create.isPending ? "Starting…" : option.email ? "Prepare & send" : "Create export"}
-          </Button>
+          {option.email ? (
+            <div className="grid grid-cols-2 gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                data-testid="export-preview-email"
+                onClick={() => start(true)}
+                disabled={create.isPending}
+              >
+                {create.isPending ? "Starting…" : "Preview email"}
+              </Button>
+              <Button
+                type="button"
+                data-testid="export-create"
+                onClick={() => start(false)}
+                disabled={create.isPending || !recipient.trim() || recipientInvalid}
+              >
+                {create.isPending ? "Starting…" : "Prepare & send"}
+              </Button>
+            </div>
+          ) : (
+            <Button
+              data-testid="export-create"
+              onClick={() => start(false)}
+              disabled={create.isPending || (option.requiresDataSlot && !slot.trim())}
+            >
+              {create.isPending ? "Starting…" : "Create export"}
+            </Button>
+          )}
           <ExportJobList shortId={shortId} open={open} />
         </div>
       </DialogContent>

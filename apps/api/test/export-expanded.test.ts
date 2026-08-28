@@ -60,6 +60,12 @@ describe("expanded export and email dogfood contracts", () => {
     const missingRecipient = await postExport(app, artifact.short_id, { kind: "email" })
     expect(missingRecipient.status).toBe(400)
     expect(await missingRecipient.text()).toContain("recipient is required")
+    const invalidPreview = await postExport(app, artifact.short_id, {
+      kind: "page_pdf",
+      preview: true,
+    })
+    expect(invalidPreview.status).toBe(400)
+    expect(await invalidPreview.text()).toContain("preview is only supported for email")
     expect((await postExport(app, artifact.short_id, { kind: "not-a-format" })).status).toBe(400)
   })
 
@@ -288,6 +294,69 @@ describe("expanded export and email dogfood contracts", () => {
     expect(html).toContain("Enterprise")
     expect(html).not.toContain("data:image/png")
     expect(html).toContain("<li>None</li>")
+  })
+
+  it("previews a production email without a recipient or delivery side effect", async () => {
+    const { app, meta, ctx } = makeAuthedApp("expanded-public-email-preview", [owner], undefined, {
+      deps: { renderExports: true },
+    })
+    const layout = {
+      schema: "derive.email/v1",
+      title: "No-send preview",
+      blocks: [
+        { type: "kpis", items: [{ label: "ARR", value: "$12.4M" }] },
+        { type: "paragraph", body: "This exact HTML can be inspected before delivery." },
+      ],
+    }
+    const artifact = await (
+      await publishAs(
+        app,
+        `<h1>No-send preview</h1><script type="application/derive-facts" data-fact="email-layout">${JSON.stringify(layout)}</script>`,
+        { title: "No-send preview", workspace_access: "none" },
+        as(owner.email),
+      )
+    ).json()
+    const requests = await Promise.all([
+      postExport(app, artifact.short_id, { kind: "email", preview: true }),
+      postExport(app, artifact.short_id, {
+        kind: "email",
+        recipient: "real-address@example.com",
+        preview: true,
+      }),
+    ])
+    expect(requests.map((response) => response.status)).toEqual([202, 202])
+    const jobs = await Promise.all(requests.map((response) => response.json()))
+    expect(new Set(jobs.map((job) => job.id))).toHaveLength(1)
+    const [job] = jobs
+    const queued = await meta.getExportJob(job.id)
+    expect(JSON.parse(queued?.options_json ?? "{}")).toMatchObject({
+      recipient: "preview@derive.test",
+      qaCapture: true,
+    })
+    expect(
+      await runExportTick({
+        meta,
+        blobs: ctx.blobs,
+        renderer: {
+          screenshot: async () => {
+            throw new Error("native HTML preview must not take a screenshot")
+          },
+        },
+        baseUrl: "http://derive.test",
+        secret: "expanded-public-preview-secret",
+      }),
+    ).toBe(1)
+    expect(await meta.recentDeliveries(INTERNAL_DELIVERY, 10)).toEqual([])
+
+    const capture = await app.request(`/v1/exports/${job.id}/preview`, {
+      headers: as(owner.email),
+    })
+    expect(capture.status).toBe(200)
+    expect(capture.headers.get("content-security-policy")).toContain("sandbox")
+    const html = await capture.text()
+    expect(html).toContain("QA capture · no email was sent")
+    expect(html).toContain("preview@derive.test")
+    expect(html).toContain("$12.4M")
   })
 
   it("renders a deck email snapshot from the first native deck image and sends PNG bytes", async () => {
