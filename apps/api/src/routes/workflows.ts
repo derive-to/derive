@@ -17,7 +17,7 @@ const workflowDirectoryItem = z.object({
     z.object({
       id: z.string(),
       title: z.string(),
-      agentSteps: z.number().int(),
+      contextSteps: z.number().int(),
       humanPauses: z.number().int(),
       branches: z.number().int(),
       loops: z.number().int(),
@@ -107,7 +107,7 @@ export const workflowRoutes = (ctx: AppContext) => {
             diagrams: (preview?.diagrams ?? []).map((diagram) => ({
               id: diagram.id,
               title: diagram.title,
-              agentSteps: diagram.context_sessions.length,
+              contextSteps: diagram.context_sessions.length,
               humanPauses: diagram.will_pause.length,
               branches: diagram.may_do.length,
               loops: diagram.can_repeat.length,

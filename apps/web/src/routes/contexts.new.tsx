@@ -1,10 +1,8 @@
-import { createFileRoute, redirect } from "@tanstack/react-router"
+import { createFileRoute } from "@tanstack/react-router"
 import { requireOnboarded } from "../lib/route-guards"
+import { ContextBuilderPage } from "../pages/context/builder"
 
-// Preserve the legacy creation URL without maintaining two builder routes.
 export const Route = createFileRoute("/contexts/new")({
-  beforeLoad: async (args) => {
-    await requireOnboarded(args)
-    throw redirect({ to: "/agents/new", replace: true })
-  },
+  beforeLoad: requireOnboarded,
+  component: ContextBuilderPage,
 })

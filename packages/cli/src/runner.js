@@ -1930,7 +1930,7 @@ ${xml}
     path: `/etc/systemd/system/${label}.service`,
     load: `sudo systemctl enable --now ${label}`,
     unit: `[Unit]
-Description=Derive Agent runner (${cfg.contextId})
+Description=Derive Context runner (${cfg.contextId})
 After=network-online.target
 
 [Service]

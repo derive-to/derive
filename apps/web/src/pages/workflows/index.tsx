@@ -21,15 +21,15 @@ const countLabel = (count: number, singular: string, plural = `${singular}s`): s
 const workflowMeta = (workflow: WorkflowDirectoryItem): string => {
   const counts = workflow.diagrams.reduce(
     (total, diagram) => ({
-      agentSteps: total.agentSteps + diagram.agentSteps,
+      contextSteps: total.contextSteps + diagram.contextSteps,
       humanPauses: total.humanPauses + diagram.humanPauses,
       branches: total.branches + diagram.branches,
       loops: total.loops + diagram.loops,
     }),
-    { agentSteps: 0, humanPauses: 0, branches: 0, loops: 0 },
+    { contextSteps: 0, humanPauses: 0, branches: 0, loops: 0 },
   )
   return [
-    countLabel(counts.agentSteps, "Agent step"),
+    countLabel(counts.contextSteps, "Context step"),
     counts.humanPauses ? countLabel(counts.humanPauses, "human pause") : "No human pauses",
     counts.loops
       ? countLabel(counts.loops, "bounded loop")
@@ -51,8 +51,8 @@ export function Workflows() {
         title="Workflows"
         subtitle={
           <>
-            Reusable work. A workflow may coordinate several steps or give one Agent a standing
-            instruction. Every start creates a fresh run.
+            Reusable work. A workflow may coordinate several Context steps or run one instruction on
+            a schedule. Every start creates a fresh run.
           </>
         }
       />
@@ -61,7 +61,7 @@ export function Workflows() {
         <div className="flex flex-col gap-1">
           <SectionHeading>Coordinated workflows</SectionHeading>
           <p className="text-sm text-muted-foreground">
-            Versioned graphs and loops made from Agent steps, branches, and human pauses.
+            Versioned graphs and loops made from Context steps, branches, and human pauses.
           </p>
         </div>
         {isPending ? (

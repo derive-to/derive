@@ -19,7 +19,7 @@ import { ownerRunsOrg, runnerDispatch } from "./use-runner"
 // context management remains on `automate` and REST.
 
 const NO_HUMAN =
-  "Using an Agent opens a session on a human's behalf, and this connection has no acting human. " +
+  "Using a Context opens a session on a human's behalf, and this connection has no acting human. " +
   "Reconnect with an OAuth login (or a token registered by a user) to use one."
 
 const workflowInput = z.object({
@@ -45,14 +45,14 @@ export function registerUseTool(tc: ToolContext): void {
     "use",
     {
       description:
-        "Give an Agent work or check its session. `context` is the compatibility input name. `workflow` binds a run attempt or records its route. See derive://skills/contexts and derive://skills/workflows.",
+        "Use a Context for work or check its session. `workflow` binds a run attempt or records its route. See derive://skills/contexts and derive://skills/workflows.",
       // Opens/advances a session (a write — messages accumulate, budget is spent) but
       // deletes nothing; a session can be followed up or checked, never destroyed from
       // here. Not idempotent by default (each open mints a new session — `dedupe_key` is
       // the opt-in exception, not the norm). This call's own execution only creates rows
       // and waits on Derive's internal bus; it doesn't itself reach outside Derive.
       annotations: {
-        title: "Work with a workspace Agent",
+        title: "Run with a workspace Context",
         readOnlyHint: false,
         destructiveHint: false,
         openWorldHint: false,
@@ -61,9 +61,7 @@ export function registerUseTool(tc: ToolContext): void {
         context: z
           .string()
           .optional()
-          .describe(
-            "The Agent id or name from find (`context` is the compatibility field). Opens a NEW session; omit with session_id.",
-          ),
+          .describe("The Context id or name from find. Opens a NEW session; omit with session_id."),
         instruction: z
           .string()
           .trim()
@@ -71,7 +69,7 @@ export function registerUseTool(tc: ToolContext): void {
           .max(20_000)
           .optional()
           .describe(
-            "'With this Agent, do this' (Markdown) — a question or a task, always naming the target.",
+            "'With this Context, do this' (Markdown) — a question or a task, always naming the target.",
           ),
         session_id: z
           .string()
@@ -125,7 +123,7 @@ export function registerUseTool(tc: ToolContext): void {
         workflow: workflowInput
           .optional()
           .describe(
-            "Bind an Agent session to a run attempt, or pass status to record its receipt.",
+            "Bind a Context session to a run attempt, or pass status to record its receipt.",
           ),
         workspace: wsArg,
       },
@@ -309,14 +307,14 @@ export function registerUseTool(tc: ToolContext): void {
             ? runnerOnline(x)
               ? "Queued — re-call use with this session_id (+ wait) to collect the answer."
               : (await ownerRunsOrg(tc, x.org_id))
-                ? `Queued, and no execution connection is polling this Agent's queue — but you own this workspace, so you can run it yourself: use({context: "${x.name}"}) with no instruction pulls the queued work (see derive://skills/contexts).`
-                : "Queued, but the Agent's execution connection looks OFFLINE — it answers when it comes back. Re-call use with this session_id later."
+                ? `Queued, and no Agent is polling this Context's queue — but you own this workspace, so you can run it yourself: use({context: "${x.name}"}) with no instruction pulls the queued work (see derive://skills/contexts).`
+                : "Queued, but this Context's Agent looks OFFLINE — it answers when it comes back. Re-call use with this session_id later."
             : s.state === "working"
               ? "In progress — the runner is working. Re-call use with this session_id (+ wait) to keep watching; the result link fills in as it goes."
               : s.state === "escalated"
                 ? "The runner escalated this to a human — a draft went to review. Check back later."
                 : s.state === "failed"
-                  ? "The run crashed; the Agent's owner sees the failure. You can ask again."
+                  ? "The run crashed; the Context's owner sees the failure. You can ask again."
                   : s.state === "closed"
                     ? "This session was closed."
                     : undefined
@@ -369,7 +367,7 @@ export function registerUseTool(tc: ToolContext): void {
       if (session_id) {
         if (context)
           return err(
-            "Pass `context` OR `session_id`, not both — a follow-up already knows its Agent.",
+            "Pass `context` OR `session_id`, not both — a follow-up already knows its Context.",
           )
         const found = await ctx.meta.getSession(session_id)
         const linked = found?.context_id ? await ctx.meta.getContext(found.context_id) : null
@@ -394,7 +392,7 @@ export function registerUseTool(tc: ToolContext): void {
           (await ctx.canUserAskContext(askerId, linked))
         if (!found || !linked || !allowed)
           return err(
-            `No session "${session_id}" you can reach. find (an Agent row) shows your open sessions.`,
+            `No session "${session_id}" you can reach. find (a Context row) shows your open sessions.`,
           )
         if (!instruction) return reply(found, linked, true)
         if (found.state === "closed")
@@ -403,7 +401,7 @@ export function registerUseTool(tc: ToolContext): void {
           )
         if (workflowAttempt && isSettled(found.state))
           return err(
-            "A settled workflow Agent session is immutable; start the next attempt instead.",
+            "A settled workflow Context session is immutable; start the next attempt instead.",
           )
         const capped = await overAskCap(askerId)
         if (capped) return capped
@@ -428,10 +426,10 @@ export function registerUseTool(tc: ToolContext): void {
       // GIVE: open a new session with an instruction.
       if (!context)
         return err(
-          "Pass `context` (+ `instruction`) to open a session, or `session_id` to check/resume. find surfaces the Agents you can use and your open sessions.",
+          "Pass `context` (+ `instruction`) to open a session, or `session_id` to check/resume. find surfaces the Contexts you can use and your open sessions.",
         )
       if (!instruction)
-        return err("Opening a session needs an `instruction` — 'with this Agent, do this'.")
+        return err("Opening a session needs an `instruction` — 'with this Context, do this'.")
       const t = await resolveWs(workspace)
       if ("error" in t) return err(t.error)
       const principal = workflow ? await workflowPrincipal(workflow.run_id, t.org) : null
@@ -439,7 +437,7 @@ export function registerUseTool(tc: ToolContext): void {
       const askerId = principal?.askerId ?? actingFor?.id
       if (!askerId) return err(NO_HUMAN)
       if (principal && principal.orgId !== t.org)
-        return err("The workflow run and Agent must be in the same workspace.")
+        return err("The workflow run and Context must be in the same workspace.")
       const rows = await askableContexts(t.org, askerId)
       const ref = context.trim()
       const hit =
@@ -450,11 +448,11 @@ export function registerUseTool(tc: ToolContext): void {
       if (!hit)
         return err(
           rows.length
-            ? `No Agent "${context}" you can ask here. You can ask: ${rows.map((r) => r.x.name).join(", ")}.`
-            : "No Agents you can ask in this workspace.",
+            ? `No Context "${context}" you can use here. You can use: ${rows.map((r) => r.x.name).join(", ")}.`
+            : "No Contexts you can use in this workspace.",
         )
       if (!hit.manifest)
-        return err(`Agent "${hit.x.name}" has lost its instruction artifact and can't be asked.`)
+        return err(`Context "${hit.x.name}" has lost its instruction artifact and can't be used.`)
       const manifest = hit.manifest
       if (workflow && principal) {
         const invalidTarget = await prepareWorkflowContextUse({

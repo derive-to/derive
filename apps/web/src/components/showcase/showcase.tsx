@@ -870,7 +870,7 @@ function RowStatesDemo() {
             <SidebarMenuItem>
               <SidebarMenuButton>
                 <Icon name="context" size={16} />
-                <span>Agents</span>
+                <span>Contexts</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
           </SidebarMenu>

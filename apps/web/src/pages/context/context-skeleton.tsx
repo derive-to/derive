@@ -17,7 +17,7 @@ export function ContextRowsSkeleton() {
 }
 
 // Match the directory layout during its initial query.
-export function AgentsPending() {
+export function ContextsPending() {
   return (
     <PageShell className="flex flex-col gap-6">
       <div className="flex flex-col gap-1">

@@ -120,7 +120,7 @@ test("starting a workflow creates a visible, version-pinned run", async ({ owner
     .getByTestId("workflow-row")
     .filter({ hasText: "Keep internal docs aligned with code changes." })
   await expect(directoryRow).toContainText("Keep internal docs aligned with code changes.")
-  await expect(directoryRow).toContainText("1 Agent step")
+  await expect(directoryRow).toContainText("1 Context step")
   await directoryRow.click()
   await expect(owner).toHaveURL(new RegExp(`/artifacts/.+${shortId}`))
   await expect(owner.getByTestId("workflow-preview")).toBeVisible()
@@ -533,7 +533,7 @@ test("the current page keeps its selected state under the pointer", async ({ own
   expect(await bgOf(current), "the active row changed colour on hover").toBe(currentRest)
 
   // …and the scoping didn't just disable hover everywhere: an idle row still washes.
-  const idle = owner.getByTestId("nav-agents")
+  const idle = owner.getByTestId("nav-contexts")
   const idleRest = await bgOf(idle)
   await idle.hover()
   await owner.waitForTimeout(400)

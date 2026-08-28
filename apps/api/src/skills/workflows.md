@@ -1,42 +1,41 @@
 ---
 name: workflows
-summary: graphs and loops via Agents (publish, use)
+summary: graphs and loops via Contexts (publish, use)
 order: 5.5
 ---
 # Graphs and bounded loops
 
-Use this when a person asks for a workflow, graph, loop, multi-Agent plan, human-decision path, or a
+Use this when a person asks for a workflow, graph, loop, multi-Context plan, human-decision path, or a
 clear account of what will happen before work runs. Do not turn an ordinary one-step artifact into
 a graph.
 
 Derive is the persistent working layer. The connected Codex, Claude, or other authorized harness
-executes. Reuse the existing Agent `use` primitive; the workflow run ledger coordinates and
+executes. Reuse the existing Context `use` primitive; the workflow run ledger coordinates and
 records that work without becoming a second executor, queue, lease model, or artifact store.
 
-The product calls reusable workers Agents. Workflow v1 keeps `kind:"context"` and `context_ref`,
-and the execution tool keeps `use({context: ...})`, as compatibility contracts. Those fields bind
-a workflow node to an Agent; they do not describe a separate user-facing object.
+A workflow node binds a Context through `kind:"context"` and `context_ref`. The connected Agent
+executes that node using the Context's instructions, skills, sources, and permissions.
 
 ## One Preview gate
 
 Preview includes explanation, structural validation, scenario checks, and repair guidance. Do not
 ask for separate Explain, Validate, and Preview steps. Present one result: **Ready to run** or
-**Needs changes**. Only explicit run intent starts Agent sessions; authored human gates still
+**Needs changes**. Only explicit run intent starts Context sessions; authored human gates still
 pause sensitive actions later.
 
 ## Author
 
-1. Extract the outcome, evidence of completion, Agents/roles, external effects, loop bounds, and
+1. Extract the outcome, evidence of completion, Contexts/roles, external effects, loop bounds, and
    decisions that really need a person. Ask only questions whose answers change safety or behavior.
 2. Choose the smallest useful shape: linear handoff, fan-out/join, human decision, router, or bounded
    evaluator–optimizer loop.
 3. Publish one ordinary HTML linked bundle with two facts generated from the same model:
    - `bundle-manifest` remains the visible topology and #799 authored working state.
-   - `workflow-definition` adds Agent bindings, route conditions, bounds, effects, gates,
+   - `workflow-definition` adds Context bindings, route conditions, bounds, effects, gates,
      forbidden actions, and scenarios.
 4. Join the facts only by stable diagram/node IDs. Every visible node and edge must have exactly one
    matching workflow node and route.
-   This is **same IDs, different jobs**. A graph may start with `members:[]`; add actual Agent
+   This is **same IDs, different jobs**. A graph may start with `members:[]`; add actual Context
    result artifacts later. Never invent a placeholder artifact id. As the authoring agent, generate
    one concise, editable `note` for every visible node. Describe what happens in plain language,
    using the matching workflow `instruction` and `result` as source material. Do not make people
@@ -120,31 +119,30 @@ The companion fact has this shape:
 ## Preview invariants
 
 - `context` nodes require `context_ref`, `instruction`, and `result`; use `terminal:true` when the
-  Agent result ends the diagram. Multiple routes require `routing:"all"` for unconditional
+  Context result ends the diagram. Multiple routes require `routing:"all"` for unconditional
   fan-out or `routing:"one"` for conditional choice with one fallback.
 - `human` nodes require a typed `decision`, at least two `options`, and `resume`.
 - `terminal` nodes require `result`.
 - Every diagram declares an `entry`; all nodes are reachable from it and at least one is terminal.
-  Human routes match their options exactly and omit fallback; Agent fan-out and branching are
+  Human routes match their options exactly and omit fallback; Context fan-out and branching are
   explicit through `routing`.
 - Effects are `read`, `write`, `message`, `spend`, or `access`. Derive artifact publication and
   state updates normally use `gate:"none"` with an idempotency contract. Reserve a `human` gate
   for explicitly requested review or consequential effects outside Derive. A human-gated effect
-  belongs on an Agent node (`kind:"context"` in workflow v1) so Derive can check approval before
-  opening the session. That node must
+  belongs on a Context node so Derive can check approval before opening the session. That node must
   sit directly and only behind its `approval_ref` human node.
 - Every directed cycle has a loop with a goal, evaluator, integer `max_attempts` (1–100), optional
   stagnation/time/cost limits, and `human_stop`.
-- Every diagram has an expected scenario. Agent work adds a failure scenario; human work adds a
+- Every diagram has an expected scenario. Context steps add a failure scenario; human work adds a
   human scenario covering each human node. Paths start at the declared entry and use real visible
   routes; non-failure paths end at a terminal node.
 - Preview distinguishes guaranteed policy from illustrative paths; it does not promise exact model
   or tool behavior.
 
-## Run through Agents
+## Run through Contexts
 
 When the person explicitly says to run, use the fresh run id from the handoff. Begin at the
-diagram's declared `entry`, then start one Agent session per ready node attempt:
+diagram's declared `entry`, then start one Context session per ready node attempt:
 
 ```text
 use({
@@ -167,11 +165,11 @@ use({workflow:{
   attempt,
   status: "succeeded",
   selected_routes: [nextNode.id],
-  route_basis: "The Agent returned ready"
+  route_basis: "The Context step returned ready"
 }})
 ```
 
-Human and terminal nodes use the same receipt shape without an Agent session. A human receipt's
+Human and terminal nodes use the same receipt shape without a Context session. A human receipt's
 `decision` must be one of that node's authored options. Pass `finish_run:"succeeded"` (or the
 matching failure/cancellation state) on the final receipt.
 
@@ -191,7 +189,7 @@ human decision.
 
 An effect's `approval_ref` is the workflow-definition field that references an authored human
 decision; it is unrelated to the removed artifact-approval lifecycle. Derive checks that decision
-before opening the selected Agent step. One approval authorizes one attempt. A retry may reuse
+before opening the selected Context step. One approval authorizes one attempt. A retry may reuse
 it only when every human-gated effect on the node declares an idempotency contract; otherwise stop
 and start a new run for fresh approval. Stop at a terminal result, exhausted
 loop/time/cost/stagnation bound, unresolved human gate, terminal failure, or the person's stop

@@ -54,7 +54,7 @@ describe("workspace mismatch API hint", () => {
 
 describe("builder session refusals", () => {
   const REFUSAL =
-    "You need permission to create things in this workspace before you can set up an Agent here. An Admin can change your access under Settings › Members."
+    "You need permission to create things in this workspace before you can set up a Context here. An Admin can change your access under Settings › Members."
 
   const rejectWith = async (status: number, body: unknown): Promise<ApiError> => {
     vi.stubGlobal(

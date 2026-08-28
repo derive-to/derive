@@ -4310,7 +4310,7 @@ export interface paths {
                                 diagrams: {
                                     id: string;
                                     title: string;
-                                    agentSteps: number;
+                                    contextSteps: number;
                                     humanPauses: number;
                                     branches: number;
                                     loops: number;
@@ -7832,8 +7832,6 @@ export interface components {
                 draft: {
                     name: string;
                     description: string;
-                    /** @enum {string} */
-                    kind: "knowledge" | "worker";
                     knows: string[];
                     answers: string;
                     wont: string[];
