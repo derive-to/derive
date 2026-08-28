@@ -238,10 +238,11 @@ export function Artifact({ template = false }: { template?: boolean }) {
   useDocumentTitle(art ? (art.title ?? shortId) : null)
   const commentsAvailable =
     !!me && !seeded && !!art && (!isGuest || canCommentWithRole(art.my_role))
-  const { data: comments = [] } = useQuery({
+  const commentsQ = useQuery({
     ...commentsQuery(shortId),
     enabled: commentsAvailable,
   })
+  const comments = commentsQ.data ?? []
   // Workspace tools are loaded only when their workspace is active.
   const { data: agents = [] } = useQuery({
     ...artifactAgentsQuery(shortId),
@@ -249,10 +250,22 @@ export function Artifact({ template = false }: { template?: boolean }) {
   })
   // The review rounds the activity rail renders — and the pending one its composer
   // answers. Members who can act only, like the card this replaced.
-  const { data: review } = useQuery({
+  const reviewEnabled = commentsAvailable && !isGuest
+  const reviewQ = useQuery({
     ...reviewQuery(shortId),
-    enabled: commentsAvailable && !isGuest,
+    enabled: reviewEnabled,
   })
+  const review = reviewQ.data
+  // The activity stream is the union of three sources that settle at different times
+  // (the artifact's versions, the comments, the review rounds — each gated on the
+  // session). It paints ONCE, when every source it will use has its first result: a
+  // partial stream is not an early stream, it is a different one (a card splits a turn,
+  // an ask lands between two publishes), and its open-scroll and "N new" logic would
+  // run against the wrong picture. A disabled source counts as settled.
+  const streamReady =
+    !loading &&
+    (!commentsAvailable || !commentsQ.isPending) &&
+    (!reviewEnabled || !reviewQ.isPending)
   const { data: workspaces } = useQuery({ ...workspacesQuery(), enabled: isGuest })
   // A password artifact returns 401 until the visitor unlocks it — show the
   // password prompt rather than the not-found state or a bounce to login.
@@ -997,9 +1010,9 @@ export function Artifact({ template = false }: { template?: boolean }) {
   // rail is closed (open, the rail shows its own "New" marker).
   const unread = countUnread(
     buildStream({
-      versions: art.versions,
-      comments,
-      rounds: review?.rounds ?? [],
+      versions: streamReady ? art.versions : [],
+      comments: streamReady ? comments : [],
+      rounds: streamReady ? (review?.rounds ?? []) : [],
       me: me?.name ?? undefined,
       lastSeen: seen.lastSeen,
       lens: "all",
@@ -1639,6 +1652,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
               currentVersion={art.current_version}
               rounds={review?.rounds ?? []}
               pendingRound={review?.pending ?? null}
+              ready={streamReady}
               meId={me?.id ?? ""}
               meName={me?.name ?? me?.username ?? me?.email ?? ""}
               lastSeen={seen.lastSeen}

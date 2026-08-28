@@ -59,6 +59,9 @@ export function ArtifactComments(p: {
   canComment: boolean
   /** The suggestion / locked one-liners shown above the stream. */
   hints?: ReactNode
+  /** Every source the stream is built from has settled (index.tsx `streamReady`): the
+   *  surfaces paint the list only then, never a partial one that reflows. */
+  ready: boolean
   /** What the activity stream is built from besides the comments: the versions, the
    *  review rounds, and the reader's last visit. The page owns the version jump and the
    *  send-back write. */
@@ -252,6 +255,7 @@ export function ArtifactComments(p: {
                   ) : undefined
                 }
                 items={items}
+                ready={p.ready}
                 openCount={p.openCount}
                 currentVersion={p.currentVersion}
                 pendingRound={p.pendingRound}
@@ -285,6 +289,7 @@ export function ArtifactComments(p: {
             open={panel === "open"}
             openThreads={p.openThreads}
             items={items}
+            ready={p.ready}
             currentVersion={p.currentVersion}
             pendingRound={p.pendingRound}
             onGoToVersion={p.onGoToVersion}
