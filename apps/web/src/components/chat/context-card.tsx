@@ -72,10 +72,6 @@ export function ContextCard({ card }: { card: BuilderCard }) {
         </CardSection>
       )}
 
-      <p className="text-xs text-muted-foreground">
-        {draft.kind === "knowledge" ? BUILDER_COPY.kindKnowledge : BUILDER_COPY.kindWorker}
-      </p>
-
       {created && (
         <Link
           to="/contexts/$id"

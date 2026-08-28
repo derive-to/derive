@@ -9,7 +9,6 @@ const viewer = { id: "u-v", email: "v@x.com", name: "V" }
 const draft = {
   name: "Pricing Helper",
   description: "Answers pricing questions",
-  kind: "knowledge" as const,
   knows: ["The pricing page", "The FAQ"],
   answers: "Short, with links",
   wont: ["Legal advice"],
@@ -37,10 +36,7 @@ describe("builder tool surface", () => {
     expect(surface.tools.map((t) => t.name)).toEqual(
       expect.arrayContaining(["draft_manifest", "create_context_from_draft", "find", "read"]),
     )
-    // The schema a model is shown must be the FLAT draft shape, not wrapped under some
-    // extra key — a tool call built from a nested schema would fail draft_manifest's own
-    // validation, which expects the draft fields at the top level (as the test below sends
-    // them).
+    // Tool callers send draft fields at the top level.
     const draftTool = surface.tools.find((t) => t.name === "draft_manifest")
     expect(draftTool?.params).toMatchObject({
       type: "object",
@@ -49,6 +45,7 @@ describe("builder tool surface", () => {
         manifest_md: expect.anything(),
       }),
     })
+    expect(draftTool?.params).not.toHaveProperty("properties.kind")
 
     await surface.execute("draft_manifest", draft)
     expect(surface.card()?.draft.name).toBe("Pricing Helper")
@@ -77,7 +74,6 @@ describe("builder tool surface", () => {
     const first = (await surface.execute("create_context_from_draft", {})) as { ok: boolean }
     expect(first.ok).toBe(true)
 
-    // Same draft (same name) again in a fresh surface sharing the same workspace.
     const surface2 = buildContextBuilderTools(made.ctx, ownerWho)
     await surface2.execute("draft_manifest", draft)
     const second = (await surface2.execute("create_context_from_draft", {})) as {
@@ -85,18 +81,12 @@ describe("builder tool surface", () => {
       note: string
     }
     expect(second.error).toBe("a context with that name already exists")
-    // …and the person is told their work is safe, because it is: the write-up was already
-    // published, so a different name finishes the job rather than restarting the interview.
+    // The write-up has already been published, so the response must offer a recoverable retry.
     expect(second.note).toMatch(/nothing was lost/i)
   })
 
-  // ── WHO MAY ACTUALLY CREATE ──────────────────────────────────────────────────────────────
-  //
-  // `find` and `read` come from buildChatTools, so their gates are the real tools'. These two
-  // are local to the turn and had none — the chat gates admit every MEMBER, including a viewer,
-  // and "create a context" is three privileged writes (publish a document, insert a context,
-  // mint a managed agent). So the seat is checked here, against the same predicate the REST
-  // create route uses.
+  // Builder writes use the same seat check as the REST create route. The read-only tools retain
+  // their own authorization gates.
 
   it("a viewer's confirmation creates nothing — and publishes nothing", async () => {
     const made = makeAuthedApp("builder-tools-seat", [owner, viewer], "viewer")
@@ -106,17 +96,14 @@ describe("builder tool surface", () => {
       user: { id: viewer.id, name: viewer.name },
       seatRole: "viewer",
     })
-    // Drafting is fine — it writes nothing, and refusing it would make the refusal arrive at
-    // the end of the interview, which is the failure this whole flow exists to avoid.
+    // Drafting remains available because it does not write workspace data.
     expect(await surface.execute("draft_manifest", draft)).toMatchObject({ ok: true })
 
     const out = (await surface.execute("create_context_from_draft", {})) as { error?: string }
     expect(out.error).toMatch(/permission to create/i)
-    // Plain language a model can relay, naming the fix — not a role name or a status code.
     expect(out.error).toMatch(/Settings/)
     expect(out.error).not.toMatch(/manifest|short id|403|forbidden/i)
-    // REFUSED BEFORE THE PUBLISH, which is the part that matters: a refusal that fires after
-    // the document is written leaves an orphan behind every time somebody tries.
+    // Authorization must fail before publishing the instruction artifact.
     expect(await instructionArtifacts(made.meta)).toEqual([])
   })
 
@@ -139,7 +126,7 @@ describe("builder tool surface", () => {
 
   it("a retry wires up the document it already published instead of a second copy", async () => {
     const made = await setupOwner("builder-tools-retry")
-    // Take the name first, so the create below fails AFTER the document is published.
+    // Reserve the name so the next create fails after publishing its instruction artifact.
     const taken = buildContextBuilderTools(made.ctx, ownerWho)
     await taken.execute("draft_manifest", draft)
     await taken.execute("create_context_from_draft", {})
@@ -150,8 +137,7 @@ describe("builder tool surface", () => {
       error: "a context with that name already exists",
     })
     const afterFirst = await instructionArtifacts(made.meta)
-    // The failed attempt's document is REMEMBERED on the card, so the transcript can hand it to
-    // the next attempt rather than leaving it orphaned.
+    // Persist the artifact id so a retry does not publish another copy.
     expect(surface.card()?.published_artifact_id).toBeTruthy()
 
     await surface.execute("create_context_from_draft", {})
@@ -167,21 +153,17 @@ describe("builder tool surface", () => {
 
     const surface = buildContextBuilderTools(made.ctx, ownerWho)
     await surface.execute("draft_manifest", draft)
-    await surface.execute("create_context_from_draft", {}) // collides, publishes + remembers
+    await surface.execute("create_context_from_draft", {})
     const firstDoc = surface.card()?.published_artifact_id
-    // They pick a different name. That is a different document, so the remembered one is
-    // dropped rather than wired up under a name it does not describe.
+    // A renamed draft must not reuse an instruction artifact written for the old name.
     await surface.execute("draft_manifest", { ...draft, name: "Pricing Guide" })
     expect(surface.card()?.published_artifact_id).toBeUndefined()
     const out = (await surface.execute("create_context_from_draft", {})) as { context_id: string }
     const made2 = await made.meta.getContext(out.context_id)
     expect(made2?.name).toBe("Pricing Guide")
-    // Wired to a document of ITS OWN, not to the one written for the name they abandoned.
     expect(made2?.manifest_artifact_id).not.toBe(firstDoc)
     expect((await instructionArtifacts(made.meta)).map((a) => a.id)).toContain(firstDoc)
   })
-
-  // ── THE DRAFT OUTLIVING ITS TURN ─────────────────────────────────────────────────────────
 
   it("seeds from the stored card, so a confirmation next turn needs no re-draft", async () => {
     const made = await setupOwner("builder-tools-seed")
@@ -189,24 +171,20 @@ describe("builder tool surface", () => {
     await first.execute("draft_manifest", draft)
     const stored = first.card() as StoredBuilderCard
 
-    // A NEW surface, as the next turn builds one — and no draft_manifest call on it at all.
+    // Each turn builds a new tool surface from the previous turn's stored card.
     const next = buildContextBuilderTools(made.ctx, ownerWho, stored)
     const out = (await next.execute("create_context_from_draft", {})) as { context_id: string }
     expect((await made.meta.getContext(out.context_id))?.name).toBe("Pricing Helper")
   })
 })
 
-// The builder end to end: a chat session opened with purpose "context_builder" drives the
-// same tool surface through the real agent loop, so the card the model writes is stored
-// whole but read back stripped, and a confirmation on a later turn creates from the exact
-// approved draft.
+// Exercise draft persistence and public projection through the real chat loop.
 describe("builder session", () => {
   const owner = { id: "u-ow", email: "ow@x.com", name: "Ow" }
   const MANIFEST = "# Pricing Helper\n\nAnswer from the pricing page only."
   const draftArgs = {
     name: "Pricing Helper",
     description: "Answers pricing questions",
-    kind: "knowledge",
     knows: ["Pricing page"],
     answers: "Short",
     wont: ["Legal advice"],

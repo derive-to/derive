@@ -377,7 +377,7 @@ export function registerAutomateTool(tc: ToolContext): void {
                 }
               : {}),
             note:
-              "No token is returned over MCP. You (an owner) serve this Context directly: " +
+              "No token is returned over MCP. You (an owner) can serve this Context's queue: " +
               "use({context}) pulls its queued work. A dedicated runner's token comes from " +
               "REST agent rotate.",
           })

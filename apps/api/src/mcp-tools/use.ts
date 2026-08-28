@@ -52,7 +52,7 @@ export function registerUseTool(tc: ToolContext): void {
       // the opt-in exception, not the norm). This call's own execution only creates rows
       // and waits on Derive's internal bus; it doesn't itself reach outside Derive.
       annotations: {
-        title: "Work with a workspace Context",
+        title: "Run with a workspace Context",
         readOnlyHint: false,
         destructiveHint: false,
         openWorldHint: false,
@@ -448,11 +448,11 @@ export function registerUseTool(tc: ToolContext): void {
       if (!hit)
         return err(
           rows.length
-            ? `No Context "${context}" you can ask here. You can ask: ${rows.map((r) => r.x.name).join(", ")}.`
-            : "No Contexts you can ask in this workspace.",
+            ? `No Context "${context}" you can use here. You can use: ${rows.map((r) => r.x.name).join(", ")}.`
+            : "No Contexts you can use in this workspace.",
         )
       if (!hit.manifest)
-        return err(`Context "${hit.x.name}" has lost its instruction artifact and can't be asked.`)
+        return err(`Context "${hit.x.name}" has lost its instruction artifact and can't be used.`)
       const manifest = hit.manifest
       if (workflow && principal) {
         const invalidTarget = await prepareWorkflowContextUse({

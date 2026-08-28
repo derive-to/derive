@@ -1,5 +1,4 @@
-// Shared copy for Context creation and the status surfaces that follow it. Keep storage and
-// runner terms out of the guided path; they describe implementation, not the Context's purpose.
+// Keep the Context builder and its result cards on the same product vocabulary.
 export const BUILDER_COPY = {
   pageTitle: "New context",
   intro: "Describe the instructions, knowledge, and access an agent should have.",
@@ -20,15 +19,9 @@ export const BUILDER_COPY = {
   wsErrorBody: "Derive needs to know which workspace this Context belongs to.",
   retryButton: "Try again",
   copyButton: "Copy",
-  // The card's own headings. Here rather than inline in context-card.tsx for the reason the
-  // rest of this file exists: a heading is copy a person reads, so it has to face the same
-  // sweep — inline JSX text is exactly where the vocabulary this flow bans would slip back in.
   cardKnows: "What an agent gets",
   cardAnswers: "How an agent should respond",
   cardWont: "Limits",
-  kindKnowledge: "Your team's agents can consult this as soon as it's created.",
-  kindWorker:
-    "An agent can also use this Context for tasks. Use it from your own agent session, or connect a dedicated runner later.",
   createdPrefix: "Ready. Open",
   degradedNotice:
     "This workspace doesn't have built-in chat turned on, so Derive can't interview you here. Your agent can still build it:",

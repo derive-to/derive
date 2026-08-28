@@ -3129,13 +3129,6 @@
                     "minLength": 1,
                     "maxLength": 280
                   },
-                  "kind": {
-                    "type": "string",
-                    "enum": [
-                      "knowledge",
-                      "worker"
-                    ]
-                  },
                   "knows": {
                     "type": "array",
                     "items": {
@@ -3171,7 +3164,6 @@
                 "required": [
                   "name",
                   "description",
-                  "kind",
                   "knows",
                   "answers",
                   "wont",
@@ -8114,7 +8106,7 @@
                                 "title": {
                                   "type": "string"
                                 },
-                                "agentSteps": {
+                                "contextSteps": {
                                   "type": "integer"
                                 },
                                 "humanPauses": {
@@ -8130,7 +8122,7 @@
                               "required": [
                                 "id",
                                 "title",
-                                "agentSteps",
+                                "contextSteps",
                                 "humanPauses",
                                 "branches",
                                 "loops"

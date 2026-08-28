@@ -140,7 +140,7 @@ export function registerFindTool(tc: ToolContext): void {
           online: runnerOnline(x),
           manifest: manifest ? { short_id: manifest.short_id, title: manifest.title } : null,
           your_open_sessions: open,
-          note: "read({short_id: id}) loads its package (manifest + skill pointers); use({context, instruction}) gives it work.",
+          note: "read({short_id: id}) loads its package (manifest + skill pointers); use({context, instruction}) starts a run with it.",
         }
       }),
     )

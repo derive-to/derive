@@ -36,7 +36,6 @@ Read this when the question is about DERIVE, not about the workspace's contents.
 | `/following` | Recent work by the people they follow. |
 | `/feedback` | Documents waiting on their review or reply. |
 | `/contexts` | Reusable Contexts: the instructions, skills, sources, and permissions an agent can use. |
-| `/agents` | Compatibility links redirect to the matching Context. |
 | `/people` | Who is in the workspace, and who they follow. |
 | `/new` | Write or paste a new document (Markdown or HTML) and publish it. |
 | `/welcome` | How to connect an agent over MCP, and how to publish from the CLI. Reachable any time. |

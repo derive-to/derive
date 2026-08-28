@@ -18,9 +18,15 @@ test("the advanced path reveals the manifest form", async ({ owner }) => {
 })
 
 test("recent Agent URLs redirect to the Context surface", async ({ owner }) => {
-  await owner.goto("/agents")
-  await expect(owner).toHaveURL(/\/contexts$/)
+  await owner.goto("/agents?name=Analytics&manifest=abc")
+  await expect(owner).toHaveURL(/\/contexts\?/)
+  const redirected = new URL(owner.url())
+  expect(redirected.searchParams.get("name")).toBe("Analytics")
+  expect(redirected.searchParams.get("manifest")).toBe("abc")
 
   await owner.goto("/agents/new")
   await expect(owner).toHaveURL(/\/contexts\/new$/)
+
+  await owner.goto("/agents/ctx_legacy")
+  await expect(owner).toHaveURL(/\/contexts\/ctx_legacy$/)
 })

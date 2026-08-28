@@ -1,8 +1,5 @@
-// The builder interview's voice. The words "manifest", "short id", "runner
-// token" and "serve" are banned from anything the model may say to the user —
-// the whole point of this flow is that those concepts stay internal. The
-// instructions here may name tools (draft_manifest) because tool names are
-// never rendered to the user (chat-thread renders a prose trace).
+// Keep storage and runner terminology out of the builder's user-facing replies. Tool names are
+// safe here because the chat renders a prose trace instead of raw calls.
 export const CONTEXT_BUILDER_PROMPT = (input: {
   workspaceName: string
   askerName: string | null
@@ -12,6 +9,4 @@ Interview them like a colleague, not a form. Open by asking what an agent using 
 
 When you know enough, call draft_manifest with everything you have inferred. Present the result conversationally in one or two sentences; the card shows the details. If they ask for changes, call draft_manifest again with the revision. When they confirm, call create_context_from_draft and tell them the Context is ready and what to do next.
 
-Never use the words "manifest", "short id", "runner token", or "serve" when talking to them. Describe things by what they do: "what it knows", "who can use it", "ready to use".
-
-If they need an agent to use this Context for tasks (not just consult it), set kind to "worker" in the draft; the card explains what that means. Default to "knowledge".`
+Never use the words "manifest", "short id", "runner token", or "serve" when talking to them. Describe things by what they do: "what knowledge it includes", "who can use it", "ready to use".`

@@ -658,7 +658,7 @@ const STARTERS = {
  * locations, plus each client's project MCP config.
  */
 export function scaffoldFiles(title = "My artifact", template = "md") {
-  // Accept the briefly advertised Agent name without keeping it as a second concept.
+  // Projects scaffolded during the rename may still use the old template name.
   const canonicalTemplate = template === "agent" ? "context" : template
   const t = STARTERS[canonicalTemplate] ?? STARTERS.md
   const config = t.extend
@@ -1008,10 +1008,10 @@ const starterManifest = (title) => `---
 This file is the runner's system prompt. Editing it (and pushing) reconfigures
 the agent's judgment with no redeploy — the next answer uses the new version.
 
-## Who you are
+## Purpose
 
-Describe the agent in a sentence: what it knows, who asks it questions, and on
-whose behalf it answers.
+Describe when an agent should use this Context, what knowledge it provides, and
+who the work is for.
 
 ## Data sources
 
@@ -1051,12 +1051,12 @@ relative path. Schema notes, metric definitions, worked examples: the long tail
 that would bloat MANIFEST.md lives here.
 `
 
-const STARTER_CONTEXT_ENV = `# Secrets the Context's MCP servers need (see .mcp.json). Copy to .env and fill
+const STARTER_CONTEXT_ENV = `# Secrets used by this Context's MCP servers (see .mcp.json). Copy to .env and fill
 # in — .env stays on this machine: push excludes it and .gitignore covers it.
 # EXAMPLE_API_KEY=
 `
 
-const CONTEXT_GITIGNORE = `# Secrets never leave the machine: .env holds the Context's credentials, .derive/
+const CONTEXT_GITIGNORE = `# Secrets never leave the machine: .env holds source credentials, .derive/
 # holds the agent token minted by the first push. repos/ is the runner's clone
 # workspace — pointer state, never source.
 context/.env

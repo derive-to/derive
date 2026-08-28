@@ -317,7 +317,7 @@ describe("workflow run: explicit local-agent handoff", () => {
         diagrams: Array<{
           id: string
           title: string
-          agentSteps: number
+          contextSteps: number
           humanPauses: number
           branches: number
           loops: number
@@ -338,7 +338,7 @@ describe("workflow run: explicit local-agent handoff", () => {
         {
           id: "brief",
           title: "Reviewed brief",
-          agentSteps: 2,
+          contextSteps: 2,
           humanPauses: 1,
           branches: 2,
           loops: 0,

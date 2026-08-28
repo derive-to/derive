@@ -53,11 +53,7 @@ import { ConsolePending, ContextRowsSkeleton } from "./context-skeleton"
 import { ANSWER_PROSE, answerMdToHtml } from "./lib/answer-md"
 import { runnerStatus } from "./runner-status"
 
-// The context console: a context's HOME, not a bare chat widget — what it is (the
-// manifest), what it can do (the skills it pins), where it runs (its owner's own
-// machine, usually), and what it produced (sessions and the reports they bind). Chat
-// stays the primary surface, but the header + rail earn the conversation first.
-//
+// The Context console combines package configuration, execution status, and run history.
 // The transcript polls fast only while the runner owes a reply (sessionQuery's
 // refetchInterval), and refetches immediately on the server's session.settled /
 // session.progress push (SessionThread) — the poll is the fallback, the push is what
@@ -812,18 +808,18 @@ function RunnerCard({
         {status}
       </div>
       <p className="text-xs text-muted-foreground">
-        Reading what this Context knows always works. Taking on a task is different: that happens on
-        a real machine someone keeps connected.{" "}
+        Reading this Context always works. Running a task is different: an agent does that work on a
+        connected machine.{" "}
         {state.online
           ? "One is connected, so tasks usually come back within minutes."
           : "None is connected right now, so tasks wait in line and run once one is."}
       </p>
       {isOwner && (
         <div className="flex flex-col gap-2">
-          <Eyebrow as="h4">Run it yourself</Eyebrow>
+          <Eyebrow as="h4">Use your own agent</Eyebrow>
           <div>
             <p className="text-2xs text-muted-foreground">
-              Ask it to do something in Chat above or from your own coding session:
+              Start a task with this Context in Chat above or from your coding session:
             </p>
             <code className="mt-1 block overflow-x-auto rounded-md bg-secondary px-2 py-1 font-mono text-2xs text-foreground">
               use({"{"} context: "{context.name}", instruction: "…" {"}"})

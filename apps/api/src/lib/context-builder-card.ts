@@ -5,7 +5,6 @@ const shortText = z.string().trim().min(1).max(200)
 export const PublicContextDraftSchema = z.object({
   name: z.string().trim().min(1).max(80),
   description: z.string().trim().min(1).max(280),
-  kind: z.enum(["knowledge", "worker"]),
   knows: z.array(shortText).max(20),
   answers: z.string().trim().min(1).max(280),
   wont: z.array(shortText).max(20),
