@@ -103,8 +103,6 @@ test.describe("render fidelity — pinning what the sandbox CSP permits", () => 
       await page.goto(`/artifacts/${shortId}`)
     })
     expect(wrapperErrors).toEqual([])
-    const diagnostics = await openRuntimeDiagnostics(page, "script-error")
-    await expect(diagnostics).toContainText("Hidden from readers")
     await expect(page.getByText("This artifact couldn’t start")).toHaveCount(0)
 
     const frame = page.locator('iframe[title="index"]')
@@ -114,6 +112,10 @@ test.describe("render fidelity — pinning what the sandbox CSP permits", () => 
     await artifact.locator("#control").click()
     await expect(artifact.locator("#count")).toHaveText("1")
     await expect(artifact.locator("#rows tr")).toHaveCount(30)
+    // Inspect is edit mode, which intentionally owns canvas clicks. Prove the
+    // authored control works before entering it, then inspect the hidden issue.
+    const diagnostics = await openRuntimeDiagnostics(page, "script-error")
+    await expect(diagnostics).toContainText("Hidden from readers")
 
     // The public wrapper has its own chrome/layout path. Exercise the same shared
     // artifact anonymously so a workbench-only fix cannot masquerade as complete.
@@ -269,15 +271,16 @@ test.describe("render fidelity — pinning what the sandbox CSP permits", () => 
     const shortId = await publishArtifact(page, "index.html", html, "text/html")
 
     await page.goto(`/artifacts/${shortId}`)
-    const diagnostics = await openRuntimeDiagnostics(page, "resource-error")
-
     const artifact = page.frameLocator('iframe[title="index"]')
     await artifact.locator("#throw-control").click()
     await expect(page.getByTestId("render-degraded")).toHaveCount(0)
-    await expect(diagnostics).toContainText("script-error")
-    await expect(diagnostics).not.toContainText("resource-error")
     await artifact.locator("#working-control").click()
     await expect(artifact.locator("#count")).toHaveText("1")
+    // Trigger the newer authored failure before entering Inspect: edit mode
+    // captures canvas clicks by design, so it is not a valid interaction harness.
+    const diagnostics = await openRuntimeDiagnostics(page, "script-error")
+    await expect(diagnostics).toContainText("script-error")
+    await expect(diagnostics).not.toContainText("resource-error")
   })
 
   test("visible meaningful content in an open shadow root reaches Ready", async ({
