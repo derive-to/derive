@@ -102,6 +102,84 @@ describe("backfillLegacyDeckStructure", () => {
     expect(applyStructuralEdits(edited.html, edited.receipt.inverses).html).toBe(backfilled)
   })
 
+  it("gives an explicit legacy size preset authority over ordinary authored width rules", () => {
+    const html = `<style>#deck .slide > .card { width: 240px }</style>
+<main id="deck">
+  <section class="slide" data-derive-slide="0"><div class="card" style="width: 240px">A</div></section>
+</main>`
+    const backfilled = backfillLegacyDeckStructure(html).html
+    const edited = applyStructuralEdits(backfilled, [
+      op({
+        op: "structural-size",
+        region: "slide-0",
+        node: "slide-0-node-1",
+        size: "compact",
+      }),
+    ])
+    expect(edited.html).toContain("width: 50% !important")
+    expect(edited.html).toContain('style="width: 240px"')
+    expect(edited.html).toContain('data-derive-size="compact"')
+    expect(applyStructuralEdits(edited.html, edited.receipt.inverses).html).toBe(backfilled)
+  })
+
+  it("ignores parser decoys while keeping wrapped foreign content atomic", () => {
+    const html = `<script>const fake = '<section class="slide"><i data-derive-node="fake"></i></section>'</script>
+<!-- <section class="slide"><b data-derive-node="also-fake"></b></section> -->
+<section class="slide" data-derive-slide="0" title="a > b">
+  <h2 title='x > y'>A</h2>
+  <!-- <p data-derive-node="comment-fake">no</p> -->
+  <div><svg viewBox="0 0 10 10"><title>Chart</title></svg><math><mi>x</mi></math><script>const close = '</section>'</script></div>
+</section>
+<section class="slide" data-derive-slide="1"><h2>B</h2><p>Body</p></section>`
+    const result = backfillLegacyDeckStructure(html)
+    expect(result).toMatchObject({ changed: true, regions: 2, nodes: 4, skipped: [] })
+    const inspected = inspectStructuralDocument(result.html)
+    expect(inspected).toHaveLength(2)
+    expect(inspected.flatMap((region) => region.nodes.map((node) => node.id))).toEqual([
+      "slide-0-node-1",
+      "slide-0-node-2",
+      "slide-1-node-1",
+      "slide-1-node-2",
+    ])
+    expect(backfillLegacyDeckStructure(result.html).html).toBe(result.html)
+
+    const edited = applyStructuralEdits(result.html, [
+      op({
+        op: "structural-order",
+        region: "slide-0",
+        nodes: ["slide-0-node-2", "slide-0-node-1"],
+      }),
+      op({
+        op: "structural-size",
+        region: "slide-0",
+        node: "slide-0-node-2",
+        size: "full",
+      }),
+      op({ op: "structural-remove", region: "slide-1", node: "slide-1-node-2" }),
+    ])
+    expect(applyStructuralEdits(edited.html, edited.receipt.inverses).html).toBe(result.html)
+  })
+
+  it("mints safe unique identities after MAX_SAFE_INTEGER without changing authored ids", () => {
+    const html = `<section class="slide" data-derive-slide="9007199254740991"><h2>Max</h2></section>
+<section class="slide"><h2>Fresh A</h2></section>
+<section class="slide" data-derive-slide="-7"><h2>Negative</h2></section>
+<section class="slide"><h2>Fresh B</h2></section>`
+    const result = backfillLegacyDeckStructure(html)
+    expect(result).toMatchObject({ changed: true, regions: 4, nodes: 4, skipped: [] })
+    expect(result.html).toContain('data-derive-slide="9007199254740991"')
+    expect(result.html).toContain('data-derive-slide="-7"')
+    expect(result.html).toContain('data-derive-slide="0"')
+    expect(result.html).toContain('data-derive-slide="1"')
+    expect(inspectStructuralDocument(result.html).map((region) => region.id)).toEqual([
+      "slide-9007199254740991",
+      "slide-0",
+      "slide--7",
+      "slide-1",
+    ])
+    expect(backfillLegacyDeckStructure(result.html).html).toBe(result.html)
+  })
+
   it("backfills safe slides independently and reports ambiguous ownership", () => {
     const html = `<main>
   <section class="slide" data-derive-slide="0"><h2>Safe</h2><p>Owned</p></section>
@@ -138,14 +216,47 @@ describe("backfillLegacyDeckStructure", () => {
        <section class="slide" data-derive-slide="1"><math><mi>x</mi></math></section>`,
       "non-html-child",
     ],
+    [
+      "a browser-context-dependent direct child",
+      `<section class="slide" data-derive-slide="0"><tr><td>A</td></tr></section>
+       <section class="slide" data-derive-slide="1"><caption>B</caption></section>`,
+      "browser-context-child",
+    ],
   ])("refuses to guess through %s", (_name, html, reason) => {
     const result = backfillLegacyDeckStructure(html)
     expect(result.changed).toBe(false)
     expect(result.skipped.map((skip) => skip.reason)).toContain(reason)
   })
 
+  it("keeps valid table and select wrappers movable as atomic HTML nodes", () => {
+    const html = `<section class="slide" data-derive-slide="0"><table><tbody><tr><td>A</td></tr></tbody></table></section>
+<section class="slide" data-derive-slide="1"><select><optgroup label="B"><option>C</option></optgroup></select></section>`
+    const result = backfillLegacyDeckStructure(html)
+    expect(result).toMatchObject({ changed: true, regions: 2, nodes: 2, skipped: [] })
+    expect(inspectStructuralDocument(result.html).map((region) => region.nodes[0]?.kind)).toEqual([
+      "group",
+      "group",
+    ])
+  })
+
   it("never completes a partial authored contract with inferred intent", () => {
     const html = `<section class="slide" data-derive-slide="0" data-derive-region="custom" data-derive-layout="stack"><h2 data-derive-node="title">A</h2></section>
+<section class="slide" data-derive-slide="1"><h2>B</h2></section>`
+    expect(backfillLegacyDeckStructure(html)).toEqual({
+      html,
+      changed: false,
+      regions: 0,
+      nodes: 0,
+      skipped: [],
+    })
+  })
+
+  it.each([
+    "data-derive-layout",
+    "data-derive-kind",
+    "data-derive-size",
+  ])("never completes a foreign partial contract containing %s", (attribute) => {
+    const html = `<section class="slide" data-derive-slide="0"><h2 ${attribute}="huge">A</h2></section>
 <section class="slide" data-derive-slide="1"><h2>B</h2></section>`
     expect(backfillLegacyDeckStructure(html)).toEqual({
       html,

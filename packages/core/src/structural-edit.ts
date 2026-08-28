@@ -7,7 +7,7 @@
  * module never serializes a browser DOM.
  */
 
-import { sliceSlides } from "./decks"
+import { nextUnusedSlideId, sliceSlides } from "./decks"
 import { EditError } from "./doc-text"
 import { attrValues, type HtmlTag, hasAttr, tags } from "./html-tags"
 import { injectArtifactRuntimeScripts } from "./shared-state-client"
@@ -86,7 +86,13 @@ export interface StructuralRegionInspection {
 
 export interface StructuralBackfillSkip {
   slide: number
-  reason: "empty" | "runtime-child" | "non-html-child" | "unowned-content" | "implicit-close"
+  reason:
+    | "empty"
+    | "runtime-child"
+    | "browser-context-child"
+    | "non-html-child"
+    | "unowned-content"
+    | "implicit-close"
 }
 
 export interface StructuralBackfillResult {
@@ -115,6 +121,13 @@ export class StructuralEditError extends EditError {
 const MAX_STRUCTURAL_EDITS = 200
 const ID = /^[A-Za-z][A-Za-z0-9_-]{0,127}$/
 const SIZES = new Set<StructuralSize>(["compact", "standard", "full"])
+const STRUCTURAL_ATTRIBUTES = [
+  "data-derive-region",
+  "data-derive-layout",
+  "data-derive-node",
+  "data-derive-kind",
+  "data-derive-size",
+] as const
 
 const fail = (code: StructuralEditError["code"], message: string): never => {
   throw new StructuralEditError(code, message)
@@ -392,9 +405,9 @@ const setAttribute = (opening: string, name: string, value: string | null): stri
 }
 
 const BACKFILL_STYLE = `<style data-derive-structural-backfill>
-[data-derive-region][data-derive-layout="stack"] > [data-derive-node][data-derive-size="compact"] { width: 50%; max-width: none; box-sizing: border-box }
-[data-derive-region][data-derive-layout="stack"] > [data-derive-node][data-derive-size="standard"] { width: 75%; max-width: none; box-sizing: border-box }
-[data-derive-region][data-derive-layout="stack"] > [data-derive-node][data-derive-size="full"] { width: 100%; max-width: none; box-sizing: border-box }
+[data-derive-region][data-derive-layout="stack"] > [data-derive-node][data-derive-size="compact"] { width: 50% !important; max-width: none !important; box-sizing: border-box !important }
+[data-derive-region][data-derive-layout="stack"] > [data-derive-node][data-derive-size="standard"] { width: 75% !important; max-width: none !important; box-sizing: border-box !important }
+[data-derive-region][data-derive-layout="stack"] > [data-derive-node][data-derive-size="full"] { width: 100% !important; max-width: none !important; box-sizing: border-box !important }
 </style>`
 
 const RUNTIME_CHILDREN = new Set([
@@ -406,6 +419,28 @@ const RUNTIME_CHILDREN = new Set([
   "style",
   "template",
   "title",
+])
+
+// Browsers do not retain these as direct children of an ordinary slide. Table
+// parts are discarded or foster-parented without a table; document roots merge
+// into the surrounding document. Stamping their source token would advertise a
+// node that the live interaction client can never find. Their valid containers
+// (`table`, and ordinary HTML wrappers) remain safe atomic nodes.
+const BROWSER_CONTEXT_CHILDREN = new Set([
+  "body",
+  "caption",
+  "col",
+  "colgroup",
+  "frame",
+  "frameset",
+  "head",
+  "html",
+  "tbody",
+  "td",
+  "tfoot",
+  "th",
+  "thead",
+  "tr",
 ])
 
 const inferredKind = (name: string): string => {
@@ -438,8 +473,7 @@ export const backfillLegacyDeckStructure = (html: string): StructuralBackfillRes
   if (
     allTags.some(
       (tag) =>
-        !tag.closing &&
-        (hasAttr(tag.attrs, "data-derive-region") || hasAttr(tag.attrs, "data-derive-node")),
+        !tag.closing && STRUCTURAL_ATTRIBUTES.some((attribute) => hasAttr(tag.attrs, attribute)),
     )
   )
     return { html, changed: false, regions: 0, nodes: 0, skipped: [] }
@@ -449,8 +483,13 @@ export const backfillLegacyDeckStructure = (html: string): StructuralBackfillRes
   const known = slides.flatMap((slide) => (slide.id === null ? [] : [slide.id]))
   if (new Set(known).size !== known.length)
     fail("ambiguous-target", "Two slides share one identity, so structural backfill is ambiguous.")
-  let nextSlideId = Math.max(-1, ...known) + 1
-  const slideIds = slides.map((slide) => slide.id ?? nextSlideId++)
+  const usedSlideIds = new Set(known)
+  const slideIds = slides.map((slide) => {
+    if (slide.id !== null) return slide.id
+    const id = nextUnusedSlideId(usedSlideIds)
+    usedSlideIds.add(id)
+    return id
+  })
 
   const elements = sourceElements(html)
   const byStart = new Map(elements.map((element) => [element.tag.start, element]))
@@ -476,6 +515,10 @@ export const backfillLegacyDeckStructure = (html: string): StructuralBackfillRes
     }
     if (children.some((child) => RUNTIME_CHILDREN.has(child.tag.name))) {
       skipped.push({ slide: position, reason: "runtime-child" })
+      continue
+    }
+    if (children.some((child) => BROWSER_CONTEXT_CHILDREN.has(child.tag.name))) {
+      skipped.push({ slide: position, reason: "browser-context-child" })
       continue
     }
     // The interaction client deliberately works with HTMLElements: focusability,

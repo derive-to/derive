@@ -705,6 +705,20 @@ describe("editing eval — deck identity and structural operations", () => {
     expect(new Set(ids).size).toBe(ids.length)
   })
 
+  it("[DECK-004b] wraps identity allocation safely after MAX_SAFE_INTEGER", () => {
+    const source =
+      '<section class="slide" data-derive-slide="9007199254740991">A</section>\n' +
+      '<section class="slide">B</section>'
+    const out = applySlideOps(source, [
+      { op: "duplicate", at: 1 },
+      { op: "insert", at: 4 },
+    ])
+    const ids = sliceSlides(out).map((slide) => slide.id)
+    expect(ids).toEqual([Number.MAX_SAFE_INTEGER, 1, 0, 2])
+    expect(ids.every((id) => id !== null && Number.isSafeInteger(id))).toBe(true)
+    expect(new Set(ids).size).toBe(ids.length)
+  })
+
   it("[DECK-005] refuses orphan content between slides", () => {
     const source = deck(["A", "B"]).replace("</section>\n<section", "</section>orphan<section")
     expect(() => applySlideOps(source, [{ op: "move", from: 1, to: 2 }])).toThrow(

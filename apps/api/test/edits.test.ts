@@ -1,5 +1,6 @@
 import {
   type ArtifactRecord,
+  backfillLegacyDeckStructure,
   EditError,
   fingerprintOf,
   roleOf,
@@ -260,6 +261,68 @@ describe("materializeEdits: quote-scoped edits (the inline editor's shape)", () 
     expect(out.filename).toBe("index.html")
   })
 
+  it("materializes a mixed legacy-deck edit batch against one optimistic source", async () => {
+    const html = `<main>
+  <section class="slide" data-derive-slide="0"><h2>Old title</h2><img id="hero" src="hero.png" alt="Hero"><p>Remove me</p></section>
+  <section class="slide"><h2>Second</h2><p>Keep me</p></section>
+</main>`
+    const rendered = backfillLegacyDeckStructure(html).html
+    const descriptor = scanElements(rendered).find((element) => element.tag === "img")
+    expect(descriptor).toBeDefined()
+    if (!descriptor) return
+    const deps = mkDeps({ 1: { text: html, contentType: "text/x-derive-deck" } })
+    const out = await materializeEdits(
+      deps,
+      fileArtifact(1),
+      [
+        {
+          op: "resize",
+          target: {
+            type: "ElementSelector",
+            tag: "img",
+            role: roleOf(descriptor),
+            id: descriptor.id,
+            fingerprint: fingerprintOf(descriptor),
+            ordinal: descriptor.ordinal,
+            docFraction: descriptor.srcFraction,
+            snapshot: { tag: "img", label: "Image — Hero" },
+          },
+          width: 360,
+          height: "auto",
+        },
+        { quote: { exact: "Old title" }, new_text: "New title" },
+        {
+          schema: "derive.structural-edit/v1",
+          op: "structural-remove",
+          region: "slide-0",
+          node: "slide-0-node-3",
+        },
+        {
+          schema: "derive.structural-edit/v1",
+          op: "structural-order",
+          region: "slide-0",
+          nodes: ["slide-0-node-2", "slide-0-node-1"],
+        },
+        {
+          schema: "derive.structural-edit/v1",
+          op: "structural-size",
+          region: "slide-0",
+          node: "slide-0-node-2",
+          size: "compact",
+        },
+      ],
+      1,
+    )
+    expect(out.content).toContain("New title")
+    expect(out.content).not.toContain("Remove me")
+    expect(out.content).toContain('style="width: 360px; height: auto"')
+    expect(out.content).toContain('data-derive-size="compact"')
+    expect(out.content.indexOf("slide-0-node-2")).toBeLessThan(
+      out.content.indexOf("slide-0-node-1"),
+    )
+    expect(out.content).toContain('data-derive-slide="1"')
+  })
+
   it("does not change the exact byte baseline for raw source edits to a legacy deck", async () => {
     const html = `<section class="slide" data-derive-slide="0"><h2>Old</h2></section>
 <section class="slide" data-derive-slide="1"><h2>B</h2></section>`
@@ -272,6 +335,67 @@ describe("materializeEdits: quote-scoped edits (the inline editor's shape)", () 
     )
     expect(out.content).toBe(html.replace("<h2>Old</h2>", "<h2>New</h2>"))
     expect(out.content).not.toContain("data-derive-region")
+  })
+
+  it("keeps ordinary deck edits available when foreign partial structural metadata exists", async () => {
+    const html = `<section class="slide" data-derive-slide="0"><h2 data-derive-size="huge">Old</h2></section>
+<section class="slide" data-derive-slide="1"><h2>B</h2></section>`
+    const deps = mkDeps({ 1: { text: html, contentType: "text/x-derive-deck" } })
+    const out = await materializeEdits(
+      deps,
+      fileArtifact(1),
+      [{ quote: { exact: "Old" }, new_text: "New" }],
+      1,
+    )
+    expect(out.content).toBe(html.replace("Old", "New"))
+    expect(out.content).not.toContain("data-derive-region")
+    expect(out.content).not.toContain("data-derive-node")
+  })
+
+  it.each([
+    [
+      "duplicate",
+      `<section class="slide" data-derive-slide="2"><h2>Old</h2></section>
+<section class="slide" data-derive-slide="2"><h2>B</h2></section>`,
+    ],
+    [
+      "malformed",
+      `<section class="slide" data-derive-slide="abc"><h2>Old</h2></section>
+<section class="slide" data-derive-slide="1"><h2>B</h2></section>`,
+    ],
+  ])("keeps ordinary deck edits available with %s slide identities", async (_name, html) => {
+    const deps = mkDeps({ 1: { text: html, contentType: "text/x-derive-deck" } })
+    const out = await materializeEdits(
+      deps,
+      fileArtifact(1),
+      [{ quote: { exact: "Old" }, new_text: "New" }],
+      1,
+    )
+    expect(out.content).toBe(html.replace("Old", "New"))
+    expect(out.content).not.toContain("data-derive-region")
+    expect(out.content).not.toContain("data-derive-node")
+  })
+
+  it("refuses structural intent when optimistic deck identity is ambiguous", async () => {
+    const html = `<section class="slide" data-derive-slide="2"><h2>A</h2></section>
+<section class="slide" data-derive-slide="2"><h2>B</h2></section>`
+    const deps = mkDeps({ 1: { text: html, contentType: "text/x-derive-deck" } })
+    await expect(
+      materializeEdits(
+        deps,
+        fileArtifact(1),
+        [
+          {
+            schema: "derive.structural-edit/v1",
+            op: "structural-size",
+            region: "slide-2",
+            node: "slide-2-node-1",
+            size: "compact",
+          },
+        ],
+        1,
+      ),
+    ).rejects.toThrow("Two slides share one identity")
   })
 
   it("refuses structural edits on Markdown", async () => {

@@ -291,8 +291,17 @@ export async function materializeEdits(
     // serve time. Persist them on the first ordinary inline save so structural
     // intent emitted from that render resolves against identical exact source.
     // Raw old_str edits retain their byte-exact baseline and never trigger this.
-    if ((contentType ?? "").split(";")[0]?.trim() === "text/x-derive-deck")
-      content = backfillLegacyDeckStructure(content).html
+    if ((contentType ?? "").split(";")[0]?.trim() === "text/x-derive-deck") {
+      try {
+        content = backfillLegacyDeckStructure(content).html
+      } catch (error) {
+        // Backfill is an optimistic capability upgrade, not a prerequisite for
+        // ordinary deck editing. Keep malformed or ambiguous legacy decks
+        // editable without persisting inferred metadata. Structural requests do
+        // fail closed because their target identities cannot be trusted.
+        if (structuralEdits.length) throw error
+      }
+    }
     // Element operations resolve against the same effective source the iframe saw
     // (the stored base plus any deterministic legacy-deck annotations). A resize
     // changes attributes only, so the visible-text projection quote edits use is identical.
