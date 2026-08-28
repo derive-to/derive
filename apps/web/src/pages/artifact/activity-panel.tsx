@@ -16,7 +16,7 @@ import {
 import { Kbd } from "@/components/ui/kbd"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { DockedComposer } from "./activity-composer"
-import { ActivityStream } from "./activity-stream"
+import { ActivityStream, StreamSkeleton } from "./activity-stream"
 import { FloatingControl } from "./floating-control"
 import type { Lens, StreamItem } from "./lib/activity"
 import { useCommentScope } from "./lib/comment-scope"
@@ -328,6 +328,7 @@ export function ActivityPanel(p: {
           className="flex h-full flex-col overflow-auto px-2.5 pb-3"
         >
           {p.hints}
+          {!p.ready && <StreamSkeleton />}
           {p.ready && (
             <ActivityStream
               items={p.items}
