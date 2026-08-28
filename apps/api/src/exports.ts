@@ -210,7 +210,10 @@ const processJob = async (deps: RenderTickDeps, job: ExportJobRecord): Promise<v
   let pdfLinked = false
   if (options.attachPdf) {
     if (!deps.renderer.pdf) throw new Error("PDF rendering is not supported by this renderer")
-    const pdf = await deps.renderer.pdf(url, { timeoutMs: RENDER_TIMEOUT_MS })
+    const pdf = await deps.renderer.pdf(url, {
+      timeoutMs: RENDER_TIMEOUT_MS,
+      deck: version.content_type === "text/x-derive-deck",
+    })
     const pdfKey = await deps.blobs.put(pdf)
     if (pdf.byteLength <= EXPORT_LIMITS.maxEmailPdfAttachmentBytes)
       attachments.push({

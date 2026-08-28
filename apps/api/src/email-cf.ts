@@ -28,10 +28,10 @@ export interface SendEmailBinding {
     headers?: Record<string, string>
     attachments?: Array<{
       filename: string
-      contentType: string
+      type: string
       content: Uint8Array
       contentId?: string
-      disposition?: "inline" | "attachment"
+      disposition: "inline" | "attachment"
     }>
   }): Promise<{ messageId: string }>
 }
@@ -62,9 +62,11 @@ export const cloudflareEmailSender = (binding: SendEmailBinding, from: string): 
       text: msg.text,
       attachments: msg.resolvedAttachments?.map((a) => ({
         filename: a.filename,
-        contentType: a.contentType,
+        type: a.contentType,
         content: a.content,
-        ...(a.contentId ? { contentId: a.contentId, disposition: "inline" as const } : {}),
+        ...(a.contentId
+          ? { contentId: a.contentId, disposition: "inline" as const }
+          : { disposition: "attachment" as const }),
       })),
     })
   },

@@ -93,6 +93,46 @@ describe("version-pinned export requests", () => {
     expect(html).toContain("derive-export.pdf")
   })
 
+  it("renders an attached deck PDF with the complete deck profile", async () => {
+    const created = await (
+      await publishAs(
+        captureApp,
+        '<section class="slide" data-derive-slide="0"><h1>One</h1></section>' +
+          '<section class="slide" data-derive-slide="1"><h2>Two</h2></section>' +
+          '<script>parent.postMessage({source:"derive-deck",type:"state",i:0,total:2},"*")</script>',
+        { title: "Email deck", workspace_access: "none" },
+        as(captureOwner.email),
+      )
+    ).json()
+    const accepted = await captureApp.request(`/v1/artifacts/${created.short_id}/exports`, {
+      method: "POST",
+      headers: { ...as(captureOwner.email), "content-type": "application/json" },
+      body: JSON.stringify({
+        kind: "email",
+        recipient: "qa@example.test",
+        attachPdf: true,
+      }),
+    })
+    expect(accepted.status).toBe(202)
+    let deckPdf = false
+    expect(
+      await runExportTick({
+        meta: captureMeta,
+        blobs: captureCtx.blobs,
+        renderer: {
+          screenshot: async () => new Uint8Array([1, 2, 3]),
+          pdf: async (_url, options) => {
+            deckPdf = options.deck === true
+            return new TextEncoder().encode("%PDF-1.7 deck fixture")
+          },
+        },
+        baseUrl: "http://derive.test",
+        secret: "capture-deck-secret",
+      }),
+    ).toBe(1)
+    expect(deckPdf).toBe(true)
+  })
+
   it("bounds concurrent export work and rejects an estimated over-quota render", async () => {
     const created = await (
       await publishAs(
