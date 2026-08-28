@@ -3409,6 +3409,29 @@ interface ElReg {
     paintStructureUi()
     scheduleDirty()
   }
+  const structureGeometry = (region: StructureRegion): Map<string, DOMRect> =>
+    new Map(
+      connectedStructureNodes(region).map((node) => [node.id, node.el.getBoundingClientRect()]),
+    )
+  const structureGeometryChanged = (
+    before: Map<string, DOMRect>,
+    region: StructureRegion,
+  ): boolean => {
+    const threshold = 0.5
+    for (const node of connectedStructureNodes(region)) {
+      const previous = before.get(node.id)
+      if (!previous) continue
+      const current = node.el.getBoundingClientRect()
+      if (
+        Math.abs(current.left - previous.left) > threshold ||
+        Math.abs(current.top - previous.top) > threshold ||
+        Math.abs(current.width - previous.width) > threshold ||
+        Math.abs(current.height - previous.height) > threshold
+      )
+        return true
+    }
+    return false
+  }
   const moveStructure = (direction: -1 | 1) => {
     const selected = structureSelected
     if (!selected) return
@@ -3420,17 +3443,47 @@ interface ElReg {
     if (index < 0 || destination < 0 || destination >= nodes.length) return
     const target = nodes[destination]
     if (!target) return
-    remember(placementOf(selected.el))
+    const initial = placementOf(selected.el)
+    const geometry = structureGeometry(region)
     if (direction < 0) region.el.insertBefore(selected.el, target.el)
     else region.el.insertBefore(selected.el, target.el.nextSibling)
+    if (!structureGeometryChanged(geometry, region)) {
+      applyPlacement(initial)
+      showStructureToast("Authored layout controls this order")
+      paintStructureUi()
+      return
+    }
+    remember(initial)
     markStructureChanged()
   }
   const sizeStructure = (size: StructureSize | null) => {
     const selected = structureSelected
     if (!selected || selected.el.getAttribute("data-derive-size") === size) return
+    const region = regionForStructureNode(selected)
+    if (!region) return
+    const previous = selected.el.getAttribute("data-derive-size")
     checkpointAttribute(selected.el, "data-derive-size")
     if (size === null) selected.el.removeAttribute("data-derive-size")
     else selected.el.setAttribute("data-derive-size", size)
+    const after = selected.el.getBoundingClientRect()
+    const regionStyle = getComputedStyle(region.el)
+    const contentWidth =
+      region.el.clientWidth -
+      (Number.parseFloat(regionStyle.paddingLeft) || 0) -
+      (Number.parseFloat(regionStyle.paddingRight) || 0)
+    const regionRect = region.el.getBoundingClientRect()
+    const scale = region.el.offsetWidth > 0 ? regionRect.width / region.el.offsetWidth : 1
+    const fraction = size === "compact" ? 0.5 : size === "standard" ? 0.75 : 1
+    const expectedWidth = contentWidth * fraction * scale
+    const tolerance = Math.max(2, expectedWidth * 0.02)
+    if (size !== null && Math.abs(after.width - expectedWidth) > tolerance) {
+      undoStack.pop()
+      if (previous === null) selected.el.removeAttribute("data-derive-size")
+      else selected.el.setAttribute("data-derive-size", previous)
+      showStructureToast("Authored constraints control this size")
+      paintStructureUi()
+      return
+    }
     markStructureChanged()
   }
   const removeStructure = () => {
@@ -3478,6 +3531,7 @@ interface ElReg {
     region: StructureRegion
     initial: Extract<HistoryEntry, { kind: "placement" }>
     initialOrder: string[]
+    initialGeometry: Map<string, DOMRect>
     moved: boolean
   }
   let structureDrag: StructureDrag | null = null
@@ -3493,6 +3547,7 @@ interface ElReg {
       region,
       initial: placementOf(node.el),
       initialOrder: connectedStructureNodes(region).map((candidate) => candidate.id),
+      initialGeometry: structureGeometry(region),
       moved: false,
     }
     node.el.classList.add("derive-structure-dragging")
@@ -3522,10 +3577,14 @@ interface ElReg {
     if (!drag || drag.pointerId !== e.pointerId) return
     structureDrag = null
     drag.node.el.classList.remove("derive-structure-dragging")
-    if (cancel || !drag.moved) applyPlacement(drag.initial)
+    const visuallyMoved = drag.moved && structureGeometryChanged(drag.initialGeometry, drag.region)
+    if (cancel || !visuallyMoved) applyPlacement(drag.initial)
     else remember(drag.initial)
-    if (drag.moved && !cancel) markStructureChanged()
-    else paintStructureUi()
+    if (visuallyMoved && !cancel) markStructureChanged()
+    else if (drag.moved && !cancel) {
+      showStructureToast("Authored layout controls this order")
+      paintStructureUi()
+    } else paintStructureUi()
   }
   window.addEventListener("pointerup", (e) => finishStructureDrag(e, false))
   window.addEventListener("pointercancel", (e) => finishStructureDrag(e, true))
