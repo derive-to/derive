@@ -1,4 +1,4 @@
-import type { AutomationRef, AutomationTrigger, Run } from "@/api"
+import type { AutomationRef, AutomationTrigger } from "@/api"
 
 // Pure formatting for single-Agent workflow definitions and their run history.
 
@@ -71,11 +71,6 @@ export function triggerLabel(t: AutomationTrigger): string {
   return "Run on demand"
 }
 
-/** The one-word status for a run's activity row. Queued/running are live; the rest terminal. */
-export function runStatusLabel(status: Run["status"]): string {
-  return { queued: "Queued", running: "Running", succeeded: "Done", failed: "Failed" }[status]
-}
-
 /** The semantic outcome (published/answered/…) recorded in a run's meta blob, or null. */
 export function runOutcome(meta: string | null): string | null {
   if (!meta) return null
@@ -86,6 +81,9 @@ export function runOutcome(meta: string | null): string | null {
     return null
   }
 }
+
+export const runOutcomeLabel = (outcome: string): string =>
+  outcome.charAt(0).toUpperCase() + outcome.slice(1).replaceAll("_", " ")
 
 export interface RunExecutionReceipt {
   provider: "claude-code" | "codex"

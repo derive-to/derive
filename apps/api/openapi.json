@@ -8375,6 +8375,10 @@
                                   "type": "string",
                                   "nullable": true
                                 },
+                                "error": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
                                 "createdAt": {
                                   "type": "string"
                                 },
@@ -8396,6 +8400,7 @@
                                 "selectedRoutes",
                                 "routeBasis",
                                 "resultArtifactId",
+                                "error",
                                 "createdAt",
                                 "startedAt",
                                 "finishedAt"

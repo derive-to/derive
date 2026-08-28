@@ -4402,6 +4402,7 @@ export interface paths {
                                     selectedRoutes: string[] | null;
                                     routeBasis: string | null;
                                     resultArtifactId: string | null;
+                                    error: string | null;
                                     createdAt: string;
                                     startedAt: string | null;
                                     finishedAt: string | null;
