@@ -4,6 +4,7 @@ import {
   backfillLegacyDeckStructure,
   injectArtifactRuntimeScripts,
   injectSharedStateScript,
+  inspectStructuralDocument,
   isBundleContentType,
   looksLikeHtmlDocument,
   MARKS_SCRIPT,
@@ -68,8 +69,24 @@ export const serveContent = async (
   // other read.
   const wantsMarks = ["1", "true"].includes(c.req.query("marks") ?? "")
   const marks = wantsMarks ? MARKS_SCRIPT : ""
+  const structuralSourceValidity = (doc: string): string => {
+    if (!/\bdata-derive-(?:runtime-)?(?:region|layout|node|kind|size)\s*=/i.test(doc)) return ""
+    try {
+      inspectStructuralDocument(doc)
+      return ""
+    } catch {
+      // The HTML parser collapses duplicate attributes, so the browser cannot
+      // independently detect every source ambiguity the save-time parser rejects.
+      // Carry that source verdict into the runtime and expose no unsafe handles.
+      return '<script>Object.defineProperty(window,"__deriveStructuralSourceValid",{value:false})</script>'
+    }
+  }
   const withRuntime = anchors
-    ? (doc: string) => injectArtifactRuntimeScripts(doc, SHARED_STATE_SCRIPT + SELECTION_SCRIPT)
+    ? (doc: string) =>
+        injectArtifactRuntimeScripts(
+          doc,
+          structuralSourceValidity(doc) + SHARED_STATE_SCRIPT + SELECTION_SCRIPT,
+        )
     : (doc: string) => doc
   // renderMarkdown already carries SELECTION_SCRIPT in its generated shell, so it
   // needs only the early shared-state runtime. Injecting the full pair would execute

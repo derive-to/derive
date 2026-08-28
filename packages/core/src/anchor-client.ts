@@ -2398,6 +2398,9 @@ interface ElReg {
   // lets shared undo/redo keep its intentional-removal ledger in sync without
   // coupling the generic history stack to structural types.
   let syncStructuralPlacement = (_el: HTMLElement) => {}
+  // Availability is owned by the structural controller below, but viewport-only
+  // CSS changes (media queries) arrive through the shared resize listener above.
+  let refreshStructureAvailability = () => {}
   const remember = (entry: HistoryEntry) => {
     undoStack.push(entry)
     if (undoStack.length > UNDO_LIMIT) undoStack.shift()
@@ -3089,6 +3092,7 @@ interface ElReg {
      an interaction preview; collect emits stable-id intent and the server projects
      that intent back into exact source bytes. */
   const STRUCTURE_SCHEMA = "derive.structural-edit/v1" as const
+  const MAX_STRUCTURAL_EDITS = 200
   const STRUCTURE_ID = /^[A-Za-z][A-Za-z0-9_-]{0,127}$/
   type StructureSize = "compact" | "standard" | "full"
   type StructurePrefix = "data-derive" | "data-derive-runtime"
@@ -3180,6 +3184,14 @@ interface ElReg {
       .map((el) => byEl.get(el))
       .filter((node): node is StructureNode => !!node)
   }
+  const filterOpacity = (filter: string): number => {
+    let opacity = 1
+    for (const match of filter.matchAll(/opacity\(\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+))(%?)\s*\)/gi)) {
+      const value = Number.parseFloat(match[1] || "")
+      if (Number.isFinite(value)) opacity *= match[2] === "%" ? value / 100 : value
+    }
+    return opacity
+  }
   const structureNodeAvailable = (node: StructureNode): boolean => {
     const region = regionForStructureNode(node)
     if (!region || node.el.parentElement !== region.el || !document.contains(node.el)) return false
@@ -3189,11 +3201,14 @@ interface ElReg {
     for (let current: Element | null = node.el; current; current = current.parentElement) {
       const style = getComputedStyle(current)
       if (
+        current.getAttribute("aria-hidden")?.trim().toLowerCase() === "true" ||
+        current.hasAttribute("inert") ||
         style.display === "none" ||
         (current === node.el && style.display === "contents") ||
         style.visibility === "hidden" ||
         style.visibility === "collapse" ||
         Number.parseFloat(style.opacity || "1") <= 0.001 ||
+        filterOpacity(style.filter || "none") <= 0.001 ||
         style.contentVisibility === "hidden" ||
         (style.clipPath && style.clipPath !== "none")
       )
@@ -3239,6 +3254,11 @@ interface ElReg {
     return null
   }
   const scanStructureRegions = (): StructureRegion[] => {
+    if (
+      (window as Window & { __deriveStructuralSourceValid?: boolean })
+        .__deriveStructuralSourceValid === false
+    )
+      return []
     const regions: StructureRegion[] = []
     const regionIds = new Set<string>()
     const nodeIds = new Set<string>()
@@ -3459,6 +3479,50 @@ interface ElReg {
     }
     return false
   }
+  const topStructureNodeAt = (
+    x: number,
+    y: number,
+    candidates: readonly StructureNode[],
+  ): StructureNode | null => {
+    const byEl = new Map(candidates.map((node) => [node.el, node]))
+    for (const hit of document.elementsFromPoint(x, y)) {
+      const owner = hit.closest(structureNodeSelector)
+      const node = owner instanceof HTMLElement ? byEl.get(owner) : undefined
+      if (node) return node
+    }
+    return null
+  }
+  const pairPaintOrder = (first: StructureNode, second: StructureNode): StructureNode | null => {
+    const a = first.el.getBoundingClientRect()
+    const b = second.el.getBoundingClientRect()
+    const left = Math.max(a.left, b.left)
+    const right = Math.min(a.right, b.right)
+    const top = Math.max(a.top, b.top)
+    const bottom = Math.min(a.bottom, b.bottom)
+    if (right - left <= 1 || bottom - top <= 1) return null
+    return topStructureNodeAt((left + right) / 2, (top + bottom) / 2, [first, second])
+  }
+  const structurePaintOrder = (
+    selected: StructureNode,
+    region: StructureRegion,
+  ): Map<string, string> => {
+    const order = new Map<string, string>()
+    for (const other of connectedStructureNodes(region)) {
+      if (other === selected) continue
+      const top = pairPaintOrder(selected, other)
+      if (top) order.set(other.id, top.id)
+    }
+    return order
+  }
+  const structurePaintOrderChanged = (
+    before: Map<string, string>,
+    selected: StructureNode,
+    region: StructureRegion,
+  ): boolean => {
+    const after = structurePaintOrder(selected, region)
+    for (const [id, top] of before) if (after.get(id) !== top) return true
+    return false
+  }
   const moveStructure = (direction: -1 | 1) => {
     const selected = structureSelected
     if (!selected) return
@@ -3472,9 +3536,12 @@ interface ElReg {
     if (!target) return
     const initial = placementOf(selected.el)
     const geometry = structureGeometry(region)
+    const initialPaintOrder = pairPaintOrder(selected, target)
     if (direction < 0) region.el.insertBefore(selected.el, target.el)
     else region.el.insertBefore(selected.el, target.el.nextSibling)
-    if (!structureGeometryChanged(geometry, region)) {
+    const paintOrderChanged =
+      initialPaintOrder !== null && pairPaintOrder(selected, target) !== initialPaintOrder
+    if (!structureGeometryChanged(geometry, region) && !paintOrderChanged) {
       applyPlacement(initial)
       showStructureToast("Authored layout controls this order")
       paintStructureUi()
@@ -3501,7 +3568,10 @@ interface ElReg {
     void selected.el.offsetWidth
     if (size === null) selected.el.removeAttribute(sizeAttribute)
     else selected.el.setAttribute(sizeAttribute, size)
-    const after = selected.el.getBoundingClientRect()
+    // offsetWidth is the authored layout width before transforms. A rotated or
+    // skewed node has a wider visual bounding box even when its semantic width is
+    // exactly right, so getBoundingClientRect() would falsely reject the preset.
+    const afterLayoutWidth = selected.el.offsetWidth
     if (authoredStyle === null) selected.el.removeAttribute("style")
     else selected.el.setAttribute("style", authoredStyle)
     const regionStyle = getComputedStyle(region.el)
@@ -3509,12 +3579,10 @@ interface ElReg {
       region.el.clientWidth -
       (Number.parseFloat(regionStyle.paddingLeft) || 0) -
       (Number.parseFloat(regionStyle.paddingRight) || 0)
-    const regionRect = region.el.getBoundingClientRect()
-    const scale = region.el.offsetWidth > 0 ? regionRect.width / region.el.offsetWidth : 1
     const fraction = size === "compact" ? 0.5 : size === "standard" ? 0.75 : 1
-    const expectedWidth = contentWidth * fraction * scale
+    const expectedWidth = contentWidth * fraction
     const tolerance = Math.max(2, expectedWidth * 0.02)
-    if (size !== null && Math.abs(after.width - expectedWidth) > tolerance) {
+    if (size !== null && Math.abs(afterLayoutWidth - expectedWidth) > tolerance) {
       undoStack.pop()
       if (previous === null) selected.el.removeAttribute(sizeAttribute)
       else selected.el.setAttribute(sizeAttribute, previous)
@@ -3570,6 +3638,7 @@ interface ElReg {
     initial: Extract<HistoryEntry, { kind: "placement" }>
     initialOrder: string[]
     initialGeometry: Map<string, DOMRect>
+    initialPaintOrder: Map<string, string>
     moved: boolean
   }
   let structureDrag: StructureDrag | null = null
@@ -3586,6 +3655,7 @@ interface ElReg {
       initial: placementOf(node.el),
       initialOrder: connectedStructureNodes(region).map((candidate) => candidate.id),
       initialGeometry: structureGeometry(region),
+      initialPaintOrder: structurePaintOrder(node, region),
       moved: false,
     }
     node.el.classList.add("derive-structure-dragging")
@@ -3615,7 +3685,10 @@ interface ElReg {
     if (!drag || drag.pointerId !== e.pointerId) return
     structureDrag = null
     drag.node.el.classList.remove("derive-structure-dragging")
-    const visuallyMoved = drag.moved && structureGeometryChanged(drag.initialGeometry, drag.region)
+    const visuallyMoved =
+      drag.moved &&
+      (structureGeometryChanged(drag.initialGeometry, drag.region) ||
+        structurePaintOrderChanged(drag.initialPaintOrder, drag.node, drag.region))
     if (cancel || !visuallyMoved) applyPlacement(drag.initial)
     else remember(drag.initial)
     if (visuallyMoved && !cancel) markStructureChanged()
@@ -3627,7 +3700,7 @@ interface ElReg {
   window.addEventListener("pointerup", (e) => finishStructureDrag(e, false))
   window.addEventListener("pointercancel", (e) => finishStructureDrag(e, true))
   window.addEventListener("scroll", paintStructureUi, true)
-  window.addEventListener("resize", paintStructureUi)
+  window.addEventListener("resize", () => refreshStructureAvailability())
   focusStructureToolbar = () => {
     if (!editOn || !structureSelected || document.activeElement !== structureSelected.el)
       return false
@@ -3684,7 +3757,7 @@ interface ElReg {
         return
       }
     }
-    const refreshAvailability = () => {
+    refreshStructureAvailability = () => {
       for (const region of structureRegions)
         for (const node of region.nodes)
           node.el.setAttribute("tabindex", structureNodeAvailable(node) ? "0" : "-1")
@@ -3694,13 +3767,24 @@ interface ElReg {
       }
       paintStructureUi()
     }
-    refreshAvailability()
+    refreshStructureAvailability()
     structureObserver?.disconnect()
     if (window.MutationObserver) {
-      structureObserver = new MutationObserver(refreshAvailability)
+      structureObserver = new MutationObserver((records) => {
+        // Painting the selection box changes platform-owned inline styles. Those
+        // mutations must not wake the availability pass that paints the box again.
+        if (
+          records.every(
+            (record) =>
+              record.target instanceof Element && !!record.target.closest(".derive-edit-ui"),
+          )
+        )
+          return
+        refreshStructureAvailability()
+      })
       structureObserver.observe(document.body || document.documentElement, {
         attributes: true,
-        attributeFilter: ["class", "style", "hidden"],
+        attributeFilter: ["class", "style", "hidden", "aria-hidden", "inert"],
         childList: true,
         subtree: true,
       })
@@ -3731,6 +3815,7 @@ interface ElReg {
     structureSelected = null
     structureExpectedRemoved = new Set()
     syncStructuralPlacement = () => {}
+    refreshStructureAvailability = () => {}
     structureRegions = []
     structureBox.style.display = "none"
     structureToast.style.display = "none"
@@ -4636,7 +4721,8 @@ interface ElReg {
     for (const entry of sceneEdits) edits.push(entry.wire)
     dirty += sceneEdits.length
     const structural = collectStructuralEdits()
-    edits.push(...structural.edits)
+    if (structural.edits.length > MAX_STRUCTURAL_EDITS) uncaptured++
+    else edits.push(...structural.edits)
     if (structural.invalid) uncaptured++
     dirty += structureDirtyCount()
     return { edits, dirty, uncaptured }
