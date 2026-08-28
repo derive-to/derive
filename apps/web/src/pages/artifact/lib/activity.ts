@@ -466,21 +466,23 @@ export function buildStream(input: StreamInput): StreamItem[] {
   if (input.order === "desc") items.reverse()
   const isNew = (it: ThreadItem | TurnItem) => !it.seen
 
-  // Sections + the unread marker (before the first item newer than the last visit —
-  // or, newest first, before the first item that is not). A stream that all happened
-  // today needs no eyebrow — labels earn their place only when there are two days to
-  // tell apart.
+  // Sections + the unread marker: oldest first it sits before the first new item; newest
+  // first, after the last new item — and only once something is new, so the reader's own
+  // rows (seen, however fresh) never earn a line of their own. A stream that all happened
+  // today needs no eyebrow — labels earn their place only when there are two days to tell
+  // apart.
   const labelled = new Set(items.map((it) => sectionOf(it.at, input.now))).size > 1
   const out: StreamItem[] = []
   let section: SectionLabel | null = null
   let marked = input.lastSeen == null
+  let sawNew = false
   for (const it of items) {
-    const boundary =
-      input.order === "desc" ? !isNew(it) && out.some((o) => o.type !== "section") : isNew(it)
+    const boundary = input.order === "desc" ? !isNew(it) && sawNew : isNew(it)
     if (!marked && boundary) {
       out.push({ type: "unread", id: "unread" })
       marked = true
     }
+    if (isNew(it)) sawNew = true
     const label = sectionOf(it.at, input.now)
     if (labelled && label !== section) {
       section = label

@@ -80,10 +80,15 @@ export function useSeenCursor(
   const [lastSeen, setLastSeen] = useState<number | null | undefined>(undefined)
 
   // The visit snapshot: reuse a recent one, else take the server value (importing the
-  // pre-cursor local stamp the first time, so an upgrade keeps the reader's place).
+  // pre-cursor local stamp the first time, so an upgrade keeps the reader's place). Taken
+  // ONCE per mount and scope — a later refetch of the cursor must not move a line the
+  // reader is looking at.
+  const snapped = useRef<string | null>(null)
   useEffect(() => {
     if (!enabled) return
     if (query.data === undefined) return
+    if (snapped.current === scope) return
+    snapped.current = scope
     const visit = readVisit(scope)
     const now = Date.now()
     // A first visit draws no line, and a line-less visit is not worth continuing: coming
