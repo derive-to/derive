@@ -63,7 +63,7 @@ Read this when the question is about DERIVE, not about the workspace's contents.
 | `/settings/brandprint` | The workspace's brand: what published pages look like. |
 | `/settings/webhooks` | Send Derive events to a URL. |
 | `/settings/agents` | Manage Agent execution connections and rotate their tokens. |
-| `/settings/automations` | Scheduled or triggered agent work. |
+| `/workflows` | Reusable work: coordinated graphs and loops, plus scheduled or triggered Agent work. |
 | `/settings/domains` | Serve published pages on a custom domain. |
 | `/settings/reports` | Content reports, when there are open ones. Admin only. |
 
@@ -131,7 +131,7 @@ on that same screen. Derive can also send direct messages. Each person controls 
 
 **Change how published pages look.** `/settings/brandprint`.
 
-**Schedule agent work.** `/settings/automations`.
+**Schedule agent work.** `/workflows`.
 
 **Use my own model key.** `/settings/model-plans`.
 

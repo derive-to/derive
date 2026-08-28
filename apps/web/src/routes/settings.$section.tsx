@@ -14,6 +14,7 @@ export const Route = createFileRoute("/settings/$section")({
   validateSearch: (search: Record<string, unknown>): Record<string, unknown> => ({ ...search }),
   beforeLoad: ({ params }) => {
     if (params.section === "people") throw redirect({ to: "/people", replace: true })
+    if (params.section === "automations") throw redirect({ to: "/workflows", replace: true })
     const alias = SECTION_ALIASES[params.section]
     if (alias) {
       throw redirect({ to: "/settings/$section", params: { section: alias }, replace: true })

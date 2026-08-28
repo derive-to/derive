@@ -647,6 +647,13 @@ export interface ArtifactStore {
   /** A version's facts: one named `slot`, or all of them (slot omitted), in slot
    *  order. Empty when the version carries none. */
   getVersionData(artifactId: string, n: number, slot?: string): Promise<VersionDataRecord[]>
+  /** Selected fact slots from the CURRENT version of many artifacts. The caller supplies the
+   *  candidate ids and remains responsible for authorization; this is only the batch read
+   *  that avoids one getVersionData call per row in corpus-backed product directories. */
+  currentVersionDataForArtifacts(
+    artifactIds: string[],
+    slots: string[],
+  ): Promise<VersionDataRecord[]>
   /** One slot's value across a RANGE of versions, oldest first — the trend read. ONE
    *  indexed query, never a per-version loop: a thirty-version series must cost one round
    *  trip, which is the entire point of facts. Versions in the range carrying no such slot

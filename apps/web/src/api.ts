@@ -342,6 +342,8 @@ export type Notification = components["schemas"]["Notification"]
 export type Webhook = components["schemas"]["Webhook"]
 /** A workspace-registered agent. Generated from the OpenAPI spec. */
 export type Agent = components["schemas"]["Agent"]
+export type WorkflowDirectoryItem =
+  paths["/v1/workflows"]["get"]["responses"][200]["content"]["application/json"]["workflows"][number]
 
 /** How an automation fires. Manual = a Run button; schedule = a cron in a timezone;
  *  event = a subscription. Hand-typed: the automation routes are the agent-facing plain
@@ -1052,6 +1054,9 @@ export const api = {
     f(`/v1/agents/${id}/rotate`, opts({})).then(j),
   deleteAgent: (id: string): Promise<void> =>
     f(`/v1/agents/${id}`, { method: "DELETE", credentials: "include" }).then(() => undefined),
+
+  listWorkflows: (): Promise<{ workflows: WorkflowDirectoryItem[] }> =>
+    f("/v1/workflows", opts()).then(j),
 
   // Automations + runs (the standing-agent-work surface; see routes/automations.ts).
   listAutomations: (): Promise<{ automations: Automation[] }> =>

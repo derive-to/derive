@@ -57,6 +57,7 @@ import { systemRoutes } from "./routes/system"
 import { templateLibraryRoutes } from "./routes/template-libraries"
 import { vitalsRoutes } from "./routes/vitals"
 import { webhookRoutes } from "./routes/webhooks"
+import { workflowRoutes } from "./routes/workflows"
 import { workspaceRoutes } from "./routes/workspace"
 import { workspaceDomainRoutes } from "./routes/workspace-domains"
 
@@ -452,6 +453,7 @@ export function createApp(deps: AppDeps): Hono {
     mcpOauthRoutes,
     modelCredentialRoutes,
     conciergeRoutes,
+    workflowRoutes,
     reworkRoutes,
     commentRoutes,
     contextRoutes,
@@ -519,6 +521,10 @@ export function createApp(deps: AppDeps): Hono {
         name: "Contexts",
         description:
           "Askable agent setups: wire an agent to a manifest, then open Q&A sessions against it.",
+      },
+      {
+        name: "Workflows",
+        description: "Reusable workflow definitions and their execution history.",
       },
       {
         name: "Agents",

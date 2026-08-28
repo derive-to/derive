@@ -31,6 +31,10 @@
       "description": "Askable agent setups: wire an agent to a manifest, then open Q&A sessions against it."
     },
     {
+      "name": "Workflows",
+      "description": "Reusable workflow definitions and their execution history."
+    },
+    {
       "name": "Agents",
       "description": "Registered agents (bearer tokens) and the OAuth agents a user has authorized."
     },
@@ -7825,6 +7829,105 @@
                   "required": [
                     "rounds",
                     "pending"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/workflows": {
+      "get": {
+        "tags": [
+          "Workflows"
+        ],
+        "summary": "List visible workflow artifacts from their current versioned definitions.",
+        "responses": {
+          "200": {
+            "description": "Current workflow definitions the caller may read, newest first. No execution is started.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "workflows": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "shortId": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "version": {
+                            "type": "integer"
+                          },
+                          "updatedAt": {
+                            "type": "string"
+                          },
+                          "purpose": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "ready",
+                              "needs-changes"
+                            ]
+                          },
+                          "diagrams": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "id": {
+                                  "type": "string"
+                                },
+                                "title": {
+                                  "type": "string"
+                                },
+                                "agentSteps": {
+                                  "type": "integer"
+                                },
+                                "humanPauses": {
+                                  "type": "integer"
+                                },
+                                "branches": {
+                                  "type": "integer"
+                                },
+                                "loops": {
+                                  "type": "integer"
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "title",
+                                "agentSteps",
+                                "humanPauses",
+                                "branches",
+                                "loops"
+                              ]
+                            }
+                          }
+                        },
+                        "required": [
+                          "shortId",
+                          "title",
+                          "version",
+                          "updatedAt",
+                          "purpose",
+                          "status",
+                          "diagrams"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "workflows"
                   ]
                 }
               }

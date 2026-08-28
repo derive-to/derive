@@ -35,7 +35,7 @@ can be reclaimed, preventing two valid executors from writing the same job.
 
 ## Follow a run
 
-Open **Settings → Automations** to see the run timeline. It distinguishes work that is:
+Open **Workflows → Single-agent workflows** to see the run timeline. It distinguishes work that is:
 
 - waiting for its scheduled time or retry;
 - queued behind a concurrency or budget limit;

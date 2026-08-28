@@ -9,6 +9,7 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as WorkflowsRouteImport } from './routes/workflows'
 import { Route as WelcomeRouteImport } from './routes/welcome'
 import { Route as UnlistedRouteImport } from './routes/unlisted'
 import { Route as ShowcaseRouteImport } from './routes/showcase'
@@ -47,6 +48,11 @@ import { Route as AgentsIdRouteImport } from './routes/agents.$id'
 import { Route as InviteCTokenRouteImport } from './routes/invite.c.$token'
 import { Route as InviteATokenRouteImport } from './routes/invite.a.$token'
 
+const WorkflowsRoute = WorkflowsRouteImport.update({
+  id: '/workflows',
+  path: '/workflows',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const WelcomeRoute = WelcomeRouteImport.update({
   id: '/welcome',
   path: '/welcome',
@@ -252,6 +258,7 @@ export interface FileRoutesByFullPath {
   '/showcase': typeof ShowcaseRoute
   '/unlisted': typeof UnlistedRoute
   '/welcome': typeof WelcomeRoute
+  '/workflows': typeof WorkflowsRoute
   '/agents/$id': typeof AgentsIdRoute
   '/agents/new': typeof AgentsNewRoute
   '/artifacts/$ref': typeof ArtifactsRefRoute
@@ -290,6 +297,7 @@ export interface FileRoutesByTo {
   '/showcase': typeof ShowcaseRoute
   '/unlisted': typeof UnlistedRoute
   '/welcome': typeof WelcomeRoute
+  '/workflows': typeof WorkflowsRoute
   '/agents/$id': typeof AgentsIdRoute
   '/agents/new': typeof AgentsNewRoute
   '/artifacts/$ref': typeof ArtifactsRefRoute
@@ -330,6 +338,7 @@ export interface FileRoutesById {
   '/showcase': typeof ShowcaseRoute
   '/unlisted': typeof UnlistedRoute
   '/welcome': typeof WelcomeRoute
+  '/workflows': typeof WorkflowsRoute
   '/agents/$id': typeof AgentsIdRoute
   '/agents/new': typeof AgentsNewRoute
   '/artifacts/$ref': typeof ArtifactsRefRoute
@@ -371,6 +380,7 @@ export interface FileRouteTypes {
     | '/showcase'
     | '/unlisted'
     | '/welcome'
+    | '/workflows'
     | '/agents/$id'
     | '/agents/new'
     | '/artifacts/$ref'
@@ -409,6 +419,7 @@ export interface FileRouteTypes {
     | '/showcase'
     | '/unlisted'
     | '/welcome'
+    | '/workflows'
     | '/agents/$id'
     | '/agents/new'
     | '/artifacts/$ref'
@@ -448,6 +459,7 @@ export interface FileRouteTypes {
     | '/showcase'
     | '/unlisted'
     | '/welcome'
+    | '/workflows'
     | '/agents/$id'
     | '/agents/new'
     | '/artifacts/$ref'
@@ -488,6 +500,7 @@ export interface RootRouteChildren {
   ShowcaseRoute: typeof ShowcaseRoute
   UnlistedRoute: typeof UnlistedRoute
   WelcomeRoute: typeof WelcomeRoute
+  WorkflowsRoute: typeof WorkflowsRoute
   AgentsIdRoute: typeof AgentsIdRoute
   AgentsNewRoute: typeof AgentsNewRoute
   ArtifactsRefRoute: typeof ArtifactsRefRoute
@@ -509,6 +522,13 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/workflows': {
+      id: '/workflows'
+      path: '/workflows'
+      fullPath: '/workflows'
+      preLoaderRoute: typeof WorkflowsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/welcome': {
       id: '/welcome'
       path: '/welcome'
@@ -804,6 +824,7 @@ const rootRouteChildren: RootRouteChildren = {
   ShowcaseRoute: ShowcaseRoute,
   UnlistedRoute: UnlistedRoute,
   WelcomeRoute: WelcomeRoute,
+  WorkflowsRoute: WorkflowsRoute,
   AgentsIdRoute: AgentsIdRoute,
   AgentsNewRoute: AgentsNewRoute,
   ArtifactsRefRoute: ArtifactsRefRoute,

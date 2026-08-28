@@ -1,6 +1,6 @@
 import type { AutomationRef, AutomationTrigger, Run } from "@/api"
 
-// Pure formatting for the Automations UI — kept out of the component so it's unit-tested.
+// Pure formatting for single-Agent workflow definitions and their run history.
 
 /** A compact human summary of an automation's targets for the row subtitle, e.g.
  *  "1 artifact, 1 tag" or "2 collections". Empty string when there are no targets. */
@@ -43,8 +43,7 @@ export function runWrites(meta: string | null): RunWrite[] {
   return out
 }
 
-/** The schedule presets the New-automation form offers, and their cron. Shared so the
- *  create form and the label reader agree on one source of truth. */
+/** Schedule presets shared by the creation form and trigger labels. */
 export const SCHEDULE_PRESETS = [
   { id: "daily", label: "Every day at 9:00 AM", cron: "0 9 * * *" },
   { id: "weekdays", label: "Weekdays at 9:00 AM", cron: "0 9 * * 1-5" },
