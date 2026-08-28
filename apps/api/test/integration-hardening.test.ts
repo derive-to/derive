@@ -79,6 +79,7 @@ type SentMsg = {
   from: string | { name: string; email: string }
   to: string | { name: string; email: string }
   subject: string
+  attachments?: Array<Record<string, unknown>>
 }
 
 describe("email header-injection defense", () => {
@@ -107,5 +108,56 @@ describe("email header-injection defense", () => {
     // The "Name <addr>" form is split into the structured { name, email } the builder wants,
     // so the sender keeps its display name instead of showing a bare address.
     expect(sent[0]?.from).toEqual({ name: "Derive", email: "notifications@derive.to" })
+  })
+
+  it("maps attachment MIME type and disposition to the Email Service builder contract", async () => {
+    const sent: SentMsg[] = []
+    const sender = cloudflareEmailSender(
+      {
+        send: async (m) => {
+          sent.push(m)
+          return { messageId: "attachment-test" }
+        },
+      },
+      "Derive <notifications@derive.to>",
+    )
+    const inline = new Uint8Array([1, 2, 3])
+    const pdf = new Uint8Array([4, 5, 6])
+    await sender.send({
+      to: "recipient@example.com",
+      subject: "Export",
+      html: '<img src="cid:derive-export">',
+      text: "Export",
+      resolvedAttachments: [
+        {
+          filename: "derive-export.png",
+          contentType: "image/png",
+          content: inline,
+          contentId: "derive-export",
+        },
+        {
+          filename: "derive-export.pdf",
+          contentType: "application/pdf",
+          content: pdf,
+        },
+      ],
+    })
+
+    expect(sent[0]?.attachments).toEqual([
+      {
+        filename: "derive-export.png",
+        type: "image/png",
+        content: inline,
+        contentId: "derive-export",
+        disposition: "inline",
+      },
+      {
+        filename: "derive-export.pdf",
+        type: "application/pdf",
+        content: pdf,
+        disposition: "attachment",
+      },
+    ])
+    expect(sent[0]?.attachments?.[0]).not.toHaveProperty("contentType")
   })
 })
