@@ -326,7 +326,7 @@ function MobileTopBar({
 // Where am I, for the mobile navbar (the sidebar is hidden behind the drawer).
 // A pathname switch, not route metadata — labels are chrome, not content.
 function PageLabel({ pathname }: { pathname: string }) {
-  if (pathname === "/") return "Library"
+  if (pathname === "/") return "Artifacts"
   if (pathname === "/favorites") return "Favorites"
   if (pathname === "/following") return "Following"
   if (pathname === "/archived") return "Archived"

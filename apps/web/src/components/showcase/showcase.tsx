@@ -856,7 +856,7 @@ function RowStatesDemo() {
             <SidebarMenuItem>
               <SidebarMenuButton isActive>
                 <Icon name="all" size={16} />
-                <span>Library</span>
+                <span>Artifacts</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
           </SidebarMenu>
