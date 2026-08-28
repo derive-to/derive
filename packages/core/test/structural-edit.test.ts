@@ -9,6 +9,7 @@ import {
   type StructuralEdit,
   StructuralEditError,
 } from "../src/structural-edit"
+import { snapStructuralWidth } from "../src/structural-width"
 
 const op = <T extends Omit<StructuralEdit, "schema">>(edit: T): StructuralEdit =>
   ({
@@ -52,21 +53,22 @@ describe("backfillLegacyDeckStructure", () => {
     expect(result.html).toContain('data-derive-node="slide-4-node-1" data-derive-kind="heading"')
     expect(result.html).toContain('data-derive-node="slide-5-node-2" data-derive-kind="visual"')
     expect(result.html).toContain("data-derive-structural-backfill")
+    expect(result.html).toContain("--derive-structural-width")
     expect(inspectStructuralDocument(result.html)).toEqual([
       {
         id: "slide-4",
         layout: "stack",
         nodes: [
-          { id: "slide-4-node-1", kind: "heading", size: null },
-          { id: "slide-4-node-2", kind: "group", size: null },
+          { id: "slide-4-node-1", kind: "heading", size: null, width_pct: null },
+          { id: "slide-4-node-2", kind: "group", size: null, width_pct: null },
         ],
       },
       {
         id: "slide-5",
         layout: "stack",
         nodes: [
-          { id: "slide-5-node-1", kind: "group", size: null },
-          { id: "slide-5-node-2", kind: "visual", size: null },
+          { id: "slide-5-node-1", kind: "group", size: null, width_pct: null },
+          { id: "slide-5-node-2", kind: "visual", size: null, width_pct: null },
         ],
       },
     ])
@@ -327,28 +329,28 @@ describe("inspectStructuralDocument", () => {
         id: "slide-0",
         layout: "stack",
         nodes: [
-          { id: "slide-0-label", kind: "label", size: null },
-          { id: "slide-0-title", kind: "heading", size: null },
-          { id: "slide-0-summary", kind: "text", size: null },
-          { id: "slide-0-visual", kind: "visual", size: null },
+          { id: "slide-0-label", kind: "label", size: null, width_pct: null },
+          { id: "slide-0-title", kind: "heading", size: null, width_pct: null },
+          { id: "slide-0-summary", kind: "text", size: null, width_pct: null },
+          { id: "slide-0-visual", kind: "visual", size: null, width_pct: null },
         ],
       },
       {
         id: "slide-1",
         layout: "stack",
         nodes: [
-          { id: "slide-1-label", kind: "label", size: null },
-          { id: "slide-1-title", kind: "heading", size: null },
-          { id: "slide-1-composition", kind: "composition", size: null },
+          { id: "slide-1-label", kind: "label", size: null, width_pct: null },
+          { id: "slide-1-title", kind: "heading", size: null, width_pct: null },
+          { id: "slide-1-composition", kind: "composition", size: null, width_pct: null },
         ],
       },
       {
         id: "slide-2",
         layout: "stack",
         nodes: [
-          { id: "slide-2-label", kind: "label", size: null },
-          { id: "slide-2-title", kind: "heading", size: null },
-          { id: "slide-2-composition", kind: "composition", size: null },
+          { id: "slide-2-label", kind: "label", size: null, width_pct: null },
+          { id: "slide-2-title", kind: "heading", size: null, width_pct: null },
+          { id: "slide-2-composition", kind: "composition", size: null, width_pct: null },
         ],
       },
     ])
@@ -386,8 +388,8 @@ describe("inspectStructuralDocument", () => {
         id: "story",
         layout: "stack",
         nodes: [
-          { id: "card-a", kind: "card", size: null },
-          { id: "card-b", kind: null, size: "compact" },
+          { id: "card-a", kind: "card", size: null, width_pct: null },
+          { id: "card-b", kind: null, size: "compact", width_pct: null },
         ],
       },
     ])
@@ -397,7 +399,7 @@ describe("inspectStructuralDocument", () => {
     const html =
       '<div data-derive-region="r" data-derive-layout="stack"><img data-derive-node="image"></div>'
     expect(inspectStructuralDocument(html)[0]?.nodes).toEqual([
-      { id: "image", kind: null, size: null },
+      { id: "image", kind: null, size: null, width_pct: null },
     ])
   })
 
@@ -570,6 +572,70 @@ describe("applyStructuralEdits", () => {
     expect(applyStructuralEdits(remove.html, remove.receipt.inverses).html).toBe(document)
   })
 
+  it("stores a region-relative custom width without replacing authored width", () => {
+    const source = document.replace(
+      'data-derive-node="card-a" data-derive-kind="card"',
+      `data-derive-node="card-a" data-derive-kind="card" style="width: 240px; background-image: url('data:image/svg+xml;utf8,a;b')"`,
+    )
+    const resized = applyStructuralEdits(source, [
+      op({ op: "structural-width", region: "story", node: "card-a", width_pct: 68 }),
+    ])
+    expect(resized.html).toContain('data-derive-width="68"')
+    expect(resized.html).toContain("width: 240px")
+    expect(resized.html).toContain("background-image: url('data:image/svg+xml;utf8,a;b')")
+    expect(resized.html).toContain("--derive-structural-width: 68%")
+    expect(inspectStructuralDocument(resized.html)[0]?.nodes[0]).toMatchObject({
+      size: null,
+      width_pct: 68,
+    })
+    expect(applyStructuralEdits(resized.html, resized.receipt.inverses).html).toBe(source)
+  })
+
+  it("moves atomically between named presets, custom width, and authored size", () => {
+    const custom = applyStructuralEdits(document, [
+      op({ op: "structural-width", region: "story", node: "card-b", width_pct: 62 }),
+    ])
+    expect(custom.html).not.toContain("data-derive-size='compact'")
+    expect(custom.html).toContain('data-derive-width="62"')
+
+    const preset = applyStructuralEdits(custom.html, [
+      op({ op: "structural-size", region: "story", node: "card-b", size: "standard" }),
+    ])
+    expect(preset.html).toContain('data-derive-size="standard"')
+    expect(preset.html).not.toContain("data-derive-width")
+    expect(preset.html).not.toContain("--derive-structural-width")
+
+    const resetCustom = applyStructuralEdits(custom.html, [
+      op({ op: "structural-width", region: "story", node: "card-b", width_pct: null }),
+    ])
+    expect(resetCustom.html).not.toContain("data-derive-width")
+    expect(resetCustom.html).not.toContain("--derive-structural-width")
+  })
+
+  it("rejects out-of-range custom widths and conflicting authored size models", () => {
+    for (const width_pct of [9, 101, 50.5, Number.NaN])
+      expect(() =>
+        applyStructuralEdits(document, [
+          op({ op: "structural-width", region: "story", node: "card-a", width_pct }),
+        ]),
+      ).toThrow(/whole percentage/)
+    expect(() =>
+      inspectStructuralDocument(
+        '<div data-derive-region="r" data-derive-layout="stack"><p data-derive-node="n" data-derive-size="compact" data-derive-width="50"></p></div>',
+      ),
+    ).toThrow(/cannot declare both/)
+    for (const node of [
+      '<p data-derive-node="n" data-derive-width="50"></p>',
+      '<p data-derive-node="n" style="--derive-structural-width: 50%"></p>',
+      '<p data-derive-node="n" data-derive-width="50" style="--derive-structural-width: 49%"></p>',
+    ])
+      expect(() =>
+        inspectStructuralDocument(
+          `<div data-derive-region="r" data-derive-layout="stack">${node}</div>`,
+        ),
+      ).toThrow(/must pair data-derive-width/)
+  })
+
   it("reorders complete node chunks and its inverse is byte-identical", () => {
     const result = applyStructuralEdits(document, [
       op({ op: "structural-order", region: "story", nodes: ["card-b", "card-a"] }),
@@ -673,5 +739,17 @@ describe("applyStructuralEdits", () => {
       op({ op: "structural-remove", region: "story", node: "card-a" }),
     )
     expect(() => applyStructuralEdits(document, edits)).toThrow(/maximum/)
+  })
+})
+
+describe("snapStructuralWidth", () => {
+  it("snaps to the nearest sibling or rail inside the screen-derived threshold", () => {
+    expect(snapStructuralWidth(66.7, [50, 67, 75], 1)).toEqual({ width: 67, snappedTo: 67 })
+    expect(snapStructuralWidth(63, [50, 67, 75], 1)).toEqual({ width: 63, snappedTo: null })
+  })
+
+  it("bounds widths and resolves ties by candidate order", () => {
+    expect(snapStructuralWidth(4, [10, 50], 2)).toEqual({ width: 10, snappedTo: 10 })
+    expect(snapStructuralWidth(62, [60, 64], 2)).toEqual({ width: 60, snappedTo: 60 })
   })
 })

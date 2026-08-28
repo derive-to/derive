@@ -19,8 +19,7 @@
  *                  edit-undo / edit-redo / edit-format / edit-mention-insert /
  *                  edit-mention-close / deck-drive
  *
- * Keep it dependency-free apart from `anchor-shared` (which is DOM-free + pure) so it
- * bundles into one small self-contained script.
+ * Keep its imports DOM-free + pure so it bundles into one small self-contained script.
  */
 
 import { findQuoteWithContext, fingerprintFrom, normWs } from "./anchor-shared"
@@ -30,6 +29,12 @@ import {
   mentionQueryAtEnd,
   mentionTokens,
 } from "./mention-shared"
+import {
+  MAX_STRUCTURAL_WIDTH_PCT,
+  MIN_STRUCTURAL_WIDTH_PCT,
+  STRUCTURAL_WIDTH_PROPERTY,
+  snapStructuralWidth,
+} from "./structural-width"
 
 // The element-anchor selector as it arrives from the host (mirrors core's ElementSelector).
 interface ElWire {
@@ -651,10 +656,17 @@ interface ElReg {
     ".derive-structure-grip:active{cursor:grabbing}" +
     ".derive-structure-size[aria-pressed=true]{border-color:#4f46e5;background:#eef2ff;color:#3730a3}" +
     ".derive-structure-parent{border-color:#c7d2fe;color:#4338ca}" +
+    ".derive-structure-resize-handle{position:absolute;right:-8px;top:50%;width:16px;height:34px;padding:0;transform:translateY(-50%);border:2px solid #4f46e5;border-radius:8px;background:#eef2ff;box-shadow:0 2px 8px rgba(15,23,42,.28);cursor:ew-resize;pointer-events:auto;touch-action:none}" +
+    ".derive-structure-resize-handle:after{content:'';position:absolute;left:5px;top:8px;width:2px;height:14px;border-left:1px solid #4f46e5;border-right:1px solid #4f46e5}" +
+    ".derive-structure-resize-handle:disabled{opacity:.38;cursor:default}" +
+    ".derive-structure-width-readout{position:absolute;right:-2px;bottom:-27px;display:none;min-height:21px;padding:3px 7px;border-radius:4px;background:rgba(49,46,129,.96);color:#fff;font:700 11px/15px ui-monospace,SFMono-Regular,Menlo,monospace;white-space:nowrap}" +
+    ".derive-structure-box.derive-structure-resizing .derive-structure-width-readout{display:block}" +
+    ".derive-structure-snap-guide{position:absolute;display:none;width:0;border-left:1px solid rgba(79,70,229,.92);box-shadow:0 0 8px rgba(79,70,229,.52);pointer-events:none;z-index:2147483643}" +
+    ".derive-structure-snap-guide:after{content:attr(data-label);position:absolute;left:7px;top:4px;padding:3px 6px;border-radius:4px;background:rgba(49,46,129,.96);color:#fff;font:700 10px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:nowrap}" +
     ".derive-structure-remove{border-color:#fecaca;color:#b91c1c}" +
     ".derive-structure-toast{position:fixed;left:50%;bottom:18px;display:none;align-items:center;gap:10px;transform:translateX(-50%);padding:8px 10px 8px 13px;border-radius:8px;background:#0f172a;color:#fff;box-shadow:0 8px 24px rgba(15,23,42,.3);z-index:2147483646;font:600 12px/1.2 system-ui,sans-serif;pointer-events:auto}" +
     ".derive-structure-toast button{height:26px;padding:0 8px;border:1px solid rgba(255,255,255,.35);border-radius:5px;background:transparent;color:#fff;font:700 11px/24px system-ui,sans-serif;cursor:pointer}" +
-    ".derive-structure-button:focus-visible,.derive-structure-toast button:focus-visible{outline:2px solid #4f46e5;outline-offset:2px}" +
+    ".derive-structure-button:focus-visible,.derive-structure-resize-handle:focus-visible,.derive-structure-toast button:focus-visible{outline:2px solid #4f46e5;outline-offset:2px}" +
     ".derive-structure-dragging{opacity:.72;box-shadow:0 12px 28px rgba(15,23,42,.2)}" +
     /* The host's deck controls overlay the bottom of the iframe. Lift destructive
        recovery above that bar on desktop so the five-second Undo is actually seen. */
@@ -2384,7 +2396,15 @@ interface ElReg {
   type HistoryEntry =
     | { kind: "html"; el: HTMLElement; html: string }
     | { kind: "style"; el: ResizableElement; style: string | null }
-    | { kind: "attribute"; el: HTMLElement; name: string; value: string | null }
+    | {
+        kind: "structural-sizing"
+        el: HTMLElement
+        sizeName: string
+        size: string | null
+        widthName: string
+        width: string | null
+        style: string | null
+      }
     | {
         kind: "placement"
         el: HTMLElement
@@ -2417,8 +2437,25 @@ interface ElReg {
   const checkpointStyle = (el: ResizableElement) => {
     remember({ kind: "style", el, style: rawStyle(el) })
   }
-  const checkpointAttribute = (el: HTMLElement, name: string) => {
-    remember({ kind: "attribute", el, name, value: el.getAttribute(name) })
+  const structuralSizingOf = (
+    el: HTMLElement,
+    sizeName: string,
+    widthName: string,
+  ): Extract<HistoryEntry, { kind: "structural-sizing" }> => ({
+    kind: "structural-sizing",
+    el,
+    sizeName,
+    size: el.getAttribute(sizeName),
+    widthName,
+    width: el.getAttribute(widthName),
+    style: rawStyle(el),
+  })
+  const applyStructuralSizing = (entry: Extract<HistoryEntry, { kind: "structural-sizing" }>) => {
+    if (entry.size === null) entry.el.removeAttribute(entry.sizeName)
+    else entry.el.setAttribute(entry.sizeName, entry.size)
+    if (entry.width === null) entry.el.removeAttribute(entry.widthName)
+    else entry.el.setAttribute(entry.widthName, entry.width)
+    restoreStyle(entry.el, entry.style)
   }
   const placementOf = (el: HTMLElement): Extract<HistoryEntry, { kind: "placement" }> => ({
     kind: "placement",
@@ -2474,6 +2511,10 @@ interface ElReg {
       to.push(placementOf(entry.el))
       applyPlacement(entry)
       syncStructuralPlacement(entry.el)
+    } else if (entry.kind === "structural-sizing") {
+      if (!document.contains(entry.el)) return
+      to.push(structuralSizingOf(entry.el, entry.sizeName, entry.widthName))
+      applyStructuralSizing(entry)
     } else if (!document.contains(entry.el)) return
     else if (entry.kind === "html") {
       to.push({ kind: "html", el: entry.el, html: entry.el.innerHTML })
@@ -2482,15 +2523,6 @@ interface ElReg {
     } else if (entry.kind === "style") {
       to.push({ kind: "style", el: entry.el, style: rawStyle(entry.el) })
       restoreStyle(entry.el, entry.style)
-    } else {
-      to.push({
-        kind: "attribute",
-        el: entry.el,
-        name: entry.name,
-        value: entry.el.getAttribute(entry.name),
-      })
-      if (entry.value === null) entry.el.removeAttribute(entry.name)
-      else entry.el.setAttribute(entry.name, entry.value)
     }
     lastBurst = null
     refreshResizeUi()
@@ -3116,6 +3148,8 @@ interface ElReg {
     id: string
     prefix: StructurePrefix
     origSize: string | null
+    origWidth: string | null
+    origStyle: string | null
     origTabindex: string | null
   }
   interface StructureRegion {
@@ -3181,7 +3215,16 @@ interface ElReg {
     structureFull,
     structureRemove,
   )
-  structureBox.append(structureToolbar)
+  const structureResizeHandle = document.createElement("button")
+  structureResizeHandle.type = "button"
+  structureResizeHandle.className = "derive-structure-resize-handle"
+  structureResizeHandle.title = "Drag or use arrow keys to resize width"
+  structureResizeHandle.setAttribute("aria-label", "Resize element width")
+  const structureWidthReadout = document.createElement("span")
+  structureWidthReadout.className = "derive-structure-width-readout"
+  const structureSnapGuide = document.createElement("div")
+  structureSnapGuide.className = "derive-edit-ui derive-structure-snap-guide"
+  structureBox.append(structureToolbar, structureResizeHandle, structureWidthReadout)
   const structureToast = document.createElement("div")
   structureToast.className = "derive-edit-ui derive-structure-toast"
   structureToast.setAttribute("role", "status")
@@ -3190,7 +3233,11 @@ interface ElReg {
   structureToastUndo.type = "button"
   structureToastUndo.textContent = "Undo"
   structureToast.append(structureToastText, structureToastUndo)
-  ;(document.body || document.documentElement).append(structureBox, structureToast)
+  ;(document.body || document.documentElement).append(
+    structureBox,
+    structureSnapGuide,
+    structureToast,
+  )
 
   const sourceChildren = (region: HTMLElement): HTMLElement[] =>
     Array.from(region.children).filter(
@@ -3258,6 +3305,8 @@ interface ElReg {
     const viewportWidth = window.innerWidth || document.documentElement.clientWidth
     return rect.right > 0 && rect.left < viewportWidth
   }
+  const structureWidthResizable = (node: StructureNode): boolean =>
+    getComputedStyle(node.el).transform === "none"
   const structureIntegrityValid = (region: StructureRegion): boolean => {
     const ownerEl = region.el.parentElement?.closest(structureNodeSelector)
     if (
@@ -3367,6 +3416,19 @@ interface ElReg {
           valid = false
           break
         }
+        const width = child.getAttribute(structureAttribute(prefix, "width"))
+        const customWidth = child.style.getPropertyValue(STRUCTURAL_WIDTH_PROPERTY).trim()
+        if (
+          (width !== null &&
+            (!/^(?:[1-9]|[1-9][0-9]|100)$/.test(width) ||
+              Number.parseInt(width, 10) < MIN_STRUCTURAL_WIDTH_PCT ||
+              customWidth !== `${width}%`)) ||
+          (width === null && !!customWidth) ||
+          (size !== null && width !== null)
+        ) {
+          valid = false
+          break
+        }
         nodeIds.add(nodeId)
         handledNodes.add(child)
         nodes.push({
@@ -3374,6 +3436,8 @@ interface ElReg {
           id: nodeId,
           prefix,
           origSize: size,
+          origWidth: width,
+          origStyle: child.getAttribute("style"),
           origTabindex: child.getAttribute("tabindex"),
         })
       }
@@ -3427,9 +3491,71 @@ interface ElReg {
       const originalRemaining = region.origOrder.filter((id) => currentSet.has(id))
       if (currentIds.some((id, index) => id !== originalRemaining[index])) dirty++
       for (const node of current)
-        if (node.el.getAttribute(structureAttribute(node.prefix, "size")) !== node.origSize) dirty++
+        if (
+          node.el.getAttribute(structureAttribute(node.prefix, "size")) !== node.origSize ||
+          node.el.getAttribute(structureAttribute(node.prefix, "width")) !== node.origWidth
+        )
+          dirty++
     }
     return dirty
+  }
+
+  const structureContentWidth = (region: StructureRegion): number => {
+    const style = getComputedStyle(region.el)
+    return (
+      region.el.clientWidth -
+      (Number.parseFloat(style.paddingLeft) || 0) -
+      (Number.parseFloat(style.paddingRight) || 0)
+    )
+  }
+  const structureWidthName = (node: StructureNode): string =>
+    structureAttribute(node.prefix, "width")
+  const structureSizeName = (node: StructureNode): string => structureAttribute(node.prefix, "size")
+  const currentStructureWidth = (node: StructureNode): number | null => {
+    const raw = node.el.getAttribute(structureWidthName(node))
+    if (raw === null) return null
+    const width = Number.parseInt(raw, 10)
+    return Number.isInteger(width) &&
+      width >= MIN_STRUCTURAL_WIDTH_PCT &&
+      width <= MAX_STRUCTURAL_WIDTH_PCT
+      ? width
+      : null
+  }
+  const rememberStructureSizing = (node: StructureNode) =>
+    remember(structuralSizingOf(node.el, structureSizeName(node), structureWidthName(node)))
+  const clearEmptyStyle = (el: HTMLElement) => {
+    if (!(el.getAttribute("style") || "").trim()) el.removeAttribute("style")
+  }
+  const applyStructurePreset = (node: StructureNode, size: StructureSize | null) => {
+    const sizeName = structureSizeName(node)
+    if (size === null) node.el.removeAttribute(sizeName)
+    else node.el.setAttribute(sizeName, size)
+    node.el.removeAttribute(structureWidthName(node))
+    node.el.style.removeProperty(STRUCTURAL_WIDTH_PROPERTY)
+    clearEmptyStyle(node.el)
+  }
+  const applyStructureWidth = (node: StructureNode, width: number | null) => {
+    node.el.removeAttribute(structureSizeName(node))
+    const widthName = structureWidthName(node)
+    if (width === null) {
+      node.el.removeAttribute(widthName)
+      node.el.style.removeProperty(STRUCTURAL_WIDTH_PROPERTY)
+      clearEmptyStyle(node.el)
+      return
+    }
+    node.el.setAttribute(widthName, String(width))
+    node.el.style.setProperty(STRUCTURAL_WIDTH_PROPERTY, `${width}%`)
+  }
+  const structureWidthFits = (
+    node: StructureNode,
+    region: StructureRegion,
+    width: number,
+  ): boolean => {
+    const contentWidth = structureContentWidth(region)
+    if (!(contentWidth > 0)) return false
+    const expected = (contentWidth * width) / 100
+    const tolerance = Math.max(2, expected * 0.02)
+    return Math.abs(node.el.offsetWidth - expected) <= tolerance
   }
 
   const syncStructureSafeArea = (
@@ -3458,6 +3584,7 @@ interface ElReg {
     syncStructureSafeArea(!!parent)
     if (!editOn || !selected || !structureNodeAvailable(selected)) {
       structureBox.style.display = "none"
+      if (!structureResizeDrag) structureSnapGuide.style.display = "none"
       return
     }
     const region = regionForStructureNode(selected)
@@ -3473,6 +3600,7 @@ interface ElReg {
     const nodes = connectedStructureNodes(region)
     const index = nodes.indexOf(selected)
     const size = selected.el.getAttribute(structureAttribute(selected.prefix, "size"))
+    const width = currentStructureWidth(selected)
     structureBox.style.display = "block"
     structureBox.style.left = `${rect.left + (window.scrollX || 0)}px`
     structureBox.style.top = `${rect.top + scrollTop()}px`
@@ -3483,10 +3611,15 @@ interface ElReg {
     structureParent.hidden = !parent
     structureEarlier.disabled = index <= 0
     structureLater.disabled = index < 0 || index >= nodes.length - 1
-    structureAuto.setAttribute("aria-pressed", String(size === null))
+    structureAuto.setAttribute("aria-pressed", String(size === null && width === null))
     structureCompact.setAttribute("aria-pressed", String(size === "compact"))
     structureStandard.setAttribute("aria-pressed", String(size === "standard"))
     structureFull.setAttribute("aria-pressed", String(size === "full"))
+    structureWidthReadout.textContent = width === null ? size || "Auto" : `${width}%`
+    structureResizeHandle.disabled = !structureWidthResizable(selected)
+    structureResizeHandle.title = structureResizeHandle.disabled
+      ? "Transformed elements keep their authored width"
+      : "Drag or use arrow keys to resize width"
   }
   refreshResizeUi = () => {
     paintResizeUi()
@@ -3497,6 +3630,7 @@ interface ElReg {
   const selectStructure = (node: StructureNode | null) => {
     if (node && !structureNodeAvailable(node)) node = null
     structureSelected = node
+    if (!node) structureSnapGuide.style.display = "none"
     if (node) {
       clearResizeUi()
       setEditHover(null)
@@ -3636,40 +3770,37 @@ interface ElReg {
   }
   const sizeStructure = (size: StructureSize | null) => {
     const selected = structureSelected
-    if (!selected || selected.el.getAttribute(structureAttribute(selected.prefix, "size")) === size)
+    if (
+      !selected ||
+      (selected.el.getAttribute(structureSizeName(selected)) === size &&
+        currentStructureWidth(selected) === null)
+    )
       return
     const region = regionForStructureNode(selected)
     if (!region) return
-    const sizeAttribute = structureAttribute(selected.prefix, "size")
-    const previous = selected.el.getAttribute(sizeAttribute)
-    checkpointAttribute(selected.el, sizeAttribute)
+    rememberStructureSizing(selected)
     // An authored width transition reports the OLD geometry for its first frame,
     // which would make a valid explicit preset look constrained and roll it back.
-    // Suppress transitions only for this synchronous measurement, then restore the
-    // exact authored style attribute before returning to the page.
-    const authoredStyle = selected.el.getAttribute("style")
+    // Suppress transitions only for this synchronous measurement.
+    const transition = selected.el.style.getPropertyValue("transition")
+    const transitionPriority = selected.el.style.getPropertyPriority("transition")
     selected.el.style.setProperty("transition", "none", "important")
     void selected.el.offsetWidth
-    if (size === null) selected.el.removeAttribute(sizeAttribute)
-    else selected.el.setAttribute(sizeAttribute, size)
+    applyStructurePreset(selected, size)
     // offsetWidth is the authored layout width before transforms. A rotated or
     // skewed node has a wider visual bounding box even when its semantic width is
     // exactly right, so getBoundingClientRect() would falsely reject the preset.
     const afterLayoutWidth = selected.el.offsetWidth
-    if (authoredStyle === null) selected.el.removeAttribute("style")
-    else selected.el.setAttribute("style", authoredStyle)
-    const regionStyle = getComputedStyle(region.el)
-    const contentWidth =
-      region.el.clientWidth -
-      (Number.parseFloat(regionStyle.paddingLeft) || 0) -
-      (Number.parseFloat(regionStyle.paddingRight) || 0)
+    if (transition) selected.el.style.setProperty("transition", transition, transitionPriority)
+    else selected.el.style.removeProperty("transition")
+    clearEmptyStyle(selected.el)
+    const contentWidth = structureContentWidth(region)
     const fraction = size === "compact" ? 0.5 : size === "standard" ? 0.75 : 1
     const expectedWidth = contentWidth * fraction
     const tolerance = Math.max(2, expectedWidth * 0.02)
     if (size !== null && Math.abs(afterLayoutWidth - expectedWidth) > tolerance) {
-      undoStack.pop()
-      if (previous === null) selected.el.removeAttribute(sizeAttribute)
-      else selected.el.setAttribute(sizeAttribute, previous)
+      const checkpoint = undoStack.pop()
+      if (checkpoint?.kind === "structural-sizing") applyStructuralSizing(checkpoint)
       showStructureToast("Authored constraints control this size")
       paintStructureUi()
       return
@@ -3721,6 +3852,173 @@ interface ElReg {
     structureToast.style.display = "none"
   })
   structureToolbar.addEventListener("pointerdown", (e) => e.stopPropagation())
+
+  interface StructureWidthCandidate {
+    width: number
+    label: string
+  }
+  const structureWidthCandidates = (
+    selected: StructureNode,
+    region: StructureRegion,
+  ): StructureWidthCandidate[] => {
+    const contentWidth = structureContentWidth(region)
+    const candidates = new Map<number, string>([
+      [50, "50% rail"],
+      [75, "75% rail"],
+      [100, "100% rail"],
+    ])
+    if (!(contentWidth > 0)) return [...candidates].map(([width, label]) => ({ width, label }))
+    for (const node of connectedStructureNodes(region)) {
+      if (node === selected || !structureNodeAvailable(node)) continue
+      const width = Math.round((node.el.offsetWidth / contentWidth) * 100)
+      if (width >= MIN_STRUCTURAL_WIDTH_PCT && width <= MAX_STRUCTURAL_WIDTH_PCT)
+        candidates.set(width, `Match ${node.id}`)
+    }
+    return [...candidates].map(([width, label]) => ({ width, label }))
+  }
+  const hideStructureSnapGuide = () => {
+    structureSnapGuide.style.display = "none"
+    structureSnapGuide.removeAttribute("data-label")
+  }
+  const showStructureSnapGuide = (node: StructureNode, region: StructureRegion, label: string) => {
+    const nodeRect = node.el.getBoundingClientRect()
+    const regionRect = region.el.getBoundingClientRect()
+    structureSnapGuide.style.display = "block"
+    structureSnapGuide.style.left = `${nodeRect.right + (window.scrollX || 0)}px`
+    structureSnapGuide.style.top = `${regionRect.top + scrollTop()}px`
+    structureSnapGuide.style.height = `${regionRect.height}px`
+    structureSnapGuide.setAttribute("data-label", label)
+  }
+
+  interface StructureResizeDrag {
+    pointerId: number
+    node: StructureNode
+    region: StructureRegion
+    initial: Extract<HistoryEntry, { kind: "structural-sizing" }>
+    startX: number
+    startWidth: number
+    contentWidth: number
+    screenScale: number
+    candidates: StructureWidthCandidate[]
+    width: number
+    moved: boolean
+  }
+  let structureResizeDrag: StructureResizeDrag | null = null
+  structureResizeHandle.addEventListener("pointerdown", (e) => {
+    const node = structureSelected
+    const region = node ? regionForStructureNode(node) : null
+    if (!node || !region || !document.contains(node.el) || !structureWidthResizable(node)) return
+    const contentWidth = structureContentWidth(region)
+    const regionRect = region.el.getBoundingClientRect()
+    const screenScale = region.el.offsetWidth > 0 ? regionRect.width / region.el.offsetWidth : 0
+    if (!(contentWidth > 0 && screenScale > 0)) return
+    e.preventDefault()
+    e.stopPropagation()
+    const initial = structuralSizingOf(node.el, structureSizeName(node), structureWidthName(node))
+    remember(initial)
+    const startWidth = Math.round((node.el.offsetWidth / contentWidth) * 100)
+    structureResizeDrag = {
+      pointerId: e.pointerId,
+      node,
+      region,
+      initial,
+      startX: e.clientX,
+      startWidth,
+      contentWidth,
+      screenScale,
+      candidates: structureWidthCandidates(node, region),
+      width: startWidth,
+      moved: false,
+    }
+    structureBox.classList.add("derive-structure-resizing")
+    structureWidthReadout.textContent = `${startWidth}%`
+    structureResizeHandle.setPointerCapture?.(e.pointerId)
+  })
+  window.addEventListener(
+    "pointermove",
+    (e) => {
+      const drag = structureResizeDrag
+      if (!drag || drag.pointerId !== e.pointerId) return
+      e.preventDefault()
+      const dx = e.clientX - drag.startX
+      if (!drag.moved && Math.abs(dx) < 1) return
+      const raw = drag.startWidth + (dx / (drag.contentWidth * drag.screenScale)) * 100
+      const threshold = (8 / (drag.contentWidth * drag.screenScale)) * 100
+      const snapped = e.altKey
+        ? { width: Math.round(raw), snappedTo: null }
+        : snapStructuralWidth(
+            raw,
+            drag.candidates.map((candidate) => candidate.width),
+            threshold,
+          )
+      const width = Math.min(
+        MAX_STRUCTURAL_WIDTH_PCT,
+        Math.max(MIN_STRUCTURAL_WIDTH_PCT, snapped.width),
+      )
+      drag.width = width
+      drag.moved = width !== drag.startWidth
+      applyStructureWidth(drag.node, width)
+      structureWidthReadout.textContent = `${width}%`
+      const candidate = drag.candidates.find((item) => item.width === snapped.snappedTo)
+      if (candidate) showStructureSnapGuide(drag.node, drag.region, candidate.label)
+      else hideStructureSnapGuide()
+      if (lastDirty <= 0) {
+        lastDirty = 1
+        post({ type: "edit-state", dirty: 1, canUndo: true })
+      }
+      paintStructureUi()
+    },
+    { passive: false },
+  )
+  const finishStructureResize = (e: PointerEvent, cancel: boolean) => {
+    const drag = structureResizeDrag
+    if (!drag || drag.pointerId !== e.pointerId) return
+    structureResizeDrag = null
+    structureBox.classList.remove("derive-structure-resizing")
+    hideStructureSnapGuide()
+    const accepted = drag.moved && structureWidthFits(drag.node, drag.region, drag.width)
+    if (cancel || !accepted) {
+      const checkpoint = undoStack.pop()
+      if (checkpoint?.kind === "structural-sizing") applyStructuralSizing(checkpoint)
+      if (drag.moved && !cancel) showStructureToast("Authored constraints control this width")
+      paintStructureUi()
+      postDirty()
+      return
+    }
+    markStructureChanged()
+  }
+  window.addEventListener("pointerup", (e) => finishStructureResize(e, false))
+  window.addEventListener("pointercancel", (e) => finishStructureResize(e, true))
+  structureResizeHandle.addEventListener("keydown", (e) => {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return
+    const node = structureSelected
+    const region = node ? regionForStructureNode(node) : null
+    if (!node || !region || !structureWidthResizable(node)) return
+    e.preventDefault()
+    e.stopPropagation()
+    const contentWidth = structureContentWidth(region)
+    if (!(contentWidth > 0)) return
+    const current = Math.round((node.el.offsetWidth / contentWidth) * 100)
+    const delta = (e.shiftKey ? 5 : 1) * (e.key === "ArrowRight" ? 1 : -1)
+    const width = Math.min(
+      MAX_STRUCTURAL_WIDTH_PCT,
+      Math.max(MIN_STRUCTURAL_WIDTH_PCT, current + delta),
+    )
+    if (width === current) return
+    rememberStructureSizing(node)
+    applyStructureWidth(node, width)
+    if (!structureWidthFits(node, region, width)) {
+      const checkpoint = undoStack.pop()
+      if (checkpoint?.kind === "structural-sizing") applyStructuralSizing(checkpoint)
+      showStructureToast("Authored constraints control this width")
+      paintStructureUi()
+      return
+    }
+    structureBox.classList.add("derive-structure-resizing")
+    structureWidthReadout.textContent = `${width}%`
+    window.setTimeout(() => structureBox.classList.remove("derive-structure-resizing"), 800)
+    markStructureChanged()
+  })
 
   interface StructureDrag {
     pointerId: number
@@ -3905,6 +4203,10 @@ interface ElReg {
           const sizeAttribute = structureAttribute(node.prefix, "size")
           if (node.origSize === null) node.el.removeAttribute(sizeAttribute)
           else node.el.setAttribute(sizeAttribute, node.origSize)
+          const widthAttribute = structureAttribute(node.prefix, "width")
+          if (node.origWidth === null) node.el.removeAttribute(widthAttribute)
+          else node.el.setAttribute(widthAttribute, node.origWidth)
+          restoreStyle(node.el, node.origStyle)
           region.el.append(node.el)
         }
       }
@@ -3914,11 +4216,14 @@ interface ElReg {
         else node.el.setAttribute("tabindex", node.origTabindex)
       }
     structureSelected = null
+    structureResizeDrag = null
     structureExpectedRemoved = new Set()
     syncStructuralPlacement = () => {}
     refreshStructureAvailability = () => {}
     setStructureRegions([])
     structureBox.style.display = "none"
+    structureBox.classList.remove("derive-structure-resizing")
+    hideStructureSnapGuide()
     structureToast.style.display = "none"
     if (structureToastTimer) clearTimeout(structureToastTimer)
     structureToastTimer = 0
@@ -4650,6 +4955,13 @@ interface ElReg {
       }
     | {
         schema: typeof STRUCTURE_SCHEMA
+        op: "structural-width"
+        region: string
+        node: string
+        width_pct: number | null
+      }
+    | {
+        schema: typeof STRUCTURE_SCHEMA
         op: "structural-order"
         region: string
         nodes: string[]
@@ -4765,13 +5077,38 @@ interface ElReg {
         const size = node.el.getAttribute(
           structureAttribute(node.prefix, "size"),
         ) as StructureSize | null
-        if (size !== node.origSize)
+        const widthRaw = node.el.getAttribute(structureAttribute(node.prefix, "width"))
+        const width = widthRaw === null ? null : Number.parseInt(widthRaw, 10)
+        if (
+          width !== null &&
+          (!Number.isInteger(width) ||
+            width < MIN_STRUCTURAL_WIDTH_PCT ||
+            width > MAX_STRUCTURAL_WIDTH_PCT)
+        )
+          return { edits: [], invalid: true }
+        if (widthRaw !== node.origWidth && width !== null)
+          edits.push({
+            schema: STRUCTURE_SCHEMA,
+            op: "structural-width",
+            region: region.id,
+            node: node.id,
+            width_pct: width,
+          })
+        else if (size !== node.origSize)
           edits.push({
             schema: STRUCTURE_SCHEMA,
             op: "structural-size",
             region: region.id,
             node: node.id,
             size,
+          })
+        else if (widthRaw !== node.origWidth)
+          edits.push({
+            schema: STRUCTURE_SCHEMA,
+            op: "structural-width",
+            region: region.id,
+            node: node.id,
+            width_pct: null,
           })
       }
     }

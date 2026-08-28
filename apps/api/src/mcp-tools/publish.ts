@@ -311,11 +311,17 @@ export function registerPublishTool(tc: ToolContext): void {
               }),
               z.object({
                 schema: z.literal("derive.structural-edit/v1"),
-                op: z.enum(["structural-size", "structural-order", "structural-remove"]),
+                op: z.enum([
+                  "structural-size",
+                  "structural-width",
+                  "structural-order",
+                  "structural-remove",
+                ]),
                 region: z.string(),
                 node: z.string().optional(),
                 nodes: z.array(z.string()).optional(),
                 size: z.enum(["compact", "standard", "full"]).nullable().optional(),
+                width_pct: z.coerce.number().int().min(10).max(100).nullable().optional(),
               }),
               z.object({
                 op: z.literal("scene-update"),

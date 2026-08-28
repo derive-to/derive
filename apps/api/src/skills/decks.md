@@ -166,7 +166,14 @@ meaning. The canonical fixed-stage mapping changes only inline width proportions
 .slide > [data-derive-node][data-derive-size="compact"] { width: 50%; max-width: none }
 .slide > [data-derive-node][data-derive-size="standard"] { width: 75%; max-width: none }
 .slide > [data-derive-node][data-derive-size="full"] { width: 100%; max-width: none }
+.slide > [data-derive-node][data-derive-width] { width: var(--derive-structural-width); max-width: none }
 ```
+
+The rendered editor also offers a horizontal resize handle. It stores a bounded whole percentage
+in `data-derive-width` and a Derive-owned `--derive-structural-width` custom property, then snaps
+near the widths of visible siblings and the 50 / 75 / 100 percent rails. Keep the custom-width
+rule alongside the named presets so direct resizing remains region-relative under stage scaling.
+Height remains authored; structural editing is not a freeform canvas.
 
 The canonical template authors this metadata directly. Legacy decks get a bounded optimistic
 upgrade in Edit mode: Derive uses each exact-source slide as a region and stamps only its explicit,

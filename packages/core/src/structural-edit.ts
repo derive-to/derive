@@ -13,6 +13,12 @@ import { nextUnusedSlideId, sliceSlides } from "./decks"
 import { EditError } from "./doc-text"
 import { attrValues, type HtmlTag, hasAttr, tags } from "./html-tags"
 import { injectArtifactRuntimeScripts } from "./shared-state-client"
+import {
+  MAX_STRUCTURAL_WIDTH_PCT,
+  MIN_STRUCTURAL_WIDTH_PCT,
+  STRUCTURAL_WIDTH_PROPERTY,
+} from "./structural-width"
+import { stylePropertyValues, updateOpeningTagStyle } from "./style-attribute"
 
 export const STRUCTURAL_EDIT_SCHEMA = "derive.structural-edit/v1" as const
 export const STRUCTURAL_RECEIPT_SCHEMA = "derive.structural-edit-receipt/v1" as const
@@ -28,6 +34,13 @@ export interface StructuralSizeEdit extends StructuralEditBase {
   op: "structural-size"
   node: string
   size: StructuralSize | null
+}
+
+export interface StructuralWidthEdit extends StructuralEditBase {
+  op: "structural-width"
+  node: string
+  /** Region-relative whole percentage. Null removes Derive's custom-width override. */
+  width_pct: number | null
 }
 
 export interface StructuralOrderEdit extends StructuralEditBase {
@@ -57,7 +70,11 @@ export interface StructuralOpeningRestoreEdit extends StructuralEditBase {
   opening: string
 }
 
-export type StructuralUserEdit = StructuralSizeEdit | StructuralOrderEdit | StructuralRemoveEdit
+export type StructuralUserEdit =
+  | StructuralSizeEdit
+  | StructuralWidthEdit
+  | StructuralOrderEdit
+  | StructuralRemoveEdit
 
 export type StructuralEdit =
   | StructuralUserEdit
@@ -78,6 +95,7 @@ export interface StructuralNodeInspection {
   id: string
   kind: string | null
   size: StructuralSize | null
+  width_pct: number | null
 }
 
 export interface StructuralRegionInspection {
@@ -131,12 +149,14 @@ const STRUCTURAL_ATTRIBUTES = [
   "data-derive-node",
   "data-derive-kind",
   "data-derive-size",
+  "data-derive-width",
   "data-derive-runtime-region",
   "data-derive-runtime-layout",
   "data-derive-runtime-owner",
   "data-derive-runtime-node",
   "data-derive-runtime-kind",
   "data-derive-runtime-size",
+  "data-derive-runtime-width",
 ] as const
 
 const fail = (code: StructuralEditError["code"], message: string): never => {
@@ -158,6 +178,22 @@ const identity = (value: string | null, label: string): string => {
       `${label} must be 1–128 characters and start with a letter; only letters, numbers, _ and - are allowed.`,
     )
   return value as string
+}
+
+const structuralWidth = (value: string | null, label: string): number | null => {
+  if (value === null) return null
+  if (!/^(?:[1-9]|[1-9][0-9]|100)$/.test(value))
+    fail(
+      "invalid-structure",
+      `${label} must be a whole percentage from ${MIN_STRUCTURAL_WIDTH_PCT} to ${MAX_STRUCTURAL_WIDTH_PCT}.`,
+    )
+  const width = Number.parseInt(value, 10)
+  if (width < MIN_STRUCTURAL_WIDTH_PCT || width > MAX_STRUCTURAL_WIDTH_PCT)
+    fail(
+      "invalid-structure",
+      `${label} must be a whole percentage from ${MIN_STRUCTURAL_WIDTH_PCT} to ${MAX_STRUCTURAL_WIDTH_PCT}.`,
+    )
+  return width
 }
 
 interface SourceElement {
@@ -321,10 +357,30 @@ const inspect = (html: string): Inspection => {
         "invalid-structure",
         `Structural node ${id} has unsupported size ${JSON.stringify(rawSize)}.`,
       )
+    const widthPct = structuralWidth(
+      exactlyOne(element.tag, "data-derive-width", `Structural node ${id}`),
+      `Structural node ${id} data-derive-width`,
+    )
+    if (rawSize !== null && widthPct !== null)
+      fail(
+        "invalid-structure",
+        `Structural node ${id} cannot declare both data-derive-size and data-derive-width.`,
+      )
+    const inlineStyle = exactlyOne(element.tag, "style", `Structural node ${id}`) ?? ""
+    const customWidths = stylePropertyValues(inlineStyle, STRUCTURAL_WIDTH_PROPERTY)
+    if (
+      customWidths.length !== (widthPct === null ? 0 : 1) ||
+      (widthPct !== null && customWidths[0] !== `${widthPct}%`)
+    )
+      fail(
+        "invalid-structure",
+        `Structural node ${id} must pair data-derive-width with one matching ${STRUCTURAL_WIDTH_PROPERTY} inline property.`,
+      )
     const node: OwnedNode = {
       id,
       kind: exactlyOne(element.tag, "data-derive-kind", `Structural node ${id}`),
       size: rawSize as StructuralSize | null,
+      width_pct: widthPct,
       element,
       chunkEnd: element.end,
     }
@@ -383,7 +439,12 @@ const inspect = (html: string): Inspection => {
         "invalid-structure",
         `Structural region ${region.id} contains a comment after its last structural node.`,
       )
-    region.nodes = region.ownedNodes.map(({ id, kind, size }) => ({ id, kind, size }))
+    region.nodes = region.ownedNodes.map(({ id, kind, size, width_pct }) => ({
+      id,
+      kind,
+      size,
+      width_pct,
+    }))
   }
 
   return { regions: [...byRegion.values()], byRegion }
@@ -398,6 +459,7 @@ export const isStructuralEdit = (value: unknown): value is StructuralEdit => {
   return (
     edit.schema === STRUCTURAL_EDIT_SCHEMA &&
     (edit.op === "structural-size" ||
+      edit.op === "structural-width" ||
       edit.op === "structural-order" ||
       edit.op === "structural-remove" ||
       edit.op === "structural-restore" ||
@@ -410,6 +472,7 @@ export const isStructuralEdit = (value: unknown): value is StructuralEdit => {
 export const isStructuralUserEdit = (value: unknown): value is StructuralUserEdit =>
   isStructuralEdit(value) &&
   (value.op === "structural-size" ||
+    value.op === "structural-width" ||
     value.op === "structural-order" ||
     value.op === "structural-remove")
 
@@ -470,6 +533,7 @@ const backfillStyle = (runtime: boolean): string => {
 [${prefix}-region][${prefix}-layout="stack"] > [${prefix}-node][${prefix}-size="compact"] { width: 50% !important; max-width: none !important; box-sizing: border-box !important }
 [${prefix}-region][${prefix}-layout="stack"] > [${prefix}-node][${prefix}-size="standard"] { width: 75% !important; max-width: none !important; box-sizing: border-box !important }
 [${prefix}-region][${prefix}-layout="stack"] > [${prefix}-node][${prefix}-size="full"] { width: 100% !important; max-width: none !important; box-sizing: border-box !important }
+[${prefix}-region][${prefix}-layout="stack"] > [${prefix}-node][${prefix}-width] { width: var(${STRUCTURAL_WIDTH_PROPERTY}) !important; max-width: none !important; box-sizing: border-box !important }
 </style>`
 }
 
@@ -541,7 +605,11 @@ export const backfillLegacyDeckStructure = (
   if (
     allTags.some(
       (tag) =>
-        !tag.closing && STRUCTURAL_ATTRIBUTES.some((attribute) => hasAttr(tag.attrs, attribute)),
+        !tag.closing &&
+        (STRUCTURAL_ATTRIBUTES.some((attribute) => hasAttr(tag.attrs, attribute)) ||
+          attrValues(tag.attrs, "style").some(
+            (style) => stylePropertyValues(style, STRUCTURAL_WIDTH_PROPERTY).length > 0,
+          )),
     )
   )
     return { html, changed: false, regions: 0, nodes: 0, skipped: [] }
@@ -697,11 +765,56 @@ const sizeEdit = (
   const node = nodeFor(region, edit.node, label)
   if (edit.size !== null && !SIZES.has(edit.size))
     fail("invalid-operation", `${label} has unsupported size ${JSON.stringify(edit.size)}.`)
-  if (node.size === edit.size) fail("no-change", `${label} leaves node ${node.id} unchanged.`)
+  if (node.size === edit.size && node.width_pct === null)
+    fail("no-change", `${label} leaves node ${node.id} unchanged.`)
   const start = node.element.tag.start
   const end = node.element.tag.end
   const opening = html.slice(start, end)
-  const changed = setAttribute(opening, "data-derive-size", edit.size)
+  let changed = setAttribute(opening, "data-derive-size", edit.size)
+  changed = setAttribute(changed, "data-derive-width", null)
+  changed = updateOpeningTagStyle(changed, { [STRUCTURAL_WIDTH_PROPERTY]: null })
+  return {
+    html: html.slice(0, start) + changed + html.slice(end),
+    inverse: {
+      schema: STRUCTURAL_EDIT_SCHEMA,
+      op: "structural-restore-opening",
+      region: region.id,
+      node: node.id,
+      opening,
+    },
+  }
+}
+
+const widthEdit = (
+  html: string,
+  edit: StructuralWidthEdit,
+  inspection: Inspection,
+  label: string,
+): { html: string; inverse: StructuralEdit } => {
+  const region = regionFor(inspection, edit.region, label)
+  const node = nodeFor(region, edit.node, label)
+  const width = edit.width_pct
+  if (
+    width !== null &&
+    (!Number.isInteger(width) ||
+      width < MIN_STRUCTURAL_WIDTH_PCT ||
+      width > MAX_STRUCTURAL_WIDTH_PCT)
+  )
+    fail(
+      "invalid-operation",
+      `${label} width_pct must be a whole percentage from ${MIN_STRUCTURAL_WIDTH_PCT} to ${MAX_STRUCTURAL_WIDTH_PCT}.`,
+    )
+  if (node.width_pct === width && (width === null || node.size === null))
+    fail("no-change", `${label} leaves node ${node.id} unchanged.`)
+  const start = node.element.tag.start
+  const end = node.element.tag.end
+  const opening = html.slice(start, end)
+  let changed = setAttribute(opening, "data-derive-width", width === null ? null : String(width))
+  if (width !== null) changed = setAttribute(changed, "data-derive-size", null)
+  changed = updateOpeningTagStyle(changed, {
+    [STRUCTURAL_WIDTH_PROPERTY]: width === null ? null : `${width}%`,
+  })
+  if (changed === opening) fail("no-change", `${label} leaves node ${node.id} unchanged.`)
   return {
     html: html.slice(0, start) + changed + html.slice(end),
     inverse: {
@@ -870,6 +983,9 @@ export const applyStructuralEdits = (
     switch (edit.op) {
       case "structural-size":
         result = sizeEdit(out, edit, inspection, label)
+        break
+      case "structural-width":
+        result = widthEdit(out, edit, inspection, label)
         break
       case "structural-order":
         result = orderEdit(out, edit, inspection, label)
