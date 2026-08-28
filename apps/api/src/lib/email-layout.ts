@@ -1,6 +1,8 @@
 import { escapeHtml } from "@derive/core"
 import type { ExportEmailMessage } from "./export-system"
 
+export const EMAIL_LAYOUT_FACT = "email-layout"
+
 const MAX_BLOCKS = 16
 const MAX_ITEMS = 12
 

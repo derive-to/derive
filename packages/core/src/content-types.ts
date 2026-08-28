@@ -20,7 +20,8 @@ export const isHtmlLike = (contentType: string): boolean =>
 export const isMarkdownLike = (contentType: string): boolean =>
   baseType(contentType) === MARKDOWN_CONTENT_TYPE
 
-/** Types that may carry author-declared facts. Decks receive derived structure only. */
+/** Types that may carry the full author-declared fact grammar. Decks receive derived structure
+ * plus narrowly allowlisted operational contracts at the API boundary. */
 export const isAuthoredFactType = (contentType: string): boolean =>
   [HTML_CONTENT_TYPE, MARKDOWN_CONTENT_TYPE, LINKED_BUNDLE_HTML_CONTENT_TYPE].includes(
     baseType(contentType),

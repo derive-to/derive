@@ -10,6 +10,7 @@
 import {
   type ArtifactRecord,
   type BlobStore,
+  DECK_CONTENT_TYPE,
   deriveFacts,
   FACT_GEN,
   isAuthoredFactType,
@@ -26,6 +27,7 @@ import { log } from "../log"
 import { type Summarizer, sanitizeSummary, summaryInput } from "../summarizer"
 import { publishSweepEvents } from "./anchor-sweep"
 import { fanOutNewContentMentions } from "./content-mentions"
+import { EMAIL_LAYOUT_FACT } from "./email-layout"
 import { indexArtifactVersion, isTextType } from "./search"
 import { recordThreadResolution } from "./thread-actions"
 
@@ -169,9 +171,10 @@ const summarizeVersion = async (
 }
 
 /** Extract a single-file HTML/markdown version's facts and persist them (see
- *  @derive/core data-facts). Zip bundles, decks and non-text versions carry no authored facts and are
- *  skipped. Writes only when at least one slot parsed — a fresh version has no prior rows,
- *  so there is nothing to clear when it has none. */
+ *  @derive/core data-facts). Decks may carry the one operational fact their export path
+ *  consumes (`email-layout`); arbitrary authored deck facts stay excluded. Writes only when at
+ *  least one slot parsed — a fresh version has no prior rows, so there is nothing to clear when
+ *  it has none. */
 const extractVersionData = async (
   meta: Pick<MetaStore, "setVersionData" | "getVersionData" | "getVersion">,
   blobs: BlobStore,
@@ -192,7 +195,12 @@ const extractVersionData = async (
   const bytes = await blobs.get(version.blob_key)
   if (!bytes) return
   const source = new TextDecoder().decode(bytes)
-  const { facts } = authored ? parseFacts(source, ct) : { facts: [] }
+  const baseType = ct.split(";")[0]?.trim()
+  const facts = authored
+    ? parseFacts(source, ct).facts
+    : baseType === DECK_CONTENT_TYPE
+      ? parseFacts(source, "text/html").facts.filter((fact) => fact.slot === EMAIL_LAYOUT_FACT)
+      : []
   // Derived facts ($outline/$links/$stats) ride the same pass over bytes already decoded:
   // the host's mechanical reading, in the namespace the author grammar can't reach. They
   // are cache entries with names — recomputable, never counted, never rewarded — so each
