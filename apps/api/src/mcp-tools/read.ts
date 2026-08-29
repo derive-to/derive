@@ -636,8 +636,20 @@ export function registerReadTool(tc: ToolContext): void {
         }
         docId = seg
       }
+      // Postgres can join the artifact and selected immutable version in one statement.
+      // Stores without the optional fast path keep the portable two reads. The joined
+      // artifact only skips its lookup: reach still runs every authorization check.
+      const envelope = ctx.meta.artifactWithVersion
+        ? await ctx.meta.artifactWithVersion(docId, version)
+        : undefined
       // Opted into the world link: a public artifact outside the grant reads at viewer.
-      const r = await reach(docId, workspace, { public: true })
+      const r =
+        envelope === null
+          ? null
+          : await reach(docId, workspace, {
+              public: true,
+              ...(envelope ? { artifact: envelope.artifact } : {}),
+            })
       if (r && "error" in r) return err(r.error)
       // A bare name that matches no artifact may still name a CONTEXT — tried only here,
       // after the artifact lookup, so a context named like a doc can never shadow it.
@@ -651,7 +663,8 @@ export function registerReadTool(tc: ToolContext): void {
       if (n < 1 || n > a.current_version)
         return err(`No version ${n} for "${short_id}" — it has versions 1..${a.current_version}.`)
       if (r.public && !versionOpenToWorld(a, n)) return historyNotPublic(short_id, a)
-      const v = await ctx.meta.getVersion(a.id, n)
+      const v =
+        envelope?.artifact.id === a.id ? envelope.version : await ctx.meta.getVersion(a.id, n)
       if (!v) return err(`Version ${n} of "${short_id}" is unavailable.`)
       const url = artifactUrl(ctx.deps.baseUrl, a)
 

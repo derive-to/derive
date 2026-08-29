@@ -213,6 +213,14 @@ export function runStoreContract(
       expect(await store.listVersions(a.id)).toHaveLength(2)
       expect((await store.getVersion(a.id, 1))?.message).toBe("first")
       expect(await store.getVersion(a.id, 99)).toBeNull()
+      if (store.artifactWithVersion) {
+        const current = await store.artifactWithVersion(a.short_id)
+        expect(current?.artifact).toEqual(after)
+        expect(current?.version).toEqual(await store.getVersion(a.id, 2))
+        expect((await store.artifactWithVersion(a.short_id, 1))?.version).toEqual(v1)
+        expect((await store.artifactWithVersion(a.short_id, 99))?.version).toBeNull()
+        expect(await store.artifactWithVersion("nope")).toBeNull()
+      }
     })
 
     it("replaces only the exact current version and clears its derived data", async () => {
