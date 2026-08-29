@@ -36,7 +36,7 @@ import { clip, MAX_CHARS } from "../lib/clip"
 import { pickVariant, rendersOff } from "../lib/collect-render"
 import { assembleContextPackage } from "../lib/context-package"
 import { sniffImageType } from "../lib/image"
-import { baseType, isTextType, present, type ReadFormat } from "../lib/search"
+import { baseType, isTextType, present, type ReadFormat, searchMatcher } from "../lib/search"
 import { canReadTemplateLibrary } from "../lib/template-library-access"
 import { templateLibraryEntryJson } from "../lib/template-library-entry"
 import { log } from "../log"
@@ -76,6 +76,16 @@ const kindCarriesFacts = (v: VersionRecord | null): boolean =>
   v?.content_type === "text/markdown" ||
   // A deck carries DERIVED rows ($map above all) though it can embed none of its own.
   isHtmlLike(v?.content_type ?? "")
+
+/** A focus read returns enough complete parts to disambiguate a repeated term, while the
+ *  response stays well below the ordinary whole-read budget. The ref lets the caller open
+ *  the exact source next without another map call. */
+const FOCUS_MATCH_MAX = 3
+const FOCUS_BODY_MAX = Math.floor(MAX_CHARS / FOCUS_MATCH_MAX)
+const clipFocusBody = (body: string): string =>
+  body.length > FOCUS_BODY_MAX
+    ? `${body.slice(0, FOCUS_BODY_MAX)}\n\n…[truncated ${body.length - FOCUS_BODY_MAX} chars — read this node for the full clipped part]`
+    : body
 
 /** Why a fact is absent, said accurately — the cases the old single message merged.
  *  A `$name` can never be embedded (the author grammar rejects `$`), so "embed a block"
@@ -175,7 +185,7 @@ export function registerReadTool(tc: ToolContext): void {
     "read",
     {
       description:
-        "Read an artifact by short_id. Small docs return whole; large ones return an OUTLINE — then pass `section`, or `map:true` then `node` to work on one part. format:'html' gives the exact source, required before publish `edits`. Also reads contexts and derive:// URIs. See derive://skills/finding.",
+        "Read an artifact. Small docs return whole; large docs return an outline. `focus` returns matching parts in one call. `map` then `node` addresses one part. format:'html' gives exact source for publish edits. Also reads contexts and derive:// URIs. See derive://skills/finding.",
       // readOnlyHint stays true despite two incidental write paths below (the lazy
       // derived-fact backfill and the render self-heal re-queue): both are deterministic
       // recomputations/cache-fills of already-published bytes — the class of side effect
@@ -231,10 +241,15 @@ export function registerReadTool(tc: ToolContext): void {
           .describe(
             "The document's addressable parts: one line per node with the `ref` that names it. Read this first to work on part of a big doc.",
           ),
-        node: z
+        node: z.string().optional().describe("One ref from map (slide:2, sec:pricing)."),
+        focus: z
           .string()
+          .trim()
+          .min(1)
+          .max(200)
           .optional()
-          .describe("Read ONE part, by a `ref` from `map` (slide:2, sec:pricing, style:1)."),
+          .describe("Literal text; returns matching parts with refs.")
+          .meta({ examples: ["pricing", "fallback", "quarterly target"] }),
         version: num("version").optional(),
         data: z
           .string()
@@ -257,6 +272,7 @@ export function registerReadTool(tc: ToolContext): void {
       lines,
       map: wantMap,
       node,
+      focus,
       render,
       wait,
       data,
@@ -572,7 +588,7 @@ export function registerReadTool(tc: ToolContext): void {
         // `map`/`node` belong here too: this branch runs BEFORE the map rung below, so its
         // own guard against `render` never fires. Found on the preview — read(map, render)
         // silently returned a screenshot to a caller who asked for the structure.
-        if (section || lines || wantMap || node)
+        if (section || lines || wantMap || node || focus)
           return err(
             "`render` is a view of the whole version — pass it alone (with `version` for history).",
           )
@@ -706,9 +722,9 @@ export function registerReadTool(tc: ToolContext): void {
       // The data rung: a version's structured facts, queried instead of re-parsed. A
       // whole-version view like `render`, so it can't combine with a within-doc selector.
       if (data !== undefined) {
-        if (section || lines || render)
+        if (section || lines || render || focus)
           return err(
-            "`data` reads a version's stored facts — pass it alone (with `version` for history), not with section/lines/render.",
+            "`data` reads a version's stored facts — pass it alone (with `version` for history), not with section/lines/render/focus.",
           )
         // The TREND read: one slot across a range of versions, in one call and one query.
         // Versions are already the time axis, so this is the whole reason facts exist —
@@ -944,6 +960,46 @@ export function registerReadTool(tc: ToolContext): void {
           url,
           ...linkedBundleMeta,
         }
+        // Focus read: collapse literal locate -> read surrounding part into one call. It
+        // uses the same derived map as `map`/`node`, so every returned match is already an
+        // address the caller can reuse for an exact-source read or a scoped edit.
+        if (focus) {
+          if (section || lines || wantMap || node)
+            return err(
+              "Pass `focus` alone (with `format` and `version`), not with another part selector.",
+            )
+          let structure: DocMap
+          try {
+            structure = docMap(src, ct ?? "text/html")
+          } catch (e) {
+            return err(e instanceof Error ? e.message : "This document's structure can't be read.")
+          }
+          const matcher = searchMatcher(focus, false)
+          const matches = structure.nodes.flatMap((target) => {
+            const body = present(src.slice(target.start, target.end), ct, fmt)
+            matcher.lastIndex = 0
+            if (!matcher.test(body)) return []
+            return [{ target, body }]
+          })
+          return json({
+            ...meta,
+            focus,
+            count: matches.length,
+            matches: matches.slice(0, FOCUS_MATCH_MAX).map(({ target, body }) => ({
+              node: target.ref,
+              type: target.type,
+              chars: body.length,
+              ...(target.title ? { title: target.title } : {}),
+              body: clipFocusBody(body),
+            })),
+            ...(matches.length > FOCUS_MATCH_MAX
+              ? { truncated: true, more_matches: matches.length - FOCUS_MATCH_MAX }
+              : {}),
+            next: matches.length
+              ? `Use read(node:"<ref>", format:"html") only if you need exact source for an edit.`
+              : `No matching part. Try one neighbouring literal, or use find(short_id:"${short_id}", query:"${focus}") for line-level search.`,
+          })
+        }
         // The map rung: the document's addressable parts. Read before working on part of
         // a big doc — it is the cheap structural view the full-document read is not, and
         // every ref it hands back is what `node` (and, next, a scoped edit) takes.
@@ -1113,6 +1169,10 @@ export function registerReadTool(tc: ToolContext): void {
 
       // Bundle.
       const pages = Object.keys(manifest.files).map(cleanPath)
+      if (focus)
+        return err(
+          "`focus` currently reads single-file artifacts. For a bundle, use find(short_id, query), then read its matching page path.",
+        )
       // A skill reads as its document: the SKILL.md body, with the bundle's files
       // listed alongside. The common caller was just told to follow this procedure,
       // so the outline-first bundle default is the wrong rung here. Explicit

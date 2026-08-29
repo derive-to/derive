@@ -96,6 +96,22 @@ const setup = async (name: string) => {
   return { app, token, short_id, meta }
 }
 
+const setupDocument = async (name: string, source: string) => {
+  const { app, meta, token } = appWithGrant(dir, name, "openid derive:read derive:publish")
+  await rpc(app, token, initBody)
+  await meta.setMembership({ id: `m_${name}`, org_id: "default", user_id: "u_o", role: "owner" })
+  const form = new FormData()
+  form.append("file", new Blob([new TextEncoder().encode(source)]), "document.html")
+  form.append("title", "Large document")
+  const res = await app.request("/v1/artifacts", {
+    method: "POST",
+    body: form,
+    headers: { authorization: `Bearer ${token}` },
+  })
+  const { short_id } = (await res.json()) as { short_id: string }
+  return { app, token, short_id }
+}
+
 describe("read map / node", () => {
   it("maps a deck, and every ref it returns resolves", async () => {
     const { app, token, short_id } = await setup("map-read")
@@ -161,6 +177,30 @@ describe("read map / node", () => {
     const json = (await res.json()) as { kind: string; nodes: { ref: string }[] }
     expect(json.kind).toBe("deck")
     expect(json.nodes.map((n) => n.ref)).toContain("slide:2")
+  })
+})
+
+describe("read focus", () => {
+  it("locates and reads one complete part of a large HTML document in one call", async () => {
+    const sections = Array.from({ length: 80 }, (_, i) => {
+      const target = i === 62 ? "<p>The fallback budget is 17 percent.</p>" : ""
+      return `<section><h2>Decision ${i + 1}</h2><p>${"routine context ".repeat(40)}</p>${target}</section>`
+    }).join("\n")
+    const source = `<!doctype html><html><body>${sections}</body></html>`
+    const { app, token, short_id } = await setupDocument("focus-large", source)
+
+    const outline = await readJson(app, token, { short_id })
+    expect(outline.sections).toHaveLength(80)
+
+    const focused = await readJson(app, token, { short_id, focus: "fallback budget" })
+    expect(focused.count).toBe(1)
+    expect(focused.matches).toHaveLength(1)
+    expect(focused.matches[0]).toMatchObject({
+      node: "sec:decision-63",
+      title: "Decision 63",
+    })
+    expect(focused.matches[0].body).toContain("17 percent")
+    expect(JSON.stringify(focused).length).toBeLessThan(source.length / 20)
   })
 })
 

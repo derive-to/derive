@@ -55,6 +55,8 @@ If the question is about what a document decided, changed, or requires, open it:
 
 - `read(short_id)` for a small document; a large one returns its heading OUTLINE instead, and
   you then call again with a `section` slug for just that part.
+- `read(short_id, focus:"pricing")` when you know one literal term and need the complete parts
+  that contain it. It returns up to three parts and their reusable node refs in one call.
 - `find(short_id, query)` first when you want the LINE the word is on, then `read(short_id,
   lines:"40-80")` for the surrounding context. Cheaper than reading a whole page.
 - `format:"text"` is what a reader sees; `format:"html"` is the exact source (what you would
