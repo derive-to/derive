@@ -1,6 +1,7 @@
 import { type DocNode, docMap } from "@derive/core"
 import { MAX_CHARS } from "./clip"
 import { present } from "./search"
+import { WeightedLruCache } from "./source-text-cache"
 
 const CHANGED_PART_MAX = 3
 const CHANGED_BODY_MAX = Math.floor(MAX_CHARS / CHANGED_PART_MAX)
@@ -25,6 +26,30 @@ export interface ChangedParts {
   more_changes?: number
   note: string
 }
+
+// Change receipts are pure functions of two immutable content-addressed blobs. Keep the
+// bounded result, not either source body. Active artifacts often receive repeated catch-up
+// reads after one publish, and recomputing the same two structural maps is their main cost.
+const receipts = new WeightedLruCache<ChangedParts>({
+  maxBytes: 2 * 1024 * 1024,
+  maxEntries: 256,
+  maxEntryBytes: 64 * 1024,
+})
+
+const receiptKey = (
+  beforeBlobKey: string,
+  beforeContentType: string,
+  afterBlobKey: string,
+  afterContentType: string,
+): string => `${beforeContentType}:${beforeBlobKey}>${afterContentType}:${afterBlobKey}`
+
+export const getChangedPartsReceipt = (
+  beforeBlobKey: string,
+  beforeContentType: string,
+  afterBlobKey: string,
+  afterContentType: string,
+): ChangedParts | null =>
+  receipts.get(receiptKey(beforeBlobKey, beforeContentType, afterBlobKey, afterContentType)) ?? null
 
 /** Prefer authored identity over position when a document supplies it. This keeps a
  *  slide insert from making every later position look edited. Refs remain the returned
@@ -182,4 +207,29 @@ export const changedParts = (
       ? "Each non-removed result is a bounded readable current part. Use its node ref for exact source only if another edit needs it."
       : "The readable document parts did not change.",
   }
+}
+
+/** Compute and retain one immutable adjacent-version receipt. Exact callers may check
+ *  getChangedPartsReceipt first to avoid loading either source body on a hit. */
+export const changedPartsWithReceipt = (
+  beforeBlobKey: string,
+  beforeSource: string,
+  beforeContentType: string,
+  afterBlobKey: string,
+  afterSource: string,
+  afterContentType: string,
+  materializeCurrentPart: MaterializeCurrentPart = currentPart,
+): ChangedParts => {
+  const key = receiptKey(beforeBlobKey, beforeContentType, afterBlobKey, afterContentType)
+  const cached = receipts.get(key)
+  if (cached) return cached
+  const value = changedParts(
+    beforeSource,
+    beforeContentType,
+    afterSource,
+    afterContentType,
+    materializeCurrentPart,
+  )
+  receipts.set(key, value, key.length * 2 + JSON.stringify(value).length * 2)
+  return value
 }

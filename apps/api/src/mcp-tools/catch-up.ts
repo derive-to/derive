@@ -1,6 +1,10 @@
 import { assertedOnly, diffLines, factDeltas, formatDiff, toMarkdown } from "@derive/core"
 import { z } from "zod"
-import { type ChangedParts, changedParts } from "../lib/changed-parts"
+import {
+  type ChangedParts,
+  changedPartsWithReceipt,
+  getChangedPartsReceipt,
+} from "../lib/changed-parts"
 import { clip } from "../lib/clip"
 import type { ToolContext } from "../mcp-tool-context"
 import {
@@ -157,27 +161,34 @@ export function registerCatchUpTool(tc: ToolContext): void {
               note: "Bundles report changed page paths in pages_changed. Read only those pages.",
             }
           } else {
-            const [as_, ah] = await Promise.all([ctx.sourceText(vs), ctx.sourceText(vh)])
-            if (as_ !== null && ah !== null) {
-              try {
-                partChanges = changedParts(
-                  as_,
-                  vs.content_type ?? "text/html",
-                  ah,
-                  vh.content_type ?? "text/html",
-                )
-              } catch {
+            const beforeType = vs.content_type ?? "text/html"
+            const afterType = vh.content_type ?? "text/html"
+            partChanges = getChangedPartsReceipt(vs.blob_key, beforeType, vh.blob_key, afterType)
+            if (!partChanges) {
+              const [as_, ah] = await Promise.all([ctx.sourceText(vs), ctx.sourceText(vh)])
+              if (as_ !== null && ah !== null) {
+                try {
+                  partChanges = changedPartsWithReceipt(
+                    vs.blob_key,
+                    as_,
+                    beforeType,
+                    vh.blob_key,
+                    ah,
+                    afterType,
+                  )
+                } catch {
+                  partChanges = {
+                    count: 0,
+                    changes: [],
+                    note: "These versions could not be mapped into stable document parts. Use response_format:'detailed' for the line diff.",
+                  }
+                }
+              } else {
                 partChanges = {
                   count: 0,
                   changes: [],
-                  note: "These versions could not be mapped into stable document parts. Use response_format:'detailed' for the line diff.",
+                  note: "One selected version has no readable source. Use the version history to choose another range.",
                 }
-              }
-            } else {
-              partChanges = {
-                count: 0,
-                changes: [],
-                note: "One selected version has no readable source. Use the version history to choose another range.",
               }
             }
           }

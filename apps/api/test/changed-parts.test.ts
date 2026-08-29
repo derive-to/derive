@@ -1,7 +1,7 @@
 import type { DocNode } from "@derive/core"
 import { describe, expect, it, vi } from "vitest"
 
-import { changedParts } from "../src/lib/changed-parts"
+import { changedParts, changedPartsWithReceipt } from "../src/lib/changed-parts"
 
 const page = (value: string): string =>
   `<!doctype html><html><body>${Array.from(
@@ -10,6 +10,38 @@ const page = (value: string): string =>
   ).join("\n")}</body></html>`
 
 describe("changed parts", () => {
+  it("reuses an immutable receipt without rematerializing its body", () => {
+    const materialize = vi.fn((change: "added" | "changed" | "moved", node: DocNode) => ({
+      change,
+      node: node.ref,
+      type: node.type,
+    }))
+    const before = "<section id='a'><h2>A</h2><p>Before</p></section>"
+    const after = "<section id='a'><h2>A</h2><p>After</p></section>"
+    const first = changedPartsWithReceipt(
+      "before-cache-test",
+      before,
+      "text/html",
+      "after-cache-test",
+      after,
+      "text/html",
+      materialize,
+    )
+    const second = changedPartsWithReceipt(
+      "before-cache-test",
+      "ignored",
+      "text/html",
+      "after-cache-test",
+      "ignored",
+      "text/html",
+      () => {
+        throw new Error("cached receipt rematerialized")
+      },
+    )
+    expect(second).toBe(first)
+    expect(materialize).toHaveBeenCalledTimes(1)
+  })
+
   it("counts a full rewrite but materializes only the three returned bodies", () => {
     const materialize = vi.fn((change: "added" | "changed" | "moved", node: DocNode) => ({
       change,

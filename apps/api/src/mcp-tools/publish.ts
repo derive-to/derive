@@ -24,7 +24,7 @@ import { PROFILE_PLACEHOLDER_HTML } from "../brandprint-reference"
 import { afterPublish } from "../lib/after-publish"
 import { AGENT_WRITES_OFF, agentWritesOff } from "../lib/agent-writes"
 import { cleanPath, mergeBundleZip, zipBundleFiles } from "../lib/bundle"
-import { type ChangedParts, changedParts } from "../lib/changed-parts"
+import { type ChangedParts, changedParts, changedPartsWithReceipt } from "../lib/changed-parts"
 import {
   collectRender,
   RENDER_VARIANTS,
@@ -600,6 +600,7 @@ export function registerPublishTool(tc: ToolContext): void {
       let slideOpsApplied = 0
       let readbackBeforeSource: string | null = null
       let readbackBeforeContentType: string | null = null
+      let readbackBeforeBlobKey: string | null = null
       if (edits !== undefined || slide_ops !== undefined) {
         const field = slide_ops !== undefined ? "slide_ops" : "edits"
         if (edits !== undefined && slide_ops !== undefined)
@@ -613,9 +614,10 @@ export function registerPublishTool(tc: ToolContext): void {
           sourceText: ctx.sourceText,
           ...(readback
             ? {
-                captureSource: (source: string, contentType: string | null) => {
+                captureSource: (source: string, contentType: string | null, blobKey: string) => {
                   readbackBeforeSource = source
                   readbackBeforeContentType = contentType ?? "text/html"
+                  readbackBeforeBlobKey = blobKey
                 },
               }
             : {}),
@@ -926,12 +928,22 @@ export function registerPublishTool(tc: ToolContext): void {
             readbackBeforeContentType ?? previous?.content_type ?? "text/html"
           if (previousSource !== null) {
             try {
-              changedReadback = changedParts(
-                previousSource,
-                previousContentType,
-                content,
-                version.content_type ?? "text/html",
-              )
+              const previousBlobKey = readbackBeforeBlobKey ?? previous?.blob_key
+              changedReadback = previousBlobKey
+                ? changedPartsWithReceipt(
+                    previousBlobKey,
+                    previousSource,
+                    previousContentType,
+                    version.blob_key,
+                    content,
+                    version.content_type ?? "text/html",
+                  )
+                : changedParts(
+                    previousSource,
+                    previousContentType,
+                    content,
+                    version.content_type ?? "text/html",
+                  )
             } catch {
               changedReadback = {
                 count: 0,
