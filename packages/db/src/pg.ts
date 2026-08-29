@@ -720,6 +720,29 @@ export class PgMetaStore implements MetaStore {
     const rows = await this.db.select().from(artifact).where(eq(artifact.short_id, shortId))
     return rows[0] ?? null
   }
+  async artifactWithVersion(
+    shortId: string,
+    n?: number,
+  ): Promise<{ artifact: ArtifactRecord; version: VersionRecord | null } | null> {
+    const rows = await this.db
+      .select({ artifact, version })
+      .from(artifact)
+      .leftJoin(
+        version,
+        and(
+          eq(version.artifact_id, artifact.id),
+          n === undefined ? eq(version.n, artifact.current_version) : eq(version.n, n),
+        ),
+      )
+      .where(eq(artifact.short_id, shortId))
+    const row = rows[0]
+    return row
+      ? {
+          artifact: row.artifact as ArtifactRecord,
+          version: (row.version as VersionRecord | null) ?? null,
+        }
+      : null
+  }
   async getByShortIds(shortIds: string[]): Promise<ArtifactRecord[]> {
     if (shortIds.length === 0) return []
     return this.db.select().from(artifact).where(inArray(artifact.short_id, shortIds))

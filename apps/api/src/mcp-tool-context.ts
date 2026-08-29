@@ -72,7 +72,7 @@ export interface ToolContext extends ToolContextBase {
      *  back. Every other gate (workspace, membership, role) still applies.
      *  `public` reaches an artifact no seat covers when its world link is open, at
      *  viewer and flagged `public: true`. Content reads and lineage only. */
-    opts?: { allowRemoved?: boolean; public?: boolean },
+    opts?: { allowRemoved?: boolean; public?: boolean; artifact?: ArtifactRecord },
   ) => Promise<Reached | { error: string } | null>
   notFound: (shortId: string) => ReturnType<typeof err>
   wsArg: typeof wsArg
@@ -162,9 +162,13 @@ export function makeToolContext(base: ToolContextBase): ToolContext {
   const reach = async (
     shortId: string,
     wsRef?: string,
-    opts?: { allowRemoved?: boolean; public?: boolean },
+    opts?: { allowRemoved?: boolean; public?: boolean; artifact?: ArtifactRecord },
   ): Promise<Reached | { error: string } | null> => {
-    const a = await ctx.meta.getByShortId(shortId)
+    // A caller may already hold the record from a store fast path that joined it to
+    // another read. Match the public id before trusting it, then run every ordinary
+    // workspace, share, public-link, expiry, and takedown check below unchanged.
+    const a =
+      opts?.artifact?.short_id === shortId ? opts.artifact : await ctx.meta.getByShortId(shortId)
     if (!a) return null
     let org = defaultOrg
     let role = defaultRole

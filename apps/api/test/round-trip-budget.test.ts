@@ -264,7 +264,20 @@ describe("MCP tool calls stay within their round-trip budget", () => {
     )
     db.close()
     const blobs = new FsBlobStore(join(dir, `${name}-blobs`))
-    const { proxy, calls, reset } = countingStore(meta)
+    // Give the embedded fixture the hosted store's optional joined read. Its body composes
+    // the portable methods because local round trips are free; the counting wrapper sees
+    // the public fast path as one call, which pins the MCP handler's choice.
+    const fastMeta: MetaStore = Object.assign(meta, {
+      artifactWithVersion: async (shortId: string, n?: number) => {
+        const artifact = await meta.getByShortId(shortId)
+        if (!artifact) return null
+        return {
+          artifact,
+          version: await meta.getVersion(artifact.id, n ?? artifact.current_version),
+        }
+      },
+    })
+    const { proxy, calls, reset } = countingStore(fastMeta)
     const app = createApp({ meta: proxy, blobs, baseUrl: "http://derive.test", token: "tok" })
     return { app, blobs, meta, token: `tok_${name}`, calls, reset }
   }
@@ -430,10 +443,13 @@ describe("MCP tool calls stay within their round-trip budget", () => {
     // the REST budgets above. Raise deliberately, in the commit that explains why, never to
     // silence a red run.
     expect(catchUpCalls.length).toBeLessThanOrEqual(10)
-    // Three shared MCP bootstrap reads, then artifact resolution, the SQLite
-    // authorization fallback, and the version row. Postgres can batch grants with
-    // artifact resolution, but the embedded fallback remains the portable ceiling.
-    expect(readCalls.length).toBeLessThanOrEqual(6)
+    // Three shared MCP bootstrap reads, one joined artifact + selected-version envelope,
+    // then the SQLite authorization fallback. The hosted store performs the envelope as
+    // one statement. The handler must not quietly restore either serial lookup.
+    expect(readCalls).toContain("artifactWithVersion")
+    expect(readCalls).not.toContain("getByShortId")
+    expect(readCalls).not.toContain("getVersion")
+    expect(readCalls.length).toBeLessThanOrEqual(5)
     expect(reactCalls.length).toBeLessThanOrEqual(7)
     // set_state went 8 → 9 when resolving a thread started keeping its mirrored Slack cards in
     // line (lib/slack-comments.ts enqueueSlackThreadState). The added call is the
