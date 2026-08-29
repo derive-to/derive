@@ -446,7 +446,17 @@ describe("inspectStructuralDocument", () => {
     [
       "a region nested inside a node",
       '<div data-derive-region="outer" data-derive-layout="stack"><div data-derive-node="a"><div data-derive-region="inner" data-derive-layout="stack"><p data-derive-node="b"></p></div></div></div>',
-      /cannot be nested/,
+      /must declare data-derive-owner="a"/,
+    ],
+    [
+      "a top-level region with an owner",
+      '<div data-derive-region="outer" data-derive-layout="stack" data-derive-owner="a"></div>',
+      /cannot declare an owner/,
+    ],
+    [
+      "two child regions owned by one node",
+      '<div data-derive-region="outer" data-derive-layout="stack"><div data-derive-node="a"><div data-derive-region="one" data-derive-layout="stack" data-derive-owner="a"></div><div data-derive-region="two" data-derive-layout="stack" data-derive-owner="a"></div></div></div>',
+      /cannot own both/,
     ],
     [
       "unowned text",
@@ -479,6 +489,51 @@ describe("inspectStructuralDocument", () => {
 })
 
 describe("applyStructuralEdits", () => {
+  it("edits explicit child regions and their owning group independently", () => {
+    const html = `<section data-derive-region="slide" data-derive-layout="stack">
+  <header data-derive-node="title">Title</header>
+  <div data-derive-node="board">
+    <div data-derive-region="board-cards" data-derive-layout="stack" data-derive-owner="board">
+      <article data-derive-node="discover">Discover</article>
+      <article data-derive-node="move">Move</article>
+      <article data-derive-node="recover">Recover</article>
+    </div>
+  </div>
+</section>`
+    expect(inspectStructuralDocument(html).map(({ id }) => id)).toEqual(["slide", "board-cards"])
+
+    const inner = applyStructuralEdits(html, [
+      op({
+        op: "structural-order",
+        region: "board-cards",
+        nodes: ["recover", "discover", "move"],
+      }),
+    ])
+    expect(inner.html.indexOf("recover")).toBeLessThan(inner.html.indexOf("discover"))
+    expect(applyStructuralEdits(inner.html, inner.receipt.inverses).html).toBe(html)
+
+    const outer = applyStructuralEdits(html, [
+      op({ op: "structural-order", region: "slide", nodes: ["board", "title"] }),
+    ])
+    expect(outer.html.indexOf('data-derive-node="board"')).toBeLessThan(
+      outer.html.indexOf('data-derive-node="title"'),
+    )
+    expect(outer.html).toContain('data-derive-owner="board"')
+    expect(applyStructuralEdits(outer.html, outer.receipt.inverses).html).toBe(html)
+  })
+
+  it("lets a parent removal supersede its complete child region byte-for-byte", () => {
+    const html = `<div data-derive-region="root" data-derive-layout="stack">
+  <div data-derive-node="group"><div data-derive-region="children" data-derive-layout="stack" data-derive-owner="group"><p data-derive-node="a">A</p><p data-derive-node="b">B</p></div></div>
+  <p data-derive-node="tail">Tail</p>
+</div>`
+    const result = applyStructuralEdits(html, [
+      op({ op: "structural-remove", region: "root", node: "group" }),
+    ])
+    expect(result.html).not.toContain('data-derive-region="children"')
+    expect(applyStructuralEdits(result.html, result.receipt.inverses).html).toBe(html)
+  })
+
   it("keeps byte-carrying inverse operations off public edit surfaces", () => {
     expect(
       isStructuralUserEdit({

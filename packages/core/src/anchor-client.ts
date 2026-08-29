@@ -650,15 +650,16 @@ interface ElReg {
     ".derive-structure-grip{cursor:grab;touch-action:none;font-size:15px;letter-spacing:-2px;padding-right:10px}" +
     ".derive-structure-grip:active{cursor:grabbing}" +
     ".derive-structure-size[aria-pressed=true]{border-color:#4f46e5;background:#eef2ff;color:#3730a3}" +
+    ".derive-structure-parent{border-color:#c7d2fe;color:#4338ca}" +
     ".derive-structure-remove{border-color:#fecaca;color:#b91c1c}" +
     ".derive-structure-toast{position:fixed;left:50%;bottom:18px;display:none;align-items:center;gap:10px;transform:translateX(-50%);padding:8px 10px 8px 13px;border-radius:8px;background:#0f172a;color:#fff;box-shadow:0 8px 24px rgba(15,23,42,.3);z-index:2147483646;font:600 12px/1.2 system-ui,sans-serif;pointer-events:auto}" +
     ".derive-structure-toast button{height:26px;padding:0 8px;border:1px solid rgba(255,255,255,.35);border-radius:5px;background:transparent;color:#fff;font:700 11px/24px system-ui,sans-serif;cursor:pointer}" +
     ".derive-structure-button:focus-visible,.derive-structure-toast button:focus-visible{outline:2px solid #4f46e5;outline-offset:2px}" +
     ".derive-structure-dragging{opacity:.72;box-shadow:0 12px 28px rgba(15,23,42,.2)}" +
     /* On a narrow canvas the contextual controls become a predictable editing shelf.
-       Two rows keep every action visible without causing document overflow, and the
-       larger targets are comfortable for touch as well as keyboard focus. */
-    "@media(max-width:640px){html.derive-structure-safe body{padding-bottom:calc(var(--derive-structure-body-padding-base,0px) + 118px + env(safe-area-inset-bottom))!important}.derive-structure-toolbar{position:fixed;left:8px;right:8px;top:auto!important;bottom:calc(8px + env(safe-area-inset-bottom))!important;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;max-width:none;padding:6px}.derive-structure-label{display:none}.derive-structure-button{width:100%;height:44px;min-width:0;padding:0 6px;font:650 12px/42px system-ui,sans-serif}.derive-structure-grip{padding-right:8px}.derive-structure-toast{bottom:calc(118px + env(safe-area-inset-bottom));max-width:calc(100vw - 16px)}}" +
+       Root selections use two rows; a nested selection reserves a third for Parent.
+       Every action stays visible without document overflow, with touch-sized targets. */
+    "@media(max-width:640px){html.derive-structure-safe body{padding-bottom:calc(var(--derive-structure-body-padding-base,0px) + 118px + env(safe-area-inset-bottom))!important}html.derive-structure-parent-safe body{padding-bottom:calc(var(--derive-structure-body-padding-base,0px) + 166px + env(safe-area-inset-bottom))!important}.derive-structure-toolbar{position:fixed;left:8px;right:8px;top:auto!important;bottom:calc(8px + env(safe-area-inset-bottom))!important;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;max-width:none;padding:6px}.derive-structure-label{display:none}.derive-structure-button{width:100%;height:44px;min-width:0;padding:0 6px;font:650 12px/42px system-ui,sans-serif}.derive-structure-grip{padding-right:8px}.derive-structure-toast{bottom:calc(118px + env(safe-area-inset-bottom));max-width:calc(100vw - 16px)}html.derive-structure-parent-safe .derive-structure-toast{bottom:calc(166px + env(safe-area-inset-bottom))}}" +
     "@media(prefers-reduced-motion:reduce){.derive-structure-dragging{transition:none!important;animation:none!important}}" +
     /* ...and again derived from the block's OWN text colour, which by definition
        contrasts with whatever the artifact painted behind it. The slate wash above
@@ -3111,6 +3112,7 @@ interface ElReg {
     id: string
     prefix: StructurePrefix
     nodes: StructureNode[]
+    owner: StructureNode | null
     origOrder: string[]
   }
   let structureRegions: StructureRegion[] = []
@@ -3140,6 +3142,11 @@ interface ElReg {
   structureLabel.className = "derive-structure-label"
   const structureEarlier = structureButton("↑", "Move earlier (Option+Up)")
   const structureLater = structureButton("↓", "Move later (Option+Down)")
+  const structureParent = structureButton(
+    "Parent",
+    "Select containing group (Escape)",
+    "derive-structure-parent",
+  )
   const structureAuto = structureButton("Auto", "Use authored size", "derive-structure-size")
   const structureCompact = structureButton("S", "Compact size", "derive-structure-size")
   const structureStandard = structureButton("M", "Standard size", "derive-structure-size")
@@ -3154,6 +3161,7 @@ interface ElReg {
     structureLabel,
     structureEarlier,
     structureLater,
+    structureParent,
     structureAuto,
     structureCompact,
     structureStandard,
@@ -3178,6 +3186,13 @@ interface ElReg {
     )
   const regionForStructureNode = (node: StructureNode): StructureRegion | null =>
     structureRegions.find((region) => region.nodes.includes(node)) ?? null
+  const parentStructureNode = (node: StructureNode): StructureNode | null =>
+    regionForStructureNode(node)?.owner ?? null
+  const structureRegionExpectedDetached = (region: StructureRegion): boolean => {
+    for (let owner = region.owner; owner; owner = regionForStructureNode(owner)?.owner ?? null)
+      if (structureExpectedRemoved.has(owner)) return true
+    return false
+  }
   const connectedStructureNodes = (region: StructureRegion): StructureNode[] => {
     const byEl = new Map(region.nodes.map((node) => [node.el, node]))
     return sourceChildren(region.el)
@@ -3220,10 +3235,14 @@ interface ElReg {
     return rect.right > 0 && rect.left < viewportWidth
   }
   const structureIntegrityValid = (region: StructureRegion): boolean => {
+    const ownerEl = region.el.parentElement?.closest(structureNodeSelector)
     if (
       !document.contains(region.el) ||
       region.el.getAttribute(structureAttribute(region.prefix, "region")) !== region.id ||
-      region.el.getAttribute(structureAttribute(region.prefix, "layout")) !== "stack"
+      region.el.getAttribute(structureAttribute(region.prefix, "layout")) !== "stack" ||
+      region.el.getAttribute(structureAttribute(region.prefix, "owner")) !==
+        (region.owner?.id ?? null) ||
+      (region.owner?.el ?? null) !== (ownerEl instanceof HTMLElement ? ownerEl : null)
     )
       return false
     const known = new Set(region.nodes.map((node) => node.el))
@@ -3239,10 +3258,17 @@ interface ElReg {
     return true
   }
   const structureDocumentIntegrityValid = (): boolean => {
-    const current = Array.from(document.querySelectorAll(structureRegionSelector))
+    const currentRegions = Array.from(document.querySelectorAll(structureRegionSelector))
+    const currentNodes = Array.from(document.querySelectorAll(structureNodeSelector))
+    const expected = structureRegions.filter((region) => !structureRegionExpectedDetached(region))
+    const expectedNodes = expected.flatMap((region) =>
+      region.nodes.filter((node) => !structureExpectedRemoved.has(node)).map((node) => node.el),
+    )
     return (
-      current.length === structureRegions.length &&
-      structureRegions.every((region) => current.includes(region.el))
+      currentRegions.length === expected.length &&
+      expected.every((region) => currentRegions.includes(region.el)) &&
+      currentNodes.length === expectedNodes.length &&
+      expectedNodes.every((node) => currentNodes.includes(node))
     )
   }
   const structuralNodeAt = (el: Element | null): StructureNode | null => {
@@ -3276,7 +3302,6 @@ interface ElReg {
       const prefix: StructurePrefix = hasRuntime ? "data-derive-runtime" : "data-derive"
       if (
         hasCanonical === hasRuntime ||
-        regionEl.closest(structureNodeSelector) ||
         regionEl.getAttribute(structureAttribute(prefix, "layout")) !== "stack"
       ) {
         invalid = true
@@ -3301,11 +3326,7 @@ interface ElReg {
           (child) => child.nodeType === Node.TEXT_NODE && !!child.nodeValue?.trim(),
         ) ||
         unsafeComment ||
-        children.some(
-          (child) =>
-            !child.hasAttribute(structureAttribute(prefix, "node")) ||
-            !!child.querySelector(structureNodeSelector),
-        )
+        children.some((child) => !child.hasAttribute(structureAttribute(prefix, "node")))
       ) {
         invalid = true
         continue
@@ -3338,16 +3359,45 @@ interface ElReg {
         continue
       }
       regionIds.add(id)
-      regions.push({ el: regionEl, id, prefix, nodes, origOrder: nodes.map((node) => node.id) })
+      regions.push({
+        el: regionEl,
+        id,
+        prefix,
+        nodes,
+        owner: null,
+        origOrder: nodes.map((node) => node.id),
+      })
     }
     for (const node of document.querySelectorAll(structureNodeSelector))
       if (!handledNodes.has(node)) invalid = true
+    const nodeByEl = new Map(
+      regions.flatMap((region) => region.nodes.map((node) => [node.el, node] as const)),
+    )
+    const claimedOwners = new Set<StructureNode>()
+    for (const region of regions) {
+      const ownerEl = region.el.parentElement?.closest(structureNodeSelector)
+      const owner = ownerEl instanceof HTMLElement ? (nodeByEl.get(ownerEl) ?? null) : null
+      const declared = region.el.getAttribute(structureAttribute(region.prefix, "owner"))
+      if (
+        (owner === null && declared !== null) ||
+        (owner !== null && declared !== owner.id) ||
+        (owner !== null && claimedOwners.has(owner))
+      ) {
+        invalid = true
+        continue
+      }
+      if (owner) {
+        claimedOwners.add(owner)
+        region.owner = owner
+      }
+    }
     return invalid ? [] : regions
   }
 
   const structureDirtyCount = (): number => {
     let dirty = 0
     for (const region of structureRegions) {
+      if (structureRegionExpectedDetached(region)) continue
       const current = connectedStructureNodes(region)
       const currentIds = current.map((node) => node.id)
       const currentSet = new Set(currentIds)
@@ -3360,25 +3410,30 @@ interface ElReg {
     return dirty
   }
 
-  const syncStructureSafeArea = () => {
+  const syncStructureSafeArea = (
+    hasParent = !!structureSelected && !!parentStructureNode(structureSelected),
+  ) => {
     const root = document.documentElement
     const body = document.body
     const shouldReserve = !!body && editOn && !!structureSelected && innerWidth <= 640
-    if (shouldReserve === structureSafeAreaOn) return
-    structureSafeAreaOn = shouldReserve
-    if (shouldReserve && body) {
-      const base = Number.parseFloat(getComputedStyle(body).paddingBottom) || 0
-      root.style.setProperty("--derive-structure-body-padding-base", `${base}px`)
-      root.classList.add("derive-structure-safe")
-    } else {
-      root.classList.remove("derive-structure-safe")
-      root.style.removeProperty("--derive-structure-body-padding-base")
+    if (shouldReserve !== structureSafeAreaOn) {
+      structureSafeAreaOn = shouldReserve
+      if (shouldReserve && body) {
+        const base = Number.parseFloat(getComputedStyle(body).paddingBottom) || 0
+        root.style.setProperty("--derive-structure-body-padding-base", `${base}px`)
+        root.classList.add("derive-structure-safe")
+      } else {
+        root.classList.remove("derive-structure-safe")
+        root.style.removeProperty("--derive-structure-body-padding-base")
+      }
     }
+    root.classList.toggle("derive-structure-parent-safe", shouldReserve && hasParent)
   }
 
   const paintStructureUi = () => {
-    syncStructureSafeArea()
     const selected = structureSelected
+    const parent = selected ? parentStructureNode(selected) : null
+    syncStructureSafeArea(!!parent)
     if (!editOn || !selected || !structureNodeAvailable(selected)) {
       structureBox.style.display = "none"
       return
@@ -3403,6 +3458,7 @@ interface ElReg {
     structureBox.style.height = `${rect.height}px`
     structureBox.classList.toggle("derive-structure-below", rect.top < 54)
     structureLabel.textContent = selected.id
+    structureParent.hidden = !parent
     structureEarlier.disabled = index <= 0
     structureLater.disabled = index < 0 || index >= nodes.length - 1
     structureAuto.setAttribute("aria-pressed", String(size === null))
@@ -3436,6 +3492,12 @@ interface ElReg {
   }
   dismissStructureUi = () => {
     if (!structureSelected) return false
+    const parent = parentStructureNode(structureSelected)
+    if (parent) {
+      selectStructure(parent)
+      parent.el.focus({ preventScroll: true })
+      return true
+    }
     selectStructure(null)
     return true
   }
@@ -3609,6 +3671,13 @@ interface ElReg {
   structureLater.addEventListener("click", (e) => {
     e.stopPropagation()
     moveStructure(1)
+  })
+  structureParent.addEventListener("click", (e) => {
+    e.stopPropagation()
+    const parent = structureSelected ? parentStructureNode(structureSelected) : null
+    if (!parent) return
+    selectStructure(parent)
+    parent.el.focus({ preventScroll: true })
   })
   for (const [button, size] of [
     [structureAuto, null],
@@ -4638,6 +4707,7 @@ interface ElReg {
     const edits: WireStructuralEdit[] = []
     if (!structureDocumentIntegrityValid()) return { edits, invalid: true }
     for (const region of structureRegions) {
+      if (structureRegionExpectedDetached(region)) continue
       if (!structureIntegrityValid(region)) return { edits: [], invalid: true }
       const current = connectedStructureNodes(region)
       const ids = current.map((node) => node.id)

@@ -132,9 +132,31 @@ the region, and only its direct authored children are nodes:
 Keep every node id unique and stable for the life of the deck. When adding a slide, derive the
 region and node prefixes from that slide's next-unused `data-derive-slide` identity. A node owns
 its complete subtree: a chart, card group, or text-and-visual composition can stay atomic inside
-one direct child. Do not put a structural region inside a node, nest structural nodes, or leave
-meaningful text/elements between the region's nodes. Those shapes fail closed instead of guessing
-which source bytes belong to a move or removal.
+one direct child.
+
+When a group and the items inside it should both move, give the group one explicit child region.
+The child region names its owning node with `data-derive-owner`; its own nodes remain direct
+children:
+
+```html
+<div data-derive-node="board" data-derive-kind="group">
+  <h3>Board</h3>
+  <div data-derive-region="board-cards" data-derive-layout="stack"
+    data-derive-owner="board">
+    <article data-derive-node="discover">Discover</article>
+    <article data-derive-node="move">Move</article>
+    <article data-derive-node="recover">Recover</article>
+  </div>
+</div>
+```
+
+A click selects the deepest item. **Parent** (or Escape) moves selection up to its owning group;
+clicking a child moves back down. Reordering the group carries its whole subtree, while reordering
+cards stays inside `board-cards`. Removing a parent supersedes pending edits inside that removed
+subtree; Undo reconnects the same live subtree and its child history. A node may own only one child
+region. Undeclared nesting, mismatched owners, structural nodes outside a region, and meaningful
+content between a region's direct nodes fail closed instead of guessing which source bytes belong
+to a move or removal.
 
 Reorder and remove work from these identities without serializing the preview DOM. Resizing uses
 the authored `compact`, `standard`, and `full` presets, so the deck must define their visual

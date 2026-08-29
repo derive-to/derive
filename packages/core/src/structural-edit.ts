@@ -3,8 +3,10 @@
  *
  * Structural editing is intentionally opt-in. Only direct children with stable
  * `data-derive-node` identities inside a `data-derive-region` whose layout is
- * `stack` can be changed. Every operation edits the original source string; this
- * module never serializes a browser DOM.
+ * `stack` can be changed. A node may explicitly own one nested region through
+ * `data-derive-owner`, forming a verified hierarchy without changing the local
+ * operation grammar. Every operation edits the original source string; this module
+ * never serializes a browser DOM.
  */
 
 import { nextUnusedSlideId, sliceSlides } from "./decks"
@@ -125,11 +127,13 @@ const SIZES = new Set<StructuralSize>(["compact", "standard", "full"])
 const STRUCTURAL_ATTRIBUTES = [
   "data-derive-region",
   "data-derive-layout",
+  "data-derive-owner",
   "data-derive-node",
   "data-derive-kind",
   "data-derive-size",
   "data-derive-runtime-region",
   "data-derive-runtime-layout",
+  "data-derive-runtime-owner",
   "data-derive-runtime-node",
   "data-derive-runtime-kind",
   "data-derive-runtime-size",
@@ -202,6 +206,7 @@ interface OwnedNode extends StructuralNodeInspection {
 
 interface OwnedRegion extends StructuralRegionInspection {
   element: SourceElement
+  ownerNodeId: string | null
   prefixEnd: number
   ownedNodes: OwnedNode[]
 }
@@ -253,15 +258,29 @@ const inspect = (html: string): Inspection => {
       fail("invalid-structure", `Structural region ${id} cannot also be a structural node.`)
     if (!element.explicitlyClosed || element.tag.selfClosing)
       fail("invalid-structure", `Structural region ${id} needs an explicit matching close tag.`)
+    let ownerNodeId: string | null = null
     for (
       let ancestor =
         element.parentStart === null ? undefined : elementByStart.get(element.parentStart);
       ancestor;
       ancestor =
         ancestor.parentStart === null ? undefined : elementByStart.get(ancestor.parentStart)
-    )
-      if (hasAttr(ancestor.tag.attrs, "data-derive-node"))
-        fail("invalid-structure", `Structural region ${id} cannot be nested inside a node.`)
+    ) {
+      if (!hasAttr(ancestor.tag.attrs, "data-derive-node")) continue
+      ownerNodeId = identity(
+        exactlyOne(ancestor.tag, "data-derive-node", `Owner of structural region ${id}`),
+        `Owner of structural region ${id}`,
+      )
+      break
+    }
+    const declaredOwner = exactlyOne(element.tag, "data-derive-owner", `Structural region ${id}`)
+    if (ownerNodeId === null && declaredOwner !== null)
+      fail("invalid-structure", `Top-level structural region ${id} cannot declare an owner.`)
+    if (ownerNodeId !== null && declaredOwner !== ownerNodeId)
+      fail(
+        "invalid-structure",
+        `Structural region ${id} must declare data-derive-owner="${ownerNodeId}".`,
+      )
     const layout = exactlyOne(element.tag, "data-derive-layout", `Structural region ${id}`)
     if (layout !== "stack")
       fail("invalid-structure", `Structural region ${id} must declare data-derive-layout="stack".`)
@@ -271,6 +290,7 @@ const inspect = (html: string): Inspection => {
       nodes: [],
       ownedNodes: [],
       element,
+      ownerNodeId,
       prefixEnd: element.closeStart,
     }
     byRegion.set(id, region)
@@ -309,6 +329,23 @@ const inspect = (html: string): Inspection => {
       chunkEnd: element.end,
     }
     region.ownedNodes.push(node)
+  }
+
+  const ownedRegionByNode = new Map<string, string>()
+  for (const region of byRegion.values()) {
+    if (region.ownerNodeId === null) continue
+    if (!nodeIds.has(region.ownerNodeId))
+      fail(
+        "invalid-structure",
+        `Structural region ${region.id} names missing owner ${region.ownerNodeId}.`,
+      )
+    const existing = ownedRegionByNode.get(region.ownerNodeId)
+    if (existing)
+      fail(
+        "invalid-structure",
+        `Structural node ${region.ownerNodeId} cannot own both ${existing} and ${region.id}.`,
+      )
+    ownedRegionByNode.set(region.ownerNodeId, region.id)
   }
 
   for (const region of byRegion.values()) {

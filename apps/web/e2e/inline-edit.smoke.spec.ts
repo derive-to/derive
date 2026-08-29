@@ -20,6 +20,24 @@ const DOC = "<h1>Runbook</h1><p id=one>First paragraph.</p><p id=two>Second para
 const RESIZE_DOC = `<h1>Layout</h1>
 <img id="hero" alt="Hero" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='90'%3E%3Crect width='160' height='90' fill='%2364748b'/%3E%3C/svg%3E" style="display:block;width:160px;height:90px">
 <div id="summary-box" data-derive-resizable style="width:220px;height:110px"><p>Summary box.</p></div>`
+const HIERARCHY_DOC = `<!doctype html><html><head><style>
+body{font-family:sans-serif}.root{display:flex;flex-direction:column;gap:12px}.board{padding:16px;border:2px solid #334155}.cards{display:flex;gap:10px}.card{width:120px;padding:12px;border:1px solid #94a3b8}
+[data-derive-region][data-derive-layout="stack"]>[data-derive-node][data-derive-size="compact"]{width:50%!important;max-width:none!important;box-sizing:border-box!important}
+[data-derive-region][data-derive-layout="stack"]>[data-derive-node][data-derive-size="standard"]{width:75%!important;max-width:none!important;box-sizing:border-box!important}
+[data-derive-region][data-derive-layout="stack"]>[data-derive-node][data-derive-size="full"]{width:100%!important;max-width:none!important;box-sizing:border-box!important}
+</style></head><body>
+<main class="root" data-derive-region="page" data-derive-layout="stack">
+  <h1 id="title" data-derive-node="title">Hierarchy</h1>
+  <section id="board" class="board" data-derive-node="board" data-derive-kind="group">
+    <h2>Three cards</h2>
+    <div id="cards" class="cards" data-derive-region="board-cards" data-derive-layout="stack" data-derive-owner="board">
+      <article id="card-a" class="card" data-derive-node="discover">Discover</article>
+      <article id="card-b" class="card" data-derive-node="move">Move</article>
+      <article id="card-c" class="card" data-derive-node="recover">Recover</article>
+    </div>
+  </section>
+  <p id="footer" data-derive-node="footer">Recovery stays available.</p>
+</main></body></html>`
 
 /** Publish an HTML artifact and open it with the workbench interactive. */
 async function seed(page: Page) {
@@ -376,6 +394,71 @@ test("resize an image and box, then undo/redo and save", async ({ owner }) => {
   expect(src).toContain(
     '<div id="summary-box" data-derive-resizable style="width: 228px; height: 118px">',
   )
+})
+
+test("nested cards and their owning group move independently, undo, and save safely", async ({
+  owner,
+}) => {
+  const shortId = await publishArtifact(owner, "hierarchy.html", HIERARCHY_DOC, "text/html")
+  await openArtifact(owner, shortId)
+  await enterEditMode(owner)
+
+  const frame = doc(owner)
+  const cards = frame.locator("#cards > [data-derive-node]")
+  await frame.locator("#card-a").click()
+  const parent = frame.getByRole("button", { name: "Select containing group (Escape)" })
+  await expect(parent).toBeVisible()
+  await frame.getByRole("button", { name: "Move later (Option+Down)" }).click()
+  await expect(cards.nth(0)).toHaveAttribute("id", "card-b")
+  await expect(cards.nth(1)).toHaveAttribute("id", "card-a")
+
+  // The explicit level control selects the board itself; its next move operates in
+  // the page region and carries the already-reordered child region along unchanged.
+  await parent.click()
+  await expect(parent).toBeHidden()
+  await frame.getByRole("button", { name: "Move earlier (Option+Up)" }).click()
+  expect(
+    await frame.locator("#board").evaluate((el) => el.parentElement?.firstElementChild === el),
+  ).toBe(true)
+
+  // Removing a parent temporarily disconnects its child region. That is expected,
+  // not corruption: one shared Undo restores the complete live subtree and both
+  // region-local moves remain representable.
+  await frame.getByRole("button", { name: "Remove element (Delete)" }).click()
+  await expect(frame.locator("#board")).toHaveCount(0)
+  await owner.getByTestId("inline-edit-undo").click()
+  await expect(frame.locator("#board")).toHaveCount(1)
+  await expect(cards.nth(0)).toHaveAttribute("id", "card-b")
+
+  await owner.getByTestId("inline-edit-save").click()
+  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+  const saved = await contentOf(owner, shortId)
+  expect(saved.indexOf('data-derive-node="board"')).toBeLessThan(
+    saved.indexOf('data-derive-node="title"'),
+  )
+  expect(saved.indexOf('data-derive-node="move"')).toBeLessThan(
+    saved.indexOf('data-derive-node="discover"'),
+  )
+  expect(saved).toContain('data-derive-owner="board"')
+
+  // Discard walks both levels back to the just-saved hierarchy without publishing.
+  await enterEditMode(owner)
+  await frame.locator("#card-b").click()
+  await frame.getByRole("button", { name: "Move later (Option+Down)" }).click()
+  await expect(cards.nth(0)).toHaveAttribute("id", "card-a")
+  await owner.getByTestId("inline-edit-discard").click()
+  await expect(cards.nth(0)).toHaveAttribute("id", "card-b")
+
+  // If the final intent removes the parent, child-region changes are superseded by
+  // that atomic subtree removal instead of producing a dangling operation.
+  await enterEditMode(owner)
+  await frame.locator("#card-b").click()
+  await frame.getByRole("button", { name: "Move later (Option+Down)" }).click()
+  await frame.getByRole("button", { name: "Select containing group (Escape)" }).click()
+  await frame.getByRole("button", { name: "Remove element (Delete)" }).click()
+  await owner.getByTestId("inline-edit-save").click()
+  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+  expect(await contentOf(owner, shortId)).not.toContain('data-derive-node="board"')
 })
 
 test("set exact dimensions, constrain a box, and reset to the authored size", async ({ owner }) => {
