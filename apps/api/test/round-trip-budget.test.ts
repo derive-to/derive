@@ -233,9 +233,8 @@ describe("hot read paths stay within their round-trip budget", () => {
  * same app, not a separate runtime). This closes that "to measure" gap with real counts,
  * using the shared countingStore helper, same as the REST budgets above.
  *
- * `catch_up` and `comment` are the two tools this branch already touched (the 3-listComments
- * merge in catch-up.ts, the threadId filter in comment.ts's react/set_state) — this is also
- * the regression guard for that work at the MCP boundary specifically, not just the REST one.
+ * `read`, `catch_up`, and `comment` are the tools this performance work touches. This is
+ * their regression guard at the MCP boundary specifically, not only at the REST boundary.
  */
 describe("MCP tool calls stay within their round-trip budget", () => {
   const dir = mkdtempSync(join(tmpdir(), "derive-mcp-budget-"))
@@ -267,7 +266,7 @@ describe("MCP tool calls stay within their round-trip budget", () => {
     const blobs = new FsBlobStore(join(dir, `${name}-blobs`))
     const { proxy, calls, reset } = countingStore(meta)
     const app = createApp({ meta: proxy, blobs, baseUrl: "http://derive.test", token: "tok" })
-    return { app, meta, token: `tok_${name}`, calls, reset }
+    return { app, blobs, meta, token: `tok_${name}`, calls, reset }
   }
 
   type App = ReturnType<typeof createApp>
@@ -303,8 +302,8 @@ describe("MCP tool calls stay within their round-trip budget", () => {
   const call = (app: App, token: string, name: string, args: Record<string, unknown>, id = 2) =>
     rpc(app, token, { jsonrpc: "2.0", id, method: "tools/call", params: { name, arguments: args } })
 
-  it("catch_up(short_id) and comment(react/set_state) — measured, not inferred", async () => {
-    const { app, meta, token, calls, reset } = appWithGrant(
+  it("read, catch_up, and comment — measured, not inferred", async () => {
+    const { app, blobs, meta, token, calls, reset } = appWithGrant(
       "rt",
       "openid derive:read derive:publish",
     )
@@ -330,9 +329,11 @@ describe("MCP tool calls stay within their round-trip budget", () => {
       kind: "file",
       spa: 0,
     })
+    const source = "# Budget read\n\nBody text for the focused read budget.\n"
+    const blobKey = await blobs.put(new TextEncoder().encode(source))
     await meta.addVersion(art.id, {
       id: "v1",
-      blob_key: "blob_rt",
+      blob_key: blobKey,
       content_type: "text/markdown",
       author: "owner",
       message: "v1",
@@ -378,6 +379,11 @@ describe("MCP tool calls stay within their round-trip budget", () => {
     const catchUpCalls = [...calls]
 
     reset()
+    const readRes = await call(app, token, "read", { short_id: "rttest01", focus: "focused read" })
+    expect(readRes?.result?.isError, JSON.stringify(readRes)).not.toBe(true)
+    const readCalls = [...calls]
+
+    reset()
     const reactRes = await call(
       app,
       token,
@@ -403,6 +409,7 @@ describe("MCP tool calls stay within their round-trip budget", () => {
     // is what you read when a budget below moves and you need to see WHICH call was added.
     console.log(
       `MCP round trips — catch_up(short_id): ${catchUpCalls.length} [${catchUpCalls.join(", ")}]\n` +
+        `MCP round trips — read(focus): ${readCalls.length} [${readCalls.join(", ")}]\n` +
         `MCP round trips — comment(react): ${reactCalls.length} [${reactCalls.join(", ")}]\n` +
         `MCP round trips — comment(set_state): ${resolveCalls.length} [${resolveCalls.join(", ")}]`,
     )
@@ -423,6 +430,10 @@ describe("MCP tool calls stay within their round-trip budget", () => {
     // the REST budgets above. Raise deliberately, in the commit that explains why, never to
     // silence a red run.
     expect(catchUpCalls.length).toBeLessThanOrEqual(10)
+    // Three shared MCP bootstrap reads, then artifact resolution, the SQLite
+    // authorization fallback, and the version row. Postgres can batch grants with
+    // artifact resolution, but the embedded fallback remains the portable ceiling.
+    expect(readCalls.length).toBeLessThanOrEqual(6)
     expect(reactCalls.length).toBeLessThanOrEqual(7)
     // set_state went 8 → 9 when resolving a thread started keeping its mirrored Slack cards in
     // line (lib/slack-comments.ts enqueueSlackThreadState). The added call is the
