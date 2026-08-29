@@ -132,6 +132,21 @@ const clipFocusBody = (body: string): string =>
     ? `${body.slice(0, FOCUS_BODY_MAX)}\n\n…[truncated ${body.length - FOCUS_BODY_MAX} chars — read this node for the full clipped part]`
     : body
 
+// MCP is stateless: mcp.ts builds a fresh server and registers its tools for every
+// request. Prepared caches therefore live at module scope, beside the Worker isolate,
+// rather than inside registerReadTool where the next request could never hit them.
+// Keys are immutable content hashes and authorization still runs before any lookup.
+const structures = new WeightedLruCache<DocMap>({
+  maxBytes: 8 * 1024 * 1024,
+  maxEntries: 64,
+  maxEntryBytes: 2 * 1024 * 1024,
+})
+const focusIndexes = new WeightedLruCache<FocusIndex>({
+  maxBytes: 8 * 1024 * 1024,
+  maxEntries: 64,
+  maxEntryBytes: 3 * 1024 * 1024,
+})
+
 /** Why a fact is absent, said accurately — the cases the old single message merged.
  *  A `$name` can never be embedded (the author grammar rejects `$`), so "embed a block"
  *  is impossible advice for it; a bundle can't carry facts at all; everything else is the
@@ -224,23 +239,10 @@ export function registerReadTool(tc: ToolContext): void {
     resolveWs,
     askableContexts,
   } = tc
-  // A source blob is immutable. Keep its parsed structure beside the hot source-text
-  // cache so repeated focus and node reads do not rebuild thousands of node objects.
-  // This cache is deliberately smaller: the source text remains the useful primary copy.
-  const structures = new WeightedLruCache<DocMap>({
-    maxBytes: 8 * 1024 * 1024,
-    maxEntries: 64,
-    maxEntryBytes: 2 * 1024 * 1024,
-  })
   // One fixed-size Bloom filter per node. It rejects nodes that cannot contain a
   // focused literal; the ordinary exact matcher verifies every candidate. This is
   // separate from the source cache so a large, rarely searched artifact cannot crowd
   // out the source text that all read modes share.
-  const focusIndexes = new WeightedLruCache<FocusIndex>({
-    maxBytes: 8 * 1024 * 1024,
-    maxEntries: 64,
-    maxEntryBytes: 3 * 1024 * 1024,
-  })
   const structureOf = (v: VersionRecord, source: string, contentType: string): DocMap => {
     const key = `${contentType}:${v.blob_key}`
     const cached = structures.get(key)
