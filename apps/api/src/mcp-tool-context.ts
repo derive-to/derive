@@ -34,6 +34,8 @@ export interface ToolContextBase {
   scopeForCap: Role
   registered: boolean
   boundWorkspaces: string[]
+  /** Live OAuth workspace memberships already read with the grant. */
+  grantWorkspaces?: { id: string; name: string; role: Role }[]
   /** The OAuth client behind this connection ("" for a registered dk_agt_ token) —
    *  provenance stamped into tokens minted by `stage target:'api'`. */
   clientId: string
@@ -72,7 +74,7 @@ export interface ToolContext extends ToolContextBase {
      *  back. Every other gate (workspace, membership, role) still applies.
      *  `public` reaches an artifact no seat covers when its world link is open, at
      *  viewer and flagged `public: true`. Content reads and lineage only. */
-    opts?: { allowRemoved?: boolean; public?: boolean },
+    opts?: { allowRemoved?: boolean; public?: boolean; artifact?: ArtifactRecord },
   ) => Promise<Reached | { error: string } | null>
   notFound: (shortId: string) => ReturnType<typeof err>
   wsArg: typeof wsArg
@@ -103,6 +105,7 @@ export function makeToolContext(base: ToolContextBase): ToolContext {
     scopeForCap,
     registered,
     boundWorkspaces,
+    grantWorkspaces,
     defaultOrg,
     defaultRole,
     pendingRequests,
@@ -113,7 +116,7 @@ export function makeToolContext(base: ToolContextBase): ToolContext {
   // of truth for what list_workspaces shows and what the `workspace` arg accepts.
   const grantedWorkspaces = async (): Promise<{ id: string; name: string; role: Role }[]> => {
     if (!ownerId) return []
-    const all = await ctx.meta.listWorkspaces(ownerId)
+    const all = grantWorkspaces ?? (await ctx.meta.listWorkspaces(ownerId))
     return boundWorkspaces.length ? all.filter((w) => boundWorkspaces.includes(w.id)) : all
   }
   // Is an org within this grant's scope? (An unscoped grant reaches all.)
@@ -162,9 +165,13 @@ export function makeToolContext(base: ToolContextBase): ToolContext {
   const reach = async (
     shortId: string,
     wsRef?: string,
-    opts?: { allowRemoved?: boolean; public?: boolean },
+    opts?: { allowRemoved?: boolean; public?: boolean; artifact?: ArtifactRecord },
   ): Promise<Reached | { error: string } | null> => {
-    const a = await ctx.meta.getByShortId(shortId)
+    // A caller may already hold the record from a store fast path that joined it to
+    // another read. Match the public id before trusting it, then run every ordinary
+    // workspace, share, public-link, expiry, and takedown check below unchanged.
+    const a =
+      opts?.artifact?.short_id === shortId ? opts.artifact : await ctx.meta.getByShortId(shortId)
     if (!a) return null
     let org = defaultOrg
     let role = defaultRole
@@ -181,7 +188,11 @@ export function makeToolContext(base: ToolContextBase): ToolContext {
       // Auto-roam to the doc's workspace only if it's within this grant and the
       // owner is a member. A doc in a workspace outside the grant reads as not found.
       const m =
-        ownerId && inGrant(a.org_id) ? await ctx.meta.getMembership(a.org_id, ownerId) : null
+        ownerId && inGrant(a.org_id)
+          ? grantWorkspaces
+            ? (grantWorkspaces.find((workspace) => workspace.id === a.org_id) ?? null)
+            : await ctx.meta.getMembership(a.org_id, ownerId)
+          : null
       if (m) {
         org = a.org_id
         role = capRole(scopeForCap, m.role)

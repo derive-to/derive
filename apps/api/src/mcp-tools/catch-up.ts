@@ -1,5 +1,20 @@
-import { assertedOnly, diffLines, factDeltas, formatDiff, toMarkdown } from "@derive/core"
+import {
+  assertedOnly,
+  type CommentRecord,
+  diffLines,
+  factDeltas,
+  formatDiff,
+  type ReviewRoundRecord,
+  toMarkdown,
+  type VersionDataRecord,
+  type VersionRecord,
+} from "@derive/core"
 import { z } from "zod"
+import {
+  type ChangedParts,
+  changedPartsWithReceipt,
+  getChangedPartsReceipt,
+} from "../lib/changed-parts"
 import { clip } from "../lib/clip"
 import type { ToolContext } from "../mcp-tool-context"
 import {
@@ -45,11 +60,9 @@ export function registerCatchUpTool(tc: ToolContext): void {
             "Return ONLY this state's comment threads (the feedback queue) instead of the delta.",
           ),
         response_format: z
-          .enum(["summary", "detailed"])
+          .enum(["summary", "detailed", "parts"])
           .optional()
-          .describe(
-            "'summary' (default, token-light) omits the line diff; 'detailed' includes it.",
-          ),
+          .describe("summary (default) | detailed | parts."),
         wait: z.coerce
           .number()
           .int()
@@ -125,17 +138,49 @@ export function registerCatchUpTool(tc: ToolContext): void {
       const head = a.current_version
       const to = Math.min(head, Math.max(1, to_version ?? head))
       const since = Math.min(to, Math.max(1, since_version ?? to - 1))
-      const history = await ctx.meta.listVersions(a.id)
+      // These rows are independent once reach has authorized the artifact. Fetch them in
+      // one latency wave instead of paying four serial edge round trips before the response
+      // can be assembled. Stores keep the same methods and response contract.
+      const snapshot = ctx.meta.catchUpRead ? await ctx.meta.catchUpRead(a.id, since, to) : null
+      const [history, allComments, rounds, dataRows]: [
+        VersionRecord[],
+        CommentRecord[],
+        ReviewRoundRecord[],
+        [VersionDataRecord[], VersionDataRecord[]],
+      ] = snapshot
+        ? [
+            snapshot.versions,
+            snapshot.comments,
+            snapshot.rounds,
+            [snapshot.beforeData, snapshot.afterData],
+          ]
+        : await Promise.all([
+            ctx.meta.listVersions(a.id),
+            ctx.meta.listComments(a.id),
+            ctx.meta.listReviewRounds(a.id),
+            since < to
+              ? Promise.all([
+                  ctx.meta.getVersionData(a.id, since).catch(() => []),
+                  ctx.meta.getVersionData(a.id, to).catch(() => []),
+                ])
+              : Promise.resolve<[VersionDataRecord[], VersionDataRecord[]]>([[], []]),
+          ])
       const newVersions = history.filter((v) => v.n > since && v.n <= to)
-      const vs = await ctx.meta.getVersion(a.id, since)
-      const vh = await ctx.meta.getVersion(a.id, to)
+      // listVersions already returned every immutable version row. Re-fetching the two
+      // selected rows paid two strictly serial edge round trips for data in hand.
+      const vs = history.find((v) => v.n === since) ?? null
+      const vh = history.find((v) => v.n === to) ?? null
       let entryDiff: string | null = null
+      let partChanges: ChangedParts | null =
+        response_format === "parts" && since >= to
+          ? { count: 0, changes: [], note: "No newer version to compare." }
+          : null
       let pagesChanged: ReturnType<typeof bundleFileChanges> | null = null
       if (vs && vh && since < to) {
-        const [ms, mh] = [await manifestOf(ctx, vs), await manifestOf(ctx, vh)]
+        const [ms, mh] = await Promise.all([manifestOf(ctx, vs), manifestOf(ctx, vh)])
         if (ms && mh) pagesChanged = bundleFileChanges(ms, mh)
         if (response_format === "detailed") {
-          const [as_, ah] = [await ctx.sourceText(vs), await ctx.sourceText(vh)]
+          const [as_, ah] = await Promise.all([ctx.sourceText(vs), ctx.sourceText(vh)])
           if (as_ !== null && ah !== null) {
             // Diff the READABLE form, not raw source: HTML tag noise drowns a
             // real change, and minified one-line HTML produces one useless
@@ -144,14 +189,58 @@ export function registerCatchUpTool(tc: ToolContext): void {
             const md = diffLines(toMarkdown(as_, vs.content_type), toMarkdown(ah, vh.content_type))
             entryDiff = `diff of markdown conversion (semantic view):\n\n${clip(formatDiff(md))}`
           }
+        } else if (response_format === "parts") {
+          if (ms || mh) {
+            partChanges = {
+              count: 0,
+              changes: [],
+              note: "Bundles report changed page paths in pages_changed. Read only those pages.",
+            }
+          } else {
+            const beforeType = vs.content_type ?? "text/html"
+            const afterType = vh.content_type ?? "text/html"
+            partChanges = getChangedPartsReceipt(vs.blob_key, beforeType, vh.blob_key, afterType)
+            if (!partChanges) {
+              const [as_, ah] = await Promise.all([ctx.sourceText(vs), ctx.sourceText(vh)])
+              if (as_ !== null && ah !== null) {
+                try {
+                  partChanges = changedPartsWithReceipt(
+                    vs.blob_key,
+                    as_,
+                    beforeType,
+                    vh.blob_key,
+                    ah,
+                    afterType,
+                  )
+                } catch {
+                  partChanges = {
+                    count: 0,
+                    changes: [],
+                    note: "These versions could not be mapped into stable document parts. Use response_format:'detailed' for the line diff.",
+                  }
+                }
+              } else {
+                partChanges = {
+                  count: 0,
+                  changes: [],
+                  note: "One selected version has no readable source. Use the version history to choose another range.",
+                }
+              }
+            }
+          }
         }
       }
+      if (response_format === "parts" && !partChanges)
+        partChanges = {
+          count: 0,
+          changes: [],
+          note: "One selected version is unavailable. Use the version history to choose another range.",
+        }
       // ONE read of this artifact's comments, split by state in memory. These were three
       // separate `listComments(a.id, { state })` calls differing only by the filter — three
       // ~80ms round trips (see edge-pg.ts) on the agent loop's hottest call, for rows out of
       // the same table for the same artifact. `listComments` orders by created_at either
       // way, so each filtered slice keeps the order its own query produced.
-      const allComments = await ctx.meta.listComments(a.id)
       const open = allComments.filter((cm) => cm.state === "open")
       // Threads whose quoted text changed in a landed version — feedback that may no
       // longer apply. Surfacing it tells the agent its edits touched commented text.
@@ -173,7 +262,6 @@ export function registerCatchUpTool(tc: ToolContext): void {
       // it requested most recently. `pending` = still waiting; `sent_back` = the human
       // returned answers — read the open threads and their note; a note that reads
       // "good to go" is the go-signal.
-      const rounds = await ctx.meta.listReviewRounds(a.id)
       const myRound =
         rounds.find((r) => r.state === "pending") ??
         rounds.find((r) => r.requested_by === agent.id) ??
@@ -207,10 +295,7 @@ export function registerCatchUpTool(tc: ToolContext): void {
         since < to
           ? // assertedOnly on both sides: "$stats.words 1204 -> 1288" is noise beside
             // "checks.pass 41 -> 44", and the diff exists to show the AUTHOR's numbers move.
-            factDeltas(
-              assertedOnly(await ctx.meta.getVersionData(a.id, since).catch(() => [])),
-              assertedOnly(await ctx.meta.getVersionData(a.id, to).catch(() => [])),
-            )
+            factDeltas(assertedOnly(dataRows[0]), assertedOnly(dataRows[1]))
           : []
       return json({
         summary,
@@ -230,6 +315,7 @@ export function registerCatchUpTool(tc: ToolContext): void {
                 "(omitted) — call again with response_format='detailed' for the line-level changes.",
             }),
         ...(slotChanges.length ? { data_changes: slotChanges } : {}),
+        ...(partChanges ? { changed_parts: partChanges } : {}),
         open_comments: open.map(summarizeComment),
         ...(outdated.length ? { outdated_comments: outdated.map(summarizeComment) } : {}),
       })

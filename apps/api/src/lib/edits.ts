@@ -79,6 +79,7 @@ const compactDiff = (ops: DiffOp[], context = 1): string => {
 export interface MaterializeEditsDeps {
   getVersion: (artifactId: string, n: number) => Promise<VersionRecord | null>
   sourceText: (v: Pick<VersionRecord, "blob_key" | "content_type">) => Promise<string | null>
+  captureSource?: (source: string, contentType: string | null, blobKey: string) => void
 }
 
 export interface MaterializedEdits {
@@ -181,6 +182,7 @@ async function currentSource(
   const src = cur ? await deps.sourceText(cur) : null
   if (!cur || src === null)
     throw new EditError(`Couldn't load the current source of "${artifact.short_id}".`)
+  deps.captureSource?.(src, cur.content_type, cur.blob_key)
   return { src, contentType: cur.content_type }
 }
 

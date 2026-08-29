@@ -20,6 +20,7 @@ import {
   type MetaStore,
   maxRole,
   newId,
+  type OAuthGrantWorkspaceRead,
   type OrgSettings,
   type Principal,
   principalActor,
@@ -64,6 +65,7 @@ import {
 import { verifyWorkToken, workTokenKind } from "./lib/run-token"
 import { billableSeatCount, isBillableRole, syncSeats } from "./lib/seats"
 import { enqueueSlackChannelEvent } from "./lib/slack-comments"
+import { SourceTextCache } from "./lib/source-text-cache"
 import { log } from "./log"
 import { enqueueRender } from "./previews"
 import { edgeCtx } from "./realtime-do"
@@ -380,6 +382,7 @@ export type AppContext = ReturnType<typeof buildContext>
 
 export function buildContext(deps: AppDeps) {
   const { meta, blobs } = deps
+  const sourceTextCache = new SourceTextCache()
   // Realtime relay + presence. In-process by default (self-host stays zero-config);
   // the edge entry injects a Durable Object backplane. `bus`/`presence` are facades
   // over it, so the publish + heartbeat call sites are unchanged.
@@ -625,6 +628,8 @@ export function buildContext(deps: AppDeps) {
       scopeRole: Role
       clientId: string
       boundWorkspaces: string[]
+      orgContext?: OAuthGrantWorkspaceRead["orgContext"]
+      workspaces?: (WorkspaceRecord & { role: Role })[]
     }
   >()
   // Set when this request's bearer is a minted dkapi_ token — read by the mint to
@@ -757,6 +762,8 @@ export function buildContext(deps: AppDeps) {
             scopeRole: o.scopeRole,
             clientId: o.clientId,
             boundWorkspaces: o.boundWorkspaces,
+            orgContext: o.orgContext,
+            workspaces: o.workspaces,
           })
           // An OAuth agent may act in any workspace WITHIN ITS GRANT: an explicit
           // X-Derive-Workspace header, validated against the OWNER's membership,
@@ -771,7 +778,9 @@ export function buildContext(deps: AppDeps) {
           const want = c.req.header("x-derive-workspace")
           const inGrant = o.boundWorkspaces.length === 0 || o.boundWorkspaces.includes(want ?? "")
           if (want && want !== a.org_id && inGrant) {
-            const m = await meta.getMembership(want, owner)
+            const m = o.workspaces
+              ? o.workspaces.find((workspace) => workspace.id === want)
+              : await meta.getMembership(want, owner)
             if (m) a = { ...a, org_id: want, role: capRole(o.scopeRole, m.role) }
           }
         }
@@ -819,6 +828,8 @@ export function buildContext(deps: AppDeps) {
     scopeRole: Role
     clientId: string
     boundWorkspaces: string[]
+    orgContext?: OAuthGrantWorkspaceRead["orgContext"]
+    workspaces?: (WorkspaceRecord & { role: Role })[]
   } | null> => {
     await agentFor(c)
     return oauthGrantCache.get(c) ?? null
@@ -1492,20 +1503,23 @@ export function buildContext(deps: AppDeps) {
   const sourceText = async (content: {
     blob_key: string
     content_type: string
-  }): Promise<string | null> => {
-    let data: Uint8Array | null
-    if (isBundleContentType(content.content_type)) {
-      const manifestBytes = await blobs.get(content.blob_key)
-      if (!manifestBytes) return null
-      const manifest = JSON.parse(new TextDecoder().decode(manifestBytes)) as BundleManifest
-      const entryFile = manifest.files[manifest.entry]
-      if (!entryFile) return null
-      data = await blobs.get(entryFile.key)
-    } else {
-      data = await blobs.get(content.blob_key)
-    }
-    return data ? new TextDecoder().decode(data) : null
-  }
+  }): Promise<string | null> =>
+    sourceTextCache.get(`${content.content_type}:${content.blob_key}`, async () => {
+      let data: Uint8Array | null
+      if (isBundleContentType(content.content_type)) {
+        const manifestBytes = await blobs.get(content.blob_key)
+        if (!manifestBytes) return null
+        const manifest = JSON.parse(new TextDecoder().decode(manifestBytes)) as BundleManifest
+        const entryFile = manifest.files[manifest.entry]
+        if (!entryFile) return null
+        data = await blobs.get(entryFile.key)
+      } else {
+        data = await blobs.get(content.blob_key)
+      }
+      if (!data) return null
+      const text = new TextDecoder().decode(data)
+      return { text, bytes: Math.max(data.byteLength, text.length * 2) }
+    })
 
   // A caller's role on a collection: the static token is owner; otherwise the
   // creator, else their explicit collection-member role, else — when the

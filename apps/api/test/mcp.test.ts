@@ -1589,6 +1589,102 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(cd.entry_diff).toContain("V2 Title")
   })
 
+  it("publish readback and catch_up parts return the same bounded working address", async () => {
+    const { app, token } = appWithGrant(dir, "changedparts", "openid derive:read derive:publish")
+    const sections = Array.from(
+      { length: 5 },
+      (_, i) => `<section><h2>Decision ${i + 1}</h2><p>Value ${i + 1}</p></section>`,
+    ).join("\n")
+    const created = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          title: "Changed parts",
+          content: `<!doctype html><html><body>${sections}</body></html>`,
+        }),
+      ),
+    )
+
+    const edited = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          short_id: created.short_id,
+          base_version: 1,
+          edits: [{ old_str: "Value 4", new_str: "Verified value 42" }],
+          readback: true,
+        }),
+      ),
+    )
+    expect(edited.version).toBe(2)
+    expect(edited.readback).toMatchObject({ count: 1 })
+    expect(edited.readback.changes).toHaveLength(1)
+    expect(edited.readback.changes[0]).toMatchObject({
+      change: "changed",
+      node: "sec:decision-4",
+      title: "Decision 4",
+      format: "markdown",
+    })
+    expect(edited.readback.changes[0].body).toContain("Verified value 42")
+
+    const caughtUp = JSON.parse(
+      toolText(
+        await call(app, token, "catch_up", {
+          short_id: created.short_id,
+          since_version: 1,
+          to_version: 2,
+          response_format: "parts",
+        }),
+      ),
+    )
+    expect(caughtUp.changed_parts).toEqual(edited.readback)
+
+    const upToDate = JSON.parse(
+      toolText(
+        await call(app, token, "catch_up", {
+          short_id: created.short_id,
+          since_version: 2,
+          response_format: "parts",
+        }),
+      ),
+    )
+    expect(upToDate.changed_parts).toMatchObject({ count: 0, changes: [] })
+
+    const ordinary = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          short_id: created.short_id,
+          edits: [{ old_str: "Value 2", new_str: "Value two" }],
+        }),
+      ),
+    )
+    expect(ordinary.readback).toBeUndefined()
+
+    const rewrittenSections = Array.from(
+      { length: 5 },
+      (_, i) => `<section><h2>Decision ${i + 1}</h2><p>Rewritten ${i + 1}</p></section>`,
+    ).join("\n")
+    const bounded = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          short_id: created.short_id,
+          content: `<!doctype html><html><body>${rewrittenSections}</body></html>`,
+          readback: true,
+        }),
+      ),
+    )
+    expect(bounded.readback).toMatchObject({ count: 5, truncated: true, more_changes: 2 })
+    expect(bounded.readback.changes).toHaveLength(3)
+
+    expect(
+      toolText(
+        await call(app, token, "publish", {
+          title: "No previous version",
+          content: "<h1>One</h1>",
+          readback: true,
+        }),
+      ),
+    ).toContain("pass a short_id")
+  })
+
   it("catch_up wait blocks until a NEW VERSION lands (no review round involved) — live co-editing", async () => {
     const { app, token } = appWithGrant(dir, "waitver", "openid derive:read derive:publish")
     const shortId = (await (await publish(app, token, "V1")).json()).short_id
@@ -2925,6 +3021,74 @@ describe("remote MCP endpoint (/mcp)", () => {
         }),
       ),
     ).toContain("multi-page bundle")
+  })
+
+  it("publish readback keeps a deck edit on its stable slide ref", async () => {
+    const { app, token } = appWithGrant(dir, "deckreadback", "openid derive:read derive:publish")
+    const slides = Array.from(
+      { length: 4 },
+      (_, i) =>
+        `<section class="slide" data-derive-slide="${i * 10}"><h2>Slide ${i + 1}</h2><p>${i === 2 ? "Old threshold" : `Value ${i + 1}`}</p></section>`,
+    ).join("\n")
+    const deck = `<!doctype html><html><body>${slides}<script>parent.postMessage({source:"derive-deck",type:"state",i:0,total:4},"*")</script></body></html>`
+    const created = JSON.parse(
+      toolText(await call(app, token, "publish", { title: "Deck readback", content: deck })),
+    )
+
+    const edited = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          short_id: created.short_id,
+          edits: [{ old_str: "Old threshold", new_str: "Threshold is 17 percent" }],
+          readback: true,
+        }),
+      ),
+    )
+    expect(edited.readback).toMatchObject({ count: 1 })
+    expect(edited.readback.changes[0]).toMatchObject({
+      change: "changed",
+      node: "slide:3",
+      type: "slide",
+      title: "Slide 3",
+    })
+    expect(edited.readback.changes[0].body).toContain("17 percent")
+
+    const inserted = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          short_id: created.short_id,
+          base_version: 2,
+          slide_ops: [{ op: "insert", at: 2 }],
+          readback: true,
+        }),
+      ),
+    )
+    expect(inserted.readback.count).toBe(1)
+    expect(inserted.readback.changes[0]).toMatchObject({
+      change: "added",
+      node: "slide:2",
+      type: "slide",
+    })
+
+    const moved = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          short_id: created.short_id,
+          base_version: 3,
+          slide_ops: [{ op: "move", from: 5, to: 2 }],
+          readback: true,
+        }),
+      ),
+    )
+    expect(moved.readback).toMatchObject({ count: 1 })
+    expect(moved.readback.changes).toHaveLength(1)
+    expect(moved.readback.changes[0]).toMatchObject({
+      change: "moved",
+      node: "slide:2",
+      from_node: "slide:5",
+      type: "slide",
+      title: "Slide 4",
+    })
   })
 
   it("publish edits: over the workspace storage quota is rejected, same as content/files (regression: the MCP edits path used to skip this check)", async () => {

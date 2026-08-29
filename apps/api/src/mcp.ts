@@ -86,7 +86,7 @@ import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mc
 import type { Hono } from "hono"
 import { BRANDPRINT_REFERENCE, BRANDPRINT_TEMPLATE } from "./brandprint-reference"
 import type { AppContext } from "./context"
-import { resolveActorBrandprint } from "./lib/brandprint"
+import { resolveActorBrandprint, resolveBrandprintContext } from "./lib/brandprint"
 import type { Sandbox } from "./lib/code-sandbox"
 import { makeToolContext, type ToolContext, type ToolContextBase } from "./mcp-tool-context"
 import { registerAutomateTool, registerListAutomationsTool } from "./mcp-tools/automate"
@@ -139,12 +139,17 @@ async function buildServer(
   // clamps list_workspaces + the `workspace` arg + cross-workspace read to
   // exactly those: workspaces outside the grant are invisible and unreachable.
   boundWorkspaces: string[],
+  // Live workspace memberships already carried by an OAuth grant snapshot.
+  grantWorkspaces: ToolContextBase["grantWorkspaces"],
   // The OAuth client behind this connection ("" for a registered dk_agt_ token).
   // Recorded into tokens minted by `stage target:'api'` as their provenance.
   clientId: string,
   // This connection is itself authenticated by a minted dkapi_ token — the mint
   // refuses to chain off one (it would renew its own TTL indefinitely).
   mintedToken: boolean,
+  // The default workspace's Brandprint inputs can ride the opaque OAuth grant query.
+  // Header re-homing passes undefined, which preserves the live workspace lookup.
+  brandprintContext?: Parameters<typeof resolveBrandprintContext>[0],
   // This request carries an `initialize` — the only request whose instructions a
   // client reads. The workspace-skills count query runs only then, so tool calls
   // stay inside their round-trip budgets.
@@ -170,7 +175,9 @@ async function buildServer(
   // OAuth grant's id is synthetic (oauth:<client>) and can never be @mentioned, so
   // querying its inbox would be a guaranteed-empty read on every human's every call.
   const [resolved, pendingRequests, wsSkills] = await Promise.all([
-    resolveActorBrandprint(ctx.meta, agent.org_id, ownerId),
+    brandprintContext
+      ? resolveBrandprintContext(brandprintContext)
+      : resolveActorBrandprint(ctx.meta, agent.org_id, ownerId),
     registered ? ctx.meta.listPendingAgentMentions(agent.id, AGENT_INBOX_PAGE) : [],
     // The workspace's skills, for the instructions count. Viewer-scoped: the granting
     // human for an OAuth grant, the agent's own membership for a registered token —
@@ -486,6 +493,7 @@ async function buildServer(
     scopeForCap,
     registered,
     boundWorkspaces,
+    grantWorkspaces,
     clientId,
     mintedToken,
     defaultOrg,
@@ -666,8 +674,10 @@ export function mountMcp(app: Hono, ctx: AppContext): void {
       scopeForCap,
       !grant,
       boundWorkspaces,
+      grant?.workspaces,
       grant?.clientId ?? "",
       mintedToken,
+      grant?.orgContext?.orgId === agent.org_id ? grant.orgContext : undefined,
       isInitialize,
     )
     const transport = new StreamableHTTPTransport()

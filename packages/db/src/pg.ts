@@ -92,6 +92,7 @@ import type {
   NotificationsPage,
   OAuthGrant,
   OAuthGrantSummary,
+  OAuthGrantWorkspaceRead,
   OrgSettings,
   PlanKind,
   PlanRecord,
@@ -720,6 +721,67 @@ export class PgMetaStore implements MetaStore {
     const rows = await this.db.select().from(artifact).where(eq(artifact.short_id, shortId))
     return rows[0] ?? null
   }
+  async artifactWithVersion(
+    shortId: string,
+    n?: number,
+  ): Promise<{ artifact: ArtifactRecord; version: VersionRecord | null } | null> {
+    const rows = await this.db
+      .select({ artifact, version })
+      .from(artifact)
+      .leftJoin(
+        version,
+        and(
+          eq(version.artifact_id, artifact.id),
+          n === undefined ? eq(version.n, artifact.current_version) : eq(version.n, n),
+        ),
+      )
+      .where(eq(artifact.short_id, shortId))
+    const row = rows[0]
+    return row
+      ? {
+          artifact: row.artifact as ArtifactRecord,
+          version: (row.version as VersionRecord | null) ?? null,
+        }
+      : null
+  }
+
+  async artifactWithVersionData(
+    shortId: string,
+    slot: string,
+    n?: number,
+  ): Promise<{
+    artifact: ArtifactRecord
+    version: VersionRecord | null
+    data: VersionDataRecord | null
+  } | null> {
+    const rows = await this.db
+      .select({ artifact, version, data: versionData })
+      .from(artifact)
+      .leftJoin(
+        version,
+        and(
+          eq(version.artifact_id, artifact.id),
+          n === undefined ? eq(version.n, artifact.current_version) : eq(version.n, n),
+        ),
+      )
+      .leftJoin(
+        versionData,
+        and(
+          eq(versionData.artifact_id, artifact.id),
+          eq(versionData.n, version.n),
+          eq(versionData.slot, slot),
+        ),
+      )
+      .where(eq(artifact.short_id, shortId))
+    const row = rows[0]
+    return row
+      ? {
+          artifact: row.artifact as ArtifactRecord,
+          version: (row.version as VersionRecord | null) ?? null,
+          data: (row.data as VersionDataRecord | null) ?? null,
+        }
+      : null
+  }
   async getByShortIds(shortIds: string[]): Promise<ArtifactRecord[]> {
     if (shortIds.length === 0) return []
     return this.db.select().from(artifact).where(inArray(artifact.short_id, shortIds))
@@ -1138,6 +1200,58 @@ export class PgMetaStore implements MetaStore {
         ),
       )
       .orderBy(asc(versionData.slot))
+  }
+
+  async catchUpRead(
+    artifactId: string,
+    beforeN: number,
+    afterN: number,
+  ): Promise<{
+    versions: VersionRecord[]
+    comments: CommentRecord[]
+    rounds: ReviewRoundRecord[]
+    beforeData: VersionDataRecord[]
+    afterData: VersionDataRecord[]
+  }> {
+    // Five independent reads ride one statement. node-postgres serializes queries on one
+    // edge connection, so Promise.all cannot remove their network latency by itself.
+    const { rows } = await this.pool.query<{ kind: string; doc: unknown }>(
+      `SELECT 'version' kind, row_to_json(v) doc FROM version v
+        WHERE v.artifact_id = $1
+       UNION ALL
+       SELECT 'comment', row_to_json(c) FROM comment c
+        WHERE c.artifact_id = $1
+       UNION ALL
+       SELECT 'round', row_to_json(r) FROM review_round r
+        WHERE r.artifact_id = $1
+       UNION ALL
+       SELECT 'before-data', row_to_json(d) FROM version_data d
+        WHERE d.artifact_id = $1 AND d.n = $2
+       UNION ALL
+       SELECT 'after-data', row_to_json(d) FROM version_data d
+        WHERE d.artifact_id = $1 AND d.n = $3`,
+      [artifactId, beforeN, afterN],
+    )
+    const versions: VersionRecord[] = []
+    const comments: CommentRecord[] = []
+    const rounds: ReviewRoundRecord[] = []
+    const beforeData: VersionDataRecord[] = []
+    const afterData: VersionDataRecord[] = []
+    for (const row of rows) {
+      if (row.kind === "version") versions.push(row.doc as VersionRecord)
+      else if (row.kind === "comment") comments.push(row.doc as CommentRecord)
+      else if (row.kind === "round") rounds.push(row.doc as ReviewRoundRecord)
+      else if (row.kind === "before-data") beforeData.push(row.doc as VersionDataRecord)
+      else if (row.kind === "after-data") afterData.push(row.doc as VersionDataRecord)
+    }
+    versions.sort((a, b) => a.n - b.n)
+    comments.sort((a, b) =>
+      a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0,
+    )
+    rounds.sort((a, b) => (a.created_at > b.created_at ? -1 : a.created_at < b.created_at ? 1 : 0))
+    beforeData.sort((a, b) => a.slot.localeCompare(b.slot))
+    afterData.sort((a, b) => a.slot.localeCompare(b.slot))
+    return { versions, comments, rounds, beforeData, afterData }
   }
   async getVersionDataSeries(
     artifactId: string,
@@ -5845,6 +5959,105 @@ export class PgMetaStore implements MetaStore {
       clientName: row.client_name,
       scopes: parseOAuthScopes(row.scopes),
       expiresAt: row.expires_at instanceof Date ? row.expires_at : new Date(row.expires_at),
+    }
+  }
+  async oauthGrantWithWorkspaces(tokenHash: string): Promise<{
+    grant: OAuthGrant
+    mine: (WorkspaceRecord & { role: Role })[]
+    bound: string[]
+    orgContext?: OAuthGrantWorkspaceRead["orgContext"]
+  } | null> {
+    type Row = { kind: string; doc: unknown }
+    type GrantRow = {
+      user_id: string
+      user_email: string
+      user_name: string | null
+      client_id: string
+      scopes: string | string[] | null
+      expires_at: Date | string | number
+      client_name: string
+    }
+    type WorkspaceRow = WorkspaceRecord & { role: Role; bound: boolean }
+    type ContextRow = {
+      org_id: string
+      settings: string | null
+      personal_brandprint: string | null
+    }
+    let rows: Row[]
+    try {
+      rows = (
+        await this.pool.query<Row>(
+          `WITH g AS (
+             SELECT t."userId" AS user_id, t."clientId" AS client_id,
+                    t."scopes" AS scopes, t."expiresAt" AS expires_at,
+                    c."name" AS client_name, u."email" AS user_email,
+                    u."name" AS user_name
+               FROM "oauthAccessToken" t
+               JOIN "oauthClient" c ON c."clientId" = t."clientId"
+               JOIN "user" u ON u."id" = t."userId"
+              WHERE t."token" = $1 LIMIT 1
+           ), w AS (
+             SELECT ws.id, ws.name, ws.created_at, m.role,
+                    (ocw.id IS NOT NULL) AS bound
+               FROM g
+               JOIN membership m ON m.user_id = g.user_id
+               JOIN workspace ws ON ws.id = m.org_id
+               LEFT JOIN oauth_client_workspace ocw
+                 ON ocw.org_id = ws.id AND ocw.user_id = g.user_id
+                AND ocw.client_id = g.client_id
+           ), target AS (
+             SELECT w.id
+               FROM w
+              ORDER BY
+                CASE WHEN EXISTS (SELECT 1 FROM w WHERE bound) AND NOT w.bound THEN 1 ELSE 0 END,
+                w.created_at
+              LIMIT 1
+           )
+           SELECT 'grant' kind, row_to_json(g) doc FROM g
+           UNION ALL
+           SELECT 'workspace', row_to_json(w) FROM (SELECT * FROM w ORDER BY created_at) w
+           UNION ALL
+           SELECT 'context', json_build_object(
+             'org_id', target.id,
+             'settings', os.settings,
+             'personal_brandprint', to_jsonb(u) ->> 'brandprint'
+           )
+             FROM target
+             JOIN g ON true
+             JOIN "user" u ON u.id = g.user_id
+             LEFT JOIN org_settings os ON os.org_id = target.id`,
+          [tokenHash],
+        )
+      ).rows
+    } catch {
+      return null
+    }
+    const grantRow = rows.find((row) => row.kind === "grant")?.doc as GrantRow | undefined
+    if (!grantRow) return null
+    const workspaceRows = rows
+      .filter((row) => row.kind === "workspace")
+      .map((row) => row.doc as WorkspaceRow)
+    const contextRow = rows.find((row) => row.kind === "context")?.doc as ContextRow | undefined
+    return {
+      grant: {
+        userId: grantRow.user_id,
+        userEmail: grantRow.user_email,
+        userName: grantRow.user_name,
+        clientId: grantRow.client_id,
+        clientName: grantRow.client_name,
+        scopes: parseOAuthScopes(grantRow.scopes),
+        expiresAt:
+          grantRow.expires_at instanceof Date ? grantRow.expires_at : new Date(grantRow.expires_at),
+      },
+      mine: workspaceRows.map(({ bound: _bound, ...workspace }) => workspace),
+      bound: workspaceRows.filter((workspace) => workspace.bound).map((workspace) => workspace.id),
+      orgContext: contextRow
+        ? {
+            orgId: contextRow.org_id,
+            settings: parseOrgSettings(contextRow.settings),
+            personalBrandprint: contextRow.personal_brandprint,
+          }
+        : undefined,
     }
   }
   async getOAuthClientName(clientId: string): Promise<string | null> {

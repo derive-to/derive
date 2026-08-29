@@ -19,7 +19,7 @@
 import { isDerivedFactName, MAX_FACT_BYTES } from "@derive/facts"
 import { pageText } from "./anchor"
 import { isHtmlLike } from "./content-types"
-import { docMap, mapJson } from "./doc-map"
+import { type DocMap, docMap, mapJson } from "./doc-map"
 import { type SectionMarker, sectionMarkers } from "./doc-text"
 import { parseRef } from "./ids"
 import { isVideoDocument, sliceScenes } from "./videos"
@@ -169,10 +169,10 @@ const deriveStats = (source: string, contentType: string, markers: SectionMarker
  *
  *  Null for a document with nothing to address: a single-node map is the read path's own
  *  fallback, and a row saying "this document is one node" tells a reader nothing. */
-const deriveMap = (source: string, contentType: string): unknown => {
+const deriveMap = (source: string, contentType: string, prepared?: DocMap): unknown => {
   let map: ReturnType<typeof docMap>
   try {
-    map = docMap(source, contentType)
+    map = prepared ?? docMap(source, contentType)
   } catch {
     return null // ambiguous structure (a slide nested in a slide): no row, never a failure
   }
@@ -203,12 +203,21 @@ const deriveVideo = (source: string, contentType: string): unknown => {
 const DERIVERS: {
   slot: string
   gen: number
-  derive: (source: string, contentType: string, markers: SectionMarker[]) => unknown
+  derive: (
+    source: string,
+    contentType: string,
+    markers: SectionMarker[],
+    structure?: DocMap,
+  ) => unknown
 }[] = [
   { slot: "$outline", gen: 1, derive: (_s, _ct, markers) => deriveOutline(markers) },
   { slot: LINKS_FACT, gen: 2, derive: (source) => deriveLinks(source) },
   { slot: "$stats", gen: 1, derive: deriveStats },
-  { slot: "$map", gen: 1, derive: (source, contentType) => deriveMap(source, contentType) },
+  {
+    slot: "$map",
+    gen: 1,
+    derive: (source, contentType, _markers, structure) => deriveMap(source, contentType, structure),
+  },
   { slot: "$video", gen: 1, derive: (source, contentType) => deriveVideo(source, contentType) },
 ]
 
@@ -232,14 +241,18 @@ const DERIVERS: {
 export const assertedOnly = <T extends { slot: string }>(rows: T[]): T[] =>
   rows.filter((r) => !isDerivedFactName(r.slot))
 
-export const deriveFacts = (source: string, contentType: string): DerivedFact[] => {
+export const deriveFacts = (
+  source: string,
+  contentType: string,
+  prepared?: { structure?: DocMap },
+): DerivedFact[] => {
   const out: DerivedFact[] = []
   const markers = sectionMarkers(source, contentType)
   for (const { slot, gen, derive } of DERIVERS) {
     if (!isDerivedFactName(slot)) continue // structurally impossible; keeps the invariant loud
     let value: unknown
     try {
-      value = derive(source, contentType, markers)
+      value = derive(source, contentType, markers, prepared?.structure)
     } catch {
       continue // a deriver must never fail a publish; a missing row is a cache miss
     }

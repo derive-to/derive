@@ -4,7 +4,6 @@ import {
   type DocMap,
   derivedGen,
   deriveFacts,
-  docMap,
   isDerivedFactName,
   isHtmlLike,
   LINKED_BUNDLE_CONTENT_TYPE,
@@ -35,8 +34,16 @@ import { boundSources, sourceTools } from "../lib/chat-sources"
 import { clip, MAX_CHARS } from "../lib/clip"
 import { pickVariant, rendersOff } from "../lib/collect-render"
 import { assembleContextPackage } from "../lib/context-package"
+import { documentStructure } from "../lib/doc-structure-cache"
+import {
+  buildFocusIndex,
+  canIndexFocus,
+  type FocusIndex,
+  focusCandidates,
+} from "../lib/focus-index"
 import { sniffImageType } from "../lib/image"
-import { baseType, isTextType, present, type ReadFormat } from "../lib/search"
+import { baseType, isTextType, present, type ReadFormat, searchMatcher } from "../lib/search"
+import { WeightedLruCache } from "../lib/source-text-cache"
 import { canReadTemplateLibrary } from "../lib/template-library-access"
 import { templateLibraryEntryJson } from "../lib/template-library-entry"
 import { log } from "../log"
@@ -76,6 +83,64 @@ const kindCarriesFacts = (v: VersionRecord | null): boolean =>
   v?.content_type === "text/markdown" ||
   // A deck carries DERIVED rows ($map above all) though it can embed none of its own.
   isHtmlLike(v?.content_type ?? "")
+
+interface StoredMap {
+  kind: string
+  bytes: number
+  nodes: Record<string, unknown>[]
+  truncated?: boolean
+  total?: number
+}
+
+/** A stored `$map` row is host-derived, but legacy or corrupt cache data must still fall
+ *  back to the source parser instead of changing a read into a 500. */
+const storedMapOf = (source: string): StoredMap | null => {
+  const value = safeJson(source)
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null
+  const row = value as Record<string, unknown>
+  if (typeof row.kind !== "string" || typeof row.bytes !== "number" || !Array.isArray(row.nodes))
+    return null
+  if (
+    row.nodes.some(
+      (node) =>
+        !node ||
+        typeof node !== "object" ||
+        Array.isArray(node) ||
+        typeof (node as Record<string, unknown>).ref !== "string" ||
+        typeof (node as Record<string, unknown>).type !== "string",
+    )
+  )
+    return null
+  if (row.truncated !== undefined && row.truncated !== true) return null
+  if (row.total !== undefined && typeof row.total !== "number") return null
+  return {
+    kind: row.kind,
+    bytes: row.bytes,
+    nodes: row.nodes as Record<string, unknown>[],
+    ...(row.truncated === true ? { truncated: true } : {}),
+    ...(typeof row.total === "number" ? { total: row.total } : {}),
+  }
+}
+
+/** A focus read returns enough complete parts to disambiguate a repeated term, while the
+ *  response stays well below the ordinary whole-read budget. The ref lets the caller open
+ *  the exact source next without another map call. */
+const FOCUS_MATCH_MAX = 3
+const FOCUS_BODY_MAX = Math.floor(MAX_CHARS / FOCUS_MATCH_MAX)
+const clipFocusBody = (body: string): string =>
+  body.length > FOCUS_BODY_MAX
+    ? `${body.slice(0, FOCUS_BODY_MAX)}\n\n…[truncated ${body.length - FOCUS_BODY_MAX} chars — read this node for the full clipped part]`
+    : body
+
+// MCP is stateless: mcp.ts builds a fresh server and registers its tools for every
+// request. Prepared caches therefore live at module scope, beside the Worker isolate,
+// rather than inside registerReadTool where the next request could never hit them.
+// Keys are immutable content hashes and authorization still runs before any lookup.
+const focusIndexes = new WeightedLruCache<FocusIndex>({
+  maxBytes: 8 * 1024 * 1024,
+  maxEntries: 64,
+  maxEntryBytes: 3 * 1024 * 1024,
+})
 
 /** Why a fact is absent, said accurately — the cases the old single message merged.
  *  A `$name` can never be embedded (the author grammar rejects `$`), so "embed a block"
@@ -169,13 +234,20 @@ export function registerReadTool(tc: ToolContext): void {
     resolveWs,
     askableContexts,
   } = tc
+  // One fixed-size Bloom filter per node. It rejects nodes that cannot contain a
+  // focused literal; the ordinary exact matcher verifies every candidate. This is
+  // separate from the source cache so a large, rarely searched artifact cannot crowd
+  // out the source text that all read modes share.
+  const structureOf = (v: VersionRecord, source: string, contentType: string): DocMap => {
+    return documentStructure(v.blob_key, source, contentType)
+  }
 
   // READ CONTENT --------------------------------------------------------------
   server.registerTool(
     "read",
     {
       description:
-        "Read an artifact by short_id. Small docs return whole; large ones return an OUTLINE — then pass `section`, or `map:true` then `node` to work on one part. format:'html' gives the exact source, required before publish `edits`. Also reads contexts and derive:// URIs. See derive://skills/finding.",
+        "Read an artifact. Small docs return whole; large docs return an outline. `focus` returns matching parts in one call. `map` then `node` addresses one part. format:'html' gives exact source for publish edits. Also reads contexts and derive:// URIs. See derive://skills/finding.",
       // readOnlyHint stays true despite two incidental write paths below (the lazy
       // derived-fact backfill and the render self-heal re-queue): both are deterministic
       // recomputations/cache-fills of already-published bytes — the class of side effect
@@ -231,10 +303,15 @@ export function registerReadTool(tc: ToolContext): void {
           .describe(
             "The document's addressable parts: one line per node with the `ref` that names it. Read this first to work on part of a big doc.",
           ),
-        node: z
+        node: z.string().optional().describe("One ref from map (slide:2, sec:pricing)."),
+        focus: z
           .string()
+          .trim()
+          .min(1)
+          .max(200)
           .optional()
-          .describe("Read ONE part, by a `ref` from `map` (slide:2, sec:pricing, style:1)."),
+          .describe("Literal text; returns matching parts with refs.")
+          .meta({ examples: ["pricing", "fallback", "quarterly target"] }),
         version: num("version").optional(),
         data: z
           .string()
@@ -257,6 +334,7 @@ export function registerReadTool(tc: ToolContext): void {
       lines,
       map: wantMap,
       node,
+      focus,
       render,
       wait,
       data,
@@ -544,8 +622,34 @@ export function registerReadTool(tc: ToolContext): void {
         }
         docId = seg
       }
+      // Postgres can join the artifact and selected immutable version in one statement.
+      // Stored maps and named facts can include their one selected data row too. Stores
+      // without either optional fast path keep the portable reads. The joined artifact
+      // only skips its lookup: reach still runs every authorization check.
+      const selectedDataSlot =
+        wantMap || (data === "$map" && versions === undefined)
+          ? "$map"
+          : data !== undefined && data !== "*" && versions === undefined
+            ? data
+            : null
+      const dataEnvelope =
+        selectedDataSlot && ctx.meta.artifactWithVersionData
+          ? await ctx.meta.artifactWithVersionData(docId, selectedDataSlot, version)
+          : undefined
+      const envelope =
+        dataEnvelope !== undefined
+          ? dataEnvelope
+          : ctx.meta.artifactWithVersion
+            ? await ctx.meta.artifactWithVersion(docId, version)
+            : undefined
       // Opted into the world link: a public artifact outside the grant reads at viewer.
-      const r = await reach(docId, workspace, { public: true })
+      const r =
+        envelope === null
+          ? null
+          : await reach(docId, workspace, {
+              public: true,
+              ...(envelope ? { artifact: envelope.artifact } : {}),
+            })
       if (r && "error" in r) return err(r.error)
       // A bare name that matches no artifact may still name a CONTEXT — tried only here,
       // after the artifact lookup, so a context named like a doc can never shadow it.
@@ -559,7 +663,8 @@ export function registerReadTool(tc: ToolContext): void {
       if (n < 1 || n > a.current_version)
         return err(`No version ${n} for "${short_id}" — it has versions 1..${a.current_version}.`)
       if (r.public && !versionOpenToWorld(a, n)) return historyNotPublic(short_id, a)
-      const v = await ctx.meta.getVersion(a.id, n)
+      const v =
+        envelope?.artifact.id === a.id ? envelope.version : await ctx.meta.getVersion(a.id, n)
       if (!v) return err(`Version ${n} of "${short_id}" is unavailable.`)
       const url = artifactUrl(ctx.deps.baseUrl, a)
 
@@ -572,7 +677,7 @@ export function registerReadTool(tc: ToolContext): void {
         // `map`/`node` belong here too: this branch runs BEFORE the map rung below, so its
         // own guard against `render` never fires. Found on the preview — read(map, render)
         // silently returned a screenshot to a caller who asked for the structure.
-        if (section || lines || wantMap || node)
+        if (section || lines || wantMap || node || focus)
           return err(
             "`render` is a view of the whole version — pass it alone (with `version` for history).",
           )
@@ -706,9 +811,9 @@ export function registerReadTool(tc: ToolContext): void {
       // The data rung: a version's structured facts, queried instead of re-parsed. A
       // whole-version view like `render`, so it can't combine with a within-doc selector.
       if (data !== undefined) {
-        if (section || lines || render)
+        if (section || lines || render || focus)
           return err(
-            "`data` reads a version's stored facts — pass it alone (with `version` for history), not with section/lines/render.",
+            "`data` reads a version's stored facts — pass it alone (with `version` for history), not with section/lines/render/focus.",
           )
         // The TREND read: one slot across a range of versions, in one call and one query.
         // Versions are already the time axis, so this is the whole reason facts exist —
@@ -781,7 +886,12 @@ export function registerReadTool(tc: ToolContext): void {
             ...(rows.length ? {} : { note: absenceNote(null, v, `Version ${n} of "${short_id}"`) }),
           })
         }
-        let rows = await ctx.meta.getVersionData(a.id, n, data)
+        let rows =
+          selectedDataSlot === data && dataEnvelope
+            ? dataEnvelope.data
+              ? [dataEnvelope.data]
+              : []
+            : await ctx.meta.getVersionData(a.id, n, data)
         // LAZY DERIVATION — bounded to exactly here, the single-version named read. A
         // $name that is missing (version predates derivation) or stale (its gen predates
         // THAT deriver's current generation — per-slot, so a $stats bump never re-derives
@@ -836,6 +946,41 @@ export function registerReadTool(tc: ToolContext): void {
           data: safeJson(row.json),
           ...(stale ? { note: stale } : {}),
         })
+      }
+      // Reject incompatible part selectors before any source blob read. These checks also
+      // keep the error text stable for focus, whose branch used to do the same validation
+      // only after a potentially multi-megabyte source load.
+      if (focus && (section || lines || wantMap || node))
+        return err(
+          "Pass `focus` alone (with `format` and `version`), not with another part selector.",
+        )
+      if (wantMap && node) return err("Pass `map` OR `node`, not both.")
+      if ((wantMap || node) && (section || lines || render))
+        return err("`map`/`node` address the document's parts — pass with `version` only.")
+
+      // Publish derivation already stores the bounded wire map. Serve it before loading and
+      // parsing the source. Missing, stale, or corrupt cache rows fall
+      // through to the source path below, so authored bytes remain the authority.
+      if (wantMap) {
+        const row =
+          selectedDataSlot === "$map" && dataEnvelope
+            ? dataEnvelope.data
+            : (await ctx.meta.getVersionData(a.id, n, "$map"))[0]
+        const stored = row?.gen === derivedGen("$map") ? storedMapOf(row.json) : null
+        if (stored)
+          return json({
+            short_id,
+            title: a.title,
+            version: n,
+            kind: stored.kind,
+            format: formatLabel(v.content_type, fmt),
+            url,
+            bytes: stored.bytes,
+            nodes: stored.nodes,
+            ...(stored.truncated ? { truncated: true } : {}),
+            ...(stored.total !== undefined ? { total: stored.total } : {}),
+            note: "Read one part with read(node:\"<ref>\"), format:'html' for its exact source. Same JSON at /raw/<short_id>/data/$map.json.",
+          })
       }
       const manifest = await manifestOf(ctx, v)
 
@@ -944,16 +1089,103 @@ export function registerReadTool(tc: ToolContext): void {
           url,
           ...linkedBundleMeta,
         }
+        // Focus read: collapse literal locate -> read surrounding part into one call. It
+        // uses the same derived map as `map`/`node`, so every returned match is already an
+        // address the caller can reuse for an exact-source read or a scoped edit.
+        if (focus) {
+          let structure: DocMap
+          try {
+            structure = structureOf(v, src, ct ?? "text/html")
+          } catch (e) {
+            return err(e instanceof Error ? e.message : "This document's structure can't be read.")
+          }
+          const matcher = searchMatcher(focus, false)
+          let matchCount = 0
+          const matches: Array<{ target: DocMap["nodes"][number]; body: string }> = []
+          const indexKey = `${ct ?? "text/html"}:${v.blob_key}`
+          const searchableFormat = fmt === "markdown" ? "text" : fmt
+          let candidates: number[] | null = null
+          let builtDuringScan = false
+          if (searchableFormat !== "html" && canIndexFocus(focus)) {
+            const cached = focusIndexes.get(indexKey)
+            if (cached) candidates = focusCandidates(cached, focus)
+            else {
+              // The cold build performs the exact scan at the same time. It therefore
+              // adds only Bloom bookkeeping to the first request and never converts a
+              // matching node twice.
+              const built = buildFocusIndex(structure.nodes.length, (index) => {
+                const target = structure.nodes[index]
+                if (!target) return ""
+                const body = present(src.slice(target.start, target.end), ct, searchableFormat)
+                matcher.lastIndex = 0
+                if (matcher.test(body)) {
+                  matchCount += 1
+                  if (matches.length < FOCUS_MATCH_MAX)
+                    matches.push({
+                      target,
+                      body:
+                        fmt === "markdown"
+                          ? present(src.slice(target.start, target.end), ct, fmt)
+                          : body,
+                    })
+                }
+                return body
+              })
+              focusIndexes.set(indexKey, built, built.bytes)
+              builtDuringScan = true
+            }
+          }
+          const targetIndexes = builtDuringScan
+            ? []
+            : (candidates ?? structure.nodes.map((_target, index) => index))
+          for (const index of targetIndexes) {
+            const target = structure.nodes[index]
+            if (!target) continue
+            const sourcePart = src.slice(target.start, target.end)
+            // `focus` asks for literal document text. Markdown is the response format, not
+            // the match domain: generated `#`, `*`, link, and table syntax must not split a
+            // phrase a viewer sees as contiguous. The visible-text projection is also much
+            // cheaper than formatting every non-match as Markdown. Exact-source focus keeps
+            // its existing HTML search contract.
+            const searchBody = present(sourcePart, ct, searchableFormat)
+            matcher.lastIndex = 0
+            if (!matcher.test(searchBody)) continue
+            matchCount += 1
+            // Count every match so truncation stays exact, but retain only the bodies
+            // the response can return. A common term in a long document must not hold a
+            // second readable copy of the whole document in Worker memory.
+            if (matches.length < FOCUS_MATCH_MAX)
+              matches.push({
+                target,
+                body: fmt === "markdown" ? present(sourcePart, ct, fmt) : searchBody,
+              })
+          }
+          return json({
+            ...meta,
+            focus,
+            count: matchCount,
+            matches: matches.map(({ target, body }) => ({
+              node: target.ref,
+              type: target.type,
+              chars: body.length,
+              ...(target.title ? { title: target.title } : {}),
+              body: clipFocusBody(body),
+            })),
+            ...(matchCount > FOCUS_MATCH_MAX
+              ? { truncated: true, more_matches: matchCount - FOCUS_MATCH_MAX }
+              : {}),
+            next: matchCount
+              ? `Use read(node:"<ref>", format:"html") only if you need exact source for an edit.`
+              : `No matching part. Try one neighbouring literal, or use find(short_id:"${short_id}", query:"${focus}") for line-level search.`,
+          })
+        }
         // The map rung: the document's addressable parts. Read before working on part of
         // a big doc — it is the cheap structural view the full-document read is not, and
         // every ref it hands back is what `node` (and, next, a scoped edit) takes.
         if (wantMap || node) {
-          if (wantMap && node) return err("Pass `map` OR `node`, not both.")
-          if (section || lines || render)
-            return err("`map`/`node` address the document's parts — pass with `version` only.")
           let structure: DocMap
           try {
-            structure = docMap(src, ct ?? "text/html")
+            structure = structureOf(v, src, ct ?? "text/html")
           } catch (e) {
             return err(e instanceof Error ? e.message : "This document's structure can't be read.")
           }
@@ -1113,6 +1345,10 @@ export function registerReadTool(tc: ToolContext): void {
 
       // Bundle.
       const pages = Object.keys(manifest.files).map(cleanPath)
+      if (focus)
+        return err(
+          "`focus` currently reads single-file artifacts. For a bundle, use find(short_id, query), then read its matching page path.",
+        )
       // A skill reads as its document: the SKILL.md body, with the bundle's files
       // listed alongside. The common caller was just told to follow this procedure,
       // so the outline-first bundle default is the wrong rung here. Explicit

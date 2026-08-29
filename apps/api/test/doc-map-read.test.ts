@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { DECK_CONTENT_TYPE, deriveFacts } from "@derive/core"
-import { afterAll, describe, expect, it } from "vitest"
+import { afterAll, describe, expect, it, vi } from "vitest"
 import { appWithGrant } from "./mcp-helpers"
 
 /**
@@ -81,7 +81,7 @@ const DECK = `<!doctype html><html><head><title>d</title><style>.slide{opacity:0
 
 /** A published deck plus a ready MCP session. */
 const setup = async (name: string) => {
-  const { app, meta, token } = appWithGrant(dir, name, "openid derive:read derive:publish")
+  const { app, blobs, meta, token } = appWithGrant(dir, name, "openid derive:read derive:publish")
   await rpc(app, token, initBody)
   await meta.setMembership({ id: "m_o", org_id: "default", user_id: "u_o", role: "owner" })
   const form = new FormData()
@@ -93,7 +93,23 @@ const setup = async (name: string) => {
     headers: { authorization: `Bearer ${token}` },
   })
   const { short_id } = (await res.json()) as { short_id: string }
-  return { app, token, short_id, meta }
+  return { app, blobs, token, short_id, meta }
+}
+
+const setupDocument = async (name: string, source: string) => {
+  const { app, blobs, meta, token } = appWithGrant(dir, name, "openid derive:read derive:publish")
+  await rpc(app, token, initBody)
+  await meta.setMembership({ id: `m_${name}`, org_id: "default", user_id: "u_o", role: "owner" })
+  const form = new FormData()
+  form.append("file", new Blob([new TextEncoder().encode(source)]), "document.html")
+  form.append("title", "Large document")
+  const res = await app.request("/v1/artifacts", {
+    method: "POST",
+    body: form,
+    headers: { authorization: `Bearer ${token}` },
+  })
+  const { short_id } = (await res.json()) as { short_id: string }
+  return { app, blobs, token, short_id }
 }
 
 describe("read map / node", () => {
@@ -161,6 +177,202 @@ describe("read map / node", () => {
     const json = (await res.json()) as { kind: string; nodes: { ref: string }[] }
     expect(json.kind).toBe("deck")
     expect(json.nodes.map((n) => n.ref)).toContain("slide:2")
+  })
+
+  it("serves a current stored map without rereading the source blob", async () => {
+    const { app, blobs, token, short_id, meta } = await setup("map-stored-read")
+    const art = await meta.getByShortId(short_id)
+    const row = deriveFacts(DECK, DECK_CONTENT_TYPE).find((fact) => fact.slot === "$map")
+    expect(art).toBeTruthy()
+    expect(row).toBeDefined()
+    await meta.setVersionData((art as { id: string }).id, 1, [
+      {
+        id: "vd_stored_map",
+        slot: "$map",
+        json: (row as { json: string }).json,
+        size_bytes: (row as { bytes: number }).bytes,
+        gen: (row as { gen: number }).gen,
+      },
+    ])
+    const get = vi.spyOn(blobs, "get")
+    get.mockClear()
+
+    const map = await readJson(app, token, { short_id, map: true })
+
+    expect(map.kind).toBe("deck")
+    expect(map.nodes.map((node: { ref: string }) => node.ref)).toContain("slide:2")
+    expect(get).not.toHaveBeenCalled()
+    get.mockRestore()
+  })
+
+  it("falls back to authored source when a stored map is corrupt", async () => {
+    const { app, blobs, token, short_id, meta } = await setup("map-corrupt-fallback")
+    const art = await meta.getByShortId(short_id)
+    const good = deriveFacts(DECK, DECK_CONTENT_TYPE).find((fact) => fact.slot === "$map")
+    expect(art).toBeTruthy()
+    expect(good).toBeDefined()
+    await meta.setVersionData((art as { id: string }).id, 1, [
+      {
+        id: "vd_corrupt_map",
+        slot: "$map",
+        json: '{"kind":"deck","bytes":"wrong","nodes":[]}',
+        size_bytes: 44,
+        gen: (good as { gen: number }).gen,
+      },
+    ])
+    const get = vi.spyOn(blobs, "get")
+    get.mockClear()
+
+    const map = await readJson(app, token, { short_id, map: true })
+
+    expect(map.kind).toBe("deck")
+    expect(map.nodes.map((node: { ref: string }) => node.ref)).toContain("slide:2")
+    expect(get).toHaveBeenCalled()
+    get.mockRestore()
+  })
+})
+
+describe("read focus", () => {
+  it("returns one deck slide with the same stable ref that map and node use", async () => {
+    const { app, token, short_id } = await setup("focus-deck")
+
+    const focused = await readJson(app, token, { short_id, focus: "The ask" })
+    expect(focused.count).toBe(1)
+    expect(focused.matches).toHaveLength(1)
+    expect(focused.matches[0]).toMatchObject({
+      node: "slide:2",
+      type: "slide",
+      title: "The ask",
+    })
+    expect(focused.matches[0].body).toContain("two")
+    expect(focused.matches[0].body).not.toContain("The problem")
+
+    const exact = await readJson(app, token, {
+      short_id,
+      focus: "data-derive-slide",
+      format: "html",
+    })
+    expect(exact.count).toBe(2)
+    expect(exact.matches.map((match: { node: string }) => match.node)).toEqual([
+      "slide:1",
+      "slide:2",
+    ])
+    expect(exact.matches[1].body).toContain('data-derive-slide="1"')
+  })
+
+  it("does not change the ordinary small-document read", async () => {
+    const source =
+      "<!doctype html><html><body><h1>Small note</h1><p>The complete body still returns.</p></body></html>"
+    const { app, token, short_id } = await setupDocument("focus-small-baseline", source)
+
+    const ordinary = await readTool(app, token, { short_id })
+    expect(ordinary.isError).toBe(false)
+    expect(ordinary.text).toContain("Small note")
+    expect(ordinary.text).toContain("The complete body still returns.")
+  })
+
+  it("locates and reads one complete part of a large HTML document in one call", async () => {
+    const sections = Array.from({ length: 80 }, (_, i) => {
+      const target = i === 62 ? "<p>The fallback budget is 17 percent.</p>" : ""
+      return `<section><h2>Decision ${i + 1}</h2><p>${"routine context ".repeat(40)}</p>${target}</section>`
+    }).join("\n")
+    const source = `<!doctype html><html><body>${sections}</body></html>`
+    const { app, token, short_id } = await setupDocument("focus-large", source)
+
+    const outline = await readJson(app, token, { short_id })
+    expect(outline.sections).toHaveLength(80)
+
+    const focused = await readJson(app, token, { short_id, focus: "fallback budget" })
+    expect(focused.count).toBe(1)
+    expect(focused.matches).toHaveLength(1)
+    expect(focused.matches[0]).toMatchObject({
+      node: "sec:decision-63",
+      title: "Decision 63",
+    })
+    expect(focused.matches[0].body).toContain("17 percent")
+    expect(JSON.stringify(focused).length).toBeLessThan(source.length / 20)
+  })
+
+  it("reuses the hot source blob across repeated focused reads", async () => {
+    const source = `<!doctype html><html><body>${"<p>routine context</p>".repeat(1_000)}<h2>Decision</h2><p>The cache target is ready.</p></body></html>`
+    const { app, blobs, token, short_id } = await setupDocument("focus-source-cache", source)
+    const get = vi.spyOn(blobs, "get")
+
+    const first = await readJson(app, token, { short_id, focus: "cache target" })
+    const readsAfterFirst = get.mock.calls.length
+    const second = await readJson(app, token, { short_id, focus: "cache target" })
+
+    expect(first).toEqual(second)
+    expect(get.mock.calls.length).toBe(readsAfterFirst)
+  })
+
+  it("matches visible text across inline markup while returning Markdown", async () => {
+    const source =
+      "<!doctype html><html><body><h2>The <em>buried</em> decision</h2><p>A &amp; B</p></body></html>"
+    const { app, token, short_id } = await setupDocument("focus-visible-text", source)
+
+    const focused = await readJson(app, token, {
+      short_id,
+      focus: "The buried decision",
+    })
+
+    expect(focused.count).toBe(1)
+    expect(focused.matches[0]).toMatchObject({
+      node: "sec:the-buried-decision",
+      title: "The buried decision",
+    })
+    expect(focused.matches[0].body).toContain("*buried*")
+    expect(focused.matches[0].body).toContain("A & B")
+  })
+
+  it("bounds repeated matches and treats a missing literal as an empty result", async () => {
+    const sections = Array.from(
+      { length: 5 },
+      (_, i) => `<section><h2>Option ${i + 1}</h2><p>Shared verification receipt.</p></section>`,
+    ).join("\n")
+    const source = `<!doctype html><html><body>${sections}</body></html>`
+    const { app, token, short_id } = await setupDocument("focus-results", source)
+
+    const repeated = await readJson(app, token, { short_id, focus: "verification receipt" })
+    expect(repeated.count).toBe(5)
+    expect(repeated.matches).toHaveLength(3)
+    expect(repeated).toMatchObject({ truncated: true, more_matches: 2 })
+
+    const missing = await readJson(app, token, { short_id, focus: "compaction threshold" })
+    expect(missing.count).toBe(0)
+    expect(missing.matches).toEqual([])
+    expect(missing.next).toContain("No matching part")
+  })
+
+  it("keeps exact focus results after the candidate index warms", async () => {
+    const sections = Array.from({ length: 120 }, (_, i) => {
+      const target = i === 91 ? "<p>The zirconium approval is ready.</p>" : ""
+      return `<section><h2>Choice ${i + 1}</h2><p>${"routine context ".repeat(30)}</p>${target}</section>`
+    }).join("\n")
+    const source = `<!doctype html><html><body>${sections}</body></html>`
+    const { app, token, short_id } = await setupDocument("focus-candidate-index", source)
+
+    const cold = await readJson(app, token, { short_id, focus: "zirconium approval" })
+    const warm = await readJson(app, token, { short_id, focus: "zirconium approval" })
+    const absent = await readJson(app, token, { short_id, focus: "quartz compaction" })
+
+    expect(warm).toEqual(cold)
+    expect(warm.matches[0]).toMatchObject({ node: "sec:choice-92", title: "Choice 92" })
+    expect(absent).toMatchObject({ count: 0, matches: [] })
+  })
+
+  it("refuses a focus combined with another part selector", async () => {
+    const { app, token, short_id } = await setup("focus-exclusive")
+    for (const extra of [
+      { map: true },
+      { node: "slide:1" },
+      { section: "the-ask" },
+      { lines: "1-4" },
+    ]) {
+      const result = await readTool(app, token, { short_id, focus: "ask", ...extra })
+      expect(result.isError, JSON.stringify(extra)).toBe(true)
+      expect(result.text).toContain("focus")
+    }
   })
 })
 

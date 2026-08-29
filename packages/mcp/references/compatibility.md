@@ -7,6 +7,7 @@ Prefer the remote Streamable HTTP MCP. It is the authoritative Derive agent surf
 | Find workspace artifacts | `find` | `list_artifacts` + `search` |
 | Read content and versions | `read` | `read` |
 | Catch up on review | `catch_up` | `catch_up` |
+| Changed-part publish readback and catch-up | `publish(readback:true)` + `catch_up(response_format:"parts")` | Not available; use `read` + detailed catch-up |
 | Comment, reply, react, resolve | `comment` | `comment` |
 | Publish a file or exact edits | `publish` | `publish` |
 | Upload large docs or assets | `stage` | Not available |

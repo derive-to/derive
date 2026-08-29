@@ -27,6 +27,7 @@ import { log } from "../log"
 import { type Summarizer, sanitizeSummary, summaryInput } from "../summarizer"
 import { publishSweepEvents } from "./anchor-sweep"
 import { fanOutNewContentMentions } from "./content-mentions"
+import { documentStructure } from "./doc-structure-cache"
 import { EMAIL_LAYOUT_FACT } from "./email-layout"
 import { indexArtifactVersion, isTextType } from "./search"
 import { recordThreadResolution } from "./thread-actions"
@@ -206,7 +207,13 @@ const extractVersionData = async (
   // are cache entries with names — recomputable, never counted, never rewarded — so each
   // row carries ITS OWN deriver's generation, not the extraction grammar's and not a
   // host-wide one (a shared constant would make a $stats change invalidate every $links row).
-  const derived = deriveFacts(source, ct)
+  let structure: ReturnType<typeof documentStructure> | undefined
+  try {
+    structure = documentStructure(version.blob_key, source, ct)
+  } catch {
+    // Ambiguous structure omits $map exactly as before. Other derived facts still persist.
+  }
+  const derived = deriveFacts(source, ct, { structure })
   const rows = [
     ...facts.map((s) => ({
       id: newId("vd"),

@@ -233,9 +233,8 @@ describe("hot read paths stay within their round-trip budget", () => {
  * same app, not a separate runtime). This closes that "to measure" gap with real counts,
  * using the shared countingStore helper, same as the REST budgets above.
  *
- * `catch_up` and `comment` are the two tools this branch already touched (the 3-listComments
- * merge in catch-up.ts, the threadId filter in comment.ts's react/set_state) — this is also
- * the regression guard for that work at the MCP boundary specifically, not just the REST one.
+ * `read`, `catch_up`, and `comment` are the tools this performance work touches. This is
+ * their regression guard at the MCP boundary specifically, not only at the REST boundary.
  */
 describe("MCP tool calls stay within their round-trip budget", () => {
   const dir = mkdtempSync(join(tmpdir(), "derive-mcp-budget-"))
@@ -265,21 +264,70 @@ describe("MCP tool calls stay within their round-trip budget", () => {
     )
     db.close()
     const blobs = new FsBlobStore(join(dir, `${name}-blobs`))
-    const { proxy, calls, reset } = countingStore(meta)
+    // Give the embedded fixture the hosted store's optional joined read. Its body composes
+    // the portable methods because local round trips are free; the counting wrapper sees
+    // the public fast path as one call, which pins the MCP handler's choice.
+    const fastMeta: MetaStore = Object.assign(meta, {
+      artifactWithVersion: async (shortId: string, n?: number) => {
+        const artifact = await meta.getByShortId(shortId)
+        if (!artifact) return null
+        return {
+          artifact,
+          version: await meta.getVersion(artifact.id, n ?? artifact.current_version),
+        }
+      },
+      artifactWithVersionData: async (shortId: string, slot: string, n?: number) => {
+        const artifact = await meta.getByShortId(shortId)
+        if (!artifact) return null
+        const selected = n ?? artifact.current_version
+        return {
+          artifact,
+          version: await meta.getVersion(artifact.id, selected),
+          data: (await meta.getVersionData(artifact.id, selected, slot))[0] ?? null,
+        }
+      },
+      catchUpRead: async (artifactId: string, beforeN: number, afterN: number) => ({
+        versions: await meta.listVersions(artifactId),
+        comments: await meta.listComments(artifactId),
+        rounds: await meta.listReviewRounds(artifactId),
+        beforeData: await meta.getVersionData(artifactId, beforeN),
+        afterData: await meta.getVersionData(artifactId, afterN),
+      }),
+      oauthGrantWithWorkspaces: async (tokenHash: string) => {
+        const grant = await meta.getOAuthGrant(tokenHash)
+        if (!grant) return null
+        const { mine, bound } = await meta.workspacesAndOauthBinding(grant.userId, grant.clientId)
+        const scoped = bound.length
+          ? mine.filter((workspace) => bound.includes(workspace.id))
+          : mine
+        const target = scoped[0] ?? mine[0]
+        return {
+          grant,
+          mine,
+          bound,
+          orgContext: target
+            ? { orgId: target.id, ...(await meta.orgContext(target.id, grant.userId)) }
+            : undefined,
+        }
+      },
+    })
+    const { proxy, calls, reset } = countingStore(fastMeta)
     const app = createApp({ meta: proxy, blobs, baseUrl: "http://derive.test", token: "tok" })
-    return { app, meta, token: `tok_${name}`, calls, reset }
+    return { app, blobs, meta, token: `tok_${name}`, calls, reset }
   }
 
   type App = ReturnType<typeof createApp>
 
-  async function rpc(app: App, token: string, body: unknown) {
+  async function rpc(app: App, token: string, body: unknown, workspace?: string) {
+    const headers: Record<string, string> = {
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+      authorization: `Bearer ${token}`,
+    }
+    if (workspace) headers["x-derive-workspace"] = workspace
     const res = await app.request("/mcp", {
       method: "POST",
-      headers: {
-        "content-type": "application/json",
-        accept: "application/json, text/event-stream",
-        authorization: `Bearer ${token}`,
-      },
+      headers,
       body: JSON.stringify(body),
     })
     const txt = await res.text()
@@ -303,8 +351,39 @@ describe("MCP tool calls stay within their round-trip budget", () => {
   const call = (app: App, token: string, name: string, args: Record<string, unknown>, id = 2) =>
     rpc(app, token, { jsonrpc: "2.0", id, method: "tools/call", params: { name, arguments: args } })
 
-  it("catch_up(short_id) and comment(react/set_state) — measured, not inferred", async () => {
+  it("refreshes workspace roles after first-touch provisioning", async () => {
+    const { app, token, calls } = appWithGrant(
+      "rt-first-touch",
+      "openid derive:read derive:publish",
+    )
+    const listed = await call(app, token, "list_workspaces", {})
+    expect(listed?.result?.isError, JSON.stringify(listed)).not.toBe(true)
+    expect(listed?.result?.content?.[0]?.text).toContain("ws_p_u_o")
+    expect(calls).toContain("listWorkspaces")
+  })
+
+  it("re-reads Brandprint inputs after a workspace override", async () => {
     const { app, meta, token, calls, reset } = appWithGrant(
+      "rt-override",
+      "openid derive:read derive:publish",
+    )
+    await meta.setWorkspace("default", "Default")
+    await meta.setMembership({ id: "m_default", org_id: "default", user_id: "u_o", role: "owner" })
+    await meta.setWorkspace("other", "Other")
+    await meta.setMembership({ id: "m_other", org_id: "other", user_id: "u_o", role: "editor" })
+    const { mine } = await meta.workspacesAndOauthBinding("u_o", "cli")
+    const override = mine[0]?.id === "default" ? "other" : "default"
+
+    reset()
+    const initialized = await rpc(app, token, initBody, override)
+    expect(initialized?.error, JSON.stringify(initialized)).toBeUndefined()
+    expect(calls).toContain("oauthGrantWithWorkspaces")
+    expect(calls).not.toContain("getMembership")
+    expect(calls).toContain("orgContext")
+  })
+
+  it("read, catch_up, and comment — measured, not inferred", async () => {
+    const { app, blobs, meta, token, calls, reset } = appWithGrant(
       "rt",
       "openid derive:read derive:publish",
     )
@@ -313,6 +392,7 @@ describe("MCP tool calls stay within their round-trip budget", () => {
     // The OAuth user needs a workspace SEAT — direct createArtifact (unlike a real publish)
     // writes no membership row on its own, and workspace_access:"member" gates on exactly
     // that row existing.
+    await meta.setWorkspace("default", "Default")
     await meta.setMembership({ id: "m_o", org_id: "default", user_id: "u_o", role: "owner" })
 
     // A realistic target: a published artifact with two open comment threads (one of them
@@ -330,9 +410,11 @@ describe("MCP tool calls stay within their round-trip budget", () => {
       kind: "file",
       spa: 0,
     })
+    const source = "# Budget read\n\nBody text for the focused read budget.\n"
+    const blobKey = await blobs.put(new TextEncoder().encode(source))
     await meta.addVersion(art.id, {
       id: "v1",
-      blob_key: "blob_rt",
+      blob_key: blobKey,
       content_type: "text/markdown",
       author: "owner",
       message: "v1",
@@ -378,12 +460,27 @@ describe("MCP tool calls stay within their round-trip budget", () => {
     const catchUpCalls = [...calls]
 
     reset()
+    const readRes = await call(app, token, "read", { short_id: "rttest01", focus: "focused read" })
+    expect(readRes?.result?.isError, JSON.stringify(readRes)).not.toBe(true)
+    const readCalls = [...calls]
+
+    reset()
+    const mapRes = await call(app, token, "read", { short_id: "rttest01", map: true })
+    expect(mapRes?.result?.isError, JSON.stringify(mapRes)).not.toBe(true)
+    const mapCalls = [...calls]
+
+    reset()
+    const workspacesRes = await call(app, token, "list_workspaces", {}, 5)
+    expect(workspacesRes?.result?.isError, JSON.stringify(workspacesRes)).not.toBe(true)
+    const workspaceCalls = [...calls]
+
+    reset()
     const reactRes = await call(
       app,
       token,
       "comment",
       { short_id: "rttest01", reply_to: threadA, react: "👍" },
-      3,
+      6,
     )
     expect(reactRes?.result?.isError, JSON.stringify(reactRes)).not.toBe(true)
     const reactCalls = [...calls]
@@ -394,7 +491,7 @@ describe("MCP tool calls stay within their round-trip budget", () => {
       token,
       "comment",
       { short_id: "rttest01", reply_to: threadB, set_state: "resolved" },
-      4,
+      7,
     )
     expect(resolveRes?.result?.isError, JSON.stringify(resolveRes)).not.toBe(true)
     const resolveCalls = [...calls]
@@ -403,13 +500,16 @@ describe("MCP tool calls stay within their round-trip budget", () => {
     // is what you read when a budget below moves and you need to see WHICH call was added.
     console.log(
       `MCP round trips — catch_up(short_id): ${catchUpCalls.length} [${catchUpCalls.join(", ")}]\n` +
+        `MCP round trips — read(focus): ${readCalls.length} [${readCalls.join(", ")}]\n` +
+        `MCP round trips — read(map): ${mapCalls.length} [${mapCalls.join(", ")}]\n` +
+        `MCP round trips — list_workspaces: ${workspaceCalls.length} [${workspaceCalls.join(", ")}]\n` +
         `MCP round trips — comment(react): ${reactCalls.length} [${reactCalls.join(", ")}]\n` +
         `MCP round trips — comment(set_state): ${resolveCalls.length} [${resolveCalls.join(", ")}]`,
     )
 
-    // THE FIRST THREE CALLS ARE IDENTICAL ON EVERY TOOL CALL: getOAuthGrant,
-    // workspacesAndOauthBinding, orgContext — the MCP/OAuth session bootstrap,
-    // paid before any tool-specific work starts. This was SEVEN calls (getAgentByToken,
+    // THE FIRST CALL IS IDENTICAL ON EVERY OPAQUE-OAUTH TOOL CALL:
+    // oauthGrantWithWorkspaces — the MCP/OAuth session bootstrap, paid before any
+    // tool-specific work starts. This was SEVEN calls (getAgentByToken,
     // getOAuthGrant, listWorkspaces, getOAuthClientWorkspaces, getUsers, getOrgSettings,
     // getUserBrandprint) until this round: getAgentByToken is now skipped outright for any
     // bearer that doesn't start with AGENT_TOKEN_PREFIX (a guaranteed miss for every OAuth/JWT
@@ -417,13 +517,34 @@ describe("MCP tool calls stay within their round-trip budget", () => {
     // already had (see OauthAgentResolution.ownerName), and listWorkspaces +
     // getOAuthClientWorkspaces / getOrgSettings + getUserBrandprint each collapsed into one
     // round trip (workspacesAndOauthBinding, orgContext — pg.ts batches, embedded
-    // composes). 7 → 3 bootstrap calls, ~320ms/call saved on every single MCP tool call.
+    // composes). The opaque grant, workspace scope, and default workspace's Brandprint
+    // inputs now share one envelope too. The bootstrap falls from seven calls to one.
+    // An explicit X-Derive-Workspace override still pays orgContext for its target.
     //
     // Budgets below are the measured count, no headroom — same discipline as
     // the REST budgets above. Raise deliberately, in the commit that explains why, never to
     // silence a red run.
-    expect(catchUpCalls.length).toBeLessThanOrEqual(10)
-    expect(reactCalls.length).toBeLessThanOrEqual(7)
+    // The complete history already carries both selected version rows. Catch-up must not
+    // restore either redundant getVersion call after listVersions.
+    expect(catchUpCalls).not.toContain("getVersion")
+    expect(catchUpCalls).toContain("catchUpRead")
+    for (const gone of ["listVersions", "listComments", "listReviewRounds", "getVersionData"])
+      expect(catchUpCalls, `${gone} escaped the catch-up batch`).not.toContain(gone)
+    expect(catchUpCalls.length).toBeLessThanOrEqual(3)
+    // One shared MCP bootstrap read, then one joined artifact + selected-version envelope.
+    // The grant snapshot also supplies the live workspace role, so authorization adds no
+    // metadata read. The handler must not quietly restore either serial lookup.
+    expect(readCalls).toContain("artifactWithVersion")
+    expect(readCalls).not.toContain("getByShortId")
+    expect(readCalls).not.toContain("getVersion")
+    expect(readCalls.length).toBeLessThanOrEqual(2)
+    expect(mapCalls).toContain("artifactWithVersionData")
+    expect(mapCalls).not.toContain("getByShortId")
+    expect(mapCalls).not.toContain("getVersion")
+    expect(mapCalls).not.toContain("getVersionData")
+    expect(mapCalls.length).toBeLessThanOrEqual(2)
+    expect(workspaceCalls).toEqual(["oauthGrantWithWorkspaces"])
+    expect(reactCalls.length).toBeLessThanOrEqual(4)
     // set_state went 8 → 9 when resolving a thread started keeping its mirrored Slack cards in
     // line (lib/slack-comments.ts enqueueSlackThreadState). The added call is the
     // listSlackThreadLinksByThread that asks whether this thread is mirrored anywhere — one
@@ -436,6 +557,6 @@ describe("MCP tool calls stay within their round-trip budget", () => {
     // onto the root comment's meta, the one row the activity stream reads "Claude Code resolved
     // Ada's thread" from. One read of the root (already loaded by the tool's own thread check)
     // and one meta write; without it the record says only "resolved", by nobody, at no time.
-    expect(resolveCalls.length).toBeLessThanOrEqual(10)
+    expect(resolveCalls.length).toBeLessThanOrEqual(7)
   })
 })

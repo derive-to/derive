@@ -2,7 +2,14 @@ import { DecodingMode, decodeHTML, EntityDecoder, htmlDecodeTree } from "entitie
 import { findQuoteWithContext } from "./anchor-shared"
 import { isHtmlLike } from "./content-types"
 import { elementResolvesIn, parseElementSelector } from "./element-anchor"
-import { elementEnd, hasAttr, RAW_TEXT_ELEMENTS, RCDATA_ELEMENTS, tags } from "./html-tags"
+import {
+  elementEnd,
+  type HtmlTag,
+  hasAttr,
+  RAW_TEXT_ELEMENTS,
+  RCDATA_ELEMENTS,
+  tags,
+} from "./html-tags"
 import { MENTION_NON_PROSE_TAGS } from "./mention-shared"
 import type { CommentState } from "./ports"
 
@@ -83,8 +90,13 @@ export function decodedEntitiesIn(input: string, from = 0, to = input.length): D
   })
   let cursor = from
   for (;;) {
-    const amp = input.indexOf("&", cursor)
-    if (amp < 0 || amp >= to) break
+    // `indexOf("&", cursor)` has no end bound. When this helper runs once per visible
+    // text run, an entity-free run near the start of a large document would scan every
+    // later run again before the result was rejected as `>= to`. Walk only this run so
+    // all calls made by one page projection examine each source character at most once.
+    let amp = cursor
+    while (amp < to && input.charCodeAt(amp) !== 38) amp++
+    if (amp >= to) break
     decoded = ""
     decoder.startEntity(DecodingMode.Legacy)
     let consumed = decoder.write(input, amp + 1)
@@ -200,7 +212,7 @@ const makeFinder = (haystack: string) => {
 
 /** Append `raw[rFrom, rTo)` — a run with no tags in it — as text/entity segments. */
 const pushTextRun = (
-  out: PageTextSegment[],
+  out: PageTextSegment[] | null,
   parts: string[],
   tLen: number,
   raw: string,
@@ -214,7 +226,7 @@ const pushTextRun = (
     const localEnd = entity.end - rFrom
     if (localStart > last) {
       const plain = run.slice(last, localStart)
-      out.push({
+      out?.push({
         kind: "text",
         tStart: tLen,
         tEnd: tLen + plain.length,
@@ -224,7 +236,7 @@ const pushTextRun = (
       parts.push(plain)
       tLen += plain.length
     }
-    out.push({
+    out?.push({
       kind: "entity",
       tStart: tLen,
       tEnd: tLen + entity.text.length,
@@ -237,7 +249,7 @@ const pushTextRun = (
   }
   if (last < run.length) {
     const plain = run.slice(last)
-    out.push({
+    out?.push({
       kind: "text",
       tStart: tLen,
       tEnd: tLen + plain.length,
@@ -252,7 +264,7 @@ const pushTextRun = (
 
 /** Append a RAWTEXT run without decoding character references. */
 const pushLiteralRun = (
-  out: PageTextSegment[],
+  out: PageTextSegment[] | null,
   parts: string[],
   tLen: number,
   raw: string,
@@ -261,7 +273,13 @@ const pushLiteralRun = (
 ): number => {
   if (rTo <= rFrom) return tLen
   const text = raw.slice(rFrom, rTo)
-  out.push({ kind: "text", tStart: tLen, tEnd: tLen + text.length, rStart: rFrom, rEnd: rTo })
+  out?.push({
+    kind: "text",
+    tStart: tLen,
+    tEnd: tLen + text.length,
+    rStart: rFrom,
+    rEnd: rTo,
+  })
   parts.push(text)
   return tLen + text.length
 }
@@ -281,14 +299,15 @@ const pushLiteralRun = (
  * before ">"); a "<" matching none stays literal text. Each stripped construct
  * collapses to one space; entities in text runs decode via {@link decodeEntities}.
  */
-export function pageTextParts(
+const projectPageText = (
   html: string,
-  omitContentsOf: readonly string[] = INVISIBLE_NAMES,
-): PageTextParts {
-  const lower = html.toLowerCase()
+  omitContentsOf: readonly string[],
+  mapOffsets: boolean,
+): PageTextParts => {
   const findRaw = makeFinder(html)
   const omitted = new Set(omitContentsOf)
   const parsedTags = tags(html)
+  let closingTagByEnd: Map<number, HtmlTag> | null = null
   const tagEnds = new Map(parsedTags.map((tag) => [tag.start, tag.end]))
   const blockTagStarts = new Set(
     parsedTags.filter((tag) => BLOCK_TEXT_ELEMENTS.has(tag.name)).map((tag) => tag.start),
@@ -304,13 +323,13 @@ export function pageTextParts(
       (RAW_TEXT_ELEMENTS.has(tag.name) || RCDATA_ELEMENTS.has(tag.name))
     ) {
       const end = elementEnd(parsedTags, i)
-      const close = parsedTags.find(
-        (candidate) =>
-          candidate.start >= tag.end &&
-          candidate.closing &&
-          candidate.name === tag.name &&
-          candidate.end === end,
+      closingTagByEnd ??= new Map(
+        parsedTags
+          .filter((candidate) => candidate.closing)
+          .map((candidate) => [candidate.end, candidate]),
       )
+      const candidate = closingTagByEnd.get(end)
+      const close = candidate?.name === tag.name ? candidate : undefined
       literalRanges.push({
         start: tag.end,
         end: close?.start ?? html.length,
@@ -347,7 +366,7 @@ export function pageTextParts(
     const invisibleEnd = invisibleEnds.get(i)
     if (invisibleEnd !== undefined) return { end: invisibleEnd, space: false }
     // <!-- ... -->
-    if (lower.startsWith("<!--", i)) return { end: commentCloseEnd(i + 4), space: false }
+    if (html.startsWith("<!--", i)) return { end: commentCloseEnd(i + 4), space: false }
     const parsedEnd = tagEnds.get(i)
     if (parsedEnd !== undefined) return { end: parsedEnd, space: blockTagStarts.has(i) }
     // A browser keeps consuming an opening tag while an attribute quote remains
@@ -363,6 +382,7 @@ export function pageTextParts(
   }
 
   const segments: PageTextSegment[] = []
+  const mappedSegments = mapOffsets ? segments : null
   const parts: string[] = []
   let tLen = 0
   let last = 0 // start of the pending text run
@@ -374,8 +394,8 @@ export function pageTextParts(
     const literal = literalRanges[literalIndex]
     if (literal && from === literal.start) {
       tLen = literal.entities
-        ? pushTextRun(segments, parts, tLen, html, literal.start, literal.end)
-        : pushLiteralRun(segments, parts, tLen, html, literal.start, literal.end)
+        ? pushTextRun(mappedSegments, parts, tLen, html, literal.start, literal.end)
+        : pushLiteralRun(mappedSegments, parts, tLen, html, literal.start, literal.end)
       last = literal.end
       from = literal.end
       literalIndex++
@@ -388,8 +408,8 @@ export function pageTextParts(
       from = i + 1 // a literal "<": it stays inside the text run
       continue
     }
-    if (i > last) tLen = pushTextRun(segments, parts, tLen, html, last, i)
-    segments.push({
+    if (i > last) tLen = pushTextRun(mappedSegments, parts, tLen, html, last, i)
+    mappedSegments?.push({
       kind: "gap",
       tStart: tLen,
       tEnd: tLen + (token.space ? 1 : 0),
@@ -403,8 +423,15 @@ export function pageTextParts(
     last = token.end
     from = token.end
   }
-  if (last < html.length) tLen = pushTextRun(segments, parts, tLen, html, last, html.length)
+  if (last < html.length) tLen = pushTextRun(mappedSegments, parts, tLen, html, last, html.length)
   return { text: parts.join(""), segments }
+}
+
+export function pageTextParts(
+  html: string,
+  omitContentsOf: readonly string[] = INVISIBLE_NAMES,
+): PageTextParts {
+  return projectPageText(html, omitContentsOf, true)
 }
 
 /**
@@ -417,7 +444,7 @@ export function pageTextParts(
  * the small differences.
  */
 export function pageText(html: string): string {
-  return pageTextParts(html).text
+  return projectPageText(html, INVISIBLE_NAMES, false).text
 }
 
 /**
@@ -426,7 +453,7 @@ export function pageText(html: string): string {
  * markup, matching the in-frame mention decorator's DOM filter.
  */
 export function mentionText(html: string): string {
-  return pageTextParts(html, MENTION_NON_PROSE_TAGS).text
+  return projectPageText(html, MENTION_NON_PROSE_TAGS, false).text
 }
 
 // The comment-anchor client that runs inside the sandboxed artifact iframe. It is real,

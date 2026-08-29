@@ -543,6 +543,16 @@ export interface VersionDataRecord {
   created_at: string
 }
 
+/** One immutable catch-up snapshot. Hosted stores can return every row the agent loop
+ *  needs in one statement; embedded stores keep the ordinary per-table reads. */
+export interface CatchUpRead {
+  versions: VersionRecord[]
+  comments: CommentRecord[]
+  rounds: ReviewRoundRecord[]
+  beforeData: VersionDataRecord[]
+  afterData: VersionDataRecord[]
+}
+
 export interface NewVersionData {
   id: string
   slot: string
@@ -568,6 +578,32 @@ export interface ArtifactStore {
   /** Owner opt-in: the anonymous public page shows version history. */
   setPublicHistory(artifactId: string, on: 0 | 1): Promise<void>
   getByShortId(shortId: string): Promise<ArtifactRecord | null>
+  /**
+   * Resolve one artifact and one of its immutable versions in ONE round trip.
+   *
+   * A read must load the artifact first to learn its internal id and current version, then
+   * load the selected version. Those reads are strictly serial on the hosted edge. A store
+   * that can join them implements this fast path; embedded stores omit it and callers keep
+   * the portable pair. Omit `n` for the artifact's current version. A missing version still
+   * returns the artifact with `version: null`, so callers preserve the precise error.
+   */
+  artifactWithVersion?(
+    shortId: string,
+    n?: number,
+  ): Promise<{ artifact: ArtifactRecord; version: VersionRecord | null } | null>
+  /** Resolve one artifact, one immutable version, and one fact slot in ONE round trip.
+   *  Read uses this for stored structural maps and named facts after which it still runs
+   *  the normal authorization gate. Embedded stores may omit it and keep the portable
+   *  artifact/version/data reads. */
+  artifactWithVersionData?(
+    shortId: string,
+    slot: string,
+    n?: number,
+  ): Promise<{
+    artifact: ArtifactRecord
+    version: VersionRecord | null
+    data: VersionDataRecord | null
+  } | null>
   /** Resolve many short ids at once. Bulk operations resolved one artifact per short id in
    *  a loop; on the edge tier that is a ~80ms round trip each, up to BULK_MAX of them.
    *  Order is unspecified and unknown ids are simply absent — callers key by `short_id`. */
@@ -647,6 +683,9 @@ export interface ArtifactStore {
   /** A version's facts: one named `slot`, or all of them (slot omitted), in slot
    *  order. Empty when the version carries none. */
   getVersionData(artifactId: string, n: number, slot?: string): Promise<VersionDataRecord[]>
+  /** Batch the history, feedback, review state, and compared fact rows used by catch_up.
+   *  Optional because a local embedded store has no network round-trip to remove. */
+  catchUpRead?(artifactId: string, beforeN: number, afterN: number): Promise<CatchUpRead>
   /** Selected fact slots from the CURRENT version of many artifacts. The caller supplies the
    *  candidate ids and remains responsible for authorization; this is only the batch read
    *  that avoids one getVersionData call per row in corpus-backed product directories. */
@@ -2217,6 +2256,10 @@ export interface AgentStore {
   getAgentByToken(token: string): Promise<AgentRecord | null>
   /** Resolve a live OAuth access token (by its stored hash) to its grant. */
   getOAuthGrant(tokenHash: string): Promise<OAuthGrant | null>
+  /** Resolve an opaque OAuth grant, its still-live workspace scope, and optionally the
+   *  default workspace's Brandprint inputs in one round trip. Optional because embedded
+   *  stores keep the portable grant then workspace reads. */
+  oauthGrantWithWorkspaces?(tokenHash: string): Promise<OAuthGrantWorkspaceRead | null>
   /** The display name of a registered OAuth client (for the consent screen). */
   getOAuthClientName(clientId: string): Promise<string | null>
   /** Does this client_id still have a row? Backs the /authorize self-heal: a client_id an
@@ -2582,6 +2625,19 @@ export interface OAuthGrant {
   clientName: string
   scopes: string[]
   expiresAt: Date
+}
+
+export interface OAuthGrantWorkspaceRead {
+  grant: OAuthGrant
+  mine: (WorkspaceRecord & { role: Role })[]
+  bound: string[]
+  /** The default workspace's Brandprint inputs, when the hosted store can include them
+   *  in the same grant snapshot. Consumers must ignore this after a workspace override. */
+  orgContext?: {
+    orgId: string
+    settings: OrgSettings
+    personalBrandprint: string | null
+  }
 }
 
 /** One authorized agent from a user's point of view — what they see in "Connected agents"

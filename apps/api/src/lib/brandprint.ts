@@ -22,5 +22,12 @@ export const resolveActorBrandprint = async (
   userId: string | null,
 ): Promise<ResolvedBrandprint> => {
   const { settings, personalBrandprint } = await meta.orgContext(orgId, userId)
-  return resolveBrandprint(settings.brandprint, parseBrandprint(personalBrandprint))
+  return resolveBrandprintContext({ settings, personalBrandprint })
 }
+
+/** Merge Brandprint inputs that another trusted read already loaded. */
+export const resolveBrandprintContext = ({
+  settings,
+  personalBrandprint,
+}: Awaited<ReturnType<MetaStore["orgContext"]>>): ResolvedBrandprint =>
+  resolveBrandprint(settings.brandprint, parseBrandprint(personalBrandprint))

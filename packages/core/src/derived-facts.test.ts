@@ -1,10 +1,19 @@
 import { describe, expect, it } from "vitest"
 import { derivedGen, deriveFacts } from "./derived-facts"
+import { docMap } from "./doc-map"
 
 const byName = (source: string, ct: string) =>
   Object.fromEntries(deriveFacts(source, ct).map((f) => [f.slot, JSON.parse(f.json)]))
 
 describe("deriveFacts", () => {
+  it("accepts a prepared document structure without changing facts", () => {
+    const page =
+      "<main><section id='one'><h2>One</h2></section><section id='two'><h2>Two</h2></section></main>"
+    expect(deriveFacts(page, "text/html", { structure: docMap(page, "text/html") })).toEqual(
+      deriveFacts(page, "text/html"),
+    )
+  })
+
   it("derives outline, links and stats from a real HTML page", () => {
     const page = `<!doctype html><html><body>
       <h1>Nightly</h1><p>see <a href="/artifacts/facts-mcqx8w9l">the how-to</a> and
