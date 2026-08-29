@@ -97,7 +97,7 @@ const setup = async (name: string) => {
 }
 
 const setupDocument = async (name: string, source: string) => {
-  const { app, meta, token } = appWithGrant(dir, name, "openid derive:read derive:publish")
+  const { app, blobs, meta, token } = appWithGrant(dir, name, "openid derive:read derive:publish")
   await rpc(app, token, initBody)
   await meta.setMembership({ id: `m_${name}`, org_id: "default", user_id: "u_o", role: "owner" })
   const form = new FormData()
@@ -109,7 +109,7 @@ const setupDocument = async (name: string, source: string) => {
     headers: { authorization: `Bearer ${token}` },
   })
   const { short_id } = (await res.json()) as { short_id: string }
-  return { app, token, short_id }
+  return { app, blobs, token, short_id }
 }
 
 describe("read map / node", () => {
@@ -291,6 +291,19 @@ describe("read focus", () => {
     })
     expect(focused.matches[0].body).toContain("17 percent")
     expect(JSON.stringify(focused).length).toBeLessThan(source.length / 20)
+  })
+
+  it("reuses the hot source blob across repeated focused reads", async () => {
+    const source = `<!doctype html><html><body>${"<p>routine context</p>".repeat(1_000)}<h2>Decision</h2><p>The cache target is ready.</p></body></html>`
+    const { app, blobs, token, short_id } = await setupDocument("focus-source-cache", source)
+    const get = vi.spyOn(blobs, "get")
+
+    const first = await readJson(app, token, { short_id, focus: "cache target" })
+    const readsAfterFirst = get.mock.calls.length
+    const second = await readJson(app, token, { short_id, focus: "cache target" })
+
+    expect(first).toEqual(second)
+    expect(get.mock.calls.length).toBe(readsAfterFirst)
   })
 
   it("matches visible text across inline markup while returning Markdown", async () => {
