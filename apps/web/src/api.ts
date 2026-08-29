@@ -7,6 +7,7 @@ import type {
   SharedStateMutation,
   SharedStateResult,
   SortMode,
+  StructuralUserEdit,
   WorkspaceAccess,
 } from "@derive/core"
 import type { components, paths } from "./api-types"
@@ -152,26 +153,7 @@ export interface ElementResizeEditInput {
   width: number
   height: number | "auto"
 }
-export type StructuralEditInput =
-  | {
-      schema: "derive.structural-edit/v1"
-      op: "structural-size"
-      region: string
-      node: string
-      size: "compact" | "standard" | "full" | null
-    }
-  | {
-      schema: "derive.structural-edit/v1"
-      op: "structural-order"
-      region: string
-      nodes: string[]
-    }
-  | {
-      schema: "derive.structural-edit/v1"
-      op: "structural-remove"
-      region: string
-      node: string
-    }
+export type StructuralEditInput = StructuralUserEdit
 export type SceneEditInput =
   | {
       op: "scene-update"

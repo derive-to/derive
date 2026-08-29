@@ -2514,6 +2514,13 @@ interface ElReg {
      moves focus out of this frame, and the link flow then asks for a URL up there —
      by the time the answer comes back the live selection may be gone. */
   let pendingRange: Range | null = null
+  const resetEditHistory = () => {
+    undoStack = []
+    redoStack = []
+    lastBurst = null
+    pendingRange = null
+    lastState = ""
+  }
 
   const postDirty = () => {
     const n = countDirty()
@@ -3099,6 +3106,7 @@ interface ElReg {
   const MAX_STRUCTURAL_EDITS = 200
   const STRUCTURE_ID = /^[A-Za-z][A-Za-z0-9_-]{0,127}$/
   type StructureSize = "compact" | "standard" | "full"
+  const STRUCTURE_SIZES = new Set<StructureSize>(["compact", "standard", "full"])
   type StructurePrefix = "data-derive" | "data-derive-runtime"
   const structureAttribute = (prefix: StructurePrefix, name: string) => `${prefix}-${name}`
   const structureNodeSelector = "[data-derive-node],[data-derive-runtime-node]"
@@ -3119,6 +3127,8 @@ interface ElReg {
     origOrder: string[]
   }
   let structureRegions: StructureRegion[] = []
+  let structureRegionByNode = new Map<StructureNode, StructureRegion>()
+  let structureNodeByElement = new Map<HTMLElement, StructureNode>()
   let structureSelected: StructureNode | null = null
   let structureExpectedRemoved = new Set<StructureNode>()
   let structureObserver: MutationObserver | null = null
@@ -3187,8 +3197,17 @@ interface ElReg {
       (child): child is HTMLElement =>
         child instanceof HTMLElement && !child.classList.contains("derive-edit-ui"),
     )
+  const setStructureRegions = (regions: StructureRegion[]) => {
+    structureRegions = regions
+    structureRegionByNode = new Map(
+      regions.flatMap((region) => region.nodes.map((node) => [node, region] as const)),
+    )
+    structureNodeByElement = new Map(
+      regions.flatMap((region) => region.nodes.map((node) => [node.el, node] as const)),
+    )
+  }
   const regionForStructureNode = (node: StructureNode): StructureRegion | null =>
-    structureRegions.find((region) => region.nodes.includes(node)) ?? null
+    structureRegionByNode.get(node) ?? null
   const parentStructureNode = (node: StructureNode): StructureNode | null =>
     regionForStructureNode(node)?.owner ?? null
   const structureRegionExpectedDetached = (region: StructureRegion): boolean => {
@@ -3196,6 +3215,8 @@ interface ElReg {
       if (structureExpectedRemoved.has(owner)) return true
     return false
   }
+  const activeStructureRegions = (): StructureRegion[] =>
+    structureRegions.filter((region) => !structureRegionExpectedDetached(region))
   const connectedStructureNodes = (region: StructureRegion): StructureNode[] => {
     const byEl = new Map(region.nodes.map((node) => [node.el, node]))
     return sourceChildren(region.el)
@@ -3263,7 +3284,7 @@ interface ElReg {
   const structureDocumentIntegrityValid = (): boolean => {
     const currentRegions = Array.from(document.querySelectorAll(structureRegionSelector))
     const currentNodes = Array.from(document.querySelectorAll(structureNodeSelector))
-    const expected = structureRegions.filter((region) => !structureRegionExpectedDetached(region))
+    const expected = activeStructureRegions()
     const expectedNodes = expected.flatMap((region) =>
       region.nodes.filter((node) => !structureExpectedRemoved.has(node)).map((node) => node.el),
     )
@@ -3277,10 +3298,9 @@ interface ElReg {
   const structuralNodeAt = (el: Element | null): StructureNode | null => {
     const candidate = el?.closest(structureNodeSelector)
     if (!(candidate instanceof HTMLElement)) return null
-    for (const region of structureRegions)
-      for (const node of region.nodes)
-        if (node.el === candidate && candidate.parentElement === region.el) return node
-    return null
+    const node = structureNodeByElement.get(candidate)
+    const region = node ? regionForStructureNode(node) : null
+    return node && candidate.parentElement === region?.el ? node : null
   }
   const scanStructureRegions = (): StructureRegion[] => {
     if (
@@ -3343,7 +3363,7 @@ interface ElReg {
           break
         }
         const size = child.getAttribute(structureAttribute(prefix, "size"))
-        if (size !== null && size !== "compact" && size !== "standard" && size !== "full") {
+        if (size !== null && !STRUCTURE_SIZES.has(size as StructureSize)) {
           valid = false
           break
         }
@@ -3399,8 +3419,7 @@ interface ElReg {
 
   const structureDirtyCount = (): number => {
     let dirty = 0
-    for (const region of structureRegions) {
-      if (structureRegionExpectedDetached(region)) continue
+    for (const region of activeStructureRegions()) {
       const current = connectedStructureNodes(region)
       const currentIds = current.map((node) => node.id)
       const currentSet = new Set(currentIds)
@@ -3830,16 +3849,14 @@ interface ElReg {
   )
 
   const enableStructuralEditing = () => {
-    structureRegions = elementEditsOn ? scanStructureRegions() : []
+    setStructureRegions(elementEditsOn ? scanStructureRegions() : [])
     structureExpectedRemoved = new Set()
     syncStructuralPlacement = (el) => {
-      for (const region of structureRegions) {
-        const node = region.nodes.find((candidate) => candidate.el === el)
-        if (!node) continue
-        if (node.el.parentElement === region.el) structureExpectedRemoved.delete(node)
-        else structureExpectedRemoved.add(node)
-        return
-      }
+      const node = structureNodeByElement.get(el)
+      const region = node ? regionForStructureNode(node) : null
+      if (!node || !region) return
+      if (node.el.parentElement === region.el) structureExpectedRemoved.delete(node)
+      else structureExpectedRemoved.add(node)
     }
     refreshStructureAvailability = () => {
       for (const region of structureRegions)
@@ -3900,7 +3917,7 @@ interface ElReg {
     structureExpectedRemoved = new Set()
     syncStructuralPlacement = () => {}
     refreshStructureAvailability = () => {}
-    structureRegions = []
+    setStructureRegions([])
     structureBox.style.display = "none"
     structureToast.style.display = "none"
     if (structureToastTimer) clearTimeout(structureToastTimer)
@@ -3964,11 +3981,7 @@ interface ElReg {
       unmaskSlides()
       // History belongs to the session that made it. Carrying it across would offer
       // to undo into a document that has already been saved and reloaded.
-      undoStack = []
-      redoStack = []
-      lastBurst = null
-      pendingRange = null
-      lastState = ""
+      resetEditHistory()
       sceneEdits = []
       clearEditMention()
       post({ type: "edit-mention-close" })
@@ -4027,11 +4040,7 @@ interface ElReg {
     // Discard establishes a new clean baseline inside the still-open mode. History
     // from the abandoned timeline must not remain actionable: a second edit cycle
     // should begin exactly like the first, with neither stale Undo nor stale Redo.
-    undoStack = []
-    redoStack = []
-    lastBurst = null
-    pendingRange = null
-    lastState = ""
+    resetEditHistory()
     if (lastDirty !== 0) {
       lastDirty = 0
     }
@@ -4729,8 +4738,7 @@ interface ElReg {
   const collectStructuralEdits = (): { edits: WireStructuralEdit[]; invalid: boolean } => {
     const edits: WireStructuralEdit[] = []
     if (!structureDocumentIntegrityValid()) return { edits, invalid: true }
-    for (const region of structureRegions) {
-      if (structureRegionExpectedDetached(region)) continue
+    for (const region of activeStructureRegions()) {
       if (!structureIntegrityValid(region)) return { edits: [], invalid: true }
       const current = connectedStructureNodes(region)
       const ids = current.map((node) => node.id)
