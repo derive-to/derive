@@ -7,6 +7,7 @@ import type {
   SharedStateMutation,
   SharedStateResult,
   SortMode,
+  StructuralUserEdit,
   WorkspaceAccess,
 } from "@derive/core"
 import type { components, paths } from "./api-types"
@@ -152,6 +153,7 @@ export interface ElementResizeEditInput {
   width: number
   height: number | "auto"
 }
+export type StructuralEditInput = StructuralUserEdit
 export type SceneEditInput =
   | {
       op: "scene-update"
@@ -164,7 +166,11 @@ export type SceneEditInput =
   | { op: "scene-move"; id: string; direction: "previous" | "next" }
   | { op: "scene-duplicate"; id: string }
   | { op: "scene-delete"; id: string }
-export type InlineEditInput = QuoteEditInput | ElementResizeEditInput | SceneEditInput
+export type InlineEditInput =
+  | QuoteEditInput
+  | ElementResizeEditInput
+  | StructuralEditInput
+  | SceneEditInput
 /** The other edit shape the server accepts: a literal string swap against the raw
  *  source. The inline editor uses it for exactly one thing — replacing an image's
  *  URL, which lives in an attribute and so has no visible text to quote. The two

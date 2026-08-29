@@ -7,6 +7,8 @@
        responsive page — design once, and every viewer sees the same composition.
     2. Each slide is a <section class="slide" data-derive-slide="N"> layered in the stage,
        shown by toggling .on. The index is the slide's stable identity: comments pin to it.
+       The slide also owns one structural region whose direct children have stable
+       data-derive-node identities, so those authored elements can be safely arranged.
     3. It POSTS its position to the host on every change (source:'derive-deck'), which is
        what turns on Derive's deck bar, Present mode, and slide-pinned comments.
     4. It LISTENS for the host's next/prev/goto, and still works standalone (keys, click
@@ -60,6 +62,12 @@
   }
   .slide.on { opacity: 1; transform: none; pointer-events: auto }
 
+  /* Structural size is semantic, not a captured pixel box. Derive changes only the
+     data-derive-size value in source; these authored rules decide what each preset means. */
+  .slide > [data-derive-node][data-derive-size="compact"] { width: 50%; max-width: none; align-self: flex-start }
+  .slide > [data-derive-node][data-derive-size="standard"] { width: 75%; max-width: none; align-self: flex-start }
+  .slide > [data-derive-node][data-derive-size="full"] { width: 100%; max-width: none; align-self: stretch }
+
   .eyebrow {
     font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
     font-size: 13px; letter-spacing: .16em; text-transform: uppercase; color: var(--mut);
@@ -105,12 +113,12 @@
 <div class="stage" id="stage">
 <!-- derive:slides:start -->
 
-  <section class="slide" data-derive-slide="0">
-    <span class="eyebrow">New deck</span>
-    <h1>New deck</h1>
-    <p class="lede">Replace this slide with your own opening. Arrow keys, click either edge,
+  <section class="slide" data-derive-slide="0" data-derive-region="slide-0" data-derive-layout="stack">
+    <span class="eyebrow" data-derive-node="slide-0-label" data-derive-kind="label">New deck</span>
+    <h1 data-derive-node="slide-0-title" data-derive-kind="heading">New deck</h1>
+    <p class="lede" data-derive-node="slide-0-summary" data-derive-kind="text">Replace this slide with your own opening. Arrow keys, click either edge,
     or press F to present.</p>
-    <div class="body">
+    <div class="body" data-derive-node="slide-0-visual" data-derive-kind="visual">
       <figure>
         <svg viewBox="0 0 900 150" role="img" aria-label="Three slides advancing left to right, the current one filled.">
           <rect x="2" y="18" width="270" height="112" rx="8" fill="#c9c4f0" opacity=".16" stroke="#c9c4f0"/>
@@ -127,10 +135,10 @@
     </div>
   </section>
 
-  <section class="slide" data-derive-slide="1">
-    <span class="eyebrow">How it works</span>
-    <h2>The stage is fixed. Only the scale changes.</h2>
-    <div class="body two">
+  <section class="slide" data-derive-slide="1" data-derive-region="slide-1" data-derive-layout="stack">
+    <span class="eyebrow" data-derive-node="slide-1-label" data-derive-kind="label">How it works</span>
+    <h2 data-derive-node="slide-1-title" data-derive-kind="heading">The stage is fixed. Only the scale changes.</h2>
+    <div class="body two" data-derive-node="slide-1-composition" data-derive-kind="composition">
       <div class="cards" style="grid-template-columns: 1fr">
         <div class="card"><b>1280 x 720</b><span>Design against real pixels. One transform
         fits the stage to any viewport, so nothing reflows and nothing is cropped.</span></div>
@@ -157,10 +165,10 @@
     </div>
   </section>
 
-  <section class="slide" data-derive-slide="2">
-    <span class="eyebrow">Make it yours</span>
-    <h2>Every slide earns a picture and a sentence.</h2>
-    <div class="body">
+  <section class="slide" data-derive-slide="2" data-derive-region="slide-2" data-derive-layout="stack">
+    <span class="eyebrow" data-derive-node="slide-2-label" data-derive-kind="label">Make it yours</span>
+    <h2 data-derive-node="slide-2-title" data-derive-kind="heading">Every slide earns a picture and a sentence.</h2>
+    <div class="body" data-derive-node="slide-2-composition" data-derive-kind="composition">
       <div class="cards">
         <div class="card"><b>Restyle everything</b><span>Palette, type, spacing, the
         transition. Keep the stage, the slide sections, and the two messages.</span></div>

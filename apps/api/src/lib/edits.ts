@@ -6,6 +6,8 @@ import {
   applyQuoteEdits,
   applySceneEdits,
   applySlideOps,
+  applyStructuralEdits,
+  backfillLegacyDeckStructure,
   type DiffOp,
   type DocEdit,
   diffLines,
@@ -15,9 +17,11 @@ import {
   isHtmlLike,
   isQuoteEdit,
   isSceneEdit,
+  isStructuralUserEdit,
   type QuoteEdit,
   type SceneEdit,
   type SlideOp,
+  type StructuralUserEdit,
   toMarkdown,
   type VersionRecord,
 } from "@derive/core"
@@ -242,14 +246,22 @@ export async function materializeEdits(
   const quoteEdits: QuoteEdit[] = []
   const elementEdits: ElementEdit[] = []
   const sceneEdits: SceneEdit[] = []
+  const structuralEdits: StructuralUserEdit[] = []
   const strEdits: DocEdit[] = []
   for (const e of edits) {
     if (isQuoteEdit(e)) quoteEdits.push(e)
     else if (isElementEdit(e)) elementEdits.push(e)
     else if (isSceneEdit(e)) sceneEdits.push(e)
+    else if (isStructuralUserEdit(e)) structuralEdits.push(e)
     else strEdits.push(e as DocEdit)
   }
-  if (!quoteEdits.length && !elementEdits.length && !sceneEdits.length && !strEdits.length)
+  if (
+    !quoteEdits.length &&
+    !elementEdits.length &&
+    !sceneEdits.length &&
+    !structuralEdits.length &&
+    !strEdits.length
+  )
     throw new EditError("`edits` is empty — provide at least one edit.")
   // The two shapes resolve against DIFFERENT baselines (quotes against the stored
   // source all-at-once; old_str edits sequentially, each seeing the previous
@@ -268,11 +280,35 @@ export async function materializeEdits(
     throw new EditError(
       "`edits` mixes scene edits and old_str edits — send the two shapes as separate requests.",
     )
+  if (strEdits.length && structuralEdits.length)
+    throw new EditError(
+      "`edits` mixes structural edits and old_str edits — send the two shapes as separate requests.",
+    )
   let content = src
   if (strEdits.length) content = applyEdits(src, strEdits)
   else {
-    // Element operations resolve against the untouched base first. A resize changes
-    // attributes only, so the visible-text projection quote edits use is identical.
+    // Persist optimistic legacy identities only when a structural operation needs
+    // them. A quote-only save must not turn an unrelated text edit into a whole-deck
+    // migration (and a large version diff). Element edits still use the effective
+    // source the iframe saw so their selectors remain deterministic.
+    // Raw old_str edits retain their byte-exact baseline and never trigger this.
+    if (
+      (structuralEdits.length || elementEdits.length) &&
+      (contentType ?? "").split(";")[0]?.trim() === "text/x-derive-deck"
+    ) {
+      try {
+        content = backfillLegacyDeckStructure(content).html
+      } catch (error) {
+        // Backfill is an optimistic capability upgrade, not a prerequisite for
+        // ordinary deck editing. Keep malformed or ambiguous legacy decks
+        // editable without persisting inferred metadata. Structural requests do
+        // fail closed because their target identities cannot be trusted.
+        if (structuralEdits.length) throw error
+      }
+    }
+    // Element operations resolve against the same effective source the iframe saw
+    // (the stored base plus any deterministic legacy-deck annotations). A resize
+    // changes attributes only, so the visible-text projection quote edits use is identical.
     // This lets one Save carry typed text and resized media atomically.
     if (elementEdits.length) {
       if (!isHtmlLike(contentType ?? "text/html"))
@@ -280,6 +316,14 @@ export async function materializeEdits(
       content = applyElementEdits(content, elementEdits)
     }
     if (quoteEdits.length) content = applyQuoteEdits(content, contentType ?? "", quoteEdits)
+    // Structural operations run after text and media edits. Their stable authored
+    // identities resolve against the updated source while the quote/element
+    // selectors above still see the exact base-version projection they captured.
+    if (structuralEdits.length) {
+      if (!isHtmlLike(contentType ?? "text/html"))
+        throw new EditError("Structural edits apply to HTML documents, not Markdown.")
+      content = applyStructuralEdits(content, structuralEdits).html
+    }
     // Structural scene operations run last, so duplicating a scene also carries any
     // text the person changed in it during the same atomic Save.
     if (sceneEdits.length) {

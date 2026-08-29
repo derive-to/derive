@@ -1,5 +1,6 @@
 import {
   type ArtifactRecord,
+  backfillLegacyDeckStructure,
   EditError,
   fingerprintOf,
   roleOf,
@@ -182,6 +183,280 @@ describe("materializeEdits: quote-scoped edits (the inline editor's shape)", () 
     expect(out.content).toBe(
       '<img id="hero" src="hero.png" alt="Hero" style="width: 360px; height: auto"><p>New caption.</p>',
     )
+  })
+
+  it("applies typed text, semantic size, reorder, and removal in one atomic HTML save", async () => {
+    const html = `<section data-derive-region="story" data-derive-layout="stack">
+  <article data-derive-node="a"><h2>Old A</h2></article>
+  <article data-derive-node="b"><h2>B</h2></article>
+  <article data-derive-node="c"><h2>C</h2></article>
+</section>`
+    const deps = mkDeps({ 1: { text: html, contentType: "text/html" } })
+    const out = await materializeEdits(
+      deps,
+      fileArtifact(1),
+      [
+        { quote: { exact: "Old A" }, new_text: "New A" },
+        {
+          schema: "derive.structural-edit/v1",
+          op: "structural-size",
+          region: "story",
+          node: "a",
+          size: "full",
+        },
+        {
+          schema: "derive.structural-edit/v1",
+          op: "structural-order",
+          region: "story",
+          nodes: ["c", "a", "b"],
+        },
+        {
+          schema: "derive.structural-edit/v1",
+          op: "structural-remove",
+          region: "story",
+          node: "b",
+        },
+      ],
+      1,
+    )
+    expect(out.content).toContain("New A")
+    expect(out.content).toContain('data-derive-node="a" data-derive-size="full"')
+    expect(out.content).not.toContain('data-derive-node="b"')
+    expect(out.content.indexOf('data-derive-node="c"')).toBeLessThan(
+      out.content.indexOf('data-derive-node="a"'),
+    )
+  })
+
+  it("persists optimistic legacy-deck annotations before applying structural intent", async () => {
+    const html = `<main>
+  <section class="slide" data-derive-slide="0"><h2>A</h2><p>Alpha</p></section>
+  <section class="slide" data-derive-slide="1"><h2>B</h2><p>Beta</p></section>
+</main><script>parent.postMessage({source:'derive-deck',type:'deck',n:2},'*')</script>`
+    const deps = mkDeps({ 1: { text: html, contentType: "text/x-derive-deck" } })
+    const out = await materializeEdits(
+      deps,
+      fileArtifact(1),
+      [
+        {
+          schema: "derive.structural-edit/v1",
+          op: "structural-order",
+          region: "slide-0",
+          nodes: ["slide-0-node-2", "slide-0-node-1"],
+        },
+        {
+          schema: "derive.structural-edit/v1",
+          op: "structural-size",
+          region: "slide-0",
+          node: "slide-0-node-2",
+          size: "compact",
+        },
+      ],
+      1,
+    )
+    expect(out.content).toContain('data-derive-region="slide-0"')
+    expect(out.content.indexOf("slide-0-node-2")).toBeLessThan(
+      out.content.indexOf("slide-0-node-1"),
+    )
+    expect(out.content).toContain('data-derive-size="compact"')
+    expect(out.filename).toBe("index.html")
+  })
+
+  it("does not persist a whole legacy migration for a quote-only save", async () => {
+    const html = `<main>
+  <section class="slide" data-derive-slide="0"><h2>Old title</h2><p>Body</p></section>
+  <section class="slide" data-derive-slide="1"><h2>Second</h2><p>More</p></section>
+</main>`
+    const deps = mkDeps({ 1: { text: html, contentType: "text/x-derive-deck" } })
+    const out = await materializeEdits(
+      deps,
+      fileArtifact(1),
+      [{ quote: { exact: "Old title" }, new_text: "New title" }],
+      1,
+    )
+    expect(out.content).toBe(html.replace("Old title", "New title"))
+    expect(out.content).not.toContain("data-derive-region")
+    expect(out.content).not.toContain("data-derive-node")
+    expect(out.content).not.toContain("data-derive-structural-backfill")
+  })
+
+  it("materializes a mixed legacy-deck edit batch against one optimistic source", async () => {
+    const html = `<main>
+  <section class="slide" data-derive-slide="0"><h2>Old title</h2><img id="hero" src="hero.png" alt="Hero"><p>Remove me</p></section>
+  <section class="slide"><h2>Second</h2><p>Keep me</p></section>
+</main>`
+    const rendered = backfillLegacyDeckStructure(html).html
+    const descriptor = scanElements(rendered).find((element) => element.tag === "img")
+    expect(descriptor).toBeDefined()
+    if (!descriptor) return
+    const deps = mkDeps({ 1: { text: html, contentType: "text/x-derive-deck" } })
+    const out = await materializeEdits(
+      deps,
+      fileArtifact(1),
+      [
+        {
+          op: "resize",
+          target: {
+            type: "ElementSelector",
+            tag: "img",
+            role: roleOf(descriptor),
+            id: descriptor.id,
+            fingerprint: fingerprintOf(descriptor),
+            ordinal: descriptor.ordinal,
+            docFraction: descriptor.srcFraction,
+            snapshot: { tag: "img", label: "Image — Hero" },
+          },
+          width: 360,
+          height: "auto",
+        },
+        { quote: { exact: "Old title" }, new_text: "New title" },
+        {
+          schema: "derive.structural-edit/v1",
+          op: "structural-remove",
+          region: "slide-0",
+          node: "slide-0-node-3",
+        },
+        {
+          schema: "derive.structural-edit/v1",
+          op: "structural-order",
+          region: "slide-0",
+          nodes: ["slide-0-node-2", "slide-0-node-1"],
+        },
+        {
+          schema: "derive.structural-edit/v1",
+          op: "structural-size",
+          region: "slide-0",
+          node: "slide-0-node-2",
+          size: "compact",
+        },
+      ],
+      1,
+    )
+    expect(out.content).toContain("New title")
+    expect(out.content).not.toContain("Remove me")
+    expect(out.content).toContain('style="width: 360px; height: auto"')
+    expect(out.content).toContain('data-derive-size="compact"')
+    expect(out.content.indexOf("slide-0-node-2")).toBeLessThan(
+      out.content.indexOf("slide-0-node-1"),
+    )
+    expect(out.content).toContain('data-derive-slide="1"')
+  })
+
+  it("does not change the exact byte baseline for raw source edits to a legacy deck", async () => {
+    const html = `<section class="slide" data-derive-slide="0"><h2>Old</h2></section>
+<section class="slide" data-derive-slide="1"><h2>B</h2></section>`
+    const deps = mkDeps({ 1: { text: html, contentType: "text/x-derive-deck" } })
+    const out = await materializeEdits(
+      deps,
+      fileArtifact(1),
+      [{ old_str: "<h2>Old</h2>", new_str: "<h2>New</h2>" }],
+      1,
+    )
+    expect(out.content).toBe(html.replace("<h2>Old</h2>", "<h2>New</h2>"))
+    expect(out.content).not.toContain("data-derive-region")
+  })
+
+  it("keeps ordinary deck edits available when foreign partial structural metadata exists", async () => {
+    const html = `<section class="slide" data-derive-slide="0"><h2 data-derive-size="huge">Old</h2></section>
+<section class="slide" data-derive-slide="1"><h2>B</h2></section>`
+    const deps = mkDeps({ 1: { text: html, contentType: "text/x-derive-deck" } })
+    const out = await materializeEdits(
+      deps,
+      fileArtifact(1),
+      [{ quote: { exact: "Old" }, new_text: "New" }],
+      1,
+    )
+    expect(out.content).toBe(html.replace("Old", "New"))
+    expect(out.content).not.toContain("data-derive-region")
+    expect(out.content).not.toContain("data-derive-node")
+  })
+
+  it.each([
+    [
+      "duplicate",
+      `<section class="slide" data-derive-slide="2"><h2>Old</h2></section>
+<section class="slide" data-derive-slide="2"><h2>B</h2></section>`,
+    ],
+    [
+      "malformed",
+      `<section class="slide" data-derive-slide="abc"><h2>Old</h2></section>
+<section class="slide" data-derive-slide="1"><h2>B</h2></section>`,
+    ],
+  ])("keeps ordinary deck edits available with %s slide identities", async (_name, html) => {
+    const deps = mkDeps({ 1: { text: html, contentType: "text/x-derive-deck" } })
+    const out = await materializeEdits(
+      deps,
+      fileArtifact(1),
+      [{ quote: { exact: "Old" }, new_text: "New" }],
+      1,
+    )
+    expect(out.content).toBe(html.replace("Old", "New"))
+    expect(out.content).not.toContain("data-derive-region")
+    expect(out.content).not.toContain("data-derive-node")
+  })
+
+  it("refuses structural intent when optimistic deck identity is ambiguous", async () => {
+    const html = `<section class="slide" data-derive-slide="2"><h2>A</h2></section>
+<section class="slide" data-derive-slide="2"><h2>B</h2></section>`
+    const deps = mkDeps({ 1: { text: html, contentType: "text/x-derive-deck" } })
+    await expect(
+      materializeEdits(
+        deps,
+        fileArtifact(1),
+        [
+          {
+            schema: "derive.structural-edit/v1",
+            op: "structural-size",
+            region: "slide-2",
+            node: "slide-2-node-1",
+            size: "compact",
+          },
+        ],
+        1,
+      ),
+    ).rejects.toThrow("Two slides share one identity")
+  })
+
+  it("refuses structural edits on Markdown", async () => {
+    const deps = mkDeps({ 1: { text: "# Not HTML", contentType: "text/markdown" } })
+    await expect(
+      materializeEdits(
+        deps,
+        fileArtifact(1),
+        [
+          {
+            schema: "derive.structural-edit/v1",
+            op: "structural-remove",
+            region: "story",
+            node: "a",
+          },
+        ],
+        1,
+      ),
+    ).rejects.toThrow("Structural edits apply to HTML documents, not Markdown")
+  })
+
+  it("refuses client-authored structural restore source", async () => {
+    const html =
+      '<div data-derive-region="story" data-derive-layout="stack"><p data-derive-node="a">A</p></div>'
+    const deps = mkDeps({ 1: { text: html, contentType: "text/html" } })
+    await expect(
+      materializeEdits(
+        deps,
+        fileArtifact(1),
+        [
+          {
+            schema: "derive.structural-edit/v1",
+            op: "structural-restore",
+            region: "story",
+            node: "evil",
+            html: '<script data-derive-node="evil">alert(1)</script>',
+            before: "a",
+            after: null,
+          } as never,
+        ],
+        1,
+      ),
+    ).rejects.toThrow(EditError)
   })
 
   it("applies canvas text and scene controls in one atomic video save", async () => {

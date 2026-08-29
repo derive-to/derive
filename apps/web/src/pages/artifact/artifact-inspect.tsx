@@ -481,7 +481,7 @@ function SessionControls({
         <div className="flex items-center gap-1">
           <Button
             variant="ghost"
-            size="icon-sm"
+            size="sm"
             aria-label="Undo"
             title="Undo"
             data-testid="artifact-inspect-undo"
@@ -489,10 +489,11 @@ function SessionControls({
             onClick={onUndo}
           >
             <Icon name="undo" size={15} />
+            Undo
           </Button>
           <Button
             variant="ghost"
-            size="icon-sm"
+            size="sm"
             aria-label="Redo"
             title="Redo"
             data-testid="artifact-inspect-redo"
@@ -500,6 +501,7 @@ function SessionControls({
             onClick={onRedo}
           >
             <Icon name="redo" size={15} />
+            Redo
           </Button>
         </div>
       </div>

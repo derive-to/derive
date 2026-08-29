@@ -1,8 +1,10 @@
 import {
   type BlobStore,
   type BundleManifest,
+  backfillLegacyDeckStructure,
   injectArtifactRuntimeScripts,
   injectSharedStateScript,
+  inspectStructuralDocument,
   isBundleContentType,
   looksLikeHtmlDocument,
   MARKS_SCRIPT,
@@ -67,8 +69,24 @@ export const serveContent = async (
   // other read.
   const wantsMarks = ["1", "true"].includes(c.req.query("marks") ?? "")
   const marks = wantsMarks ? MARKS_SCRIPT : ""
+  const structuralSourceValidity = (doc: string): string => {
+    if (!/\bdata-derive-(?:runtime-)?(?:region|layout|node|kind|size)\s*=/i.test(doc)) return ""
+    try {
+      inspectStructuralDocument(doc)
+      return ""
+    } catch {
+      // The HTML parser collapses duplicate attributes, so the browser cannot
+      // independently detect every source ambiguity the save-time parser rejects.
+      // Carry that source verdict into the runtime and expose no unsafe handles.
+      return '<script>Object.defineProperty(window,"__deriveStructuralSourceValid",{value:false})</script>'
+    }
+  }
   const withRuntime = anchors
-    ? (doc: string) => injectArtifactRuntimeScripts(doc, SHARED_STATE_SCRIPT + SELECTION_SCRIPT)
+    ? (doc: string) =>
+        injectArtifactRuntimeScripts(
+          doc,
+          structuralSourceValidity(doc) + SHARED_STATE_SCRIPT + SELECTION_SCRIPT,
+        )
     : (doc: string) => doc
   // renderMarkdown already carries SELECTION_SCRIPT in its generated shell, so it
   // needs only the early shared-state runtime. Injecting the full pair would execute
@@ -77,6 +95,21 @@ export const serveContent = async (
   // Runtime scripts precede authored meta CSP and execute in parse-safe order. Marks and
   // route-specific chrome remain appended because they are optional DOM enhancements.
   const htmlBody = (doc: string): string => withRuntime(rf(doc)) + marks + append
+  // Legacy decks already have a source-level slide boundary. Optimistically expose
+  // their safe direct children as movable nodes in the app render; the identical
+  // pure transform is persisted by materializeEdits on the first save. A malformed
+  // or ambiguous deck remains viewable and simply receives no structural handles.
+  const withDeckStructure = (doc: string): string => {
+    if (content.content_type !== "text/x-derive-deck") return doc
+    try {
+      // Runtime-only names keep a legacy page's authored data-derive selectors and
+      // scripts inert. Save materialization stamps the canonical contract only
+      // after an accepted structural action.
+      return backfillLegacyDeckStructure(doc, { runtime: true }).html
+    } catch {
+      return doc
+    }
+  }
   let path = rawPath
   if (isBundleContentType(content.content_type)) {
     const manifestBytes = await blobs.get(content.blob_key)
@@ -151,7 +184,7 @@ export const serveContent = async (
   // html file artifact — any path serves the document (+ selection capture)
   const ct = mimeFor(path || "index.html")
   if (ct.startsWith("text/html")) {
-    const html = await htmlBody(new TextDecoder().decode(data))
+    const html = await htmlBody(withDeckStructure(new TextDecoder().decode(data)))
     return c.body(html, 200, { ...headers, "Content-Type": ct })
   }
   return c.body(toBody(data), 200, { ...headers, "Content-Type": ct })

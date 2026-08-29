@@ -162,6 +162,21 @@ const idOf = (attrs: string): number | null => {
   return Number(raw)
 }
 
+/** Mint a deterministic identity without crossing JavaScript's safe-integer boundary.
+ * Normal decks keep max+1. A deck already using MAX_SAFE_INTEGER wraps to the lowest
+ * unused non-negative identity instead of rounding into a collision. */
+export const nextUnusedSlideId = (usedIds: Iterable<number>): number => {
+  const used = new Set(usedIds)
+  let max = -1
+  for (const id of used) if (id > max) max = id
+  if (max < Number.MAX_SAFE_INTEGER) return max + 1
+  let candidate = 0
+  while (used.has(candidate)) candidate++
+  if (!Number.isSafeInteger(candidate))
+    throw new EditError("This deck has no safely representable slide identity left to allocate.")
+  return candidate
+}
+
 /** One slide element's exact span in the source. */
 export interface SlideSpan {
   /** 1-based position in document order — what a person sees on the deck bar. */
@@ -218,11 +233,12 @@ export const MAX_SLIDE_OPS = 200
 /** Give every slide a stable identity, minting only for the ones that lack it. Existing
  *  values are never touched: they are what comment threads are pinned to. */
 const stamped = (texts: string[], ids: (number | null)[]): { text: string; id: number }[] => {
-  let next = Math.max(-1, ...ids.filter((v): v is number => v !== null)) + 1
+  const used = new Set(ids.filter((v): v is number => v !== null))
   return texts.map((text, i) => {
     const existing = ids[i]
     if (existing !== null && existing !== undefined) return { text, id: existing }
-    const id = next++
+    const id = nextUnusedSlideId(used)
+    used.add(id)
     // Insert into the opening tag, just past the tag name.
     const m = /^<([a-zA-Z][a-zA-Z0-9-]*)/.exec(text)
     return {
@@ -452,7 +468,7 @@ export const applySlideOps = (html: string, ops: SlideOp[]): string => {
     spans.map((s) => html.slice(s.start, s.end)),
     ids,
   )
-  let nextId = Math.max(-1, ...items.map((item) => item.id)) + 1
+  const usedSlideIds = new Set(items.map((item) => item.id))
   const authoredDomIds = domIds(html)
   if (new Set(authoredDomIds).size !== authoredDomIds.length)
     throw new EditError(
@@ -486,18 +502,20 @@ export const applySlideOps = (html: string, ops: SlideOp[]): string => {
     } else if (op?.op === "duplicate") {
       const pos = at(op.at, "at", items.length)
       const src = items[pos - 1] as { text: string; id: number | null }
+      const nextId = nextUnusedSlideId(usedSlideIds)
+      usedSlideIds.add(nextId)
       // The copy is a NEW slide: it must not inherit the original's identity, or every
       // thread pinned to the original would claim both.
       items.splice(pos, 0, { text: inactiveCopy(src.text, nextId, usedDomIds), id: nextId })
-      nextId++
     } else if (op?.op === "insert") {
       // `at` is the position the new slide will occupy, so unlike the other ops it may
       // be one past the current end. Use the nearest existing slide as the visual shell.
       const pos = at(op.at, "at", items.length + 1)
       const templateAt = Math.min(Math.max(pos - 1, 0), items.length - 1)
       const src = items[templateAt] as { text: string; id: number | null }
+      const nextId = nextUnusedSlideId(usedSlideIds)
+      usedSlideIds.add(nextId)
       items.splice(pos - 1, 0, { text: blankFrom(src.text, nextId), id: nextId })
-      nextId++
     } else {
       throw new EditError(
         `slide_ops: unknown op ${JSON.stringify((op as { op?: unknown })?.op)} — use "move", "delete", "duplicate", or "insert".`,
