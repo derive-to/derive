@@ -107,6 +107,31 @@ body { font-family: sans-serif }
   <article data-derive-node="columns-b">Columns B</article>
 </section>`
 
+const STRUCTURAL_RESIZE_TRANSACTION_DOC = `<style>
+body { font-family: sans-serif }
+.stack { width: 600px; padding: 10px; display: flex; flex-direction: column; gap: 10px }
+.stack > [data-derive-node] { min-height: 40px; padding: 10px; border: 1px solid #ccd; box-sizing: border-box }
+.stack > [data-derive-node][data-derive-width] { width: var(--derive-structural-width); max-width: none }
+.stack > [data-derive-node][data-derive-height] { height: var(--derive-structural-height); box-sizing: border-box }
+#owner { overflow: hidden }
+#css-owner { height: 120px; overflow: hidden }
+#guarded { max-width: 50% !important }
+.mutated-during-resize { transform: scale(.9) }
+</style>
+<main id="outer" class="stack" data-derive-ready data-derive-region="outer" data-derive-layout="stack">
+  <article id="owner" data-derive-node="owner" data-derive-height="120" style="--derive-structural-height: 120px">
+    <section id="inner" class="stack" data-derive-region="inner" data-derive-layout="stack" data-derive-owner="owner">
+      <div id="nested-child" data-derive-node="nested-child" data-derive-height="60" style="--derive-structural-height: 60px">Nested child</div>
+    </section>
+  </article>
+  <article id="guarded" data-derive-node="guarded" data-derive-width="50" style="--derive-structural-width: 50%">Guarded width</article>
+  <article id="css-owner" data-derive-node="css-owner">
+    <section class="stack" data-derive-region="css-inner" data-derive-layout="stack" data-derive-owner="css-owner">
+      <div id="css-child" data-derive-node="css-child" data-derive-height="60" style="--derive-structural-height: 60px">CSS-height child</div>
+    </section>
+  </article>
+</main>`
+
 /** Publish an HTML artifact and open it with the workbench interactive. */
 async function seed(page: Page) {
   const shortId = await publishArtifact(page, "doc.html", DOC, "text/html")
@@ -788,6 +813,135 @@ test("structural resize fails closed for ambiguous layouts and unsafe snap targe
   await expect(selected).toHaveAttribute("data-derive-width", "70")
   await expect(selected).toHaveAttribute("data-derive-height", "96")
   await expect(reflowTarget).toHaveCSS("height", "144px")
+})
+
+test("structural resize transactions cancel safely and preserve nested constraints", async ({
+  owner,
+}) => {
+  const shortId = await publishArtifact(
+    owner,
+    "structural-resize-transactions.html",
+    STRUCTURAL_RESIZE_TRANSACTION_DOC,
+    "text/html",
+  )
+  await openArtifact(owner, shortId)
+  await enterEditMode(owner)
+
+  const frame = doc(owner)
+  const ownerNode = frame.locator("#owner")
+  const guarded = frame.locator("#guarded")
+  const widthHandle = frame.getByRole("slider", { name: "Resize element width" })
+  const heightHandle = frame.getByRole("slider", { name: "Resize element height" })
+
+  // Discard must restore the height attribute as well as its custom property,
+  // otherwise the next structural scan fails closed on a mismatched source pair.
+  await frame.locator("#nested-child").click()
+  await frame.getByRole("button", { name: "Select containing group (Escape)" }).click()
+  await heightHandle.focus()
+  await heightHandle.press("ArrowDown")
+  await expect(ownerNode).toHaveAttribute("data-derive-height", "121")
+  await owner.getByTestId("inline-edit-discard").click()
+  await expect(owner.getByTestId("inline-edit-bar")).toContainText("click text to edit")
+  await owner.getByTestId("inline-edit-done").click()
+  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+  await enterEditMode(owner)
+  await frame.locator("#nested-child").click()
+  await frame.getByRole("button", { name: "Select containing group (Escape)" }).click()
+  await expect(heightHandle).toBeVisible()
+  await expect(ownerNode).toHaveAttribute("data-derive-height", "120")
+
+  // A constrained temporary preview must never be serialized by a keyboard save
+  // while its pointer transaction is still active.
+  // The owner's toolbar sits directly over the next sibling. Select the guarded
+  // node from its unobscured lower edge, matching how a user can reach it.
+  const guardedBox = await guarded.boundingBox()
+  expect(guardedBox).not.toBeNull()
+  if (!guardedBox) return
+  await owner.mouse.click(guardedBox.x + 8, guardedBox.y + guardedBox.height - 8)
+  const grip = await widthHandle.boundingBox()
+  const outer = await frame.locator("#outer").boundingBox()
+  expect(grip).not.toBeNull()
+  expect(outer).not.toBeNull()
+  if (!grip || !outer) return
+  await owner.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2)
+  await owner.mouse.down()
+  await owner.mouse.move(grip.x + grip.width / 2 + outer.width * 0.2, grip.y + grip.height / 2)
+  await owner.keyboard.press("Control+s")
+  await expect(guarded).toHaveAttribute("data-derive-width", "50")
+  await expect(owner.getByTestId("inline-edit-bar")).toBeVisible()
+  await owner.mouse.up()
+
+  // Secondary-button starts are ignored.
+  await owner.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2)
+  await owner.mouse.down({ button: "right" })
+  await owner.mouse.move(grip.x + grip.width / 2 + outer.width * 0.1, grip.y + grip.height / 2)
+  await owner.mouse.up({ button: "right" })
+  await expect(guarded).toHaveAttribute("data-derive-width", "50")
+
+  // Lost capture and a newly unsupported transform both restore the transaction.
+  await owner.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2)
+  await owner.mouse.down()
+  await owner.mouse.move(grip.x + grip.width / 2 + outer.width * 0.1, grip.y + grip.height / 2)
+  await widthHandle.evaluate((element) =>
+    element.dispatchEvent(new PointerEvent("lostpointercapture")),
+  )
+  await owner.mouse.up()
+  await expect(guarded).toHaveAttribute("data-derive-width", "50")
+
+  await owner.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2)
+  await owner.mouse.down()
+  await owner.mouse.move(grip.x + grip.width / 2 + outer.width * 0.1, grip.y + grip.height / 2)
+  await guarded.evaluate((element) => element.classList.add("mutated-during-resize"))
+  await owner.mouse.up()
+  await expect(guarded).toHaveAttribute("data-derive-width", "50")
+  await guarded.evaluate((element) => element.classList.remove("mutated-during-resize"))
+
+  await guarded.evaluate((element) => (element as HTMLElement).blur())
+  await guarded.focus()
+  await expect(widthHandle).toBeVisible()
+  const mutationGrip = await widthHandle.boundingBox()
+  expect(mutationGrip).not.toBeNull()
+  if (!mutationGrip) return
+  await owner.mouse.move(
+    mutationGrip.x + mutationGrip.width / 2,
+    mutationGrip.y + mutationGrip.height / 2,
+  )
+  await owner.mouse.down()
+  await owner.mouse.move(
+    mutationGrip.x + mutationGrip.width / 2 + outer.width * 0.1,
+    mutationGrip.y + mutationGrip.height / 2,
+  )
+  await expect(guarded).not.toHaveAttribute("data-derive-width", "50")
+  await guarded.evaluate((element) => element.setAttribute("data-derive-width", "90"))
+  await owner.mouse.up()
+  await expect(guarded).toHaveAttribute("data-derive-width", "50")
+
+  // Growing a nested child may not make an already-sized owner clip. Accepted
+  // steps remain undoable; the first clipping step rolls back by itself.
+  const child = frame.locator("#nested-child")
+  await child.click()
+  await heightHandle.focus()
+  for (let i = 0; i < 12; i++) await heightHandle.press("Shift+ArrowDown")
+  const clips = await ownerNode.evaluate((element) => {
+    const html = element as HTMLElement
+    return html.scrollHeight > html.clientHeight + 1
+  })
+  expect(clips).toBe(false)
+  expect(Number(await child.getAttribute("data-derive-height"))).toBeLessThan(156)
+
+  // CSS-authored fixed-height ancestors are equally capable of clipping a
+  // nested resize and must fail closed even without data-derive-height.
+  const cssOwner = frame.locator("#css-owner")
+  const cssChild = frame.locator("#css-child")
+  await cssChild.click()
+  await heightHandle.focus()
+  for (let i = 0; i < 12; i++) await heightHandle.press("Shift+ArrowDown")
+  const cssClips = await cssOwner.evaluate((element) => {
+    const html = element as HTMLElement
+    return html.scrollHeight > html.clientHeight + 1
+  })
+  expect(cssClips).toBe(false)
+  expect(Number(await cssChild.getAttribute("data-derive-height"))).toBeLessThan(156)
 })
 
 test("set exact dimensions, constrain a box, and reset to the authored size", async ({ owner }) => {

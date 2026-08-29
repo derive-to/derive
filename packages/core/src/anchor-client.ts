@@ -435,6 +435,7 @@ interface ElReg {
     // open the browser's Save-page dialog over the document.
     if (editOn && (k === "s" || k === "enter"))
       return () => {
+        if (cancelStructureResize()) return
         if (commitEditUi()) post({ type: "edit-save" })
       }
     // ⌘Z drives OUR stack. The native one only sees typing, and only in the block it
@@ -3810,6 +3811,29 @@ interface ElReg {
     const clipsContent = node.el.scrollHeight > node.el.clientHeight + 1
     return Math.abs(rendered - height) <= tolerance && !clipsContent
   }
+  const structureHeightChainFits = (node: StructureNode): boolean => {
+    for (
+      let current: StructureNode | null = node;
+      current;
+      current = parentStructureNode(current)
+    ) {
+      const height = currentStructureHeight(current)
+      if (height !== null && !structureHeightFits(current, height)) return false
+    }
+    // Nested structural regions can also live inside an authored CSS-height
+    // wrapper. Reject a candidate that newly overflows a clipping ancestor even
+    // when that ancestor does not participate in Derive's sizing contract.
+    for (let ancestor = node.el.parentElement; ancestor && ancestor !== document.body; ) {
+      const overflowY = getComputedStyle(ancestor).overflowY
+      if (
+        (overflowY === "hidden" || overflowY === "clip") &&
+        ancestor.scrollHeight > ancestor.clientHeight + 1
+      )
+        return false
+      ancestor = ancestor.parentElement
+    }
+    return true
+  }
 
   const syncStructureSafeArea = (
     hasParent = !!structureSelected && !!parentStructureNode(structureSelected),
@@ -4291,6 +4315,7 @@ interface ElReg {
     mode: StructureResizeMode,
     handle: HTMLButtonElement,
   ) => {
+    if (!e.isPrimary || (e.pointerType === "mouse" && e.button !== 0)) return
     const node = structureSelected
     const region = node ? regionForStructureNode(node) : null
     if (!node || !region || !document.contains(node.el) || !structureTransformResizable(node))
@@ -4517,7 +4542,24 @@ interface ElReg {
     const widthAccepted =
       drag.mode === "height" || structureWidthFits(drag.node, drag.region, drag.width)
     const heightAccepted = drag.mode === "width" || structureHeightFits(drag.node, drag.height)
-    const accepted = drag.moved && widthAccepted && heightAccepted
+    const axesAccepted =
+      (drag.mode === "height" || !!structureWidthAxisFor(drag.node, drag.region)) &&
+      (drag.mode === "width" || !!structureHeightAxisFor(drag.node, drag.region))
+    const sourceAccepted =
+      (drag.mode === "height" ||
+        (currentStructureWidth(drag.node) === drag.width &&
+          drag.node.el.style.getPropertyValue(STRUCTURAL_WIDTH_PROPERTY) === `${drag.width}%`)) &&
+      (drag.mode === "width" ||
+        (currentStructureHeight(drag.node) === drag.height &&
+          drag.node.el.style.getPropertyValue(STRUCTURAL_HEIGHT_PROPERTY) === `${drag.height}px`))
+    const accepted =
+      drag.moved &&
+      widthAccepted &&
+      heightAccepted &&
+      axesAccepted &&
+      sourceAccepted &&
+      structureTransformResizable(drag.node) &&
+      structureHeightChainFits(drag.node)
     if (cancel || !accepted) {
       applyStructuralSizing(drag.initial)
       if (drag.moved && !cancel)
@@ -4550,6 +4592,12 @@ interface ElReg {
     postDirty()
     return true
   }
+  for (const handle of [structureResizeHandle, structureHeightHandle, structureCornerHandle])
+    handle.addEventListener("lostpointercapture", () => cancelStructureResize())
+  window.addEventListener("blur", () => cancelStructureResize())
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) cancelStructureResize()
+  })
   const keyboardStructureResize = (e: KeyboardEvent, mode: StructureResizeMode) => {
     const horizontal = e.key === "ArrowLeft" || e.key === "ArrowRight"
     const vertical = e.key === "ArrowUp" || e.key === "ArrowDown"
@@ -4603,7 +4651,8 @@ interface ElReg {
     if (vertical) applyStructureHeight(node, height)
     const accepted =
       (!horizontal || structureWidthFits(node, region, width)) &&
-      (!vertical || structureHeightFits(node, height))
+      (!vertical || structureHeightFits(node, height)) &&
+      structureHeightChainFits(node)
     restoreStructureTransition(node, transition, transitionPriority)
     if (!accepted) {
       applyStructuralSizing(initial)
@@ -4823,6 +4872,9 @@ interface ElReg {
           const widthAttribute = structureAttribute(node.prefix, "width")
           if (node.origWidth === null) node.el.removeAttribute(widthAttribute)
           else node.el.setAttribute(widthAttribute, node.origWidth)
+          const heightAttribute = structureAttribute(node.prefix, "height")
+          if (node.origHeight === null) node.el.removeAttribute(heightAttribute)
+          else node.el.setAttribute(heightAttribute, node.origHeight)
           restoreStyle(node.el, node.origStyle)
           region.el.append(node.el)
         }
@@ -5674,6 +5726,7 @@ interface ElReg {
   }
   const collectStructuralEdits = (): { edits: WireStructuralEdit[]; invalid: boolean } => {
     const edits: WireStructuralEdit[] = []
+    if (structureResizeDrag) return { edits, invalid: true }
     if (!structureDocumentIntegrityValid()) return { edits, invalid: true }
     for (const region of activeStructureRegions()) {
       if (!structureIntegrityValid(region)) return { edits: [], invalid: true }
