@@ -662,6 +662,7 @@ interface ElReg {
        outline and a compact toolbar; the artifact keeps full control of layout and
        of what compact/standard/full mean in its own CSS. */
     ".derive-structure-box{position:absolute;display:none;pointer-events:none;box-sizing:border-box;border:2px solid rgba(79,70,229,.88);border-radius:5px;box-shadow:0 0 0 4px rgba(79,70,229,.12);z-index:2147483644}" +
+    ".derive-structure-multi-box{position:absolute;display:none;pointer-events:none;box-sizing:border-box;border:2px dashed rgba(79,70,229,.72);border-radius:5px;background:rgba(79,70,229,.05);z-index:2147483642}" +
     ".derive-structure-toolbar{position:absolute;left:-2px;bottom:calc(100% + 8px);display:flex;align-items:center;gap:3px;max-width:min(560px,calc(100vw - 16px));padding:5px;border:1px solid rgba(71,85,105,.35);border-radius:8px;background:rgba(248,250,252,.98);color:#0f172a;box-shadow:0 8px 24px rgba(15,23,42,.24);pointer-events:auto;font:600 11px/1 system-ui,sans-serif;white-space:nowrap}" +
     ".derive-structure-box.derive-structure-below .derive-structure-toolbar{bottom:auto;top:calc(100% + 8px)}" +
     ".derive-structure-label{max-width:112px;padding:0 5px;overflow:hidden;text-overflow:ellipsis;color:#475569;font:600 10px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace}" +
@@ -672,6 +673,7 @@ interface ElReg {
     ".derive-structure-grip:active{cursor:grabbing}" +
     ".derive-structure-size[aria-pressed=true]{border-color:#4f46e5;background:#eef2ff;color:#3730a3}" +
     ".derive-structure-parent{border-color:#c7d2fe;color:#4338ca}" +
+    ".derive-structure-batch{border-color:#a7f3d0;background:#ecfdf5;color:#065f46}" +
     ".derive-structure-resize-handle{position:absolute;right:-8px;top:50%;width:16px;height:34px;padding:0;transform:translateY(-50%);border:2px solid #4f46e5;border-radius:8px;background:#eef2ff;box-shadow:0 2px 8px rgba(15,23,42,.28);cursor:ew-resize;pointer-events:auto;touch-action:none}" +
     ".derive-structure-resize-handle.derive-structure-resize-left{left:-8px;right:auto}" +
     ".derive-structure-resize-handle:after{content:'';position:absolute;left:5px;top:8px;width:2px;height:14px;border-left:1px solid #4f46e5;border-right:1px solid #4f46e5}" +
@@ -703,7 +705,7 @@ interface ElReg {
     /* On a narrow canvas the contextual controls become a predictable editing shelf.
        Root selections use two rows; a nested selection reserves a third for Parent.
        Every action stays visible without document overflow, with touch-sized targets. */
-    "@media(max-width:640px){html.derive-structure-safe body{padding-bottom:calc(var(--derive-structure-body-padding-base,0px) + 118px + env(safe-area-inset-bottom))!important}html.derive-structure-parent-safe body{padding-bottom:calc(var(--derive-structure-body-padding-base,0px) + 166px + env(safe-area-inset-bottom))!important}.derive-structure-toolbar{position:fixed;left:8px;right:8px;top:auto!important;bottom:calc(8px + env(safe-area-inset-bottom))!important;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;max-width:none;padding:6px}.derive-structure-label{display:none}.derive-structure-button{width:100%;height:44px;min-width:0;padding:0 6px;font:650 12px/42px system-ui,sans-serif}.derive-structure-grip{padding-right:8px}.derive-structure-resize-handle{right:0;width:24px;height:44px}.derive-structure-resize-handle.derive-structure-resize-left{left:0}.derive-structure-resize-handle:after{left:9px;top:13px}.derive-structure-resize-height{bottom:0;width:44px;height:24px}.derive-structure-resize-height.derive-structure-resize-top{top:0;bottom:auto}.derive-structure-resize-height:after{left:13px;top:9px}.derive-structure-resize-corner{right:0;bottom:0;width:44px;height:44px}.derive-structure-resize-corner.derive-structure-resize-left{left:0}.derive-structure-resize-corner.derive-structure-resize-top{top:0;bottom:auto}.derive-structure-toast{bottom:calc(118px + env(safe-area-inset-bottom));max-width:calc(100vw - 16px)}html.derive-structure-parent-safe .derive-structure-toast{bottom:calc(166px + env(safe-area-inset-bottom))}}" +
+    "@media(max-width:640px){html.derive-structure-safe body{padding-bottom:calc(var(--derive-structure-body-padding-base,0px) + 166px + env(safe-area-inset-bottom))!important}html.derive-structure-parent-safe body{padding-bottom:calc(var(--derive-structure-body-padding-base,0px) + 214px + env(safe-area-inset-bottom))!important}.derive-structure-toolbar{position:fixed;left:8px;right:8px;top:auto!important;bottom:calc(8px + env(safe-area-inset-bottom))!important;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;max-width:none;padding:6px}.derive-structure-label{display:none}.derive-structure-button{width:100%;height:44px;min-width:0;padding:0 6px;font:650 12px/42px system-ui,sans-serif}.derive-structure-grip{padding-right:8px}.derive-structure-resize-handle{right:0;width:24px;height:44px}.derive-structure-resize-handle.derive-structure-resize-left{left:0}.derive-structure-resize-handle:after{left:9px;top:13px}.derive-structure-resize-height{bottom:0;width:44px;height:24px}.derive-structure-resize-height.derive-structure-resize-top{top:0;bottom:auto}.derive-structure-resize-height:after{left:13px;top:9px}.derive-structure-resize-corner{right:0;bottom:0;width:44px;height:44px}.derive-structure-resize-corner.derive-structure-resize-left{left:0}.derive-structure-resize-corner.derive-structure-resize-top{top:0;bottom:auto}.derive-structure-toast{bottom:calc(166px + env(safe-area-inset-bottom));max-width:calc(100vw - 16px)}html.derive-structure-parent-safe .derive-structure-toast{bottom:calc(214px + env(safe-area-inset-bottom))}}" +
     "@media(prefers-reduced-motion:reduce){.derive-structure-dragging{transition:none!important;animation:none!important}}" +
     /* ...and again derived from the block's OWN text colour, which by definition
        contrasts with whatever the artifact painted behind it. The slate wash above
@@ -2422,20 +2424,22 @@ interface ElReg {
      round trip to the host would be neither. */
   const UNDO_LIMIT = 60
   const TYPING_BURST_MS = 900
+  interface StructuralSizingHistory {
+    el: HTMLElement
+    sizeName: string
+    size: string | null
+    widthName: string
+    width: string | null
+    heightName: string
+    height: string | null
+    style: string | null
+  }
   type HistoryEntry =
     | { kind: "html"; el: HTMLElement; html: string }
     | { kind: "style"; el: ResizableElement; style: string | null }
-    | {
-        kind: "structural-sizing"
-        el: HTMLElement
-        sizeName: string
-        size: string | null
-        widthName: string
-        width: string | null
-        heightName: string
-        height: string | null
-        style: string | null
-      }
+    | ({ kind: "structural-sizing" } & StructuralSizingHistory)
+    | { kind: "structural-sizing-batch"; entries: StructuralSizingHistory[] }
+    | { kind: "structural-order"; region: HTMLElement; nodes: HTMLElement[] }
     | {
         kind: "placement"
         el: HTMLElement
@@ -2492,6 +2496,39 @@ interface ElReg {
     if (entry.height === null) entry.el.removeAttribute(entry.heightName)
     else entry.el.setAttribute(entry.heightName, entry.height)
     restoreStyle(entry.el, entry.style)
+  }
+  const structuralSizingBatchOf = (
+    entries: readonly StructuralSizingHistory[],
+  ): Extract<HistoryEntry, { kind: "structural-sizing-batch" }> => ({
+    kind: "structural-sizing-batch",
+    entries: entries.map((entry) => {
+      const current = structuralSizingOf(
+        entry.el,
+        entry.sizeName,
+        entry.widthName,
+        entry.heightName,
+      )
+      const { kind: _kind, ...sizing } = current
+      return sizing
+    }),
+  })
+  const applyStructuralSizingBatch = (
+    entry: Extract<HistoryEntry, { kind: "structural-sizing-batch" }>,
+  ) => {
+    for (const sizing of entry.entries)
+      applyStructuralSizing({ kind: "structural-sizing", ...sizing })
+  }
+  const structuralOrderOf = (
+    region: HTMLElement,
+    nodes: readonly HTMLElement[],
+  ): Extract<HistoryEntry, { kind: "structural-order" }> => ({
+    kind: "structural-order",
+    region,
+    nodes: [...nodes],
+  })
+  const applyStructuralOrder = (entry: Extract<HistoryEntry, { kind: "structural-order" }>) => {
+    for (const node of entry.nodes)
+      if (node.parentElement === entry.region) entry.region.append(node)
   }
   const placementOf = (el: HTMLElement): Extract<HistoryEntry, { kind: "placement" }> => ({
     kind: "placement",
@@ -2551,6 +2588,16 @@ interface ElReg {
       if (!document.contains(entry.el)) return
       to.push(structuralSizingOf(entry.el, entry.sizeName, entry.widthName, entry.heightName))
       applyStructuralSizing(entry)
+    } else if (entry.kind === "structural-sizing-batch") {
+      if (entry.entries.some(({ el }) => !document.contains(el))) return
+      to.push(structuralSizingBatchOf(entry.entries))
+      applyStructuralSizingBatch(entry)
+    } else if (entry.kind === "structural-order") {
+      if (!document.contains(entry.region)) return
+      const current = entry.nodes.filter((node) => node.parentElement === entry.region)
+      to.push(structuralOrderOf(entry.region, current))
+      applyStructuralOrder(entry)
+      for (const node of entry.nodes) syncStructuralPlacement(node)
     } else if (!document.contains(entry.el)) return
     else if (entry.kind === "html") {
       to.push({ kind: "html", el: entry.el, html: entry.el.innerHTML })
@@ -3201,6 +3248,9 @@ interface ElReg {
   let structureRegionByNode = new Map<StructureNode, StructureRegion>()
   let structureNodeByElement = new Map<HTMLElement, StructureNode>()
   let structureSelected: StructureNode | null = null
+  let structureSelection: StructureNode[] = []
+  let structurePointerExtend = false
+  let structurePointerSelectionHandled = false
   let structureExpectedRemoved = new Set<StructureNode>()
   let structureObserver: MutationObserver | null = null
   let structureToastTimer = 0
@@ -3226,6 +3276,17 @@ interface ElReg {
   structureLabel.className = "derive-structure-label"
   const structureEarlier = structureButton("↑", "Move earlier (Option+Up)")
   const structureLater = structureButton("↓", "Move later (Option+Down)")
+  const structureSelectAll = structureButton("All", "Select all siblings", "derive-structure-batch")
+  const structureSameWidth = structureButton(
+    "Same W",
+    "Match selected widths to the active element",
+    "derive-structure-batch",
+  )
+  const structureSameHeight = structureButton(
+    "Same H",
+    "Match selected heights to the active element",
+    "derive-structure-batch",
+  )
   const structureParent = structureButton(
     "Parent",
     "Select containing group (Escape)",
@@ -3245,6 +3306,9 @@ interface ElReg {
     structureLabel,
     structureEarlier,
     structureLater,
+    structureSelectAll,
+    structureSameWidth,
+    structureSameHeight,
     structureParent,
     structureAuto,
     structureCompact,
@@ -3296,8 +3360,12 @@ interface ElReg {
   structureToastUndo.type = "button"
   structureToastUndo.textContent = "Undo"
   structureToast.append(structureToastText, structureToastUndo)
+  const structureMultiLayer = document.createElement("div")
+  structureMultiLayer.className = "derive-edit-ui"
+  const structureMultiBoxes = new Map<HTMLElement, HTMLDivElement>()
   ;(document.body || document.documentElement).append(
     structureBox,
+    structureMultiLayer,
     structureSnapGuide,
     structureHeightSnapGuide,
     structureToast,
@@ -3855,10 +3923,45 @@ interface ElReg {
     root.classList.toggle("derive-structure-parent-safe", shouldReserve && hasParent)
   }
 
+  const paintStructureMultiSelection = () => {
+    const activeRegion = structureSelected ? regionForStructureNode(structureSelected) : null
+    const selected = new Set(
+      structureSelection
+        .filter(
+          (node) =>
+            node !== structureSelected &&
+            structureNodeAvailable(node) &&
+            regionForStructureNode(node) === activeRegion,
+        )
+        .map((node) => node.el),
+    )
+    for (const [el, box] of structureMultiBoxes)
+      if (!selected.has(el)) {
+        box.remove()
+        structureMultiBoxes.delete(el)
+      }
+    for (const el of selected) {
+      let box = structureMultiBoxes.get(el)
+      if (!box) {
+        box = document.createElement("div")
+        box.className = "derive-structure-multi-box"
+        structureMultiLayer.append(box)
+        structureMultiBoxes.set(el, box)
+      }
+      const rect = el.getBoundingClientRect()
+      box.style.display = rect.width || rect.height ? "block" : "none"
+      box.style.left = `${rect.left + (window.scrollX || 0)}px`
+      box.style.top = `${rect.top + scrollTop()}px`
+      box.style.width = `${rect.width}px`
+      box.style.height = `${rect.height}px`
+    }
+  }
+
   const paintStructureUi = () => {
     const selected = structureSelected
     const parent = selected ? parentStructureNode(selected) : null
     syncStructureSafeArea(!!parent)
+    paintStructureMultiSelection()
     if (!editOn || !selected || !structureNodeAvailable(selected)) {
       structureBox.style.display = "none"
       if (!structureResizeDrag) {
@@ -3878,7 +3981,6 @@ interface ElReg {
       return
     }
     const nodes = connectedStructureNodes(region)
-    const index = nodes.indexOf(selected)
     const size = selected.el.getAttribute(structureAttribute(selected.prefix, "size"))
     const width = currentStructureWidth(selected)
     const height = currentStructureHeight(selected)
@@ -3888,10 +3990,34 @@ interface ElReg {
     structureBox.style.width = `${rect.width}px`
     structureBox.style.height = `${rect.height}px`
     structureBox.classList.toggle("derive-structure-below", rect.top < 54)
-    structureLabel.textContent = selected.id
+    const selection = structureSelection.filter(
+      (node) => regionForStructureNode(node) === region && structureNodeAvailable(node),
+    )
+    const selectionSet = new Set(selection)
+    structureLabel.textContent =
+      selection.length > 1 ? `${selection.length} selected · ${selected.id}` : selected.id
     structureParent.hidden = !parent
-    structureEarlier.disabled = index <= 0
-    structureLater.disabled = index < 0 || index >= nodes.length - 1
+    structureGrip.disabled = selection.length > 1
+    structureGrip.title =
+      selection.length > 1 ? "Use the arrow controls to reorder this selection" : "Drag to reorder"
+    structureEarlier.disabled = !nodes.some(
+      (node, nodeIndex) =>
+        selectionSet.has(node) &&
+        nodeIndex > 0 &&
+        !selectionSet.has(nodes[nodeIndex - 1] as StructureNode),
+    )
+    structureLater.disabled = !nodes.some(
+      (node, nodeIndex) =>
+        selectionSet.has(node) &&
+        nodeIndex < nodes.length - 1 &&
+        !selectionSet.has(nodes[nodeIndex + 1] as StructureNode),
+    )
+    structureSelectAll.disabled = nodes.length < 2 || selection.length === nodes.length
+    structureSameWidth.hidden = selection.length < 2
+    structureSameHeight.hidden = selection.length < 2
+    structureRemove.disabled = selection.length > 1
+    structureRemove.title =
+      selection.length > 1 ? "Remove one element at a time" : "Remove element (Delete)"
     structureAuto.setAttribute("aria-pressed", String(size === null && width === null))
     structureCompact.setAttribute("aria-pressed", String(size === "compact"))
     structureStandard.setAttribute("aria-pressed", String(size === "standard"))
@@ -3922,9 +4048,12 @@ interface ElReg {
     const transformDisabled = !structureTransformResizable(selected)
     const widthAxis = structureWidthAxisFor(selected, region)
     const heightAxis = structureHeightAxisFor(selected, region)
-    structureResizeHandle.disabled = transformDisabled || !widthAxis
-    structureHeightHandle.disabled = transformDisabled || !heightAxis
-    structureCornerHandle.disabled = transformDisabled || !widthAxis || !heightAxis
+    const batchSelected = selection.length > 1
+    for (const button of [structureAuto, structureCompact, structureStandard, structureFull])
+      button.disabled = batchSelected
+    structureResizeHandle.disabled = batchSelected || transformDisabled || !widthAxis
+    structureHeightHandle.disabled = batchSelected || transformDisabled || !heightAxis
+    structureCornerHandle.disabled = batchSelected || transformDisabled || !widthAxis || !heightAxis
     structureResizeHandle.classList.toggle(
       "derive-structure-resize-left",
       widthAxis?.edge === "left",
@@ -3942,19 +4071,25 @@ interface ElReg {
       heightAxis?.edge === "top",
     )
     structureResizeHandle.title = structureResizeHandle.disabled
-      ? transformDisabled
-        ? "Transformed elements keep their authored width"
-        : "This authored layout controls horizontal distribution"
+      ? batchSelected
+        ? "Use Same W to equalize a multi-selection"
+        : transformDisabled
+          ? "Transformed elements keep their authored width"
+          : "This authored layout controls horizontal distribution"
       : "Drag or use arrow keys to resize width"
     structureHeightHandle.title = structureHeightHandle.disabled
-      ? transformDisabled
-        ? "Transformed elements keep their authored height"
-        : "This authored stack controls vertical distribution"
+      ? batchSelected
+        ? "Use Same H to equalize a multi-selection"
+        : transformDisabled
+          ? "Transformed elements keep their authored height"
+          : "This authored stack controls vertical distribution"
       : "Drag or use arrow keys to resize height"
     structureCornerHandle.title = structureCornerHandle.disabled
-      ? transformDisabled
-        ? "Transformed elements keep their authored size"
-        : "This authored layout controls size distribution"
+      ? batchSelected
+        ? "Equalize one axis at a time for a multi-selection"
+        : transformDisabled
+          ? "Transformed elements keep their authored size"
+          : "This authored layout controls size distribution"
       : "Drag to resize width and height"
   }
   refreshResizeUi = () => {
@@ -3963,9 +4098,25 @@ interface ElReg {
   }
   hasSelectedResize = () => !!resizeSelectedEl || !!structureSelected
 
-  const selectStructure = (node: StructureNode | null) => {
+  const selectStructure = (node: StructureNode | null, extend = false) => {
     if (node && !structureNodeAvailable(node)) node = null
-    structureSelected = node
+    if (!node) {
+      structureSelection = []
+      structureSelected = null
+    } else if (
+      extend &&
+      structureSelected &&
+      regionForStructureNode(node) === regionForStructureNode(structureSelected)
+    ) {
+      const existing = structureSelection.indexOf(node)
+      if (existing >= 0) structureSelection.splice(existing, 1)
+      else structureSelection.push(node)
+      structureSelected = structureSelection.at(-1) ?? null
+    } else {
+      structureSelection = [node]
+      structureSelected = node
+    }
+    node = structureSelected
     if (!node) {
       structureSnapGuide.style.display = "none"
       structureHeightSnapGuide.style.display = "none"
@@ -3987,6 +4138,11 @@ interface ElReg {
   }
   dismissStructureUi = () => {
     if (!structureSelected) return false
+    if (structureSelection.length > 1) {
+      structureSelection = [structureSelected]
+      paintStructureUi()
+      return true
+    }
     const parent = parentStructureNode(structureSelected)
     if (parent) {
       selectStructure(parent)
@@ -4081,30 +4237,136 @@ interface ElReg {
     return false
   }
   const moveStructure = (direction: -1 | 1) => {
-    const selected = structureSelected
-    if (!selected) return
-    const region = regionForStructureNode(selected)
+    const active = structureSelected
+    if (!active) return
+    const region = regionForStructureNode(active)
     if (!region) return
     const nodes = connectedStructureNodes(region)
-    const index = nodes.indexOf(selected)
-    const destination = index + direction
-    if (index < 0 || destination < 0 || destination >= nodes.length) return
-    const target = nodes[destination]
-    if (!target) return
-    const initial = placementOf(selected.el)
+    const selected = new Set(
+      structureSelection.filter((node) => regionForStructureNode(node) === region),
+    )
+    if (!selected.size) selected.add(active)
+    const canMove = nodes.some(
+      (node, index) =>
+        selected.has(node) &&
+        (direction < 0
+          ? index > 0 && !selected.has(nodes[index - 1] as StructureNode)
+          : index < nodes.length - 1 && !selected.has(nodes[index + 1] as StructureNode)),
+    )
+    if (!canMove) return
+    const initial = structuralOrderOf(
+      region.el,
+      nodes.map((node) => node.el),
+    )
     const geometry = structureGeometry(region)
-    const initialPaintOrder = pairPaintOrder(selected, target)
-    if (direction < 0) region.el.insertBefore(selected.el, target.el)
-    else region.el.insertBefore(selected.el, target.el.nextSibling)
-    const paintOrderChanged =
-      initialPaintOrder !== null && pairPaintOrder(selected, target) !== initialPaintOrder
+    const initialPaintOrder = new Map<string, string>()
+    for (const chosen of selected)
+      for (const other of nodes) {
+        if (selected.has(other)) continue
+        const top = pairPaintOrder(chosen, other)
+        if (top) initialPaintOrder.set(`${chosen.id}\u0000${other.id}`, top.id)
+      }
+    const reordered = [...nodes]
+    if (direction < 0) {
+      for (let index = 1; index < reordered.length; index++) {
+        const node = reordered[index] as StructureNode
+        if (!selected.has(node) || selected.has(reordered[index - 1] as StructureNode)) continue
+        const previous = reordered[index - 1] as StructureNode
+        reordered[index - 1] = node
+        reordered[index] = previous
+      }
+    } else {
+      for (let index = reordered.length - 2; index >= 0; index--) {
+        const node = reordered[index] as StructureNode
+        if (!selected.has(node) || selected.has(reordered[index + 1] as StructureNode)) continue
+        const next = reordered[index + 1] as StructureNode
+        reordered[index] = next
+        reordered[index + 1] = node
+      }
+    }
+    for (const node of reordered) region.el.append(node.el)
+    let paintOrderChanged = false
+    for (const [pair, topId] of initialPaintOrder) {
+      const [chosenId, otherId] = pair.split("\u0000")
+      const chosen = nodes.find((node) => node.id === chosenId)
+      const other = nodes.find((node) => node.id === otherId)
+      if (chosen && other && pairPaintOrder(chosen, other)?.id !== topId) {
+        paintOrderChanged = true
+        break
+      }
+    }
     if (!structureGeometryChanged(geometry, region) && !paintOrderChanged) {
-      applyPlacement(initial)
+      applyStructuralOrder(initial)
       showStructureToast("Authored layout controls this order")
       paintStructureUi()
       return
     }
     remember(initial)
+    markStructureChanged()
+  }
+  const selectedStructureNodes = (region: StructureRegion): StructureNode[] =>
+    structureSelection.filter(
+      (node) => regionForStructureNode(node) === region && structureNodeAvailable(node),
+    )
+  const equalizeStructure = (axis: "width" | "height") => {
+    const active = structureSelected
+    if (!active) return
+    const region = regionForStructureNode(active)
+    if (!region) return
+    const selected = selectedStructureNodes(region)
+    if (selected.length < 2) return
+    const contentWidth = structureContentWidth(region)
+    const width =
+      currentStructureWidth(active) ?? Math.round((active.el.offsetWidth / contentWidth) * 100)
+    const height = currentStructureHeight(active) ?? active.el.offsetHeight
+    const snapshots = selected.map((node) => {
+      const { kind: _kind, ...sizing } = structuralSizingOf(
+        node.el,
+        structureSizeName(node),
+        structureWidthName(node),
+        structureHeightName(node),
+      )
+      return sizing
+    })
+    let accepted =
+      contentWidth > 0 &&
+      width >= MIN_STRUCTURAL_WIDTH_PCT &&
+      width <= MAX_STRUCTURAL_WIDTH_PCT &&
+      height >= MIN_STRUCTURAL_HEIGHT_PX &&
+      height <= MAX_STRUCTURAL_HEIGHT_PX
+    for (const node of selected) {
+      if (
+        !structureTransformResizable(node) ||
+        (axis === "width"
+          ? !structureWidthAxisFor(node, region)
+          : !structureHeightAxisFor(node, region))
+      ) {
+        accepted = false
+        break
+      }
+      if (node === active) continue
+      if (axis === "width") applyStructureWidth(node, width)
+      else applyStructureHeight(node, height)
+      if (
+        (axis === "width" && !structureWidthFits(node, region, width)) ||
+        (axis === "height" &&
+          (!structureHeightFits(node, height) || !structureHeightChainFits(node)))
+      ) {
+        accepted = false
+        break
+      }
+    }
+    if (!accepted) {
+      applyStructuralSizingBatch({ kind: "structural-sizing-batch", entries: snapshots })
+      showStructureToast(
+        axis === "width"
+          ? "Authored constraints prevent matching these widths"
+          : "Content or authored constraints prevent matching these heights",
+      )
+      paintStructureUi()
+      return
+    }
+    remember({ kind: "structural-sizing-batch", entries: snapshots })
     markStructureChanged()
   }
   const sizeStructure = (size: StructureSize | null) => {
@@ -4149,6 +4411,10 @@ interface ElReg {
   const removeStructure = () => {
     const selected = structureSelected
     if (!selected?.el.parentElement) return
+    if (structureSelection.length > 1) {
+      showStructureToast("Collapse the selection before removing an element")
+      return
+    }
     remember(placementOf(selected.el))
     structureExpectedRemoved.add(selected)
     selected.el.remove()
@@ -4163,6 +4429,25 @@ interface ElReg {
   structureLater.addEventListener("click", (e) => {
     e.stopPropagation()
     moveStructure(1)
+  })
+  structureSelectAll.addEventListener("click", (e) => {
+    e.stopPropagation()
+    const active = structureSelected
+    const region = active ? regionForStructureNode(active) : null
+    if (!active || !region) return
+    structureSelection = connectedStructureNodes(region).filter((node) =>
+      structureNodeAvailable(node),
+    )
+    structureSelected = active
+    paintStructureUi()
+  })
+  structureSameWidth.addEventListener("click", (e) => {
+    e.stopPropagation()
+    equalizeStructure("width")
+  })
+  structureSameHeight.addEventListener("click", (e) => {
+    e.stopPropagation()
+    equalizeStructure("height")
   })
   structureParent.addEventListener("click", (e) => {
     e.stopPropagation()
@@ -4763,10 +5048,23 @@ interface ElReg {
     structureGrip.focus()
     return true
   }
+  document.addEventListener(
+    "mousedown",
+    (e) => {
+      const target = asEl(e.target)
+      const node = editOn && !target?.closest(".derive-edit-ui") ? structuralNodeAt(target) : null
+      structurePointerExtend = !!node && (e.shiftKey || e.metaKey || e.ctrlKey)
+      structurePointerSelectionHandled = false
+    },
+    true,
+  )
   document.addEventListener("focusin", (e) => {
     if (!editOn) return
     const node = structuralNodeAt(asEl(e.target))
-    if (node && e.target === node.el && structureNodeAvailable(node)) selectStructure(node)
+    if (node && e.target === node.el && structureNodeAvailable(node)) {
+      selectStructure(node, structurePointerExtend)
+      structurePointerSelectionHandled = structurePointerExtend
+    }
   })
   document.addEventListener(
     "keydown",
@@ -4819,6 +5117,11 @@ interface ElReg {
         if (document.activeElement === structureSelected.el) structureSelected.el.blur()
         structureSelected = null
       }
+      structureSelection = structureSelection.filter((node) => structureNodeAvailable(node))
+      if (!structureSelected && structureSelection.length)
+        structureSelected = structureSelection.at(-1) ?? null
+      if (structureSelected && !structureSelection.includes(structureSelected))
+        structureSelection.push(structureSelected)
       paintStructureUi()
     }
     refreshStructureAvailability()
@@ -4855,6 +5158,7 @@ interface ElReg {
       })
     }
     structureSelected = null
+    structureSelection = []
     paintStructureUi()
   }
   const settleStructuralEditing = (restore: boolean) => {
@@ -4885,6 +5189,9 @@ interface ElReg {
         else node.el.setAttribute("tabindex", node.origTabindex)
       }
     structureSelected = null
+    structureSelection = []
+    for (const box of structureMultiBoxes.values()) box.remove()
+    structureMultiBoxes.clear()
     structureResizeDrag = null
     structureExpectedRemoved = new Set()
     syncStructuralPlacement = () => {}
@@ -5217,7 +5524,10 @@ interface ElReg {
     // inner copy just as editable as the container is movable.
     const structural = structuralNodeAt(el0)
     if (e.detail <= 1 && structural) {
-      selectStructure(structural)
+      const extend = e.shiftKey || e.metaKey || e.ctrlKey
+      if (!(extend && structurePointerSelectionHandled)) selectStructure(structural, extend)
+      structurePointerExtend = false
+      structurePointerSelectionHandled = false
       selectResize(null)
       return
     }
