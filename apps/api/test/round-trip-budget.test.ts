@@ -351,11 +351,23 @@ describe("MCP tool calls stay within their round-trip budget", () => {
   const call = (app: App, token: string, name: string, args: Record<string, unknown>, id = 2) =>
     rpc(app, token, { jsonrpc: "2.0", id, method: "tools/call", params: { name, arguments: args } })
 
+  it("refreshes workspace roles after first-touch provisioning", async () => {
+    const { app, token, calls } = appWithGrant(
+      "rt-first-touch",
+      "openid derive:read derive:publish",
+    )
+    const listed = await call(app, token, "list_workspaces", {})
+    expect(listed?.result?.isError, JSON.stringify(listed)).not.toBe(true)
+    expect(listed?.result?.content?.[0]?.text).toContain("ws_p_u_o")
+    expect(calls).toContain("listWorkspaces")
+  })
+
   it("re-reads Brandprint inputs after a workspace override", async () => {
     const { app, meta, token, calls, reset } = appWithGrant(
       "rt-override",
       "openid derive:read derive:publish",
     )
+    await meta.setWorkspace("default", "Default")
     await meta.setMembership({ id: "m_default", org_id: "default", user_id: "u_o", role: "owner" })
     await meta.setWorkspace("other", "Other")
     await meta.setMembership({ id: "m_other", org_id: "other", user_id: "u_o", role: "editor" })
@@ -366,7 +378,7 @@ describe("MCP tool calls stay within their round-trip budget", () => {
     const initialized = await rpc(app, token, initBody, override)
     expect(initialized?.error, JSON.stringify(initialized)).toBeUndefined()
     expect(calls).toContain("oauthGrantWithWorkspaces")
-    expect(calls).toContain("getMembership")
+    expect(calls).not.toContain("getMembership")
     expect(calls).toContain("orgContext")
   })
 
@@ -380,6 +392,7 @@ describe("MCP tool calls stay within their round-trip budget", () => {
     // The OAuth user needs a workspace SEAT — direct createArtifact (unlike a real publish)
     // writes no membership row on its own, and workspace_access:"member" gates on exactly
     // that row existing.
+    await meta.setWorkspace("default", "Default")
     await meta.setMembership({ id: "m_o", org_id: "default", user_id: "u_o", role: "owner" })
 
     // A realistic target: a published artifact with two open comment threads (one of them
@@ -457,12 +470,17 @@ describe("MCP tool calls stay within their round-trip budget", () => {
     const mapCalls = [...calls]
 
     reset()
+    const workspacesRes = await call(app, token, "list_workspaces", {}, 5)
+    expect(workspacesRes?.result?.isError, JSON.stringify(workspacesRes)).not.toBe(true)
+    const workspaceCalls = [...calls]
+
+    reset()
     const reactRes = await call(
       app,
       token,
       "comment",
       { short_id: "rttest01", reply_to: threadA, react: "👍" },
-      3,
+      6,
     )
     expect(reactRes?.result?.isError, JSON.stringify(reactRes)).not.toBe(true)
     const reactCalls = [...calls]
@@ -473,7 +491,7 @@ describe("MCP tool calls stay within their round-trip budget", () => {
       token,
       "comment",
       { short_id: "rttest01", reply_to: threadB, set_state: "resolved" },
-      4,
+      7,
     )
     expect(resolveRes?.result?.isError, JSON.stringify(resolveRes)).not.toBe(true)
     const resolveCalls = [...calls]
@@ -484,6 +502,7 @@ describe("MCP tool calls stay within their round-trip budget", () => {
       `MCP round trips — catch_up(short_id): ${catchUpCalls.length} [${catchUpCalls.join(", ")}]\n` +
         `MCP round trips — read(focus): ${readCalls.length} [${readCalls.join(", ")}]\n` +
         `MCP round trips — read(map): ${mapCalls.length} [${mapCalls.join(", ")}]\n` +
+        `MCP round trips — list_workspaces: ${workspaceCalls.length} [${workspaceCalls.join(", ")}]\n` +
         `MCP round trips — comment(react): ${reactCalls.length} [${reactCalls.join(", ")}]\n` +
         `MCP round trips — comment(set_state): ${resolveCalls.length} [${resolveCalls.join(", ")}]`,
     )
@@ -511,20 +530,21 @@ describe("MCP tool calls stay within their round-trip budget", () => {
     expect(catchUpCalls).toContain("catchUpRead")
     for (const gone of ["listVersions", "listComments", "listReviewRounds", "getVersionData"])
       expect(catchUpCalls, `${gone} escaped the catch-up batch`).not.toContain(gone)
-    expect(catchUpCalls.length).toBeLessThanOrEqual(4)
-    // One shared MCP bootstrap read, one joined artifact + selected-version envelope,
-    // then the SQLite authorization fallback. The hosted store performs the envelope as
-    // one statement. The handler must not quietly restore either serial lookup.
+    expect(catchUpCalls.length).toBeLessThanOrEqual(3)
+    // One shared MCP bootstrap read, then one joined artifact + selected-version envelope.
+    // The grant snapshot also supplies the live workspace role, so authorization adds no
+    // metadata read. The handler must not quietly restore either serial lookup.
     expect(readCalls).toContain("artifactWithVersion")
     expect(readCalls).not.toContain("getByShortId")
     expect(readCalls).not.toContain("getVersion")
-    expect(readCalls.length).toBeLessThanOrEqual(3)
+    expect(readCalls.length).toBeLessThanOrEqual(2)
     expect(mapCalls).toContain("artifactWithVersionData")
     expect(mapCalls).not.toContain("getByShortId")
     expect(mapCalls).not.toContain("getVersion")
     expect(mapCalls).not.toContain("getVersionData")
-    expect(mapCalls.length).toBeLessThanOrEqual(3)
-    expect(reactCalls.length).toBeLessThanOrEqual(5)
+    expect(mapCalls.length).toBeLessThanOrEqual(2)
+    expect(workspaceCalls).toEqual(["oauthGrantWithWorkspaces"])
+    expect(reactCalls.length).toBeLessThanOrEqual(4)
     // set_state went 8 → 9 when resolving a thread started keeping its mirrored Slack cards in
     // line (lib/slack-comments.ts enqueueSlackThreadState). The added call is the
     // listSlackThreadLinksByThread that asks whether this thread is mirrored anywhere — one
@@ -537,6 +557,6 @@ describe("MCP tool calls stay within their round-trip budget", () => {
     // onto the root comment's meta, the one row the activity stream reads "Claude Code resolved
     // Ada's thread" from. One read of the root (already loaded by the tool's own thread check)
     // and one meta write; without it the record says only "resolved", by nobody, at no time.
-    expect(resolveCalls.length).toBeLessThanOrEqual(8)
+    expect(resolveCalls.length).toBeLessThanOrEqual(7)
   })
 })

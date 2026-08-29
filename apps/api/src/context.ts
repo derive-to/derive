@@ -629,6 +629,7 @@ export function buildContext(deps: AppDeps) {
       clientId: string
       boundWorkspaces: string[]
       orgContext?: OAuthGrantWorkspaceRead["orgContext"]
+      workspaces?: (WorkspaceRecord & { role: Role })[]
     }
   >()
   // Set when this request's bearer is a minted dkapi_ token — read by the mint to
@@ -762,6 +763,7 @@ export function buildContext(deps: AppDeps) {
             clientId: o.clientId,
             boundWorkspaces: o.boundWorkspaces,
             orgContext: o.orgContext,
+            workspaces: o.workspaces,
           })
           // An OAuth agent may act in any workspace WITHIN ITS GRANT: an explicit
           // X-Derive-Workspace header, validated against the OWNER's membership,
@@ -776,7 +778,9 @@ export function buildContext(deps: AppDeps) {
           const want = c.req.header("x-derive-workspace")
           const inGrant = o.boundWorkspaces.length === 0 || o.boundWorkspaces.includes(want ?? "")
           if (want && want !== a.org_id && inGrant) {
-            const m = await meta.getMembership(want, owner)
+            const m = o.workspaces
+              ? o.workspaces.find((workspace) => workspace.id === want)
+              : await meta.getMembership(want, owner)
             if (m) a = { ...a, org_id: want, role: capRole(o.scopeRole, m.role) }
           }
         }
@@ -825,6 +829,7 @@ export function buildContext(deps: AppDeps) {
     clientId: string
     boundWorkspaces: string[]
     orgContext?: OAuthGrantWorkspaceRead["orgContext"]
+    workspaces?: (WorkspaceRecord & { role: Role })[]
   } | null> => {
     await agentFor(c)
     return oauthGrantCache.get(c) ?? null

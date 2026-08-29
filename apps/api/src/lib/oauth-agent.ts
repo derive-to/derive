@@ -4,6 +4,7 @@ import {
   type MetaStore,
   type OAuthGrantWorkspaceRead,
   type Role,
+  type WorkspaceRecord,
 } from "@derive/core"
 import { createLocalJWKSet, type JWTPayload, jwtVerify } from "jose"
 import { type Auth, oauthIssuerFor } from "../auth-config"
@@ -33,6 +34,8 @@ export interface OauthAgentResolution {
   /** Brandprint inputs already read for the default workspace. The request layer uses
    *  these only while the resolved agent remains in that workspace. */
   orgContext?: OAuthGrantWorkspaceRead["orgContext"]
+  /** The owner's live workspace memberships from the same grant snapshot. */
+  workspaces?: (WorkspaceRecord & { role: Role })[]
 }
 
 interface OauthAgentDeps {
@@ -87,14 +90,21 @@ export function makeOauthAgent({
     email: string | null,
     name: string | null,
     preloaded?: OAuthGrantWorkspaceRead,
-  ): Promise<{ org: string; memberRole: Role; bound: string[] }> => {
+  ): Promise<{
+    org: string
+    memberRole: Role
+    bound: string[]
+    mine?: (WorkspaceRecord & { role: Role })[]
+  }> => {
     const { mine, bound } = preloaded ?? (await meta.workspacesAndOauthBinding(userId, clientId))
     // The grant's reachable workspaces the user is STILL a member of. A non-empty
     // `bound` restricts; an empty one means every workspace they belong to.
     const scoped = bound.length ? mine.filter((w) => bound.includes(w.id)) : mine
     const target = scoped[0] ?? mine[0]
-    if (target) return { org: target.id, memberRole: target.role, bound }
+    if (target) return { org: target.id, memberRole: target.role, bound, mine }
     const org = await provisionPersonal({ id: userId, email: email ?? "", name })
+    // The provision happened after the snapshot. Leave memberships unknown so callers
+    // perform their portable live fallback instead of treating the stale empty set as final.
     return { org, memberRole: "owner", bound }
   }
 
@@ -141,6 +151,7 @@ export function makeOauthAgent({
         clientId: grant.clientId,
         boundWorkspaces: ws.bound,
         orgContext: joined?.orgContext,
+        workspaces: ws.mine,
         rec: {
           id: `oauth:${grant.clientId}`,
           org_id: ws.org,
@@ -209,6 +220,7 @@ export function makeOauthAgent({
       scopeRole,
       clientId,
       boundWorkspaces: ws.bound,
+      workspaces: ws.mine,
       rec: {
         id: `oauth:${clientId}`,
         org_id: ws.org,

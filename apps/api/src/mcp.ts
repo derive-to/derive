@@ -139,6 +139,8 @@ async function buildServer(
   // clamps list_workspaces + the `workspace` arg + cross-workspace read to
   // exactly those: workspaces outside the grant are invisible and unreachable.
   boundWorkspaces: string[],
+  // Live workspace memberships already carried by an OAuth grant snapshot.
+  grantWorkspaces: ToolContextBase["grantWorkspaces"],
   // The OAuth client behind this connection ("" for a registered dk_agt_ token).
   // Recorded into tokens minted by `stage target:'api'` as their provenance.
   clientId: string,
@@ -491,6 +493,7 @@ async function buildServer(
     scopeForCap,
     registered,
     boundWorkspaces,
+    grantWorkspaces,
     clientId,
     mintedToken,
     defaultOrg,
@@ -671,6 +674,7 @@ export function mountMcp(app: Hono, ctx: AppContext): void {
       scopeForCap,
       !grant,
       boundWorkspaces,
+      grant?.workspaces,
       grant?.clientId ?? "",
       mintedToken,
       grant?.orgContext?.orgId === agent.org_id ? grant.orgContext : undefined,
