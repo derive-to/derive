@@ -408,7 +408,7 @@ test("nested cards and their owning group move independently, undo, and save saf
   await frame.locator("#card-a").click()
   const parent = frame.getByRole("button", { name: "Select containing group (Escape)" })
   await expect(parent).toBeVisible()
-  await frame.getByRole("button", { name: "Move later (Option+Down)" }).click()
+  await frame.getByRole("button", { name: "Drag to reorder" }).dragTo(frame.locator("#card-b"))
   await expect(cards.nth(0)).toHaveAttribute("id", "card-b")
   await expect(cards.nth(1)).toHaveAttribute("id", "card-a")
 

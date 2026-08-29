@@ -3711,6 +3711,16 @@ interface ElReg {
     moved: boolean
   }
   let structureDrag: StructureDrag | null = null
+  const structureDragAxis = (nodes: readonly StructureNode[]): "x" | "y" => {
+    if (nodes.length < 2) return "y"
+    const centers = nodes.map((node) => {
+      const rect = node.el.getBoundingClientRect()
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
+    })
+    const xs = centers.map(({ x }) => x)
+    const ys = centers.map(({ y }) => y)
+    return Math.max(...xs) - Math.min(...xs) > Math.max(...ys) - Math.min(...ys) ? "x" : "y"
+  }
   structureGrip.addEventListener("pointerdown", (e) => {
     const node = structureSelected
     const region = node ? regionForStructureNode(node) : null
@@ -3737,11 +3747,13 @@ interface ElReg {
       if (!drag || drag.pointerId !== e.pointerId) return
       e.preventDefault()
       const others = connectedStructureNodes(drag.region).filter((node) => node !== drag.node)
-      const before = others.find(
-        (node) =>
-          e.clientY <
-          node.el.getBoundingClientRect().top + node.el.getBoundingClientRect().height / 2,
-      )
+      const axis = structureDragAxis(others)
+      const before = others.find((node) => {
+        const rect = node.el.getBoundingClientRect()
+        return axis === "x"
+          ? e.clientX < rect.left + rect.width / 2
+          : e.clientY < rect.top + rect.height / 2
+      })
       drag.region.el.insertBefore(drag.node.el, before?.el ?? null)
       const order = connectedStructureNodes(drag.region).map((node) => node.id)
       drag.moved = order.some((id, index) => id !== drag.initialOrder[index])
