@@ -568,19 +568,6 @@ export interface ArtifactStore {
   /** Owner opt-in: the anonymous public page shows version history. */
   setPublicHistory(artifactId: string, on: 0 | 1): Promise<void>
   getByShortId(shortId: string): Promise<ArtifactRecord | null>
-  /**
-   * Resolve one artifact and one of its immutable versions in ONE round trip.
-   *
-   * A read must load the artifact first to learn its internal id and current version, then
-   * load the selected version. Those reads are strictly serial on the hosted edge. A store
-   * that can join them implements this fast path; embedded stores omit it and callers keep
-   * the portable pair. Omit `n` for the artifact's current version. A missing version still
-   * returns the artifact with `version: null`, so callers preserve the precise error.
-   */
-  artifactWithVersion?(
-    shortId: string,
-    n?: number,
-  ): Promise<{ artifact: ArtifactRecord; version: VersionRecord | null } | null>
   /** Resolve many short ids at once. Bulk operations resolved one artifact per short id in
    *  a loop; on the edge tier that is a ~80ms round trip each, up to BULK_MAX of them.
    *  Order is unspecified and unknown ids are simply absent — callers key by `short_id`. */
