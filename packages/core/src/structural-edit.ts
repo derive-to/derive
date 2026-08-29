@@ -14,12 +14,17 @@ import { EditError } from "./doc-text"
 import { attrValues, type HtmlTag, hasAttr, tags } from "./html-tags"
 import { injectArtifactRuntimeScripts } from "./shared-state-client"
 import {
+  MAX_STRUCTURAL_GAP_PX,
   MAX_STRUCTURAL_HEIGHT_PX,
   MAX_STRUCTURAL_WIDTH_PCT,
+  MIN_STRUCTURAL_GAP_PX,
   MIN_STRUCTURAL_HEIGHT_PX,
   MIN_STRUCTURAL_WIDTH_PCT,
+  STRUCTURAL_ALIGN_PROPERTY,
+  STRUCTURAL_GAP_PROPERTY,
   STRUCTURAL_HEIGHT_PROPERTY,
   STRUCTURAL_WIDTH_PROPERTY,
+  type StructuralAlignment,
 } from "./structural-width"
 import { stylePropertyValues, updateOpeningTagStyle } from "./style-attribute"
 
@@ -55,6 +60,19 @@ export interface StructuralDimensionsEdit extends StructuralEditBase {
   height_px: number | null
 }
 
+export interface StructuralAlignEdit extends StructuralEditBase {
+  op: "structural-align"
+  node: string
+  /** Logical cross-axis alignment inside an authored stack. Null restores authored alignment. */
+  align: StructuralAlignment | null
+}
+
+export interface StructuralGapEdit extends StructuralEditBase {
+  op: "structural-gap"
+  /** Whole CSS pixels between every direct child in the authored stack. */
+  gap_px: number | null
+}
+
 export interface StructuralOrderEdit extends StructuralEditBase {
   op: "structural-order"
   /** The complete desired order of every node currently in the region. */
@@ -82,10 +100,18 @@ export interface StructuralOpeningRestoreEdit extends StructuralEditBase {
   opening: string
 }
 
+/** Internal byte-exact inverse for a region opening-tag mutation. */
+export interface StructuralRegionOpeningRestoreEdit extends StructuralEditBase {
+  op: "structural-restore-region-opening"
+  opening: string
+}
+
 export type StructuralUserEdit =
   | StructuralSizeEdit
   | StructuralWidthEdit
   | StructuralDimensionsEdit
+  | StructuralAlignEdit
+  | StructuralGapEdit
   | StructuralOrderEdit
   | StructuralRemoveEdit
 
@@ -93,6 +119,7 @@ export type StructuralEdit =
   | StructuralUserEdit
   | StructuralRestoreEdit
   | StructuralOpeningRestoreEdit
+  | StructuralRegionOpeningRestoreEdit
 
 export interface StructuralEditReceipt {
   schema: typeof STRUCTURAL_RECEIPT_SCHEMA
@@ -165,6 +192,8 @@ const STRUCTURAL_ATTRIBUTES = [
   "data-derive-size",
   "data-derive-width",
   "data-derive-height",
+  "data-derive-align",
+  "data-derive-gap",
   "data-derive-runtime-region",
   "data-derive-runtime-layout",
   "data-derive-runtime-owner",
@@ -173,6 +202,8 @@ const STRUCTURAL_ATTRIBUTES = [
   "data-derive-runtime-size",
   "data-derive-runtime-width",
   "data-derive-runtime-height",
+  "data-derive-runtime-align",
+  "data-derive-runtime-gap",
 ] as const
 
 const fail = (code: StructuralEditError["code"], message: string): never => {
@@ -228,6 +259,22 @@ const structuralHeight = (value: string | null, label: string): number | null =>
   return height
 }
 
+const structuralGap = (value: string | null, label: string): number | null => {
+  if (value === null) return null
+  if (!/^\d+$/.test(value))
+    fail(
+      "invalid-structure",
+      `${label} must be a whole pixel value from ${MIN_STRUCTURAL_GAP_PX} to ${MAX_STRUCTURAL_GAP_PX}.`,
+    )
+  const gap = Number.parseInt(value, 10)
+  if (gap < MIN_STRUCTURAL_GAP_PX || gap > MAX_STRUCTURAL_GAP_PX)
+    fail(
+      "invalid-structure",
+      `${label} must be a whole pixel value from ${MIN_STRUCTURAL_GAP_PX} to ${MAX_STRUCTURAL_GAP_PX}.`,
+    )
+  return gap
+}
+
 interface SourceElement {
   tag: HtmlTag
   parentStart: number | null
@@ -267,6 +314,7 @@ const sourceElements = (html: string): SourceElement[] => {
 }
 
 interface OwnedNode extends StructuralNodeInspection {
+  align: StructuralAlignment | null
   element: SourceElement
   /** End of this node's owned chunk, including its following whitespace/comments. */
   chunkEnd: number
@@ -277,6 +325,7 @@ interface OwnedRegion extends StructuralRegionInspection {
   ownerNodeId: string | null
   prefixEnd: number
   ownedNodes: OwnedNode[]
+  gap: number | null
 }
 
 interface Inspection {
@@ -352,6 +401,20 @@ const inspect = (html: string): Inspection => {
     const layout = exactlyOne(element.tag, "data-derive-layout", `Structural region ${id}`)
     if (layout !== "stack")
       fail("invalid-structure", `Structural region ${id} must declare data-derive-layout="stack".`)
+    const gap = structuralGap(
+      exactlyOne(element.tag, "data-derive-gap", `Structural region ${id}`),
+      `Structural region ${id} data-derive-gap`,
+    )
+    const inlineStyle = exactlyOne(element.tag, "style", `Structural region ${id}`) ?? ""
+    const customGaps = stylePropertyValues(inlineStyle, STRUCTURAL_GAP_PROPERTY)
+    if (
+      customGaps.length !== (gap === null ? 0 : 1) ||
+      (gap !== null && customGaps[0] !== `${gap}px`)
+    )
+      fail(
+        "invalid-structure",
+        `Structural region ${id} must pair data-derive-gap with one matching ${STRUCTURAL_GAP_PROPERTY} inline property.`,
+      )
     const region: OwnedRegion = {
       id,
       layout: "stack",
@@ -360,6 +423,7 @@ const inspect = (html: string): Inspection => {
       element,
       ownerNodeId,
       prefixEnd: element.closeStart,
+      gap,
     }
     byRegion.set(id, region)
     regionByStart.set(element.tag.start, region)
@@ -421,12 +485,28 @@ const inspect = (html: string): Inspection => {
         "invalid-structure",
         `Structural node ${id} must pair data-derive-height with one matching ${STRUCTURAL_HEIGHT_PROPERTY} inline property.`,
       )
+    const rawAlign = exactlyOne(element.tag, "data-derive-align", `Structural node ${id}`)
+    if (rawAlign !== null && !/^(?:start|center|end)$/.test(rawAlign))
+      fail(
+        "invalid-structure",
+        `Structural node ${id} has unsupported alignment ${JSON.stringify(rawAlign)}.`,
+      )
+    const customAlignments = stylePropertyValues(inlineStyle, STRUCTURAL_ALIGN_PROPERTY)
+    if (
+      customAlignments.length !== (rawAlign === null ? 0 : 1) ||
+      (rawAlign !== null && customAlignments[0] !== rawAlign)
+    )
+      fail(
+        "invalid-structure",
+        `Structural node ${id} must pair data-derive-align with one matching ${STRUCTURAL_ALIGN_PROPERTY} inline property.`,
+      )
     const node: OwnedNode = {
       id,
       kind: exactlyOne(element.tag, "data-derive-kind", `Structural node ${id}`),
       size: rawSize as StructuralSize | null,
       width_pct: widthPct,
       height_px: heightPx,
+      align: rawAlign as StructuralAlignment | null,
       element,
       chunkEnd: element.end,
     }
@@ -508,10 +588,13 @@ export const isStructuralEdit = (value: unknown): value is StructuralEdit => {
     (edit.op === "structural-size" ||
       edit.op === "structural-width" ||
       edit.op === "structural-dimensions" ||
+      edit.op === "structural-align" ||
+      edit.op === "structural-gap" ||
       edit.op === "structural-order" ||
       edit.op === "structural-remove" ||
       edit.op === "structural-restore" ||
-      edit.op === "structural-restore-opening")
+      edit.op === "structural-restore-opening" ||
+      edit.op === "structural-restore-region-opening")
   )
 }
 
@@ -522,6 +605,8 @@ export const isStructuralUserEdit = (value: unknown): value is StructuralUserEdi
   (value.op === "structural-size" ||
     value.op === "structural-width" ||
     value.op === "structural-dimensions" ||
+    value.op === "structural-align" ||
+    value.op === "structural-gap" ||
     value.op === "structural-order" ||
     value.op === "structural-remove")
 
@@ -584,6 +669,8 @@ const backfillStyle = (runtime: boolean): string => {
 [${prefix}-region][${prefix}-layout="stack"] > [${prefix}-node][${prefix}-size="full"] { width: 100% !important; max-width: none !important; box-sizing: border-box !important }
 [${prefix}-region][${prefix}-layout="stack"] > [${prefix}-node][${prefix}-width] { width: var(${STRUCTURAL_WIDTH_PROPERTY}) !important; max-width: none !important; box-sizing: border-box !important }
 [${prefix}-region][${prefix}-layout="stack"] > [${prefix}-node][${prefix}-height] { height: var(${STRUCTURAL_HEIGHT_PROPERTY}) !important; box-sizing: border-box !important }
+[${prefix}-region][${prefix}-layout="stack"] > [${prefix}-node][${prefix}-align] { align-self: var(${STRUCTURAL_ALIGN_PROPERTY}) !important }
+[${prefix}-region][${prefix}-layout="stack"][${prefix}-gap] { gap: var(${STRUCTURAL_GAP_PROPERTY}) !important }
 </style>`
 }
 
@@ -938,6 +1025,101 @@ const dimensionsEdit = (
   }
 }
 
+const alignEdit = (
+  html: string,
+  edit: StructuralAlignEdit,
+  inspection: Inspection,
+  label: string,
+): { html: string; inverse: StructuralEdit } => {
+  const region = regionFor(inspection, edit.region, label)
+  const node = nodeFor(region, edit.node, label)
+  const align = edit.align
+  if (align !== null && !/^(?:start|center|end)$/.test(align))
+    fail("invalid-operation", `${label} has unsupported alignment ${JSON.stringify(align)}.`)
+  if (node.align === align) fail("no-change", `${label} leaves node ${node.id} unchanged.`)
+  const start = node.element.tag.start
+  const end = node.element.tag.end
+  const opening = html.slice(start, end)
+  let changed = setAttribute(opening, "data-derive-align", align)
+  changed = updateOpeningTagStyle(changed, { [STRUCTURAL_ALIGN_PROPERTY]: align })
+  return {
+    html: html.slice(0, start) + changed + html.slice(end),
+    inverse: {
+      schema: STRUCTURAL_EDIT_SCHEMA,
+      op: "structural-restore-opening",
+      region: region.id,
+      node: node.id,
+      opening,
+    },
+  }
+}
+
+const gapEdit = (
+  html: string,
+  edit: StructuralGapEdit,
+  inspection: Inspection,
+  label: string,
+): { html: string; inverse: StructuralEdit } => {
+  const region = regionFor(inspection, edit.region, label)
+  const gap = edit.gap_px
+  if (
+    gap !== null &&
+    (!Number.isInteger(gap) || gap < MIN_STRUCTURAL_GAP_PX || gap > MAX_STRUCTURAL_GAP_PX)
+  )
+    fail(
+      "invalid-operation",
+      `${label} gap_px must be a whole pixel value from ${MIN_STRUCTURAL_GAP_PX} to ${MAX_STRUCTURAL_GAP_PX}.`,
+    )
+  if (region.gap === gap) fail("no-change", `${label} leaves region ${region.id} unchanged.`)
+  const start = region.element.tag.start
+  const end = region.element.tag.end
+  const opening = html.slice(start, end)
+  let changed = setAttribute(opening, "data-derive-gap", gap === null ? null : String(gap))
+  changed = updateOpeningTagStyle(changed, {
+    [STRUCTURAL_GAP_PROPERTY]: gap === null ? null : `${gap}px`,
+  })
+  return {
+    html: html.slice(0, start) + changed + html.slice(end),
+    inverse: {
+      schema: STRUCTURAL_EDIT_SCHEMA,
+      op: "structural-restore-region-opening",
+      region: region.id,
+      opening,
+    },
+  }
+}
+
+const restoreRegionOpeningEdit = (
+  html: string,
+  edit: StructuralRegionOpeningRestoreEdit,
+  inspection: Inspection,
+  label: string,
+): { html: string; inverse: StructuralEdit } => {
+  const region = regionFor(inspection, edit.region, label)
+  if (typeof edit.opening !== "string")
+    fail("invalid-operation", `${label} has no region opening-tag source.`)
+  const parsed = tags(edit.opening)
+  const restored = parsed.length === 1 && parsed[0]?.start === 0 ? parsed[0] : undefined
+  if (
+    !restored ||
+    restored.closing ||
+    restored.end !== edit.opening.length ||
+    restored.name !== region.element.tag.name ||
+    attrValues(restored.attrs, "data-derive-region").length !== 1 ||
+    attrValues(restored.attrs, "data-derive-region")[0] !== region.id ||
+    attrValues(restored.attrs, "data-derive-layout")[0] !== "stack"
+  )
+    fail("invalid-operation", `${label} opening-tag source does not match region ${region.id}.`)
+  const start = region.element.tag.start
+  const end = region.element.tag.end
+  const opening = html.slice(start, end)
+  if (opening === edit.opening) fail("no-change", `${label} leaves region ${region.id} unchanged.`)
+  return {
+    html: html.slice(0, start) + edit.opening + html.slice(end),
+    inverse: { ...edit, opening },
+  }
+}
+
 const restoreOpeningEdit = (
   html: string,
   edit: StructuralOpeningRestoreEdit,
@@ -1101,6 +1283,12 @@ export const applyStructuralEdits = (
       case "structural-dimensions":
         result = dimensionsEdit(out, edit, inspection, label)
         break
+      case "structural-align":
+        result = alignEdit(out, edit, inspection, label)
+        break
+      case "structural-gap":
+        result = gapEdit(out, edit, inspection, label)
+        break
       case "structural-order":
         result = orderEdit(out, edit, inspection, label)
         break
@@ -1112,6 +1300,9 @@ export const applyStructuralEdits = (
         break
       case "structural-restore-opening":
         result = restoreOpeningEdit(out, edit, inspection, label)
+        break
+      case "structural-restore-region-opening":
+        result = restoreRegionOpeningEdit(out, edit, inspection, label)
         break
     }
     out = result.html

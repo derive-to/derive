@@ -30,12 +30,17 @@ import {
   mentionTokens,
 } from "./mention-shared"
 import {
+  MAX_STRUCTURAL_GAP_PX,
   MAX_STRUCTURAL_HEIGHT_PX,
   MAX_STRUCTURAL_WIDTH_PCT,
+  MIN_STRUCTURAL_GAP_PX,
   MIN_STRUCTURAL_HEIGHT_PX,
   MIN_STRUCTURAL_WIDTH_PCT,
+  STRUCTURAL_ALIGN_PROPERTY,
+  STRUCTURAL_GAP_PROPERTY,
   STRUCTURAL_HEIGHT_PROPERTY,
   STRUCTURAL_WIDTH_PROPERTY,
+  type StructuralAlignment,
   snapStructuralHeight,
   snapStructuralWidth,
   structuralBlockResizeAxis,
@@ -674,6 +679,13 @@ interface ElReg {
     ".derive-structure-size[aria-pressed=true]{border-color:#4f46e5;background:#eef2ff;color:#3730a3}" +
     ".derive-structure-parent{border-color:#c7d2fe;color:#4338ca}" +
     ".derive-structure-batch{border-color:#a7f3d0;background:#ecfdf5;color:#065f46}" +
+    ".derive-structure-layout-panel{position:absolute;right:5px;top:calc(100% + 6px);display:grid;grid-template-columns:repeat(3,max-content);gap:4px;padding:6px;border:1px solid rgba(71,85,105,.35);border-radius:8px;background:rgba(248,250,252,.99);box-shadow:0 8px 24px rgba(15,23,42,.24);pointer-events:auto}" +
+    ".derive-structure-layout-panel[hidden]{display:none}" +
+    ".derive-structure-precision-panel{position:absolute;right:5px;top:calc(100% + 6px);display:grid;grid-template-columns:repeat(2,92px);gap:7px;padding:9px;border:1px solid rgba(71,85,105,.35);border-radius:8px;background:rgba(248,250,252,.99);box-shadow:0 8px 24px rgba(15,23,42,.24);pointer-events:auto;color:#334155;font:600 10px/1.2 system-ui,sans-serif}" +
+    ".derive-structure-precision-panel[hidden]{display:none}" +
+    ".derive-structure-precision-field{display:grid;gap:4px}" +
+    ".derive-structure-precision-input{width:100%;height:30px;box-sizing:border-box;padding:4px 7px;border:1px solid #cbd5e1;border-radius:5px;background:#fff;color:#0f172a;font:600 12px/1 ui-monospace,SFMono-Regular,Menlo,monospace;outline:none}" +
+    ".derive-structure-precision-actions{grid-column:1/-1;display:flex;justify-content:flex-end;gap:5px}" +
     ".derive-structure-resize-handle{position:absolute;right:-8px;top:50%;width:16px;height:34px;padding:0;transform:translateY(-50%);border:2px solid #4f46e5;border-radius:8px;background:#eef2ff;box-shadow:0 2px 8px rgba(15,23,42,.28);cursor:ew-resize;pointer-events:auto;touch-action:none}" +
     ".derive-structure-resize-handle.derive-structure-resize-left{left:-8px;right:auto}" +
     ".derive-structure-resize-handle:after{content:'';position:absolute;left:5px;top:8px;width:2px;height:14px;border-left:1px solid #4f46e5;border-right:1px solid #4f46e5}" +
@@ -694,6 +706,13 @@ interface ElReg {
     ".derive-structure-snap-guide.derive-structure-snap-left:after{left:auto;right:7px}" +
     ".derive-structure-height-snap-guide{position:absolute;display:none;height:0;border-top:1px solid rgba(79,70,229,.92);box-shadow:0 0 8px rgba(79,70,229,.52);pointer-events:none;z-index:2147483643}" +
     ".derive-structure-height-snap-guide:after{content:attr(data-label);position:absolute;left:var(--derive-structure-height-label-x,50%);top:7px;max-width:min(160px,calc(100vw - 24px));transform:translateX(-50%);overflow:hidden;text-overflow:ellipsis;padding:3px 6px;border-radius:4px;background:rgba(49,46,129,.96);color:#fff;font:700 10px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:nowrap}" +
+    ".derive-structure-drop-marker{position:absolute;display:none;height:0;border-top:3px solid #4f46e5;pointer-events:none;z-index:2147483645}" +
+    ".derive-structure-drop-marker:before,.derive-structure-drop-marker:after{content:'';position:absolute;top:-6px;width:9px;height:9px;border-radius:50%;background:#4f46e5}" +
+    ".derive-structure-drop-marker:before{left:-2px}.derive-structure-drop-marker:after{right:-2px}" +
+    ".derive-structure-drop-marker.derive-structure-drop-marker-x{width:0;height:auto;border-top:0;border-left:3px solid #4f46e5}" +
+    ".derive-structure-drop-marker.derive-structure-drop-marker-x:before,.derive-structure-drop-marker.derive-structure-drop-marker-x:after{left:-6px;right:auto}" +
+    ".derive-structure-drop-marker.derive-structure-drop-marker-x:before{top:-2px}.derive-structure-drop-marker.derive-structure-drop-marker-x:after{top:auto;bottom:-2px}" +
+    ".derive-structure-drop-marker-label{position:absolute;left:8px;bottom:7px;padding:3px 6px;border-radius:4px;background:rgba(49,46,129,.96);color:#fff;font:700 10px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:nowrap}" +
     ".derive-structure-remove{border-color:#fecaca;color:#b91c1c}" +
     ".derive-structure-toast{position:fixed;left:50%;bottom:18px;display:none;align-items:center;gap:10px;transform:translateX(-50%);padding:8px 10px 8px 13px;border-radius:8px;background:#0f172a;color:#fff;box-shadow:0 8px 24px rgba(15,23,42,.3);z-index:2147483646;font:600 12px/1.2 system-ui,sans-serif;pointer-events:auto}" +
     ".derive-structure-toast button{height:26px;padding:0 8px;border:1px solid rgba(255,255,255,.35);border-radius:5px;background:transparent;color:#fff;font:700 11px/24px system-ui,sans-serif;cursor:pointer}" +
@@ -705,7 +724,7 @@ interface ElReg {
     /* On a narrow canvas the contextual controls become a predictable editing shelf.
        Root selections use two rows; a nested selection reserves a third for Parent.
        Every action stays visible without document overflow, with touch-sized targets. */
-    "@media(max-width:640px){html.derive-structure-safe body{padding-bottom:calc(var(--derive-structure-body-padding-base,0px) + 166px + env(safe-area-inset-bottom))!important}html.derive-structure-parent-safe body{padding-bottom:calc(var(--derive-structure-body-padding-base,0px) + 214px + env(safe-area-inset-bottom))!important}.derive-structure-toolbar{position:fixed;left:8px;right:8px;top:auto!important;bottom:calc(8px + env(safe-area-inset-bottom))!important;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;max-width:none;padding:6px}.derive-structure-label{display:none}.derive-structure-button{width:100%;height:44px;min-width:0;padding:0 6px;font:650 12px/42px system-ui,sans-serif}.derive-structure-grip{padding-right:8px}.derive-structure-resize-handle{right:0;width:24px;height:44px}.derive-structure-resize-handle.derive-structure-resize-left{left:0}.derive-structure-resize-handle:after{left:9px;top:13px}.derive-structure-resize-height{bottom:0;width:44px;height:24px}.derive-structure-resize-height.derive-structure-resize-top{top:0;bottom:auto}.derive-structure-resize-height:after{left:13px;top:9px}.derive-structure-resize-corner{right:0;bottom:0;width:44px;height:44px}.derive-structure-resize-corner.derive-structure-resize-left{left:0}.derive-structure-resize-corner.derive-structure-resize-top{top:0;bottom:auto}.derive-structure-toast{bottom:calc(166px + env(safe-area-inset-bottom));max-width:calc(100vw - 16px)}html.derive-structure-parent-safe .derive-structure-toast{bottom:calc(214px + env(safe-area-inset-bottom))}}" +
+    "@media(max-width:640px){html.derive-structure-safe body{padding-bottom:calc(var(--derive-structure-body-padding-base,0px) + 166px + env(safe-area-inset-bottom))!important}html.derive-structure-parent-safe body{padding-bottom:calc(var(--derive-structure-body-padding-base,0px) + 214px + env(safe-area-inset-bottom))!important}.derive-structure-toolbar{position:fixed;left:8px;right:8px;top:auto!important;bottom:calc(8px + env(safe-area-inset-bottom))!important;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;max-width:none;padding:6px}.derive-structure-layout-panel,.derive-structure-precision-panel{position:fixed;left:8px;right:8px;top:auto;bottom:calc(174px + env(safe-area-inset-bottom))}.derive-structure-layout-panel{grid-template-columns:repeat(3,minmax(0,1fr))}.derive-structure-precision-panel{grid-template-columns:repeat(2,minmax(0,1fr))}.derive-structure-label{display:none}.derive-structure-button{width:100%;height:44px;min-width:0;padding:0 6px;font:650 12px/42px system-ui,sans-serif}.derive-structure-grip{padding-right:8px}.derive-structure-resize-handle{right:0;width:24px;height:44px}.derive-structure-resize-handle.derive-structure-resize-left{left:0}.derive-structure-resize-handle:after{left:9px;top:13px}.derive-structure-resize-height{bottom:0;width:44px;height:24px}.derive-structure-resize-height.derive-structure-resize-top{top:0;bottom:auto}.derive-structure-resize-height:after{left:13px;top:9px}.derive-structure-resize-corner{right:0;bottom:0;width:44px;height:44px}.derive-structure-resize-corner.derive-structure-resize-left{left:0}.derive-structure-resize-corner.derive-structure-resize-top{top:0;bottom:auto}.derive-structure-toast{bottom:calc(166px + env(safe-area-inset-bottom));max-width:calc(100vw - 16px)}html.derive-structure-parent-safe .derive-structure-toast{bottom:calc(214px + env(safe-area-inset-bottom))}}" +
     "@media(prefers-reduced-motion:reduce){.derive-structure-dragging{transition:none!important;animation:none!important}}" +
     /* ...and again derived from the block's OWN text colour, which by definition
        contrasts with whatever the artifact painted behind it. The slate wash above
@@ -2434,11 +2453,25 @@ interface ElReg {
     height: string | null
     style: string | null
   }
+  interface StructuralAlignHistory {
+    el: HTMLElement
+    alignName: string
+    align: string | null
+    style: string | null
+  }
+  interface StructuralGapHistory {
+    el: HTMLElement
+    gapName: string
+    gap: string | null
+    style: string | null
+  }
   type HistoryEntry =
     | { kind: "html"; el: HTMLElement; html: string }
     | { kind: "style"; el: ResizableElement; style: string | null }
     | ({ kind: "structural-sizing" } & StructuralSizingHistory)
     | { kind: "structural-sizing-batch"; entries: StructuralSizingHistory[] }
+    | { kind: "structural-align-batch"; entries: StructuralAlignHistory[] }
+    | ({ kind: "structural-gap" } & StructuralGapHistory)
     | { kind: "structural-order"; region: HTMLElement; nodes: HTMLElement[] }
     | {
         kind: "placement"
@@ -2530,6 +2563,41 @@ interface ElReg {
     for (const node of entry.nodes)
       if (node.parentElement === entry.region) entry.region.append(node)
   }
+  const structuralAlignBatchOf = (
+    entries: readonly StructuralAlignHistory[],
+  ): Extract<HistoryEntry, { kind: "structural-align-batch" }> => ({
+    kind: "structural-align-batch",
+    entries: entries.map((entry) => ({
+      el: entry.el,
+      alignName: entry.alignName,
+      align: entry.el.getAttribute(entry.alignName),
+      style: rawStyle(entry.el),
+    })),
+  })
+  const applyStructuralAlignBatch = (
+    entry: Extract<HistoryEntry, { kind: "structural-align-batch" }>,
+  ) => {
+    for (const alignment of entry.entries) {
+      if (alignment.align === null) alignment.el.removeAttribute(alignment.alignName)
+      else alignment.el.setAttribute(alignment.alignName, alignment.align)
+      restoreStyle(alignment.el, alignment.style)
+    }
+  }
+  const structuralGapOf = (
+    el: HTMLElement,
+    gapName: string,
+  ): Extract<HistoryEntry, { kind: "structural-gap" }> => ({
+    kind: "structural-gap",
+    el,
+    gapName,
+    gap: el.getAttribute(gapName),
+    style: rawStyle(el),
+  })
+  const applyStructuralGap = (entry: Extract<HistoryEntry, { kind: "structural-gap" }>) => {
+    if (entry.gap === null) entry.el.removeAttribute(entry.gapName)
+    else entry.el.setAttribute(entry.gapName, entry.gap)
+    restoreStyle(entry.el, entry.style)
+  }
   const placementOf = (el: HTMLElement): Extract<HistoryEntry, { kind: "placement" }> => ({
     kind: "placement",
     el,
@@ -2592,6 +2660,14 @@ interface ElReg {
       if (entry.entries.some(({ el }) => !document.contains(el))) return
       to.push(structuralSizingBatchOf(entry.entries))
       applyStructuralSizingBatch(entry)
+    } else if (entry.kind === "structural-align-batch") {
+      if (entry.entries.some(({ el }) => !document.contains(el))) return
+      to.push(structuralAlignBatchOf(entry.entries))
+      applyStructuralAlignBatch(entry)
+    } else if (entry.kind === "structural-gap") {
+      if (!document.contains(entry.el)) return
+      to.push(structuralGapOf(entry.el, entry.gapName))
+      applyStructuralGap(entry)
     } else if (entry.kind === "structural-order") {
       if (!document.contains(entry.region)) return
       const current = entry.nodes.filter((node) => node.parentElement === entry.region)
@@ -3233,6 +3309,7 @@ interface ElReg {
     origSize: string | null
     origWidth: string | null
     origHeight: string | null
+    origAlign: string | null
     origStyle: string | null
     origTabindex: string | null
   }
@@ -3243,6 +3320,8 @@ interface ElReg {
     nodes: StructureNode[]
     owner: StructureNode | null
     origOrder: string[]
+    origGap: string | null
+    origStyle: string | null
   }
   let structureRegions: StructureRegion[] = []
   let structureRegionByNode = new Map<StructureNode, StructureRegion>()
@@ -3255,6 +3334,8 @@ interface ElReg {
   let structureObserver: MutationObserver | null = null
   let structureToastTimer = 0
   let structureSafeAreaOn = false
+  let structureLayoutOpen = false
+  let structurePrecisionOpen = false
 
   const structureBox = document.createElement("div")
   structureBox.className = "derive-edit-ui derive-structure-box"
@@ -3287,6 +3368,28 @@ interface ElReg {
     "Match selected heights to the active element",
     "derive-structure-batch",
   )
+  const structureFitHeight = structureButton(
+    "Fit H",
+    "Fit selected heights to their content",
+    "derive-structure-batch",
+  )
+  const structureDistribute = structureButton("Space", "Distribute all siblings vertically")
+  const structureAlignStart = structureButton("Start", "Align selected to start")
+  const structureAlignCenter = structureButton("Center", "Align selected to center")
+  const structureAlignEnd = structureButton("End", "Align selected to end")
+  const structureLayout = structureButton("Layout", "Open selected layout actions")
+  const structureLayoutPanel = document.createElement("div")
+  structureLayoutPanel.className = "derive-structure-layout-panel"
+  structureLayoutPanel.hidden = true
+  structureLayoutPanel.append(
+    structureSameWidth,
+    structureSameHeight,
+    structureFitHeight,
+    structureDistribute,
+    structureAlignStart,
+    structureAlignCenter,
+    structureAlignEnd,
+  )
   const structureParent = structureButton(
     "Parent",
     "Select containing group (Escape)",
@@ -3296,6 +3399,41 @@ interface ElReg {
   const structureCompact = structureButton("S", "Compact size", "derive-structure-size")
   const structureStandard = structureButton("M", "Standard size", "derive-structure-size")
   const structureFull = structureButton("L", "Full size", "derive-structure-size")
+  const structureExact = structureButton("Exact", "Set exact width and height")
+  const structurePrecisionPanel = document.createElement("form")
+  structurePrecisionPanel.className = "derive-structure-precision-panel"
+  structurePrecisionPanel.hidden = true
+  const structurePrecisionField = (label: string, suffix: string) => {
+    const field = document.createElement("label")
+    field.className = "derive-structure-precision-field"
+    const title = document.createElement("span")
+    title.textContent = `${label} (${suffix})`
+    const input = document.createElement("input")
+    input.className = "derive-structure-precision-input"
+    input.type = "number"
+    input.required = true
+    field.append(title, input)
+    return { field, input }
+  }
+  const structurePrecisionWidth = structurePrecisionField("Width", "%")
+  const structurePrecisionHeight = structurePrecisionField("Height", "px")
+  structurePrecisionHeight.input.required = false
+  structurePrecisionHeight.input.placeholder = "Auto"
+  structurePrecisionWidth.input.min = String(MIN_STRUCTURAL_WIDTH_PCT)
+  structurePrecisionWidth.input.max = String(MAX_STRUCTURAL_WIDTH_PCT)
+  structurePrecisionHeight.input.min = String(MIN_STRUCTURAL_HEIGHT_PX)
+  structurePrecisionHeight.input.max = String(MAX_STRUCTURAL_HEIGHT_PX)
+  const structurePrecisionActions = document.createElement("div")
+  structurePrecisionActions.className = "derive-structure-precision-actions"
+  const structurePrecisionCancel = structureButton("Cancel", "Cancel exact sizing")
+  const structurePrecisionApply = structureButton("Apply", "Apply exact width and height")
+  structurePrecisionApply.type = "submit"
+  structurePrecisionActions.append(structurePrecisionCancel, structurePrecisionApply)
+  structurePrecisionPanel.append(
+    structurePrecisionWidth.field,
+    structurePrecisionHeight.field,
+    structurePrecisionActions,
+  )
   const structureRemove = structureButton(
     "Remove",
     "Remove element (Delete)",
@@ -3307,14 +3445,16 @@ interface ElReg {
     structureEarlier,
     structureLater,
     structureSelectAll,
-    structureSameWidth,
-    structureSameHeight,
+    structureLayout,
     structureParent,
     structureAuto,
     structureCompact,
     structureStandard,
     structureFull,
+    structureExact,
     structureRemove,
+    structureLayoutPanel,
+    structurePrecisionPanel,
   )
   const structureResizeHandle = document.createElement("button")
   structureResizeHandle.type = "button"
@@ -3345,6 +3485,11 @@ interface ElReg {
   structureSnapGuide.className = "derive-edit-ui derive-structure-snap-guide"
   const structureHeightSnapGuide = document.createElement("div")
   structureHeightSnapGuide.className = "derive-edit-ui derive-structure-height-snap-guide"
+  const structureDropMarker = document.createElement("div")
+  structureDropMarker.className = "derive-edit-ui derive-structure-drop-marker"
+  const structureDropMarkerLabel = document.createElement("span")
+  structureDropMarkerLabel.className = "derive-structure-drop-marker-label"
+  structureDropMarker.append(structureDropMarkerLabel)
   structureBox.append(
     structureToolbar,
     structureResizeHandle,
@@ -3366,6 +3511,7 @@ interface ElReg {
   ;(document.body || document.documentElement).append(
     structureBox,
     structureMultiLayer,
+    structureDropMarker,
     structureSnapGuide,
     structureHeightSnapGuide,
     structureToast,
@@ -3559,6 +3705,19 @@ interface ElReg {
         invalid = true
         continue
       }
+      const gap = regionEl.getAttribute(structureAttribute(prefix, "gap"))
+      const customGap = regionEl.style.getPropertyValue(STRUCTURAL_GAP_PROPERTY).trim()
+      if (
+        (gap !== null &&
+          (!/^\d+$/.test(gap) ||
+            Number.parseInt(gap, 10) < MIN_STRUCTURAL_GAP_PX ||
+            Number.parseInt(gap, 10) > MAX_STRUCTURAL_GAP_PX ||
+            customGap !== `${gap}px`)) ||
+        (gap === null && !!customGap)
+      ) {
+        invalid = true
+        continue
+      }
       const children = sourceChildren(regionEl)
       const directNodes = Array.from(regionEl.childNodes)
       const firstOwnedNode = directNodes.findIndex(
@@ -3617,6 +3776,15 @@ interface ElReg {
           valid = false
           break
         }
+        const align = child.getAttribute(structureAttribute(prefix, "align"))
+        const customAlign = child.style.getPropertyValue(STRUCTURAL_ALIGN_PROPERTY).trim()
+        if (
+          (align !== null && (!/^(?:start|center|end)$/.test(align) || customAlign !== align)) ||
+          (align === null && !!customAlign)
+        ) {
+          valid = false
+          break
+        }
         nodeIds.add(nodeId)
         handledNodes.add(child)
         nodes.push({
@@ -3626,6 +3794,7 @@ interface ElReg {
           origSize: size,
           origWidth: width,
           origHeight: height,
+          origAlign: align,
           origStyle: child.getAttribute("style"),
           origTabindex: child.getAttribute("tabindex"),
         })
@@ -3642,6 +3811,8 @@ interface ElReg {
         nodes,
         owner: null,
         origOrder: nodes.map((node) => node.id),
+        origGap: gap,
+        origStyle: rawStyle(regionEl),
       })
     }
     for (const node of document.querySelectorAll(structureNodeSelector))
@@ -3673,6 +3844,8 @@ interface ElReg {
   const structureDirtyCount = (): number => {
     let dirty = 0
     for (const region of activeStructureRegions()) {
+      if (region.el.getAttribute(structureAttribute(region.prefix, "gap")) !== region.origGap)
+        dirty++
       const current = connectedStructureNodes(region)
       const currentIds = current.map((node) => node.id)
       const currentSet = new Set(currentIds)
@@ -3683,7 +3856,8 @@ interface ElReg {
         if (
           node.el.getAttribute(structureAttribute(node.prefix, "size")) !== node.origSize ||
           node.el.getAttribute(structureAttribute(node.prefix, "width")) !== node.origWidth ||
-          node.el.getAttribute(structureAttribute(node.prefix, "height")) !== node.origHeight
+          node.el.getAttribute(structureAttribute(node.prefix, "height")) !== node.origHeight ||
+          node.el.getAttribute(structureAttribute(node.prefix, "align")) !== node.origAlign
         )
           dirty++
     }
@@ -3789,11 +3963,66 @@ interface ElReg {
     }
     return structuralBlockResizeAxis(0, 1)
   }
+  const structureCrossAxisAlignAvailable = (
+    node: StructureNode,
+    region: StructureRegion,
+  ): boolean => {
+    const regionStyle = getComputedStyle(region.el)
+    const nodeStyle = getComputedStyle(node.el)
+    return (
+      horizontalStructureWritingMode(node, region) &&
+      regionStyle.display.includes("flex") &&
+      regionStyle.flexDirection === "column" &&
+      regionStyle.flexWrap === "nowrap" &&
+      /^(?:static|relative)$/.test(nodeStyle.position) &&
+      nodeStyle.float === "none"
+    )
+  }
+  const structureDistributionGap = (region: StructureRegion): number | null => {
+    const nodes = connectedStructureNodes(region).filter((node) => structureNodeAvailable(node))
+    if (nodes.length < 3 || selectedStructureNodes(region).length !== nodes.length) return null
+    const regionStyle = getComputedStyle(region.el)
+    if (
+      !regionStyle.display.includes("flex") ||
+      regionStyle.flexDirection !== "column" ||
+      regionStyle.flexWrap !== "nowrap" ||
+      !/^(?:normal|start|flex-start)$/.test(regionStyle.justifyContent)
+    )
+      return null
+    for (const node of nodes) {
+      const style = getComputedStyle(node.el)
+      if (
+        !structureTransformResizable(node) ||
+        !/^(?:static|relative)$/.test(style.position) ||
+        style.float !== "none" ||
+        Math.abs(Number.parseFloat(style.marginTop) || 0) > 0.5 ||
+        Math.abs(Number.parseFloat(style.marginBottom) || 0) > 0.5
+      )
+        return null
+    }
+    const contentHeight =
+      region.el.clientHeight -
+      (Number.parseFloat(regionStyle.paddingTop) || 0) -
+      (Number.parseFloat(regionStyle.paddingBottom) || 0)
+    const gap = Math.round(
+      (contentHeight - nodes.reduce((sum, node) => sum + node.el.offsetHeight, 0)) /
+        (nodes.length - 1),
+    )
+    const currentGap = Number.parseFloat(regionStyle.rowGap)
+    return Number.isInteger(gap) &&
+      gap >= MIN_STRUCTURAL_GAP_PX &&
+      gap <= MAX_STRUCTURAL_GAP_PX &&
+      Math.abs(gap - currentGap) > 1
+      ? gap
+      : null
+  }
   const structureWidthName = (node: StructureNode): string =>
     structureAttribute(node.prefix, "width")
   const structureSizeName = (node: StructureNode): string => structureAttribute(node.prefix, "size")
   const structureHeightName = (node: StructureNode): string =>
     structureAttribute(node.prefix, "height")
+  const structureAlignName = (node: StructureNode): string =>
+    structureAttribute(node.prefix, "align")
   const currentStructureWidth = (node: StructureNode): number | null => {
     const raw = node.el.getAttribute(structureWidthName(node))
     if (raw === null) return null
@@ -3826,7 +4055,11 @@ interface ElReg {
   const clearEmptyStyle = (el: HTMLElement) => {
     if (!(el.getAttribute("style") || "").trim()) el.removeAttribute("style")
   }
-  const restoreStructureTransition = (node: StructureNode, value: string, priority: string) => {
+  const restoreStructureTransition = (
+    node: { el: HTMLElement },
+    value: string,
+    priority: string,
+  ) => {
     if (value) node.el.style.setProperty("transition", value, priority)
     else node.el.style.removeProperty("transition")
     clearEmptyStyle(node.el)
@@ -3861,6 +4094,17 @@ interface ElReg {
     }
     node.el.setAttribute(heightName, String(height))
     node.el.style.setProperty(STRUCTURAL_HEIGHT_PROPERTY, `${height}px`)
+  }
+  const applyStructureAlign = (node: StructureNode, align: StructuralAlignment | null) => {
+    const alignName = structureAlignName(node)
+    if (align === null) {
+      node.el.removeAttribute(alignName)
+      node.el.style.removeProperty(STRUCTURAL_ALIGN_PROPERTY)
+      clearEmptyStyle(node.el)
+      return
+    }
+    node.el.setAttribute(alignName, align)
+    node.el.style.setProperty(STRUCTURAL_ALIGN_PROPERTY, align)
   }
   const structureWidthFits = (
     node: StructureNode,
@@ -4013,8 +4257,17 @@ interface ElReg {
         !selectionSet.has(nodes[nodeIndex + 1] as StructureNode),
     )
     structureSelectAll.disabled = nodes.length < 2 || selection.length === nodes.length
-    structureSameWidth.hidden = selection.length < 2
-    structureSameHeight.hidden = selection.length < 2
+    structureLayout.hidden = selection.length < 2
+    if (selection.length < 2) structureLayoutOpen = false
+    if (selection.length > 1) structurePrecisionOpen = false
+    structureLayout.setAttribute("aria-expanded", String(structureLayoutOpen))
+    structureLayoutPanel.hidden = !structureLayoutOpen || selection.length < 2
+    const canAlign = selection.every((node) => structureCrossAxisAlignAvailable(node, region))
+    structureAlignStart.disabled = !canAlign
+    structureAlignCenter.disabled = !canAlign
+    structureAlignEnd.disabled = !canAlign
+    structureFitHeight.disabled = selection.every((node) => currentStructureHeight(node) === null)
+    structureDistribute.disabled = structureDistributionGap(region) === null
     structureRemove.disabled = selection.length > 1
     structureRemove.title =
       selection.length > 1 ? "Remove one element at a time" : "Remove element (Delete)"
@@ -4049,8 +4302,12 @@ interface ElReg {
     const widthAxis = structureWidthAxisFor(selected, region)
     const heightAxis = structureHeightAxisFor(selected, region)
     const batchSelected = selection.length > 1
+    structureExact.hidden = batchSelected
+    structureExact.setAttribute("aria-expanded", String(structurePrecisionOpen))
+    structurePrecisionPanel.hidden = !structurePrecisionOpen || batchSelected
     for (const button of [structureAuto, structureCompact, structureStandard, structureFull])
       button.disabled = batchSelected
+    structureExact.disabled = transformDisabled || !widthAxis || !heightAxis
     structureResizeHandle.disabled = batchSelected || transformDisabled || !widthAxis
     structureHeightHandle.disabled = batchSelected || transformDisabled || !heightAxis
     structureCornerHandle.disabled = batchSelected || transformDisabled || !widthAxis || !heightAxis
@@ -4099,6 +4356,8 @@ interface ElReg {
   hasSelectedResize = () => !!resizeSelectedEl || !!structureSelected
 
   const selectStructure = (node: StructureNode | null, extend = false) => {
+    structureLayoutOpen = false
+    structurePrecisionOpen = false
     if (node && !structureNodeAvailable(node)) node = null
     if (!node) {
       structureSelection = []
@@ -4138,8 +4397,17 @@ interface ElReg {
   }
   dismissStructureUi = () => {
     if (!structureSelected) return false
+    if (structurePrecisionOpen || structureLayoutOpen) {
+      const returnFocus = structureLayoutOpen ? structureLayout : structureExact
+      structurePrecisionOpen = false
+      structureLayoutOpen = false
+      paintStructureUi()
+      returnFocus.focus()
+      return true
+    }
     if (structureSelection.length > 1) {
       structureSelection = [structureSelected]
+      structureLayoutOpen = false
       paintStructureUi()
       return true
     }
@@ -4369,6 +4637,165 @@ interface ElReg {
     remember({ kind: "structural-sizing-batch", entries: snapshots })
     markStructureChanged()
   }
+  const fitStructureHeight = () => {
+    const active = structureSelected
+    if (!active) return
+    const region = regionForStructureNode(active)
+    if (!region) return
+    const selected = selectedStructureNodes(region)
+    const changed = selected.filter((node) => currentStructureHeight(node) !== null)
+    if (selected.length < 2 || !changed.length) return
+    const snapshots = selected.map((node) => {
+      const { kind: _kind, ...sizing } = structuralSizingOf(
+        node.el,
+        structureSizeName(node),
+        structureWidthName(node),
+        structureHeightName(node),
+      )
+      return sizing
+    })
+    for (const node of changed) applyStructureHeight(node, null)
+    if (selected.some((node) => !structureHeightChainFits(node))) {
+      applyStructuralSizingBatch({ kind: "structural-sizing-batch", entries: snapshots })
+      showStructureToast("An authored wrapper prevents these elements from fitting content")
+      paintStructureUi()
+      return
+    }
+    remember({ kind: "structural-sizing-batch", entries: snapshots })
+    markStructureChanged()
+  }
+  const distributeStructure = () => {
+    const active = structureSelected
+    const region = active ? regionForStructureNode(active) : null
+    if (!region) return
+    const gap = structureDistributionGap(region)
+    if (gap === null) return
+    const nodes = connectedStructureNodes(region).filter((node) => structureNodeAvailable(node))
+    const initial = structuralGapOf(region.el, structureAttribute(region.prefix, "gap"))
+    const heights = nodes.map((node) => node.el.getBoundingClientRect().height)
+    const transition = region.el.style.getPropertyValue("transition")
+    const transitionPriority = region.el.style.getPropertyPriority("transition")
+    region.el.style.setProperty("transition", "none", "important")
+    void region.el.offsetWidth
+    region.el.setAttribute(structureAttribute(region.prefix, "gap"), String(gap))
+    region.el.style.setProperty(STRUCTURAL_GAP_PROPERTY, `${gap}px`)
+    const rects = nodes.map((node) => node.el.getBoundingClientRect())
+    const actualGaps = rects.slice(1).map((rect, index) => rect.top - (rects[index]?.bottom ?? 0))
+    const accepted =
+      getComputedStyle(region.el).rowGap === `${gap}px` &&
+      actualGaps.every((actual) => Math.abs(actual - gap) <= 1) &&
+      rects.every((rect, index) => Math.abs(rect.height - (heights[index] ?? rect.height)) <= 1) &&
+      region.el.scrollHeight <= region.el.clientHeight + 1
+    restoreStructureTransition(region, transition, transitionPriority)
+    if (!accepted) {
+      applyStructuralGap(initial)
+      showStructureToast("This authored stack cannot safely distribute its siblings")
+      paintStructureUi()
+      postDirty()
+      return
+    }
+    remember(initial)
+    markStructureChanged()
+  }
+  const alignStructure = (align: StructuralAlignment) => {
+    const active = structureSelected
+    if (!active) return
+    const region = regionForStructureNode(active)
+    if (!region) return
+    const selected = selectedStructureNodes(region)
+    if (
+      selected.length < 2 ||
+      selected.some((node) => !structureCrossAxisAlignAvailable(node, region))
+    )
+      return
+    const snapshots: StructuralAlignHistory[] = selected.map((node) => ({
+      el: node.el,
+      alignName: structureAlignName(node),
+      align: node.el.getAttribute(structureAlignName(node)),
+      style: rawStyle(node.el),
+    }))
+    const before = new Map(
+      selected.map((node) => {
+        const rect = node.el.getBoundingClientRect()
+        return [node, { width: rect.width, height: rect.height }]
+      }),
+    )
+    for (const node of selected) applyStructureAlign(node, align)
+    const regionRect = region.el.getBoundingClientRect()
+    const regionStyle = getComputedStyle(region.el)
+    const left = regionRect.left + (Number.parseFloat(regionStyle.paddingLeft) || 0)
+    const right = regionRect.right - (Number.parseFloat(regionStyle.paddingRight) || 0)
+    const accepted = selected.every((node) => {
+      const rect = node.el.getBoundingClientRect()
+      const original = before.get(node)
+      return (
+        getComputedStyle(node.el).alignSelf === align &&
+        !!original &&
+        Math.abs(rect.width - original.width) <= 1 &&
+        Math.abs(rect.height - original.height) <= 1 &&
+        rect.left >= left - 1 &&
+        rect.right <= right + 1
+      )
+    })
+    if (!accepted) {
+      applyStructuralAlignBatch({ kind: "structural-align-batch", entries: snapshots })
+      showStructureToast("This authored stack does not expose safe cross-axis alignment")
+      paintStructureUi()
+      return
+    }
+    remember({ kind: "structural-align-batch", entries: snapshots })
+    markStructureChanged()
+  }
+  const applyExactStructureSize = () => {
+    const node = structureSelected
+    const region = node ? regionForStructureNode(node) : null
+    if (!node || !region || structureSelection.length > 1) return
+    const width = structurePrecisionWidth.input.valueAsNumber
+    const heightText = structurePrecisionHeight.input.value.trim()
+    const height = heightText ? structurePrecisionHeight.input.valueAsNumber : null
+    if (
+      !Number.isInteger(width) ||
+      width < MIN_STRUCTURAL_WIDTH_PCT ||
+      width > MAX_STRUCTURAL_WIDTH_PCT ||
+      (height !== null &&
+        (!Number.isInteger(height) ||
+          height < MIN_STRUCTURAL_HEIGHT_PX ||
+          height > MAX_STRUCTURAL_HEIGHT_PX))
+    ) {
+      structurePrecisionPanel.reportValidity()
+      return
+    }
+    const initial = structuralSizingOf(
+      node.el,
+      structureSizeName(node),
+      structureWidthName(node),
+      structureHeightName(node),
+    )
+    const transition = node.el.style.getPropertyValue("transition")
+    const transitionPriority = node.el.style.getPropertyPriority("transition")
+    node.el.style.setProperty("transition", "none", "important")
+    void node.el.offsetWidth
+    applyStructureWidth(node, width)
+    applyStructureHeight(node, height)
+    const accepted =
+      structureTransformResizable(node) &&
+      !!structureWidthAxisFor(node, region) &&
+      !!structureHeightAxisFor(node, region) &&
+      structureWidthFits(node, region, width) &&
+      (height === null || structureHeightFits(node, height)) &&
+      structureHeightChainFits(node)
+    restoreStructureTransition(node, transition, transitionPriority)
+    if (!accepted) {
+      applyStructuralSizing(initial)
+      showStructureToast("Authored content or constraints control this size")
+      paintStructureUi()
+      postDirty()
+      return
+    }
+    remember(initial)
+    structurePrecisionOpen = false
+    markStructureChanged()
+  }
   const sizeStructure = (size: StructureSize | null) => {
     const selected = structureSelected
     if (
@@ -4441,6 +4868,42 @@ interface ElReg {
     structureSelected = active
     paintStructureUi()
   })
+  structureLayout.addEventListener("click", (e) => {
+    e.stopPropagation()
+    structureLayoutOpen = !structureLayoutOpen
+    paintStructureUi()
+  })
+  structureExact.addEventListener("click", (e) => {
+    e.stopPropagation()
+    const node = structureSelected
+    const region = node ? regionForStructureNode(node) : null
+    if (!node || !region || structureSelection.length > 1) return
+    structureLayoutOpen = false
+    structurePrecisionOpen = !structurePrecisionOpen
+    if (structurePrecisionOpen) {
+      const contentWidth = structureContentWidth(region)
+      structurePrecisionWidth.input.value = String(
+        currentStructureWidth(node) ??
+          Math.round((node.el.offsetWidth / Math.max(1, contentWidth)) * 100),
+      )
+      const height = currentStructureHeight(node)
+      structurePrecisionHeight.input.value = height === null ? "" : String(height)
+      paintStructureUi()
+      structurePrecisionWidth.input.focus()
+    } else paintStructureUi()
+  })
+  structurePrecisionCancel.addEventListener("click", (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    structurePrecisionOpen = false
+    paintStructureUi()
+    structureExact.focus()
+  })
+  structurePrecisionPanel.addEventListener("submit", (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    applyExactStructureSize()
+  })
   structureSameWidth.addEventListener("click", (e) => {
     e.stopPropagation()
     equalizeStructure("width")
@@ -4449,6 +4912,23 @@ interface ElReg {
     e.stopPropagation()
     equalizeStructure("height")
   })
+  structureFitHeight.addEventListener("click", (e) => {
+    e.stopPropagation()
+    fitStructureHeight()
+  })
+  structureDistribute.addEventListener("click", (e) => {
+    e.stopPropagation()
+    distributeStructure()
+  })
+  for (const [button, align] of [
+    [structureAlignStart, "start"],
+    [structureAlignCenter, "center"],
+    [structureAlignEnd, "end"],
+  ] as const)
+    button.addEventListener("click", (e) => {
+      e.stopPropagation()
+      alignStructure(align)
+    })
   structureParent.addEventListener("click", (e) => {
     e.stopPropagation()
     const parent = structureSelected ? parentStructureNode(structureSelected) : null
@@ -4821,8 +5301,11 @@ interface ElReg {
     const drag = structureResizeDrag
     if (!drag || drag.pointerId !== e.pointerId) return
     structureResizeDrag = null
+    structureLayoutOpen = false
+    structurePrecisionOpen = false
     structureBox.classList.remove("derive-structure-resizing")
     hideStructureSnapGuide()
+    hideStructureDropMarker()
     hideStructureHeightSnapGuide()
     const widthAccepted =
       drag.mode === "height" || structureWidthFits(drag.node, drag.region, drag.width)
@@ -4971,6 +5454,36 @@ interface ElReg {
     moved: boolean
   }
   let structureDrag: StructureDrag | null = null
+  const hideStructureDropMarker = () => {
+    structureDropMarker.style.display = "none"
+  }
+  const showStructureDropMarker = (
+    region: StructureRegion,
+    before: StructureNode | undefined,
+    axis: "x" | "y",
+    others: readonly StructureNode[],
+  ) => {
+    const regionRect = region.el.getBoundingClientRect()
+    const anchor = before ?? others.at(-1)
+    if (!anchor) return hideStructureDropMarker()
+    const anchorRect = anchor.el.getBoundingClientRect()
+    const after = !before
+    structureDropMarker.style.display = "block"
+    structureDropMarker.classList.toggle("derive-structure-drop-marker-x", axis === "x")
+    structureDropMarkerLabel.textContent = `${after ? "After" : "Before"} ${anchor.id}`
+    structureDropMarker.setAttribute("data-label", structureDropMarkerLabel.textContent)
+    if (axis === "x") {
+      structureDropMarker.style.left = `${(after ? anchorRect.right : anchorRect.left) + (window.scrollX || 0)}px`
+      structureDropMarker.style.top = `${regionRect.top + scrollTop()}px`
+      structureDropMarker.style.width = "0"
+      structureDropMarker.style.height = `${regionRect.height}px`
+    } else {
+      structureDropMarker.style.left = `${regionRect.left + (window.scrollX || 0)}px`
+      structureDropMarker.style.top = `${(after ? anchorRect.bottom : anchorRect.top) + scrollTop()}px`
+      structureDropMarker.style.width = `${regionRect.width}px`
+      structureDropMarker.style.height = "0"
+    }
+  }
   const structureDragAxis = (nodes: readonly StructureNode[]): "x" | "y" => {
     if (nodes.length < 2) return "y"
     const centers = nodes.map((node) => {
@@ -5015,6 +5528,7 @@ interface ElReg {
           : e.clientY < rect.top + rect.height / 2
       })
       drag.region.el.insertBefore(drag.node.el, before?.el ?? null)
+      showStructureDropMarker(drag.region, before, axis, others)
       const order = connectedStructureNodes(drag.region).map((node) => node.id)
       drag.moved = order.some((id, index) => id !== drag.initialOrder[index])
       paintStructureUi()
@@ -5025,6 +5539,7 @@ interface ElReg {
     const drag = structureDrag
     if (!drag || drag.pointerId !== e.pointerId) return
     structureDrag = null
+    hideStructureDropMarker()
     drag.node.el.classList.remove("derive-structure-dragging")
     const visuallyMoved =
       drag.moved &&
@@ -5038,9 +5553,32 @@ interface ElReg {
       paintStructureUi()
     } else paintStructureUi()
   }
+  const cancelStructureDrag = () => {
+    const drag = structureDrag
+    if (!drag) return false
+    structureDrag = null
+    drag.node.el.classList.remove("derive-structure-dragging")
+    hideStructureDropMarker()
+    applyPlacement(drag.initial)
+    paintStructureUi()
+    postDirty()
+    return true
+  }
   window.addEventListener("pointerup", (e) => finishStructureDrag(e, false))
   window.addEventListener("pointercancel", (e) => finishStructureDrag(e, true))
-  window.addEventListener("scroll", paintStructureUi, true)
+  structureGrip.addEventListener("lostpointercapture", () => cancelStructureDrag())
+  window.addEventListener("blur", () => cancelStructureDrag())
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) cancelStructureDrag()
+  })
+  window.addEventListener(
+    "scroll",
+    () => {
+      if (structureDrag) hideStructureDropMarker()
+      paintStructureUi()
+    },
+    true,
+  )
   window.addEventListener("resize", () => refreshStructureAvailability())
   focusStructureToolbar = () => {
     if (!editOn || !structureSelected || document.activeElement !== structureSelected.el)
@@ -5166,6 +5704,10 @@ interface ElReg {
     structureObserver = null
     if (restore)
       for (const region of structureRegions) {
+        const gapAttribute = structureAttribute(region.prefix, "gap")
+        if (region.origGap === null) region.el.removeAttribute(gapAttribute)
+        else region.el.setAttribute(gapAttribute, region.origGap)
+        restoreStyle(region.el, region.origStyle)
         const byId = new Map(region.nodes.map((node) => [node.id, node]))
         for (const id of region.origOrder) {
           const node = byId.get(id)
@@ -5179,6 +5721,9 @@ interface ElReg {
           const heightAttribute = structureAttribute(node.prefix, "height")
           if (node.origHeight === null) node.el.removeAttribute(heightAttribute)
           else node.el.setAttribute(heightAttribute, node.origHeight)
+          const alignAttribute = structureAttribute(node.prefix, "align")
+          if (node.origAlign === null) node.el.removeAttribute(alignAttribute)
+          else node.el.setAttribute(alignAttribute, node.origAlign)
           restoreStyle(node.el, node.origStyle)
           region.el.append(node.el)
         }
@@ -5193,6 +5738,8 @@ interface ElReg {
     for (const box of structureMultiBoxes.values()) box.remove()
     structureMultiBoxes.clear()
     structureResizeDrag = null
+    structureLayoutOpen = false
+    structurePrecisionOpen = false
     structureExpectedRemoved = new Set()
     syncStructuralPlacement = () => {}
     refreshStructureAvailability = () => {}
@@ -5200,6 +5747,7 @@ interface ElReg {
     structureBox.style.display = "none"
     structureBox.classList.remove("derive-structure-resizing")
     hideStructureSnapGuide()
+    hideStructureDropMarker()
     structureToast.style.display = "none"
     if (structureToastTimer) clearTimeout(structureToastTimer)
     structureToastTimer = 0
@@ -5949,6 +6497,19 @@ interface ElReg {
       }
     | {
         schema: typeof STRUCTURE_SCHEMA
+        op: "structural-align"
+        region: string
+        node: string
+        align: StructuralAlignment | null
+      }
+    | {
+        schema: typeof STRUCTURE_SCHEMA
+        op: "structural-gap"
+        region: string
+        gap_px: number | null
+      }
+    | {
+        schema: typeof STRUCTURE_SCHEMA
         op: "structural-order"
         region: string
         nodes: string[]
@@ -6040,6 +6601,20 @@ interface ElReg {
     if (!structureDocumentIntegrityValid()) return { edits, invalid: true }
     for (const region of activeStructureRegions()) {
       if (!structureIntegrityValid(region)) return { edits: [], invalid: true }
+      const gapRaw = region.el.getAttribute(structureAttribute(region.prefix, "gap"))
+      const gap = gapRaw === null ? null : Number.parseInt(gapRaw, 10)
+      if (
+        gap !== null &&
+        (!Number.isInteger(gap) || gap < MIN_STRUCTURAL_GAP_PX || gap > MAX_STRUCTURAL_GAP_PX)
+      )
+        return { edits: [], invalid: true }
+      if (gapRaw !== region.origGap)
+        edits.push({
+          schema: STRUCTURE_SCHEMA,
+          op: "structural-gap",
+          region: region.id,
+          gap_px: gap,
+        })
       const current = connectedStructureNodes(region)
       const ids = current.map((node) => node.id)
       const present = new Set(ids)
@@ -6085,6 +6660,12 @@ interface ElReg {
           return { edits: [], invalid: true }
         const widthChanged = widthRaw !== node.origWidth
         const heightChanged = heightRaw !== node.origHeight
+        const align = node.el.getAttribute(
+          structureAttribute(node.prefix, "align"),
+        ) as StructuralAlignment | null
+        if (align !== null && !/^(?:start|center|end)$/.test(align))
+          return { edits: [], invalid: true }
+        const alignChanged = align !== node.origAlign
         const sizeChanged = size !== node.origSize
         if (heightChanged && sizeChanged && width === null)
           edits.push({
@@ -6126,6 +6707,14 @@ interface ElReg {
             region: region.id,
             node: node.id,
             width_pct: null,
+          })
+        if (alignChanged)
+          edits.push({
+            schema: STRUCTURE_SCHEMA,
+            op: "structural-align",
+            region: region.id,
+            node: node.id,
+            align,
           })
       }
     }
