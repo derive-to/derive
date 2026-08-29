@@ -1,5 +1,6 @@
 import { type DocNode, docMap } from "@derive/core"
 import { MAX_CHARS } from "./clip"
+import { documentStructure } from "./doc-structure-cache"
 import { present } from "./search"
 import { WeightedLruCache } from "./source-text-cache"
 
@@ -140,9 +141,10 @@ export const changedParts = (
   afterSource: string,
   afterContentType: string,
   materializeCurrentPart: MaterializeCurrentPart = currentPart,
+  prepared?: { before: ReturnType<typeof docMap>; after: ReturnType<typeof docMap> },
 ): ChangedParts => {
-  const before = docMap(beforeSource, beforeContentType)
-  const after = docMap(afterSource, afterContentType)
+  const before = prepared?.before ?? docMap(beforeSource, beforeContentType)
+  const after = prepared?.after ?? docMap(afterSource, afterContentType)
   const previous = keyed(before.nodes)
   const current = keyed(after.nodes)
   const common = after.nodes.filter((node) => previous.has(stableKey(node)))
@@ -229,6 +231,10 @@ export const changedPartsWithReceipt = (
     afterSource,
     afterContentType,
     materializeCurrentPart,
+    {
+      before: documentStructure(beforeBlobKey, beforeSource, beforeContentType),
+      after: documentStructure(afterBlobKey, afterSource, afterContentType),
+    },
   )
   receipts.set(key, value, key.length * 2 + JSON.stringify(value).length * 2)
   return value

@@ -4,7 +4,6 @@ import {
   type DocMap,
   derivedGen,
   deriveFacts,
-  docMap,
   isDerivedFactName,
   isHtmlLike,
   LINKED_BUNDLE_CONTENT_TYPE,
@@ -35,6 +34,7 @@ import { boundSources, sourceTools } from "../lib/chat-sources"
 import { clip, MAX_CHARS } from "../lib/clip"
 import { pickVariant, rendersOff } from "../lib/collect-render"
 import { assembleContextPackage } from "../lib/context-package"
+import { documentStructure } from "../lib/doc-structure-cache"
 import {
   buildFocusIndex,
   canIndexFocus,
@@ -136,11 +136,6 @@ const clipFocusBody = (body: string): string =>
 // request. Prepared caches therefore live at module scope, beside the Worker isolate,
 // rather than inside registerReadTool where the next request could never hit them.
 // Keys are immutable content hashes and authorization still runs before any lookup.
-const structures = new WeightedLruCache<DocMap>({
-  maxBytes: 8 * 1024 * 1024,
-  maxEntries: 64,
-  maxEntryBytes: 2 * 1024 * 1024,
-})
 const focusIndexes = new WeightedLruCache<FocusIndex>({
   maxBytes: 8 * 1024 * 1024,
   maxEntries: 64,
@@ -244,16 +239,7 @@ export function registerReadTool(tc: ToolContext): void {
   // separate from the source cache so a large, rarely searched artifact cannot crowd
   // out the source text that all read modes share.
   const structureOf = (v: VersionRecord, source: string, contentType: string): DocMap => {
-    const key = `${contentType}:${v.blob_key}`
-    const cached = structures.get(key)
-    if (cached) return cached
-    const structure = docMap(source, contentType)
-    const bytes = structure.nodes.reduce(
-      (total, node) => total + 192 + (node.title?.length ?? 0) * 2,
-      256,
-    )
-    structures.set(key, structure, bytes)
-    return structure
+    return documentStructure(v.blob_key, source, contentType)
   }
 
   // READ CONTENT --------------------------------------------------------------

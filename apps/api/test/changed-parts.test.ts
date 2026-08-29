@@ -2,6 +2,7 @@ import type { DocNode } from "@derive/core"
 import { describe, expect, it, vi } from "vitest"
 
 import { changedParts, changedPartsWithReceipt } from "../src/lib/changed-parts"
+import { documentStructure } from "../src/lib/doc-structure-cache"
 
 const page = (value: string): string =>
   `<!doctype html><html><body>${Array.from(
@@ -10,6 +11,16 @@ const page = (value: string): string =>
   ).join("\n")}</body></html>`
 
 describe("changed parts", () => {
+  it("shares one immutable structure by content hash", () => {
+    const source = "<section id='a'><h2>A</h2><p>Body</p></section>"
+    const first = documentStructure("shared-structure", source, "text/html")
+    const second = documentStructure("shared-structure", "not parsed", "text/html")
+    const other = documentStructure("other-structure", source, "text/html")
+
+    expect(second).toBe(first)
+    expect(other).not.toBe(first)
+  })
+
   it("reuses an immutable receipt without rematerializing its body", () => {
     const materialize = vi.fn((change: "added" | "changed" | "moved", node: DocNode) => ({
       change,
