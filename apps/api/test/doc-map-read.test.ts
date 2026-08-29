@@ -181,6 +181,44 @@ describe("read map / node", () => {
 })
 
 describe("read focus", () => {
+  it("returns one deck slide with the same stable ref that map and node use", async () => {
+    const { app, token, short_id } = await setup("focus-deck")
+
+    const focused = await readJson(app, token, { short_id, focus: "The ask" })
+    expect(focused.count).toBe(1)
+    expect(focused.matches).toHaveLength(1)
+    expect(focused.matches[0]).toMatchObject({
+      node: "slide:2",
+      type: "slide",
+      title: "The ask",
+    })
+    expect(focused.matches[0].body).toContain("two")
+    expect(focused.matches[0].body).not.toContain("The problem")
+
+    const exact = await readJson(app, token, {
+      short_id,
+      focus: "data-derive-slide",
+      format: "html",
+    })
+    expect(exact.count).toBe(2)
+    expect(exact.matches.map((match: { node: string }) => match.node)).toEqual([
+      "slide:1",
+      "slide:2",
+    ])
+    expect(exact.matches[1].body).toContain('data-derive-slide="1"')
+  })
+
+  it("does not change the ordinary small-document read", async () => {
+    const source =
+      "<!doctype html><html><body><h1>Small note</h1><p>The complete body still returns.</p></body></html>"
+    const { app, token, short_id } = await setupDocument("focus-small-baseline", source)
+
+    const ordinary = await readTool(app, token, { short_id })
+    expect(ordinary.isError).toBe(false)
+    expect(ordinary.text).toContain("Small note")
+    expect(ordinary.text).toContain("The complete body still returns.")
+  })
+
   it("locates and reads one complete part of a large HTML document in one call", async () => {
     const sections = Array.from({ length: 80 }, (_, i) => {
       const target = i === 62 ? "<p>The fallback budget is 17 percent.</p>" : ""
@@ -201,6 +239,39 @@ describe("read focus", () => {
     })
     expect(focused.matches[0].body).toContain("17 percent")
     expect(JSON.stringify(focused).length).toBeLessThan(source.length / 20)
+  })
+
+  it("bounds repeated matches and treats a missing literal as an empty result", async () => {
+    const sections = Array.from(
+      { length: 5 },
+      (_, i) => `<section><h2>Option ${i + 1}</h2><p>Shared verification receipt.</p></section>`,
+    ).join("\n")
+    const source = `<!doctype html><html><body>${sections}</body></html>`
+    const { app, token, short_id } = await setupDocument("focus-results", source)
+
+    const repeated = await readJson(app, token, { short_id, focus: "verification receipt" })
+    expect(repeated.count).toBe(5)
+    expect(repeated.matches).toHaveLength(3)
+    expect(repeated).toMatchObject({ truncated: true, more_matches: 2 })
+
+    const missing = await readJson(app, token, { short_id, focus: "compaction threshold" })
+    expect(missing.count).toBe(0)
+    expect(missing.matches).toEqual([])
+    expect(missing.next).toContain("No matching part")
+  })
+
+  it("refuses a focus combined with another part selector", async () => {
+    const { app, token, short_id } = await setup("focus-exclusive")
+    for (const extra of [
+      { map: true },
+      { node: "slide:1" },
+      { section: "the-ask" },
+      { lines: "1-4" },
+    ]) {
+      const result = await readTool(app, token, { short_id, focus: "ask", ...extra })
+      expect(result.isError, JSON.stringify(extra)).toBe(true)
+      expect(result.text).toContain("focus")
+    }
   })
 })
 
