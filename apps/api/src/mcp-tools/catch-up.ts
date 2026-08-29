@@ -126,8 +126,10 @@ export function registerCatchUpTool(tc: ToolContext): void {
       const since = Math.min(to, Math.max(1, since_version ?? to - 1))
       const history = await ctx.meta.listVersions(a.id)
       const newVersions = history.filter((v) => v.n > since && v.n <= to)
-      const vs = await ctx.meta.getVersion(a.id, since)
-      const vh = await ctx.meta.getVersion(a.id, to)
+      // listVersions already returned every immutable version row. Re-fetching the two
+      // selected rows paid two strictly serial edge round trips for data in hand.
+      const vs = history.find((v) => v.n === since) ?? null
+      const vh = history.find((v) => v.n === to) ?? null
       let entryDiff: string | null = null
       let partChanges: ChangedParts | null =
         response_format === "parts" && since >= to
