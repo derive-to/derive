@@ -314,6 +314,7 @@ export function registerPublishTool(tc: ToolContext): void {
                 op: z.enum([
                   "structural-size",
                   "structural-width",
+                  "structural-dimensions",
                   "structural-order",
                   "structural-remove",
                 ]),
@@ -322,6 +323,7 @@ export function registerPublishTool(tc: ToolContext): void {
                 nodes: z.array(z.string()).optional(),
                 size: z.enum(["compact", "standard", "full"]).nullable().optional(),
                 width_pct: z.coerce.number().int().min(10).max(100).nullable().optional(),
+                height_px: z.coerce.number().int().min(24).max(8192).nullable().optional(),
               }),
               z.object({
                 op: z.literal("scene-update"),

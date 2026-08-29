@@ -167,13 +167,15 @@ meaning. The canonical fixed-stage mapping changes only inline width proportions
 .slide > [data-derive-node][data-derive-size="standard"] { width: 75%; max-width: none; box-sizing: border-box }
 .slide > [data-derive-node][data-derive-size="full"] { width: 100%; max-width: none; box-sizing: border-box }
 .slide > [data-derive-node][data-derive-width] { width: var(--derive-structural-width); max-width: none; box-sizing: border-box }
+.slide > [data-derive-node][data-derive-height] { height: var(--derive-structural-height); box-sizing: border-box }
 ```
 
-The rendered editor also offers a horizontal resize handle. It stores a bounded whole percentage
-in `data-derive-width` and a Derive-owned `--derive-structural-width` custom property, then snaps
-near the widths of visible siblings and the 50 / 75 / 100 percent rails. Keep the custom-width
-rule alongside the named presets so direct resizing remains region-relative under stage scaling.
-Height remains authored; structural editing is not a freeform canvas.
+The rendered editor offers horizontal, vertical, and corner resize handles. Width stores a bounded
+whole percentage in `data-derive-width` and `--derive-structural-width`; height stores bounded CSS
+pixels in `data-derive-height` and `--derive-structural-height`. Both axes snap to visible sibling
+dimensions, while width also snaps to the 50 / 75 / 100 percent rails. A diagonal gesture saves
+both dimensions atomically. Height refuses content clipping or authored constraints instead of
+silently forcing a broken box. Keep both custom-property rules alongside the named presets.
 
 The canonical template authors this metadata directly. Legacy decks get a bounded optimistic
 upgrade in Edit mode: Derive uses each exact-source slide as a region and stamps only its explicit,

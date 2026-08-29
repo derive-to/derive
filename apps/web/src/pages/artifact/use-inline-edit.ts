@@ -30,6 +30,8 @@ const editMessage = (edits: InlineEditInput[]): string => {
     return `${first.size ? `Set ${first.node} to ${first.size}` : `Reset ${first.node} size`}`
   if ("op" in first && first.op === "structural-width")
     return `${first.width_pct === null ? `Reset ${first.node} width` : `Resized ${first.node} to ${first.width_pct}%`}`
+  if ("op" in first && first.op === "structural-dimensions")
+    return `Resized ${first.node} to ${first.width_pct === null ? "authored width" : `${first.width_pct}%`} × ${first.height_px === null ? "authored height" : `${first.height_px}px`}`
   if ("op" in first && first.op === "structural-order") return `Reordered ${first.region}`
   if ("op" in first && first.op === "structural-remove") return `Removed ${first.node}`
   if ("op" in first) return `Updated video scene ${first.id}`

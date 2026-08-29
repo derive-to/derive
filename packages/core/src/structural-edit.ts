@@ -14,8 +14,11 @@ import { EditError } from "./doc-text"
 import { attrValues, type HtmlTag, hasAttr, tags } from "./html-tags"
 import { injectArtifactRuntimeScripts } from "./shared-state-client"
 import {
+  MAX_STRUCTURAL_HEIGHT_PX,
   MAX_STRUCTURAL_WIDTH_PCT,
+  MIN_STRUCTURAL_HEIGHT_PX,
   MIN_STRUCTURAL_WIDTH_PCT,
+  STRUCTURAL_HEIGHT_PROPERTY,
   STRUCTURAL_WIDTH_PROPERTY,
 } from "./structural-width"
 import { stylePropertyValues, updateOpeningTagStyle } from "./style-attribute"
@@ -41,6 +44,15 @@ export interface StructuralWidthEdit extends StructuralEditBase {
   node: string
   /** Region-relative whole percentage. Null removes Derive's custom-width override. */
   width_pct: number | null
+}
+
+/** Atomic two-axis source intent. Height is authored CSS pixels because a stack
+ * normally has no definite parent height for a meaningful percentage. */
+export interface StructuralDimensionsEdit extends StructuralEditBase {
+  op: "structural-dimensions"
+  node: string
+  width_pct: number | null
+  height_px: number | null
 }
 
 export interface StructuralOrderEdit extends StructuralEditBase {
@@ -73,6 +85,7 @@ export interface StructuralOpeningRestoreEdit extends StructuralEditBase {
 export type StructuralUserEdit =
   | StructuralSizeEdit
   | StructuralWidthEdit
+  | StructuralDimensionsEdit
   | StructuralOrderEdit
   | StructuralRemoveEdit
 
@@ -96,6 +109,7 @@ export interface StructuralNodeInspection {
   kind: string | null
   size: StructuralSize | null
   width_pct: number | null
+  height_px: number | null
 }
 
 export interface StructuralRegionInspection {
@@ -150,6 +164,7 @@ const STRUCTURAL_ATTRIBUTES = [
   "data-derive-kind",
   "data-derive-size",
   "data-derive-width",
+  "data-derive-height",
   "data-derive-runtime-region",
   "data-derive-runtime-layout",
   "data-derive-runtime-owner",
@@ -157,6 +172,7 @@ const STRUCTURAL_ATTRIBUTES = [
   "data-derive-runtime-kind",
   "data-derive-runtime-size",
   "data-derive-runtime-width",
+  "data-derive-runtime-height",
 ] as const
 
 const fail = (code: StructuralEditError["code"], message: string): never => {
@@ -194,6 +210,22 @@ const structuralWidth = (value: string | null, label: string): number | null => 
       `${label} must be a whole percentage from ${MIN_STRUCTURAL_WIDTH_PCT} to ${MAX_STRUCTURAL_WIDTH_PCT}.`,
     )
   return width
+}
+
+const structuralHeight = (value: string | null, label: string): number | null => {
+  if (value === null) return null
+  if (!/^\d+$/.test(value))
+    fail(
+      "invalid-structure",
+      `${label} must be a whole pixel value from ${MIN_STRUCTURAL_HEIGHT_PX} to ${MAX_STRUCTURAL_HEIGHT_PX}.`,
+    )
+  const height = Number.parseInt(value, 10)
+  if (height < MIN_STRUCTURAL_HEIGHT_PX || height > MAX_STRUCTURAL_HEIGHT_PX)
+    fail(
+      "invalid-structure",
+      `${label} must be a whole pixel value from ${MIN_STRUCTURAL_HEIGHT_PX} to ${MAX_STRUCTURAL_HEIGHT_PX}.`,
+    )
+  return height
 }
 
 interface SourceElement {
@@ -376,11 +408,25 @@ const inspect = (html: string): Inspection => {
         "invalid-structure",
         `Structural node ${id} must pair data-derive-width with one matching ${STRUCTURAL_WIDTH_PROPERTY} inline property.`,
       )
+    const heightPx = structuralHeight(
+      exactlyOne(element.tag, "data-derive-height", `Structural node ${id}`),
+      `Structural node ${id} data-derive-height`,
+    )
+    const customHeights = stylePropertyValues(inlineStyle, STRUCTURAL_HEIGHT_PROPERTY)
+    if (
+      customHeights.length !== (heightPx === null ? 0 : 1) ||
+      (heightPx !== null && customHeights[0] !== `${heightPx}px`)
+    )
+      fail(
+        "invalid-structure",
+        `Structural node ${id} must pair data-derive-height with one matching ${STRUCTURAL_HEIGHT_PROPERTY} inline property.`,
+      )
     const node: OwnedNode = {
       id,
       kind: exactlyOne(element.tag, "data-derive-kind", `Structural node ${id}`),
       size: rawSize as StructuralSize | null,
       width_pct: widthPct,
+      height_px: heightPx,
       element,
       chunkEnd: element.end,
     }
@@ -439,11 +485,12 @@ const inspect = (html: string): Inspection => {
         "invalid-structure",
         `Structural region ${region.id} contains a comment after its last structural node.`,
       )
-    region.nodes = region.ownedNodes.map(({ id, kind, size, width_pct }) => ({
+    region.nodes = region.ownedNodes.map(({ id, kind, size, width_pct, height_px }) => ({
       id,
       kind,
       size,
       width_pct,
+      height_px,
     }))
   }
 
@@ -460,6 +507,7 @@ export const isStructuralEdit = (value: unknown): value is StructuralEdit => {
     edit.schema === STRUCTURAL_EDIT_SCHEMA &&
     (edit.op === "structural-size" ||
       edit.op === "structural-width" ||
+      edit.op === "structural-dimensions" ||
       edit.op === "structural-order" ||
       edit.op === "structural-remove" ||
       edit.op === "structural-restore" ||
@@ -473,6 +521,7 @@ export const isStructuralUserEdit = (value: unknown): value is StructuralUserEdi
   isStructuralEdit(value) &&
   (value.op === "structural-size" ||
     value.op === "structural-width" ||
+    value.op === "structural-dimensions" ||
     value.op === "structural-order" ||
     value.op === "structural-remove")
 
@@ -534,6 +583,7 @@ const backfillStyle = (runtime: boolean): string => {
 [${prefix}-region][${prefix}-layout="stack"] > [${prefix}-node][${prefix}-size="standard"] { width: 75% !important; max-width: none !important; box-sizing: border-box !important }
 [${prefix}-region][${prefix}-layout="stack"] > [${prefix}-node][${prefix}-size="full"] { width: 100% !important; max-width: none !important; box-sizing: border-box !important }
 [${prefix}-region][${prefix}-layout="stack"] > [${prefix}-node][${prefix}-width] { width: var(${STRUCTURAL_WIDTH_PROPERTY}) !important; max-width: none !important; box-sizing: border-box !important }
+[${prefix}-region][${prefix}-layout="stack"] > [${prefix}-node][${prefix}-height] { height: var(${STRUCTURAL_HEIGHT_PROPERTY}) !important; box-sizing: border-box !important }
 </style>`
 }
 
@@ -608,7 +658,9 @@ export const backfillLegacyDeckStructure = (
         !tag.closing &&
         (STRUCTURAL_ATTRIBUTES.some((attribute) => hasAttr(tag.attrs, attribute)) ||
           attrValues(tag.attrs, "style").some(
-            (style) => stylePropertyValues(style, STRUCTURAL_WIDTH_PROPERTY).length > 0,
+            (style) =>
+              stylePropertyValues(style, STRUCTURAL_WIDTH_PROPERTY).length > 0 ||
+              stylePropertyValues(style, STRUCTURAL_HEIGHT_PROPERTY).length > 0,
           )),
     )
   )
@@ -827,6 +879,65 @@ const widthEdit = (
   }
 }
 
+const dimensionsEdit = (
+  html: string,
+  edit: StructuralDimensionsEdit,
+  inspection: Inspection,
+  label: string,
+): { html: string; inverse: StructuralEdit } => {
+  const region = regionFor(inspection, edit.region, label)
+  const node = nodeFor(region, edit.node, label)
+  const width = edit.width_pct
+  const height = edit.height_px
+  if (
+    width !== null &&
+    (!Number.isInteger(width) ||
+      width < MIN_STRUCTURAL_WIDTH_PCT ||
+      width > MAX_STRUCTURAL_WIDTH_PCT)
+  )
+    fail(
+      "invalid-operation",
+      `${label} width_pct must be a whole percentage from ${MIN_STRUCTURAL_WIDTH_PCT} to ${MAX_STRUCTURAL_WIDTH_PCT}.`,
+    )
+  if (
+    height !== null &&
+    (!Number.isInteger(height) ||
+      height < MIN_STRUCTURAL_HEIGHT_PX ||
+      height > MAX_STRUCTURAL_HEIGHT_PX)
+  )
+    fail(
+      "invalid-operation",
+      `${label} height_px must be a whole pixel value from ${MIN_STRUCTURAL_HEIGHT_PX} to ${MAX_STRUCTURAL_HEIGHT_PX}.`,
+    )
+  if (
+    node.width_pct === width &&
+    node.height_px === height &&
+    (width === null || node.size === null)
+  )
+    fail("no-change", `${label} leaves node ${node.id} unchanged.`)
+  const start = node.element.tag.start
+  const end = node.element.tag.end
+  const opening = html.slice(start, end)
+  let changed = setAttribute(opening, "data-derive-width", width === null ? null : String(width))
+  if (width !== null) changed = setAttribute(changed, "data-derive-size", null)
+  changed = setAttribute(changed, "data-derive-height", height === null ? null : String(height))
+  changed = updateOpeningTagStyle(changed, {
+    [STRUCTURAL_WIDTH_PROPERTY]: width === null ? null : `${width}%`,
+    [STRUCTURAL_HEIGHT_PROPERTY]: height === null ? null : `${height}px`,
+  })
+  if (changed === opening) fail("no-change", `${label} leaves node ${node.id} unchanged.`)
+  return {
+    html: html.slice(0, start) + changed + html.slice(end),
+    inverse: {
+      schema: STRUCTURAL_EDIT_SCHEMA,
+      op: "structural-restore-opening",
+      region: region.id,
+      node: node.id,
+      opening,
+    },
+  }
+}
+
 const restoreOpeningEdit = (
   html: string,
   edit: StructuralOpeningRestoreEdit,
@@ -986,6 +1097,9 @@ export const applyStructuralEdits = (
         break
       case "structural-width":
         result = widthEdit(out, edit, inspection, label)
+        break
+      case "structural-dimensions":
+        result = dimensionsEdit(out, edit, inspection, label)
         break
       case "structural-order":
         result = orderEdit(out, edit, inspection, label)

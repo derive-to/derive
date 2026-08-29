@@ -47,11 +47,12 @@ const STRUCTURAL_RESIZE_DOC = `<style>
 .stack > [data-derive-node][data-derive-size="standard"] { width: 75%; max-width: none }
 .stack > [data-derive-node][data-derive-size="full"] { width: 100%; max-width: none }
 .stack > [data-derive-node][data-derive-width] { width: var(--derive-structural-width); max-width: none }
+.stack > [data-derive-node][data-derive-height] { height: var(--derive-structural-height); box-sizing: border-box }
 </style>
 <div class="stage">
   <section class="stack" data-derive-ready data-derive-region="story" data-derive-layout="stack">
-    <article id="alpha" data-derive-node="alpha" data-derive-kind="card" data-derive-size="compact" style="transition: width 2s ease; color: navy">Alpha</article>
-    <article id="bravo" data-derive-node="bravo" data-derive-kind="card" data-derive-width="68" style="--derive-structural-width: 68%">Bravo</article>
+    <article id="alpha" data-derive-node="alpha" data-derive-kind="card" data-derive-size="compact" style="transition: width 2s ease, height 2s ease; color: navy">Alpha</article>
+    <article id="bravo" data-derive-node="bravo" data-derive-kind="card" data-derive-width="68" style="--derive-structural-width: 68%; height: 128px">Bravo</article>
   </section>
 </div>`
 
@@ -486,7 +487,7 @@ test("nested cards and their owning group move independently, undo, and save saf
   expect(await contentOf(owner, shortId)).not.toContain('data-derive-node="board"')
 })
 
-test("structural resize snaps on a scaled canvas, survives history, and saves source", async ({
+test("structural diagonal and vertical resize snap on a scaled canvas and save atomically", async ({
   owner,
 }) => {
   const shortId = await publishArtifact(
@@ -496,40 +497,87 @@ test("structural resize snaps on a scaled canvas, survives history, and saves so
     "text/html",
   )
   await openArtifact(owner, shortId)
+  await expect(
+    doc(owner).getByRole("button", { name: "Resize element width and height" }),
+  ).toBeHidden()
+  await expect(doc(owner).getByRole("slider", { name: "Resize element width" })).toBeHidden()
+  await expect(doc(owner).getByRole("slider", { name: "Resize element height" })).toBeHidden()
   await enterEditMode(owner)
 
   const alpha = doc(owner).locator("#alpha")
   const bravo = doc(owner).locator("#bravo")
   await alpha.click()
-  const handle = doc(owner).getByRole("slider", { name: "Resize element width" })
-  await expect(handle).toBeVisible()
-  await expect(handle).toHaveAttribute("aria-valuenow", "50")
+  const widthHandle = doc(owner).getByRole("slider", { name: "Resize element width" })
+  const heightHandle = doc(owner).getByRole("slider", { name: "Resize element height" })
+  const corner = doc(owner).getByRole("button", { name: "Resize element width and height" })
+  await expect(corner).toBeVisible()
+  await expect(widthHandle).toHaveAttribute("aria-valuenow", "50")
+  await expect(heightHandle).toHaveAttribute("aria-valuenow", "80")
 
-  const grip = await handle.boundingBox()
+  const grip = await corner.boundingBox()
+  const start = await alpha.boundingBox()
   const target = await bravo.boundingBox()
   expect(grip).not.toBeNull()
+  expect(start).not.toBeNull()
   expect(target).not.toBeNull()
-  if (!grip || !target) return
+  if (!grip || !start || !target) return
   await owner.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2)
   await owner.mouse.down()
-  await owner.mouse.move(target.x + target.width, grip.y + grip.height / 2)
+  await owner.mouse.move(
+    target.x + target.width,
+    grip.y + grip.height / 2 + target.height - start.height,
+  )
+  await expect(doc(owner).locator(".derive-structure-snap-guide")).toHaveAttribute(
+    "data-label",
+    "Match bravo",
+  )
+  await expect(doc(owner).locator(".derive-structure-height-snap-guide")).toHaveAttribute(
+    "data-label",
+    "Match bravo height",
+  )
   await owner.mouse.up()
 
   await expect(alpha).toHaveAttribute("data-derive-width", "68")
+  await expect(alpha).toHaveAttribute("data-derive-height", "128")
   await expect(alpha).not.toHaveAttribute("data-derive-size")
-  await expect(handle).toHaveAttribute("aria-valuenow", "68")
-  expect(await alpha.evaluate((element) => getComputedStyle(element).transitionDuration)).toBe("2s")
+  await expect(widthHandle).toHaveAttribute("aria-valuenow", "68")
+  await expect(heightHandle).toHaveAttribute("aria-valuenow", "128")
+  expect(await alpha.evaluate((element) => getComputedStyle(element).transitionDuration)).toBe(
+    "2s, 2s",
+  )
   await expect(owner.getByTestId("inline-edit-bar")).toContainText("1 unsaved change")
 
   await owner.getByTestId("inline-edit-undo").click()
   await expect(alpha).toHaveAttribute("data-derive-size", "compact")
   await expect(alpha).not.toHaveAttribute("data-derive-width")
+  await expect(alpha).not.toHaveAttribute("data-derive-height")
   await expect(owner.getByTestId("inline-edit-redo")).toBeEnabled()
   // A tap/focus with no resize is not a transaction and must not fork history.
-  await handle.click()
+  await corner.click()
   await expect(owner.getByTestId("inline-edit-redo")).toBeEnabled()
   await owner.getByTestId("inline-edit-redo").click()
   await expect(alpha).toHaveAttribute("data-derive-width", "68")
+  await expect(alpha).toHaveAttribute("data-derive-height", "128")
+
+  // The dedicated vertical slider shares the same source model and history.
+  await heightHandle.focus()
+  await heightHandle.press("ArrowDown")
+  await expect(alpha).toHaveAttribute("data-derive-height", "129")
+  await owner.getByTestId("inline-edit-undo").click()
+  await expect(alpha).toHaveAttribute("data-derive-height", "128")
+
+  await owner.setViewportSize({ width: 390, height: 844 })
+  for (const control of [widthHandle, heightHandle, corner]) {
+    const box = await control.boundingBox()
+    expect(box).not.toBeNull()
+    if (!box) continue
+    expect(box.x).toBeGreaterThanOrEqual(0)
+    expect(box.y).toBeGreaterThanOrEqual(0)
+    expect(box.x + box.width).toBeLessThanOrEqual(390)
+    expect(box.y + box.height).toBeLessThanOrEqual(844)
+    expect(box.width).toBeGreaterThanOrEqual(24)
+    expect(box.height).toBeGreaterThanOrEqual(24)
+  }
 
   await owner.getByTestId("inline-edit-save").click()
   await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
@@ -537,8 +585,10 @@ test("structural resize snaps on a scaled canvas, survives history, and saves so
     const source = await contentOf(owner, shortId)
     const opening = source.match(/<article id="alpha"[^>]*>/)?.[0]
     expect(opening).toContain('data-derive-width="68"')
-    expect(opening).toContain("transition: width 2s ease")
+    expect(opening).toContain('data-derive-height="128"')
+    expect(opening).toContain("transition: width 2s ease, height 2s ease")
     expect(opening).toContain("--derive-structural-width: 68%")
+    expect(opening).toContain("--derive-structural-height: 128px")
     expect(opening).not.toContain("data-derive-size")
   }).toPass({ timeout: 10_000 })
 })
