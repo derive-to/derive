@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { DECK_CONTENT_TYPE, deriveFacts } from "@derive/core"
-import { afterAll, describe, expect, it } from "vitest"
+import { afterAll, describe, expect, it, vi } from "vitest"
 import { appWithGrant } from "./mcp-helpers"
 
 /**
@@ -81,7 +81,7 @@ const DECK = `<!doctype html><html><head><title>d</title><style>.slide{opacity:0
 
 /** A published deck plus a ready MCP session. */
 const setup = async (name: string) => {
-  const { app, meta, token } = appWithGrant(dir, name, "openid derive:read derive:publish")
+  const { app, blobs, meta, token } = appWithGrant(dir, name, "openid derive:read derive:publish")
   await rpc(app, token, initBody)
   await meta.setMembership({ id: "m_o", org_id: "default", user_id: "u_o", role: "owner" })
   const form = new FormData()
@@ -93,7 +93,7 @@ const setup = async (name: string) => {
     headers: { authorization: `Bearer ${token}` },
   })
   const { short_id } = (await res.json()) as { short_id: string }
-  return { app, token, short_id, meta }
+  return { app, blobs, token, short_id, meta }
 }
 
 const setupDocument = async (name: string, source: string) => {
@@ -178,6 +178,58 @@ describe("read map / node", () => {
     expect(json.kind).toBe("deck")
     expect(json.nodes.map((n) => n.ref)).toContain("slide:2")
   })
+
+  it("serves a current stored map without rereading the source blob", async () => {
+    const { app, blobs, token, short_id, meta } = await setup("map-stored-read")
+    const art = await meta.getByShortId(short_id)
+    const row = deriveFacts(DECK, DECK_CONTENT_TYPE).find((fact) => fact.slot === "$map")
+    expect(art).toBeTruthy()
+    expect(row).toBeDefined()
+    await meta.setVersionData((art as { id: string }).id, 1, [
+      {
+        id: "vd_stored_map",
+        slot: "$map",
+        json: (row as { json: string }).json,
+        size_bytes: (row as { bytes: number }).bytes,
+        gen: (row as { gen: number }).gen,
+      },
+    ])
+    const get = vi.spyOn(blobs, "get")
+    get.mockClear()
+
+    const map = await readJson(app, token, { short_id, map: true })
+
+    expect(map.kind).toBe("deck")
+    expect(map.nodes.map((node: { ref: string }) => node.ref)).toContain("slide:2")
+    expect(get).not.toHaveBeenCalled()
+    get.mockRestore()
+  })
+
+  it("falls back to authored source when a stored map is corrupt", async () => {
+    const { app, blobs, token, short_id, meta } = await setup("map-corrupt-fallback")
+    const art = await meta.getByShortId(short_id)
+    const good = deriveFacts(DECK, DECK_CONTENT_TYPE).find((fact) => fact.slot === "$map")
+    expect(art).toBeTruthy()
+    expect(good).toBeDefined()
+    await meta.setVersionData((art as { id: string }).id, 1, [
+      {
+        id: "vd_corrupt_map",
+        slot: "$map",
+        json: '{"kind":"deck","bytes":"wrong","nodes":[]}',
+        size_bytes: 44,
+        gen: (good as { gen: number }).gen,
+      },
+    ])
+    const get = vi.spyOn(blobs, "get")
+    get.mockClear()
+
+    const map = await readJson(app, token, { short_id, map: true })
+
+    expect(map.kind).toBe("deck")
+    expect(map.nodes.map((node: { ref: string }) => node.ref)).toContain("slide:2")
+    expect(get).toHaveBeenCalled()
+    get.mockRestore()
+  })
 })
 
 describe("read focus", () => {
@@ -239,6 +291,25 @@ describe("read focus", () => {
     })
     expect(focused.matches[0].body).toContain("17 percent")
     expect(JSON.stringify(focused).length).toBeLessThan(source.length / 20)
+  })
+
+  it("matches visible text across inline markup while returning Markdown", async () => {
+    const source =
+      "<!doctype html><html><body><h2>The <em>buried</em> decision</h2><p>A &amp; B</p></body></html>"
+    const { app, token, short_id } = await setupDocument("focus-visible-text", source)
+
+    const focused = await readJson(app, token, {
+      short_id,
+      focus: "The buried decision",
+    })
+
+    expect(focused.count).toBe(1)
+    expect(focused.matches[0]).toMatchObject({
+      node: "sec:the-buried-decision",
+      title: "The buried decision",
+    })
+    expect(focused.matches[0].body).toContain("*buried*")
+    expect(focused.matches[0].body).toContain("A & B")
   })
 
   it("bounds repeated matches and treats a missing literal as an empty result", async () => {

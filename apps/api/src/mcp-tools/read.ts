@@ -77,6 +77,44 @@ const kindCarriesFacts = (v: VersionRecord | null): boolean =>
   // A deck carries DERIVED rows ($map above all) though it can embed none of its own.
   isHtmlLike(v?.content_type ?? "")
 
+interface StoredMap {
+  kind: string
+  bytes: number
+  nodes: Record<string, unknown>[]
+  truncated?: boolean
+  total?: number
+}
+
+/** A stored `$map` row is host-derived, but legacy or corrupt cache data must still fall
+ *  back to the source parser instead of changing a read into a 500. */
+const storedMapOf = (source: string): StoredMap | null => {
+  const value = safeJson(source)
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null
+  const row = value as Record<string, unknown>
+  if (typeof row.kind !== "string" || typeof row.bytes !== "number" || !Array.isArray(row.nodes))
+    return null
+  if (
+    row.nodes.some(
+      (node) =>
+        !node ||
+        typeof node !== "object" ||
+        Array.isArray(node) ||
+        typeof (node as Record<string, unknown>).ref !== "string" ||
+        typeof (node as Record<string, unknown>).type !== "string",
+    )
+  )
+    return null
+  if (row.truncated !== undefined && row.truncated !== true) return null
+  if (row.total !== undefined && typeof row.total !== "number") return null
+  return {
+    kind: row.kind,
+    bytes: row.bytes,
+    nodes: row.nodes as Record<string, unknown>[],
+    ...(row.truncated === true ? { truncated: true } : {}),
+    ...(typeof row.total === "number" ? { total: row.total } : {}),
+  }
+}
+
 /** A focus read returns enough complete parts to disambiguate a repeated term, while the
  *  response stays well below the ordinary whole-read budget. The ref lets the caller open
  *  the exact source next without another map call. */
@@ -853,6 +891,38 @@ export function registerReadTool(tc: ToolContext): void {
           ...(stale ? { note: stale } : {}),
         })
       }
+      // Reject incompatible part selectors before any source blob read. These checks also
+      // keep the error text stable for focus, whose branch used to do the same validation
+      // only after a potentially multi-megabyte source load.
+      if (focus && (section || lines || wantMap || node))
+        return err(
+          "Pass `focus` alone (with `format` and `version`), not with another part selector.",
+        )
+      if (wantMap && node) return err("Pass `map` OR `node`, not both.")
+      if ((wantMap || node) && (section || lines || render))
+        return err("`map`/`node` address the document's parts — pass with `version` only.")
+
+      // Publish derivation already stores the bounded wire map. Serve it before loading and
+      // parsing the source. Missing, stale, or corrupt cache rows fall
+      // through to the source path below, so authored bytes remain the authority.
+      if (wantMap) {
+        const row = (await ctx.meta.getVersionData(a.id, n, "$map"))[0]
+        const stored = row?.gen === derivedGen("$map") ? storedMapOf(row.json) : null
+        if (stored)
+          return json({
+            short_id,
+            title: a.title,
+            version: n,
+            kind: stored.kind,
+            format: formatLabel(v.content_type, fmt),
+            url,
+            bytes: stored.bytes,
+            nodes: stored.nodes,
+            ...(stored.truncated ? { truncated: true } : {}),
+            ...(stored.total !== undefined ? { total: stored.total } : {}),
+            note: "Read one part with read(node:\"<ref>\"), format:'html' for its exact source. Same JSON at /raw/<short_id>/data/$map.json.",
+          })
+      }
       const manifest = await manifestOf(ctx, v)
 
       if (!manifest) {
@@ -964,10 +1034,6 @@ export function registerReadTool(tc: ToolContext): void {
         // uses the same derived map as `map`/`node`, so every returned match is already an
         // address the caller can reuse for an exact-source read or a scoped edit.
         if (focus) {
-          if (section || lines || wantMap || node)
-            return err(
-              "Pass `focus` alone (with `format` and `version`), not with another part selector.",
-            )
           let structure: DocMap
           try {
             structure = docMap(src, ct ?? "text/html")
@@ -978,14 +1044,24 @@ export function registerReadTool(tc: ToolContext): void {
           let matchCount = 0
           const matches: Array<{ target: DocMap["nodes"][number]; body: string }> = []
           for (const target of structure.nodes) {
-            const body = present(src.slice(target.start, target.end), ct, fmt)
+            const sourcePart = src.slice(target.start, target.end)
+            // `focus` asks for literal document text. Markdown is the response format, not
+            // the match domain: generated `#`, `*`, link, and table syntax must not split a
+            // phrase a viewer sees as contiguous. The visible-text projection is also much
+            // cheaper than formatting every non-match as Markdown. Exact-source focus keeps
+            // its existing HTML search contract.
+            const searchBody = present(sourcePart, ct, fmt === "markdown" ? "text" : fmt)
             matcher.lastIndex = 0
-            if (!matcher.test(body)) continue
+            if (!matcher.test(searchBody)) continue
             matchCount += 1
             // Count every match so truncation stays exact, but retain only the bodies
             // the response can return. A common term in a long document must not hold a
             // second readable copy of the whole document in Worker memory.
-            if (matches.length < FOCUS_MATCH_MAX) matches.push({ target, body })
+            if (matches.length < FOCUS_MATCH_MAX)
+              matches.push({
+                target,
+                body: fmt === "markdown" ? present(sourcePart, ct, fmt) : searchBody,
+              })
           }
           return json({
             ...meta,
@@ -1010,9 +1086,6 @@ export function registerReadTool(tc: ToolContext): void {
         // a big doc — it is the cheap structural view the full-document read is not, and
         // every ref it hands back is what `node` (and, next, a scoped edit) takes.
         if (wantMap || node) {
-          if (wantMap && node) return err("Pass `map` OR `node`, not both.")
-          if (section || lines || render)
-            return err("`map`/`node` address the document's parts — pass with `version` only.")
           let structure: DocMap
           try {
             structure = docMap(src, ct ?? "text/html")
