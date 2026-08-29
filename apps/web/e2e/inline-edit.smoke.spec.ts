@@ -107,6 +107,15 @@ test("discard reverts the text and publishes nothing", async ({ owner }) => {
   // Back to the invitation, and the document reads as it did before.
   await expect(owner.getByTestId("inline-edit-bar")).toContainText("click text to edit")
   await expect(doc(owner).locator("#one")).toHaveText("First paragraph.")
+  await expect(owner.getByTestId("inline-edit-undo")).toBeDisabled()
+  await expect(owner.getByTestId("inline-edit-redo")).toBeDisabled()
+
+  // A second cycle gets a fresh history rather than reviving the abandoned first one.
+  await appendToParagraph(owner, "two", " Throwaway too.")
+  await owner.getByTestId("inline-edit-discard").click()
+  await expect(doc(owner).locator("#two")).toHaveText("Second paragraph.")
+  await expect(owner.getByTestId("inline-edit-undo")).toBeDisabled()
+  await expect(owner.getByTestId("inline-edit-redo")).toBeDisabled()
   expect(await versionOf(owner, shortId)).toBe(1)
 })
 

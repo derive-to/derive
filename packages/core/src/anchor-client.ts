@@ -656,6 +656,9 @@ interface ElReg {
     ".derive-structure-toast button{height:26px;padding:0 8px;border:1px solid rgba(255,255,255,.35);border-radius:5px;background:transparent;color:#fff;font:700 11px/24px system-ui,sans-serif;cursor:pointer}" +
     ".derive-structure-button:focus-visible,.derive-structure-toast button:focus-visible{outline:2px solid #4f46e5;outline-offset:2px}" +
     ".derive-structure-dragging{opacity:.72;box-shadow:0 12px 28px rgba(15,23,42,.2)}" +
+    /* The host's deck controls overlay the bottom of the iframe. Lift destructive
+       recovery above that bar on desktop so the five-second Undo is actually seen. */
+    "@media(min-width:641px){body:has([data-derive-slide])>.derive-structure-toast{bottom:92px}}" +
     /* On a narrow canvas the contextual controls become a predictable editing shelf.
        Root selections use two rows; a nested selection reserves a third for Parent.
        Every action stays visible without document overflow, with touch-sized targets. */
@@ -4021,10 +4024,18 @@ interface ElReg {
     restoreResizeFocus()
     clearResizeUi()
     sceneEdits = []
+    // Discard establishes a new clean baseline inside the still-open mode. History
+    // from the abandoned timeline must not remain actionable: a second edit cycle
+    // should begin exactly like the first, with neither stale Undo nor stale Redo.
+    undoStack = []
+    redoStack = []
+    lastBurst = null
+    pendingRange = null
+    lastState = ""
     if (lastDirty !== 0) {
       lastDirty = 0
-      post({ type: "edit-state", dirty: 0 })
     }
+    scheduleDirty()
   }
 
   /* The element a caret click should edit: the nearest block-ish ancestor of the
