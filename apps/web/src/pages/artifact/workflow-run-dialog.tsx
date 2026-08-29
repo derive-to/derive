@@ -68,7 +68,7 @@ export function WorkflowRunDialog({
         <DialogHeader>
           <DialogTitle>Run with your agent</DialogTitle>
           <DialogDescription>
-            Your Codex, Claude, or other runner executes the Agent steps. Derive keeps the graph,
+            Your Codex, Claude, or other runner executes the Context steps. Derive keeps the graph,
             artifacts, review, and receipts—it is not the runtime.
           </DialogDescription>
         </DialogHeader>

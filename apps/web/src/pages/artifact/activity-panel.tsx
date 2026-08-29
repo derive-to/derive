@@ -16,7 +16,7 @@ import {
 import { Kbd } from "@/components/ui/kbd"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { DockedComposer } from "./activity-composer"
-import { ActivityStream } from "./activity-stream"
+import { ActivityStream, StreamSkeleton } from "./activity-stream"
 import { FloatingControl } from "./floating-control"
 import type { Lens, StreamItem } from "./lib/activity"
 import { useCommentScope } from "./lib/comment-scope"
@@ -52,6 +52,8 @@ export function ActivityPanel(p: {
   onToggleVisualPin?: () => void
   /** The suggestion / locked one-liners, above the stream. */
   hints?: ReactNode
+  /** All sources settled — the list paints only then (index.tsx `streamReady`). */
+  ready: boolean
   editing?: boolean
   onGoToVersion: (n: number) => void
   onSendBack: (note?: string) => void
@@ -103,7 +105,11 @@ export function ActivityPanel(p: {
   const atBottom = useRef(true)
   const opened = useRef(false)
   const [pendingNew, setPendingNew] = useState(0)
-  const count = p.items.filter((it) => it.type === "thread" || it.type === "turn").length
+  // Until ready there is no list: the open-scroll waits for the whole picture, and the
+  // first paint is never counted as arrivals.
+  const count = p.ready
+    ? p.items.filter((it) => it.type === "thread" || it.type === "turn").length
+    : 0
   const lastCount = useRef(count)
   const lastLens = useRef(p.lens)
   useLayoutEffect(() => {
@@ -322,20 +328,23 @@ export function ActivityPanel(p: {
           className="flex h-full flex-col overflow-auto px-2.5 pb-3"
         >
           {p.hints}
-          <ActivityStream
-            items={p.items}
-            currentVersion={p.currentVersion}
-            answeringRoundId={answering?.id ?? null}
-            inView={inView}
-            markerRef={(el) => {
-              marker.current = el
-            }}
-            editing={p.editing}
-            emptyTestId="comments-empty-new"
-            onNewComment={newComment}
-            onGoToVersion={p.onGoToVersion}
-            onAnswer={answer}
-          />
+          {!p.ready && <StreamSkeleton />}
+          {p.ready && (
+            <ActivityStream
+              items={p.items}
+              currentVersion={p.currentVersion}
+              answeringRoundId={answering?.id ?? null}
+              inView={inView}
+              markerRef={(el) => {
+                marker.current = el
+              }}
+              editing={p.editing}
+              emptyTestId="comments-empty-new"
+              onNewComment={newComment}
+              onGoToVersion={p.onGoToVersion}
+              onAnswer={answer}
+            />
+          )}
         </div>
         {pendingNew > 0 && (
           <FloatingControl

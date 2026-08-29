@@ -12,9 +12,8 @@ import { cn } from "@/lib/utils"
 import { ContextRowsSkeleton } from "./context-skeleton"
 import { runnerStatus } from "./runner-status"
 
-// ContextInfo is the v1 API type; this surface uses Agent terminology.
-export function Agents() {
-  useDocumentTitle("Agents")
+export function Contexts() {
+  useDocumentTitle("Contexts")
   const nav = useNavigate()
   const { data: contexts, isPending, isError, refetch } = useQuery(contextsQuery())
 
@@ -22,39 +21,45 @@ export function Agents() {
     <PageShell className="flex flex-col gap-6">
       <div className="flex flex-wrap items-start gap-4">
         <div className="flex flex-col gap-1">
-          <h1 className="font-serif text-2xl font-medium tracking-tight text-foreground">Agents</h1>
+          <h1 className="font-serif text-2xl font-medium tracking-tight text-foreground">
+            Contexts
+          </h1>
           <p className="max-w-2xl text-pretty text-sm text-muted-foreground">
-            An Agent is a reusable worker: what it knows, what it can do, who may use it, and where
-            it runs.
+            A Context is a reusable setup: instructions, skills, sources, and permissions that an
+            agent can use across many runs.
           </p>
         </div>
         <Button
           variant="outline"
           size="sm"
-          data-testid="agents-new-toggle"
-          onClick={() => void nav({ to: "/agents/new" })}
+          data-testid="contexts-new-toggle"
+          onClick={() => void nav({ to: "/contexts/new" })}
           className="ml-auto"
         >
-          <Icon name="plus" /> New agent
+          <Icon name="plus" /> New context
         </Button>
       </div>
 
       {isPending ? (
         <ContextRowsSkeleton />
       ) : isError ? (
-        <LoadError title="Couldn’t load agents" testId="agents-retry" onRetry={() => refetch()} />
+        <LoadError
+          title="Couldn’t load contexts"
+          testId="contexts-retry"
+          onRetry={() => refetch()}
+        />
       ) : !contexts || contexts.length === 0 ? (
         <EmptyState
           icon={<Icon name="context" />}
-          title="No agents yet"
-          description="Describe a job or body of knowledge, and Derive builds the Agent with you."
+          title="No contexts yet"
+          description="Package instructions, skills, and sources so your agents can reuse them."
           action={
             <Button
               size="sm"
-              data-testid="agents-empty-new"
-              onClick={() => void nav({ to: "/agents/new" })}
+              data-testid="contexts-empty-new"
+              onClick={() => void nav({ to: "/contexts/new" })}
             >
-              <Icon name="plus" /> New agent
+              <Icon name="plus" /> New context
             </Button>
           }
         />
@@ -76,9 +81,9 @@ function ContextRow({ context: x }: { context: ContextInfo }) {
   const runnerLabel = status.online ? "ready" : status.away ? "away" : "offline"
   return (
     <Link
-      to="/agents/$id"
+      to="/contexts/$id"
       params={{ id: x.id }}
-      data-testid="agent-card"
+      data-testid="context-card"
       className="relative flex flex-col gap-2 overflow-hidden rounded-xl border bg-card px-4 py-3 pl-5 transition-colors hover:bg-accent"
     >
       <span

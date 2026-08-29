@@ -17,7 +17,7 @@ export function Roadmap() {
   return (
     <div className="dark min-h-dvh bg-background text-foreground">
       <div className="mx-auto max-w-5xl px-6 py-5">
-        <header className="flex items-center gap-2.5 border-b border-border/70 pb-5">
+        <header className="flex items-center gap-2.5 pb-5">
           <Link to="/" className="flex items-center gap-2.5">
             <Logo size={19} />
             <span className="text-sm font-semibold tracking-tight">Derive</span>
@@ -33,9 +33,7 @@ export function Roadmap() {
         </header>
 
         <div className="pt-10 pb-7">
-          <p className="font-mono text-2xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">
-            Living document
-          </p>
+          <Eyebrow as="div">Living document</Eyebrow>
           <h1 className="mt-3 text-3xl font-semibold tracking-tight sm:text-4xl">
             Where Derive is going
           </h1>

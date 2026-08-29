@@ -1,109 +1,91 @@
 import { useQuery } from "@tanstack/react-query"
+import { Link } from "@tanstack/react-router"
 import { api, type WorkflowRunSummary } from "@/api"
-import { ago } from "@/lib/time"
-import { cn } from "@/lib/utils"
+import { RunReceipt, runStatusLabel, runStatusTone } from "@/components/shared/run-receipt"
+import { Eyebrow } from "@/components/shared/section-eyebrow"
+import { StatusBadge } from "@/components/shared/status-badge"
+import {
+  compactWorkflowReceiptText,
+  workflowAttemptRoute,
+  workflowDeliveryLabel,
+  workflowRunSummary,
+} from "./workflow-run-presentation"
 
 const terminal = new Set<WorkflowRunSummary["status"]>(["succeeded", "failed", "cancelled"])
-
-const statusTone = (status: WorkflowRunSummary["status"]): string => {
-  if (status === "succeeded") return "bg-success"
-  if (status === "failed" || status === "cancelled") return "bg-destructive"
-  if (status === "waiting") return "bg-warning"
-  if (status === "running") return "bg-insights"
-  return "bg-muted-foreground"
-}
-
-const statusLabel = (status: WorkflowRunSummary["status"]): string =>
-  status.charAt(0).toUpperCase() + status.slice(1)
 
 type WorkflowAttempt = WorkflowRunSummary["attempts"][number]
 
 const attemptKindLabel = (kind: WorkflowAttempt["kind"]): string => {
-  if (kind === "context") return "Agent"
+  if (kind === "context") return "Context step"
   if (kind === "human") return "Human pause"
-  return "Terminal"
+  return "Terminal step"
 }
 
-export const workflowAttemptRoute = (attempt: WorkflowAttempt): string | null => {
-  if (attempt.selectedRoutes === null) return null
-  if (attempt.selectedRoutes.length > 0) return `Next: ${attempt.selectedRoutes.join(", ")}`
-  if (attempt.status === "succeeded" && attempt.finishedAt) return "No next node selected"
-  return null
-}
-
-const deliveryLabel = (run: WorkflowRunSummary): string => {
-  if (run.actualExecution) return run.actualExecution
-  if (run.reason === "agent-request") return "assigned agent"
-  if (run.reason === "manual:copy") return "local copy"
-  return run.requestedExecution
-}
-
-const runDetail = (run: WorkflowRunSummary): string => {
-  const waiting = run.attempts.find((attempt) => attempt.status === "waiting")
-  if (waiting) return `${waiting.nodeId} is waiting.`
-  const active = run.attempts.find((attempt) => attempt.status === "running")
-  if (active) return `${active.nodeId} is running.`
-  if (run.status === "queued") return "Waiting for an agent to claim this run."
-  if (run.status === "running" && run.attempts.length === 0)
-    return "The agent claimed this run; no step receipt has arrived yet."
-  if (run.status === "succeeded") return "The workflow finished successfully."
-  if (run.status === "failed") return "The workflow stopped after a failure."
-  if (run.status === "cancelled") return "The workflow was cancelled."
-  return `${run.attempts.length} materialized attempt${run.attempts.length === 1 ? "" : "s"}.`
+const ReceiptField = ({ label, value }: { label: string; value: string | null }) => {
+  if (!value) return null
+  return (
+    <div className="grid gap-0.5 text-2xs sm:grid-cols-[5rem_minmax(0,1fr)] sm:gap-2">
+      <dt className="font-medium text-muted-foreground">{label}</dt>
+      <dd className="min-w-0 break-words text-foreground">{compactWorkflowReceiptText(value)}</dd>
+    </div>
+  )
 }
 
 const WorkflowAttemptTimeline = ({ attempts }: { attempts: WorkflowAttempt[] }) => (
-  <ol className="grid gap-2" aria-label="Materialized workflow steps">
+  <ol className="grid gap-2" aria-label="Steps taken in this run">
     {attempts.map((attempt) => {
       const route = workflowAttemptRoute(attempt)
       return (
-        <li
-          key={attempt.id}
-          className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-2.5 rounded-lg border border-border-soft bg-background px-3 py-2.5"
-        >
-          <span
-            aria-hidden="true"
-            className={cn("mt-1 size-2 rounded-full", statusTone(attempt.status))}
-          />
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-              <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-                <span className="break-all font-mono text-xs font-semibold text-foreground">
-                  {attempt.nodeId}
-                </span>
-                <span className="text-2xs text-muted-foreground">
-                  {attemptKindLabel(attempt.kind)} · attempt {attempt.attempt}
-                </span>
-              </div>
-              <span className="text-2xs font-medium text-muted-foreground">
-                {statusLabel(attempt.status)}
-              </span>
-            </div>
-            {route || attempt.routeBasis || attempt.resultArtifactId ? (
-              <div className="mt-1.5 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-2xs text-muted-foreground">
-                {route ? <span>{route}</span> : null}
-                {attempt.routeBasis ? (
-                  <span className="break-words">Because: {attempt.routeBasis}</span>
-                ) : null}
-                {attempt.resultArtifactId ? (
-                  <a
+        <li key={attempt.id} className="rounded-lg border border-border-soft bg-background p-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <StatusBadge tone={runStatusTone(attempt.status)} shape="pill">
+              {runStatusLabel(attempt.status)}
+            </StatusBadge>
+            <span className="break-all font-mono text-xs font-medium text-foreground">
+              {attempt.nodeId}
+            </span>
+            <span className="text-2xs text-muted-foreground">
+              {attemptKindLabel(attempt.kind)} · attempt {attempt.attempt}
+            </span>
+          </div>
+          <dl className="mt-2 grid gap-1.5">
+            {attempt.kind === "human" && attempt.status === "waiting" ? (
+              <ReceiptField label="Waiting for" value="A person's decision" />
+            ) : null}
+            <ReceiptField label="Route" value={route} />
+            <ReceiptField label="Because" value={attempt.routeBasis} />
+            <ReceiptField label="Error" value={attempt.error} />
+            {attempt.resultArtifactId ? (
+              <div className="grid gap-0.5 text-2xs sm:grid-cols-[5rem_minmax(0,1fr)] sm:gap-2">
+                <dt className="font-medium text-muted-foreground">Result</dt>
+                <dd>
+                  <Link
+                    to="/artifacts/$ref"
+                    params={{ ref: attempt.resultArtifactId }}
                     className="font-medium text-primary hover:underline"
-                    href={`/artifacts/${attempt.resultArtifactId}`}
                     aria-label={`Open result from ${attempt.nodeId}`}
                   >
-                    Open result
-                  </a>
-                ) : null}
+                    Open Artifact
+                  </Link>
+                </dd>
               </div>
             ) : null}
-          </div>
+          </dl>
         </li>
       )
     })}
   </ol>
 )
 
-export function WorkflowRunHistory({ shortId, diagramId }: { shortId: string; diagramId: string }) {
+export function WorkflowRunHistory({
+  shortId,
+  diagramId,
+  diagramTitle,
+}: {
+  shortId: string
+  diagramId: string
+  diagramTitle: string
+}) {
   const query = useQuery({
     queryKey: ["workflow-runs", shortId, diagramId] as const,
     queryFn: () => api.workflowRuns(shortId, diagramId),
@@ -113,70 +95,50 @@ export function WorkflowRunHistory({ shortId, diagramId }: { shortId: string; di
 
   if (query.isPending) {
     return (
-      <div className="border-t border-border-soft px-4 py-3 text-xs text-muted-foreground sm:px-5">
+      <div className="px-4 pb-4 text-xs text-muted-foreground sm:px-5" role="status">
         Checking recent runs…
       </div>
     )
   }
   if (query.isError) {
     return (
-      <div className="border-t border-border-soft px-4 py-3 text-xs text-destructive sm:px-5">
-        Couldn’t load recent runs.
-      </div>
+      <div className="px-4 pb-4 text-xs text-destructive sm:px-5">Couldn’t load recent runs.</div>
     )
   }
   if (query.data.runs.length === 0) {
     return (
-      <div className="border-t border-border-soft px-4 py-3 text-xs text-muted-foreground sm:px-5">
+      <div className="px-4 pb-4 text-xs text-muted-foreground sm:px-5">
         No runs yet. Starting this workflow creates a separate, version-pinned run.
       </div>
     )
   }
 
   return (
-    <section className="border-t border-border-soft px-4 py-3 sm:px-5" data-testid="workflow-runs">
-      <div className="font-mono text-2xs uppercase tracking-[0.12em] text-muted-foreground">
-        Recent runs
-      </div>
+    <section className="px-4 pb-4 sm:px-5" data-testid="workflow-runs">
+      <Eyebrow as="div">Recent runs</Eyebrow>
       <div className="mt-2 grid gap-2">
         {query.data.runs.map((run, index) => (
-          <article
+          <RunReceipt
             key={run.id}
-            className={cn(
-              "rounded-lg border border-border-soft px-3 py-2.5",
-              index === 0 && "bg-muted/20",
-            )}
+            id={run.id}
+            status={run.status}
+            title={diagramTitle}
+            summary={workflowRunSummary(run)}
+            facts={[
+              `Definition v${run.workflowVersion}`,
+              workflowDeliveryLabel(run),
+              run.attempts.length === 0
+                ? "No steps started"
+                : `${run.attempts.length} step${run.attempts.length === 1 ? "" : "s"} recorded`,
+            ]}
+            createdAt={run.createdAt}
+            defaultOpen={index === 0}
+            testId={`workflow-run-${run.id}`}
           >
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex min-w-0 items-center gap-2 text-xs font-medium text-foreground">
-                <span className={cn("size-1.5 shrink-0 rounded-full", statusTone(run.status))} />
-                <span>{statusLabel(run.status)}</span>
-                <span className="font-mono text-2xs font-normal text-muted-foreground">
-                  {run.id.slice(-8)}
-                </span>
-              </div>
-              <span className="font-mono text-2xs text-muted-foreground">
-                v{run.workflowVersion} · {deliveryLabel(run)} · {ago(run.createdAt)}
-              </span>
-            </div>
-            {run.attempts.length > 0 && index === 0 ? (
-              <div className="mt-2 grid gap-2">
-                <p className="text-xs text-muted-foreground">{runDetail(run)}</p>
-                <WorkflowAttemptTimeline attempts={run.attempts} />
-              </div>
-            ) : run.attempts.length > 0 ? (
-              <details className="mt-2">
-                <summary className="cursor-pointer text-xs text-muted-foreground">
-                  {runDetail(run)}
-                </summary>
-                <div className="mt-2">
-                  <WorkflowAttemptTimeline attempts={run.attempts} />
-                </div>
-              </details>
-            ) : index === 0 ? (
-              <p className="mt-2 text-xs text-muted-foreground">{runDetail(run)}</p>
-            ) : null}
-          </article>
+            {run.attempts.length > 0 ? (
+              <WorkflowAttemptTimeline attempts={run.attempts} />
+            ) : undefined}
+          </RunReceipt>
         ))}
       </div>
     </section>

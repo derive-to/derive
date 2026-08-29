@@ -24,6 +24,15 @@ export type Lens = "all" | "comments"
 export type SectionLabel = "Today" | "Yesterday" | "Earlier"
 
 type Version = Artifact["versions"][number]
+/** What a version row needs of a version — the artifact's own, or the workspace feed's
+ *  (`ActivityVersion`, which adds `artifact_id`). */
+export type VersionLike = Pick<Version, "n" | "author" | "created_at" | "message" | "name"> & {
+  agent?: Version["agent"]
+  handle?: string | null
+  artifact_id?: string
+}
+/** The document a row belongs to — set in workspace mode, where the stream spans many. */
+export type ActivityArtifact = { short_id: string; title: string }
 
 export type VersionRow = {
   kind: "version"
@@ -45,7 +54,8 @@ export type VersionRow = {
   message: string | null
   /** The versions in the range, oldest first — the expanded list reads down the way the
    *  stream does, so the current version is its last line. */
-  versions: Version[]
+  versions: VersionLike[]
+  artifact?: ActivityArtifact
 }
 export type ReviewRequestRow = {
   kind: "review_request"
@@ -58,6 +68,7 @@ export type ReviewRequestRow = {
   version: number
   note: string | null
   pending: boolean
+  artifact?: ActivityArtifact
 }
 export type ReviewSentBackRow = {
   kind: "review_sent_back"
@@ -68,6 +79,7 @@ export type ReviewSentBackRow = {
   agent: boolean
   version: number
   note: string | null
+  artifact?: ActivityArtifact
 }
 export type ReplyRow = {
   kind: "reply"
@@ -79,6 +91,20 @@ export type ReplyRow = {
   threadId: string
   threadAuthor: string
   body: string
+  artifact?: ActivityArtifact
+}
+/** A new thread, as a LINE — the workspace feed's shape for it (the artifact rail shows
+ *  threads as cards, where they are answered in place). */
+export type CommentedRow = {
+  kind: "commented"
+  id: string
+  at: string
+  by: string
+  byId: string | null
+  agent: boolean
+  threadId: string
+  body: string
+  artifact?: ActivityArtifact
 }
 export type ResolvedRow = {
   kind: "resolved"
@@ -92,10 +118,24 @@ export type ResolvedRow = {
   threadAuthor: string
   /** The version whose publish settled the thread; null for a hand resolve. */
   version: number | null
+  artifact?: ActivityArtifact
 }
-export type ActivityRow = VersionRow | ReviewRequestRow | ReviewSentBackRow | ReplyRow | ResolvedRow
+export type ActivityRow =
+  | VersionRow
+  | ReviewRequestRow
+  | ReviewSentBackRow
+  | ReplyRow
+  | CommentedRow
+  | ResolvedRow
 
-export type ThreadItem = { type: "thread"; id: string; at: string; thread: Comment[] }
+export type ThreadItem = {
+  type: "thread"
+  id: string
+  at: string
+  thread: Comment[]
+  /** On the seen side of the marker: older than the reader's visit, or their own. */
+  seen: boolean
+}
 export type TurnItem = {
   type: "turn"
   id: string
@@ -108,6 +148,9 @@ export type TurnItem = {
   agent: boolean
   /** Never empty — a turn is made from its first row. */
   rows: [ActivityRow, ...ActivityRow[]]
+  artifact?: ActivityArtifact
+  /** On the seen side of the marker: older than the reader\'s visit, or their own. */
+  seen: boolean
 }
 export type StreamItem =
   | { type: "section"; id: string; label: SectionLabel }
@@ -116,9 +159,16 @@ export type StreamItem =
   | TurnItem
 
 export interface StreamInput {
-  versions: Version[]
+  versions: VersionLike[]
   comments: Comment[]
   rounds: ReviewRound[]
+  /** WORKSPACE mode (the home): rows span many documents and carry theirs (looked up by
+   *  `artifact_id` here); a new thread is a line, not a card; a pending ask is not a row
+   *  (it is the home's "Needs you"); rows before `since` are left out. */
+  workspace?: { artifacts: Record<string, ActivityArtifact>; since: string }
+  /** Newest first (a page reads down from now) or oldest first (the rail reads up to its
+   *  composer). Default oldest first. */
+  order?: "asc" | "desc"
   /** The viewer — their own replies and resolves are not news to them. Matched by id when
    *  the record has one, by name for rows written before ids were kept. */
   meId?: string
@@ -163,10 +213,10 @@ export function stamp(iso: string, now: number): string {
  *  answer, a card — keeps them apart. The server's time-clustered `sessions` are not
  *  used here on purpose: a session is blind to what happened between its versions, so
  *  "asked for review of v6" would sit before a v6–v7 row that includes v6. */
-function versionRows(versions: Version[]): VersionRow[] {
+function versionRows(versions: VersionLike[], docOf: DocOf): VersionRow[] {
   return versions.map((v) => ({
     kind: "version",
-    id: `v-${v.n}`,
+    id: `v-${v.artifact_id ?? ""}-${v.n}`,
     at: v.created_at,
     by: v.agent?.name ?? v.author,
     byId: v.agent?.id ?? (v.handle ? `@${v.handle}` : null),
@@ -176,16 +226,21 @@ function versionRows(versions: Version[]): VersionRow[] {
     count: 1,
     message: v.message ?? v.name ?? null,
     versions: [v],
+    artifact: docOf(v.artifact_id),
   }))
 }
+
+/** The document a record belongs to, in workspace mode; nothing in the rail. */
+type DocOf = (artifactId: string | undefined) => ActivityArtifact | undefined
 
 // A round carries ONE note: the requester's while pending, then the answer once sent
 // back (send-back overwrites it). So a settled round's request row has no note to show —
 // the answer belongs to the sent-back row alone.
-function reviewRows(rounds: ReviewRound[]) {
+function reviewRows(rounds: ReviewRound[], docOf: DocOf) {
   const rows: ActivityRow[] = []
   for (const r of rounds) {
     const pending = r.state === "pending"
+    const artifact = docOf(r.artifact_id)
     rows.push({
       kind: "review_request",
       id: `rr-${r.id}`,
@@ -196,6 +251,7 @@ function reviewRows(rounds: ReviewRound[]) {
       version: r.version,
       note: pending ? r.note : null,
       pending,
+      artifact,
     })
     if (r.state === "sent_back" && r.resolved_at)
       rows.push({
@@ -209,6 +265,7 @@ function reviewRows(rounds: ReviewRound[]) {
         agent: false,
         version: r.version,
         note: r.note,
+        artifact,
       })
   }
   return rows
@@ -220,18 +277,37 @@ function reviewRows(rounds: ReviewRound[]) {
 function threadRows(
   threads: Comment[][],
   lastSeen: number | null,
+  docOf: DocOf,
+  workspace: boolean,
   meId?: string,
   me?: string,
-): (ReplyRow | ResolvedRow)[] {
-  if (lastSeen == null) return []
+): (ReplyRow | ResolvedRow | CommentedRow)[] {
   const isMe = (id: string | null | undefined, name: string | null) =>
     id ? id === meId : !!name && name === me
-  const rows: (ReplyRow | ResolvedRow)[] = []
+  const rows: (ReplyRow | ResolvedRow | CommentedRow)[] = []
   for (const t of threads) {
     const root = t[0]
     if (!root) continue
+    const artifact = docOf(root.artifact_id)
+    // In the workspace feed a thread is a line like any other action; in the rail it is a
+    // card, and only what happened INSIDE it since the last visit gets a row.
+    if (workspace && !root.deleted)
+      rows.push({
+        kind: "commented",
+        id: `t-${root.id}`,
+        at: root.created_at,
+        by: root.author,
+        byId: root.author_id ?? null,
+        agent: root.author_kind === "agent",
+        threadId: root.thread_id,
+        body: root.body_md,
+        artifact,
+      })
+    // Replies and resolves are news only after a visit; in the workspace feed, always.
+    const floor = workspace ? Number.NEGATIVE_INFINITY : lastSeen
+    if (floor == null) continue
     for (const c of t.slice(1)) {
-      if (c.deleted || ms(c.created_at) <= lastSeen || isMe(c.author_id, c.author)) continue
+      if (c.deleted || ms(c.created_at) <= floor || isMe(c.author_id, c.author)) continue
       rows.push({
         kind: "reply",
         id: `r-${c.id}`,
@@ -242,10 +318,11 @@ function threadRows(
         threadId: root.thread_id,
         threadAuthor: root.author,
         body: c.body_md,
+        artifact,
       })
     }
     const res = root.state === "resolved" ? root.resolution : null
-    if (res && ms(res.at) > lastSeen && !isMe(res.by_id, res.by))
+    if (res && ms(res.at) > floor && !isMe(res.by_id, res.by))
       rows.push({
         kind: "resolved",
         id: `x-${root.thread_id}`,
@@ -256,6 +333,7 @@ function threadRows(
         threadId: root.thread_id,
         threadAuthor: root.author,
         version: res.version,
+        artifact,
       })
   }
   return rows
@@ -279,18 +357,30 @@ function mergeVersions(into: VersionRow, row: VersionRow): void {
  *  an agent's name is not that agent). The viewer's last visit is a boundary too: what
  *  happened since must start its own turn, or it folds into one that sits before the
  *  "New" marker and is never new. */
-function foldTurns(rows: ActivityRow[], lastSeen: number | null): TurnItem[] {
+function foldTurns(
+  rows: ActivityRow[],
+  lastSeen: number | null,
+  meId?: string,
+  me?: string,
+): TurnItem[] {
   const turns: TurnItem[] = []
   let cur: TurnItem | null = null
-  const seen = (iso: string) => lastSeen != null && ms(iso) <= lastSeen
+  // The reader's own rows are never new — they wrote them — so they sit with the seen
+  // side. Identity by id when the row carries one, else by name; an agent is never "me".
+  const own = (row: ActivityRow) =>
+    !row.agent && (row.byId != null ? row.byId === meId : !!row.by && row.by === me)
+  const seen = (row: ActivityRow) => own(row) || (lastSeen != null && ms(row.at) <= lastSeen)
   for (const row of rows) {
     const sameActor = (a: TurnItem, b: ActivityRow) =>
       a.byId && b.byId ? a.byId === b.byId : a.by === b.by && a.agent === b.agent
+    // Across documents (the workspace feed) a turn is one actor on ONE document.
+    const sameDoc = (a: TurnItem, b: ActivityRow) => a.artifact?.short_id === b.artifact?.short_id
     const joins =
       cur !== null &&
       (row.by === null || sameActor(cur, row)) &&
+      sameDoc(cur, row) &&
       dayKey(cur.at) === dayKey(row.at) &&
-      seen(cur.at) === seen(row.at)
+      cur.seen === seen(row)
     if (joins && cur) {
       const publish = row.kind === "version" ? cur.rows.find((r) => r.kind === "version") : null
       if (publish && row.kind === "version") mergeVersions(publish, row)
@@ -306,6 +396,8 @@ function foldTurns(rows: ActivityRow[], lastSeen: number | null): TurnItem[] {
         byId: row.byId,
         agent: row.agent,
         rows: [row],
+        artifact: row.artifact,
+        seen: seen(row),
       }
       turns.push(cur)
     }
@@ -313,22 +405,43 @@ function foldTurns(rows: ActivityRow[], lastSeen: number | null): TurnItem[] {
   return turns
 }
 
-const THREAD_KINDS = new Set<ActivityRow["kind"]>(["reply", "resolved"])
+const THREAD_KINDS = new Set<ActivityRow["kind"]>(["reply", "resolved", "commented"])
 
 export function buildStream(input: StreamInput): StreamItem[] {
   const threads = groupThreads(input.comments)
+  const ws = input.workspace
+  const docOf: DocOf = (id) => (ws && id ? ws.artifacts[id] : undefined)
+  const since = ws ? ms(ws.since) : Number.NEGATIVE_INFINITY
   const rows: ActivityRow[] = [
-    ...versionRows(input.versions),
-    ...reviewRows(input.rounds),
-    ...threadRows(threads, input.lastSeen, input.meId, input.me),
-  ]
+    ...versionRows(input.versions, docOf),
+    ...reviewRows(input.rounds, docOf),
+    ...threadRows(threads, input.lastSeen, docOf, !!ws, input.meId, input.me),
+  ].filter(
+    (r) =>
+      // Workspace mode: a pending ask is the home's "Needs you", not a line; rows before the
+      // window (open threads served for Needs you) stay out of the stream.
+      !ws || (!(r.kind === "review_request" && r.pending) && ms(r.at) >= since),
+  )
   const lensRows = input.lens === "comments" ? rows.filter((r) => THREAD_KINDS.has(r.kind)) : rows
-  const threadItems: ThreadItem[] = threads.flatMap((t) => {
-    const root = t[0]
-    return root
-      ? [{ type: "thread" as const, id: root.thread_id, at: root.created_at, thread: t }]
-      : []
-  })
+  // Cards only in the rail: the workspace feed made its threads lines above.
+  const threadItems: ThreadItem[] = ws
+    ? []
+    : threads.flatMap((t) => {
+        const root = t[0]
+        return root
+          ? [
+              {
+                type: "thread" as const,
+                id: root.thread_id,
+                at: root.created_at,
+                thread: t,
+                seen:
+                  (root.author_id != null && root.author_id === input.meId) ||
+                  (input.lastSeen != null && ms(root.created_at) <= input.lastSeen),
+              },
+            ]
+          : []
+      })
 
   // Merge in time, then fold the runs of rows between cards into turns. Cards break a
   // turn: what happened after a comment is a different story from what happened before.
@@ -338,7 +451,7 @@ export function buildStream(input: StreamInput): StreamItem[] {
   const items: (ThreadItem | TurnItem)[] = []
   let run: ActivityRow[] = []
   const flush = () => {
-    if (run.length) items.push(...foldTurns(run, input.lastSeen))
+    if (run.length) items.push(...foldTurns(run, input.lastSeen, input.meId, input.me))
     run = []
   }
   for (const m of merged) {
@@ -348,19 +461,28 @@ export function buildStream(input: StreamInput): StreamItem[] {
     } else run.push(m)
   }
   flush()
+  // Newest first reads down from now: the same items, reversed, and the marker sits
+  // after the last new item instead of before the first.
+  if (input.order === "desc") items.reverse()
+  const isNew = (it: ThreadItem | TurnItem) => !it.seen
 
-  // Sections + the unread marker (before the first item newer than the last visit).
-  // A stream that all happened today needs no eyebrow — labels earn their place only
-  // when there are two days to tell apart.
+  // Sections + the unread marker: oldest first it sits before the first new item; newest
+  // first, after the last new item — and only once something is new, so the reader's own
+  // rows (seen, however fresh) never earn a line of their own. A stream that all happened
+  // today needs no eyebrow — labels earn their place only when there are two days to tell
+  // apart.
   const labelled = new Set(items.map((it) => sectionOf(it.at, input.now))).size > 1
   const out: StreamItem[] = []
   let section: SectionLabel | null = null
   let marked = input.lastSeen == null
+  let sawNew = false
   for (const it of items) {
-    if (!marked && ms(it.at) > (input.lastSeen ?? 0)) {
+    const boundary = input.order === "desc" ? !isNew(it) && sawNew : isNew(it)
+    if (!marked && boundary) {
       out.push({ type: "unread", id: "unread" })
       marked = true
     }
+    if (isNew(it)) sawNew = true
     const label = sectionOf(it.at, input.now)
     if (labelled && label !== section) {
       section = label
@@ -371,11 +493,11 @@ export function buildStream(input: StreamInput): StreamItem[] {
   return out
 }
 
-/** How many cards and turns sit after the unread marker. */
+/** How many threads and turns sit on the new side of the marker (none before a first
+ *  visit, when there is no marker). */
 export function countUnread(items: StreamItem[]): number {
-  const i = items.findIndex((it) => it.type === "unread")
-  if (i < 0) return 0
-  return items.slice(i + 1).filter((it) => it.type === "thread" || it.type === "turn").length
+  if (!items.some((it) => it.type === "unread")) return 0
+  return items.filter((it) => (it.type === "thread" || it.type === "turn") && !it.seen).length
 }
 
 /** The one phrase a turn line leads with: a pending ask, else the publish, else the
@@ -385,6 +507,7 @@ const PRIORITY: ActivityRow["kind"][] = [
   "version",
   "review_sent_back",
   "review_request",
+  "commented",
   "reply",
   "resolved",
 ]
@@ -397,17 +520,30 @@ export function leadRow(turn: TurnItem): ActivityRow {
 /** A row's plain-text phrase, actor excluded ("published v9–v11"). Shared by the turn
  *  line and its opened detail rows so the two can never disagree. */
 export function phrase(row: ActivityRow): string {
+  // In the workspace feed the sentence names the document; in the rail the document is
+  // the page.
+  const doc = row.artifact?.title
   switch (row.kind) {
-    case "version":
-      return row.count > 1 ? `published v${row.from}–v${row.to}` : `published v${row.to}`
+    case "version": {
+      const span = row.count > 1 ? `v${row.from}–v${row.to}` : `v${row.to}`
+      return doc ? `published ${span} of ${doc}` : `published ${span}`
+    }
     case "review_request":
-      return `asked for review of v${row.version}`
+      return doc
+        ? `asked for review of v${row.version} · ${doc}`
+        : `asked for review of v${row.version}`
     case "review_sent_back":
-      return `sent v${row.version} back`
+      return doc ? `sent v${row.version} of ${doc} back` : `sent v${row.version} back`
+    case "commented":
+      return doc ? `commented on ${doc}` : "commented"
     case "reply":
-      return `replied in ${row.threadAuthor}'s thread`
+      return doc
+        ? `replied in ${row.threadAuthor}'s thread on ${doc}`
+        : `replied in ${row.threadAuthor}'s thread`
     case "resolved":
-      return `resolved ${row.threadAuthor}'s thread`
+      return doc
+        ? `resolved ${row.threadAuthor}'s thread on ${doc}`
+        : `resolved ${row.threadAuthor}'s thread`
   }
 }
 

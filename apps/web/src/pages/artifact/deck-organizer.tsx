@@ -11,6 +11,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react"
 import { type Artifact, api } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
+import { SectionTitle } from "@/components/shared/section-title"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -339,7 +340,7 @@ function OrganizerBody({ organizer, touch }: { organizer: Organizer; touch: bool
     <>
       <div className="flex items-center justify-between border-b border-border px-3 py-2.5">
         <div>
-          <h2 className="font-heading text-sm font-medium">Slides</h2>
+          <SectionTitle as="h2">Slides</SectionTitle>
           <p className="text-2xs text-muted-foreground">
             {organizer.slides.length} slide{organizer.slides.length === 1 ? "" : "s"} ·{" "}
             {organizer.dirty ? "Unsaved changes" : "No unsaved changes"}

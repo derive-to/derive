@@ -27,6 +27,7 @@ import { Route as FavoritesRouteImport } from './routes/favorites'
 import { Route as ChatRouteImport } from './routes/chat'
 import { Route as BrandprintRouteImport } from './routes/brandprint'
 import { Route as ArchivedRouteImport } from './routes/archived'
+import { Route as ActivityRouteImport } from './routes/activity'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as TemplatesIndexRouteImport } from './routes/templates.index'
 import { Route as TemplateLibrariesIndexRouteImport } from './routes/template-libraries.index'
@@ -138,6 +139,11 @@ const ArchivedRoute = ArchivedRouteImport.update({
   path: '/archived',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ActivityRoute = ActivityRouteImport.update({
+  id: '/activity',
+  path: '/activity',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
@@ -241,6 +247,7 @@ const InviteATokenRoute = InviteATokenRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/activity': typeof ActivityRoute
   '/archived': typeof ArchivedRoute
   '/brandprint': typeof BrandprintRoute
   '/chat': typeof ChatRoute
@@ -281,6 +288,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/activity': typeof ActivityRoute
   '/archived': typeof ArchivedRoute
   '/brandprint': typeof BrandprintRoute
   '/chat': typeof ChatRoute
@@ -321,6 +329,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/activity': typeof ActivityRoute
   '/archived': typeof ArchivedRoute
   '/brandprint': typeof BrandprintRoute
   '/chat': typeof ChatRoute
@@ -363,6 +372,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/activity'
     | '/archived'
     | '/brandprint'
     | '/chat'
@@ -403,6 +413,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/activity'
     | '/archived'
     | '/brandprint'
     | '/chat'
@@ -442,6 +453,7 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/activity'
     | '/archived'
     | '/brandprint'
     | '/chat'
@@ -483,6 +495,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  ActivityRoute: typeof ActivityRoute
   ArchivedRoute: typeof ArchivedRoute
   BrandprintRoute: typeof BrandprintRoute
   ChatRoute: typeof ChatRoute
@@ -648,6 +661,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ArchivedRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/activity': {
+      id: '/activity'
+      path: '/activity'
+      fullPath: '/activity'
+      preLoaderRoute: typeof ActivityRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
@@ -807,6 +827,7 @@ const SettingsRouteWithChildren = SettingsRoute._addFileChildren(
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  ActivityRoute: ActivityRoute,
   ArchivedRoute: ArchivedRoute,
   BrandprintRoute: BrandprintRoute,
   ChatRoute: ChatRoute,

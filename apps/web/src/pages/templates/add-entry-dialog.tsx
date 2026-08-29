@@ -2,6 +2,7 @@ import { useReducer } from "react"
 import { type Artifact, api } from "@/api"
 import { Icon } from "@/components/icons"
 import { FormField } from "@/components/shared/form-field"
+import { Eyebrow } from "@/components/shared/section-eyebrow"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -78,9 +79,9 @@ export function AddEntryDialog({
     >
       <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-xl">
         <DialogHeader>
-          <p className="font-mono text-2xs uppercase tracking-wider text-muted-foreground">
+          <Eyebrow as="div">
             {step === "source" ? "1 of 2 · Choose source" : "2 of 2 · Describe starter"}
-          </p>
+          </Eyebrow>
           <DialogTitle>
             {step === "source" ? "Choose reusable work" : "Name the starter"}
           </DialogTitle>

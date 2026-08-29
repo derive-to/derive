@@ -4,6 +4,7 @@ import { type ReactNode, useState } from "react"
 import type { Artifact, Viewer } from "@/api"
 import { Icon } from "@/components/icons"
 import { Logo } from "@/components/shared/logo"
+import { Eyebrow } from "@/components/shared/section-eyebrow"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -207,9 +208,7 @@ export function PublicViewer({
           data-testid="template-strip"
           className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2 border-b border-border bg-muted/40 px-4 py-2 text-sm max-sm:px-3"
         >
-          <span className="font-mono text-2xs uppercase tracking-wider text-muted-foreground">
-            Template
-          </span>
+          <Eyebrow>Template</Eyebrow>
           <span className="min-w-0 flex-1 text-muted-foreground">
             Make a copy to start from it, or hand it to your agent.
           </span>

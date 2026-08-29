@@ -175,7 +175,7 @@ const TOOL_WORDS: Record<string, string> = {
   find: "searched the workspace",
   read: "read documents",
   publish: "wrote a document",
-  use: "ran an Agent",
+  use: "used a Context",
 }
 
 const traceOf = (tools: string[] | undefined): string | null => {

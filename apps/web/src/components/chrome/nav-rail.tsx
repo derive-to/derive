@@ -28,6 +28,7 @@ import { getMonogram } from "@/lib/initials"
 import {
   collectionsQuery,
   summaryQuery,
+  workspaceActivityQuery,
   workspaceSettingsQuery,
   workspacesQuery,
 } from "@/lib/queries"
@@ -53,6 +54,34 @@ const COUNT_BADGE = "top-1.5 text-muted-foreground"
 // The row's inner glyph — icon, label, and the ink-earning count badge — shared by
 // FilterItem and NavItem below (a zero count is noise, so the badge only renders
 // once it's nonzero).
+/** The Activity page's row, beside Notifications: the count is the reviews waiting on
+ *  this person across the workspace — the one number that is an ask, not news. */
+function ActivityRow() {
+  const loc = useLocation()
+  const { me } = useAuth()
+  const { setOpenMobile } = useSidebar()
+  const { data } = useQuery({ ...workspaceActivityQuery(), enabled: !!me })
+  const waiting = me
+    ? (data?.rounds.filter((r) => r.state === "pending" && r.requested_for === me.id).length ?? 0)
+    : 0
+  const active = loc.pathname === "/activity"
+  return (
+    <SidebarMenuItem>
+      <SidebarMenuButton asChild isActive={active} tooltip="Activity">
+        <Link
+          to="/activity"
+          data-testid="menu-activity"
+          aria-current={active ? "page" : undefined}
+          onClick={() => setOpenMobile(false)}
+          className={ROW_ICON}
+        >
+          <RowGlyph icon="history" label="Activity" count={waiting || undefined} />
+        </Link>
+      </SidebarMenuButton>
+    </SidebarMenuItem>
+  )
+}
+
 function RowGlyph({ icon, label, count }: { icon: IconName; label: string; count?: number }) {
   return (
     <>
@@ -121,7 +150,7 @@ function NavItem({
   icon: IconName
   label: string
   count?: number
-  to: "/following" | "/agents" | "/workflows" | "/templates" | "/chat"
+  to: "/following" | "/contexts" | "/workflows" | "/templates" | "/chat"
   active: boolean
   testId?: string
 }) {
@@ -349,7 +378,7 @@ export function NavRail() {
   // Feeds are routes now; the home library reads "active > All" only when no collection
   // filter narrows it. (A ?query= search doesn't change which feed you're in.)
   const isAll = onLibrary && !search.collection
-  const onAgents = loc.pathname.startsWith("/agents") || loc.pathname.startsWith("/contexts")
+  const onContexts = loc.pathname.startsWith("/contexts") || loc.pathname.startsWith("/agents")
   const onWorkflows = loc.pathname.startsWith("/workflows")
   const onTemplates = loc.pathname.startsWith("/templates")
   const onSettings = loc.pathname.startsWith("/settings")
@@ -368,8 +397,8 @@ export function NavRail() {
   const brandprintIds = useBrandprintCollectionIds()
   const visibleCollections = collections.filter((col) => !brandprintIds.has(col.id))
 
-  // Only starred collections reach the rail; the rest live in the library's Collections
-  // view. Every collection used to be listed here, which grew unbounded.
+  // Only starred collections reach the rail; the rest live in the Artifacts page's
+  // Collections view. Every collection used to be listed here, which grew unbounded.
   //
   const starredCollections = visibleCollections.filter((col) => col.starred)
 
@@ -388,7 +417,7 @@ export function NavRail() {
             <SidebarMenu>
               <FilterItem
                 icon="all"
-                label="Library"
+                label="Artifacts"
                 count={summary?.total}
                 search={{}}
                 active={isAll}
@@ -403,10 +432,10 @@ export function NavRail() {
               />
               <NavItem
                 icon="context"
-                label="Agents"
-                to="/agents"
-                active={onAgents}
-                testId="nav-agents"
+                label="Contexts"
+                to="/contexts"
+                active={onContexts}
+                testId="nav-contexts"
               />
               <NavItem
                 icon="workflow"
@@ -463,6 +492,7 @@ export function NavRail() {
           <SidebarGroupContent>
             <SidebarMenu>
               <NotificationBell />
+              <ActivityRow />
               <SidebarMenuItem>
                 <SidebarMenuButton asChild isActive={onSettings} tooltip="Settings">
                   <Link

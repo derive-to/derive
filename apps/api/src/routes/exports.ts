@@ -64,6 +64,7 @@ export const exportRoutes = (ctx: AppContext) => {
     note: z.string().max(2_000).optional(),
     attachPdf: z.boolean().optional(),
     emailMode: z.enum(["auto", "snapshot"]).optional(),
+    preview: z.boolean().optional(),
   })
 
   app.openapi(
@@ -87,17 +88,21 @@ export const exportRoutes = (ctx: AppContext) => {
       const versionN = body.version ?? artifact.current_version
       const version = await meta.getVersion(artifact.id, versionN)
       if (!version) return bail(fail(c, 404, "version not found"))
+      if (body.preview === true && body.kind !== "email")
+        return bail(fail(c, 400, "preview is only supported for email exports"))
+      const previewOnly = body.kind === "email" && body.preview === true
       const qaCapture = body.kind === "email" && deps.qaEmailCapture === true
       const options = normalizeExportOptions({
         ...body,
         title: artifact.title ?? undefined,
-        ...(qaCapture ? { qaCapture: true } : {}),
+        ...(previewOnly ? { recipient: "preview@derive.test" } : {}),
+        ...(qaCapture || previewOnly ? { qaCapture: true } : {}),
       })
       if (isDataExport(body.kind) && !options.dataSlot)
         return bail(fail(c, 400, "dataSlot is required for declared data export"))
       if (body.kind === "email" && !options.recipient)
         return bail(fail(c, 400, "recipient is required for email export"))
-      if (qaCapture && options.recipient && !isQaEmailRecipient(options.recipient))
+      if ((qaCapture || previewOnly) && options.recipient && !isQaEmailRecipient(options.recipient))
         return bail(fail(c, 400, "preview email capture requires a recipient under .test"))
       if (isDeckExport(body.kind) && version.content_type !== "text/x-derive-deck")
         return bail(fail(c, 400, "deck export requires a Derive deck"))

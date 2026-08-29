@@ -1,5 +1,7 @@
 import { Icon } from "@/components/icons"
 import { FormField } from "@/components/shared/form-field"
+import { Eyebrow } from "@/components/shared/section-eyebrow"
+import { SectionTitle } from "@/components/shared/section-title"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -18,7 +20,7 @@ const exampleBrief = (target: AgentTemplateTarget) => {
   const namedInputs = target.inputs?.slice(0, 3).map((input) => input.name.toLowerCase()) ?? []
   if (namedInputs.length)
     return `What are you making? Include ${namedInputs.join(", ")}, plus anything your agent should know.`
-  if (target.kind === "context") return "What should this Agent help your team know or do?"
+  if (target.kind === "context") return "What should this Context help your team know or do?"
   if (target.category === "Deck")
     return "Describe the story, audience, and outcome you want from this deck."
   return "Describe what you want to make, who it is for, and what a strong result should accomplish."
@@ -56,9 +58,9 @@ function AgentTemplateDialogInner({
         aria-describedby={descriptionId}
       >
         <DialogHeader className="pr-7">
-          <p className="mb-1 font-mono text-2xs uppercase tracking-wider text-muted-foreground">
+          <Eyebrow as="div" className="mb-1">
             {target.kind === "context" ? "Context" : target.category}
-          </p>
+          </Eyebrow>
           <DialogTitle className="font-serif text-2xl tracking-tight [overflow-wrap:anywhere]">
             Use {target.title}
           </DialogTitle>
@@ -72,11 +74,8 @@ function AgentTemplateDialogInner({
             {target.description}
           </p>
           {target.sections?.length ? (
-            <div
-              className="mt-2.5 border-t pt-2.5"
-              data-testid="template-agent-inheritance-preview"
-            >
-              <p className="text-xs font-medium text-muted-foreground">Included sections</p>
+            <div className="mt-3" data-testid="template-agent-inheritance-preview">
+              <SectionTitle as="h4">Included sections</SectionTitle>
               <div className="mt-1.5 flex flex-wrap gap-1.5">
                 {target.sections.slice(0, 6).map((section) => (
                   <p
@@ -127,7 +126,7 @@ function AgentTemplateDialogInner({
 
           {showHandoff ? (
             <div className="grid gap-2" data-testid="template-agent-handoff-preview">
-              <p className="text-xs font-medium text-foreground">Prepared task</p>
+              <SectionTitle as="h4">Prepared task</SectionTitle>
               <Textarea
                 readOnly
                 value={handoff}

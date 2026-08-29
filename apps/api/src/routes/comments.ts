@@ -16,7 +16,7 @@ import { commentJson, parseMentions, parseMeta, REACTIONS } from "../lib/comment
 import { bail, fail, readJson } from "../lib/http"
 import { principalKind } from "../lib/principal-kind"
 import { resolveThreadAction } from "../lib/thread-actions"
-import { Mention as MentionSchema } from "../schemas"
+import { Comment as CommentSchema } from "../schemas"
 
 /** Comments: threaded, anchored to text quotes, with reactions, edits, and soft
  *  deletes. @mentions notify people (bell) or land in an agent's pull inbox. The
@@ -38,79 +38,7 @@ export const commentRoutes = (ctx: AppContext) => {
   } = ctx
   const app = new OpenAPIHono<BlankEnv>()
 
-  const Comment = z
-    .object({
-      id: z.string(),
-      thread_id: z
-        .string()
-        .describe("The thread this comment belongs to; equals id for the thread's root comment."),
-      base_version: z.number().describe("Artifact version this comment was anchored against."),
-      path: z
-        .string()
-        .nullable()
-        .describe("File within a bundle the comment targets; null if not file-scoped."),
-      anchor: z
-        .string()
-        .nullable()
-        .describe(
-          "Serialized text-quote or element anchor locating the comment; null if unanchored.",
-        ),
-      body_md: z
-        .string()
-        .describe("Comment body in Markdown; blanked when the comment is deleted."),
-      author: z.string().describe('Author\'s display name; "anonymous" for an anonymous poster.'),
-      author_id: z
-        .string()
-        .nullable()
-        .optional()
-        .describe(
-          'Stable id of the author — a user id, an agent id, or "derive" for the built-in chat agent; null for anonymous or legacy rows.',
-        ),
-      author_kind: z
-        .enum(["user", "agent", "anonymous"])
-        .describe("What kind of principal wrote it, from the recorded id."),
-      resolution: z
-        .object({
-          at: z.string(),
-          by: z.string().nullable().describe("The resolver's display name at the time."),
-          by_id: z.string().nullable(),
-          by_kind: z.enum(["user", "agent"]).nullable(),
-          version: z
-            .number()
-            .nullable()
-            .describe("The version whose publish resolved the thread; null for a hand resolve."),
-        })
-        .nullable()
-        .optional()
-        .describe("On a resolved thread's root: who settled it, when, and by which version."),
-      state: z
-        .enum(["open", "resolved", "outdated"])
-        .describe("Thread state: open, resolved, or outdated (the quoted text changed)."),
-      created_at: z.string(),
-      anchored: z
-        .boolean()
-        .optional()
-        .describe("Whether the anchor still resolves against the current version (list only)."),
-      reactions: z
-        .record(z.string(), z.array(z.string()))
-        .optional()
-        .describe("Emoji → list of reactor display names."),
-      edited: z.boolean().optional().describe("True if the body was edited after posting."),
-      edited_at: z
-        .string()
-        .nullable()
-        .optional()
-        .describe("When the comment was last edited; null if never."),
-      deleted: z
-        .boolean()
-        .optional()
-        .describe("True if soft-deleted; the row stays but the body is blanked."),
-      mentions: z
-        .array(MentionSchema)
-        .optional()
-        .describe("Users or agents @mentioned in the comment body."),
-    })
-    .openapi("Comment")
+  const Comment = CommentSchema
 
   // Loads (artifact, comment) for a mutation, 404ing on mismatch. Tagged union so
   // the @hono/zod-openapi handler return type narrows cleanly on `!r.ok`.

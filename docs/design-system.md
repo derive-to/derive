@@ -145,7 +145,7 @@ Rules:
 - Headings: `font-medium` or `font-semibold`, never `font-bold`; `tracking-tight` above
   `text-xl` (globals.css already tightens h1–h6 letter-spacing); no `leading-*` overrides
   on headings; `text-balance` on headings, `text-pretty` on paragraphs.
-- `uppercase` only on mono eyebrows, always with `tracking-wide` (the `SectionEyebrow`
+- `uppercase` only on mono eyebrows, always with `tracking-wide` (the `Eyebrow`
   grammar).
 - Numbers that change (counts, stats, timers): `tabular-nums`.
 - Voice moments are set per call-site (`font-serif font-medium tracking-tight` —
@@ -172,6 +172,26 @@ Rules:
   in dark).
 - Never a heavy mid-gray divider; edges are the low-contrast hairline tokens
   (`border-border`, `border-border-soft`).
+- **Lines mark positions and structure, never groups — and no label ever carries a rule.**
+  At page scale a section is separated by whitespace and by its heading being the
+  second-largest type on the page (`SectionHeading`); inside a bounded container (dialog, card,
+  rail, console column) the title steps down one size (`SectionTitle`) and the container's own
+  edges are the only lines; a sub-group, a day or a column label is a bare mono `Eyebrow` with
+  air above it. The hairlines that remain are structural — a container's edge, a table's column
+  row, the row separators of a dense list — or positional — the activity "New" line, the login
+  "or". Never a hairline between two sibling blocks to say "new section", and never a label with
+  a rule trailing to the edge (that idiom, the old `SectionEyebrow`, is gone). Four levels, four
+  signals: page title, heading, title, eyebrow; one line-system per surface.
+  The lines that are allowed, precisely: **bars** — a container's header bar (title, tabs,
+  actions), footer or action bar, composer dock, toolbar, a card's cover-to-body edge, and a
+  vertical `w-px` between control groups inside a bar; **tables** — column-header rows and the
+  row separators of a dense list (`divide-y`, `border-t first:border-t-0`); **positions** — the
+  unread marker, the login "or", a `border-l-2` indent rail. A block that needs containment gets
+  a well (`rounded-md bg-secondary/40`) or spacing, not a rule; a loading state is a `Skeleton`,
+  not a boxed line.
+  On narrative surfaces (welcome, how-it-works, public heroes) a section heading may speak in the
+  voice register (`font-serif text-xl font-medium tracking-tight`) — a register, not a fifth
+  level — and it still carries no rule.
 - Images/screenshots/thumbnails: no borders — `outline-1 -outline-offset-1
   outline-foreground/10`.
 
@@ -351,20 +371,24 @@ variants.
   muted keeps it quiet — and matches the stock menu/select/command group labels, so the register
   reads identically everywhere. Use `Eyebrow` for card step-labels, popover section headers, and
   inline dividers instead of re-typing the class string.
-- **SectionEyebrow** — `Eyebrow` **re-inked to `text-foreground`** (a section header should be
-  seen) + tabular count (kept muted) + hairline rule to the edge. The section-level header; pairs
-  with **PageHeader**, the page-level one.
-- **SectionTitle** (`shared/section-title.tsx`) — the quiet **sans** sub-block heading (`text-sm
-  font-medium text-foreground` `<h3>` + optional right-aligned `action`): for control/card
-  sub-groups nested inside a section (Settings "Role"/"Discoverability"/"Slack", a card title)
-  where the mono eyebrow reads too technical. The warm counterpart to `SectionEyebrow`'s mono.
+- **SectionHeading** (`shared/section-title.tsx`) — the page-level section heading in the
+  chrome register (`text-base font-medium text-foreground` `<h2>`, the machine-register `Count`,
+  an optional trailing `action`, **no rule**). One step below **PageHeader**, one above
+  **SectionTitle**; Activity, People, Profile "Work" and the Collections index lead their
+  sections with it, and sections separate by whitespace. Under it, a sub-group or day label is a
+  bare `Eyebrow as="h3"` — never a label with a rule.
+- **SectionTitle** (`shared/section-title.tsx`) — the **sans** title inside a bounded container
+  (`text-sm font-medium text-foreground` `<h3>`, the machine-register `Count`, an optional
+  right-aligned `action`, no rule): Settings groups, dialog sections ("Who can open this",
+  "People with access"), the context console's cards and columns, a card title. Same anatomy as
+  `SectionHeading` one step down.
 - **LabeledDivider** (`shared/section-eyebrow.tsx`) — a label centered between two hairline rules
   (the login "or", a mid-page voice break). Owns only the flanking-rule layout; pass the label in
   whatever register fits (a mono `Eyebrow`, a voice `<h2>`), so nothing hand-rolls the two-sided
   `<Separator className="flex-1" />` pair.
 - **Count** (`shared/section-eyebrow.tsx`) — the machine-register count beside a label
   ("Members · 12"): mono `text-2xs` tabular muted, led by an aria-hidden middle dot (SRs read just
-  the number). `SectionEyebrow` bakes the same in; use `Count` for standalone label + count rows.
+  the number). `SectionHeading` and `SectionTitle` bake the same in; use `Count` for standalone label + count rows.
 - **PageHeader** (`shared/page-header.tsx`) — the ONE page title band, so screens stop
   diverging: an optional mono `Eyebrow`, the title in the house **voice** (`font-serif`
   alias + `text-2xl font-medium tracking-tight text-balance`), an optional muted subtitle,
@@ -467,8 +491,11 @@ variants.
   absolute before that, so only Today / Yesterday / Earlier get an eyebrow. A resolved
   thread folds to one line (✓ · author · first words) that opens to the muted card.
   Replies since the reader's last visit get a row of their own so recency is never buried
-  in an old card. The **"New" marker** is the rail's one ink line (the reader's last visit,
-  per browser; closing the rail advances it), and "follow the document" marks the thread
+  in an old card. The **"New" marker** is the rail's one ink line — the reader's position in
+  the stream, kept on the server per account and scope (`/v1/seen`), read once per visit and
+  held still while they read; it advances after a visible dwell, on later arrivals, and when
+  the rail closes, never because the tab was hidden, and the reader's own rows are never
+  new — and "follow the document" marks the thread
   whose highlight is in the document's viewport with a 2px ink rule. Three levels and
   nothing else: the stream, the docked **composer** (one input — what a message is attached
   to is a chip above it: the quoted selection, or the review round being answered, with a

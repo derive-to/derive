@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import type { Artifact, Comment, DirUser } from "@/api"
 import { Icon } from "@/components/icons"
-import { Count } from "@/components/shared/section-eyebrow"
+import { Count, Eyebrow } from "@/components/shared/section-eyebrow"
+import { SectionHeading, SectionTitle } from "@/components/shared/section-title"
 import { Button } from "@/components/ui/button"
 import { ago } from "@/lib/time"
 import { cn } from "@/lib/utils"
@@ -400,10 +401,10 @@ function DiagramWorkspace({
     <section className="overflow-hidden rounded-xl border border-border bg-card">
       <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border-soft px-4 py-3.5">
         <div>
-          <div className="font-mono text-2xs uppercase tracking-[0.12em] text-muted-foreground">
+          <Eyebrow as="div">
             {diagram.type} · {diagram.nodes.length} {diagram.type === "loop" ? "steps" : "nodes"}
-          </div>
-          <h3 className="mt-1 text-base font-semibold text-foreground">{diagram.title}</h3>
+          </Eyebrow>
+          <SectionTitle className="mt-1">{diagram.title}</SectionTitle>
         </div>
         <div className="flex items-center gap-3">
           <span className="text-xs text-muted-foreground">
@@ -478,9 +479,7 @@ function DiagramWorkspace({
                   active && "bg-primary/5",
                 )}
               >
-                <span className="font-mono text-2xs uppercase tracking-[0.1em] text-muted-foreground">
-                  {key}
-                </span>
+                <Eyebrow as="span">{key}</Eyebrow>
                 <span className="mt-1 block line-clamp-2 text-xs text-foreground">
                   {diagram[key] ?? "Not stated"}
                 </span>
@@ -493,9 +492,9 @@ function DiagramWorkspace({
 
       {currentNodes.length ? (
         <div className="flex items-center gap-2 overflow-x-auto border-b border-border-soft bg-muted/15 px-3 py-2 sm:hidden">
-          <span className="shrink-0 font-mono text-2xs uppercase tracking-[0.1em] text-muted-foreground">
+          <Eyebrow as="span" className="shrink-0">
             Current
-          </span>
+          </Eyebrow>
           {currentNodes.map((node) => (
             <button
               key={node.id}
@@ -656,11 +655,11 @@ function DiagramWorkspace({
                   >
                     <span className="flex min-w-0 items-center gap-2">
                       <span className={cn("size-2 shrink-0 rounded-full", stateDot(node.state))} />
-                      <span className="truncate text-sm font-semibold text-foreground">
+                      <span className="truncate text-sm font-medium text-foreground">
                         {node.label}
                       </span>
                       {node.help?.needed ? (
-                        <span className="ml-auto shrink-0 rounded border border-destructive/40 bg-destructive/10 px-1.5 py-0.5 font-mono text-2xs font-semibold uppercase tracking-[0.08em] text-destructive">
+                        <span className="ml-auto shrink-0 rounded border border-destructive/40 bg-destructive/10 px-1.5 py-0.5 font-mono text-2xs font-semibold text-destructive">
                           Needs help
                         </span>
                       ) : null}
@@ -702,11 +701,9 @@ function DiagramWorkspace({
           {selection ? (
             <div data-testid="bundle-selection" className="grid items-start gap-4">
               <div className="min-w-0">
-                <div className="font-mono text-2xs uppercase tracking-[0.12em] text-muted-foreground">
-                  {selection.eyebrow}
-                </div>
+                <Eyebrow as="div">{selection.eyebrow}</Eyebrow>
                 <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
-                  <h4 className="text-base font-semibold text-foreground">{selection.title}</h4>
+                  <SectionTitle as="h4">{selection.title}</SectionTitle>
                   {selection.state ? (
                     <span className="flex items-center gap-1.5 text-xs">
                       <span className={cn("size-2 rounded-full", stateDot(selection.state))} />
@@ -824,14 +821,9 @@ function ArtifactShelf({
       )}
       data-testid="bundle-artifact-shelf"
     >
-      <div className="mb-2 flex items-baseline justify-between gap-3">
-        <div>
-          <h2 className="text-sm font-semibold text-foreground">Living artifacts</h2>
-          <p className="mt-0.5 text-2xs text-muted-foreground">Always in this workspace</p>
-        </div>
-        <span className="shrink-0 font-mono text-2xs text-muted-foreground">
-          {members.length} total
-        </span>
+      <div className="mb-2">
+        <SectionHeading count={members.length}>Living artifacts</SectionHeading>
+        <p className="mt-0.5 text-2xs text-muted-foreground">Always in this workspace</p>
       </div>
       <div className="flex gap-2 overflow-x-auto pb-2 lg:grid lg:overflow-visible lg:pb-0">
         {members.map((member) => (
@@ -1014,9 +1006,9 @@ export function LinkedBundleWorkspace({
       <div className="sticky top-0 z-30 border-b border-border bg-background/95 px-4 py-3 backdrop-blur sm:px-6">
         <div className="mx-auto grid max-w-[90rem] gap-3">
           <div className="min-w-0">
-            <div className="font-mono text-2xs uppercase tracking-[0.12em] text-primary">
+            <Eyebrow as="div" className="text-primary">
               Linked bundle workspace
-            </div>
+            </Eyebrow>
             <p className="mt-1 max-w-3xl text-sm text-muted-foreground">{bundle.purpose}</p>
             <div className="mt-2 font-mono text-2xs text-muted-foreground">
               {bundle.members.length} artifacts · {loops} loop{loops === 1 ? "" : "s"} · {graphs}{" "}
@@ -1132,12 +1124,10 @@ export function LinkedBundleWorkspace({
           ) : diagrams.length ? (
             <div className="grid gap-4" data-testid="bundle-advanced-view">
               <div className="rounded-xl border border-border bg-card p-4">
-                <div className="font-mono text-2xs uppercase tracking-[0.12em] text-muted-foreground">
-                  Advanced
-                </div>
-                <h2 className="mt-1 text-base font-semibold text-foreground">
+                <Eyebrow as="div">Advanced</Eyebrow>
+                <SectionTitle as="h2" className="mt-1">
                   Full graph and authored state
-                </h2>
+                </SectionTitle>
                 <p className="mt-1 text-xs text-muted-foreground">
                   Inspect exact relationships, tiers, confidence, help state, and loop policy.
                 </p>

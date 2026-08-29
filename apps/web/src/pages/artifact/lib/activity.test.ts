@@ -40,6 +40,7 @@ const version = (
 const comment = (
   p: Partial<Comment> & { id: string; author: string; created_at: string },
 ): Comment => ({
+  artifact_id: "a",
   thread_id: p.id,
   base_version: 1,
   path: null,
@@ -392,6 +393,119 @@ describe("buildStream", () => {
     const only = buildStream({ ...base, versions, comments, lens: "comments" })
     expect(all.map((it) => it.type)).toEqual(["turn", "thread"])
     expect(only.map((it) => it.type)).toEqual(["thread"])
+  })
+})
+
+describe("buildStream — workspace mode", () => {
+  const DOCS = {
+    a: { short_id: "aaaaaaaa", title: "Q3 Narrative" },
+    b: { short_id: "bbbbbbbb", title: "Roadmap" },
+  }
+  const ws = { artifacts: DOCS, since: at(7, 0) }
+
+  it("never treats the reader's own rows as new — they wrote them", () => {
+    const seen = new Date(at(0, 12)).getTime()
+    const versions = [
+      version(1, "Mert", at(0, 10), null),
+      version(2, "Mert", at(0, 14), null),
+      version(3, "Ana", at(0, 15), null),
+    ]
+    const items = buildStream({ ...base, versions, comments: [], lastSeen: seen, me: "Mert" })
+    const turns = items.filter((it) => it.type === "turn")
+    // Mert's v2 landed after the visit but is Mert's own: it folds with v1 on the seen
+    // side (one actor, one day, one turn), and only Ana's v3 is new.
+    expect(turns.map((t) => t.type === "turn" && t.seen)).toEqual([true, false])
+    expect(countUnread(items)).toBe(1)
+  })
+
+  it("newest first, the line follows the last new item past the reader's own fresh rows, and needs something new to exist", () => {
+    const seen = new Date(at(1, 12)).getTime()
+    const versions = [
+      { ...version(1, "Ana", at(2, 9), "Old"), artifact_id: "a" },
+      { ...version(2, "Ana", at(0, 9), "New"), artifact_id: "a" },
+      { ...version(3, "Mert", at(0, 10), "Mine"), artifact_id: "b" },
+      { ...version(4, "Mert", at(0, 11), "Mine too"), artifact_id: "c" },
+    ]
+    const items = buildStream({
+      ...base,
+      versions,
+      comments: [],
+      workspace: {
+        ...ws,
+        artifacts: {
+          ...ws.artifacts,
+          b: { short_id: "b", title: "B" },
+          c: { short_id: "c", title: "C" },
+        },
+      },
+      order: "desc",
+      lastSeen: seen,
+      me: "Mert",
+    })
+    const kinds = items.map((it) => (it.type === "section" ? `section:${it.label}` : it.type))
+    // Mert's two fresh publishes are newest but seen; Ana's v2 is the new one; the line sits
+    // right under it, not between Mert's rows.
+    expect(kinds).toEqual([
+      "section:Today",
+      "turn",
+      "turn",
+      "turn",
+      "unread",
+      "section:Earlier",
+      "turn",
+    ])
+    expect(countUnread(items)).toBe(1)
+    const nothingNew = buildStream({
+      ...base,
+      versions: versions.slice(0, 1),
+      comments: [],
+      workspace: ws,
+      order: "desc",
+      lastSeen: seen,
+    })
+    expect(nothingNew.some((it) => it.type === "unread")).toBe(false)
+  })
+
+  it("names the document, makes threads lines, keeps pending asks out, folds per document", () => {
+    const versions = [
+      { ...version(1, "Mert", at(0, 9), "One", CLAUDE), artifact_id: "a" },
+      { ...version(2, "Mert", at(0, 9, 30), "Two", CLAUDE), artifact_id: "a" },
+      { ...version(4, "Mert", at(0, 10), "Four", CLAUDE), artifact_id: "b" },
+    ]
+    const comments = [
+      { ...comment({ id: "t1", author: "Ada", created_at: at(0, 11) }), artifact_id: "a" },
+      // A thread from before the window: served for Needs you, never a line here.
+      { ...comment({ id: "t0", author: "Ada", created_at: at(9, 11) }), artifact_id: "a" },
+    ]
+    const rounds = [round({ id: "rr", version: 2, created_at: at(0, 9, 40), note: "Look?" })]
+    const items = buildStream({ ...base, versions, comments, rounds, workspace: ws })
+    const turns = items.filter((it) => it.type === "turn")
+    // Same actor, same day, two documents → two turns; the thread is a line, not a card.
+    expect(items.some((it) => it.type === "thread")).toBe(false)
+    expect(turns.map((t) => phrase(leadRow(t)))).toEqual([
+      "published v1–v2 of Q3 Narrative",
+      "published v4 of Roadmap",
+      "commented on Q3 Narrative",
+    ])
+    expect(turns.flatMap((t) => t.rows.map((r) => r.kind))).not.toContain("review_request")
+  })
+
+  it("reads newest first, with the marker after the last new item", () => {
+    const versions = [
+      { ...version(1, "Mert", at(2, 9), "Old"), artifact_id: "a" },
+      { ...version(2, "Mert", at(0, 9), "New"), artifact_id: "a" },
+    ]
+    const items = buildStream({
+      ...base,
+      versions,
+      comments: [],
+      workspace: ws,
+      order: "desc",
+      lastSeen: new Date(at(1, 12)).getTime(),
+    })
+    const kinds = items.map((it) => (it.type === "section" ? `section:${it.label}` : it.type))
+    expect(kinds).toEqual(["section:Today", "turn", "unread", "section:Earlier", "turn"])
+    expect(countUnread(items)).toBe(1)
   })
 })
 

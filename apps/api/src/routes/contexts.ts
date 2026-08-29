@@ -2050,7 +2050,7 @@ export const contextRoutes = (ctx: AppContext) => {
             fail(
               c,
               403,
-              "You need permission to create things in this workspace before you can set up an Agent here. An Admin can change your access under Settings › Members.",
+              "You need permission to create things in this workspace before you can set up a Context here. An Admin can change your access under Settings › Members.",
             ),
           )
       }

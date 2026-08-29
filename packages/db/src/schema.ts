@@ -921,6 +921,23 @@ export const slackInstall = sqliteTable("slack_install", {
 
 // Per-user notification preferences within a workspace. `prefs` is a JSON blob (absent =
 // defaults on), so preference types can be added without a migration.
+// A reader's last-seen position in an activity stream — one row per (user, scope), where
+// scope is `ws:<org_id>` for the workspace feed or `artifact:<short_id>` for an artifact's
+// rail. The web's "New" marker is measured against it. It moves forward on visible dwell
+// and rewinds only on an explicit "mark new from here" (`manual`), so a glance at another
+// tab never eats the line and every device draws it in the same place.
+export const activitySeen = sqliteTable(
+  "activity_seen",
+  {
+    id: text("id").primaryKey(),
+    user_id: text("user_id").notNull(),
+    scope: text("scope").notNull(),
+    seen_at: text("seen_at").notNull(),
+    updated_at: text("updated_at").notNull().default(now),
+  },
+  (t) => [uniqueIndex("activity_seen_key").on(t.user_id, t.scope)],
+)
+
 export const userNotificationPref = sqliteTable(
   "user_notification_pref",
   {
@@ -1385,6 +1402,7 @@ const TABLES = [
   slackUserLink,
   slackSubscription,
   userNotificationPref,
+  activitySeen,
   githubApp,
   githubInstallation,
   domain,

@@ -4,6 +4,7 @@ import { EmptyState } from "@/components/shared/empty-state"
 import { Eyebrow } from "@/components/shared/section-eyebrow"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
+import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
 import { ResolvedRow, TurnRow } from "./activity-rows"
 import { CommentCard } from "./comment-thread"
@@ -12,7 +13,45 @@ import { useCommentScope } from "./lib/comment-scope"
 import { useCommentTree } from "./lib/comment-tree"
 
 /**
- * The stream itself — the items `buildStream` produced, rendered: day eyebrows, the one
+ * The stream's loading frame, in the stream's own grammar — a turn line (glyph, sentence,
+ * stamp), a card, two more lines — so the rail is visibly the rail while its sources
+ * settle (a reload with a cold cache waits on three requests). Shape doctrine: the boxes'
+ * dims and rhythm, never a border or fill (those arrive with the content). The region
+ * announces; the blocks are decoration.
+ */
+export function StreamSkeleton() {
+  const line = (w: string) => (
+    <div className="grid grid-cols-[1.25rem_minmax(0,1fr)_auto] items-center gap-x-2 py-1.5">
+      <Skeleton className="size-5 rounded-full" />
+      <Skeleton className={cn("h-3.5", w)} />
+      <Skeleton className="h-2.5 w-7" />
+    </div>
+  )
+  return (
+    <div role="status" data-testid="activity-stream-loading" className="flex flex-col pt-1">
+      <span className="sr-only">Loading activity…</span>
+      {line("w-2/3")}
+      <div className="my-1 flex flex-col gap-2 rounded-lg px-3 py-2.5">
+        <Skeleton className="h-3.5 w-3/5" />
+        <div className="flex items-center gap-2">
+          <Skeleton className="size-5 rounded-full" />
+          <Skeleton className="h-3.5 w-24" />
+          <Skeleton className="h-2.5 w-6" />
+        </div>
+        <div className="flex flex-col gap-2 pl-7">
+          <Skeleton className="h-3.5 w-full" />
+          <Skeleton className="h-3.5 w-3/4" />
+        </div>
+      </div>
+      {line("w-1/2")}
+      {line("w-3/5")}
+    </div>
+  )
+}
+
+/**
+ * The stream itself — the items `buildStream` produced, rendered: day labels (no rule —
+ * lines mark positions, not groups), the one
  * ink "New" line, comment threads as cards (resolved ones folded to a line), every other
  * action as a one-line turn. Shared by the desktop rail and the phone sheet, so the two
  * can't drift; each surface brings its own header, composer and scroll behaviour.
@@ -80,10 +119,9 @@ export function ActivityStream({
     switch (it.type) {
       case "section":
         return (
-          <div key={it.id} className="flex items-center gap-2 pt-3 pb-1">
-            <Eyebrow>{it.label}</Eyebrow>
-            <Separator className="flex-1" />
-          </div>
+          <Eyebrow key={it.id} as="h3" className="pt-3 pb-1">
+            {it.label}
+          </Eyebrow>
         )
       case "unread":
         return (

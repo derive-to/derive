@@ -15,6 +15,7 @@ import { serveContent } from "./lib/serve-content"
 import { isTemplateLibrarySchemaUnavailable } from "./lib/template-library-schema"
 import { log } from "./log"
 import { mountMcp } from "./mcp"
+import { activityRoutes } from "./routes/activity"
 import { agentDiscoveryRoutes } from "./routes/agent-discovery"
 import { agentRoutes } from "./routes/agents"
 import { analyticsRoutes } from "./routes/analytics"
@@ -48,6 +49,7 @@ import { rawRoutes } from "./routes/raw"
 import { realtimeRoutes } from "./routes/realtime"
 import { reviewRoutes } from "./routes/review"
 import { reworkRoutes } from "./routes/rework"
+import { seenRoutes } from "./routes/seen"
 import { sessionRoutes } from "./routes/session"
 import { sharedStateRoutes } from "./routes/shared-state"
 import { sharingRoutes } from "./routes/sharing"
@@ -447,6 +449,8 @@ export function createApp(deps: AppDeps): Hono {
     bootstrapRoutes,
     moderationRoutes,
     reviewRoutes,
+    activityRoutes,
+    seenRoutes,
     automationRoutes,
     planRoutes,
     connectionRoutes,

@@ -5,7 +5,7 @@ import { Count } from "@/components/shared/section-eyebrow"
 import { Button } from "@/components/ui/button"
 import { useKeyboardInset } from "@/lib/use-keyboard-inset"
 import { cn } from "@/lib/utils"
-import { ActivityStream } from "./activity-stream"
+import { ActivityStream, StreamSkeleton } from "./activity-stream"
 import { type RailTab, RailTabs } from "./artifact-chat"
 import { Composer } from "./comment-composer"
 import type { StreamItem } from "./lib/activity"
@@ -35,6 +35,7 @@ export function MobileComments({
   open,
   openThreads,
   items,
+  ready,
   currentVersion,
   pendingRound,
   onGoToVersion,
@@ -60,6 +61,7 @@ export function MobileComments({
   openThreads: Comment[][]
   /** The activity stream (see ArtifactComments); the sheet renders it in its full state. */
   items: StreamItem[]
+  ready: boolean
   currentVersion: number
   pendingRound: ReviewRound | null
   onGoToVersion: (n: number) => void
@@ -383,20 +385,23 @@ export function MobileComments({
             data-testid="activity-stream"
             className="flex min-h-0 flex-1 flex-col overflow-auto px-3 pb-[max(14px,env(safe-area-inset-bottom))]"
           >
-            <ActivityStream
-              items={items}
-              currentVersion={currentVersion}
-              // Answering shows the composer bar instead of the list, so nothing here is.
-              answeringRoundId={null}
-              editing={editing}
-              emptyTestId="comments-sheet-empty-new"
-              onNewComment={() => {
-                setSize("full")
-                onNewGeneral()
-              }}
-              onGoToVersion={onGoToVersion}
-              onAnswer={() => setAnswering(true)}
-            />
+            {!ready && <StreamSkeleton />}
+            {ready && (
+              <ActivityStream
+                items={items}
+                currentVersion={currentVersion}
+                // Answering shows the composer bar instead of the list, so nothing here is.
+                answeringRoundId={null}
+                editing={editing}
+                emptyTestId="comments-sheet-empty-new"
+                onNewComment={() => {
+                  setSize("full")
+                  onNewGeneral()
+                }}
+                onGoToVersion={onGoToVersion}
+                onAnswer={() => setAnswering(true)}
+              />
+            )}
           </div>
         </CommentTreeProvider>
       ) : latest ? (

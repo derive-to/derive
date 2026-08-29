@@ -2026,6 +2026,7 @@ export interface paths {
                         attachPdf?: boolean;
                         /** @enum {string} */
                         emailMode?: "auto" | "snapshot";
+                        preview?: boolean;
                     };
                 };
             };
@@ -4173,6 +4174,107 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/workspace/activity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Recent activity across the workspace, for the home. */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description The window in days (default 7, max 30). */
+                    days?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The window's versions, comments and review rounds, over visible artifacts. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["WorkspaceActivity"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/seen": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Where the signed-in user last left an activity stream. */
+        get: {
+            parameters: {
+                query: {
+                    scope: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The last-seen time, or null before the first visit. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            seen_at: string | null;
+                        };
+                    };
+                };
+            };
+        };
+        /** Move the signed-in user's position in an activity stream. */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description What is stored after the write: forward-only unless `manual`, so a slow write never rewinds a fresher one. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            seen_at: string | null;
+                        };
+                    };
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/workflows": {
         parameters: {
             query?: never;
@@ -4208,7 +4310,7 @@ export interface paths {
                                 diagrams: {
                                     id: string;
                                     title: string;
-                                    agentSteps: number;
+                                    contextSteps: number;
                                     humanPauses: number;
                                     branches: number;
                                     loops: number;
@@ -4362,6 +4464,7 @@ export interface paths {
                                     selectedRoutes: string[] | null;
                                     routeBasis: string | null;
                                     resultArtifactId: string | null;
+                                    error: string | null;
                                     createdAt: string;
                                     startedAt: string | null;
                                     finishedAt: string | null;
@@ -7507,8 +7610,39 @@ export interface components {
             /** @description When it was sent back; null while pending. */
             resolved_at: string | null;
         };
+        WorkspaceActivity: {
+            /** @description The window's start (ISO). */
+            since: string;
+            /** @description The artifacts the rows below belong to — only those the viewer can read. */
+            artifacts: {
+                id: string;
+                short_id: string;
+                title: string;
+            }[];
+            versions: components["schemas"]["ActivityVersion"][];
+            comments: components["schemas"]["Comment"][];
+            /** @description Pending rounds (any age) and rounds opened or settled in the window. */
+            rounds: components["schemas"]["ReviewRound"][];
+        };
+        ActivityVersion: {
+            artifact_id: string;
+            n: number;
+            /** @description The person's byline, healed to their live name. */
+            author: string;
+            handle: string | null;
+            /** @description The agent that produced this version on the author's behalf; null for the person's own. */
+            agent: {
+                id: string;
+                name: string;
+            } | null;
+            message: string | null;
+            name: string | null;
+            created_at: string;
+        };
         Comment: {
             id: string;
+            /** @description The artifact the comment is on. */
+            artifact_id: string;
             /** @description The thread this comment belongs to; equals id for the thread's root comment. */
             thread_id: string;
             /** @description Artifact version this comment was anchored against. */
@@ -7698,8 +7832,6 @@ export interface components {
                 draft: {
                     name: string;
                     description: string;
-                    /** @enum {string} */
-                    kind: "knowledge" | "worker";
                     knows: string[];
                     answers: string;
                     wont: string[];

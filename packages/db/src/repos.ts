@@ -167,6 +167,7 @@ import {
 import type { BaseSQLiteDatabase } from "drizzle-orm/sqlite-core"
 import type { Exhaustive, Shapes } from "./parity"
 import {
+  activitySeen,
   agent,
   agentMention,
   artifact,
@@ -3452,6 +3453,89 @@ export function makeRepos(db: SqliteDb) {
         .get()) ?? null
     )
   }
+  // ---- Workspace activity -----------------------------------------------------------
+  const listVersionsInOrg = async (
+    orgId: string,
+    opts: { since: string; limit: number },
+  ): Promise<VersionRecord[]> =>
+    (
+      await db
+        .select({ v: version })
+        .from(version)
+        .innerJoin(artifact, eq(artifact.id, version.artifact_id))
+        .where(and(eq(artifact.org_id, orgId), gte(version.created_at, opts.since)))
+        .orderBy(desc(version.created_at))
+        .limit(opts.limit)
+    ).map((r) => r.v)
+  const listCommentsInOrg = async (
+    orgId: string,
+    opts: { since: string; limit: number; openOn?: string[] },
+  ): Promise<CommentRecord[]> => {
+    const recent = gte(comment.created_at, opts.since)
+    const open =
+      opts.openOn && opts.openOn.length
+        ? and(eq(comment.state, "open"), inArray(comment.artifact_id, opts.openOn))
+        : null
+    return (
+      await db
+        .select({ c: comment })
+        .from(comment)
+        .innerJoin(artifact, eq(artifact.id, comment.artifact_id))
+        .where(and(eq(artifact.org_id, orgId), open ? or(recent, open) : recent))
+        .orderBy(desc(comment.created_at))
+        .limit(opts.limit)
+    ).map((r) => r.c)
+  }
+  const getActivitySeen = async (userId: string, scope: string): Promise<string | null> => {
+    const row = await db
+      .select({ seen_at: activitySeen.seen_at })
+      .from(activitySeen)
+      .where(and(eq(activitySeen.user_id, userId), eq(activitySeen.scope, scope)))
+      .get()
+    return row?.seen_at ?? null
+  }
+  const setActivitySeen = async (
+    userId: string,
+    scope: string,
+    at: string,
+    opts?: { manual?: boolean },
+  ): Promise<string> => {
+    const current = await getActivitySeen(userId, scope)
+    if (current !== null && !opts?.manual && current >= at) return current
+    const updated_at = new Date().toISOString()
+    await db
+      .insert(activitySeen)
+      .values({ id: crypto.randomUUID(), user_id: userId, scope, seen_at: at, updated_at })
+      .onConflictDoUpdate({
+        target: [activitySeen.user_id, activitySeen.scope],
+        set: { seen_at: at, updated_at },
+      })
+    return at
+  }
+
+  const listReviewRoundsInOrg = async (
+    orgId: string,
+    opts: { since: string; limit: number },
+  ): Promise<ReviewRoundRecord[]> =>
+    (
+      await db
+        .select({ r: reviewRound })
+        .from(reviewRound)
+        .innerJoin(artifact, eq(artifact.id, reviewRound.artifact_id))
+        .where(
+          and(
+            eq(artifact.org_id, orgId),
+            or(
+              eq(reviewRound.state, "pending"),
+              gte(reviewRound.created_at, opts.since),
+              gte(reviewRound.resolved_at, opts.since),
+            ),
+          ),
+        )
+        .orderBy(desc(reviewRound.created_at))
+        .limit(opts.limit)
+    ).map((r) => r.r)
+
   const listReviewRounds = async (artifactId: string): Promise<ReviewRoundRecord[]> =>
     db
       .select()
@@ -5589,6 +5673,11 @@ export function makeRepos(db: SqliteDb) {
     createReviewRound,
     getPendingRound,
     listReviewRounds,
+    listVersionsInOrg,
+    listCommentsInOrg,
+    listReviewRoundsInOrg,
+    getActivitySeen,
+    setActivitySeen,
     resolveReviewRound,
     createContext,
     getContext,

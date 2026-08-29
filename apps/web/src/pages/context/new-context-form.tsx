@@ -42,7 +42,7 @@ export function NewContextForm({
         ...(agentId ? { agent_id: agentId } : {}),
         manifest_short_id: manifest.trim(),
       }),
-    success: "Agent created",
+    success: "Context created",
     onSuccess: (ctx) => {
       const created = name.trim()
       setName("")
@@ -52,8 +52,8 @@ export function NewContextForm({
         setMinted({ contextId: ctx.id, name: created, token: ctx.agent_token })
         return
       }
-      // Open the new Agent directly when no credential reveal is required.
-      nav({ to: "/agents/$id", params: { id: ctx.id } })
+      // Open the new Context directly when no credential reveal is required.
+      nav({ to: "/contexts/$id", params: { id: ctx.id } })
     },
   })
   const submit = () => {
@@ -65,7 +65,7 @@ export function NewContextForm({
       <div className="flex flex-wrap items-center gap-2">
         <Input
           data-testid="context-create-name"
-          aria-label="Agent name"
+          aria-label="Context name"
           placeholder="Name (e.g. Analytics)"
           value={name}
           onChange={(e) => setName(e.target.value)}
@@ -82,11 +82,15 @@ export function NewContextForm({
         {/* Only admins can even load the roster; everyone else auto-mints. */}
         {agents.length > 0 && (
           <Select value={agentId} onValueChange={(v) => setAgentId(v === "auto" ? "" : v)}>
-            <SelectTrigger data-testid="context-create-agent" aria-label="Agent" className="w-44">
-              <SelectValue placeholder="Its own agent" />
+            <SelectTrigger
+              data-testid="context-create-agent"
+              aria-label="Execution connection"
+              className="w-44"
+            >
+              <SelectValue placeholder="Dedicated connection" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="auto">Its own agent (default)</SelectItem>
+              <SelectItem value="auto">Dedicated connection (default)</SelectItem>
               {agents.map((a) => (
                 <SelectItem key={a.id} value={a.id}>
                   {a.name}
@@ -119,7 +123,7 @@ export function NewContextForm({
                 <span className="text-2xs text-muted-foreground">
                   Save it where the runner reads it (e.g.{" "}
                   <code className="font-mono">.derive/agent-token</code>), then{" "}
-                  <code className="font-mono">derive runner serve</code> answers this Agent.
+                  <code className="font-mono">derive runner serve</code> serves this Context.
                 </span>
               </div>
             }
@@ -140,7 +144,7 @@ export function NewContextForm({
                   onClick={() => {
                     const id = minted.contextId
                     setMinted(null)
-                    nav({ to: "/agents/$id", params: { id } })
+                    nav({ to: "/contexts/$id", params: { id } })
                   }}
                 >
                   Done

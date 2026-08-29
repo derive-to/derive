@@ -6,6 +6,7 @@ import { ChatThread } from "@/components/chat/chat-thread"
 import { useChatSession } from "@/components/chat/use-chat-session"
 import { Icon } from "@/components/icons"
 import { PageShell } from "@/components/shared/page-shell"
+import { SectionTitle } from "@/components/shared/section-title"
 import { StatusPanel } from "@/components/shared/status-panel"
 import { Button } from "@/components/ui/button"
 import { copyText } from "@/lib/clipboard"
@@ -24,7 +25,9 @@ function AgentDoor() {
     >
       <div className="flex items-center gap-2">
         <Icon name="sparkles" className="size-4 text-muted-foreground" />
-        <h2 className="text-sm font-medium text-foreground">{BUILDER_COPY.agentDoorTitle}</h2>
+        <SectionTitle as="h2" className="min-w-0 flex-1">
+          {BUILDER_COPY.agentDoorTitle}
+        </SectionTitle>
       </div>
       <p className="text-sm text-muted-foreground">{BUILDER_COPY.agentDoorBody}</p>
       <div className="flex items-start gap-2">
@@ -45,7 +48,7 @@ function AgentDoor() {
   )
 }
 
-export function AgentBuilderPage() {
+export function ContextBuilderPage() {
   useDocumentTitle(BUILDER_COPY.pageTitle)
   const qc = useQueryClient()
   const [showExpert, setShowExpert] = useState(false)
@@ -146,7 +149,7 @@ export function AgentBuilderPage() {
         </div>
       )}
 
-      <div className="flex flex-col gap-3 border-t border-border-soft pt-4">
+      <div className="flex flex-col gap-3">
         <button
           type="button"
           data-testid="builder-expert-door"

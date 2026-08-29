@@ -212,7 +212,7 @@ describe("export contracts", () => {
     expect(email.html).toContain("margin:0 0 10px;table-layout:fixed")
     expect(email.html).toContain('class="derive-kpi-cell"')
     expect(email.html).toContain(
-      "@media(max-width:360px){.derive-kpi-cell{display:block!important;width:100%!important",
+      "@media(max-width:420px){.derive-kpi-cell{display:block!important;width:100%!important",
     )
     expect(email.html).toContain("−$1.4M")
     expect(email.html).toContain("Enterprise &lt;script&gt;")
@@ -231,6 +231,44 @@ describe("export contracts", () => {
       }),
     ).toThrow(/must use https/)
     expect(parseEmailLayout({ schema: "some-other-contract" })).toBeNull()
+  })
+
+  it("wraps hostile long content and turns wide tables into readable field cards", () => {
+    const token = "x".repeat(200)
+    const cellToken = "x".repeat(400)
+    const layout = parseEmailLayout({
+      schema: "derive.email/v1",
+      title: token,
+      blocks: [
+        { type: "paragraph", body: `https://derive.test/${token}` },
+        {
+          type: "segments",
+          items: [
+            { label: "Only positive", value: 1 },
+            { label: "Zero", value: 0 },
+            { label: "Negative", value: -3 },
+          ],
+        },
+        {
+          type: "table",
+          columns: ["Account", "Region", "Owner", "Evidence"],
+          rows: [[cellToken, "Worldwide", "Revenue", `https://derive.test/${cellToken}`]],
+        },
+      ],
+    })
+    expect(layout).not.toBeNull()
+    if (!layout) throw new Error("expected a parsed email layout")
+    const email = buildRichExportEmail({
+      to: "qa@example.test",
+      subjectTitle: "Adversarial email",
+      openUrl: "https://derive.test/artifacts/adversarial/v/1",
+      version: 1,
+      layout,
+    })
+    expect(email.html).toContain("overflow-wrap:anywhere;word-break:break-word")
+    expect(email.html).toContain('width="34%"')
+    expect(email.html).toContain('width="66%"')
+    expect(email.html).not.toContain('width="3%"')
   })
 })
 

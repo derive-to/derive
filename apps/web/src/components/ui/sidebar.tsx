@@ -408,7 +408,7 @@ function SidebarGroupLabel({
       data-slot="sidebar-group-label"
       data-sidebar="group-label"
       className={cn(
-        // Group labels are the house mono eyebrow (SectionEyebrow register), not
+        // Group labels are the house mono eyebrow (Eyebrow register), not
         // shadcn's default sans text-xs — one machine register for micro-labels.
         "flex h-8 shrink-0 items-center rounded-lg px-2 font-mono text-2xs font-medium tracking-wide text-sidebar-foreground/70 uppercase outline-none transition-[margin,opacity] duration-move ease-linear group-data-[collapsible=icon]:-mt-8 group-data-[collapsible=icon]:opacity-0 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring [&>svg]:size-4 [&>svg]:shrink-0",
         className,

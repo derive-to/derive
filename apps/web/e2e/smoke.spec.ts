@@ -120,7 +120,7 @@ test("starting a workflow creates a visible, version-pinned run", async ({ owner
     .getByTestId("workflow-row")
     .filter({ hasText: "Keep internal docs aligned with code changes." })
   await expect(directoryRow).toContainText("Keep internal docs aligned with code changes.")
-  await expect(directoryRow).toContainText("1 Agent step")
+  await expect(directoryRow).toContainText("1 Context step")
   await directoryRow.click()
   await expect(owner).toHaveURL(new RegExp(`/artifacts/.+${shortId}`))
   await expect(owner.getByTestId("workflow-preview")).toBeVisible()
@@ -130,8 +130,10 @@ test("starting a workflow creates a visible, version-pinned run", async ({ owner
 
   const runs = owner.getByTestId("workflow-runs")
   await expect(runs.getByText("Queued", { exact: true })).toBeVisible()
-  await expect(runs.getByText("v1 · local copy", { exact: false })).toBeVisible()
-  await expect(runs.getByText("Waiting for an agent to claim this run.")).toBeVisible()
+  await expect(runs.getByText("Update internal docs", { exact: true })).toBeVisible()
+  await expect(runs.getByText("Definition v1", { exact: true })).toBeVisible()
+  await expect(runs.getByText("Local copy", { exact: true })).toBeVisible()
+  await expect(runs.getByText("Waiting for an Agent to claim this run.")).toBeVisible()
 })
 
 test("a cached screenshot still becomes a visible library thumbnail", async ({ owner }) => {
@@ -348,14 +350,20 @@ test("settings destinations and their retired paths resolve", async ({ owner }) 
   await expect(owner.getByTestId("toggle-github-preview-link")).toHaveCount(0)
 })
 
-test("Archived lives inside the Library filter rather than the primary rail", async ({ owner }) => {
+test("Artifacts is the front door and Archived remains one of its filters", async ({ owner }) => {
   await owner.goto("/")
+  await expect(owner.getByTestId("sidebar-all")).toContainText("Artifacts")
+  await expect(owner.getByRole("heading", { name: /^Artifacts\b/ })).toBeVisible()
+  await expect(owner.getByTestId("library-view")).toHaveAttribute("aria-label", "Artifact views")
+  await expect(owner.getByTestId("library-view-artifacts")).toHaveText("All")
+  await expect(owner.getByTestId("library-view-collections")).toHaveText("Collections")
+  await expect(owner).toHaveTitle("Artifacts · Derive")
   await expect(owner.getByTestId("nav-archived")).toHaveCount(0)
 
   await owner.getByTestId("library-filter").click()
   await owner.getByTestId("library-filter-archived").click()
   await expect(owner).toHaveURL(/\/archived$/)
-  await expect(owner.getByRole("heading", { name: /Library/ })).toBeVisible()
+  await expect(owner.getByRole("heading", { name: /^Artifacts\b/ })).toBeVisible()
   await expect(owner.getByTestId("library-filter")).toHaveAttribute(
     "aria-label",
     "Filter: Archived",
@@ -408,6 +416,7 @@ test("Collections is a digest of the week, then an alphabetical index", async ({
   const colId = new URL(owner.url()).searchParams.get("collection")
 
   await owner.goto("/?view=collections")
+  await expect(owner).toHaveTitle("Collections · Derive")
   // A brand-new empty collection is one index line — never a digest entry (no activity),
   // and never an apology about its contents.
   await expect(owner.getByTestId("collections-index")).toBeVisible()
@@ -429,9 +438,10 @@ test("Collections is a digest of the week, then an alphabetical index", async ({
   await owner.reload()
   await expect(owner.getByTestId("collections-index")).toBeVisible()
 
-  // Switching back to Artifacts leaves the Collections view entirely.
+  // Switching back to All leaves the Collections view entirely.
   await owner.getByTestId("library-view-artifacts").click()
   await expect(owner.getByTestId("collections-index")).toHaveCount(0)
+  await expect(owner).toHaveTitle("Artifacts · Derive")
 })
 
 test("a card states three facts, not nine", async ({ owner }) => {
@@ -523,7 +533,7 @@ test("the current page keeps its selected state under the pointer", async ({ own
   expect(await bgOf(current), "the active row changed colour on hover").toBe(currentRest)
 
   // …and the scoping didn't just disable hover everywhere: an idle row still washes.
-  const idle = owner.getByTestId("nav-agents")
+  const idle = owner.getByTestId("nav-contexts")
   const idleRest = await bgOf(idle)
   await idle.hover()
   await owner.waitForTimeout(400)
@@ -546,7 +556,7 @@ test("a collection says where you are, and the way back is the trail", async ({ 
   // first, with the way out an `×` chip over in the toolbar.
   await owner.goto(`/?collection=${colId}`)
   const home = owner.getByTestId("crumb-0")
-  await expect(home).toHaveText("Library")
+  await expect(home).toHaveText("Artifacts")
   await home.click()
   await expect(owner).toHaveURL(/\/$|\/\?/)
   await expect(owner.getByTestId("collection-share")).toHaveCount(0)
@@ -554,7 +564,7 @@ test("a collection says where you are, and the way back is the trail", async ({ 
   await expect(owner.getByTestId("library-clear-filter")).toHaveCount(0)
 })
 
-test("the library is a drop target, and + New never hides", async ({ owner }) => {
+test("Artifacts is a drop target, and + New never hides", async ({ owner }) => {
   await owner.goto("/")
   // The one primary action is STABLE: visible even while the connect-agent card shows
   // (a fresh workspace used to have no visible way to create anything by hand).

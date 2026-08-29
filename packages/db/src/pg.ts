@@ -179,6 +179,7 @@ import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres"
 import { Pool } from "pg"
 import type { Exhaustive, Shapes } from "./parity"
 import {
+  activitySeen,
   agent,
   agentMention,
   artifact,
@@ -4190,6 +4191,86 @@ export class PgMetaStore implements MetaStore {
       .orderBy(asc(reviewRound.created_at))
       .limit(1)
     return rows[0] ?? null
+  }
+  // ---- Workspace activity -----------------------------------------------------------
+  async listVersionsInOrg(
+    orgId: string,
+    opts: { since: string; limit: number },
+  ): Promise<VersionRecord[]> {
+    const rows = await this.db
+      .select({ v: version })
+      .from(version)
+      .innerJoin(artifact, eq(artifact.id, version.artifact_id))
+      .where(and(eq(artifact.org_id, orgId), gte(version.created_at, opts.since)))
+      .orderBy(desc(version.created_at))
+      .limit(opts.limit)
+    return rows.map((r) => r.v)
+  }
+  async listCommentsInOrg(
+    orgId: string,
+    opts: { since: string; limit: number; openOn?: string[] },
+  ): Promise<CommentRecord[]> {
+    const recent = gte(comment.created_at, opts.since)
+    const open =
+      opts.openOn && opts.openOn.length
+        ? and(eq(comment.state, "open"), inArray(comment.artifact_id, opts.openOn))
+        : null
+    const rows = await this.db
+      .select({ c: comment })
+      .from(comment)
+      .innerJoin(artifact, eq(artifact.id, comment.artifact_id))
+      .where(and(eq(artifact.org_id, orgId), open ? or(recent, open) : recent))
+      .orderBy(desc(comment.created_at))
+      .limit(opts.limit)
+    return rows.map((r) => r.c)
+  }
+  async getActivitySeen(userId: string, scope: string): Promise<string | null> {
+    const rows = await this.db
+      .select({ seen_at: activitySeen.seen_at })
+      .from(activitySeen)
+      .where(and(eq(activitySeen.user_id, userId), eq(activitySeen.scope, scope)))
+      .limit(1)
+    return rows[0]?.seen_at ?? null
+  }
+  async setActivitySeen(
+    userId: string,
+    scope: string,
+    at: string,
+    opts?: { manual?: boolean },
+  ): Promise<string> {
+    const current = await this.getActivitySeen(userId, scope)
+    if (current !== null && !opts?.manual && current >= at) return current
+    const updated_at = new Date().toISOString()
+    await this.db
+      .insert(activitySeen)
+      .values({ id: crypto.randomUUID(), user_id: userId, scope, seen_at: at, updated_at })
+      .onConflictDoUpdate({
+        target: [activitySeen.user_id, activitySeen.scope],
+        set: { seen_at: at, updated_at },
+      })
+    return at
+  }
+  async listReviewRoundsInOrg(
+    orgId: string,
+    opts: { since: string; limit: number },
+  ): Promise<ReviewRoundRecord[]> {
+    const rows = await this.db
+      .select({ r: reviewRound })
+      .from(reviewRound)
+      .innerJoin(artifact, eq(artifact.id, reviewRound.artifact_id))
+      .where(
+        and(
+          eq(artifact.org_id, orgId),
+          or(
+            eq(reviewRound.state, "pending"),
+            gte(reviewRound.created_at, opts.since),
+            gte(reviewRound.resolved_at, opts.since),
+          ),
+        ),
+      )
+      .orderBy(desc(reviewRound.created_at))
+      .limit(opts.limit)
+    return rows.map((r) => r.r)
   }
   listReviewRounds(artifactId: string): Promise<ReviewRoundRecord[]> {
     return this.db

@@ -1097,7 +1097,7 @@ describe("read — a context opens as a package", () => {
     // way into material the ask gate withholds.
     const denied = await callRaw(app, ownerToken, "read", { short_id: cx.id })
     expect(denied.isError).toBe(true)
-    expect(denied.text).toMatch(/No Agent/i)
+    expect(denied.text).toMatch(/No Context/i)
 
     expect((await invite()).status).toBe(201)
 

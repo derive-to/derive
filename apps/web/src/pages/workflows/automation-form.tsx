@@ -228,8 +228,8 @@ export function AutomationForm({
   return (
     <div className="flex flex-col gap-4">
       <Field
-        label="Run with Agent"
-        hint="Optional. An Agent packages durable instructions, repository pointers, skills, and permitted sources for complex work."
+        label="Use a Context"
+        hint="Optional. A Context packages reusable instructions, repository pointers, skills, and permitted sources for complex work."
       >
         <Select
           value={contextId || "none"}
@@ -238,13 +238,13 @@ export function AutomationForm({
         >
           <SelectTrigger
             data-testid="automation-context"
-            aria-label="Run with Agent"
+            aria-label="Use a Context"
             className="w-full"
           >
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="none">No Agent · use this instruction directly</SelectItem>
+            <SelectItem value="none">No Context · use this instruction directly</SelectItem>
             {(contexts.data ?? []).map((context) => (
               <SelectItem key={context.id} value={context.id}>
                 {context.name}
@@ -256,12 +256,12 @@ export function AutomationForm({
           <p className="text-xs text-muted-foreground">
             Need a reusable method for this job?{" "}
             <Link
-              to="/agents/new"
+              to="/contexts/new"
               target="_blank"
               rel="noreferrer"
               className="font-medium text-foreground underline underline-offset-2"
             >
-              Create an Agent in a new tab
+              Create a Context in a new tab
             </Link>
             .
           </p>

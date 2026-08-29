@@ -143,6 +143,153 @@ export const CollectionGrant = z
  *  by the artifacts router AND session's /users/:handle/artifacts, so it's shared here.
  *  Fields match the web Artifact interface exactly; the handler may return extra fields
  *  (org_id, raw bytes) that are omitted here — extras are tolerated. */
+/** A comment, as every comment route serves it (lib/comments.ts commentJson). */
+export const Comment = z
+  .object({
+    id: z.string(),
+    artifact_id: z.string().describe("The artifact the comment is on."),
+    thread_id: z
+      .string()
+      .describe("The thread this comment belongs to; equals id for the thread's root comment."),
+    base_version: z.number().describe("Artifact version this comment was anchored against."),
+    path: z
+      .string()
+      .nullable()
+      .describe("File within a bundle the comment targets; null if not file-scoped."),
+    anchor: z
+      .string()
+      .nullable()
+      .describe(
+        "Serialized text-quote or element anchor locating the comment; null if unanchored.",
+      ),
+    body_md: z.string().describe("Comment body in Markdown; blanked when the comment is deleted."),
+    author: z.string().describe('Author\'s display name; "anonymous" for an anonymous poster.'),
+    author_id: z
+      .string()
+      .nullable()
+      .optional()
+      .describe(
+        'Stable id of the author — a user id, an agent id, or "derive" for the built-in chat agent; null for anonymous or legacy rows.',
+      ),
+    author_kind: z
+      .enum(["user", "agent", "anonymous"])
+      .describe("What kind of principal wrote it, from the recorded id."),
+    resolution: z
+      .object({
+        at: z.string(),
+        by: z.string().nullable().describe("The resolver's display name at the time."),
+        by_id: z.string().nullable(),
+        by_kind: z.enum(["user", "agent"]).nullable(),
+        version: z
+          .number()
+          .nullable()
+          .describe("The version whose publish resolved the thread; null for a hand resolve."),
+      })
+      .nullable()
+      .optional()
+      .describe("On a resolved thread's root: who settled it, when, and by which version."),
+    state: z
+      .enum(["open", "resolved", "outdated"])
+      .describe("Thread state: open, resolved, or outdated (the quoted text changed)."),
+    created_at: z.string(),
+    anchored: z
+      .boolean()
+      .optional()
+      .describe("Whether the anchor still resolves against the current version (list only)."),
+    reactions: z
+      .record(z.string(), z.array(z.string()))
+      .optional()
+      .describe("Emoji → list of reactor display names."),
+    edited: z.boolean().optional().describe("True if the body was edited after posting."),
+    edited_at: z
+      .string()
+      .nullable()
+      .optional()
+      .describe("When the comment was last edited; null if never."),
+    deleted: z
+      .boolean()
+      .optional()
+      .describe("True if soft-deleted; the row stays but the body is blanked."),
+    mentions: z
+      .array(Mention)
+      .optional()
+      .describe("Users or agents @mentioned in the comment body."),
+  })
+  .openapi("Comment")
+
+/** A review round, as the review routes and the workspace activity serve it
+ *  (lib/review-json.ts roundJson). */
+export const ReviewRound = z
+  .object({
+    id: z.string(),
+    artifact_id: z.string(),
+    version: z.number().describe("The artifact version this round is reviewing."),
+    requested_by: z
+      .string()
+      .describe("Who asked for the review (usually the agent that published)."),
+    requested_by_name: z
+      .string()
+      .nullable()
+      .describe(
+        "The requester's name when the round opened (a row from before the name was kept is named from the directory, while the agent exists).",
+      ),
+    requested_by_kind: z
+      .enum(["user", "agent"])
+      .describe("What kind of principal asked, from the recorded id."),
+    requested_for: z.string().describe("The person asked to answer this round."),
+    state: z
+      .enum(["pending", "sent_back"])
+      .describe(
+        "Round state: pending, or sent_back (the answers came back — a note saying go IS the go-signal).",
+      ),
+    note: z.string().nullable().describe("Free-text note attached to the round; null if none."),
+    resolved_by_name: z
+      .string()
+      .nullable()
+      .describe(
+        "The human who settled the round; null while pending, or when the store has no name for the resolver.",
+      ),
+    created_at: z.string(),
+    resolved_at: z.string().nullable().describe("When it was sent back; null while pending."),
+  })
+  .openapi("ReviewRound")
+
+/** One version in the workspace activity feed: the artifact rail's version shape, cut to
+ *  what a line needs, plus the artifact it belongs to. */
+export const ActivityVersion = z
+  .object({
+    artifact_id: z.string(),
+    n: z.number(),
+    author: z.string().describe("The person's byline, healed to their live name."),
+    handle: z.string().nullable(),
+    agent: z
+      .object({ id: z.string(), name: z.string() })
+      .nullable()
+      .describe(
+        "The agent that produced this version on the author's behalf; null for the person's own.",
+      ),
+    message: z.string().nullable(),
+    name: z.string().nullable(),
+    created_at: z.string(),
+  })
+  .openapi("ActivityVersion")
+
+/** The workspace's recent activity, for the home: everything the stream is built from,
+ *  over the artifacts the viewer can see. The client folds it (pages/artifact/lib/activity.ts). */
+export const WorkspaceActivity = z
+  .object({
+    since: z.string().describe("The window's start (ISO)."),
+    artifacts: z
+      .array(z.object({ id: z.string(), short_id: z.string(), title: z.string() }))
+      .describe("The artifacts the rows below belong to — only those the viewer can read."),
+    versions: z.array(ActivityVersion),
+    comments: z.array(Comment),
+    rounds: z
+      .array(ReviewRound)
+      .describe("Pending rounds (any age) and rounds opened or settled in the window."),
+  })
+  .openapi("WorkspaceActivity")
+
 export const Artifact = z
   .object({
     short_id: z.string().describe("Stable public id — the /a/<short_id> URL slug."),

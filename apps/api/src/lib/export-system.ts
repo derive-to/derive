@@ -56,7 +56,7 @@ export interface ExportOptions {
   attachPdf?: boolean
   emailMode?: "auto" | "snapshot"
   title?: string
-  /** Internal-only PR-preview guard. Never accepted from the public request schema. */
+  /** Internal no-send capture guard. Public `preview` requests map to this server-side. */
   qaCapture?: boolean
 }
 

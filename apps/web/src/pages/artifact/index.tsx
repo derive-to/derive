@@ -66,16 +66,17 @@ import { parseRef, refFor } from "./parse-ref"
 import { PasswordGate } from "./password-gate"
 import { PublicViewer } from "./public-viewer"
 import { Presence } from "./rail-deck"
+import { runtimeDiagnosticFor } from "./render-stage"
 import type { ArtifactSearch } from "./route-config"
 import { SharedStateAuthDialog } from "./shared-state-auth-dialog"
 import { SourceEditor } from "./source-editor"
 import { type ComposerState, parseAnchor, type Sel } from "./types"
-import { useActivitySeen } from "./use-activity-seen"
 import { useArtifactFrame } from "./use-artifact-frame"
 import { useArtifactLive } from "./use-artifact-live"
 import { useArtifactRoute } from "./use-artifact-route"
 import { useCommentsPanel } from "./use-comments-panel"
 import { unsavedEditsCopy, useInlineEdit } from "./use-inline-edit"
+import { useSeenCursor } from "./use-seen-cursor"
 import { useVersionDiff } from "./use-version-diff"
 import { WorkbenchSkeleton } from "./workbench-skeleton"
 
@@ -238,10 +239,11 @@ export function Artifact({ template = false }: { template?: boolean }) {
   useDocumentTitle(art ? (art.title ?? shortId) : null)
   const commentsAvailable =
     !!me && !seeded && !!art && (!isGuest || canCommentWithRole(art.my_role))
-  const { data: comments = [] } = useQuery({
+  const commentsQ = useQuery({
     ...commentsQuery(shortId),
     enabled: commentsAvailable,
   })
+  const comments = commentsQ.data ?? []
   // Workspace tools are loaded only when their workspace is active.
   const { data: agents = [] } = useQuery({
     ...artifactAgentsQuery(shortId),
@@ -249,10 +251,22 @@ export function Artifact({ template = false }: { template?: boolean }) {
   })
   // The review rounds the activity rail renders — and the pending one its composer
   // answers. Members who can act only, like the card this replaced.
-  const { data: review } = useQuery({
+  const reviewEnabled = commentsAvailable && !isGuest
+  const reviewQ = useQuery({
     ...reviewQuery(shortId),
-    enabled: commentsAvailable && !isGuest,
+    enabled: reviewEnabled,
   })
+  const review = reviewQ.data
+  // The activity stream is the union of three sources that settle at different times
+  // (the artifact's versions, the comments, the review rounds — each gated on the
+  // session). It paints ONCE, when every source it will use has its first result: a
+  // partial stream is not an early stream, it is a different one (a card splits a turn,
+  // an ask lands between two publishes), and its open-scroll and "N new" logic would
+  // run against the wrong picture. A disabled source counts as settled.
+  const streamReady =
+    !loading &&
+    (!commentsAvailable || !commentsQ.isPending) &&
+    (!reviewEnabled || !reviewQ.isPending)
   const { data: workspaces } = useQuery({ ...workspacesQuery(), enabled: isGuest })
   // A password artifact returns 401 until the visitor unlocks it — show the
   // password prompt rather than the not-found state or a bounce to login.
@@ -369,9 +383,14 @@ export function Artifact({ template = false }: { template?: boolean }) {
   const [hoverThread, setHoverThread] = useState<string | null>(null)
   // The open/hidden comments panel, with its persistence + `c`/Esc hotkeys.
   const { panel, setPanel } = useCommentsPanel(() => setComposer(null))
-  // The reader's last visit to this artifact's activity — the rail's "New" marker and
-  // the header toggle's unread dot measure against it; closing the rail advances it.
-  const seen = useActivitySeen(shortId, panel === "open")
+  // The reader's position in this artifact's activity — the rail's "New" marker and the
+  // header toggle's unread dot measure against it; it advances after a visible dwell with
+  // the rail open, on each arrival while it stays open, and when the rail closes.
+  const seen = useSeenCursor(`artifact:${shortId}`, {
+    open: panel === "open",
+    enabled: !!me,
+    arrivals: (art?.versions.length ?? 0) + comments.length + (review?.rounds.length ?? 0),
+  })
 
   // Server-truth refetch after a write or an SSE ping (defined up here so the
   // realtime hook + the iframe message bridge below can both lean on them).
@@ -955,6 +974,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
     seeded || (rawTokenStale && !pinnedForShown) ? null : rawArtifactUrl(shortId, shown, rawToken)
   // Direct publishing is a workbench capability.
   const canPublish = !isGuest && (art.my_role === "editor" || art.my_role === "owner")
+  const runtimeDiagnostic = canPublish ? runtimeDiagnosticFor(runtimeError, shortId, shown) : null
   // md vs html drives syntax highlighting + how the live preview renders.
   const format = formatOf(art)
   // Lock: any editor can toggle it (advanced menu). While locked, nothing
@@ -997,10 +1017,11 @@ export function Artifact({ template = false }: { template?: boolean }) {
   // rail is closed (open, the rail shows its own "New" marker).
   const unread = countUnread(
     buildStream({
-      versions: art.versions,
-      comments,
-      rounds: review?.rounds ?? [],
+      versions: streamReady ? art.versions : [],
+      comments: streamReady ? comments : [],
+      rounds: streamReady ? (review?.rounds ?? []) : [],
       me: me?.name ?? undefined,
+      meId: me?.id,
       lastSeen: seen.lastSeen,
       lens: "all",
       now: Date.now(),
@@ -1597,6 +1618,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
                     textKind={inlineEdit.tools.textKind}
                     selectedText={inlineEdit.tools.selectedText}
                     video={video}
+                    runtimeDiagnostic={runtimeDiagnostic}
                     onSceneEdit={(edit) => post({ type: "video-edit", ...edit })}
                     onUndo={inlineEdit.undo}
                     onRedo={inlineEdit.redo}
@@ -1619,14 +1641,14 @@ export function Artifact({ template = false }: { template?: boolean }) {
                     {!canPublish ? (
                       <div
                         data-testid="comment-suggestion-hint"
-                        className="border-b border-border-soft px-3 py-2 text-xs text-muted-foreground"
+                        className="px-3 py-2 text-xs text-muted-foreground"
                       >
                         You can comment on this document. Select any text to suggest a change.
                       </div>
                     ) : isLocked ? (
                       <div
                         data-testid="locked-suggestion-hint"
-                        className="border-b border-border-soft px-3 py-2 text-xs text-muted-foreground"
+                        className="px-3 py-2 text-xs text-muted-foreground"
                       >
                         Changes are locked. Suggest an edit as a comment, or unlock to publish.
                       </div>
@@ -1639,6 +1661,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
               currentVersion={art.current_version}
               rounds={review?.rounds ?? []}
               pendingRound={review?.pending ?? null}
+              ready={streamReady}
               meId={me?.id ?? ""}
               meName={me?.name ?? me?.username ?? me?.email ?? ""}
               lastSeen={seen.lastSeen}

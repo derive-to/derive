@@ -62,7 +62,7 @@ export function PublicCollection() {
   return (
     <main className="min-h-dvh bg-background">
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-8 px-5 py-8 sm:px-8 sm:py-12">
-        <header className="flex flex-wrap items-end gap-4 border-b border-border-soft pb-6">
+        <header className="flex flex-wrap items-end gap-4">
           <div className="min-w-0 flex-1">
             <div className="mb-2 flex items-center gap-2 text-sm text-muted-foreground">
               <Icon name="collection" /> Collection

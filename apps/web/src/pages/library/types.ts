@@ -62,7 +62,7 @@ export const LIBRARY_SEARCH_PARAMS = [
 ] as const
 
 export type LibrarySearch = {
-  /** Which of the library's two views is showing. Absent = Artifacts. Collections is
+  /** Which of the Artifact page's two views is showing. Absent = All. Collections is
    *  a view of the same page rather than its own route: it shares the toolbar, and
    *  opening a shelf from it is just the `collection` filter below. */
   view?: "collections"
