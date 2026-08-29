@@ -33,6 +33,10 @@ version history.
   to include a line-by-line diff between two versions. The diff uses readable Markdown,
   not raw HTML, so it shows what changed rather than tag noise. `since_version` defaults to
   `to_version − 1`.
+- **Changed parts.** Pass `response_format='parts'` to return up to three parts that
+  changed between the selected versions. Each current part includes its stable node ref and a
+  bounded readable body. Removed parts keep their old ref. Use this when you need to continue
+  work, and use `detailed` when you need a line audit. Bundles use `pages_changed` instead.
 - **Review state.** The `review` field tracks a requested review round: `pending` means
   it is waiting; `sent_back` means the reviewer returned their answers, and their note saying
   "good to go" is the go-signal. Open or reopen a round with `request_review` on `publish`.

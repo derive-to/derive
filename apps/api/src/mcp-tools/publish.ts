@@ -24,6 +24,7 @@ import { PROFILE_PLACEHOLDER_HTML } from "../brandprint-reference"
 import { afterPublish } from "../lib/after-publish"
 import { AGENT_WRITES_OFF, agentWritesOff } from "../lib/agent-writes"
 import { cleanPath, mergeBundleZip, zipBundleFiles } from "../lib/bundle"
+import { type ChangedParts, changedParts } from "../lib/changed-parts"
 import {
   collectRender,
   RENDER_VARIANTS,
@@ -254,6 +255,7 @@ export function registerPublishTool(tc: ToolContext): void {
           .describe(
             "After a LIVE publish, ask your human to review this version — the /derive loop.",
           ),
+        readback: z.boolean().optional().describe("Return changed parts after a revision."),
         // SEE IT in the same call. Optional and off by default, so an existing caller's
         // response shape never changes.
         render: z
@@ -405,6 +407,7 @@ export function registerPublishTool(tc: ToolContext): void {
       filename,
       addresses,
       request_review,
+      readback,
       render,
       wait,
       workspace,
@@ -595,6 +598,8 @@ export function registerPublishTool(tc: ToolContext): void {
       // kinds of intent, and a batch mixing them would have no honest ordering.
       let editsApplied = 0
       let slideOpsApplied = 0
+      let readbackBeforeSource: string | null = null
+      let readbackBeforeContentType: string | null = null
       if (edits !== undefined || slide_ops !== undefined) {
         const field = slide_ops !== undefined ? "slide_ops" : "edits"
         if (edits !== undefined && slide_ops !== undefined)
@@ -606,6 +611,14 @@ export function registerPublishTool(tc: ToolContext): void {
         const deps = {
           getVersion: ctx.meta.getVersion.bind(ctx.meta),
           sourceText: ctx.sourceText,
+          ...(readback
+            ? {
+                captureSource: (source: string, contentType: string | null) => {
+                  readbackBeforeSource = source
+                  readbackBeforeContentType = contentType ?? "text/html"
+                },
+              }
+            : {}),
         }
         let materialized: MaterializedEdits
         try {
@@ -649,6 +662,12 @@ export function registerPublishTool(tc: ToolContext): void {
             `"${short_id}" is locked — leave your suggested change as a comment, or ask an editor to unlock it.`,
           )
       }
+      if (readback && !existing)
+        return err("`readback` compares a revision with its previous version — pass a short_id.")
+      if (readback && isBundle)
+        return err(
+          "Bundles report changed page paths through catch_up; `readback` needs a single file.",
+        )
 
       // Publishing needs publish standing — a commenter-grade grant is steered to
       // comments, where its suggestion reaches a person who can apply it.
@@ -889,6 +908,39 @@ export function registerPublishTool(tc: ToolContext): void {
         const storedSlots = assertedOnly(
           await ctx.meta.getVersionData(artifact.id, version.n).catch(() => []),
         )
+        let changedReadback: ChangedParts | null = readback
+          ? {
+              count: 0,
+              changes: [],
+              note: "The revision landed, but its previous source was unavailable. Read the current version to verify it.",
+            }
+          : null
+        if (readback && artifact.kind === "file" && typeof content === "string") {
+          const previous =
+            readbackBeforeSource !== null
+              ? null
+              : await ctx.meta.getVersion(artifact.id, version.n - 1)
+          const previousSource =
+            readbackBeforeSource ?? (previous ? await ctx.sourceText(previous) : null)
+          const previousContentType =
+            readbackBeforeContentType ?? previous?.content_type ?? "text/html"
+          if (previousSource !== null) {
+            try {
+              changedReadback = changedParts(
+                previousSource,
+                previousContentType,
+                content,
+                version.content_type ?? "text/html",
+              )
+            } catch {
+              changedReadback = {
+                count: 0,
+                changes: [],
+                note: "The revision landed, but these versions could not be mapped into stable document parts. Read the current version to verify it.",
+              }
+            }
+          }
+        }
         const payload = {
           published: true,
           short_id: artifact.short_id,
@@ -928,6 +980,7 @@ export function registerPublishTool(tc: ToolContext): void {
           ...(artifact.derived_from ? { derived_from } : {}),
           ...(editsApplied ? { edits_applied: editsApplied } : {}),
           ...(slideOpsApplied ? { slide_ops_applied: slideOpsApplied } : {}),
+          ...(changedReadback ? { readback: changedReadback } : {}),
           ...(resolved.length ? { resolved } : {}),
           ...(actingFor ? { opened_in_tab: openedInTab } : {}),
           note:

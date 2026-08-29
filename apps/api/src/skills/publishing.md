@@ -42,6 +42,11 @@ sandboxed viewer, so publish real designed pages, not just prose.
   `addresses`, `message`, `request_review`.
 - **base_version safety.** With `edits`, pass the version you read as `base_version`; the
   publish errors instead of applying when the artifact has moved past it.
+- **Changed-part readback.** On a single-file revision, pass `readback:true` to receive up to
+  three parts that changed. Each current part includes its stable node ref and a bounded
+  readable body. This verifies the edit and gives the next working address in the publish call.
+  Omit it when the ordinary small receipt is enough. Bundles report changed paths through
+  `catch_up` instead.
 - **Full single file.** Provide the complete `content` (HTML or Markdown) for a
   single-file artifact.
 - **Bundle.** Provide `files` (a map of page path → content) for a multi-page bundle such as a

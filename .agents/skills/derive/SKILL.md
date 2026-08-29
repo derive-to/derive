@@ -97,6 +97,8 @@ For an existing artifact:
 3. Reply when a comment needs an answer. Use a reaction for a simple acknowledgement.
 4. Revise with `publish`. Prefer exact `edits` plus `base_version` for a partial change;
    include thread ids in `addresses` on the same publish.
+   On the remote MCP, pass `readback:true` to verify the changed parts in the same call.
+   Later, use `catch_up` with `response_format:"parts"` to recover the same bounded working set.
 5. If someone asks for review, set `request_review:true`, then chain
    `catch_up({short_id, wait:50})` while the round is pending. On `sent_back`, read the
    note and sweep all threads, then repeat. The note is where the human says whether to

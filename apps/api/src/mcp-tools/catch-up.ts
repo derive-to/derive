@@ -1,5 +1,6 @@
 import { assertedOnly, diffLines, factDeltas, formatDiff, toMarkdown } from "@derive/core"
 import { z } from "zod"
+import { type ChangedParts, changedParts } from "../lib/changed-parts"
 import { clip } from "../lib/clip"
 import type { ToolContext } from "../mcp-tool-context"
 import {
@@ -45,11 +46,9 @@ export function registerCatchUpTool(tc: ToolContext): void {
             "Return ONLY this state's comment threads (the feedback queue) instead of the delta.",
           ),
         response_format: z
-          .enum(["summary", "detailed"])
+          .enum(["summary", "detailed", "parts"])
           .optional()
-          .describe(
-            "'summary' (default, token-light) omits the line diff; 'detailed' includes it.",
-          ),
+          .describe("summary (default) | detailed | parts."),
         wait: z.coerce
           .number()
           .int()
@@ -130,12 +129,16 @@ export function registerCatchUpTool(tc: ToolContext): void {
       const vs = await ctx.meta.getVersion(a.id, since)
       const vh = await ctx.meta.getVersion(a.id, to)
       let entryDiff: string | null = null
+      let partChanges: ChangedParts | null =
+        response_format === "parts" && since >= to
+          ? { count: 0, changes: [], note: "No newer version to compare." }
+          : null
       let pagesChanged: ReturnType<typeof bundleFileChanges> | null = null
       if (vs && vh && since < to) {
-        const [ms, mh] = [await manifestOf(ctx, vs), await manifestOf(ctx, vh)]
+        const [ms, mh] = await Promise.all([manifestOf(ctx, vs), manifestOf(ctx, vh)])
         if (ms && mh) pagesChanged = bundleFileChanges(ms, mh)
         if (response_format === "detailed") {
-          const [as_, ah] = [await ctx.sourceText(vs), await ctx.sourceText(vh)]
+          const [as_, ah] = await Promise.all([ctx.sourceText(vs), ctx.sourceText(vh)])
           if (as_ !== null && ah !== null) {
             // Diff the READABLE form, not raw source: HTML tag noise drowns a
             // real change, and minified one-line HTML produces one useless
@@ -144,8 +147,46 @@ export function registerCatchUpTool(tc: ToolContext): void {
             const md = diffLines(toMarkdown(as_, vs.content_type), toMarkdown(ah, vh.content_type))
             entryDiff = `diff of markdown conversion (semantic view):\n\n${clip(formatDiff(md))}`
           }
+        } else if (response_format === "parts") {
+          if (ms || mh) {
+            partChanges = {
+              count: 0,
+              changes: [],
+              note: "Bundles report changed page paths in pages_changed. Read only those pages.",
+            }
+          } else {
+            const [as_, ah] = await Promise.all([ctx.sourceText(vs), ctx.sourceText(vh)])
+            if (as_ !== null && ah !== null) {
+              try {
+                partChanges = changedParts(
+                  as_,
+                  vs.content_type ?? "text/html",
+                  ah,
+                  vh.content_type ?? "text/html",
+                )
+              } catch {
+                partChanges = {
+                  count: 0,
+                  changes: [],
+                  note: "These versions could not be mapped into stable document parts. Use response_format:'detailed' for the line diff.",
+                }
+              }
+            } else {
+              partChanges = {
+                count: 0,
+                changes: [],
+                note: "One selected version has no readable source. Use the version history to choose another range.",
+              }
+            }
+          }
         }
       }
+      if (response_format === "parts" && !partChanges)
+        partChanges = {
+          count: 0,
+          changes: [],
+          note: "One selected version is unavailable. Use the version history to choose another range.",
+        }
       // ONE read of this artifact's comments, split by state in memory. These were three
       // separate `listComments(a.id, { state })` calls differing only by the filter — three
       // ~80ms round trips (see edge-pg.ts) on the agent loop's hottest call, for rows out of
@@ -230,6 +271,7 @@ export function registerCatchUpTool(tc: ToolContext): void {
                 "(omitted) — call again with response_format='detailed' for the line-level changes.",
             }),
         ...(slotChanges.length ? { data_changes: slotChanges } : {}),
+        ...(partChanges ? { changed_parts: partChanges } : {}),
         open_comments: open.map(summarizeComment),
         ...(outdated.length ? { outdated_comments: outdated.map(summarizeComment) } : {}),
       })
