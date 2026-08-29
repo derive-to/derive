@@ -975,27 +975,33 @@ export function registerReadTool(tc: ToolContext): void {
             return err(e instanceof Error ? e.message : "This document's structure can't be read.")
           }
           const matcher = searchMatcher(focus, false)
-          const matches = structure.nodes.flatMap((target) => {
+          let matchCount = 0
+          const matches: Array<{ target: DocMap["nodes"][number]; body: string }> = []
+          for (const target of structure.nodes) {
             const body = present(src.slice(target.start, target.end), ct, fmt)
             matcher.lastIndex = 0
-            if (!matcher.test(body)) return []
-            return [{ target, body }]
-          })
+            if (!matcher.test(body)) continue
+            matchCount += 1
+            // Count every match so truncation stays exact, but retain only the bodies
+            // the response can return. A common term in a long document must not hold a
+            // second readable copy of the whole document in Worker memory.
+            if (matches.length < FOCUS_MATCH_MAX) matches.push({ target, body })
+          }
           return json({
             ...meta,
             focus,
-            count: matches.length,
-            matches: matches.slice(0, FOCUS_MATCH_MAX).map(({ target, body }) => ({
+            count: matchCount,
+            matches: matches.map(({ target, body }) => ({
               node: target.ref,
               type: target.type,
               chars: body.length,
               ...(target.title ? { title: target.title } : {}),
               body: clipFocusBody(body),
             })),
-            ...(matches.length > FOCUS_MATCH_MAX
-              ? { truncated: true, more_matches: matches.length - FOCUS_MATCH_MAX }
+            ...(matchCount > FOCUS_MATCH_MAX
+              ? { truncated: true, more_matches: matchCount - FOCUS_MATCH_MAX }
               : {}),
-            next: matches.length
+            next: matchCount
               ? `Use read(node:"<ref>", format:"html") only if you need exact source for an edit.`
               : `No matching part. Try one neighbouring literal, or use find(short_id:"${short_id}", query:"${focus}") for line-level search.`,
           })
