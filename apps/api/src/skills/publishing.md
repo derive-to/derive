@@ -45,6 +45,8 @@ sandboxed viewer, so publish real designed pages, not just prose.
 - **Changed-part readback.** On a single-file revision, pass `readback:true` to receive up to
   three parts that changed. Each current part includes its stable node ref and a bounded
   readable body. This verifies the edit and gives the next working address in the publish call.
+  A reordered part returns `change:'moved'`, its current `node`, and its previous
+  `from_node`. Inserts and deletes do not mark every shifted neighbour as moved.
   Omit it when the ordinary small receipt is enough. Bundles report changed paths through
   `catch_up` instead.
 - **Full single file.** Provide the complete `content` (HTML or Markdown) for a

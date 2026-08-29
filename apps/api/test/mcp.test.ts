@@ -3069,6 +3069,26 @@ describe("remote MCP endpoint (/mcp)", () => {
       node: "slide:2",
       type: "slide",
     })
+
+    const moved = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          short_id: created.short_id,
+          base_version: 3,
+          slide_ops: [{ op: "move", from: 5, to: 2 }],
+          readback: true,
+        }),
+      ),
+    )
+    expect(moved.readback).toMatchObject({ count: 1 })
+    expect(moved.readback.changes).toHaveLength(1)
+    expect(moved.readback.changes[0]).toMatchObject({
+      change: "moved",
+      node: "slide:2",
+      from_node: "slide:5",
+      type: "slide",
+      title: "Slide 4",
+    })
   })
 
   it("publish edits: over the workspace storage quota is rejected, same as content/files (regression: the MCP edits path used to skip this check)", async () => {
