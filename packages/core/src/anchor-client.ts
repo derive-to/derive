@@ -4277,6 +4277,33 @@ interface ElReg {
       const t = asEl(e.target)?.closest("[data-derive-editable]")
       if (!t) return
       const it = e.inputType || ""
+      /* Replacing a selection may delete the DOM nodes between its endpoints before
+         the diff collector ever sees them. Plain inline wrappers are intentionally
+         replaceable (the authored-HTML seam fixture and Markdown's adjacent <strong>
+         runs rely on that), but an attributed descendant carries authored metadata:
+         hrefs, annotations, IDs, ARIA wiring, classes, and data attributes. Flattening
+         any of those into plaintext would turn a convenient edit into source loss.
+
+         cloneContents gives us exactly the structure the browser is about to remove.
+         A selection wholly inside one attributed element clones only text and remains
+         safe: the element survives and the aligned text-node diff preserves it. */
+      const selection = window.getSelection()
+      if (selection?.rangeCount && !selection.isCollapsed) {
+        const range = selection.getRangeAt(0)
+        const owner = range.commonAncestorContainer
+        const ownerEl = owner.nodeType === 1 ? (owner as Element) : owner.parentElement
+        if (ownerEl?.closest("[data-derive-editable]") === t) {
+          const fragment = range.cloneContents()
+          const attributed = Array.from(fragment.querySelectorAll("*")).some(
+            (el) => el.attributes.length > 0,
+          )
+          if (attributed) {
+            e.preventDefault()
+            post({ type: "edit-blocked", reason: "protected-structure" })
+            return
+          }
+        }
+      }
       // Before the mutation, not after: this is the only place we can capture what
       // the block looked like a keystroke ago.
       if (t instanceof HTMLElement) checkpointTyping(t)

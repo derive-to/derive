@@ -68,6 +68,8 @@ const BLOCKED_COPY: Record<string, string> = {
   "format-outside": "Select text inside the document to format it.",
   "format-range":
     "That selection is part of something bigger. Select a run of plain words instead.",
+  "protected-structure":
+    "That selection includes linked or annotated content. Edit inside one element at a time.",
 }
 
 /**

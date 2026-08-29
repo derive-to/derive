@@ -524,6 +524,50 @@ test("Markdown saves a selection across consecutive bold subtitle lines", async 
   }).toPass({ timeout: 10_000 })
 })
 
+test("typing across attributed inline elements refuses instead of flattening authored metadata", async ({
+  owner,
+}) => {
+  const html =
+    '<p class="target"><a href="/jobs">ORBIT-LINK</a> <mark data-note="keep">ORBIT-NOTE</mark></p>'
+  const shortId = await publishArtifact(owner, "protected-inline.html", html, "text/html")
+  await openArtifact(owner, shortId)
+  await enterEditMode(owner)
+
+  const target = doc(owner).locator("p.target")
+  // The preview timeout overlay can race a healthy iframe in the local harness;
+  // the frame is already rendered and interactive, so exercise the frame directly.
+  await target.evaluate((el) => {
+    const rect = el.getBoundingClientRect()
+    el.querySelector("a")?.dispatchEvent(
+      new MouseEvent("click", {
+        bubbles: true,
+        cancelable: true,
+        clientX: rect.left + 8,
+        clientY: rect.top + rect.height / 2,
+        detail: 1,
+      }),
+    )
+  })
+  await expect(target).toHaveAttribute("contenteditable", /^(plaintext-only|true)$/)
+  await target.evaluate((el) => {
+    const range = document.createRange()
+    range.selectNodeContents(el)
+    const selection = window.getSelection()
+    selection?.removeAllRanges()
+    selection?.addRange(range)
+  })
+  await owner.keyboard.type("REFUSAL-CHECK")
+
+  await expect(
+    owner.getByText("That selection includes linked or annotated content."),
+  ).toBeVisible()
+  await expect(target).toContainText("ORBIT-LINK ORBIT-NOTE")
+  await expect(target.locator('a[href="/jobs"]')).toHaveText("ORBIT-LINK")
+  await expect(target.locator('mark[data-note="keep"]')).toHaveText("ORBIT-NOTE")
+  await expect(owner.getByTestId("inline-edit-save")).toHaveCount(0)
+  expect(await contentOf(owner, shortId)).toBe(html)
+})
+
 test("Inspect appears only inside an editor's HTML edit session", async ({ owner, secondUser }) => {
   // Make the shared chat tab explicit for this isolated workspace. The resting artifact
   // is conversation-only; Inspect appears only after the existing Edit entry point.
