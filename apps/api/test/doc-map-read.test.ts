@@ -344,6 +344,23 @@ describe("read focus", () => {
     expect(missing.next).toContain("No matching part")
   })
 
+  it("keeps exact focus results after the candidate index warms", async () => {
+    const sections = Array.from({ length: 120 }, (_, i) => {
+      const target = i === 91 ? "<p>The zirconium approval is ready.</p>" : ""
+      return `<section><h2>Choice ${i + 1}</h2><p>${"routine context ".repeat(30)}</p>${target}</section>`
+    }).join("\n")
+    const source = `<!doctype html><html><body>${sections}</body></html>`
+    const { app, token, short_id } = await setupDocument("focus-candidate-index", source)
+
+    const cold = await readJson(app, token, { short_id, focus: "zirconium approval" })
+    const warm = await readJson(app, token, { short_id, focus: "zirconium approval" })
+    const absent = await readJson(app, token, { short_id, focus: "quartz compaction" })
+
+    expect(warm).toEqual(cold)
+    expect(warm.matches[0]).toMatchObject({ node: "sec:choice-92", title: "Choice 92" })
+    expect(absent).toMatchObject({ count: 0, matches: [] })
+  })
+
   it("refuses a focus combined with another part selector", async () => {
     const { app, token, short_id } = await setup("focus-exclusive")
     for (const extra of [

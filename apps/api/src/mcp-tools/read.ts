@@ -35,6 +35,12 @@ import { boundSources, sourceTools } from "../lib/chat-sources"
 import { clip, MAX_CHARS } from "../lib/clip"
 import { pickVariant, rendersOff } from "../lib/collect-render"
 import { assembleContextPackage } from "../lib/context-package"
+import {
+  buildFocusIndex,
+  canIndexFocus,
+  type FocusIndex,
+  focusCandidates,
+} from "../lib/focus-index"
 import { sniffImageType } from "../lib/image"
 import { baseType, isTextType, present, type ReadFormat, searchMatcher } from "../lib/search"
 import { WeightedLruCache } from "../lib/source-text-cache"
@@ -225,6 +231,15 @@ export function registerReadTool(tc: ToolContext): void {
     maxBytes: 8 * 1024 * 1024,
     maxEntries: 64,
     maxEntryBytes: 2 * 1024 * 1024,
+  })
+  // One fixed-size Bloom filter per node. It rejects nodes that cannot contain a
+  // focused literal; the ordinary exact matcher verifies every candidate. This is
+  // separate from the source cache so a large, rarely searched artifact cannot crowd
+  // out the source text that all read modes share.
+  const focusIndexes = new WeightedLruCache<FocusIndex>({
+    maxBytes: 8 * 1024 * 1024,
+    maxEntries: 64,
+    maxEntryBytes: 3 * 1024 * 1024,
   })
   const structureOf = (v: VersionRecord, source: string, contentType: string): DocMap => {
     const key = `${contentType}:${v.blob_key}`
@@ -1064,14 +1079,52 @@ export function registerReadTool(tc: ToolContext): void {
           const matcher = searchMatcher(focus, false)
           let matchCount = 0
           const matches: Array<{ target: DocMap["nodes"][number]; body: string }> = []
-          for (const target of structure.nodes) {
+          const indexKey = `${ct ?? "text/html"}:${v.blob_key}`
+          const searchableFormat = fmt === "markdown" ? "text" : fmt
+          let candidates: number[] | null = null
+          let builtDuringScan = false
+          if (searchableFormat !== "html" && canIndexFocus(focus)) {
+            const cached = focusIndexes.get(indexKey)
+            if (cached) candidates = focusCandidates(cached, focus)
+            else {
+              // The cold build performs the exact scan at the same time. It therefore
+              // adds only Bloom bookkeeping to the first request and never converts a
+              // matching node twice.
+              const built = buildFocusIndex(structure.nodes.length, (index) => {
+                const target = structure.nodes[index]
+                if (!target) return ""
+                const body = present(src.slice(target.start, target.end), ct, searchableFormat)
+                matcher.lastIndex = 0
+                if (matcher.test(body)) {
+                  matchCount += 1
+                  if (matches.length < FOCUS_MATCH_MAX)
+                    matches.push({
+                      target,
+                      body:
+                        fmt === "markdown"
+                          ? present(src.slice(target.start, target.end), ct, fmt)
+                          : body,
+                    })
+                }
+                return body
+              })
+              focusIndexes.set(indexKey, built, built.bytes)
+              builtDuringScan = true
+            }
+          }
+          const targetIndexes = builtDuringScan
+            ? []
+            : (candidates ?? structure.nodes.map((_target, index) => index))
+          for (const index of targetIndexes) {
+            const target = structure.nodes[index]
+            if (!target) continue
             const sourcePart = src.slice(target.start, target.end)
             // `focus` asks for literal document text. Markdown is the response format, not
             // the match domain: generated `#`, `*`, link, and table syntax must not split a
             // phrase a viewer sees as contiguous. The visible-text projection is also much
             // cheaper than formatting every non-match as Markdown. Exact-source focus keeps
             // its existing HTML search contract.
-            const searchBody = present(sourcePart, ct, fmt === "markdown" ? "text" : fmt)
+            const searchBody = present(sourcePart, ct, searchableFormat)
             matcher.lastIndex = 0
             if (!matcher.test(searchBody)) continue
             matchCount += 1
