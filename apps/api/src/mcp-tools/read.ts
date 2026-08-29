@@ -37,6 +37,7 @@ import { pickVariant, rendersOff } from "../lib/collect-render"
 import { assembleContextPackage } from "../lib/context-package"
 import { sniffImageType } from "../lib/image"
 import { baseType, isTextType, present, type ReadFormat, searchMatcher } from "../lib/search"
+import { WeightedLruCache } from "../lib/source-text-cache"
 import { canReadTemplateLibrary } from "../lib/template-library-access"
 import { templateLibraryEntryJson } from "../lib/template-library-entry"
 import { log } from "../log"
@@ -217,6 +218,26 @@ export function registerReadTool(tc: ToolContext): void {
     resolveWs,
     askableContexts,
   } = tc
+  // A source blob is immutable. Keep its parsed structure beside the hot source-text
+  // cache so repeated focus and node reads do not rebuild thousands of node objects.
+  // This cache is deliberately smaller: the source text remains the useful primary copy.
+  const structures = new WeightedLruCache<DocMap>({
+    maxBytes: 8 * 1024 * 1024,
+    maxEntries: 64,
+    maxEntryBytes: 2 * 1024 * 1024,
+  })
+  const structureOf = (v: VersionRecord, source: string, contentType: string): DocMap => {
+    const key = `${contentType}:${v.blob_key}`
+    const cached = structures.get(key)
+    if (cached) return cached
+    const structure = docMap(source, contentType)
+    const bytes = structure.nodes.reduce(
+      (total, node) => total + 192 + (node.title?.length ?? 0) * 2,
+      256,
+    )
+    structures.set(key, structure, bytes)
+    return structure
+  }
 
   // READ CONTENT --------------------------------------------------------------
   server.registerTool(
@@ -1036,7 +1057,7 @@ export function registerReadTool(tc: ToolContext): void {
         if (focus) {
           let structure: DocMap
           try {
-            structure = docMap(src, ct ?? "text/html")
+            structure = structureOf(v, src, ct ?? "text/html")
           } catch (e) {
             return err(e instanceof Error ? e.message : "This document's structure can't be read.")
           }
@@ -1088,7 +1109,7 @@ export function registerReadTool(tc: ToolContext): void {
         if (wantMap || node) {
           let structure: DocMap
           try {
-            structure = docMap(src, ct ?? "text/html")
+            structure = structureOf(v, src, ct ?? "text/html")
           } catch (e) {
             return err(e instanceof Error ? e.message : "This document's structure can't be read.")
           }
