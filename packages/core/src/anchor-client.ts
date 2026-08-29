@@ -3392,6 +3392,27 @@ interface ElReg {
       if (!axisAlignedTransform(getComputedStyle(current))) return false
     return true
   }
+  const structureNodeVisibleForSnap = (node: StructureNode): boolean => {
+    if (!structureNodeAvailable(node) || !structureTransformResizable(node)) return false
+    const rect = node.el.getBoundingClientRect()
+    const viewportWidth = window.innerWidth || document.documentElement.clientWidth
+    const viewportHeight = window.innerHeight || document.documentElement.clientHeight
+    if (rect.left < 0 || rect.top < 0 || rect.right > viewportWidth || rect.bottom > viewportHeight)
+      return false
+    for (let current = node.el.parentElement; current; current = current.parentElement) {
+      const style = getComputedStyle(current)
+      const clipsX = /^(?:auto|hidden|clip|scroll)$/.test(style.overflowX)
+      const clipsY = /^(?:auto|hidden|clip|scroll)$/.test(style.overflowY)
+      if (!clipsX && !clipsY) continue
+      const clip = current.getBoundingClientRect()
+      if (
+        (clipsX && (rect.left < clip.left - 1 || rect.right > clip.right + 1)) ||
+        (clipsY && (rect.top < clip.top - 1 || rect.bottom > clip.bottom + 1))
+      )
+        return false
+    }
+    return true
+  }
   const structureIntegrityValid = (region: StructureRegion): boolean => {
     const ownerEl = region.el.parentElement?.closest(structureNodeSelector)
     if (
@@ -3629,26 +3650,73 @@ interface ElReg {
       selfAlignment && selfAlignment !== "auto" ? selfAlignment : regionStyle.alignItems
     return structuralResizeAxis(leftGap, rightGap, alignment.includes("center"))
   }
+  const horizontalStructureWritingMode = (node: StructureNode, region: StructureRegion): boolean =>
+    getComputedStyle(node.el).writingMode === "horizontal-tb" &&
+    getComputedStyle(region.el).writingMode === "horizontal-tb"
+  const cssTrackCount = (value: string): number => {
+    let count = 0
+    let depth = 0
+    let inTrack = false
+    for (const character of value.trim()) {
+      if (character === "(") depth++
+      if (character === ")") depth = Math.max(0, depth - 1)
+      if (/\s/.test(character) && depth === 0) inTrack = false
+      else if (!inTrack) {
+        count++
+        inTrack = true
+      }
+    }
+    return count
+  }
+  const structureGridHasSingleColumn = (style: CSSStyleDeclaration): boolean =>
+    !style.gridAutoFlow.includes("column") &&
+    (style.gridTemplateColumns === "none" || cssTrackCount(style.gridTemplateColumns) === 1)
+  const structureStackLayoutResizable = (node: StructureNode, region: StructureRegion): boolean => {
+    if (!horizontalStructureWritingMode(node, region)) return false
+    const regionStyle = getComputedStyle(region.el)
+    const nodeStyle = getComputedStyle(node.el)
+    if (!/^(?:static|relative)$/.test(nodeStyle.position)) return false
+    if (!/^(?:auto|1)$/.test(regionStyle.columnCount) || regionStyle.columnWidth !== "auto")
+      return false
+    if (
+      regionStyle.display.includes("flex") &&
+      (regionStyle.flexDirection !== "column" || regionStyle.flexWrap !== "nowrap")
+    )
+      return false
+    if (regionStyle.display.includes("grid") && !structureGridHasSingleColumn(regionStyle))
+      return false
+    let previousBottom = Number.NEGATIVE_INFINITY
+    for (const child of connectedStructureNodes(region)) {
+      if (!structureNodeAvailable(child)) continue
+      const style = getComputedStyle(child.el)
+      if (!/^(?:static|relative)$/.test(style.position) || style.float !== "none") return false
+      const rect = child.el.getBoundingClientRect()
+      if (rect.top < previousBottom - 1) return false
+      previousBottom = Math.max(previousBottom, rect.bottom)
+    }
+    return true
+  }
+  const structureWidthAxisFor = (node: StructureNode, region: StructureRegion) => {
+    if (!structureStackLayoutResizable(node, region)) return null
+    return structureResizeAxisFor(node, region)
+  }
   const structureHeightAxisFor = (node: StructureNode, region: StructureRegion) => {
+    if (!structureStackLayoutResizable(node, region)) return null
     const regionStyle = getComputedStyle(region.el)
     const nodeStyle = getComputedStyle(node.el)
     if (regionStyle.display.includes("flex")) {
-      if (!regionStyle.flexDirection.includes("column")) return null
+      if (regionStyle.flexDirection !== "column") return null
       const alignment = regionStyle.justifyContent
-      if (/space-|stretch/.test(alignment)) return null
-      if (alignment.includes("center")) return structuralBlockResizeAxis(0, 0, true)
-      return alignment.includes("end")
-        ? structuralBlockResizeAxis(1, 0)
-        : structuralBlockResizeAxis(0, 1)
+      if (!/^(?:normal|start|flex-start)$/.test(alignment)) return null
+      return structuralBlockResizeAxis(0, 1)
     }
     if (regionStyle.display.includes("grid")) {
+      if (!structureGridHasSingleColumn(regionStyle)) return null
       const selfAlignment = nodeStyle.alignSelf
       const alignment =
         selfAlignment && selfAlignment !== "auto" ? selfAlignment : regionStyle.alignItems
-      if (alignment.includes("center")) return structuralBlockResizeAxis(0, 0, true)
-      return alignment.includes("end")
-        ? structuralBlockResizeAxis(1, 0)
-        : structuralBlockResizeAxis(0, 1)
+      if (!/^(?:start|flex-start)$/.test(alignment)) return null
+      return structuralBlockResizeAxis(0, 1)
     }
     return structuralBlockResizeAxis(0, 1)
   }
@@ -3828,17 +3896,18 @@ interface ElReg {
       `${reportedWidth}% wide and ${reportedHeight} pixels high`,
     )
     const transformDisabled = !structureTransformResizable(selected)
+    const widthAxis = structureWidthAxisFor(selected, region)
     const heightAxis = structureHeightAxisFor(selected, region)
-    structureResizeHandle.disabled = transformDisabled
+    structureResizeHandle.disabled = transformDisabled || !widthAxis
     structureHeightHandle.disabled = transformDisabled || !heightAxis
-    structureCornerHandle.disabled = transformDisabled || !heightAxis
+    structureCornerHandle.disabled = transformDisabled || !widthAxis || !heightAxis
     structureResizeHandle.classList.toggle(
       "derive-structure-resize-left",
-      structureResizeAxisFor(selected, region).edge === "left",
+      widthAxis?.edge === "left",
     )
     structureCornerHandle.classList.toggle(
       "derive-structure-resize-left",
-      structureResizeAxisFor(selected, region).edge === "left",
+      widthAxis?.edge === "left",
     )
     structureHeightHandle.classList.toggle(
       "derive-structure-resize-top",
@@ -3849,7 +3918,9 @@ interface ElReg {
       heightAxis?.edge === "top",
     )
     structureResizeHandle.title = structureResizeHandle.disabled
-      ? "Transformed elements keep their authored width"
+      ? transformDisabled
+        ? "Transformed elements keep their authored width"
+        : "This authored layout controls horizontal distribution"
       : "Drag or use arrow keys to resize width"
     structureHeightHandle.title = structureHeightHandle.disabled
       ? transformDisabled
@@ -3859,7 +3930,7 @@ interface ElReg {
     structureCornerHandle.title = structureCornerHandle.disabled
       ? transformDisabled
         ? "Transformed elements keep their authored size"
-        : "This authored stack controls vertical distribution"
+        : "This authored layout controls size distribution"
       : "Drag to resize width and height"
   }
   refreshResizeUi = () => {
@@ -4117,9 +4188,7 @@ interface ElReg {
     ])
     if (!(contentWidth > 0)) return [...candidates].map(([width, label]) => ({ width, label }))
     for (const node of connectedStructureNodes(region)) {
-      if (node === selected || !structureNodeAvailable(node)) continue
-      const rect = node.el.getBoundingClientRect()
-      if (rect.bottom <= 0 || rect.top >= innerHeight) continue
+      if (node === selected || !structureNodeVisibleForSnap(node)) continue
       const width = Math.round((node.el.offsetWidth / contentWidth) * 100)
       if (width >= MIN_STRUCTURAL_WIDTH_PCT && width <= MAX_STRUCTURAL_WIDTH_PCT)
         candidates.set(width, `Match ${node.id}`)
@@ -4132,9 +4201,7 @@ interface ElReg {
   ): StructureHeightCandidate[] => {
     const candidates = new Map<number, string>()
     for (const node of connectedStructureNodes(region)) {
-      if (node === selected || !structureNodeAvailable(node)) continue
-      const rect = node.el.getBoundingClientRect()
-      if (rect.bottom <= 0 || rect.top >= innerHeight) continue
+      if (node === selected || !structureNodeVisibleForSnap(node)) continue
       const height = Math.round(node.el.offsetHeight)
       if (height >= MIN_STRUCTURAL_HEIGHT_PX && height <= MAX_STRUCTURAL_HEIGHT_PX)
         candidates.set(height, `Match ${node.id} height`)
@@ -4214,8 +4281,6 @@ interface ElReg {
     heightMotion: -1 | 0.5 | 1
     transition: string
     transitionPriority: string
-    widthCandidates: StructureWidthCandidate[]
-    heightCandidates: StructureHeightCandidate[]
     width: number
     height: number
     moved: boolean
@@ -4230,7 +4295,9 @@ interface ElReg {
     const region = node ? regionForStructureNode(node) : null
     if (!node || !region || !document.contains(node.el) || !structureTransformResizable(node))
       return
+    const widthAxis = structureWidthAxisFor(node, region)
     const heightAxis = structureHeightAxisFor(node, region)
+    if (mode !== "height" && !widthAxis) return
     if (mode !== "width" && !heightAxis) return
     const contentWidth = structureContentWidth(region)
     const regionRect = region.el.getBoundingClientRect()
@@ -4246,7 +4313,6 @@ interface ElReg {
       structureWidthName(node),
       structureHeightName(node),
     )
-    const widthAxis = structureResizeAxisFor(node, region)
     const transition = node.el.style.getPropertyValue("transition")
     const transitionPriority = node.el.style.getPropertyPriority("transition")
     node.el.style.setProperty("transition", "none", "important")
@@ -4265,14 +4331,12 @@ interface ElReg {
       contentWidth,
       screenScaleX,
       screenScaleY,
-      widthEdge: widthAxis.edge,
-      widthMotion: widthAxis.motion,
+      widthEdge: widthAxis?.edge ?? "right",
+      widthMotion: widthAxis?.motion ?? 1,
       heightEdge: heightAxis?.edge ?? "bottom",
       heightMotion: heightAxis?.motion ?? 1,
       transition,
       transitionPriority,
-      widthCandidates: structureWidthCandidates(node, region),
-      heightCandidates: structureHeightCandidates(node, region),
       width: startWidth,
       height: node.el.offsetHeight,
       moved: false,
@@ -4307,15 +4371,18 @@ interface ElReg {
         height: drag.startHeight,
         snappedTo: null,
       }
+      let rawWidth: number | null = null
+      let rawHeight: number | null = null
       if (drag.mode !== "height") {
-        const rawWidth =
+        const widthCandidates = structureWidthCandidates(drag.node, drag.region)
+        rawWidth =
           drag.startWidth + (dx / (drag.contentWidth * drag.screenScaleX * drag.widthMotion)) * 100
         const threshold = (8 / (drag.contentWidth * drag.screenScaleX)) * 100
         widthSnap = e.altKey
           ? { width: Math.round(rawWidth), snappedTo: null }
           : snapStructuralWidth(
               rawWidth,
-              drag.widthCandidates.map((candidate) => candidate.width),
+              widthCandidates.map((candidate) => candidate.width),
               threshold,
             )
         drag.width = Math.min(
@@ -4323,15 +4390,31 @@ interface ElReg {
           Math.max(MIN_STRUCTURAL_WIDTH_PCT, widthSnap.width),
         )
         applyStructureWidth(drag.node, drag.width)
+        if (
+          widthSnap.snappedTo !== null &&
+          !structureWidthCandidates(drag.node, drag.region).some(
+            (candidate) => candidate.width === widthSnap.snappedTo,
+          )
+        ) {
+          widthSnap = { width: Math.round(rawWidth), snappedTo: null }
+          drag.width = Math.min(
+            MAX_STRUCTURAL_WIDTH_PCT,
+            Math.max(MIN_STRUCTURAL_WIDTH_PCT, widthSnap.width),
+          )
+          applyStructureWidth(drag.node, drag.width)
+        }
       }
       if (drag.mode !== "width") {
-        const rawHeight = drag.startHeight + dy / (drag.screenScaleY * drag.heightMotion)
+        // Width changes can reflow siblings, so measure height targets only after
+        // applying the current horizontal result.
+        const heightCandidates = structureHeightCandidates(drag.node, drag.region)
+        rawHeight = drag.startHeight + dy / (drag.screenScaleY * drag.heightMotion)
         const threshold = 8 / drag.screenScaleY
         heightSnap = e.altKey
           ? { height: Math.round(rawHeight), snappedTo: null }
           : snapStructuralHeight(
               rawHeight,
-              drag.heightCandidates.map((candidate) => candidate.height),
+              heightCandidates.map((candidate) => candidate.height),
               threshold,
             )
         drag.height = Math.min(
@@ -4339,16 +4422,78 @@ interface ElReg {
           Math.max(MIN_STRUCTURAL_HEIGHT_PX, heightSnap.height),
         )
         applyStructureHeight(drag.node, drag.height)
+        if (
+          heightSnap.snappedTo !== null &&
+          !structureHeightCandidates(drag.node, drag.region).some(
+            (candidate) => candidate.height === heightSnap.snappedTo,
+          )
+        ) {
+          heightSnap = { height: Math.round(rawHeight), snappedTo: null }
+          drag.height = Math.min(
+            MAX_STRUCTURAL_HEIGHT_PX,
+            Math.max(MIN_STRUCTURAL_HEIGHT_PX, heightSnap.height),
+          )
+          applyStructureHeight(drag.node, drag.height)
+        }
+      }
+      // Reconcile once more after both dimensions are present. Height-dependent
+      // CSS can invalidate a width target (and the width fallback can in turn
+      // invalidate a height target), so labels and committed values must agree.
+      if (
+        widthSnap.snappedTo !== null &&
+        rawWidth !== null &&
+        !structureWidthCandidates(drag.node, drag.region).some(
+          (candidate) => candidate.width === widthSnap.snappedTo,
+        )
+      ) {
+        widthSnap = { width: Math.round(rawWidth), snappedTo: null }
+        drag.width = Math.min(
+          MAX_STRUCTURAL_WIDTH_PCT,
+          Math.max(MIN_STRUCTURAL_WIDTH_PCT, widthSnap.width),
+        )
+        applyStructureWidth(drag.node, drag.width)
+      }
+      if (
+        heightSnap.snappedTo !== null &&
+        rawHeight !== null &&
+        !structureHeightCandidates(drag.node, drag.region).some(
+          (candidate) => candidate.height === heightSnap.snappedTo,
+        )
+      ) {
+        heightSnap = { height: Math.round(rawHeight), snappedTo: null }
+        drag.height = Math.min(
+          MAX_STRUCTURAL_HEIGHT_PX,
+          Math.max(MIN_STRUCTURAL_HEIGHT_PX, heightSnap.height),
+        )
+        applyStructureHeight(drag.node, drag.height)
+      }
+      if (
+        widthSnap.snappedTo !== null &&
+        rawWidth !== null &&
+        !structureWidthCandidates(drag.node, drag.region).some(
+          (candidate) => candidate.width === widthSnap.snappedTo,
+        )
+      ) {
+        widthSnap = { width: Math.round(rawWidth), snappedTo: null }
+        drag.width = Math.min(
+          MAX_STRUCTURAL_WIDTH_PCT,
+          Math.max(MIN_STRUCTURAL_WIDTH_PCT, widthSnap.width),
+        )
+        applyStructureWidth(drag.node, drag.width)
       }
       drag.moved =
         (drag.mode !== "height" && drag.width !== drag.startWidth) ||
         (drag.mode !== "width" && drag.height !== drag.startHeight)
       structureWidthReadout.textContent = `${drag.width}% × ${drag.height}px`
-      const widthCandidate = drag.widthCandidates.find((item) => item.width === widthSnap.snappedTo)
+      // Revalidate labels after both dimensions have been applied. A diagonal
+      // resize may reflow or clip the sibling that supplied the initial target.
+      const widthCandidate = structureWidthCandidates(drag.node, drag.region).find(
+        (item) => item.width === widthSnap.snappedTo,
+      )
       if (widthCandidate)
         showStructureSnapGuide(drag.node, drag.region, widthCandidate.label, drag.widthEdge)
       else hideStructureSnapGuide()
-      const heightCandidate = drag.heightCandidates.find(
+      const heightCandidate = structureHeightCandidates(drag.node, drag.region).find(
         (item) => item.height === heightSnap.snappedTo,
       )
       if (heightCandidate)
@@ -4417,6 +4562,7 @@ interface ElReg {
     const node = structureSelected
     const region = node ? regionForStructureNode(node) : null
     if (!node || !region || !structureTransformResizable(node)) return
+    if (horizontal && !structureWidthAxisFor(node, region)) return
     if (vertical && !structureHeightAxisFor(node, region)) return
     e.preventDefault()
     e.stopPropagation()

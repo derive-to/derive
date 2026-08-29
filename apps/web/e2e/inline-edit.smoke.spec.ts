@@ -56,6 +56,57 @@ const STRUCTURAL_RESIZE_DOC = `<style>
   </section>
 </div>`
 
+const STRUCTURAL_RESIZE_EDGE_DOC = `<style>
+body { font-family: sans-serif }
+.region { width: 600px; padding: 12px; gap: 12px; margin-bottom: 24px }
+.region > [data-derive-node] { min-height: 72px; padding: 12px; border: 1px solid #ccd; box-sizing: border-box }
+.region > [data-derive-node][data-derive-width] { width: var(--derive-structural-width); max-width: none }
+.region > [data-derive-node][data-derive-height] { height: var(--derive-structural-height); box-sizing: border-box }
+.reverse { display: flex; flex-direction: column-reverse }
+.wrapped { display: flex; flex-direction: column; flex-wrap: wrap }
+.grid { display: grid; grid-template-columns: 1fr 1fr }
+.overlap { display: grid; grid-template-columns: 1fr }
+.overlap > [data-derive-node] { grid-row: 1 }
+.columns { column-width: 200px }
+.safe { display: flex; flex-direction: column }
+.absolute { position: relative; min-height: 120px }
+.absolute > #absolute-a { position: absolute; bottom: 0 }
+.safe:has(#safe-a[data-derive-width="70"]) #reflow-target { height: 144px !important }
+.safe:has(#safe-a[data-derive-width="64"]) #volatile-target { width: 72% !important }
+.safe:has(#safe-a[data-derive-height="96"]) #height-volatile-target { width: 72% !important }
+</style>
+<section id="safe-region" class="region safe" data-derive-ready data-derive-region="safe" data-derive-layout="stack">
+  <article id="safe-a" data-derive-node="safe-a" data-derive-width="50" style="--derive-structural-width: 50%">Safe A</article>
+  <article id="transformed-target" data-derive-node="transformed-target" data-derive-width="62" style="--derive-structural-width: 62%; transform: scale(.95)">Transformed target</article>
+  <article id="volatile-target" data-derive-node="volatile-target" data-derive-width="64" style="--derive-structural-width: 64%">Volatile target</article>
+  <article id="height-volatile-target" data-derive-node="height-volatile-target" data-derive-width="66" style="--derive-structural-width: 66%">Height-volatile target</article>
+  <article id="reflow-target" data-derive-node="reflow-target" data-derive-width="70" style="--derive-structural-width: 70%; height: 96px">Reflow target</article>
+</section>
+<section class="region reverse" data-derive-region="reverse" data-derive-layout="stack">
+  <article id="reverse-a" data-derive-node="reverse-a">Reverse A</article>
+  <article data-derive-node="reverse-b">Reverse B</article>
+</section>
+<section class="region grid" data-derive-region="grid" data-derive-layout="stack">
+  <article id="grid-a" data-derive-node="grid-a">Grid A</article>
+  <article data-derive-node="grid-b">Grid B</article>
+</section>
+<section class="region wrapped" data-derive-region="wrapped" data-derive-layout="stack">
+  <article id="wrapped-a" data-derive-node="wrapped-a">Wrapped A</article>
+  <article data-derive-node="wrapped-b">Wrapped B</article>
+</section>
+<section class="region absolute" data-derive-region="absolute" data-derive-layout="stack">
+  <article id="absolute-a" data-derive-node="absolute-a">Absolute A</article>
+  <article data-derive-node="absolute-b">Absolute B</article>
+</section>
+<section class="region overlap" data-derive-region="overlap" data-derive-layout="stack">
+  <article id="overlap-a" data-derive-node="overlap-a">Overlap A</article>
+  <article data-derive-node="overlap-b">Overlap B</article>
+</section>
+<section class="region columns" data-derive-region="columns" data-derive-layout="stack">
+  <article id="columns-a" data-derive-node="columns-a">Columns A</article>
+  <article data-derive-node="columns-b">Columns B</article>
+</section>`
+
 /** Publish an HTML artifact and open it with the workbench interactive. */
 async function seed(page: Page) {
   const shortId = await publishArtifact(page, "doc.html", DOC, "text/html")
@@ -591,6 +642,152 @@ test("structural diagonal and vertical resize snap on a scaled canvas and save a
     expect(opening).toContain("--derive-structural-height: 128px")
     expect(opening).not.toContain("data-derive-size")
   }).toPass({ timeout: 10_000 })
+})
+
+test("structural resize fails closed for ambiguous layouts and unsafe snap targets", async ({
+  owner,
+}) => {
+  const shortId = await publishArtifact(
+    owner,
+    "structural-resize-edges.html",
+    STRUCTURAL_RESIZE_EDGE_DOC,
+    "text/html",
+  )
+  await openArtifact(owner, shortId)
+  await enterEditMode(owner)
+
+  const widthHandle = doc(owner).getByRole("slider", { name: "Resize element width" })
+  const heightHandle = doc(owner).getByRole("slider", { name: "Resize element height" })
+  const corner = doc(owner).getByRole("button", { name: "Resize element width and height" })
+
+  await doc(owner).locator("#reverse-a").click()
+  await expect(widthHandle).toBeDisabled()
+  await expect(heightHandle).toBeDisabled()
+  await expect(corner).toBeDisabled()
+  await widthHandle.press("ArrowRight")
+  await expect(doc(owner).locator("#reverse-a")).not.toHaveAttribute("data-derive-width")
+
+  await doc(owner).locator("#grid-a").click()
+  await expect(widthHandle).toBeDisabled()
+  await expect(heightHandle).toBeDisabled()
+  await expect(corner).toBeDisabled()
+
+  for (const selector of ["#wrapped-a", "#absolute-a", "#overlap-a", "#columns-a"]) {
+    await doc(owner).locator(selector).click()
+    await expect(widthHandle).toBeDisabled()
+    await expect(heightHandle).toBeDisabled()
+    await expect(corner).toBeDisabled()
+  }
+
+  const selected = doc(owner).locator("#safe-a")
+  await selected.click()
+  await expect(widthHandle).toBeEnabled()
+  await expect(heightHandle).toBeEnabled()
+  await expect(corner).toBeEnabled()
+  const grip = await widthHandle.boundingBox()
+  const region = await doc(owner).locator("#safe-region").boundingBox()
+  expect(grip).not.toBeNull()
+  expect(region).not.toBeNull()
+  if (!grip || !region) return
+  await owner.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2)
+  await owner.mouse.down()
+  await owner.mouse.move(grip.x + grip.width / 2 + region.width * 0.12, grip.y + grip.height / 2)
+  await expect(doc(owner).locator(".derive-structure-snap-guide")).toBeHidden()
+  await owner.mouse.up()
+  await expect(selected).toHaveAttribute("data-derive-width", "62")
+
+  // If applying a tentative same-axis snap invalidates that target, use the
+  // rounded unsnapped value for the event instead of committing a hidden snap.
+  await owner.getByTestId("inline-edit-undo").click()
+  await expect(selected).toHaveAttribute("data-derive-width", "50")
+  const contentWidth = await doc(owner)
+    .locator("#safe-region")
+    .evaluate((element) => {
+      const html = element as HTMLElement
+      const style = getComputedStyle(html)
+      return (
+        html.clientWidth -
+        (Number.parseFloat(style.paddingLeft) || 0) -
+        (Number.parseFloat(style.paddingRight) || 0)
+      )
+    })
+  const volatileGrip = await widthHandle.boundingBox()
+  expect(volatileGrip).not.toBeNull()
+  if (!volatileGrip) return
+  await owner.mouse.move(
+    volatileGrip.x + volatileGrip.width / 2,
+    volatileGrip.y + volatileGrip.height / 2,
+  )
+  await owner.mouse.down()
+  await owner.mouse.move(
+    volatileGrip.x + volatileGrip.width / 2 + contentWidth * 0.128,
+    volatileGrip.y + volatileGrip.height / 2,
+  )
+  await expect(doc(owner).locator(".derive-structure-snap-guide")).toBeHidden()
+  await owner.mouse.up()
+  await expect(selected).toHaveAttribute("data-derive-width", "63")
+
+  // Height-dependent CSS can invalidate an earlier width snap in the same
+  // diagonal event; final-state reconciliation must fall back symmetrically.
+  await owner.getByTestId("inline-edit-undo").click()
+  await expect(selected).toHaveAttribute("data-derive-width", "50")
+  const heightVolatileTarget = doc(owner).locator("#height-volatile-target")
+  const symmetricGrip = await corner.boundingBox()
+  const symmetricStart = await selected.boundingBox()
+  const symmetricHeight = await doc(owner).locator("#reflow-target").boundingBox()
+  expect(symmetricGrip).not.toBeNull()
+  expect(symmetricStart).not.toBeNull()
+  expect(symmetricHeight).not.toBeNull()
+  if (!symmetricGrip || !symmetricStart || !symmetricHeight) return
+  await owner.mouse.move(
+    symmetricGrip.x + symmetricGrip.width / 2,
+    symmetricGrip.y + symmetricGrip.height / 2,
+  )
+  await owner.mouse.down()
+  await owner.mouse.move(
+    symmetricGrip.x + symmetricGrip.width / 2 + contentWidth * 0.154,
+    symmetricGrip.y + symmetricGrip.height / 2 + symmetricHeight.height - symmetricStart.height,
+  )
+  await expect(doc(owner).locator(".derive-structure-snap-guide")).toBeHidden()
+  await expect(doc(owner).locator(".derive-structure-height-snap-guide")).toHaveAttribute(
+    "data-label",
+    "Match reflow-target height",
+  )
+  await owner.mouse.up()
+  await expect(selected).toHaveAttribute("data-derive-width", "65")
+  await expect(selected).toHaveAttribute("data-derive-height", "96")
+  await expect(heightVolatileTarget).toHaveCSS("width", "432px")
+
+  // A width snap can reflow a height target during the same diagonal move. The
+  // old height must not remain a stale snap candidate or leave a false guide.
+  await owner.getByTestId("inline-edit-undo").click()
+  await expect(selected).toHaveAttribute("data-derive-width", "50")
+  const reflowTarget = doc(owner).locator("#reflow-target")
+  const beforeReflow = await reflowTarget.boundingBox()
+  const diagonalGrip = await corner.boundingBox()
+  const selectedBox = await selected.boundingBox()
+  expect(beforeReflow).not.toBeNull()
+  expect(diagonalGrip).not.toBeNull()
+  expect(selectedBox).not.toBeNull()
+  if (!beforeReflow || !diagonalGrip || !selectedBox) return
+  await owner.mouse.move(
+    diagonalGrip.x + diagonalGrip.width / 2,
+    diagonalGrip.y + diagonalGrip.height / 2,
+  )
+  await owner.mouse.down()
+  await owner.mouse.move(
+    diagonalGrip.x + diagonalGrip.width / 2 + region.width * 0.2,
+    diagonalGrip.y + diagonalGrip.height / 2 + beforeReflow.height - selectedBox.height,
+  )
+  await expect(doc(owner).locator(".derive-structure-snap-guide")).toHaveAttribute(
+    "data-label",
+    "Match reflow-target",
+  )
+  await expect(doc(owner).locator(".derive-structure-height-snap-guide")).toBeHidden()
+  await owner.mouse.up()
+  await expect(selected).toHaveAttribute("data-derive-width", "70")
+  await expect(selected).toHaveAttribute("data-derive-height", "96")
+  await expect(reflowTarget).toHaveCSS("height", "144px")
 })
 
 test("set exact dimensions, constrain a box, and reset to the authored size", async ({ owner }) => {
