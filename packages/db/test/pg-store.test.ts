@@ -112,6 +112,38 @@ if (PG_URL) {
           })
           expect(grant?.scopes).toEqual(["derive:read", "derive:publish"])
           expect(grant?.expiresAt).toBeInstanceOf(Date)
+          await store.setWorkspace("ws_first", "First")
+          await store.setWorkspace("ws_scoped", "Scoped")
+          await store.setMembership({
+            id: uuid(),
+            org_id: "ws_first",
+            user_id: "u1",
+            role: "owner",
+          })
+          await store.setMembership({
+            id: uuid(),
+            org_id: "ws_scoped",
+            user_id: "u1",
+            role: "editor",
+          })
+          await store.setOrgSettings("ws_scoped", {
+            ...DEFAULT_ORG_SETTINGS,
+            brandprint: { enabled: true, collectionIds: ["bp_scoped"] },
+          })
+          await store.setOAuthClientWorkspaces("u1", "client_live", ["ws_scoped"])
+          const joined = await store.oauthGrantWithWorkspaces("hash_live")
+          expect(joined?.mine.map((workspace) => workspace.id)).toEqual(
+            expect.arrayContaining(["ws_first", "ws_scoped"]),
+          )
+          expect(joined?.bound).toEqual(["ws_scoped"])
+          expect(joined?.orgContext).toEqual({
+            orgId: "ws_scoped",
+            settings: {
+              ...DEFAULT_ORG_SETTINGS,
+              brandprint: { enabled: true, collectionIds: ["bp_scoped"] },
+            },
+            personalBrandprint: null,
+          })
           expect(await store.getOAuthClientName("client_live")).toBe("Claude")
           expect(await store.getOAuthGrant("missing")).toBeNull()
           // client_live is protected by its access token; only client_stale is reaped.

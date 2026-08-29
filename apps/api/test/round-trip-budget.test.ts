@@ -297,7 +297,18 @@ describe("MCP tool calls stay within their round-trip budget", () => {
         const grant = await meta.getOAuthGrant(tokenHash)
         if (!grant) return null
         const { mine, bound } = await meta.workspacesAndOauthBinding(grant.userId, grant.clientId)
-        return { grant, mine, bound }
+        const scoped = bound.length
+          ? mine.filter((workspace) => bound.includes(workspace.id))
+          : mine
+        const target = scoped[0] ?? mine[0]
+        return {
+          grant,
+          mine,
+          bound,
+          orgContext: target
+            ? { orgId: target.id, ...(await meta.orgContext(target.id, grant.userId)) }
+            : undefined,
+        }
       },
     })
     const { proxy, calls, reset } = countingStore(fastMeta)
@@ -307,14 +318,16 @@ describe("MCP tool calls stay within their round-trip budget", () => {
 
   type App = ReturnType<typeof createApp>
 
-  async function rpc(app: App, token: string, body: unknown) {
+  async function rpc(app: App, token: string, body: unknown, workspace?: string) {
+    const headers: Record<string, string> = {
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+      authorization: `Bearer ${token}`,
+    }
+    if (workspace) headers["x-derive-workspace"] = workspace
     const res = await app.request("/mcp", {
       method: "POST",
-      headers: {
-        "content-type": "application/json",
-        accept: "application/json, text/event-stream",
-        authorization: `Bearer ${token}`,
-      },
+      headers,
       body: JSON.stringify(body),
     })
     const txt = await res.text()
@@ -337,6 +350,25 @@ describe("MCP tool calls stay within their round-trip budget", () => {
 
   const call = (app: App, token: string, name: string, args: Record<string, unknown>, id = 2) =>
     rpc(app, token, { jsonrpc: "2.0", id, method: "tools/call", params: { name, arguments: args } })
+
+  it("re-reads Brandprint inputs after a workspace override", async () => {
+    const { app, meta, token, calls, reset } = appWithGrant(
+      "rt-override",
+      "openid derive:read derive:publish",
+    )
+    await meta.setMembership({ id: "m_default", org_id: "default", user_id: "u_o", role: "owner" })
+    await meta.setWorkspace("other", "Other")
+    await meta.setMembership({ id: "m_other", org_id: "other", user_id: "u_o", role: "editor" })
+    const { mine } = await meta.workspacesAndOauthBinding("u_o", "cli")
+    const override = mine[0]?.id === "default" ? "other" : "default"
+
+    reset()
+    const initialized = await rpc(app, token, initBody, override)
+    expect(initialized?.error, JSON.stringify(initialized)).toBeUndefined()
+    expect(calls).toContain("oauthGrantWithWorkspaces")
+    expect(calls).toContain("getMembership")
+    expect(calls).toContain("orgContext")
+  })
 
   it("read, catch_up, and comment — measured, not inferred", async () => {
     const { app, blobs, meta, token, calls, reset } = appWithGrant(
@@ -456,9 +488,9 @@ describe("MCP tool calls stay within their round-trip budget", () => {
         `MCP round trips — comment(set_state): ${resolveCalls.length} [${resolveCalls.join(", ")}]`,
     )
 
-    // THE FIRST TWO CALLS ARE IDENTICAL ON EVERY TOOL CALL: oauthGrantWithWorkspaces and
-    // orgContext — the MCP/OAuth session bootstrap,
-    // paid before any tool-specific work starts. This was SEVEN calls (getAgentByToken,
+    // THE FIRST CALL IS IDENTICAL ON EVERY OPAQUE-OAUTH TOOL CALL:
+    // oauthGrantWithWorkspaces — the MCP/OAuth session bootstrap, paid before any
+    // tool-specific work starts. This was SEVEN calls (getAgentByToken,
     // getOAuthGrant, listWorkspaces, getOAuthClientWorkspaces, getUsers, getOrgSettings,
     // getUserBrandprint) until this round: getAgentByToken is now skipped outright for any
     // bearer that doesn't start with AGENT_TOKEN_PREFIX (a guaranteed miss for every OAuth/JWT
@@ -466,8 +498,9 @@ describe("MCP tool calls stay within their round-trip budget", () => {
     // already had (see OauthAgentResolution.ownerName), and listWorkspaces +
     // getOAuthClientWorkspaces / getOrgSettings + getUserBrandprint each collapsed into one
     // round trip (workspacesAndOauthBinding, orgContext — pg.ts batches, embedded
-    // composes). The opaque grant and workspace scope now share one envelope too. The
-    // bootstrap falls from seven calls to two, or about 400ms saved per tool call.
+    // composes). The opaque grant, workspace scope, and default workspace's Brandprint
+    // inputs now share one envelope too. The bootstrap falls from seven calls to one.
+    // An explicit X-Derive-Workspace override still pays orgContext for its target.
     //
     // Budgets below are the measured count, no headroom — same discipline as
     // the REST budgets above. Raise deliberately, in the commit that explains why, never to
@@ -478,20 +511,20 @@ describe("MCP tool calls stay within their round-trip budget", () => {
     expect(catchUpCalls).toContain("catchUpRead")
     for (const gone of ["listVersions", "listComments", "listReviewRounds", "getVersionData"])
       expect(catchUpCalls, `${gone} escaped the catch-up batch`).not.toContain(gone)
-    expect(catchUpCalls.length).toBeLessThanOrEqual(5)
-    // Two shared MCP bootstrap reads, one joined artifact + selected-version envelope,
+    expect(catchUpCalls.length).toBeLessThanOrEqual(4)
+    // One shared MCP bootstrap read, one joined artifact + selected-version envelope,
     // then the SQLite authorization fallback. The hosted store performs the envelope as
     // one statement. The handler must not quietly restore either serial lookup.
     expect(readCalls).toContain("artifactWithVersion")
     expect(readCalls).not.toContain("getByShortId")
     expect(readCalls).not.toContain("getVersion")
-    expect(readCalls.length).toBeLessThanOrEqual(4)
+    expect(readCalls.length).toBeLessThanOrEqual(3)
     expect(mapCalls).toContain("artifactWithVersionData")
     expect(mapCalls).not.toContain("getByShortId")
     expect(mapCalls).not.toContain("getVersion")
     expect(mapCalls).not.toContain("getVersionData")
-    expect(mapCalls.length).toBeLessThanOrEqual(4)
-    expect(reactCalls.length).toBeLessThanOrEqual(6)
+    expect(mapCalls.length).toBeLessThanOrEqual(3)
+    expect(reactCalls.length).toBeLessThanOrEqual(5)
     // set_state went 8 → 9 when resolving a thread started keeping its mirrored Slack cards in
     // line (lib/slack-comments.ts enqueueSlackThreadState). The added call is the
     // listSlackThreadLinksByThread that asks whether this thread is mirrored anywhere — one
@@ -504,6 +537,6 @@ describe("MCP tool calls stay within their round-trip budget", () => {
     // onto the root comment's meta, the one row the activity stream reads "Claude Code resolved
     // Ada's thread" from. One read of the root (already loaded by the tool's own thread check)
     // and one meta write; without it the record says only "resolved", by nobody, at no time.
-    expect(resolveCalls.length).toBeLessThanOrEqual(9)
+    expect(resolveCalls.length).toBeLessThanOrEqual(8)
   })
 })

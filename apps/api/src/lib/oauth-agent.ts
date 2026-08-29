@@ -30,6 +30,9 @@ export interface OauthAgentResolution {
    *  A non-empty set restricts every resolution: default org, X-Derive-Workspace
    *  re-home, and the MCP list_workspaces/switch surface all clamp to it. */
   boundWorkspaces: string[]
+  /** Brandprint inputs already read for the default workspace. The request layer uses
+   *  these only while the resolved agent remains in that workspace. */
+  orgContext?: OAuthGrantWorkspaceRead["orgContext"]
 }
 
 interface OauthAgentDeps {
@@ -137,6 +140,7 @@ export function makeOauthAgent({
         scopeRole,
         clientId: grant.clientId,
         boundWorkspaces: ws.bound,
+        orgContext: joined?.orgContext,
         rec: {
           id: `oauth:${grant.clientId}`,
           org_id: ws.org,

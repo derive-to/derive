@@ -92,6 +92,7 @@ import type {
   NotificationsPage,
   OAuthGrant,
   OAuthGrantSummary,
+  OAuthGrantWorkspaceRead,
   OrgSettings,
   PlanKind,
   PlanRecord,
@@ -5964,6 +5965,7 @@ export class PgMetaStore implements MetaStore {
     grant: OAuthGrant
     mine: (WorkspaceRecord & { role: Role })[]
     bound: string[]
+    orgContext?: OAuthGrantWorkspaceRead["orgContext"]
   } | null> {
     type Row = { kind: string; doc: unknown }
     type GrantRow = {
@@ -5976,6 +5978,11 @@ export class PgMetaStore implements MetaStore {
       client_name: string
     }
     type WorkspaceRow = WorkspaceRecord & { role: Role; bound: boolean }
+    type ContextRow = {
+      org_id: string
+      settings: string | null
+      personal_brandprint: string | null
+    }
     let rows: Row[]
     try {
       rows = (
@@ -5989,10 +5996,7 @@ export class PgMetaStore implements MetaStore {
                JOIN "oauthClient" c ON c."clientId" = t."clientId"
                JOIN "user" u ON u."id" = t."userId"
               WHERE t."token" = $1 LIMIT 1
-           )
-           SELECT 'grant' kind, row_to_json(g) doc FROM g
-           UNION ALL
-           SELECT 'workspace', row_to_json(w) FROM (
+           ), w AS (
              SELECT ws.id, ws.name, ws.created_at, m.role,
                     (ocw.id IS NOT NULL) AS bound
                FROM g
@@ -6001,8 +6005,27 @@ export class PgMetaStore implements MetaStore {
                LEFT JOIN oauth_client_workspace ocw
                  ON ocw.org_id = ws.id AND ocw.user_id = g.user_id
                 AND ocw.client_id = g.client_id
-              ORDER BY ws.created_at
-           ) w`,
+           ), target AS (
+             SELECT w.id
+               FROM w
+              ORDER BY
+                CASE WHEN EXISTS (SELECT 1 FROM w WHERE bound) AND NOT w.bound THEN 1 ELSE 0 END,
+                w.created_at
+              LIMIT 1
+           )
+           SELECT 'grant' kind, row_to_json(g) doc FROM g
+           UNION ALL
+           SELECT 'workspace', row_to_json(w) FROM (SELECT * FROM w ORDER BY created_at) w
+           UNION ALL
+           SELECT 'context', json_build_object(
+             'org_id', target.id,
+             'settings', os.settings,
+             'personal_brandprint', to_jsonb(u) ->> 'brandprint'
+           )
+             FROM target
+             JOIN g ON true
+             JOIN "user" u ON u.id = g.user_id
+             LEFT JOIN org_settings os ON os.org_id = target.id`,
           [tokenHash],
         )
       ).rows
@@ -6014,6 +6037,7 @@ export class PgMetaStore implements MetaStore {
     const workspaceRows = rows
       .filter((row) => row.kind === "workspace")
       .map((row) => row.doc as WorkspaceRow)
+    const contextRow = rows.find((row) => row.kind === "context")?.doc as ContextRow | undefined
     return {
       grant: {
         userId: grantRow.user_id,
@@ -6027,6 +6051,13 @@ export class PgMetaStore implements MetaStore {
       },
       mine: workspaceRows.map(({ bound: _bound, ...workspace }) => workspace),
       bound: workspaceRows.filter((workspace) => workspace.bound).map((workspace) => workspace.id),
+      orgContext: contextRow
+        ? {
+            orgId: contextRow.org_id,
+            settings: parseOrgSettings(contextRow.settings),
+            personalBrandprint: contextRow.personal_brandprint,
+          }
+        : undefined,
     }
   }
   async getOAuthClientName(clientId: string): Promise<string | null> {

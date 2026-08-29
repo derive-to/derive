@@ -20,6 +20,7 @@ import {
   type MetaStore,
   maxRole,
   newId,
+  type OAuthGrantWorkspaceRead,
   type OrgSettings,
   type Principal,
   principalActor,
@@ -627,6 +628,7 @@ export function buildContext(deps: AppDeps) {
       scopeRole: Role
       clientId: string
       boundWorkspaces: string[]
+      orgContext?: OAuthGrantWorkspaceRead["orgContext"]
     }
   >()
   // Set when this request's bearer is a minted dkapi_ token — read by the mint to
@@ -759,6 +761,7 @@ export function buildContext(deps: AppDeps) {
             scopeRole: o.scopeRole,
             clientId: o.clientId,
             boundWorkspaces: o.boundWorkspaces,
+            orgContext: o.orgContext,
           })
           // An OAuth agent may act in any workspace WITHIN ITS GRANT: an explicit
           // X-Derive-Workspace header, validated against the OWNER's membership,
@@ -821,6 +824,7 @@ export function buildContext(deps: AppDeps) {
     scopeRole: Role
     clientId: string
     boundWorkspaces: string[]
+    orgContext?: OAuthGrantWorkspaceRead["orgContext"]
   } | null> => {
     await agentFor(c)
     return oauthGrantCache.get(c) ?? null

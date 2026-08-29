@@ -2256,8 +2256,9 @@ export interface AgentStore {
   getAgentByToken(token: string): Promise<AgentRecord | null>
   /** Resolve a live OAuth access token (by its stored hash) to its grant. */
   getOAuthGrant(tokenHash: string): Promise<OAuthGrant | null>
-  /** Resolve an opaque OAuth grant and its still-live workspace scope in one round trip.
-   *  Optional because embedded stores keep the portable grant then workspace reads. */
+  /** Resolve an opaque OAuth grant, its still-live workspace scope, and optionally the
+   *  default workspace's Brandprint inputs in one round trip. Optional because embedded
+   *  stores keep the portable grant then workspace reads. */
   oauthGrantWithWorkspaces?(tokenHash: string): Promise<OAuthGrantWorkspaceRead | null>
   /** The display name of a registered OAuth client (for the consent screen). */
   getOAuthClientName(clientId: string): Promise<string | null>
@@ -2630,6 +2631,13 @@ export interface OAuthGrantWorkspaceRead {
   grant: OAuthGrant
   mine: (WorkspaceRecord & { role: Role })[]
   bound: string[]
+  /** The default workspace's Brandprint inputs, when the hosted store can include them
+   *  in the same grant snapshot. Consumers must ignore this after a workspace override. */
+  orgContext?: {
+    orgId: string
+    settings: OrgSettings
+    personalBrandprint: string | null
+  }
 }
 
 /** One authorized agent from a user's point of view — what they see in "Connected agents"
