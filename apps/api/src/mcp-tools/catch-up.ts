@@ -1,4 +1,14 @@
-import { assertedOnly, diffLines, factDeltas, formatDiff, toMarkdown } from "@derive/core"
+import {
+  assertedOnly,
+  type CommentRecord,
+  diffLines,
+  factDeltas,
+  formatDiff,
+  type ReviewRoundRecord,
+  toMarkdown,
+  type VersionDataRecord,
+  type VersionRecord,
+} from "@derive/core"
 import { z } from "zod"
 import {
   type ChangedParts,
@@ -128,7 +138,33 @@ export function registerCatchUpTool(tc: ToolContext): void {
       const head = a.current_version
       const to = Math.min(head, Math.max(1, to_version ?? head))
       const since = Math.min(to, Math.max(1, since_version ?? to - 1))
-      const history = await ctx.meta.listVersions(a.id)
+      // These rows are independent once reach has authorized the artifact. Fetch them in
+      // one latency wave instead of paying four serial edge round trips before the response
+      // can be assembled. Stores keep the same methods and response contract.
+      const snapshot = ctx.meta.catchUpRead ? await ctx.meta.catchUpRead(a.id, since, to) : null
+      const [history, allComments, rounds, dataRows]: [
+        VersionRecord[],
+        CommentRecord[],
+        ReviewRoundRecord[],
+        [VersionDataRecord[], VersionDataRecord[]],
+      ] = snapshot
+        ? [
+            snapshot.versions,
+            snapshot.comments,
+            snapshot.rounds,
+            [snapshot.beforeData, snapshot.afterData],
+          ]
+        : await Promise.all([
+            ctx.meta.listVersions(a.id),
+            ctx.meta.listComments(a.id),
+            ctx.meta.listReviewRounds(a.id),
+            since < to
+              ? Promise.all([
+                  ctx.meta.getVersionData(a.id, since).catch(() => []),
+                  ctx.meta.getVersionData(a.id, to).catch(() => []),
+                ])
+              : Promise.resolve<[VersionDataRecord[], VersionDataRecord[]]>([[], []]),
+          ])
       const newVersions = history.filter((v) => v.n > since && v.n <= to)
       // listVersions already returned every immutable version row. Re-fetching the two
       // selected rows paid two strictly serial edge round trips for data in hand.
@@ -205,7 +241,6 @@ export function registerCatchUpTool(tc: ToolContext): void {
       // ~80ms round trips (see edge-pg.ts) on the agent loop's hottest call, for rows out of
       // the same table for the same artifact. `listComments` orders by created_at either
       // way, so each filtered slice keeps the order its own query produced.
-      const allComments = await ctx.meta.listComments(a.id)
       const open = allComments.filter((cm) => cm.state === "open")
       // Threads whose quoted text changed in a landed version — feedback that may no
       // longer apply. Surfacing it tells the agent its edits touched commented text.
@@ -227,7 +262,6 @@ export function registerCatchUpTool(tc: ToolContext): void {
       // it requested most recently. `pending` = still waiting; `sent_back` = the human
       // returned answers — read the open threads and their note; a note that reads
       // "good to go" is the go-signal.
-      const rounds = await ctx.meta.listReviewRounds(a.id)
       const myRound =
         rounds.find((r) => r.state === "pending") ??
         rounds.find((r) => r.requested_by === agent.id) ??
@@ -261,10 +295,7 @@ export function registerCatchUpTool(tc: ToolContext): void {
         since < to
           ? // assertedOnly on both sides: "$stats.words 1204 -> 1288" is noise beside
             // "checks.pass 41 -> 44", and the diff exists to show the AUTHOR's numbers move.
-            factDeltas(
-              assertedOnly(await ctx.meta.getVersionData(a.id, since).catch(() => [])),
-              assertedOnly(await ctx.meta.getVersionData(a.id, to).catch(() => [])),
-            )
+            factDeltas(assertedOnly(dataRows[0]), assertedOnly(dataRows[1]))
           : []
       return json({
         summary,

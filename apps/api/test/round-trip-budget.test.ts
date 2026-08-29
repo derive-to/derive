@@ -276,6 +276,23 @@ describe("MCP tool calls stay within their round-trip budget", () => {
           version: await meta.getVersion(artifact.id, n ?? artifact.current_version),
         }
       },
+      artifactWithVersionData: async (shortId: string, slot: string, n?: number) => {
+        const artifact = await meta.getByShortId(shortId)
+        if (!artifact) return null
+        const selected = n ?? artifact.current_version
+        return {
+          artifact,
+          version: await meta.getVersion(artifact.id, selected),
+          data: (await meta.getVersionData(artifact.id, selected, slot))[0] ?? null,
+        }
+      },
+      catchUpRead: async (artifactId: string, beforeN: number, afterN: number) => ({
+        versions: await meta.listVersions(artifactId),
+        comments: await meta.listComments(artifactId),
+        rounds: await meta.listReviewRounds(artifactId),
+        beforeData: await meta.getVersionData(artifactId, beforeN),
+        afterData: await meta.getVersionData(artifactId, afterN),
+      }),
     })
     const { proxy, calls, reset } = countingStore(fastMeta)
     const app = createApp({ meta: proxy, blobs, baseUrl: "http://derive.test", token: "tok" })
@@ -397,6 +414,11 @@ describe("MCP tool calls stay within their round-trip budget", () => {
     const readCalls = [...calls]
 
     reset()
+    const mapRes = await call(app, token, "read", { short_id: "rttest01", map: true })
+    expect(mapRes?.result?.isError, JSON.stringify(mapRes)).not.toBe(true)
+    const mapCalls = [...calls]
+
+    reset()
     const reactRes = await call(
       app,
       token,
@@ -423,6 +445,7 @@ describe("MCP tool calls stay within their round-trip budget", () => {
     console.log(
       `MCP round trips — catch_up(short_id): ${catchUpCalls.length} [${catchUpCalls.join(", ")}]\n` +
         `MCP round trips — read(focus): ${readCalls.length} [${readCalls.join(", ")}]\n` +
+        `MCP round trips — read(map): ${mapCalls.length} [${mapCalls.join(", ")}]\n` +
         `MCP round trips — comment(react): ${reactCalls.length} [${reactCalls.join(", ")}]\n` +
         `MCP round trips — comment(set_state): ${resolveCalls.length} [${resolveCalls.join(", ")}]`,
     )
@@ -445,7 +468,10 @@ describe("MCP tool calls stay within their round-trip budget", () => {
     // The complete history already carries both selected version rows. Catch-up must not
     // restore either redundant getVersion call after listVersions.
     expect(catchUpCalls).not.toContain("getVersion")
-    expect(catchUpCalls.length).toBeLessThanOrEqual(8)
+    expect(catchUpCalls).toContain("catchUpRead")
+    for (const gone of ["listVersions", "listComments", "listReviewRounds", "getVersionData"])
+      expect(catchUpCalls, `${gone} escaped the catch-up batch`).not.toContain(gone)
+    expect(catchUpCalls.length).toBeLessThanOrEqual(6)
     // Three shared MCP bootstrap reads, one joined artifact + selected-version envelope,
     // then the SQLite authorization fallback. The hosted store performs the envelope as
     // one statement. The handler must not quietly restore either serial lookup.
@@ -453,6 +479,11 @@ describe("MCP tool calls stay within their round-trip budget", () => {
     expect(readCalls).not.toContain("getByShortId")
     expect(readCalls).not.toContain("getVersion")
     expect(readCalls.length).toBeLessThanOrEqual(5)
+    expect(mapCalls).toContain("artifactWithVersionData")
+    expect(mapCalls).not.toContain("getByShortId")
+    expect(mapCalls).not.toContain("getVersion")
+    expect(mapCalls).not.toContain("getVersionData")
+    expect(mapCalls.length).toBeLessThanOrEqual(5)
     expect(reactCalls.length).toBeLessThanOrEqual(7)
     // set_state went 8 → 9 when resolving a thread started keeping its mirrored Slack cards in
     // line (lib/slack-comments.ts enqueueSlackThreadState). The added call is the

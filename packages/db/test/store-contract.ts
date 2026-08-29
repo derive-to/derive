@@ -221,6 +221,14 @@ export function runStoreContract(
         expect((await store.artifactWithVersion(a.short_id, 99))?.version).toBeNull()
         expect(await store.artifactWithVersion("nope")).toBeNull()
       }
+      if (store.artifactWithVersionData) {
+        const empty = await store.artifactWithVersionData(a.short_id, "$map")
+        expect(empty?.artifact).toEqual(after)
+        expect(empty?.version).toEqual(await store.getVersion(a.id, 2))
+        expect(empty?.data).toBeNull()
+        expect((await store.artifactWithVersionData(a.short_id, "$map", 99))?.version).toBeNull()
+        expect(await store.artifactWithVersionData("nope", "$map")).toBeNull()
+      }
     })
 
     it("replaces only the exact current version and clears its derived data", async () => {
@@ -260,6 +268,20 @@ export function runStoreContract(
       const all = await store.getVersionData(a.id, v.n)
       expect(all.map((r) => r.slot)).toEqual(["budget", "checks"])
       expect(all[0]?.gen).toBe(1)
+      if (store.catchUpRead) {
+        const snapshot = await store.catchUpRead(a.id, v.n, v.n)
+        expect(snapshot.versions).toEqual([v])
+        expect(snapshot.comments).toEqual([])
+        expect(snapshot.rounds).toEqual([])
+        expect(snapshot.beforeData).toEqual(all)
+        expect(snapshot.afterData).toEqual(all)
+      }
+      if (store.artifactWithVersionData) {
+        const joined = await store.artifactWithVersionData(a.short_id, "checks", v.n)
+        expect(joined?.artifact).toEqual(await store.getByShortId(a.short_id))
+        expect(joined?.version).toEqual(v)
+        expect(joined?.data).toEqual(all.find((row) => row.slot === "checks"))
+      }
       // One slot by name.
       const one = await store.getVersionData(a.id, v.n, "checks")
       expect(one).toHaveLength(1)

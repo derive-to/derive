@@ -637,11 +637,25 @@ export function registerReadTool(tc: ToolContext): void {
         docId = seg
       }
       // Postgres can join the artifact and selected immutable version in one statement.
-      // Stores without the optional fast path keep the portable two reads. The joined
-      // artifact only skips its lookup: reach still runs every authorization check.
-      const envelope = ctx.meta.artifactWithVersion
-        ? await ctx.meta.artifactWithVersion(docId, version)
-        : undefined
+      // Stored maps and named facts can include their one selected data row too. Stores
+      // without either optional fast path keep the portable reads. The joined artifact
+      // only skips its lookup: reach still runs every authorization check.
+      const selectedDataSlot =
+        wantMap || (data === "$map" && versions === undefined)
+          ? "$map"
+          : data !== undefined && data !== "*" && versions === undefined
+            ? data
+            : null
+      const dataEnvelope =
+        selectedDataSlot && ctx.meta.artifactWithVersionData
+          ? await ctx.meta.artifactWithVersionData(docId, selectedDataSlot, version)
+          : undefined
+      const envelope =
+        dataEnvelope !== undefined
+          ? dataEnvelope
+          : ctx.meta.artifactWithVersion
+            ? await ctx.meta.artifactWithVersion(docId, version)
+            : undefined
       // Opted into the world link: a public artifact outside the grant reads at viewer.
       const r =
         envelope === null
@@ -886,7 +900,12 @@ export function registerReadTool(tc: ToolContext): void {
             ...(rows.length ? {} : { note: absenceNote(null, v, `Version ${n} of "${short_id}"`) }),
           })
         }
-        let rows = await ctx.meta.getVersionData(a.id, n, data)
+        let rows =
+          selectedDataSlot === data && dataEnvelope
+            ? dataEnvelope.data
+              ? [dataEnvelope.data]
+              : []
+            : await ctx.meta.getVersionData(a.id, n, data)
         // LAZY DERIVATION — bounded to exactly here, the single-version named read. A
         // $name that is missing (version predates derivation) or stale (its gen predates
         // THAT deriver's current generation — per-slot, so a $stats bump never re-derives
@@ -957,7 +976,10 @@ export function registerReadTool(tc: ToolContext): void {
       // parsing the source. Missing, stale, or corrupt cache rows fall
       // through to the source path below, so authored bytes remain the authority.
       if (wantMap) {
-        const row = (await ctx.meta.getVersionData(a.id, n, "$map"))[0]
+        const row =
+          selectedDataSlot === "$map" && dataEnvelope
+            ? dataEnvelope.data
+            : (await ctx.meta.getVersionData(a.id, n, "$map"))[0]
         const stored = row?.gen === derivedGen("$map") ? storedMapOf(row.json) : null
         if (stored)
           return json({

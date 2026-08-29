@@ -743,6 +743,44 @@ export class PgMetaStore implements MetaStore {
         }
       : null
   }
+
+  async artifactWithVersionData(
+    shortId: string,
+    slot: string,
+    n?: number,
+  ): Promise<{
+    artifact: ArtifactRecord
+    version: VersionRecord | null
+    data: VersionDataRecord | null
+  } | null> {
+    const rows = await this.db
+      .select({ artifact, version, data: versionData })
+      .from(artifact)
+      .leftJoin(
+        version,
+        and(
+          eq(version.artifact_id, artifact.id),
+          n === undefined ? eq(version.n, artifact.current_version) : eq(version.n, n),
+        ),
+      )
+      .leftJoin(
+        versionData,
+        and(
+          eq(versionData.artifact_id, artifact.id),
+          eq(versionData.n, version.n),
+          eq(versionData.slot, slot),
+        ),
+      )
+      .where(eq(artifact.short_id, shortId))
+    const row = rows[0]
+    return row
+      ? {
+          artifact: row.artifact as ArtifactRecord,
+          version: (row.version as VersionRecord | null) ?? null,
+          data: (row.data as VersionDataRecord | null) ?? null,
+        }
+      : null
+  }
   async getByShortIds(shortIds: string[]): Promise<ArtifactRecord[]> {
     if (shortIds.length === 0) return []
     return this.db.select().from(artifact).where(inArray(artifact.short_id, shortIds))
@@ -1161,6 +1199,58 @@ export class PgMetaStore implements MetaStore {
         ),
       )
       .orderBy(asc(versionData.slot))
+  }
+
+  async catchUpRead(
+    artifactId: string,
+    beforeN: number,
+    afterN: number,
+  ): Promise<{
+    versions: VersionRecord[]
+    comments: CommentRecord[]
+    rounds: ReviewRoundRecord[]
+    beforeData: VersionDataRecord[]
+    afterData: VersionDataRecord[]
+  }> {
+    // Five independent reads ride one statement. node-postgres serializes queries on one
+    // edge connection, so Promise.all cannot remove their network latency by itself.
+    const { rows } = await this.pool.query<{ kind: string; doc: unknown }>(
+      `SELECT 'version' kind, row_to_json(v) doc FROM version v
+        WHERE v.artifact_id = $1
+       UNION ALL
+       SELECT 'comment', row_to_json(c) FROM comment c
+        WHERE c.artifact_id = $1
+       UNION ALL
+       SELECT 'round', row_to_json(r) FROM review_round r
+        WHERE r.artifact_id = $1
+       UNION ALL
+       SELECT 'before-data', row_to_json(d) FROM version_data d
+        WHERE d.artifact_id = $1 AND d.n = $2
+       UNION ALL
+       SELECT 'after-data', row_to_json(d) FROM version_data d
+        WHERE d.artifact_id = $1 AND d.n = $3`,
+      [artifactId, beforeN, afterN],
+    )
+    const versions: VersionRecord[] = []
+    const comments: CommentRecord[] = []
+    const rounds: ReviewRoundRecord[] = []
+    const beforeData: VersionDataRecord[] = []
+    const afterData: VersionDataRecord[] = []
+    for (const row of rows) {
+      if (row.kind === "version") versions.push(row.doc as VersionRecord)
+      else if (row.kind === "comment") comments.push(row.doc as CommentRecord)
+      else if (row.kind === "round") rounds.push(row.doc as ReviewRoundRecord)
+      else if (row.kind === "before-data") beforeData.push(row.doc as VersionDataRecord)
+      else if (row.kind === "after-data") afterData.push(row.doc as VersionDataRecord)
+    }
+    versions.sort((a, b) => a.n - b.n)
+    comments.sort((a, b) =>
+      a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0,
+    )
+    rounds.sort((a, b) => (a.created_at > b.created_at ? -1 : a.created_at < b.created_at ? 1 : 0))
+    beforeData.sort((a, b) => a.slot.localeCompare(b.slot))
+    afterData.sort((a, b) => a.slot.localeCompare(b.slot))
+    return { versions, comments, rounds, beforeData, afterData }
   }
   async getVersionDataSeries(
     artifactId: string,

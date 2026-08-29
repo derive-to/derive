@@ -543,6 +543,16 @@ export interface VersionDataRecord {
   created_at: string
 }
 
+/** One immutable catch-up snapshot. Hosted stores can return every row the agent loop
+ *  needs in one statement; embedded stores keep the ordinary per-table reads. */
+export interface CatchUpRead {
+  versions: VersionRecord[]
+  comments: CommentRecord[]
+  rounds: ReviewRoundRecord[]
+  beforeData: VersionDataRecord[]
+  afterData: VersionDataRecord[]
+}
+
 export interface NewVersionData {
   id: string
   slot: string
@@ -581,6 +591,19 @@ export interface ArtifactStore {
     shortId: string,
     n?: number,
   ): Promise<{ artifact: ArtifactRecord; version: VersionRecord | null } | null>
+  /** Resolve one artifact, one immutable version, and one fact slot in ONE round trip.
+   *  Read uses this for stored structural maps and named facts after which it still runs
+   *  the normal authorization gate. Embedded stores may omit it and keep the portable
+   *  artifact/version/data reads. */
+  artifactWithVersionData?(
+    shortId: string,
+    slot: string,
+    n?: number,
+  ): Promise<{
+    artifact: ArtifactRecord
+    version: VersionRecord | null
+    data: VersionDataRecord | null
+  } | null>
   /** Resolve many short ids at once. Bulk operations resolved one artifact per short id in
    *  a loop; on the edge tier that is a ~80ms round trip each, up to BULK_MAX of them.
    *  Order is unspecified and unknown ids are simply absent — callers key by `short_id`. */
@@ -660,6 +683,9 @@ export interface ArtifactStore {
   /** A version's facts: one named `slot`, or all of them (slot omitted), in slot
    *  order. Empty when the version carries none. */
   getVersionData(artifactId: string, n: number, slot?: string): Promise<VersionDataRecord[]>
+  /** Batch the history, feedback, review state, and compared fact rows used by catch_up.
+   *  Optional because a local embedded store has no network round-trip to remove. */
+  catchUpRead?(artifactId: string, beforeN: number, afterN: number): Promise<CatchUpRead>
   /** Selected fact slots from the CURRENT version of many artifacts. The caller supplies the
    *  candidate ids and remains responsible for authorization; this is only the batch read
    *  that avoids one getVersionData call per row in corpus-backed product directories. */
