@@ -185,7 +185,7 @@ describe("materializeEdits: quote-scoped edits (the inline editor's shape)", () 
     )
   })
 
-  it("applies typed text, semantic size, reorder, and removal in one atomic HTML save", async () => {
+  it("applies typed text, custom dimensions, reorder, and removal in one atomic HTML save", async () => {
     const html = `<section data-derive-region="story" data-derive-layout="stack">
   <article data-derive-node="a"><h2>Old A</h2></article>
   <article data-derive-node="b"><h2>B</h2></article>
@@ -199,10 +199,11 @@ describe("materializeEdits: quote-scoped edits (the inline editor's shape)", () 
         { quote: { exact: "Old A" }, new_text: "New A" },
         {
           schema: "derive.structural-edit/v1",
-          op: "structural-size",
+          op: "structural-dimensions",
           region: "story",
           node: "a",
-          size: "full",
+          width_pct: 68,
+          height_px: 144,
         },
         {
           schema: "derive.structural-edit/v1",
@@ -220,7 +221,11 @@ describe("materializeEdits: quote-scoped edits (the inline editor's shape)", () 
       1,
     )
     expect(out.content).toContain("New A")
-    expect(out.content).toContain('data-derive-node="a" data-derive-size="full"')
+    expect(out.content).toContain(
+      'data-derive-node="a" data-derive-width="68" data-derive-height="144"',
+    )
+    expect(out.content).toContain("--derive-structural-width: 68%")
+    expect(out.content).toContain("--derive-structural-height: 144px")
     expect(out.content).not.toContain('data-derive-node="b"')
     expect(out.content.indexOf('data-derive-node="c"')).toBeLessThan(
       out.content.indexOf('data-derive-node="a"'),

@@ -64,9 +64,11 @@
 
   /* Structural size is semantic, not a captured pixel box. Derive changes only the
      data-derive-size value in source; these authored rules decide what each preset means. */
-  .slide > [data-derive-node][data-derive-size="compact"] { width: 50%; max-width: none; align-self: flex-start }
-  .slide > [data-derive-node][data-derive-size="standard"] { width: 75%; max-width: none; align-self: flex-start }
-  .slide > [data-derive-node][data-derive-size="full"] { width: 100%; max-width: none; align-self: stretch }
+  .slide > [data-derive-node][data-derive-size="compact"] { width: 50%; max-width: none; box-sizing: border-box; align-self: flex-start }
+  .slide > [data-derive-node][data-derive-size="standard"] { width: 75%; max-width: none; box-sizing: border-box; align-self: flex-start }
+  .slide > [data-derive-node][data-derive-size="full"] { width: 100%; max-width: none; box-sizing: border-box; align-self: stretch }
+  .slide > [data-derive-node][data-derive-width] { width: var(--derive-structural-width); max-width: none; box-sizing: border-box; align-self: flex-start }
+  .slide > [data-derive-node][data-derive-height] { height: var(--derive-structural-height); box-sizing: border-box }
 
   .eyebrow {
     font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;

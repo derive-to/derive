@@ -17,6 +17,7 @@ import {
   resolveElement,
   scanElements,
 } from "./element-anchor"
+import { updateOpeningTagStyle } from "./style-attribute"
 
 export interface ElementResizeEdit {
   op: "resize"
@@ -92,74 +93,13 @@ const editTarget = (
   return target
 }
 
-/** Split a style attribute at real declaration boundaries (not semicolons inside
- * strings, data URLs, or functions). Existing declaration values stay intact. */
-const declarations = (style: string): string[] => {
-  const out: string[] = []
-  let start = 0
-  let quote = ""
-  let depth = 0
-  let escaped = false
-  for (let i = 0; i < style.length; i++) {
-    const ch = style[i] as string
-    if (escaped) {
-      escaped = false
-      continue
-    }
-    if (ch === "\\") {
-      escaped = true
-      continue
-    }
-    if (quote) {
-      if (ch === quote) quote = ""
-      continue
-    }
-    if (ch === '"' || ch === "'") {
-      quote = ch
-      continue
-    }
-    if (ch === "(") depth++
-    else if (ch === ")" && depth > 0) depth--
-    else if (ch === ";" && depth === 0) {
-      out.push(style.slice(start, i))
-      start = i + 1
-    }
-  }
-  out.push(style.slice(start))
-  return out
-}
-
-const propertyOf = (declaration: string): string => {
-  const colon = declaration.indexOf(":")
-  return colon < 0 ? "" : declaration.slice(0, colon).trim().toLowerCase()
-}
-
-const resizedStyle = (style: string, width: number, height: number | "auto"): string => {
-  const kept = declarations(style).filter((d) => {
-    const property = propertyOf(d)
-    return d.trim() && property !== "width" && property !== "height"
-  })
-  kept.push(`width: ${width}px`, `height: ${height === "auto" ? "auto" : `${height}px`}`)
-  return kept.map((d) => d.trim()).join("; ")
-}
-
 /** Change/add only the opening tag's style attribute, preserving quote style and
  * every unrelated attribute. */
 const resizeOpeningTag = (tag: string, width: number, height: number | "auto"): string => {
-  const style = /(\sstyle\s*=\s*)(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i.exec(tag)
-  if (style) {
-    const raw = style[2] ?? style[3] ?? style[4] ?? ""
-    const quote = style[2] !== undefined ? '"' : style[3] !== undefined ? "'" : '"'
-    const replacement = `${style[1]}${quote}${resizedStyle(raw, width, height)}${quote}`
-    return tag.slice(0, style.index) + replacement + tag.slice(style.index + style[0].length)
-  }
-  const close = tag.lastIndexOf(">")
-  if (close < 0) return tag
-  let insert = close
-  for (let i = close - 1; i >= 0 && /\s/.test(tag[i] as string); i--) insert = i
-  if (tag[insert - 1] === "/") insert--
-  const attr = ` style="${resizedStyle("", width, height)}"`
-  return tag.slice(0, insert) + attr + tag.slice(insert)
+  return updateOpeningTagStyle(tag, {
+    width: `${width}px`,
+    height: height === "auto" ? "auto" : `${height}px`,
+  })
 }
 
 /** Apply element edits in order. Each op sees the preceding op, matching exact-text
