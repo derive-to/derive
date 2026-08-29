@@ -442,7 +442,10 @@ describe("MCP tool calls stay within their round-trip budget", () => {
     // Budgets below are the measured count, no headroom — same discipline as
     // the REST budgets above. Raise deliberately, in the commit that explains why, never to
     // silence a red run.
-    expect(catchUpCalls.length).toBeLessThanOrEqual(10)
+    // The complete history already carries both selected version rows. Catch-up must not
+    // restore either redundant getVersion call after listVersions.
+    expect(catchUpCalls).not.toContain("getVersion")
+    expect(catchUpCalls.length).toBeLessThanOrEqual(8)
     // Three shared MCP bootstrap reads, one joined artifact + selected-version envelope,
     // then the SQLite authorization fallback. The hosted store performs the envelope as
     // one statement. The handler must not quietly restore either serial lookup.
