@@ -5960,6 +5960,75 @@ export class PgMetaStore implements MetaStore {
       expiresAt: row.expires_at instanceof Date ? row.expires_at : new Date(row.expires_at),
     }
   }
+  async oauthGrantWithWorkspaces(tokenHash: string): Promise<{
+    grant: OAuthGrant
+    mine: (WorkspaceRecord & { role: Role })[]
+    bound: string[]
+  } | null> {
+    type Row = { kind: string; doc: unknown }
+    type GrantRow = {
+      user_id: string
+      user_email: string
+      user_name: string | null
+      client_id: string
+      scopes: string | string[] | null
+      expires_at: Date | string | number
+      client_name: string
+    }
+    type WorkspaceRow = WorkspaceRecord & { role: Role; bound: boolean }
+    let rows: Row[]
+    try {
+      rows = (
+        await this.pool.query<Row>(
+          `WITH g AS (
+             SELECT t."userId" AS user_id, t."clientId" AS client_id,
+                    t."scopes" AS scopes, t."expiresAt" AS expires_at,
+                    c."name" AS client_name, u."email" AS user_email,
+                    u."name" AS user_name
+               FROM "oauthAccessToken" t
+               JOIN "oauthClient" c ON c."clientId" = t."clientId"
+               JOIN "user" u ON u."id" = t."userId"
+              WHERE t."token" = $1 LIMIT 1
+           )
+           SELECT 'grant' kind, row_to_json(g) doc FROM g
+           UNION ALL
+           SELECT 'workspace', row_to_json(w) FROM (
+             SELECT ws.id, ws.name, ws.created_at, m.role,
+                    (ocw.id IS NOT NULL) AS bound
+               FROM g
+               JOIN membership m ON m.user_id = g.user_id
+               JOIN workspace ws ON ws.id = m.org_id
+               LEFT JOIN oauth_client_workspace ocw
+                 ON ocw.org_id = ws.id AND ocw.user_id = g.user_id
+                AND ocw.client_id = g.client_id
+              ORDER BY ws.created_at
+           ) w`,
+          [tokenHash],
+        )
+      ).rows
+    } catch {
+      return null
+    }
+    const grantRow = rows.find((row) => row.kind === "grant")?.doc as GrantRow | undefined
+    if (!grantRow) return null
+    const workspaceRows = rows
+      .filter((row) => row.kind === "workspace")
+      .map((row) => row.doc as WorkspaceRow)
+    return {
+      grant: {
+        userId: grantRow.user_id,
+        userEmail: grantRow.user_email,
+        userName: grantRow.user_name,
+        clientId: grantRow.client_id,
+        clientName: grantRow.client_name,
+        scopes: parseOAuthScopes(grantRow.scopes),
+        expiresAt:
+          grantRow.expires_at instanceof Date ? grantRow.expires_at : new Date(grantRow.expires_at),
+      },
+      mine: workspaceRows.map(({ bound: _bound, ...workspace }) => workspace),
+      bound: workspaceRows.filter((workspace) => workspace.bound).map((workspace) => workspace.id),
+    }
+  }
   async getOAuthClientName(clientId: string): Promise<string | null> {
     try {
       const { rows } = await this.pool.query(

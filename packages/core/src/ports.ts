@@ -2256,6 +2256,9 @@ export interface AgentStore {
   getAgentByToken(token: string): Promise<AgentRecord | null>
   /** Resolve a live OAuth access token (by its stored hash) to its grant. */
   getOAuthGrant(tokenHash: string): Promise<OAuthGrant | null>
+  /** Resolve an opaque OAuth grant and its still-live workspace scope in one round trip.
+   *  Optional because embedded stores keep the portable grant then workspace reads. */
+  oauthGrantWithWorkspaces?(tokenHash: string): Promise<OAuthGrantWorkspaceRead | null>
   /** The display name of a registered OAuth client (for the consent screen). */
   getOAuthClientName(clientId: string): Promise<string | null>
   /** Does this client_id still have a row? Backs the /authorize self-heal: a client_id an
@@ -2621,6 +2624,12 @@ export interface OAuthGrant {
   clientName: string
   scopes: string[]
   expiresAt: Date
+}
+
+export interface OAuthGrantWorkspaceRead {
+  grant: OAuthGrant
+  mine: (WorkspaceRecord & { role: Role })[]
+  bound: string[]
 }
 
 /** One authorized agent from a user's point of view — what they see in "Connected agents"

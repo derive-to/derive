@@ -293,6 +293,12 @@ describe("MCP tool calls stay within their round-trip budget", () => {
         beforeData: await meta.getVersionData(artifactId, beforeN),
         afterData: await meta.getVersionData(artifactId, afterN),
       }),
+      oauthGrantWithWorkspaces: async (tokenHash: string) => {
+        const grant = await meta.getOAuthGrant(tokenHash)
+        if (!grant) return null
+        const { mine, bound } = await meta.workspacesAndOauthBinding(grant.userId, grant.clientId)
+        return { grant, mine, bound }
+      },
     })
     const { proxy, calls, reset } = countingStore(fastMeta)
     const app = createApp({ meta: proxy, blobs, baseUrl: "http://derive.test", token: "tok" })
@@ -450,8 +456,8 @@ describe("MCP tool calls stay within their round-trip budget", () => {
         `MCP round trips — comment(set_state): ${resolveCalls.length} [${resolveCalls.join(", ")}]`,
     )
 
-    // THE FIRST THREE CALLS ARE IDENTICAL ON EVERY TOOL CALL: getOAuthGrant,
-    // workspacesAndOauthBinding, orgContext — the MCP/OAuth session bootstrap,
+    // THE FIRST TWO CALLS ARE IDENTICAL ON EVERY TOOL CALL: oauthGrantWithWorkspaces and
+    // orgContext — the MCP/OAuth session bootstrap,
     // paid before any tool-specific work starts. This was SEVEN calls (getAgentByToken,
     // getOAuthGrant, listWorkspaces, getOAuthClientWorkspaces, getUsers, getOrgSettings,
     // getUserBrandprint) until this round: getAgentByToken is now skipped outright for any
@@ -460,7 +466,8 @@ describe("MCP tool calls stay within their round-trip budget", () => {
     // already had (see OauthAgentResolution.ownerName), and listWorkspaces +
     // getOAuthClientWorkspaces / getOrgSettings + getUserBrandprint each collapsed into one
     // round trip (workspacesAndOauthBinding, orgContext — pg.ts batches, embedded
-    // composes). 7 → 3 bootstrap calls, ~320ms/call saved on every single MCP tool call.
+    // composes). The opaque grant and workspace scope now share one envelope too. The
+    // bootstrap falls from seven calls to two, or about 400ms saved per tool call.
     //
     // Budgets below are the measured count, no headroom — same discipline as
     // the REST budgets above. Raise deliberately, in the commit that explains why, never to
@@ -471,20 +478,20 @@ describe("MCP tool calls stay within their round-trip budget", () => {
     expect(catchUpCalls).toContain("catchUpRead")
     for (const gone of ["listVersions", "listComments", "listReviewRounds", "getVersionData"])
       expect(catchUpCalls, `${gone} escaped the catch-up batch`).not.toContain(gone)
-    expect(catchUpCalls.length).toBeLessThanOrEqual(6)
-    // Three shared MCP bootstrap reads, one joined artifact + selected-version envelope,
+    expect(catchUpCalls.length).toBeLessThanOrEqual(5)
+    // Two shared MCP bootstrap reads, one joined artifact + selected-version envelope,
     // then the SQLite authorization fallback. The hosted store performs the envelope as
     // one statement. The handler must not quietly restore either serial lookup.
     expect(readCalls).toContain("artifactWithVersion")
     expect(readCalls).not.toContain("getByShortId")
     expect(readCalls).not.toContain("getVersion")
-    expect(readCalls.length).toBeLessThanOrEqual(5)
+    expect(readCalls.length).toBeLessThanOrEqual(4)
     expect(mapCalls).toContain("artifactWithVersionData")
     expect(mapCalls).not.toContain("getByShortId")
     expect(mapCalls).not.toContain("getVersion")
     expect(mapCalls).not.toContain("getVersionData")
-    expect(mapCalls.length).toBeLessThanOrEqual(5)
-    expect(reactCalls.length).toBeLessThanOrEqual(7)
+    expect(mapCalls.length).toBeLessThanOrEqual(4)
+    expect(reactCalls.length).toBeLessThanOrEqual(6)
     // set_state went 8 → 9 when resolving a thread started keeping its mirrored Slack cards in
     // line (lib/slack-comments.ts enqueueSlackThreadState). The added call is the
     // listSlackThreadLinksByThread that asks whether this thread is mirrored anywhere — one
@@ -497,6 +504,6 @@ describe("MCP tool calls stay within their round-trip budget", () => {
     // onto the root comment's meta, the one row the activity stream reads "Claude Code resolved
     // Ada's thread" from. One read of the root (already loaded by the tool's own thread check)
     // and one meta write; without it the record says only "resolved", by nobody, at no time.
-    expect(resolveCalls.length).toBeLessThanOrEqual(10)
+    expect(resolveCalls.length).toBeLessThanOrEqual(9)
   })
 })

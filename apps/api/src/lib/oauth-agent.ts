@@ -1,4 +1,10 @@
-import { type AgentRecord, capRole, type MetaStore, type Role } from "@derive/core"
+import {
+  type AgentRecord,
+  capRole,
+  type MetaStore,
+  type OAuthGrantWorkspaceRead,
+  type Role,
+} from "@derive/core"
 import { createLocalJWKSet, type JWTPayload, jwtVerify } from "jose"
 import { type Auth, oauthIssuerFor } from "../auth-config"
 import { sha256 } from "./crypto"
@@ -77,8 +83,9 @@ export function makeOauthAgent({
     clientId: string,
     email: string | null,
     name: string | null,
+    preloaded?: OAuthGrantWorkspaceRead,
   ): Promise<{ org: string; memberRole: Role; bound: string[] }> => {
-    const { mine, bound } = await meta.workspacesAndOauthBinding(userId, clientId)
+    const { mine, bound } = preloaded ?? (await meta.workspacesAndOauthBinding(userId, clientId))
     // The grant's reachable workspaces the user is STILL a member of. A non-empty
     // `bound` restricts; an empty one means every workspace they belong to.
     const scoped = bound.length ? mine.filter((w) => bound.includes(w.id)) : mine
@@ -109,10 +116,20 @@ export function makeOauthAgent({
   const oauthAgent = async (token: string): Promise<OauthAgentResolution | null> => {
     // 1. Opaque access token (the `derive login` flow): stored hashed (sha256, like
     //    agent tokens), so resolve by the hash of the presented bearer.
-    const grant = await meta.getOAuthGrant(sha256(token))
+    const tokenHash = sha256(token)
+    const joined = meta.oauthGrantWithWorkspaces
+      ? await meta.oauthGrantWithWorkspaces(tokenHash)
+      : undefined
+    const grant = joined === undefined ? await meta.getOAuthGrant(tokenHash) : joined?.grant
     if (grant) {
       if (grant.expiresAt.getTime() <= Date.now()) return null
-      const ws = await oauthWorkspace(grant.userId, grant.clientId, grant.userEmail, grant.userName)
+      const ws = await oauthWorkspace(
+        grant.userId,
+        grant.clientId,
+        grant.userEmail,
+        grant.userName,
+        joined ?? undefined,
+      )
       const scopeRole = roleFromScopes(grant.scopes)
       return {
         ownerId: grant.userId,
