@@ -182,7 +182,7 @@ describe("live artifact content mentions", () => {
         version,
         { isNew: false, onBehalf: owner.id, actorId: owner.id },
       ),
-    ).resolves.toEqual({ resolved: [] })
+    ).resolves.toMatchObject({ resolved: [] })
 
     expect(notificationWrite).toHaveBeenCalledTimes(1)
     expect((await meta.getVersion(artifact.id, version.n))?.blob_key).toBe(blob_key)

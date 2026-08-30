@@ -590,10 +590,11 @@ describe("MCP tool calls stay within their round-trip budget", () => {
     // separate version lookup.
     expect(editCalls).toContain("artifactWithVersion")
     expect(editCalls).not.toContain("getVersion")
+    expect(editCalls).not.toContain("getVersionData")
     expect(editCalls.filter((call) => call === "getByShortId")).toHaveLength(1)
     expect(editCalls.filter((call) => call === "getSubscription")).toHaveLength(1)
     expect(editCalls.filter((call) => call === "listMemberships")).toHaveLength(1)
-    expect(editCalls).toHaveLength(14)
+    expect(editCalls).toHaveLength(13)
     // A cold edit reads the previous immutable source once. This fixture already read the
     // active version, so the source cache may make it zero. The new version must never be
     // read back for search, facts, anchors, mentions, or the completion summary.

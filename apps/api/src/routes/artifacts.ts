@@ -998,7 +998,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       // Webhook + follower fan-out + thread resolves + realtime/render/re-anchor, all via
       // the one shared helper so this path can never drift from MCP publish or restore.
       const afterPublishStartedAt = performance.now()
-      await afterPublish(
+      const { storedRows } = await afterPublish(
         {
           meta,
           blobs,
@@ -1102,7 +1102,6 @@ export const artifactRoutes = (ctx: AppContext) => {
       // its human exactly like the /mcp path does — the shared bell + auto-open
       // fan-out. A signed-in human's own save gets none of this — they're
       // already looking at it.
-      const receiptStartedAt = performance.now()
       const responseText =
         artifact.kind === "file" && isTextType(version.content_type)
           ? new TextDecoder().decode(bytes)
@@ -1120,7 +1119,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       // inline base64, expiring upload URLs, page-markup-as-markdown, broken blob
       // refs) — computed server-side so every client relays the same guidance; the
       // boundary rules keep @derive/core out of the clients.
-      const [openedInTab, versions, blobAdvisory, weightAdvisory, driftAdvisories, storedRows] =
+      const [openedInTab, versions, blobAdvisory, weightAdvisory, driftAdvisories] =
         await Promise.all([
           timedReceipt("push", () =>
             agentPrincipal && onBehalf
@@ -1157,7 +1156,6 @@ export const artifactRoutes = (ctx: AppContext) => {
                 )
               : Promise.resolve([]),
           ),
-          timedReceipt("data", () => meta.getVersionData(artifact.id, version.n).catch(() => [])),
         ])
       const advisoryStartedAt = performance.now()
       const advisories = responseText
@@ -1169,9 +1167,8 @@ export const artifactRoutes = (ctx: AppContext) => {
           ]
         : []
       receiptDurations["advisories"] = performance.now() - advisoryStartedAt
-      receiptDurations["prepare"] = advisoryStartedAt - receiptStartedAt
-      // What extraction actually STORED, read back from the rows rather than echoed from
-      // the parser — so a persistence failure reads as an empty list, not a false claim.
+      // What extraction actually STORED, returned by the successful write rather than echoed
+      // from the parser — so a persistence failure reads as an empty list, not a false claim.
       // assertedOnly: this 201 body is the REST publish receipt, and the rows now include
       // the host's own $facts — a receipt listing $stats beside the author's numbers is
       // the host congratulating itself, the exact thing the reward surfaces must not do.
@@ -1189,13 +1186,11 @@ export const artifactRoutes = (ctx: AppContext) => {
           )}`,
           `after-publish;dur=${duration(afterPublishFinishedAt - afterPublishStartedAt)}`,
           `post-publish;dur=${duration(responseStartedAt - afterPublishFinishedAt)}`,
-          `receipt-prepare;dur=${duration(receiptDurations["prepare"] ?? 0)}`,
           `receipt-push;dur=${duration(receiptDurations["push"] ?? 0)}`,
           `receipt-versions;dur=${duration(receiptDurations["versions"] ?? 0)}`,
           `receipt-blob-check;dur=${duration(receiptDurations["blob-check"] ?? 0)}`,
           `receipt-asset-weight;dur=${duration(receiptDurations["asset-weight"] ?? 0)}`,
           `receipt-fact-drift;dur=${duration(receiptDurations["fact-drift"] ?? 0)}`,
-          `receipt-data;dur=${duration(receiptDurations["data"] ?? 0)}`,
           `receipt-advisories;dur=${duration(receiptDurations["advisories"] ?? 0)}`,
           `total;dur=${duration(responseStartedAt - requestStartedAt)}`,
         ].join(", "),

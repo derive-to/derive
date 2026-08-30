@@ -855,7 +855,7 @@ export function registerPublishTool(tc: ToolContext): void {
         // one shared helper — event parity with the HTTP publish route (an open tab
         // live-reloads, the webhook outbox reaches integrations) with no chance to drift.
         // A publish that fixes feedback resolves those threads directly here.
-        const { resolved } = await afterPublish(
+        const { resolved, storedRows } = await afterPublish(
           {
             meta: ctx.meta,
             blobs: ctx.blobs,
@@ -932,47 +932,49 @@ export function registerPublishTool(tc: ToolContext): void {
         // completion DM, but does not commandeer the person's browser; their live tab reloads.
         const responseContent =
           typeof content === "string" && artifact.kind === "file" ? content : null
-        const [openedInTab, blobAdvisory, weightAdvisory, driftAdvisories, storedRows] =
-          await Promise.all([
-            actingFor
-              ? agentPushFanout(
-                  {
-                    meta: ctx.meta,
-                    blobs: ctx.blobs,
-                    bus: ctx.bus,
-                    baseUrl: ctx.deps.baseUrl,
-                    pokeWebhooks: ctx.deps.pokeWebhooks,
-                  },
-                  artifact,
-                  {
-                    user: actingFor.id,
-                    agentId: agent.id,
-                    agentName: agent.name,
-                    version: version.n,
-                    reviewRound: !!review_round,
-                    isNew: !short_id,
-                    notifyBrowser: !attended || !short_id,
-                    ...(editSummary ? { summary: editSummary } : {}),
-                  },
-                )
-              : Promise.resolve(false),
-            responseContent
-              ? missingBlobAdvisory(responseContent, ctx.blobs)
-              : Promise.resolve(null),
-            responseContent
-              ? heavyAssetsAdvisory(responseContent, ctx.meta)
-              : Promise.resolve(null),
-            responseContent
-              ? slotShapeDriftAdvisories(
-                  responseContent,
-                  version.content_type,
-                  artifact.id,
-                  version.n - 1,
-                  ctx.meta,
-                )
-              : Promise.resolve([]),
-            ctx.meta.getVersionData(artifact.id, version.n).catch(() => []),
-          ])
+        const pushReceipt = actingFor
+          ? agentPushFanout(
+              {
+                meta: ctx.meta,
+                blobs: ctx.blobs,
+                bus: ctx.bus,
+                baseUrl: ctx.deps.baseUrl,
+                pokeWebhooks: ctx.deps.pokeWebhooks,
+              },
+              artifact,
+              {
+                user: actingFor.id,
+                agentId: agent.id,
+                agentName: agent.name,
+                version: version.n,
+                reviewRound: !!review_round,
+                isNew: !short_id,
+                notifyBrowser: !attended || !short_id,
+                ...(editSummary ? { summary: editSummary } : {}),
+              },
+            )
+          : Promise.resolve(false)
+        // An attended revision never opens the user's browser, so its receipt is already
+        // known. Keep completion delivery reliable through waitUntil without holding the
+        // edit response open for remote notification writes that cannot change it.
+        const openedInTabReceipt =
+          actingFor && attended && short_id
+            ? ctx.background(pushReceipt).then(() => false)
+            : pushReceipt
+        const [openedInTab, blobAdvisory, weightAdvisory, driftAdvisories] = await Promise.all([
+          openedInTabReceipt,
+          responseContent ? missingBlobAdvisory(responseContent, ctx.blobs) : Promise.resolve(null),
+          responseContent ? heavyAssetsAdvisory(responseContent, ctx.meta) : Promise.resolve(null),
+          responseContent
+            ? slotShapeDriftAdvisories(
+                responseContent,
+                version.content_type,
+                artifact.id,
+                version.n - 1,
+                ctx.meta,
+              )
+            : Promise.resolve([]),
+        ])
         // Each bundle page (including any bound images) is directly fetchable once
         // live — surfacing the URLs here is the fix for an agent that can't find
         // them otherwise and falls back to inlining base64 (see the "cheap image
@@ -987,8 +989,8 @@ export function registerPublishTool(tc: ToolContext): void {
           : null
         // The one advisory that needs I/O — computed once here, folded into the
         // note below alongside the pure publishAdvisories.
-        // What the extraction actually STORED for this version, read back from the rows
-        // rather than echoed from the parser. Reporting the store is strictly more honest:
+        // What the extraction actually STORED for this version, returned by the successful
+        // write rather than echoed from the parser. Reporting the store is strictly more honest:
         // it reflects what is now queryable, so a persistence failure shows up as an empty
         // list instead of a confident claim. Until now success was silent — a fact was
         // only ever mentioned when something went wrong, which is a poor way to teach a
