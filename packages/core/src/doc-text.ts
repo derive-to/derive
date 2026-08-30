@@ -871,12 +871,49 @@ export const toMarkdown = (source: string, contentType: string): string =>
 // `edits` matches byte-for-byte against); anything over ~200 base64 chars (~150
 // bytes) is worth collapsing.
 const DATA_URI_RE = /data:([a-zA-Z0-9.+-]+\/[a-zA-Z0-9.+-]+);base64,([A-Za-z0-9+/=]+)/g
-export const elideDataUris = (s: string): string =>
-  s.replace(DATA_URI_RE, (m, mime: string, b64: string) =>
-    b64.length > 200
-      ? `data:${mime};base64,[elided — ${Math.round((b64.length * 3) / 4 / 1024)}KB inline image. Re-upload via POST /v1/assets and swap in its url to make this doc cheap to read]`
-      : m,
-  )
+const DATA_URI_AT_RE = /data:([a-zA-Z0-9.+-]+\/[a-zA-Z0-9.+-]+);base64,([A-Za-z0-9+/=]+)/y
+const elidedDataUri = (match: string, mime: string, b64: string): string =>
+  b64.length > 200
+    ? `data:${mime};base64,[elided — ${Math.round((b64.length * 3) / 4 / 1024)}KB inline image. Re-upload via POST /v1/assets and swap in its url to make this doc cheap to read]`
+    : match
+export const elideDataUris = (s: string): string => s.replace(DATA_URI_RE, elidedDataUri)
+
+/**
+ * The first `maxChars` of {@link elideDataUris}, without scanning source that cannot
+ * contribute to that prefix. Search indexes at most 256 KiB of one source, while an
+ * artifact can be tens of MiB. Running the global replacement before slicing made a
+ * small far-tail edit rescan the complete document just to reproduce the same prefix.
+ *
+ * A data URI that STARTS inside the output window is still consumed in full. Its
+ * replacement reports the original byte size, so stopping halfway through it would
+ * change the indexed text. Everything after the output window is irrelevant.
+ */
+export const elideDataUrisToLimit = (s: string, maxChars: number): string => {
+  const limit = Math.max(0, Math.floor(maxChars))
+  if (!limit || !s) return ""
+  let cursor = 0
+  let out = ""
+  while (cursor < s.length && out.length < limit) {
+    const remaining = limit - out.length
+    const candidate = s.indexOf("data:", cursor)
+    if (candidate < 0 || candidate - cursor >= remaining) {
+      out += s.slice(cursor, cursor + remaining)
+      break
+    }
+    out += s.slice(cursor, candidate)
+    DATA_URI_AT_RE.lastIndex = candidate
+    const match = DATA_URI_AT_RE.exec(s)
+    if (!match) {
+      out += "data:"
+      cursor = candidate + 5
+      continue
+    }
+    const replacement = elidedDataUri(match[0], match[1] as string, match[2] as string)
+    out += replacement.slice(0, limit - out.length)
+    cursor = DATA_URI_AT_RE.lastIndex
+  }
+  return out
+}
 
 /** Outline for any text source (h1–h6 for HTML, ATX `#`–`######` for markdown). */
 export const outlineOf = (source: string, contentType: string): OutlineSection[] => {

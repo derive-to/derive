@@ -1,6 +1,7 @@
 import type { Embedder, SearchIndex } from "@derive/core"
 import type { VectorStore } from "@derive/db/pgvector"
 import { EMBED_BATCH } from "./embedder"
+import { WeightedLruCache, type WeightedLruCacheOptions } from "./lib/source-text-cache"
 import { type ChunkUnit, rollupBestChunk, staleIds, unitsFor } from "./search-chunk"
 
 // The dense-search adapter (used by BOTH tiers — edge and Postgres self-host): chunk-level semantic
@@ -19,12 +20,76 @@ import { type ChunkUnit, rollupBestChunk, staleIds, unitsFor } from "./search-ch
 // The vector pool sets hnsw.ef_search ≥ this so pgvector's ANN scan doesn't cap the fetch below it
 // (see node.ts / apply-pg-schema.ts).
 const SEARCH_TOPK = 50
+const INDEXED_PROJECTION_CACHE_BYTES = 8 * 1024 * 1024
+const INDEXED_PROJECTION_CACHE_ENTRIES = 128
+const INDEXED_PROJECTION_CACHE_ENTRY_BYTES = 512 * 1024
+const INDEXED_PROJECTION_CACHE_IDLE_MS = 10 * 60 * 1000
+
+const sameUnits = (a: ChunkUnit[], b: ChunkUnit[]): boolean =>
+  a.length === b.length &&
+  a.every((unit, i) => {
+    const other = b[i]
+    return (
+      other !== undefined &&
+      unit.vectorId === other.vectorId &&
+      unit.chunk === other.chunk &&
+      unit.orgId === other.orgId &&
+      unit.artifactId === other.artifactId &&
+      unit.embedText === other.embedText &&
+      unit.snippet === other.snippet
+    )
+  })
+
+// Approximate the JS string storage, plus a small fixed amount for the unit fields.
+// The cache is an optimization only, so conservative over-counting is preferable.
+const unitsWeight = (units: ChunkUnit[]): number =>
+  units.reduce((bytes, unit) => bytes + (unit.embedText.length + unit.snippet.length) * 2 + 96, 0)
+
+/**
+ * A small L0 receipt cache for dense projections that fully reached pgvector.
+ *
+ * Workers build a request-scoped PgVectorStore around the live Hyperdrive pool, so
+ * worker.ts supplies one module-scoped cache to successive adapter instances. Node
+ * creates one long-lived adapter and uses the constructor default. The key includes
+ * the embedding model and dimensions, so a model switch never reuses a receipt from
+ * another vector space.
+ */
+export class IndexedProjectionCache {
+  private readonly cache: WeightedLruCache<ChunkUnit[]>
+
+  constructor(options: WeightedLruCacheOptions = {}) {
+    this.cache = new WeightedLruCache({
+      maxBytes: INDEXED_PROJECTION_CACHE_BYTES,
+      maxEntries: INDEXED_PROJECTION_CACHE_ENTRIES,
+      maxEntryBytes: INDEXED_PROJECTION_CACHE_ENTRY_BYTES,
+      idleTtlMs: INDEXED_PROJECTION_CACHE_IDLE_MS,
+      ...options,
+    })
+  }
+
+  get(key: string): ChunkUnit[] | undefined {
+    return this.cache.get(key)
+  }
+
+  set(key: string, units: ChunkUnit[]): void {
+    this.cache.set(key, units, unitsWeight(units))
+  }
+
+  delete(key: string): void {
+    this.cache.delete(key)
+  }
+}
 
 export class PgvectorSearchIndex implements SearchIndex {
   constructor(
     private readonly embedder: Embedder,
     private readonly store: VectorStore,
+    private readonly indexedProjections = new IndexedProjectionCache(),
   ) {}
+
+  private projectionKey(id: string): string {
+    return `${this.embedder.model}:${this.embedder.dimensions}:${id}`
+  }
 
   // Embed + upsert a flat unit list in EMBED_BATCH groups, interleaved (not embed-all-then-write) —
   // bounds peak memory to one batch of vectors and lands earlier groups before a later embed can
@@ -56,12 +121,20 @@ export class PgvectorSearchIndex implements SearchIndex {
     text: string,
   ): Promise<void> {
     const units = unitsFor(id, orgId, title, text)
+    const cacheKey = this.projectionKey(id)
+    const indexed = this.indexedProjections.get(cacheKey)
+    // This is deliberately a success cache, not an assumption derived from source
+    // equality. An entry is written only after BOTH vector upserts and stale cleanup
+    // complete. A cold process, an evicted entry, or a failed prior update takes the
+    // full recovery path and re-indexes exactly as before.
+    if (indexed && sameUnits(indexed, units)) return
     // Upsert the fresh chunks first, then clear any chunk slots beyond the new count (a shrunk doc)
     // plus the bare legacy id. Empty content ⇒ no units ⇒ this clears everything for the artifact.
     // (upsert-then-delete, two statements: a delete failure leaves orphan chunks that self-heal on
     // the next index — best-effort, per the port's contract.)
     if (units.length) await this.embedAndStore(units)
     await this.store.deleteByIds(staleIds(id, units.length))
+    this.indexedProjections.set(cacheKey, units)
   }
 
   async indexArtifacts(
@@ -69,18 +142,25 @@ export class PgvectorSearchIndex implements SearchIndex {
   ): Promise<void> {
     const all: ChunkUnit[] = []
     const stale: string[] = []
+    const indexed: { id: string; units: ChunkUnit[] }[] = []
     for (const it of items) {
       const units = unitsFor(it.id, it.orgId, it.title, it.text)
+      const cacheKey = this.projectionKey(it.id)
+      const cached = this.indexedProjections.get(cacheKey)
+      if (cached && sameUnits(cached, units)) continue
       all.push(...units)
       stale.push(...staleIds(it.id, units.length))
+      indexed.push({ id: cacheKey, units })
     }
     if (all.length) await this.embedAndStore(all)
     await this.store.deleteByIds(stale)
+    for (const item of indexed) this.indexedProjections.set(item.id, item.units)
   }
 
   async unindexArtifact(id: string): Promise<void> {
     // Drop every chunk vector for the artifact in one statement (by artifact_id column).
     await this.store.deleteByArtifact(id)
+    this.indexedProjections.delete(this.projectionKey(id))
   }
 
   async search(

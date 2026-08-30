@@ -1,4 +1,5 @@
-import type { ArtifactRecord, SearchIndex, VersionRecord } from "@derive/core"
+import type { ArtifactRecord, Embedder, SearchIndex, VersionRecord } from "@derive/core"
+import type { VectorStore } from "@derive/db/pgvector"
 import { describe, expect, it } from "vitest"
 import {
   deleteArtifactAndUnindex,
@@ -7,6 +8,7 @@ import {
   searchWorkspace,
   type WorkspaceSearchDeps,
 } from "../src/lib/search"
+import { IndexedProjectionCache, PgvectorSearchIndex } from "../src/search-pgvector"
 
 // Hybrid (lexical FTS + dense/semantic) workspace search. These are pure-logic tests over the
 // fusion + orchestration — with in-memory fakes for both the FTS arm and the dense SearchIndex, so
@@ -223,5 +225,118 @@ describe("write path — dense arm best-effort + backfill", () => {
     await deleteArtifactAndUnindex(meta, search, "a1", ORG)
     expect(deleted).toEqual([["a1", ORG]])
     expect(unindexed).toEqual(["a1"]) // the dense vector is dropped too, not just the FTS row
+  })
+})
+
+describe("PgvectorSearchIndex — successful projection cache", () => {
+  const harness = (cacheOptions: ConstructorParameters<typeof IndexedProjectionCache>[0] = {}) => {
+    const embedded: string[][] = []
+    const upserts: string[][] = []
+    const staleDeletes: string[][] = []
+    const artifactDeletes: string[] = []
+    let failNextStaleDelete = false
+    const embedder: Embedder = {
+      model: "test",
+      dimensions: 2,
+      minScore: 0,
+      embed: async (texts) => {
+        embedded.push(texts)
+        return texts.map(() => [1, 0])
+      },
+    }
+    const store: VectorStore = {
+      upsert: async (rows) => {
+        upserts.push(rows.map((row) => row.vectorId))
+      },
+      deleteByIds: async (ids) => {
+        staleDeletes.push(ids)
+        if (failNextStaleDelete) {
+          failNextStaleDelete = false
+          throw new Error("stale cleanup failed")
+        }
+      },
+      deleteByArtifact: async (id) => {
+        artifactDeletes.push(id)
+      },
+      query: async () => [],
+      getVector: async () => null,
+    }
+    const cache = new IndexedProjectionCache(cacheOptions)
+    return {
+      index: new PgvectorSearchIndex(embedder, store, cache),
+      anotherIndex: () => new PgvectorSearchIndex(embedder, store, cache),
+      embedded,
+      upserts,
+      staleDeletes,
+      artifactDeletes,
+      failStaleDelete: () => {
+        failNextStaleDelete = true
+      },
+    }
+  }
+
+  it("skips an exact dense projection only after its full prior update succeeded", async () => {
+    const h = harness()
+    const opening = "opening search text ".repeat(2_000)
+    await h.index.indexArtifact("a1", ORG, "Long HTML", `${opening}<p>old tail</p>`)
+    await h.index.indexArtifact("a1", ORG, "Long HTML", `${opening}<p>new tail</p>`)
+
+    expect(h.embedded).toHaveLength(1)
+    expect(h.upserts).toHaveLength(1)
+    expect(h.staleDeletes).toHaveLength(1)
+  })
+
+  it("also skips a far-tail slide edit whose dense opening is unchanged", async () => {
+    const h = harness()
+    const opening = '<section data-derive-slide="intro">Intro</section>'.repeat(1_000)
+    await h.index.indexArtifact("deck", ORG, "Deck", `${opening}<section>Slide 47 old</section>`)
+    await h.index.indexArtifact("deck", ORG, "Deck", `${opening}<section>Slide 47 new</section>`)
+
+    expect(h.embedded).toHaveLength(1)
+    expect(h.staleDeletes).toHaveLength(1)
+  })
+
+  it("shares successful receipts across request-scoped Worker adapters", async () => {
+    const h = harness()
+    await h.index.indexArtifact("a1", ORG, "Doc", "same projection")
+    await h.anotherIndex().indexArtifact("a1", ORG, "Doc", "same projection")
+
+    expect(h.embedded).toHaveLength(1)
+    expect(h.staleDeletes).toHaveLength(1)
+  })
+
+  it("does not cache a partial update and retries the complete projection", async () => {
+    const h = harness()
+    h.failStaleDelete()
+    await expect(h.index.indexArtifact("a1", ORG, "Doc", "body")).rejects.toThrow(
+      "stale cleanup failed",
+    )
+    await h.index.indexArtifact("a1", ORG, "Doc", "body")
+
+    expect(h.embedded).toHaveLength(2)
+    expect(h.upserts).toHaveLength(2)
+    expect(h.staleDeletes).toHaveLength(2)
+  })
+
+  it("invalidates the projection after unindex and respects LRU eviction", async () => {
+    const h = harness({ maxEntries: 1 })
+    await h.index.indexArtifact("a1", ORG, "One", "body one")
+    await h.index.indexArtifact("a2", ORG, "Two", "body two")
+    await h.index.indexArtifact("a1", ORG, "One", "body one")
+    await h.index.unindexArtifact("a1")
+    await h.index.indexArtifact("a1", ORG, "One", "body one")
+
+    expect(h.embedded).toHaveLength(4)
+    expect(h.artifactDeletes).toEqual(["a1"])
+  })
+
+  it("re-indexes when title or indexed text changes", async () => {
+    const h = harness()
+    await h.index.indexArtifact("a1", ORG, "One", "body")
+    await h.index.indexArtifact("a1", ORG, "Two", "body")
+    await h.index.indexArtifact("a1", ORG, "Two", "changed body")
+
+    expect(h.embedded).toHaveLength(3)
+    expect(h.staleDeletes).toHaveLength(3)
   })
 })

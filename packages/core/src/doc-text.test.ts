@@ -4,6 +4,8 @@ import {
   applyEdits,
   docOutline,
   EditError,
+  elideDataUris,
+  elideDataUrisToLimit,
   htmlToMarkdown,
   LANDMARK_TAGS,
   landmarkMap,
@@ -176,6 +178,28 @@ describe("headingSlug + slugger", () => {
   it("dedups repeated headings across a document", () => {
     const out = docOutline(doc("<h2>Goals</h2><h2>Goals</h2><h2>Goals</h2>"))
     expect(out.map((s) => s.slug)).toEqual(["goals", "goals-1", "goals-2"])
+  })
+})
+
+describe("elideDataUrisToLimit", () => {
+  const matchesFullElision = (source: string, limit: number) =>
+    expect(elideDataUrisToLimit(source, limit)).toBe(elideDataUris(source).slice(0, limit))
+
+  it("matches full elision for long plain sources without scanning semantics", () => {
+    matchesFullElision("a".repeat(2_000_000), 256 * 1024)
+  })
+
+  it("matches full elision when a large URI crosses the output boundary", () => {
+    const source = `before data:image/png;base64,${"A".repeat(500_000)} after ${"z".repeat(500_000)}`
+    matchesFullElision(source, 80)
+    matchesFullElision(source, 256 * 1024)
+  })
+
+  it("keeps short URIs and ignores malformed candidates exactly like full elision", () => {
+    const source =
+      `bad data:not-a-uri then data:image/png;base64,${"A".repeat(40)} ` +
+      `and data:image/png;base64,${"B".repeat(240)} tail`
+    for (const limit of [0, 4, 20, 80, 180, 400]) matchesFullElision(source, limit)
   })
 })
 

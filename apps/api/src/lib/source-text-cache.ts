@@ -49,6 +49,13 @@ export class WeightedLruCache<T> {
     this.evictToLimits()
   }
 
+  delete(key: string): void {
+    const entry = this.entries.get(key)
+    if (!entry) return
+    this.entries.delete(key)
+    this.totalBytes -= entry.bytes
+  }
+
   private removeExpired(now: number) {
     for (const [key, entry] of this.entries) {
       if (entry.expiresAt > now) continue

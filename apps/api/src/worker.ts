@@ -46,7 +46,7 @@ import { loopSubstrate } from "./lib/substrate-loop"
 import { providerSubstrate } from "./lib/substrate-provider"
 import { log } from "./log"
 import { createDoBackplane, edgeCtx, edgeWaitUntil } from "./realtime-do"
-import { PgvectorSearchIndex } from "./search-pgvector"
+import { IndexedProjectionCache, PgvectorSearchIndex } from "./search-pgvector"
 import { bindingSummarizer, type TextGenAiLike } from "./summarizer"
 import { enqueueChannelDelivery } from "./webhooks"
 
@@ -62,6 +62,11 @@ export { WebhookOutbox } from "./webhook-do"
 // The webhook outbox DO is a singleton: every isolate pokes the same instance by a
 // fixed name, so one alarm loop drains the shared outbox.
 const OUTBOX_NAME = "outbox"
+// A Worker creates request-scoped adapters around its request-scoped Hyperdrive pool.
+// Keep only the small success receipts across requests in the same warm isolate. A
+// cold isolate takes the complete dense-index path, so this never becomes correctness
+// state and needs no Durable Object or external cache.
+const indexedProjectionCache = new IndexedProjectionCache()
 
 // The preview renderer DO is a singleton: one fixed name → one DO instance →
 // one browser at a time (no parallel-browser billing).
@@ -341,6 +346,7 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
             ? new PgvectorSearchIndex(
                 bindingEmbedder(env.AI),
                 new PgVectorStore(livePgPool, EMBED_DIMENSIONS),
+                indexedProjectionCache,
               )
             : undefined,
         // Bound on env.AI ALONE, unlike `search` above: a summary is a text call with nowhere to

@@ -1,5 +1,19 @@
 import { describe, expect, it, vi } from "vitest"
-import { SourceTextCache } from "../src/lib/source-text-cache"
+import { SourceTextCache, WeightedLruCache } from "../src/lib/source-text-cache"
+
+describe("WeightedLruCache", () => {
+  it("deletes an entry without disturbing the remaining byte budget", () => {
+    const cache = new WeightedLruCache<string>({ maxBytes: 8, maxEntryBytes: 8 })
+    cache.set("a", "a", 4)
+    cache.set("b", "b", 4)
+    cache.delete("a")
+    cache.set("c", "c", 4)
+
+    expect(cache.get("a")).toBeUndefined()
+    expect(cache.get("b")).toBe("b")
+    expect(cache.get("c")).toBe("c")
+  })
+})
 
 describe("SourceTextCache", () => {
   it("keeps hot entries alive with a sliding idle timeout", async () => {
