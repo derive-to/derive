@@ -132,6 +132,26 @@ const clipFocusBody = (body: string): string =>
     ? `${body.slice(0, FOCUS_BODY_MAX)}\n\n…[truncated ${body.length - FOCUS_BODY_MAX} chars — read this node for the full clipped part]`
     : body
 
+/** Find exact-source focus candidates without allocating every node body. The map tiles
+ *  the source, so one forward cursor assigns each literal hit to its containing node.
+ *  A hit that crosses a node boundary is excluded, matching the ordinary per-node scan. */
+const htmlFocusCandidates = (source: string, structure: DocMap, matcher: RegExp): number[] => {
+  const candidates: number[] = []
+  let nodeIndex = 0
+  for (const hit of source.matchAll(matcher)) {
+    const start = hit.index
+    const end = start + hit[0].length
+    let target = structure.nodes[nodeIndex]
+    while (target && target.end <= start) {
+      nodeIndex += 1
+      target = structure.nodes[nodeIndex]
+    }
+    if (!target || start < target.start || end > target.end) continue
+    if (candidates.at(-1) !== nodeIndex) candidates.push(nodeIndex)
+  }
+  return candidates
+}
+
 // MCP is stateless: mcp.ts builds a fresh server and registers its tools for every
 // request. Prepared caches therefore live at module scope, beside the Worker isolate,
 // rather than inside registerReadTool where the next request could never hit them.
@@ -1106,7 +1126,11 @@ export function registerReadTool(tc: ToolContext): void {
           const searchableFormat = fmt === "markdown" ? "text" : fmt
           let candidates: number[] | null = null
           let builtDuringScan = false
-          if (searchableFormat !== "html" && canIndexFocus(focus)) {
+          if (searchableFormat === "html") {
+            // Exact-source focus can scan the full string once, then materialize only
+            // matching nodes. Text and Markdown keep the presentation-aware Bloom path.
+            candidates = htmlFocusCandidates(src, structure, matcher)
+          } else if (canIndexFocus(focus)) {
             const cached = focusIndexes.get(indexKey)
             if (cached) candidates = focusCandidates(cached, focus)
             else {

@@ -260,6 +260,31 @@ describe("read focus", () => {
     expect(exact.matches[1].body).toContain('data-derive-slide="1"')
   })
 
+  it("keeps exact-source focus inside node boundaries and counts each node once", async () => {
+    const source =
+      "<!doctype html><html><body>" +
+      "<h2>First</h2><p>Alpha alpha ALPHA café</p>" +
+      "<h2>Second</h2><p>CAFÉ finish</p>" +
+      "</body></html>"
+    const { app, token, short_id } = await setupDocument("focus-html-candidates", source)
+
+    const repeated = await readJson(app, token, {
+      short_id,
+      focus: "alpha",
+      format: "html",
+    })
+    expect(repeated.count).toBe(1)
+    expect(repeated.matches).toHaveLength(1)
+    expect(repeated.matches[0]).toMatchObject({ node: "sec:first", type: "section" })
+
+    const crossBoundary = await readJson(app, token, {
+      short_id,
+      focus: "</p><h2>",
+      format: "html",
+    })
+    expect(crossBoundary).toMatchObject({ count: 0, matches: [] })
+  })
+
   it("does not change the ordinary small-document read", async () => {
     const source =
       "<!doctype html><html><body><h1>Small note</h1><p>The complete body still returns.</p></body></html>"
