@@ -389,7 +389,7 @@ export function IntegrationsSection() {
             {github.app_permissions_state !== "update_required" && (
               <ListRow
                 title={github.accounts.length ? "Another GitHub account" : "GitHub account"}
-                meta="Choose the repositories that this workspace's contexts and automations may use."
+                meta="Connect an existing App installation or install it on another GitHub account."
                 actions={
                   isAdmin ? (
                     <Button

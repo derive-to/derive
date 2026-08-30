@@ -236,12 +236,10 @@ export async function exchangeGithubUserCode(input: {
   return data.access_token
 }
 
-/** GitHub's documented defense against a spoofed setup `installation_id`: use the temporary
- * user access token to confirm the installer is associated with that installation. */
-export async function getUserInstallation(
-  userToken: string,
-  installationId: string,
-): Promise<AppInstallation | null> {
+/** List installations this App's temporary user token can access. GitHub scopes this endpoint
+ * to the App that issued the token, so it is safe to use for existing-install discovery. */
+export async function listUserInstallations(userToken: string): Promise<AppInstallation[]> {
+  const result: AppInstallation[] = []
   for (let page = 1; page <= 10; page++) {
     const res = await fetch(`${API}/user/installations?per_page=100&page=${page}`, {
       headers: ghHeaders(`Bearer ${userToken}`),
@@ -256,19 +254,30 @@ export async function getUserInstallation(
       }[]
     }
     const installations = data.installations ?? []
-    const found = installations.find((installation) => String(installation.id) === installationId)
-    if (found)
-      return {
-        id: found.id ?? Number(installationId),
-        account: found.account
-          ? { login: found.account.login ?? "", type: found.account.type ?? "" }
+    for (const installation of installations) {
+      if (!installation.id || !Number.isSafeInteger(installation.id)) continue
+      result.push({
+        id: installation.id,
+        account: installation.account
+          ? { login: installation.account.login ?? "", type: installation.account.type ?? "" }
           : null,
-        htmlUrl: found.html_url ?? null,
-        permissions: found.permissions ?? {},
-      }
+        htmlUrl: installation.html_url ?? null,
+        permissions: installation.permissions ?? {},
+      })
+    }
     if (installations.length < 100) break
   }
-  return null
+  return result
+}
+
+/** GitHub's documented defense against a spoofed setup `installation_id`: use the temporary
+ * user access token to confirm the installer is associated with that installation. */
+export async function getUserInstallation(
+  userToken: string,
+  installationId: string,
+): Promise<AppInstallation | null> {
+  const installations = await listUserInstallations(userToken)
+  return installations.find((installation) => String(installation.id) === installationId) ?? null
 }
 
 export interface AppInstallation {

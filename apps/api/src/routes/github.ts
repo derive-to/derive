@@ -4,7 +4,11 @@ import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { Handler } from "hono"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
-import { MANIFEST_PERMISSIONS, REQUIRED_PERMISSIONS } from "../github-app-setup"
+import {
+  installationPickerHTML,
+  MANIFEST_PERMISSIONS,
+  REQUIRED_PERMISSIONS,
+} from "../github-app-setup"
 import { decryptSecret, signState, verifyState } from "../lib/crypto"
 import {
   exchangeGithubUserCode,
@@ -12,6 +16,7 @@ import {
   getAppInfo,
   getAppInstallation,
   getUserInstallation,
+  listUserInstallations,
 } from "../lib/github-app"
 import { upsertGithubConnection } from "../lib/github-connection"
 import { bail, fail } from "../lib/http"
@@ -26,6 +31,21 @@ interface InstallState {
 
 interface AuthorizationState {
   kind: "github-install-authorize"
+  org: string
+  uid: string
+  installationId: string
+  iat: number
+}
+
+interface DiscoveryState {
+  kind: "github-install-discover"
+  org: string
+  uid: string
+  iat: number
+}
+
+interface SelectionState {
+  kind: "github-install-select"
   org: string
   uid: string
   installationId: string
@@ -72,6 +92,24 @@ export const githubRoutes = (ctx: AppContext) => {
 
   const codeChallenge = (verifier: string): string =>
     createHash("sha256").update(verifier).digest("base64url")
+
+  const authorizationUrl = (clientId: string, state: string): string => {
+    if (!deps.encryptionKey) throw new Error("GitHub authorization is not configured")
+    const authorize = new URL("https://github.com/login/oauth/authorize")
+    authorize.searchParams.set("client_id", clientId)
+    authorize.searchParams.set(
+      "redirect_uri",
+      new URL("/v1/github/authorize", deps.baseUrl).toString(),
+    )
+    authorize.searchParams.set("state", state)
+    authorize.searchParams.set(
+      "code_challenge",
+      codeChallenge(codeVerifier(state, deps.encryptionKey)),
+    )
+    authorize.searchParams.set("code_challenge_method", "S256")
+    authorize.searchParams.set("prompt", "select_account")
+    return authorize.toString()
+  }
 
   const Account = z.object({
     installation_id: z.string(),
@@ -249,8 +287,25 @@ export const githubRoutes = (ctx: AppContext) => {
     },
   )
 
-  // One navigation, like Slack: admin → GitHub login/SSO/repository selection → callback.
+  // Start with GitHub user authorization. This lets Derive discover an existing installation
+  // even when an older App does not redirect installation updates to its setup URL.
   app.get("/v1/github/install", async (c) => {
+    const org = await requireWorkspace(c, "manage")
+    if (org instanceof Response) return org
+    const me = await requireUser(c)
+    if (me instanceof Response) return me
+    const loaded = await loadApp()
+    if (!loaded || !deps.encryptionKey) return fail(c, 404, "GitHub is not configured")
+    const state = signState(
+      { kind: "github-install-discover", org, uid: me.id },
+      deps.encryptionKey,
+    )
+    return c.redirect(authorizationUrl(loaded.app.client_id, state))
+  })
+
+  // No accessible installation exists yet. GitHub returns through the setup callback after the
+  // manager chooses an account and repositories.
+  app.get("/v1/github/install/new", async (c) => {
     const org = await requireWorkspace(c, "manage")
     if (org instanceof Response) return org
     const me = await requireUser(c)
@@ -316,16 +371,7 @@ export const githubRoutes = (ctx: AppContext) => {
       { kind: "github-install-authorize", org, uid, installationId },
       deps.encryptionKey,
     )
-    const verifier = codeVerifier(authorizationState, deps.encryptionKey)
-    const redirectUri = new URL("/v1/github/authorize", deps.baseUrl).toString()
-    const authorize = new URL("https://github.com/login/oauth/authorize")
-    authorize.searchParams.set("client_id", loaded.app.client_id)
-    authorize.searchParams.set("redirect_uri", redirectUri)
-    authorize.searchParams.set("state", authorizationState)
-    authorize.searchParams.set("code_challenge", codeChallenge(verifier))
-    authorize.searchParams.set("code_challenge_method", "S256")
-    authorize.searchParams.set("prompt", "select_account")
-    return c.redirect(authorize.toString())
+    return c.redirect(authorizationUrl(loaded.app.client_id, authorizationState))
   }
 
   app.get("/v1/github/callback", handleInstallCallback)
@@ -339,8 +385,13 @@ export const githubRoutes = (ctx: AppContext) => {
     const stateRaw = c.req.query("state") ?? ""
     if (c.req.query("error") === "access_denied") return c.redirect(settingsRedirect("canceled"))
     if (!deps.encryptionKey || !code) return c.redirect(settingsRedirect("config"))
-    const state = verifyState<AuthorizationState>(stateRaw, deps.encryptionKey)
-    if (state?.kind !== "github-install-authorize" || !installationIdIsValid(state.installationId))
+    const encryptionKey = deps.encryptionKey
+    const state = verifyState<AuthorizationState | DiscoveryState>(stateRaw, encryptionKey)
+    if (
+      !state ||
+      (state.kind !== "github-install-discover" &&
+        (state.kind !== "github-install-authorize" || !installationIdIsValid(state.installationId)))
+    )
       return c.redirect(settingsRedirect("expired"))
 
     const me = await currentUser(c)
@@ -357,11 +408,43 @@ export const githubRoutes = (ctx: AppContext) => {
     try {
       const userToken = await exchangeGithubUserCode({
         clientId: loaded.app.client_id,
-        clientSecret: decryptSecret(loaded.app.client_secret, deps.encryptionKey),
+        clientSecret: decryptSecret(loaded.app.client_secret, encryptionKey),
         code,
         redirectUri: new URL("/v1/github/authorize", deps.baseUrl).toString(),
-        codeVerifier: codeVerifier(stateRaw, deps.encryptionKey),
+        codeVerifier: codeVerifier(stateRaw, encryptionKey),
       })
+      if (state.kind === "github-install-discover") {
+        const installations = await listUserInstallations(userToken)
+        if (!installations.length) return c.redirect("/v1/github/install/new")
+        if (installations.length === 1) {
+          const installation = installations[0]
+          if (!installation) return c.redirect(settingsRedirect("save"))
+          await upsertGithubConnection(meta, {
+            orgId: state.org,
+            userId: me.id,
+            installationId: String(installation.id),
+            accountLogin: installation.account?.login ?? null,
+          })
+          return c.redirect(settingsRedirect("connected"))
+        }
+        return c.html(
+          installationPickerHTML({
+            installations: installations.map((installation) => ({
+              login: installation.account?.login || `Installation ${installation.id}`,
+              state: signState(
+                {
+                  kind: "github-install-select",
+                  org: state.org,
+                  uid: me.id,
+                  installationId: String(installation.id),
+                },
+                encryptionKey,
+              ),
+            })),
+            installUrl: "/v1/github/install/new",
+          }),
+        )
+      }
       const installation = await getUserInstallation(userToken, state.installationId)
       if (!installation) {
         log.warn("github installer cannot access installation", {
@@ -380,6 +463,47 @@ export const githubRoutes = (ctx: AppContext) => {
       return c.redirect(settingsRedirect("connected"))
     } catch (err) {
       log.warn("github integration save failed", {
+        installation_id:
+          state.kind === "github-install-authorize" ? state.installationId : "discovery",
+        error: err instanceof Error ? err.message : String(err),
+      })
+      return c.redirect(settingsRedirect("save"))
+    }
+  })
+
+  app.post("/v1/github/select", async (c) => {
+    const org = await requireWorkspace(c, "manage")
+    if (org instanceof Response) return org
+    const me = await requireUser(c)
+    if (me instanceof Response) return me
+    if (!deps.encryptionKey) return c.redirect(settingsRedirect("config"))
+    const body = await c.req.parseBody()
+    const stateRaw = typeof body.state === "string" ? body.state : ""
+    const state = verifyState<SelectionState>(stateRaw, deps.encryptionKey)
+    if (
+      state?.kind !== "github-install-select" ||
+      !installationIdIsValid(state.installationId) ||
+      state.org !== org ||
+      state.uid !== me.id
+    )
+      return c.redirect(settingsRedirect("expired"))
+    const loaded = await loadApp()
+    if (!loaded) return c.redirect(settingsRedirect("config"))
+    try {
+      const installation = await getAppInstallation(
+        loaded.app.app_id,
+        loaded.pem,
+        state.installationId,
+      )
+      await upsertGithubConnection(meta, {
+        orgId: org,
+        userId: me.id,
+        installationId: state.installationId,
+        accountLogin: installation.account?.login ?? null,
+      })
+      return c.redirect(settingsRedirect("connected"))
+    } catch (err) {
+      log.warn("github installation selection failed", {
         installation_id: state.installationId,
         error: err instanceof Error ? err.message : String(err),
       })

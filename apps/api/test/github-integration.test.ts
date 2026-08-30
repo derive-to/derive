@@ -51,7 +51,11 @@ describe("standard GitHub integration", () => {
     expect(generic.status).toBe(400)
     const install = await app.request("/v1/github/install", { headers: as(owner.email) })
     expect(install.status).toBe(302)
-    expect(install.headers.get("location")).toContain(
+    expect(new URL(install.headers.get("location") ?? "").pathname).toBe("/login/oauth/authorize")
+    const freshInstall = await app.request("/v1/github/install/new", {
+      headers: as(owner.email),
+    })
+    expect(freshInstall.headers.get("location")).toContain(
       "https://github.com/apps/derive-test/installations/new?state=",
     )
     expect((await app.request("/v1/github/install", { headers: as(member.email) })).status).toBe(
@@ -268,14 +272,91 @@ describe("standard GitHub integration", () => {
     expect(disconnected.status).toBe(204)
     expect(await meta.getConnection(created?.id ?? "")).toMatchObject({ status: "revoked" })
 
-    const finalSetup = await callback("44001")
-    await authorize(finalSetup.headers.get("location"), "reconnect")
+    const recovered = await authorize(install.headers.get("location"), "reconnect")
+    expect(recovered.headers.get("location")).toContain("github_connected=1")
     expect(await meta.getConnection(created?.id ?? "")).toMatchObject({ status: "active" })
     expect(
       (await meta.listConnections("default", undefined, "workspace")).filter(
         (connection) => connection.kind === "github_app",
       ),
     ).toHaveLength(1)
+  })
+
+  it("lets a manager choose between existing installations without an install callback", async () => {
+    const { app, meta } = makeAuthedApp("gh-standard-existing", [owner], "editor", {
+      deps: { encryptionKey: KEY },
+    })
+    await seedApp(meta)
+    let installations = [
+      { id: 55001, account: { login: "derive-one", type: "Organization" } },
+      { id: 55002, account: { login: "derive-two", type: "Organization" } },
+    ]
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string | URL) => {
+        const parsed = new URL(String(url))
+        if (parsed.host === "github.com" && parsed.pathname === "/login/oauth/access_token")
+          return new Response(JSON.stringify({ access_token: "ghu_existing" }), { status: 200 })
+        if (parsed.pathname === "/user/installations")
+          return new Response(JSON.stringify({ installations }), { status: 200 })
+        if (parsed.pathname === "/app/installations/55002")
+          return new Response(
+            JSON.stringify({
+              id: 55002,
+              account: { login: "derive-two", type: "Organization" },
+              permissions: { actions: "write", metadata: "read", pull_requests: "write" },
+            }),
+            { status: 200 },
+          )
+        return new Response("not found", { status: 404 })
+      }),
+    )
+
+    const install = await app.request("/v1/github/install", { headers: as(owner.email) })
+    const oauth = new URL(install.headers.get("location") ?? "")
+    const picker = await app.request(
+      `/v1/github/authorize?code=existing&state=${encodeURIComponent(oauth.searchParams.get("state") ?? "")}`,
+      { headers: as(owner.email) },
+    )
+    expect(picker.status).toBe(200)
+    const html = await picker.text()
+    expect(html).toContain("Choose a GitHub account")
+    expect(html).toContain("derive-one")
+    expect(html).toContain("derive-two")
+    expect(html).toContain("/v1/github/install/new")
+    const selectionStates = [...html.matchAll(/name="state" value="([^"]+)"/g)].map(
+      (match) => match[1] ?? "",
+    )
+    expect(selectionStates).toHaveLength(2)
+
+    const forged = await app.request("/v1/github/select", {
+      method: "POST",
+      headers: { ...as(owner.email), "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ state: "forged" }),
+    })
+    expect(forged.headers.get("location")).toContain("github_error=expired")
+    expect(await meta.listConnections("default", undefined, "workspace")).toEqual([])
+
+    const selected = await app.request("/v1/github/select", {
+      method: "POST",
+      headers: { ...as(owner.email), "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ state: selectionStates[1] ?? "" }),
+    })
+    expect(selected.headers.get("location")).toContain("github_connected=1")
+    expect(
+      (await meta.listConnections("default", undefined, "workspace")).filter(
+        (connection) => connection.kind === "github_app",
+      ),
+    ).toMatchObject([{ broker_ref: "55002", scopes_label: "derive-two", status: "active" }])
+
+    installations = []
+    const emptyInstall = await app.request("/v1/github/install", { headers: as(owner.email) })
+    const emptyOauth = new URL(emptyInstall.headers.get("location") ?? "")
+    const noExisting = await app.request(
+      `/v1/github/authorize?code=empty&state=${encodeURIComponent(emptyOauth.searchParams.get("state") ?? "")}`,
+      { headers: as(owner.email) },
+    )
+    expect(noExisting.headers.get("location")).toBe("/v1/github/install/new")
   })
 
   it("rejects a forged standard callback before it records an installation", async () => {
