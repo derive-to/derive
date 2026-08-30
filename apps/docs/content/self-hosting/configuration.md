@@ -293,7 +293,10 @@ cannot add them. Use **Add to Slack** again when adding `links:read`, `links:wri
 or `commands`. Older installations without the `commands` scope must reconnect before
 `/derive` will work.
 
-Linking is per-user and optional: without it, DMs fall back to matching a member by their Derive account email; with it, DMs and Slack-reply attribution resolve to the member's exact Slack identity (so a Derive email that differs from the Slack email no longer drops the DM).
+Slack identity settings are per user and workspace. A member can save a Slack lookup email for
+each Derive workspace and send fixed test DMs from **Settings → Notifications**. Without an
+override or account link, DMs fall back to the Derive account email. A linked account takes
+priority and also attributes Slack replies to the exact Derive member.
 
 The manifest is served (filled) at `/v1/slack/manifest.json`; the setup page is the copy-paste
 front end for it. Bot tokens are stored per workspace, encrypted at rest with `DERIVE_AUTH_SECRET`.

@@ -1317,8 +1317,18 @@ export const api = {
     f("/v1/slack/prefs", { ...opts({ slack_dm }), method: "PATCH" }).then(j),
   setReviewEmail: (review_email: boolean): Promise<{ slack_dm: boolean; review_email: boolean }> =>
     f("/v1/slack/prefs", { ...opts({ review_email }), method: "PATCH" }).then(j),
-  sendSlackTestDm: (): Promise<{ ok: boolean }> =>
-    f("/v1/slack/test-dm", { ...opts({}), method: "POST" }).then(j),
+  setSlackEmail: (
+    slack_email: string | null,
+  ): Promise<{ slack_dm: boolean; review_email: boolean; slack_email: string | null }> =>
+    f("/v1/slack/prefs", { ...opts({ slack_email }), method: "PATCH" }).then(j),
+  sendSlackTestDm: (
+    emails: string[],
+  ): Promise<{
+    ok: boolean
+    sent: number
+    total: number
+    results: { email: string; ok: boolean; reason?: string }[]
+  }> => f("/v1/slack/test-dm", { ...opts({ emails }), method: "POST" }).then(j),
   // Link is a redirect to /v1/slack/link (full-page navigation); only unlink is a fetch.
   listSlackSubscriptions: (): Promise<{
     subscriptions: SlackSubscription[]
