@@ -26,6 +26,7 @@ describe("GitHub App manifest", () => {
 
   it("uses setup + authorization callbacks without automatic OAuth-on-install", () => {
     expect(m.setup_url).toBe("https://derive.example.com/v1/github/callback")
+    expect(m.setup_on_update).toBe(true)
     expect(m.callback_urls).toEqual(["https://derive.example.com/v1/github/authorize"])
     expect(m.request_oauth_on_install).toBe(false)
     expect(m.redirect_url).toBe("https://derive.example.com/settings/github/app/created")
