@@ -97,6 +97,7 @@ import {
 import { agentName } from "../lib/principal-kind"
 import { PUBLISH_TARGET_CREATE, verifyPublishToken } from "../lib/publish-token"
 import { agentPushFanout, openReviewRound } from "../lib/review-request"
+import { type ReviewSummary, summarizeTextEdits } from "../lib/review-summary"
 import {
   deleteArtifactAndUnindex,
   indexArtifactVersion,
@@ -654,6 +655,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     let filename: string
     let isBundle: boolean
     let preparedSource: string | undefined
+    let editSummary: ReviewSummary | undefined
     let previousSearchSource:
       | { source: string; contentType: string | null; title: string | null }
       | undefined
@@ -703,6 +705,35 @@ export const artifactRoutes = (ctx: AppContext) => {
       }
       bytes = new TextEncoder().encode(materialized.content)
       preparedSource = materialized.content
+      if (!structural) {
+        const applied = parsed as AnyDocEdit[]
+        const textEdits = applied.flatMap((edit) => {
+          if ("old_str" in edit)
+            return [
+              {
+                before: edit.old_str,
+                after: edit.new_str,
+                contentType: materialized.filename.endsWith(".md") ? "text/markdown" : "text/html",
+              },
+            ]
+          if ("quote" in edit && typeof edit.new_text === "string")
+            return [
+              {
+                before: edit.quote.exact,
+                after: edit.new_text,
+                contentType: "text/markdown",
+              },
+            ]
+          return []
+        })
+        if (textEdits.length === applied.length)
+          editSummary = summarizeTextEdits({
+            edits: textEdits,
+            fromVersion: existing.current_version,
+            toVersion: existing.current_version + 1,
+            note: str(body["message"]),
+          })
+      }
       if (bytes.length > MAX_UPLOAD_BYTES) return fail(c, 413, "upload too large")
       if (await overStorage(org, bytes.length))
         return fail(c, 413, blockCopy.storage.message, { code: blockCopy.storage.code })
@@ -1035,6 +1066,7 @@ export const artifactRoutes = (ctx: AppContext) => {
               version: version.n,
               note: str(body["review_note"]) ?? null,
               actorId: agentPrincipal?.id ?? actor?.id ?? null,
+              ...(editSummary ? { summary: editSummary } : {}),
             },
           )
           roundCreated = true
@@ -1060,6 +1092,7 @@ export const artifactRoutes = (ctx: AppContext) => {
             requestedByName: agentPrincipal.name,
             version: version.n,
             actorId: agentPrincipal.id,
+            ...(editSummary ? { summary: editSummary } : {}),
           },
         )
         roundCreated = true
@@ -1101,6 +1134,7 @@ export const artifactRoutes = (ctx: AppContext) => {
                     version: version.n,
                     reviewRound: roundCreated,
                     isNew: !shortId,
+                    ...(editSummary ? { summary: editSummary } : {}),
                   },
                 )
               : Promise.resolve(null),
