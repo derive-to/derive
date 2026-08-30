@@ -45,6 +45,9 @@ export const buildManifest = (baseUrl: string, host: string) => ({
   // Where GitHub sends the browser after the App is INSTALLED — our callback
   // starts a user-authorization proof before any installation is persisted.
   setup_url: new URL("/v1/github/callback", baseUrl).toString(),
+  // An already-installed App opens GitHub's repository-selection screen. Return to the
+  // same callback after that update too, or Derive never receives the installation id.
+  setup_on_update: true,
   callback_urls: [new URL("/v1/github/authorize", baseUrl).toString()],
   request_oauth_on_install: false,
   // Public so it can be installed on organizations too, not just the owner's
