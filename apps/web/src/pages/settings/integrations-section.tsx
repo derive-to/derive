@@ -232,29 +232,22 @@ export function IntegrationsSection() {
             }
           />
         )}
-        {github &&
-          (github.needs_permissions || github.actions_available === false) &&
-          github.permissions_url && (
-            <StatusPanel
-              tone="warning"
-              layout="inline"
-              icon={<AlertTriangle aria-hidden />}
-              title="Your GitHub App needs more permissions"
-              description="Review the App permissions on GitHub, then approve the update for each connected account."
-              action={
-                isAdmin && (
-                  <Button
-                    data-testid="github-update-permissions"
-                    variant="outline"
-                    size="sm"
-                    asChild
-                  >
-                    <a href={github.permissions_url}>Review permissions</a>
-                  </Button>
-                )
-              }
-            />
-          )}
+        {github && github.permissions_ready === false && github.permissions_url && (
+          <StatusPanel
+            tone="warning"
+            layout="inline"
+            icon={<AlertTriangle aria-hidden />}
+            title="Your GitHub App needs more permissions"
+            description="Review the App permissions on GitHub, then approve the update for each connected account."
+            action={
+              isAdmin && (
+                <Button data-testid="github-update-permissions" variant="outline" size="sm" asChild>
+                  <a href={github.permissions_url}>Review permissions</a>
+                </Button>
+              )
+            }
+          />
+        )}
         {githubIsPending ? (
           <SettingsListSkeleton />
         ) : githubIsError ? (
