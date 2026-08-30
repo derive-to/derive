@@ -298,6 +298,29 @@ Linking is per-user and optional: without it, DMs fall back to matching a member
 The manifest is served (filled) at `/v1/slack/manifest.json`; the setup page is the copy-paste
 front end for it. Bot tokens are stored per workspace, encrypted at rest with `DERIVE_AUTH_SECRET`.
 
+### GitHub App (optional)
+
+Create one GitHub App for each Derive instance. The instance operator creates and owns the
+shared App. Workspace owners then install that App on a GitHub account and select the
+repositories that their workspace can use. One GitHub installation can connect to more than
+one Derive workspace. Each workspace keeps an independent connection.
+
+1. Sign in as the instance operator. Open **Settings → Integrations → Set up App**.
+2. Enter the GitHub organization that operates the Derive instance. GitHub shows this account
+   as the App developer. Use a personal account only when that account should own the App.
+3. Review the generated manifest on GitHub and create the App. Derive stores the App credentials
+   encrypted with `DERIVE_AUTH_SECRET`.
+4. Return to **Settings → Integrations**. Workspace owners can now connect GitHub accounts and
+   select repositories.
+
+Derive requests **Metadata: read**, **Pull requests: write**, and **Actions: write**. It uses
+these permissions for pull request reads, top-level pull request comments, workflow status, and
+workflow dispatch. Derive limits dispatch to workflow files named `derive-*.yml`.
+
+If a release adds an App permission, an App owner or manager must first update the shared App.
+Each connected GitHub account owner must then approve the permission update for that
+installation. Derive shows these as separate actions in **Settings → Integrations**.
+
 ---
 
 ## Node Basic: containers + Postgres + S3/R2

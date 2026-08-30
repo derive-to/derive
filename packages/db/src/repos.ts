@@ -30,7 +30,6 @@ import type {
   FollowKind,
   FollowRecord,
   GitHubAppRecord,
-  GitHubInstallationRecord,
   InvitationRecord,
   LinkRole,
   ListArtifactsOpts,
@@ -193,7 +192,6 @@ import {
   folder,
   follow,
   githubApp,
-  githubInstallation,
   instanceOperator,
   invitation,
   membership,
@@ -423,7 +421,6 @@ export const schema = {
   templateLibrary,
   templateLibraryEntry,
   githubApp,
-  githubInstallation,
   domain,
   report,
   auditLog,
@@ -473,7 +470,6 @@ const _schemaShapes: Shapes<typeof schema> = {
   templateLibrary: true,
   templateLibraryEntry: true,
   githubApp: true,
-  githubInstallation: true,
   domain: true,
   report: true,
   auditLog: true,
@@ -3015,6 +3011,13 @@ export function makeRepos(db: SqliteDb) {
   // ---- GitHub App (instance credentials + per-workspace installations) -----
   const getGithubApp = async (): Promise<GitHubAppRecord | null> =>
     (await db.select().from(githubApp).where(eq(githubApp.id, "default")).get()) ?? null
+  const createGithubApp = async (a: GitHubAppRecord): Promise<boolean> =>
+    !!(await db
+      .insert(githubApp)
+      .values(a)
+      .onConflictDoNothing()
+      .returning({ id: githubApp.id })
+      .get())
   const setGithubApp = async (a: GitHubAppRecord): Promise<void> => {
     const { id: _id, created_at: _created, ...set } = a
     await db.insert(githubApp).values(a).onConflictDoUpdate({ target: githubApp.id, set }).run()
@@ -3337,33 +3340,6 @@ export function makeRepos(db: SqliteDb) {
       })
       .run()
   }
-  const upsertGithubInstallation = async (
-    i: GitHubInstallationRecord,
-  ): Promise<GitHubInstallationRecord> =>
-    (await db
-      .insert(githubInstallation)
-      .values(i)
-      .onConflictDoUpdate({
-        target: githubInstallation.installation_id,
-        set: { org_id: i.org_id, account_login: i.account_login, created_by: i.created_by },
-      })
-      .returning()
-      .get()) as GitHubInstallationRecord
-  const getGithubInstallation = async (
-    installationId: string,
-  ): Promise<GitHubInstallationRecord | null> =>
-    (await db
-      .select()
-      .from(githubInstallation)
-      .where(eq(githubInstallation.installation_id, installationId))
-      .get()) ?? null
-  const listGithubInstallations = async (orgId: string): Promise<GitHubInstallationRecord[]> =>
-    db
-      .select()
-      .from(githubInstallation)
-      .where(eq(githubInstallation.org_id, orgId))
-      .orderBy(desc(githubInstallation.created_at))
-      .all()
   // ---- Domains (hostname → artifact) -------------------------------------
   const getDomain = async (host: string): Promise<DomainRecord | null> =>
     (await db.select().from(domain).where(eq(domain.host, host)).get()) ?? null
@@ -5628,6 +5604,7 @@ export function makeRepos(db: SqliteDb) {
     countTemplateLibraryEntries,
     deleteTemplateLibraryEntry,
     getGithubApp,
+    createGithubApp,
     setGithubApp,
     getOrgSettings,
     setOrgSettings,
@@ -5659,9 +5636,6 @@ export function makeRepos(db: SqliteDb) {
     deleteSlackUserLink,
     getUserNotificationPref,
     setUserNotificationPref,
-    upsertGithubInstallation,
-    getGithubInstallation,
-    listGithubInstallations,
     getDomain,
     setDomain,
     getArtifactDomains,

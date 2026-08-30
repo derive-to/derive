@@ -6,14 +6,14 @@ import { convertManifestCode } from "../lib/github-app"
 import { log } from "../log"
 
 /**
- * One-click GitHub App registration (the manifest flow). /new renders the auto-submitting
- * manifest form (admins only); GitHub creates the App and redirects to /created with a
+ * One-click GitHub App registration (the manifest flow). /new lets the instance operator
+ * choose the App owner; GitHub creates the App and redirects to /created with a
  * temporary code we trade for the App's credentials. Both are top-level navigations (not
  * the /v1 API), bound by a signed `state` carrying the initiating user. Needs an
  * encryptionKey — App secrets are never stored in the clear.
  */
 export const githubAppRoutes = (ctx: AppContext) => {
-  const { deps, meta, workspaceCan, currentUser } = ctx
+  const { deps, meta, isSuperAdmin, currentUser } = ctx
   const app = new Hono()
 
   app.get("/settings/github/app/new", async (c) => {
@@ -22,9 +22,25 @@ export const githubAppRoutes = (ctx: AppContext) => {
         setupResultHTML({ ok: false, error: "Server is missing an encryption key." }),
         500,
       )
-    if (!(await workspaceCan(c, "manage")))
-      return c.redirect("/login?return_to=/settings/github/app/new")
-    const uid = (await currentUser(c))?.id ?? "anon"
+    const me = await currentUser(c)
+    if (!me) return c.redirect("/login?return_to=/settings/github/app/new")
+    if (!(await isSuperAdmin(c)))
+      return c.html(
+        setupResultHTML({
+          ok: false,
+          error: "Only an instance operator can configure the shared GitHub App.",
+        }),
+        403,
+      )
+    if (await meta.getGithubApp())
+      return c.html(
+        setupResultHTML({
+          ok: false,
+          error: "This Derive instance already has a GitHub App. It cannot be replaced here.",
+        }),
+        409,
+      )
+    const uid = me.id
     const state = signState({ kind: "app-manifest", uid }, deps.encryptionKey)
     return c.html(manifestFormHTML({ baseUrl: deps.baseUrl, state }))
   })
@@ -34,13 +50,32 @@ export const githubAppRoutes = (ctx: AppContext) => {
     const stateRaw = c.req.query("state") ?? ""
     if (!deps.encryptionKey || !code)
       return c.html(setupResultHTML({ ok: false, error: "Missing setup code." }), 400)
-    const state = verifyState<{ kind?: string }>(stateRaw, deps.encryptionKey)
-    if (state?.kind !== "app-manifest")
+    const state = verifyState<{ kind?: string; uid?: string }>(
+      stateRaw,
+      deps.encryptionKey,
+      60 * 60 * 1000,
+    )
+    const me = await currentUser(c)
+    if (
+      state?.kind !== "app-manifest" ||
+      !state.uid ||
+      !me ||
+      state.uid !== me.id ||
+      !(await isSuperAdmin(c))
+    )
       return c.html(setupResultHTML({ ok: false, error: "This setup link has expired." }), 400)
+    if (await meta.getGithubApp())
+      return c.html(
+        setupResultHTML({
+          ok: false,
+          error: "Another operator already configured the GitHub App. No changes were made.",
+        }),
+        409,
+      )
     try {
       const conv = await convertManifestCode(code)
       const key = deps.encryptionKey
-      await meta.setGithubApp({
+      const created = await meta.createGithubApp({
         id: "default",
         app_id: conv.app_id,
         slug: conv.slug,
@@ -49,6 +84,14 @@ export const githubAppRoutes = (ctx: AppContext) => {
         private_key: encryptSecret(conv.pem, key),
         created_at: new Date().toISOString(),
       })
+      if (!created)
+        return c.html(
+          setupResultHTML({
+            ok: false,
+            error: `Another operator completed setup first. Delete the unused ${conv.slug} App on GitHub.`,
+          }),
+          409,
+        )
       return c.html(setupResultHTML({ ok: true, slug: conv.slug }))
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err)

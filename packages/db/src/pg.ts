@@ -35,7 +35,6 @@ import type {
   FollowKind,
   FollowRecord,
   GitHubAppRecord,
-  GitHubInstallationRecord,
   GithubUserMapping,
   InvitationRecord,
   LinkRole,
@@ -206,7 +205,6 @@ import {
   folder,
   follow,
   githubApp,
-  githubInstallation,
   instanceOperator,
   invitation,
   membership,
@@ -301,7 +299,6 @@ export const schema = {
   templateLibrary,
   templateLibraryEntry,
   githubApp,
-  githubInstallation,
   domain,
   report,
   auditLog,
@@ -351,7 +348,6 @@ const _schemaShapes: Shapes<typeof schema> = {
   templateLibrary: true,
   templateLibraryEntry: true,
   githubApp: true,
-  githubInstallation: true,
   domain: true,
   report: true,
   auditLog: true,
@@ -3858,6 +3854,14 @@ export class PgMetaStore implements MetaStore {
     const rows = await this.db.select().from(githubApp).where(eq(githubApp.id, "default"))
     return rows[0] ?? null
   }
+  async createGithubApp(a: GitHubAppRecord): Promise<boolean> {
+    const rows = await this.db
+      .insert(githubApp)
+      .values(a)
+      .onConflictDoNothing()
+      .returning({ id: githubApp.id })
+    return rows.length > 0
+  }
   async setGithubApp(a: GitHubAppRecord): Promise<void> {
     const { id: _id, created_at: _created, ...set } = a
     await this.db.insert(githubApp).values(a).onConflictDoUpdate({ target: githubApp.id, set })
@@ -4195,32 +4199,6 @@ export class PgMetaStore implements MetaStore {
         set,
       })
   }
-  async upsertGithubInstallation(i: GitHubInstallationRecord): Promise<GitHubInstallationRecord> {
-    const rows = await this.db
-      .insert(githubInstallation)
-      .values(i)
-      .onConflictDoUpdate({
-        target: githubInstallation.installation_id,
-        set: { org_id: i.org_id, account_login: i.account_login, created_by: i.created_by },
-      })
-      .returning()
-    return one(rows)
-  }
-  async getGithubInstallation(installationId: string): Promise<GitHubInstallationRecord | null> {
-    const rows = await this.db
-      .select()
-      .from(githubInstallation)
-      .where(eq(githubInstallation.installation_id, installationId))
-    return rows[0] ?? null
-  }
-  async listGithubInstallations(orgId: string): Promise<GitHubInstallationRecord[]> {
-    return this.db
-      .select()
-      .from(githubInstallation)
-      .where(eq(githubInstallation.org_id, orgId))
-      .orderBy(desc(githubInstallation.created_at))
-  }
-
   // ---- Domains (hostname → artifact) -------------------------------------
   async getDomain(host: string): Promise<DomainRecord | null> {
     const rows = await this.db.select().from(domain).where(eq(domain.host, host))

@@ -36,8 +36,16 @@ const installationIdIsValid = (value: string | undefined): value is string =>
   !!value && /^[1-9][0-9]*$/.test(value)
 
 export const githubRoutes = (ctx: AppContext) => {
-  const { meta, deps, requireUser, requireWorkspace, workspaceCan, activeWorkspace, currentUser } =
-    ctx
+  const {
+    meta,
+    deps,
+    requireUser,
+    requireWorkspace,
+    workspaceCan,
+    activeWorkspace,
+    currentUser,
+    isSuperAdmin,
+  } = ctx
   const app = new OpenAPIHono<BlankEnv>()
 
   const loadApp = async (): Promise<{ app: GitHubAppRecord; pem: string } | null> => {
@@ -70,6 +78,8 @@ export const githubRoutes = (ctx: AppContext) => {
     account_login: z.string().nullable(),
     connection_id: z.string().nullable(),
     state: z.enum(["active", "disconnected", "needs_reauth"]),
+    permissions_state: z.enum(["ready", "approval_required", "unknown"]),
+    permissions_url: z.string().nullable(),
   })
   const GithubStatus = z
     .object({
@@ -78,13 +88,17 @@ export const githubRoutes = (ctx: AppContext) => {
         .boolean()
         .describe("Whether this workspace has at least one active GitHub connection"),
       app_slug: z.string().nullable(),
-      permissions_ready: z
-        .boolean()
+      app_owner_login: z.string().nullable(),
+      app_permissions_state: z
+        .enum(["ready", "update_required", "unknown"])
         .nullable()
         .describe(
-          "Whether the configured App and its connected installations have every current permission; null when GitHub could not be checked",
+          "Whether the instance App has every current permission; null when no live App exists",
         ),
-      permissions_url: z.string().nullable(),
+      app_settings_url: z.string().nullable(),
+      can_manage_app: z
+        .boolean()
+        .describe("Whether the caller is an instance operator who can configure the shared App"),
       accounts: z.array(Account),
     })
     .openapi("GithubStatus")
@@ -107,132 +121,129 @@ export const githubRoutes = (ctx: AppContext) => {
       if (me instanceof Response) return bail(me)
       const org = await requireWorkspace(c, "read")
       if (org instanceof Response) return bail(org)
-      const [loaded, installs, connections] = await Promise.all([
+      const [loaded, connections, canManageApp] = await Promise.all([
         loadApp(),
-        meta.listGithubInstallations(org),
         meta.listConnections(org, undefined, "workspace"),
+        isSuperAdmin(c),
       ])
 
       let available = !!loaded
       let slug = loaded?.app.slug ?? null
+      let appOwnerLogin: string | null = null
+      let appOwnerType: string | null = null
       let basePermissionsMissing = false
       // Null means GitHub could not be checked. Do not turn a transient outage into a false
       // permission-upgrade prompt.
-      let appPermissionsReady: boolean | null = null
+      let appPermissionsState: "ready" | "update_required" | "unknown" | null = loaded
+        ? "unknown"
+        : null
       const rank: Record<string, number> = { read: 1, write: 2, admin: 3 }
       if (loaded) {
         try {
           const live = await getAppInfo(loaded.app.app_id, loaded.pem)
           slug = live.slug || slug
+          appOwnerLogin = live.owner?.login || null
+          appOwnerType = live.owner?.type || null
           if (slug && slug !== loaded.app.slug) await meta.setGithubApp({ ...loaded.app, slug })
           basePermissionsMissing = Object.entries(REQUIRED_PERMISSIONS).some(
             ([permission, level]) =>
               !live.permissions[permission] ||
               (rank[live.permissions[permission] ?? ""] ?? 0) < (rank[level] ?? 0),
           )
-          appPermissionsReady = Object.entries(MANIFEST_PERMISSIONS).every(
+          appPermissionsState = Object.entries(MANIFEST_PERMISSIONS).every(
             ([permission, level]) =>
               !!live.permissions[permission] &&
               (rank[live.permissions[permission] ?? ""] ?? 0) >= (rank[level] ?? 0),
           )
+            ? "ready"
+            : "update_required"
         } catch (err) {
           // Deleted/revoked is definitive. A network/5xx failure must not hide a working App.
-          if (err instanceof GitHubError && (err.status === 401 || err.status === 404))
+          if (err instanceof GitHubError && (err.status === 401 || err.status === 404)) {
             available = false
+            appPermissionsState = null
+          }
         }
       }
 
       const githubConnections = connections.filter((cn) => cn.kind === "github_app")
-      const byInstallation = new Map(githubConnections.map((cn) => [cn.broker_ref, cn]))
-      const installIds = new Set(installs.map((installation) => installation.installation_id))
-      // A stored row is not proof the installation still exists. Check each account live so
+      // A connection row is not proof the installation still exists. Check each account live so
       // Settings can distinguish a working connection from an App GitHub has removed. Treat
       // only definitive auth/not-found responses as stale; a transient GitHub outage must not
       // make healthy connections disappear.
       const staleInstallations = new Set<string>()
-      const installationPermissions = new Map<string, boolean>()
-      let installationPermissionsUrl: string | null = null
+      const installationPermissions = new Map<
+        string,
+        { state: "ready" | "approval_required"; url: string | null }
+      >()
       if (loaded && available) {
         await Promise.all(
-          installs.map(async (installation) => {
+          githubConnections.map(async (connection) => {
             try {
               const live = await getAppInstallation(
                 loaded.app.app_id,
                 loaded.pem,
-                installation.installation_id,
+                connection.broker_ref,
               )
               const permissionsReady = Object.entries(MANIFEST_PERMISSIONS).every(
                 ([permission, level]) =>
                   !!live.permissions[permission] &&
                   (rank[live.permissions[permission] ?? ""] ?? 0) >= (rank[level] ?? 0),
               )
-              installationPermissions.set(installation.installation_id, permissionsReady)
-              if (!permissionsReady && !installationPermissionsUrl && live.htmlUrl)
-                installationPermissionsUrl = live.htmlUrl
+              installationPermissions.set(connection.broker_ref, {
+                state: permissionsReady ? "ready" : "approval_required",
+                url: permissionsReady ? null : live.htmlUrl,
+              })
             } catch (err) {
               if (
                 err instanceof GitHubError &&
                 (err.status === 401 || err.status === 403 || err.status === 404)
               )
-                staleInstallations.add(installation.installation_id)
+                staleInstallations.add(connection.broker_ref)
             }
           }),
         )
-      }
-      const liveInstallationIds = installs
-        .map((installation) => installation.installation_id)
-        .filter((id) => !staleInstallations.has(id))
-      let permissionsReady = appPermissionsReady
-      if (appPermissionsReady === true && liveInstallationIds.length > 0) {
-        if (liveInstallationIds.some((id) => installationPermissions.get(id) === false))
-          permissionsReady = false
-        else if (liveInstallationIds.some((id) => !installationPermissions.has(id)))
-          permissionsReady = null
       }
       const accounts: {
         installation_id: string
         account_login: string | null
         connection_id: string | null
         state: "active" | "disconnected" | "needs_reauth"
-      }[] = installs.map((installation) => {
-        const connection = byInstallation.get(installation.installation_id)
+        permissions_state: "ready" | "approval_required" | "unknown"
+        permissions_url: string | null
+      }[] = githubConnections.map((connection) => {
+        const permissions = installationPermissions.get(connection.broker_ref)
         const usable =
-          connection?.status === "active" &&
+          connection.status === "active" &&
           available &&
           !basePermissionsMissing &&
-          !staleInstallations.has(installation.installation_id)
+          !staleInstallations.has(connection.broker_ref)
         return {
-          installation_id: installation.installation_id,
-          account_login: installation.account_login ?? connection?.scopes_label ?? null,
-          connection_id: connection?.id ?? null,
+          installation_id: connection.broker_ref,
+          account_login: connection.scopes_label,
+          connection_id: connection.id,
+          permissions_state: permissions?.state ?? "unknown",
+          permissions_url: permissions?.url ?? null,
           state: usable
             ? ("active" as const)
-            : connection?.status === "active"
+            : connection.status === "active"
               ? ("needs_reauth" as const)
               : ("disconnected" as const),
         }
       })
-      for (const connection of githubConnections) {
-        if (installIds.has(connection.broker_ref)) continue
-        accounts.push({
-          installation_id: connection.broker_ref,
-          account_login: connection.scopes_label,
-          connection_id: connection.id,
-          state: "needs_reauth",
-        })
-      }
 
       return c.json({
         available,
         connected: accounts.some((account) => account.state === "active"),
         app_slug: slug,
-        permissions_ready: permissionsReady,
-        permissions_url:
-          appPermissionsReady === true && installationPermissionsUrl
-            ? installationPermissionsUrl
-            : slug
-              ? `https://github.com/settings/apps/${encodeURIComponent(slug)}/permissions`
-              : null,
+        app_owner_login: appOwnerLogin,
+        app_permissions_state: appPermissionsState,
+        app_settings_url: slug
+          ? appOwnerType === "Organization" && appOwnerLogin
+            ? `https://github.com/organizations/${encodeURIComponent(appOwnerLogin)}/settings/apps/${encodeURIComponent(slug)}/permissions`
+            : `https://github.com/settings/apps/${encodeURIComponent(slug)}/permissions`
+          : null,
+        can_manage_app: canManageApp,
         accounts,
       })
     },
@@ -360,13 +371,6 @@ export const githubRoutes = (ctx: AppContext) => {
         return c.redirect(settingsRedirect("save"))
       }
       const accountLogin = installation.account?.login ?? null
-      await meta.upsertGithubInstallation({
-        installation_id: state.installationId,
-        org_id: state.org,
-        account_login: accountLogin,
-        created_by: me.id,
-        created_at: new Date().toISOString(),
-      })
       await upsertGithubConnection(meta, {
         orgId: state.org,
         userId: me.id,

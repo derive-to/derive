@@ -545,13 +545,6 @@ describe("hosted tool injection — least privilege (WO4)", () => {
       private_key: encryptSecret(GITHUB_APP_PEM, key),
       created_at: new Date().toISOString(),
     })
-    await h.meta.upsertGithubInstallation({
-      installation_id: "99002",
-      org_id: "default",
-      account_login: "derive-to",
-      created_by: owner.id,
-      created_at: new Date().toISOString(),
-    })
     const connection = await upsertGithubConnection(h.meta, {
       orgId: "default",
       userId: owner.id,
