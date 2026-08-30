@@ -59,6 +59,28 @@ export const buildManifest = (baseUrl: string, host: string) => ({
   default_events: REQUIRED_EVENTS,
 })
 
+export function installationPickerHTML(props: {
+  installations: { login: string; state: string }[]
+  installUrl: string
+}): string {
+  const choices = props.installations
+    .map(
+      (installation) => `<form class="field" method="post" action="/v1/github/select">
+        <input type="hidden" name="state" value="${esc(installation.state)}"/>
+        <button class="btn ghost" type="submit">${esc(installation.login)}</button>
+      </form>`,
+    )
+    .join("")
+  return SHELL(
+    "Choose GitHub account",
+    "",
+    `<h1>Choose a GitHub account</h1>
+    <p class="sub">Choose the existing App installation to connect to this Derive workspace.</p>
+    ${choices}
+    <p class="foot"><a href="${esc(props.installUrl)}">Install the App on another account</a></p>`,
+  )
+}
+
 /** The manifest form page. The operator chooses who owns the App before GitHub creates it.
  * GitHub shows that owner as the developer, so silently defaulting to the signed-in person's
  * account is both surprising and difficult to repair after installations exist. */
