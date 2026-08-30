@@ -3,6 +3,8 @@ import {
   coachStructuralLayout,
   evaluateStructuralCapability,
   idleStructuralInteraction,
+  inferStructuralDesignRail,
+  planStructuralIntent,
   structuralDistributionIsValid,
   structuralDropTarget,
   structuralModifierIntent,
@@ -237,5 +239,82 @@ describe("constraint coach", () => {
       message: "charlie clips 9px of content inside an authored height",
       suggestion: undefined,
     })
+  })
+})
+
+describe("structural intent planner", () => {
+  it.each([
+    [[52, 68, 84, 90], 75],
+    [[44, 48, 55], 50],
+    [[92, 110], 100],
+    [[], null],
+  ] as const)("infers the nearest local rail from %o", (widths, expected) => {
+    expect(inferStructuralDesignRail(widths)).toBe(expected)
+  })
+
+  it("previews a balanced repair as bounded existing operations", () => {
+    expect(
+      planStructuralIntent("balance", {
+        selectedIds: ["alpha", "bravo", "charlie"],
+        activeId: "bravo",
+        widths: [52, 76, 88],
+        fixedHeightIds: ["alpha", "charlie", "outside"],
+        canAlign: true,
+      }),
+    ).toEqual({
+      command: "balance",
+      title: "Balance selection",
+      summary: "75% local rail · fit 2 fixed heights · center alignment",
+      operations: [
+        { kind: "set-width", ids: ["alpha", "bravo", "charlie"], width: 75 },
+        { kind: "fit-height", ids: ["alpha", "charlie"] },
+        {
+          kind: "align",
+          ids: ["alpha", "bravo", "charlie"],
+          alignment: "center",
+        },
+      ],
+    })
+  })
+
+  it("keeps emphasis deterministic around the active element", () => {
+    expect(
+      planStructuralIntent("emphasize-active", {
+        selectedIds: ["alpha", "bravo", "charlie"],
+        activeId: "bravo",
+        widths: [50, 50, 50],
+        canAlign: true,
+      }),
+    ).toEqual({
+      command: "emphasize-active",
+      title: "Emphasize bravo",
+      summary: "active 75% · 2 peers 50% · start alignment",
+      operations: [
+        { kind: "set-width", ids: ["bravo"], width: 75 },
+        { kind: "set-width", ids: ["alpha", "charlie"], width: 50 },
+        {
+          kind: "align",
+          ids: ["alpha", "bravo", "charlie"],
+          alignment: "start",
+        },
+      ],
+    })
+  })
+
+  it("rejects selections that cannot name a stable active element", () => {
+    expect(
+      planStructuralIntent("balance", {
+        selectedIds: ["alpha"],
+        activeId: "alpha",
+        widths: [50],
+      }),
+    ).toBeNull()
+    expect(
+      planStructuralIntent("balance", {
+        selectedIds: ["alpha", "bravo"],
+        activeId: "outside",
+        widths: [50, 75],
+      }),
+    ).toBeNull()
   })
 })

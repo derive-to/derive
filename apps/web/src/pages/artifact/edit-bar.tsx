@@ -5,6 +5,8 @@ import { Kbd } from "@/components/ui/kbd"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
 
+export type EditViewport = "auto" | "tablet" | "mobile"
+
 /**
  * The mode strip for inline editing — a slim band between the workbench header and
  * the document, IN FLOW rather than floating over it.
@@ -33,9 +35,11 @@ export function EditBar({
   canRedo = false,
   canFormat = false,
   allowElementEdits = false,
+  viewport = "auto",
   onUndo,
   onRedo,
   onFormat,
+  onViewport,
   onSave,
   onDiscard,
   onDone,
@@ -51,10 +55,13 @@ export function EditBar({
   canFormat?: boolean
   /** HTML/deck sources can persist resize operations; rendered Markdown cannot. */
   allowElementEdits?: boolean
+  /** Resize the real artifact iframe so authored media queries run during editing. */
+  viewport?: EditViewport
   onUndo: () => void
   onRedo: () => void
   /** A link needs a URL; the bar asks for it (below) before it sends one. */
   onFormat: (kind: "b" | "i" | "a", href?: string) => void
+  onViewport?: (viewport: EditViewport) => void
   onSave: () => void
   onDiscard: () => void
   onDone: () => void
@@ -138,6 +145,41 @@ export function EditBar({
           onClick={() => setHref("")}
         />
       </div>
+
+      {allowElementEdits && onViewport && (
+        <fieldset
+          className="flex min-w-0 shrink-0 items-center gap-0.5 rounded-md border border-border bg-background/70 p-0.5"
+          aria-label="Responsive preview width"
+          data-testid="inline-edit-viewports"
+        >
+          {(
+            [
+              ["auto", "Fluid", "Use the available preview width"],
+              ["tablet", "768", "Preview at tablet width, 768 pixels"],
+              ["mobile", "390", "Preview at mobile width, 390 pixels"],
+            ] as const
+          ).map(([value, label, title]) => (
+            <button
+              key={value}
+              type="button"
+              aria-label={title}
+              aria-pressed={viewport === value}
+              title={title}
+              data-testid={`inline-edit-viewport-${value}`}
+              className={cn(
+                "h-6 rounded px-2 font-mono text-2xs transition-colors",
+                viewport === value
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:bg-accent hover:text-foreground",
+              )}
+              onClick={() => onViewport(value)}
+              disabled={saving}
+            >
+              {label}
+            </button>
+          ))}
+        </fieldset>
+      )}
 
       {/* Asking for the URL takes the status line's place: one line, one question,
           gone the moment it's answered. Enter applies it, Escape drops it. */}

@@ -59,6 +59,7 @@ const STRUCTURAL_RESIZE_DOC = `<style>
 
 const STRUCTURAL_MULTISELECT_DOC = `<style>
 body { font-family: sans-serif }
+@media (max-width: 420px) { body { --dogfood-breakpoint: mobile } }
 .stack { width: 600px; padding: 12px; display: flex; flex-direction: column; gap: 12px }
 .stack > [data-derive-node] { min-height: 48px; padding: 10px; border: 1px solid #ccd; box-sizing: border-box }
 .stack > [data-derive-node][data-derive-width] { width: var(--derive-structural-width); max-width: none }
@@ -872,6 +873,122 @@ test("structural health coach explains a blocked layout action and applies the s
   )
   await frame.getByRole("button", { name: "Select all", exact: true }).click()
   await expect(frame.locator(".derive-structure-label")).toContainText("4 selected")
+})
+
+test("responsive edit previews use the real iframe viewport and label health checks", async ({
+  owner,
+}) => {
+  const shortId = await publishArtifact(
+    owner,
+    "structural-responsive-preview.html",
+    STRUCTURAL_MULTISELECT_DOC,
+    "text/html",
+  )
+  await openArtifact(owner, shortId)
+  await expect(owner.getByTestId("inline-edit-viewports")).toBeHidden()
+  await enterEditMode(owner)
+
+  const iframe = owner.locator("iframe[title]")
+  const frame = doc(owner)
+  await owner.getByTestId("inline-edit-viewport-mobile").click()
+  await expect(iframe).toHaveAttribute("data-preview-width", "390")
+  await expect.poll(async () => (await iframe.boundingBox())?.width).toBeCloseTo(390, 0)
+  await expect
+    .poll(() =>
+      frame
+        .locator("body")
+        .evaluate((el) => getComputedStyle(el).getPropertyValue("--dogfood-breakpoint").trim()),
+    )
+    .toBe("mobile")
+
+  await frame.locator("#alpha").click()
+  await frame.locator("#bravo").click({ modifiers: ["Shift"] })
+  await frame.getByRole("button", { name: "Open selected layout actions" }).click()
+  await frame
+    .getByRole("button", { name: "Check layout health and suggest the nearest safe fix" })
+    .click()
+  await expect(frame.locator(".derive-structure-toast")).toContainText("Mobile · 390px:")
+
+  await owner.getByTestId("inline-edit-viewport-tablet").click()
+  await expect(iframe).toHaveAttribute("data-preview-width", "768")
+  await expect.poll(async () => (await iframe.boundingBox())?.width).toBeCloseTo(768, 0)
+  await expect
+    .poll(() =>
+      frame
+        .locator("body")
+        .evaluate((el) => getComputedStyle(el).getPropertyValue("--dogfood-breakpoint").trim()),
+    )
+    .toBe("")
+  await owner.getByTestId("inline-edit-done").click()
+  await expect(owner.getByTestId("inline-edit-viewports")).toBeHidden()
+})
+
+test("design intent previews exact operations and applies as one reversible transaction", async ({
+  owner,
+}) => {
+  const shortId = await publishArtifact(
+    owner,
+    "structural-design-intent.html",
+    STRUCTURAL_MULTISELECT_DOC,
+    "text/html",
+  )
+  await openArtifact(owner, shortId)
+  await enterEditMode(owner)
+  const frame = doc(owner)
+  const alpha = frame.locator("#alpha")
+  const bravo = frame.locator("#bravo")
+
+  await alpha.click()
+  await bravo.click({ modifiers: ["Shift"] })
+  await frame.getByRole("button", { name: "Open selected layout actions" }).click()
+  await frame.getByRole("button", { name: "Preview a safe design-intent plan" }).click()
+  await expect(frame.locator(".derive-structure-intent-receipt")).toContainText(
+    "50% local rail · fit 2 fixed heights · center alignment",
+  )
+  await expect(alpha).toHaveAttribute("data-derive-width", "52")
+  await expect(bravo).toHaveAttribute("data-derive-width", "68")
+
+  await frame.getByRole("button", { name: "Make the active element dominant" }).click()
+  await expect(frame.locator(".derive-structure-intent-receipt")).toContainText(
+    "active 75% · 1 peer 50% · fit content · start alignment",
+  )
+  await frame.getByRole("button", { name: "Apply this design intent plan" }).click()
+  await expect(alpha).toHaveAttribute("data-derive-width", "50")
+  await expect(bravo).toHaveAttribute("data-derive-width", "75")
+  await expect(alpha).not.toHaveAttribute("data-derive-height")
+  await expect(bravo).not.toHaveAttribute("data-derive-height")
+  await expect(alpha).toHaveAttribute("data-derive-align", "start")
+  await expect(bravo).toHaveAttribute("data-derive-align", "start")
+  await expect(owner.getByTestId("inline-edit-bar")).toContainText("1 unsaved change")
+
+  await owner.getByTestId("inline-edit-undo").click()
+  await expect(alpha).toHaveAttribute("data-derive-width", "52")
+  await expect(bravo).toHaveAttribute("data-derive-width", "68")
+  await expect(alpha).toHaveAttribute("data-derive-height", "96")
+  await expect(bravo).toHaveAttribute("data-derive-height", "112")
+  await expect(alpha).not.toHaveAttribute("data-derive-align")
+  await expect(bravo).not.toHaveAttribute("data-derive-align")
+
+  await owner.getByTestId("inline-edit-redo").click()
+  await expect(alpha).toHaveAttribute("data-derive-width", "50")
+  await expect(bravo).toHaveAttribute("data-derive-width", "75")
+  await expect(alpha).not.toHaveAttribute("data-derive-height")
+  await expect(bravo).not.toHaveAttribute("data-derive-height")
+  await expect(alpha).toHaveAttribute("data-derive-align", "start")
+  await expect(bravo).toHaveAttribute("data-derive-align", "start")
+
+  await owner.getByTestId("inline-edit-save").click()
+  await expect(async () => {
+    const source = await contentOf(owner, shortId)
+    const alphaOpening = source.match(/<article id="alpha"[^>]*>/)?.[0]
+    const bravoOpening = source.match(/<article id="bravo"[^>]*>/)?.[0]
+    expect(alphaOpening).toContain('data-derive-width="50"')
+    expect(bravoOpening).toContain('data-derive-width="75"')
+    expect(alphaOpening).toContain('data-derive-align="start"')
+    expect(bravoOpening).toContain('data-derive-align="start"')
+    expect(alphaOpening).not.toContain("data-derive-height")
+    expect(bravoOpening).not.toContain("data-derive-height")
+  }).toPass({ timeout: 10_000 })
 })
 
 test("structural exact sizing commits both axes as one source-safe action", async ({ owner }) => {

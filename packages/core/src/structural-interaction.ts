@@ -274,6 +274,91 @@ export const structuralDistributionIsValid = ({
   afterSizes.every((size, index) => Math.abs(size - (beforeSizes[index] ?? size)) <= tolerance) &&
   scrollSize <= clientSize + tolerance
 
+export type StructuralIntentCommand = "balance" | "emphasize-active"
+
+export type StructuralIntentOperation =
+  | { kind: "set-width"; ids: readonly string[]; width: number }
+  | { kind: "fit-height"; ids: readonly string[] }
+  | { kind: "align"; ids: readonly string[]; alignment: "start" | "center" }
+
+export interface StructuralIntentPlan {
+  command: StructuralIntentCommand
+  title: string
+  summary: string
+  operations: readonly StructuralIntentOperation[]
+}
+
+export interface StructuralIntentPlanInput {
+  selectedIds: readonly string[]
+  activeId: string
+  widths: readonly number[]
+  fixedHeightIds?: readonly string[]
+  canAlign?: boolean
+}
+
+/** Choose the artifact's nearest familiar width rail from the selection's median.
+ * Keeping this pure makes the inferred design language deterministic and reviewable. */
+export const inferStructuralDesignRail = (
+  widths: readonly number[],
+  rails: readonly number[] = [50, 75, 100],
+): number | null => {
+  const values = widths.filter(Number.isFinite).map((value) => Math.round(value))
+  const candidates = rails.filter(Number.isFinite).map((value) => Math.round(value))
+  if (!values.length || !candidates.length) return null
+  values.sort((a, b) => a - b)
+  const middle = Math.floor(values.length / 2)
+  const median =
+    values.length % 2
+      ? (values[middle] as number)
+      : ((values[middle - 1] as number) + (values[middle] as number)) / 2
+  return candidates.reduce((best, candidate) =>
+    Math.abs(candidate - median) < Math.abs(best - median) ? candidate : best,
+  )
+}
+
+/** Compile a human or agent design intent into the same bounded operations exposed
+ * by manual controls. The caller previews this plan before applying it. */
+export const planStructuralIntent = (
+  command: StructuralIntentCommand,
+  input: StructuralIntentPlanInput,
+): StructuralIntentPlan | null => {
+  if (input.selectedIds.length < 2 || !input.selectedIds.includes(input.activeId)) return null
+  const fixed = (input.fixedHeightIds ?? []).filter((id) => input.selectedIds.includes(id))
+  if (command === "balance") {
+    const rail = inferStructuralDesignRail(input.widths)
+    if (rail === null) return null
+    const operations: StructuralIntentOperation[] = [
+      { kind: "set-width", ids: [...input.selectedIds], width: rail },
+    ]
+    if (fixed.length) operations.push({ kind: "fit-height", ids: fixed })
+    if (input.canAlign)
+      operations.push({ kind: "align", ids: [...input.selectedIds], alignment: "center" })
+    const parts = [`${rail}% local rail`]
+    if (fixed.length) parts.push(`fit ${fixed.length} fixed height${fixed.length === 1 ? "" : "s"}`)
+    if (input.canAlign) parts.push("center alignment")
+    return {
+      command,
+      title: "Balance selection",
+      summary: parts.join(" · "),
+      operations,
+    }
+  }
+  const peers = input.selectedIds.filter((id) => id !== input.activeId)
+  const operations: StructuralIntentOperation[] = [
+    { kind: "set-width", ids: [input.activeId], width: 75 },
+    { kind: "set-width", ids: peers, width: 50 },
+  ]
+  if (fixed.length) operations.push({ kind: "fit-height", ids: fixed })
+  if (input.canAlign)
+    operations.push({ kind: "align", ids: [...input.selectedIds], alignment: "start" })
+  return {
+    command,
+    title: `Emphasize ${input.activeId}`,
+    summary: `active 75% · ${peers.length} peer${peers.length === 1 ? "" : "s"} 50%${fixed.length ? " · fit content" : ""}${input.canAlign ? " · start alignment" : ""}`,
+    operations,
+  }
+}
+
 export interface StructuralHealthInput extends StructuralCapabilityInput {
   clipping?: readonly { id: string; overflow: number; fitHeight?: boolean }[]
   widths?: readonly number[]
