@@ -874,7 +874,6 @@ export function registerPublishTool(tc: ToolContext): void {
             // And the summarizer, for the same reason: this is where most content is written, so
             // an omission here would mean the cards that most need a description never get one.
             summarize: ctx.summarize,
-            deferVersionConvergence: ctx.deps.deferVersionConvergence,
           },
           artifact,
           version,

@@ -193,7 +193,6 @@ export function registerCheckpointTool(tc: ToolContext): void {
             background: ctx.background,
             search: ctx.search,
             summarize: ctx.summarize,
-            deferVersionConvergence: ctx.deps.deferVersionConvergence,
             baseUrl: ctx.deps.baseUrl,
           },
           artifact,

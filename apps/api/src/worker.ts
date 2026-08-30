@@ -210,9 +210,6 @@ export interface Env {
   /** PR-preview email seam. The route additionally enforces reserved .test recipients,
    *  and the export worker writes a private capture without touching the outbox. */
   DERIVE_QA_EMAIL_CAPTURE?: string
-  /** Generated only for PR previews. It is additionally gated on exports-only isolation below,
-   *  so a production variable typo cannot enable eventual convergence by itself. */
-  DERIVE_PREVIEW_FAST_COMMIT?: string
 }
 
 /** The public site over the SITE service binding, when this deployment binds one:
@@ -355,8 +352,6 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
         // Bound on env.AI ALONE, unlike `search` above: a summary is a text call with nowhere to
         // store a vector, so it needs no Hyperdrive and works on a D1 edge that has no pgvector.
         summarize: env.AI ? bindingSummarizer(env.AI) : undefined,
-        deferVersionConvergence:
-          env.DERIVE_EXPORTS_ONLY === "true" && env.DERIVE_PREVIEW_FAST_COMMIT === "true",
         backplane: createDoBackplane(env.ROOMS),
         baseUrl,
         auth,
