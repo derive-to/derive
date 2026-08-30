@@ -14,20 +14,10 @@ import type {
   WorkflowTransitionGuard,
 } from "./workflow-run"
 
-export interface BlobByteRange {
-  /** Zero-based byte offset into the immutable object. */
-  offset: number
-  /** Maximum bytes to return. A range that reaches EOF may return fewer bytes. */
-  length: number
-}
-
 export interface BlobStore {
   /** Content-addressed put; returns the sha256 hex key. Idempotent. */
   put(data: Uint8Array): Promise<string>
   get(key: string): Promise<Uint8Array | null>
-  /** Read one byte range without downloading the complete object. OPTIONAL and additive.
-   *  Callers must fall back to `get` when an adapter does not implement this method. */
-  getRange?(key: string, range: BlobByteRange): Promise<Uint8Array | null>
   /** Cheap existence check (a stat/HEAD, never a body read). OPTIONAL and additive so
    *  existing stores keep compiling; a caller that needs it (publish lint's
    *  broken-embed check) treats absence as "can't check here" and skips — it never
@@ -483,8 +473,6 @@ export interface VersionRecord {
    *  about, so an unchanged hash copies the previous summary forward rather than paying a
    *  model for an identical one. */
   summary_src_hash: string | null
-  /** Content-addressed key of the validated structural sidecar for these exact source bytes. */
-  prepared_key: string | null
   created_at: string
 }
 
@@ -800,14 +788,6 @@ export interface ArtifactStore {
     n: number,
     fields: { summary?: string | null; summary_src_hash?: string | null },
   ): Promise<void>
-  /** Publish a structural sidecar pointer only while this version still names the source
-   *  bytes that produced it. False means a newer in-place edit won the race. */
-  setVersionPrepared(
-    artifactId: string,
-    n: number,
-    expectedBlobKey: string,
-    preparedKey: string,
-  ): Promise<boolean>
   /** Set the full-page or marked-render variant's result (blob key + status + error).
    *  Partial; only given fields are written. Separate from `setVersionPreview` (the
    *  OG crop) because these two variants are best-effort and written independently —

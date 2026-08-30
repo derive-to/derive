@@ -221,9 +221,6 @@ export const version = sqliteTable(
     // instead of paying for an identical one.
     summary: text("summary"),
     summary_src_hash: text("summary_src_hash"),
-    // Compact structural index stored in BlobStore. One pointer is enough: generation,
-    // source key, content type, and sizes live in the strictly validated sidecar header.
-    prepared_key: text("prepared_key"),
     created_at: text("created_at").notNull().default(now),
   },
   (t) => [uniqueIndex("artifact_version").on(t.artifact_id, t.n)],

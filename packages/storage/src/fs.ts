@@ -1,8 +1,7 @@
 import { existsSync } from "node:fs"
-import { mkdir, open, readFile, rename, writeFile } from "node:fs/promises"
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises"
 import { join } from "node:path"
-import { type BlobByteRange, type BlobStore, sha256Hex } from "@derive/core"
-import { assertBlobByteRange } from "./blob-range"
+import { type BlobStore, sha256Hex } from "@derive/core"
 
 /** Content-addressed blobs on the local filesystem. The default store. */
 export class FsBlobStore implements BlobStore {
@@ -29,25 +28,6 @@ export class FsBlobStore implements BlobStore {
       return new Uint8Array(await readFile(this.pathFor(key)))
     } catch {
       return null
-    }
-  }
-
-  async getRange(key: string, range: BlobByteRange): Promise<Uint8Array | null> {
-    assertBlobByteRange(range)
-    if (!/^[0-9a-f]{64}$/.test(key)) return null
-    if (range.length === 0) return new Uint8Array()
-    let file: Awaited<ReturnType<typeof open>>
-    try {
-      file = await open(this.pathFor(key), "r")
-    } catch {
-      return null
-    }
-    try {
-      const out = new Uint8Array(range.length)
-      const { bytesRead } = await file.read(out, 0, range.length, range.offset)
-      return out.slice(0, bytesRead)
-    } finally {
-      await file.close()
     }
   }
 

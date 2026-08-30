@@ -952,7 +952,6 @@ export class PgMetaStore implements MetaStore {
           preview_marked_error: null,
           summary: null,
           summary_src_hash: null,
-          prepared_key: null,
           created_at: now,
         })
         .where(
@@ -1437,26 +1436,6 @@ export class PgMetaStore implements MetaStore {
       .update(version)
       .set(fields)
       .where(and(eq(version.artifact_id, artifactId), eq(version.n, n)))
-  }
-
-  async setVersionPrepared(
-    artifactId: string,
-    n: number,
-    expectedBlobKey: string,
-    preparedKey: string,
-  ): Promise<boolean> {
-    const rows = await this.db
-      .update(version)
-      .set({ prepared_key: preparedKey })
-      .where(
-        and(
-          eq(version.artifact_id, artifactId),
-          eq(version.n, n),
-          eq(version.blob_key, expectedBlobKey),
-        ),
-      )
-      .returning({ id: version.id })
-    return rows.length === 1
   }
 
   async setVersionPreviewVariant(

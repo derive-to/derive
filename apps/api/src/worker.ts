@@ -35,7 +35,6 @@ import {
 } from "./lib/env"
 import { catalogFromGateway, type GatewayConfig } from "./lib/model-catalog"
 import { getInstanceSlot } from "./lib/model-library"
-import { parsePreparedReadMode } from "./lib/prepared-version"
 import { nativeLimiter } from "./lib/rate-limit"
 import { liveD1, requestD1 } from "./lib/request-d1"
 import { isApiPath } from "./lib/serve-web"
@@ -47,7 +46,7 @@ import { loopSubstrate } from "./lib/substrate-loop"
 import { providerSubstrate } from "./lib/substrate-provider"
 import { log } from "./log"
 import { createDoBackplane, edgeCtx, edgeWaitUntil } from "./realtime-do"
-import { IndexedProjectionCache, PgvectorSearchIndex } from "./search-pgvector"
+import { PgvectorSearchIndex } from "./search-pgvector"
 import { bindingSummarizer, type TextGenAiLike } from "./summarizer"
 import { enqueueChannelDelivery } from "./webhooks"
 
@@ -63,11 +62,6 @@ export { WebhookOutbox } from "./webhook-do"
 // The webhook outbox DO is a singleton: every isolate pokes the same instance by a
 // fixed name, so one alarm loop drains the shared outbox.
 const OUTBOX_NAME = "outbox"
-// A Worker creates request-scoped adapters around its request-scoped Hyperdrive pool.
-// Keep only the small success receipts across requests in the same warm isolate. A
-// cold isolate takes the complete dense-index path, so this never becomes correctness
-// state and needs no Durable Object or external cache.
-const indexedProjectionCache = new IndexedProjectionCache()
 
 // The preview renderer DO is a singleton: one fixed name → one DO instance →
 // one browser at a time (no parallel-browser billing).
@@ -184,7 +178,6 @@ export interface Env {
   DERIVE_SANDBOX_URL?: string
   DERIVE_SUPERADMIN_EMAILS?: string
   DERIVE_SIGNUP_MODE?: string
-  DERIVE_PREPARED_READS?: string
   // Base domain for vanity subdomains (domain mode); unset = off.
   DERIVE_SUBDOMAIN_BASE?: string
   // Cloudflare for SaaS (BYO custom domains); all three unset = custom domains off.
@@ -332,7 +325,6 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
           .map((x) => x.trim())
           .filter(Boolean),
         blobs: new R2BlobStore(env.BUCKET),
-        preparedReads: parsePreparedReadMode(env.DERIVE_PREPARED_READS),
         // THE CEILING THIS TIER ACTUALLY HAS. An attended turn is detached through
         // `background()` → waitUntil, which the runtime ends a short while after the response is
         // sent — the isolate stops, so a turn that overruns writes nothing and leaves its session
@@ -349,7 +341,6 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
             ? new PgvectorSearchIndex(
                 bindingEmbedder(env.AI),
                 new PgVectorStore(livePgPool, EMBED_DIMENSIONS),
-                indexedProjectionCache,
               )
             : undefined,
         // Bound on env.AI ALONE, unlike `search` above: a summary is a text call with nowhere to

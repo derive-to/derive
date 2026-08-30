@@ -662,27 +662,6 @@ describe("editing eval — HTML projection, topology, and injection", () => {
       )
     }
   })
-
-  it("[HTML-034] finds mixed-case raw-text closers without accepting prefixed names", () => {
-    const source =
-      '<SCRIPT>const decoy = "</script-widget>"</ScRiPt >' +
-      '<STYLE>.x::after{content:"</style-widget>"}</sTyLe>' +
-      "<TITLE>Title </title-widget> text</TiTlE>" +
-      "<TEXTAREA>Field </textarea-widget> text</TeXtArEa>" +
-      "<p>tail</p>"
-    expect(tags(source).map(({ name, closing }) => `${closing ? "/" : ""}${name}`)).toEqual([
-      "script",
-      "/script",
-      "style",
-      "/style",
-      "title",
-      "/title",
-      "textarea",
-      "/textarea",
-      "p",
-      "/p",
-    ])
-  })
 })
 
 describe("editing eval — deck identity and structural operations", () => {

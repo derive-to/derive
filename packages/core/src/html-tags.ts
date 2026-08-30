@@ -216,31 +216,22 @@ const commentCloseEnd = (html: string, from: number): number => {
 
 /** Find a real raw-text closing tag. `\b` is not sufficient here: a hyphen is a
  *  word boundary, so `</script-widget>` would otherwise close `<script>`. */
-const rawTextCloseStart = (html: string, name: string, from: number): number => {
+const rawTextCloseStart = (lower: string, name: string, from: number): number => {
+  const needle = `</${name}`
   let cursor = from
   for (;;) {
-    const close = html.indexOf("</", cursor)
+    const close = lower.indexOf(needle, cursor)
     if (close < 0) return -1
-    let same = true
-    for (let i = 0; i < name.length; i++) {
-      const code = html.charCodeAt(close + 2 + i)
-      const lowercase = code >= 65 && code <= 90 ? code + 32 : code
-      if (lowercase !== name.charCodeAt(i)) {
-        same = false
-        break
-      }
-    }
-    if (same) {
-      const boundary = html[close + 2 + name.length] ?? ""
-      if (!boundary || boundary === ">" || boundary === "/" || isHtmlSpace(boundary)) return close
-    }
-    cursor = close + 2
+    const boundary = lower[close + needle.length] ?? ""
+    if (!boundary || boundary === ">" || boundary === "/" || isHtmlSpace(boundary)) return close
+    cursor = close + needle.length
   }
 }
 
 /** Every tag in `html`, in document order. */
 export const tags = (html: string): HtmlTag[] => {
   const out: HtmlTag[] = []
+  const lower = html.toLowerCase()
   let i = 0
   type Namespace = "html" | "svg" | "math"
   const open: { name: string; namespace: Namespace; attrs: string; start: number }[] = []
@@ -324,7 +315,7 @@ export const tags = (html: string): HtmlTag[] => {
     i = j + 1
     // Raw-text elements: their content is text, so skip straight past the close tag.
     if (!closing && (RAW_TEXT_ELEMENTS.has(name) || RCDATA_ELEMENTS.has(name))) {
-      const close = rawTextCloseStart(html, name, i)
+      const close = rawTextCloseStart(lower, name, i)
       if (close < 0) break
       i = close
     }

@@ -594,7 +594,6 @@ export const contextRoutes = (ctx: AppContext) => {
             background: ctx.background,
             search: ctx.search,
             summarize: ctx.summarize,
-            preparedReads: ctx.preparedReads,
             baseUrl: ctx.deps.baseUrl,
             // Wrapped, not re-plumbed: runSessionTurn → runTurn → the agent loop all keep passing
             // `callModel` along exactly as before, and the streaming decision stays here, where

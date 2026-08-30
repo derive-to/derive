@@ -30,7 +30,7 @@
     "test:live": "vitest run --config vitest.manual.config.ts",
     "test:worker": "vitest run --config vitest.worker.config.ts",
     "test:coverage": "vitest run --coverage",
-    "gen:env": "tsx scripts/gen-env.ts",
+    "gen:env": "vitest run test/config-manifest.test.ts -u",
     "gen:openapi": "vitest run test/openapi.test.ts -u"
   },
   "dependencies": {

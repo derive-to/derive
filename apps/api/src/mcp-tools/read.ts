@@ -4,7 +4,6 @@ import {
   type DocMap,
   derivedGen,
   deriveFacts,
-  isBundleContentType,
   isDerivedFactName,
   isHtmlLike,
   LINKED_BUNDLE_CONTENT_TYPE,
@@ -15,12 +14,9 @@ import {
   newId,
   type OutlineSection,
   outlineOf,
-  type PreparedNode,
-  type PreparedVersion,
   parseTemplateLibraryUri,
   refsOf,
   resolveNode,
-  resolvePreparedNode,
   SKILL_CONTENT_TYPE,
   sectionOf,
   TEMPLATE_LIBRARY_CATALOG_URI,
@@ -126,55 +122,6 @@ const storedMapOf = (source: string): StoredMap | null => {
   }
 }
 
-const preparedOutline = (prepared: PreparedVersion): OutlineSection[] =>
-  prepared.nodes
-    .filter(
-      (node): node is PreparedNode & { level: number } =>
-        node.type === "section" && node.level !== undefined,
-    )
-    .map((node) => ({
-      level: node.level,
-      text: node.title ?? node.ref.slice(4),
-      slug: node.ref.slice(4),
-      chars: node.end - node.contentStart,
-    }))
-
-/** A nested heading section is one contiguous range of the sidecar's flat section nodes. */
-const preparedSectionRange = (
-  prepared: PreparedVersion,
-  slug: string,
-): {
-  target: PreparedNode
-  offset: number
-  length: number
-  outline: OutlineSection[]
-  index: number
-} | null => {
-  const sections = prepared.nodes.filter(
-    (node): node is PreparedNode & { level: number } =>
-      node.type === "section" && node.level !== undefined,
-  )
-  const index = sections.findIndex((node) => node.ref === `sec:${slug}`)
-  const target = sections[index]
-  if (!target) return null
-  let end = sections.at(-1)?.byteEnd ?? target.byteEnd
-  for (let i = index + 1; i < sections.length; i++) {
-    const next = sections[i]
-    if (next && next.level <= target.level) {
-      end = next.contentByteStart
-      break
-    }
-  }
-  if (end <= target.contentByteStart) return null
-  return {
-    target,
-    offset: target.contentByteStart,
-    length: end - target.contentByteStart,
-    outline: preparedOutline(prepared),
-    index,
-  }
-}
-
 /** A focus read returns enough complete parts to disambiguate a repeated term, while the
  *  response stays well below the ordinary whole-read budget. The ref lets the caller open
  *  the exact source next without another map call. */
@@ -184,26 +131,6 @@ const clipFocusBody = (body: string): string =>
   body.length > FOCUS_BODY_MAX
     ? `${body.slice(0, FOCUS_BODY_MAX)}\n\n…[truncated ${body.length - FOCUS_BODY_MAX} chars — read this node for the full clipped part]`
     : body
-
-/** Find exact-source focus candidates without allocating every node body. The map tiles
- *  the source, so one forward cursor assigns each literal hit to its containing node.
- *  A hit that crosses a node boundary is excluded, matching the ordinary per-node scan. */
-const htmlFocusCandidates = (source: string, structure: DocMap, matcher: RegExp): number[] => {
-  const candidates: number[] = []
-  let nodeIndex = 0
-  for (const hit of source.matchAll(matcher)) {
-    const start = hit.index
-    const end = start + hit[0].length
-    let target = structure.nodes[nodeIndex]
-    while (target && target.end <= start) {
-      nodeIndex += 1
-      target = structure.nodes[nodeIndex]
-    }
-    if (!target || start < target.start || end > target.end) continue
-    if (candidates.at(-1) !== nodeIndex) candidates.push(nodeIndex)
-  }
-  return candidates
-}
 
 // MCP is stateless: mcp.ts builds a fresh server and registers its tools for every
 // request. Prepared caches therefore live at module scope, beside the Worker isolate,
@@ -1055,94 +982,6 @@ export function registerReadTool(tc: ToolContext): void {
             note: "Read one part with read(node:\"<ref>\"), format:'html' for its exact source. Same JSON at /raw/<short_id>/data/$map.json.",
           })
       }
-
-      // The authorized, single-range path. The version row arrived in the same lookup as
-      // the artifact, and reach has already completed above. A sidecar or range fault does
-      // not return an error here; it falls through to the exact full-source implementation.
-      const canUsePrepared =
-        !isBundleContentType(v.content_type) && v.content_type !== LINKED_BUNDLE_CONTENT_TYPE
-      const prepared =
-        canUsePrepared && (node || (section && section !== "*" && !lines))
-          ? await ctx.preparedVersion(v)
-          : null
-      if (prepared && node) {
-        const target = resolvePreparedNode(prepared, node)
-        if (target) {
-          const slice = await ctx.sourceRange(
-            v,
-            target.byteStart,
-            target.byteEnd - target.byteStart,
-          )
-          if (slice !== null)
-            return json({
-              short_id,
-              title: a.title,
-              version: `${n}${n === a.current_version ? " (current)" : ""}`,
-              kind: a.kind,
-              format: formatLabel(v.content_type, fmt),
-              url,
-              node: target.ref,
-              type: target.type,
-              // Preserve the existing response contract. These are UTF-16 source units,
-              // while the object-store request uses the separate UTF-8 byte span above.
-              bytes: target.end - target.start,
-              ...(target.title ? { title: target.title } : {}),
-              body: clip(present(slice, v.content_type, fmt)),
-            })
-        }
-      }
-      if (prepared && section && section !== "*" && !lines) {
-        const regionRef = section.match(/^@(\d+)$/)
-        if (regionRef) {
-          const target = resolvePreparedNode(prepared, section)
-          const regions = prepared.nodes.filter((candidate) => candidate.type === "region")
-          if (target?.type === "region") {
-            const slice = await ctx.sourceRange(
-              v,
-              target.contentByteStart,
-              target.byteEnd - target.contentByteStart,
-            )
-            if (slice !== null) {
-              const body = present(slice, v.content_type, fmt)
-              return doc(
-                {
-                  short_id,
-                  title: a.title,
-                  version: `${n}${n === a.current_version ? " (current)" : ""}`,
-                  kind: a.kind,
-                  format: formatLabel(v.content_type, fmt),
-                  url,
-                  section: `${section} of ${regions.length} regions`,
-                  chars: body.length,
-                },
-                clip(body),
-              )
-            }
-          }
-        } else if (prepared.kind === "page" || prepared.kind === "markdown") {
-          const range = preparedSectionRange(prepared, section)
-          if (range) {
-            const ranged = await ctx.sourceRange(v, range.offset, range.length)
-            if (ranged !== null) {
-              const slice = prepared.kind === "markdown" ? ranged.replace(/\n+$/, "\n") : ranged
-              const body = present(slice, v.content_type, fmt)
-              return doc(
-                {
-                  short_id,
-                  title: a.title,
-                  version: `${n}${n === a.current_version ? " (current)" : ""}`,
-                  kind: a.kind,
-                  format: formatLabel(v.content_type, fmt),
-                  url,
-                  section: `${section} (${range.index + 1} of ${range.outline.length})`,
-                  chars: body.length,
-                },
-                clipDoc(body, range.outline),
-              )
-            }
-          }
-        }
-      }
       const manifest = await manifestOf(ctx, v)
 
       if (!manifest) {
@@ -1267,11 +1106,7 @@ export function registerReadTool(tc: ToolContext): void {
           const searchableFormat = fmt === "markdown" ? "text" : fmt
           let candidates: number[] | null = null
           let builtDuringScan = false
-          if (searchableFormat === "html") {
-            // Exact-source focus can scan the full string once, then materialize only
-            // matching nodes. Text and Markdown keep the presentation-aware Bloom path.
-            candidates = htmlFocusCandidates(src, structure, matcher)
-          } else if (canIndexFocus(focus)) {
+          if (searchableFormat !== "html" && canIndexFocus(focus)) {
             const cached = focusIndexes.get(indexKey)
             if (cached) candidates = focusCandidates(cached, focus)
             else {

@@ -1,13 +1,9 @@
-import { type BlobByteRange, type BlobStore, sha256Hex } from "@derive/core"
-import { assertBlobByteRange } from "./blob-range"
+import { type BlobStore, sha256Hex } from "@derive/core"
 
 /** Structural type for a Cloudflare R2 binding (no hard dep on workers-types). */
 export interface R2Like {
   put(key: string, value: Uint8Array | ArrayBuffer): Promise<unknown>
-  get(
-    key: string,
-    options?: { range: { offset: number; length: number } },
-  ): Promise<{ arrayBuffer(): Promise<ArrayBuffer> } | null>
+  get(key: string): Promise<{ arrayBuffer(): Promise<ArrayBuffer> } | null>
   /** R2's metadata-only read; optional so a minimal test double stays valid. */
   head?(key: string): Promise<unknown | null>
 }
@@ -27,17 +23,6 @@ export class R2BlobStore implements BlobStore {
     const obj = await this.bucket.get(key)
     if (!obj) return null
     return new Uint8Array(await obj.arrayBuffer())
-  }
-
-  async getRange(key: string, range: BlobByteRange): Promise<Uint8Array | null> {
-    assertBlobByteRange(range)
-    if (!/^[0-9a-f]{64}$/.test(key)) return null
-    if (range.length === 0) return new Uint8Array()
-    const obj = await this.bucket.get(key, { range })
-    if (!obj) return null
-    const body = new Uint8Array(await obj.arrayBuffer())
-    if (body.length > range.length) throw new Error("r2 range response exceeded requested length")
-    return body
   }
 
   async has(key: string): Promise<boolean> {

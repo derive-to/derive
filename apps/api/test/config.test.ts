@@ -86,15 +86,6 @@ describe("config: field mapping", () => {
     expect(c.webOrigins).toEqual(["https://a.com", "https://b.com"])
     expect(c.crossSite).toBe(true)
   })
-
-  it("defaults prepared reads on and validates the rollout mode", () => {
-    expect(loadConfig(base).preparedReads).toBe("read")
-    expect(loadConfig({ ...base, DERIVE_PREPARED_READS: "shadow" }).preparedReads).toBe("shadow")
-    expect(loadConfig({ ...base, DERIVE_PREPARED_READS: "off" }).preparedReads).toBe("off")
-    expect(() => loadConfig({ ...base, DERIVE_PREPARED_READS: "sometimes" })).toThrow(
-      /DERIVE_PREPARED_READS/,
-    )
-  })
 })
 
 // A stable session-signing secret survives restarts (or zero-config self-host would

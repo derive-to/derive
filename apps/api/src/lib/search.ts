@@ -2,7 +2,6 @@ import {
   type ArtifactRecord,
   type BlobStore,
   elideDataUris,
-  elideDataUrisToLimit,
   enclosingMarker,
   isBundleContentType,
   isHtmlLike,
@@ -320,7 +319,7 @@ export async function versionIndexText(
 ): Promise<string> {
   const clipText = (s: string) => (s.length > MAX_INDEX_TEXT ? s.slice(0, MAX_INDEX_TEXT) : s)
   if (preparedSource !== undefined && !isBundleContentType(v.content_type))
-    return isTextType(v.content_type) ? elideDataUrisToLimit(preparedSource, MAX_INDEX_TEXT) : ""
+    return isTextType(v.content_type) ? clipText(elideDataUris(preparedSource)) : ""
   const manifest = await manifestOf(blobs, v)
   if (!manifest) {
     if (!isTextType(v.content_type)) return ""

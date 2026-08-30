@@ -27,9 +27,8 @@ import { log } from "../log"
 import { type Summarizer, sanitizeSummary, summaryInput } from "../summarizer"
 import { publishSweepEvents } from "./anchor-sweep"
 import { fanOutNewContentMentions } from "./content-mentions"
-import { cachePreparedVersion, documentStructure } from "./doc-structure-cache"
+import { documentStructure } from "./doc-structure-cache"
 import { EMAIL_LAYOUT_FACT } from "./email-layout"
-import { type PreparedReadMode, persistPreparedVersion } from "./prepared-version"
 import { indexArtifactVersion, isTextType } from "./search"
 import { recordThreadResolution } from "./thread-actions"
 
@@ -56,8 +55,6 @@ export interface VersionBumpDeps {
    *  and normally ABSENT: only the edge binds a model here, so self-host publishes exactly as
    *  before and every consumer falls back to the inventory line. */
   summarize?: Summarizer
-  /** Produce structural sidecars in shadow/read mode. Off leaves existing behavior exact. */
-  preparedReads?: PreparedReadMode
 }
 
 export const emitVersionBump = async (
@@ -85,14 +82,7 @@ export const emitVersionBump = async (
   // response already advises about any UNstored slot via publishAdvisories; this is the
   // persistence half, and both call the one parser so they can't disagree.
   try {
-    await extractVersionData(
-      meta,
-      blobs,
-      version,
-      deps.background,
-      preparedSource,
-      deps.preparedReads,
-    )
+    await extractVersionData(meta, blobs, version, deps.background, preparedSource)
   } catch (err) {
     log.error("data-slot extraction failed", { artifact: artifact.id, err: String(err) })
   }
@@ -200,12 +190,11 @@ const summarizeVersion = async (
  *  least one slot parsed — a fresh version has no prior rows, so there is nothing to clear when
  *  it has none. */
 const extractVersionData = async (
-  meta: Pick<MetaStore, "setVersionData" | "getVersionData" | "getVersion" | "setVersionPrepared">,
+  meta: Pick<MetaStore, "setVersionData" | "getVersionData" | "getVersion">,
   blobs: BlobStore,
   version: VersionRecord,
   background?: (work: Promise<unknown>) => Promise<void>,
   preparedSource?: string,
-  preparedReads: PreparedReadMode = "off",
 ): Promise<void> => {
   const ct = version.content_type
   // AUTHORED facts stay HTML/markdown only. DERIVED facts also cover decks.
@@ -241,36 +230,6 @@ const extractVersionData = async (
   } catch {
     // Ambiguous structure omits $map exactly as before. Other derived facts still persist.
   }
-  const preparedWork: Promise<void> =
-    structure && preparedReads !== "off"
-      ? persistPreparedVersion(meta, blobs, version, source, structure)
-          .then((result) => {
-            if (!result) {
-              log.info("prepared version skipped", {
-                artifact: version.artifact_id,
-                n: version.n,
-                reason: "size_or_structure",
-              })
-              return
-            }
-            if (result.attached) cachePreparedVersion(result.prepared, result.key, result.bytes)
-            log.info("prepared version stored", {
-              artifact: version.artifact_id,
-              n: version.n,
-              bytes: result.bytes,
-              source_bytes: result.prepared.sourceBytes,
-              attached: result.attached,
-              mode: preparedReads,
-            })
-          })
-          .catch((err) =>
-            log.warn("prepared version failed", {
-              artifact: version.artifact_id,
-              n: version.n,
-              error: err instanceof Error ? err.message : String(err),
-            }),
-          )
-      : Promise.resolve()
   const derived = deriveFacts(source, ct, { structure })
   const rows = [
     ...facts.map((s) => ({
@@ -288,14 +247,11 @@ const extractVersionData = async (
       gen: s.gen,
     })),
   ]
-  if (rows.length === 0) {
-    await preparedWork
-    return
-  }
+  if (rows.length === 0) return
   // ONE setVersionData call: it is a full replace, so asserted and derived must land
   // together or the second write erases the first — the same union trap the backfill
   // below documents for itself.
-  await Promise.all([meta.setVersionData(version.artifact_id, version.n, rows), preparedWork])
+  await meta.setVersionData(version.artifact_id, version.n, rows)
   if (facts.length === 0) return
   // Off the hot path where the caller can: the walk-back costs a blob read per version.
   // ASSERTED names only — old versions get their derived rows lazily on first read, so a
