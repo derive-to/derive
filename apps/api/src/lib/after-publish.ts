@@ -62,6 +62,7 @@ export const emitVersionBump = async (
   artifact: ArtifactRecord,
   version: VersionRecord,
   preparedSource?: string,
+  previousSearchSource?: { source: string; contentType: string | null; title: string | null },
 ): Promise<void> => {
   const { meta, blobs, bus, notifyRender } = deps
   bus.publish(artifact.id, { type: "version.published", n: version.n, message: version.message })
@@ -72,7 +73,15 @@ export const emitVersionBump = async (
   // and move on — the artifact re-indexes on its next publish (and the backfill
   // sweep is the safety net for anything missed).
   try {
-    await indexArtifactVersion(meta, blobs, artifact, version, deps.search, preparedSource)
+    await indexArtifactVersion(
+      meta,
+      blobs,
+      artifact,
+      version,
+      deps.search,
+      preparedSource,
+      previousSearchSource,
+    )
   } catch (err) {
     log.error("search index update failed", { artifact: artifact.id, err: String(err) })
   }
@@ -386,6 +395,9 @@ export interface AfterPublishOpts {
    *  new multi-megabyte blob back from storage. Omit for restores, bundles, and any caller
    *  without the bytes; every consumer retains its exact blob fallback. */
   preparedSource?: string
+  /** Previous exact source captured while materializing an edit. Search can skip all index
+   *  work when its bounded projection and title are unchanged. */
+  previousSearchSource?: { source: string; contentType: string | null; title: string | null }
 }
 
 /**
@@ -435,7 +447,7 @@ export const afterPublish = async (
     bus.publish(artifact.id, { type: "comment.resolved", thread_id: threadId, state: "resolved" })
     resolved.push(threadId)
   }
-  await emitVersionBump(deps, artifact, version, opts.preparedSource)
+  await emitVersionBump(deps, artifact, version, opts.preparedSource, opts.previousSearchSource)
   // Source mentions are derived from the just-published bytes, never trusted from a client
   // payload. Run after the canonical version bump and isolate every delivery branch inside the
   // fan-out, so an outage cannot fail, roll back, or delay a live document edit.

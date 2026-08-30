@@ -658,15 +658,11 @@ export function registerPublishTool(tc: ToolContext): void {
               ? editEnvelope.version
               : ctx.meta.getVersion(artifactId, n),
           sourceText: ctx.sourceText,
-          ...(readback
-            ? {
-                captureSource: (source: string, contentType: string | null, blobKey: string) => {
-                  readbackBeforeSource = source
-                  readbackBeforeContentType = contentType ?? "text/html"
-                  readbackBeforeBlobKey = blobKey
-                },
-              }
-            : {}),
+          captureSource: (source: string, contentType: string | null, blobKey: string) => {
+            readbackBeforeSource = source
+            readbackBeforeContentType = contentType ?? "text/html"
+            readbackBeforeBlobKey = blobKey
+          },
         }
         let materialized: MaterializedEdits
         try {
@@ -886,6 +882,15 @@ export function registerPublishTool(tc: ToolContext): void {
             ...(artifact.kind === "file" && typeof content === "string"
               ? { preparedSource: content }
               : {}),
+            ...(readbackBeforeSource !== null && existing
+              ? {
+                  previousSearchSource: {
+                    source: readbackBeforeSource,
+                    contentType: readbackBeforeContentType,
+                    title: existing.title,
+                  },
+                }
+              : {}),
           },
         )
         // Tag at publish time — the one-step "auto-tag on create". `tags` given ⇒ set them
@@ -925,29 +930,49 @@ export function registerPublishTool(tc: ToolContext): void {
         // fan-out the HTTP route runs. The delivery receipt becomes `opened_in_tab`, so the
         // agent knows whether to open the URL locally. An attended revision still gets the
         // completion DM, but does not commandeer the person's browser; their live tab reloads.
-        let openedInTab = false
-        if (actingFor) {
-          openedInTab = await agentPushFanout(
-            {
-              meta: ctx.meta,
-              blobs: ctx.blobs,
-              bus: ctx.bus,
-              baseUrl: ctx.deps.baseUrl,
-              pokeWebhooks: ctx.deps.pokeWebhooks,
-            },
-            artifact,
-            {
-              user: actingFor.id,
-              agentId: agent.id,
-              agentName: agent.name,
-              version: version.n,
-              reviewRound: !!review_round,
-              isNew: !short_id,
-              notifyBrowser: !attended || !short_id,
-              ...(editSummary ? { summary: editSummary } : {}),
-            },
-          )
-        }
+        const responseContent =
+          typeof content === "string" && artifact.kind === "file" ? content : null
+        const [openedInTab, blobAdvisory, weightAdvisory, driftAdvisories, storedRows] =
+          await Promise.all([
+            actingFor
+              ? agentPushFanout(
+                  {
+                    meta: ctx.meta,
+                    blobs: ctx.blobs,
+                    bus: ctx.bus,
+                    baseUrl: ctx.deps.baseUrl,
+                    pokeWebhooks: ctx.deps.pokeWebhooks,
+                  },
+                  artifact,
+                  {
+                    user: actingFor.id,
+                    agentId: agent.id,
+                    agentName: agent.name,
+                    version: version.n,
+                    reviewRound: !!review_round,
+                    isNew: !short_id,
+                    notifyBrowser: !attended || !short_id,
+                    ...(editSummary ? { summary: editSummary } : {}),
+                  },
+                )
+              : Promise.resolve(false),
+            responseContent
+              ? missingBlobAdvisory(responseContent, ctx.blobs)
+              : Promise.resolve(null),
+            responseContent
+              ? heavyAssetsAdvisory(responseContent, ctx.meta)
+              : Promise.resolve(null),
+            responseContent
+              ? slotShapeDriftAdvisories(
+                  responseContent,
+                  version.content_type,
+                  artifact.id,
+                  version.n - 1,
+                  ctx.meta,
+                )
+              : Promise.resolve([]),
+            ctx.meta.getVersionData(artifact.id, version.n).catch(() => []),
+          ])
         // Each bundle page (including any bound images) is directly fetchable once
         // live — surfacing the URLs here is the fix for an agent that can't find
         // them otherwise and falls back to inlining base64 (see the "cheap image
@@ -962,28 +987,6 @@ export function registerPublishTool(tc: ToolContext): void {
           : null
         // The one advisory that needs I/O — computed once here, folded into the
         // note below alongside the pure publishAdvisories.
-        const blobAdvisory =
-          typeof content === "string" && artifact.kind === "file"
-            ? await missingBlobAdvisory(content, ctx.blobs)
-            : null
-        // What this page's images cost every viewer, every load. Same I/O shape; named
-        // rather than silently re-encoded, because these are the user's bytes.
-        const weightAdvisory =
-          typeof content === "string" && artifact.kind === "file"
-            ? await heavyAssetsAdvisory(content, ctx.meta)
-            : null
-        // Shape drift against the previous version — the quiet way a trend read splits
-        // into two metrics that look like one.
-        const driftAdvisories =
-          typeof content === "string" && artifact.kind === "file"
-            ? await slotShapeDriftAdvisories(
-                content,
-                version.content_type,
-                artifact.id,
-                version.n - 1,
-                ctx.meta,
-              )
-            : []
         // What the extraction actually STORED for this version, read back from the rows
         // rather than echoed from the parser. Reporting the store is strictly more honest:
         // it reflects what is now queryable, so a persistence failure shows up as an empty
@@ -993,9 +996,7 @@ export function registerPublishTool(tc: ToolContext): void {
         // assertedOnly: every version now also carries host-derived $rows, and the receipt
         // is the AUTHOR's reward — a receipt that congratulated the host for its own
         // indexes would bury the one line that pays the author for asserting.
-        const storedSlots = assertedOnly(
-          await ctx.meta.getVersionData(artifact.id, version.n).catch(() => []),
-        )
+        const storedSlots = assertedOnly(storedRows)
         let changedReadback: ChangedParts | null = readback
           ? {
               count: 0,

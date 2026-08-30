@@ -352,8 +352,16 @@ export async function indexArtifactVersion(
   v: VersionRecord,
   search?: Pick<SearchIndex, "indexArtifact">,
   preparedSource?: string,
+  previous?: { source: string; contentType: string | null; title: string | null },
 ): Promise<void> {
   const text = await versionIndexText(blobs, v, preparedSource)
+  // Exact edits already hold both complete sources. If the bounded search projection and
+  // title did not change, both current indexes are already correct. Skip the lexical write,
+  // embedding call, and vector write instead of relying on an isolate-local cache.
+  if (previous && previous.title === artifact.title && isTextType(previous.contentType ?? "")) {
+    const previousText = elideDataUrisToLimit(previous.source, MAX_INDEX_TEXT)
+    if (previousText === text) return
+  }
   await meta.indexArtifact(artifact.id, artifact.org_id, artifact.title, text)
   // The dense arm is independently best-effort: a dense-arm (embed or store) hiccup must never undo
   // the lexical upsert that already committed, nor fail the publish. Log and move on — the next
