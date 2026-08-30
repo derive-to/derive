@@ -14,10 +14,20 @@ import type {
   WorkflowTransitionGuard,
 } from "./workflow-run"
 
+export interface BlobByteRange {
+  /** Zero-based byte offset into the immutable object. */
+  offset: number
+  /** Maximum bytes to return. A range that reaches EOF may return fewer bytes. */
+  length: number
+}
+
 export interface BlobStore {
   /** Content-addressed put; returns the sha256 hex key. Idempotent. */
   put(data: Uint8Array): Promise<string>
   get(key: string): Promise<Uint8Array | null>
+  /** Read one byte range without downloading the complete object. OPTIONAL and additive.
+   *  Callers must fall back to `get` when an adapter does not implement this method. */
+  getRange?(key: string, range: BlobByteRange): Promise<Uint8Array | null>
   /** Cheap existence check (a stat/HEAD, never a body read). OPTIONAL and additive so
    *  existing stores keep compiling; a caller that needs it (publish lint's
    *  broken-embed check) treats absence as "can't check here" and skips — it never

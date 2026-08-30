@@ -35,6 +35,15 @@ describe("FsBlobStore (local disk, the default store)", () => {
     expect(await store.has("c".repeat(64))).toBe(false)
     expect(await store.has("not-a-key")).toBe(false)
   })
+
+  it("reads an exact byte range and truncates cleanly at EOF", async () => {
+    const key = await store.put(bytes("zero one two"))
+    expect(str(await store.getRange(key, { offset: 5, length: 3 }))).toBe("one")
+    expect(str(await store.getRange(key, { offset: 9, length: 20 }))).toBe("two")
+    expect(await store.getRange(key, { offset: 99, length: 3 })).toEqual(new Uint8Array())
+    expect(await store.getRange("bad", { offset: 0, length: 1 })).toBeNull()
+    await expect(store.getRange(key, { offset: -1, length: 1 })).rejects.toThrow(RangeError)
+  })
 })
 
 describe("R2BlobStore (Cloudflare R2)", () => {
@@ -83,6 +92,27 @@ describe("R2BlobStore (Cloudflare R2)", () => {
     // A double without head can't check cheaply; `has` reports true so the caller's
     // advisory stays quiet instead of false-positives (and never falls back to get).
     expect(await store.has("e".repeat(64))).toBe(true)
+  })
+
+  it("passes an offset range to the binding and rejects oversized responses", async () => {
+    const calls: { offset: number; length: number }[] = []
+    const ranged = new R2BlobStore({
+      ...bucket,
+      get: async (key, options) => {
+        const value = map.get(key)
+        if (!value) return null
+        if (!options) return { arrayBuffer: async () => value.slice().buffer }
+        calls.push(options.range)
+        const { offset, length } = options.range
+        const body = value.slice(offset, offset + length)
+        return { arrayBuffer: async () => body.buffer }
+      },
+    })
+    const key = await ranged.put(bytes("edge range bytes"))
+    expect(str(await ranged.getRange(key, { offset: 5, length: 5 }))).toBe("range")
+    expect(calls).toEqual([{ offset: 5, length: 5 }])
+    expect(await ranged.getRange("bad", { offset: 0, length: 1 })).toBeNull()
+    await expect(ranged.getRange(key, { offset: 0.5, length: 1 })).rejects.toThrow(RangeError)
   })
 })
 
@@ -142,6 +172,46 @@ describe("S3BlobStore put/get (SigV4 over fetch)", () => {
       vi.fn(async () => new Response("denied", { status: 403 })),
     )
     await expect(store.put(new TextEncoder().encode("x"))).rejects.toThrow(/s3 put .* failed: 403/)
+  })
+
+  it("requests and validates a partial byte response", async () => {
+    const calls: { headers: Record<string, string> }[] = []
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init: RequestInit) => {
+        calls.push({ headers: init.headers as Record<string, string> })
+        return new Response(bytes("range"), {
+          status: 206,
+          headers: { "content-range": "bytes 5-9/16" },
+        })
+      }),
+    )
+    expect(str(await store.getRange("a".repeat(64), { offset: 5, length: 5 }))).toBe("range")
+    expect(calls[0]?.headers.range).toBe("bytes=5-9")
+  })
+
+  it("rejects ignored or malformed range responses", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(bytes("whole"), { status: 200 })),
+    )
+    await expect(store.getRange("a".repeat(64), { offset: 2, length: 3 })).rejects.toThrow(
+      /range get .* failed: 200/,
+    )
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(bytes("bad"), {
+            status: 206,
+            headers: { "content-range": "bytes 3-5/16" },
+          }),
+      ),
+    )
+    await expect(store.getRange("a".repeat(64), { offset: 2, length: 3 })).rejects.toThrow(
+      /invalid Content-Range/,
+    )
   })
 })
 

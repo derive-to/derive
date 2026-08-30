@@ -1,5 +1,6 @@
 import { createHash, createHmac } from "node:crypto"
-import { type BlobStore, sha256Hex } from "@derive/core"
+import { type BlobByteRange, type BlobStore, sha256Hex } from "@derive/core"
+import { assertBlobByteRange } from "./blob-range"
 
 /**
  * S3-compatible blob store for the Node container — covers AWS S3, Cloudflare
@@ -98,6 +99,29 @@ export class S3BlobStore implements BlobStore {
     if (res.status === 404) return null
     if (!res.ok) throw new Error(`s3 get ${key} failed: ${res.status}`)
     return new Uint8Array(await res.arrayBuffer())
+  }
+
+  async getRange(key: string, range: BlobByteRange): Promise<Uint8Array | null> {
+    assertBlobByteRange(range)
+    if (!/^[0-9a-f]{64}$/.test(key)) return null
+    if (range.length === 0) return new Uint8Array()
+    const { url, headers } = this.sign("GET", key, hash(""))
+    const end = range.offset + range.length - 1
+    const res = await fetch(url, {
+      method: "GET",
+      headers: { ...headers, range: `bytes=${range.offset}-${end}` },
+    })
+    if (res.status === 404) return null
+    if (res.status !== 206) throw new Error(`s3 range get ${key} failed: ${res.status}`)
+    const contentRange = res.headers.get("content-range")
+    const match = contentRange?.match(/^bytes (\d+)-(\d+)\/(\d+|\*)$/)
+    if (!match || Number(match[1]) !== range.offset)
+      throw new Error(`s3 range get ${key} returned an invalid Content-Range`)
+    const body = new Uint8Array(await res.arrayBuffer())
+    const responseEnd = Number(match[2])
+    if (responseEnd - range.offset + 1 !== body.length || body.length > range.length)
+      throw new Error(`s3 range get ${key} returned an invalid body length`)
+    return body
   }
 
   /** Metadata-only existence check (a signed HEAD — never pulls the body). A transport
