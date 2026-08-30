@@ -1069,44 +1069,63 @@ export const artifactRoutes = (ctx: AppContext) => {
       // its human exactly like the /mcp path does — the shared bell + auto-open
       // fan-out. A signed-in human's own save gets none of this — they're
       // already looking at it.
+      const receiptStartedAt = performance.now()
       const responseText =
         artifact.kind === "file" && isTextType(version.content_type)
           ? new TextDecoder().decode(bytes)
           : null
+      const receiptDurations: Record<string, number> = {}
+      const timedReceipt = async <T>(name: string, work: () => Promise<T>): Promise<T> => {
+        const startedAt = performance.now()
+        try {
+          return await work()
+        } finally {
+          receiptDurations[name] = performance.now() - startedAt
+        }
+      }
       // Advisories over what was just stored (missing viewport meta, oversized
       // inline base64, expiring upload URLs, page-markup-as-markdown, broken blob
       // refs) — computed server-side so every client relays the same guidance; the
       // boundary rules keep @derive/core out of the clients.
       const [openedInTab, versions, blobAdvisory, weightAdvisory, driftAdvisories, storedRows] =
         await Promise.all([
-          agentPrincipal && onBehalf
-            ? agentPushFanout(
-                { meta, blobs, bus, baseUrl: deps.baseUrl, pokeWebhooks: deps.pokeWebhooks },
-                artifact,
-                {
-                  user: onBehalf,
-                  agentId: agentPrincipal.id,
-                  agentName: agentPrincipal.name,
-                  version: version.n,
-                  reviewRound: roundCreated,
-                  isNew: !shortId,
-                },
-              )
-            : Promise.resolve(null),
-          meta.listVersions(artifact.id),
-          responseText ? missingBlobAdvisory(responseText, blobs) : Promise.resolve(null),
-          responseText ? heavyAssetsAdvisory(responseText, meta) : Promise.resolve(null),
-          responseText
-            ? slotShapeDriftAdvisories(
-                responseText,
-                version.content_type,
-                artifact.id,
-                version.n - 1,
-                meta,
-              )
-            : Promise.resolve([]),
-          meta.getVersionData(artifact.id, version.n).catch(() => []),
+          timedReceipt("push", () =>
+            agentPrincipal && onBehalf
+              ? agentPushFanout(
+                  { meta, blobs, bus, baseUrl: deps.baseUrl, pokeWebhooks: deps.pokeWebhooks },
+                  artifact,
+                  {
+                    user: onBehalf,
+                    agentId: agentPrincipal.id,
+                    agentName: agentPrincipal.name,
+                    version: version.n,
+                    reviewRound: roundCreated,
+                    isNew: !shortId,
+                  },
+                )
+              : Promise.resolve(null),
+          ),
+          timedReceipt("versions", () => meta.listVersions(artifact.id)),
+          timedReceipt("blob-check", () =>
+            responseText ? missingBlobAdvisory(responseText, blobs) : Promise.resolve(null),
+          ),
+          timedReceipt("asset-weight", () =>
+            responseText ? heavyAssetsAdvisory(responseText, meta) : Promise.resolve(null),
+          ),
+          timedReceipt("fact-drift", () =>
+            responseText
+              ? slotShapeDriftAdvisories(
+                  responseText,
+                  version.content_type,
+                  artifact.id,
+                  version.n - 1,
+                  meta,
+                )
+              : Promise.resolve([]),
+          ),
+          timedReceipt("data", () => meta.getVersionData(artifact.id, version.n).catch(() => [])),
         ])
+      const advisoryStartedAt = performance.now()
       const advisories = responseText
         ? [
             ...publishAdvisories(responseText, version.content_type),
@@ -1115,6 +1134,8 @@ export const artifactRoutes = (ctx: AppContext) => {
             ...driftAdvisories,
           ]
         : []
+      receiptDurations["advisories"] = performance.now() - advisoryStartedAt
+      receiptDurations["prepare"] = advisoryStartedAt - receiptStartedAt
       // What extraction actually STORED, read back from the rows rather than echoed from
       // the parser — so a persistence failure reads as an empty list, not a false claim.
       // assertedOnly: this 201 body is the REST publish receipt, and the rows now include
@@ -1134,6 +1155,14 @@ export const artifactRoutes = (ctx: AppContext) => {
           )}`,
           `after-publish;dur=${duration(afterPublishFinishedAt - afterPublishStartedAt)}`,
           `post-publish;dur=${duration(responseStartedAt - afterPublishFinishedAt)}`,
+          `receipt-prepare;dur=${duration(receiptDurations["prepare"] ?? 0)}`,
+          `receipt-push;dur=${duration(receiptDurations["push"] ?? 0)}`,
+          `receipt-versions;dur=${duration(receiptDurations["versions"] ?? 0)}`,
+          `receipt-blob-check;dur=${duration(receiptDurations["blob-check"] ?? 0)}`,
+          `receipt-asset-weight;dur=${duration(receiptDurations["asset-weight"] ?? 0)}`,
+          `receipt-fact-drift;dur=${duration(receiptDurations["fact-drift"] ?? 0)}`,
+          `receipt-data;dur=${duration(receiptDurations["data"] ?? 0)}`,
+          `receipt-advisories;dur=${duration(receiptDurations["advisories"] ?? 0)}`,
           `total;dur=${duration(responseStartedAt - requestStartedAt)}`,
         ].join(", "),
       )

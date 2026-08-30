@@ -478,7 +478,7 @@ describe("publish html file", () => {
     const content = "<h1>Checksum me</h1>"
     const res = await upload("sum.html", content, { title: "Sum" })
     expect(res.headers.get("server-timing")).toMatch(
-      /^prepare;dur=\d+\.\d, blob-put;dur=\d+\.\d, store-content;dur=\d+\.\d, metadata;dur=\d+\.\d, after-publish;dur=\d+\.\d, post-publish;dur=\d+\.\d, total;dur=\d+\.\d$/,
+      /^prepare;dur=\d+\.\d, blob-put;dur=\d+\.\d, store-content;dur=\d+\.\d, metadata;dur=\d+\.\d, after-publish;dur=\d+\.\d, post-publish;dur=\d+\.\d, receipt-prepare;dur=\d+\.\d, receipt-push;dur=\d+\.\d, receipt-versions;dur=\d+\.\d, receipt-blob-check;dur=\d+\.\d, receipt-asset-weight;dur=\d+\.\d, receipt-fact-drift;dur=\d+\.\d, receipt-data;dur=\d+\.\d, receipt-advisories;dur=\d+\.\d, total;dur=\d+\.\d$/,
     )
     const json = await res.json()
     const expected = Buffer.from(
