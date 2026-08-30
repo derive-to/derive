@@ -214,7 +214,7 @@ export function IntegrationsSection() {
 
       <SettingsGroup
         title="GitHub"
-        description="Read pull requests and add top-level PR conversation comments in repositories selected during installation. Derive does not mirror repository files or create collections."
+        description="Read pull requests, add top-level PR comments, and run selected GitHub Actions workflows. Derive does not mirror repository files or create collections."
       >
         {githubInstallError && githubInstallResult && !githubInstallResult.connected && (
           <StatusPanel
@@ -247,6 +247,24 @@ export function IntegrationsSection() {
             }
           />
         )}
+        {github &&
+          !github.needs_permissions &&
+          github.actions_available === false &&
+          github.permissions_url && (
+            <StatusPanel
+              tone="warning"
+              layout="inline"
+              title="Enable GitHub Actions"
+              description="Complete the GitHub permission step to let Derive discover and follow workflows, and start adapter workflows named derive-*.yml in selected repositories. Pull request tools continue to work without it."
+              action={
+                isAdmin && (
+                  <Button data-testid="github-enable-actions" size="sm" asChild>
+                    <a href={github.permissions_url}>Enable Actions</a>
+                  </Button>
+                )
+              }
+            />
+          )}
         {githubIsPending ? (
           <SettingsListSkeleton />
         ) : githubIsError ? (

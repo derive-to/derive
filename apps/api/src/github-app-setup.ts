@@ -25,6 +25,11 @@ export const REQUIRED_PERMISSIONS: Record<string, string> = {
   metadata: "read",
   pull_requests: "write",
 }
+export const ACTIONS_PERMISSION = { actions: "write" } as const
+export const MANIFEST_PERMISSIONS: Record<string, string> = {
+  ...REQUIRED_PERMISSIONS,
+  ...ACTIONS_PERMISSION,
+}
 // Scheduled/manual runs query GitHub directly. No webhook collection is part of this path.
 export const REQUIRED_EVENTS: string[] = []
 
@@ -47,7 +52,7 @@ export const buildManifest = (baseUrl: string, host: string) => ({
   // server-narrowed to PR reads plus top-level comments, and only matters once bound via our
   // signed-state callback, so a stray direct install is inert.
   public: true,
-  default_permissions: REQUIRED_PERMISSIONS,
+  default_permissions: MANIFEST_PERMISSIONS,
   default_events: REQUIRED_EVENTS,
 })
 
@@ -76,7 +81,7 @@ export function manifestFormHTML(props: { baseUrl: string; state: string }): str
       <input type="hidden" name="manifest" value="${esc(manifestJson)}"/>
       <button class="btn" type="submit">Continue to GitHub</button>
     </form>
-    <p class="foot">Derive asks for <strong>Metadata: read</strong> and <strong>Pull requests: write</strong>. The write level is required to add a top-level PR conversation comment; Derive permits no other GitHub write.</p>
+    <p class="foot">Derive asks for <strong>Metadata: read</strong>, <strong>Pull requests: write</strong>, and <strong>Actions: write</strong>. Server-side policies limit these to PR reads, one top-level PR comment, workflow status, and dispatch of workflows named <strong>derive-*.yml</strong>.</p>
     <script>setTimeout(function(){document.getElementById("f").submit()},400)</script>`,
   )
 }

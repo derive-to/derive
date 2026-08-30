@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest"
 import { buildManifest } from "../src/github-app-setup"
 
 // Locks the standard-source manifest. New installs query GitHub on demand: no contents,
-// issues, webhook events, or sync callback may creep back into this contract.
+// issues, webhook events, or sync callback may creep back into this contract. Actions write is
+// server-narrowed to workflow discovery, dispatch, status, artifacts, and cancellation.
 describe("GitHub App manifest", () => {
   const m = buildManifest("https://derive.example.com", "derive.example.com")
 
@@ -15,8 +16,9 @@ describe("GitHub App manifest", () => {
     expect(m.public).toBe(true)
   })
 
-  it("requests metadata read + pull-request write, nothing more", () => {
+  it("requests only metadata, pull requests, and the bounded Actions capability", () => {
     expect(m.default_permissions).toEqual({
+      actions: "write",
       metadata: "read",
       pull_requests: "write",
     })
