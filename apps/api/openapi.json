@@ -2028,7 +2028,8 @@
           },
           "actions_available": {
             "type": "boolean",
-            "description": "Whether the configured App can discover and dispatch GitHub Actions workflows"
+            "nullable": true,
+            "description": "Whether the configured App and its connected installations can dispatch GitHub Actions workflows; null when GitHub could not be checked"
           },
           "permissions_url": {
             "type": "string",

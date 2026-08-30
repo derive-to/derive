@@ -20,8 +20,11 @@ on:
         required: false
         type: string
 
-permissions:
-  contents: read
+permissions: {}
+
+concurrency:
+  group: derive-runner-${{ inputs.derive_run_id }}
+  cancel-in-progress: false
 
 jobs:
   canary:
@@ -34,6 +37,7 @@ jobs:
           SUITE: ${{ inputs.suite }}
           PAYLOAD: ${{ inputs.payload }}
         run: |
+          set -euo pipefail
           jq -n \
             --arg derive_run_id "$DERIVE_RUN_ID" \
             --arg suite "$SUITE" \
@@ -56,14 +60,13 @@ jobs:
           {
             echo "## Derive runner canary"
             echo
-            echo "- Derive run: \`$DERIVE_RUN_ID\`"
-            echo "- Suite: \`$SUITE\`"
             echo "- GitHub run: \`$GITHUB_RUN_ID\`"
+            echo "- Result: \`derive-result-$GITHUB_RUN_ID\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload result
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: derive-result-${{ inputs.derive_run_id }}
+          name: derive-result-${{ github.run_id }}
           path: derive-result.json
           retention-days: 7

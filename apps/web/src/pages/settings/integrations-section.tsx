@@ -249,13 +249,13 @@ export function IntegrationsSection() {
         )}
         {github &&
           !github.needs_permissions &&
-          !github.actions_available &&
+          github.actions_available === false &&
           github.permissions_url && (
             <StatusPanel
               tone="warning"
               layout="inline"
               title="Enable GitHub Actions"
-              description="Approve Actions access once to let Derive discover, start, follow, and cancel workflows in selected repositories. Pull request tools continue to work without it."
+              description="Complete the GitHub permission step to let Derive discover and follow workflows, and start adapter workflows named derive-*.yml in selected repositories. Pull request tools continue to work without it."
               action={
                 isAdmin && (
                   <Button data-testid="github-enable-actions" size="sm" asChild>

@@ -58,6 +58,8 @@ describe("standard GitHub integration", () => {
     )
     let pullPermission = "write"
     let actionsPermission: string | undefined = "write"
+    let installationActionsPermission: string | undefined = "write"
+    let appStatus = 200
     let installationStatus = 200
     const oauthCodes: string[] = []
     const oauthVerifiers: string[] = []
@@ -68,7 +70,18 @@ describe("standard GitHub integration", () => {
         const path = parsed.pathname
         if (path === "/app/installations/44001")
           return new Response(
-            JSON.stringify({ id: 44001, account: { login: "derive-to", type: "Organization" } }),
+            JSON.stringify({
+              id: 44001,
+              account: { login: "derive-to", type: "Organization" },
+              html_url: "https://github.com/organizations/derive-to/settings/installations/44001",
+              permissions: {
+                ...(installationActionsPermission
+                  ? { actions: installationActionsPermission }
+                  : {}),
+                metadata: "read",
+                pull_requests: "write",
+              },
+            }),
             { status: installationStatus },
           )
         if (parsed.host === "github.com" && path === "/login/oauth/access_token") {
@@ -100,7 +113,7 @@ describe("standard GitHub integration", () => {
               },
               events: [],
             }),
-            { status: 200 },
+            { status: appStatus },
           )
         return new Response("not found", { status: 404 })
       }),
@@ -186,6 +199,19 @@ describe("standard GitHub integration", () => {
       await (await app.request("/v1/github", { headers: as(owner.email) })).json(),
     ).toMatchObject({ actions_available: false, connected: true, needs_permissions: false })
     actionsPermission = "write"
+    installationActionsPermission = undefined
+    expect(
+      await (await app.request("/v1/github", { headers: as(owner.email) })).json(),
+    ).toMatchObject({
+      actions_available: false,
+      permissions_url: "https://github.com/organizations/derive-to/settings/installations/44001",
+    })
+    installationActionsPermission = "write"
+    appStatus = 500
+    expect(
+      await (await app.request("/v1/github", { headers: as(owner.email) })).json(),
+    ).toMatchObject({ actions_available: null, available: true, connected: true })
+    appStatus = 200
     installationStatus = 404
     expect(
       await (await app.request("/v1/github", { headers: as(owner.email) })).json(),

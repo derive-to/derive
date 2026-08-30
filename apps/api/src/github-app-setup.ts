@@ -81,7 +81,7 @@ export function manifestFormHTML(props: { baseUrl: string; state: string }): str
       <input type="hidden" name="manifest" value="${esc(manifestJson)}"/>
       <button class="btn" type="submit">Continue to GitHub</button>
     </form>
-    <p class="foot">Derive asks for <strong>Metadata: read</strong>, <strong>Pull requests: write</strong>, and <strong>Actions: write</strong>. Server-side policies limit these to PR reads, one top-level PR comment, and workflow discovery, dispatch, status, artifacts, and cancellation.</p>
+    <p class="foot">Derive asks for <strong>Metadata: read</strong>, <strong>Pull requests: write</strong>, and <strong>Actions: write</strong>. Server-side policies limit these to PR reads, one top-level PR comment, workflow status, and dispatch of workflows named <strong>derive-*.yml</strong>.</p>
     <script>setTimeout(function(){document.getElementById("f").submit()},400)</script>`,
   )
 }

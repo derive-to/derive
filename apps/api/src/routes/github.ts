@@ -80,7 +80,10 @@ export const githubRoutes = (ctx: AppContext) => {
       needs_permissions: z.boolean(),
       actions_available: z
         .boolean()
-        .describe("Whether the configured App can discover and dispatch GitHub Actions workflows"),
+        .nullable()
+        .describe(
+          "Whether the configured App and its connected installations can dispatch GitHub Actions workflows; null when GitHub could not be checked",
+        ),
       permissions_url: z.string().nullable(),
       accounts: z.array(Account),
     })
@@ -113,19 +116,21 @@ export const githubRoutes = (ctx: AppContext) => {
       let available = !!loaded
       let slug = loaded?.app.slug ?? null
       let needsPermissions = false
-      let actionsAvailable = false
+      // Null means GitHub could not be checked. Do not turn a transient outage into a false
+      // permission-upgrade prompt.
+      let appActionsAvailable: boolean | null = null
+      const rank: Record<string, number> = { read: 1, write: 2, admin: 3 }
       if (loaded) {
         try {
           const live = await getAppInfo(loaded.app.app_id, loaded.pem)
           slug = live.slug || slug
           if (slug && slug !== loaded.app.slug) await meta.setGithubApp({ ...loaded.app, slug })
-          const rank: Record<string, number> = { read: 1, write: 2, admin: 3 }
           needsPermissions = Object.entries(REQUIRED_PERMISSIONS).some(
             ([permission, level]) =>
               !live.permissions[permission] ||
               (rank[live.permissions[permission] ?? ""] ?? 0) < (rank[level] ?? 0),
           )
-          actionsAvailable = Object.entries(ACTIONS_PERMISSION).every(
+          appActionsAvailable = Object.entries(ACTIONS_PERMISSION).every(
             ([permission, level]) =>
               !!live.permissions[permission] &&
               (rank[live.permissions[permission] ?? ""] ?? 0) >= (rank[level] ?? 0),
@@ -145,11 +150,25 @@ export const githubRoutes = (ctx: AppContext) => {
       // only definitive auth/not-found responses as stale; a transient GitHub outage must not
       // make healthy connections disappear.
       const staleInstallations = new Set<string>()
+      const installationActions = new Map<string, boolean>()
+      let installationPermissionsUrl: string | null = null
       if (loaded && available) {
         await Promise.all(
           installs.map(async (installation) => {
             try {
-              await getAppInstallation(loaded.app.app_id, loaded.pem, installation.installation_id)
+              const live = await getAppInstallation(
+                loaded.app.app_id,
+                loaded.pem,
+                installation.installation_id,
+              )
+              const actions = Object.entries(ACTIONS_PERMISSION).every(
+                ([permission, level]) =>
+                  !!live.permissions[permission] &&
+                  (rank[live.permissions[permission] ?? ""] ?? 0) >= (rank[level] ?? 0),
+              )
+              installationActions.set(installation.installation_id, actions)
+              if (!actions && !installationPermissionsUrl && live.htmlUrl)
+                installationPermissionsUrl = live.htmlUrl
             } catch (err) {
               if (
                 err instanceof GitHubError &&
@@ -159,6 +178,16 @@ export const githubRoutes = (ctx: AppContext) => {
             }
           }),
         )
+      }
+      const liveInstallationIds = installs
+        .map((installation) => installation.installation_id)
+        .filter((id) => !staleInstallations.has(id))
+      let actionsAvailable = appActionsAvailable
+      if (appActionsAvailable === true && liveInstallationIds.length > 0) {
+        if (liveInstallationIds.some((id) => installationActions.get(id) === false))
+          actionsAvailable = false
+        else if (liveInstallationIds.some((id) => !installationActions.has(id)))
+          actionsAvailable = null
       }
       const accounts: {
         installation_id: string
@@ -199,9 +228,12 @@ export const githubRoutes = (ctx: AppContext) => {
         app_slug: slug,
         needs_permissions: needsPermissions,
         actions_available: actionsAvailable,
-        permissions_url: slug
-          ? `https://github.com/settings/apps/${encodeURIComponent(slug)}/permissions`
-          : null,
+        permissions_url:
+          appActionsAvailable === true && installationPermissionsUrl
+            ? installationPermissionsUrl
+            : slug
+              ? `https://github.com/settings/apps/${encodeURIComponent(slug)}/permissions`
+              : null,
         accounts,
       })
     },

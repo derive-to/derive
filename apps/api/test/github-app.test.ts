@@ -48,35 +48,71 @@ describe("installationToken", () => {
       }),
     )
 
-    const narrow = await installationToken("12345", privateKey, "profile-9001")
-    const narrowAgain = await installationToken("12345", privateKey, "profile-9001")
+    const narrow = await installationToken("12345", privateKey, "9001")
+    const narrowAgain = await installationToken("12345", privateKey, "9001")
+    const comment = await installationToken("12345", privateKey, "9001", "pr-comment")
+    const commentAgain = await installationToken("12345", privateKey, "9001", "pr-comment")
+    const read = await installationToken("12345", privateKey, "9001", "workflow-read", "derive")
+    const readAgain = await installationToken(
+      "12345",
+      privateKey,
+      "9001",
+      "workflow-read",
+      "derive",
+    )
     const actions = await installationToken(
       "12345",
       privateKey,
-      "profile-9001",
+      "9001",
       "workflow-dispatch",
       "derive",
     )
     const actionsAgain = await installationToken(
       "12345",
       privateKey,
-      "profile-9001",
+      "9001",
       "workflow-dispatch",
       "derive",
     )
 
     expect(narrow).toBe("installation-profile-1")
     expect(narrowAgain).toBe(narrow)
-    expect(actions).toBe("installation-profile-2")
+    expect(comment).toBe("installation-profile-2")
+    expect(commentAgain).toBe(comment)
+    expect(read).toBe("installation-profile-3")
+    expect(readAgain).toBe(read)
+    expect(actions).toBe("installation-profile-4")
     expect(actionsAgain).toBe(actions)
-    expect(calls).toHaveLength(2)
+    expect(calls).toHaveLength(4)
     expect(JSON.parse(String(calls[0]?.body))).toEqual({
-      permissions: { metadata: "read", pull_requests: "write" },
+      permissions: { metadata: "read", pull_requests: "read" },
     })
     expect(JSON.parse(String(calls[1]?.body))).toEqual({
+      permissions: { metadata: "read", pull_requests: "write" },
+    })
+    expect(JSON.parse(String(calls[2]?.body))).toEqual({
+      permissions: { actions: "read", metadata: "read" },
+      repositories: ["derive"],
+    })
+    expect(JSON.parse(String(calls[3]?.body))).toEqual({
       permissions: { actions: "write", metadata: "read" },
       repositories: ["derive"],
     })
     expect(new Headers(calls[0]?.headers).get("content-type")).toBe("application/json")
+  })
+
+  it("refuses malformed installation and repository scopes before calling GitHub", async () => {
+    const fetch = vi.fn()
+    vi.stubGlobal("fetch", fetch)
+    await expect(installationToken("12345", privateKey, "not-an-id")).rejects.toThrow(
+      /installation id/i,
+    )
+    await expect(installationToken("12345", privateKey, "9002", "workflow-read")).rejects.toThrow(
+      /name one repository/i,
+    )
+    await expect(
+      installationToken("12345", privateKey, "9002", "workflow-read", "bad/repo"),
+    ).rejects.toThrow(/repository name/i)
+    expect(fetch).not.toHaveBeenCalled()
   })
 })

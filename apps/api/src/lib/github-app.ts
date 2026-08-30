@@ -15,6 +15,9 @@ export class GitHubError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    readonly retryAfter: string | null = null,
+    readonly rateLimitRemaining: string | null = null,
+    readonly rateLimitReset: string | null = null,
   ) {
     super(message)
     this.name = "GitHubError"
@@ -33,7 +36,13 @@ const ghHeaders = (auth?: string): Record<string, string> => ({
 
 const raise = async (res: Response, what: string): Promise<never> => {
   const body = await res.text().catch(() => "")
-  throw new GitHubError(res.status, `${what}: ${body.slice(0, 200) || res.statusText}`)
+  throw new GitHubError(
+    res.status,
+    `${what}: ${body.slice(0, 200) || res.statusText}`,
+    res.headers.get("retry-after"),
+    res.headers.get("x-ratelimit-remaining"),
+    res.headers.get("x-ratelimit-reset"),
+  )
 }
 
 /**
@@ -64,10 +73,16 @@ export interface InstallationToken {
   expiresAt: string
 }
 
-export type GitHubTokenProfile = "standard-pr" | "workflow-dispatch"
+export type GitHubTokenProfile =
+  | "standard-read"
+  | "pr-comment"
+  | "workflow-read"
+  | "workflow-dispatch"
 
 const PROFILE_PERMISSIONS: Record<GitHubTokenProfile, Record<string, string>> = {
-  "standard-pr": { metadata: "read", pull_requests: "write" },
+  "standard-read": { metadata: "read", pull_requests: "read" },
+  "pr-comment": { metadata: "read", pull_requests: "write" },
+  "workflow-read": { actions: "read", metadata: "read" },
   "workflow-dispatch": { actions: "write", metadata: "read" },
 }
 
@@ -107,15 +122,32 @@ export async function getAppInfo(
 // Per-isolate cache so a burst of source calls against one installation mints one token.
 // Re-minted 60s before expiry. Cleared implicitly when the isolate recycles.
 const tokenCache = new Map<string, InstallationToken>()
+const TOKEN_CACHE_MAX = 500
+
+const pruneTokenCache = (now: number): void => {
+  for (const [key, value] of tokenCache)
+    if (!Number.isFinite(Date.parse(value.expiresAt)) || Date.parse(value.expiresAt) <= now)
+      tokenCache.delete(key)
+  while (tokenCache.size >= TOKEN_CACHE_MAX) {
+    const oldest = tokenCache.keys().next().value
+    if (typeof oldest !== "string") break
+    tokenCache.delete(oldest)
+  }
+}
 
 /** Mint (or reuse) an installation access token for `installationId`. */
 export async function installationToken(
   appId: string,
   privateKeyPem: string,
   installationId: string,
-  profile: GitHubTokenProfile = "standard-pr",
+  profile: GitHubTokenProfile = "standard-read",
   repository?: string,
 ): Promise<string> {
+  if (!/^[1-9][0-9]{0,19}$/.test(installationId)) throw new Error("invalid GitHub installation id")
+  if ((profile === "workflow-read" || profile === "workflow-dispatch") && !repository)
+    throw new Error("a workflow token must name one repository")
+  if (repository && !/^[A-Za-z0-9_.-]{1,100}$/.test(repository))
+    throw new Error("invalid GitHub repository name")
   const cacheKey = `${appId}:${installationId}:${profile}:${repository ?? "*"}`
   const cached = tokenCache.get(cacheKey)
   if (cached && Date.parse(cached.expiresAt) - 60_000 > Date.now()) return cached.token
@@ -133,7 +165,16 @@ export async function installationToken(
     }),
   })
   if (!res.ok) return raise(res, "minting an installation token")
-  const data = (await res.json()) as { token: string; expires_at: string }
+  const data = (await res.json()) as { token?: unknown; expires_at?: unknown }
+  if (
+    typeof data.token !== "string" ||
+    !data.token ||
+    data.token.length > 2_048 ||
+    typeof data.expires_at !== "string" ||
+    !Number.isFinite(Date.parse(data.expires_at))
+  )
+    throw new Error("GitHub returned an invalid installation token")
+  pruneTokenCache(Date.now())
   tokenCache.set(cacheKey, { token: data.token, expiresAt: data.expires_at })
   return data.token
 }
@@ -152,12 +193,16 @@ export async function getAppInstallation(
   const data = (await res.json()) as {
     id?: number
     account?: { login?: string; type?: string }
+    html_url?: string
+    permissions?: Record<string, string>
   }
   return {
     id: data.id ?? Number(installationId),
     account: data.account
       ? { login: data.account.login ?? "", type: data.account.type ?? "" }
       : null,
+    htmlUrl: data.html_url ?? null,
+    permissions: data.permissions ?? {},
   }
 }
 
@@ -203,6 +248,8 @@ export async function getUserInstallation(
       installations?: {
         id?: number
         account?: { login?: string; type?: string }
+        html_url?: string
+        permissions?: Record<string, string>
       }[]
     }
     const installations = data.installations ?? []
@@ -213,6 +260,8 @@ export async function getUserInstallation(
         account: found.account
           ? { login: found.account.login ?? "", type: found.account.type ?? "" }
           : null,
+        htmlUrl: found.html_url ?? null,
+        permissions: found.permissions ?? {},
       }
     if (installations.length < 100) break
   }
@@ -222,6 +271,8 @@ export async function getUserInstallation(
 export interface AppInstallation {
   id: number
   account: { login: string; type: string } | null
+  htmlUrl: string | null
+  permissions: Record<string, string>
 }
 
 export interface ManifestConversion {

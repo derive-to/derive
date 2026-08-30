@@ -243,7 +243,7 @@ export const httpTools = (toolkit: string): BrokerToolDef[] => [
     name: `${toolkit}.post`,
     description:
       toolkit === "github"
-        ? "Dispatch or cancel a GitHub Actions workflow, or add one top-level pull request conversation comment. Other writes are refused."
+        ? "Dispatch an opted-in derive-*.yml GitHub Actions workflow, or add one top-level pull request conversation comment. Other writes are refused."
         : `POST JSON to a path on the ${toolkit} API (authenticated server-side).`,
     params: { path: { type: "string" }, body: { type: "object" } },
   },
@@ -266,7 +266,7 @@ export const bearerFor = async (
   meta: MetaStore,
   cn: ConnectionRecord,
   encryptionKey: string,
-  githubProfile: GitHubTokenProfile = "standard-pr",
+  githubProfile: GitHubTokenProfile = "standard-read",
   githubRepository?: string,
 ): Promise<string> => {
   if (cn.kind === "secret") {
@@ -286,17 +286,30 @@ export const bearerFor = async (
       )
     } catch (err) {
       // Installation removal/suspension must stop being advertised after the first live call.
-      // Transient 5xx/rate failures leave the source active so a later run can recover.
-      if (
-        err instanceof GitHubError &&
-        (err.status === 401 ||
-          err.status === 404 ||
-          (err.status === 403 && githubProfile === "standard-pr"))
-      ) {
+      // A 403 can also mean a primary or secondary rate limit. It must never revoke a healthy
+      // installation. Only invalid credentials and a missing installation are definitive.
+      if (err instanceof GitHubError && (err.status === 401 || err.status === 404)) {
         await meta.setConnectionStatus(cn.id, cn.org_id, "revoked")
         throw new Error("GitHub is no longer authorized; reconnect it in Settings → Integrations")
       }
-      if (err instanceof GitHubError && err.status === 403 && githubProfile === "workflow-dispatch")
+      if (
+        err instanceof GitHubError &&
+        (err.status === 429 ||
+          (err.status === 403 && (err.retryAfter !== null || err.rateLimitRemaining === "0")))
+      ) {
+        const reset = Number(err.rateLimitReset)
+        const retry = err.retryAfter
+          ? ` Retry after ${err.retryAfter} seconds.`
+          : Number.isFinite(reset) && reset > 0
+            ? ` Retry after ${new Date(reset * 1_000).toISOString()}.`
+            : " Retry later."
+        throw new Error(`GitHub rate limit reached.${retry}`)
+      }
+      if (
+        err instanceof GitHubError &&
+        (err.status === 403 || err.status === 422) &&
+        (githubProfile === "workflow-read" || githubProfile === "workflow-dispatch")
+      )
         throw new Error(
           "GitHub Actions is not enabled for this App; update its permissions in Settings → Integrations",
         )
@@ -310,6 +323,40 @@ export const bearerFor = async (
     return decryptSecret(install.bot_token, encryptionKey)
   }
   throw new Error(`connection kind ${cn.kind} has no direct credential`)
+}
+
+const MAX_GITHUB_RESPONSE_BYTES = 4 * 1_024 * 1_024
+
+const responseText = async (res: Response, maxBytes?: number): Promise<string> => {
+  if (!maxBytes) return res.text()
+  const declared = Number(res.headers.get("content-length"))
+  if (Number.isFinite(declared) && declared > maxBytes)
+    throw new Error("GitHub response is too large; request a smaller page")
+  if (!res.body) return ""
+  const reader = res.body.getReader()
+  const chunks: Uint8Array[] = []
+  let total = 0
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      total += value.byteLength
+      if (total > maxBytes) {
+        await reader.cancel()
+        throw new Error("GitHub response is too large; request a smaller page")
+      }
+      chunks.push(value)
+    }
+  } finally {
+    reader.releaseLock()
+  }
+  const bytes = new Uint8Array(total)
+  let offset = 0
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return new TextDecoder().decode(bytes)
 }
 
 /**
@@ -384,7 +431,10 @@ export const executeHttpTool = async (
     body: verb === "POST" ? JSON.stringify(a.body ?? {}) : undefined,
     signal: AbortSignal.timeout(20_000),
   })
-  const text = await res.text()
+  const text = await responseText(
+    res,
+    cn.kind === "github_app" ? MAX_GITHUB_RESPONSE_BYTES : undefined,
+  )
   let body: unknown = text
   try {
     body = JSON.parse(text)
