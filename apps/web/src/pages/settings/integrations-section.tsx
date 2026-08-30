@@ -232,39 +232,22 @@ export function IntegrationsSection() {
             }
           />
         )}
-        {github?.needs_permissions && github.permissions_url && (
+        {github && github.permissions_ready === false && github.permissions_url && (
           <StatusPanel
-            tone="danger"
+            tone="warning"
             layout="inline"
-            title="GitHub needs updated pull request access"
-            description="Update the App permission, then approve it for each connected account."
+            icon={<AlertTriangle aria-hidden />}
+            title="Your GitHub App needs more permissions"
+            description="Review the App permissions on GitHub, then approve the update for each connected account."
             action={
               isAdmin && (
-                <Button data-testid="github-update-permissions" size="sm" asChild>
-                  <a href={github.permissions_url}>Update permissions</a>
+                <Button data-testid="github-update-permissions" variant="outline" size="sm" asChild>
+                  <a href={github.permissions_url}>Review permissions</a>
                 </Button>
               )
             }
           />
         )}
-        {github &&
-          !github.needs_permissions &&
-          github.actions_available === false &&
-          github.permissions_url && (
-            <StatusPanel
-              tone="warning"
-              layout="inline"
-              title="Enable GitHub Actions"
-              description="Complete the GitHub permission step to let Derive discover and follow workflows, and start adapter workflows named derive-*.yml in selected repositories. Pull request tools continue to work without it."
-              action={
-                isAdmin && (
-                  <Button data-testid="github-enable-actions" size="sm" asChild>
-                    <a href={github.permissions_url}>Enable Actions</a>
-                  </Button>
-                )
-              }
-            />
-          )}
         {githubIsPending ? (
           <SettingsListSkeleton />
         ) : githubIsError ? (

@@ -2023,13 +2023,10 @@
             "type": "string",
             "nullable": true
           },
-          "needs_permissions": {
-            "type": "boolean"
-          },
-          "actions_available": {
+          "permissions_ready": {
             "type": "boolean",
             "nullable": true,
-            "description": "Whether the configured App and its connected installations can dispatch GitHub Actions workflows; null when GitHub could not be checked"
+            "description": "Whether the configured App and its connected installations have every current permission; null when GitHub could not be checked"
           },
           "permissions_url": {
             "type": "string",
@@ -2073,8 +2070,7 @@
           "available",
           "connected",
           "app_slug",
-          "needs_permissions",
-          "actions_available",
+          "permissions_ready",
           "permissions_url",
           "accounts"
         ]

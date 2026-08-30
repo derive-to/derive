@@ -1,9 +1,10 @@
 import { createHash, createHmac } from "node:crypto"
 import type { GitHubAppRecord } from "@derive/core"
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
+import type { Handler } from "hono"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
-import { ACTIONS_PERMISSION, REQUIRED_PERMISSIONS } from "../github-app-setup"
+import { MANIFEST_PERMISSIONS, REQUIRED_PERMISSIONS } from "../github-app-setup"
 import { decryptSecret, signState, verifyState } from "../lib/crypto"
 import {
   exchangeGithubUserCode,
@@ -77,12 +78,11 @@ export const githubRoutes = (ctx: AppContext) => {
         .boolean()
         .describe("Whether this workspace has at least one active GitHub connection"),
       app_slug: z.string().nullable(),
-      needs_permissions: z.boolean(),
-      actions_available: z
+      permissions_ready: z
         .boolean()
         .nullable()
         .describe(
-          "Whether the configured App and its connected installations can dispatch GitHub Actions workflows; null when GitHub could not be checked",
+          "Whether the configured App and its connected installations have every current permission; null when GitHub could not be checked",
         ),
       permissions_url: z.string().nullable(),
       accounts: z.array(Account),
@@ -115,22 +115,22 @@ export const githubRoutes = (ctx: AppContext) => {
 
       let available = !!loaded
       let slug = loaded?.app.slug ?? null
-      let needsPermissions = false
+      let basePermissionsMissing = false
       // Null means GitHub could not be checked. Do not turn a transient outage into a false
       // permission-upgrade prompt.
-      let appActionsAvailable: boolean | null = null
+      let appPermissionsReady: boolean | null = null
       const rank: Record<string, number> = { read: 1, write: 2, admin: 3 }
       if (loaded) {
         try {
           const live = await getAppInfo(loaded.app.app_id, loaded.pem)
           slug = live.slug || slug
           if (slug && slug !== loaded.app.slug) await meta.setGithubApp({ ...loaded.app, slug })
-          needsPermissions = Object.entries(REQUIRED_PERMISSIONS).some(
+          basePermissionsMissing = Object.entries(REQUIRED_PERMISSIONS).some(
             ([permission, level]) =>
               !live.permissions[permission] ||
               (rank[live.permissions[permission] ?? ""] ?? 0) < (rank[level] ?? 0),
           )
-          appActionsAvailable = Object.entries(ACTIONS_PERMISSION).every(
+          appPermissionsReady = Object.entries(MANIFEST_PERMISSIONS).every(
             ([permission, level]) =>
               !!live.permissions[permission] &&
               (rank[live.permissions[permission] ?? ""] ?? 0) >= (rank[level] ?? 0),
@@ -150,7 +150,7 @@ export const githubRoutes = (ctx: AppContext) => {
       // only definitive auth/not-found responses as stale; a transient GitHub outage must not
       // make healthy connections disappear.
       const staleInstallations = new Set<string>()
-      const installationActions = new Map<string, boolean>()
+      const installationPermissions = new Map<string, boolean>()
       let installationPermissionsUrl: string | null = null
       if (loaded && available) {
         await Promise.all(
@@ -161,13 +161,13 @@ export const githubRoutes = (ctx: AppContext) => {
                 loaded.pem,
                 installation.installation_id,
               )
-              const actions = Object.entries(ACTIONS_PERMISSION).every(
+              const permissionsReady = Object.entries(MANIFEST_PERMISSIONS).every(
                 ([permission, level]) =>
                   !!live.permissions[permission] &&
                   (rank[live.permissions[permission] ?? ""] ?? 0) >= (rank[level] ?? 0),
               )
-              installationActions.set(installation.installation_id, actions)
-              if (!actions && !installationPermissionsUrl && live.htmlUrl)
+              installationPermissions.set(installation.installation_id, permissionsReady)
+              if (!permissionsReady && !installationPermissionsUrl && live.htmlUrl)
                 installationPermissionsUrl = live.htmlUrl
             } catch (err) {
               if (
@@ -182,12 +182,12 @@ export const githubRoutes = (ctx: AppContext) => {
       const liveInstallationIds = installs
         .map((installation) => installation.installation_id)
         .filter((id) => !staleInstallations.has(id))
-      let actionsAvailable = appActionsAvailable
-      if (appActionsAvailable === true && liveInstallationIds.length > 0) {
-        if (liveInstallationIds.some((id) => installationActions.get(id) === false))
-          actionsAvailable = false
-        else if (liveInstallationIds.some((id) => !installationActions.has(id)))
-          actionsAvailable = null
+      let permissionsReady = appPermissionsReady
+      if (appPermissionsReady === true && liveInstallationIds.length > 0) {
+        if (liveInstallationIds.some((id) => installationPermissions.get(id) === false))
+          permissionsReady = false
+        else if (liveInstallationIds.some((id) => !installationPermissions.has(id)))
+          permissionsReady = null
       }
       const accounts: {
         installation_id: string
@@ -199,7 +199,7 @@ export const githubRoutes = (ctx: AppContext) => {
         const usable =
           connection?.status === "active" &&
           available &&
-          !needsPermissions &&
+          !basePermissionsMissing &&
           !staleInstallations.has(installation.installation_id)
         return {
           installation_id: installation.installation_id,
@@ -226,10 +226,9 @@ export const githubRoutes = (ctx: AppContext) => {
         available,
         connected: accounts.some((account) => account.state === "active"),
         app_slug: slug,
-        needs_permissions: needsPermissions,
-        actions_available: actionsAvailable,
+        permissions_ready: permissionsReady,
         permissions_url:
-          appActionsAvailable === true && installationPermissionsUrl
+          appPermissionsReady === true && installationPermissionsUrl
             ? installationPermissionsUrl
             : slug
               ? `https://github.com/settings/apps/${encodeURIComponent(slug)}/permissions`
@@ -256,7 +255,7 @@ export const githubRoutes = (ctx: AppContext) => {
   // GitHub warns that installation_id on a setup callback is attacker-controlled. This first
   // callback therefore verifies the App + Derive manager, then starts GitHub's user OAuth proof.
   // Nothing is persisted until /authorize confirms this user can access this installation.
-  app.get("/v1/github/callback", async (c) => {
+  const handleInstallCallback: Handler<BlankEnv> = async (c) => {
     const installationId = c.req.query("installation_id")
     const stateRaw = c.req.query("state") ?? ""
     if (c.req.query("setup_action") === "request") return c.redirect(settingsRedirect("canceled"))
@@ -316,7 +315,13 @@ export const githubRoutes = (ctx: AppContext) => {
     authorize.searchParams.set("code_challenge_method", "S256")
     authorize.searchParams.set("prompt", "select_account")
     return c.redirect(authorize.toString())
-  })
+  }
+
+  app.get("/v1/github/callback", handleInstallCallback)
+  // Apps created before GitHub became a standard integration still have this setup URL on
+  // GitHub. GitHub does not expose an API that can rewrite a live App's configuration, so keep
+  // the old browser callback as an alias to the same signed, workspace-scoped install flow.
+  app.get("/v1/sync/github/callback", handleInstallCallback)
 
   app.get("/v1/github/authorize", async (c) => {
     const code = c.req.query("code")

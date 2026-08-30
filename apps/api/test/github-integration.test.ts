@@ -59,6 +59,7 @@ describe("standard GitHub integration", () => {
     let pullPermission = "write"
     let actionsPermission: string | undefined = "write"
     let installationActionsPermission: string | undefined = "write"
+    let installationPullPermission: string | undefined = "write"
     let appStatus = 200
     let installationStatus = 200
     const oauthCodes: string[] = []
@@ -79,7 +80,9 @@ describe("standard GitHub integration", () => {
                   ? { actions: installationActionsPermission }
                   : {}),
                 metadata: "read",
-                pull_requests: "write",
+                ...(installationPullPermission
+                  ? { pull_requests: installationPullPermission }
+                  : {}),
               },
             }),
             { status: installationStatus },
@@ -123,6 +126,11 @@ describe("standard GitHub integration", () => {
       app.request(`/v1/github/callback?installation_id=${id}&state=${encodeURIComponent(state)}`, {
         headers: as(owner.email),
       })
+    const legacyCallback = (id: string) =>
+      app.request(
+        `/v1/sync/github/callback?installation_id=${id}&setup_action=install&state=${encodeURIComponent(state)}`,
+        { headers: as(owner.email) },
+      )
     const authorize = (location: string | null, code: string) => {
       const oauth = new URL(location ?? "")
       expect(oauth.origin).toBe("https://github.com")
@@ -164,6 +172,13 @@ describe("standard GitHub integration", () => {
     })
     expect(await meta.listCollections("default")).toEqual([])
 
+    const legacySetup = await legacyCallback("44001")
+    expect(legacySetup.status).toBe(302)
+    expect(new URL(legacySetup.headers.get("location") ?? "").pathname).toBe(
+      "/login/oauth/authorize",
+    )
+    expect(await meta.listGithubInstallations("default")).toHaveLength(1)
+
     const reconnectSetup = await callback("44001")
     const replay = await authorize(reconnectSetup.headers.get("location"), "replay")
     expect(replay.headers.get("location")).toContain("github_connected=1")
@@ -178,8 +193,7 @@ describe("standard GitHub integration", () => {
     expect(await status.json()).toMatchObject({
       available: true,
       connected: true,
-      actions_available: true,
-      needs_permissions: false,
+      permissions_ready: true,
       accounts: [
         {
           installation_id: "44001",
@@ -192,25 +206,33 @@ describe("standard GitHub integration", () => {
     pullPermission = "read"
     expect(
       await (await app.request("/v1/github", { headers: as(owner.email) })).json(),
-    ).toMatchObject({ needs_permissions: true })
+    ).toMatchObject({ permissions_ready: false })
     pullPermission = "write"
     actionsPermission = undefined
     expect(
       await (await app.request("/v1/github", { headers: as(owner.email) })).json(),
-    ).toMatchObject({ actions_available: false, connected: true, needs_permissions: false })
+    ).toMatchObject({ permissions_ready: false, connected: true })
     actionsPermission = "write"
     installationActionsPermission = undefined
     expect(
       await (await app.request("/v1/github", { headers: as(owner.email) })).json(),
     ).toMatchObject({
-      actions_available: false,
+      permissions_ready: false,
       permissions_url: "https://github.com/organizations/derive-to/settings/installations/44001",
     })
     installationActionsPermission = "write"
+    installationPullPermission = undefined
+    expect(
+      await (await app.request("/v1/github", { headers: as(owner.email) })).json(),
+    ).toMatchObject({
+      permissions_ready: false,
+      permissions_url: "https://github.com/organizations/derive-to/settings/installations/44001",
+    })
+    installationPullPermission = "write"
     appStatus = 500
     expect(
       await (await app.request("/v1/github", { headers: as(owner.email) })).json(),
-    ).toMatchObject({ actions_available: null, available: true, connected: true })
+    ).toMatchObject({ permissions_ready: null, available: true, connected: true })
     appStatus = 200
     installationStatus = 404
     expect(
@@ -250,6 +272,13 @@ describe("standard GitHub integration", () => {
     expect(res.headers.get("location")).toContain("github_error=expired")
     expect(await meta.getGithubInstallation("44002")).toBeNull()
     expect(await meta.listConnections("default", undefined, "workspace")).toEqual([])
+
+    const legacy = await app.request(
+      "/v1/sync/github/callback?installation_id=44002&setup_action=install&state=forged",
+      { headers: as(owner.email) },
+    )
+    expect(legacy.headers.get("location")).toContain("github_error=expired")
+    expect(await meta.getGithubInstallation("44002")).toBeNull()
 
     const ownerState = signState(
       { kind: "github-install-setup", org: "default", uid: owner.id },
@@ -313,6 +342,14 @@ describe("standard GitHub integration", () => {
 
     const anonymousResult = await app.request("/v1/github/callback?installation_id=44005")
     expect(anonymousResult.headers.get("location")).toContain("/login?return_to=")
+    expect(await meta.getGithubInstallation("44005")).toBeNull()
+
+    const anonymousLegacyResult = await app.request(
+      "/v1/sync/github/callback?installation_id=44005&setup_action=install",
+    )
+    expect(anonymousLegacyResult.headers.get("location")).toContain(
+      "return_to=%2Fv1%2Fsync%2Fgithub%2Fcallback",
+    )
     expect(await meta.getGithubInstallation("44005")).toBeNull()
   })
 
