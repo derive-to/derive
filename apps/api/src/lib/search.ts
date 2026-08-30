@@ -353,8 +353,31 @@ export async function indexArtifactVersion(
   search?: Pick<SearchIndex, "indexArtifact">,
   preparedSource?: string,
 ): Promise<void> {
+  const text = await indexArtifactVersionLexical(meta, blobs, artifact, v, preparedSource)
+  await indexArtifactVersionDense(artifact, search, text)
+}
+
+/** Update only the synchronous lexical arm and return the exact projection. The preview fast-
+ * commit experiment uses this split to keep read-your-writes search while moving only the
+ * derived dense arm off the response path. The ordinary path above still calls both in order. */
+export async function indexArtifactVersionLexical(
+  meta: Pick<MetaStore, "indexArtifact">,
+  blobs: BlobStore,
+  artifact: Pick<ArtifactRecord, "id" | "org_id" | "title">,
+  v: VersionRecord,
+  preparedSource?: string,
+): Promise<string> {
   const text = await versionIndexText(blobs, v, preparedSource)
   await meta.indexArtifact(artifact.id, artifact.org_id, artifact.title, text)
+  return text
+}
+
+/** Update only the derived dense arm from a projection already committed to lexical search. */
+export async function indexArtifactVersionDense(
+  artifact: Pick<ArtifactRecord, "id" | "org_id" | "title">,
+  search: Pick<SearchIndex, "indexArtifact"> | undefined,
+  text: string,
+): Promise<void> {
   // The dense arm is independently best-effort: a dense-arm (embed or store) hiccup must never undo
   // the lexical upsert that already committed, nor fail the publish. Log and move on — the next
   // publish re-embeds and the backfill sweep is the safety net. (emitVersionBump's own catch

@@ -188,6 +188,154 @@ describe("live artifact content mentions", () => {
     expect((await meta.getVersion(artifact.id, version.n))?.blob_key).toBe(blob_key)
   })
 
+  it("keeps lexical search and authored facts synchronous while preview convergence is deferred", async () => {
+    const { meta, ctx } = makeAuthedApp("preview-fast-commit", [owner], "editor")
+    const source = `<!doctype html><html><body><main><section id="fast-tail"><h2>Immediate needle</h2><p>Long artifact body.</p></section></main><script type="application/derive-facts" data-fact="authored">{"ready":true}</script></body></html>`
+    const blobKey = await ctx.blobs.put(new TextEncoder().encode(source))
+    const artifact = await meta.createArtifact({
+      id: newId("a"),
+      short_id: "fastcommit",
+      title: "Fast commit fixture",
+      kind: "file",
+      org_id: "default",
+      slug: null,
+      spa: 0,
+      workspace_access: "member",
+      link_role: "none",
+      listed: "none",
+    })
+    const version = await meta.addVersion(artifact.id, {
+      id: newId("v"),
+      blob_key: blobKey,
+      content_type: "text/html",
+      size_bytes: source.length,
+      author: "Owner",
+      author_id: owner.id,
+      source: "web",
+      message: null,
+      name: null,
+    })
+
+    let releaseDense = () => {}
+    const denseGate = new Promise<void>((resolve) => {
+      releaseDense = resolve
+    })
+    let markDenseStarted = () => {}
+    const denseStarted = new Promise<void>((resolve) => {
+      markDenseStarted = resolve
+    })
+    const search = {
+      indexArtifact: vi.fn(async () => {
+        markDenseStarted()
+        await denseGate
+      }),
+    }
+    const deferred: Promise<unknown>[] = []
+
+    await afterPublish(
+      {
+        meta,
+        blobs: ctx.blobs,
+        bus: { publish: () => {}, subscribe: () => () => {} } as never,
+        notify: async () => {},
+        background: async (work) => {
+          deferred.push(work)
+        },
+        search: search as never,
+        deferVersionConvergence: true,
+      },
+      artifact,
+      version,
+      { isNew: false, onBehalf: owner.id, actorId: owner.id, preparedSource: source },
+    )
+    await denseStarted
+
+    expect(await meta.searchArtifactIds("default", "needle", 10)).toMatchObject([
+      { id: artifact.id },
+    ])
+    expect(await meta.getVersionData(artifact.id, version.n)).toMatchObject([
+      { slot: "authored", json: '{"ready":true}' },
+    ])
+    expect(
+      (await meta.getVersionData(artifact.id, version.n)).some((row) => row.slot === "$map"),
+    ).toBe(false)
+
+    releaseDense()
+    await Promise.all(deferred)
+    expect(search.indexArtifact).toHaveBeenCalledTimes(1)
+    expect(
+      (await meta.getVersionData(artifact.id, version.n)).some((row) => row.slot === "$map"),
+    ).toBe(true)
+  })
+
+  it("keeps the default convergence path synchronous", async () => {
+    const { meta, ctx } = makeAuthedApp("default-convergence", [owner], "editor")
+    const source = "<main><section id=default-path><h2>Default path</h2></section></main>"
+    const blobKey = await ctx.blobs.put(new TextEncoder().encode(source))
+    const artifact = await meta.createArtifact({
+      id: newId("a"),
+      short_id: "defaultpath",
+      title: "Default convergence fixture",
+      kind: "file",
+      org_id: "default",
+      slug: null,
+      spa: 0,
+      workspace_access: "member",
+      link_role: "none",
+      listed: "none",
+    })
+    const version = await meta.addVersion(artifact.id, {
+      id: newId("v"),
+      blob_key: blobKey,
+      content_type: "text/html",
+      size_bytes: source.length,
+      author: "Owner",
+      author_id: owner.id,
+      source: "web",
+      message: null,
+      name: null,
+    })
+    let releaseDense = () => {}
+    const denseGate = new Promise<void>((resolve) => {
+      releaseDense = resolve
+    })
+    let markDenseStarted = () => {}
+    const denseStarted = new Promise<void>((resolve) => {
+      markDenseStarted = resolve
+    })
+    let returned = false
+    const work = afterPublish(
+      {
+        meta,
+        blobs: ctx.blobs,
+        bus: { publish: () => {}, subscribe: () => () => {} } as never,
+        notify: async () => {},
+        background: async (task) => {
+          await task
+        },
+        search: {
+          indexArtifact: async () => {
+            markDenseStarted()
+            await denseGate
+          },
+        } as never,
+      },
+      artifact,
+      version,
+      { isNew: false, onBehalf: owner.id, actorId: owner.id, preparedSource: source },
+    ).then(() => {
+      returned = true
+    })
+    await denseStarted
+    expect(returned).toBe(false)
+    releaseDense()
+    await work
+    expect(returned).toBe(true)
+    expect(
+      (await meta.getVersionData(artifact.id, version.n)).some((row) => row.slot === "$map"),
+    ).toBe(true)
+  })
+
   it("lets an agent publish a live-body handoff back to the person it acts for", async () => {
     const { app, meta, ctx } = makeAuthedApp("content-mention-agent-handoff", [owner], "editor")
     const made = await pub(

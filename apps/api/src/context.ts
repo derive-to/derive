@@ -146,6 +146,9 @@ export interface AppDeps {
    *  (summarizer.ts). Absent ⇒ no summaries and every card keeps its inventory line, which is
    *  the resting state for self-host and for any deploy without a model binding. */
   summarize?: Summarizer
+  /** Preview-only fast-commit experiment. Production leaves this false. It measures the response
+   *  ceiling of the strict/eventual split before Derive adds a transactional convergence queue. */
+  deferVersionConvergence?: boolean
   /** Realtime relay + presence. In-process when unset (self-host); the Cloudflare
    *  edge entry injects a Durable Object backplane. */
   backplane?: Backplane

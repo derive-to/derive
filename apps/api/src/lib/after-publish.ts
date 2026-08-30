@@ -29,7 +29,12 @@ import { publishSweepEvents } from "./anchor-sweep"
 import { fanOutNewContentMentions } from "./content-mentions"
 import { documentStructure } from "./doc-structure-cache"
 import { EMAIL_LAYOUT_FACT } from "./email-layout"
-import { indexArtifactVersion, isTextType } from "./search"
+import {
+  indexArtifactVersion,
+  indexArtifactVersionDense,
+  indexArtifactVersionLexical,
+  isTextType,
+} from "./search"
 import { recordThreadResolution } from "./thread-actions"
 
 /** The realtime + render + re-anchor core shared by every version bump (publish, restore):
@@ -55,6 +60,11 @@ export interface VersionBumpDeps {
    *  and normally ABSENT: only the edge binds a model here, so self-host publishes exactly as
    *  before and every consumer falls back to the inventory line. */
   summarize?: Summarizer
+  /** Preview-only upper-bound experiment. Keep lexical search and authored facts synchronous,
+   *  then hand derived convergence to `background`. Production leaves this unset until the same
+   *  split has a transactional durable job. Node still awaits because its background adapter is
+   *  inline, so this cannot silently weaken a self-host. */
+  deferVersionConvergence?: boolean
 }
 
 export const emitVersionBump = async (
@@ -66,6 +76,63 @@ export const emitVersionBump = async (
   const { meta, blobs, bus, notifyRender } = deps
   bus.publish(artifact.id, { type: "version.published", n: version.n, message: version.message })
   await notifyRender?.(artifact, version.n)
+
+  // The default path is deliberately unchanged. The preview experiment below exists to measure
+  // the best response-time ceiling before we accept the schema and worker complexity of a real
+  // convergence queue. Production and every self-host continue to finish all stages inline.
+  if (!deps.deferVersionConvergence || !deps.background) {
+    await runVersionConvergence(deps, artifact, version, preparedSource)
+    return
+  }
+
+  // STRICT READ-YOUR-WRITES STATE. Lexical search and authored facts must be visible before the
+  // response. Dense search, host-derived facts, anchors, and summaries can converge later.
+  let indexText: string | undefined
+  try {
+    indexText = await indexArtifactVersionLexical(meta, blobs, artifact, version, preparedSource)
+  } catch (err) {
+    log.error("lexical search index update failed", { artifact: artifact.id, err: String(err) })
+  }
+  try {
+    await extractAuthoredVersionData(meta, blobs, version, preparedSource)
+  } catch (err) {
+    log.error("authored data-slot extraction failed", {
+      artifact: artifact.id,
+      err: String(err),
+    })
+  }
+
+  // Start the work before handing it to the runtime so a throwing scheduler can fall back to
+  // awaiting the SAME promise. On Workers `background` registers waitUntil and returns. On Node
+  // it awaits, so an accidental flag does not weaken durability there.
+  const convergence = runDeferredVersionConvergence(
+    deps,
+    artifact,
+    version,
+    preparedSource,
+    indexText,
+  )
+  try {
+    await deps.background(convergence)
+  } catch (err) {
+    log.error("version convergence scheduling failed; awaiting inline", {
+      artifact: artifact.id,
+      n: version.n,
+      err: String(err),
+    })
+    await convergence
+  }
+}
+
+/** The existing synchronous stage order. Keep this as the default until the preview experiment
+ * proves enough value to justify an atomic queue. Every stage remains best effort. */
+const runVersionConvergence = async (
+  deps: VersionBumpDeps,
+  artifact: ArtifactRecord,
+  version: VersionRecord,
+  preparedSource?: string,
+): Promise<void> => {
+  const { meta, blobs, bus } = deps
   await publishSweepEvents(meta, blobs, bus, artifact.id, version, preparedSource)
   // Keep the workspace search index current for the new live version. Best-effort:
   // a search-index hiccup must never fail a publish that already succeeded, so log
@@ -108,6 +175,48 @@ export const emitVersionBump = async (
     )
     await (deps.background ? deps.background(work) : work)
   }
+}
+
+/** Preview-only eventual stages. A failure in one stage must not skip the remaining stages. The
+ * durable implementation will give each stage a persisted receipt; this experiment intentionally
+ * stops short of claiming that guarantee. */
+const runDeferredVersionConvergence = async (
+  deps: VersionBumpDeps,
+  artifact: ArtifactRecord,
+  version: VersionRecord,
+  preparedSource: string | undefined,
+  preparedIndexText: string | undefined,
+): Promise<void> => {
+  const { meta, blobs, bus } = deps
+  try {
+    await publishSweepEvents(meta, blobs, bus, artifact.id, version, preparedSource)
+  } catch (err) {
+    log.error("anchor convergence failed", { artifact: artifact.id, err: String(err) })
+  }
+  try {
+    if (preparedIndexText !== undefined)
+      await indexArtifactVersionDense(artifact, deps.search, preparedIndexText)
+    else await indexArtifactVersion(meta, blobs, artifact, version, deps.search, preparedSource)
+  } catch (err) {
+    log.error("search convergence failed", { artifact: artifact.id, err: String(err) })
+  }
+  try {
+    await extractVersionData(meta, blobs, version, undefined, preparedSource)
+  } catch (err) {
+    log.error("derived data-slot convergence failed", {
+      artifact: artifact.id,
+      err: String(err),
+    })
+  }
+  if (deps.summarize)
+    await summarizeVersion(meta, blobs, deps.summarize, artifact, version, preparedSource).catch(
+      (err) =>
+        log.error("version summary convergence failed", {
+          artifact: artifact.id,
+          n: version.n,
+          err: String(err),
+        }),
+    )
 }
 
 /** sha256 of the exact text handed to the model, hex. Web Crypto only — this runs on Workers
@@ -184,11 +293,56 @@ const summarizeVersion = async (
   })
 }
 
-/** Extract a single-file HTML/markdown version's facts and persist them (see
- *  @derive/core data-facts). Decks may carry the one operational fact their export path
- *  consumes (`email-layout`); arbitrary authored deck facts stay excluded. Writes only when at
- *  least one slot parsed — a fresh version has no prior rows, so there is nothing to clear when
- *  it has none. */
+/** Parse only author-owned slots. The preview fast-commit path persists these before returning;
+ * host-derived slots join them during convergence. */
+const authoredVersionFacts = (source: string, contentType: string) => {
+  if (isAuthoredFactType(contentType)) return parseFacts(source, contentType).facts
+  const baseType = contentType.split(";")[0]?.trim()
+  return baseType === DECK_CONTENT_TYPE
+    ? parseFacts(source, "text/html").facts.filter((fact) => fact.slot === EMAIL_LAYOUT_FACT)
+    : []
+}
+
+const versionDataSource = async (
+  blobs: BlobStore,
+  version: VersionRecord,
+  preparedSource?: string,
+): Promise<string | null> => {
+  if (preparedSource !== undefined) return preparedSource
+  const bytes = await blobs.get(version.blob_key)
+  return bytes ? new TextDecoder().decode(bytes) : null
+}
+
+/** Persist only authored facts. A fresh version has no prior rows, so an empty parse needs no
+ * clear. The later full extraction replaces this set with authored and derived rows together. */
+const extractAuthoredVersionData = async (
+  meta: Pick<MetaStore, "setVersionData">,
+  blobs: BlobStore,
+  version: VersionRecord,
+  preparedSource?: string,
+): Promise<void> => {
+  const ct = version.content_type
+  if (!isAuthoredFactType(ct) && !isHtmlLike(ct)) return
+  const source = await versionDataSource(blobs, version, preparedSource)
+  if (source === null) return
+  const facts = authoredVersionFacts(source, ct)
+  if (!facts.length) return
+  await meta.setVersionData(
+    version.artifact_id,
+    version.n,
+    facts.map((fact) => ({
+      id: newId("vd"),
+      slot: fact.slot,
+      json: fact.json,
+      size_bytes: fact.bytes,
+      gen: FACT_GEN,
+    })),
+  )
+}
+
+/** Extract a single-file HTML/markdown version's authored and derived facts and persist them (see
+ *  @derive/core data-facts). Decks may carry the one operational fact their export path consumes
+ *  (`email-layout`); arbitrary authored deck facts stay excluded. */
 const extractVersionData = async (
   meta: Pick<MetaStore, "setVersionData" | "getVersionData" | "getVersion">,
   blobs: BlobStore,
@@ -207,18 +361,9 @@ const extractVersionData = async (
   // correctly moves them off every path that asks `content_type === "text/html"`.
   const authored = isAuthoredFactType(ct)
   if (!authored && !isHtmlLike(ct)) return
-  let source = preparedSource
-  if (source === undefined) {
-    const bytes = await blobs.get(version.blob_key)
-    if (!bytes) return
-    source = new TextDecoder().decode(bytes)
-  }
-  const baseType = ct.split(";")[0]?.trim()
-  const facts = authored
-    ? parseFacts(source, ct).facts
-    : baseType === DECK_CONTENT_TYPE
-      ? parseFacts(source, "text/html").facts.filter((fact) => fact.slot === EMAIL_LAYOUT_FACT)
-      : []
+  const source = await versionDataSource(blobs, version, preparedSource)
+  if (source === null) return
+  const facts = authoredVersionFacts(source, ct)
   // Derived facts ($outline/$links/$stats) ride the same pass over bytes already decoded:
   // the host's mechanical reading, in the namespace the author grammar can't reach. They
   // are cache entries with names — recomputable, never counted, never rewarded — so each
