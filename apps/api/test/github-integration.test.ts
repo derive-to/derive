@@ -57,6 +57,7 @@ describe("standard GitHub integration", () => {
       403,
     )
     let pullPermission = "write"
+    let actionsPermission: string | undefined = "write"
     let installationStatus = 200
     const oauthCodes: string[] = []
     const oauthVerifiers: string[] = []
@@ -92,7 +93,11 @@ describe("standard GitHub integration", () => {
           return new Response(
             JSON.stringify({
               slug: "derive-test",
-              permissions: { metadata: "read", pull_requests: pullPermission },
+              permissions: {
+                ...(actionsPermission ? { actions: actionsPermission } : {}),
+                metadata: "read",
+                pull_requests: pullPermission,
+              },
               events: [],
             }),
             { status: 200 },
@@ -160,6 +165,7 @@ describe("standard GitHub integration", () => {
     expect(await status.json()).toMatchObject({
       available: true,
       connected: true,
+      actions_available: true,
       needs_permissions: false,
       accounts: [
         {
@@ -175,6 +181,11 @@ describe("standard GitHub integration", () => {
       await (await app.request("/v1/github", { headers: as(owner.email) })).json(),
     ).toMatchObject({ needs_permissions: true })
     pullPermission = "write"
+    actionsPermission = undefined
+    expect(
+      await (await app.request("/v1/github", { headers: as(owner.email) })).json(),
+    ).toMatchObject({ actions_available: false, connected: true, needs_permissions: false })
+    actionsPermission = "write"
     installationStatus = 404
     expect(
       await (await app.request("/v1/github", { headers: as(owner.email) })).json(),

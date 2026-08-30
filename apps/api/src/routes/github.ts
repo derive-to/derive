@@ -3,7 +3,7 @@ import type { GitHubAppRecord } from "@derive/core"
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
-import { REQUIRED_PERMISSIONS } from "../github-app-setup"
+import { ACTIONS_PERMISSION, REQUIRED_PERMISSIONS } from "../github-app-setup"
 import { decryptSecret, signState, verifyState } from "../lib/crypto"
 import {
   exchangeGithubUserCode,
@@ -78,6 +78,9 @@ export const githubRoutes = (ctx: AppContext) => {
         .describe("Whether this workspace has at least one active GitHub connection"),
       app_slug: z.string().nullable(),
       needs_permissions: z.boolean(),
+      actions_available: z
+        .boolean()
+        .describe("Whether the configured App can discover and dispatch GitHub Actions workflows"),
       permissions_url: z.string().nullable(),
       accounts: z.array(Account),
     })
@@ -110,6 +113,7 @@ export const githubRoutes = (ctx: AppContext) => {
       let available = !!loaded
       let slug = loaded?.app.slug ?? null
       let needsPermissions = false
+      let actionsAvailable = false
       if (loaded) {
         try {
           const live = await getAppInfo(loaded.app.app_id, loaded.pem)
@@ -120,6 +124,11 @@ export const githubRoutes = (ctx: AppContext) => {
             ([permission, level]) =>
               !live.permissions[permission] ||
               (rank[live.permissions[permission] ?? ""] ?? 0) < (rank[level] ?? 0),
+          )
+          actionsAvailable = Object.entries(ACTIONS_PERMISSION).every(
+            ([permission, level]) =>
+              !!live.permissions[permission] &&
+              (rank[live.permissions[permission] ?? ""] ?? 0) >= (rank[level] ?? 0),
           )
         } catch (err) {
           // Deleted/revoked is definitive. A network/5xx failure must not hide a working App.
@@ -189,6 +198,7 @@ export const githubRoutes = (ctx: AppContext) => {
         connected: accounts.some((account) => account.state === "active"),
         app_slug: slug,
         needs_permissions: needsPermissions,
+        actions_available: actionsAvailable,
         permissions_url: slug
           ? `https://github.com/settings/apps/${encodeURIComponent(slug)}/permissions`
           : null,

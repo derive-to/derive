@@ -64,6 +64,13 @@ export interface InstallationToken {
   expiresAt: string
 }
 
+export type GitHubTokenProfile = "standard-pr" | "workflow-dispatch"
+
+const PROFILE_PERMISSIONS: Record<GitHubTokenProfile, Record<string, string>> = {
+  "standard-pr": { metadata: "read", pull_requests: "write" },
+  "workflow-dispatch": { actions: "write", metadata: "read" },
+}
+
 /**
  * Fetch the App's own record (GET /app, App-JWT auth). Used to confirm a stored
  * App still exists on GitHub — if it was deleted, this 404s, and the caller treats
@@ -106,8 +113,10 @@ export async function installationToken(
   appId: string,
   privateKeyPem: string,
   installationId: string,
+  profile: GitHubTokenProfile = "standard-pr",
+  repository?: string,
 ): Promise<string> {
-  const cacheKey = `${appId}:${installationId}`
+  const cacheKey = `${appId}:${installationId}:${profile}:${repository ?? "*"}`
   const cached = tokenCache.get(cacheKey)
   if (cached && Date.parse(cached.expiresAt) - 60_000 > Date.now()) return cached.token
 
@@ -118,7 +127,10 @@ export async function installationToken(
       ...ghHeaders(`Bearer ${jwt}`),
       "content-type": "application/json",
     },
-    body: JSON.stringify({ permissions: { metadata: "read", pull_requests: "write" } }),
+    body: JSON.stringify({
+      permissions: PROFILE_PERMISSIONS[profile],
+      ...(repository ? { repositories: [repository] } : {}),
+    }),
   })
   if (!res.ok) return raise(res, "minting an installation token")
   const data = (await res.json()) as { token: string; expires_at: string }

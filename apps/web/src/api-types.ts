@@ -7471,6 +7471,8 @@ export interface components {
             connected: boolean;
             app_slug: string | null;
             needs_permissions: boolean;
+            /** @description Whether the configured App can discover and dispatch GitHub Actions workflows */
+            actions_available: boolean;
             permissions_url: string | null;
             accounts: {
                 installation_id: string;

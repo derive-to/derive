@@ -32,7 +32,7 @@ describe("appJwt", () => {
 })
 
 describe("installationToken", () => {
-  it("always down-scopes a token to the standard PR capability", async () => {
+  it("keeps permission profiles and repository scopes isolated in the token cache", async () => {
     const calls: RequestInit[] = []
     vi.stubGlobal(
       "fetch",
@@ -50,12 +50,32 @@ describe("installationToken", () => {
 
     const narrow = await installationToken("12345", privateKey, "profile-9001")
     const narrowAgain = await installationToken("12345", privateKey, "profile-9001")
+    const actions = await installationToken(
+      "12345",
+      privateKey,
+      "profile-9001",
+      "workflow-dispatch",
+      "derive",
+    )
+    const actionsAgain = await installationToken(
+      "12345",
+      privateKey,
+      "profile-9001",
+      "workflow-dispatch",
+      "derive",
+    )
 
     expect(narrow).toBe("installation-profile-1")
     expect(narrowAgain).toBe(narrow)
-    expect(calls).toHaveLength(1)
+    expect(actions).toBe("installation-profile-2")
+    expect(actionsAgain).toBe(actions)
+    expect(calls).toHaveLength(2)
     expect(JSON.parse(String(calls[0]?.body))).toEqual({
       permissions: { metadata: "read", pull_requests: "write" },
+    })
+    expect(JSON.parse(String(calls[1]?.body))).toEqual({
+      permissions: { actions: "write", metadata: "read" },
+      repositories: ["derive"],
     })
     expect(new Headers(calls[0]?.headers).get("content-type")).toBe("application/json")
   })

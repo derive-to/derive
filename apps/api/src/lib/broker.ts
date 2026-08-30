@@ -2,7 +2,7 @@ import type { BrokerToolDef, ToolBroker } from "@derive/broker"
 import { type McpAuthResolver, makeBroker, quietReason, refRouter } from "@derive/broker"
 import type { ConnectionKind, ConnectionRecord, MetaStore } from "@derive/core"
 import { decryptSecret } from "./crypto"
-import { GitHubError, installationToken } from "./github-app"
+import { GitHubError, type GitHubTokenProfile, installationToken } from "./github-app"
 import { githubSourcePolicy } from "./github-source-policy"
 import { liveBearer } from "./mcp-oauth"
 
@@ -235,7 +235,7 @@ export const httpTools = (toolkit: string): BrokerToolDef[] => [
     name: `${toolkit}.get`,
     description:
       toolkit === "github"
-        ? "Read installation repositories, pull requests, changed files, or PR conversation comments from GitHub."
+        ? "Read installation repositories, pull requests, workflow definitions, workflow runs, jobs, or result-artifact metadata from GitHub."
         : `GET a path on the ${toolkit} API (authenticated server-side).`,
     params: { path: { type: "string", description: "Path starting with /" } },
   },
@@ -243,7 +243,7 @@ export const httpTools = (toolkit: string): BrokerToolDef[] => [
     name: `${toolkit}.post`,
     description:
       toolkit === "github"
-        ? "Add one top-level GitHub pull request conversation comment. Other writes are refused."
+        ? "Dispatch or cancel a GitHub Actions workflow, or add one top-level pull request conversation comment. Other writes are refused."
         : `POST JSON to a path on the ${toolkit} API (authenticated server-side).`,
     params: { path: { type: "string" }, body: { type: "object" } },
   },
@@ -266,6 +266,8 @@ export const bearerFor = async (
   meta: MetaStore,
   cn: ConnectionRecord,
   encryptionKey: string,
+  githubProfile: GitHubTokenProfile = "standard-pr",
+  githubRepository?: string,
 ): Promise<string> => {
   if (cn.kind === "secret") {
     if (!cn.secret_enc) throw new Error("secret connection is missing its secret")
@@ -279,17 +281,25 @@ export const bearerFor = async (
         app.app_id,
         decryptSecret(app.private_key, encryptionKey),
         cn.broker_ref,
+        githubProfile,
+        githubRepository,
       )
     } catch (err) {
       // Installation removal/suspension must stop being advertised after the first live call.
       // Transient 5xx/rate failures leave the source active so a later run can recover.
       if (
         err instanceof GitHubError &&
-        (err.status === 401 || err.status === 403 || err.status === 404)
+        (err.status === 401 ||
+          err.status === 404 ||
+          (err.status === 403 && githubProfile === "standard-pr"))
       ) {
         await meta.setConnectionStatus(cn.id, cn.org_id, "revoked")
         throw new Error("GitHub is no longer authorized; reconnect it in Settings → Integrations")
       }
+      if (err instanceof GitHubError && err.status === 403 && githubProfile === "workflow-dispatch")
+        throw new Error(
+          "GitHub Actions is not enabled for this App; update its permissions in Settings → Integrations",
+        )
       throw err
     }
   }
@@ -338,14 +348,20 @@ export const executeHttpTool = async (
   // effective surface before minting that token, so a prompt can never turn github.post into
   // a branch/PR mutation. Other direct integrations retain the generic confined HTTP surface.
   const githubPolicy = cn.kind === "github_app" ? githubSourcePolicy(tool, url, a.body) : null
-  const bearer = await bearerFor(meta, cn, encryptionKey)
+  const bearer = await bearerFor(
+    meta,
+    cn,
+    encryptionKey,
+    githubPolicy?.tokenProfile,
+    githubPolicy?.repository,
+  )
   const headers = {
     authorization: `Bearer ${bearer}`,
     ...(cn.kind === "github_app"
       ? {
           accept: "application/vnd.github+json",
           "user-agent": "derive-source/1",
-          "x-github-api-version": "2022-11-28",
+          "x-github-api-version": githubPolicy?.apiVersion ?? "2022-11-28",
         }
       : {}),
     ...(verb === "POST" ? { "content-type": "application/json" } : {}),

@@ -227,7 +227,7 @@ describe("hosted tool injection — least privilege (WO4)", () => {
     ).rejects.toThrow(/reconnect/i)
   })
 
-  it("github_app: exposes only PR reads and new top-level PR comments", async () => {
+  it("github_app: exposes only bounded PR and workflow operations", async () => {
     const connection = {
       id: "conn_gh_policy",
       org_id: "default",
@@ -269,14 +269,21 @@ describe("hosted tool injection — least privilege (WO4)", () => {
       "https://api.github.com/repos/derive-to/derive/pulls/42",
       "https://api.github.com/repos/derive-to/derive/pulls/42/files?per_page=100&page=2",
     ])
-      expect(githubSourcePolicy("github.get", new URL(url), undefined)).toEqual({ verb: "GET" })
+      expect(githubSourcePolicy("github.get", new URL(url), undefined)).toEqual({
+        tokenProfile: "standard-pr",
+        verb: "GET",
+      })
     expect(
       githubSourcePolicy(
         "github.get",
         new URL("https://api.github.com/repos/derive-to/derive/issues/42/comments?per_page=100"),
         undefined,
       ),
-    ).toEqual({ verb: "GET", prPreflightPath: "/repos/derive-to/derive/pulls/42" })
+    ).toEqual({
+      tokenProfile: "standard-pr",
+      verb: "GET",
+      prPreflightPath: "/repos/derive-to/derive/pulls/42",
+    })
     expect(() =>
       githubSourcePolicy(
         "github.get",
@@ -297,13 +304,151 @@ describe("hosted tool injection — least privilege (WO4)", () => {
         new URL("https://api.github.com/repos/derive-to/derive/issues/42/comments"),
         { body: "One explicit PR comment." },
       ),
-    ).toEqual({ verb: "POST", prPreflightPath: "/repos/derive-to/derive/pulls/42" })
+    ).toEqual({
+      tokenProfile: "standard-pr",
+      verb: "POST",
+      prPreflightPath: "/repos/derive-to/derive/pulls/42",
+    })
+
+    for (const url of [
+      "https://api.github.com/repos/derive-to/derive/actions/workflows?per_page=100",
+      "https://api.github.com/repos/derive-to/derive/actions/workflows/agent-qa.yml",
+      "https://api.github.com/repos/derive-to/derive/actions/workflows/agent-qa.yml/runs?event=workflow_dispatch&status=in_progress",
+      "https://api.github.com/repos/derive-to/derive/actions/runs/9001",
+      "https://api.github.com/repos/derive-to/derive/actions/runs/9001/jobs?filter=latest",
+      "https://api.github.com/repos/derive-to/derive/actions/runs/9001/artifacts?name=derive-result",
+    ])
+      expect(githubSourcePolicy("github.get", new URL(url), undefined)).toMatchObject({
+        repository: "derive",
+        tokenProfile: "workflow-dispatch",
+        verb: "GET",
+      })
+    expect(
+      githubSourcePolicy(
+        "github.post",
+        new URL(
+          "https://api.github.com/repos/derive-to/derive/actions/workflows/agent-qa.yml/dispatches",
+        ),
+        { ref: "main", inputs: { derive_run_id: "run_123", deep: true } },
+      ),
+    ).toEqual({
+      apiVersion: "2026-03-10",
+      repository: "derive",
+      tokenProfile: "workflow-dispatch",
+      verb: "POST",
+    })
+    expect(
+      githubSourcePolicy(
+        "github.post",
+        new URL("https://api.github.com/repos/derive-to/derive/actions/runs/9001/cancel"),
+        {},
+      ),
+    ).toEqual({
+      repository: "derive",
+      tokenProfile: "workflow-dispatch",
+      verb: "POST",
+    })
+    expect(() =>
+      githubSourcePolicy(
+        "github.post",
+        new URL(
+          "https://api.github.com/repos/derive-to/derive/actions/workflows/agent-qa.yml/dispatches",
+        ),
+        { ref: "main", inputs: { nested: { unsafe: true } } },
+      ),
+    ).toThrow(/scalar inputs/i)
+    expect(() =>
+      githubSourcePolicy(
+        "github.post",
+        new URL("https://api.github.com/repos/derive-to/derive/actions/runs/9001/rerun"),
+        {},
+      ),
+    ).toThrow(/pull request comment/i)
 
     const defs = httpTools("github")
     expect(defs.find((tool) => tool.name === "github.get")?.description).toContain("pull requests")
+    expect(defs.find((tool) => tool.name === "github.get")?.description).toContain("workflow runs")
     expect(defs.find((tool) => tool.name === "github.post")?.description).toContain(
-      "Other writes are refused",
+      "Dispatch or cancel",
     )
+  })
+
+  it("github_app: dispatches with an Actions-only token narrowed to one repository", async () => {
+    const key = "github-actions-key"
+    const h = makeAuthedApp("conn-gh-actions", [owner], "editor", {
+      deps: { encryptionKey: key },
+    })
+    await h.meta.setGithubApp({
+      id: "default",
+      app_id: "553",
+      slug: "derive-test",
+      client_id: "Iv1.test",
+      client_secret: encryptSecret("client-secret", key),
+      private_key: encryptSecret(GITHUB_APP_PEM, key),
+      created_at: new Date().toISOString(),
+    })
+    const connection = await upsertGithubConnection(h.meta, {
+      orgId: "default",
+      userId: owner.id,
+      installationId: "99004",
+      accountLogin: "derive-to",
+    })
+    let tokenBody: unknown
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string | URL, init?: RequestInit) => {
+        tokenBody = JSON.parse(String(init?.body))
+        return new Response(
+          JSON.stringify({
+            token: "github-actions-token",
+            expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+          }),
+          { status: 201 },
+        )
+      }),
+    )
+    const calls: { apiVersion: string | null; auth: string | null; body: string | null }[] = []
+    const githubFetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+      const headers = new Headers(init?.headers)
+      calls.push({
+        apiVersion: headers.get("x-github-api-version"),
+        auth: headers.get("authorization"),
+        body: typeof init?.body === "string" ? init.body : null,
+      })
+      return new Response(
+        JSON.stringify({
+          workflow_run_id: 7788,
+          run_url: "https://api.github.com/repos/derive-to/derive/actions/runs/7788",
+          html_url: "https://github.com/derive-to/derive/actions/runs/7788",
+        }),
+        { status: 200 },
+      )
+    }) as typeof fetch
+
+    const out = await executeHttpTool(
+      h.meta,
+      connection,
+      "github.post",
+      {
+        path: "/repos/derive-to/derive/actions/workflows/agent-qa.yml/dispatches",
+        body: { ref: "main", inputs: { derive_run_id: "run_123" } },
+      },
+      key,
+      githubFetch,
+    )
+
+    expect(tokenBody).toEqual({
+      permissions: { actions: "write", metadata: "read" },
+      repositories: ["derive"],
+    })
+    expect(calls).toEqual([
+      {
+        apiVersion: "2026-03-10",
+        auth: "Bearer github-actions-token",
+        body: JSON.stringify({ ref: "main", inputs: { derive_run_id: "run_123" } }),
+      },
+    ])
+    expect(out).toMatchObject({ status: 200, body: { workflow_run_id: 7788 } })
   })
 
   it("github_app: verifies a comment target is a PR before posting", async () => {

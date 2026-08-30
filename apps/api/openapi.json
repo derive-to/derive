@@ -2026,6 +2026,10 @@
           "needs_permissions": {
             "type": "boolean"
           },
+          "actions_available": {
+            "type": "boolean",
+            "description": "Whether the configured App can discover and dispatch GitHub Actions workflows"
+          },
           "permissions_url": {
             "type": "string",
             "nullable": true
@@ -2069,6 +2073,7 @@
           "connected",
           "app_slug",
           "needs_permissions",
+          "actions_available",
           "permissions_url",
           "accounts"
         ]
