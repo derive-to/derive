@@ -120,7 +120,7 @@ out = out.replace(/^name = "derive"$/m, `name = "${name}"`)
 out = out.replace(/^BASE_URL = "https:\/\/derive\.to"$/m, `BASE_URL = "${baseUrl}"`)
 out = out.replace(
   `BASE_URL = "${baseUrl}"`,
-  `BASE_URL = "${baseUrl}"\nDERIVE_EXPORTS_ONLY = "true"\nDERIVE_QA_EMAIL_CAPTURE = "true"`,
+  `BASE_URL = "${baseUrl}"\nDERIVE_EXPORTS_ONLY = "true"\nDERIVE_QA_EMAIL_CAPTURE = "true"\nDERIVE_PREVIEW_MULTIPART = "true"`,
 )
 // Serve /raw/* from THIS preview instead of 302-ing it to production's sandbox origin —
 // otherwise the in-iframe client the preview injects is production's, not the branch's.
@@ -193,6 +193,10 @@ must(
 must(
   out.includes('DERIVE_QA_EMAIL_CAPTURE = "true"'),
   "the .test-only email capture seam was not enabled",
+)
+must(
+  out.includes('DERIVE_PREVIEW_MULTIPART = "true"'),
+  "the preview multipart experiment was not enabled",
 )
 must(
   !/^\[\[send_email\]\]/m.test(out),

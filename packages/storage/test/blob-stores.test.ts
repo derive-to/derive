@@ -84,6 +84,66 @@ describe("R2BlobStore (Cloudflare R2)", () => {
     // advisory stays quiet instead of false-positives (and never falls back to get).
     expect(await store.has("e".repeat(64))).toBe(true)
   })
+
+  it("uses bounded native multipart for large preview writes", async () => {
+    const puts = vi.fn()
+    const uploaded: { partNumber: number; value: Uint8Array }[] = []
+    let completed: { partNumber: number; etag: string }[] = []
+    const multipart = new R2BlobStore(
+      {
+        put: puts,
+        get: async () => null,
+        createMultipartUpload: async () => ({
+          uploadPart: async (partNumber, value) => {
+            uploaded.push({ partNumber, value })
+            return { partNumber, etag: `part-${partNumber}` }
+          },
+          complete: async (parts) => {
+            completed = parts
+          },
+          abort: async () => {},
+        }),
+      },
+      { multipart: true },
+    )
+    const data = new Uint8Array(11 * 1024 * 1024 + 17)
+    data[data.length - 1] = 7
+
+    const key = await multipart.put(data)
+
+    expect(key).toMatch(SHA_RE)
+    expect(puts).not.toHaveBeenCalled()
+    expect(
+      uploaded.map((part) => [part.partNumber, part.value.byteLength]).sort((a, b) => a[0] - b[0]),
+    ).toEqual([
+      [1, 5 * 1024 * 1024],
+      [2, 5 * 1024 * 1024],
+      [3, 1024 * 1024 + 17],
+    ])
+    expect(completed.map((part) => part.partNumber)).toEqual([1, 2, 3])
+  })
+
+  it("aborts a failed multipart write and leaves the error intact", async () => {
+    const abort = vi.fn(async () => {})
+    const multipart = new R2BlobStore(
+      {
+        put: async () => {},
+        get: async () => null,
+        createMultipartUpload: async () => ({
+          uploadPart: async (partNumber) => {
+            if (partNumber === 2) throw new Error("part failed")
+            return { partNumber, etag: `part-${partNumber}` }
+          },
+          complete: async () => {},
+          abort,
+        }),
+      },
+      { multipart: true },
+    )
+
+    await expect(multipart.put(new Uint8Array(9 * 1024 * 1024))).rejects.toThrow("part failed")
+    expect(abort).toHaveBeenCalledOnce()
+  })
 })
 
 describe("s3FromUrl", () => {
