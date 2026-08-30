@@ -123,6 +123,11 @@ describe("standard GitHub integration", () => {
       app.request(`/v1/github/callback?installation_id=${id}&state=${encodeURIComponent(state)}`, {
         headers: as(owner.email),
       })
+    const legacyCallback = (id: string) =>
+      app.request(
+        `/v1/sync/github/callback?installation_id=${id}&setup_action=install&state=${encodeURIComponent(state)}`,
+        { headers: as(owner.email) },
+      )
     const authorize = (location: string | null, code: string) => {
       const oauth = new URL(location ?? "")
       expect(oauth.origin).toBe("https://github.com")
@@ -163,6 +168,13 @@ describe("standard GitHub integration", () => {
       secret_enc: null,
     })
     expect(await meta.listCollections("default")).toEqual([])
+
+    const legacySetup = await legacyCallback("44001")
+    expect(legacySetup.status).toBe(302)
+    expect(new URL(legacySetup.headers.get("location") ?? "").pathname).toBe(
+      "/login/oauth/authorize",
+    )
+    expect(await meta.listGithubInstallations("default")).toHaveLength(1)
 
     const reconnectSetup = await callback("44001")
     const replay = await authorize(reconnectSetup.headers.get("location"), "replay")
@@ -251,6 +263,13 @@ describe("standard GitHub integration", () => {
     expect(await meta.getGithubInstallation("44002")).toBeNull()
     expect(await meta.listConnections("default", undefined, "workspace")).toEqual([])
 
+    const legacy = await app.request(
+      "/v1/sync/github/callback?installation_id=44002&setup_action=install&state=forged",
+      { headers: as(owner.email) },
+    )
+    expect(legacy.headers.get("location")).toContain("github_error=expired")
+    expect(await meta.getGithubInstallation("44002")).toBeNull()
+
     const ownerState = signState(
       { kind: "github-install-setup", org: "default", uid: owner.id },
       KEY,
@@ -313,6 +332,14 @@ describe("standard GitHub integration", () => {
 
     const anonymousResult = await app.request("/v1/github/callback?installation_id=44005")
     expect(anonymousResult.headers.get("location")).toContain("/login?return_to=")
+    expect(await meta.getGithubInstallation("44005")).toBeNull()
+
+    const anonymousLegacyResult = await app.request(
+      "/v1/sync/github/callback?installation_id=44005&setup_action=install",
+    )
+    expect(anonymousLegacyResult.headers.get("location")).toContain(
+      "return_to=%2Fv1%2Fsync%2Fgithub%2Fcallback",
+    )
     expect(await meta.getGithubInstallation("44005")).toBeNull()
   })
 

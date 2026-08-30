@@ -1,6 +1,7 @@
 import { createHash, createHmac } from "node:crypto"
 import type { GitHubAppRecord } from "@derive/core"
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
+import type { Handler } from "hono"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
 import { ACTIONS_PERMISSION, REQUIRED_PERMISSIONS } from "../github-app-setup"
@@ -256,7 +257,7 @@ export const githubRoutes = (ctx: AppContext) => {
   // GitHub warns that installation_id on a setup callback is attacker-controlled. This first
   // callback therefore verifies the App + Derive manager, then starts GitHub's user OAuth proof.
   // Nothing is persisted until /authorize confirms this user can access this installation.
-  app.get("/v1/github/callback", async (c) => {
+  const handleInstallCallback: Handler<BlankEnv> = async (c) => {
     const installationId = c.req.query("installation_id")
     const stateRaw = c.req.query("state") ?? ""
     if (c.req.query("setup_action") === "request") return c.redirect(settingsRedirect("canceled"))
@@ -316,7 +317,13 @@ export const githubRoutes = (ctx: AppContext) => {
     authorize.searchParams.set("code_challenge_method", "S256")
     authorize.searchParams.set("prompt", "select_account")
     return c.redirect(authorize.toString())
-  })
+  }
+
+  app.get("/v1/github/callback", handleInstallCallback)
+  // Apps created before GitHub became a standard integration still have this setup URL on
+  // GitHub. GitHub does not expose an API that can rewrite a live App's configuration, so keep
+  // the old browser callback as an alias to the same signed, workspace-scoped install flow.
+  app.get("/v1/sync/github/callback", handleInstallCallback)
 
   app.get("/v1/github/authorize", async (c) => {
     const code = c.req.query("code")
