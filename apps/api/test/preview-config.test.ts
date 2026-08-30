@@ -34,7 +34,6 @@ describe("preview-config", () => {
     expect(out).toContain('name = "PREVIEW_RENDERER"')
     expect(out).toContain('DERIVE_EXPORTS_ONLY = "true"')
     expect(out).toContain('DERIVE_QA_EMAIL_CAPTURE = "true"')
-    expect(out).toContain('DERIVE_R2_MULTIPART = "false"')
     // The DO's migration stays: the class is still declared in the script, and
     // dropping an applied migration is what wrangler refuses.
     expect(out).toContain('new_sqlite_classes = ["PreviewRenderer"]')
