@@ -30,6 +30,18 @@ import {
   mentionTokens,
 } from "./mention-shared"
 import {
+  coachStructuralLayout,
+  evaluateStructuralCapability,
+  idleStructuralInteraction,
+  type StructuralCapability,
+  type StructuralConstraintReason,
+  type StructuralInteractionEvent,
+  structuralDistributionIsValid,
+  structuralDropTarget,
+  structuralModifierIntent,
+  transitionStructuralInteraction,
+} from "./structural-interaction"
+import {
   MAX_STRUCTURAL_GAP_PX,
   MAX_STRUCTURAL_HEIGHT_PX,
   MAX_STRUCTURAL_WIDTH_PCT,
@@ -428,6 +440,7 @@ interface ElReg {
   /** Our own chords, as a table: what the handler does is readable in one place,
    *  and every one of them is a modifier chord — never a bare key. */
   let cancelStructureResize = () => false
+  let cancelStructuralGesture = () => cancelStructureResize()
   const chordFor = (
     e: KeyboardEvent,
     focused: HTMLElement | null,
@@ -440,7 +453,7 @@ interface ElReg {
     // open the browser's Save-page dialog over the document.
     if (editOn && (k === "s" || k === "enter"))
       return () => {
-        if (cancelStructureResize()) return
+        if (cancelStructuralGesture()) return
         if (commitEditUi()) post({ type: "edit-save" })
       }
     // ⌘Z drives OUR stack. The native one only sees typing, and only in the block it
@@ -448,7 +461,7 @@ interface ElReg {
     // Keep it live with no text caret because a resize grip never owns one.
     if (editOn && k === "z" && !precisionFocused)
       return () => {
-        if (!cancelStructureResize()) (e.shiftKey ? redo : undo)()
+        if (!cancelStructuralGesture()) (e.shiftKey ? redo : undo)()
       }
     if (!focused) return null
     // ⌘B / ⌘I never fired here at all: a plaintext-only contenteditable drops every
@@ -523,7 +536,7 @@ interface ElReg {
           return
         }
         if (e.key === "Escape") {
-          if (cancelStructureResize()) {
+          if (cancelStructuralGesture()) {
             e.preventDefault()
             e.stopImmediatePropagation()
             return
@@ -3336,9 +3349,14 @@ interface ElReg {
   let structureSafeAreaOn = false
   let structureLayoutOpen = false
   let structurePrecisionOpen = false
+  let structureInteraction = idleStructuralInteraction()
 
   const structureBox = document.createElement("div")
   structureBox.className = "derive-edit-ui derive-structure-box"
+  const updateStructureInteraction = (event: StructuralInteractionEvent) => {
+    structureInteraction = transitionStructuralInteraction(structureInteraction, event)
+    structureBox.setAttribute("data-interaction-state", structureInteraction.phase)
+  }
   const structureToolbar = document.createElement("div")
   structureToolbar.className = "derive-structure-toolbar"
   structureToolbar.setAttribute("role", "toolbar")
@@ -3374,6 +3392,11 @@ interface ElReg {
     "derive-structure-batch",
   )
   const structureDistribute = structureButton("Space", "Distribute all siblings vertically")
+  const structureHealth = structureButton(
+    "Check",
+    "Check layout health and suggest the nearest safe fix",
+    "derive-structure-batch",
+  )
   const structureAlignStart = structureButton("Start", "Align selected to start")
   const structureAlignCenter = structureButton("Center", "Align selected to center")
   const structureAlignEnd = structureButton("End", "Align selected to end")
@@ -3386,6 +3409,7 @@ interface ElReg {
     structureSameHeight,
     structureFitHeight,
     structureDistribute,
+    structureHealth,
     structureAlignStart,
     structureAlignCenter,
     structureAlignEnd,
@@ -3501,10 +3525,13 @@ interface ElReg {
   structureToast.className = "derive-edit-ui derive-structure-toast"
   structureToast.setAttribute("role", "status")
   const structureToastText = document.createElement("span")
+  const structureToastAction = document.createElement("button")
+  structureToastAction.type = "button"
+  structureToastAction.hidden = true
   const structureToastUndo = document.createElement("button")
   structureToastUndo.type = "button"
   structureToastUndo.textContent = "Undo"
-  structureToast.append(structureToastText, structureToastUndo)
+  structureToast.append(structureToastText, structureToastAction, structureToastUndo)
   const structureMultiLayer = document.createElement("div")
   structureMultiLayer.className = "derive-edit-ui"
   const structureMultiBoxes = new Map<HTMLElement, HTMLDivElement>()
@@ -4201,6 +4228,35 @@ interface ElReg {
     }
   }
 
+  const structureCapability = (
+    capability: StructuralCapability,
+    selected: StructureNode,
+    region: StructureRegion,
+    selection: readonly StructureNode[],
+    nodes = connectedStructureNodes(region),
+  ) =>
+    evaluateStructuralCapability(capability, {
+      selectionCount: selection.length,
+      siblingCount: nodes.length,
+      transformed: selection.some((node) => !structureTransformResizable(node)),
+      widthAxis: selection.every((node) => !!structureWidthAxisFor(node, region)),
+      heightAxis: selection.every((node) => !!structureHeightAxisFor(node, region)),
+      alignAxis: selection.every((node) => structureCrossAxisAlignAvailable(node, region)),
+      boundedStack: structureDistributionGap(region) !== null,
+      hasFixedHeight: selection.some((node) => currentStructureHeight(node) !== null),
+      activeId: selected.id,
+    })
+
+  const applyCapabilityToButton = (
+    button: HTMLButtonElement,
+    capability: ReturnType<typeof structureCapability>,
+    availableTitle: string,
+  ) => {
+    button.disabled = !capability.available
+    button.title = capability.available ? availableTitle : capability.reason.message
+    button.setAttribute("aria-label", button.title)
+  }
+
   const paintStructureUi = () => {
     const selected = structureSelected
     const parent = selected ? parentStructureNode(selected) : null
@@ -4262,12 +4318,33 @@ interface ElReg {
     if (selection.length > 1) structurePrecisionOpen = false
     structureLayout.setAttribute("aria-expanded", String(structureLayoutOpen))
     structureLayoutPanel.hidden = !structureLayoutOpen || selection.length < 2
-    const canAlign = selection.every((node) => structureCrossAxisAlignAvailable(node, region))
-    structureAlignStart.disabled = !canAlign
-    structureAlignCenter.disabled = !canAlign
-    structureAlignEnd.disabled = !canAlign
-    structureFitHeight.disabled = selection.every((node) => currentStructureHeight(node) === null)
-    structureDistribute.disabled = structureDistributionGap(region) === null
+    const alignCapability = structureCapability("align", selected, region, selection, nodes)
+    for (const [button, title] of [
+      [structureAlignStart, "Align selected to start"],
+      [structureAlignCenter, "Align selected to center"],
+      [structureAlignEnd, "Align selected to end"],
+    ] as const)
+      applyCapabilityToButton(button, alignCapability, title)
+    applyCapabilityToButton(
+      structureFitHeight,
+      structureCapability("fit-height", selected, region, selection, nodes),
+      "Fit selected heights to their content",
+    )
+    applyCapabilityToButton(
+      structureSameWidth,
+      structureCapability("equalize-width", selected, region, selection, nodes),
+      "Match selected widths to the active element",
+    )
+    applyCapabilityToButton(
+      structureSameHeight,
+      structureCapability("equalize-height", selected, region, selection, nodes),
+      "Match selected heights to the active element",
+    )
+    applyCapabilityToButton(
+      structureDistribute,
+      structureCapability("distribute", selected, region, selection, nodes),
+      "Distribute all siblings vertically",
+    )
     structureRemove.disabled = selection.length > 1
     structureRemove.title =
       selection.length > 1 ? "Remove one element at a time" : "Remove element (Delete)"
@@ -4298,7 +4375,6 @@ interface ElReg {
       "aria-description",
       `${reportedWidth}% wide and ${reportedHeight} pixels high`,
     )
-    const transformDisabled = !structureTransformResizable(selected)
     const widthAxis = structureWidthAxisFor(selected, region)
     const heightAxis = structureHeightAxisFor(selected, region)
     const batchSelected = selection.length > 1
@@ -4307,10 +4383,20 @@ interface ElReg {
     structurePrecisionPanel.hidden = !structurePrecisionOpen || batchSelected
     for (const button of [structureAuto, structureCompact, structureStandard, structureFull])
       button.disabled = batchSelected
-    structureExact.disabled = transformDisabled || !widthAxis || !heightAxis
-    structureResizeHandle.disabled = batchSelected || transformDisabled || !widthAxis
-    structureHeightHandle.disabled = batchSelected || transformDisabled || !heightAxis
-    structureCornerHandle.disabled = batchSelected || transformDisabled || !widthAxis || !heightAxis
+    const exactCapability = structureCapability("exact-size", selected, region, selection, nodes)
+    const widthCapability = structureCapability("resize-width", selected, region, selection, nodes)
+    const heightCapability = structureCapability(
+      "resize-height",
+      selected,
+      region,
+      selection,
+      nodes,
+    )
+    const bothCapability = structureCapability("resize-both", selected, region, selection, nodes)
+    structureExact.disabled = !exactCapability.available
+    structureResizeHandle.disabled = !widthCapability.available
+    structureHeightHandle.disabled = !heightCapability.available
+    structureCornerHandle.disabled = !bothCapability.available
     structureResizeHandle.classList.toggle(
       "derive-structure-resize-left",
       widthAxis?.edge === "left",
@@ -4327,27 +4413,15 @@ interface ElReg {
       "derive-structure-resize-top",
       heightAxis?.edge === "top",
     )
-    structureResizeHandle.title = structureResizeHandle.disabled
-      ? batchSelected
-        ? "Use Same W to equalize a multi-selection"
-        : transformDisabled
-          ? "Transformed elements keep their authored width"
-          : "This authored layout controls horizontal distribution"
-      : "Drag or use arrow keys to resize width"
-    structureHeightHandle.title = structureHeightHandle.disabled
-      ? batchSelected
-        ? "Use Same H to equalize a multi-selection"
-        : transformDisabled
-          ? "Transformed elements keep their authored height"
-          : "This authored stack controls vertical distribution"
-      : "Drag or use arrow keys to resize height"
-    structureCornerHandle.title = structureCornerHandle.disabled
-      ? batchSelected
-        ? "Equalize one axis at a time for a multi-selection"
-        : transformDisabled
-          ? "Transformed elements keep their authored size"
-          : "This authored layout controls size distribution"
-      : "Drag to resize width and height"
+    structureResizeHandle.title = widthCapability.available
+      ? "Drag or use arrow keys to resize width"
+      : widthCapability.reason.message
+    structureHeightHandle.title = heightCapability.available
+      ? "Drag or use arrow keys to resize height"
+      : heightCapability.reason.message
+    structureCornerHandle.title = bothCapability.available
+      ? "Drag to resize width and height"
+      : bothCapability.reason.message
   }
   refreshResizeUi = () => {
     paintResizeUi()
@@ -4384,6 +4458,11 @@ interface ElReg {
       clearResizeUi()
       setEditHover(null)
     }
+    updateStructureInteraction(
+      node
+        ? { type: "select", selectedIds: structureSelection.map(({ id }) => id), activeId: node.id }
+        : { type: "clear" },
+    )
     paintStructureUi()
     if (node && innerWidth <= 640)
       requestAnimationFrame(() => {
@@ -4420,8 +4499,13 @@ interface ElReg {
     selectStructure(null)
     return true
   }
-  const showStructureToast = (message: string) => {
+  let structureToastActionRun: (() => void) | null = null
+  const showStructureToast = (message: string, action?: { label: string; run: () => void }) => {
     structureToastText.textContent = message
+    structureToastActionRun = action?.run ?? null
+    structureToastAction.hidden = !action
+    structureToastAction.textContent = action?.label ?? ""
+    structureToastUndo.hidden = !!action
     structureToast.style.display = "flex"
     if (structureToastTimer) clearTimeout(structureToastTimer)
     structureToastTimer = window.setTimeout(() => {
@@ -4429,6 +4513,17 @@ interface ElReg {
       structureToastTimer = 0
     }, 5000)
   }
+  const settleStructureInteraction = (
+    outcome: "commit" | "cancel",
+    reason?: StructuralConstraintReason,
+  ) => {
+    updateStructureInteraction(
+      outcome === "commit" ? { type: "commit" } : { type: "cancel", reason },
+    )
+    updateStructureInteraction({ type: "settle" })
+  }
+  const beginStructureLayoutInteraction = () =>
+    updateStructureInteraction({ type: "begin", gesture: "layout" })
   const markStructureChanged = () => {
     if (lastDirty <= 0) {
       lastDirty = 1
@@ -4522,6 +4617,7 @@ interface ElReg {
           : index < nodes.length - 1 && !selected.has(nodes[index + 1] as StructureNode)),
     )
     if (!canMove) return
+    beginStructureLayoutInteraction()
     const initial = structuralOrderOf(
       region.el,
       nodes.map((node) => node.el),
@@ -4565,11 +4661,18 @@ interface ElReg {
     }
     if (!structureGeometryChanged(geometry, region) && !paintOrderChanged) {
       applyStructuralOrder(initial)
-      showStructureToast("Authored layout controls this order")
+      const reason: StructuralConstraintReason = {
+        code: "authored-layout",
+        nodeId: active.id,
+        message: "Authored layout controls this order",
+      }
+      settleStructureInteraction("cancel", reason)
+      showStructureToast(reason.message)
       paintStructureUi()
       return
     }
     remember(initial)
+    settleStructureInteraction("commit")
     markStructureChanged()
   }
   const selectedStructureNodes = (region: StructureRegion): StructureNode[] =>
@@ -4583,6 +4686,7 @@ interface ElReg {
     if (!region) return
     const selected = selectedStructureNodes(region)
     if (selected.length < 2) return
+    beginStructureLayoutInteraction()
     const contentWidth = structureContentWidth(region)
     const width =
       currentStructureWidth(active) ?? Math.round((active.el.offsetWidth / contentWidth) * 100)
@@ -4631,10 +4735,20 @@ interface ElReg {
           ? "Authored constraints prevent matching these widths"
           : "Content or authored constraints prevent matching these heights",
       )
+      settleStructureInteraction("cancel", {
+        code: "authored-layout",
+        nodeId: active.id,
+        message:
+          axis === "width"
+            ? "Authored constraints prevent matching these widths"
+            : "Content or authored constraints prevent matching these heights",
+        suggestion: axis === "width" ? "same-width" : "fit-height",
+      })
       paintStructureUi()
       return
     }
     remember({ kind: "structural-sizing-batch", entries: snapshots })
+    settleStructureInteraction("commit")
     markStructureChanged()
   }
   const fitStructureHeight = () => {
@@ -4645,6 +4759,7 @@ interface ElReg {
     const selected = selectedStructureNodes(region)
     const changed = selected.filter((node) => currentStructureHeight(node) !== null)
     if (selected.length < 2 || !changed.length) return
+    beginStructureLayoutInteraction()
     const snapshots = selected.map((node) => {
       const { kind: _kind, ...sizing } = structuralSizingOf(
         node.el,
@@ -4658,10 +4773,16 @@ interface ElReg {
     if (selected.some((node) => !structureHeightChainFits(node))) {
       applyStructuralSizingBatch({ kind: "structural-sizing-batch", entries: snapshots })
       showStructureToast("An authored wrapper prevents these elements from fitting content")
+      settleStructureInteraction("cancel", {
+        code: "authored-layout",
+        nodeId: active.id,
+        message: "An authored wrapper prevents these elements from fitting content",
+      })
       paintStructureUi()
       return
     }
     remember({ kind: "structural-sizing-batch", entries: snapshots })
+    settleStructureInteraction("commit")
     markStructureChanged()
   }
   const distributeStructure = () => {
@@ -4670,6 +4791,7 @@ interface ElReg {
     if (!region) return
     const gap = structureDistributionGap(region)
     if (gap === null) return
+    beginStructureLayoutInteraction()
     const nodes = connectedStructureNodes(region).filter((node) => structureNodeAvailable(node))
     const initial = structuralGapOf(region.el, structureAttribute(region.prefix, "gap"))
     const heights = nodes.map((node) => node.el.getBoundingClientRect().height)
@@ -4683,18 +4805,29 @@ interface ElReg {
     const actualGaps = rects.slice(1).map((rect, index) => rect.top - (rects[index]?.bottom ?? 0))
     const accepted =
       getComputedStyle(region.el).rowGap === `${gap}px` &&
-      actualGaps.every((actual) => Math.abs(actual - gap) <= 1) &&
-      rects.every((rect, index) => Math.abs(rect.height - (heights[index] ?? rect.height)) <= 1) &&
-      region.el.scrollHeight <= region.el.clientHeight + 1
+      structuralDistributionIsValid({
+        targetGap: gap,
+        actualGaps,
+        beforeSizes: heights,
+        afterSizes: rects.map(({ height }) => height),
+        scrollSize: region.el.scrollHeight,
+        clientSize: region.el.clientHeight,
+      })
     restoreStructureTransition(region, transition, transitionPriority)
     if (!accepted) {
       applyStructuralGap(initial)
       showStructureToast("This authored stack cannot safely distribute its siblings")
+      settleStructureInteraction("cancel", {
+        code: "authored-layout",
+        nodeId: active?.id,
+        message: "This authored stack cannot safely distribute its siblings",
+      })
       paintStructureUi()
       postDirty()
       return
     }
     remember(initial)
+    settleStructureInteraction("commit")
     markStructureChanged()
   }
   const alignStructure = (align: StructuralAlignment) => {
@@ -4708,6 +4841,7 @@ interface ElReg {
       selected.some((node) => !structureCrossAxisAlignAvailable(node, region))
     )
       return
+    beginStructureLayoutInteraction()
     const snapshots: StructuralAlignHistory[] = selected.map((node) => ({
       el: node.el,
       alignName: structureAlignName(node),
@@ -4740,10 +4874,16 @@ interface ElReg {
     if (!accepted) {
       applyStructuralAlignBatch({ kind: "structural-align-batch", entries: snapshots })
       showStructureToast("This authored stack does not expose safe cross-axis alignment")
+      settleStructureInteraction("cancel", {
+        code: "authored-layout",
+        nodeId: active.id,
+        message: "This authored stack does not expose safe cross-axis alignment",
+      })
       paintStructureUi()
       return
     }
     remember({ kind: "structural-align-batch", entries: snapshots })
+    settleStructureInteraction("commit")
     markStructureChanged()
   }
   const applyExactStructureSize = () => {
@@ -4771,6 +4911,7 @@ interface ElReg {
       structureWidthName(node),
       structureHeightName(node),
     )
+    beginStructureLayoutInteraction()
     const transition = node.el.style.getPropertyValue("transition")
     const transitionPriority = node.el.style.getPropertyPriority("transition")
     node.el.style.setProperty("transition", "none", "important")
@@ -4788,12 +4929,19 @@ interface ElReg {
     if (!accepted) {
       applyStructuralSizing(initial)
       showStructureToast("Authored content or constraints control this size")
+      settleStructureInteraction("cancel", {
+        code: "authored-layout",
+        nodeId: node.id,
+        message: "Authored content or constraints control this size",
+        suggestion: "fit-height",
+      })
       paintStructureUi()
       postDirty()
       return
     }
     remember(initial)
     structurePrecisionOpen = false
+    settleStructureInteraction("commit")
     markStructureChanged()
   }
   const sizeStructure = (size: StructureSize | null) => {
@@ -4849,6 +4997,56 @@ interface ElReg {
     showStructureToast(`Removed ${selected.id}`)
     markStructureChanged()
   }
+  const selectAllStructureSiblings = () => {
+    const active = structureSelected
+    const region = active ? regionForStructureNode(active) : null
+    if (!active || !region) return
+    structureSelection = connectedStructureNodes(region).filter((node) =>
+      structureNodeAvailable(node),
+    )
+    structureSelected = active
+    updateStructureInteraction({
+      type: "select",
+      selectedIds: structureSelection.map(({ id }) => id),
+      activeId: active.id,
+    })
+    paintStructureUi()
+  }
+  const checkStructureHealth = () => {
+    const active = structureSelected
+    const region = active ? regionForStructureNode(active) : null
+    if (!active || !region) return
+    const nodes = connectedStructureNodes(region).filter((node) => structureNodeAvailable(node))
+    const selected = selectedStructureNodes(region)
+    const issue = coachStructuralLayout({
+      selectionCount: selected.length,
+      siblingCount: nodes.length,
+      boundedStack: structureDistributionGap(region) !== null,
+      activeId: active.id,
+      clipping: selected.map((node) => ({
+        id: node.id,
+        overflow: node.el.scrollHeight - node.el.clientHeight,
+        fitHeight: currentStructureHeight(node) !== null,
+      })),
+      widths: selected.map((node) => node.el.getBoundingClientRect().width),
+      heights: selected.map((node) => node.el.getBoundingClientRect().height),
+    })
+    if (!issue) {
+      showStructureToast("Layout health looks good at this viewport")
+      return
+    }
+    const action =
+      issue.suggestion === "select-all"
+        ? { label: "Select all", run: selectAllStructureSiblings }
+        : issue.suggestion === "fit-height"
+          ? { label: "Fit H", run: fitStructureHeight }
+          : issue.suggestion === "same-width"
+            ? { label: "Same W", run: () => equalizeStructure("width") }
+            : issue.suggestion === "same-height"
+              ? { label: "Same H", run: () => equalizeStructure("height") }
+              : undefined
+    showStructureToast(issue.message, action)
+  }
   structureEarlier.addEventListener("click", (e) => {
     e.stopPropagation()
     moveStructure(-1)
@@ -4859,14 +5057,7 @@ interface ElReg {
   })
   structureSelectAll.addEventListener("click", (e) => {
     e.stopPropagation()
-    const active = structureSelected
-    const region = active ? regionForStructureNode(active) : null
-    if (!active || !region) return
-    structureSelection = connectedStructureNodes(region).filter((node) =>
-      structureNodeAvailable(node),
-    )
-    structureSelected = active
-    paintStructureUi()
+    selectAllStructureSiblings()
   })
   structureLayout.addEventListener("click", (e) => {
     e.stopPropagation()
@@ -4920,6 +5111,10 @@ interface ElReg {
     e.stopPropagation()
     distributeStructure()
   })
+  structureHealth.addEventListener("click", (e) => {
+    e.stopPropagation()
+    checkStructureHealth()
+  })
   for (const [button, align] of [
     [structureAlignStart, "start"],
     [structureAlignCenter, "center"],
@@ -4949,6 +5144,13 @@ interface ElReg {
   structureRemove.addEventListener("click", (e) => {
     e.stopPropagation()
     removeStructure()
+  })
+  structureToastAction.addEventListener("click", (e) => {
+    e.stopPropagation()
+    const run = structureToastActionRun
+    structureToast.style.display = "none"
+    structureToastActionRun = null
+    run?.()
   })
   structureToastUndo.addEventListener("click", (e) => {
     e.stopPropagation()
@@ -5131,6 +5333,7 @@ interface ElReg {
       height: node.el.offsetHeight,
       moved: false,
     }
+    updateStructureInteraction({ type: "begin", gesture: "resize" })
     structureBox.classList.add("derive-structure-resizing")
     structureWidthReadout.textContent = `${startWidth}% × ${node.el.offsetHeight}px`
     handle.setPointerCapture?.(e.pointerId)
@@ -5168,7 +5371,7 @@ interface ElReg {
         rawWidth =
           drag.startWidth + (dx / (drag.contentWidth * drag.screenScaleX * drag.widthMotion)) * 100
         const threshold = (8 / (drag.contentWidth * drag.screenScaleX)) * 100
-        widthSnap = e.altKey
+        widthSnap = structuralModifierIntent(e).bypassSnap
           ? { width: Math.round(rawWidth), snappedTo: null }
           : snapStructuralWidth(
               rawWidth,
@@ -5200,7 +5403,7 @@ interface ElReg {
         const heightCandidates = structureHeightCandidates(drag.node, drag.region)
         rawHeight = drag.startHeight + dy / (drag.screenScaleY * drag.heightMotion)
         const threshold = 8 / drag.screenScaleY
-        heightSnap = e.altKey
+        heightSnap = structuralModifierIntent(e).bypassSnap
           ? { height: Math.round(rawHeight), snappedTo: null }
           : snapStructuralHeight(
               rawHeight,
@@ -5307,6 +5510,7 @@ interface ElReg {
     hideStructureSnapGuide()
     hideStructureDropMarker()
     hideStructureHeightSnapGuide()
+    updateStructureInteraction({ type: "validate" })
     const widthAccepted =
       drag.mode === "height" || structureWidthFits(drag.node, drag.region, drag.width)
     const heightAccepted = drag.mode === "width" || structureHeightFits(drag.node, drag.height)
@@ -5330,20 +5534,26 @@ interface ElReg {
       structureHeightChainFits(drag.node)
     if (cancel || !accepted) {
       applyStructuralSizing(drag.initial)
-      if (drag.moved && !cancel)
-        showStructureToast(
+      const reason: StructuralConstraintReason = {
+        code: cancel ? "no-change" : "authored-layout",
+        nodeId: drag.node.id,
+        message:
           drag.mode === "width"
             ? "Authored constraints control this width"
             : drag.mode === "height"
               ? "Authored content or constraints control this height"
               : "Authored content or constraints control this size",
-        )
+        suggestion: drag.mode === "width" ? "same-width" : "fit-height",
+      }
+      if (drag.moved && !cancel) showStructureToast(reason.message)
+      settleStructureInteraction("cancel", reason)
       paintStructureUi()
       postDirty()
       return
     }
     remember(drag.initial)
     restoreStructureTransition(drag.node, drag.transition, drag.transitionPriority)
+    settleStructureInteraction("commit")
     markStructureChanged()
   }
   window.addEventListener("pointerup", (e) => finishStructureResize(e, false))
@@ -5356,16 +5566,14 @@ interface ElReg {
     hideStructureSnapGuide()
     hideStructureHeightSnapGuide()
     applyStructuralSizing(drag.initial)
+    updateStructureInteraction({ type: "cancel" })
+    updateStructureInteraction({ type: "settle" })
     paintStructureUi()
     postDirty()
     return true
   }
   for (const handle of [structureResizeHandle, structureHeightHandle, structureCornerHandle])
     handle.addEventListener("lostpointercapture", () => cancelStructureResize())
-  window.addEventListener("blur", () => cancelStructureResize())
-  document.addEventListener("visibilitychange", () => {
-    if (document.hidden) cancelStructureResize()
-  })
   const keyboardStructureResize = (e: KeyboardEvent, mode: StructureResizeMode) => {
     const horizontal = e.key === "ArrowLeft" || e.key === "ArrowRight"
     const vertical = e.key === "ArrowUp" || e.key === "ArrowDown"
@@ -5386,12 +5594,13 @@ interface ElReg {
     if (!(contentWidth > 0)) return
     const currentWidth = Math.round((node.el.offsetWidth / contentWidth) * 100)
     const currentHeight = Math.round(node.el.offsetHeight)
+    const modifiers = structuralModifierIntent(e)
     const width = horizontal
       ? Math.min(
           MAX_STRUCTURAL_WIDTH_PCT,
           Math.max(
             MIN_STRUCTURAL_WIDTH_PCT,
-            currentWidth + (e.shiftKey ? 5 : 1) * (e.key === "ArrowRight" ? 1 : -1),
+            currentWidth + modifiers.keyboardWidthStep * (e.key === "ArrowRight" ? 1 : -1),
           ),
         )
       : currentWidth
@@ -5400,11 +5609,12 @@ interface ElReg {
           MAX_STRUCTURAL_HEIGHT_PX,
           Math.max(
             MIN_STRUCTURAL_HEIGHT_PX,
-            currentHeight + (e.shiftKey ? 8 : 1) * (e.key === "ArrowDown" ? 1 : -1),
+            currentHeight + modifiers.keyboardHeightStep * (e.key === "ArrowDown" ? 1 : -1),
           ),
         )
       : currentHeight
     if (width === currentWidth && height === currentHeight) return
+    updateStructureInteraction({ type: "begin", gesture: "resize" })
     const initial = structuralSizingOf(
       node.el,
       structureSizeName(node),
@@ -5421,6 +5631,7 @@ interface ElReg {
       (!horizontal || structureWidthFits(node, region, width)) &&
       (!vertical || structureHeightFits(node, height)) &&
       structureHeightChainFits(node)
+    updateStructureInteraction({ type: "validate" })
     restoreStructureTransition(node, transition, transitionPriority)
     if (!accepted) {
       applyStructuralSizing(initial)
@@ -5429,11 +5640,20 @@ interface ElReg {
           ? "Authored constraints control this width"
           : "Authored content or constraints control this height",
       )
+      settleStructureInteraction("cancel", {
+        code: "authored-layout",
+        nodeId: node.id,
+        message: horizontal
+          ? "Authored constraints control this width"
+          : "Authored content or constraints control this height",
+        suggestion: horizontal ? "same-width" : "fit-height",
+      })
       paintStructureUi()
       postDirty()
       return
     }
     remember(initial)
+    settleStructureInteraction("commit")
     structureBox.classList.add("derive-structure-resizing")
     structureWidthReadout.textContent = `${width}% × ${height}px`
     window.setTimeout(() => structureBox.classList.remove("derive-structure-resizing"), 800)
@@ -5510,6 +5730,7 @@ interface ElReg {
       initialPaintOrder: structurePaintOrder(node, region),
       moved: false,
     }
+    updateStructureInteraction({ type: "begin", gesture: "drag" })
     node.el.classList.add("derive-structure-dragging")
     structureGrip.setPointerCapture?.(e.pointerId)
   })
@@ -5521,12 +5742,20 @@ interface ElReg {
       e.preventDefault()
       const others = connectedStructureNodes(drag.region).filter((node) => node !== drag.node)
       const axis = structureDragAxis(others)
-      const before = others.find((node) => {
-        const rect = node.el.getBoundingClientRect()
-        return axis === "x"
-          ? e.clientX < rect.left + rect.width / 2
-          : e.clientY < rect.top + rect.height / 2
-      })
+      const target = structuralDropTarget(
+        axis === "x" ? e.clientX : e.clientY,
+        others.map((node) => {
+          const rect = node.el.getBoundingClientRect()
+          return {
+            id: node.id,
+            start: axis === "x" ? rect.left : rect.top,
+            end: axis === "x" ? rect.right : rect.bottom,
+          }
+        }),
+      )
+      const before = target?.beforeId
+        ? others.find((node) => node.id === target.beforeId)
+        : undefined
       drag.region.el.insertBefore(drag.node.el, before?.el ?? null)
       showStructureDropMarker(drag.region, before, axis, others)
       const order = connectedStructureNodes(drag.region).map((node) => node.id)
@@ -5541,17 +5770,29 @@ interface ElReg {
     structureDrag = null
     hideStructureDropMarker()
     drag.node.el.classList.remove("derive-structure-dragging")
+    updateStructureInteraction({ type: "validate" })
     const visuallyMoved =
       drag.moved &&
       (structureGeometryChanged(drag.initialGeometry, drag.region) ||
         structurePaintOrderChanged(drag.initialPaintOrder, drag.node, drag.region))
     if (cancel || !visuallyMoved) applyPlacement(drag.initial)
     else remember(drag.initial)
-    if (visuallyMoved && !cancel) markStructureChanged()
-    else if (drag.moved && !cancel) {
-      showStructureToast("Authored layout controls this order")
+    if (visuallyMoved && !cancel) {
+      settleStructureInteraction("commit")
+      markStructureChanged()
+    } else if (drag.moved && !cancel) {
+      const reason: StructuralConstraintReason = {
+        code: "authored-layout",
+        nodeId: drag.node.id,
+        message: "Authored layout controls this order",
+      }
+      settleStructureInteraction("cancel", reason)
+      showStructureToast(reason.message)
       paintStructureUi()
-    } else paintStructureUi()
+    } else {
+      settleStructureInteraction("cancel")
+      paintStructureUi()
+    }
   }
   const cancelStructureDrag = () => {
     const drag = structureDrag
@@ -5560,6 +5801,8 @@ interface ElReg {
     drag.node.el.classList.remove("derive-structure-dragging")
     hideStructureDropMarker()
     applyPlacement(drag.initial)
+    updateStructureInteraction({ type: "cancel" })
+    updateStructureInteraction({ type: "settle" })
     paintStructureUi()
     postDirty()
     return true
@@ -5567,9 +5810,10 @@ interface ElReg {
   window.addEventListener("pointerup", (e) => finishStructureDrag(e, false))
   window.addEventListener("pointercancel", (e) => finishStructureDrag(e, true))
   structureGrip.addEventListener("lostpointercapture", () => cancelStructureDrag())
-  window.addEventListener("blur", () => cancelStructureDrag())
+  cancelStructuralGesture = () => cancelStructureResize() || cancelStructureDrag()
+  window.addEventListener("blur", () => cancelStructuralGesture())
   document.addEventListener("visibilitychange", () => {
-    if (document.hidden) cancelStructureDrag()
+    if (document.hidden) cancelStructuralGesture()
   })
   window.addEventListener(
     "scroll",
@@ -5591,7 +5835,7 @@ interface ElReg {
     (e) => {
       const target = asEl(e.target)
       const node = editOn && !target?.closest(".derive-edit-ui") ? structuralNodeAt(target) : null
-      structurePointerExtend = !!node && (e.shiftKey || e.metaKey || e.ctrlKey)
+      structurePointerExtend = !!node && structuralModifierIntent(e).extendSelection
       structurePointerSelectionHandled = false
     },
     true,
@@ -5615,9 +5859,7 @@ interface ElReg {
         e.stopImmediatePropagation()
         structureGrip.focus()
       } else if (
-        e.altKey &&
-        !e.metaKey &&
-        !e.ctrlKey &&
+        structuralModifierIntent(e).reorderShortcut &&
         (e.key === "ArrowUp" || e.key === "ArrowDown")
       ) {
         e.preventDefault()
@@ -5660,6 +5902,20 @@ interface ElReg {
         structureSelected = structureSelection.at(-1) ?? null
       if (structureSelected && !structureSelection.includes(structureSelected))
         structureSelection.push(structureSelected)
+      if (
+        structureInteraction.phase !== "dragging" &&
+        structureInteraction.phase !== "resizing" &&
+        structureInteraction.phase !== "validating"
+      )
+        updateStructureInteraction(
+          structureSelected
+            ? {
+                type: "select",
+                selectedIds: structureSelection.map(({ id }) => id),
+                activeId: structureSelected.id,
+              }
+            : { type: "clear" },
+        )
       paintStructureUi()
     }
     refreshStructureAvailability()
@@ -6072,7 +6328,7 @@ interface ElReg {
     // inner copy just as editable as the container is movable.
     const structural = structuralNodeAt(el0)
     if (e.detail <= 1 && structural) {
-      const extend = e.shiftKey || e.metaKey || e.ctrlKey
+      const extend = structuralModifierIntent(e).extendSelection
       if (!(extend && structurePointerSelectionHandled)) selectStructure(structural, extend)
       structurePointerExtend = false
       structurePointerSelectionHandled = false
@@ -6815,9 +7071,9 @@ interface ElReg {
     // The edit bar's controls, driven from the host. Same functions the keyboard
     // chords call, so a button and its shortcut can never mean different things.
     else if (d.type === "edit-undo") {
-      if (!cancelStructureResize()) undo()
+      if (!cancelStructuralGesture()) undo()
     } else if (d.type === "edit-redo") {
-      if (!cancelStructureResize()) redo()
+      if (!cancelStructuralGesture()) redo()
     } else if (d.type === "edit-format")
       applyFmt(
         d.kind === "i" ? "i" : d.kind === "a" ? "a" : "b",

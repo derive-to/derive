@@ -845,6 +845,35 @@ test("structural multi-select equalizes and reorders as atomic safe actions", as
   }).toPass({ timeout: 10_000 })
 })
 
+test("structural health coach explains a blocked layout action and applies the safe fix", async ({
+  owner,
+}) => {
+  const shortId = await publishArtifact(
+    owner,
+    "structural-health-coach.html",
+    STRUCTURAL_MULTISELECT_DOC,
+    "text/html",
+  )
+  await openArtifact(owner, shortId)
+  await enterEditMode(owner)
+  const frame = doc(owner)
+  await frame.locator("#alpha").click()
+  await frame.locator("#bravo").click({ modifiers: ["Shift"] })
+  await expect(frame.locator(".derive-structure-box")).toHaveAttribute(
+    "data-interaction-state",
+    "selected",
+  )
+  await frame.getByRole("button", { name: "Open selected layout actions" }).click()
+  await frame
+    .getByRole("button", { name: "Check layout health and suggest the nearest safe fix" })
+    .click()
+  await expect(frame.locator(".derive-structure-toast")).toContainText(
+    "Select all 4 siblings to distribute spacing",
+  )
+  await frame.getByRole("button", { name: "Select all", exact: true }).click()
+  await expect(frame.locator(".derive-structure-label")).toContainText("4 selected")
+})
+
 test("structural exact sizing commits both axes as one source-safe action", async ({ owner }) => {
   const shortId = await publishArtifact(
     owner,
