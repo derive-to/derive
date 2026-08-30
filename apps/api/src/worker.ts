@@ -207,8 +207,8 @@ export interface Env {
   /** PR-preview isolation: keep Browser Rendering available for export jobs while
    *  disabling the unscoped ordinary-preview sweep and queue. */
   DERIVE_EXPORTS_ONLY?: string
-  /** PR-preview experiment: use native R2 multipart writes for complete large blobs. */
-  DERIVE_PREVIEW_MULTIPART?: string
+  /** Hosted R2 optimization: use native multipart writes for complete large blobs. */
+  DERIVE_R2_MULTIPART?: string
   /** PR-preview email seam. The route additionally enforces reserved .test recipients,
    *  and the export worker writes a private capture without touching the outbox. */
   DERIVE_QA_EMAIL_CAPTURE?: string
@@ -332,7 +332,7 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
           .map((x) => x.trim())
           .filter(Boolean),
         blobs: new R2BlobStore(env.BUCKET, {
-          multipart: env.DERIVE_PREVIEW_MULTIPART === "true",
+          multipart: env.DERIVE_R2_MULTIPART === "true",
         }),
         // THE CEILING THIS TIER ACTUALLY HAS. An attended turn is detached through
         // `background()` → waitUntil, which the runtime ends a short while after the response is

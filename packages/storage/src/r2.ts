@@ -22,13 +22,17 @@ export interface R2MultipartUploadLike {
 }
 
 export interface R2BlobStoreOptions {
-  /** Preview experiment: parallelize complete large-object writes. Off by default. */
+  /** Parallelize complete large-object writes through R2's native multipart API. */
   multipart?: boolean
 }
 
 const MULTIPART_AT_BYTES = 8 * 1024 * 1024
 const MULTIPART_PART_BYTES = 5 * 1024 * 1024
 const MULTIPART_CONCURRENCY = 4
+const MULTIPART_ATTEMPTS = 3
+const MULTIPART_RETRY_MS = 25
+
+const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
 
 /** Cloudflare R2 blob store. A generic S3-compatible driver covers S3/GCS/MinIO. */
 export class R2BlobStore implements BlobStore {
@@ -71,7 +75,7 @@ export class R2BlobStore implements BlobStore {
             const end = Math.min(start + MULTIPART_PART_BYTES, data.byteLength)
             try {
               // subarray is a view, so splitting does not make another complete blob copy.
-              parts[index] = await upload.uploadPart(index + 1, data.subarray(start, end))
+              parts[index] = await this.uploadPart(upload, index + 1, data.subarray(start, end))
             } catch (error) {
               failure ??= error
             }
@@ -79,11 +83,43 @@ export class R2BlobStore implements BlobStore {
         }),
       )
       if (failure !== undefined) throw failure
-      await upload.complete(parts)
+      try {
+        await upload.complete(parts)
+      } catch (error) {
+        // A complete request can commit and still lose its response. The key is the exact
+        // content SHA, so an object at that key proves this write is already durable.
+        const committed = this.bucket.head
+          ? await this.bucket
+              .head(key)
+              .then((value) => value !== null)
+              .catch(() => false)
+          : false
+        if (!committed) throw error
+        // If the object already existed, this upload can still be incomplete. Abort is safe
+        // after a completed upload and avoids leaving that second upload for lifecycle cleanup.
+        await upload.abort().catch(() => {})
+      }
     } catch (error) {
       await upload.abort().catch(() => {})
       throw error
     }
+  }
+
+  private async uploadPart(
+    upload: R2MultipartUploadLike,
+    partNumber: number,
+    data: Uint8Array,
+  ): Promise<R2UploadedPartLike> {
+    let failure: unknown
+    for (let attempt = 1; attempt <= MULTIPART_ATTEMPTS; attempt++) {
+      try {
+        return await upload.uploadPart(partNumber, data)
+      } catch (error) {
+        failure = error
+        if (attempt < MULTIPART_ATTEMPTS) await wait(MULTIPART_RETRY_MS * 2 ** (attempt - 1))
+      }
+    }
+    throw failure
   }
 
   async get(key: string): Promise<Uint8Array | null> {

@@ -292,6 +292,9 @@ zone_name = "derive.page"
 # Cross-instance realtime fan-out uses the ArtifactRoom Durable Object (one room
 # per channel).
 [vars]
+# Parallel native R2 parts cut measured 9-12 MB artifact writes by about 20% on the PR preview.
+# The API keeps the single-put path below 8 MiB and when a binding lacks multipart support.
+DERIVE_R2_MULTIPART = "true"
 # Ordinary automations execute in the isolate (model + fetch); Codex runs in the container.
 DERIVE_LOOP_RUNS = "1"
 #

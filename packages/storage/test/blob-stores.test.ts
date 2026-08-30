@@ -85,7 +85,7 @@ describe("R2BlobStore (Cloudflare R2)", () => {
     expect(await store.has("e".repeat(64))).toBe(true)
   })
 
-  it("uses bounded native multipart for large preview writes", async () => {
+  it("uses bounded native multipart for large writes", async () => {
     const puts = vi.fn()
     const uploaded: { partNumber: number; value: Uint8Array }[] = []
     let completed: { partNumber: number; etag: string }[] = []
@@ -123,18 +123,88 @@ describe("R2BlobStore (Cloudflare R2)", () => {
     expect(completed.map((part) => part.partNumber)).toEqual([1, 2, 3])
   })
 
+  it("keeps writes below the multipart threshold on the single-put path", async () => {
+    const put = vi.fn(async () => {})
+    const createMultipartUpload = vi.fn()
+    const store = new R2BlobStore(
+      { put, get: async () => null, createMultipartUpload },
+      { multipart: true },
+    )
+
+    await store.put(new Uint8Array(8 * 1024 * 1024 - 1))
+
+    expect(put).toHaveBeenCalledOnce()
+    expect(createMultipartUpload).not.toHaveBeenCalled()
+  })
+
+  it("retries transient part failures before it completes", async () => {
+    const attempts = new Map<number, number>()
+    const complete = vi.fn(async () => {})
+    const abort = vi.fn(async () => {})
+    const store = new R2BlobStore(
+      {
+        put: async () => {},
+        get: async () => null,
+        createMultipartUpload: async () => ({
+          uploadPart: async (partNumber) => {
+            const attempt = (attempts.get(partNumber) ?? 0) + 1
+            attempts.set(partNumber, attempt)
+            if (partNumber === 2 && attempt < 3) throw new Error("temporary failure")
+            return { partNumber, etag: `part-${partNumber}` }
+          },
+          complete,
+          abort,
+        }),
+      },
+      { multipart: true },
+    )
+
+    await store.put(new Uint8Array(9 * 1024 * 1024))
+
+    expect(attempts.get(2)).toBe(3)
+    expect(complete).toHaveBeenCalledOnce()
+    expect(abort).not.toHaveBeenCalled()
+  })
+
+  it("accepts a committed object when the complete response is lost", async () => {
+    const abort = vi.fn(async () => {})
+    const store = new R2BlobStore(
+      {
+        put: async () => {},
+        get: async () => null,
+        head: async () => ({}),
+        createMultipartUpload: async () => ({
+          uploadPart: async (partNumber) => ({ partNumber, etag: `part-${partNumber}` }),
+          complete: async () => {
+            throw new Error("response lost")
+          },
+          abort,
+        }),
+      },
+      { multipart: true },
+    )
+
+    await expect(store.put(new Uint8Array(9 * 1024 * 1024))).resolves.toMatch(SHA_RE)
+    expect(abort).toHaveBeenCalledOnce()
+  })
+
   it("aborts a failed multipart write and leaves the error intact", async () => {
     const abort = vi.fn(async () => {})
+    const complete = vi.fn(async () => {})
+    let failedPartAttempts = 0
     const multipart = new R2BlobStore(
       {
         put: async () => {},
         get: async () => null,
         createMultipartUpload: async () => ({
           uploadPart: async (partNumber) => {
-            if (partNumber === 2) throw new Error("part failed")
+            if (partNumber === 2) {
+              failedPartAttempts++
+              throw new Error("part failed")
+            }
             return { partNumber, etag: `part-${partNumber}` }
           },
-          complete: async () => {},
+          complete,
           abort,
         }),
       },
@@ -142,6 +212,8 @@ describe("R2BlobStore (Cloudflare R2)", () => {
     )
 
     await expect(multipart.put(new Uint8Array(9 * 1024 * 1024))).rejects.toThrow("part failed")
+    expect(failedPartAttempts).toBe(3)
+    expect(complete).not.toHaveBeenCalled()
     expect(abort).toHaveBeenCalledOnce()
   })
 })
