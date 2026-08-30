@@ -1081,17 +1081,6 @@ export const githubApp = sqliteTable("github_app", {
   created_at: text("created_at").notNull().default(now),
 })
 
-// A GitHub App installation a workspace connected — the binding between a GitHub
-// account's selected repos and a Derive workspace. Agent source calls mint
-// short-lived installation tokens against installation_id.
-export const githubInstallation = sqliteTable("github_installation", {
-  installation_id: text("installation_id").primaryKey(),
-  org_id: text("org_id").notNull(),
-  account_login: text("account_login"),
-  created_by: text("created_by").notNull(),
-  created_at: text("created_at").notNull().default(now),
-})
-
 // Domain mode: a hostname that serves an artifact at the root of its own origin.
 // `host` is globally unique (one host → one artifact); `kind` separates a platform
 // subdomain (name.derived.app) from a customer's own domain.
@@ -1404,7 +1393,6 @@ const TABLES = [
   userNotificationPref,
   activitySeen,
   githubApp,
-  githubInstallation,
   domain,
   reviewRound,
   context,

@@ -1,6 +1,7 @@
 import { generateKeyPairSync } from "node:crypto"
 import { describe, expect, it, vi } from "vitest"
 import { encryptSecret, signState } from "../src/lib/crypto"
+import { upsertGithubConnection } from "../src/lib/github-connection"
 import { as, jsonAs, makeAuthedApp, type quotaApp, type TestUser } from "./helpers"
 
 // A real RSA key (PKCS#1, as GitHub's manifest returns) so appJwt/getAppInfo can
@@ -109,6 +110,7 @@ describe("standard GitHub integration", () => {
           return new Response(
             JSON.stringify({
               slug: "derive-test",
+              owner: { login: "derive-to", type: "Organization" },
               permissions: {
                 ...(actionsPermission ? { actions: actionsPermission } : {}),
                 metadata: "read",
@@ -149,7 +151,7 @@ describe("standard GitHub integration", () => {
     const [firstSetup, concurrentSetup] = await Promise.all([callback("44001"), callback("44001")])
     expect(firstSetup.status).toBe(302)
     expect(concurrentSetup.status).toBe(302)
-    expect(await meta.getGithubInstallation("44001")).toBeNull()
+    expect(await meta.listConnections("default", undefined, "workspace")).toEqual([])
 
     const [first, concurrentReplay] = await Promise.all([
       authorize(firstSetup.headers.get("location"), "first"),
@@ -177,8 +179,6 @@ describe("standard GitHub integration", () => {
     expect(new URL(legacySetup.headers.get("location") ?? "").pathname).toBe(
       "/login/oauth/authorize",
     )
-    expect(await meta.listGithubInstallations("default")).toHaveLength(1)
-
     const reconnectSetup = await callback("44001")
     const replay = await authorize(reconnectSetup.headers.get("location"), "replay")
     expect(replay.headers.get("location")).toContain("github_connected=1")
@@ -193,46 +193,64 @@ describe("standard GitHub integration", () => {
     expect(await status.json()).toMatchObject({
       available: true,
       connected: true,
-      permissions_ready: true,
+      app_owner_login: "derive-to",
+      app_permissions_state: "ready",
+      app_settings_url:
+        "https://github.com/organizations/derive-to/settings/apps/derive-test/permissions",
+      can_manage_app: false,
       accounts: [
         {
           installation_id: "44001",
           account_login: "derive-to",
           connection_id: created?.id,
           state: "active",
+          permissions_state: "ready",
+          permissions_url: null,
         },
       ],
     })
     pullPermission = "read"
     expect(
       await (await app.request("/v1/github", { headers: as(owner.email) })).json(),
-    ).toMatchObject({ permissions_ready: false })
+    ).toMatchObject({ app_permissions_state: "update_required" })
     pullPermission = "write"
     actionsPermission = undefined
     expect(
       await (await app.request("/v1/github", { headers: as(owner.email) })).json(),
-    ).toMatchObject({ permissions_ready: false, connected: true })
+    ).toMatchObject({ app_permissions_state: "update_required", connected: true })
     actionsPermission = "write"
     installationActionsPermission = undefined
     expect(
       await (await app.request("/v1/github", { headers: as(owner.email) })).json(),
     ).toMatchObject({
-      permissions_ready: false,
-      permissions_url: "https://github.com/organizations/derive-to/settings/installations/44001",
+      app_permissions_state: "ready",
+      accounts: [
+        {
+          permissions_state: "approval_required",
+          permissions_url:
+            "https://github.com/organizations/derive-to/settings/installations/44001",
+        },
+      ],
     })
     installationActionsPermission = "write"
     installationPullPermission = undefined
     expect(
       await (await app.request("/v1/github", { headers: as(owner.email) })).json(),
     ).toMatchObject({
-      permissions_ready: false,
-      permissions_url: "https://github.com/organizations/derive-to/settings/installations/44001",
+      app_permissions_state: "ready",
+      accounts: [
+        {
+          permissions_state: "approval_required",
+          permissions_url:
+            "https://github.com/organizations/derive-to/settings/installations/44001",
+        },
+      ],
     })
     installationPullPermission = "write"
     appStatus = 500
     expect(
       await (await app.request("/v1/github", { headers: as(owner.email) })).json(),
-    ).toMatchObject({ permissions_ready: null, available: true, connected: true })
+    ).toMatchObject({ app_permissions_state: "unknown", available: true, connected: true })
     appStatus = 200
     installationStatus = 404
     expect(
@@ -270,7 +288,6 @@ describe("standard GitHub integration", () => {
     })
     expect(res.status).toBe(302)
     expect(res.headers.get("location")).toContain("github_error=expired")
-    expect(await meta.getGithubInstallation("44002")).toBeNull()
     expect(await meta.listConnections("default", undefined, "workspace")).toEqual([])
 
     const legacy = await app.request(
@@ -278,8 +295,6 @@ describe("standard GitHub integration", () => {
       { headers: as(owner.email) },
     )
     expect(legacy.headers.get("location")).toContain("github_error=expired")
-    expect(await meta.getGithubInstallation("44002")).toBeNull()
-
     const ownerState = signState(
       { kind: "github-install-setup", org: "default", uid: owner.id },
       KEY,
@@ -289,7 +304,7 @@ describe("standard GitHub integration", () => {
       { headers: as(member.email) },
     )
     expect(wrongSession.headers.get("location")).toContain("github_error=expired")
-    expect(await meta.getGithubInstallation("44002")).toBeNull()
+    expect(await meta.listConnections("default", undefined, "workspace")).toEqual([])
   })
 
   it("allows a direct GitHub install only after manager login and user-access proof", async () => {
@@ -326,23 +341,23 @@ describe("standard GitHub integration", () => {
     })
     const oauth = new URL(ownerResult.headers.get("location") ?? "")
     expect(oauth.pathname).toBe("/login/oauth/authorize")
-    expect(await meta.getGithubInstallation("44003")).toBeNull()
+    expect(await meta.listConnections("default", undefined, "workspace")).toEqual([])
     const authorized = await app.request(
       `/v1/github/authorize?code=direct&state=${encodeURIComponent(oauth.searchParams.get("state") ?? "")}`,
       { headers: as(owner.email) },
     )
     expect(authorized.headers.get("location")).toContain("github_connected=1")
-    expect(await meta.getGithubInstallation("44003")).toMatchObject({ org_id: "default" })
+    expect(await meta.listConnections("default", undefined, "workspace")).toEqual([
+      expect.objectContaining({ broker_ref: "44003", org_id: "default" }),
+    ])
 
     const memberResult = await app.request("/v1/github/callback?installation_id=44004", {
       headers: as(member.email),
     })
     expect(memberResult.headers.get("location")).toContain("github_error=expired")
-    expect(await meta.getGithubInstallation("44004")).toBeNull()
 
     const anonymousResult = await app.request("/v1/github/callback?installation_id=44005")
     expect(anonymousResult.headers.get("location")).toContain("/login?return_to=")
-    expect(await meta.getGithubInstallation("44005")).toBeNull()
 
     const anonymousLegacyResult = await app.request(
       "/v1/sync/github/callback?installation_id=44005&setup_action=install",
@@ -350,7 +365,6 @@ describe("standard GitHub integration", () => {
     expect(anonymousLegacyResult.headers.get("location")).toContain(
       "return_to=%2Fv1%2Fsync%2Fgithub%2Fcallback",
     )
-    expect(await meta.getGithubInstallation("44005")).toBeNull()
   })
 
   it("refuses an installation the authorizing GitHub user cannot access", async () => {
@@ -385,7 +399,38 @@ describe("standard GitHub integration", () => {
       { headers: as(owner.email) },
     )
     expect(authorized.headers.get("location")).toContain("github_error=save")
-    expect(await meta.getGithubInstallation("44006")).toBeNull()
     expect(await meta.listConnections("default", undefined, "workspace")).toEqual([])
+  })
+
+  it("binds one GitHub installation independently to multiple Derive workspaces", async () => {
+    const { meta } = makeAuthedApp("gh-standard-multi-workspace", [owner], "editor")
+    await meta.setWorkspace("second", "Second workspace")
+    await meta.setMembership({
+      id: "m_gh_second",
+      org_id: "second",
+      user_id: owner.id,
+      role: "owner",
+    })
+
+    const first = await upsertGithubConnection(meta, {
+      orgId: "default",
+      userId: owner.id,
+      installationId: "44007",
+      accountLogin: "derive-to",
+    })
+    const second = await upsertGithubConnection(meta, {
+      orgId: "second",
+      userId: owner.id,
+      installationId: "44007",
+      accountLogin: "derive-to",
+    })
+
+    expect(first.id).not.toBe(second.id)
+    expect(await meta.listConnections("default", undefined, "workspace")).toEqual([
+      expect.objectContaining({ id: first.id, broker_ref: "44007" }),
+    ])
+    expect(await meta.listConnections("second", undefined, "workspace")).toEqual([
+      expect.objectContaining({ id: second.id, broker_ref: "44007" }),
+    ])
   })
 })

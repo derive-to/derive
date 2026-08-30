@@ -98,6 +98,7 @@ export async function getAppInfo(
 ): Promise<{
   slug: string
   html_url: string
+  owner: { login: string; type: string } | null
   permissions: Record<string, string>
   events: string[]
 }> {
@@ -108,12 +109,14 @@ export async function getAppInfo(
   const d = (await res.json()) as {
     slug?: string
     html_url?: string
+    owner?: { login?: string; type?: string } | null
     permissions?: Record<string, string>
     events?: string[]
   }
   return {
     slug: d.slug ?? "",
     html_url: d.html_url ?? "",
+    owner: d.owner ? { login: d.owner.login ?? "", type: d.owner.type ?? "" } : null,
     permissions: d.permissions ?? {},
     events: d.events ?? [],
   }

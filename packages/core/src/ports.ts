@@ -1397,13 +1397,10 @@ export interface IntegrationStore {
   // ---- GitHub App (instance credentials + per-workspace installations) -----
   /** The instance's GitHub App credentials, or null before the manifest setup. */
   getGithubApp(): Promise<GitHubAppRecord | null>
+  /** Insert the instance App only when none exists. False means another operator won setup. */
+  createGithubApp(a: GitHubAppRecord): Promise<boolean>
   /** Upsert the single instance App row (id = "default"). */
   setGithubApp(a: GitHubAppRecord): Promise<void>
-  /** Record (or refresh) a workspace's App installation. */
-  upsertGithubInstallation(i: GitHubInstallationRecord): Promise<GitHubInstallationRecord>
-  getGithubInstallation(installationId: string): Promise<GitHubInstallationRecord | null>
-  /** A workspace's installations, newest first. */
-  listGithubInstallations(orgId: string): Promise<GitHubInstallationRecord[]>
   // ---- Workspace integration settings (enable/disable each channel) --------
   /** The workspace's integration preferences, merged over defaults (so a workspace
    *  that never saved any returns all-enabled). */
@@ -4036,18 +4033,6 @@ export interface GitHubAppRecord {
   client_secret: string
   /** PEM private key (encrypted at rest). */
   private_key: string
-  created_at: string
-}
-
-/** A GitHub App installation a workspace connected: the binding between a GitHub
- *  account's selected repos and a Derive workspace. */
-export interface GitHubInstallationRecord {
-  /** Numeric GitHub installation id, stored as text (PK). */
-  installation_id: string
-  org_id: string
-  /** The GitHub account (org/user login) the App is installed on. */
-  account_login: string | null
-  created_by: string
   created_at: string
 }
 

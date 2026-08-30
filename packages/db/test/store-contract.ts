@@ -1774,32 +1774,9 @@ export function runStoreContract(
   })
 
   describe(`${label}: github app`, () => {
-    it("stores a workspace installation", async () => {
-      const inst = await store.upsertGithubInstallation({
-        installation_id: "4242",
-        org_id: ORG,
-        account_login: "acme",
-        created_by: "amy",
-        created_at: "2026-06-15T00:00:00.000Z",
-      })
-      expect(inst.account_login).toBe("acme")
-      // Upsert is idempotent on installation_id (re-install refreshes, no dupe).
-      await store.upsertGithubInstallation({
-        installation_id: "4242",
-        org_id: ORG,
-        account_login: "acme-renamed",
-        created_by: "amy",
-        created_at: "2026-06-15T00:00:00.000Z",
-      })
-      expect(await store.getGithubInstallation("4242")).toMatchObject({
-        account_login: "acme-renamed",
-      })
-      expect(await store.listGithubInstallations(ORG)).toHaveLength(1)
-    })
-
-    it("stores the instance GitHub App credentials as a single upserted row", async () => {
+    it("creates the instance GitHub App once and only updates that App in place", async () => {
       expect(await store.getGithubApp()).toBeNull()
-      await store.setGithubApp({
+      const first = {
         id: "default",
         app_id: "111",
         slug: "derive-on-acme",
@@ -1807,19 +1784,27 @@ export function runStoreContract(
         client_secret: "enc-secret",
         private_key: "enc-pem",
         created_at: "2026-06-15T00:00:00.000Z",
-      })
+      }
+      expect(await store.createGithubApp(first)).toBe(true)
       expect(await store.getGithubApp()).toMatchObject({ app_id: "111", slug: "derive-on-acme" })
-      // Re-setup overwrites in place (still one row).
+      expect(
+        await store.createGithubApp({
+          ...first,
+          app_id: "222",
+          slug: "derive-on-acme-2",
+        }),
+      ).toBe(false)
+      expect(await store.getGithubApp()).toMatchObject({ app_id: "111", slug: "derive-on-acme" })
+      // A live rename may refresh metadata without replacing the credentials.
       await store.setGithubApp({
+        ...first,
         id: "default",
-        app_id: "222",
-        slug: "derive-on-acme-2",
-        client_id: "Iv1.def",
-        client_secret: "enc-secret-2",
-        private_key: "enc-pem-2",
-        created_at: "2026-06-15T00:00:00.000Z",
+        slug: "derive-on-acme-renamed",
       })
-      expect(await store.getGithubApp()).toMatchObject({ app_id: "222" })
+      expect(await store.getGithubApp()).toMatchObject({
+        app_id: "111",
+        slug: "derive-on-acme-renamed",
+      })
     })
   })
 

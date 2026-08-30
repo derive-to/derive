@@ -2,7 +2,7 @@
 // a self-hoster to hand-create an App and paste five secrets, we POST a manifest
 // to GitHub; they click "Create GitHub App" once and GitHub redirects back with a
 // temporary code we trade for the App's permanent credentials (see lib/github-app
-// convertManifestCode). Two pages: the auto-submitting manifest form, and a
+// convertManifestCode). Two pages: the owner-selection manifest form, and a
 // success/failure landing. Styled like the CLI callback so setup feels like Derive.
 import { esc, brandShell as SHELL } from "./brand-page"
 
@@ -56,11 +56,9 @@ export const buildManifest = (baseUrl: string, host: string) => ({
   default_events: REQUIRED_EVENTS,
 })
 
-/**
- * The manifest form page. Auto-POSTs to GitHub's App-creation endpoint with the
- * manifest + our signed `state`; GitHub shows a "Create GitHub App" confirmation,
- * then redirects to the created-callback. A no-JS button is the fallback.
- */
+/** The manifest form page. The operator chooses who owns the App before GitHub creates it.
+ * GitHub shows that owner as the developer, so silently defaulting to the signed-in person's
+ * account is both surprising and difficult to repair after installations exist. */
 export function manifestFormHTML(props: { baseUrl: string; state: string }): string {
   const { baseUrl } = props
   const host = (() => {
@@ -70,19 +68,39 @@ export function manifestFormHTML(props: { baseUrl: string; state: string }): str
       return "self-hosted"
     }
   })()
-  const action = `https://github.com/settings/apps/new?state=${encodeURIComponent(props.state)}`
+  const personalAction = `https://github.com/settings/apps/new?state=${encodeURIComponent(props.state)}`
   const manifestJson = JSON.stringify(buildManifest(baseUrl, host))
   return SHELL(
     "Set up GitHub App",
     "",
     `<h1>Create your GitHub App</h1>
-    <p class="sub">This opens GitHub to create a Derive app for your account. Select the repositories agents may read — no tokens to paste and no repository mirror.</p>
-    <form id="f" method="post" action="${esc(action)}">
+    <p class="sub">Create the App under the organization that operates this Derive instance. GitHub shows that account as the App developer.</p>
+    <form id="f" method="post" action="${esc(personalAction)}">
+      <div class="field">
+        <label for="owner">GitHub organization</label>
+        <input id="owner" name="owner" autocomplete="organization" placeholder="derive-to" pattern="[A-Za-z0-9-]{1,39}"/>
+        <p class="hint">Leave this blank only if a personal account should own the App.</p>
+      </div>
       <input type="hidden" name="manifest" value="${esc(manifestJson)}"/>
-      <button class="btn" type="submit">Continue to GitHub</button>
+      <div class="row">
+        <button class="btn" type="submit">Continue to GitHub</button>
+        <button class="btn ghost" type="submit" formnovalidate data-personal>Use personal account</button>
+      </div>
     </form>
     <p class="foot">Derive asks for <strong>Metadata: read</strong>, <strong>Pull requests: write</strong>, and <strong>Actions: write</strong>. Server-side policies limit these to PR reads, one top-level PR comment, workflow status, and dispatch of workflows named <strong>derive-*.yml</strong>.</p>
-    <script>setTimeout(function(){document.getElementById("f").submit()},400)</script>`,
+    <script>
+      (function(){
+        var form=document.getElementById("f"),owner=document.getElementById("owner"),personal=${JSON.stringify(personalAction)};
+        form.addEventListener("submit",function(event){
+          if(event.submitter&&event.submitter.hasAttribute("data-personal")){form.action=personal;return}
+          var value=owner.value.trim();
+          if(!value){event.preventDefault();owner.setCustomValidity("Enter the GitHub organization that should own this App, or choose personal account.");owner.reportValidity();return}
+          owner.setCustomValidity("");
+          form.action="https://github.com/organizations/"+encodeURIComponent(value)+"/settings/apps/new?state="+${JSON.stringify(encodeURIComponent(props.state))};
+        });
+        owner.addEventListener("input",function(){owner.setCustomValidity("")});
+      })()
+    </script>`,
   )
 }
 
