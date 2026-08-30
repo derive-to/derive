@@ -207,11 +207,15 @@ export const fanOutNewContentMentions = async (
   artifact: ArtifactRecord,
   version: VersionRecord,
   actorId: string | null = version.author_id,
+  preparedSource?: string,
 ): Promise<void> => {
   if (version.content_type !== "text/markdown" && !isHtmlLike(version.content_type)) return
-  const currentBytes = await deps.blobs.get(version.blob_key)
-  if (!currentBytes) return
-  const current = new TextDecoder().decode(currentBytes)
+  let current = preparedSource
+  if (current === undefined) {
+    const bytes = await deps.blobs.get(version.blob_key)
+    if (!bytes) return
+    current = new TextDecoder().decode(bytes)
+  }
   const handles = contentMentionHandles(current, version.content_type)
   if (!handles.length) return
 

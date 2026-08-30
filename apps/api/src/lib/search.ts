@@ -3,6 +3,7 @@ import {
   type BlobStore,
   elideDataUris,
   enclosingMarker,
+  isBundleContentType,
   isHtmlLike,
   type MetaStore,
   pageText,
@@ -311,8 +312,14 @@ export const MAX_INDEX_TEXT = 256 * 1024
 // query for a word split across inline tags (foo<b>bar</b> → visible "foobar") may not
 // be nominated. All three are workspace-discovery gaps only: the one-artifact grep still
 // finds those hits directly. A non-text single file (a bare uploaded image) adds nothing.
-export async function versionIndexText(blobs: BlobStore, v: VersionRecord): Promise<string> {
+export async function versionIndexText(
+  blobs: BlobStore,
+  v: VersionRecord,
+  preparedSource?: string,
+): Promise<string> {
   const clipText = (s: string) => (s.length > MAX_INDEX_TEXT ? s.slice(0, MAX_INDEX_TEXT) : s)
+  if (preparedSource !== undefined && !isBundleContentType(v.content_type))
+    return isTextType(v.content_type) ? clipText(elideDataUris(preparedSource)) : ""
   const manifest = await manifestOf(blobs, v)
   if (!manifest) {
     if (!isTextType(v.content_type)) return ""
@@ -343,8 +350,9 @@ export async function indexArtifactVersion(
   artifact: Pick<ArtifactRecord, "id" | "org_id" | "title">,
   v: VersionRecord,
   search?: Pick<SearchIndex, "indexArtifact">,
+  preparedSource?: string,
 ): Promise<void> {
-  const text = await versionIndexText(blobs, v)
+  const text = await versionIndexText(blobs, v, preparedSource)
   await meta.indexArtifact(artifact.id, artifact.org_id, artifact.title, text)
   // The dense arm is independently best-effort: a dense-arm (embed or store) hiccup must never undo
   // the lexical upsert that already committed, nor fail the publish. Log and move on — the next

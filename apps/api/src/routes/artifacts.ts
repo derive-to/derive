@@ -652,6 +652,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     let bytes: Uint8Array
     let filename: string
     let isBundle: boolean
+    let preparedSource: string | undefined
     if (typeof editsField === "string" || typeof slideOpsField === "string") {
       if (typeof editsField === "string" && typeof slideOpsField === "string")
         return fail(c, 400, "Provide `edits` OR `slide_ops`, not both")
@@ -691,6 +692,7 @@ export const artifactRoutes = (ctx: AppContext) => {
         )
       }
       bytes = new TextEncoder().encode(materialized.content)
+      preparedSource = materialized.content
       if (bytes.length > MAX_UPLOAD_BYTES) return fail(c, 413, "upload too large")
       if (await overStorage(org, bytes.length))
         return fail(c, 413, blockCopy.storage.message, { code: blockCopy.storage.code })
@@ -710,6 +712,7 @@ export const artifactRoutes = (ctx: AppContext) => {
         /\.zip$/i.test(file.name) ||
         body["kind"] === "bundle" ||
         (bytes[0] === 0x50 && bytes[1] === 0x4b && (bytes[2] === 3 || bytes[2] === 5))
+      if (!isBundle) preparedSource = new TextDecoder().decode(bytes)
     }
 
     // Access is three single-purpose fields (see access-model.md). Each is validated
@@ -913,6 +916,7 @@ export const artifactRoutes = (ctx: AppContext) => {
           linkRole: resolvedLinkRole,
           listed: resolvedListed,
           expiresAt: draft?.expiresAt,
+          ...(existing ? { existingArtifact: existing } : {}),
         },
         shortId,
       )
@@ -969,6 +973,7 @@ export const artifactRoutes = (ctx: AppContext) => {
           // version.author_id) is deliberately the human, so it can't classify who published.
           actorId: agentPrincipal?.id ?? tokenAuth?.agent?.id ?? actor?.id ?? null,
           actorName: agentPrincipal?.name ?? tokenAuth?.agent?.name ?? actor?.name ?? null,
+          ...(preparedSource !== undefined ? { preparedSource } : {}),
         },
       )
       // Tag at publish time — the one-step "auto-tag on create/version" hook. `tags` is a

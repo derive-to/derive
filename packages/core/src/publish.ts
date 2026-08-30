@@ -91,6 +91,11 @@ export interface PublishInput {
   /** Provenance for a NEW artifact created from another artifact or a pinned
    * template entry. The API validates read access before passing the internal id. */
   derivedFrom?: string | null
+  /** Trusted artifact record already authorized by the caller for a republish. The core
+   *  still validates its short id and kind. Omit when the caller does not already hold the
+   *  row; storage remains the exact fallback. This removes a serial read before addVersion
+   *  on hot edit paths without changing the public publish contract. */
+  existingArtifact?: ArtifactRecord
 }
 
 export interface PublishResult {
@@ -290,7 +295,10 @@ export async function publish(
   const author = input.author ?? "anonymous"
 
   if (shortId) {
-    const artifact = await meta.getByShortId(shortId)
+    const artifact =
+      input.existingArtifact?.short_id === shortId
+        ? input.existingArtifact
+        : await meta.getByShortId(shortId)
     if (!artifact) throw new PublishError(404, `no artifact with short_id ${shortId}`)
     if (artifact.kind !== kind)
       throw new PublishError(409, `artifact is a ${artifact.kind}; republish the same kind`)

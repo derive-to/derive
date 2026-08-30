@@ -56,6 +56,8 @@ export interface ReviewRequestInput {
    *  acting, else the acting user; null when neither is known. The card's `author` is
    *  always `requestedByName`. */
   actorId: string | null
+  /** Exact bounded summary already derived from a validated text-edit batch. */
+  summary?: ReviewSummary
 }
 
 /** Open the round and run the whole reviewer fan-out. Returns the round id. */
@@ -80,9 +82,9 @@ export const openReviewRound = async (
     author: input.requestedByName,
     actor_id: input.actorId,
   })
-  let summary: ReviewSummary
+  let summary = input.summary
   try {
-    summary = await buildReviewSummary(
+    summary ??= await buildReviewSummary(
       deps.meta,
       deps.blobs,
       artifact.id,
@@ -156,6 +158,8 @@ export interface AgentPushInput {
   isNew: boolean
   /** Whether this surface should try to auto-open the artifact in a live Derive tab. */
   notifyBrowser?: boolean
+  /** Exact bounded summary already derived from a validated text-edit batch. */
+  summary?: ReviewSummary
 }
 
 /**
@@ -171,9 +175,9 @@ export const agentPushFanout = async (
   // A successful agent publish is the reliable completion boundary shared by every client.
   // Review asks already enqueue a richer actionable DM, so one version never produces both.
   if (!input.reviewRound) {
-    let summary: ReviewSummary
+    let summary = input.summary
     try {
-      summary = await buildReviewSummary(deps.meta, deps.blobs, artifact.id, input.version)
+      summary ??= await buildReviewSummary(deps.meta, deps.blobs, artifact.id, input.version)
     } catch (err) {
       log.warn("completion summary could not be built; sending completion without a diff", {
         artifact: artifact.id,

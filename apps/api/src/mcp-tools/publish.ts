@@ -41,6 +41,7 @@ import {
 import { MAX_UPLOAD_BYTES } from "../lib/http"
 import { badChoice, choiceDescription } from "../lib/open-choice"
 import { agentPushFanout, openReviewRound } from "../lib/review-request"
+import { type ReviewSummary, summarizeTextEdits } from "../lib/review-summary"
 import { normalizeTags } from "../lib/tags"
 import { canReadTemplateLibrary } from "../lib/template-library-access"
 import type { ToolContext } from "../mcp-tool-context"
@@ -531,7 +532,18 @@ export function registerPublishTool(tc: ToolContext): void {
       // workspace, within the grant); create a new one in the targeted (or
       // default) workspace. The acting role is re-capped to that workspace, so
       // the publish gate is correct there, not just in the default one.
-      const reached = short_id ? await reach(short_id, workspace) : null
+      // An inline edit needs both the artifact for authorization and its current version
+      // for materialization. Hosted stores can join those immutable rows, which removes
+      // one serial edge round trip without moving any authorization check ahead of reach.
+      const editEnvelope =
+        short_id && (edits !== undefined || slide_ops !== undefined) && ctx.meta.artifactWithVersion
+          ? await ctx.meta.artifactWithVersion(short_id)
+          : undefined
+      const reached = short_id
+        ? await reach(short_id, workspace, {
+            ...(editEnvelope ? { artifact: editEnvelope.artifact } : {}),
+          })
+        : null
       if (reached && "error" in reached) return text(reached.error)
       const existing = reached && !("error" in reached) ? reached.a : null
       if (short_id && !existing) return text(`No artifact "${short_id}" you can reach.`)
@@ -547,6 +559,14 @@ export function registerPublishTool(tc: ToolContext): void {
         if ("error" in t) return text(t.error)
         targetOrg = t.org
         actRole = t.role
+      }
+      // Billing eligibility and the storage cap come from the same subscription + seat
+      // snapshot. An edit checks both, so keep one request-local result instead of paying
+      // the two hosted queries twice.
+      let publishBillingState: Awaited<ReturnType<typeof ctx.billingState>> | undefined
+      const billingForPublish = async () => {
+        publishBillingState ??= await ctx.billingState(targetOrg)
+        return publishBillingState
       }
 
       // THE AGENT-WRITE SWITCH binds every write this tool makes, whichever grant is
@@ -620,6 +640,7 @@ export function registerPublishTool(tc: ToolContext): void {
       // kinds of intent, and a batch mixing them would have no honest ordering.
       let editsApplied = 0
       let slideOpsApplied = 0
+      let editSummary: ReviewSummary | undefined
       let readbackBeforeSource: string | null = null
       let readbackBeforeContentType: string | null = null
       let readbackBeforeBlobKey: string | null = null
@@ -632,7 +653,10 @@ export function registerPublishTool(tc: ToolContext): void {
         if (!existing)
           return err(`\`${field}\` revises an EXISTING artifact — pass its \`short_id\`.`)
         const deps = {
-          getVersion: ctx.meta.getVersion.bind(ctx.meta),
+          getVersion: async (artifactId: string, n: number) =>
+            editEnvelope?.artifact.id === artifactId && editEnvelope.version?.n === n
+              ? editEnvelope.version
+              : ctx.meta.getVersion(artifactId, n),
           sourceText: ctx.sourceText,
           ...(readback
             ? {
@@ -658,10 +682,44 @@ export function registerPublishTool(tc: ToolContext): void {
         // over-quota version the HTTP surfaces would have rejected.
         const editedBytes = new TextEncoder().encode(materialized.content).length
         if (editedBytes > MAX_UPLOAD_BYTES) return err("Edited content is too large.")
-        if (await ctx.overStorage(targetOrg, editedBytes)) return err(ctx.blockCopy.storage.message)
+        if (await ctx.overStorage(targetOrg, editedBytes, await billingForPublish()))
+          return err(ctx.blockCopy.storage.message)
         content = materialized.content
         if (slide_ops) slideOpsApplied = slide_ops.length
-        else editsApplied = (edits as AnyDocEdit[]).length
+        else {
+          const applied = edits as AnyDocEdit[]
+          editsApplied = applied.length
+          const textEdits = applied.flatMap((edit) => {
+            if ("old_str" in edit)
+              return [
+                {
+                  before: edit.old_str,
+                  after: edit.new_str,
+                  contentType: materialized.filename.endsWith(".md")
+                    ? "text/markdown"
+                    : "text/html",
+                },
+              ]
+            if ("quote" in edit && typeof edit.new_text === "string")
+              return [
+                {
+                  before: edit.quote.exact,
+                  after: edit.new_text,
+                  contentType: "text/markdown",
+                },
+              ]
+            return []
+          })
+          // A mixed quote + element/structural save needs the complete-version fallback;
+          // a text-only batch is fully represented by these exact validated spans.
+          if (textEdits.length === applied.length)
+            editSummary = summarizeTextEdits({
+              edits: textEdits,
+              fromVersion: existing.current_version,
+              toVersion: existing.current_version + 1,
+              note: message,
+            })
+        }
         if (!filename) filename = materialized.filename
       }
 
@@ -701,7 +759,7 @@ export function registerPublishTool(tc: ToolContext): void {
         )
 
       // Billing gates the live write, after the standing check above.
-      const blocked = await ctx.billingBlocked(targetOrg)
+      const blocked = await ctx.billingBlocked(targetOrg, await billingForPublish())
       if (blocked) return err(blocked.message)
       if (merge) {
         if (!isBundle) return text("`merge` adds files to a bundle — pass `files`, not `content`.")
@@ -784,6 +842,7 @@ export function registerPublishTool(tc: ToolContext): void {
             linkRole: resolvedLinkRole,
             listed: resolvedListed,
             derivedFrom: derivedFromId,
+            ...(existing ? { existingArtifact: existing } : {}),
           },
           short_id,
         )
@@ -824,6 +883,9 @@ export function registerPublishTool(tc: ToolContext): void {
             resolves: addresses ?? [],
             actorId: agent.id,
             actorName: agent.name,
+            ...(artifact.kind === "file" && typeof content === "string"
+              ? { preparedSource: content }
+              : {}),
           },
         )
         // Tag at publish time — the one-step "auto-tag on create". `tags` given ⇒ set them
@@ -854,6 +916,7 @@ export function registerPublishTool(tc: ToolContext): void {
               requestedByName: agent.name,
               version: version.n,
               actorId: agent.id,
+              ...(editSummary ? { summary: editSummary } : {}),
             },
           )
         }
@@ -881,6 +944,7 @@ export function registerPublishTool(tc: ToolContext): void {
               reviewRound: !!review_round,
               isNew: !short_id,
               notifyBrowser: !attended || !short_id,
+              ...(editSummary ? { summary: editSummary } : {}),
             },
           )
         }

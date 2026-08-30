@@ -345,6 +345,42 @@ describe("inline edit version coalescing", () => {
   })
 })
 
+describe("prepared single-file publishes", () => {
+  const owner: TestUser = {
+    id: "prepared-source-owner",
+    email: "prepared-source-owner@test.dev",
+    name: "Prepared Owner",
+  }
+  const { app: preparedApp, ctx: preparedCtx } = makeAuthedApp("prepared-source", [owner])
+
+  it("reads only the previous blob during an exact edit", async () => {
+    const created = await (
+      await publishAs(
+        preparedApp,
+        "<!doctype html><html><body><h1>Before</h1><p>Stable body.</p></body></html>",
+        { title: "Prepared source" },
+        as(owner.email),
+      )
+    ).json()
+    const getBlob = vi.spyOn(preparedCtx.blobs, "get")
+    const form = new FormData()
+    form.append("edits", JSON.stringify([{ old_str: "Before", new_str: "After" }]))
+    form.append("base_version", "1")
+
+    const edited = await preparedApp.request(`/v1/artifacts/${created.short_id}/versions`, {
+      method: "POST",
+      body: form,
+      headers: as(owner.email),
+    })
+
+    expect(edited.status).toBe(201)
+    // materializeEdits must read the immutable previous source once. The canonical
+    // post-publish pipeline then reuses the trusted new source for search, facts,
+    // anchor sweeping, and mention detection instead of reading the new blob back.
+    expect(getBlob).toHaveBeenCalledTimes(1)
+  })
+})
+
 describe("version restore", () => {
   it("restores a past version as a new current revision", async () => {
     const { short_id } = await (await upload("r.md", "alpha")).json()
