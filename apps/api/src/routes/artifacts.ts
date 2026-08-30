@@ -589,6 +589,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       draft?: { expiresAt: string }
     },
   ) => {
+    const requestStartedAt = performance.now()
     const tokenUser = tokenAuth ? tokenAuth.user : null
     // Republishing a version needs publish rights on that artifact; creating a
     // new one needs publish rights at the workspace level.
@@ -874,7 +875,12 @@ export const artifactRoutes = (ctx: AppContext) => {
         resolvedLinkRole && resolvedLinkRole !== "none" && password && !draft
           ? await hashPassword(password)
           : undefined
-      const { artifact, version } = await publish(
+      const coreStartedAt = performance.now()
+      const {
+        artifact,
+        version,
+        timings: publishTimings,
+      } = await publish(
         meta,
         blobs,
         {
@@ -920,6 +926,7 @@ export const artifactRoutes = (ctx: AppContext) => {
         },
         shortId,
       )
+      const coreFinishedAt = performance.now()
       // Ownership on creation: ONE row, the human behind the publish (an agent
       // publishes on behalf of whoever registered it) — this is what makes
       // `private` work, since workspace role grants nothing there. The agent
@@ -950,6 +957,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       }
       // Webhook + follower fan-out + thread resolves + realtime/render/re-anchor, all via
       // the one shared helper so this path can never drift from MCP publish or restore.
+      const afterPublishStartedAt = performance.now()
       await afterPublish(
         {
           meta,
@@ -976,6 +984,7 @@ export const artifactRoutes = (ctx: AppContext) => {
           ...(preparedSource !== undefined ? { preparedSource } : {}),
         },
       )
+      const afterPublishFinishedAt = performance.now()
       // Tag at publish time — the one-step "auto-tag on create/version" hook. `tags` is a
       // JSON array or a comma/space list on the multipart body; an editor can set it (the
       // publisher already holds publish standing on this artifact by having written the
@@ -1101,6 +1110,22 @@ export const artifactRoutes = (ctx: AppContext) => {
       // the host congratulating itself, the exact thing the reward surfaces must not do.
       const storedSlots = assertedOnly(
         await meta.getVersionData(artifact.id, version.n).catch(() => []),
+      )
+      const responseStartedAt = performance.now()
+      const duration = (value: number) => Math.max(0, value).toFixed(1)
+      c.header(
+        "Server-Timing",
+        [
+          `prepare;dur=${duration(coreStartedAt - requestStartedAt)}`,
+          `blob-put;dur=${duration(publishTimings.blobWriteMs)}`,
+          `store-content;dur=${duration(publishTimings.storeContentMs)}`,
+          `metadata;dur=${duration(
+            coreFinishedAt - coreStartedAt - publishTimings.storeContentMs,
+          )}`,
+          `after-publish;dur=${duration(afterPublishFinishedAt - afterPublishStartedAt)}`,
+          `post-publish;dur=${duration(responseStartedAt - afterPublishFinishedAt)}`,
+          `total;dur=${duration(responseStartedAt - requestStartedAt)}`,
+        ].join(", "),
       )
       return c.json(
         {

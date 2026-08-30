@@ -477,6 +477,9 @@ describe("publish html file", () => {
   it("echoes the stored content's sha256 so a caller can verify byte integrity", async () => {
     const content = "<h1>Checksum me</h1>"
     const res = await upload("sum.html", content, { title: "Sum" })
+    expect(res.headers.get("server-timing")).toMatch(
+      /^prepare;dur=\d+\.\d, blob-put;dur=\d+\.\d, store-content;dur=\d+\.\d, metadata;dur=\d+\.\d, after-publish;dur=\d+\.\d, post-publish;dur=\d+\.\d, total;dur=\d+\.\d$/,
+    )
     const json = await res.json()
     const expected = Buffer.from(
       await crypto.subtle.digest("SHA-256", new TextEncoder().encode(content)),

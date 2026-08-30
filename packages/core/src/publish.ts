@@ -101,6 +101,12 @@ export interface PublishInput {
 export interface PublishResult {
   artifact: ArtifactRecord
   version: VersionRecord
+  timings: {
+    /** Time spent in content-addressed blob writes. Bundles include every file and manifest. */
+    blobWriteMs: number
+    /** Classification, bundle work, and blob writes before the metadata commit. */
+    storeContentMs: number
+  }
 }
 
 export class PublishError extends Error {
@@ -161,6 +167,7 @@ interface StoredContent {
   blobKey: string
   contentType: string
   kind: ArtifactKind
+  blobWriteMs: number
   /** A skill bundle's frontmatter `name`, so a new artifact is titled from the skill
    *  rather than the zip's filename when the publisher gives no explicit title. */
   suggestedTitle?: string
@@ -178,6 +185,15 @@ async function storeContent(
   isBundle: boolean,
   spa: boolean,
 ): Promise<StoredContent> {
+  let blobWriteMs = 0
+  const put = async (data: Uint8Array): Promise<string> => {
+    const startedAt = performance.now()
+    try {
+      return await blobs.put(data)
+    } finally {
+      blobWriteMs += performance.now() - startedAt
+    }
+  }
   if (isBundle) {
     let unzipped: Record<string, Uint8Array>
     try {
@@ -203,7 +219,7 @@ async function storeContent(
       if (!path) continue
       const data = unzipped[raw]
       if (data === undefined) continue
-      files[path] = { key: await blobs.put(data), type: mimeFor(path) }
+      files[path] = { key: await put(data), type: mimeFor(path) }
     }
     // Entry point: an HTML site enters at index/shallowest .html; a skill/doc
     // bundle with no HTML enters at SKILL.md / README.md / shallowest markdown.
@@ -223,9 +239,10 @@ async function storeContent(
       if (name) suggestedTitle = name
     }
     return {
-      blobKey: await blobs.put(new TextEncoder().encode(JSON.stringify(manifest))),
+      blobKey: await put(new TextEncoder().encode(JSON.stringify(manifest))),
       contentType: isSkill ? SKILL_CONTENT_TYPE : BUNDLE_CONTENT_TYPE,
       kind: "bundle",
+      blobWriteMs,
       suggestedTitle,
     }
   }
@@ -271,7 +288,7 @@ async function storeContent(
     // (full doc by content, or an explicit .html name).
     contentType = "text/markdown"
   }
-  return { blobKey: await blobs.put(bytes), contentType, kind: "file" }
+  return { blobKey: await put(bytes), contentType, kind: "file", blobWriteMs }
 }
 
 /**
@@ -284,13 +301,15 @@ export async function publish(
   input: PublishInput,
   shortId?: string,
 ): Promise<PublishResult> {
-  const { blobKey, contentType, kind, suggestedTitle } = await storeContent(
+  const storeStartedAt = performance.now()
+  const { blobKey, contentType, kind, suggestedTitle, blobWriteMs } = await storeContent(
     blobs,
     input.bytes,
     input.filename,
     input.isBundle,
     !!input.spa,
   )
+  const timings = { blobWriteMs, storeContentMs: performance.now() - storeStartedAt }
 
   const author = input.author ?? "anonymous"
 
@@ -341,7 +360,7 @@ export async function publish(
       if (newTitle !== artifact.title || nextSlug !== artifact.slug)
         await meta.setArtifactTitle(artifact.id, newTitle, nextSlug)
     }
-    return { artifact: (await meta.getByShortId(shortId)) as ArtifactRecord, version }
+    return { artifact: (await meta.getByShortId(shortId)) as ArtifactRecord, version, timings }
   }
 
   const title =
@@ -380,7 +399,11 @@ export async function publish(
     message: input.message ?? "first publish",
     name: input.name ?? null,
   })
-  return { artifact: (await meta.getByShortId(artifact.short_id)) as ArtifactRecord, version }
+  return {
+    artifact: (await meta.getByShortId(artifact.short_id)) as ArtifactRecord,
+    version,
+    timings,
+  }
 }
 
 // Name-first ref: the slug reads first, the short id is the final token. parseRef
