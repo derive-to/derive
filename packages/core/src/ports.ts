@@ -483,6 +483,8 @@ export interface VersionRecord {
    *  about, so an unchanged hash copies the previous summary forward rather than paying a
    *  model for an identical one. */
   summary_src_hash: string | null
+  /** Content-addressed key of the validated structural sidecar for these exact source bytes. */
+  prepared_key: string | null
   created_at: string
 }
 
@@ -798,6 +800,14 @@ export interface ArtifactStore {
     n: number,
     fields: { summary?: string | null; summary_src_hash?: string | null },
   ): Promise<void>
+  /** Publish a structural sidecar pointer only while this version still names the source
+   *  bytes that produced it. False means a newer in-place edit won the race. */
+  setVersionPrepared(
+    artifactId: string,
+    n: number,
+    expectedBlobKey: string,
+    preparedKey: string,
+  ): Promise<boolean>
   /** Set the full-page or marked-render variant's result (blob key + status + error).
    *  Partial; only given fields are written. Separate from `setVersionPreview` (the
    *  OG crop) because these two variants are best-effort and written independently —

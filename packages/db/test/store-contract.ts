@@ -234,6 +234,15 @@ export function runStoreContract(
     it("replaces only the exact current version and clears its derived data", async () => {
       const a = await store.createArtifact(newArtifact())
       const v1 = await store.addVersion(a.id, newVersion({ blob_key: "working-1" }))
+      expect(v1.prepared_key).toBeNull()
+      await expect(store.setVersionPrepared(a.id, v1.n, v1.blob_key, "prepared-1")).resolves.toBe(
+        true,
+      )
+      expect((await store.getVersion(a.id, v1.n))?.prepared_key).toBe("prepared-1")
+      await expect(
+        store.setVersionPrepared(a.id, v1.n, "stale-source", "prepared-stale"),
+      ).resolves.toBe(false)
+      expect((await store.getVersion(a.id, v1.n))?.prepared_key).toBe("prepared-1")
       await store.setVersionData(a.id, v1.n, [
         { id: uuid(), slot: "metric", json: "1", size_bytes: 1, gen: 1 },
       ])
@@ -243,7 +252,12 @@ export function runStoreContract(
         { n: v1.n, blobKey: v1.blob_key },
         newVersion({ blob_key: "working-2", message: "small edit" }),
       )
-      expect(replaced).toMatchObject({ n: 1, blob_key: "working-2", message: "small edit" })
+      expect(replaced).toMatchObject({
+        n: 1,
+        blob_key: "working-2",
+        message: "small edit",
+        prepared_key: null,
+      })
       expect(await store.listVersions(a.id)).toHaveLength(1)
       expect(await store.getVersionData(a.id, 1)).toEqual([])
 

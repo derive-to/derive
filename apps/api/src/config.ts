@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto"
 import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import { join, resolve } from "node:path"
 import { slackFromEnv, subdomainBaseFromEnv, superAdminsFromEnv } from "./lib/env"
+import { type PreparedReadMode, parsePreparedReadMode } from "./lib/prepared-version"
 import { parseSignupMode, type SignupMode } from "./lib/signup-policy"
 import { log } from "./log"
 
@@ -94,6 +95,8 @@ export interface Config {
    *  (see scripts/dev-prod-db.sh) without joining that database's worker pool. */
   backgroundWorkers: boolean
   previews: boolean
+  /** Structural sidecar rollout and kill switch. */
+  preparedReads: PreparedReadMode
   /** EXPERIMENTAL: hosted automation runs on this Node deploy — the API process
    *  materializes due schedules and executes each run by spawning the derive CLI as a
    *  child process (`derive runner run <capability token>`). Default false: queued
@@ -216,6 +219,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     signupMode: parseSignupMode(env.DERIVE_SIGNUP_MODE),
     backgroundWorkers: env.DERIVE_BACKGROUND_WORKERS !== "0",
     previews: env.DERIVE_PREVIEWS === "true",
+    preparedReads: parsePreparedReadMode(env.DERIVE_PREPARED_READS),
     hostedRuns: env.DERIVE_HOSTED_RUNS === "true",
     runnerBin: env.DERIVE_RUNNER_BIN || "derive",
     analytics: env.DERIVE_ANALYTICS !== "false",

@@ -48,9 +48,9 @@ export interface DocNode {
   /** The address: `slide:2`, `sec:pricing`, `@3`, `style:1`, `doc:head`… */
   ref: string
   type: DocNodeType
-  /** Offset of the node's first byte. Internal — never serialized. */
+  /** UTF-16 string offset of the node's first character. Internal — never serialized. */
   start: number
-  /** Offset just past its last byte. Internal — never serialized. */
+  /** UTF-16 string offset just past its last character. Internal — never serialized. */
   end: number
   /** Heading text, landmark label, or a slide's first heading. Clipped. */
   title?: string

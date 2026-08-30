@@ -176,6 +176,8 @@ export const version = pgTable(
     // See the matching comment in schema.ts. Mirrors schema.ts.
     summary: text("summary"),
     summary_src_hash: text("summary_src_hash"),
+    // Mirrors schema.ts. The sidecar header owns generation and source validation.
+    prepared_key: text("prepared_key"),
     created_at: text("created_at").notNull().$defaultFn(isoNow),
   },
   // (artifact_id, n) is unique — addVersion relies on it to turn a concurrent

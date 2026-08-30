@@ -193,6 +193,7 @@ export function registerCheckpointTool(tc: ToolContext): void {
             background: ctx.background,
             search: ctx.search,
             summarize: ctx.summarize,
+            preparedReads: ctx.preparedReads,
             baseUrl: ctx.deps.baseUrl,
           },
           artifact,

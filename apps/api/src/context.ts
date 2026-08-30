@@ -11,6 +11,7 @@ import {
   can,
   capRole,
   DEFAULT_VERSION_WINDOW_MS,
+  decodePreparedVersion,
   effectiveRole,
   FREE_SEAT_LIMIT,
   isAuthenticated,
@@ -22,6 +23,7 @@ import {
   newId,
   type OAuthGrantWorkspaceRead,
   type OrgSettings,
+  type PreparedVersion,
   type Principal,
   principalActor,
   principalOwnerId,
@@ -30,6 +32,7 @@ import {
   roleAllows,
   type SearchIndex,
   type SubscriptionRecord,
+  type VersionRecord,
   type WorkspaceRecord,
 } from "@derive/core"
 import type { Context } from "hono"
@@ -50,11 +53,13 @@ import {
   unlockCookie,
   unlockToken,
 } from "./lib/crypto"
+import { cachedPreparedVersion, cachePreparedVersion } from "./lib/doc-structure-cache"
 import { fail, VIEWER_COOKIE, WS_COOKIE } from "./lib/http"
 import { INSTANCE_SETTINGS_ID } from "./lib/instance-settings"
 import { catalogOf, type GatewayConfig, type ModelCatalog } from "./lib/model-catalog"
 import { type ModelLibrary, modelSource, readLibrary } from "./lib/model-library"
 import { makeOauthAgent } from "./lib/oauth-agent"
+import type { PreparedReadMode } from "./lib/prepared-version"
 import {
   clientIp,
   inMemoryRateLimiters,
@@ -126,6 +131,9 @@ export interface SessionUser {
 export interface AppDeps {
   meta: MetaStore
   blobs: BlobStore
+  /** Structural sidecar rollout. Direct embedders and tests default off; runtime
+   *  entrypoints pass their validated environment mode. */
+  preparedReads?: PreparedReadMode
   /**
    * How long an ATTENDED turn may run before it must settle itself, in ms.
    *
@@ -383,6 +391,8 @@ export type AppContext = ReturnType<typeof buildContext>
 export function buildContext(deps: AppDeps) {
   const { meta, blobs } = deps
   const sourceTextCache = new SourceTextCache()
+  const preparedReads = deps.preparedReads ?? "off"
+  const preparedInflight = new Map<string, Promise<PreparedVersion | null>>()
   // Realtime relay + presence. In-process by default (self-host stays zero-config);
   // the edge entry injects a Durable Object backplane. `bus`/`presence` are facades
   // over it, so the publish + heartbeat call sites are unchanged.
@@ -1526,6 +1536,66 @@ export function buildContext(deps: AppDeps) {
       return { text, bytes: Math.max(data.byteLength, text.length * 2) }
     })
 
+  /** Load one validated sidecar. Callers must complete artifact authorization first. */
+  const preparedVersion = async (version: VersionRecord): Promise<PreparedVersion | null> => {
+    if (preparedReads !== "read" || !version.prepared_key) return null
+    const preparedKey = version.prepared_key
+    const cached = cachedPreparedVersion(version)
+    if (cached) return cached
+    const pending = preparedInflight.get(preparedKey)
+    if (pending) return pending
+    const load = (async (): Promise<PreparedVersion | null> => {
+      try {
+        const bytes = await blobs.get(preparedKey)
+        if (!bytes) return null
+        const prepared = decodePreparedVersion(bytes, {
+          sourceKey: version.blob_key,
+          contentType: version.content_type,
+          ...(version.size_bytes > 0 ? { sourceBytes: version.size_bytes } : {}),
+        })
+        if (!prepared) return null
+        cachePreparedVersion(prepared, preparedKey, bytes.byteLength)
+        return prepared
+      } catch {
+        return null
+      }
+    })()
+    preparedInflight.set(preparedKey, load)
+    try {
+      return await load
+    } finally {
+      preparedInflight.delete(preparedKey)
+    }
+  }
+
+  /** Read one exact UTF-8 range and share its bytes through the existing source cache budget. */
+  const sourceRange = async (
+    version: VersionRecord,
+    offset: number,
+    length: number,
+  ): Promise<string | null> => {
+    if (!blobs.getRange || offset < 0 || length <= 0 || offset + length > version.size_bytes)
+      return null
+    const key = `range:${version.content_type}:${version.blob_key}:${offset}:${length}`
+    return sourceTextCache.get(key, async () => {
+      try {
+        const data = await blobs.getRange?.(version.blob_key, { offset, length })
+        if (!data || data.byteLength !== length) return null
+        const text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(data)
+        if (new TextEncoder().encode(text).byteLength !== data.byteLength) return null
+        log.info("source range fetched", {
+          artifact: version.artifact_id,
+          n: version.n,
+          range_bytes: data.byteLength,
+          source_bytes: version.size_bytes,
+        })
+        return { text, bytes: Math.max(data.byteLength, text.length * 2) }
+      } catch {
+        return null
+      }
+    })
+  }
+
   // A caller's role on a collection: the static token is owner; otherwise the
   // creator, else their explicit collection-member role, else — when the
   // collection's own workspace_access is `member` — their workspace SEAT role,
@@ -1751,6 +1821,7 @@ export function buildContext(deps: AppDeps) {
     presence,
     backplane,
     analyticsOn,
+    preparedReads,
     versionWindowMs,
     allowOrigins,
     defaultRole,
@@ -1835,6 +1906,8 @@ export function buildContext(deps: AppDeps) {
     collectionRole,
     collectionStandingRole,
     sourceText,
+    preparedVersion,
+    sourceRange,
     resolveArtifact,
     requireArtifact,
     resolveArtifacts,

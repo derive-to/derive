@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { DECK_CONTENT_TYPE, deriveFacts } from "@derive/core"
+import { DECK_CONTENT_TYPE, deriveFacts, sectionOf } from "@derive/core"
 import { afterAll, describe, expect, it, vi } from "vitest"
 import { appWithGrant } from "./mcp-helpers"
 
@@ -81,7 +81,9 @@ const DECK = `<!doctype html><html><head><title>d</title><style>.slide{opacity:0
 
 /** A published deck plus a ready MCP session. */
 const setup = async (name: string) => {
-  const { app, blobs, meta, token } = appWithGrant(dir, name, "openid derive:read derive:publish")
+  const { app, blobs, meta, token } = appWithGrant(dir, name, "openid derive:read derive:publish", {
+    preparedReads: "read",
+  })
   await rpc(app, token, initBody)
   await meta.setMembership({ id: "m_o", org_id: "default", user_id: "u_o", role: "owner" })
   const form = new FormData()
@@ -96,8 +98,14 @@ const setup = async (name: string) => {
   return { app, blobs, token, short_id, meta }
 }
 
-const setupDocument = async (name: string, source: string) => {
-  const { app, blobs, meta, token } = appWithGrant(dir, name, "openid derive:read derive:publish")
+const setupDocument = async (
+  name: string,
+  source: string,
+  preparedReads: "off" | "shadow" | "read" = "read",
+) => {
+  const { app, blobs, meta, token } = appWithGrant(dir, name, "openid derive:read derive:publish", {
+    preparedReads,
+  })
   await rpc(app, token, initBody)
   await meta.setMembership({ id: `m_${name}`, org_id: "default", user_id: "u_o", role: "owner" })
   const form = new FormData()
@@ -109,7 +117,7 @@ const setupDocument = async (name: string, source: string) => {
     headers: { authorization: `Bearer ${token}` },
   })
   const { short_id } = (await res.json()) as { short_id: string }
-  return { app, blobs, token, short_id }
+  return { app, blobs, token, short_id, meta }
 }
 
 describe("read map / node", () => {
@@ -133,12 +141,181 @@ describe("read map / node", () => {
   })
 
   it("returns one slide's exact source, far under a full read", async () => {
-    const { app, token, short_id } = await setup("map-node-src")
+    const { app, blobs, token, short_id } = await setup("map-node-src")
+    const get = vi.spyOn(blobs, "get")
+    const getRange = vi.spyOn(blobs, "getRange")
+    get.mockClear()
+    getRange.mockClear()
     const one = await readJson(app, token, { short_id, node: "slide:2", format: "html" })
     expect(one.body).toContain('data-derive-slide="1"')
     expect(one.body).toContain("The ask")
     expect(one.body).not.toContain("The problem")
     expect(one.body.length).toBeLessThan(DECK.length / 2)
+    expect(get).not.toHaveBeenCalled()
+    expect(getRange).toHaveBeenCalledTimes(1)
+
+    const again = await readJson(app, token, { short_id, node: "slide:2", format: "html" })
+    expect(again).toEqual(one)
+    expect(getRange).toHaveBeenCalledTimes(1)
+  })
+
+  it("reads one nested heading section as one exact UTF-8 range", async () => {
+    const source = `<!doctype html><html><body>
+      <h2>Parent 🚀</h2><p>Café context.</p>
+      <h3>Child</h3><p>Nested évidence.</p>
+      <h2>Next</h2><p>Not selected.</p>
+    </body></html>`
+    const { app, blobs, token, short_id } = await setupDocument("section-range", source)
+    const get = vi.spyOn(blobs, "get")
+    const getRange = vi.spyOn(blobs, "getRange")
+    get.mockClear()
+    getRange.mockClear()
+
+    const exact = await readTool(app, token, { short_id, section: "parent", format: "html" })
+    const expected = sectionOf(source, "text/html", "parent")
+    expect(expected).not.toBeNull()
+    expect(exact.text.endsWith(expected as string)).toBe(true)
+    expect(exact.text).toContain("Nested évidence")
+    expect(exact.text).not.toContain("Not selected")
+    expect(get).not.toHaveBeenCalled()
+    expect(getRange).toHaveBeenCalledTimes(1)
+  })
+
+  it("falls back exactly when the sidecar is corrupt", async () => {
+    const source = "<!doctype html><html><body><h2>One</h2><p>Exact fallback.</p></body></html>"
+    const { app, blobs, meta, token, short_id } = await setupDocument("sidecar-corrupt", source)
+    const artifact = await meta.getByShortId(short_id)
+    const version = artifact ? await meta.getVersion(artifact.id, 1) : null
+    if (!artifact || !version?.prepared_key) throw new Error("prepared version missing")
+    const corruptKey = await blobs.put(new TextEncoder().encode("not json"))
+    await meta.setVersionPrepared(artifact.id, 1, version.blob_key, corruptKey)
+    const get = vi.spyOn(blobs, "get")
+    const getRange = vi.spyOn(blobs, "getRange")
+    get.mockClear()
+    getRange.mockClear()
+
+    const one = await readJson(app, token, { short_id, node: "sec:one", format: "html" })
+    expect(one.body).toContain("Exact fallback.")
+    expect(get).toHaveBeenCalledTimes(2)
+    expect(getRange).not.toHaveBeenCalled()
+  })
+
+  it("falls back to one full read when the source range is unavailable", async () => {
+    const source =
+      "<!doctype html><html><body><h2>Fallback</h2><p>The adapter stays compatible.</p></body></html>"
+    const { app, blobs, token, short_id } = await setupDocument("sidecar-range-fallback", source)
+    const get = vi.spyOn(blobs, "get")
+    const getRange = vi.spyOn(blobs, "getRange").mockResolvedValue(null)
+    get.mockClear()
+
+    const one = await readJson(app, token, { short_id, node: "sec:fallback", format: "html" })
+    expect(one.body).toContain("adapter stays compatible")
+    expect(getRange).toHaveBeenCalledTimes(1)
+    expect(get).toHaveBeenCalledTimes(1)
+  })
+
+  it("keeps shadow and off modes on the full-source path", async () => {
+    const source =
+      "<!doctype html><html><body><h2>Mode</h2><p>The exact baseline stays available.</p></body></html>"
+    const shadow = await setupDocument("sidecar-shadow", source, "shadow")
+    const shadowArtifact = await shadow.meta.getByShortId(shadow.short_id)
+    const shadowVersion = shadowArtifact ? await shadow.meta.getVersion(shadowArtifact.id, 1) : null
+    expect(shadowVersion?.prepared_key).toBeTruthy()
+    const shadowGet = vi.spyOn(shadow.blobs, "get")
+    const shadowRange = vi.spyOn(shadow.blobs, "getRange")
+    shadowGet.mockClear()
+
+    const shadowRead = await readJson(shadow.app, shadow.token, {
+      short_id: shadow.short_id,
+      node: "sec:mode",
+      format: "html",
+    })
+    expect(shadowRead.body).toContain("exact baseline")
+    expect(shadowGet).toHaveBeenCalledTimes(1)
+    expect(shadowRange).not.toHaveBeenCalled()
+
+    const off = await setupDocument("sidecar-off", `${source}\n<!-- off -->`, "off")
+    const offArtifact = await off.meta.getByShortId(off.short_id)
+    const offVersion = offArtifact ? await off.meta.getVersion(offArtifact.id, 1) : null
+    expect(offVersion?.prepared_key).toBeNull()
+  })
+
+  it("keeps a multi-megabyte far-tail node exact while reading under 3% of its source", async () => {
+    const sections = Array.from({ length: 48 }, (_, index) => {
+      const marker = index === 46 ? "The far-tail approval is ready. 🚀" : `Routine ${index + 1}.`
+      return `<section><h2>Part ${index + 1}</h2><p>${marker}</p><p>${"context café ".repeat(4_800)}</p></section>`
+    }).join("\n")
+    const source = `<!doctype html><html><body>${sections}</body></html>`
+    expect(new TextEncoder().encode(source).byteLength).toBeGreaterThan(3_000_000)
+    const fast = await setupDocument("sidecar-long-read", source)
+    const artifact = await fast.meta.getByShortId(fast.short_id)
+    const version = artifact ? await fast.meta.getVersion(artifact.id, 1) : null
+    if (!version?.prepared_key) throw new Error("prepared version missing")
+    const sidecar = await fast.blobs.get(version.prepared_key)
+    expect(sidecar?.byteLength).toBeLessThan(version.size_bytes / 100)
+
+    const get = vi.spyOn(fast.blobs, "get")
+    const getRange = vi.spyOn(fast.blobs, "getRange")
+    get.mockClear()
+    getRange.mockClear()
+    const one = await readJson(fast.app, fast.token, {
+      short_id: fast.short_id,
+      node: "sec:part-47",
+      format: "html",
+    })
+
+    expect(one.body).toContain("far-tail approval")
+    expect(one.body).not.toContain("Routine 46")
+    expect(get).not.toHaveBeenCalled()
+    expect(getRange).toHaveBeenCalledTimes(1)
+    const range = getRange.mock.calls[0]?.[1]
+    expect(range?.length).toBeLessThan(version.size_bytes * 0.03)
+
+    const baseline = await setupDocument("sidecar-long-shadow", source, "shadow")
+    const baselineGet = vi.spyOn(baseline.blobs, "get")
+    baselineGet.mockClear()
+    const full = await readJson(baseline.app, baseline.token, {
+      short_id: baseline.short_id,
+      node: "sec:part-47",
+      format: "html",
+    })
+    expect(full).toMatchObject({
+      body: one.body,
+      node: one.node,
+      type: one.type,
+      bytes: one.bytes,
+      format: one.format,
+    })
+    expect(baselineGet).toHaveBeenCalledTimes(1)
+  })
+
+  it("reads slide 47 from a 48-slide deck with one small range", async () => {
+    const slides = Array.from(
+      { length: 48 },
+      (_, index) =>
+        `<section class="slide" data-derive-slide="${index}"><h2>Slide ${index + 1}</h2><p>${index === 46 ? "The launch gate is green." : "Routine evidence."}</p><p>${"deck context ".repeat(320)}</p></section>`,
+    ).join("\n")
+    const source = `<!doctype html><html><body>${slides}<script>parent.postMessage({source:"derive-deck",type:"state",i:0,total:48},"*")</script></body></html>`
+    const fast = await setupDocument("sidecar-deck-47", source)
+    const artifact = await fast.meta.getByShortId(fast.short_id)
+    const version = artifact ? await fast.meta.getVersion(artifact.id, 1) : null
+    if (!version) throw new Error("deck version missing")
+    expect(version.content_type).toBe(DECK_CONTENT_TYPE)
+    const get = vi.spyOn(fast.blobs, "get")
+    const getRange = vi.spyOn(fast.blobs, "getRange")
+    get.mockClear()
+    getRange.mockClear()
+
+    const one = await readJson(fast.app, fast.token, {
+      short_id: fast.short_id,
+      node: "slide:47",
+      format: "html",
+    })
+    expect(one.body).toContain("launch gate is green")
+    expect(one.body).not.toContain("Slide 46")
+    expect(get).not.toHaveBeenCalled()
+    expect(getRange).toHaveBeenCalledTimes(1)
+    expect(getRange.mock.calls[0]?.[1].length).toBeLessThan(version.size_bytes / 40)
   })
 
   it("names the refs you could have used when one does not exist", async () => {

@@ -869,6 +869,7 @@ export function makeRepos(db: SqliteDb) {
         preview_marked_error: null,
         summary: null,
         summary_src_hash: null,
+        prepared_key: null,
         created_at: now,
       })
       .where(
@@ -1174,6 +1175,27 @@ export function makeRepos(db: SqliteDb) {
       .set(fields)
       .where(and(eq(version.artifact_id, artifactId), eq(version.n, n)))
       .run()
+  }
+
+  const setVersionPrepared = async (
+    artifactId: string,
+    n: number,
+    expectedBlobKey: string,
+    preparedKey: string,
+  ): Promise<boolean> => {
+    const updated = await db
+      .update(version)
+      .set({ prepared_key: preparedKey })
+      .where(
+        and(
+          eq(version.artifact_id, artifactId),
+          eq(version.n, n),
+          eq(version.blob_key, expectedBlobKey),
+        ),
+      )
+      .returning({ id: version.id })
+      .get()
+    return !!updated
   }
 
   const setVersionPreviewVariant = async (
@@ -5470,6 +5492,7 @@ export function makeRepos(db: SqliteDb) {
     reclassifyVersion,
     setVersionPreview,
     setVersionSummary,
+    setVersionPrepared,
     setVersionPreviewVariant,
     listArtifacts,
     indexArtifact,

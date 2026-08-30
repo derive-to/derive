@@ -35,6 +35,7 @@ import {
 } from "./lib/env"
 import { catalogFromGateway, type GatewayConfig } from "./lib/model-catalog"
 import { getInstanceSlot } from "./lib/model-library"
+import { parsePreparedReadMode } from "./lib/prepared-version"
 import { nativeLimiter } from "./lib/rate-limit"
 import { liveD1, requestD1 } from "./lib/request-d1"
 import { isApiPath } from "./lib/serve-web"
@@ -183,6 +184,7 @@ export interface Env {
   DERIVE_SANDBOX_URL?: string
   DERIVE_SUPERADMIN_EMAILS?: string
   DERIVE_SIGNUP_MODE?: string
+  DERIVE_PREPARED_READS?: string
   // Base domain for vanity subdomains (domain mode); unset = off.
   DERIVE_SUBDOMAIN_BASE?: string
   // Cloudflare for SaaS (BYO custom domains); all three unset = custom domains off.
@@ -330,6 +332,7 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
           .map((x) => x.trim())
           .filter(Boolean),
         blobs: new R2BlobStore(env.BUCKET),
+        preparedReads: parsePreparedReadMode(env.DERIVE_PREPARED_READS),
         // THE CEILING THIS TIER ACTUALLY HAS. An attended turn is detached through
         // `background()` → waitUntil, which the runtime ends a short while after the response is
         // sent — the isolate stops, so a turn that overruns writes nothing and leaves its session
