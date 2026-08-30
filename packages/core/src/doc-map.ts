@@ -209,7 +209,24 @@ export const docMap = (source: string, contentType: string): DocMap => {
     return { kind, nodes: [{ ref: "doc:body", type: "body", start: 0, end: source.length }] }
 
   // 2. Style/script blocks outside the content, addressable in their own right.
-  const inAnchor = (pos: number) => anchors.some((a) => pos >= a.start && pos < a.end)
+  // Asset tags and anchors are both ordered, but future anchor families may overlap.
+  // Prefix maxima preserve "inside any anchor" while reducing each lookup from a full scan
+  // to a binary search.
+  const orderedAnchors = [...anchors].sort((a, b) => a.start - b.start || b.end - a.end)
+  const anchorStarts = orderedAnchors.map((a) => a.start)
+  const prefixMaxEnd: number[] = []
+  for (const anchor of orderedAnchors)
+    prefixMaxEnd.push(Math.max(prefixMaxEnd.at(-1) ?? -1, anchor.end))
+  const inAnchor = (pos: number): boolean => {
+    let low = 0
+    let high = anchorStarts.length
+    while (low < high) {
+      const middle = (low + high) >>> 1
+      if ((anchorStarts[middle] ?? Number.POSITIVE_INFINITY) <= pos) low = middle + 1
+      else high = middle
+    }
+    return low > 0 && (prefixMaxEnd[low - 1] ?? -1) > pos
+  }
   const blocks = html ? assetBlocks(tags(source), inAnchor) : []
   let styles = 0
   let scripts = 0

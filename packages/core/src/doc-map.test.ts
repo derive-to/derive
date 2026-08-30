@@ -146,6 +146,20 @@ describe("docMap: what it maps", () => {
     // Only the deck's own trailing protocol script is top level.
     expect(map.nodes.filter((n) => n.type === "script")).toHaveLength(1)
   })
+
+  it("keeps only top-level assets when many sections carry local scripts", () => {
+    const sections = Array.from(
+      { length: 240 },
+      (_, i) => `<h2>Section ${i}</h2><p>body</p><script>const local${i}=true</script>`,
+    ).join("")
+    const source = `<html><body><style>.top{color:red}</style><script>const top=true</script>${sections}</body></html>`
+    const map = docMap(source, HTML)
+
+    expect(map.nodes.filter((node) => node.type === "style")).toHaveLength(1)
+    expect(map.nodes.filter((node) => node.type === "script")).toHaveLength(1)
+    expect(map.nodes.filter((node) => node.type === "section")).toHaveLength(240)
+    expect(map.nodes.map((node) => source.slice(node.start, node.end)).join("")).toBe(source)
+  })
 })
 
 describe("docMap: parity with the lenses it replaces", () => {
