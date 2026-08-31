@@ -2036,7 +2036,18 @@
               "unknown",
               null
             ],
-            "description": "Whether the instance App has every current permission; null when no live App exists"
+            "description": "Whether the instance App has every current permission and event; null when no live App exists"
+          },
+          "app_webhook_state": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "ready",
+              "update_required",
+              "unknown",
+              null
+            ],
+            "description": "Whether signed GitHub workflow completion events can reach this instance"
           },
           "app_settings_url": {
             "type": "string",
@@ -2100,6 +2111,7 @@
           "app_slug",
           "app_owner_login",
           "app_permissions_state",
+          "app_webhook_state",
           "app_settings_url",
           "can_manage_app",
           "accounts"

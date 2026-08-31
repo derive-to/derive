@@ -173,6 +173,11 @@ export function IntegrationsSection() {
     success: "GitHub disconnected",
     invalidate: [githubQuery().queryKey, connectionsQuery().queryKey],
   })
+  const configureGithubWebhook = useApiMutation({
+    mutationFn: () => api.configureGithubWebhook(),
+    success: "GitHub completion updates enabled",
+    invalidate: [githubQuery().queryKey],
+  })
   const confirmDisconnectGithub = () => {
     const connectionId = disconnectingGithub?.connection_id
     if (!connectionId) return
@@ -304,21 +309,56 @@ export function IntegrationsSection() {
               }
               meta={
                 github.app_permissions_state === "update_required"
-                  ? `${github.app_owner_login ? `@${github.app_owner_login} owns this App. ` : ""}An App owner or manager must grant Actions read and write before Derive can run workflows.`
+                  ? `${github.app_owner_login ? `@${github.app_owner_login} owns this App. ` : ""}An App owner or manager must grant Actions read and write and enable workflow run events.`
                   : github.app_permissions_state === "ready"
-                    ? `${github.app_owner_login ? `Owned by @${github.app_owner_login}. ` : ""}The App permissions are current.`
-                    : "Derive could not confirm the App permissions. Existing connections remain available."
+                    ? `${github.app_owner_login ? `Owned by @${github.app_owner_login}. ` : ""}The App permissions and events are current.`
+                    : "Derive could not confirm the App settings. Existing connections remain available."
               }
               actions={
                 github.app_permissions_state === "update_required" &&
                 github.can_manage_app &&
                 github.app_settings_url ? (
                   <Button data-testid="github-update-app" variant="ghost" size="sm" asChild>
-                    <a href={github.app_settings_url}>Open App settings</a>
+                    <a href={github.app_settings_url}>Review App settings</a>
                   </Button>
                 ) : undefined
               }
             />
+            {github.app_permissions_state === "ready" && (
+              <ListRow
+                title={
+                  <span className="flex flex-wrap items-center gap-2">
+                    Workflow completion updates
+                    {github.app_webhook_state === "ready" ? (
+                      <StatusBadge tone="ok">Active</StatusBadge>
+                    ) : github.app_webhook_state === "update_required" ? (
+                      <StatusBadge tone="attention">Setup required</StatusBadge>
+                    ) : (
+                      <StatusBadge tone="muted">Status unknown</StatusBadge>
+                    )}
+                  </span>
+                }
+                meta={
+                  github.app_webhook_state === "ready"
+                    ? "GitHub sends signed workflow completion events to Derive."
+                    : "Finish the signed webhook setup so Derive can receive workflow completion events."
+                }
+                actions={
+                  github.can_manage_app && github.app_webhook_state !== "ready" ? (
+                    <Button
+                      data-testid="github-configure-webhook"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => configureGithubWebhook.mutate()}
+                      loading={configureGithubWebhook.isPending}
+                      disabled={configureGithubWebhook.isPending}
+                    >
+                      Enable updates
+                    </Button>
+                  ) : undefined
+                }
+              />
+            )}
             {github.accounts.map((account) => (
               <ListRow
                 key={account.installation_id}

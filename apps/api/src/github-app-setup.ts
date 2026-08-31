@@ -30,8 +30,9 @@ export const MANIFEST_PERMISSIONS: Record<string, string> = {
   ...REQUIRED_PERMISSIONS,
   ...ACTIONS_PERMISSION,
 }
-// Scheduled/manual runs query GitHub directly. No webhook collection is part of this path.
-export const REQUIRED_EVENTS: string[] = []
+// Completion events let Derive react when an external workflow finishes. The receiver accepts
+// only signed payloads and ignores every event except the narrow workflow-run contract.
+export const REQUIRED_EVENTS = ["workflow_run"]
 
 /** The GitHub App manifest: what permissions/events/URLs the new App is born with.
  *  Consumes REQUIRED_PERMISSIONS/REQUIRED_EVENTS so a fresh App is always current.
@@ -50,6 +51,10 @@ export const buildManifest = (baseUrl: string, host: string) => ({
   setup_on_update: true,
   callback_urls: [new URL("/v1/github/authorize", baseUrl).toString()],
   request_oauth_on_install: false,
+  hook_attributes: {
+    url: new URL("/v1/github/webhook", baseUrl).toString(),
+    active: true,
+  },
   // Public so it can be installed on organizations too, not just the owner's
   // personal account (GitHub restricts a private App to its owner account). It is
   // server-narrowed to PR reads plus top-level comments, and only matters once bound via our
@@ -112,7 +117,7 @@ export function manifestFormHTML(props: { baseUrl: string; state: string }): str
         <button class="btn ghost" type="submit" formnovalidate data-personal>Use personal account</button>
       </div>
     </form>
-    <p class="foot">Derive asks for <strong>Metadata: read</strong>, <strong>Pull requests: write</strong>, and <strong>Actions: write</strong>. Server-side policies limit these to PR reads, one top-level PR comment, workflow status, and dispatch of workflows named <strong>derive-*.yml</strong>.</p>
+    <p class="foot">Derive asks for <strong>Metadata: read</strong>, <strong>Pull requests: write</strong>, and <strong>Actions: write</strong>. Server-side policies limit these to PR reads, one top-level PR comment, workflow status, dispatch of workflows named <strong>derive-*.yml</strong>, and signed workflow completion events.</p>
     <script>
       (function(){
         var form=document.getElementById("f"),owner=document.getElementById("owner"),personal=${JSON.stringify(personalAction)};

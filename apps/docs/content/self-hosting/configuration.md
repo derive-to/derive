@@ -315,11 +315,14 @@ one Derive workspace. Each workspace keeps an independent connection.
 
 Derive requests **Metadata: read**, **Pull requests: write**, and **Actions: write**. It uses
 these permissions for pull request reads, top-level pull request comments, workflow status, and
-workflow dispatch. Derive limits dispatch to workflow files named `derive-*.yml`.
+workflow dispatch. Derive limits dispatch to workflow files named `derive-*.yml`. The App also
+subscribes to `workflow_run`. Derive verifies each webhook signature before it accepts a workflow
+completion event.
 
-If a release adds an App permission, an App owner or manager must first update the shared App.
-Each connected GitHub account owner must then approve the permission update for that
-installation. Derive shows these as separate actions in **Settings → Integrations**.
+If a release adds an App permission or event, an App owner or manager must first update the shared
+App. Each connected GitHub account owner must then approve the update for that installation.
+Derive shows these as separate actions in **Settings → Integrations**. An instance operator can
+also repair the webhook URL and signing secret there. The secret stays on the server.
 
 ---
 
