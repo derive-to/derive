@@ -528,7 +528,14 @@ export function registerUseTool(tc: ToolContext): void {
       // PAYER guard, mirroring the REST ask (routes/contexts.ts): the asker pays, then
       // owner-lend, then the pool. After the dedupe join for the same reason — joining an
       // open session creates no new work.
+      //
+      // A live external runner is the execution plan. It polls with its own registered-agent
+      // bearer or an owner's grant and spends its own model entitlement, so requiring a
+      // Derive-hosted model plan here would reject BYO execution that Derive never pays for.
+      // Liveness is deliberately narrow (90s): if no runner is actually present, retain the
+      // preflight and refuse work that would otherwise be stranded or fall into hosted compute.
       if (
+        !runnerOnline(hit.x) &&
         !(await canPayForAgent(ctx.meta, {
           orgId: hit.x.org_id,
           agentId: hit.x.agent_id,

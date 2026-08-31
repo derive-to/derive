@@ -53,6 +53,7 @@ import { RUN_LEASE_MS } from "../lib/run-lifecycle"
 import { type DeltaStream, makeDeltaStream } from "../lib/session-stream"
 import { runSessionTurn } from "../lib/session-turn"
 import { log } from "../log"
+import { runnerOnline } from "../mcp-util"
 
 /**
  * Contexts (askable agent setups) + sessions (ask-conversations with one).
@@ -1685,9 +1686,13 @@ export const contextRoutes = (ctx: AppContext) => {
       // An operator-configured gateway means THIS DEPLOY pays, so there is no chain to walk
       // and no plan to connect. Without this the guard 402s every session on exactly the
       // self-host deployments DERIVE_MODEL_BASE_URL exists to serve — the model would work
-      // and the session could never open. Found by running it, not by reading it.
+      // and the session could never open. A recently polling external runner is the other BYO
+      // lane: it spends its own model entitlement, so Derive must not require a hosted plan for
+      // work it will neither execute nor pay for. The short liveness window keeps an absent
+      // runner from turning this into a way to queue stranded work.
       if (
         !ctx.callModel &&
+        !runnerOnline(x) &&
         !(await canPayForAgent(meta, {
           orgId: x.org_id,
           agentId: x.agent_id,
