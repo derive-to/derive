@@ -282,6 +282,42 @@ describe("standard GitHub integration", () => {
     ).toHaveLength(1)
   })
 
+  it("recovers the shared App for an instance operator without GitHub OAuth", async () => {
+    const { app, meta } = makeAuthedApp("gh-standard-operator", [owner], "editor", {
+      deps: { encryptionKey: KEY },
+      operatorIds: [owner.id],
+    })
+    await seedApp(meta)
+    let installations = [
+      {
+        id: 56001,
+        account: { login: "derive-operator", type: "Organization" },
+        permissions: { actions: "write", metadata: "read", pull_requests: "write" },
+      },
+    ]
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string | URL) => {
+        const parsed = new URL(String(url))
+        if (parsed.pathname === "/app/installations")
+          return new Response(JSON.stringify(installations), { status: 200 })
+        return new Response("not found", { status: 404 })
+      }),
+    )
+
+    const recovered = await app.request("/v1/github/install", { headers: as(owner.email) })
+    expect(recovered.headers.get("location")).toContain("github_connected=1")
+    expect(
+      (await meta.listConnections("default", undefined, "workspace")).filter(
+        (connection) => connection.kind === "github_app",
+      ),
+    ).toMatchObject([{ broker_ref: "56001", scopes_label: "derive-operator", status: "active" }])
+
+    installations = []
+    const fresh = await app.request("/v1/github/install", { headers: as(owner.email) })
+    expect(fresh.headers.get("location")).toBe("/v1/github/install/new")
+  })
+
   it("lets a manager choose between existing installations without an install callback", async () => {
     const { app, meta } = makeAuthedApp("gh-standard-existing", [owner], "editor", {
       deps: { encryptionKey: KEY },
