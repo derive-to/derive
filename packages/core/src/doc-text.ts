@@ -904,8 +904,12 @@ export const elideDataUrisToLimit = (s: string, maxChars: number): string => {
     DATA_URI_AT_RE.lastIndex = candidate
     const match = DATA_URI_AT_RE.exec(s)
     if (!match) {
-      out += "data:"
-      cursor = candidate + 5
+      // Match the final slice exactly when a malformed literal crosses the output
+      // boundary. Appending all five characters here could exceed `maxChars` and make
+      // the bounded search projection differ from full elision followed by slicing.
+      const literal = "data:".slice(0, limit - out.length)
+      out += literal
+      cursor = candidate + literal.length
       continue
     }
     const replacement = elidedDataUri(match[0], match[1] as string, match[2] as string)

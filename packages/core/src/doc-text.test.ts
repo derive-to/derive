@@ -201,6 +201,30 @@ describe("elideDataUrisToLimit", () => {
       `and data:image/png;base64,${"B".repeat(240)} tail`
     for (const limit of [0, 4, 20, 80, 180, 400]) matchesFullElision(source, limit)
   })
+
+  it("matches full elision across deterministic mixed-source cases", () => {
+    let state = 0x861
+    const next = (max: number) => {
+      state = (state * 1_664_525 + 1_013_904_223) >>> 0
+      return state % max
+    }
+    const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/="
+    const base64 = (length: number) =>
+      Array.from({ length }, () => alphabet[next(alphabet.length)]).join("")
+
+    for (let sample = 0; sample < 500; sample++) {
+      const parts: string[] = []
+      for (let part = 0; part < 2 + next(8); part++) {
+        const kind = next(4)
+        if (kind === 0) parts.push("plain-".repeat(next(80)))
+        else if (kind === 1) parts.push(`data:image/png;base64,${base64(next(700))}`)
+        else if (kind === 2) parts.push(`data:not-valid;base64,${base64(next(120))}`)
+        else parts.push("literal data: marker")
+      }
+      const source = parts.join("|")
+      matchesFullElision(source, next(source.length + 200))
+    }
+  })
 })
 
 describe("docOutline + sectionSlice", () => {
