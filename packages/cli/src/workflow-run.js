@@ -24,6 +24,9 @@ const validRunId = (value) =>
 const validNonce = (value) =>
   typeof value === "string" && value.length >= 16 && value.length <= 512 && !/\s/.test(value)
 
+const validEnvironmentName = (value) =>
+  typeof value === "string" && /^[A-Z_][A-Z0-9_]*$/.test(value)
+
 function secureUrl(value, label, { githubActions = false } = {}) {
   let url
   try {
@@ -166,7 +169,31 @@ export async function exchangeWorkflowCapability({
 
 const tomlString = (value) => JSON.stringify(String(value))
 
-export function codexWorkflowArgs({ instruction, mcpUrl, model = null }) {
+function codexProviderArgs(provider) {
+  if (!provider) return []
+  const url = secureUrl(provider.baseUrl, "Codex provider")
+  if (url.search || url.hash)
+    throw new Error("Codex provider URL must not contain a query or fragment")
+  if (!validEnvironmentName(provider.apiKeyEnv))
+    throw new Error("Codex provider API key environment name is malformed")
+  const id = "derive-workflow-provider"
+  return [
+    "--config",
+    `model_provider=${tomlString(id)}`,
+    "--config",
+    `model_providers.${id}.name=${tomlString("Workflow provider")}`,
+    "--config",
+    `model_providers.${id}.base_url=${tomlString(url.toString().replace(/\/+$/, ""))}`,
+    "--config",
+    `model_providers.${id}.env_key=${tomlString(provider.apiKeyEnv)}`,
+    "--config",
+    `model_providers.${id}.wire_api=${tomlString("responses")}`,
+    "--config",
+    `model_providers.${id}.requires_openai_auth=false`,
+  ]
+}
+
+export function codexWorkflowArgs({ instruction, mcpUrl, model = null, provider = null }) {
   const prompt = `You are the one authorized execution harness for this exact version-pinned Derive graph run.
 
 Follow the pinned instruction below. Coordinate every Context node and every final step/run receipt through the Derive MCP \`use\` tool. Reuse the graph's existing approvals, loop bounds, sessions, and workflow state. Do not create another scheduler or receipt store. Continue until the graph reaches its honest terminal state or the existing protocol tells you it is waiting for a human. A dispatch or a clean process exit is not proof that the graph succeeded.
@@ -190,6 +217,7 @@ ${instruction}`
     'mcp_servers.derive.enabled_tools=["use"]',
     "--config",
     "mcp_servers.derive.required=true",
+    ...codexProviderArgs(provider),
     ...(model ? ["--model", model] : []),
     prompt,
   ]
@@ -339,6 +367,8 @@ export async function runGithubWorkflowHarness({
   env = process.env,
   bin = env.CODEX_BIN ?? env.AGENT_BIN ?? "codex",
   model = env.DERIVE_CODEX_MODEL ?? null,
+  providerBaseUrl = env.DERIVE_CODEX_PROVIDER_BASE_URL ?? null,
+  providerApiKeyEnv = env.DERIVE_CODEX_PROVIDER_API_KEY_ENV ?? "OPENAI_API_KEY",
   timeoutMs = env.DERIVE_WORKFLOW_TIMEOUT_MS,
   fetchImpl = fetch,
   spawnImpl = spawn,
@@ -349,6 +379,8 @@ export async function runGithubWorkflowHarness({
 }) {
   if (!validRunId(runId)) throw new Error("workflow run id is missing or malformed")
   if (!validNonce(nonce)) throw new Error("workflow exchange nonce is missing or malformed")
+  if (providerBaseUrl && !model)
+    throw new Error("DERIVE_CODEX_MODEL is required with a custom Codex provider")
   const normalizedServer = normalizeWorkflowServer(server)
   const oidcToken = await requestGithubOidc({
     requestUrl,
@@ -374,6 +406,7 @@ export async function runGithubWorkflowHarness({
       instruction: exchange.instruction,
       mcpUrl: exchange.mcpUrl,
       model,
+      provider: providerBaseUrl ? { baseUrl: providerBaseUrl, apiKeyEnv: providerApiKeyEnv } : null,
     }),
     cwd,
     env: workflowAgentEnv(env, exchange.token),

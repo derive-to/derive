@@ -618,4 +618,42 @@ describe("GitHub Actions one-shot workflow harness", () => {
       DERIVE_WORKFLOW_TOKEN: "workflow-capability-value",
     })
   })
+
+  it("configures a custom Responses provider without putting its credential in argv", () => {
+    const args = codexWorkflowArgs({
+      instruction: "Pinned graph.",
+      mcpUrl: "https://derive.to/mcp",
+      model: "accounts/example/models/agent",
+      provider: {
+        baseUrl: "https://inference.example/v1/",
+        apiKeyEnv: "OWNER_INFERENCE_KEY",
+      },
+    })
+    const observable = args.join("\n")
+    expect(observable).toContain('model_provider="derive-workflow-provider"')
+    expect(observable).toContain('base_url="https://inference.example/v1"')
+    expect(observable).toContain('env_key="OWNER_INFERENCE_KEY"')
+    expect(observable).toContain('wire_api="responses"')
+    expect(observable).toContain("requires_openai_auth=false")
+    expect(observable).not.toContain("owner-inference-secret")
+  })
+
+  it("rejects unsafe custom provider configuration before spawning Codex", () => {
+    expect(() =>
+      codexWorkflowArgs({
+        instruction: "Pinned graph.",
+        mcpUrl: "https://derive.to/mcp",
+        model: "agent",
+        provider: { baseUrl: "http://inference.example/v1", apiKeyEnv: "OWNER_KEY" },
+      }),
+    ).toThrow(/HTTPS/)
+    expect(() =>
+      codexWorkflowArgs({
+        instruction: "Pinned graph.",
+        mcpUrl: "https://derive.to/mcp",
+        model: "agent",
+        provider: { baseUrl: "https://inference.example/v1", apiKeyEnv: "OWNER-KEY" },
+      }),
+    ).toThrow(/environment name/)
+  })
 })
