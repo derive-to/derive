@@ -632,6 +632,10 @@ describe("workflow run: explicit local-agent handoff", () => {
       }),
     })
     expect(agentResponse.status).toBe(201)
+    const agentStarted = (await agentResponse.json()) as { runId: string }
+    expect(await meta.getWorkflowRun(agentStarted.runId, "default")).toMatchObject({
+      initiated_by: owner.id,
+    })
   })
 
   it("returns the recorded reason a failed step stopped", async () => {

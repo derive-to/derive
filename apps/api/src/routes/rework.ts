@@ -61,6 +61,7 @@ export const reworkRoutes = (ctx: AppContext) => {
     commentLimiter,
     deps,
     authorizeStanding,
+    actingHuman,
   } = ctx
   const app = new OpenAPIHono<BlankEnv>()
 
@@ -104,6 +105,11 @@ export const reworkRoutes = (ctx: AppContext) => {
     if (artifact.current_version === 0) return fail(c, 404, "not found")
     const acting = await actingUser(c)
     if (!acting) return fail(c, 401, "sign in to send an agent request")
+    // Workflow Context sessions are always opened on behalf of a human. Keep
+    // the agent byline for comments, but pin the run initiator to the OAuth
+    // grantor or registered agent owner so Context membership/access checks
+    // evaluate the real person instead of a synthetic agent id.
+    const initiator = (await actingHuman(c)) ?? acting
     const rl = await limited(c, commentLimiter)
     if (rl) return rl
     const body = await readJson(
@@ -129,6 +135,7 @@ export const reworkRoutes = (ctx: AppContext) => {
     return {
       artifact,
       acting,
+      initiator,
       agentId: body.agentId,
       diagramId: body.diagramId,
       delivery: body.delivery,
@@ -500,7 +507,7 @@ export const reworkRoutes = (ctx: AppContext) => {
     async (c) => {
       const rc = await requestContext(c, c.req.param("shortId"))
       if (rc instanceof Response) return bail(rc)
-      const { artifact, acting, agentId, diagramId, delivery, github } = rc
+      const { artifact, acting, initiator, agentId, diagramId, delivery, github } = rc
       if (!diagramId) return bail(fail(c, 400, "diagramId is required"))
       const ready = await requireReadyWorkflow(c, artifact, diagramId)
       if (ready instanceof Response) return bail(ready)
@@ -528,7 +535,7 @@ export const reworkRoutes = (ctx: AppContext) => {
           workflow_content_type: version.content_type,
           diagram_id: ready.id,
           reason,
-          initiated_by: acting.id,
+          initiated_by: initiator.id,
           request_id: assignment?.requestId,
           assigned_agent_id: assignment?.agentId,
           requested_execution: execution?.requested ?? "local",
@@ -571,7 +578,7 @@ export const reworkRoutes = (ctx: AppContext) => {
         })
         const agent = agentId
           ? pickAgent(c, await meta.listAgents(artifact.org_id), agentId)
-          : await githubExecutor(artifact.org_id, acting.id)
+          : await githubExecutor(artifact.org_id, initiator.id)
         if (agent instanceof Response) return bail(agent)
         const created = await createRun(
           "github-actions",
