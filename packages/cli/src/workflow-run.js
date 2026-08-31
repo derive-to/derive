@@ -14,6 +14,7 @@ const SAFE_EVENT_TYPES = new Set([
   "plan_update",
   "web_search",
 ])
+const CODEX_DIAGNOSTIC_WINDOW = 8_192
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -215,6 +216,52 @@ function timeoutFrom(value) {
   return Math.floor(timeout)
 }
 
+function codexDiagnosticState() {
+  return {
+    tail: "",
+    providerAuth: false,
+    providerLimit: false,
+    deriveMcp: false,
+  }
+}
+
+function scanCodexDiagnostics(state, chunk) {
+  // Keep only a small rolling window and emit only fixed classifications. Provider
+  // diagnostics can repeat request configuration, so raw output must never reach logs.
+  state.tail = `${state.tail}${chunk}`.slice(-CODEX_DIAGNOSTIC_WINDOW)
+  const sample = state.tail.toLowerCase()
+  if (
+    (sample.includes("401 unauthorized") || sample.includes("invalid_api_key")) &&
+    sample.includes("openai")
+  )
+    state.providerAuth = true
+  if (
+    sample.includes("insufficient_quota") ||
+    sample.includes("rate_limit_exceeded") ||
+    sample.includes("429 too many requests")
+  )
+    state.providerLimit = true
+  if (
+    sample.includes("required mcp servers failed to initialize") ||
+    (sample.includes("derive") && sample.includes("mcp") && sample.includes("failed to initialize"))
+  )
+    state.deriveMcp = true
+}
+
+function logCodexFailureDiagnostic(state, log) {
+  if (state.providerAuth) {
+    log(
+      "Codex provider authentication failed. Verify OPENAI_API_KEY or the configured workload identity in this GitHub environment.",
+    )
+    return
+  }
+  if (state.providerLimit) {
+    log("The Codex provider blocked this run because of a rate or usage limit.")
+    return
+  }
+  if (state.deriveMcp) log("Codex could not initialize the required Derive MCP connection.")
+}
+
 /** Spawn exactly one Codex process. Output is consumed as structured events, but only
  * event types are logged: model text and command output can contain repository secrets. */
 export function spawnWorkflowAgent({
@@ -238,6 +285,7 @@ export function spawnWorkflowAgent({
     let timedOut = false
     let killTimer = null
     let buffer = ""
+    const diagnostics = codexDiagnosticState()
     const finish = (result) => {
       if (finished) return
       finished = true
@@ -256,6 +304,7 @@ export function spawnWorkflowAgent({
       }
     }
     child.stdout?.on("data", (chunk) => {
+      scanCodexDiagnostics(diagnostics, chunk)
       buffer += chunk.toString()
       let newline = buffer.indexOf("\n")
       while (newline >= 0) {
@@ -265,9 +314,7 @@ export function spawnWorkflowAgent({
         newline = buffer.indexOf("\n")
       }
     })
-    // Drain stderr without retaining or printing it. It can contain provider diagnostics
-    // derived from secret-bearing configuration.
-    child.stderr?.on("data", () => {})
+    child.stderr?.on("data", (chunk) => scanCodexDiagnostics(diagnostics, chunk))
     const timer = setTimeout(() => {
       timedOut = true
       child.kill("SIGTERM")
@@ -276,6 +323,7 @@ export function spawnWorkflowAgent({
     child.once("error", () => finish({ code: -1, signal: null, timedOut: false }))
     child.once("close", (code, signal) => {
       if (buffer.trim()) take(buffer.trim())
+      if (code !== 0) logCodexFailureDiagnostic(diagnostics, log)
       finish({ code, signal, timedOut })
     })
   })

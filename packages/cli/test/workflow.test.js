@@ -40,15 +40,16 @@ const jsonResponse = (body, status = 200) =>
     headers: { "content-type": "application/json" },
   })
 
-const fakeChild = (code = 0) => {
+const fakeChild = (code = 0, { stdout = null, stderr = null } = {}) => {
   const child = new EventEmitter()
   child.stdout = new PassThrough()
   child.stderr = new PassThrough()
   child.kill = () => true
   queueMicrotask(() => {
     child.stdout.write(
-      `${JSON.stringify({ type: "item.completed", item: { type: "mcp_tool_call" } })}\n`,
+      stdout ?? `${JSON.stringify({ type: "item.completed", item: { type: "mcp_tool_call" } })}\n`,
     )
+    if (stderr) child.stderr.write(stderr)
     child.emit("close", code, null)
   })
   return child
@@ -557,6 +558,40 @@ describe("GitHub Actions one-shot workflow harness", () => {
       spawnImpl: () => fakeChild(17),
     })
     expect(code).toBe(17)
+  })
+
+  it("classifies a provider authentication failure without echoing raw diagnostics", async () => {
+    const logs = []
+    const rawDiagnostic =
+      "401 Unauthorized from wss://api.openai.com with leaked-secret-owner-model-value"
+    const responses = [
+      jsonResponse({ value: oidcToken }),
+      jsonResponse({
+        token: "workflow-capability-value",
+        instruction: "Pinned.",
+        expiresAt,
+      }),
+    ]
+    const code = await runGithubWorkflowHarness({
+      runId,
+      nonce,
+      server: "https://derive.to",
+      requestUrl: oidcUrl,
+      requestToken,
+      env: {},
+      timeoutMs: 60_000,
+      retryDelays: [0],
+      now: Date.parse("2029-01-01T00:00:00.000Z"),
+      log: (line) => logs.push(line),
+      fetchImpl: async () => responses.shift(),
+      spawnImpl: () => fakeChild(1, { stderr: rawDiagnostic }),
+    })
+    expect(code).toBe(1)
+    expect(logs).toContain(
+      "Codex provider authentication failed. Verify OPENAI_API_KEY or the configured workload identity in this GitHub environment.",
+    )
+    expect(JSON.stringify(logs)).not.toContain(rawDiagnostic)
+    expect(JSON.stringify(logs)).not.toContain("leaked-secret-owner-model-value")
   })
 
   it("keeps the capability out of Codex argv while preserving owner model configuration", () => {
