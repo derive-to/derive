@@ -118,14 +118,30 @@ export function ConnectAgent({ testidPrefix = "connect-agent" }: { testidPrefix?
       </TabsContent>
       <TabsContent value="claude" className={tabContent}>
         <p className="text-sm text-pretty text-muted-foreground">
-          In claude.ai or Claude Desktop:{" "}
-          <span className="font-medium text-foreground">
-            Settings → Connectors → Add custom connector
-          </span>
-          , then paste this URL.
+          Open{" "}
+          <a
+            href="https://claude.ai/customize/connectors"
+            target="_blank"
+            rel="noreferrer"
+            className="font-medium text-foreground underline underline-offset-4 transition-colors hover:text-muted-foreground"
+          >
+            claude.ai/customize/connectors
+          </a>{" "}
+          (<span className="font-medium text-foreground">Customize → Connectors</span> in the left
+          panel) and click <span className="font-medium text-foreground">Add</span>, then paste this
+          URL.
         </p>
         <PromptBlock text={mcp} testid={`${testidPrefix}-cmd-claude`} copyLabel="Copy URL" />
-        {consentHint}
+        {/* Not the shared consentHint: claude.ai approves in the connector dialog, not on
+            first tool call, and the connector stays off in chats until it is switched on. */}
+        <p className="text-sm text-pretty text-muted-foreground">
+          Approve access when Claude prompts, then switch Derive on in a chat from the{" "}
+          <span className="font-medium text-foreground">+</span> menu under Connectors.
+        </p>
+        <p className="text-xs text-pretty text-muted-foreground">
+          On Team or Enterprise, an owner adds it under Organization settings → Connectors first,
+          then everyone connects it here.
+        </p>
       </TabsContent>
       <TabsContent value="codex" className={tabContent}>
         <p className="text-sm text-pretty text-muted-foreground">One command connects Codex.</p>
