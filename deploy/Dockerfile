@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 # Derive Lite: one non-root image containing the API, SPA, SQLite/local-blob
 # storage, and optional Playwright preview renderer.
-FROM node:24-bookworm-slim@sha256:3638d9a6fe4030bd716be989438248074489337ba3275657f93595428be4fc03 AS build
+FROM node:26-bookworm-slim@sha256:367679cf9792759492a486e4aa4b421764d71a9546a6dae8aab81a99eb797b3e AS build
 ENV CI=true
 RUN corepack enable
 WORKDIR /src
@@ -20,7 +20,7 @@ RUN pnpm --filter @derive/api deploy --legacy --prod /runtime/apps/api && \
     mkdir -p /runtime/apps/web/dist && \
     cp -R /src/apps/web/dist/client /runtime/apps/web/dist/client
 
-FROM node:24-bookworm-slim@sha256:3638d9a6fe4030bd716be989438248074489337ba3275657f93595428be4fc03 AS runtime
+FROM node:26-bookworm-slim@sha256:367679cf9792759492a486e4aa4b421764d71a9546a6dae8aab81a99eb797b3e AS runtime
 ARG VERSION=dev
 ARG REVISION=unknown
 LABEL org.opencontainers.image.title="Derive" \
