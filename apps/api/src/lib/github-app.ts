@@ -2,7 +2,7 @@
 // installation tokens, and handle App setup/installer authorization. Everything runs on the
 // Cloudflare Worker (node:crypto under nodejs_compat — same basis as ./crypto).
 
-import { createPrivateKey, createSign } from "node:crypto"
+import { createHmac, createPrivateKey, createSign } from "node:crypto"
 
 const API = "https://api.github.com"
 const WEB = "https://github.com"
@@ -10,6 +10,14 @@ const UA = "derive/1"
 const API_VERSION = "2022-11-28"
 
 const b64url = (b: Buffer | string): string => Buffer.from(b).toString("base64url")
+
+/** Stable per-App webhook secret derived from server-only material. This avoids another stored
+ *  credential while keeping App transfers and installation changes harmless. */
+export const githubWebhookSecret = (appId: string, encryptionKey: string): string =>
+  createHmac("sha256", encryptionKey).update(`derive-github-webhook:v1\0${appId}`).digest("hex")
+
+export const githubWebhookSignature = (body: string, secret: string): string =>
+  `sha256=${createHmac("sha256", secret).update(body).digest("hex")}`
 
 export class GitHubError extends Error {
   constructor(
@@ -329,6 +337,66 @@ export interface ManifestConversion {
   client_secret: string
   /** PEM private key (PKCS#1). */
   pem: string
+}
+
+export interface AppWebhookConfig {
+  url: string
+  contentType: string
+  insecureSsl: string
+}
+
+/** Read the App webhook target. GitHub never returns the secret, only a masked placeholder. */
+export async function getAppWebhookConfig(
+  appId: string,
+  privateKeyPem: string,
+): Promise<AppWebhookConfig> {
+  const res = await fetch(`${API}/app/hook/config`, {
+    headers: ghHeaders(`Bearer ${appJwt(appId, privateKeyPem)}`),
+  })
+  if (!res.ok) return raise(res, "reading the GitHub App webhook")
+  const data = (await res.json()) as {
+    url?: unknown
+    content_type?: unknown
+    insecure_ssl?: unknown
+  }
+  return {
+    url: typeof data.url === "string" ? data.url : "",
+    contentType: typeof data.content_type === "string" ? data.content_type : "",
+    insecureSsl: String(data.insecure_ssl ?? ""),
+  }
+}
+
+/** Set the shared App webhook without exposing its secret to a browser or installation. */
+export async function configureAppWebhook(input: {
+  appId: string
+  privateKeyPem: string
+  url: string
+  secret: string
+}): Promise<AppWebhookConfig> {
+  const res = await fetch(`${API}/app/hook/config`, {
+    method: "PATCH",
+    headers: {
+      ...ghHeaders(`Bearer ${appJwt(input.appId, input.privateKeyPem)}`),
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      url: input.url,
+      content_type: "json",
+      insecure_ssl: "0",
+      secret: input.secret,
+    }),
+  })
+  if (!res.ok) return raise(res, "updating the GitHub App webhook")
+  const data = (await res.json()) as {
+    url?: unknown
+    content_type?: unknown
+    insecure_ssl?: unknown
+  }
+  return {
+    url: typeof data.url === "string" ? data.url : "",
+    contentType: typeof data.content_type === "string" ? data.content_type : "",
+    insecureSsl: String(data.insecure_ssl ?? ""),
+  }
 }
 
 /**

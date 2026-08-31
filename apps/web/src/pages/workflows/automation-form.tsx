@@ -28,9 +28,9 @@ import { Textarea } from "@/components/ui/textarea"
 import {
   agentsQuery,
   artifactQuery,
+  automationConnectionsQuery,
   automationsQuery,
   collectionsQuery,
-  connectionsQuery,
   contextsQuery,
   modelCredentialsQuery,
   runsQuery,
@@ -103,27 +103,28 @@ export function AutomationForm({
     return (seed ?? []).map((r) => ({ ref: r, label: seedLabel(r) }))
   })
   const [pickerOpen, setPickerOpen] = useState(false)
-  const [sourcesOpen, setSourcesOpen] = useState(false)
-  // Ids, not objects: the row a source resolves to can change under us (a pending source signs
-  // in mid-edit), and holding the id means the label always reflects the CURRENT row.
-  const [sourceIds, setSourceIds] = useState<string[]>(automation?.connection_ids ?? [])
+  const [connectionsOpen, setConnectionsOpen] = useState(false)
+  // Ids, not objects: the row a connection resolves to can change under us (a pending source
+  // signs in mid-edit), and holding the id means the label always reflects the CURRENT row.
+  const [connectionIds, setConnectionIds] = useState<string[]>(automation?.connection_ids ?? [])
   const [q, setQ] = useState("")
   const tz = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC", [])
 
   const docs = useQuery(targetPickerQuery(q))
   const collections = useQuery(collectionsQuery())
-  // ACTIVE only. A pending source has an unpinned ref, which every run refuses — offering it
-  // here would let someone build an automation that silently reads nothing.
-  const connections = useQuery(connectionsQuery())
+  // ACTIVE only. A pending connection cannot provide tools, so offering it here would let
+  // someone build an automation that silently reads nothing.
+  const connections = useQuery(automationConnectionsQuery())
   const contexts = useQuery(contextsQuery())
   const modelCredentials = useQuery(modelCredentialsQuery())
   const personalPlan = modelCredentials.data?.find((c) => c.provider === provider)
-  const sources = useMemo(
-    () => (connections.data ?? []).filter((c) => c.kind === "mcp" && c.status === "active"),
+  const runConnections = useMemo(
+    () => (connections.data ?? []).filter((c) => c.status === "active"),
     [connections.data],
   )
-  const sourceLabel = (id: string): string =>
-    sources.find((s) => s.id === id)?.toolkit ?? "a disconnected source"
+  const connectionLabel = (id: string): string =>
+    runConnections.find((connection) => connection.id === id)?.toolkit ??
+    "a disconnected connection"
   const collectionMatches = useMemo(() => {
     const all = collections.data ?? []
     const needle = q.trim().toLowerCase()
@@ -183,7 +184,7 @@ export function AutomationForm({
         instruction: instruction.trim(),
         ...(!automation && runOnCreate ? { runNow: true } : {}),
         refs: buildRefs(),
-        connectionIds: sourceIds,
+        connectionIds,
       }
       return automation
         ? api.updateAutomation(automation.id, {
@@ -352,27 +353,27 @@ export function AutomationForm({
       </Field>
 
       <Field
-        label="Sources"
-        hint="Connected MCP servers this run may read from. Its tools were recorded when you connected it."
+        label="Connections"
+        hint="Connected tools this run can use. Add GitHub under Integrations, or add any runner adapter as an MCP source."
       >
         <div className="flex flex-wrap items-center gap-1.5">
-          {sourceIds.map((id) => (
+          {connectionIds.map((id) => (
             <Badge key={id} variant="outline" className="h-6 gap-1 pr-1 pl-1.5 font-normal">
               <Plug className="size-3.5 text-muted-foreground" aria-hidden />
-              <span className="max-w-40 truncate">{sourceLabel(id)}</span>
+              <span className="max-w-40 truncate">{connectionLabel(id)}</span>
               <button
                 type="button"
                 data-testid={`automation-source-remove-${id}`}
-                aria-label={`Remove ${sourceLabel(id)}`}
+                aria-label={`Remove ${connectionLabel(id)}`}
                 className="rounded-sm p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
-                onClick={() => setSourceIds((cur) => cur.filter((x) => x !== id))}
+                onClick={() => setConnectionIds((cur) => cur.filter((x) => x !== id))}
               >
                 <X className="size-3" aria-hidden />
               </button>
             </Badge>
           ))}
-          {sources.length > sourceIds.length ? (
-            <Popover open={sourcesOpen} onOpenChange={setSourcesOpen}>
+          {runConnections.length > connectionIds.length ? (
+            <Popover open={connectionsOpen} onOpenChange={setConnectionsOpen}>
               <PopoverTrigger asChild>
                 <Button
                   data-testid="automation-add-source"
@@ -385,26 +386,26 @@ export function AutomationForm({
               </PopoverTrigger>
               <PopoverContent className="w-80 p-0" align="start">
                 <Command>
-                  <CommandInput placeholder="Search sources…" />
+                  <CommandInput placeholder="Search connections…" />
                   <CommandList>
                     <CommandEmpty>No matches.</CommandEmpty>
                     <CommandGroup>
-                      {sources
-                        .filter((c) => !sourceIds.includes(c.id))
+                      {runConnections
+                        .filter((c) => !connectionIds.includes(c.id))
                         .map((c) => (
                           <CommandItem
                             key={c.id}
                             value={c.toolkit}
                             data-testid={`automation-source-${c.id}`}
                             onSelect={() => {
-                              setSourceIds((cur) => [...cur, c.id])
-                              setSourcesOpen(false)
+                              setConnectionIds((cur) => [...cur, c.id])
+                              setConnectionsOpen(false)
                             }}
                           >
                             <Plug className="size-3.5 text-muted-foreground" aria-hidden />
                             <span className="truncate">{c.toolkit}</span>
                             <span className="ml-auto max-w-36 truncate text-2xs text-muted-foreground">
-                              {c.base_url ?? ""}
+                              {c.scopes_label ?? c.base_url ?? c.kind ?? ""}
                             </span>
                           </CommandItem>
                         ))}
@@ -413,11 +414,12 @@ export function AutomationForm({
                 </Command>
               </PopoverContent>
             </Popover>
-          ) : sources.length === 0 ? (
-            // Said plainly rather than hidden: a run with no source can still only read what is
+          ) : runConnections.length === 0 ? (
+            // Said plainly rather than hidden: a run with no connection can only read what is
             // already in Derive, and that is the difference this field exists to explain.
             <span className="text-muted-foreground text-xs">
-              No sources connected yet. Add one under Settings → Sources.
+              No connections yet. Add GitHub under Settings → Integrations or an MCP source under
+              Settings → Sources.
             </span>
           ) : null}
         </div>

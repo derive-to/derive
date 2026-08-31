@@ -1,15 +1,18 @@
 import { describe, expect, it } from "vitest"
 import { buildManifest } from "../src/github-app-setup"
 
-// Locks the standard-source manifest. New installs query GitHub on demand: no contents,
-// issues, webhook events, or sync callback may creep back into this contract. Actions write is
-// server-narrowed to workflow discovery, dispatch, status, artifacts, and cancellation.
+// Locks the standard-source manifest. New installs query GitHub on demand. The only event is a
+// signed workflow completion signal. Actions write is server-narrowed to workflow discovery,
+// dispatch, status, artifacts, and cancellation.
 describe("GitHub App manifest", () => {
   const m = buildManifest("https://derive.example.com", "derive.example.com")
 
-  it("subscribes to no webhook events and configures no webhook", () => {
-    expect(m.default_events).toEqual([])
-    expect("hook_attributes" in m).toBe(false)
+  it("subscribes only to signed workflow completion events", () => {
+    expect(m.default_events).toEqual(["workflow_run"])
+    expect(m.hook_attributes).toEqual({
+      url: "https://derive.example.com/v1/github/webhook",
+      active: true,
+    })
   })
 
   it("is public so it can install on organizations, not just the owner", () => {

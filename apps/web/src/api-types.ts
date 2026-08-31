@@ -7472,10 +7472,15 @@ export interface components {
             app_slug: string | null;
             app_owner_login: string | null;
             /**
-             * @description Whether the instance App has every current permission; null when no live App exists
+             * @description Whether the instance App has every current permission and event; null when no live App exists
              * @enum {string|null}
              */
             app_permissions_state: "ready" | "update_required" | "unknown" | null;
+            /**
+             * @description Whether signed GitHub workflow completion events can reach this instance
+             * @enum {string|null}
+             */
+            app_webhook_state: "ready" | "update_required" | "unknown" | null;
             app_settings_url: string | null;
             /** @description Whether the caller is an instance operator who can configure the shared App */
             can_manage_app: boolean;
