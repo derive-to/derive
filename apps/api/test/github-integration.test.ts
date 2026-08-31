@@ -199,8 +199,7 @@ describe("standard GitHub integration", () => {
       connected: true,
       app_owner_login: "derive-to",
       app_permissions_state: "ready",
-      app_settings_url:
-        "https://github.com/organizations/derive-to/settings/apps/derive-test/permissions",
+      app_url: "https://github.com/apps/derive-test",
       can_manage_app: false,
       accounts: [
         {

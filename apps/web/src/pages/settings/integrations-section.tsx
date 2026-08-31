@@ -312,9 +312,9 @@ export function IntegrationsSection() {
               actions={
                 github.app_permissions_state === "update_required" &&
                 github.can_manage_app &&
-                github.app_settings_url ? (
+                github.app_url ? (
                   <Button data-testid="github-update-app" variant="ghost" size="sm" asChild>
-                    <a href={github.app_settings_url}>Open App settings</a>
+                    <a href={github.app_url}>View App on GitHub</a>
                   </Button>
                 ) : undefined
               }

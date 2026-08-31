@@ -7476,7 +7476,8 @@ export interface components {
              * @enum {string|null}
              */
             app_permissions_state: "ready" | "update_required" | "unknown" | null;
-            app_settings_url: string | null;
+            /** @description Public GitHub App page. This URL does not assume the caller manages the App */
+            app_url: string | null;
             /** @description Whether the caller is an instance operator who can configure the shared App */
             can_manage_app: boolean;
             accounts: {

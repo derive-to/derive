@@ -156,7 +156,10 @@ export const githubRoutes = (ctx: AppContext) => {
         .describe(
           "Whether the instance App has every current permission; null when no live App exists",
         ),
-      app_settings_url: z.string().nullable(),
+      app_url: z
+        .string()
+        .nullable()
+        .describe("Public GitHub App page. This URL does not assume the caller manages the App"),
       can_manage_app: z
         .boolean()
         .describe("Whether the caller is an instance operator who can configure the shared App"),
@@ -191,7 +194,6 @@ export const githubRoutes = (ctx: AppContext) => {
       let available = !!loaded
       let slug = loaded?.app.slug ?? null
       let appOwnerLogin: string | null = null
-      let appOwnerType: string | null = null
       let basePermissionsMissing = false
       // Null means GitHub could not be checked. Do not turn a transient outage into a false
       // permission-upgrade prompt.
@@ -204,7 +206,6 @@ export const githubRoutes = (ctx: AppContext) => {
           const live = await getAppInfo(loaded.app.app_id, loaded.pem)
           slug = live.slug || slug
           appOwnerLogin = live.owner?.login || null
-          appOwnerType = live.owner?.type || null
           if (slug && slug !== loaded.app.slug) await meta.setGithubApp({ ...loaded.app, slug })
           basePermissionsMissing = Object.entries(REQUIRED_PERMISSIONS).some(
             ([permission, level]) =>
@@ -299,11 +300,7 @@ export const githubRoutes = (ctx: AppContext) => {
         app_slug: slug,
         app_owner_login: appOwnerLogin,
         app_permissions_state: appPermissionsState,
-        app_settings_url: slug
-          ? appOwnerType === "Organization" && appOwnerLogin
-            ? `https://github.com/organizations/${encodeURIComponent(appOwnerLogin)}/settings/apps/${encodeURIComponent(slug)}/permissions`
-            : `https://github.com/settings/apps/${encodeURIComponent(slug)}/permissions`
-          : null,
+        app_url: slug ? `https://github.com/apps/${encodeURIComponent(slug)}` : null,
         can_manage_app: canManageApp,
         accounts,
       })

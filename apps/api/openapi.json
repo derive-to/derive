@@ -2038,9 +2038,10 @@
             ],
             "description": "Whether the instance App has every current permission; null when no live App exists"
           },
-          "app_settings_url": {
+          "app_url": {
             "type": "string",
-            "nullable": true
+            "nullable": true,
+            "description": "Public GitHub App page. This URL does not assume the caller manages the App"
           },
           "can_manage_app": {
             "type": "boolean",
@@ -2100,7 +2101,7 @@
           "app_slug",
           "app_owner_login",
           "app_permissions_state",
-          "app_settings_url",
+          "app_url",
           "can_manage_app",
           "accounts"
         ]
