@@ -4,7 +4,7 @@ export interface WorkflowGithubReceipt {
   repository: string
   workflow: string
   ref: string
-  provider: "codex"
+  provider: "cloud-agent"
   runId: string | null
   runUrl: string | null
   runAttempt: number | null
@@ -75,7 +75,7 @@ export const workflowGithubReceipt = (run: WorkflowRunSummary): WorkflowGithubRe
     repository,
     workflow,
     ref,
-    provider: "codex",
+    provider: "cloud-agent",
     runId: runId === null ? null : String(runId),
     runUrl:
       runId === null ? null : `https://github.com/${repository}/actions/runs/${String(runId)}`,
@@ -88,7 +88,7 @@ export const workflowGithubReceipt = (run: WorkflowRunSummary): WorkflowGithubRe
   }
 }
 
-export const workflowGithubProviderLabel = (): string => "Codex"
+export const workflowGithubProviderLabel = (): string => "Cloud agent"
 
 export const workflowGithubStarterAdapter = (): string => `name: Derive graph runner
 
@@ -117,13 +117,15 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install pinned harness
-        run: npm install --global "@derive-to/cli@0.6.0" "@openai/codex@0.151.0"
+      - name: Install pinned adapter
+        run: npm install --global "@derive-to/cli@0.6.0"
       - name: Run the assigned graph
         run: derive workflow run
         env:
           DERIVE_SERVER: https://derive.to
           DERIVE_WORKFLOW_RUN_ID: \${{ inputs.derive_run_id }}
           DERIVE_EXCHANGE_NONCE: \${{ inputs.derive_exchange_nonce }}
-          OPENAI_API_KEY: \${{ secrets.OPENAI_API_KEY }}
+          DERIVE_CLOUD_AGENT_URL: \${{ vars.DERIVE_CLOUD_AGENT_URL }}
+          DERIVE_CLOUD_AGENT_ACCESS_CLIENT_ID: \${{ secrets.DERIVE_CLOUD_AGENT_ACCESS_CLIENT_ID }}
+          DERIVE_CLOUD_AGENT_ACCESS_CLIENT_SECRET: \${{ secrets.DERIVE_CLOUD_AGENT_ACCESS_CLIENT_SECRET }}
 `

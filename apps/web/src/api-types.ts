@@ -3521,6 +3521,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/workflow-runs/{runId}/github/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read terminal state for one OIDC-authenticated workflow capability. */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    runId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The current Derive ledger state for this exact workflow run. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            /** @enum {string} */
+                            status: "queued" | "dispatched" | "running" | "waiting" | "succeeded" | "failed" | "cancelled" | "timed_out";
+                            terminal: boolean;
+                        };
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/github": {
         parameters: {
             query?: never;

@@ -13,6 +13,7 @@ import {
   reconcileGithubWorkflowRun,
   verifyGithubOidc,
 } from "../src/lib/github-workflow-harness"
+import { signWorkToken } from "../src/lib/run-token"
 import { as, jsonAs, makeAuthedApp, type quotaApp, type TestUser } from "./helpers"
 
 // A real RSA key (PKCS#1, as GitHub's manifest returns) so appJwt/getAppInfo can
@@ -683,7 +684,7 @@ describe("standard GitHub integration", () => {
   })
 
   const seedHarnessRun = async (name: string, githubRunId = "91001") => {
-    const { meta } = makeAuthedApp(`gh-harness-${name}`, [owner], "editor", {
+    const { app, meta } = makeAuthedApp(`gh-harness-${name}`, [owner], "editor", {
       deps: { encryptionKey: KEY },
     })
     const connection = await upsertGithubConnection(meta, {
@@ -744,8 +745,40 @@ describe("standard GitHub integration", () => {
       },
     )
     if (!dispatched) throw new Error("failed to seed dispatched run")
-    return { meta, run: dispatched, assignment, nonce, agent }
+    return { app, meta, run: dispatched, assignment, nonce, agent }
   }
+
+  it("lets only the one-run capability read whether the Derive graph is terminal", async () => {
+    const seeded = await seedHarnessRun("status", "91020")
+    const token = await signWorkToken(
+      "workflow",
+      KEY,
+      seeded.run.id,
+      seeded.agent.id,
+      seeded.run.org_id,
+      Date.now() + 60_000,
+    )
+    const read = (bearer: string, runId = seeded.run.id) =>
+      seeded.app.request(`/v1/workflow-runs/${runId}/github/status`, {
+        headers: { authorization: `Bearer ${bearer}` },
+      })
+
+    const active = await read(token)
+    expect(active.status).toBe(200)
+    expect(await active.json()).toEqual({ status: "dispatched", terminal: false })
+    expect((await read("dkwfr_invalid")).status).toBe(401)
+    expect((await read(token, "wfr_other")).status).toBe(401)
+
+    const failed = await seeded.meta.transitionWorkflowRun(
+      seeded.run.id,
+      seeded.run.org_id,
+      { status: "dispatched", stateRevision: seeded.run.state_revision },
+      { status: "failed", at: new Date().toISOString() },
+    )
+    expect(failed?.status).toBe("failed")
+    const terminal = await read(token)
+    expect(await terminal.json()).toEqual({ status: "failed", terminal: true })
+  })
 
   it("records dispatch failure and sends only bounded identifiers to the adapter", async () => {
     const { meta } = makeAuthedApp("gh-harness-dispatch", [owner], "editor", {

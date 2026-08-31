@@ -82,17 +82,17 @@ existing Derive sessions.
 
 ## Run one assigned graph from GitHub Actions
 
-`derive workflow run` is the one-shot Codex harness for an adapter deliberately exposed as
-`derive-*.yml`. It does not accept a prompt or a Derive bearer. In GitHub Actions it requests an
-OIDC assertion with the fixed `derive-graph-runner` audience, exchanges the bounded run id and
-one-time nonce for a short-lived run capability, and only then fetches the pinned instruction.
-Codex receives that capability through an environment-backed MCP bearer; the Derive MCP server is
-restricted to the `use` tool for the run.
+`derive workflow run` is a one-shot adapter deliberately exposed as `derive-*.yml`. It does not
+accept a caller-authored prompt or standing Derive bearer. In GitHub Actions it requests an OIDC
+assertion with the fixed `derive-graph-runner` audience, exchanges the bounded run id and one-time
+nonce for a short-lived run capability, and only then fetches the pinned instruction.
 
-The repository owner supplies and pins the Codex and Derive CLI versions and configures Codex's
-own model credential (for example `OPENAI_API_KEY`) as a GitHub secret. Derive does not receive or
-store that model credential. The starter checks out the repository so testing and code tasks work
-without another setup pass.
+Set `DERIVE_CLOUD_AGENT_URL` to a compatible cloud-agent control plane. The CLI creates one Codex
+agent in its managed sandbox, sends the instruction as prompt text, and sends the short-lived
+Derive capability through the API's separate `deriveWorkflow` field. The capability never enters
+the prompt, repository, or Actions log. The sandbox supplies model access and its normal tools, so
+GitHub needs no OpenAI credential. The CLI polls the cloud run, requires a terminal successful
+Derive graph receipt, and archives the sandbox before it exits.
 
 ```yaml
 name: Derive graph harness
@@ -121,20 +121,28 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install repository-pinned harness
-        run: npm install --global "@derive-to/cli@0.6.0" "@openai/codex@0.151.0"
+      - name: Install the pinned adapter
+        run: npm install --global "@derive-to/cli@0.6.0"
       - name: Run the assigned graph
         env:
           DERIVE_WORKFLOW_RUN_ID: ${{ inputs.derive_run_id }}
           DERIVE_EXCHANGE_NONCE: ${{ inputs.derive_exchange_nonce }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          DERIVE_CLOUD_AGENT_URL: https://agents.example.com
+          DERIVE_CLOUD_AGENT_ACCESS_CLIENT_ID: ${{ secrets.DERIVE_CLOUD_AGENT_ACCESS_CLIENT_ID }}
+          DERIVE_CLOUD_AGENT_ACCESS_CLIENT_SECRET: ${{ secrets.DERIVE_CLOUD_AGENT_ACCESS_CLIENT_SECRET }}
         run: derive workflow run
 ```
 
 GitHub supplies `ACTIONS_ID_TOKEN_REQUEST_URL` and `ACTIONS_ID_TOKEN_REQUEST_TOKEN` when
 `id-token: write` is present. The command never prints those values, the nonce, the OIDC assertion,
-or the exchanged capability. A zero exit means the one Codex process exited cleanly; the correlated
-GitHub conclusion and Derive step/run receipts remain the authority on graph success.
+or the exchanged capability. A zero exit means both the cloud agent and the Derive workflow ledger
+recorded success. A clean agent exit without a terminal Derive receipt fails the job.
+
+The cloud-agent API must implement `POST /v1/agents`, `GET
+/v1/agents/{agentId}/runs/{runId}`, and `POST /v1/agents/{agentId}/archive`. Its create body must
+accept `deriveWorkflow: {token, mcpUrl}` as a control-plane secret and inject that capability only
+into the Codex process. The Sift Cloud Agents Worker is the first production adapter for this
+contract.
 
 ## Hosted and self-hosted servers
 

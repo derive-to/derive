@@ -31,6 +31,7 @@ import {
   reconcileGithubWorkflowRun,
 } from "../lib/github-workflow-harness"
 import { bail, fail } from "../lib/http"
+import { verifyWorkToken } from "../lib/run-token"
 import { parseLinkedWorkflowFacts } from "../lib/workflow-facts"
 import { log } from "../log"
 
@@ -158,6 +159,60 @@ export const githubRoutes = (ctx: AppContext) => {
         const status = error instanceof GithubWorkflowHarnessError ? error.status : 401
         return bail(fail(c, status, "GitHub workflow exchange failed"))
       }
+    },
+  )
+
+  // authz-exempt: the bearer is the same signed, expiring, one-run capability
+  // minted by the OIDC exchange. This narrow read lets an external harness
+  // prove the graph itself settled instead of treating process exit as success.
+  app.openapi(
+    createRoute({
+      method: "get",
+      path: "/v1/workflow-runs/{runId}/github/status",
+      tags: ["GitHub"],
+      summary: "Read terminal state for one OIDC-authenticated workflow capability.",
+      request: { params: z.object({ runId: z.string().min(1) }) },
+      responses: {
+        200: {
+          description: "The current Derive ledger state for this exact workflow run.",
+          content: {
+            "application/json": {
+              schema: z.object({
+                status: z.enum([
+                  "queued",
+                  "dispatched",
+                  "running",
+                  "waiting",
+                  "succeeded",
+                  "failed",
+                  "cancelled",
+                  "timed_out",
+                ]),
+                terminal: z.boolean(),
+              }),
+            },
+          },
+        },
+      },
+    }),
+    async (c) => {
+      if (!deps.encryptionKey) return bail(fail(c, 404, "not found"))
+      const authorization = c.req.header("authorization") ?? ""
+      const token = authorization.startsWith("Bearer ") ? authorization.slice(7) : ""
+      const runId = c.req.param("runId")
+      const claim = await verifyWorkToken("workflow", deps.encryptionKey, token, Date.now())
+      if (!claim || claim.id !== runId) return bail(fail(c, 401, "workflow capability is invalid"))
+      const run = await meta.getWorkflowRun(runId, claim.orgId)
+      if (!run || run.assigned_agent_id !== claim.agentId || run.org_id !== claim.orgId)
+        return bail(fail(c, 404, "not found"))
+      return c.json({
+        status: run.status,
+        terminal:
+          run.status === "succeeded" ||
+          run.status === "failed" ||
+          run.status === "cancelled" ||
+          run.status === "timed_out",
+      })
     },
   )
 

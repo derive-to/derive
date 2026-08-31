@@ -1460,10 +1460,10 @@ if (cmd === "workflow") {
       })
       if (code === 0)
         console.log(
-          "Codex exited cleanly; the correlated GitHub and Derive receipts determine the graph outcome.",
+          "The execution harness finished and Derive recorded the terminal graph receipt.",
         )
-      else if (code === 124) console.error("error: the one-shot Codex harness timed out")
-      else console.error(`error: the one-shot Codex harness exited with status ${code}`)
+      else if (code === 124) console.error("error: the one-shot execution harness timed out")
+      else console.error(`error: the one-shot execution harness exited with status ${code}`)
       process.exit(code)
     } catch (e) {
       console.error(`error: ${e.message}`)

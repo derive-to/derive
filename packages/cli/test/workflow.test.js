@@ -20,8 +20,11 @@ import {
   exchangeWorkflowCapability,
   githubOidcRequest,
   requestGithubOidc,
+  runCloudWorkflowAgent,
   runGithubWorkflowHarness,
   workflowAgentEnv,
+  workflowHarnessPrompt,
+  workflowStatusUrl,
 } from "../src/workflow-run.js"
 
 const dirs = []
@@ -469,6 +472,115 @@ describe("GitHub Actions one-shot workflow harness", () => {
         now: Date.parse("2029-01-01T00:00:00.000Z"),
       }),
     ).rejects.toThrow(/expired/)
+  })
+
+  it("runs through a cloud agent, keeps the capability out of its prompt, and proves the Derive receipt", async () => {
+    const calls = []
+    const logs = []
+    let runChecks = 0
+    const code = await runCloudWorkflowAgent({
+      server: "https://derive.to",
+      runId,
+      exchange: {
+        token: "dkwfr_workflow-capability-value",
+        instruction: "Execute exact pinned v7 graph.",
+        expiresAt,
+        mcpUrl: "https://derive.to/mcp",
+      },
+      apiUrl: "https://agents.example",
+      clientId: "access-client-id",
+      clientSecret: "access-client-secret",
+      timeoutMs: 60_000,
+      pollMs: 250,
+      sleepImpl: async () => {},
+      now: () => Date.parse("2029-01-01T00:00:00.000Z"),
+      log: (line) => logs.push(line),
+      fetchImpl: async (url, init) => {
+        calls.push({ url, init })
+        const path = new URL(url).pathname
+        if (path === "/v1/agents" && init.method === "POST")
+          return jsonResponse(
+            {
+              agent: { id: "sca_graph" },
+              run: { id: "run_graph", status: "queued" },
+            },
+            201,
+          )
+        if (path === "/v1/agents/sca_graph/runs/run_graph") {
+          runChecks += 1
+          return jsonResponse({
+            run: { id: "run_graph", status: runChecks === 1 ? "queued" : "finished" },
+          })
+        }
+        if (path === `/v1/workflow-runs/${runId}/github/status`)
+          return jsonResponse({ status: "succeeded", terminal: true })
+        if (path === "/v1/agents/sca_graph/archive") return jsonResponse({ agent: {} })
+        return jsonResponse({}, 404)
+      },
+    })
+    expect(code).toBe(0)
+    expect(workflowStatusUrl("https://derive.to", runId)).toContain("/github/status")
+    expect(workflowHarnessPrompt("Pinned.")).toContain("PINNED DERIVE WORKFLOW INSTRUCTION")
+
+    const create = calls.find(
+      ({ url, init }) => new URL(url).pathname === "/v1/agents" && init.method === "POST",
+    )
+    const body = JSON.parse(create.init.body)
+    expect(body).toMatchObject({
+      harness: "codex",
+      model: "gpt-5.6-terra",
+      deriveWorkflow: {
+        token: "dkwfr_workflow-capability-value",
+        mcpUrl: "https://derive.to/mcp",
+      },
+    })
+    expect(body.prompt.text).toContain("Execute exact pinned v7 graph.")
+    expect(body.prompt.text).not.toContain("dkwfr_workflow-capability-value")
+    expect(create.init.headers).toMatchObject({
+      "CF-Access-Client-Id": "access-client-id",
+      "CF-Access-Client-Secret": "access-client-secret",
+    })
+    const observable = JSON.stringify(logs)
+    for (const secret of [
+      "dkwfr_workflow-capability-value",
+      "access-client-id",
+      "access-client-secret",
+    ])
+      expect(observable).not.toContain(secret)
+    expect(calls.some(({ url }) => new URL(url).pathname === "/v1/agents/sca_graph/archive")).toBe(
+      true,
+    )
+  })
+
+  it("fails a clean cloud-agent exit when Derive has no terminal receipt", async () => {
+    const code = await runCloudWorkflowAgent({
+      server: "https://derive.to",
+      runId,
+      exchange: {
+        token: "dkwfr_workflow-capability-value",
+        instruction: "Pinned.",
+        expiresAt,
+        mcpUrl: "https://derive.to/mcp",
+      },
+      apiUrl: "https://agents.example",
+      clientId: "id",
+      clientSecret: "secret",
+      timeoutMs: 60_000,
+      pollMs: 250,
+      sleepImpl: async () => {},
+      now: () => Date.parse("2029-01-01T00:00:00.000Z"),
+      log: () => {},
+      fetchImpl: async (url) => {
+        const path = new URL(url).pathname
+        if (path === "/v1/agents")
+          return jsonResponse({ agent: { id: "sca_graph" }, run: { id: "run_graph" } }, 201)
+        if (path.endsWith("/runs/run_graph")) return jsonResponse({ run: { status: "finished" } })
+        if (path.endsWith("/github/status"))
+          return jsonResponse({ status: "running", terminal: false })
+        return jsonResponse({ agent: {} })
+      },
+    })
+    expect(code).toBe(1)
   })
 
   it("spawns exactly one Codex process with only use and no exchange secret in argv or logs", async () => {

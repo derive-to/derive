@@ -358,8 +358,8 @@ export function WorkflowRunDialog({
                           repository’s default branch.
                         </SetupCheck>
                         <SetupCheck ready={githubReady}>
-                          Grant id-token: write and add OPENAI_API_KEY as a GitHub secret. The
-                          copied adapter pins both CLIs.
+                          Grant id-token: write, set the cloud-agent URL, and add its two access
+                          credentials as GitHub secrets. No model key is needed in Actions.
                         </SetupCheck>
                       </ul>
                     )}
@@ -457,18 +457,21 @@ export function WorkflowRunDialog({
               <div className="flex min-w-0 gap-3 rounded-lg border border-primary/20 bg-primary/5 p-3">
                 <ShieldCheck className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
                 <div className="min-w-0 text-xs leading-relaxed text-muted-foreground">
-                  <p className="font-medium text-foreground">No prompt or Derive token is sent</p>
+                  <p className="font-medium text-foreground">
+                    The dispatch contains no prompt or Derive token
+                  </p>
                   <p className="mt-0.5">
                     GitHub receives only a bounded run ID and one-time exchange nonce. The job uses
-                    GitHub OIDC to authenticate, then fetches the pinned graph instruction and a
-                    short-lived run capability. Derive does not store the model secret.
+                    GitHub OIDC to fetch the pinned instruction and a short-lived run capability.
+                    The adapter sends that capability to the cloud agent through a protected
+                    control-plane field, never through prompt text or logs.
                   </p>
                 </div>
               </div>
 
               <details className="min-w-0 overflow-hidden rounded-lg border border-border bg-card">
                 <summary className="cursor-pointer px-3 py-2.5 text-xs font-medium text-foreground">
-                  Copy minimal Codex adapter
+                  Copy minimal cloud-agent adapter
                 </summary>
                 <div className="min-w-0 border-t border-border-soft">
                   <div className="flex items-center justify-between gap-2 px-3 py-2">

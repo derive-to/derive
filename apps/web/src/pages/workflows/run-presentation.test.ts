@@ -131,22 +131,26 @@ describe("run presentation", () => {
     expect(workflowRunSummary(coordinated)).toBe(
       "GitHub run #998877 was dispatched; waiting for its OIDC-authenticated job.", // tokens-ignore
     )
-    expect(workflowDeliveryLabel(coordinated)).toBe("GitHub Actions · Codex")
+    expect(workflowDeliveryLabel(coordinated)).toBe("GitHub Actions · Cloud agent")
     expect(workflowGithubReceipt(coordinated)?.runUrl).toBe(
       "https://github.com/Niftory/sift/actions/runs/998877", // tokens-ignore
     )
   })
 
-  it("renders a no-prompt OIDC adapter with repository-pinned CLIs", () => {
-    const codex = workflowGithubStarterAdapter()
-    expect(codex).toContain("id-token: write")
-    expect(codex).toContain("DERIVE_EXCHANGE_NONCE")
-    expect(codex).toMatch(/OPENAI_API_KEY: \$\{\{ secrets\.OPENAI_API_KEY \}\}/)
-    expect(codex).not.toContain("DERIVE_TOKEN")
-    expect(codex).not.toContain("prompt:")
-    expect(codex).toContain("@derive-to/cli@0.6.0")
-    expect(codex).toContain("@openai/codex@0.151.0")
-    expect(codex).not.toContain("@latest")
+  it("renders a no-prompt OIDC adapter for an existing cloud-agent control plane", () => {
+    const adapter = workflowGithubStarterAdapter()
+    expect(adapter).toContain("id-token: write")
+    expect(adapter).toContain("DERIVE_EXCHANGE_NONCE")
+    expect(adapter).toMatch(
+      /DERIVE_CLOUD_AGENT_ACCESS_CLIENT_ID: \$\{\{ secrets\.DERIVE_CLOUD_AGENT_ACCESS_CLIENT_ID \}\}/,
+    )
+    expect(adapter).toContain("DERIVE_CLOUD_AGENT_URL")
+    expect(adapter).not.toContain("OPENAI_API_KEY")
+    expect(adapter).not.toContain("DERIVE_TOKEN")
+    expect(adapter).not.toContain("prompt:")
+    expect(adapter).toContain("@derive-to/cli@0.6.0")
+    expect(adapter).not.toContain("@openai/codex")
+    expect(adapter).not.toContain("@latest")
   })
 
   it("shows an exact, safe GitHub Actions run receipt", () => {

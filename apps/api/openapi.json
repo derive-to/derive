@@ -7380,6 +7380,59 @@
         }
       }
     },
+    "/v1/workflow-runs/{runId}/github/status": {
+      "get": {
+        "tags": [
+          "GitHub"
+        ],
+        "summary": "Read terminal state for one OIDC-authenticated workflow capability.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "runId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The current Derive ledger state for this exact workflow run.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "queued",
+                        "dispatched",
+                        "running",
+                        "waiting",
+                        "succeeded",
+                        "failed",
+                        "cancelled",
+                        "timed_out"
+                      ]
+                    },
+                    "terminal": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "terminal"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/github": {
       "get": {
         "tags": [

@@ -15,6 +15,10 @@ const SAFE_EVENT_TYPES = new Set([
   "web_search",
 ])
 const CODEX_DIAGNOSTIC_WINDOW = 8_192
+const DEFAULT_CLOUD_AGENT_URL = ""
+const DEFAULT_CLOUD_POLL_MS = 5_000
+const CLOUD_RUN_STATUSES = new Set(["pending", "queued", "running"])
+const CLOUD_TERMINAL_STATUSES = new Set(["finished", "error", "cancelled"])
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -58,6 +62,11 @@ export function githubOidcRequest(urlValue) {
 export function workflowExchangeUrl(server, runId) {
   if (!validRunId(runId)) throw new Error("workflow run id is missing or malformed")
   return `${normalizeWorkflowServer(server)}/v1/workflow-runs/${encodeURIComponent(runId)}/github/exchange`
+}
+
+export function workflowStatusUrl(server, runId) {
+  if (!validRunId(runId)) throw new Error("workflow run id is missing or malformed")
+  return `${normalizeWorkflowServer(server)}/v1/workflow-runs/${encodeURIComponent(runId)}/github/status`
 }
 
 async function retryFetch(
@@ -193,13 +202,17 @@ function codexProviderArgs(provider) {
   ]
 }
 
-export function codexWorkflowArgs({ instruction, mcpUrl, model = null, provider = null }) {
-  const prompt = `You are the one authorized execution harness for this exact version-pinned Derive graph run.
+export function workflowHarnessPrompt(instruction) {
+  return `You are the one authorized execution harness for this exact version-pinned Derive graph run.
 
 Follow the pinned instruction below. Coordinate every Context node and every final step/run receipt through the Derive MCP \`use\` tool. Reuse the graph's existing approvals, loop bounds, sessions, and workflow state. Do not create another scheduler or receipt store. Continue until the graph reaches its honest terminal state or the existing protocol tells you it is waiting for a human. A dispatch or a clean process exit is not proof that the graph succeeded.
 
 PINNED DERIVE WORKFLOW INSTRUCTION
 ${instruction}`
+}
+
+export function codexWorkflowArgs({ instruction, mcpUrl, model = null, provider = null }) {
+  const prompt = workflowHarnessPrompt(instruction)
   return [
     "exec",
     "--json",
@@ -221,6 +234,213 @@ ${instruction}`
     ...(model ? ["--model", model] : []),
     prompt,
   ]
+}
+
+function normalizeCloudAgentUrl(value) {
+  const url = secureUrl(value, "Cloud agent API")
+  if (url.search || url.hash)
+    throw new Error("Cloud agent API must not contain a query or fragment")
+  return url.toString().replace(/\/+$/, "")
+}
+
+function cloudAgentHeaders(clientId, clientSecret) {
+  if (typeof clientId !== "string" || !clientId.trim())
+    throw new Error("cloud agent access client id is missing")
+  if (typeof clientSecret !== "string" || !clientSecret.trim())
+    throw new Error("cloud agent access client secret is missing")
+  return {
+    accept: "application/json",
+    "content-type": "application/json",
+    "CF-Access-Client-Id": clientId,
+    "CF-Access-Client-Secret": clientSecret,
+  }
+}
+
+async function cloudAgentRequest({ url, init, label, fetchImpl }) {
+  let response
+  try {
+    response = await fetchImpl(url, init)
+  } catch {
+    throw new Error(`${label} could not be reached`)
+  }
+  if (!response.ok) throw new Error(`${label} was rejected (${response.status})`)
+  const body = await response.json().catch(() => null)
+  if (!body || typeof body !== "object") throw new Error(`${label} returned invalid JSON`)
+  return body
+}
+
+async function readWorkflowStatus({ server, runId, token, fetchImpl }) {
+  const body = await cloudAgentRequest({
+    url: workflowStatusUrl(server, runId),
+    init: {
+      method: "GET",
+      headers: { accept: "application/json", authorization: `Bearer ${token}` },
+    },
+    label: "Derive workflow receipt check",
+    fetchImpl,
+  })
+  if (typeof body.status !== "string" || typeof body.terminal !== "boolean")
+    throw new Error("Derive workflow receipt check returned an invalid response")
+  return body
+}
+
+/** Run one pinned graph through a Cursor-shaped cloud-agent control plane. The
+ * Derive capability travels in a dedicated secret field, never prompt text or logs. */
+export async function runCloudWorkflowAgent({
+  server,
+  runId,
+  exchange,
+  apiUrl,
+  clientId,
+  clientSecret,
+  model = "gpt-5.6-terra",
+  environment = "base",
+  boxType = "large",
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+  pollMs = DEFAULT_CLOUD_POLL_MS,
+  fetchImpl = fetch,
+  sleepImpl = sleep,
+  now = () => Date.now(),
+  log = console.log,
+}) {
+  const baseUrl = normalizeCloudAgentUrl(apiUrl)
+  const headers = cloudAgentHeaders(clientId, clientSecret)
+  if (!Number.isFinite(pollMs) || pollMs < 250 || pollMs > 60_000)
+    throw new Error("cloud agent poll interval must be between 250 and 60000 milliseconds")
+  const name = `derive-${runId}`
+  let created
+  try {
+    created = await cloudAgentRequest({
+      url: `${baseUrl}/v1/agents`,
+      init: {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          harness: "codex",
+          model,
+          name,
+          description: `Version-pinned Derive graph run ${runId}`,
+          prompt: { text: workflowHarnessPrompt(exchange.instruction) },
+          environment,
+          boxType,
+          deriveWorkflow: { token: exchange.token, mcpUrl: exchange.mcpUrl },
+        }),
+      },
+      label: "Cloud agent creation",
+      fetchImpl,
+    })
+  } catch (creationError) {
+    // A lost 201 response must not create a second sandbox. The run id makes
+    // this name unique, so recover the accepted assignment from the index.
+    const listed = await cloudAgentRequest({
+      url: `${baseUrl}/v1/agents`,
+      init: { method: "GET", headers },
+      label: "Cloud agent assignment recovery",
+      fetchImpl,
+    }).catch(() => null)
+    const recovered = listed?.agents
+      ?.filter(
+        (agent) =>
+          agent?.name === name &&
+          agent?.harness === "codex" &&
+          agent?.status !== "error" &&
+          typeof agent?.latestRunId === "string" &&
+          agent.latestRunId,
+      )
+      .at(-1)
+    if (!recovered) throw creationError
+    created = { agent: recovered, run: { id: recovered.latestRunId } }
+  }
+  const agentId = created.agent?.id
+  const cloudRunId = created.run?.id
+  if (typeof agentId !== "string" || !agentId || typeof cloudRunId !== "string" || !cloudRunId)
+    throw new Error("Cloud agent creation returned an invalid assignment")
+  log(`Cloud agent ${agentId} accepted Derive run ${runId}.`)
+
+  const deadline = now() + timeoutMs
+  let lastStatus = ""
+  let terminalStatus = ""
+  let consecutiveCheckFailures = 0
+  try {
+    while (now() < deadline) {
+      let body
+      try {
+        body = await cloudAgentRequest({
+          url: `${baseUrl}/v1/agents/${encodeURIComponent(agentId)}/runs/${encodeURIComponent(cloudRunId)}`,
+          init: { method: "GET", headers },
+          label: "Cloud agent run check",
+          fetchImpl,
+        })
+        consecutiveCheckFailures = 0
+      } catch (error) {
+        consecutiveCheckFailures += 1
+        if (consecutiveCheckFailures >= 3) throw error
+        log("Cloud agent status is temporarily unavailable; retrying.")
+        await sleepImpl(Math.max(250, pollMs))
+        continue
+      }
+      const status = body.run?.status
+      if (
+        typeof status !== "string" ||
+        (!CLOUD_RUN_STATUSES.has(status) && !CLOUD_TERMINAL_STATUSES.has(status))
+      )
+        throw new Error("Cloud agent run check returned an invalid status")
+      if (status !== lastStatus) {
+        log(`Cloud agent run is ${status}.`)
+        lastStatus = status
+      }
+      if (CLOUD_TERMINAL_STATUSES.has(status)) {
+        terminalStatus = status
+        break
+      }
+      await sleepImpl(Math.max(250, pollMs))
+    }
+    if (!terminalStatus) {
+      await cloudAgentRequest({
+        url: `${baseUrl}/v1/agents/${encodeURIComponent(agentId)}/runs/${encodeURIComponent(cloudRunId)}/cancel`,
+        init: { method: "POST", headers },
+        label: "Cloud agent cancellation",
+        fetchImpl,
+      }).catch(() => null)
+      return 124
+    }
+    if (terminalStatus !== "finished") return 1
+
+    // The process result is necessary but not sufficient. Read the Derive
+    // ledger with the same one-run capability and require its terminal receipt.
+    let receipt = null
+    let receiptError = null
+    for (const delay of [0, 250, 1_000]) {
+      if (delay) await sleepImpl(delay)
+      try {
+        receipt = await readWorkflowStatus({
+          server,
+          runId,
+          token: exchange.token,
+          fetchImpl,
+        })
+        receiptError = null
+      } catch (error) {
+        receiptError = error
+        continue
+      }
+      if (receipt.terminal) break
+    }
+    if (receiptError && !receipt) throw receiptError
+    if (receipt?.status === "succeeded") {
+      log("Derive recorded a terminal successful graph receipt.")
+      return 0
+    }
+    log("Cloud agent exited without a terminal successful Derive graph receipt.")
+    return 1
+  } finally {
+    await cloudAgentRequest({
+      url: `${baseUrl}/v1/agents/${encodeURIComponent(agentId)}/archive`,
+      init: { method: "POST", headers },
+      label: "Cloud agent archive",
+      fetchImpl,
+    }).catch(() => null)
+  }
 }
 
 export function workflowAgentEnv(source, token) {
@@ -379,12 +599,20 @@ export async function runGithubWorkflowHarness({
   model = env.DERIVE_CODEX_MODEL ?? null,
   providerBaseUrl = env.DERIVE_CODEX_PROVIDER_BASE_URL ?? null,
   providerApiKeyEnv = env.DERIVE_CODEX_PROVIDER_API_KEY_ENV ?? "OPENAI_API_KEY",
+  cloudAgentUrl = env.DERIVE_CLOUD_AGENT_URL ?? DEFAULT_CLOUD_AGENT_URL,
+  cloudAgentClientId = env.DERIVE_CLOUD_AGENT_ACCESS_CLIENT_ID ?? "",
+  cloudAgentClientSecret = env.DERIVE_CLOUD_AGENT_ACCESS_CLIENT_SECRET ?? "",
+  cloudAgentModel = env.DERIVE_CLOUD_AGENT_MODEL ?? "gpt-5.6-terra",
+  cloudAgentEnvironment = env.DERIVE_CLOUD_AGENT_ENVIRONMENT ?? "base",
+  cloudAgentBoxType = env.DERIVE_CLOUD_AGENT_BOX_TYPE ?? "large",
+  cloudAgentPollMs = Number(env.DERIVE_CLOUD_AGENT_POLL_MS ?? DEFAULT_CLOUD_POLL_MS),
   timeoutMs = env.DERIVE_WORKFLOW_TIMEOUT_MS,
   fetchImpl = fetch,
   spawnImpl = spawn,
   retryDelays,
   sleepImpl,
   now,
+  clock = () => Date.now(),
   log = console.log,
 }) {
   if (!validRunId(runId)) throw new Error("workflow run id is missing or malformed")
@@ -409,6 +637,26 @@ export async function runGithubWorkflowHarness({
     sleepImpl,
     now,
   })
+  if (cloudAgentUrl) {
+    log("GitHub identity accepted; starting one authorized cloud agent.")
+    return runCloudWorkflowAgent({
+      server: normalizedServer,
+      runId,
+      exchange,
+      apiUrl: cloudAgentUrl,
+      clientId: cloudAgentClientId,
+      clientSecret: cloudAgentClientSecret,
+      model: cloudAgentModel,
+      environment: cloudAgentEnvironment,
+      boxType: cloudAgentBoxType,
+      timeoutMs: timeoutFrom(timeoutMs),
+      pollMs: cloudAgentPollMs,
+      fetchImpl,
+      sleepImpl,
+      now: clock,
+      log,
+    })
+  }
   log("GitHub identity accepted; starting one authorized Codex harness.")
   const result = await spawnWorkflowAgent({
     bin,
