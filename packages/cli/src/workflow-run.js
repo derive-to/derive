@@ -249,6 +249,7 @@ function codexDiagnosticState() {
     tail: "",
     providerAuth: false,
     providerLimit: false,
+    providerCompatibility: false,
     deriveMcp: false,
   }
 }
@@ -270,6 +271,11 @@ function scanCodexDiagnostics(state, chunk) {
   )
     state.providerLimit = true
   if (
+    (sample.includes("404 not found") || sample.includes("status 404")) &&
+    sample.includes("/responses")
+  )
+    state.providerCompatibility = true
+  if (
     sample.includes("required mcp servers failed to initialize") ||
     (sample.includes("derive") && sample.includes("mcp") && sample.includes("failed to initialize"))
   )
@@ -279,12 +285,16 @@ function scanCodexDiagnostics(state, chunk) {
 function logCodexFailureDiagnostic(state, log) {
   if (state.providerAuth) {
     log(
-      "Codex provider authentication failed. Verify OPENAI_API_KEY or the configured workload identity in this GitHub environment.",
+      "Codex provider authentication failed. Verify the model API key or configured workload identity in this GitHub environment.",
     )
     return
   }
   if (state.providerLimit) {
     log("The Codex provider blocked this run because of a rate or usage limit.")
+    return
+  }
+  if (state.providerCompatibility) {
+    log("The Codex provider does not expose the required Responses API for this model.")
     return
   }
   if (state.deriveMcp) log("Codex could not initialize the required Derive MCP connection.")

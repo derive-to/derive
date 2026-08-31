@@ -588,10 +588,44 @@ describe("GitHub Actions one-shot workflow harness", () => {
     })
     expect(code).toBe(1)
     expect(logs).toContain(
-      "Codex provider authentication failed. Verify OPENAI_API_KEY or the configured workload identity in this GitHub environment.",
+      "Codex provider authentication failed. Verify the model API key or configured workload identity in this GitHub environment.",
     )
     expect(JSON.stringify(logs)).not.toContain(rawDiagnostic)
     expect(JSON.stringify(logs)).not.toContain("leaked-secret-owner-model-value")
+  })
+
+  it("classifies a missing Responses API without echoing the provider payload", async () => {
+    const logs = []
+    const rawDiagnostic =
+      "unexpected status 404 Not Found at https://provider.example/v1/responses provider-payload"
+    const responses = [
+      jsonResponse({ value: oidcToken }),
+      jsonResponse({
+        token: "workflow-capability-value",
+        instruction: "Pinned.",
+        expiresAt,
+      }),
+    ]
+    const code = await runGithubWorkflowHarness({
+      runId,
+      nonce,
+      server: "https://derive.to",
+      requestUrl: oidcUrl,
+      requestToken,
+      env: {},
+      timeoutMs: 60_000,
+      retryDelays: [0],
+      now: Date.parse("2029-01-01T00:00:00.000Z"),
+      log: (line) => logs.push(line),
+      fetchImpl: async () => responses.shift(),
+      spawnImpl: () => fakeChild(1, { stderr: rawDiagnostic }),
+    })
+    expect(code).toBe(1)
+    expect(logs).toContain(
+      "The Codex provider does not expose the required Responses API for this model.",
+    )
+    expect(JSON.stringify(logs)).not.toContain(rawDiagnostic)
+    expect(JSON.stringify(logs)).not.toContain("provider-payload")
   })
 
   it("keeps the capability out of Codex argv while preserving owner model configuration", () => {
