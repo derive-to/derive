@@ -398,9 +398,10 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          MODEL_AUTO_PROVIDERS: ${{ vars.DERIVE_MODEL_AUTO_PROVIDERS }}
         run: |
           for attempt in 1 2 3; do
-            if pnpm --filter @derive/api exec wrangler deploy --var BUILD_SHA:"$GITHUB_SHA"; then
+            if pnpm --filter @derive/api exec wrangler deploy --var BUILD_SHA:"$GITHUB_SHA" --var DERIVE_MODEL_AUTO_PROVIDERS:"$MODEL_AUTO_PROVIDERS"; then
               exit 0
             fi
             echo "::warning::wrangler deploy failed (attempt $attempt/3); retrying" >&2
