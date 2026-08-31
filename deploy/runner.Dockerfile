@@ -9,7 +9,7 @@
 # the context's .mcp.json expects. The API resolves that credential from the requester,
 # an explicitly lending agent owner, or the workspace pool; no model key is baked in.
 # See runner.compose.example.yml.
-FROM node:24-slim@sha256:3638d9a6fe4030bd716be989438248074489337ba3275657f93595428be4fc03
+FROM node:26-slim@sha256:c0753125a3789977aefe869cbebccf70e3cfd7ea84ca48547458f02e4f1d7146
 
 # git: repo pointers clone at boot. python3 + gh: what context manifests most
 # commonly shell out to (doctor checks both, warn-only). uv: the launcher
