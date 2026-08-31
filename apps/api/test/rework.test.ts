@@ -545,6 +545,7 @@ describe("workflow run: explicit local-agent handoff", () => {
       installationId: "9988",
       accountLogin: "Niftory",
     })
+    const caller = await addAgent(app, "Codex")
     const calls: Array<{ path: string; body: unknown }> = []
     vi.stubGlobal(
       "fetch",
@@ -611,6 +612,26 @@ describe("workflow run: explicit local-agent handoff", () => {
     })
     expect(JSON.stringify(historyBody)).not.toContain("nonce_hash")
     expect(JSON.stringify(historyBody)).not.toContain("oidc_subject")
+
+    // A registered or OAuth-backed agent carries a synthetic actor id, but its standing is
+    // the creator/grantor's live standing capped by the agent role. The GitHub lane must
+    // authorize that principal rather than trying to find the synthetic id in membership.
+    const agentResponse = await app.request(`/v1/artifacts/${published.short_id}/workflow-run`, {
+      method: "POST",
+      headers: { ...bearer(caller.token), "content-type": "application/json" },
+      body: JSON.stringify({
+        diagramId: "brief",
+        delivery: "github",
+        github: {
+          connectionId: connection.id,
+          owner: "Niftory",
+          repo: "sift",
+          workflow: "derive-graph-runner.yml",
+          ref: "main",
+        },
+      }),
+    })
+    expect(agentResponse.status).toBe(201)
   })
 
   it("returns the recorded reason a failed step stopped", async () => {

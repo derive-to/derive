@@ -60,7 +60,7 @@ export const reworkRoutes = (ctx: AppContext) => {
     limited,
     commentLimiter,
     deps,
-    authorizeUserStanding,
+    authorizeStanding,
   } = ctx
   const app = new OpenAPIHono<BlankEnv>()
 
@@ -539,7 +539,12 @@ export const reworkRoutes = (ctx: AppContext) => {
         return c.json({ runId, prompt }, 201)
       }
       if (delivery === "github") {
-        if (!(await authorizeUserStanding(acting.id, "publish", artifact)))
+        // Authorize the REQUEST principal, not its byline id. An OAuth/CLI agent has a
+        // synthetic `oauth:<client>` actor id, while its standing comes from the consenting
+        // human and is capped by the grant's role. Looking that synthetic id up as a human
+        // member rejects every legitimate agent-triggered dispatch. `authorizeStanding`
+        // preserves both halves of the boundary: live human standing and the agent's scope.
+        if (!(await authorizeStanding(c, "publish", artifact)))
           return bail(fail(c, 403, "publish access is required to run GitHub Actions"))
         if (!(await meta.getOrgSettings(artifact.org_id))?.automateBeta)
           return bail(fail(c, 404, "not found"))
