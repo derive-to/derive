@@ -7470,14 +7470,29 @@ export interface components {
             /** @description Whether this workspace has at least one active GitHub connection */
             connected: boolean;
             app_slug: string | null;
-            needs_permissions: boolean;
-            permissions_url: string | null;
+            app_owner_login: string | null;
+            /**
+             * @description Whether the instance App has every current permission and event; null when no live App exists
+             * @enum {string|null}
+             */
+            app_permissions_state: "ready" | "update_required" | "unknown" | null;
+            /**
+             * @description Whether signed GitHub workflow completion events can reach this instance
+             * @enum {string|null}
+             */
+            app_webhook_state: "ready" | "update_required" | "unknown" | null;
+            app_settings_url: string | null;
+            /** @description Whether the caller is an instance operator who can configure the shared App */
+            can_manage_app: boolean;
             accounts: {
                 installation_id: string;
                 account_login: string | null;
                 connection_id: string | null;
                 /** @enum {string} */
                 state: "active" | "disconnected" | "needs_reauth";
+                /** @enum {string} */
+                permissions_state: "ready" | "approval_required" | "unknown";
+                permissions_url: string | null;
             }[];
         };
         SlackStatus: {

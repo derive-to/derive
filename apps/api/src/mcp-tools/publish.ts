@@ -41,6 +41,7 @@ import {
 import { MAX_UPLOAD_BYTES } from "../lib/http"
 import { badChoice, choiceDescription } from "../lib/open-choice"
 import { agentPushFanout, openReviewRound } from "../lib/review-request"
+import { type ReviewSummary, summarizeTextEdits } from "../lib/review-summary"
 import { normalizeTags } from "../lib/tags"
 import { canReadTemplateLibrary } from "../lib/template-library-access"
 import type { ToolContext } from "../mcp-tool-context"
@@ -531,7 +532,18 @@ export function registerPublishTool(tc: ToolContext): void {
       // workspace, within the grant); create a new one in the targeted (or
       // default) workspace. The acting role is re-capped to that workspace, so
       // the publish gate is correct there, not just in the default one.
-      const reached = short_id ? await reach(short_id, workspace) : null
+      // An inline edit needs both the artifact for authorization and its current version
+      // for materialization. Hosted stores can join those immutable rows, which removes
+      // one serial edge round trip without moving any authorization check ahead of reach.
+      const editEnvelope =
+        short_id && (edits !== undefined || slide_ops !== undefined) && ctx.meta.artifactWithVersion
+          ? await ctx.meta.artifactWithVersion(short_id)
+          : undefined
+      const reached = short_id
+        ? await reach(short_id, workspace, {
+            ...(editEnvelope ? { artifact: editEnvelope.artifact } : {}),
+          })
+        : null
       if (reached && "error" in reached) return text(reached.error)
       const existing = reached && !("error" in reached) ? reached.a : null
       if (short_id && !existing) return text(`No artifact "${short_id}" you can reach.`)
@@ -547,6 +559,14 @@ export function registerPublishTool(tc: ToolContext): void {
         if ("error" in t) return text(t.error)
         targetOrg = t.org
         actRole = t.role
+      }
+      // Billing eligibility and the storage cap come from the same subscription + seat
+      // snapshot. An edit checks both, so keep one request-local result instead of paying
+      // the two hosted queries twice.
+      let publishBillingState: Awaited<ReturnType<typeof ctx.billingState>> | undefined
+      const billingForPublish = async () => {
+        publishBillingState ??= await ctx.billingState(targetOrg)
+        return publishBillingState
       }
 
       // THE AGENT-WRITE SWITCH binds every write this tool makes, whichever grant is
@@ -620,6 +640,7 @@ export function registerPublishTool(tc: ToolContext): void {
       // kinds of intent, and a batch mixing them would have no honest ordering.
       let editsApplied = 0
       let slideOpsApplied = 0
+      let editSummary: ReviewSummary | undefined
       let readbackBeforeSource: string | null = null
       let readbackBeforeContentType: string | null = null
       let readbackBeforeBlobKey: string | null = null
@@ -632,17 +653,16 @@ export function registerPublishTool(tc: ToolContext): void {
         if (!existing)
           return err(`\`${field}\` revises an EXISTING artifact — pass its \`short_id\`.`)
         const deps = {
-          getVersion: ctx.meta.getVersion.bind(ctx.meta),
+          getVersion: async (artifactId: string, n: number) =>
+            editEnvelope?.artifact.id === artifactId && editEnvelope.version?.n === n
+              ? editEnvelope.version
+              : ctx.meta.getVersion(artifactId, n),
           sourceText: ctx.sourceText,
-          ...(readback
-            ? {
-                captureSource: (source: string, contentType: string | null, blobKey: string) => {
-                  readbackBeforeSource = source
-                  readbackBeforeContentType = contentType ?? "text/html"
-                  readbackBeforeBlobKey = blobKey
-                },
-              }
-            : {}),
+          captureSource: (source: string, contentType: string | null, blobKey: string) => {
+            readbackBeforeSource = source
+            readbackBeforeContentType = contentType ?? "text/html"
+            readbackBeforeBlobKey = blobKey
+          },
         }
         let materialized: MaterializedEdits
         try {
@@ -658,10 +678,44 @@ export function registerPublishTool(tc: ToolContext): void {
         // over-quota version the HTTP surfaces would have rejected.
         const editedBytes = new TextEncoder().encode(materialized.content).length
         if (editedBytes > MAX_UPLOAD_BYTES) return err("Edited content is too large.")
-        if (await ctx.overStorage(targetOrg, editedBytes)) return err(ctx.blockCopy.storage.message)
+        if (await ctx.overStorage(targetOrg, editedBytes, await billingForPublish()))
+          return err(ctx.blockCopy.storage.message)
         content = materialized.content
         if (slide_ops) slideOpsApplied = slide_ops.length
-        else editsApplied = (edits as AnyDocEdit[]).length
+        else {
+          const applied = edits as AnyDocEdit[]
+          editsApplied = applied.length
+          const textEdits = applied.flatMap((edit) => {
+            if ("old_str" in edit)
+              return [
+                {
+                  before: edit.old_str,
+                  after: edit.new_str,
+                  contentType: materialized.filename.endsWith(".md")
+                    ? "text/markdown"
+                    : "text/html",
+                },
+              ]
+            if ("quote" in edit && typeof edit.new_text === "string")
+              return [
+                {
+                  before: edit.quote.exact,
+                  after: edit.new_text,
+                  contentType: "text/markdown",
+                },
+              ]
+            return []
+          })
+          // A mixed quote + element/structural save needs the complete-version fallback;
+          // a text-only batch is fully represented by these exact validated spans.
+          if (textEdits.length === applied.length)
+            editSummary = summarizeTextEdits({
+              edits: textEdits,
+              fromVersion: existing.current_version,
+              toVersion: existing.current_version + 1,
+              note: message,
+            })
+        }
         if (!filename) filename = materialized.filename
       }
 
@@ -701,7 +755,7 @@ export function registerPublishTool(tc: ToolContext): void {
         )
 
       // Billing gates the live write, after the standing check above.
-      const blocked = await ctx.billingBlocked(targetOrg)
+      const blocked = await ctx.billingBlocked(targetOrg, await billingForPublish())
       if (blocked) return err(blocked.message)
       if (merge) {
         if (!isBundle) return text("`merge` adds files to a bundle — pass `files`, not `content`.")
@@ -784,6 +838,7 @@ export function registerPublishTool(tc: ToolContext): void {
             linkRole: resolvedLinkRole,
             listed: resolvedListed,
             derivedFrom: derivedFromId,
+            ...(existing ? { existingArtifact: existing } : {}),
           },
           short_id,
         )
@@ -800,7 +855,7 @@ export function registerPublishTool(tc: ToolContext): void {
         // one shared helper — event parity with the HTTP publish route (an open tab
         // live-reloads, the webhook outbox reaches integrations) with no chance to drift.
         // A publish that fixes feedback resolves those threads directly here.
-        const { resolved } = await afterPublish(
+        const { resolved, storedRows } = await afterPublish(
           {
             meta: ctx.meta,
             blobs: ctx.blobs,
@@ -824,6 +879,18 @@ export function registerPublishTool(tc: ToolContext): void {
             resolves: addresses ?? [],
             actorId: agent.id,
             actorName: agent.name,
+            ...(artifact.kind === "file" && typeof content === "string"
+              ? { preparedSource: content }
+              : {}),
+            ...(readbackBeforeSource !== null && existing
+              ? {
+                  previousSearchSource: {
+                    source: readbackBeforeSource,
+                    contentType: readbackBeforeContentType,
+                    title: existing.title,
+                  },
+                }
+              : {}),
           },
         )
         // Tag at publish time — the one-step "auto-tag on create". `tags` given ⇒ set them
@@ -854,6 +921,7 @@ export function registerPublishTool(tc: ToolContext): void {
               requestedByName: agent.name,
               version: version.n,
               actorId: agent.id,
+              ...(editSummary ? { summary: editSummary } : {}),
             },
           )
         }
@@ -862,28 +930,51 @@ export function registerPublishTool(tc: ToolContext): void {
         // fan-out the HTTP route runs. The delivery receipt becomes `opened_in_tab`, so the
         // agent knows whether to open the URL locally. An attended revision still gets the
         // completion DM, but does not commandeer the person's browser; their live tab reloads.
-        let openedInTab = false
-        if (actingFor) {
-          openedInTab = await agentPushFanout(
-            {
-              meta: ctx.meta,
-              blobs: ctx.blobs,
-              bus: ctx.bus,
-              baseUrl: ctx.deps.baseUrl,
-              pokeWebhooks: ctx.deps.pokeWebhooks,
-            },
-            artifact,
-            {
-              user: actingFor.id,
-              agentId: agent.id,
-              agentName: agent.name,
-              version: version.n,
-              reviewRound: !!review_round,
-              isNew: !short_id,
-              notifyBrowser: !attended || !short_id,
-            },
-          )
-        }
+        const responseContent =
+          typeof content === "string" && artifact.kind === "file" ? content : null
+        const pushReceipt = actingFor
+          ? agentPushFanout(
+              {
+                meta: ctx.meta,
+                blobs: ctx.blobs,
+                bus: ctx.bus,
+                baseUrl: ctx.deps.baseUrl,
+                pokeWebhooks: ctx.deps.pokeWebhooks,
+              },
+              artifact,
+              {
+                user: actingFor.id,
+                agentId: agent.id,
+                agentName: agent.name,
+                version: version.n,
+                reviewRound: !!review_round,
+                isNew: !short_id,
+                notifyBrowser: !attended || !short_id,
+                ...(editSummary ? { summary: editSummary } : {}),
+              },
+            )
+          : Promise.resolve(false)
+        // An attended revision never opens the user's browser, so its receipt is already
+        // known. Keep completion delivery reliable through waitUntil without holding the
+        // edit response open for remote notification writes that cannot change it.
+        const openedInTabReceipt =
+          actingFor && attended && short_id
+            ? ctx.background(pushReceipt).then(() => false)
+            : pushReceipt
+        const [openedInTab, blobAdvisory, weightAdvisory, driftAdvisories] = await Promise.all([
+          openedInTabReceipt,
+          responseContent ? missingBlobAdvisory(responseContent, ctx.blobs) : Promise.resolve(null),
+          responseContent ? heavyAssetsAdvisory(responseContent, ctx.meta) : Promise.resolve(null),
+          responseContent
+            ? slotShapeDriftAdvisories(
+                responseContent,
+                version.content_type,
+                artifact.id,
+                version.n - 1,
+                ctx.meta,
+              )
+            : Promise.resolve([]),
+        ])
         // Each bundle page (including any bound images) is directly fetchable once
         // live — surfacing the URLs here is the fix for an agent that can't find
         // them otherwise and falls back to inlining base64 (see the "cheap image
@@ -898,30 +989,8 @@ export function registerPublishTool(tc: ToolContext): void {
           : null
         // The one advisory that needs I/O — computed once here, folded into the
         // note below alongside the pure publishAdvisories.
-        const blobAdvisory =
-          typeof content === "string" && artifact.kind === "file"
-            ? await missingBlobAdvisory(content, ctx.blobs)
-            : null
-        // What this page's images cost every viewer, every load. Same I/O shape; named
-        // rather than silently re-encoded, because these are the user's bytes.
-        const weightAdvisory =
-          typeof content === "string" && artifact.kind === "file"
-            ? await heavyAssetsAdvisory(content, ctx.meta)
-            : null
-        // Shape drift against the previous version — the quiet way a trend read splits
-        // into two metrics that look like one.
-        const driftAdvisories =
-          typeof content === "string" && artifact.kind === "file"
-            ? await slotShapeDriftAdvisories(
-                content,
-                version.content_type,
-                artifact.id,
-                version.n - 1,
-                ctx.meta,
-              )
-            : []
-        // What the extraction actually STORED for this version, read back from the rows
-        // rather than echoed from the parser. Reporting the store is strictly more honest:
+        // What the extraction actually STORED for this version, returned by the successful
+        // write rather than echoed from the parser. Reporting the store is strictly more honest:
         // it reflects what is now queryable, so a persistence failure shows up as an empty
         // list instead of a confident claim. Until now success was silent — a fact was
         // only ever mentioned when something went wrong, which is a poor way to teach a
@@ -929,9 +998,7 @@ export function registerPublishTool(tc: ToolContext): void {
         // assertedOnly: every version now also carries host-derived $rows, and the receipt
         // is the AUTHOR's reward — a receipt that congratulated the host for its own
         // indexes would bury the one line that pays the author for asserting.
-        const storedSlots = assertedOnly(
-          await ctx.meta.getVersionData(artifact.id, version.n).catch(() => []),
-        )
+        const storedSlots = assertedOnly(storedRows)
         let changedReadback: ChangedParts | null = readback
           ? {
               count: 0,

@@ -4,9 +4,11 @@ import { useEffect, useState } from "react"
 import { api, type GithubIntegrationAccount, type OrgSettings } from "@/api"
 import { AdminNote } from "@/components/shared/admin-note"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
+import { ListRow } from "@/components/shared/list-row"
 import { LoadError } from "@/components/shared/load-error"
 import { SettingRow } from "@/components/shared/setting-row"
 import { SettingsGroup } from "@/components/shared/settings-group"
+import { StatusBadge } from "@/components/shared/status-badge"
 import { StatusPanel } from "@/components/shared/status-panel"
 import { Button } from "@/components/ui/button"
 import { toast } from "@/components/ui/sonner"
@@ -171,6 +173,11 @@ export function IntegrationsSection() {
     success: "GitHub disconnected",
     invalidate: [githubQuery().queryKey, connectionsQuery().queryKey],
   })
+  const configureGithubWebhook = useApiMutation({
+    mutationFn: () => api.configureGithubWebhook(),
+    success: "GitHub completion updates enabled",
+    invalidate: [githubQuery().queryKey],
+  })
   const confirmDisconnectGithub = () => {
     const connectionId = disconnectingGithub?.connection_id
     if (!connectionId) return
@@ -214,7 +221,7 @@ export function IntegrationsSection() {
 
       <SettingsGroup
         title="GitHub"
-        description="Read pull requests and add top-level PR conversation comments in repositories selected during installation. Derive does not mirror repository files or create collections."
+        description="Read pull requests, add top-level PR comments, and run selected GitHub Actions workflows. Derive does not mirror repository files or create collections."
       >
         {githubInstallError && githubInstallResult && !githubInstallResult.connected && (
           <StatusPanel
@@ -232,21 +239,6 @@ export function IntegrationsSection() {
             }
           />
         )}
-        {github?.needs_permissions && github.permissions_url && (
-          <StatusPanel
-            tone="danger"
-            layout="inline"
-            title="GitHub needs updated pull request access"
-            description="Update the App permission, then approve it for each connected account."
-            action={
-              isAdmin && (
-                <Button data-testid="github-update-permissions" size="sm" asChild>
-                  <a href={github.permissions_url}>Update permissions</a>
-                </Button>
-              )
-            }
-          />
-        )}
         {githubIsPending ? (
           <SettingsListSkeleton />
         ) : githubIsError ? (
@@ -257,19 +249,26 @@ export function IntegrationsSection() {
             onRetry={() => refetchGithub()}
           />
         ) : github && !github.available ? (
-          <div className="flex flex-col items-start gap-3 py-1">
-            <p className="text-sm text-muted-foreground">
-              GitHub isn't configured on this Derive instance yet. Create the App once, then install
-              it on the repositories agents may read.
-            </p>
-            {isAdmin ? (
-              <Button data-testid="github-setup" variant="default" asChild>
-                <a href="/settings/github/app/new">Set up GitHub App</a>
-              </Button>
-            ) : (
-              <AdminNote can="set up the GitHub App" />
-            )}
-          </div>
+          <ListRow
+            title={
+              <span className="flex flex-wrap items-center gap-2">
+                GitHub App
+                <StatusBadge tone="muted">Not configured</StatusBadge>
+              </span>
+            }
+            meta={
+              github.can_manage_app
+                ? "Create the shared App once for this Derive instance."
+                : "Ask an instance operator to configure the shared GitHub App."
+            }
+            actions={
+              github.can_manage_app ? (
+                <Button data-testid="github-setup" variant="ghost" size="sm" asChild>
+                  <a href="/settings/github/app/new">Set up App</a>
+                </Button>
+              ) : undefined
+            }
+          />
         ) : githubInstallResult?.connected && !github?.connected ? (
           <StatusPanel
             tone={githubIsFetching ? "neutral" : "danger"}
@@ -293,28 +292,116 @@ export function IntegrationsSection() {
               )
             }
           />
-        ) : github?.accounts.length ? (
+        ) : github ? (
           <>
-            <div className="divide-y">
-              {github.accounts.map((account) => (
-                <div
-                  key={account.installation_id}
-                  className="flex flex-wrap items-center justify-between gap-3 py-3.5"
-                >
-                  <div>
-                    <p className="text-sm font-medium">
-                      {account.account_login ?? `Installation ${account.installation_id}`}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      {account.state === "active"
-                        ? "Available to this workspace's contexts and automations"
-                        : account.state === "needs_reauth"
-                          ? "The GitHub installation is missing or was removed"
-                          : "Installed, but disconnected from agent use"}
-                    </p>
-                  </div>
-                  {isAdmin && (
-                    <div className="flex flex-wrap items-center gap-2">
+            <ListRow
+              title={
+                <span className="flex flex-wrap items-center gap-2">
+                  GitHub App
+                  {github.app_permissions_state === "update_required" ? (
+                    <StatusBadge tone="attention">Update required</StatusBadge>
+                  ) : github.app_permissions_state === "ready" ? (
+                    <StatusBadge tone="ok">Ready</StatusBadge>
+                  ) : (
+                    <StatusBadge tone="muted">Status unknown</StatusBadge>
+                  )}
+                </span>
+              }
+              meta={
+                github.app_permissions_state === "update_required"
+                  ? `${github.app_owner_login ? `@${github.app_owner_login} owns this App. ` : ""}An App owner or manager must grant Actions read and write and enable workflow run events.`
+                  : github.app_permissions_state === "ready"
+                    ? `${github.app_owner_login ? `Owned by @${github.app_owner_login}. ` : ""}The App permissions and events are current.`
+                    : "Derive could not confirm the App settings. Existing connections remain available."
+              }
+              actions={
+                github.app_permissions_state === "update_required" &&
+                github.can_manage_app &&
+                github.app_settings_url ? (
+                  <Button data-testid="github-update-app" variant="ghost" size="sm" asChild>
+                    <a href={github.app_settings_url}>Review App settings</a>
+                  </Button>
+                ) : undefined
+              }
+            />
+            {github.app_permissions_state === "ready" && (
+              <ListRow
+                title={
+                  <span className="flex flex-wrap items-center gap-2">
+                    Workflow completion updates
+                    {github.app_webhook_state === "ready" ? (
+                      <StatusBadge tone="ok">Active</StatusBadge>
+                    ) : github.app_webhook_state === "update_required" ? (
+                      <StatusBadge tone="attention">Setup required</StatusBadge>
+                    ) : (
+                      <StatusBadge tone="muted">Status unknown</StatusBadge>
+                    )}
+                  </span>
+                }
+                meta={
+                  github.app_webhook_state === "ready"
+                    ? "GitHub sends signed workflow completion events to Derive."
+                    : "Finish the signed webhook setup so Derive can receive workflow completion events."
+                }
+                actions={
+                  github.can_manage_app && github.app_webhook_state !== "ready" ? (
+                    <Button
+                      data-testid="github-configure-webhook"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => configureGithubWebhook.mutate()}
+                      loading={configureGithubWebhook.isPending}
+                      disabled={configureGithubWebhook.isPending}
+                    >
+                      Enable updates
+                    </Button>
+                  ) : undefined
+                }
+              />
+            )}
+            {github.accounts.map((account) => (
+              <ListRow
+                key={account.installation_id}
+                title={
+                  <span className="flex flex-wrap items-center gap-2">
+                    {account.account_login ?? `Installation ${account.installation_id}`}
+                    {account.state === "needs_reauth" ? (
+                      <StatusBadge tone="attention">Needs reconnect</StatusBadge>
+                    ) : github.app_permissions_state === "ready" &&
+                      account.permissions_state === "approval_required" ? (
+                      <StatusBadge tone="attention">Approval required</StatusBadge>
+                    ) : account.state === "active" ? (
+                      <StatusBadge tone="ok">Connected</StatusBadge>
+                    ) : (
+                      <StatusBadge tone="muted">Disconnected</StatusBadge>
+                    )}
+                  </span>
+                }
+                meta={
+                  account.state === "needs_reauth"
+                    ? "The GitHub installation is missing or was removed."
+                    : github.app_permissions_state === "ready" &&
+                        account.permissions_state === "approval_required"
+                      ? "A GitHub account owner must approve the App's updated permissions."
+                      : account.state === "active"
+                        ? "Available to this workspace's contexts and automations."
+                        : "Installed, but disconnected from agent use."
+                }
+                actions={
+                  isAdmin ? (
+                    <>
+                      {github.app_permissions_state === "ready" &&
+                        account.permissions_state === "approval_required" &&
+                        account.permissions_url && (
+                          <Button
+                            data-testid={`github-approve-${account.installation_id}`}
+                            variant="ghost"
+                            size="sm"
+                            asChild
+                          >
+                            <a href={account.permissions_url}>Review update</a>
+                          </Button>
+                        )}
                       {account.state === "active" && account.connection_id ? (
                         <Button
                           data-testid={`github-disconnect-${account.installation_id}`}
@@ -327,42 +414,41 @@ export function IntegrationsSection() {
                       ) : (
                         <Button
                           data-testid={`github-reconnect-${account.installation_id}`}
-                          variant="default"
+                          variant="ghost"
                           size="sm"
                           asChild
                         >
                           <a href="/v1/github/install">Reconnect</a>
                         </Button>
                       )}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-            {isAdmin && (
-              <div className="py-2">
-                <Button data-testid="github-add-account" variant="outline" size="sm" asChild>
-                  <a href="/v1/github/install">Connect another account</a>
-                </Button>
-              </div>
+                    </>
+                  ) : undefined
+                }
+              />
+            ))}
+            {github.app_permissions_state !== "update_required" && (
+              <ListRow
+                title={github.accounts.length ? "Another GitHub account" : "GitHub account"}
+                meta="Connect an existing App installation or install it on another GitHub account."
+                actions={
+                  isAdmin ? (
+                    <Button
+                      data-testid={github.accounts.length ? "github-add-account" : "github-connect"}
+                      variant="ghost"
+                      size="sm"
+                      asChild
+                    >
+                      <a href="/v1/github/install">
+                        {github.accounts.length ? "Connect account" : "Connect"}
+                      </a>
+                    </Button>
+                  ) : undefined
+                }
+              />
             )}
             {!isAdmin && <AdminNote can="manage the GitHub connection" />}
           </>
-        ) : (
-          <div className="flex flex-col items-start gap-3 py-1">
-            <p className="text-sm text-muted-foreground">
-              Install the GitHub App, sign in or complete SSO if GitHub asks, and choose the
-              repositories agents may read.
-            </p>
-            {isAdmin ? (
-              <Button data-testid="github-connect" variant="default" asChild>
-                <a href="/v1/github/install">Connect GitHub</a>
-              </Button>
-            ) : (
-              <AdminNote can="connect GitHub" />
-            )}
-          </div>
-        )}
+        ) : null}
         <ConfirmDialog
           open={!!disconnectingGithub}
           onOpenChange={(open) => !open && setDisconnectingGithub(null)}

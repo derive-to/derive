@@ -10,6 +10,7 @@ import { LoadError } from "@/components/shared/load-error"
 import { RunReceipt } from "@/components/shared/run-receipt"
 import { Eyebrow } from "@/components/shared/section-eyebrow"
 import { SectionHeading } from "@/components/shared/section-title"
+import { SettingRow } from "@/components/shared/setting-row"
 import { SettingsEmpty } from "@/components/shared/settings-empty"
 import { SettingsGroup } from "@/components/shared/settings-group"
 import { StatusBadge } from "@/components/shared/status-badge"
@@ -51,6 +52,11 @@ export function AutomatedWorkflows() {
     qc.invalidateQueries({ queryKey: automationsQuery().queryKey })
     qc.invalidateQueries({ queryKey: runsQuery().queryKey })
   }
+  const enable = useApiMutation({
+    mutationFn: () => api.updateWorkspaceSettings({ automateBeta: true }),
+    success: "Workflows enabled",
+    onSuccess: (next) => qc.setQueryData(workspaceSettingsQuery().queryKey, next),
+  })
 
   return (
     <section className="flex flex-col gap-4">
@@ -75,10 +81,23 @@ export function AutomatedWorkflows() {
           <AutomationForm onDone={reload} />
         </div>
       ) : isAdmin ? (
-        <p className="text-sm text-muted-foreground">
-          Standing triggers are not enabled for this workspace. Existing definitions remain visible,
-          but they cannot start a new run.
-        </p>
+        <SettingsGroup>
+          <SettingRow
+            label="Enable single-agent workflows"
+            description="Create reusable jobs and run them here, on a schedule, or from an event."
+          >
+            <Button
+              data-testid="automations-enable"
+              variant="secondary"
+              size="sm"
+              onClick={() => enable.mutate()}
+              loading={enable.isPending}
+              disabled={enable.isPending}
+            >
+              Enable workflows
+            </Button>
+          </SettingRow>
+        </SettingsGroup>
       ) : (
         <AdminNote can="create workflows" />
       )}
@@ -149,14 +168,15 @@ function AutomationRow({
   return (
     <ListRow
       data-testid={`automation-row-${automation.id}`}
+      className="[&>div:first-child]:flex-wrap [&>div:first-child>div:last-child]:w-full sm:[&>div:first-child>div:last-child]:w-auto"
       leading={
         <div className="flex size-7 shrink-0 items-center justify-center rounded-full bg-accent">
           <Zap className="size-4 text-muted-foreground" aria-hidden />
         </div>
       }
       title={
-        <span className="flex items-center gap-1.5">
-          <span className="truncate">{automation.instruction}</span>
+        <span className="flex min-w-0 flex-wrap items-center gap-1.5">
+          <span className="min-w-0 max-w-full truncate">{automation.instruction}</span>
           <Badge variant="outline">
             {automation.provider === "codex" ? "Codex" : "Claude Code"}
           </Badge>

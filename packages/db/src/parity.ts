@@ -33,7 +33,6 @@ import type {
   FolderRecord,
   FollowRecord,
   GitHubAppRecord,
-  GitHubInstallationRecord,
   InvitationRecord,
   MembershipRecord,
   NotificationRecord,
@@ -101,7 +100,6 @@ export interface TypedTables {
   templateLibrary: TemplateLibraryRecord
   templateLibraryEntry: TemplateLibraryEntryRecord
   githubApp: GitHubAppRecord
-  githubInstallation: GitHubInstallationRecord
   domain: DomainRecord
   report: ReportRecord
   auditLog: AuditLogRecord

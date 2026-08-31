@@ -171,6 +171,14 @@ export const connectionsQuery = () =>
     queryFn: () => api.connections(),
   })
 
+/** Every connection an owner may bind to an automation, including workspace GitHub Apps.
+ *  Keep this under the `connections` key so integration changes invalidate both views. */
+export const automationConnectionsQuery = () =>
+  queryOptions({
+    queryKey: ["connections", "automation"] as const,
+    queryFn: () => api.automationConnections(),
+  })
+
 // A small, flat slice of the Following feed — recent work from the people you follow —
 // for the "Recent activity" preview on the People tab. The full feed lives at /following
 // (the infinite libraryArtifactsQuery({ scope: "following" })); this is the peek.

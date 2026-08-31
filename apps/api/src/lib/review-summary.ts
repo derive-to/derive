@@ -319,6 +319,86 @@ export const summarizeReviewDocuments = (input: {
   }
 }
 
+// Keep the actual changed span inside the compact 220-character card excerpt. A larger
+// context window made a one-line HTML section spend the whole excerpt on unchanged prose
+// before the edit and hide the change the card existed to show.
+const EDIT_SUMMARY_CONTEXT = 96
+
+/** Build the notification/review story from the exact text edits the publisher already
+ * validated and applied. A tiny edit in a 15 MB page must not reload, convert, and diff two
+ * whole versions only to say which text changed. Each edit is bounded around its changed
+ * span, so an intentionally large replacement cannot turn the receipt back into a full-doc
+ * diff. This summary is advisory only; the stored version and changed-part readback remain
+ * the exact verification surfaces. */
+export const summarizeTextEdits = (input: {
+  edits: { before: string; after: string; contentType: string }[]
+  fromVersion: number
+  toVersion: number
+  note?: string | null
+}): ReviewSummary => {
+  const changed = input.edits.filter((edit) => edit.before !== edit.after)
+  const window = (before: string, after: string): { before: string; after: string } => {
+    let prefix = 0
+    const prefixMax = Math.min(before.length, after.length)
+    while (prefix < prefixMax && before[prefix] === after[prefix]) prefix++
+    let suffix = 0
+    const suffixMax = Math.min(before.length - prefix, after.length - prefix)
+    while (
+      suffix < suffixMax &&
+      before[before.length - 1 - suffix] === after[after.length - 1 - suffix]
+    )
+      suffix++
+    const start = Math.max(0, prefix - EDIT_SUMMARY_CONTEXT)
+    const beforeEnd = Math.min(before.length, before.length - suffix + EDIT_SUMMARY_CONTEXT)
+    const afterEnd = Math.min(after.length, after.length - suffix + EDIT_SUMMARY_CONTEXT)
+    return { before: before.slice(start, beforeEnd), after: after.slice(start, afterEnd) }
+  }
+  const boundedEdits = changed.map((edit) => ({
+    ...window(edit.before, edit.after),
+    contentType: edit.contentType,
+  }))
+  const fragments = boundedEdits.map((bounded, index) => {
+    const title = changed.length === 1 ? "Edited content" : `Text edit ${index + 1}`
+    return {
+      before: `## ${title}\n\n${toMarkdown(bounded.before, bounded.contentType)}`,
+      after: `## ${title}\n\n${toMarkdown(bounded.after, bounded.contentType)}`,
+    }
+  })
+  const summary = summarizeReviewDocuments({
+    before: fragments.map((fragment) => fragment.before).join("\n\n"),
+    after: fragments.map((fragment) => fragment.after).join("\n\n"),
+    beforeContentType: "text/markdown",
+    afterContentType: "text/markdown",
+    fromVersion: input.fromVersion,
+    toVersion: input.toVersion,
+    note: input.note,
+  })
+  if (summary.added || summary.removed || changed.length === 0) return summary
+
+  // The structural summarizer deliberately ignores tiny/non-prose lines. A one-word
+  // correction is still a real edit, so keep the receipt useful instead of saying no text
+  // changed. Count edit spans here, not lines we intentionally classified as non-prose.
+  const first = boundedEdits[0]
+  const change: ReviewChange = {
+    kind: "updated",
+    title: changed.length === 1 ? "Edited content" : `${changed.length} text edits`,
+    added: changed.filter((edit) => edit.after.length > 0).length,
+    removed: changed.filter((edit) => edit.before.length > 0).length,
+    ...(first?.before ? { before: truncate(cleanLine(first.before), 220) } : {}),
+    ...(first?.after ? { after: truncate(cleanLine(first.after), 220) } : {}),
+  }
+  return {
+    fromVersion: input.fromVersion,
+    toVersion: input.toVersion,
+    added: change.added,
+    removed: change.removed,
+    changes: [change],
+    totalChanges: changed.length,
+    highlights: change.after ? [change.after] : [],
+    note: input.note ? truncate(input.note, 600) : null,
+  }
+}
+
 /** Build the compact, channel-neutral change story used by Slack and email. */
 export const buildReviewSummary = async (
   meta: MetaStore,

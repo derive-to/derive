@@ -9,6 +9,7 @@ import { afterAll, describe, expect, it, vi } from "vitest"
 import { createApp } from "../src/app"
 import { type Backplane, createInProcessBackplane, type DeriveEvent } from "../src/bus"
 import { sha256 } from "../src/lib/crypto"
+import { edgeCtx } from "../src/realtime-do"
 import { as, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
 // The strong MCP loop, server side: an agent publish must reach the human's open
@@ -210,6 +211,55 @@ describe("MCP publish reaches the human (event parity + auto-open)", () => {
     const payload = JSON.parse(completions[0]?.payload ?? "{}")
     expect(payload.text).toContain("v2")
     expect(JSON.stringify(payload.metadata)).toContain("Decision")
+  })
+
+  it("returns an attended revision while waitUntil keeps its completion delivery alive", async () => {
+    const { app, meta, token } = loopApp("attended-deferred-completion", "chat")
+    await connectSlack(meta)
+    const created = await call(app, token, "publish", {
+      content: "<h1>Draft</h1>",
+      title: "Deferred attended work",
+    })
+
+    let releaseInstall: (() => void) | undefined
+    const installGate = new Promise<void>((resolve) => {
+      releaseInstall = resolve
+    })
+    const getSlackInstall = meta.getSlackInstall.bind(meta)
+    vi.spyOn(meta, "getSlackInstall").mockImplementationOnce(async (orgId) => {
+      await installGate
+      return getSlackInstall(orgId)
+    })
+    const deferred: Promise<unknown>[] = []
+    const execution = {
+      waitUntil: (work: Promise<unknown>) => deferred.push(work),
+      passThroughOnException: () => {},
+      props: {},
+    }
+
+    const revision = edgeCtx.run(execution as never, () =>
+      call(app, token, "publish", {
+        content: "<h1>Finished</h1><p>The delivery must survive the response.</p>",
+        short_id: created.short_id,
+      }),
+    )
+    const raced = await Promise.race([
+      revision,
+      new Promise<"blocked">((resolve) => setTimeout(() => resolve("blocked"), 1_000)),
+    ])
+    expect(raced).not.toBe("blocked")
+    expect(raced).toMatchObject({ version: 2, opened_in_tab: false })
+    expect(deferred.length).toBeGreaterThan(0)
+
+    releaseInstall?.()
+    await Promise.all(deferred)
+    const completions = (await claim(meta)).filter(
+      (delivery) => delivery.kind === "slack_dm" && delivery.event_type === "artifact.completed",
+    )
+    expect(completions).toHaveLength(1)
+    expect(JSON.parse(completions[0]?.payload ?? "{}").text).toContain(
+      "ChatGPT updated Deferred attended work",
+    )
   })
 })
 

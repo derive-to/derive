@@ -2,7 +2,7 @@
 // a self-hoster to hand-create an App and paste five secrets, we POST a manifest
 // to GitHub; they click "Create GitHub App" once and GitHub redirects back with a
 // temporary code we trade for the App's permanent credentials (see lib/github-app
-// convertManifestCode). Two pages: the auto-submitting manifest form, and a
+// convertManifestCode). Two pages: the owner-selection manifest form, and a
 // success/failure landing. Styled like the CLI callback so setup feels like Derive.
 import { esc, brandShell as SHELL } from "./brand-page"
 
@@ -25,8 +25,14 @@ export const REQUIRED_PERMISSIONS: Record<string, string> = {
   metadata: "read",
   pull_requests: "write",
 }
-// Scheduled/manual runs query GitHub directly. No webhook collection is part of this path.
-export const REQUIRED_EVENTS: string[] = []
+export const ACTIONS_PERMISSION = { actions: "write" } as const
+export const MANIFEST_PERMISSIONS: Record<string, string> = {
+  ...REQUIRED_PERMISSIONS,
+  ...ACTIONS_PERMISSION,
+}
+// Completion events let Derive react when an external workflow finishes. The receiver accepts
+// only signed payloads and ignores every event except the narrow workflow-run contract.
+export const REQUIRED_EVENTS = ["workflow_run"]
 
 /** The GitHub App manifest: what permissions/events/URLs the new App is born with.
  *  Consumes REQUIRED_PERMISSIONS/REQUIRED_EVENTS so a fresh App is always current.
@@ -40,22 +46,49 @@ export const buildManifest = (baseUrl: string, host: string) => ({
   // Where GitHub sends the browser after the App is INSTALLED — our callback
   // starts a user-authorization proof before any installation is persisted.
   setup_url: new URL("/v1/github/callback", baseUrl).toString(),
+  // An already-installed App opens GitHub's repository-selection screen. Return to the
+  // same callback after that update too, or Derive never receives the installation id.
+  setup_on_update: true,
   callback_urls: [new URL("/v1/github/authorize", baseUrl).toString()],
   request_oauth_on_install: false,
+  hook_attributes: {
+    url: new URL("/v1/github/webhook", baseUrl).toString(),
+    active: true,
+  },
   // Public so it can be installed on organizations too, not just the owner's
   // personal account (GitHub restricts a private App to its owner account). It is
   // server-narrowed to PR reads plus top-level comments, and only matters once bound via our
   // signed-state callback, so a stray direct install is inert.
   public: true,
-  default_permissions: REQUIRED_PERMISSIONS,
+  default_permissions: MANIFEST_PERMISSIONS,
   default_events: REQUIRED_EVENTS,
 })
 
-/**
- * The manifest form page. Auto-POSTs to GitHub's App-creation endpoint with the
- * manifest + our signed `state`; GitHub shows a "Create GitHub App" confirmation,
- * then redirects to the created-callback. A no-JS button is the fallback.
- */
+export function installationPickerHTML(props: {
+  installations: { login: string; state: string }[]
+  installUrl: string
+}): string {
+  const choices = props.installations
+    .map(
+      (installation) => `<form class="field" method="post" action="/v1/github/select">
+        <input type="hidden" name="state" value="${esc(installation.state)}"/>
+        <button class="btn ghost" type="submit">${esc(installation.login)}</button>
+      </form>`,
+    )
+    .join("")
+  return SHELL(
+    "Choose GitHub account",
+    "",
+    `<h1>Choose a GitHub account</h1>
+    <p class="sub">Choose the existing App installation to connect to this Derive workspace.</p>
+    ${choices}
+    <p class="foot"><a href="${esc(props.installUrl)}">Install the App on another account</a></p>`,
+  )
+}
+
+/** The manifest form page. The operator chooses who owns the App before GitHub creates it.
+ * GitHub shows that owner as the developer, so silently defaulting to the signed-in person's
+ * account is both surprising and difficult to repair after installations exist. */
 export function manifestFormHTML(props: { baseUrl: string; state: string }): string {
   const { baseUrl } = props
   const host = (() => {
@@ -65,19 +98,39 @@ export function manifestFormHTML(props: { baseUrl: string; state: string }): str
       return "self-hosted"
     }
   })()
-  const action = `https://github.com/settings/apps/new?state=${encodeURIComponent(props.state)}`
+  const personalAction = `https://github.com/settings/apps/new?state=${encodeURIComponent(props.state)}`
   const manifestJson = JSON.stringify(buildManifest(baseUrl, host))
   return SHELL(
     "Set up GitHub App",
     "",
     `<h1>Create your GitHub App</h1>
-    <p class="sub">This opens GitHub to create a Derive app for your account. Select the repositories agents may read — no tokens to paste and no repository mirror.</p>
-    <form id="f" method="post" action="${esc(action)}">
+    <p class="sub">Create the App under the organization that operates this Derive instance. GitHub shows that account as the App developer.</p>
+    <form id="f" method="post" action="${esc(personalAction)}">
+      <div class="field">
+        <label for="owner">GitHub organization</label>
+        <input id="owner" name="owner" autocomplete="organization" placeholder="derive-to" pattern="[A-Za-z0-9-]{1,39}"/>
+        <p class="hint">Leave this blank only if a personal account should own the App.</p>
+      </div>
       <input type="hidden" name="manifest" value="${esc(manifestJson)}"/>
-      <button class="btn" type="submit">Continue to GitHub</button>
+      <div class="row">
+        <button class="btn" type="submit">Continue to GitHub</button>
+        <button class="btn ghost" type="submit" formnovalidate data-personal>Use personal account</button>
+      </div>
     </form>
-    <p class="foot">Derive asks for <strong>Metadata: read</strong> and <strong>Pull requests: write</strong>. The write level is required to add a top-level PR conversation comment; Derive permits no other GitHub write.</p>
-    <script>setTimeout(function(){document.getElementById("f").submit()},400)</script>`,
+    <p class="foot">Derive asks for <strong>Metadata: read</strong>, <strong>Pull requests: write</strong>, and <strong>Actions: write</strong>. Server-side policies limit these to PR reads, one top-level PR comment, workflow status, dispatch of workflows named <strong>derive-*.yml</strong>, and signed workflow completion events.</p>
+    <script>
+      (function(){
+        var form=document.getElementById("f"),owner=document.getElementById("owner"),personal=${JSON.stringify(personalAction)};
+        form.addEventListener("submit",function(event){
+          if(event.submitter&&event.submitter.hasAttribute("data-personal")){form.action=personal;return}
+          var value=owner.value.trim();
+          if(!value){event.preventDefault();owner.setCustomValidity("Enter the GitHub organization that should own this App, or choose personal account.");owner.reportValidity();return}
+          owner.setCustomValidity("");
+          form.action="https://github.com/organizations/"+encodeURIComponent(value)+"/settings/apps/new?state="+${JSON.stringify(encodeURIComponent(props.state))};
+        });
+        owner.addEventListener("input",function(){owner.setCustomValidity("")});
+      })()
+    </script>`,
   )
 }
 

@@ -2,7 +2,9 @@ import {
   type ArtifactRecord,
   type BlobStore,
   elideDataUris,
+  elideDataUrisToLimit,
   enclosingMarker,
+  isBundleContentType,
   isHtmlLike,
   type MetaStore,
   pageText,
@@ -311,8 +313,14 @@ export const MAX_INDEX_TEXT = 256 * 1024
 // query for a word split across inline tags (foo<b>bar</b> → visible "foobar") may not
 // be nominated. All three are workspace-discovery gaps only: the one-artifact grep still
 // finds those hits directly. A non-text single file (a bare uploaded image) adds nothing.
-export async function versionIndexText(blobs: BlobStore, v: VersionRecord): Promise<string> {
+export async function versionIndexText(
+  blobs: BlobStore,
+  v: VersionRecord,
+  preparedSource?: string,
+): Promise<string> {
   const clipText = (s: string) => (s.length > MAX_INDEX_TEXT ? s.slice(0, MAX_INDEX_TEXT) : s)
+  if (preparedSource !== undefined && !isBundleContentType(v.content_type))
+    return isTextType(v.content_type) ? elideDataUrisToLimit(preparedSource, MAX_INDEX_TEXT) : ""
   const manifest = await manifestOf(blobs, v)
   if (!manifest) {
     if (!isTextType(v.content_type)) return ""
@@ -343,8 +351,17 @@ export async function indexArtifactVersion(
   artifact: Pick<ArtifactRecord, "id" | "org_id" | "title">,
   v: VersionRecord,
   search?: Pick<SearchIndex, "indexArtifact">,
+  preparedSource?: string,
+  previous?: { source: string; contentType: string | null; title: string | null },
 ): Promise<void> {
-  const text = await versionIndexText(blobs, v)
+  const text = await versionIndexText(blobs, v, preparedSource)
+  // Exact edits already hold both complete sources. If the bounded search projection and
+  // title did not change, both current indexes are already correct. Skip the lexical write,
+  // embedding call, and vector write instead of relying on an isolate-local cache.
+  if (previous && previous.title === artifact.title && isTextType(previous.contentType ?? "")) {
+    const previousText = elideDataUrisToLimit(previous.source, MAX_INDEX_TEXT)
+    if (previousText === text) return
+  }
   await meta.indexArtifact(artifact.id, artifact.org_id, artifact.title, text)
   // The dense arm is independently best-effort: a dense-arm (embed or store) hiccup must never undo
   // the lexical upsert that already committed, nor fail the publish. Log and move on — the next

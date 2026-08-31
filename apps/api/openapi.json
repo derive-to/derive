@@ -2023,12 +2023,39 @@
             "type": "string",
             "nullable": true
           },
-          "needs_permissions": {
-            "type": "boolean"
-          },
-          "permissions_url": {
+          "app_owner_login": {
             "type": "string",
             "nullable": true
+          },
+          "app_permissions_state": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "ready",
+              "update_required",
+              "unknown",
+              null
+            ],
+            "description": "Whether the instance App has every current permission and event; null when no live App exists"
+          },
+          "app_webhook_state": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "ready",
+              "update_required",
+              "unknown",
+              null
+            ],
+            "description": "Whether signed GitHub workflow completion events can reach this instance"
+          },
+          "app_settings_url": {
+            "type": "string",
+            "nullable": true
+          },
+          "can_manage_app": {
+            "type": "boolean",
+            "description": "Whether the caller is an instance operator who can configure the shared App"
           },
           "accounts": {
             "type": "array",
@@ -2053,13 +2080,27 @@
                     "disconnected",
                     "needs_reauth"
                   ]
+                },
+                "permissions_state": {
+                  "type": "string",
+                  "enum": [
+                    "ready",
+                    "approval_required",
+                    "unknown"
+                  ]
+                },
+                "permissions_url": {
+                  "type": "string",
+                  "nullable": true
                 }
               },
               "required": [
                 "installation_id",
                 "account_login",
                 "connection_id",
-                "state"
+                "state",
+                "permissions_state",
+                "permissions_url"
               ]
             }
           }
@@ -2068,8 +2109,11 @@
           "available",
           "connected",
           "app_slug",
-          "needs_permissions",
-          "permissions_url",
+          "app_owner_login",
+          "app_permissions_state",
+          "app_webhook_state",
+          "app_settings_url",
+          "can_manage_app",
           "accounts"
         ]
       },

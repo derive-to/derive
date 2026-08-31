@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest"
+import { callModelFromGateway } from "../src/lib/model-catalog"
 import { openAiCompatModel } from "../src/lib/model-openai"
 
 // The OPENAI-COMPATIBLE adapter. Everything here is the mapping between the two wire formats,
@@ -90,6 +91,56 @@ describe("the request it builds", () => {
         function: { name: "svc.read", description: "read", parameters: { type: "object" } },
       },
     ])
+  })
+})
+
+describe("gateway provider routing", () => {
+  const routedBody = async (gateway: Parameters<typeof callModelFromGateway>[0]) => {
+    const { seen, impl } = capture()
+    vi.stubGlobal("fetch", impl)
+    try {
+      await callModelFromGateway(
+        gateway,
+        gateway.model,
+      )({
+        system: "s",
+        messages: [],
+        tools: [],
+      })
+      return seen[0]?.body
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  }
+
+  it("auto-routes inside an allowlist using latency plus a throughput floor", async () => {
+    const body = await routedBody({
+      baseUrl: "https://openrouter.ai/api/v1",
+      apiKey: "k",
+      model: "deepseek/deepseek-v4-flash-0731",
+      autoProviders: " DeepInfra,DigitalOcean,DeepInfra, BaseTen ",
+      // Automatic routing takes precedence over the old fixed order during migration.
+      providers: "Novita,GMICloud",
+    })
+    expect(body?.provider).toEqual({
+      only: ["DeepInfra", "DigitalOcean", "BaseTen"],
+      sort: "latency",
+      preferred_min_throughput: { p50: 50 },
+      allow_fallbacks: true,
+    })
+  })
+
+  it("keeps the existing fixed provider order when automatic routing is unset", async () => {
+    const body = await routedBody({
+      baseUrl: "https://gw.test/v1",
+      apiKey: "k",
+      model: "m",
+      providers: "provider-a,provider-b",
+    })
+    expect(body?.provider).toEqual({
+      order: ["provider-a", "provider-b"],
+      allow_fallbacks: true,
+    })
   })
 })
 

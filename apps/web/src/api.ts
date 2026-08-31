@@ -1237,6 +1237,8 @@ export const api = {
       method: "DELETE",
       credentials: "include",
     }).then(() => undefined),
+  configureGithubWebhook: (): Promise<{ state: "ready" }> =>
+    f("/v1/github/webhook/configure", { ...opts({}), method: "POST" }).then(j),
 
   // OPERATOR-ONLY, and used as the operator SIGNAL itself: it 403s for everyone who is not a
   // super-admin, so a component can gate on whether this resolves rather than on a role the
@@ -1731,6 +1733,15 @@ export const api = {
     return f("/v1/connections?mine=1", opts())
       .then(j)
       .then((r) => r.connections as Connection[])
+  },
+  /** Connections the current workspace can bind to an automation. The server still enforces
+   *  personal ownership and workspace-manage access when the automation is saved. */
+  async automationConnections(): Promise<Connection[]> {
+    const [personal, workspace] = await Promise.all([
+      f("/v1/connections?mine=1", opts()).then(j),
+      f("/v1/connections?scope=workspace", opts()).then(j),
+    ])
+    return [...(personal.connections as Connection[]), ...(workspace.connections as Connection[])]
   },
   connect(toolkit: string): Promise<Connection & { connect_url: string }> {
     return f("/v1/connections", opts({ toolkit })).then(j)

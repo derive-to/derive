@@ -883,13 +883,6 @@ export const githubApp = pgTable("github_app", {
   private_key: text("private_key").notNull(),
   created_at: text("created_at").notNull().$defaultFn(isoNow),
 })
-export const githubInstallation = pgTable("github_installation", {
-  installation_id: text("installation_id").primaryKey(),
-  org_id: text("org_id").notNull(),
-  account_login: text("account_login"),
-  created_by: text("created_by").notNull(),
-  created_at: text("created_at").notNull().$defaultFn(isoNow),
-})
 export const domain = pgTable("domain", {
   host: text("host").primaryKey(),
   artifact_id: text("artifact_id").references(() => artifact.id),
@@ -1182,7 +1175,6 @@ const TABLES = [
   userNotificationPref,
   activitySeen,
   githubApp,
-  githubInstallation,
   domain,
   reviewRound,
   context,

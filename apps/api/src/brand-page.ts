@@ -30,6 +30,12 @@ const STYLE = `<style>
     border:1px solid var(--accent);background:var(--accent);color:var(--accent-fg);text-decoration:none}
   .btn:hover{filter:brightness(1.07)}
   .btn.ghost{background:transparent;color:var(--ink);border-color:var(--line)}
+  .field{display:flex;flex-direction:column;gap:6px;margin:0 0 16px}
+  .field label{font-size:13px;font-weight:600;color:var(--ink)}
+  .field input{width:100%;border:1px solid var(--line);border-radius:10px;background:var(--paper);
+    color:var(--ink);padding:10px 12px;font:14px var(--sans);outline:none}
+  .field input:focus{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 16%,transparent)}
+  .hint{color:var(--muted);font-size:12.5px;margin:0}
   .foot{color:var(--muted);font-size:12.5px;line-height:1.5;margin:20px 0 0}
   .err{color:var(--bad);font-size:14px;margin:0 0 4px;font-weight:500}
   code{font-family:var(--mono);font-size:.9em;background:rgba(0,0,0,.05);padding:1px 5px;border-radius:5px}

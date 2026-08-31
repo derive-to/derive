@@ -412,6 +412,12 @@ const CONFIG_VARS: ConfigVar[] = [
     example: "provider-a,provider-b",
   },
   {
+    name: "DERIVE_MODEL_AUTO_PROVIDERS",
+    group: "advanced",
+    doc: "Upstream backends eligible for automatic routing, comma-separated. When set, this takes\nprecedence over DERIVE_MODEL_PROVIDERS: the gateway chooses among the allowlist using current\nlatency, while preferring endpoints sustaining at least 50 output tokens/sec. Fallbacks remain\nenabled, so a rate-limited backend is tried elsewhere automatically.",
+    example: "DeepInfra,DigitalOcean,BaseTen,CoreWeave,Together,Cloudflare",
+  },
+  {
     name: "DERIVE_LOCAL_BROKER",
     group: "advanced",
     doc: "DEV ONLY — let a workspace with no broker plan use the ECHO stub instead of a broker that\nrefuses. The stub's `execute` returns the caller's own arguments: it reaches Stripe, Gmail\nand nothing else, so a run using it reports success over data that never existed and writes\nan artifact full of invented numbers, with no error anywhere. Unset = a workspace with no\nplan gets a refusing broker, which is what you want everywhere a human might see the output.\nMCP connections are unaffected either way — they carry their own server and route on their\nown ref.",

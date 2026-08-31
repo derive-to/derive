@@ -2,7 +2,7 @@
 // installation tokens, and handle App setup/installer authorization. Everything runs on the
 // Cloudflare Worker (node:crypto under nodejs_compat — same basis as ./crypto).
 
-import { createPrivateKey, createSign } from "node:crypto"
+import { createHmac, createPrivateKey, createSign } from "node:crypto"
 
 const API = "https://api.github.com"
 const WEB = "https://github.com"
@@ -11,10 +11,21 @@ const API_VERSION = "2022-11-28"
 
 const b64url = (b: Buffer | string): string => Buffer.from(b).toString("base64url")
 
+/** Stable per-App webhook secret derived from server-only material. This avoids another stored
+ *  credential while keeping App transfers and installation changes harmless. */
+export const githubWebhookSecret = (appId: string, encryptionKey: string): string =>
+  createHmac("sha256", encryptionKey).update(`derive-github-webhook:v1\0${appId}`).digest("hex")
+
+export const githubWebhookSignature = (body: string, secret: string): string =>
+  `sha256=${createHmac("sha256", secret).update(body).digest("hex")}`
+
 export class GitHubError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    readonly retryAfter: string | null = null,
+    readonly rateLimitRemaining: string | null = null,
+    readonly rateLimitReset: string | null = null,
   ) {
     super(message)
     this.name = "GitHubError"
@@ -33,7 +44,13 @@ const ghHeaders = (auth?: string): Record<string, string> => ({
 
 const raise = async (res: Response, what: string): Promise<never> => {
   const body = await res.text().catch(() => "")
-  throw new GitHubError(res.status, `${what}: ${body.slice(0, 200) || res.statusText}`)
+  throw new GitHubError(
+    res.status,
+    `${what}: ${body.slice(0, 200) || res.statusText}`,
+    res.headers.get("retry-after"),
+    res.headers.get("x-ratelimit-remaining"),
+    res.headers.get("x-ratelimit-reset"),
+  )
 }
 
 /**
@@ -64,6 +81,19 @@ export interface InstallationToken {
   expiresAt: string
 }
 
+export type GitHubTokenProfile =
+  | "standard-read"
+  | "pr-comment"
+  | "workflow-read"
+  | "workflow-dispatch"
+
+const PROFILE_PERMISSIONS: Record<GitHubTokenProfile, Record<string, string>> = {
+  "standard-read": { metadata: "read", pull_requests: "read" },
+  "pr-comment": { metadata: "read", pull_requests: "write" },
+  "workflow-read": { actions: "read", metadata: "read" },
+  "workflow-dispatch": { actions: "write", metadata: "read" },
+}
+
 /**
  * Fetch the App's own record (GET /app, App-JWT auth). Used to confirm a stored
  * App still exists on GitHub — if it was deleted, this 404s, and the caller treats
@@ -76,6 +106,7 @@ export async function getAppInfo(
 ): Promise<{
   slug: string
   html_url: string
+  owner: { login: string; type: string } | null
   permissions: Record<string, string>
   events: string[]
 }> {
@@ -86,12 +117,14 @@ export async function getAppInfo(
   const d = (await res.json()) as {
     slug?: string
     html_url?: string
+    owner?: { login?: string; type?: string } | null
     permissions?: Record<string, string>
     events?: string[]
   }
   return {
     slug: d.slug ?? "",
     html_url: d.html_url ?? "",
+    owner: d.owner ? { login: d.owner.login ?? "", type: d.owner.type ?? "" } : null,
     permissions: d.permissions ?? {},
     events: d.events ?? [],
   }
@@ -100,14 +133,33 @@ export async function getAppInfo(
 // Per-isolate cache so a burst of source calls against one installation mints one token.
 // Re-minted 60s before expiry. Cleared implicitly when the isolate recycles.
 const tokenCache = new Map<string, InstallationToken>()
+const TOKEN_CACHE_MAX = 500
+
+const pruneTokenCache = (now: number): void => {
+  for (const [key, value] of tokenCache)
+    if (!Number.isFinite(Date.parse(value.expiresAt)) || Date.parse(value.expiresAt) <= now)
+      tokenCache.delete(key)
+  while (tokenCache.size >= TOKEN_CACHE_MAX) {
+    const oldest = tokenCache.keys().next().value
+    if (typeof oldest !== "string") break
+    tokenCache.delete(oldest)
+  }
+}
 
 /** Mint (or reuse) an installation access token for `installationId`. */
 export async function installationToken(
   appId: string,
   privateKeyPem: string,
   installationId: string,
+  profile: GitHubTokenProfile = "standard-read",
+  repository?: string,
 ): Promise<string> {
-  const cacheKey = `${appId}:${installationId}`
+  if (!/^[1-9][0-9]{0,19}$/.test(installationId)) throw new Error("invalid GitHub installation id")
+  if ((profile === "workflow-read" || profile === "workflow-dispatch") && !repository)
+    throw new Error("a workflow token must name one repository")
+  if (repository && !/^[A-Za-z0-9_.-]{1,100}$/.test(repository))
+    throw new Error("invalid GitHub repository name")
+  const cacheKey = `${appId}:${installationId}:${profile}:${repository ?? "*"}`
   const cached = tokenCache.get(cacheKey)
   if (cached && Date.parse(cached.expiresAt) - 60_000 > Date.now()) return cached.token
 
@@ -118,10 +170,22 @@ export async function installationToken(
       ...ghHeaders(`Bearer ${jwt}`),
       "content-type": "application/json",
     },
-    body: JSON.stringify({ permissions: { metadata: "read", pull_requests: "write" } }),
+    body: JSON.stringify({
+      permissions: PROFILE_PERMISSIONS[profile],
+      ...(repository ? { repositories: [repository] } : {}),
+    }),
   })
   if (!res.ok) return raise(res, "minting an installation token")
-  const data = (await res.json()) as { token: string; expires_at: string }
+  const data = (await res.json()) as { token?: unknown; expires_at?: unknown }
+  if (
+    typeof data.token !== "string" ||
+    !data.token ||
+    data.token.length > 2_048 ||
+    typeof data.expires_at !== "string" ||
+    !Number.isFinite(Date.parse(data.expires_at))
+  )
+    throw new Error("GitHub returned an invalid installation token")
+  pruneTokenCache(Date.now())
   tokenCache.set(cacheKey, { token: data.token, expiresAt: data.expires_at })
   return data.token
 }
@@ -140,13 +204,52 @@ export async function getAppInstallation(
   const data = (await res.json()) as {
     id?: number
     account?: { login?: string; type?: string }
+    html_url?: string
+    permissions?: Record<string, string>
   }
   return {
     id: data.id ?? Number(installationId),
     account: data.account
       ? { login: data.account.login ?? "", type: data.account.type ?? "" }
       : null,
+    htmlUrl: data.html_url ?? null,
+    permissions: data.permissions ?? {},
   }
+}
+
+/** List every installation for the App with App-JWT auth. Instance operators use this only to
+ * recover the shared App they administer; workspace managers still prove access with OAuth. */
+export async function listAppInstallations(
+  appId: string,
+  privateKeyPem: string,
+): Promise<AppInstallation[]> {
+  const result: AppInstallation[] = []
+  const jwt = appJwt(appId, privateKeyPem)
+  for (let page = 1; page <= 10; page++) {
+    const res = await fetch(`${API}/app/installations?per_page=100&page=${page}`, {
+      headers: ghHeaders(`Bearer ${jwt}`),
+    })
+    if (!res.ok) return raise(res, "listing the GitHub App installations")
+    const installations = (await res.json()) as {
+      id?: number
+      account?: { login?: string; type?: string }
+      html_url?: string
+      permissions?: Record<string, string>
+    }[]
+    for (const installation of installations) {
+      if (!installation.id || !Number.isSafeInteger(installation.id)) continue
+      result.push({
+        id: installation.id,
+        account: installation.account
+          ? { login: installation.account.login ?? "", type: installation.account.type ?? "" }
+          : null,
+        htmlUrl: installation.html_url ?? null,
+        permissions: installation.permissions ?? {},
+      })
+    }
+    if (installations.length < 100) break
+  }
+  return result
 }
 
 /** Exchange GitHub's one-time web-flow code. The token exists only long enough to prove that
@@ -176,12 +279,10 @@ export async function exchangeGithubUserCode(input: {
   return data.access_token
 }
 
-/** GitHub's documented defense against a spoofed setup `installation_id`: use the temporary
- * user access token to confirm the installer is associated with that installation. */
-export async function getUserInstallation(
-  userToken: string,
-  installationId: string,
-): Promise<AppInstallation | null> {
+/** List installations this App's temporary user token can access. GitHub scopes this endpoint
+ * to the App that issued the token, so it is safe to use for existing-install discovery. */
+export async function listUserInstallations(userToken: string): Promise<AppInstallation[]> {
+  const result: AppInstallation[] = []
   for (let page = 1; page <= 10; page++) {
     const res = await fetch(`${API}/user/installations?per_page=100&page=${page}`, {
       headers: ghHeaders(`Bearer ${userToken}`),
@@ -191,25 +292,42 @@ export async function getUserInstallation(
       installations?: {
         id?: number
         account?: { login?: string; type?: string }
+        html_url?: string
+        permissions?: Record<string, string>
       }[]
     }
     const installations = data.installations ?? []
-    const found = installations.find((installation) => String(installation.id) === installationId)
-    if (found)
-      return {
-        id: found.id ?? Number(installationId),
-        account: found.account
-          ? { login: found.account.login ?? "", type: found.account.type ?? "" }
+    for (const installation of installations) {
+      if (!installation.id || !Number.isSafeInteger(installation.id)) continue
+      result.push({
+        id: installation.id,
+        account: installation.account
+          ? { login: installation.account.login ?? "", type: installation.account.type ?? "" }
           : null,
-      }
+        htmlUrl: installation.html_url ?? null,
+        permissions: installation.permissions ?? {},
+      })
+    }
     if (installations.length < 100) break
   }
-  return null
+  return result
+}
+
+/** GitHub's documented defense against a spoofed setup `installation_id`: use the temporary
+ * user access token to confirm the installer is associated with that installation. */
+export async function getUserInstallation(
+  userToken: string,
+  installationId: string,
+): Promise<AppInstallation | null> {
+  const installations = await listUserInstallations(userToken)
+  return installations.find((installation) => String(installation.id) === installationId) ?? null
 }
 
 export interface AppInstallation {
   id: number
   account: { login: string; type: string } | null
+  htmlUrl: string | null
+  permissions: Record<string, string>
 }
 
 export interface ManifestConversion {
@@ -219,6 +337,66 @@ export interface ManifestConversion {
   client_secret: string
   /** PEM private key (PKCS#1). */
   pem: string
+}
+
+export interface AppWebhookConfig {
+  url: string
+  contentType: string
+  insecureSsl: string
+}
+
+/** Read the App webhook target. GitHub never returns the secret, only a masked placeholder. */
+export async function getAppWebhookConfig(
+  appId: string,
+  privateKeyPem: string,
+): Promise<AppWebhookConfig> {
+  const res = await fetch(`${API}/app/hook/config`, {
+    headers: ghHeaders(`Bearer ${appJwt(appId, privateKeyPem)}`),
+  })
+  if (!res.ok) return raise(res, "reading the GitHub App webhook")
+  const data = (await res.json()) as {
+    url?: unknown
+    content_type?: unknown
+    insecure_ssl?: unknown
+  }
+  return {
+    url: typeof data.url === "string" ? data.url : "",
+    contentType: typeof data.content_type === "string" ? data.content_type : "",
+    insecureSsl: String(data.insecure_ssl ?? ""),
+  }
+}
+
+/** Set the shared App webhook without exposing its secret to a browser or installation. */
+export async function configureAppWebhook(input: {
+  appId: string
+  privateKeyPem: string
+  url: string
+  secret: string
+}): Promise<AppWebhookConfig> {
+  const res = await fetch(`${API}/app/hook/config`, {
+    method: "PATCH",
+    headers: {
+      ...ghHeaders(`Bearer ${appJwt(input.appId, input.privateKeyPem)}`),
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      url: input.url,
+      content_type: "json",
+      insecure_ssl: "0",
+      secret: input.secret,
+    }),
+  })
+  if (!res.ok) return raise(res, "updating the GitHub App webhook")
+  const data = (await res.json()) as {
+    url?: unknown
+    content_type?: unknown
+    insecure_ssl?: unknown
+  }
+  return {
+    url: typeof data.url === "string" ? data.url : "",
+    contentType: typeof data.content_type === "string" ? data.content_type : "",
+    insecureSsl: String(data.insecure_ssl ?? ""),
+  }
 }
 
 /**

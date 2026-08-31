@@ -7,7 +7,7 @@ import {
 } from "@derive/core"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { buildReviewEmail } from "../src/lib/email"
-import { summarizeReviewDocuments } from "../src/lib/review-summary"
+import { summarizeReviewDocuments, summarizeTextEdits } from "../src/lib/review-summary"
 import { postWithRecovery } from "../src/lib/slack-delivery"
 import {
   enqueueSlackArtifactCompletedDm,
@@ -416,6 +416,35 @@ describe("notification preferences", () => {
 })
 
 describe("review summary", () => {
+  it("summarizes an exact edit without diffing the surrounding large document", () => {
+    const unchanged = "stable surrounding copy ".repeat(100_000)
+    const summary = summarizeTextEdits({
+      edits: [
+        {
+          before: `${unchanged}needle-2301${unchanged}`,
+          after: `${unchanged}needle-2301-proof${unchanged}`,
+          contentType: "text/html",
+        },
+      ],
+      fromVersion: 3,
+      toVersion: 4,
+    })
+    expect(summary).toMatchObject({ fromVersion: 3, toVersion: 4 })
+    expect(summary.added + summary.removed).toBeGreaterThan(0)
+    expect(JSON.stringify(summary).length).toBeLessThan(4_000)
+    expect(JSON.stringify(summary)).toContain("needle-2301-proof")
+  })
+
+  it("reports a short one-word correction as a real edit", () => {
+    const summary = summarizeTextEdits({
+      edits: [{ before: "teh", after: "the", contentType: "text/markdown" }],
+      fromVersion: 8,
+      toVersion: 9,
+    })
+    expect(summary).toMatchObject({ added: 1, removed: 1, totalChanges: 1 })
+    expect(summary.changes?.[0]).toMatchObject({ title: "Edited content" })
+  })
+
   it("turns HTML and Mermaid changes into ranked, bounded structural cards", () => {
     const summary = summarizeReviewDocuments({
       before: `<h1>Checkout</h1><h2>Flow</h2><pre class="mermaid">graph LR\nCart-->|Pay|Receipt</pre><h2>Legacy</h2><p>Publish immediately after approval.</p>`,

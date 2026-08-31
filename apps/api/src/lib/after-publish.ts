@@ -16,6 +16,7 @@ import {
   isAuthoredFactType,
   isHtmlLike,
   type MetaStore,
+  type NewVersionData,
   newId,
   parseFacts,
   type SearchIndex,
@@ -61,17 +62,27 @@ export const emitVersionBump = async (
   deps: VersionBumpDeps,
   artifact: ArtifactRecord,
   version: VersionRecord,
-): Promise<void> => {
+  preparedSource?: string,
+  previousSearchSource?: { source: string; contentType: string | null; title: string | null },
+): Promise<NewVersionData[]> => {
   const { meta, blobs, bus, notifyRender } = deps
   bus.publish(artifact.id, { type: "version.published", n: version.n, message: version.message })
   await notifyRender?.(artifact, version.n)
-  await publishSweepEvents(meta, blobs, bus, artifact.id, version)
+  await publishSweepEvents(meta, blobs, bus, artifact.id, version, preparedSource)
   // Keep the workspace search index current for the new live version. Best-effort:
   // a search-index hiccup must never fail a publish that already succeeded, so log
   // and move on — the artifact re-indexes on its next publish (and the backfill
   // sweep is the safety net for anything missed).
   try {
-    await indexArtifactVersion(meta, blobs, artifact, version, deps.search)
+    await indexArtifactVersion(
+      meta,
+      blobs,
+      artifact,
+      version,
+      deps.search,
+      preparedSource,
+      previousSearchSource,
+    )
   } catch (err) {
     log.error("search index update failed", { artifact: artifact.id, err: String(err) })
   }
@@ -80,8 +91,9 @@ export const emitVersionBump = async (
   // contract (a hiccup must never fail a publish that already went live). The publish
   // response already advises about any UNstored slot via publishAdvisories; this is the
   // persistence half, and both call the one parser so they can't disagree.
+  let storedRows: NewVersionData[] = []
   try {
-    await extractVersionData(meta, blobs, version, deps.background)
+    storedRows = await extractVersionData(meta, blobs, version, deps.background, preparedSource)
   } catch (err) {
     log.error("data-slot extraction failed", { artifact: artifact.id, err: String(err) })
   }
@@ -91,7 +103,14 @@ export const emitVersionBump = async (
   // succeeded. Off the hot path via `background` — on Workers that is waitUntil; on Node it
   // awaits, which costs nothing there because Node binds no summarizer.
   if (deps.summarize) {
-    const work = summarizeVersion(meta, blobs, deps.summarize, artifact, version).catch((err) =>
+    const work = summarizeVersion(
+      meta,
+      blobs,
+      deps.summarize,
+      artifact,
+      version,
+      preparedSource,
+    ).catch((err) =>
       log.error("version summary failed", {
         artifact: artifact.id,
         n: version.n,
@@ -100,6 +119,7 @@ export const emitVersionBump = async (
     )
     await (deps.background ? deps.background(work) : work)
   }
+  return storedRows
 }
 
 /** sha256 of the exact text handed to the model, hex. Web Crypto only — this runs on Workers
@@ -132,15 +152,20 @@ const summarizeVersion = async (
   summarizer: Summarizer,
   artifact: ArtifactRecord,
   version: VersionRecord,
+  preparedSource?: string,
 ): Promise<void> => {
   const skip = (reason: string) =>
     log.info("version summary skipped", { artifact: artifact.id, n: version.n, reason })
   // Bundles and binary uploads have no prose to summarize. `isTextType` is the same predicate
   // search indexing uses, so a new text-ish kind (the deck type was one) is handled in one place.
   if (!isTextType(version.content_type)) return skip("not a text version")
-  const bytes = await blobs.get(version.blob_key)
-  if (!bytes) return skip("blob missing")
-  const text = summaryInput(new TextDecoder().decode(bytes), version.content_type)
+  let source = preparedSource
+  if (source === undefined) {
+    const bytes = await blobs.get(version.blob_key)
+    if (!bytes) return skip("blob missing")
+    source = new TextDecoder().decode(bytes)
+  }
+  const text = summaryInput(source, version.content_type)
   if (!text) return skip("too little prose to summarize")
 
   const hash = await srcHash(text)
@@ -181,7 +206,8 @@ const extractVersionData = async (
   blobs: BlobStore,
   version: VersionRecord,
   background?: (work: Promise<unknown>) => Promise<void>,
-): Promise<void> => {
+  preparedSource?: string,
+): Promise<NewVersionData[]> => {
   const ct = version.content_type
   // AUTHORED facts stay HTML/markdown only. DERIVED facts also cover decks.
   //
@@ -192,10 +218,13 @@ const extractVersionData = async (
   // $map at all. Same second-order blast radius the sniff fix documented — typing decks
   // correctly moves them off every path that asks `content_type === "text/html"`.
   const authored = isAuthoredFactType(ct)
-  if (!authored && !isHtmlLike(ct)) return
-  const bytes = await blobs.get(version.blob_key)
-  if (!bytes) return
-  const source = new TextDecoder().decode(bytes)
+  if (!authored && !isHtmlLike(ct)) return []
+  let source = preparedSource
+  if (source === undefined) {
+    const bytes = await blobs.get(version.blob_key)
+    if (!bytes) return []
+    source = new TextDecoder().decode(bytes)
+  }
   const baseType = ct.split(";")[0]?.trim()
   const facts = authored
     ? parseFacts(source, ct).facts
@@ -230,12 +259,12 @@ const extractVersionData = async (
       gen: s.gen,
     })),
   ]
-  if (rows.length === 0) return
+  if (rows.length === 0) return []
   // ONE setVersionData call: it is a full replace, so asserted and derived must land
   // together or the second write erases the first — the same union trap the backfill
   // below documents for itself.
   await meta.setVersionData(version.artifact_id, version.n, rows)
-  if (facts.length === 0) return
+  if (facts.length === 0) return rows
   // Off the hot path where the caller can: the walk-back costs a blob read per version.
   // ASSERTED names only — old versions get their derived rows lazily on first read, so a
   // backfill walk never pays derivation for versions nobody asks about.
@@ -246,6 +275,7 @@ const extractVersionData = async (
     facts.map((s) => s.slot),
   )
   await (background ? background(backfill) : backfill)
+  return rows
 }
 
 /** Versions walked back when a fact first appears. Bounded because each one costs a blob
@@ -364,6 +394,14 @@ export interface AfterPublishOpts {
   /** The acting principal's display name, recorded with `actorId` on every thread this
    *  publish resolves. */
   actorName?: string | null
+  /** Exact trusted source that produced this single-file version. Publish callers already
+   *  hold it, so the bump pipeline can index, derive, sweep, and notify without reading the
+   *  new multi-megabyte blob back from storage. Omit for restores, bundles, and any caller
+   *  without the bytes; every consumer retains its exact blob fallback. */
+  preparedSource?: string
+  /** Previous exact source captured while materializing an edit. Search can skip all index
+   *  work when its bounded projection and title are unchanged. */
+  previousSearchSource?: { source: string; contentType: string | null; title: string | null }
 }
 
 /**
@@ -371,14 +409,14 @@ export interface AfterPublishOpts {
  * HTTP route, the MCP tool, and restore can't drift: fire the `version.published` webhook,
  * fan out to the publisher's followers (new + human + public only), resolve any threads
  * named in the call, then run the shared realtime/render/re-anchor bump. Returns the thread
- * ids actually resolved so the caller can report them.
+ * ids and stored data rows, so publish receipts need no immediate read-back.
  */
 export const afterPublish = async (
   deps: AfterPublishDeps,
   artifact: ArtifactRecord,
   version: VersionRecord,
   opts: AfterPublishOpts,
-): Promise<{ resolved: string[] }> => {
+): Promise<{ resolved: string[]; storedRows: NewVersionData[] }> => {
   const { meta, bus, notify, background } = deps
   await notify(artifact, "version.published", {
     version: version.n,
@@ -413,7 +451,13 @@ export const afterPublish = async (
     bus.publish(artifact.id, { type: "comment.resolved", thread_id: threadId, state: "resolved" })
     resolved.push(threadId)
   }
-  await emitVersionBump(deps, artifact, version)
+  const storedRows = await emitVersionBump(
+    deps,
+    artifact,
+    version,
+    opts.preparedSource,
+    opts.previousSearchSource,
+  )
   // Source mentions are derived from the just-published bytes, never trusted from a client
   // payload. Run after the canonical version bump and isolate every delivery branch inside the
   // fan-out, so an outage cannot fail, roll back, or delay a live document edit.
@@ -423,6 +467,7 @@ export const afterPublish = async (
       artifact,
       version,
       opts.actorId ?? null,
+      opts.preparedSource,
     ).catch((err) =>
       log.warn("content mention fan-out failed", {
         artifact: artifact.id,
@@ -432,7 +477,7 @@ export const afterPublish = async (
       }),
     ),
   )
-  return { resolved }
+  return { resolved, storedRows }
 }
 
 const fanOutToFollowers = async (

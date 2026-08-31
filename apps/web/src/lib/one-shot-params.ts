@@ -1,5 +1,5 @@
 // Pure core of the one-shot URL-param handshake (?checkout=success,
-// ?slack_error=…, ?gh_install=…): take the named params out of a search string,
+// ?slack_error=…, ?github_connected=…): take the named params out of a search string,
 // returning what was taken and the search that should remain. Pure so the
 // take-and-strip semantics are unit-testable; the browser wiring (history,
 // mount-once) lives in use-one-shot-params.tsx.

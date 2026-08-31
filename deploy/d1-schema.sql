@@ -656,14 +656,6 @@ CREATE TABLE IF NOT EXISTS github_app (
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 
-CREATE TABLE IF NOT EXISTS github_installation (
-  installation_id TEXT PRIMARY KEY,
-  org_id TEXT NOT NULL,
-  account_login TEXT,
-  created_by TEXT NOT NULL,
-  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-);
-
 CREATE TABLE IF NOT EXISTS domain (
   host TEXT PRIMARY KEY,
   artifact_id TEXT,
