@@ -58,13 +58,15 @@ export function RunReceipt({
         <StatusBadge tone={runStatusTone(status)} shape="pill">
           {runStatusLabel(status)}
         </StatusBadge>
-        <span className="min-w-0 truncate text-sm font-medium text-foreground">{title}</span>
+        <span className="w-full min-w-0 break-words text-sm font-medium text-foreground sm:w-auto sm:truncate">
+          {title}
+        </span>
         <span className="font-mono text-2xs text-muted-foreground">{id.slice(-8)}</span>
         <span className="ml-auto shrink-0 font-mono text-2xs text-muted-foreground">
           {ago(createdAt)}
         </span>
       </div>
-      <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">{summary}</p>
+      <p className="mt-1.5 break-words text-xs leading-relaxed text-muted-foreground">{summary}</p>
       {facts.length > 0 ? (
         <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 font-mono text-2xs text-muted-foreground">
           {facts.map((fact) => (

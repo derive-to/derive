@@ -171,7 +171,7 @@ export function WorkflowBuilderDialog({
           </DialogDescription>
         </DialogHeader>
         <StepRail current={step} />
-        <div className="min-h-72 py-2">
+        <div className="min-h-0 py-2 sm:min-h-72">
           {step === 0 ? (
             <div className="flex flex-col gap-4" data-testid="workflow-builder-outcome">
               <div>
@@ -212,7 +212,7 @@ export function WorkflowBuilderDialog({
                     aria-pressed={draft.shape === shape.id}
                     onClick={() => setDraft({ ...draft, shape: shape.id })}
                     className={cn(
-                      "flex min-h-32 flex-col items-start gap-2 rounded-xl border bg-card p-3 text-left outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring",
+                      "flex min-h-0 flex-col items-start gap-2 rounded-xl border bg-card p-3 text-left outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring sm:min-h-32",
                       draft.shape === shape.id && "border-primary ring-2 ring-primary/20",
                     )}
                   >
