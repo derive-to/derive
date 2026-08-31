@@ -2,6 +2,7 @@ import type { ArtifactRecord, SearchIndex, VersionRecord } from "@derive/core"
 import { describe, expect, it } from "vitest"
 import {
   deleteArtifactAndUnindex,
+  indexArtifactVersion,
   rrfFuse,
   searchMatcher,
   searchWorkspace,
@@ -207,6 +208,54 @@ describe("searchWorkspace — hybrid retrieval", () => {
 })
 
 describe("write path — dense arm best-effort + backfill", () => {
+  it("skips both index writes when an exact edit leaves the search projection unchanged", async () => {
+    const lexical: string[] = []
+    const dense: string[] = []
+    const source = `${"a".repeat(300_000)}tail before`
+    const edited = `${"a".repeat(300_000)}tail after`
+    await indexArtifactVersion(
+      {
+        indexArtifact: async () => {
+          lexical.push("lexical")
+        },
+      },
+      { get: async () => null, put: async () => "unused" },
+      { id: "a1", org_id: ORG, title: "Large" },
+      { blob_key: "new", content_type: "text/html" } as VersionRecord,
+      {
+        indexArtifact: async () => {
+          dense.push("dense")
+        },
+      },
+      edited,
+      { source, contentType: "text/html", title: "Large" },
+    )
+    expect(lexical).toEqual([])
+    expect(dense).toEqual([])
+  })
+
+  it("updates both indexes when the bounded projection changes", async () => {
+    const calls: string[] = []
+    await indexArtifactVersion(
+      {
+        indexArtifact: async () => {
+          calls.push("lexical")
+        },
+      },
+      { get: async () => null, put: async () => "unused" },
+      { id: "a1", org_id: ORG, title: "Large" },
+      { blob_key: "new", content_type: "text/html" } as VersionRecord,
+      {
+        indexArtifact: async () => {
+          calls.push("dense")
+        },
+      },
+      "changed body",
+      { source: "old body", contentType: "text/html", title: "Large" },
+    )
+    expect(calls).toEqual(["lexical", "dense"])
+  })
+
   it("deleteArtifactAndUnindex drops BOTH arms — the FTS row (in deleteArtifact) and the dense vector", async () => {
     const deleted: [string, string][] = []
     const unindexed: string[] = []

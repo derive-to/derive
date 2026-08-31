@@ -25,8 +25,9 @@ export async function publishSweepEvents(
   bus: Backplane,
   artifactId: string,
   version: VersionRecord,
+  preparedSource?: string,
 ): Promise<void> {
-  for (const t of await sweepAnchors(meta, blobs, artifactId, version))
+  for (const t of await sweepAnchors(meta, blobs, artifactId, version, preparedSource))
     bus.publish(artifactId, {
       type: t.state === "outdated" ? "comment.outdated" : "comment.resolved",
       thread_id: t.thread_id,
@@ -75,6 +76,7 @@ export async function sweepAnchors(
   blobs: BlobStore,
   artifactId: string,
   version: VersionRecord,
+  preparedSource?: string,
 ): Promise<AnchorTransition[]> {
   // Re-anchor every thread across versions. Background sweep, never a client response.
   const comments = await meta.listComments(artifactId)
@@ -106,7 +108,7 @@ export async function sweepAnchors(
     }
   }
 
-  const resolveText = await pageTextResolver(blobs, version)
+  const resolveText = await pageTextResolver(blobs, version, preparedSource)
   // Group by page so each page's content is read once, then plan per page.
   const byPage = new Map<string | null, Thread[]>()
   for (const t of byThread.values()) {

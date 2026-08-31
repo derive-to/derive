@@ -168,14 +168,15 @@ function AutomationRow({
   return (
     <ListRow
       data-testid={`automation-row-${automation.id}`}
+      className="[&>div:first-child]:flex-wrap [&>div:first-child>div:last-child]:w-full sm:[&>div:first-child>div:last-child]:w-auto"
       leading={
         <div className="flex size-7 shrink-0 items-center justify-center rounded-full bg-accent">
           <Zap className="size-4 text-muted-foreground" aria-hidden />
         </div>
       }
       title={
-        <span className="flex items-center gap-1.5">
-          <span className="truncate">{automation.instruction}</span>
+        <span className="flex min-w-0 flex-wrap items-center gap-1.5">
+          <span className="min-w-0 max-w-full truncate">{automation.instruction}</span>
           <Badge variant="outline">
             {automation.provider === "codex" ? "Codex" : "Claude Code"}
           </Badge>

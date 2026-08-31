@@ -906,8 +906,9 @@ export function buildContext(deps: AppDeps) {
   // surface to the caller.
   const billingBlocked = async (
     orgId: string,
+    pre?: BillingState,
   ): Promise<{ code: string; message: string } | null> => {
-    const s = await billingState(orgId)
+    const s = pre ?? (await billingState(orgId))
     return s.canPublish || !s.blockedReason ? null : blockCopy[s.blockedReason]
   }
   // The full gate as a route guard, mirroring `limited`: a Response to return when
@@ -956,8 +957,12 @@ export function buildContext(deps: AppDeps) {
   // The cap itself is now plan-aware (billingState.storageCapBytes) rather than a flat
   // deps.maxBytes comparison: an active subscription's tier cap replaces the operator's
   // fallback, so a Team workspace isn't stuck on the self-host default.
-  const overStorage = async (orgId: string, incoming: number): Promise<boolean> => {
-    const cap = (await billingState(orgId)).storageCapBytes
+  const overStorage = async (
+    orgId: string,
+    incoming: number,
+    pre?: BillingState,
+  ): Promise<boolean> => {
+    const cap = (pre ?? (await billingState(orgId))).storageCapBytes
     if (!cap) return false
     const [stored, assets] = await Promise.all([
       meta.storageBytes(orgId),
