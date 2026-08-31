@@ -335,6 +335,7 @@ const modelGateway = (): GatewayConfig | null => {
       model,
       alsoModels: process.env.DERIVE_MODEL_NAMES,
       providers: process.env.DERIVE_MODEL_PROVIDERS,
+      autoProviders: process.env.DERIVE_MODEL_AUTO_PROVIDERS,
     }
   if (baseUrl || apiKey || model)
     log.warn("model gateway ignored: set DERIVE_MODEL_BASE_URL, _API_KEY and _NAME together", {
