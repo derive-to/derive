@@ -15,6 +15,7 @@ import {
   CommandItem,
   CommandList,
 } from "@/components/ui/command"
+import { Input } from "@/components/ui/input"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import {
   Select,
@@ -91,6 +92,18 @@ export function AutomationForm({
   const [instruction, setInstruction] = useState(
     automation?.instruction ?? defaultInstruction ?? "",
   )
+  const directAction = automation?.trigger.action
+  const [workflowType, setWorkflowType] = useState<"agent" | "github_workflow">(
+    directAction ? "github_workflow" : "agent",
+  )
+  const [repository, setRepository] = useState(
+    directAction ? `${directAction.owner}/${directAction.repo}` : "",
+  )
+  const [workflowFile, setWorkflowFile] = useState(directAction?.workflow ?? "")
+  const [workflowRef, setWorkflowRef] = useState(directAction?.ref ?? "main")
+  const [workflowInputs, setWorkflowInputs] = useState(
+    JSON.stringify(directAction?.inputs ?? {}, null, 2),
+  )
   // Existing automations retain their provider. API clients that omit one retain the server's
   // Claude default.
   const [provider, setProvider] = useState<Automation["provider"]>(automation?.provider ?? "codex")
@@ -121,6 +134,13 @@ export function AutomationForm({
   const runConnections = useMemo(
     () => (connections.data ?? []).filter((c) => c.status === "active"),
     [connections.data],
+  )
+  const githubConnections = useMemo(
+    () => runConnections.filter((connection) => connection.kind === "github_app"),
+    [runConnections],
+  )
+  const [githubConnectionId, setGithubConnectionId] = useState(
+    directAction ? (automation?.connection_ids[0] ?? "") : "",
   )
   const connectionLabel = (id: string): string =>
     runConnections.find((connection) => connection.id === id)?.toolkit ??
@@ -170,21 +190,48 @@ export function AutomationForm({
   const removeTarget = (r: AutomationRef) =>
     setTargets((cur) => cur.filter((x) => keyOf(x.ref) !== keyOf(r)))
 
-  const buildTrigger = (): AutomationTrigger =>
-    kind === "schedule" ? { kind, cron, tz } : kind === "event" ? { kind, on } : { kind }
+  const parsedRepository = repository.trim().split("/")
+  const parsedInputs = (() => {
+    try {
+      const value = JSON.parse(workflowInputs) as unknown
+      return value && typeof value === "object" && !Array.isArray(value)
+        ? (value as Record<string, string | number | boolean>)
+        : null
+    } catch {
+      return null
+    }
+  })()
+  const buildTrigger = (): AutomationTrigger => {
+    if (workflowType === "github_workflow")
+      return {
+        kind: "manual",
+        action: {
+          kind: "github_workflow",
+          owner: parsedRepository[0] ?? "",
+          repo: parsedRepository[1] ?? "",
+          workflow: workflowFile.trim(),
+          ref: workflowRef.trim(),
+          ...(parsedInputs && Object.keys(parsedInputs).length ? { inputs: parsedInputs } : {}),
+        },
+      }
+    return kind === "schedule" ? { kind, cron, tz } : kind === "event" ? { kind, on } : { kind }
+  }
   const buildRefs = (): AutomationRef[] => targets.map((t) => t.ref)
 
   const save = useApiMutation({
     mutationFn: () => {
       const body = {
-        ...(!contextId && agentId ? { agentId } : {}),
+        ...(workflowType === "agent" && !contextId && agentId ? { agentId } : {}),
         provider,
-        ...(contextId ? { contextId } : {}),
+        ...(workflowType === "agent" && contextId ? { contextId } : {}),
         trigger: buildTrigger(),
-        instruction: instruction.trim(),
+        instruction:
+          workflowType === "github_workflow"
+            ? `Run ${repository.trim()} · ${workflowFile.trim()}`
+            : instruction.trim(),
         ...(!automation && runOnCreate ? { runNow: true } : {}),
-        refs: buildRefs(),
-        connectionIds,
+        refs: workflowType === "agent" ? buildRefs() : [],
+        connectionIds: workflowType === "agent" ? connectionIds : [githubConnectionId],
       }
       return automation
         ? api.updateAutomation(automation.id, {
@@ -223,367 +270,476 @@ export function AutomationForm({
   })
   // Edit keeps requiring its agent; create no longer needs one (auto-mint), and a
   // roster error only blocks someone who actually picked a service agent.
+  const directReady =
+    parsedRepository.length === 2 &&
+    parsedRepository.every(Boolean) &&
+    workflowFile.trim() !== "" &&
+    workflowRef.trim() !== "" &&
+    githubConnectionId !== "" &&
+    parsedInputs !== null
   const ready =
-    instruction.trim() !== "" && (automation ? agentId !== "" : !(agentId && agentsError))
+    workflowType === "github_workflow"
+      ? directReady
+      : instruction.trim() !== "" && (automation ? agentId !== "" : !(agentId && agentsError))
 
   return (
     <div className="flex flex-col gap-4">
-      <Field
-        label="Use a Context"
-        hint="Optional. A Context packages reusable instructions, repository pointers, skills, and permitted sources for complex work."
-      >
+      <Field label="Workflow type">
         <Select
-          value={contextId || "none"}
-          onValueChange={(v) => setContextId(v === "none" ? "" : v)}
-          disabled={contexts.isPending || contexts.isError}
+          value={workflowType}
+          onValueChange={(value) => setWorkflowType(value as "agent" | "github_workflow")}
         >
-          <SelectTrigger
-            data-testid="automation-context"
-            aria-label="Use a Context"
-            className="w-full"
-          >
+          <SelectTrigger data-testid="automation-type" aria-label="Workflow type">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="none">No Context · use this instruction directly</SelectItem>
-            {(contexts.data ?? []).map((context) => (
-              <SelectItem key={context.id} value={context.id}>
-                {context.name}
-              </SelectItem>
-            ))}
+            <SelectItem value="github_workflow">GitHub Actions</SelectItem>
+            <SelectItem value="agent">Agent instruction</SelectItem>
           </SelectContent>
         </Select>
-        {!contexts.isPending && !contexts.isError && (contexts.data ?? []).length === 0 && (
-          <p className="text-xs text-muted-foreground">
-            Need a reusable method for this job?{" "}
-            <Link
-              to="/contexts/new"
-              target="_blank"
-              rel="noreferrer"
-              className="font-medium text-foreground underline underline-offset-2"
-            >
-              Create a Context in a new tab
-            </Link>
-            .
-          </p>
-        )}
       </Field>
 
-      {!contextId && (automation || (agents ?? []).some((a) => !a.managed)) && (
-        <Field label="Execution connection">
-          <Select
-            value={agentId || "auto"}
-            onValueChange={(v) => setAgentId(v === "auto" ? "" : v)}
-          >
-            <SelectTrigger
-              data-testid="automation-agent"
-              aria-label="Execution connection"
-              className="w-full"
-            >
-              <SelectValue placeholder="Dedicated connection" />
-            </SelectTrigger>
-            <SelectContent>
-              {!automation && <SelectItem value="auto">Dedicated connection (default)</SelectItem>}
-              {(agents ?? [])
-                .filter((a) => !a.managed || a.id === automation?.agent_id)
-                .map((a) => (
-                  <SelectItem key={a.id} value={a.id}>
-                    @{a.name}
-                  </SelectItem>
-                ))}
-            </SelectContent>
-          </Select>
-        </Field>
-      )}
-
-      <Field
-        label="Runs with"
-        hint="The selected coding agent executes through an available connected or hosted runner."
-      >
-        <Select value={provider} onValueChange={(v) => setProvider(v as Automation["provider"])}>
-          <SelectTrigger
-            data-testid="automation-provider"
-            aria-label="Runs with"
-            className="w-full"
-          >
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="codex">Codex</SelectItem>
-            <SelectItem value="claude-code">Claude Code</SelectItem>
-          </SelectContent>
-        </Select>
-        <div className="rounded-md border bg-muted/30 px-2.5 py-2 text-xs text-muted-foreground">
-          {modelCredentials.isPending ? (
-            <span>Checking your connected model plans…</span>
-          ) : personalPlan ? (
-            <span>
-              {provider === "codex" ? "Codex" : "Claude"} plan connected · {personalPlan.hint}
-            </span>
-          ) : (
-            <span>
-              {modelCredentials.isError
-                ? "Couldn't check your personal plan. "
-                : `No personal ${provider === "codex" ? "Codex" : "Claude"} plan connected. `}
-              An agent owner or shared workspace plan may still cover this run, or you can{" "}
-              <Link
-                to="/settings/$section"
-                params={{ section: "model-plans" }}
-                target="_blank"
-                rel="noreferrer"
-                className="font-medium text-foreground underline underline-offset-2"
-              >
-                connect yours in a new tab
-              </Link>
-              .
-            </span>
-          )}
-        </div>
-      </Field>
-
-      <Field label="Instruction">
-        <Textarea
-          data-testid="automation-instruction"
-          aria-label="Instruction"
-          placeholder="What should the agent do? e.g. Keep this doc's dates and statuses current."
-          value={instruction}
-          onChange={(e) => setInstruction(e.target.value)}
-          rows={2}
-        />
-      </Field>
-
-      <Field
-        label="Connections"
-        hint="Connected tools this run can use. Add GitHub under Integrations, or add any runner adapter as an MCP source."
-      >
-        <div className="flex flex-wrap items-center gap-1.5">
-          {connectionIds.map((id) => (
-            <Badge key={id} variant="outline" className="h-6 gap-1 pr-1 pl-1.5 font-normal">
-              <Plug className="size-3.5 text-muted-foreground" aria-hidden />
-              <span className="max-w-40 truncate">{connectionLabel(id)}</span>
-              <button
-                type="button"
-                data-testid={`automation-source-remove-${id}`}
-                aria-label={`Remove ${connectionLabel(id)}`}
-                className="rounded-sm p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
-                onClick={() => setConnectionIds((cur) => cur.filter((x) => x !== id))}
-              >
-                <X className="size-3" aria-hidden />
-              </button>
-            </Badge>
-          ))}
-          {runConnections.length > connectionIds.length ? (
-            <Popover open={connectionsOpen} onOpenChange={setConnectionsOpen}>
-              <PopoverTrigger asChild>
-                <Button
-                  data-testid="automation-add-source"
-                  variant="outline"
-                  size="sm"
-                  className="h-6"
-                >
-                  <Plus className="size-3.5" aria-hidden /> Add source
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent className="w-80 p-0" align="start">
-                <Command>
-                  <CommandInput placeholder="Search connections…" />
-                  <CommandList>
-                    <CommandEmpty>No matches.</CommandEmpty>
-                    <CommandGroup>
-                      {runConnections
-                        .filter((c) => !connectionIds.includes(c.id))
-                        .map((c) => (
-                          <CommandItem
-                            key={c.id}
-                            value={c.toolkit}
-                            data-testid={`automation-source-${c.id}`}
-                            onSelect={() => {
-                              setConnectionIds((cur) => [...cur, c.id])
-                              setConnectionsOpen(false)
-                            }}
-                          >
-                            <Plug className="size-3.5 text-muted-foreground" aria-hidden />
-                            <span className="truncate">{c.toolkit}</span>
-                            <span className="ml-auto max-w-36 truncate text-2xs text-muted-foreground">
-                              {c.scopes_label ?? c.base_url ?? c.kind ?? ""}
-                            </span>
-                          </CommandItem>
-                        ))}
-                    </CommandGroup>
-                  </CommandList>
-                </Command>
-              </PopoverContent>
-            </Popover>
-          ) : runConnections.length === 0 ? (
-            // Said plainly rather than hidden: a run with no connection can only read what is
-            // already in Derive, and that is the difference this field exists to explain.
-            <span className="text-muted-foreground text-xs">
-              No connections yet. Add GitHub under Settings → Integrations or an MCP source under
-              Settings → Sources.
-            </span>
-          ) : null}
-        </div>
-      </Field>
-
-      <Field
-        label="Targets"
-        hint="Documents it revises, collections it files new work into, and tags it stamps on its output."
-      >
-        <div className="flex flex-wrap items-center gap-1.5">
-          {targets.map((t) => (
-            <Badge
-              key={keyOf(t.ref)}
-              variant="outline"
-              className="h-6 gap-1 pr-1 pl-1.5 font-normal"
-            >
-              <TargetIcon kind={t.ref.kind} />
-              <span className="max-w-40 truncate">{labelFor(t)}</span>
-              <button
-                type="button"
-                data-testid={`automation-target-remove-${keyOf(t.ref)}`}
-                aria-label={`Remove ${labelFor(t)}`}
-                className="rounded-sm p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
-                onClick={() => removeTarget(t.ref)}
-              >
-                <X className="size-3" aria-hidden />
-              </button>
-            </Badge>
-          ))}
-          <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
-            <PopoverTrigger asChild>
-              <Button
-                data-testid="automation-add-target"
-                variant="outline"
-                size="sm"
-                className="h-6"
-              >
-                <Plus className="size-3.5" aria-hidden /> Add target
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent className="w-80 p-0" align="start">
-              <Command shouldFilter={false}>
-                <CommandInput
-                  data-testid="automation-target-search"
-                  placeholder="Search docs, collections, or type a tag…"
-                  value={q}
-                  onValueChange={setQ}
-                />
-                <CommandList>
-                  <CommandEmpty>
-                    {docs.isError ? "Couldn't search. Try again." : "No matches."}
-                  </CommandEmpty>
-                  {(docs.data?.artifacts ?? []).length > 0 && (
-                    <CommandGroup heading="Artifacts">
-                      {(docs.data?.artifacts ?? []).map((a) => (
-                        <CommandItem
-                          key={a.short_id}
-                          value={`doc:${a.short_id}`}
-                          onSelect={() =>
-                            addTarget({
-                              ref: { kind: "artifact", id: a.short_id },
-                              label: a.title || a.short_id,
-                            })
-                          }
-                        >
-                          <FileText className="size-3.5 text-muted-foreground" aria-hidden />
-                          <span className="truncate">{a.title || a.short_id}</span>
-                        </CommandItem>
-                      ))}
-                    </CommandGroup>
-                  )}
-                  {collectionMatches.length > 0 && (
-                    <CommandGroup heading="Collections">
-                      {collectionMatches.map((c) => (
-                        <CommandItem
-                          key={c.id}
-                          value={`col:${c.id}`}
-                          onSelect={() =>
-                            addTarget({ ref: { kind: "collection", id: c.id }, label: c.title })
-                          }
-                        >
-                          <FolderOpen className="size-3.5 text-muted-foreground" aria-hidden />
-                          <span className="truncate">{c.title}</span>
-                          <span className="ml-auto text-2xs text-muted-foreground">{c.count}</span>
-                        </CommandItem>
-                      ))}
-                    </CommandGroup>
-                  )}
-                  {tagDraft !== "" && (
-                    <CommandGroup heading="Tag">
-                      <CommandItem
-                        data-testid="automation-add-tag"
-                        value={`tag:${tagDraft}`}
-                        onSelect={() =>
-                          addTarget({ ref: { kind: "tag", tag: tagDraft }, label: `#${tagDraft}` })
-                        }
-                      >
-                        <Hash className="size-3.5 text-muted-foreground" aria-hidden />
-                        <span>
-                          Stamp with <span className="text-foreground">#{tagDraft}</span>
-                        </span>
-                      </CommandItem>
-                    </CommandGroup>
-                  )}
-                </CommandList>
-              </Command>
-            </PopoverContent>
-          </Popover>
-        </div>
-      </Field>
-
-      <Field label="Trigger">
-        <Tabs value={kind} onValueChange={(v) => setKind(v as AutomationTrigger["kind"])}>
-          <TabsList>
-            <TabsTrigger data-testid="automation-trigger-manual" value="manual">
-              Manual
-            </TabsTrigger>
-            <TabsTrigger data-testid="automation-trigger-schedule" value="schedule">
-              Schedule
-            </TabsTrigger>
-            <TabsTrigger data-testid="automation-trigger-event" value="event">
-              Event
-            </TabsTrigger>
-          </TabsList>
-        </Tabs>
-        {kind === "manual" && (
-          <p className="text-sm text-muted-foreground">Runs only when you press Run now.</p>
-        )}
-        {kind === "schedule" && (
-          <div className="flex flex-wrap items-center gap-2">
-            <Select value={cron} onValueChange={setCron}>
+      {workflowType === "github_workflow" ? (
+        <>
+          <Field label="GitHub connection">
+            <Select value={githubConnectionId} onValueChange={setGithubConnectionId}>
               <SelectTrigger
-                data-testid="automation-schedule"
-                aria-label="Schedule"
-                className="w-60"
+                data-testid="automation-github-connection"
+                aria-label="GitHub connection"
               >
-                <SelectValue />
+                <SelectValue placeholder="Select a GitHub App installation" />
               </SelectTrigger>
               <SelectContent>
-                {SCHEDULE_PRESETS.map((p) => (
-                  <SelectItem key={p.id} value={p.cron}>
-                    {p.label}
+                {githubConnections.map((connection) => (
+                  <SelectItem key={connection.id} value={connection.id}>
+                    {connection.scopes_label ?? "GitHub App"}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
-            <span className="font-mono text-2xs text-muted-foreground">{tz}</span>
-          </div>
-        )}
-        {kind === "event" && (
-          <Select value={on} onValueChange={setOn}>
-            <SelectTrigger data-testid="automation-event" aria-label="Event" className="w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {EVENT_KINDS.map((e) => (
-                <SelectItem key={e.id} value={e.id}>
-                  {e.label}
-                </SelectItem>
+            {!connections.isPending && githubConnections.length === 0 ? (
+              <p className="text-xs text-muted-foreground">
+                Connect GitHub under Settings → Integrations first.
+              </p>
+            ) : null}
+          </Field>
+          <Field label="Repository" hint="Use owner/repository, for example Niftory/sift.">
+            <Input
+              data-testid="automation-github-repository"
+              aria-label="Repository"
+              placeholder="owner/repository"
+              value={repository}
+              onChange={(event) => setRepository(event.target.value)}
+            />
+          </Field>
+          <Field
+            label="Workflow file"
+            hint="For safety, the file name must start with derive- and end with .yml or .yaml."
+          >
+            <Input
+              data-testid="automation-github-workflow"
+              aria-label="Workflow file"
+              placeholder="derive-tests.yml"
+              value={workflowFile}
+              onChange={(event) => setWorkflowFile(event.target.value)}
+            />
+          </Field>
+          <Field label="Git ref">
+            <Input
+              data-testid="automation-github-ref"
+              aria-label="Git ref"
+              placeholder="main"
+              value={workflowRef}
+              onChange={(event) => setWorkflowRef(event.target.value)}
+            />
+          </Field>
+          <Field
+            label="Inputs"
+            hint="Optional JSON object. Values can be text, numbers, or booleans."
+          >
+            <Textarea
+              data-testid="automation-github-inputs"
+              aria-label="Inputs"
+              value={workflowInputs}
+              onChange={(event) => setWorkflowInputs(event.target.value)}
+              rows={3}
+              className="font-mono text-xs"
+            />
+            {parsedInputs === null ? (
+              <p className="text-xs text-destructive">Enter a valid JSON object.</p>
+            ) : null}
+          </Field>
+        </>
+      ) : (
+        <>
+          <Field
+            label="Use a Context"
+            hint="Optional. A Context packages reusable instructions, repository pointers, skills, and permitted sources for complex work."
+          >
+            <Select
+              value={contextId || "none"}
+              onValueChange={(v) => setContextId(v === "none" ? "" : v)}
+              disabled={contexts.isPending || contexts.isError}
+            >
+              <SelectTrigger
+                data-testid="automation-context"
+                aria-label="Use a Context"
+                className="w-full"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">No Context · use this instruction directly</SelectItem>
+                {(contexts.data ?? []).map((context) => (
+                  <SelectItem key={context.id} value={context.id}>
+                    {context.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {!contexts.isPending && !contexts.isError && (contexts.data ?? []).length === 0 && (
+              <p className="text-xs text-muted-foreground">
+                Need a reusable method for this job?{" "}
+                <Link
+                  to="/contexts/new"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="font-medium text-foreground underline underline-offset-2"
+                >
+                  Create a Context in a new tab
+                </Link>
+                .
+              </p>
+            )}
+          </Field>
+
+          {!contextId && (automation || (agents ?? []).some((a) => !a.managed)) && (
+            <Field label="Execution connection">
+              <Select
+                value={agentId || "auto"}
+                onValueChange={(v) => setAgentId(v === "auto" ? "" : v)}
+              >
+                <SelectTrigger
+                  data-testid="automation-agent"
+                  aria-label="Execution connection"
+                  className="w-full"
+                >
+                  <SelectValue placeholder="Dedicated connection" />
+                </SelectTrigger>
+                <SelectContent>
+                  {!automation && (
+                    <SelectItem value="auto">Dedicated connection (default)</SelectItem>
+                  )}
+                  {(agents ?? [])
+                    .filter((a) => !a.managed || a.id === automation?.agent_id)
+                    .map((a) => (
+                      <SelectItem key={a.id} value={a.id}>
+                        @{a.name}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+            </Field>
+          )}
+
+          <Field
+            label="Runs with"
+            hint="The selected coding agent executes through an available connected or hosted runner."
+          >
+            <Select
+              value={provider}
+              onValueChange={(v) => setProvider(v as Automation["provider"])}
+            >
+              <SelectTrigger
+                data-testid="automation-provider"
+                aria-label="Runs with"
+                className="w-full"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="codex">Codex</SelectItem>
+                <SelectItem value="claude-code">Claude Code</SelectItem>
+              </SelectContent>
+            </Select>
+            <div className="rounded-md border bg-muted/30 px-2.5 py-2 text-xs text-muted-foreground">
+              {modelCredentials.isPending ? (
+                <span>Checking your connected model plans…</span>
+              ) : personalPlan ? (
+                <span>
+                  {provider === "codex" ? "Codex" : "Claude"} plan connected · {personalPlan.hint}
+                </span>
+              ) : (
+                <span>
+                  {modelCredentials.isError
+                    ? "Couldn't check your personal plan. "
+                    : `No personal ${provider === "codex" ? "Codex" : "Claude"} plan connected. `}
+                  An agent owner or shared workspace plan may still cover this run, or you can{" "}
+                  <Link
+                    to="/settings/$section"
+                    params={{ section: "model-plans" }}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="font-medium text-foreground underline underline-offset-2"
+                  >
+                    connect yours in a new tab
+                  </Link>
+                  .
+                </span>
+              )}
+            </div>
+          </Field>
+
+          <Field label="Instruction">
+            <Textarea
+              data-testid="automation-instruction"
+              aria-label="Instruction"
+              placeholder="What should the agent do? e.g. Keep this doc's dates and statuses current."
+              value={instruction}
+              onChange={(e) => setInstruction(e.target.value)}
+              rows={2}
+            />
+          </Field>
+
+          <Field
+            label="Connections"
+            hint="Connected tools this run can use. Add GitHub under Integrations, or add any runner adapter as an MCP source."
+          >
+            <div className="flex flex-wrap items-center gap-1.5">
+              {connectionIds.map((id) => (
+                <Badge key={id} variant="outline" className="h-6 gap-1 pr-1 pl-1.5 font-normal">
+                  <Plug className="size-3.5 text-muted-foreground" aria-hidden />
+                  <span className="max-w-40 truncate">{connectionLabel(id)}</span>
+                  <button
+                    type="button"
+                    data-testid={`automation-source-remove-${id}`}
+                    aria-label={`Remove ${connectionLabel(id)}`}
+                    className="rounded-sm p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+                    onClick={() => setConnectionIds((cur) => cur.filter((x) => x !== id))}
+                  >
+                    <X className="size-3" aria-hidden />
+                  </button>
+                </Badge>
               ))}
-            </SelectContent>
-          </Select>
-        )}
-      </Field>
+              {runConnections.length > connectionIds.length ? (
+                <Popover open={connectionsOpen} onOpenChange={setConnectionsOpen}>
+                  <PopoverTrigger asChild>
+                    <Button
+                      data-testid="automation-add-source"
+                      variant="outline"
+                      size="sm"
+                      className="h-6"
+                    >
+                      <Plus className="size-3.5" aria-hidden /> Add source
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-80 p-0" align="start">
+                    <Command>
+                      <CommandInput placeholder="Search connections…" />
+                      <CommandList>
+                        <CommandEmpty>No matches.</CommandEmpty>
+                        <CommandGroup>
+                          {runConnections
+                            .filter((c) => !connectionIds.includes(c.id))
+                            .map((c) => (
+                              <CommandItem
+                                key={c.id}
+                                value={c.toolkit}
+                                data-testid={`automation-source-${c.id}`}
+                                onSelect={() => {
+                                  setConnectionIds((cur) => [...cur, c.id])
+                                  setConnectionsOpen(false)
+                                }}
+                              >
+                                <Plug className="size-3.5 text-muted-foreground" aria-hidden />
+                                <span className="truncate">{c.toolkit}</span>
+                                <span className="ml-auto max-w-36 truncate text-2xs text-muted-foreground">
+                                  {c.scopes_label ?? c.base_url ?? c.kind ?? ""}
+                                </span>
+                              </CommandItem>
+                            ))}
+                        </CommandGroup>
+                      </CommandList>
+                    </Command>
+                  </PopoverContent>
+                </Popover>
+              ) : runConnections.length === 0 ? (
+                // Said plainly rather than hidden: a run with no connection can only read what is
+                // already in Derive, and that is the difference this field exists to explain.
+                <span className="text-muted-foreground text-xs">
+                  No connections yet. Add GitHub under Settings → Integrations or an MCP source
+                  under Settings → Sources.
+                </span>
+              ) : null}
+            </div>
+          </Field>
+
+          <Field
+            label="Targets"
+            hint="Documents it revises, collections it files new work into, and tags it stamps on its output."
+          >
+            <div className="flex flex-wrap items-center gap-1.5">
+              {targets.map((t) => (
+                <Badge
+                  key={keyOf(t.ref)}
+                  variant="outline"
+                  className="h-6 gap-1 pr-1 pl-1.5 font-normal"
+                >
+                  <TargetIcon kind={t.ref.kind} />
+                  <span className="max-w-40 truncate">{labelFor(t)}</span>
+                  <button
+                    type="button"
+                    data-testid={`automation-target-remove-${keyOf(t.ref)}`}
+                    aria-label={`Remove ${labelFor(t)}`}
+                    className="rounded-sm p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+                    onClick={() => removeTarget(t.ref)}
+                  >
+                    <X className="size-3" aria-hidden />
+                  </button>
+                </Badge>
+              ))}
+              <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
+                <PopoverTrigger asChild>
+                  <Button
+                    data-testid="automation-add-target"
+                    variant="outline"
+                    size="sm"
+                    className="h-6"
+                  >
+                    <Plus className="size-3.5" aria-hidden /> Add target
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-80 p-0" align="start">
+                  <Command shouldFilter={false}>
+                    <CommandInput
+                      data-testid="automation-target-search"
+                      placeholder="Search docs, collections, or type a tag…"
+                      value={q}
+                      onValueChange={setQ}
+                    />
+                    <CommandList>
+                      <CommandEmpty>
+                        {docs.isError ? "Couldn't search. Try again." : "No matches."}
+                      </CommandEmpty>
+                      {(docs.data?.artifacts ?? []).length > 0 && (
+                        <CommandGroup heading="Artifacts">
+                          {(docs.data?.artifacts ?? []).map((a) => (
+                            <CommandItem
+                              key={a.short_id}
+                              value={`doc:${a.short_id}`}
+                              onSelect={() =>
+                                addTarget({
+                                  ref: { kind: "artifact", id: a.short_id },
+                                  label: a.title || a.short_id,
+                                })
+                              }
+                            >
+                              <FileText className="size-3.5 text-muted-foreground" aria-hidden />
+                              <span className="truncate">{a.title || a.short_id}</span>
+                            </CommandItem>
+                          ))}
+                        </CommandGroup>
+                      )}
+                      {collectionMatches.length > 0 && (
+                        <CommandGroup heading="Collections">
+                          {collectionMatches.map((c) => (
+                            <CommandItem
+                              key={c.id}
+                              value={`col:${c.id}`}
+                              onSelect={() =>
+                                addTarget({ ref: { kind: "collection", id: c.id }, label: c.title })
+                              }
+                            >
+                              <FolderOpen className="size-3.5 text-muted-foreground" aria-hidden />
+                              <span className="truncate">{c.title}</span>
+                              <span className="ml-auto text-2xs text-muted-foreground">
+                                {c.count}
+                              </span>
+                            </CommandItem>
+                          ))}
+                        </CommandGroup>
+                      )}
+                      {tagDraft !== "" && (
+                        <CommandGroup heading="Tag">
+                          <CommandItem
+                            data-testid="automation-add-tag"
+                            value={`tag:${tagDraft}`}
+                            onSelect={() =>
+                              addTarget({
+                                ref: { kind: "tag", tag: tagDraft },
+                                label: `#${tagDraft}`,
+                              })
+                            }
+                          >
+                            <Hash className="size-3.5 text-muted-foreground" aria-hidden />
+                            <span>
+                              Stamp with <span className="text-foreground">#{tagDraft}</span>
+                            </span>
+                          </CommandItem>
+                        </CommandGroup>
+                      )}
+                    </CommandList>
+                  </Command>
+                </PopoverContent>
+              </Popover>
+            </div>
+          </Field>
+
+          <Field label="Trigger">
+            <Tabs value={kind} onValueChange={(v) => setKind(v as AutomationTrigger["kind"])}>
+              <TabsList>
+                <TabsTrigger data-testid="automation-trigger-manual" value="manual">
+                  Manual
+                </TabsTrigger>
+                <TabsTrigger data-testid="automation-trigger-schedule" value="schedule">
+                  Schedule
+                </TabsTrigger>
+                <TabsTrigger data-testid="automation-trigger-event" value="event">
+                  Event
+                </TabsTrigger>
+              </TabsList>
+            </Tabs>
+            {kind === "manual" && (
+              <p className="text-sm text-muted-foreground">Runs only when you press Run now.</p>
+            )}
+            {kind === "schedule" && (
+              <div className="flex flex-wrap items-center gap-2">
+                <Select value={cron} onValueChange={setCron}>
+                  <SelectTrigger
+                    data-testid="automation-schedule"
+                    aria-label="Schedule"
+                    className="w-60"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {SCHEDULE_PRESETS.map((p) => (
+                      <SelectItem key={p.id} value={p.cron}>
+                        {p.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <span className="font-mono text-2xs text-muted-foreground">{tz}</span>
+              </div>
+            )}
+            {kind === "event" && (
+              <Select value={on} onValueChange={setOn}>
+                <SelectTrigger data-testid="automation-event" aria-label="Event" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {EVENT_KINDS.map((e) => (
+                    <SelectItem key={e.id} value={e.id}>
+                      {e.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          </Field>
+        </>
+      )}
 
       {mintedToken && (
         <div data-testid="automation-agent-token">

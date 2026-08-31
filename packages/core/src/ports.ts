@@ -2755,6 +2755,19 @@ export interface NewAgent {
 
 export type TriggerKind = "manual" | "schedule" | "event"
 
+/** A direct action executes without a coding agent or model plan. GitHub Actions is the first
+ * adapter; the tagged shape leaves room for other outbound runners without another column. */
+export interface GithubWorkflowAutomationAction {
+  kind: "github_workflow"
+  owner: string
+  repo: string
+  workflow: string
+  ref: string
+  inputs?: Record<string, string | number | boolean>
+}
+
+export type AutomationAction = GithubWorkflowAutomationAction
+
 /** How an automation fires. Open-ended JSON on the row — a new kind adds no columns. */
 export interface AutomationTrigger {
   kind: TriggerKind
@@ -2764,6 +2777,8 @@ export interface AutomationTrigger {
   tz?: string
   /** event: the event name (e.g. "comment.opened", "upstream.published", "webhook"). */
   on?: string
+  /** Optional direct outbound work. Omitted means the normal agent instruction lane. */
+  action?: AutomationAction
   /** event/webhook: sha256 of the fire secret. The raw secret rides only the create
    *  response that mints it; the fire endpoint verifies a presented bearer against this
    *  hash. Never surfaced on read — redacted to a boolean when an automation is presented. */

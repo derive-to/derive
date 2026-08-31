@@ -61,10 +61,9 @@ export function AutomatedWorkflows() {
   return (
     <section className="flex flex-col gap-4">
       <div className="flex flex-col gap-1">
-        <SectionHeading>Single-agent workflows</SectionHeading>
+        <SectionHeading>Automated workflows</SectionHeading>
         <p className="text-sm text-muted-foreground">
-          Give one Agent a standing instruction, then run it on demand, on a schedule, or after an
-          event. Each start creates a separate run.
+          Run a GitHub Actions workflow directly, or give an Agent a reusable instruction.
         </p>
       </div>
       {accessPending ? (
@@ -83,8 +82,8 @@ export function AutomatedWorkflows() {
       ) : isAdmin ? (
         <SettingsGroup>
           <SettingRow
-            label="Enable single-agent workflows"
-            description="Create reusable jobs and run them here, on a schedule, or from an event."
+            label="Enable automated workflows"
+            description="Create reusable jobs and run them from Derive."
           >
             <Button
               data-testid="automations-enable"
@@ -106,16 +105,12 @@ export function AutomatedWorkflows() {
         <SettingsListSkeleton />
       ) : isError ? (
         <LoadError
-          title="Couldn’t load single-agent workflows"
+          title="Couldn’t load automated workflows"
           testId="automations-retry"
           onRetry={() => refetch()}
         />
       ) : !automations || automations.length === 0 ? (
-        <SettingsEmpty>
-          {isAdmin
-            ? "No single-agent workflows yet. Nothing is running on a schedule or trigger."
-            : "No single-agent workflows yet."}
-        </SettingsEmpty>
+        <SettingsEmpty>No automated workflows yet.</SettingsEmpty>
       ) : (
         <SettingsGroup>
           {automations.map((a) => (
@@ -151,7 +146,7 @@ function AutomationRow({
   const [editing, setEditing] = useState(false)
   const run = useApiMutation({
     mutationFn: () => api.runAutomation(automation.id),
-    success: "Run queued",
+    success: automation.trigger.action ? "Workflow dispatched" : "Run queued",
     onSuccess: () => onDone(),
   })
   const pause = useApiMutation({
@@ -178,12 +173,18 @@ function AutomationRow({
         <span className="flex min-w-0 flex-wrap items-center gap-1.5">
           <span className="min-w-0 max-w-full truncate">{automation.instruction}</span>
           <Badge variant="outline">
-            {automation.provider === "codex" ? "Codex" : "Claude Code"}
+            {automation.trigger.action
+              ? "GitHub Actions"
+              : automation.provider === "codex"
+                ? "Codex"
+                : "Claude Code"}
           </Badge>
           {automation.context_id && <Badge variant="outline">Context</Badge>}
           <Badge variant="secondary">{triggerLabel(automation.trigger)}</Badge>
           {!automation.enabled && <Badge variant="outline">Paused</Badge>}
-          <ExecutorBadge seenAt={automation.executor_seen_at ?? null} />
+          {!automation.trigger.action ? (
+            <ExecutorBadge seenAt={automation.executor_seen_at ?? null} />
+          ) : null}
         </span>
       }
       meta={summary || undefined}

@@ -360,6 +360,14 @@ export interface AutomationTrigger {
   cron?: string
   tz?: string
   on?: string
+  action?: {
+    kind: "github_workflow"
+    owner: string
+    repo: string
+    workflow: string
+    ref: string
+    inputs?: Record<string, string | number | boolean>
+  }
 }
 /** A connected model-plan credential, as the settings UI sees it — never the secret. */
 export interface ModelCredentialHint {

@@ -1,4 +1,7 @@
-import { describe, expect, it } from "vitest"
+import { generateKeyPairSync } from "node:crypto"
+import { afterEach, describe, expect, it, vi } from "vitest"
+import { encryptSecret } from "../src/lib/crypto"
+import { upsertGithubConnection } from "../src/lib/github-connection"
 import {
   as,
   bearer,
@@ -8,6 +11,14 @@ import {
   publishAs,
   type TestUser,
 } from "./helpers"
+
+const { privateKey: GITHUB_APP_PEM } = generateKeyPairSync("rsa", {
+  modulusLength: 2048,
+  privateKeyEncoding: { type: "pkcs1", format: "pem" },
+  publicKeyEncoding: { type: "spki", format: "pem" },
+})
+
+afterEach(() => vi.unstubAllGlobals())
 
 // Automations + runs — the generic agent-work primitive. An owner defines an
 // automation (agent + trigger + instruction); "run now" enqueues a run; the agent claims
@@ -46,6 +57,118 @@ describe("automations + runs", () => {
         ...over,
       }),
     )
+
+  it("dispatches GitHub Actions directly without a model plan or executor", async () => {
+    const key = "direct-github-actions-key"
+    const direct = makeAuthedApp("automations-direct-github", [owner], "editor", {
+      noPlan: true,
+      deps: { encryptionKey: key },
+    })
+    await direct.meta.setGithubApp({
+      id: "default",
+      app_id: "553",
+      slug: "derive-test",
+      client_id: "Iv1.test",
+      client_secret: encryptSecret("client-secret", key),
+      private_key: encryptSecret(GITHUB_APP_PEM, key),
+      created_at: new Date().toISOString(),
+    })
+    const connection = await upsertGithubConnection(direct.meta, {
+      orgId: "default",
+      userId: owner.id,
+      installationId: "99004",
+      accountLogin: "Niftory",
+    })
+    const calls: Array<{ url: string; body: unknown }> = []
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string | URL, init?: RequestInit) => {
+        const href = String(url)
+        const body = init?.body ? JSON.parse(String(init.body)) : undefined
+        calls.push({ url: href, body })
+        if (href.includes("/app/installations/99004/access_tokens"))
+          return new Response(
+            JSON.stringify({
+              token: "github-actions-token",
+              expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+            }),
+            { status: 201 },
+          )
+        return new Response(
+          JSON.stringify({
+            workflow_run_id: 7788,
+            html_url: "https://github.com/Niftory/sift/actions/runs/7788",
+          }),
+          { status: 200 },
+        )
+      }),
+    )
+
+    const unsafe = await direct.app.request(
+      "/v1/automations",
+      jsonAs(as(owner.email), {
+        trigger: {
+          kind: "manual",
+          action: {
+            kind: "github_workflow",
+            owner: "Niftory",
+            repo: "sift",
+            workflow: "release.yml",
+            ref: "main",
+          },
+        },
+        instruction: "Run a workflow",
+        connectionIds: [connection.id],
+      }),
+    )
+    expect(unsafe.status).toBe(400)
+    expect(calls).toEqual([])
+
+    const created = await direct.app.request(
+      "/v1/automations",
+      jsonAs(as(owner.email), {
+        trigger: {
+          kind: "manual",
+          action: {
+            kind: "github_workflow",
+            owner: "Niftory",
+            repo: "sift",
+            workflow: "derive-docs-refresh.yml",
+            ref: "main",
+            inputs: { source_sha: "abc123" },
+          },
+        },
+        instruction: "Run Niftory/sift · derive-docs-refresh.yml",
+        connectionIds: [connection.id],
+      }),
+    )
+    expect(created.status).toBe(201)
+    const automation = (await created.json()) as { id: string; agent_token?: string }
+    expect(automation.agent_token).toBeUndefined()
+
+    const dispatched = await direct.app.request(
+      `/v1/automations/${automation.id}/run`,
+      jsonAs(as(owner.email), {}),
+    )
+    expect(dispatched.status).toBe(201)
+    expect(await dispatched.json()).toMatchObject({ status: "succeeded" })
+    expect(calls).toEqual([
+      {
+        url: expect.stringContaining("/app/installations/99004/access_tokens"),
+        body: { permissions: { actions: "write", metadata: "read" }, repositories: ["sift"] },
+      },
+      {
+        url: "https://api.github.com/repos/Niftory/sift/actions/workflows/derive-docs-refresh.yml/dispatches",
+        body: { ref: "main", inputs: { source_sha: "abc123" } },
+      },
+    ])
+    const [run] = await direct.meta.listRuns("default")
+    expect(run).toMatchObject({ status: "succeeded", automation_id: automation.id })
+    expect(JSON.parse(run?.meta ?? "{}")).toMatchObject({
+      outcome: "dispatched",
+      response: { workflow_run_id: 7788 },
+    })
+  })
 
   it("an owner defines an automation; the agent must be in the workspace", async () => {
     const agent = await mintAgent()

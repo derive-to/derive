@@ -8,6 +8,7 @@ import {
 } from "@derive/core"
 import { z } from "zod"
 import { automationProvider, runMetaForAutomation } from "../lib/automation"
+import { githubWorkflowAction, runDirectAutomation } from "../lib/automation-action"
 import { connectionBindError } from "../lib/broker"
 import { ContextConflictError, createContextCore } from "../lib/create-context"
 import { mintToken, sha256 } from "../lib/crypto"
@@ -295,6 +296,22 @@ export function registerAutomateTool(tc: ToolContext): void {
         const a = await meta.getAutomation(input.automation_id)
         if (!a || a.org_id !== org) return json({ error: "no such automation" })
         if (a.enabled !== 1) return json({ error: "automation is disabled" })
+        if (githubWorkflowAction(a)) {
+          try {
+            const rec = await runDirectAutomation({
+              meta,
+              automation: a,
+              encryptionKey: ctx.deps.encryptionKey,
+              reason: "manual:mcp",
+              initiatedBy: tc.ownerId ?? null,
+            })
+            return json({ run_id: rec.id, status: rec.status })
+          } catch (error) {
+            return json({
+              error: error instanceof Error ? error.message : "GitHub workflow dispatch failed",
+            })
+          }
+        }
         // PAYER guard, same as the REST "Run now" (routes/automations.ts). An agent driving
         // this over MCP is the caller least able to see a failure afterwards — it queues and
         // moves on — so refusing here, in the tool result it is already reading, is the only
