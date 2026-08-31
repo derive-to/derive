@@ -77,6 +77,10 @@ export interface GatewayConfig {
   /** Preferred upstream backends, best first, comma-separated. Only meaningful on a gateway that
    *  routes; unset sends nothing. */
   providers?: string
+  /** Upstream backends eligible for automatic routing, comma-separated. When present this wins
+   *  over `providers`: the gateway chooses among this set from live performance rather than
+   *  walking a fixed order. */
+  autoProviders?: string
 }
 
 /**
@@ -93,18 +97,53 @@ export interface GatewayConfig {
  */
 const NO_THINKING = { reasoning: { enabled: false } } as const
 
+/** Keep interactive replies from winning on time-to-first-token only to then dribble output.
+ *  This is a PREFERENCE, not a gate: OpenRouter moves slower endpoints behind the preferred
+ *  group and can still use them if the fast group is unavailable. Fifty tokens/sec is enough
+ *  that generation no longer dominates an ordinary chat reply while leaving a broad fallback
+ *  pool for a large model. */
+const AUTO_MIN_THROUGHPUT = { p50: 50 } as const
+
+const providerList = (raw: string | undefined): string[] => {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const provider of (raw ?? "")
+    .split(",")
+    .map((p) => p.trim())
+    .filter(Boolean)) {
+    if (seen.has(provider)) continue
+    seen.add(provider)
+    out.push(provider)
+  }
+  return out
+}
+
 /** The one construction path for a model on the configured gateway. Configured entries,
  * operator-added entries, and add-time probes must share every routing/body knob. */
 export const callModelFromGateway = (
   gw: GatewayConfig,
   id: string,
 ): AgentLoopInput["callModel"] => {
-  const order = (gw.providers ?? "")
-    .split(",")
-    .map((p) => p.trim())
-    .filter(Boolean)
+  const automatic = providerList(gw.autoProviders)
+  const order = providerList(gw.providers)
+  // A fixed `order` disables the gateway's live routing and keeps leaning on the first backend
+  // until it fails. The automatic mode instead limits WHO may receive a request while leaving
+  // WHICH eligible backend goes first to the gateway's rolling latency/throughput observations.
+  // Low latency is what an attended turn feels; the throughput floor prevents a quick first
+  // token from masking a slow completion. Fallbacks stay on so a provider 429 becomes another
+  // route attempt, not a failed Derive turn.
+  const provider = automatic.length
+    ? {
+        only: automatic,
+        sort: "latency",
+        preferred_min_throughput: AUTO_MIN_THROUGHPUT,
+        allow_fallbacks: true,
+      }
+    : order.length
+      ? { order, allow_fallbacks: true }
+      : undefined
   const extraBody = {
-    ...(order.length ? { provider: { order, allow_fallbacks: true } } : {}),
+    ...(provider ? { provider } : {}),
     ...NO_THINKING,
   }
   return openAiCompatModel({
