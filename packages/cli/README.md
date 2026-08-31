@@ -119,6 +119,8 @@ jobs:
     steps:
       - name: Check out the repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Install repository-pinned harness
         run: npm install --global "@derive-to/cli@0.6.0" "@openai/codex@0.151.0"
       - name: Run the assigned graph
