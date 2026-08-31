@@ -6,25 +6,29 @@ import { StatusBadge, type StatusTone } from "./status-badge"
 
 export type RunDisplayStatus =
   | "queued"
+  | "dispatched"
   | "running"
   | "waiting"
   | "succeeded"
   | "failed"
   | "cancelled"
+  | "timed_out"
 
 export const runStatusLabel = (status: RunDisplayStatus): string =>
   ({
     queued: "Queued",
+    dispatched: "Dispatched",
     running: "Running",
     waiting: "Waiting",
     succeeded: "Completed",
     failed: "Failed",
     cancelled: "Cancelled",
+    timed_out: "Timed out",
   })[status]
 
 export const runStatusTone = (status: RunDisplayStatus): StatusTone => {
   if (status === "succeeded") return "ok"
-  if (status === "failed") return "error"
+  if (status === "failed" || status === "timed_out") return "error"
   if (status === "running") return "busy"
   if (status === "waiting") return "attention"
   return "muted"

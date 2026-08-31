@@ -4,6 +4,7 @@ import {
   type MetaStore,
   newId,
   type SessionRecord,
+  type WorkflowExecutionLane,
   type WorkflowNodeDefinition,
   type WorkflowRouteDefinition,
   type WorkflowRunRecord,
@@ -195,13 +196,14 @@ export const claimWorkflowRun = async (
   run: WorkflowRunRecord,
   executorId: string,
   at: string,
+  lane: WorkflowExecutionLane = "local",
 ): Promise<WorkflowRunRecord | string> => {
   if (workflowStatusIsTerminal(run.status))
     return `Workflow run ${run.id} is already ${run.status}.`
   if (run.executor_id && run.executor_id !== executorId)
     return "This workflow run is already claimed by another executor."
-  if (run.actual_execution && run.actual_execution !== "local")
-    return "This workflow run is already claimed by the hosted lane."
+  if (run.actual_execution && run.actual_execution !== lane)
+    return "This workflow run is already claimed by another execution lane."
   if (run.status === "running") return run
   const claimed = await meta.transitionWorkflowRun(
     run.id,
@@ -210,7 +212,7 @@ export const claimWorkflowRun = async (
     {
       status: "running",
       at,
-      actualExecution: "local",
+      actualExecution: lane,
       executorId,
     },
   )
@@ -225,6 +227,7 @@ export const bindWorkflowContextSession = async (args: {
   manifest: ArtifactRecord
   session: SessionRecord
   executorId: string
+  executionLane?: WorkflowExecutionLane
   at: string
 }): Promise<WorkflowStepAttemptRecord | string> => {
   const sessionAttempt = await args.meta.getWorkflowStepAttemptBySession(
@@ -255,7 +258,13 @@ export const bindWorkflowContextSession = async (args: {
       : "This workflow node attempt is already bound to another context session."
   const invalidAttempt = validateNewAttempt(pinned, args.ref, attempts)
   if (invalidAttempt) return invalidAttempt
-  const claimed = await claimWorkflowRun(args.meta, pinned.run, args.executorId, args.at)
+  const claimed = await claimWorkflowRun(
+    args.meta,
+    pinned.run,
+    args.executorId,
+    args.at,
+    args.executionLane,
+  )
   if (typeof claimed === "string") return claimed
   attempts = await args.meta.listWorkflowStepAttempts(claimed.id, args.orgId)
   existing = attemptFor(attempts, args.ref)
@@ -398,6 +407,7 @@ export const recordWorkflowReceipt = async (args: {
   receipt: WorkflowReceipt
   orgId: string
   executorId: string
+  executionLane?: WorkflowExecutionLane
   at: string
 }): Promise<{ run: WorkflowRunRecord; attempt: WorkflowStepAttemptRecord } | string> => {
   const pinned = await pinnedNode(args.meta, args.receipt, args.orgId)
@@ -495,7 +505,13 @@ export const recordWorkflowReceipt = async (args: {
       return { run: pinned.run, attempt }
     return `Workflow run ${pinned.run.id} is already ${pinned.run.status}.`
   }
-  const claimed = await claimWorkflowRun(args.meta, pinned.run, args.executorId, args.at)
+  const claimed = await claimWorkflowRun(
+    args.meta,
+    pinned.run,
+    args.executorId,
+    args.at,
+    args.executionLane,
+  )
   if (typeof claimed === "string") return claimed
   if (!attempt) {
     const attemptKind = pinned.node.kind === "human" ? "human" : "terminal"
@@ -580,7 +596,7 @@ export const recordWorkflowReceipt = async (args: {
       {
         status: args.receipt.finish_run,
         at: args.at,
-        actualExecution: "local",
+        actualExecution: run.actual_execution ?? "local",
         executorId: args.executorId,
       },
     )

@@ -32,6 +32,7 @@
 //   derive runner serve|once|doctor|install   serve queued Context sessions, or drain once (npx-able anywhere)
 //   derive context push|dev                ship a Context dir as its manifest / tune it live
 //   derive workflow sync|preview [file] [--json] sync the visible graph, then explain + validate
+//   derive workflow run [run_id]          one authorized GitHub Actions graph harness
 import { spawn } from "node:child_process"
 import { createHash, randomBytes } from "node:crypto"
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
@@ -77,6 +78,7 @@ import {
   previewWorkflowSource,
   syncWorkflowSource,
 } from "../src/workflow.js"
+import { runGithubWorkflowHarness } from "../src/workflow-run.js"
 
 const args = process.argv.slice(2)
 const cmd = args.shift()
@@ -1440,8 +1442,36 @@ if (cmd === "brandprint") {
 
 if (cmd === "workflow") {
   const action = positional[0]
+  if (action === "run") {
+    const runId = positional[1] ?? process.env.DERIVE_WORKFLOW_RUN_ID
+    const nonce = process.env.DERIVE_EXCHANGE_NONCE
+    try {
+      const code = await runGithubWorkflowHarness({
+        runId,
+        nonce,
+        server: flags.server ?? process.env.DERIVE_SERVER ?? "https://derive.to",
+        requestUrl: process.env.ACTIONS_ID_TOKEN_REQUEST_URL,
+        requestToken: process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN,
+        cwd: flags.cwd ?? process.cwd(),
+        env: process.env,
+        bin: flags["agent-bin"] ?? process.env.CODEX_BIN ?? process.env.AGENT_BIN ?? "codex",
+        model: flags.model ?? process.env.DERIVE_CODEX_MODEL ?? null,
+        timeoutMs: flags.timeout ?? process.env.DERIVE_WORKFLOW_TIMEOUT_MS,
+      })
+      if (code === 0)
+        console.log(
+          "Codex exited cleanly; the correlated GitHub and Derive receipts determine the graph outcome.",
+        )
+      else if (code === 124) console.error("error: the one-shot Codex harness timed out")
+      else console.error(`error: the one-shot Codex harness exited with status ${code}`)
+      process.exit(code)
+    } catch (e) {
+      console.error(`error: ${e.message}`)
+      process.exit(1)
+    }
+  }
   if (action !== "preview" && action !== "sync") {
-    console.error("usage: derive workflow sync|preview [file] [--json]")
+    console.error("usage: derive workflow sync|preview [file] [--json] | run [run_id]")
     process.exit(1)
   }
   let config = null
@@ -1528,6 +1558,7 @@ if (cmd !== "publish") {
   derive agent push|dev                    compatibility alias for derive context push|dev
   derive workflow sync [file] [--json]     project definition topology into the visible graph, then Preview
   derive workflow preview [file] [--json]  explain + validate a graph/loop before it runs
+  derive workflow run [run_id]             execute one assigned graph from GitHub Actions OIDC
   derive skill add <short_id>              materialize a published skill into ./.claude/skills/ (pinned)
   derive brandprint pull                   materialize the workspace + your Brandprint into this repo`)
   process.exit(cmd ? 1 : 0)

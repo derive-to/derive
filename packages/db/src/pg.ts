@@ -132,6 +132,7 @@ import type {
   WorkflowRunTransition,
   WorkflowStepAttemptRecord,
   WorkflowStepAttemptTransition,
+  WorkflowStepTransitionGuard,
   WorkflowTransitionGuard,
   WorkspaceAccess,
   WorkspaceRecord,
@@ -5532,6 +5533,18 @@ export class PgMetaStore implements MetaStore {
       .limit(1)
     return rows[0] ?? null
   }
+  async getWorkflowRunById(id: string): Promise<WorkflowRunRecord | null> {
+    const rows = await this.db.select().from(workflowRun).where(eq(workflowRun.id, id)).limit(1)
+    return rows[0] ?? null
+  }
+  async getWorkflowRunByExternalRunId(externalRunId: string): Promise<WorkflowRunRecord | null> {
+    const rows = await this.db
+      .select()
+      .from(workflowRun)
+      .where(eq(workflowRun.external_run_id, externalRunId))
+      .limit(1)
+    return rows[0] ?? null
+  }
   async listWorkflowRuns(
     workflowArtifactId: string,
     orgId: string,
@@ -5559,12 +5572,18 @@ export class PgMetaStore implements MetaStore {
   ): Promise<WorkflowRunRecord | null> {
     if (!workflowRunCanTransition(expected.status, transition.status)) return null
     if (!Number.isInteger(expected.stateRevision) || expected.stateRevision < 0) return null
-    const firstStart = expected.status === "queued" && transition.status === "running"
+    const firstStart =
+      (expected.status === "queued" || expected.status === "dispatched") &&
+      transition.status === "running"
+    const dispatching = expected.status === "queued" && transition.status === "dispatched"
     const lane = transition.actualExecution
     const executorId = transition.executorId
     if (firstStart && (!lane || !executorId)) return null
-    if (expected.status === "queued" && !firstStart && (lane || executorId)) return null
-    if (expected.status !== "queued" && (!lane || !executorId)) return null
+    if (dispatching && (!transition.externalRunId || transition.externalExecution === undefined))
+      return null
+    const alreadyClaimed = expected.status === "running" || expected.status === "waiting"
+    if (!firstStart && !alreadyClaimed && (lane || executorId)) return null
+    if (alreadyClaimed && (!lane || !executorId)) return null
     const rows = await this.db
       .update(workflowRun)
       .set({
@@ -5576,6 +5595,12 @@ export class PgMetaStore implements MetaStore {
           : {}),
         ...(workflowStatusIsTerminal(transition.status) ? { finished_at: transition.at } : {}),
         ...(firstStart ? { actual_execution: lane, executor_id: executorId } : {}),
+        ...(transition.externalExecution !== undefined
+          ? { external_execution: transition.externalExecution }
+          : {}),
+        ...(transition.externalRunId !== undefined
+          ? { external_run_id: transition.externalRunId }
+          : {}),
       })
       .where(
         and(
@@ -5583,6 +5608,7 @@ export class PgMetaStore implements MetaStore {
           eq(workflowRun.org_id, orgId),
           eq(workflowRun.status, expected.status),
           eq(workflowRun.state_revision, expected.stateRevision),
+          dispatching ? eq(workflowRun.requested_execution, "github_actions") : undefined,
           workflowStatusIsTerminal(transition.status)
             ? notExists(
                 this.db
@@ -5604,6 +5630,54 @@ export class PgMetaStore implements MetaStore {
             : lane && executorId
               ? and(eq(workflowRun.actual_execution, lane), eq(workflowRun.executor_id, executorId))
               : undefined,
+        ),
+      )
+      .returning()
+    return rows[0] ?? null
+  }
+  async setWorkflowRunExternalReceipt(
+    id: string,
+    orgId: string,
+    externalRunId: string,
+    externalExecution: string,
+    at: string,
+  ): Promise<WorkflowRunRecord | null> {
+    const rows = await this.db
+      .update(workflowRun)
+      .set({ external_execution: externalExecution, updated_at: at })
+      .where(
+        and(
+          eq(workflowRun.id, id),
+          eq(workflowRun.org_id, orgId),
+          eq(workflowRun.external_run_id, externalRunId),
+        ),
+      )
+      .returning()
+    return rows[0] ?? null
+  }
+  async overrideSuccessfulWorkflowRunFromExternal(
+    id: string,
+    orgId: string,
+    externalRunId: string,
+    status: "failed" | "cancelled" | "timed_out",
+    externalExecution: string,
+    at: string,
+  ): Promise<WorkflowRunRecord | null> {
+    const rows = await this.db
+      .update(workflowRun)
+      .set({
+        status,
+        state_revision: sql`${workflowRun.state_revision} + 1`,
+        external_execution: externalExecution,
+        updated_at: at,
+        finished_at: at,
+      })
+      .where(
+        and(
+          eq(workflowRun.id, id),
+          eq(workflowRun.org_id, orgId),
+          eq(workflowRun.external_run_id, externalRunId),
+          eq(workflowRun.status, "succeeded"),
         ),
       )
       .returning()
@@ -5725,7 +5799,7 @@ export class PgMetaStore implements MetaStore {
     id: string,
     workflowRunId: string,
     orgId: string,
-    expected: WorkflowTransitionGuard,
+    expected: WorkflowStepTransitionGuard,
     transition: WorkflowStepAttemptTransition,
   ): Promise<WorkflowStepAttemptRecord | null> {
     if (!workflowStepCanTransition(expected.status, transition.status)) return null

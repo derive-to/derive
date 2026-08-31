@@ -390,7 +390,9 @@ export const workflowRun = sqliteTable(
       .$type<WorkflowRequestedExecution>()
       .notNull()
       .default("any"),
-    actual_execution: text("actual_execution").$type<"local" | "hosted">(),
+    actual_execution: text("actual_execution").$type<"local" | "hosted" | "github_actions">(),
+    external_execution: text("external_execution"),
+    external_run_id: text("external_run_id"),
     created_at: text("created_at").notNull().default(now),
     updated_at: text("updated_at").notNull(),
     started_at: text("started_at"),
@@ -404,6 +406,7 @@ export const workflowRun = sqliteTable(
       t.diagram_id,
       t.created_at,
     ),
+    index("workflow_run_external").on(t.external_run_id),
   ],
 )
 

@@ -238,6 +238,7 @@ export const buildChatTools = (
     boundWorkspaces: [who.org],
     clientId: "chat",
     mintedToken: false,
+    workflowScope: null,
     defaultOrg: who.org,
     defaultRole: who.seatRole,
     pendingRequests: [],

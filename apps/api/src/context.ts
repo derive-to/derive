@@ -641,6 +641,8 @@ export function buildContext(deps: AppDeps) {
   const runScopeCache = new WeakMap<Context, string>()
   // The same, for a session-scoped bearer (the ask lane's half of hosted execution).
   const sessionScopeCache = new WeakMap<Context, string>()
+  // One version-pinned workflow run, for a dkwfr_ GitHub harness capability.
+  const workflowScopeCache = new WeakMap<Context, string>()
   const agentFor = async (c: Context): Promise<AgentRecord | null> => {
     if (agentCache.has(c)) return agentCache.get(c) ?? null
     const b = bearer(c)
@@ -694,8 +696,15 @@ export function buildContext(deps: AppDeps) {
     }
     const workKind = b ? workTokenKind(b) : null
     if (b && workKind && deps.encryptionKey) {
+      // A workflow capability is deliberately MCP-only. It has exactly the `use` surface
+      // registered below and must never inherit the agent principal on ordinary REST routes.
+      if (workKind === "workflow" && c.req.path !== "/mcp") {
+        agentCache.set(c, null)
+        onBehalfOfCache.set(c, null)
+        return null
+      }
       // A per-work capability token (unattended execution): signed + expiring, minted at
-      // dispatch, never stored. Both kinds resolve to the SAME agent principal a registered
+      // dispatch, never stored. All three kinds resolve to the SAME agent principal a registered
       // token would — the write path needs no special cases — with the work item pinned as
       // this request's scope. Fail-closed at every step: bad signature/expiry, a foreign or
       // already-settled item, or a mismatched agent all resolve to anonymous.
@@ -712,7 +721,7 @@ export function buildContext(deps: AppDeps) {
             r.org_id === claim.orgId &&
             (r.status === "queued" || r.status === "running")
           )
-        } else {
+        } else if (workKind === "session") {
           const s = await meta.getSession(claim.id)
           // A session's agent lives on its CONTEXT (sessions have no agent column).
           const cx = s?.context_id ? await meta.getContext(s.context_id) : null
@@ -723,6 +732,14 @@ export function buildContext(deps: AppDeps) {
             s.org_id === claim.orgId &&
             (s.state === "open" || s.state === "working")
           )
+        } else {
+          const r = await meta.getWorkflowRunById(claim.id)
+          live = !!(
+            r &&
+            r.assigned_agent_id === claim.agentId &&
+            r.org_id === claim.orgId &&
+            (r.status === "dispatched" || r.status === "running" || r.status === "waiting")
+          )
         }
         if (live) {
           const ag = await meta.getAgent(claim.agentId)
@@ -730,7 +747,8 @@ export function buildContext(deps: AppDeps) {
             a = ag
             owner = ag.created_by ?? null
             if (workKind === "run") runScopeCache.set(c, claim.id)
-            else sessionScopeCache.set(c, claim.id)
+            else if (workKind === "session") sessionScopeCache.set(c, claim.id)
+            else workflowScopeCache.set(c, claim.id)
           }
         }
       }
@@ -1792,6 +1810,8 @@ export function buildContext(deps: AppDeps) {
     /** The session id a dksess_ capability bearer is pinned to (null for every other
      *  principal) — the ask lane's twin of agentRunScope. */
     agentSessionScope: (c: Context): string | null => sessionScopeCache.get(c) ?? null,
+    /** The workflow run id a dkwfr_ capability bearer is pinned to. */
+    agentWorkflowScope: (c: Context): string | null => workflowScopeCache.get(c) ?? null,
     /** Is this request authenticated by a MINTED api token (dkapi_)? The mint refuses
      *  to run off one: a token minting its successor with a fresh TTL would renew
      *  itself indefinitely and quietly defeat the "expires in minutes" property that

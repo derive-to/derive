@@ -305,6 +305,8 @@ CREATE TABLE IF NOT EXISTS workflow_run (
   executor_id TEXT,
   requested_execution TEXT NOT NULL DEFAULT 'any',
   actual_execution TEXT,
+  external_execution TEXT,
+  external_run_id TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT NOT NULL,
   started_at TEXT,
@@ -800,6 +802,8 @@ CREATE TABLE IF NOT EXISTS view_read (
 CREATE INDEX IF NOT EXISTS workflow_run_org_created ON workflow_run (org_id, created_at);
 
 CREATE INDEX IF NOT EXISTS workflow_run_definition ON workflow_run (workflow_artifact_id, workflow_version, diagram_id, created_at);
+
+CREATE INDEX IF NOT EXISTS workflow_run_external ON workflow_run (external_run_id);
 
 CREATE INDEX IF NOT EXISTS workflow_step_attempt_run ON workflow_step_attempt (workflow_run_id, created_at);
 

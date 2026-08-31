@@ -80,6 +80,60 @@ does not execute nodes, call tools, or mutate external systems. It lists the Con
 an explicit run would open; the connected Codex or Claude harness runs the work through those
 existing Derive sessions.
 
+## Run one assigned graph from GitHub Actions
+
+`derive workflow run` is the one-shot Codex harness for an adapter deliberately exposed as
+`derive-*.yml`. It does not accept a prompt or a Derive bearer. In GitHub Actions it requests an
+OIDC assertion with the fixed `derive-graph-runner` audience, exchanges the bounded run id and
+one-time nonce for a short-lived run capability, and only then fetches the pinned instruction.
+Codex receives that capability through an environment-backed MCP bearer; the Derive MCP server is
+restricted to the `use` tool for the run.
+
+The repository owner supplies and pins the Codex and Derive CLI versions and configures Codex's
+own model credential (for example `OPENAI_API_KEY`) as a GitHub secret. Derive does not receive or
+store that model credential. The starter checks out the repository so testing and code tasks work
+without another setup pass.
+
+```yaml
+name: Derive graph harness
+on:
+  workflow_dispatch:
+    inputs:
+      derive_run_id:
+        description: Derive workflow run id
+        required: true
+        type: string
+      derive_exchange_nonce:
+        description: One-time Derive exchange nonce
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  graph:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install repository-pinned harness
+        run: npm install --global "@derive-to/cli@0.6.0" "@openai/codex@0.151.0"
+      - name: Run the assigned graph
+        env:
+          DERIVE_WORKFLOW_RUN_ID: ${{ inputs.derive_run_id }}
+          DERIVE_EXCHANGE_NONCE: ${{ inputs.derive_exchange_nonce }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: derive workflow run
+```
+
+GitHub supplies `ACTIONS_ID_TOKEN_REQUEST_URL` and `ACTIONS_ID_TOKEN_REQUEST_TOKEN` when
+`id-token: write` is present. The command never prints those values, the nonce, the OIDC assertion,
+or the exchanged capability. A zero exit means the one Codex process exited cleanly; the correlated
+GitHub conclusion and Derive step/run receipts remain the authority on graph success.
+
 ## Hosted and self-hosted servers
 
 The CLI resolves its server from `derive.json`, then `DERIVE_SERVER`, then

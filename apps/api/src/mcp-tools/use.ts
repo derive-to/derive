@@ -36,8 +36,18 @@ const workflowInput = z.object({
 })
 
 export function registerUseTool(tc: ToolContext): void {
-  const { server, ctx, agent, actingFor, registered, askableContexts, inGrant, resolveWs, wsArg } =
-    tc
+  const {
+    server,
+    ctx,
+    agent,
+    actingFor,
+    registered,
+    askableContexts,
+    inGrant,
+    resolveWs,
+    wsArg,
+    workflowScope,
+  } = tc
 
   // (Listing the askable contexts now lives in `find` — they ride the browse/search rows.)
 
@@ -142,13 +152,30 @@ export function registerUseTool(tc: ToolContext): void {
       workflow,
       workspace,
     }) => {
+      if (workflowScope) {
+        if (answer || progress !== undefined || state || result_artifact_id || answers)
+          return err("This workflow capability cannot run or answer Context sessions.")
+        if (workflow && workflow.run_id !== workflowScope)
+          return err("This workflow capability is scoped to a different run.")
+        if (session_id) {
+          if (context || dedupe_key || workflow)
+            return err(
+              "A workflow capability may only continue or check its already-bound Context session.",
+            )
+          const attempt = await ctx.meta.getWorkflowStepAttemptBySession(session_id, agent.org_id)
+          if (!attempt || attempt.workflow_run_id !== workflowScope)
+            return err("This Context session is not bound to the scoped workflow run.")
+        } else if (!workflow || workflow.run_id !== workflowScope) {
+          return err("This workflow capability must name its assigned workflow run.")
+        }
+      }
       // RUN MODE — dispatched by ownership: a registered agent on a context it is the
       // AGENT FOR (needs no acting human — it acts as itself), or OWNER-RUN, a grant
       // whose human holds the owner seat in the context's workspace. runnerDispatch
       // handles REPORT/PULL and returns a result, or null when this isn't a runner op,
       // so it falls through to the give path below and every other grant's surface is
       // unchanged. (See mcp-tools/use-runner.ts.)
-      {
+      if (!workflowScope) {
         const ran = await runnerDispatch(tc, {
           context,
           instruction,
@@ -216,6 +243,7 @@ export function registerUseTool(tc: ToolContext): void {
           receipt: { ...workflow, status: workflow.status },
           orgId: principal.orgId,
           executorId: principal.executorId,
+          executionLane: workflowScope ? "github_actions" : "local",
           at: new Date().toISOString(),
         })
         if (typeof recorded === "string") return err(recorded)
@@ -482,6 +510,7 @@ export function registerUseTool(tc: ToolContext): void {
           manifest,
           session,
           executorId: principal.executorId,
+          executionLane: workflowScope ? "github_actions" : "local",
           at: session.created_at,
         })
         return typeof bound === "string" ? bound : null

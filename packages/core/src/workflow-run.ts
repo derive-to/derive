@@ -1,5 +1,18 @@
 const WORKFLOW_RUN_STATUSES = [
   "queued",
+  "dispatched",
+  "running",
+  "waiting",
+  "succeeded",
+  "failed",
+  "cancelled",
+  "timed_out",
+] as const
+
+export type WorkflowRunStatus = (typeof WORKFLOW_RUN_STATUSES)[number]
+
+const WORKFLOW_STEP_ATTEMPT_STATUSES = [
+  "queued",
   "running",
   "waiting",
   "succeeded",
@@ -7,13 +20,11 @@ const WORKFLOW_RUN_STATUSES = [
   "cancelled",
 ] as const
 
-export type WorkflowRunStatus = (typeof WORKFLOW_RUN_STATUSES)[number]
-
-export type WorkflowStepAttemptStatus = WorkflowRunStatus
+export type WorkflowStepAttemptStatus = (typeof WORKFLOW_STEP_ATTEMPT_STATUSES)[number]
 
 export type WorkflowStepKind = "context" | "human" | "terminal"
 
-export type WorkflowRequestedExecution = "any" | "local" | "hosted"
+export type WorkflowRequestedExecution = "any" | "local" | "hosted" | "github_actions"
 export type WorkflowExecutionLane = Exclude<WorkflowRequestedExecution, "any">
 
 export interface WorkflowTransitionGuard {
@@ -21,13 +32,20 @@ export interface WorkflowTransitionGuard {
   stateRevision: number
 }
 
+export interface WorkflowStepTransitionGuard {
+  status: WorkflowStepAttemptStatus
+  stateRevision: number
+}
+
 const runTransitions: Record<WorkflowRunStatus, readonly WorkflowRunStatus[]> = {
-  queued: ["running", "failed", "cancelled"],
-  running: ["waiting", "succeeded", "failed", "cancelled"],
-  waiting: ["running", "succeeded", "failed", "cancelled"],
+  queued: ["dispatched", "running", "failed", "cancelled", "timed_out"],
+  dispatched: ["running", "failed", "cancelled", "timed_out"],
+  running: ["waiting", "succeeded", "failed", "cancelled", "timed_out"],
+  waiting: ["running", "succeeded", "failed", "cancelled", "timed_out"],
   succeeded: [],
   failed: [],
   cancelled: [],
+  timed_out: [],
 }
 
 const stepTransitions: Record<WorkflowStepAttemptStatus, readonly WorkflowStepAttemptStatus[]> = {
@@ -48,7 +66,7 @@ export const workflowStepCanTransition = (
 ): boolean => stepTransitions[from].includes(to)
 
 export const workflowStatusIsTerminal = (status: WorkflowRunStatus): boolean =>
-  status === "succeeded" || status === "failed" || status === "cancelled"
+  status === "succeeded" || status === "failed" || status === "cancelled" || status === "timed_out"
 
 const isNonEmptyString = (value: unknown): value is string =>
   typeof value === "string" && value.trim().length > 0

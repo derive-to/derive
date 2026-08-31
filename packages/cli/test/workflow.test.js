@@ -1,15 +1,28 @@
 import { spawnSync } from "node:child_process"
+import { EventEmitter } from "node:events"
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { PassThrough } from "node:stream"
 import { afterEach, describe, expect, it } from "vitest"
-import { previewWorkflow as previewCoreWorkflow } from "../../core/src/workflow"
+import {
+  previewWorkflow as previewCoreWorkflow,
+  workflowRunInstruction,
+} from "../../core/src/workflow"
 import {
   factJson,
   formatWorkflowPreview,
   previewWorkflowSource,
   syncWorkflowSource,
 } from "../src/workflow.js"
+import {
+  codexWorkflowArgs,
+  exchangeWorkflowCapability,
+  githubOidcRequest,
+  requestGithubOidc,
+  runGithubWorkflowHarness,
+  workflowAgentEnv,
+} from "../src/workflow-run.js"
 
 const dirs = []
 const tmp = () => {
@@ -20,6 +33,26 @@ const tmp = () => {
 afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true })
 })
+
+const jsonResponse = (body, status = 200) =>
+  new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json" },
+  })
+
+const fakeChild = (code = 0) => {
+  const child = new EventEmitter()
+  child.stdout = new PassThrough()
+  child.stderr = new PassThrough()
+  child.kill = () => true
+  queueMicrotask(() => {
+    child.stdout.write(
+      `${JSON.stringify({ type: "item.completed", item: { type: "mcp_tool_call" } })}\n`,
+    )
+    child.emit("close", code, null)
+  })
+  return child
+}
 
 const workflowPage = () => {
   const linked = {
@@ -315,5 +348,239 @@ describe("workflow Preview parity with core", () => {
   ])("keeps %s behavior identical", (_name, mutate) => {
     const source = mutate(workflowPage())
     expect(previewWorkflowSource(source)).toEqual(previewCoreWorkflow(source))
+  })
+})
+
+describe("GitHub Actions one-shot workflow harness", () => {
+  const oidcUrl = "https://pipelines.actions.githubusercontent.com/example/oidc?api-version=2.0"
+  const requestToken = "github-request-value"
+  const oidcToken = "signed-oidc-value"
+  const nonce = "nonce-value-abcdefghijklmnop"
+  const runId = "wfr_12345678"
+  const expiresAt = "2030-01-01T00:00:00.000Z"
+
+  it("inlines the exact validated graph so the capability can remain use-only", () => {
+    const source = workflowPage()
+    const instruction = workflowRunInstruction({
+      shortId: "graph-123",
+      version: 7,
+      diagramId: "weekly-brief",
+      runId,
+      baseUrl: "https://derive.to",
+      definition: factJson(source, "workflow-definition").value,
+      manifest: factJson(source, "bundle-manifest").value,
+    })
+    expect(instruction).toContain("PINNED WORKFLOW-DEFINITION")
+    expect(instruction).toContain('"context_ref":"signal-researcher"')
+    expect(instruction).toContain("PINNED BUNDLE-MANIFEST")
+    expect(instruction).not.toContain("read({")
+  })
+
+  it("requests GitHub OIDC with the fixed audience and bearer kept in a header", async () => {
+    const calls = []
+    const value = await requestGithubOidc({
+      requestUrl: oidcUrl,
+      requestToken,
+      retryDelays: [0],
+      fetchImpl: async (url, init) => {
+        calls.push({ url, init })
+        return jsonResponse({ value: oidcToken })
+      },
+    })
+    expect(value).toBe(oidcToken)
+    expect(githubOidcRequest(oidcUrl)).toContain("audience=derive-graph-runner")
+    expect(calls).toEqual([
+      expect.objectContaining({
+        url: expect.stringContaining("audience=derive-graph-runner"),
+        init: expect.objectContaining({
+          method: "GET",
+          headers: expect.objectContaining({ authorization: `Bearer ${requestToken}` }),
+        }),
+      }),
+    ])
+    expect(calls[0].url).not.toContain(requestToken)
+  })
+
+  it("retries a lost exchange response with the exact same nonce and OIDC assertion", async () => {
+    const calls = []
+    const exchange = await exchangeWorkflowCapability({
+      server: "https://derive.to",
+      runId,
+      nonce,
+      oidcToken,
+      retryDelays: [0, 0],
+      sleepImpl: async () => {},
+      now: Date.parse("2029-01-01T00:00:00.000Z"),
+      fetchImpl: async (url, init) => {
+        calls.push({ url, init })
+        return calls.length === 1
+          ? jsonResponse({}, 503)
+          : jsonResponse({
+              token: "workflow-capability-value",
+              instruction: "Run the pinned graph.",
+              expiresAt,
+              mcpUrl: "https://derive.to/mcp",
+            })
+      },
+    })
+    expect(exchange).toMatchObject({
+      token: "workflow-capability-value",
+      instruction: "Run the pinned graph.",
+      mcpUrl: "https://derive.to/mcp",
+    })
+    expect(calls).toHaveLength(2)
+    expect(calls[0]).toEqual(calls[1])
+    expect(JSON.parse(calls[0].init.body)).toEqual({ nonce, oidcToken })
+  })
+
+  it("rejects an expired capability and an MCP URL that could exfiltrate it", async () => {
+    const fetchImpl = async () =>
+      jsonResponse({
+        token: "workflow-capability-value",
+        instruction: "Pinned.",
+        expiresAt,
+        mcpUrl: "https://attacker.example/mcp",
+      })
+    await expect(
+      exchangeWorkflowCapability({
+        server: "https://derive.to",
+        runId,
+        nonce,
+        oidcToken,
+        fetchImpl,
+        retryDelays: [0],
+        now: Date.parse("2029-01-01T00:00:00.000Z"),
+      }),
+    ).rejects.toThrow(/another origin/)
+    await expect(
+      exchangeWorkflowCapability({
+        server: "https://derive.to",
+        runId,
+        nonce,
+        oidcToken,
+        fetchImpl: async () =>
+          jsonResponse({
+            token: "workflow-capability-value",
+            instruction: "Pinned.",
+            expiresAt: "2020-01-01T00:00:00.000Z",
+          }),
+        retryDelays: [0],
+        now: Date.parse("2029-01-01T00:00:00.000Z"),
+      }),
+    ).rejects.toThrow(/expired/)
+  })
+
+  it("spawns exactly one Codex process with only use and no exchange secret in argv or logs", async () => {
+    const fetchCalls = []
+    const spawnCalls = []
+    const logs = []
+    const env = {
+      ACTIONS_ID_TOKEN_REQUEST_URL: oidcUrl,
+      ACTIONS_ID_TOKEN_REQUEST_TOKEN: requestToken,
+      DERIVE_EXCHANGE_NONCE: nonce,
+      DERIVE_WORKFLOW_RUN_ID: runId,
+      DERIVE_TOKEN: "ambient-derive-value",
+      OPENAI_API_KEY: "owner-model-value",
+      PATH: "/usr/bin",
+    }
+    const code = await runGithubWorkflowHarness({
+      runId,
+      nonce,
+      server: "https://derive.to",
+      requestUrl: oidcUrl,
+      requestToken,
+      env,
+      timeoutMs: 60_000,
+      retryDelays: [0],
+      now: Date.parse("2029-01-01T00:00:00.000Z"),
+      log: (line) => logs.push(line),
+      fetchImpl: async (url, init) => {
+        fetchCalls.push({ url, init })
+        return fetchCalls.length === 1
+          ? jsonResponse({ value: oidcToken })
+          : jsonResponse({
+              token: "workflow-capability-value",
+              instruction: "Execute exact pinned v7 graph.",
+              expiresAt,
+            })
+      },
+      spawnImpl: (bin, args, options) => {
+        spawnCalls.push({ bin, args, options })
+        return fakeChild(0)
+      },
+    })
+    expect(code).toBe(0)
+    expect(spawnCalls).toHaveLength(1)
+    const [call] = spawnCalls
+    expect(call.bin).toBe("codex")
+    expect(call.args.join("\n")).toContain('mcp_servers.derive.enabled_tools=["use"]')
+    expect(call.args.join("\n")).toContain("Execute exact pinned v7 graph.")
+    expect(call.options.env).toMatchObject({
+      OPENAI_API_KEY: "owner-model-value",
+      DERIVE_WORKFLOW_TOKEN: "workflow-capability-value",
+    })
+    for (const removed of [
+      "ACTIONS_ID_TOKEN_REQUEST_URL",
+      "ACTIONS_ID_TOKEN_REQUEST_TOKEN",
+      "DERIVE_EXCHANGE_NONCE",
+      "DERIVE_WORKFLOW_RUN_ID",
+      "DERIVE_TOKEN",
+    ])
+      expect(call.options.env[removed]).toBeUndefined()
+    const observable = JSON.stringify({ args: call.args, logs })
+    for (const secret of [requestToken, oidcToken, nonce, "workflow-capability-value"])
+      expect(observable).not.toContain(secret)
+    expect(logs).toContain("[codex] → mcp_tool_call")
+  })
+
+  it("passes the one Codex process failure through as the command exit status", async () => {
+    const responses = [
+      jsonResponse({ value: oidcToken }),
+      jsonResponse({
+        token: "workflow-capability-value",
+        instruction: "Pinned.",
+        expiresAt,
+      }),
+    ]
+    const code = await runGithubWorkflowHarness({
+      runId,
+      nonce,
+      server: "https://derive.to",
+      requestUrl: oidcUrl,
+      requestToken,
+      env: {},
+      timeoutMs: 60_000,
+      retryDelays: [0],
+      now: Date.parse("2029-01-01T00:00:00.000Z"),
+      log: () => {},
+      fetchImpl: async () => responses.shift(),
+      spawnImpl: () => fakeChild(17),
+    })
+    expect(code).toBe(17)
+  })
+
+  it("keeps the capability out of Codex argv while preserving owner model configuration", () => {
+    const args = codexWorkflowArgs({
+      instruction: "Pinned graph.",
+      mcpUrl: "https://derive.to/mcp",
+      model: "gpt-owner-choice",
+    })
+    expect(args).toContain("gpt-owner-choice")
+    expect(args.join(" ")).toContain("bearer_token_env_var")
+    expect(args.join(" ")).not.toContain("workflow-capability-value")
+    expect(
+      workflowAgentEnv(
+        {
+          CODEX_HOME: "/repo-owned/codex",
+          OPENAI_API_KEY: "owner-model-value",
+          ACTIONS_ID_TOKEN_REQUEST_TOKEN: requestToken,
+        },
+        "workflow-capability-value",
+      ),
+    ).toEqual({
+      CODEX_HOME: "/repo-owned/codex",
+      OPENAI_API_KEY: "owner-model-value",
+      DERIVE_WORKFLOW_TOKEN: "workflow-capability-value",
+    })
   })
 })

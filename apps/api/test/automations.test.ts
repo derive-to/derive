@@ -172,11 +172,19 @@ describe("automations + runs", () => {
       },
       {
         url: "https://api.github.com/repos/Niftory/sift/actions/workflows/derive-docs-refresh.yml/dispatches",
-        body: { ref: "main", inputs: { source_sha: "abc123" } },
+        body: {
+          ref: "main",
+          return_run_details: true,
+          inputs: { source_sha: "abc123" },
+        },
       },
       {
         url: "https://api.github.com/repos/Niftory/sift/actions/workflows/derive-docs-refresh.yml/dispatches",
-        body: { ref: "main", inputs: { source_sha: "abc123" } },
+        body: {
+          ref: "main",
+          return_run_details: true,
+          inputs: { source_sha: "abc123" },
+        },
       },
     ])
     const [run] = await direct.meta.listRuns("default")

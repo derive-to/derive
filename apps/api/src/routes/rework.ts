@@ -16,6 +16,14 @@ import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
 import { resolveActorBrandprint } from "../lib/brandprint"
 import { parseMeta, quoteOf } from "../lib/comments"
+import { mintToken, sha256 } from "../lib/crypto"
+import {
+  dispatchGithubWorkflowRun,
+  GithubWorkflowHarnessError,
+  newGithubWorkflowExecution,
+  parseGithubWorkflowExecution,
+  publicGithubWorkflowExecution,
+} from "../lib/github-workflow-harness"
 import { bail, fail, readJson } from "../lib/http"
 import { notifyMentions } from "../lib/mentions"
 import { notifyCommentBells } from "../lib/notify-comment"
@@ -52,6 +60,7 @@ export const reworkRoutes = (ctx: AppContext) => {
     limited,
     commentLimiter,
     deps,
+    authorizeUserStanding,
   } = ctx
   const app = new OpenAPIHono<BlankEnv>()
 
@@ -102,7 +111,16 @@ export const reworkRoutes = (ctx: AppContext) => {
       z.object({
         agentId: z.string().optional(),
         diagramId: z.string().optional(),
-        delivery: z.enum(["agent", "copy"]).optional(),
+        delivery: z.enum(["agent", "copy", "github"]).optional(),
+        github: z
+          .object({
+            connectionId: z.string().min(1),
+            owner: z.string().min(1).max(100),
+            repo: z.string().min(1).max(100),
+            workflow: z.string().min(1).max(200),
+            ref: z.string().min(1).max(1_024),
+          })
+          .optional(),
         note: z.string().max(500).optional(),
         threadId: z.string().optional(),
       }),
@@ -114,6 +132,7 @@ export const reworkRoutes = (ctx: AppContext) => {
       agentId: body.agentId,
       diagramId: body.diagramId,
       delivery: body.delivery,
+      github: body.github,
       note: body.note,
       threadId: body.threadId,
     }
@@ -195,10 +214,20 @@ export const reworkRoutes = (ctx: AppContext) => {
     id: z.string(),
     diagramId: z.string(),
     workflowVersion: z.number().int(),
-    status: z.enum(["queued", "running", "waiting", "succeeded", "failed", "cancelled"]),
+    status: z.enum([
+      "queued",
+      "dispatched",
+      "running",
+      "waiting",
+      "succeeded",
+      "failed",
+      "cancelled",
+      "timed_out",
+    ]),
     reason: z.string(),
-    requestedExecution: z.enum(["any", "local", "hosted"]),
-    actualExecution: z.enum(["local", "hosted"]).nullable(),
+    requestedExecution: z.enum(["any", "local", "hosted", "github_actions"]),
+    actualExecution: z.enum(["local", "hosted", "github_actions"]).nullable(),
+    externalExecution: z.unknown().nullable(),
     createdAt: z.string(),
     startedAt: z.string().nullable(),
     finishedAt: z.string().nullable(),
@@ -221,6 +250,34 @@ export const reworkRoutes = (ctx: AppContext) => {
     if (!sole || rest.length > 0)
       return fail(c, 400, "agentId required when several agents are registered")
     return sole
+  }
+
+  // GitHub's OIDC-authenticated job still needs an attributable Derive principal, but
+  // making people register or choose a standing agent would defeat the passwordless setup.
+  // Reuse one hidden workspace principal and never return its otherwise-unused bearer.
+  const githubExecutor = async (orgId: string, createdBy: string): Promise<AgentRecord> => {
+    const exact = (await meta.listAgents(orgId)).find(
+      (agent) => agent.managed === 1 && agent.name === "GitHub Actions",
+    )
+    if (exact) return exact
+    const create = (name: string) =>
+      meta.createAgent({
+        id: newId("ag"),
+        org_id: orgId,
+        name,
+        token: sha256(mintToken("dk_agt")),
+        role: "editor",
+        created_by: createdBy,
+        managed: 1,
+      })
+    try {
+      return await create("GitHub Actions")
+    } catch {
+      const raced = (await meta.listAgents(orgId)).find(
+        (agent) => agent.managed === 1 && agent.name === "GitHub Actions",
+      )
+      return raced ?? create(`GitHub Actions ${newId("x").slice(-4)}`)
+    }
   }
 
   // Post the canned request: a whole-document comment (no anchor) @mentioning the
@@ -369,6 +426,7 @@ export const reworkRoutes = (ctx: AppContext) => {
           reason: run.reason,
           requestedExecution: run.requested_execution,
           actualExecution: run.actual_execution,
+          externalExecution: publicGithubWorkflowExecution(run.external_execution),
           createdAt: run.created_at,
           startedAt: run.started_at,
           finishedAt: run.finished_at,
@@ -406,7 +464,16 @@ export const reworkRoutes = (ctx: AppContext) => {
               schema: z.object({
                 agentId: z.string().optional(),
                 diagramId: z.string().min(1),
-                delivery: z.enum(["agent", "copy"]).optional(),
+                delivery: z.enum(["agent", "copy", "github"]).optional(),
+                github: z
+                  .object({
+                    connectionId: z.string().min(1),
+                    owner: z.string().min(1).max(100),
+                    repo: z.string().min(1).max(100),
+                    workflow: z.string().min(1).max(200),
+                    ref: z.string().min(1).max(1_024),
+                  })
+                  .optional(),
               }),
             },
           },
@@ -422,6 +489,8 @@ export const reworkRoutes = (ctx: AppContext) => {
                 runId: z.string(),
                 prompt: z.string(),
                 requestId: z.string().optional(),
+                githubRunId: z.string().optional(),
+                githubRunUrl: z.string().url().optional(),
               }),
             },
           },
@@ -431,7 +500,7 @@ export const reworkRoutes = (ctx: AppContext) => {
     async (c) => {
       const rc = await requestContext(c, c.req.param("shortId"))
       if (rc instanceof Response) return bail(rc)
-      const { artifact, acting, agentId, diagramId, delivery } = rc
+      const { artifact, acting, agentId, diagramId, delivery, github } = rc
       if (!diagramId) return bail(fail(c, 400, "diagramId is required"))
       const ready = await requireReadyWorkflow(c, artifact, diagramId)
       if (ready instanceof Response) return bail(ready)
@@ -445,7 +514,11 @@ export const reworkRoutes = (ctx: AppContext) => {
         runId,
         baseUrl: deps.baseUrl,
       })
-      const createRun = (reason: string, assignment?: { requestId: string; agentId: string }) =>
+      const createRun = (
+        reason: string,
+        assignment?: { requestId?: string; agentId: string },
+        execution?: { requested: "local" | "github_actions"; external?: string },
+      ) =>
         meta.createWorkflowRun({
           id: runId,
           org_id: artifact.org_id,
@@ -458,11 +531,72 @@ export const reworkRoutes = (ctx: AppContext) => {
           initiated_by: acting.id,
           request_id: assignment?.requestId,
           assigned_agent_id: assignment?.agentId,
-          requested_execution: "local",
+          requested_execution: execution?.requested ?? "local",
+          external_execution: execution?.external,
         })
       if (delivery === "copy") {
         await createRun("manual:copy")
         return c.json({ runId, prompt }, 201)
+      }
+      if (delivery === "github") {
+        if (!(await authorizeUserStanding(acting.id, "publish", artifact)))
+          return bail(fail(c, 403, "publish access is required to run GitHub Actions"))
+        if (!(await meta.getOrgSettings(artifact.org_id))?.automateBeta)
+          return bail(fail(c, 404, "not found"))
+        if (!deps.encryptionKey) return bail(fail(c, 502, "GitHub Actions is not configured"))
+        if (!github) return bail(fail(c, 400, "github setup is required for GitHub Actions"))
+        const connection = await meta.getConnection(github.connectionId)
+        if (
+          !connection ||
+          connection.org_id !== artifact.org_id ||
+          connection.kind !== "github_app" ||
+          connection.toolkit !== "github" ||
+          connection.status !== "active"
+        )
+          return bail(fail(c, 400, "select an active GitHub App connection"))
+        const nonce = newId("dkx")
+        const external = await newGithubWorkflowExecution({
+          connectionId: connection.id,
+          installationId: connection.broker_ref,
+          owner: github.owner,
+          repo: github.repo,
+          workflow: github.workflow,
+          ref: github.ref,
+          nonce,
+        })
+        const agent = agentId
+          ? pickAgent(c, await meta.listAgents(artifact.org_id), agentId)
+          : await githubExecutor(artifact.org_id, acting.id)
+        if (agent instanceof Response) return bail(agent)
+        const created = await createRun(
+          "github-actions",
+          { agentId: agent.id },
+          { requested: "github_actions", external: JSON.stringify(external) },
+        )
+        try {
+          const dispatched = await dispatchGithubWorkflowRun({
+            meta,
+            run: created,
+            assignment: external,
+            nonce,
+            encryptionKey: deps.encryptionKey,
+          })
+          const receipt = parseGithubWorkflowExecution(dispatched.external_execution)
+          return c.json(
+            {
+              runId,
+              prompt,
+              githubRunId: receipt?.github_run_id ?? undefined,
+              githubRunUrl: receipt?.github_run_url ?? undefined,
+            },
+            201,
+          )
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "GitHub workflow dispatch failed"
+          return bail(
+            fail(c, error instanceof GithubWorkflowHarnessError ? error.status : 502, message),
+          )
+        }
       }
       const agent = pickAgent(c, await meta.listAgents(artifact.org_id), agentId)
       if (agent instanceof Response) return bail(agent)

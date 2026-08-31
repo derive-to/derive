@@ -7302,6 +7302,84 @@
         }
       }
     },
+    "/v1/workflow-runs/{runId}/github/exchange": {
+      "post": {
+        "tags": [
+          "GitHub"
+        ],
+        "summary": "Exchange an assigned GitHub Actions OIDC identity for one run capability.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "runId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "nonce": {
+                    "type": "string",
+                    "minLength": 16,
+                    "maxLength": 500
+                  },
+                  "oidcToken": {
+                    "type": "string",
+                    "minLength": 100,
+                    "maxLength": 20000
+                  }
+                },
+                "required": [
+                  "nonce",
+                  "oidcToken"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "A short-lived capability and the exact pinned graph instruction.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "token": {
+                      "type": "string"
+                    },
+                    "instruction": {
+                      "type": "string"
+                    },
+                    "expiresAt": {
+                      "type": "string"
+                    },
+                    "mcpUrl": {
+                      "type": "string",
+                      "format": "uri"
+                    }
+                  },
+                  "required": [
+                    "token",
+                    "instruction",
+                    "expiresAt",
+                    "mcpUrl"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/github": {
       "get": {
         "tags": [
@@ -8291,7 +8369,44 @@
                     "type": "string",
                     "enum": [
                       "agent",
-                      "copy"
+                      "copy",
+                      "github"
+                    ]
+                  },
+                  "github": {
+                    "type": "object",
+                    "properties": {
+                      "connectionId": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "owner": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 100
+                      },
+                      "repo": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 100
+                      },
+                      "workflow": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200
+                      },
+                      "ref": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 1024
+                      }
+                    },
+                    "required": [
+                      "connectionId",
+                      "owner",
+                      "repo",
+                      "workflow",
+                      "ref"
                     ]
                   }
                 },
@@ -8318,6 +8433,13 @@
                     },
                     "requestId": {
                       "type": "string"
+                    },
+                    "githubRunId": {
+                      "type": "string"
+                    },
+                    "githubRunUrl": {
+                      "type": "string",
+                      "format": "uri"
                     }
                   },
                   "required": [
@@ -8392,11 +8514,13 @@
                             "type": "string",
                             "enum": [
                               "queued",
+                              "dispatched",
                               "running",
                               "waiting",
                               "succeeded",
                               "failed",
-                              "cancelled"
+                              "cancelled",
+                              "timed_out"
                             ]
                           },
                           "reason": {
@@ -8407,7 +8531,8 @@
                             "enum": [
                               "any",
                               "local",
-                              "hosted"
+                              "hosted",
+                              "github_actions"
                             ]
                           },
                           "actualExecution": {
@@ -8416,8 +8541,12 @@
                             "enum": [
                               "local",
                               "hosted",
+                              "github_actions",
                               null
                             ]
+                          },
+                          "externalExecution": {
+                            "nullable": true
                           },
                           "createdAt": {
                             "type": "string"

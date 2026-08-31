@@ -136,6 +136,169 @@ test("starting a workflow creates a visible, version-pinned run", async ({ owner
   await expect(runs.getByText("Waiting for an Agent to claim this run.")).toBeVisible()
 })
 
+test("a Ready graph exposes a bounded GitHub Actions harness on mobile", async ({ owner }) => {
+  const manifest = {
+    schema: "derive.linked-bundle/v1",
+    purpose: "Settle one reviewed Context step through GitHub Actions.",
+    members: [],
+    diagrams: [
+      {
+        id: "github-proof",
+        title: "GitHub proof",
+        type: "graph",
+        nodes: [{ id: "prove", label: "Prove the run", state: "pending" }],
+        edges: [],
+      },
+    ],
+  }
+  const workflow = {
+    schema: "derive.workflow/v1",
+    purpose: manifest.purpose,
+    diagrams: [
+      {
+        id: "github-proof",
+        entry: "prove",
+        nodes: [
+          {
+            id: "prove",
+            kind: "context",
+            context_ref: "github-proof-agent",
+            instruction: "Publish one proof Artifact.",
+            result: "A reviewed proof Artifact",
+            terminal: true,
+          },
+        ],
+        routes: [],
+        scenarios: [
+          {
+            id: "expected",
+            kind: "expected",
+            path: ["prove"],
+            outcome: "The proof is published",
+          },
+          {
+            id: "failure",
+            kind: "failure",
+            path: ["prove"],
+            outcome: "The failed Context step is visible and the run stops",
+          },
+        ],
+      },
+    ],
+  }
+  const html =
+    `<!doctype html><html><body><h1>GitHub proof</h1>` +
+    `<script type="application/derive-facts" data-fact="bundle-manifest">${JSON.stringify(manifest)}</script>` +
+    `<script type="application/derive-facts" data-fact="workflow-definition">${JSON.stringify(workflow)}</script>` +
+    `</body></html>`
+  const shortId = await publishArtifact(owner, "github-proof.html", html, "text/html")
+  const gate = await owner.request.patch("/v1/workspace/settings", {
+    data: { automateBeta: true },
+  })
+  expect(gate.ok(), "workspace Automate gate should opt in explicitly").toBeTruthy()
+
+  await owner.route("**/v1/connections?*", async (route) => {
+    const url = new URL(route.request().url())
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        connections:
+          url.searchParams.get("scope") === "workspace"
+            ? [
+                {
+                  id: "con_github_proof",
+                  user_id: "workspace",
+                  broker: "github_app",
+                  toolkit: "github",
+                  scope: "workspace",
+                  kind: "github_app",
+                  scopes_label: "Niftory · selected repositories",
+                  status: "active",
+                  created_at: "2026-08-31T12:00:00.000Z",
+                },
+              ]
+            : [],
+      }),
+    })
+  })
+  await owner.route("**/v1/github", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        available: true,
+        connected: true,
+        app_slug: "derive",
+        app_owner_login: "derive-to",
+        app_permissions_state: "ready",
+        app_webhook_state: "ready",
+        app_settings_url: null,
+        can_manage_app: false,
+        accounts: [
+          {
+            installation_id: "9988",
+            account_login: "Niftory",
+            connection_id: "con_github_proof",
+            state: "active",
+            permissions_state: "ready",
+            permissions_url: null,
+          },
+        ],
+      }),
+    }),
+  )
+  let dispatchBody: Record<string, unknown> | null = null
+  await owner.route(`**/v1/artifacts/${shortId}/workflow-run`, async (route) => {
+    if (route.request().method() !== "POST") {
+      await route.continue()
+      return
+    }
+    dispatchBody = route.request().postDataJSON() as Record<string, unknown>
+    await route.fulfill({
+      status: 202,
+      contentType: "application/json",
+      body: JSON.stringify({
+        runId: "wfr_github_proof",
+        prompt: "",
+        github: {
+          runId: "778899",
+          url: "https://github.com/Niftory/sift/actions/runs/778899",
+        },
+      }),
+    })
+  })
+
+  await owner.setViewportSize({ width: 390, height: 844 })
+  await owner.goto(`/artifacts/${shortId}`)
+  await owner.getByTestId("workflow-run-github-proof").click()
+  await owner.getByTestId("workflow-harness-github").click()
+  await expect(owner.getByTestId("workflow-github-setup")).toBeVisible()
+  await expect(owner.getByText("No prompt or Derive token is sent")).toBeVisible()
+  await expect
+    .poll(() => owner.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth))
+    .toBe(true)
+
+  await owner.getByTestId("workflow-github-repository").fill("Niftory/sift")
+  await owner.getByTestId("workflow-github-ref").fill("main")
+  await owner.getByTestId("workflow-github-workflow").fill("derive-graph-runner.yml")
+  await owner.getByTestId("workflow-github-run").click()
+  await expect.poll(() => dispatchBody).not.toBeNull()
+  expect(dispatchBody).toEqual({
+    diagramId: "github-proof",
+    delivery: "github",
+    github: {
+      connectionId: "con_github_proof",
+      owner: "Niftory",
+      repo: "sift",
+      workflow: "derive-graph-runner.yml",
+      ref: "main",
+    },
+  })
+  expect(JSON.stringify(dispatchBody)).not.toContain("prompt")
+  expect(JSON.stringify(dispatchBody)).not.toContain("GitHub proof")
+})
+
 test("a cached screenshot still becomes a visible library thumbnail", async ({ owner }) => {
   const shortId = await publishArtifact(owner, "cached-thumb.md", "# Cached thumbnail")
 

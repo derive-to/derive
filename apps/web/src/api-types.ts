@@ -3470,6 +3470,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/workflow-runs/{runId}/github/exchange": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Exchange an assigned GitHub Actions OIDC identity for one run capability. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    runId: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": {
+                        nonce: string;
+                        oidcToken: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description A short-lived capability and the exact pinned graph instruction. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            token: string;
+                            instruction: string;
+                            expiresAt: string;
+                            /** Format: uri */
+                            mcpUrl: string;
+                        };
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/github": {
         parameters: {
             query?: never;
@@ -4384,7 +4435,14 @@ export interface paths {
                         agentId?: string;
                         diagramId: string;
                         /** @enum {string} */
-                        delivery?: "agent" | "copy";
+                        delivery?: "agent" | "copy" | "github";
+                        github?: {
+                            connectionId: string;
+                            owner: string;
+                            repo: string;
+                            workflow: string;
+                            ref: string;
+                        };
                     };
                 };
             };
@@ -4399,6 +4457,9 @@ export interface paths {
                             runId: string;
                             prompt: string;
                             requestId?: string;
+                            githubRunId?: string;
+                            /** Format: uri */
+                            githubRunUrl?: string;
                         };
                     };
                 };
@@ -4444,12 +4505,13 @@ export interface paths {
                                 diagramId: string;
                                 workflowVersion: number;
                                 /** @enum {string} */
-                                status: "queued" | "running" | "waiting" | "succeeded" | "failed" | "cancelled";
+                                status: "queued" | "dispatched" | "running" | "waiting" | "succeeded" | "failed" | "cancelled" | "timed_out";
                                 reason: string;
                                 /** @enum {string} */
-                                requestedExecution: "any" | "local" | "hosted";
+                                requestedExecution: "any" | "local" | "hosted" | "github_actions";
                                 /** @enum {string|null} */
-                                actualExecution: "local" | "hosted" | null;
+                                actualExecution: "local" | "hosted" | "github_actions" | null;
+                                externalExecution?: unknown;
                                 createdAt: string;
                                 startedAt: string | null;
                                 finishedAt: string | null;

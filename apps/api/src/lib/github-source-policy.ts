@@ -196,12 +196,15 @@ export function githubSourcePolicy(tool: string, url: URL, body: unknown): Githu
   if (dispatchMatch && queryKeys(url).size === 0) {
     if (
       !plainObject(body) ||
-      Object.keys(body).some((key) => key !== "ref" && key !== "inputs") ||
+      Object.keys(body).some(
+        (key) => key !== "ref" && key !== "inputs" && key !== "return_run_details",
+      ) ||
       !workflowRefIsValid(body.ref) ||
+      (body.return_run_details !== undefined && body.return_run_details !== true) ||
       !workflowInputsAreValid(body.inputs)
     )
       throw new Error(
-        "a GitHub workflow dispatch needs a valid ref and at most 25 scalar inputs (65,535 characters total)",
+        "a GitHub workflow dispatch needs a valid ref, optional return_run_details=true, and at most 25 scalar inputs (65,535 characters total)",
       )
     return workflowAction(dispatchMatch[2] as string, {
       tokenProfile: "workflow-dispatch",

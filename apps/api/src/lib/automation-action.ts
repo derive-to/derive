@@ -32,6 +32,9 @@ const workflowPath = (action: GithubWorkflowAutomationAction): string =>
 
 const workflowBody = (action: GithubWorkflowAutomationAction): Record<string, unknown> => ({
   ref: action.ref,
+  // GitHub otherwise preserves its legacy 204 response and gives us no safe way to
+  // correlate the dispatch with one exact run.
+  return_run_details: true,
   ...(action.inputs && Object.keys(action.inputs).length ? { inputs: action.inputs } : {}),
 })
 
