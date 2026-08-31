@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
-import { Zap } from "lucide-react"
+import { ExternalLink, GitBranch, Sparkles } from "lucide-react"
 import { useState } from "react"
 import { type Automation, api, type Run } from "@/api"
 import { AdminNote } from "@/components/shared/admin-note"
@@ -24,6 +24,7 @@ import { useApiMutation } from "@/lib/use-api-mutation"
 import { SettingsListSkeleton } from "../settings/settings-list-skeleton"
 import { AutomationForm } from "./automation-form"
 import {
+  githubActionRunReceipt,
   runExecutionReceipt,
   runOutcome,
   runOutcomeLabel,
@@ -35,6 +36,7 @@ import { presentAutomationRun } from "./run-presentation"
 
 export function AutomatedWorkflows() {
   const qc = useQueryClient()
+  const [createVersion, setCreateVersion] = useState(0)
   const { data: automations, isPending, isError, refetch } = useQuery(automationsQuery())
   const workspace = useQuery(workspaceQuery())
   const settingsQuery = useQuery(workspaceSettingsQuery())
@@ -52,6 +54,10 @@ export function AutomatedWorkflows() {
     qc.invalidateQueries({ queryKey: automationsQuery().queryKey })
     qc.invalidateQueries({ queryKey: runsQuery().queryKey })
   }
+  const created = () => {
+    setCreateVersion((version) => version + 1)
+    reload()
+  }
   const enable = useApiMutation({
     mutationFn: () => api.updateWorkspaceSettings({ automateBeta: true }),
     success: "Workflows enabled",
@@ -61,9 +67,10 @@ export function AutomatedWorkflows() {
   return (
     <section className="flex flex-col gap-4">
       <div className="flex flex-col gap-1">
-        <SectionHeading>Automated workflows</SectionHeading>
+        <SectionHeading>Automate</SectionHeading>
         <p className="text-sm text-muted-foreground">
-          Run a GitHub Actions workflow directly, or give an Agent a reusable instruction.
+          Start a simple AI task now, on a schedule, or from an event—or safely dispatch an opted-in
+          GitHub Action.
         </p>
       </div>
       {accessPending ? (
@@ -77,13 +84,13 @@ export function AutomatedWorkflows() {
         />
       ) : isAdmin && standingRunsEnabled ? (
         <div className="rounded-lg border bg-card p-4">
-          <AutomationForm onDone={reload} />
+          <AutomationForm key={createVersion} runOnCreate onDone={created} />
         </div>
       ) : isAdmin ? (
         <SettingsGroup>
           <SettingRow
             label="Enable automated workflows"
-            description="Create reusable jobs and run them from Derive."
+            description="Turn on direct AI tasks and GitHub Action dispatches for this workspace. You can review every run before adding a schedule."
           >
             <Button
               data-testid="automations-enable"
@@ -110,7 +117,10 @@ export function AutomatedWorkflows() {
           onRetry={() => refetch()}
         />
       ) : !automations || automations.length === 0 ? (
-        <SettingsEmpty>No automated workflows yet.</SettingsEmpty>
+        <SettingsEmpty>
+          Choose Simple for an AI instruction or Advanced for a safe derive-*.yml GitHub Action.
+          Your first run starts as soon as you create it.
+        </SettingsEmpty>
       ) : (
         <SettingsGroup>
           {automations.map((a) => (
@@ -159,25 +169,32 @@ function AutomationRow({
     success: "Workflow removed",
     onSuccess: () => onDone(),
   })
-  const summary = targetSummary(automation.refs)
+  const action = automation.trigger.action
+  const summary = action
+    ? `${action.owner}/${action.repo} · ${action.workflow} · ${action.ref}`
+    : targetSummary(automation.refs)
   return (
     <ListRow
       data-testid={`automation-row-${automation.id}`}
       className="[&>div:first-child]:flex-wrap [&>div:first-child>div:last-child]:w-full sm:[&>div:first-child>div:last-child]:w-auto"
       leading={
         <div className="flex size-7 shrink-0 items-center justify-center rounded-full bg-accent">
-          <Zap className="size-4 text-muted-foreground" aria-hidden />
+          {action ? (
+            <GitBranch className="size-4 text-muted-foreground" aria-hidden />
+          ) : (
+            <Sparkles className="size-4 text-muted-foreground" aria-hidden />
+          )}
         </div>
       }
       title={
         <span className="flex min-w-0 flex-wrap items-center gap-1.5">
           <span className="min-w-0 max-w-full truncate">{automation.instruction}</span>
           <Badge variant="outline">
-            {automation.trigger.action
-              ? "GitHub Actions"
+            {action
+              ? "Advanced · GitHub Action"
               : automation.provider === "codex"
-                ? "Codex"
-                : "Claude Code"}
+                ? "Simple · Codex"
+                : "Simple · Claude Code"}
           </Badge>
           {automation.context_id && <Badge variant="outline">Context</Badge>}
           <Badge variant="secondary">{triggerLabel(automation.trigger)}</Badge>
@@ -295,9 +312,11 @@ function RecentRuns({ automations }: { automations: Automation[] }) {
           const presentation = presentAutomationRun(run, automation)
           const writes = runWrites(run.meta)
           const receipt = runExecutionReceipt(run.meta)
+          const githubReceipt = githubActionRunReceipt(run.meta)
           const timeline = run.timeline
           const hasDetails = Boolean(
             writes.length ||
+              githubReceipt ||
               runOutcome(run.meta) ||
               receipt?.model ||
               receipt?.actions ||
@@ -310,6 +329,7 @@ function RecentRuns({ automations }: { automations: Automation[] }) {
               key={run.id}
               id={run.id}
               status={run.status}
+              statusLabel={githubReceipt && run.status === "succeeded" ? "Dispatched" : undefined}
               title={presentation.title}
               summary={presentation.summary}
               facts={presentation.facts}
@@ -320,6 +340,7 @@ function RecentRuns({ automations }: { automations: Automation[] }) {
               {hasDetails ? (
                 <div className="grid gap-2">
                   <RunOutcome meta={run.meta} />
+                  <RunGithubAction meta={run.meta} />
                   <RunWrites meta={run.meta} />
                   <RunExecution meta={run.meta} />
                   <RunTimeline timeline={run.timeline} />
@@ -329,6 +350,28 @@ function RecentRuns({ automations }: { automations: Automation[] }) {
           )
         })}
       </div>
+    </div>
+  )
+}
+
+function RunGithubAction({ meta }: { meta: string | null }) {
+  const receipt = githubActionRunReceipt(meta)
+  if (!receipt) return null
+  return (
+    <div className="flex min-w-0 flex-wrap items-center gap-2 text-2xs text-muted-foreground">
+      <span className="font-medium text-foreground">GitHub Action</span>
+      <a
+        href={receipt.url}
+        target="_blank"
+        rel="noreferrer"
+        className="inline-flex min-w-0 items-center gap-1 font-mono text-foreground underline underline-offset-2"
+      >
+        <span className="truncate">View run #{receipt.runId}</span>
+        <ExternalLink className="size-3 shrink-0" aria-hidden />
+      </a>
+      <span className="min-w-0 truncate">
+        {receipt.repository} · {receipt.workflow} · {receipt.ref}
+      </span>
     </div>
   )
 }

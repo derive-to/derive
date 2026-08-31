@@ -153,18 +153,20 @@ export async function installationToken(
   installationId: string,
   profile: GitHubTokenProfile = "standard-read",
   repository?: string,
+  apiBaseUrl = API,
 ): Promise<string> {
   if (!/^[1-9][0-9]{0,19}$/.test(installationId)) throw new Error("invalid GitHub installation id")
   if ((profile === "workflow-read" || profile === "workflow-dispatch") && !repository)
     throw new Error("a workflow token must name one repository")
   if (repository && !/^[A-Za-z0-9_.-]{1,100}$/.test(repository))
     throw new Error("invalid GitHub repository name")
-  const cacheKey = `${appId}:${installationId}:${profile}:${repository ?? "*"}`
+  const base = apiBaseUrl.replace(/\/$/, "")
+  const cacheKey = `${base}:${appId}:${installationId}:${profile}:${repository ?? "*"}`
   const cached = tokenCache.get(cacheKey)
   if (cached && Date.parse(cached.expiresAt) - 60_000 > Date.now()) return cached.token
 
   const jwt = appJwt(appId, privateKeyPem)
-  const res = await fetch(`${API}/app/installations/${installationId}/access_tokens`, {
+  const res = await fetch(`${base}/app/installations/${installationId}/access_tokens`, {
     method: "POST",
     headers: {
       ...ghHeaders(`Bearer ${jwt}`),

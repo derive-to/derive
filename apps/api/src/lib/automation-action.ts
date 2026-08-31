@@ -35,6 +35,32 @@ const workflowBody = (action: GithubWorkflowAutomationAction): Record<string, un
   ...(action.inputs && Object.keys(action.inputs).length ? { inputs: action.inputs } : {}),
 })
 
+export interface GithubActionReceipt {
+  run_id: string
+  url: string
+}
+
+/** GitHub's modern dispatch endpoint returns a run id. Normalize it at the trust boundary and
+ * construct the browser URL ourselves instead of persisting an arbitrary URL from upstream. */
+export const githubActionReceipt = (
+  action: GithubWorkflowAutomationAction,
+  body: unknown,
+): GithubActionReceipt | null => {
+  const value = (body ?? {}) as { workflow_run_id?: unknown }
+  const raw = value.workflow_run_id
+  const runId =
+    typeof raw === "number" && Number.isSafeInteger(raw) && raw > 0
+      ? String(raw)
+      : typeof raw === "string" && /^[1-9][0-9]{0,19}$/.test(raw)
+        ? raw
+        : null
+  if (!runId) return null
+  return {
+    run_id: runId,
+    url: `https://github.com/${action.owner}/${action.repo}/actions/runs/${runId}`,
+  }
+}
+
 export const validateGithubWorkflowAutomation = async (
   meta: MetaStore,
   orgId: string,
@@ -105,10 +131,16 @@ export const runDirectAutomation = async (input: {
         502,
       )
     const finishedAt = isoNow()
+    const receipt = githubActionReceipt(action, result.body)
     const finished = await meta.finishRun(run.id, automation.agent_id, {
       status: "succeeded",
       finishedAt,
-      meta: JSON.stringify({ action, outcome: "dispatched", response: result.body }),
+      meta: JSON.stringify({
+        action,
+        outcome: "dispatched",
+        response: result.body,
+        ...(receipt ? { github_action: receipt } : {}),
+      }),
     })
     return finished ?? run
   } catch (error) {

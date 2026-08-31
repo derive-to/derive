@@ -167,6 +167,10 @@ describe("automations + runs", () => {
     expect(JSON.parse(run?.meta ?? "{}")).toMatchObject({
       outcome: "dispatched",
       response: { workflow_run_id: 7788 },
+      github_action: {
+        run_id: "7788",
+        url: "https://github.com/Niftory/sift/actions/runs/7788",
+      },
     })
   })
 

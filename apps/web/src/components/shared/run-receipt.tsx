@@ -33,6 +33,7 @@ export const runStatusTone = (status: RunDisplayStatus): StatusTone => {
 export function RunReceipt({
   id,
   status,
+  statusLabel,
   title,
   summary,
   facts,
@@ -43,6 +44,9 @@ export function RunReceipt({
 }: {
   id: string
   status: RunDisplayStatus
+  /** Override the generic lifecycle label when completion means a narrower boundary, such as
+   *  "GitHub accepted this dispatch" rather than "the remote workflow passed." */
+  statusLabel?: string
   title: string
   summary: string
   facts: string[]
@@ -56,7 +60,7 @@ export function RunReceipt({
     <div className="min-w-0 flex-1">
       <div className="flex flex-wrap items-center gap-2">
         <StatusBadge tone={runStatusTone(status)} shape="pill">
-          {runStatusLabel(status)}
+          {statusLabel ?? runStatusLabel(status)}
         </StatusBadge>
         <span className="w-full min-w-0 break-words text-sm font-medium text-foreground sm:w-auto sm:truncate">
           {title}

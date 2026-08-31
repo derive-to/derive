@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest"
 import type { WorkflowDirectoryItem } from "@/api"
+import {
+  githubRepositoryError,
+  githubRepositoryParts,
+  githubWorkflowFileError,
+  githubWorkflowRefError,
+  parseGithubWorkflowInputs,
+} from "./automation-format"
 import { visibleWorkflows } from "./index"
 import { workflowBuilderPrompt } from "./workflow-builder-dialog"
 
@@ -43,5 +50,32 @@ describe("workflow builder handoff", () => {
     expect(prompt).toContain("Outcome: Verify a pull request and publish the evidence.")
     expect(prompt).toContain("Stop after at most 3 attempts.")
     expect(prompt).toContain("Do not run it yet.")
+  })
+})
+
+describe("GitHub Actions form boundaries", () => {
+  it("accepts the exact repository, workflow, ref, and scalar input contract", () => {
+    expect(githubRepositoryParts("Niftory/sift")).toEqual({ owner: "Niftory", repo: "sift" })
+    expect(githubRepositoryError("Niftory/sift")).toBeNull()
+    expect(githubWorkflowFileError("derive-docs-refresh.yml")).toBeNull()
+    expect(githubWorkflowRefError("feature/automate-proof")).toBeNull()
+    expect(parseGithubWorkflowInputs('{"source_sha":"abc123","dry_run":true}')).toEqual({
+      value: { source_sha: "abc123", dry_run: true },
+      error: null,
+    })
+  })
+
+  it("explains invalid values before the API has to refuse them", () => {
+    expect(githubRepositoryError("https://github.com/Niftory/sift")).toContain("owner/name")
+    expect(githubWorkflowFileError("deploy-prod.yml")).toContain("derive-*")
+    expect(githubWorkflowRefError("bad ref")).toContain("valid Git")
+    expect(parseGithubWorkflowInputs('{"nested":{"no":true}}').error).toContain(
+      "text, numbers, or booleans",
+    )
+    expect(
+      parseGithubWorkflowInputs(
+        JSON.stringify(Object.fromEntries(Array.from({ length: 26 }, (_, i) => [`k${i}`, i]))),
+      ).error,
+    ).toContain("25")
   })
 })

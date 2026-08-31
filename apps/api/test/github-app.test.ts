@@ -212,4 +212,31 @@ describe("installationToken", () => {
     ).rejects.toThrow(/repository name/i)
     expect(fetch).not.toHaveBeenCalled()
   })
+
+  it("uses a server-owned API base for GitHub Enterprise and local integration tests", async () => {
+    const fetch = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            token: "enterprise-installation-token",
+            expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+          }),
+          { status: 201 },
+        ),
+    )
+    vi.stubGlobal("fetch", fetch)
+    const token = await installationToken(
+      "12345",
+      privateKey,
+      "9011",
+      "workflow-dispatch",
+      "sift",
+      "https://github.example/api/v3/",
+    )
+    expect(token).toBe("enterprise-installation-token")
+    expect(fetch).toHaveBeenCalledWith(
+      "https://github.example/api/v3/app/installations/9011/access_tokens",
+      expect.any(Object),
+    )
+  })
 })

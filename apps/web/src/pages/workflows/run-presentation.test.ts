@@ -92,4 +92,37 @@ describe("run presentation", () => {
     expect(runStatusTone("cancelled")).toBe("muted")
     expect(runStatusTone("failed")).toBe("error")
   })
+
+  it("shows an exact, safe GitHub Actions run receipt", () => {
+    const githubAutomation: Automation = {
+      ...automation,
+      trigger: {
+        kind: "manual",
+        action: {
+          kind: "github_workflow",
+          owner: "Niftory",
+          repo: "sift",
+          workflow: "derive-docs-refresh.yml",
+          ref: "main",
+        },
+      },
+      instruction: "Run Niftory/sift · derive-docs-refresh.yml",
+    }
+    const githubRun: Run = {
+      ...run,
+      meta: JSON.stringify({
+        outcome: "dispatched",
+        action: githubAutomation.trigger.action,
+        github_action: {
+          run_id: "7788",
+          url: "https://malicious.example/ignored",
+        },
+      }),
+    }
+    expect(presentAutomationRun(githubRun, githubAutomation)).toEqual({
+      title: "Run Niftory/sift · derive-docs-refresh.yml",
+      summary: "GitHub started derive-docs-refresh.yml as run #7788.", // tokens-ignore
+      facts: ["Started by webhook", "Niftory/sift · main", "Ran for 2m"],
+    })
+  })
 })
