@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import type { MetaStore } from "@derive/core"
+import type { BlobStore, MetaStore } from "@derive/core"
 import { SqliteMetaStore } from "@derive/db/sqlite"
 import { FsBlobStore } from "@derive/storage/fs"
 import Database from "better-sqlite3"
@@ -263,7 +263,16 @@ describe("MCP tool calls stay within their round-trip budget", () => {
       new Date(Date.now() + 3_600_000).toISOString(),
     )
     db.close()
-    const blobs = new FsBlobStore(join(dir, `${name}-blobs`))
+    const storedBlobs = new FsBlobStore(join(dir, `${name}-blobs`))
+    const blobGets: string[] = []
+    const blobs: BlobStore = {
+      put: (data) => storedBlobs.put(data),
+      get: (key) => {
+        blobGets.push(key)
+        return storedBlobs.get(key)
+      },
+      has: (key) => storedBlobs.has(key),
+    }
     // Give the embedded fixture the hosted store's optional joined read. Its body composes
     // the portable methods because local round trips are free; the counting wrapper sees
     // the public fast path as one call, which pins the MCP handler's choice.
@@ -313,7 +322,7 @@ describe("MCP tool calls stay within their round-trip budget", () => {
     })
     const { proxy, calls, reset } = countingStore(fastMeta)
     const app = createApp({ meta: proxy, blobs, baseUrl: "http://derive.test", token: "tok" })
-    return { app, blobs, meta, token: `tok_${name}`, calls, reset }
+    return { app, blobs, blobGets, meta, token: `tok_${name}`, calls, reset }
   }
 
   type App = ReturnType<typeof createApp>
@@ -383,7 +392,7 @@ describe("MCP tool calls stay within their round-trip budget", () => {
   })
 
   it("read, catch_up, and comment — measured, not inferred", async () => {
-    const { app, blobs, meta, token, calls, reset } = appWithGrant(
+    const { app, blobs, blobGets, meta, token, calls, reset } = appWithGrant(
       "rt",
       "openid derive:read derive:publish",
     )
@@ -496,6 +505,22 @@ describe("MCP tool calls stay within their round-trip budget", () => {
     expect(resolveRes?.result?.isError, JSON.stringify(resolveRes)).not.toBe(true)
     const resolveCalls = [...calls]
 
+    reset()
+    blobGets.length = 0
+    const editRes = await call(
+      app,
+      token,
+      "publish",
+      {
+        short_id: "rttest01",
+        base_version: 1,
+        edits: [{ old_str: "Body text", new_str: "Updated text" }],
+      },
+      8,
+    )
+    expect(editRes?.result?.isError, JSON.stringify(editRes)).not.toBe(true)
+    const editCalls = [...calls]
+
     // The measured counts, printed: this test exists to produce them, and a run's own output
     // is what you read when a budget below moves and you need to see WHICH call was added.
     console.log(
@@ -504,7 +529,8 @@ describe("MCP tool calls stay within their round-trip budget", () => {
         `MCP round trips — read(map): ${mapCalls.length} [${mapCalls.join(", ")}]\n` +
         `MCP round trips — list_workspaces: ${workspaceCalls.length} [${workspaceCalls.join(", ")}]\n` +
         `MCP round trips — comment(react): ${reactCalls.length} [${reactCalls.join(", ")}]\n` +
-        `MCP round trips — comment(set_state): ${resolveCalls.length} [${resolveCalls.join(", ")}]`,
+        `MCP round trips — comment(set_state): ${resolveCalls.length} [${resolveCalls.join(", ")}]\n` +
+        `MCP round trips — publish(edit): ${editCalls.length} [${editCalls.join(", ")}]`,
     )
 
     // THE FIRST CALL IS IDENTICAL ON EVERY OPAQUE-OAUTH TOOL CALL:
@@ -558,5 +584,20 @@ describe("MCP tool calls stay within their round-trip budget", () => {
     // Ada's thread" from. One read of the root (already loaded by the tool's own thread check)
     // and one meta write; without it the record says only "resolved", by nobody, at no time.
     expect(resolveCalls.length).toBeLessThanOrEqual(7)
+    // The edit resolves and authorizes the artifact plus its current version through one
+    // joined read. Core publish uses that trusted record and performs only the one final
+    // artifact read needed for its fresh return value. Materialization must not restore a
+    // separate version lookup.
+    expect(editCalls).toContain("artifactWithVersion")
+    expect(editCalls).not.toContain("getVersion")
+    expect(editCalls).not.toContain("getVersionData")
+    expect(editCalls.filter((call) => call === "getByShortId")).toHaveLength(1)
+    expect(editCalls.filter((call) => call === "getSubscription")).toHaveLength(1)
+    expect(editCalls.filter((call) => call === "listMemberships")).toHaveLength(1)
+    expect(editCalls).toHaveLength(13)
+    // A cold edit reads the previous immutable source once. This fixture already read the
+    // active version, so the source cache may make it zero. The new version must never be
+    // read back for search, facts, anchors, mentions, or the completion summary.
+    expect(blobGets.length).toBeLessThanOrEqual(1)
   })
 })

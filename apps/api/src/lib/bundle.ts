@@ -137,7 +137,14 @@ export async function manifestOf(
 export async function pageTextResolver(
   blobs: BlobStore,
   v: VersionRecord,
+  preparedSource?: string,
 ): Promise<(path: string | null) => Promise<string | null>> {
+  // A live single-file publish already holds these exact bytes in memory. Reusing the
+  // trusted internal source avoids an immediate read-after-write of a multi-megabyte blob.
+  // Bundles still resolve through their manifest because one source string cannot name
+  // every page. Callers that do not have prepared bytes keep the exact storage fallback.
+  if (preparedSource !== undefined && !isBundleContentType(v.content_type))
+    return async () => preparedSource
   const manifest = await manifestOf(blobs, v)
   if (!manifest) {
     const bytes = await blobs.get(v.blob_key)

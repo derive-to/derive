@@ -205,7 +205,7 @@ describe("publish: single file", () => {
   it("creates an artifact + first version, titled from the filename", async () => {
     const meta = makeMeta()
     const blobs = makeBlobs()
-    const { artifact, version } = await publish(meta, blobs, file("<h1>hi</h1>"))
+    const { artifact, version, timings } = await publish(meta, blobs, file("<h1>hi</h1>"))
     expect(artifact.kind).toBe("file")
     expect(artifact.title).toBe("page") // ".html" stripped
     // Publishing without access fields is fail-closed — nobody but the publisher
@@ -216,6 +216,8 @@ describe("publish: single file", () => {
     expect(artifact.listed).toBe("none")
     expect(version.n).toBe(1)
     expect(version.content_type).toBe("text/html")
+    expect(timings.blobWriteMs).toBeGreaterThanOrEqual(0)
+    expect(timings.storeContentMs).toBeGreaterThanOrEqual(timings.blobWriteMs)
     expect(new TextDecoder().decode((await blobs.get(version.blob_key)) ?? undefined)).toBe(
       "<h1>hi</h1>",
     )

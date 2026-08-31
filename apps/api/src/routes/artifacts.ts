@@ -97,6 +97,7 @@ import {
 import { agentName } from "../lib/principal-kind"
 import { PUBLISH_TARGET_CREATE, verifyPublishToken } from "../lib/publish-token"
 import { agentPushFanout, openReviewRound } from "../lib/review-request"
+import { type ReviewSummary, summarizeTextEdits } from "../lib/review-summary"
 import {
   deleteArtifactAndUnindex,
   indexArtifactVersion,
@@ -589,6 +590,7 @@ export const artifactRoutes = (ctx: AppContext) => {
       draft?: { expiresAt: string }
     },
   ) => {
+    const requestStartedAt = performance.now()
     const tokenUser = tokenAuth ? tokenAuth.user : null
     // Republishing a version needs publish rights on that artifact; creating a
     // new one needs publish rights at the workspace level.
@@ -652,6 +654,11 @@ export const artifactRoutes = (ctx: AppContext) => {
     let bytes: Uint8Array
     let filename: string
     let isBundle: boolean
+    let preparedSource: string | undefined
+    let editSummary: ReviewSummary | undefined
+    let previousSearchSource:
+      | { source: string; contentType: string | null; title: string | null }
+      | undefined
     if (typeof editsField === "string" || typeof slideOpsField === "string") {
       if (typeof editsField === "string" && typeof slideOpsField === "string")
         return fail(c, 400, "Provide `edits` OR `slide_ops`, not both")
@@ -678,7 +685,13 @@ export const artifactRoutes = (ctx: AppContext) => {
       let materialized: MaterializedEdits
       try {
         const baseVersion = parseBaseVersion(str(body["base_version"]))
-        const deps = { getVersion: meta.getVersion.bind(meta), sourceText }
+        const deps = {
+          getVersion: meta.getVersion.bind(meta),
+          sourceText,
+          captureSource: (source: string, contentType: string | null) => {
+            previousSearchSource = { source, contentType, title: existing.title }
+          },
+        }
         materialized = structural
           ? await materializeSlideOps(deps, existing, parsed as SlideOp[], baseVersion)
           : await materializeEdits(deps, existing, parsed as AnyDocEdit[], baseVersion)
@@ -691,6 +704,36 @@ export const artifactRoutes = (ctx: AppContext) => {
         )
       }
       bytes = new TextEncoder().encode(materialized.content)
+      preparedSource = materialized.content
+      if (!structural) {
+        const applied = parsed as AnyDocEdit[]
+        const textEdits = applied.flatMap((edit) => {
+          if ("old_str" in edit)
+            return [
+              {
+                before: edit.old_str,
+                after: edit.new_str,
+                contentType: materialized.filename.endsWith(".md") ? "text/markdown" : "text/html",
+              },
+            ]
+          if ("quote" in edit && typeof edit.new_text === "string")
+            return [
+              {
+                before: edit.quote.exact,
+                after: edit.new_text,
+                contentType: "text/markdown",
+              },
+            ]
+          return []
+        })
+        if (textEdits.length === applied.length)
+          editSummary = summarizeTextEdits({
+            edits: textEdits,
+            fromVersion: existing.current_version,
+            toVersion: existing.current_version + 1,
+            note: str(body["message"]),
+          })
+      }
       if (bytes.length > MAX_UPLOAD_BYTES) return fail(c, 413, "upload too large")
       if (await overStorage(org, bytes.length))
         return fail(c, 413, blockCopy.storage.message, { code: blockCopy.storage.code })
@@ -710,6 +753,7 @@ export const artifactRoutes = (ctx: AppContext) => {
         /\.zip$/i.test(file.name) ||
         body["kind"] === "bundle" ||
         (bytes[0] === 0x50 && bytes[1] === 0x4b && (bytes[2] === 3 || bytes[2] === 5))
+      if (!isBundle) preparedSource = new TextDecoder().decode(bytes)
     }
 
     // Access is three single-purpose fields (see access-model.md). Each is validated
@@ -871,7 +915,12 @@ export const artifactRoutes = (ctx: AppContext) => {
         resolvedLinkRole && resolvedLinkRole !== "none" && password && !draft
           ? await hashPassword(password)
           : undefined
-      const { artifact, version } = await publish(
+      const coreStartedAt = performance.now()
+      const {
+        artifact,
+        version,
+        timings: publishTimings,
+      } = await publish(
         meta,
         blobs,
         {
@@ -913,9 +962,11 @@ export const artifactRoutes = (ctx: AppContext) => {
           linkRole: resolvedLinkRole,
           listed: resolvedListed,
           expiresAt: draft?.expiresAt,
+          ...(existing ? { existingArtifact: existing } : {}),
         },
         shortId,
       )
+      const coreFinishedAt = performance.now()
       // Ownership on creation: ONE row, the human behind the publish (an agent
       // publishes on behalf of whoever registered it) — this is what makes
       // `private` work, since workspace role grants nothing there. The agent
@@ -946,7 +997,8 @@ export const artifactRoutes = (ctx: AppContext) => {
       }
       // Webhook + follower fan-out + thread resolves + realtime/render/re-anchor, all via
       // the one shared helper so this path can never drift from MCP publish or restore.
-      await afterPublish(
+      const afterPublishStartedAt = performance.now()
+      const { storedRows } = await afterPublish(
         {
           meta,
           blobs,
@@ -969,8 +1021,11 @@ export const artifactRoutes = (ctx: AppContext) => {
           // version.author_id) is deliberately the human, so it can't classify who published.
           actorId: agentPrincipal?.id ?? tokenAuth?.agent?.id ?? actor?.id ?? null,
           actorName: agentPrincipal?.name ?? tokenAuth?.agent?.name ?? actor?.name ?? null,
+          ...(preparedSource !== undefined ? { preparedSource } : {}),
+          ...(previousSearchSource ? { previousSearchSource } : {}),
         },
       )
+      const afterPublishFinishedAt = performance.now()
       // Tag at publish time — the one-step "auto-tag on create/version" hook. `tags` is a
       // JSON array or a comma/space list on the multipart body; an editor can set it (the
       // publisher already holds publish standing on this artifact by having written the
@@ -1011,6 +1066,7 @@ export const artifactRoutes = (ctx: AppContext) => {
               version: version.n,
               note: str(body["review_note"]) ?? null,
               actorId: agentPrincipal?.id ?? actor?.id ?? null,
+              ...(editSummary ? { summary: editSummary } : {}),
             },
           )
           roundCreated = true
@@ -1036,6 +1092,7 @@ export const artifactRoutes = (ctx: AppContext) => {
             requestedByName: agentPrincipal.name,
             version: version.n,
             actorId: agentPrincipal.id,
+            ...(editSummary ? { summary: editSummary } : {}),
           },
         )
         roundCreated = true
@@ -1045,57 +1102,98 @@ export const artifactRoutes = (ctx: AppContext) => {
       // its human exactly like the /mcp path does — the shared bell + auto-open
       // fan-out. A signed-in human's own save gets none of this — they're
       // already looking at it.
-      let openedInTab: boolean | null = null
-      if (agentPrincipal && onBehalf) {
-        openedInTab = await agentPushFanout(
-          { meta, blobs, bus, baseUrl: deps.baseUrl, pokeWebhooks: deps.pokeWebhooks },
-          artifact,
-          {
-            user: onBehalf,
-            agentId: agentPrincipal.id,
-            agentName: agentPrincipal.name,
-            version: version.n,
-            reviewRound: roundCreated,
-            isNew: !shortId,
-          },
-        )
+      const responseText =
+        artifact.kind === "file" && isTextType(version.content_type)
+          ? new TextDecoder().decode(bytes)
+          : null
+      const receiptDurations: Record<string, number> = {}
+      const timedReceipt = async <T>(name: string, work: () => Promise<T>): Promise<T> => {
+        const startedAt = performance.now()
+        try {
+          return await work()
+        } finally {
+          receiptDurations[name] = performance.now() - startedAt
+        }
       }
-      const versions = await meta.listVersions(artifact.id)
       // Advisories over what was just stored (missing viewport meta, oversized
       // inline base64, expiring upload URLs, page-markup-as-markdown, broken blob
       // refs) — computed server-side so every client relays the same guidance; the
       // boundary rules keep @derive/core out of the clients.
-      let advisories: string[] = []
-      // isTextType, not a local text/html check: a DECK is text/x-derive-deck, and the
-      // literal comparison here meant a deck published over REST came back with
-      // advisories:null while the same bytes over MCP (gated on kind alone) got them —
-      // so a deck never heard about an expiring upload URL or a broken blob ref. Caught
-      // by publishing one against a deploy preview and reading the response.
-      if (artifact.kind === "file" && isTextType(version.content_type)) {
-        const text = new TextDecoder().decode(bytes)
-        advisories = publishAdvisories(text, version.content_type)
-        const blobAdvisory = await missingBlobAdvisory(text, blobs)
-        if (blobAdvisory) advisories.push(blobAdvisory)
-        const weight = await heavyAssetsAdvisory(text, meta)
-        if (weight) advisories.push(weight)
-        // A fact whose shape drifted from the previous version silently splits a series.
-        advisories.push(
-          ...(await slotShapeDriftAdvisories(
-            text,
-            version.content_type,
-            artifact.id,
-            version.n - 1,
-            meta,
-          )),
-        )
-      }
-      // What extraction actually STORED, read back from the rows rather than echoed from
-      // the parser — so a persistence failure reads as an empty list, not a false claim.
+      const [openedInTab, versions, blobAdvisory, weightAdvisory, driftAdvisories] =
+        await Promise.all([
+          timedReceipt("push", () =>
+            agentPrincipal && onBehalf
+              ? agentPushFanout(
+                  { meta, blobs, bus, baseUrl: deps.baseUrl, pokeWebhooks: deps.pokeWebhooks },
+                  artifact,
+                  {
+                    user: onBehalf,
+                    agentId: agentPrincipal.id,
+                    agentName: agentPrincipal.name,
+                    version: version.n,
+                    reviewRound: roundCreated,
+                    isNew: !shortId,
+                    ...(editSummary ? { summary: editSummary } : {}),
+                  },
+                )
+              : Promise.resolve(null),
+          ),
+          timedReceipt("versions", () => meta.listVersions(artifact.id)),
+          timedReceipt("blob-check", () =>
+            responseText ? missingBlobAdvisory(responseText, blobs) : Promise.resolve(null),
+          ),
+          timedReceipt("asset-weight", () =>
+            responseText ? heavyAssetsAdvisory(responseText, meta) : Promise.resolve(null),
+          ),
+          timedReceipt("fact-drift", () =>
+            responseText
+              ? slotShapeDriftAdvisories(
+                  responseText,
+                  version.content_type,
+                  artifact.id,
+                  version.n - 1,
+                  meta,
+                )
+              : Promise.resolve([]),
+          ),
+        ])
+      const advisoryStartedAt = performance.now()
+      const advisories = responseText
+        ? [
+            ...publishAdvisories(responseText, version.content_type),
+            ...(blobAdvisory ? [blobAdvisory] : []),
+            ...(weightAdvisory ? [weightAdvisory] : []),
+            ...driftAdvisories,
+          ]
+        : []
+      receiptDurations["advisories"] = performance.now() - advisoryStartedAt
+      // What extraction actually STORED, returned by the successful write rather than echoed
+      // from the parser — so a persistence failure reads as an empty list, not a false claim.
       // assertedOnly: this 201 body is the REST publish receipt, and the rows now include
       // the host's own $facts — a receipt listing $stats beside the author's numbers is
       // the host congratulating itself, the exact thing the reward surfaces must not do.
-      const storedSlots = assertedOnly(
-        await meta.getVersionData(artifact.id, version.n).catch(() => []),
+      const storedSlots = assertedOnly(storedRows)
+      const responseStartedAt = performance.now()
+      const duration = (value: number) => Math.max(0, value).toFixed(1)
+      c.header(
+        "Server-Timing",
+        [
+          `prepare;dur=${duration(coreStartedAt - requestStartedAt)}`,
+          `blob-put;dur=${duration(publishTimings.blobWriteMs)}`,
+          `store-content;dur=${duration(publishTimings.storeContentMs)}`,
+          `metadata;dur=${duration(
+            coreFinishedAt - coreStartedAt - publishTimings.storeContentMs,
+          )}`,
+          `after-publish;dur=${duration(afterPublishFinishedAt - afterPublishStartedAt)}`,
+          `post-publish;dur=${duration(responseStartedAt - afterPublishFinishedAt)}`,
+          `receipt-push;dur=${duration(receiptDurations["push"] ?? 0)}`,
+          `receipt-versions;dur=${duration(receiptDurations["versions"] ?? 0)}`,
+          `receipt-blob-check;dur=${duration(receiptDurations["blob-check"] ?? 0)}`,
+          `receipt-asset-weight;dur=${duration(receiptDurations["asset-weight"] ?? 0)}`,
+          `receipt-fact-drift;dur=${duration(receiptDurations["fact-drift"] ?? 0)}`,
+          `receipt-advisories;dur=${duration(receiptDurations["advisories"] ?? 0)}`,
+          `total;dur=${duration(responseStartedAt - requestStartedAt)}`,
+        ].join(", "),
       )
       return c.json(
         {
