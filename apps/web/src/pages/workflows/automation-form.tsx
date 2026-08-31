@@ -61,9 +61,9 @@ import {
   SCHEDULE_PRESETS,
 } from "./automation-format"
 
-// Shared by the Workflow directory and the per-artifact Automate dialog. Targets determine where
-// a run writes: artifacts receive revisions, collections receive new artifacts, and tags classify
-// and archive the artifacts a run produces. Pass `automation` to edit an existing definition.
+// Shared by the Workflow directory and the per-artifact Automate dialog. AI targets determine
+// where a run writes. A direct GitHub Action retains those refs as Derive-side linkage, but GitHub
+// receives only its explicit workflow inputs. Pass `automation` to edit an existing definition.
 
 /** A chosen target plus a display label. Titles resolve lazily (see below). */
 type Target = { ref: AutomationRef; label: string }
@@ -299,7 +299,9 @@ export function AutomationForm({
             ? `Run ${repository.trim()} · ${workflowFile.trim()}`
             : instruction.trim(),
         ...(!automation && runOnCreate ? { runNow: true } : {}),
-        refs: workflowType === "agent" ? buildRefs() : [],
+        // Keep an artifact-launched GitHub Action attached to the artifact in Derive. Refs are
+        // Derive metadata, never implicit workflow inputs; the dispatch sends only action.inputs.
+        refs: buildRefs(),
         connectionIds: workflowType === "agent" ? connectionIds : [selectedGithubConnectionId],
       }
       return automation
@@ -409,6 +411,28 @@ export function AutomationForm({
 
       {workflowType === "github_workflow" ? (
         <div className="flex flex-col gap-4">
+          {targets.length > 0 ? (
+            <div
+              className="flex min-w-0 gap-3 rounded-lg border bg-card p-4"
+              data-testid="automation-github-artifact-link"
+            >
+              <span className="grid size-9 shrink-0 place-items-center rounded-lg border bg-background">
+                <FileText className="size-4" aria-hidden />
+              </span>
+              <div className="min-w-0">
+                <p className="text-sm font-medium">
+                  Linked to{" "}
+                  {targets.length === 1
+                    ? labelFor(targets[0] as Target)
+                    : `${targets.length} Derive targets`}
+                </p>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  This link stays in Derive. No AI prompt or artifact content is sent to GitHub. If
+                  the Action needs either, declare an input in the adapter and add it below.
+                </p>
+              </div>
+            </div>
+          ) : null}
           <div className="rounded-lg border bg-muted/20 p-4" data-testid="automation-github-setup">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
               <span className="grid size-9 shrink-0 place-items-center rounded-lg border bg-background">
@@ -561,7 +585,7 @@ export function AutomationForm({
             <div className="min-w-0 sm:col-span-2">
               <Field
                 label="Inputs"
-                hint="Optional JSON object; up to 25 text, number, or boolean values."
+                hint="Optional JSON object; Derive sends exactly these values and nothing implicit. Up to 25 text, number, or boolean values."
                 error={parsedInputs.error}
               >
                 <Textarea

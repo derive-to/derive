@@ -139,12 +139,25 @@ describe("automations + runs", () => {
           },
         },
         instruction: "Run Niftory/sift · derive-docs-refresh.yml",
+        refs: ["artifact-proof"],
         connectionIds: [connection.id],
+        runNow: true,
       }),
     )
     expect(created.status).toBe(201)
-    const automation = (await created.json()) as { id: string; agent_token?: string }
+    const automation = (await created.json()) as {
+      id: string
+      agent_token?: string
+      refs?: unknown
+      run_id?: string
+      run_status?: string
+    }
     expect(automation.agent_token).toBeUndefined()
+    expect(automation.refs).toEqual([{ kind: "artifact", id: "artifact-proof" }])
+    expect(automation).toMatchObject({
+      run_id: expect.stringMatching(/^run_/),
+      run_status: "succeeded",
+    })
 
     const dispatched = await direct.app.request(
       `/v1/automations/${automation.id}/run`,
@@ -156,6 +169,10 @@ describe("automations + runs", () => {
       {
         url: expect.stringContaining("/app/installations/99004/access_tokens"),
         body: { permissions: { actions: "write", metadata: "read" }, repositories: ["sift"] },
+      },
+      {
+        url: "https://api.github.com/repos/Niftory/sift/actions/workflows/derive-docs-refresh.yml/dispatches",
+        body: { ref: "main", inputs: { source_sha: "abc123" } },
       },
       {
         url: "https://api.github.com/repos/Niftory/sift/actions/workflows/derive-docs-refresh.yml/dispatches",
