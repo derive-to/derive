@@ -49,6 +49,25 @@ describe("standard GitHub integration", () => {
     name: "Member",
   }
 
+  it("lets a GitHub job reach the OIDC exchange before it has a Derive principal", async () => {
+    const { app } = makeAuthedApp("gh-exchange-door", [owner], "editor", {
+      deps: { encryptionKey: KEY },
+    })
+    const response = await app.request("/v1/workflow-runs/wfr_missing/github/exchange", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        nonce: "one-time-assignment-nonce",
+        oidcToken: "header.payload.signature".repeat(10),
+      }),
+    })
+    // The route's exact run/nonce/OIDC checks are the authentication gate. A 409 for the
+    // missing assignment proves the global anonymous-write firewall did not stop the signed
+    // exchange at 403 before those checks could run.
+    expect(response.status).toBe(409)
+    expect(await response.json()).toEqual({ error: "GitHub workflow exchange failed" })
+  })
+
   it("configures and verifies the signed App webhook without a browser-held secret", async () => {
     const { app, meta } = makeAuthedApp("gh-webhook", [owner], "editor", {
       deps: { encryptionKey: KEY },
