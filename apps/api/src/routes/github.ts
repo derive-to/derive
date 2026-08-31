@@ -16,6 +16,7 @@ import {
   getAppInfo,
   getAppInstallation,
   getUserInstallation,
+  listAppInstallations,
   listUserInstallations,
 } from "../lib/github-app"
 import { upsertGithubConnection } from "../lib/github-connection"
@@ -110,6 +111,28 @@ export const githubRoutes = (ctx: AppContext) => {
     authorize.searchParams.set("prompt", "select_account")
     return authorize.toString()
   }
+
+  const selectionPage = (
+    org: string,
+    uid: string,
+    installations: Awaited<ReturnType<typeof listAppInstallations>>,
+    encryptionKey: string,
+  ): string =>
+    installationPickerHTML({
+      installations: installations.map((installation) => ({
+        login: installation.account?.login || `Installation ${installation.id}`,
+        state: signState(
+          {
+            kind: "github-install-select",
+            org,
+            uid,
+            installationId: String(installation.id),
+          },
+          encryptionKey,
+        ),
+      })),
+      installUrl: "/v1/github/install/new",
+    })
 
   const Account = z.object({
     installation_id: z.string(),
@@ -296,6 +319,30 @@ export const githubRoutes = (ctx: AppContext) => {
     if (me instanceof Response) return me
     const loaded = await loadApp()
     if (!loaded || !deps.encryptionKey) return fail(c, 404, "GitHub is not configured")
+    if (await isSuperAdmin(c)) {
+      try {
+        const installations = await listAppInstallations(loaded.app.app_id, loaded.pem)
+        if (!installations.length) return c.redirect("/v1/github/install/new")
+        if (installations.length === 1) {
+          const installation = installations[0]
+          if (!installation) return c.redirect(settingsRedirect("save"))
+          await upsertGithubConnection(meta, {
+            orgId: org,
+            userId: me.id,
+            installationId: String(installation.id),
+            accountLogin: installation.account?.login ?? null,
+          })
+          return c.redirect(settingsRedirect("connected"))
+        }
+        return c.html(selectionPage(org, me.id, installations, deps.encryptionKey))
+      } catch (err) {
+        log.warn("github operator installation recovery failed", {
+          user_id: me.id,
+          error: err instanceof Error ? err.message : String(err),
+        })
+        return c.redirect(settingsRedirect("save"))
+      }
+    }
     const state = signState(
       { kind: "github-install-discover", org, uid: me.id },
       deps.encryptionKey,
@@ -427,23 +474,7 @@ export const githubRoutes = (ctx: AppContext) => {
           })
           return c.redirect(settingsRedirect("connected"))
         }
-        return c.html(
-          installationPickerHTML({
-            installations: installations.map((installation) => ({
-              login: installation.account?.login || `Installation ${installation.id}`,
-              state: signState(
-                {
-                  kind: "github-install-select",
-                  org: state.org,
-                  uid: me.id,
-                  installationId: String(installation.id),
-                },
-                encryptionKey,
-              ),
-            })),
-            installUrl: "/v1/github/install/new",
-          }),
-        )
+        return c.html(selectionPage(state.org, me.id, installations, encryptionKey))
       }
       const installation = await getUserInstallation(userToken, state.installationId)
       if (!installation) {

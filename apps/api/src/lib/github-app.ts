@@ -209,6 +209,41 @@ export async function getAppInstallation(
   }
 }
 
+/** List every installation for the App with App-JWT auth. Instance operators use this only to
+ * recover the shared App they administer; workspace managers still prove access with OAuth. */
+export async function listAppInstallations(
+  appId: string,
+  privateKeyPem: string,
+): Promise<AppInstallation[]> {
+  const result: AppInstallation[] = []
+  const jwt = appJwt(appId, privateKeyPem)
+  for (let page = 1; page <= 10; page++) {
+    const res = await fetch(`${API}/app/installations?per_page=100&page=${page}`, {
+      headers: ghHeaders(`Bearer ${jwt}`),
+    })
+    if (!res.ok) return raise(res, "listing the GitHub App installations")
+    const installations = (await res.json()) as {
+      id?: number
+      account?: { login?: string; type?: string }
+      html_url?: string
+      permissions?: Record<string, string>
+    }[]
+    for (const installation of installations) {
+      if (!installation.id || !Number.isSafeInteger(installation.id)) continue
+      result.push({
+        id: installation.id,
+        account: installation.account
+          ? { login: installation.account.login ?? "", type: installation.account.type ?? "" }
+          : null,
+        htmlUrl: installation.html_url ?? null,
+        permissions: installation.permissions ?? {},
+      })
+    }
+    if (installations.length < 100) break
+  }
+  return result
+}
+
 /** Exchange GitHub's one-time web-flow code. The token exists only long enough to prove that
  * the signed-in installer can access the installation they are binding; it is never persisted. */
 export async function exchangeGithubUserCode(input: {
