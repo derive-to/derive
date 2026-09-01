@@ -166,14 +166,29 @@ import { CORE_SKILLS } from "../src/skills-reference.gen"
 // already spent; this raise restores headroom rather than consuming the last of it.
 // Measured: descriptions 3,356 of 3,400; params 9,868 of 9,900; total 13,224 of 13,250;
 // instructions 2,424 of 2,500.
-const TOOL_DESCRIPTIONS_BUDGET = 3_400
+// RAISED 3,400 -> 3,500 / 13,250 -> 13,350 / instructions 2,500 -> 2,650, and
+// MAX_TOOL_DESCRIPTION 420 -> 540 (2026-08-31), for the artifact-routing claim. Users
+// with Derive connected were still getting host-native artifacts (Claude Artifacts)
+// when they asked for an HTML page: the surface steered against "a wall of chat prose"
+// but never claimed precedence over the host's OWN artifact/canvas tool, so the host's
+// always-loaded instruction won the tie. The instructions and `publish` now name that
+// conflict outright ("publish it HERE, not with a built-in artifact/canvas tool") and
+// `publish` leads with what it creates (an HTML page, doc, report, deck) so keyword-based
+// tool selection surfaces it for exactly the asks that were drifting. Routing prose that
+// exists only because a competing tool does cannot move to a skill body: a skill is
+// read AFTER the agent has already chosen Derive, which is the decision this buys.
+// Reclaim paid for part of the instructions growth: the claim leans on the artifact
+// enumeration it sits under ("gets none of that") instead of restating it.
+// Measured: descriptions 3,438 of 3,500; params 9,884 of 9,900; total 13,322 of 13,350;
+// instructions 2,579 of 2,650.
+const TOOL_DESCRIPTIONS_BUDGET = 3_500
 const PARAM_DESCRIPTIONS_BUDGET = 9_900
-const SURFACE_BUDGET = 13_250
-const INSTRUCTIONS_BUDGET = 2_500
+const SURFACE_BUDGET = 13_350
+const INSTRUCTIONS_BUDGET = 2_650
 
 /** No single tool may sprawl: one sentence of routing, the one thing that silently breaks,
  *  and a pointer to its skill. */
-const MAX_TOOL_DESCRIPTION = 420
+const MAX_TOOL_DESCRIPTION = 540
 /** No single param may sprawl: what to pass, and what silently breaks. */
 const MAX_PARAM_DESCRIPTION = 250
 
@@ -266,6 +281,10 @@ describe("MCP surface budget (thin tools, thick skills)", () => {
     expect(instructions.length).toBeGreaterThan(0)
     expect(instructions).toContain("Prefer Derive for substantial planning")
     expect(instructions).toContain("instead of a wall of chat prose")
+    // The routing claim against the host's own artifact tool — the steer that stops
+    // "make me an HTML page" from landing in a chat-local artifact. Must stay in the
+    // always-loaded instructions: a skill body loads after the routing decision.
+    expect(instructions).toContain("not with a built-in artifact/canvas tool")
     // The core-skills index is still ADVERTISED in the always-loaded instructions —
     // thinning must not drop the pointer that makes the lazy skills discoverable.
     for (const skill of CORE_SKILLS) expect(instructions).toContain(`derive://skills/${skill.name}`)
