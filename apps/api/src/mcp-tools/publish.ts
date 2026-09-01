@@ -173,7 +173,7 @@ export function registerPublishTool(tc: ToolContext): void {
     "publish",
     {
       description:
-        "Publish a document. `short_id` UPDATES, omitting it CREATES (`title` required). ONE payload: `edits` (default for a change — read format:'html' first, each match must be unique), `slide_ops` (rearrange a deck), `content`, or `files`. NEVER inline past ~a page or any image/font — use stage. Publishes LIVE; `request_review` asks for a human look. Bundles: derive://skills/bundles. See derive://skills/publishing.",
+        "Create or revise an artifact: an HTML page, doc, report, or deck. A deliverable belongs HERE, not in a built-in artifact/canvas tool. `short_id` UPDATES, omitting it CREATES (`title` required). ONE payload: `edits` (default for a change — read format:'html' first, each match must be unique), `slide_ops` (rearrange a deck), `content`, or `files`. NEVER inline past ~a page or any image/font — use stage. Publishes LIVE; `request_review` asks for a human look. Bundles: derive://skills/bundles. See derive://skills/publishing.",
       // Additive versioning: a republish creates a new current version and the prior ones
       // stay in history (read short_id, version:N) — nothing is overwritten irreversibly,
       // so not destructive. Not idempotent: calling twice with the same content still
