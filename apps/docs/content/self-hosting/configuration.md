@@ -519,6 +519,11 @@ wrangler secret put DERIVE_MODEL_NAME       # the provider's own model id
 This key pays for every attended turn on the deployment, so it is an operator decision
 rather than a per-user one.
 
+An `openrouter.ai` base URL also gives the model a bounded, read-only public tool belt:
+web search (at most two searches and ten results per model call), URL fetch (at most two),
+and current date/time. OpenRouter runs these server-side alongside Derive's own function tools.
+Other OpenAI-compatible gateways receive only the standard function tools they already support.
+
 **Streaming: the gateway should speak SSE, but need not.** When a browser is watching an
 attended reply, the request carries `stream: true` and `stream_options: {include_usage: true}`
 (the latter makes a streamed turn report its cost; a stream otherwise omits usage),
