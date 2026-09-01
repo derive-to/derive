@@ -158,10 +158,10 @@ test("a rail imports the old per-browser stamp once, then its position lives on 
     ).seen_at
   expect(await cursor()).toBeNull()
   const legacy = Date.now() - 3_600_000
-  await page.addInitScript(
-    ([key, value]) => localStorage.setItem(key, value),
-    [`derive.activity.seen.${short_id}`, String(legacy)],
-  )
+  await page.addInitScript(([key, value]) => localStorage.setItem(key, value), [
+    `derive.activity.seen.${short_id}`,
+    String(legacy),
+  ] as const)
   await openArtifact(page, short_id)
   await expect.poll(cursor, { timeout: 10_000 }).toBe(new Date(legacy).toISOString())
   expect(

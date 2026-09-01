@@ -150,6 +150,14 @@ children:
 </div>
 ```
 
+Use `data-derive-layout="stack"` for a vertical ordered region and
+`data-derive-layout="row"` for one unwrapped horizontal flex row. Both support source-safe
+reorder, remove, exact width/height, pointer resize, and nested Parent navigation. A row must use
+`display:flex; flex-direction:row; flex-wrap:nowrap`; wrapped, reverse, grid, absolute, rotated, or
+overlapping arrangements fail closed instead of pretending a source order maps cleanly to the
+canvas. Named Compact / Standard / Full presets remain stack-only because several row siblings
+cannot each claim a 50–100% rail without overflowing; use Exact or the resize handles in a row.
+
 A click selects the deepest item. **Parent** (or Escape) moves selection up to its owning group;
 clicking a child moves back down. Reordering the group carries its whole subtree, while reordering
 cards stays inside `board-cards`. Removing a parent supersedes pending edits inside that removed

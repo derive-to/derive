@@ -46,7 +46,7 @@ import { BundleBar } from "./bundle-bar"
 import { ActionsCtx } from "./comment-actions"
 import { DeckOrganizer, DeckOrganizerDiscardDialog, useDeckOrganizer } from "./deck-organizer"
 import { DerivedFromBanner } from "./derived-from-banner"
-import { EditBar } from "./edit-bar"
+import { EditBar, type EditViewport } from "./edit-bar"
 import { FloatingControl } from "./floating-control"
 import { InlineMentionMenu } from "./inline-mention-menu"
 import { buildStream, countUnread } from "./lib/activity"
@@ -440,6 +440,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
     save: () => {},
     start: () => {},
   })
+  const [editViewport, setEditViewport] = useState<EditViewport>("auto")
   const pinnedRef = useRef(version)
   pinnedRef.current = version
   const onVersionLive = useCallback(
@@ -756,6 +757,9 @@ export function Artifact({ template = false }: { template?: boolean }) {
       setActiveThread(null)
     },
   })
+  useEffect(() => {
+    if (!inlineEdit.active && editViewport !== "auto") setEditViewport("auto")
+  }, [inlineEdit.active, editViewport])
   inlineEditRef.current = {
     active: inlineEdit.active,
     canEdit: inlineEdit.canEdit,
@@ -1088,6 +1092,12 @@ export function Artifact({ template = false }: { template?: boolean }) {
   }
 
   // Build the document once; public, guest, and workbench layouts share this surface.
+  const editViewportWidth =
+    inlineEdit.active && editViewport !== "auto"
+      ? editViewport === "tablet"
+        ? 768
+        : 390
+      : undefined
   const documentEl = (
     <ArtifactDocument
       shown={shown}
@@ -1117,6 +1127,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
       runtimeError={runtimeError}
       runtimeReady={runtimeReady}
       canFixRuntimeError={canPublish}
+      viewportWidth={editViewportWidth}
       onScrollDoc={scrollBy}
       // A frame (re)load while inline editing means the edit session's document is
       // gone — the hook exits and warns rather than letting a later Save silently
@@ -1502,9 +1513,11 @@ export function Artifact({ template = false }: { template?: boolean }) {
                 canRedo={inlineEdit.tools.canRedo}
                 canFormat={inlineEdit.tools.canFormat}
                 allowElementEdits={inlineEdit.allowElementEdits}
+                viewport={editViewport}
                 onUndo={inlineEdit.undo}
                 onRedo={inlineEdit.redo}
                 onFormat={inlineEdit.format}
+                onViewport={setEditViewport}
                 onSave={inlineEdit.save}
                 onDiscard={inlineEdit.discard}
                 onDone={inlineEdit.done}

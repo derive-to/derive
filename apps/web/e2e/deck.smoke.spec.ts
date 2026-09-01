@@ -313,6 +313,40 @@ test.describe("deck", () => {
     })
   </script></body></html>`
 
+  const STRUCTURAL_DECK = `<!doctype html><html><head><meta charset="utf-8"><title>Structural deck</title>
+  <style>
+    *{box-sizing:border-box}html,body{height:100%;margin:0;overflow:hidden;background:#10131a}
+    .stage{position:fixed;left:50%;top:50%;width:960px;height:540px;overflow:hidden;transform:translate(-50%,-50%) scale(.72);transform-origin:center}
+    .slide{position:absolute;inset:0;opacity:0;pointer-events:none;display:flex;flex-direction:column;gap:18px;padding:48px;background:#fff}
+    .slide.on{opacity:1;pointer-events:auto}.board{padding:18px;border:2px solid #94a3b8}.cards{display:flex;flex-direction:row;flex-wrap:nowrap;align-items:flex-start;gap:12px}
+    .card{flex:1 1 0;min-width:0;padding:14px;border:2px solid #64748b;background:#f8fafc;overflow:hidden}
+  </style></head><body><main class="stage">
+    <section class="slide on" data-derive-slide="0" data-derive-region="slide-0" data-derive-layout="stack">
+      <h1 data-derive-node="s0-title">Scaled structural deck</h1><p data-derive-node="s0-copy">Advance to edit the hierarchy.</p>
+    </section>
+    <section class="slide" data-derive-slide="1" data-derive-region="slide-1" data-derive-layout="stack">
+      <h2 data-derive-node="s1-title">Editable hierarchy</h2>
+      <div id="board" class="board" data-derive-node="s1-board" data-derive-kind="group">
+        <div id="cards" class="cards" data-derive-region="s1-cards" data-derive-layout="row" data-derive-owner="s1-board">
+          <article id="alpha" class="card" data-derive-node="s1-alpha" data-derive-width="28" data-derive-height="96" style="--derive-structural-width:28%;--derive-structural-height:96px">Alpha</article>
+          <article id="beta" class="card" data-derive-node="s1-beta" data-derive-width="32" data-derive-height="112" style="--derive-structural-width:32%;--derive-structural-height:112px">Beta</article>
+          <article id="gamma" class="card" data-derive-node="s1-gamma" data-derive-width="36" data-derive-height="128" style="--derive-structural-width:36%;--derive-structural-height:128px">Gamma</article>
+        </div>
+      </div>
+    </section>
+    <section class="slide" data-derive-slide="2" data-derive-region="slide-2" data-derive-layout="stack">
+      <h2 data-derive-node="s2-title">Isolation sentinel</h2><p id="sentinel" data-derive-node="s2-copy">Nothing on slide two may mutate this slide.</p>
+    </section>
+    <i aria-hidden="true" style="position:absolute;top:540px;height:12px"></i>
+  </main><script>
+    var slides=[].slice.call(document.querySelectorAll('.slide')),at=0
+    function report(){parent.postMessage({source:'derive-deck',type:'state',i:at,total:slides.length},'*')}
+    function show(n){at=Math.max(0,Math.min(slides.length-1,n));slides.forEach(function(s,i){s.classList.toggle('on',i===at)});report()}
+    addEventListener('message',function(e){var d=e.data;if(!d||d.source!=='derive-host'||d.type!=='deck')return;if(d.action==='next')show(at+1);else if(d.action==='prev')show(at-1);else if(d.action==='goto')show(typeof d.n==='number'?d.n:0)})
+    addEventListener('keydown',function(e){if(e.key==='ArrowRight')show(at+1);else if(e.key==='ArrowLeft')show(at-1)})
+    report()
+  </script></body></html>`
+
   const doc = (page: Page) => page.frameLocator("iframe[title]")
 
   async function seedSilentDeck(page: Page) {
@@ -321,6 +355,106 @@ test.describe("deck", () => {
     await expect(page.getByTestId("deck-bar")).toBeVisible()
     return shortId
   }
+
+  test("a scaled deck supports row movement, hierarchy, resize, history, and persistence", async ({
+    owner,
+  }) => {
+    const shortId = await publishArtifact(
+      owner,
+      "structural-deck.html",
+      STRUCTURAL_DECK,
+      "text/html",
+    )
+    await openArtifact(owner, shortId)
+    await expect(owner.getByTestId("deck-position")).toHaveText("1 / 3")
+    await owner.getByTestId("deck-next").click()
+    await expect(owner.getByTestId("deck-position")).toHaveText("2 / 3")
+    await owner.getByTestId("deck-edit").click()
+
+    const frame = doc(owner)
+    const beta = frame.locator("#beta")
+    await beta.click()
+    await expect(
+      frame.getByRole("button", { name: "Select containing group (Escape)" }),
+    ).toBeVisible()
+
+    // Row order changes locally; the outer hierarchy and inactive slide stay intact.
+    await frame.getByRole("button", { name: "Move earlier (Option+Up)" }).click()
+    await expect(frame.locator("#cards > [data-derive-node]").nth(0)).toHaveAttribute(
+      "data-derive-node",
+      "s1-beta",
+    )
+    await frame.getByRole("button", { name: "Select containing group (Escape)" }).click()
+    await frame.getByRole("button", { name: "Move earlier (Option+Up)" }).click()
+    await expect(
+      frame.locator("[data-derive-region='slide-1'] > [data-derive-node]").nth(0),
+    ).toHaveAttribute("data-derive-node", "s1-board")
+    await expect(frame.locator("#sentinel")).toHaveText(
+      "Nothing on slide two may mutate this slide.",
+    )
+
+    await owner.getByTestId("inline-edit-undo").click()
+    await owner.getByTestId("inline-edit-undo").click()
+    await expect(frame.locator("#cards > [data-derive-node]").nth(1)).toHaveAttribute(
+      "data-derive-node",
+      "s1-beta",
+    )
+
+    // Redo must replay the live moved order, not accidentally checkpoint and apply
+    // the original order again. Exercise both hierarchy levels, then return to the
+    // authored baseline for the sizing phase.
+    await owner.getByTestId("inline-edit-redo").click()
+    await owner.getByTestId("inline-edit-redo").click()
+    await expect(frame.locator("#cards > [data-derive-node]").nth(0)).toHaveAttribute(
+      "data-derive-node",
+      "s1-beta",
+    )
+    await expect(
+      frame.locator("[data-derive-region='slide-1'] > [data-derive-node]").nth(0),
+    ).toHaveAttribute("data-derive-node", "s1-board")
+    await owner.getByTestId("inline-edit-undo").click()
+    await owner.getByTestId("inline-edit-undo").click()
+
+    // Two-axis sizing remains one transaction inside the scaled stage. Pointer-scale
+    // math has its own focused E2E; this deck regression pins the deck integration,
+    // row authority, and shared history without making the proof depend on CDP's
+    // cross-frame pointer-capture timing.
+    await beta.click()
+    await frame.getByRole("button", { name: "Set exact width and height" }).click()
+    const dimensions = frame.locator(".derive-structure-precision-input")
+    await dimensions.nth(0).fill("36")
+    await dimensions.nth(1).fill("128")
+    await frame.getByRole("button", { name: "Apply exact width and height" }).click()
+    await expect(beta).toHaveAttribute("data-derive-width", "36")
+    await expect(beta).toHaveAttribute("data-derive-height", "128")
+
+    // Unrelated stage overflow must not block a valid edit, while new clipping from
+    // the selected subtree still fails closed and creates no history entry.
+    await frame.getByRole("button", { name: "Set exact width and height" }).click()
+    await dimensions.nth(0).fill("36")
+    await dimensions.nth(1).fill("600")
+    await frame.getByRole("button", { name: "Apply exact width and height" }).click()
+    await expect(beta).toHaveAttribute("data-derive-height", "128")
+    await expect(frame.getByText("Authored content or constraints control this size")).toBeVisible()
+
+    await owner.getByTestId("inline-edit-undo").click()
+    await expect(beta).toHaveAttribute("data-derive-width", "32")
+    await expect(beta).toHaveAttribute("data-derive-height", "112")
+    await expect(owner.getByTestId("inline-edit-redo")).toBeEnabled()
+    await owner.getByTestId("inline-edit-redo").click()
+    await expect(beta).toHaveAttribute("data-derive-width", "36")
+    await expect(beta).toHaveAttribute("data-derive-height", "128")
+
+    await owner.getByTestId("inline-edit-save").click()
+    await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+    await expect(async () => {
+      const src = await (await owner.request.get(`/v1/artifacts/${shortId}/content`)).text()
+      expect(src).toContain('data-derive-layout="row"')
+      expect(src.match(/<article id="beta"[^>]*>/)?.[0]).toContain('data-derive-width="36"')
+      expect(src.match(/<article id="beta"[^>]*>/)?.[0]).toContain('data-derive-height="128"')
+      expect(src).toContain("Nothing on slide two may mutate this slide.")
+    }).toPass({ timeout: 10_000 })
+  })
 
   test("a deck that never announced itself still gets the bar, and the bar drives it", async ({
     owner,

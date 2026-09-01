@@ -143,6 +143,7 @@ export function RenderStage({
   runtimeError,
   runtimeReady = false,
   canFixRuntimeError = false,
+  viewportWidth,
   banner,
   overlays,
   overlay = false,
@@ -172,6 +173,8 @@ export function RenderStage({
   runtimeReady?: boolean
   /** Editors get repair guidance; readers see a neutral failure. */
   canFixRuntimeError?: boolean
+  /** Edit-mode responsive preview. This is the iframe's real layout viewport. */
+  viewportWidth?: number
   /** A strip above the render (the past-version banner). */
   banner?: ReactNode
   /** Absolutely-positioned children inside the render (deck bar, cursor overlay). */
@@ -255,7 +258,8 @@ export function RenderStage({
         ref={wrapRef}
         data-presenting={overlay || undefined}
         className={cn(
-          "relative flex min-h-0 flex-1 flex-col overflow-hidden bg-background",
+          "relative flex min-h-0 flex-1 flex-col bg-background",
+          viewportWidth ? "overflow-auto" : "overflow-hidden",
           // Presenting where the Fullscreen API isn't available (iOS Safari refuses
           // it for anything but a video): the stage takes the viewport itself. Same
           // result, one z-index instead of a capability we don't have.
@@ -297,8 +301,11 @@ export function RenderStage({
             // hidden and cross-fades in on load, so the white→content swap resolves
             // gently over the neutral canvas instead of hard-flashing.
             sandbox="allow-scripts allow-forms allow-popups allow-modals allow-downloads"
+            data-preview-width={viewportWidth}
+            style={viewportWidth ? { width: viewportWidth } : undefined}
             className={cn(
-              "min-h-0 flex-1 touch-pan-y border-0 bg-white opacity-0 transition-opacity duration-state",
+              "min-h-0 touch-pan-y border-0 bg-white opacity-0 transition-[width,opacity] duration-state",
+              viewportWidth ? "mx-auto h-full flex-none shadow-[var(--shadow-lg)]" : "flex-1",
               phase === "ready" && "opacity-100",
             )}
           />
