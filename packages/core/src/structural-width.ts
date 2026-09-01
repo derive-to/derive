@@ -4,6 +4,11 @@ export const STRUCTURAL_WIDTH_PROPERTY = "--derive-structural-width"
 export const MIN_STRUCTURAL_HEIGHT_PX = 24
 export const MAX_STRUCTURAL_HEIGHT_PX = 8192
 export const STRUCTURAL_HEIGHT_PROPERTY = "--derive-structural-height"
+export const STRUCTURAL_ALIGN_PROPERTY = "--derive-structural-align"
+export const STRUCTURAL_GAP_PROPERTY = "--derive-structural-gap"
+export const MIN_STRUCTURAL_GAP_PX = 0
+export const MAX_STRUCTURAL_GAP_PX = 512
+export type StructuralAlignment = "start" | "center" | "end"
 
 export interface StructuralWidthSnap {
   width: number

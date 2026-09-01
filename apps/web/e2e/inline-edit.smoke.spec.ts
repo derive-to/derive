@@ -48,6 +48,7 @@ const STRUCTURAL_RESIZE_DOC = `<style>
 .stack > [data-derive-node][data-derive-size="full"] { width: 100%; max-width: none }
 .stack > [data-derive-node][data-derive-width] { width: var(--derive-structural-width); max-width: none }
 .stack > [data-derive-node][data-derive-height] { height: var(--derive-structural-height); box-sizing: border-box }
+.stack > [data-derive-node][data-derive-align] { align-self: var(--derive-structural-align) }
 </style>
 <div class="stage">
   <section class="stack" data-derive-ready data-derive-region="story" data-derive-layout="stack">
@@ -55,6 +56,38 @@ const STRUCTURAL_RESIZE_DOC = `<style>
     <article id="bravo" data-derive-node="bravo" data-derive-kind="card" data-derive-width="68" style="--derive-structural-width: 68%; height: 128px">Bravo</article>
   </section>
 </div>`
+
+const STRUCTURAL_MULTISELECT_DOC = `<style>
+body { font-family: sans-serif }
+@media (max-width: 420px) { body { --dogfood-breakpoint: mobile } }
+.stack { width: 600px; padding: 12px; display: flex; flex-direction: column; gap: 12px }
+.stack > [data-derive-node] { min-height: 48px; padding: 10px; border: 1px solid #ccd; box-sizing: border-box }
+.stack > [data-derive-node][data-derive-width] { width: var(--derive-structural-width); max-width: none }
+.stack > [data-derive-node][data-derive-height] { height: var(--derive-structural-height); box-sizing: border-box }
+.stack > [data-derive-node][data-derive-align] { align-self: var(--derive-structural-align) }
+#delta { min-height: 140px }
+</style>
+<section id="multi" class="stack" data-derive-ready data-derive-region="multi" data-derive-layout="stack">
+  <article id="alpha" data-derive-node="alpha" data-derive-width="52" data-derive-height="96" style="--derive-structural-width: 52%; --derive-structural-height: 96px">Alpha</article>
+  <article id="bravo" data-derive-node="bravo" data-derive-width="68" data-derive-height="112" style="--derive-structural-width: 68%; --derive-structural-height: 112px">Bravo</article>
+  <article id="charlie" data-derive-node="charlie" data-derive-width="76" style="--derive-structural-width: 76%">Charlie</article>
+  <article id="delta" data-derive-node="delta" data-derive-width="84" style="--derive-structural-width: 84%">Delta cannot safely shrink to Alpha height.</article>
+</section>
+<section class="stack" data-derive-region="other" data-derive-layout="stack">
+  <article id="echo" data-derive-node="echo">Echo</article>
+</section>`
+
+const STRUCTURAL_DISTRIBUTE_DOC = `<style>
+body { font-family: sans-serif }
+.stack { width: 560px; height: 500px; padding: 12px; display: flex; flex-direction: column; gap: 12px; box-sizing: border-box }
+.stack[data-derive-gap] { gap: var(--derive-structural-gap) }
+.stack > [data-derive-node] { height: 80px; flex: 0 0 80px; padding: 10px; border: 1px solid #ccd; box-sizing: border-box }
+</style>
+<section id="distributed" class="stack" data-derive-ready data-derive-region="distributed" data-derive-layout="stack">
+  <article id="one" data-derive-node="one">One</article>
+  <article id="two" data-derive-node="two">Two</article>
+  <article id="three" data-derive-node="three">Three</article>
+</section>`
 
 const STRUCTURAL_RESIZE_EDGE_DOC = `<style>
 body { font-family: sans-serif }
@@ -666,6 +699,363 @@ test("structural diagonal and vertical resize snap on a scaled canvas and save a
     expect(opening).toContain("--derive-structural-width: 68%")
     expect(opening).toContain("--derive-structural-height: 128px")
     expect(opening).not.toContain("data-derive-size")
+  }).toPass({ timeout: 10_000 })
+})
+
+test("structural multi-select equalizes and reorders as atomic safe actions", async ({ owner }) => {
+  const shortId = await publishArtifact(
+    owner,
+    "structural-multiselect.html",
+    STRUCTURAL_MULTISELECT_DOC,
+    "text/html",
+  )
+  await openArtifact(owner, shortId)
+  const frame = doc(owner)
+  await expect(frame.getByRole("button", { name: "Select all siblings" })).toBeHidden()
+  await enterEditMode(owner)
+
+  const alpha = frame.locator("#alpha")
+  const bravo = frame.locator("#bravo")
+  const nodes = frame.locator("#multi > [data-derive-node]")
+  await bravo.click()
+  const reorderGrip = frame.getByRole("button", { name: "Drag to reorder" })
+  const gripBox = await reorderGrip.boundingBox()
+  const charlieBox = await frame.locator("#charlie").boundingBox()
+  expect(gripBox).not.toBeNull()
+  expect(charlieBox).not.toBeNull()
+  if (!gripBox || !charlieBox) return
+  await owner.mouse.move(gripBox.x + gripBox.width / 2, gripBox.y + gripBox.height / 2)
+  await owner.mouse.down()
+  await owner.mouse.move(charlieBox.x + charlieBox.width / 2, charlieBox.y + 2)
+  await expect(frame.locator(".derive-structure-drop-marker")).toBeVisible()
+  await expect(frame.locator(".derive-structure-drop-marker")).toHaveAttribute(
+    "data-label",
+    "Before charlie",
+  )
+  await owner.mouse.up()
+  await expect(frame.locator(".derive-structure-drop-marker")).toBeHidden()
+  await expect(nodes.nth(0)).toHaveAttribute("id", "alpha")
+  await alpha.click({ modifiers: ["Shift"] })
+  await expect(frame.locator(".derive-structure-label")).toHaveText("2 selected · alpha")
+  await expect(frame.locator(".derive-structure-multi-box:visible")).toHaveCount(1)
+  await expect(frame.getByRole("button", { name: "Drag to reorder" })).toBeDisabled()
+  await expect(frame.getByRole("button", { name: "Remove element (Delete)" })).toBeDisabled()
+  await expect(frame.getByRole("button", { name: "Compact size" })).toBeDisabled()
+  await owner.keyboard.press("Delete")
+  await expect(nodes).toHaveCount(4)
+
+  await frame.getByRole("button", { name: "Open selected layout actions" }).click()
+  await frame.getByRole("button", { name: "Match selected widths to the active element" }).click()
+  await expect(bravo).toHaveAttribute("data-derive-width", "52")
+  await expect(owner.getByTestId("inline-edit-bar")).toContainText("1 unsaved change")
+  await owner.getByTestId("inline-edit-undo").click()
+  await expect(bravo).toHaveAttribute("data-derive-width", "68")
+  await owner.getByTestId("inline-edit-redo").click()
+  await expect(bravo).toHaveAttribute("data-derive-width", "52")
+  await frame.getByRole("button", { name: "Align selected to center" }).click()
+  await expect(alpha).toHaveAttribute("data-derive-align", "center")
+  await expect(bravo).toHaveAttribute("data-derive-align", "center")
+  await expect(alpha).toHaveCSS("align-self", "center")
+  await owner.getByTestId("inline-edit-undo").click()
+  await expect(alpha).not.toHaveAttribute("data-derive-align")
+  await expect(bravo).not.toHaveAttribute("data-derive-align")
+  await owner.getByTestId("inline-edit-redo").click()
+  await expect(alpha).toHaveAttribute("data-derive-align", "center")
+
+  // A non-contiguous selection advances stably as one action and one Undo restores
+  // the complete sibling order instead of peeling off one member at a time.
+  await bravo.click()
+  await frame.locator("#delta").click({ modifiers: ["Shift"] })
+  await frame.getByRole("button", { name: "Move earlier (Option+Up)" }).click()
+  await expect(nodes.nth(0)).toHaveAttribute("id", "bravo")
+  await expect(nodes.nth(1)).toHaveAttribute("id", "alpha")
+  await expect(nodes.nth(2)).toHaveAttribute("id", "delta")
+  await expect(nodes.nth(3)).toHaveAttribute("id", "charlie")
+  await owner.getByTestId("inline-edit-undo").click()
+  await expect(nodes.nth(0)).toHaveAttribute("id", "alpha")
+  await expect(nodes.nth(1)).toHaveAttribute("id", "bravo")
+  await expect(nodes.nth(2)).toHaveAttribute("id", "charlie")
+  await expect(nodes.nth(3)).toHaveAttribute("id", "delta")
+
+  // Equal-height is all-or-nothing. Delta's authored minimum makes Alpha's height
+  // unsafe, so no peer may retain a partial preview from the rejected batch.
+  await alpha.click()
+  await frame.getByRole("button", { name: "Select all siblings" }).click()
+  await frame.getByRole("button", { name: "Open selected layout actions" }).click()
+  await frame.getByRole("button", { name: "Match selected heights to the active element" }).click()
+  await expect(bravo).toHaveAttribute("data-derive-height", "112")
+  await expect(frame.locator("#charlie")).not.toHaveAttribute("data-derive-height")
+  await expect(frame.locator("#delta")).not.toHaveAttribute("data-derive-height")
+  await expect(frame.locator(".derive-structure-toast")).toContainText(
+    "Content or authored constraints prevent matching these heights",
+  )
+
+  // Escape collapses the group before navigating hierarchy. A safe two-node batch
+  // then becomes one undoable height action.
+  await owner.keyboard.press("Escape")
+  await bravo.click()
+  await alpha.click({ modifiers: ["Shift"] })
+  await frame.getByRole("button", { name: "Open selected layout actions" }).click()
+  await frame.getByRole("button", { name: "Match selected heights to the active element" }).click()
+  await expect(bravo).toHaveAttribute("data-derive-height", "96")
+  await owner.getByTestId("inline-edit-undo").click()
+  await expect(bravo).toHaveAttribute("data-derive-height", "112")
+  await owner.getByTestId("inline-edit-redo").click()
+  await expect(bravo).toHaveAttribute("data-derive-height", "96")
+  await frame.getByRole("button", { name: "Fit selected heights to their content" }).click()
+  await expect(alpha).not.toHaveAttribute("data-derive-height")
+  await expect(bravo).not.toHaveAttribute("data-derive-height")
+  await owner.getByTestId("inline-edit-undo").click()
+  await expect(alpha).toHaveAttribute("data-derive-height", "96")
+  await expect(bravo).toHaveAttribute("data-derive-height", "96")
+  await owner.getByTestId("inline-edit-redo").click()
+  await expect(alpha).not.toHaveAttribute("data-derive-height")
+
+  // Modifier selection cannot leak across authored regions.
+  await frame.locator("#echo").click({ modifiers: ["Shift"] })
+  await expect(frame.locator(".derive-structure-label")).toHaveText("echo")
+  await expect(frame.locator(".derive-structure-multi-box:visible")).toHaveCount(0)
+
+  // Keep the batch toolbar reachable on the compact canvas where it is densest.
+  await owner.setViewportSize({ width: 390, height: 844 })
+  await bravo.evaluate((el) => (el as HTMLElement).focus())
+  await alpha.click({ modifiers: ["Shift"] })
+  const toolbar = await frame.locator(".derive-structure-toolbar").boundingBox()
+  expect(toolbar).not.toBeNull()
+  if (!toolbar) return
+  expect(toolbar.x).toBeGreaterThanOrEqual(0)
+  expect(toolbar.x + toolbar.width).toBeLessThanOrEqual(390)
+  expect(toolbar.y).toBeGreaterThanOrEqual(0)
+  expect(toolbar.y + toolbar.height).toBeLessThanOrEqual(844)
+
+  await frame.getByRole("button", { name: "Move later (Option+Down)" }).click()
+  await owner.getByTestId("inline-edit-save").click()
+  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+  await expect(async () => {
+    const source = await contentOf(owner, shortId)
+    expect(source.indexOf('data-derive-node="charlie"')).toBeLessThan(
+      source.indexOf('data-derive-node="alpha"'),
+    )
+    const bravoOpening = source.match(/<article id="bravo"[^>]*>/)?.[0]
+    expect(bravoOpening).toContain('data-derive-width="52"')
+    expect(bravoOpening).toContain('data-derive-align="center"')
+    expect(bravoOpening).toContain("--derive-structural-width: 52%")
+    expect(bravoOpening).toContain("--derive-structural-align: center")
+    expect(bravoOpening).not.toContain("data-derive-height")
+    expect(bravoOpening).not.toContain("--derive-structural-height")
+  }).toPass({ timeout: 10_000 })
+})
+
+test("structural health coach explains a blocked layout action and applies the safe fix", async ({
+  owner,
+}) => {
+  const shortId = await publishArtifact(
+    owner,
+    "structural-health-coach.html",
+    STRUCTURAL_MULTISELECT_DOC,
+    "text/html",
+  )
+  await openArtifact(owner, shortId)
+  await enterEditMode(owner)
+  const frame = doc(owner)
+  await frame.locator("#alpha").click()
+  await frame.locator("#bravo").click({ modifiers: ["Shift"] })
+  await expect(frame.locator(".derive-structure-box")).toHaveAttribute(
+    "data-interaction-state",
+    "selected",
+  )
+  await frame.getByRole("button", { name: "Open selected layout actions" }).click()
+  await frame
+    .getByRole("button", { name: "Check layout health and suggest the nearest safe fix" })
+    .click()
+  await expect(frame.locator(".derive-structure-toast")).toContainText(
+    "Select all 4 siblings to distribute spacing",
+  )
+  await frame.getByRole("button", { name: "Select all", exact: true }).click()
+  await expect(frame.locator(".derive-structure-label")).toContainText("4 selected")
+})
+
+test("responsive edit previews use the real iframe viewport and label health checks", async ({
+  owner,
+}) => {
+  const shortId = await publishArtifact(
+    owner,
+    "structural-responsive-preview.html",
+    STRUCTURAL_MULTISELECT_DOC,
+    "text/html",
+  )
+  await openArtifact(owner, shortId)
+  await expect(owner.getByTestId("inline-edit-viewports")).toBeHidden()
+  await enterEditMode(owner)
+
+  const iframe = owner.locator("iframe[title]")
+  const frame = doc(owner)
+  await owner.getByTestId("inline-edit-viewport-mobile").click()
+  await expect(iframe).toHaveAttribute("data-preview-width", "390")
+  await expect.poll(async () => (await iframe.boundingBox())?.width).toBeCloseTo(390, 0)
+  await expect
+    .poll(() =>
+      frame
+        .locator("body")
+        .evaluate((el) => getComputedStyle(el).getPropertyValue("--dogfood-breakpoint").trim()),
+    )
+    .toBe("mobile")
+
+  await frame.locator("#alpha").click()
+  await frame.locator("#bravo").click({ modifiers: ["Shift"] })
+  await frame.getByRole("button", { name: "Open selected layout actions" }).click()
+  await frame
+    .getByRole("button", { name: "Check layout health and suggest the nearest safe fix" })
+    .click()
+  await expect(frame.locator(".derive-structure-toast")).toContainText("Mobile · 390px:")
+
+  await owner.getByTestId("inline-edit-viewport-tablet").click()
+  await expect(iframe).toHaveAttribute("data-preview-width", "768")
+  await expect.poll(async () => (await iframe.boundingBox())?.width).toBeCloseTo(768, 0)
+  await expect
+    .poll(() =>
+      frame
+        .locator("body")
+        .evaluate((el) => getComputedStyle(el).getPropertyValue("--dogfood-breakpoint").trim()),
+    )
+    .toBe("")
+  await owner.getByTestId("inline-edit-done").click()
+  await expect(owner.getByTestId("inline-edit-viewports")).toBeHidden()
+})
+
+test("design intent previews exact operations and applies as one reversible transaction", async ({
+  owner,
+}) => {
+  const shortId = await publishArtifact(
+    owner,
+    "structural-design-intent.html",
+    STRUCTURAL_MULTISELECT_DOC,
+    "text/html",
+  )
+  await openArtifact(owner, shortId)
+  await enterEditMode(owner)
+  const frame = doc(owner)
+  const alpha = frame.locator("#alpha")
+  const bravo = frame.locator("#bravo")
+
+  await alpha.click()
+  await bravo.click({ modifiers: ["Shift"] })
+  await frame.getByRole("button", { name: "Open selected layout actions" }).click()
+  await frame.getByRole("button", { name: "Preview a safe design-intent plan" }).click()
+  await expect(frame.locator(".derive-structure-intent-receipt")).toContainText(
+    "50% local rail · fit 2 fixed heights · center alignment",
+  )
+  await expect(alpha).toHaveAttribute("data-derive-width", "52")
+  await expect(bravo).toHaveAttribute("data-derive-width", "68")
+
+  await frame.getByRole("button", { name: "Make the active element dominant" }).click()
+  await expect(frame.locator(".derive-structure-intent-receipt")).toContainText(
+    "active 75% · 1 peer 50% · fit content · start alignment",
+  )
+  await frame.getByRole("button", { name: "Apply this design intent plan" }).click()
+  await expect(alpha).toHaveAttribute("data-derive-width", "50")
+  await expect(bravo).toHaveAttribute("data-derive-width", "75")
+  await expect(alpha).not.toHaveAttribute("data-derive-height")
+  await expect(bravo).not.toHaveAttribute("data-derive-height")
+  await expect(alpha).toHaveAttribute("data-derive-align", "start")
+  await expect(bravo).toHaveAttribute("data-derive-align", "start")
+  await expect(owner.getByTestId("inline-edit-bar")).toContainText("1 unsaved change")
+
+  await owner.getByTestId("inline-edit-undo").click()
+  await expect(alpha).toHaveAttribute("data-derive-width", "52")
+  await expect(bravo).toHaveAttribute("data-derive-width", "68")
+  await expect(alpha).toHaveAttribute("data-derive-height", "96")
+  await expect(bravo).toHaveAttribute("data-derive-height", "112")
+  await expect(alpha).not.toHaveAttribute("data-derive-align")
+  await expect(bravo).not.toHaveAttribute("data-derive-align")
+
+  await owner.getByTestId("inline-edit-redo").click()
+  await expect(alpha).toHaveAttribute("data-derive-width", "50")
+  await expect(bravo).toHaveAttribute("data-derive-width", "75")
+  await expect(alpha).not.toHaveAttribute("data-derive-height")
+  await expect(bravo).not.toHaveAttribute("data-derive-height")
+  await expect(alpha).toHaveAttribute("data-derive-align", "start")
+  await expect(bravo).toHaveAttribute("data-derive-align", "start")
+
+  await owner.getByTestId("inline-edit-save").click()
+  await expect(async () => {
+    const source = await contentOf(owner, shortId)
+    const alphaOpening = source.match(/<article id="alpha"[^>]*>/)?.[0]
+    const bravoOpening = source.match(/<article id="bravo"[^>]*>/)?.[0]
+    expect(alphaOpening).toContain('data-derive-width="50"')
+    expect(bravoOpening).toContain('data-derive-width="75"')
+    expect(alphaOpening).toContain('data-derive-align="start"')
+    expect(bravoOpening).toContain('data-derive-align="start"')
+    expect(alphaOpening).not.toContain("data-derive-height")
+    expect(bravoOpening).not.toContain("data-derive-height")
+  }).toPass({ timeout: 10_000 })
+})
+
+test("structural exact sizing commits both axes as one source-safe action", async ({ owner }) => {
+  const shortId = await publishArtifact(
+    owner,
+    "structural-exact-size.html",
+    STRUCTURAL_MULTISELECT_DOC,
+    "text/html",
+  )
+  await openArtifact(owner, shortId)
+  await enterEditMode(owner)
+  const frame = doc(owner)
+  const bravo = frame.locator("#bravo")
+  await bravo.click()
+  await frame.getByRole("button", { name: "Set exact width and height" }).click()
+  await frame.locator(".derive-structure-precision-field").nth(0).locator("input").fill("63")
+  await frame.locator(".derive-structure-precision-field").nth(1).locator("input").fill("118")
+  await frame.getByRole("button", { name: "Apply exact width and height" }).click()
+  await expect(bravo).toHaveAttribute("data-derive-width", "63")
+  await expect(bravo).toHaveAttribute("data-derive-height", "118")
+  await owner.getByTestId("inline-edit-undo").click()
+  await expect(bravo).toHaveAttribute("data-derive-width", "68")
+  await expect(bravo).toHaveAttribute("data-derive-height", "112")
+  await owner.getByTestId("inline-edit-redo").click()
+  await expect(bravo).toHaveAttribute("data-derive-width", "63")
+  await expect(bravo).toHaveAttribute("data-derive-height", "118")
+  await owner.getByTestId("inline-edit-save").click()
+  await expect(async () => {
+    const source = await contentOf(owner, shortId)
+    const opening = source.match(/<article id="bravo"[^>]*>/)?.[0]
+    expect(opening).toContain('data-derive-width="63"')
+    expect(opening).toContain('data-derive-height="118"')
+    expect(opening).toContain("--derive-structural-width: 63%")
+    expect(opening).toContain("--derive-structural-height: 118px")
+  }).toPass({ timeout: 10_000 })
+})
+
+test("structural distribution fills a bounded stack as one reversible action", async ({
+  owner,
+}) => {
+  const shortId = await publishArtifact(
+    owner,
+    "structural-distribution.html",
+    STRUCTURAL_DISTRIBUTE_DOC,
+    "text/html",
+  )
+  await openArtifact(owner, shortId)
+  await enterEditMode(owner)
+  const frame = doc(owner)
+  const region = frame.locator("#distributed")
+  await frame.locator("#one").click()
+  await frame.getByRole("button", { name: "Select all siblings" }).click()
+  await frame.getByRole("button", { name: "Open selected layout actions" }).click()
+  await frame.getByRole("button", { name: "Distribute all siblings vertically" }).click()
+  await expect(region).toHaveAttribute("data-derive-gap", "118")
+  await expect(region).toHaveCSS("row-gap", "118px")
+  await owner.getByTestId("inline-edit-undo").click()
+  await expect(region).not.toHaveAttribute("data-derive-gap")
+  await expect(region).toHaveCSS("row-gap", "12px")
+  await owner.getByTestId("inline-edit-redo").click()
+  await expect(region).toHaveAttribute("data-derive-gap", "118")
+  await owner.getByTestId("inline-edit-save").click()
+  await expect(async () => {
+    const source = await contentOf(owner, shortId)
+    const opening = source.match(/<section id="distributed"[^>]*>/)?.[0]
+    expect(opening).toContain('data-derive-gap="118"')
+    expect(opening).toContain("--derive-structural-gap: 118px")
   }).toPass({ timeout: 10_000 })
 })
 

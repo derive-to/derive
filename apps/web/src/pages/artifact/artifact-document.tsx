@@ -57,6 +57,7 @@ export function ArtifactDocument({
   onDeckEdit,
   onDeckArrange,
   readOnlyView = false,
+  viewportWidth,
 }: {
   shown: number
   currentVersion: number
@@ -111,6 +112,8 @@ export function ArtifactDocument({
   onDeckArrange?: () => void
   /** Public and guest readers cannot diff or restore an older version. */
   readOnlyView?: boolean
+  /** Edit-mode width for the real sandbox viewport; omitted outside preview mode. */
+  viewportWidth?: number
 }) {
   const past = shown !== currentVersion
   return (
@@ -177,6 +180,7 @@ export function ArtifactDocument({
           runtimeError={runtimeError}
           runtimeReady={runtimeReady}
           canFixRuntimeError={canFixRuntimeError}
+          viewportWidth={viewportWidth}
           overlay={presentOverlay}
           presenting={presenting}
           overlays={

@@ -420,6 +420,45 @@ describe("inspectStructuralDocument", () => {
     ])
   })
 
+  it("treats a horizontal row as an ordered source-safe region", () => {
+    const html = `<section data-derive-region="cards" data-derive-layout="row">
+  <article data-derive-node="alpha">Alpha</article>
+  <article data-derive-node="beta">Beta</article>
+</section>`
+    expect(inspectStructuralDocument(html)).toEqual([
+      {
+        id: "cards",
+        layout: "row",
+        nodes: [
+          { id: "alpha", kind: null, size: null, width_pct: null, height_px: null },
+          { id: "beta", kind: null, size: null, width_pct: null, height_px: null },
+        ],
+      },
+    ])
+
+    const edited = applyStructuralEdits(html, [
+      op({ op: "structural-order", region: "cards", nodes: ["beta", "alpha"] }),
+      op({
+        op: "structural-dimensions",
+        region: "cards",
+        node: "beta",
+        width_pct: 42,
+        height_px: 144,
+      }),
+    ])
+    expect(edited.html.indexOf('data-derive-node="beta"')).toBeLessThan(
+      edited.html.indexOf('data-derive-node="alpha"'),
+    )
+    expect(edited.html).toContain('data-derive-width="42"')
+    expect(edited.html).toContain('data-derive-height="144"')
+    expect(applyStructuralEdits(edited.html, edited.receipt.inverses).html).toBe(html)
+    expect(() =>
+      applyStructuralEdits(html, [
+        op({ op: "structural-size", region: "cards", node: "alpha", size: "compact" }),
+      ]),
+    ).toThrow(/cannot apply a named size preset inside row region cards/)
+  })
+
   it.each([
     [
       "duplicate regions",
@@ -442,6 +481,11 @@ describe("inspectStructuralDocument", () => {
       /must be 1–128/,
     ],
     ["missing layout", '<div data-derive-region="r"></div>', /layout="stack"/],
+    [
+      "unknown layout",
+      '<div data-derive-region="r" data-derive-layout="grid"></div>',
+      /layout="stack" or data-derive-layout="row"/,
+    ],
     [
       "unknown size",
       '<div data-derive-region="r" data-derive-layout="stack"><p data-derive-node="n" data-derive-size="huge"></p></div>',
@@ -650,6 +694,75 @@ describe("applyStructuralEdits", () => {
     expect(resized.html).toContain('data-derive-height="120"')
     expect(resized.html).toContain("--derive-structural-height: 120px")
     expect(applyStructuralEdits(resized.html, resized.receipt.inverses).html).toBe(document)
+  })
+
+  it("stores logical alignment without replacing authored styles", () => {
+    const source = document.replace(
+      'data-derive-node="card-a" data-derive-kind="card"',
+      'data-derive-node="card-a" data-derive-kind="card" style="color: navy; align-self: auto"',
+    )
+    const aligned = applyStructuralEdits(source, [
+      op({ op: "structural-align", region: "story", node: "card-a", align: "center" }),
+    ])
+    expect(aligned.html).toContain('data-derive-align="center"')
+    expect(aligned.html).toContain("--derive-structural-align: center")
+    expect(aligned.html).toContain("align-self: auto")
+    expect(aligned.html).toContain("color: navy")
+    expect(applyStructuralEdits(aligned.html, aligned.receipt.inverses).html).toBe(source)
+  })
+
+  it("rejects unsupported or unpaired structural alignment", () => {
+    expect(() =>
+      applyStructuralEdits(document, [
+        op({
+          op: "structural-align",
+          region: "story",
+          node: "card-a",
+          align: "stretch" as "center",
+        }),
+      ]),
+    ).toThrow(/unsupported alignment/)
+    for (const node of [
+      '<p data-derive-node="n" data-derive-align="center"></p>',
+      '<p data-derive-node="n" style="--derive-structural-align: center"></p>',
+      '<p data-derive-node="n" data-derive-align="end" style="--derive-structural-align: start"></p>',
+    ])
+      expect(() =>
+        inspectStructuralDocument(
+          `<div data-derive-region="r" data-derive-layout="stack">${node}</div>`,
+        ),
+      ).toThrow(/must pair data-derive-align/)
+  })
+
+  it("stores a region gap without replacing authored styles", () => {
+    const source = document.replace(
+      'data-derive-region="story" data-derive-layout="stack"',
+      'data-derive-region="story" data-derive-layout="stack" style="height: 500px; color: navy"',
+    )
+    const distributed = applyStructuralEdits(source, [
+      op({ op: "structural-gap", region: "story", gap_px: 72 }),
+    ])
+    expect(distributed.html).toContain('data-derive-gap="72"')
+    expect(distributed.html).toContain("--derive-structural-gap: 72px")
+    expect(distributed.html).toContain("height: 500px")
+    expect(distributed.html).toContain("color: navy")
+    expect(applyStructuralEdits(distributed.html, distributed.receipt.inverses).html).toBe(source)
+  })
+
+  it("rejects unsupported or unpaired structural gaps", () => {
+    expect(() =>
+      applyStructuralEdits(document, [op({ op: "structural-gap", region: "story", gap_px: 513 })]),
+    ).toThrow(/gap_px/)
+    for (const attributes of [
+      'data-derive-gap="12"',
+      'style="--derive-structural-gap: 12px"',
+      'data-derive-gap="12" style="--derive-structural-gap: 13px"',
+    ])
+      expect(() =>
+        inspectStructuralDocument(
+          `<div data-derive-region="r" data-derive-layout="stack" ${attributes}><p data-derive-node="n"></p></div>`,
+        ),
+      ).toThrow(/must pair data-derive-gap/)
   })
 
   it("moves atomically between named presets, custom width, and authored size", () => {

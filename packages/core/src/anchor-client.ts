@@ -30,12 +30,32 @@ import {
   mentionTokens,
 } from "./mention-shared"
 import {
+  coachStructuralLayout,
+  evaluateStructuralCapability,
+  idleStructuralInteraction,
+  planStructuralIntent,
+  type StructuralCapability,
+  type StructuralConstraintReason,
+  type StructuralIntentCommand,
+  type StructuralIntentPlan,
+  type StructuralInteractionEvent,
+  structuralDistributionIsValid,
+  structuralDropTarget,
+  structuralModifierIntent,
+  transitionStructuralInteraction,
+} from "./structural-interaction"
+import {
+  MAX_STRUCTURAL_GAP_PX,
   MAX_STRUCTURAL_HEIGHT_PX,
   MAX_STRUCTURAL_WIDTH_PCT,
+  MIN_STRUCTURAL_GAP_PX,
   MIN_STRUCTURAL_HEIGHT_PX,
   MIN_STRUCTURAL_WIDTH_PCT,
+  STRUCTURAL_ALIGN_PROPERTY,
+  STRUCTURAL_GAP_PROPERTY,
   STRUCTURAL_HEIGHT_PROPERTY,
   STRUCTURAL_WIDTH_PROPERTY,
+  type StructuralAlignment,
   snapStructuralHeight,
   snapStructuralWidth,
   structuralBlockResizeAxis,
@@ -423,6 +443,7 @@ interface ElReg {
   /** Our own chords, as a table: what the handler does is readable in one place,
    *  and every one of them is a modifier chord — never a bare key. */
   let cancelStructureResize = () => false
+  let cancelStructuralGesture = () => cancelStructureResize()
   const chordFor = (
     e: KeyboardEvent,
     focused: HTMLElement | null,
@@ -435,7 +456,7 @@ interface ElReg {
     // open the browser's Save-page dialog over the document.
     if (editOn && (k === "s" || k === "enter"))
       return () => {
-        if (cancelStructureResize()) return
+        if (cancelStructuralGesture()) return
         if (commitEditUi()) post({ type: "edit-save" })
       }
     // ⌘Z drives OUR stack. The native one only sees typing, and only in the block it
@@ -443,7 +464,7 @@ interface ElReg {
     // Keep it live with no text caret because a resize grip never owns one.
     if (editOn && k === "z" && !precisionFocused)
       return () => {
-        if (!cancelStructureResize()) (e.shiftKey ? redo : undo)()
+        if (!cancelStructuralGesture()) (e.shiftKey ? redo : undo)()
       }
     if (!focused) return null
     // ⌘B / ⌘I never fired here at all: a plaintext-only contenteditable drops every
@@ -518,7 +539,7 @@ interface ElReg {
           return
         }
         if (e.key === "Escape") {
-          if (cancelStructureResize()) {
+          if (cancelStructuralGesture()) {
             e.preventDefault()
             e.stopImmediatePropagation()
             return
@@ -662,9 +683,25 @@ interface ElReg {
        outline and a compact toolbar; the artifact keeps full control of layout and
        of what compact/standard/full mean in its own CSS. */
     ".derive-structure-box{position:absolute;display:none;pointer-events:none;box-sizing:border-box;border:2px solid rgba(79,70,229,.88);border-radius:5px;box-shadow:0 0 0 4px rgba(79,70,229,.12);z-index:2147483644}" +
+    ".derive-structure-multi-box{position:absolute;display:none;pointer-events:none;box-sizing:border-box;border:2px dashed rgba(79,70,229,.72);border-radius:5px;background:rgba(79,70,229,.05);z-index:2147483642}" +
     ".derive-structure-toolbar{position:absolute;left:-2px;bottom:calc(100% + 8px);display:flex;align-items:center;gap:3px;max-width:min(560px,calc(100vw - 16px));padding:5px;border:1px solid rgba(71,85,105,.35);border-radius:8px;background:rgba(248,250,252,.98);color:#0f172a;box-shadow:0 8px 24px rgba(15,23,42,.24);pointer-events:auto;font:600 11px/1 system-ui,sans-serif;white-space:nowrap}" +
     ".derive-structure-box.derive-structure-below .derive-structure-toolbar{bottom:auto;top:calc(100% + 8px)}" +
     ".derive-structure-label{max-width:112px;padding:0 5px;overflow:hidden;text-overflow:ellipsis;color:#475569;font:600 10px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace}" +
+    /* Structural dimensions are product semantics, not a suggestion to every deck
+       author to recreate the same CSS. Runtime-only legacy nodes and canonical
+       authored nodes therefore render the same in a fixed stage. Row widths also
+       take flex-basis authority so a common `flex:1` card rail is resizable. */
+    ":is([data-derive-region],[data-derive-runtime-region]):is([data-derive-layout],[data-derive-runtime-layout])>:is([data-derive-node],[data-derive-runtime-node]):is([data-derive-size=compact],[data-derive-runtime-size=compact]){width:50%!important;max-width:none!important;box-sizing:border-box!important}" +
+    ":is([data-derive-region],[data-derive-runtime-region]):is([data-derive-layout],[data-derive-runtime-layout])>:is([data-derive-node],[data-derive-runtime-node]):is([data-derive-size=standard],[data-derive-runtime-size=standard]){width:75%!important;max-width:none!important;box-sizing:border-box!important}" +
+    ":is([data-derive-region],[data-derive-runtime-region]):is([data-derive-layout],[data-derive-runtime-layout])>:is([data-derive-node],[data-derive-runtime-node]):is([data-derive-size=full],[data-derive-runtime-size=full]){width:100%!important;max-width:none!important;box-sizing:border-box!important}" +
+    ":is([data-derive-region],[data-derive-runtime-region]):is([data-derive-layout],[data-derive-runtime-layout])>:is([data-derive-node],[data-derive-runtime-node]):is([data-derive-width],[data-derive-runtime-width]){width:var(--derive-structural-width)!important;max-width:none!important;box-sizing:border-box!important}" +
+    ":is([data-derive-region][data-derive-layout=row],[data-derive-runtime-region][data-derive-runtime-layout=row])>:is([data-derive-node],[data-derive-runtime-node]):is([data-derive-size=compact],[data-derive-runtime-size=compact]){flex:0 0 50%!important}" +
+    ":is([data-derive-region][data-derive-layout=row],[data-derive-runtime-region][data-derive-runtime-layout=row])>:is([data-derive-node],[data-derive-runtime-node]):is([data-derive-size=standard],[data-derive-runtime-size=standard]){flex:0 0 75%!important}" +
+    ":is([data-derive-region][data-derive-layout=row],[data-derive-runtime-region][data-derive-runtime-layout=row])>:is([data-derive-node],[data-derive-runtime-node]):is([data-derive-size=full],[data-derive-runtime-size=full]){flex:0 0 100%!important}" +
+    ":is([data-derive-region][data-derive-layout=row],[data-derive-runtime-region][data-derive-runtime-layout=row])>:is([data-derive-node],[data-derive-runtime-node]):is([data-derive-width],[data-derive-runtime-width]){flex:0 0 var(--derive-structural-width)!important}" +
+    ":is([data-derive-region],[data-derive-runtime-region]):is([data-derive-layout],[data-derive-runtime-layout])>:is([data-derive-node],[data-derive-runtime-node]):is([data-derive-height],[data-derive-runtime-height]){height:var(--derive-structural-height)!important;box-sizing:border-box!important}" +
+    ":is([data-derive-region],[data-derive-runtime-region]):is([data-derive-layout],[data-derive-runtime-layout])>:is([data-derive-node],[data-derive-runtime-node]):is([data-derive-align],[data-derive-runtime-align]){align-self:var(--derive-structural-align)!important}" +
+    ":is([data-derive-region],[data-derive-runtime-region]):is([data-derive-gap],[data-derive-runtime-gap]){gap:var(--derive-structural-gap)!important}" +
     ".derive-structure-button{height:28px;min-width:28px;padding:0 8px;border:1px solid #cbd5e1;border-radius:5px;background:#fff;color:#334155;font:650 11px/26px system-ui,sans-serif;cursor:pointer}" +
     ".derive-structure-button:hover:not(:disabled){border-color:#64748b;background:#f1f5f9}" +
     ".derive-structure-button:disabled{opacity:.38;cursor:default}" +
@@ -672,6 +709,22 @@ interface ElReg {
     ".derive-structure-grip:active{cursor:grabbing}" +
     ".derive-structure-size[aria-pressed=true]{border-color:#4f46e5;background:#eef2ff;color:#3730a3}" +
     ".derive-structure-parent{border-color:#c7d2fe;color:#4338ca}" +
+    ".derive-structure-batch{border-color:#a7f3d0;background:#ecfdf5;color:#065f46}" +
+    ".derive-structure-layout-panel{position:absolute;right:5px;top:calc(100% + 6px);display:grid;grid-template-columns:repeat(3,max-content);gap:4px;padding:6px;border:1px solid rgba(71,85,105,.35);border-radius:8px;background:rgba(248,250,252,.99);box-shadow:0 8px 24px rgba(15,23,42,.24);pointer-events:auto}" +
+    ".derive-structure-layout-panel[hidden]{display:none}" +
+    ".derive-structure-intent-panel{position:absolute;right:5px;top:calc(100% + 6px);display:grid;width:272px;box-sizing:border-box;gap:7px;padding:9px;border:1px solid rgba(71,85,105,.35);border-radius:8px;background:rgba(248,250,252,.99);color:#334155;box-shadow:0 8px 24px rgba(15,23,42,.24);pointer-events:auto;font:600 11px/1.35 system-ui,sans-serif;white-space:normal}" +
+    ".derive-structure-intent-panel[hidden]{display:none}" +
+    ".derive-structure-intent-variants{display:grid;grid-template-columns:1fr 1fr;gap:5px}" +
+    ".derive-structure-intent-variants .derive-structure-button{height:auto;min-height:34px;line-height:1.15;white-space:normal}" +
+    ".derive-structure-intent-variants .derive-structure-button[aria-pressed=true]{border-color:#4f46e5;background:#eef2ff;color:#3730a3}" +
+    ".derive-structure-intent-receipt{display:grid;gap:3px;padding:7px;border-radius:6px;background:#f1f5f9;color:#475569}" +
+    ".derive-structure-intent-receipt b{color:#0f172a}" +
+    ".derive-structure-intent-actions{display:flex;justify-content:flex-end;gap:5px}" +
+    ".derive-structure-precision-panel{position:absolute;right:5px;top:calc(100% + 6px);display:grid;grid-template-columns:repeat(2,92px);gap:7px;padding:9px;border:1px solid rgba(71,85,105,.35);border-radius:8px;background:rgba(248,250,252,.99);box-shadow:0 8px 24px rgba(15,23,42,.24);pointer-events:auto;color:#334155;font:600 10px/1.2 system-ui,sans-serif}" +
+    ".derive-structure-precision-panel[hidden]{display:none}" +
+    ".derive-structure-precision-field{display:grid;gap:4px}" +
+    ".derive-structure-precision-input{width:100%;height:30px;box-sizing:border-box;padding:4px 7px;border:1px solid #cbd5e1;border-radius:5px;background:#fff;color:#0f172a;font:600 12px/1 ui-monospace,SFMono-Regular,Menlo,monospace;outline:none}" +
+    ".derive-structure-precision-actions{grid-column:1/-1;display:flex;justify-content:flex-end;gap:5px}" +
     ".derive-structure-resize-handle{position:absolute;right:-8px;top:50%;width:16px;height:34px;padding:0;transform:translateY(-50%);border:2px solid #4f46e5;border-radius:8px;background:#eef2ff;box-shadow:0 2px 8px rgba(15,23,42,.28);cursor:ew-resize;pointer-events:auto;touch-action:none}" +
     ".derive-structure-resize-handle.derive-structure-resize-left{left:-8px;right:auto}" +
     ".derive-structure-resize-handle:after{content:'';position:absolute;left:5px;top:8px;width:2px;height:14px;border-left:1px solid #4f46e5;border-right:1px solid #4f46e5}" +
@@ -692,6 +745,13 @@ interface ElReg {
     ".derive-structure-snap-guide.derive-structure-snap-left:after{left:auto;right:7px}" +
     ".derive-structure-height-snap-guide{position:absolute;display:none;height:0;border-top:1px solid rgba(79,70,229,.92);box-shadow:0 0 8px rgba(79,70,229,.52);pointer-events:none;z-index:2147483643}" +
     ".derive-structure-height-snap-guide:after{content:attr(data-label);position:absolute;left:var(--derive-structure-height-label-x,50%);top:7px;max-width:min(160px,calc(100vw - 24px));transform:translateX(-50%);overflow:hidden;text-overflow:ellipsis;padding:3px 6px;border-radius:4px;background:rgba(49,46,129,.96);color:#fff;font:700 10px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:nowrap}" +
+    ".derive-structure-drop-marker{position:absolute;display:none;height:0;border-top:3px solid #4f46e5;pointer-events:none;z-index:2147483645}" +
+    ".derive-structure-drop-marker:before,.derive-structure-drop-marker:after{content:'';position:absolute;top:-6px;width:9px;height:9px;border-radius:50%;background:#4f46e5}" +
+    ".derive-structure-drop-marker:before{left:-2px}.derive-structure-drop-marker:after{right:-2px}" +
+    ".derive-structure-drop-marker.derive-structure-drop-marker-x{width:0;height:auto;border-top:0;border-left:3px solid #4f46e5}" +
+    ".derive-structure-drop-marker.derive-structure-drop-marker-x:before,.derive-structure-drop-marker.derive-structure-drop-marker-x:after{left:-6px;right:auto}" +
+    ".derive-structure-drop-marker.derive-structure-drop-marker-x:before{top:-2px}.derive-structure-drop-marker.derive-structure-drop-marker-x:after{top:auto;bottom:-2px}" +
+    ".derive-structure-drop-marker-label{position:absolute;left:8px;bottom:7px;padding:3px 6px;border-radius:4px;background:rgba(49,46,129,.96);color:#fff;font:700 10px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:nowrap}" +
     ".derive-structure-remove{border-color:#fecaca;color:#b91c1c}" +
     ".derive-structure-toast{position:fixed;left:50%;bottom:18px;display:none;align-items:center;gap:10px;transform:translateX(-50%);padding:8px 10px 8px 13px;border-radius:8px;background:#0f172a;color:#fff;box-shadow:0 8px 24px rgba(15,23,42,.3);z-index:2147483646;font:600 12px/1.2 system-ui,sans-serif;pointer-events:auto}" +
     ".derive-structure-toast button{height:26px;padding:0 8px;border:1px solid rgba(255,255,255,.35);border-radius:5px;background:transparent;color:#fff;font:700 11px/24px system-ui,sans-serif;cursor:pointer}" +
@@ -703,7 +763,7 @@ interface ElReg {
     /* On a narrow canvas the contextual controls become a predictable editing shelf.
        Root selections use two rows; a nested selection reserves a third for Parent.
        Every action stays visible without document overflow, with touch-sized targets. */
-    "@media(max-width:640px){html.derive-structure-safe body{padding-bottom:calc(var(--derive-structure-body-padding-base,0px) + 118px + env(safe-area-inset-bottom))!important}html.derive-structure-parent-safe body{padding-bottom:calc(var(--derive-structure-body-padding-base,0px) + 166px + env(safe-area-inset-bottom))!important}.derive-structure-toolbar{position:fixed;left:8px;right:8px;top:auto!important;bottom:calc(8px + env(safe-area-inset-bottom))!important;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;max-width:none;padding:6px}.derive-structure-label{display:none}.derive-structure-button{width:100%;height:44px;min-width:0;padding:0 6px;font:650 12px/42px system-ui,sans-serif}.derive-structure-grip{padding-right:8px}.derive-structure-resize-handle{right:0;width:24px;height:44px}.derive-structure-resize-handle.derive-structure-resize-left{left:0}.derive-structure-resize-handle:after{left:9px;top:13px}.derive-structure-resize-height{bottom:0;width:44px;height:24px}.derive-structure-resize-height.derive-structure-resize-top{top:0;bottom:auto}.derive-structure-resize-height:after{left:13px;top:9px}.derive-structure-resize-corner{right:0;bottom:0;width:44px;height:44px}.derive-structure-resize-corner.derive-structure-resize-left{left:0}.derive-structure-resize-corner.derive-structure-resize-top{top:0;bottom:auto}.derive-structure-toast{bottom:calc(118px + env(safe-area-inset-bottom));max-width:calc(100vw - 16px)}html.derive-structure-parent-safe .derive-structure-toast{bottom:calc(166px + env(safe-area-inset-bottom))}}" +
+    "@media(max-width:640px){html.derive-structure-safe body{padding-bottom:calc(var(--derive-structure-body-padding-base,0px) + 166px + env(safe-area-inset-bottom))!important}html.derive-structure-parent-safe body{padding-bottom:calc(var(--derive-structure-body-padding-base,0px) + 214px + env(safe-area-inset-bottom))!important}.derive-structure-toolbar{position:fixed;left:8px;right:8px;top:auto!important;bottom:calc(8px + env(safe-area-inset-bottom))!important;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;max-width:none;padding:6px}.derive-structure-layout-panel,.derive-structure-precision-panel,.derive-structure-intent-panel{position:fixed;left:8px;right:8px;top:auto;bottom:calc(174px + env(safe-area-inset-bottom))}.derive-structure-layout-panel{grid-template-columns:repeat(3,minmax(0,1fr))}.derive-structure-precision-panel{grid-template-columns:repeat(2,minmax(0,1fr))}.derive-structure-intent-panel{width:auto}.derive-structure-label{display:none}.derive-structure-button{width:100%;height:44px;min-width:0;padding:0 6px;font:650 12px/42px system-ui,sans-serif}.derive-structure-grip{padding-right:8px}.derive-structure-resize-handle{right:0;width:24px;height:44px}.derive-structure-resize-handle.derive-structure-resize-left{left:0}.derive-structure-resize-handle:after{left:9px;top:13px}.derive-structure-resize-height{bottom:0;width:44px;height:24px}.derive-structure-resize-height.derive-structure-resize-top{top:0;bottom:auto}.derive-structure-resize-height:after{left:13px;top:9px}.derive-structure-resize-corner{right:0;bottom:0;width:44px;height:44px}.derive-structure-resize-corner.derive-structure-resize-left{left:0}.derive-structure-resize-corner.derive-structure-resize-top{top:0;bottom:auto}.derive-structure-toast{bottom:calc(166px + env(safe-area-inset-bottom));max-width:calc(100vw - 16px)}html.derive-structure-parent-safe .derive-structure-toast{bottom:calc(214px + env(safe-area-inset-bottom))}}" +
     "@media(prefers-reduced-motion:reduce){.derive-structure-dragging{transition:none!important;animation:none!important}}" +
     /* ...and again derived from the block's OWN text colour, which by definition
        contrasts with whatever the artifact painted behind it. The slate wash above
@@ -2422,20 +2482,41 @@ interface ElReg {
      round trip to the host would be neither. */
   const UNDO_LIMIT = 60
   const TYPING_BURST_MS = 900
+  interface StructuralSizingHistory {
+    el: HTMLElement
+    sizeName: string
+    size: string | null
+    widthName: string
+    width: string | null
+    heightName: string
+    height: string | null
+    style: string | null
+  }
+  interface StructuralAlignHistory {
+    el: HTMLElement
+    alignName: string
+    align: string | null
+    style: string | null
+  }
+  interface StructuralGapHistory {
+    el: HTMLElement
+    gapName: string
+    gap: string | null
+    style: string | null
+  }
+  interface StructuralIntentHistory {
+    sizing: StructuralSizingHistory[]
+    alignment: StructuralAlignHistory[]
+  }
   type HistoryEntry =
     | { kind: "html"; el: HTMLElement; html: string }
     | { kind: "style"; el: ResizableElement; style: string | null }
-    | {
-        kind: "structural-sizing"
-        el: HTMLElement
-        sizeName: string
-        size: string | null
-        widthName: string
-        width: string | null
-        heightName: string
-        height: string | null
-        style: string | null
-      }
+    | ({ kind: "structural-sizing" } & StructuralSizingHistory)
+    | { kind: "structural-sizing-batch"; entries: StructuralSizingHistory[] }
+    | { kind: "structural-align-batch"; entries: StructuralAlignHistory[] }
+    | ({ kind: "structural-intent" } & StructuralIntentHistory)
+    | ({ kind: "structural-gap" } & StructuralGapHistory)
+    | { kind: "structural-order"; region: HTMLElement; nodes: HTMLElement[] }
     | {
         kind: "placement"
         el: HTMLElement
@@ -2491,6 +2572,87 @@ interface ElReg {
     else entry.el.setAttribute(entry.widthName, entry.width)
     if (entry.height === null) entry.el.removeAttribute(entry.heightName)
     else entry.el.setAttribute(entry.heightName, entry.height)
+    restoreStyle(entry.el, entry.style)
+  }
+  const structuralSizingBatchOf = (
+    entries: readonly StructuralSizingHistory[],
+  ): Extract<HistoryEntry, { kind: "structural-sizing-batch" }> => ({
+    kind: "structural-sizing-batch",
+    entries: entries.map((entry) => {
+      const current = structuralSizingOf(
+        entry.el,
+        entry.sizeName,
+        entry.widthName,
+        entry.heightName,
+      )
+      const { kind: _kind, ...sizing } = current
+      return sizing
+    }),
+  })
+  const applyStructuralSizingBatch = (
+    entry: Extract<HistoryEntry, { kind: "structural-sizing-batch" }>,
+  ) => {
+    for (const sizing of entry.entries)
+      applyStructuralSizing({ kind: "structural-sizing", ...sizing })
+  }
+  const structuralOrderOf = (
+    region: HTMLElement,
+    nodes: readonly HTMLElement[],
+  ): Extract<HistoryEntry, { kind: "structural-order" }> => ({
+    kind: "structural-order",
+    region,
+    nodes: [...nodes],
+  })
+  const applyStructuralOrder = (entry: Extract<HistoryEntry, { kind: "structural-order" }>) => {
+    for (const node of entry.nodes)
+      if (node.parentElement === entry.region) entry.region.append(node)
+  }
+  const structuralAlignBatchOf = (
+    entries: readonly StructuralAlignHistory[],
+  ): Extract<HistoryEntry, { kind: "structural-align-batch" }> => ({
+    kind: "structural-align-batch",
+    entries: entries.map((entry) => ({
+      el: entry.el,
+      alignName: entry.alignName,
+      align: entry.el.getAttribute(entry.alignName),
+      style: rawStyle(entry.el),
+    })),
+  })
+  const applyStructuralAlignBatch = (
+    entry: Extract<HistoryEntry, { kind: "structural-align-batch" }>,
+  ) => {
+    for (const alignment of entry.entries) {
+      if (alignment.align === null) alignment.el.removeAttribute(alignment.alignName)
+      else alignment.el.setAttribute(alignment.alignName, alignment.align)
+      restoreStyle(alignment.el, alignment.style)
+    }
+  }
+  const structuralIntentHistoryOf = (
+    entry: StructuralIntentHistory,
+  ): Extract<HistoryEntry, { kind: "structural-intent" }> => ({
+    kind: "structural-intent",
+    sizing: structuralSizingBatchOf(entry.sizing).entries,
+    alignment: structuralAlignBatchOf(entry.alignment).entries,
+  })
+  const applyStructuralIntentHistory = (
+    entry: Extract<HistoryEntry, { kind: "structural-intent" }>,
+  ) => {
+    applyStructuralSizingBatch({ kind: "structural-sizing-batch", entries: entry.sizing })
+    applyStructuralAlignBatch({ kind: "structural-align-batch", entries: entry.alignment })
+  }
+  const structuralGapOf = (
+    el: HTMLElement,
+    gapName: string,
+  ): Extract<HistoryEntry, { kind: "structural-gap" }> => ({
+    kind: "structural-gap",
+    el,
+    gapName,
+    gap: el.getAttribute(gapName),
+    style: rawStyle(el),
+  })
+  const applyStructuralGap = (entry: Extract<HistoryEntry, { kind: "structural-gap" }>) => {
+    if (entry.gap === null) entry.el.removeAttribute(entry.gapName)
+    else entry.el.setAttribute(entry.gapName, entry.gap)
     restoreStyle(entry.el, entry.style)
   }
   const placementOf = (el: HTMLElement): Extract<HistoryEntry, { kind: "placement" }> => ({
@@ -2551,6 +2713,31 @@ interface ElReg {
       if (!document.contains(entry.el)) return
       to.push(structuralSizingOf(entry.el, entry.sizeName, entry.widthName, entry.heightName))
       applyStructuralSizing(entry)
+    } else if (entry.kind === "structural-sizing-batch") {
+      if (entry.entries.some(({ el }) => !document.contains(el))) return
+      to.push(structuralSizingBatchOf(entry.entries))
+      applyStructuralSizingBatch(entry)
+    } else if (entry.kind === "structural-align-batch") {
+      if (entry.entries.some(({ el }) => !document.contains(el))) return
+      to.push(structuralAlignBatchOf(entry.entries))
+      applyStructuralAlignBatch(entry)
+    } else if (entry.kind === "structural-intent") {
+      if ([...entry.sizing, ...entry.alignment].some(({ el }) => !document.contains(el))) return
+      to.push(structuralIntentHistoryOf(entry))
+      applyStructuralIntentHistory(entry)
+    } else if (entry.kind === "structural-gap") {
+      if (!document.contains(entry.el)) return
+      to.push(structuralGapOf(entry.el, entry.gapName))
+      applyStructuralGap(entry)
+    } else if (entry.kind === "structural-order") {
+      if (!document.contains(entry.region)) return
+      const tracked = new Set(entry.nodes)
+      const current = Array.from(entry.region.children).filter(
+        (node): node is HTMLElement => node instanceof HTMLElement && tracked.has(node),
+      )
+      to.push(structuralOrderOf(entry.region, current))
+      applyStructuralOrder(entry)
+      for (const node of entry.nodes) syncStructuralPlacement(node)
     } else if (!document.contains(entry.el)) return
     else if (entry.kind === "html") {
       to.push({ kind: "html", el: entry.el, html: entry.el.innerHTML })
@@ -3141,6 +3328,10 @@ interface ElReg {
       // Arm the unsaved-work guard on the first movement, before the settled count.
       if (lastDirty <= 0) {
         lastDirty = 1
+        // This optimistic state is intentionally partial. Invalidate the full-state
+        // dedupe key so an immediate cancel/Undo can restore Redo even when that
+        // full state happens to match one posted earlier in the session.
+        lastState = ""
         post({ type: "edit-state", dirty: 1, canUndo: true })
       }
       paintResizeUi()
@@ -3167,7 +3358,7 @@ interface ElReg {
 
   /* ── Authored structural regions ─────────────────────────────────────────────
      This editor is deliberately capability-based: no data attributes, no tools.
-     A stack region owns only its direct data-derive-node children. The live DOM is
+     An ordered stack or row owns only its direct data-derive-node children. The live DOM is
      an interaction preview; collect emits stable-id intent and the server projects
      that intent back into exact source bytes. */
   const STRUCTURE_SCHEMA = "derive.structural-edit/v1" as const
@@ -3175,6 +3366,8 @@ interface ElReg {
   const STRUCTURE_ID = /^[A-Za-z][A-Za-z0-9_-]{0,127}$/
   type StructureSize = "compact" | "standard" | "full"
   const STRUCTURE_SIZES = new Set<StructureSize>(["compact", "standard", "full"])
+  type StructureLayout = "stack" | "row"
+  const STRUCTURE_LAYOUTS = new Set<StructureLayout>(["stack", "row"])
   type StructurePrefix = "data-derive" | "data-derive-runtime"
   const structureAttribute = (prefix: StructurePrefix, name: string) => `${prefix}-${name}`
   const structureNodeSelector = "[data-derive-node],[data-derive-runtime-node]"
@@ -3182,10 +3375,12 @@ interface ElReg {
   interface StructureNode {
     el: HTMLElement
     id: string
+    kind: string
     prefix: StructurePrefix
     origSize: string | null
     origWidth: string | null
     origHeight: string | null
+    origAlign: string | null
     origStyle: string | null
     origTabindex: string | null
   }
@@ -3193,21 +3388,36 @@ interface ElReg {
     el: HTMLElement
     id: string
     prefix: StructurePrefix
+    layout: StructureLayout
     nodes: StructureNode[]
     owner: StructureNode | null
     origOrder: string[]
+    origGap: string | null
+    origStyle: string | null
   }
   let structureRegions: StructureRegion[] = []
   let structureRegionByNode = new Map<StructureNode, StructureRegion>()
   let structureNodeByElement = new Map<HTMLElement, StructureNode>()
   let structureSelected: StructureNode | null = null
+  let structureSelection: StructureNode[] = []
+  let structurePointerExtend = false
+  let structurePointerSelectionHandled = false
   let structureExpectedRemoved = new Set<StructureNode>()
   let structureObserver: MutationObserver | null = null
   let structureToastTimer = 0
   let structureSafeAreaOn = false
+  let structureLayoutOpen = false
+  let structurePrecisionOpen = false
+  let structureIntentOpen = false
+  let structureIntentCommand: StructuralIntentCommand = "balance"
+  let structureInteraction = idleStructuralInteraction()
 
   const structureBox = document.createElement("div")
   structureBox.className = "derive-edit-ui derive-structure-box"
+  const updateStructureInteraction = (event: StructuralInteractionEvent) => {
+    structureInteraction = transitionStructuralInteraction(structureInteraction, event)
+    structureBox.setAttribute("data-interaction-state", structureInteraction.phase)
+  }
   const structureToolbar = document.createElement("div")
   structureToolbar.className = "derive-structure-toolbar"
   structureToolbar.setAttribute("role", "toolbar")
@@ -3226,6 +3436,77 @@ interface ElReg {
   structureLabel.className = "derive-structure-label"
   const structureEarlier = structureButton("↑", "Move earlier (Option+Up)")
   const structureLater = structureButton("↓", "Move later (Option+Down)")
+  const structureSelectAll = structureButton("All", "Select all siblings", "derive-structure-batch")
+  const structureSameWidth = structureButton(
+    "Same W",
+    "Match selected widths to the active element",
+    "derive-structure-batch",
+  )
+  const structureSameHeight = structureButton(
+    "Same H",
+    "Match selected heights to the active element",
+    "derive-structure-batch",
+  )
+  const structureFitHeight = structureButton(
+    "Fit H",
+    "Fit selected heights to their content",
+    "derive-structure-batch",
+  )
+  const structureDistribute = structureButton("Space", "Distribute all siblings vertically")
+  const structureHealth = structureButton(
+    "Check",
+    "Check layout health and suggest the nearest safe fix",
+    "derive-structure-batch",
+  )
+  const structureIntent = structureButton(
+    "Design",
+    "Preview a safe design-intent plan",
+    "derive-structure-batch",
+  )
+  const structureAlignStart = structureButton("Start", "Align selected to start")
+  const structureAlignCenter = structureButton("Center", "Align selected to center")
+  const structureAlignEnd = structureButton("End", "Align selected to end")
+  const structureLayout = structureButton("Layout", "Open selected layout actions")
+  const structureLayoutPanel = document.createElement("div")
+  structureLayoutPanel.className = "derive-structure-layout-panel"
+  structureLayoutPanel.hidden = true
+  structureLayoutPanel.append(
+    structureSameWidth,
+    structureSameHeight,
+    structureFitHeight,
+    structureDistribute,
+    structureHealth,
+    structureIntent,
+    structureAlignStart,
+    structureAlignCenter,
+    structureAlignEnd,
+  )
+  const structureIntentPanel = document.createElement("div")
+  structureIntentPanel.className = "derive-structure-intent-panel"
+  structureIntentPanel.hidden = true
+  const structureIntentVariants = document.createElement("div")
+  structureIntentVariants.className = "derive-structure-intent-variants"
+  const structureIntentBalance = structureButton("Balance", "Balance on the nearest local rail")
+  const structureIntentEmphasize = structureButton(
+    "Emphasize active",
+    "Make the active element dominant",
+  )
+  structureIntentVariants.append(structureIntentBalance, structureIntentEmphasize)
+  const structureIntentReceipt = document.createElement("div")
+  structureIntentReceipt.className = "derive-structure-intent-receipt"
+  const structureIntentReceiptTitle = document.createElement("b")
+  const structureIntentReceiptSummary = document.createElement("span")
+  structureIntentReceipt.append(structureIntentReceiptTitle, structureIntentReceiptSummary)
+  const structureIntentActions = document.createElement("div")
+  structureIntentActions.className = "derive-structure-intent-actions"
+  const structureIntentCancel = structureButton("Cancel", "Cancel design intent preview")
+  const structureIntentApply = structureButton("Apply plan", "Apply this design intent plan")
+  structureIntentActions.append(structureIntentCancel, structureIntentApply)
+  structureIntentPanel.append(
+    structureIntentVariants,
+    structureIntentReceipt,
+    structureIntentActions,
+  )
   const structureParent = structureButton(
     "Parent",
     "Select containing group (Escape)",
@@ -3235,6 +3516,41 @@ interface ElReg {
   const structureCompact = structureButton("S", "Compact size", "derive-structure-size")
   const structureStandard = structureButton("M", "Standard size", "derive-structure-size")
   const structureFull = structureButton("L", "Full size", "derive-structure-size")
+  const structureExact = structureButton("Exact", "Set exact width and height")
+  const structurePrecisionPanel = document.createElement("form")
+  structurePrecisionPanel.className = "derive-structure-precision-panel"
+  structurePrecisionPanel.hidden = true
+  const structurePrecisionField = (label: string, suffix: string) => {
+    const field = document.createElement("label")
+    field.className = "derive-structure-precision-field"
+    const title = document.createElement("span")
+    title.textContent = `${label} (${suffix})`
+    const input = document.createElement("input")
+    input.className = "derive-structure-precision-input"
+    input.type = "number"
+    input.required = true
+    field.append(title, input)
+    return { field, input }
+  }
+  const structurePrecisionWidth = structurePrecisionField("Width", "%")
+  const structurePrecisionHeight = structurePrecisionField("Height", "px")
+  structurePrecisionHeight.input.required = false
+  structurePrecisionHeight.input.placeholder = "Auto"
+  structurePrecisionWidth.input.min = String(MIN_STRUCTURAL_WIDTH_PCT)
+  structurePrecisionWidth.input.max = String(MAX_STRUCTURAL_WIDTH_PCT)
+  structurePrecisionHeight.input.min = String(MIN_STRUCTURAL_HEIGHT_PX)
+  structurePrecisionHeight.input.max = String(MAX_STRUCTURAL_HEIGHT_PX)
+  const structurePrecisionActions = document.createElement("div")
+  structurePrecisionActions.className = "derive-structure-precision-actions"
+  const structurePrecisionCancel = structureButton("Cancel", "Cancel exact sizing")
+  const structurePrecisionApply = structureButton("Apply", "Apply exact width and height")
+  structurePrecisionApply.type = "submit"
+  structurePrecisionActions.append(structurePrecisionCancel, structurePrecisionApply)
+  structurePrecisionPanel.append(
+    structurePrecisionWidth.field,
+    structurePrecisionHeight.field,
+    structurePrecisionActions,
+  )
   const structureRemove = structureButton(
     "Remove",
     "Remove element (Delete)",
@@ -3245,12 +3561,18 @@ interface ElReg {
     structureLabel,
     structureEarlier,
     structureLater,
+    structureSelectAll,
+    structureLayout,
     structureParent,
     structureAuto,
     structureCompact,
     structureStandard,
     structureFull,
+    structureExact,
     structureRemove,
+    structureLayoutPanel,
+    structurePrecisionPanel,
+    structureIntentPanel,
   )
   const structureResizeHandle = document.createElement("button")
   structureResizeHandle.type = "button"
@@ -3281,6 +3603,11 @@ interface ElReg {
   structureSnapGuide.className = "derive-edit-ui derive-structure-snap-guide"
   const structureHeightSnapGuide = document.createElement("div")
   structureHeightSnapGuide.className = "derive-edit-ui derive-structure-height-snap-guide"
+  const structureDropMarker = document.createElement("div")
+  structureDropMarker.className = "derive-edit-ui derive-structure-drop-marker"
+  const structureDropMarkerLabel = document.createElement("span")
+  structureDropMarkerLabel.className = "derive-structure-drop-marker-label"
+  structureDropMarker.append(structureDropMarkerLabel)
   structureBox.append(
     structureToolbar,
     structureResizeHandle,
@@ -3292,12 +3619,20 @@ interface ElReg {
   structureToast.className = "derive-edit-ui derive-structure-toast"
   structureToast.setAttribute("role", "status")
   const structureToastText = document.createElement("span")
+  const structureToastAction = document.createElement("button")
+  structureToastAction.type = "button"
+  structureToastAction.hidden = true
   const structureToastUndo = document.createElement("button")
   structureToastUndo.type = "button"
   structureToastUndo.textContent = "Undo"
-  structureToast.append(structureToastText, structureToastUndo)
+  structureToast.append(structureToastText, structureToastAction, structureToastUndo)
+  const structureMultiLayer = document.createElement("div")
+  structureMultiLayer.className = "derive-edit-ui"
+  const structureMultiBoxes = new Map<HTMLElement, HTMLDivElement>()
   ;(document.body || document.documentElement).append(
     structureBox,
+    structureMultiLayer,
+    structureDropMarker,
     structureSnapGuide,
     structureHeightSnapGuide,
     structureToast,
@@ -3419,7 +3754,7 @@ interface ElReg {
     if (
       !document.contains(region.el) ||
       region.el.getAttribute(structureAttribute(region.prefix, "region")) !== region.id ||
-      region.el.getAttribute(structureAttribute(region.prefix, "layout")) !== "stack" ||
+      region.el.getAttribute(structureAttribute(region.prefix, "layout")) !== region.layout ||
       region.el.getAttribute(structureAttribute(region.prefix, "owner")) !==
         (region.owner?.id ?? null) ||
       (region.owner?.el ?? null) !== (ownerEl instanceof HTMLElement ? ownerEl : null)
@@ -3479,15 +3814,26 @@ interface ElReg {
       const hasCanonical = regionEl.hasAttribute("data-derive-region")
       const hasRuntime = regionEl.hasAttribute("data-derive-runtime-region")
       const prefix: StructurePrefix = hasRuntime ? "data-derive-runtime" : "data-derive"
-      if (
-        hasCanonical === hasRuntime ||
-        regionEl.getAttribute(structureAttribute(prefix, "layout")) !== "stack"
-      ) {
+      const layout = regionEl.getAttribute(structureAttribute(prefix, "layout"))
+      if (hasCanonical === hasRuntime || !STRUCTURE_LAYOUTS.has(layout as StructureLayout)) {
         invalid = true
         continue
       }
       const id = regionEl.getAttribute(structureAttribute(prefix, "region")) || ""
       if (!STRUCTURE_ID.test(id) || regionIds.has(id)) {
+        invalid = true
+        continue
+      }
+      const gap = regionEl.getAttribute(structureAttribute(prefix, "gap"))
+      const customGap = regionEl.style.getPropertyValue(STRUCTURAL_GAP_PROPERTY).trim()
+      if (
+        (gap !== null &&
+          (!/^\d+$/.test(gap) ||
+            Number.parseInt(gap, 10) < MIN_STRUCTURAL_GAP_PX ||
+            Number.parseInt(gap, 10) > MAX_STRUCTURAL_GAP_PX ||
+            customGap !== `${gap}px`)) ||
+        (gap === null && !!customGap)
+      ) {
         invalid = true
         continue
       }
@@ -3549,15 +3895,26 @@ interface ElReg {
           valid = false
           break
         }
+        const align = child.getAttribute(structureAttribute(prefix, "align"))
+        const customAlign = child.style.getPropertyValue(STRUCTURAL_ALIGN_PROPERTY).trim()
+        if (
+          (align !== null && (!/^(?:start|center|end)$/.test(align) || customAlign !== align)) ||
+          (align === null && !!customAlign)
+        ) {
+          valid = false
+          break
+        }
         nodeIds.add(nodeId)
         handledNodes.add(child)
         nodes.push({
           el: child,
           id: nodeId,
+          kind: child.getAttribute(structureAttribute(prefix, "kind")) || "element",
           prefix,
           origSize: size,
           origWidth: width,
           origHeight: height,
+          origAlign: align,
           origStyle: child.getAttribute("style"),
           origTabindex: child.getAttribute("tabindex"),
         })
@@ -3571,9 +3928,12 @@ interface ElReg {
         el: regionEl,
         id,
         prefix,
+        layout: layout as StructureLayout,
         nodes,
         owner: null,
         origOrder: nodes.map((node) => node.id),
+        origGap: gap,
+        origStyle: rawStyle(regionEl),
       })
     }
     for (const node of document.querySelectorAll(structureNodeSelector))
@@ -3605,6 +3965,8 @@ interface ElReg {
   const structureDirtyCount = (): number => {
     let dirty = 0
     for (const region of activeStructureRegions()) {
+      if (region.el.getAttribute(structureAttribute(region.prefix, "gap")) !== region.origGap)
+        dirty++
       const current = connectedStructureNodes(region)
       const currentIds = current.map((node) => node.id)
       const currentSet = new Set(currentIds)
@@ -3615,7 +3977,8 @@ interface ElReg {
         if (
           node.el.getAttribute(structureAttribute(node.prefix, "size")) !== node.origSize ||
           node.el.getAttribute(structureAttribute(node.prefix, "width")) !== node.origWidth ||
-          node.el.getAttribute(structureAttribute(node.prefix, "height")) !== node.origHeight
+          node.el.getAttribute(structureAttribute(node.prefix, "height")) !== node.origHeight ||
+          node.el.getAttribute(structureAttribute(node.prefix, "align")) !== node.origAlign
         )
           dirty++
     }
@@ -3673,7 +4036,7 @@ interface ElReg {
     !style.gridAutoFlow.includes("column") &&
     (style.gridTemplateColumns === "none" || cssTrackCount(style.gridTemplateColumns) === 1)
   const structureStackLayoutResizable = (node: StructureNode, region: StructureRegion): boolean => {
-    if (!horizontalStructureWritingMode(node, region)) return false
+    if (region.layout !== "stack" || !horizontalStructureWritingMode(node, region)) return false
     const regionStyle = getComputedStyle(region.el)
     const nodeStyle = getComputedStyle(node.el)
     if (!/^(?:static|relative)$/.test(nodeStyle.position)) return false
@@ -3697,18 +4060,37 @@ interface ElReg {
     }
     return true
   }
+  const structureRowLayoutResizable = (node: StructureNode, region: StructureRegion): boolean => {
+    if (region.layout !== "row" || !horizontalStructureWritingMode(node, region)) return false
+    const regionStyle = getComputedStyle(region.el)
+    const nodeStyle = getComputedStyle(node.el)
+    if (
+      !regionStyle.display.includes("flex") ||
+      regionStyle.flexDirection !== "row" ||
+      regionStyle.flexWrap !== "nowrap" ||
+      !/^(?:static|relative)$/.test(nodeStyle.position)
+    )
+      return false
+    for (const child of connectedStructureNodes(region)) {
+      if (!structureNodeAvailable(child)) continue
+      const style = getComputedStyle(child.el)
+      if (!/^(?:static|relative)$/.test(style.position) || style.float !== "none") return false
+    }
+    return true
+  }
   const structureWidthAxisFor = (node: StructureNode, region: StructureRegion) => {
-    if (!structureStackLayoutResizable(node, region)) return null
+    if (!structureStackLayoutResizable(node, region) && !structureRowLayoutResizable(node, region))
+      return null
     return structureResizeAxisFor(node, region)
   }
   const structureHeightAxisFor = (node: StructureNode, region: StructureRegion) => {
-    if (!structureStackLayoutResizable(node, region)) return null
+    const row = structureRowLayoutResizable(node, region)
+    if (!row && !structureStackLayoutResizable(node, region)) return null
     const regionStyle = getComputedStyle(region.el)
     const nodeStyle = getComputedStyle(node.el)
     if (regionStyle.display.includes("flex")) {
-      if (regionStyle.flexDirection !== "column") return null
-      const alignment = regionStyle.justifyContent
-      if (!/^(?:normal|start|flex-start)$/.test(alignment)) return null
+      const alignment = row ? regionStyle.alignItems : regionStyle.justifyContent
+      if (!/^(?:normal|start|flex-start|stretch)$/.test(alignment)) return null
       return structuralBlockResizeAxis(0, 1)
     }
     if (regionStyle.display.includes("grid")) {
@@ -3721,11 +4103,68 @@ interface ElReg {
     }
     return structuralBlockResizeAxis(0, 1)
   }
+  const structureCrossAxisAlignAvailable = (
+    node: StructureNode,
+    region: StructureRegion,
+  ): boolean => {
+    const regionStyle = getComputedStyle(region.el)
+    const nodeStyle = getComputedStyle(node.el)
+    return (
+      horizontalStructureWritingMode(node, region) &&
+      regionStyle.display.includes("flex") &&
+      ((region.layout === "stack" && regionStyle.flexDirection === "column") ||
+        (region.layout === "row" && regionStyle.flexDirection === "row")) &&
+      regionStyle.flexWrap === "nowrap" &&
+      /^(?:static|relative)$/.test(nodeStyle.position) &&
+      nodeStyle.float === "none"
+    )
+  }
+  const structureDistributionGap = (region: StructureRegion): number | null => {
+    if (region.layout !== "stack") return null
+    const nodes = connectedStructureNodes(region).filter((node) => structureNodeAvailable(node))
+    if (nodes.length < 3 || selectedStructureNodes(region).length !== nodes.length) return null
+    const regionStyle = getComputedStyle(region.el)
+    if (
+      !regionStyle.display.includes("flex") ||
+      regionStyle.flexDirection !== "column" ||
+      regionStyle.flexWrap !== "nowrap" ||
+      !/^(?:normal|start|flex-start)$/.test(regionStyle.justifyContent)
+    )
+      return null
+    for (const node of nodes) {
+      const style = getComputedStyle(node.el)
+      if (
+        !structureTransformResizable(node) ||
+        !/^(?:static|relative)$/.test(style.position) ||
+        style.float !== "none" ||
+        Math.abs(Number.parseFloat(style.marginTop) || 0) > 0.5 ||
+        Math.abs(Number.parseFloat(style.marginBottom) || 0) > 0.5
+      )
+        return null
+    }
+    const contentHeight =
+      region.el.clientHeight -
+      (Number.parseFloat(regionStyle.paddingTop) || 0) -
+      (Number.parseFloat(regionStyle.paddingBottom) || 0)
+    const gap = Math.round(
+      (contentHeight - nodes.reduce((sum, node) => sum + node.el.offsetHeight, 0)) /
+        (nodes.length - 1),
+    )
+    const currentGap = Number.parseFloat(regionStyle.rowGap)
+    return Number.isInteger(gap) &&
+      gap >= MIN_STRUCTURAL_GAP_PX &&
+      gap <= MAX_STRUCTURAL_GAP_PX &&
+      Math.abs(gap - currentGap) > 1
+      ? gap
+      : null
+  }
   const structureWidthName = (node: StructureNode): string =>
     structureAttribute(node.prefix, "width")
   const structureSizeName = (node: StructureNode): string => structureAttribute(node.prefix, "size")
   const structureHeightName = (node: StructureNode): string =>
     structureAttribute(node.prefix, "height")
+  const structureAlignName = (node: StructureNode): string =>
+    structureAttribute(node.prefix, "align")
   const currentStructureWidth = (node: StructureNode): number | null => {
     const raw = node.el.getAttribute(structureWidthName(node))
     if (raw === null) return null
@@ -3758,7 +4197,11 @@ interface ElReg {
   const clearEmptyStyle = (el: HTMLElement) => {
     if (!(el.getAttribute("style") || "").trim()) el.removeAttribute("style")
   }
-  const restoreStructureTransition = (node: StructureNode, value: string, priority: string) => {
+  const restoreStructureTransition = (
+    node: { el: HTMLElement },
+    value: string,
+    priority: string,
+  ) => {
     if (value) node.el.style.setProperty("transition", value, priority)
     else node.el.style.removeProperty("transition")
     clearEmptyStyle(node.el)
@@ -3794,6 +4237,17 @@ interface ElReg {
     node.el.setAttribute(heightName, String(height))
     node.el.style.setProperty(STRUCTURAL_HEIGHT_PROPERTY, `${height}px`)
   }
+  const applyStructureAlign = (node: StructureNode, align: StructuralAlignment | null) => {
+    const alignName = structureAlignName(node)
+    if (align === null) {
+      node.el.removeAttribute(alignName)
+      node.el.style.removeProperty(STRUCTURAL_ALIGN_PROPERTY)
+      clearEmptyStyle(node.el)
+      return
+    }
+    node.el.setAttribute(alignName, align)
+    node.el.style.setProperty(STRUCTURAL_ALIGN_PROPERTY, align)
+  }
   const structureWidthFits = (
     node: StructureNode,
     region: StructureRegion,
@@ -3811,7 +4265,49 @@ interface ElReg {
     const clipsContent = node.el.scrollHeight > node.el.clientHeight + 1
     return Math.abs(rendered - height) <= tolerance && !clipsContent
   }
-  const structureHeightChainFits = (node: StructureNode): boolean => {
+  interface StructureHeightClipOverflow {
+    top: number
+    bottom: number
+  }
+  type StructureHeightChainBaseline = Map<HTMLElement, StructureHeightClipOverflow>
+  const structureHeightClipOverflow = (
+    node: StructureNode,
+    ancestor: HTMLElement,
+  ): StructureHeightClipOverflow => {
+    const ancestorRect = ancestor.getBoundingClientRect()
+    const screenScaleY = ancestor.offsetHeight > 0 ? ancestorRect.height / ancestor.offsetHeight : 1
+    const clipTop = ancestorRect.top + ancestor.clientTop * screenScaleY
+    const clipBottom = clipTop + ancestor.clientHeight * screenScaleY
+    const footprint = [node.el, ...node.el.querySelectorAll<HTMLElement>("*")].reduce(
+      (bounds, element) => {
+        const rect = element.getBoundingClientRect()
+        if (!(rect.width > 0 || rect.height > 0)) return bounds
+        return {
+          top: Math.min(bounds.top, rect.top),
+          bottom: Math.max(bounds.bottom, rect.bottom),
+        }
+      },
+      { top: node.el.getBoundingClientRect().top, bottom: node.el.getBoundingClientRect().bottom },
+    )
+    return {
+      top: Math.max(0, clipTop - footprint.top),
+      bottom: Math.max(0, footprint.bottom - clipBottom),
+    }
+  }
+  const structureHeightChainBaseline = (node: StructureNode): StructureHeightChainBaseline => {
+    const baseline: StructureHeightChainBaseline = new Map()
+    for (let ancestor = node.el.parentElement; ancestor && ancestor !== document.body; ) {
+      const overflowY = getComputedStyle(ancestor).overflowY
+      if (overflowY === "hidden" || overflowY === "clip")
+        baseline.set(ancestor, structureHeightClipOverflow(node, ancestor))
+      ancestor = ancestor.parentElement
+    }
+    return baseline
+  }
+  const structureHeightChainFits = (
+    node: StructureNode,
+    baseline?: StructureHeightChainBaseline,
+  ): boolean => {
     for (
       let current: StructureNode | null = node;
       current;
@@ -3825,11 +4321,11 @@ interface ElReg {
     // when that ancestor does not participate in Derive's sizing contract.
     for (let ancestor = node.el.parentElement; ancestor && ancestor !== document.body; ) {
       const overflowY = getComputedStyle(ancestor).overflowY
-      if (
-        (overflowY === "hidden" || overflowY === "clip") &&
-        ancestor.scrollHeight > ancestor.clientHeight + 1
-      )
-        return false
+      if (overflowY === "hidden" || overflowY === "clip") {
+        const overflow = structureHeightClipOverflow(node, ancestor)
+        const before = baseline?.get(ancestor) ?? { top: 0, bottom: 0 }
+        if (overflow.top > before.top + 1 || overflow.bottom > before.bottom + 1) return false
+      }
       ancestor = ancestor.parentElement
     }
     return true
@@ -3855,10 +4351,93 @@ interface ElReg {
     root.classList.toggle("derive-structure-parent-safe", shouldReserve && hasParent)
   }
 
+  const paintStructureMultiSelection = () => {
+    const activeRegion = structureSelected ? regionForStructureNode(structureSelected) : null
+    const selected = new Set(
+      structureSelection
+        .filter(
+          (node) =>
+            node !== structureSelected &&
+            structureNodeAvailable(node) &&
+            regionForStructureNode(node) === activeRegion,
+        )
+        .map((node) => node.el),
+    )
+    for (const [el, box] of structureMultiBoxes)
+      if (!selected.has(el)) {
+        box.remove()
+        structureMultiBoxes.delete(el)
+      }
+    for (const el of selected) {
+      let box = structureMultiBoxes.get(el)
+      if (!box) {
+        box = document.createElement("div")
+        box.className = "derive-structure-multi-box"
+        structureMultiLayer.append(box)
+        structureMultiBoxes.set(el, box)
+      }
+      const rect = el.getBoundingClientRect()
+      box.style.display = rect.width || rect.height ? "block" : "none"
+      box.style.left = `${rect.left + (window.scrollX || 0)}px`
+      box.style.top = `${rect.top + scrollTop()}px`
+      box.style.width = `${rect.width}px`
+      box.style.height = `${rect.height}px`
+    }
+  }
+
+  const structureCapability = (
+    capability: StructuralCapability,
+    selected: StructureNode,
+    region: StructureRegion,
+    selection: readonly StructureNode[],
+    nodes = connectedStructureNodes(region),
+  ) =>
+    evaluateStructuralCapability(capability, {
+      selectionCount: selection.length,
+      siblingCount: nodes.length,
+      transformed: selection.some((node) => !structureTransformResizable(node)),
+      widthAxis: selection.every((node) => !!structureWidthAxisFor(node, region)),
+      heightAxis: selection.every((node) => !!structureHeightAxisFor(node, region)),
+      alignAxis: selection.every((node) => structureCrossAxisAlignAvailable(node, region)),
+      boundedStack: structureDistributionGap(region) !== null,
+      hasFixedHeight: selection.some((node) => currentStructureHeight(node) !== null),
+      activeId: selected.id,
+    })
+
+  const applyCapabilityToButton = (
+    button: HTMLButtonElement,
+    capability: ReturnType<typeof structureCapability>,
+    availableTitle: string,
+  ) => {
+    button.disabled = !capability.available
+    button.title = capability.available ? availableTitle : capability.reason.message
+    button.setAttribute("aria-label", button.title)
+  }
+
+  const structureIntentPlanFor = (
+    command: StructuralIntentCommand,
+    selected: StructureNode,
+    region: StructureRegion,
+    selection: readonly StructureNode[],
+  ): StructuralIntentPlan | null => {
+    const contentWidth = structureContentWidth(region)
+    if (!(contentWidth > 0)) return null
+    return planStructuralIntent(command, {
+      selectedIds: selection.map(({ id }) => id),
+      activeId: selected.id,
+      widths: selection.map((node) => Math.round((node.el.offsetWidth / contentWidth) * 100)),
+      fixedHeightIds: selection
+        .filter((node) => currentStructureHeight(node) !== null)
+        .map(({ id }) => id),
+      canAlign: selection.every((node) => structureCrossAxisAlignAvailable(node, region)),
+    })
+  }
+
   const paintStructureUi = () => {
     const selected = structureSelected
     const parent = selected ? parentStructureNode(selected) : null
     syncStructureSafeArea(!!parent)
+    paintStructureMultiSelection()
     if (!editOn || !selected || !structureNodeAvailable(selected)) {
       structureBox.style.display = "none"
       if (!structureResizeDrag) {
@@ -3878,7 +4457,6 @@ interface ElReg {
       return
     }
     const nodes = connectedStructureNodes(region)
-    const index = nodes.indexOf(selected)
     const size = selected.el.getAttribute(structureAttribute(selected.prefix, "size"))
     const width = currentStructureWidth(selected)
     const height = currentStructureHeight(selected)
@@ -3888,10 +4466,85 @@ interface ElReg {
     structureBox.style.width = `${rect.width}px`
     structureBox.style.height = `${rect.height}px`
     structureBox.classList.toggle("derive-structure-below", rect.top < 54)
-    structureLabel.textContent = selected.id
+    const selection = structureSelection.filter(
+      (node) => regionForStructureNode(node) === region && structureNodeAvailable(node),
+    )
+    const selectionSet = new Set(selection)
+    structureLabel.textContent =
+      selection.length > 1 ? `${selection.length} selected · ${selected.id}` : selected.id
     structureParent.hidden = !parent
-    structureEarlier.disabled = index <= 0
-    structureLater.disabled = index < 0 || index >= nodes.length - 1
+    structureGrip.disabled = selection.length > 1
+    structureGrip.title =
+      selection.length > 1 ? "Use the arrow controls to reorder this selection" : "Drag to reorder"
+    structureEarlier.disabled = !nodes.some(
+      (node, nodeIndex) =>
+        selectionSet.has(node) &&
+        nodeIndex > 0 &&
+        !selectionSet.has(nodes[nodeIndex - 1] as StructureNode),
+    )
+    structureLater.disabled = !nodes.some(
+      (node, nodeIndex) =>
+        selectionSet.has(node) &&
+        nodeIndex < nodes.length - 1 &&
+        !selectionSet.has(nodes[nodeIndex + 1] as StructureNode),
+    )
+    structureSelectAll.disabled = nodes.length < 2 || selection.length === nodes.length
+    structureLayout.hidden = selection.length < 2
+    if (selection.length < 2) {
+      structureLayoutOpen = false
+      structureIntentOpen = false
+    }
+    if (selection.length > 1) structurePrecisionOpen = false
+    structureLayout.setAttribute("aria-expanded", String(structureLayoutOpen))
+    structureLayoutPanel.hidden = !structureLayoutOpen || selection.length < 2
+    const intentPlan = structureIntentPlanFor(structureIntentCommand, selected, region, selection)
+    structureIntent.setAttribute("aria-expanded", String(structureIntentOpen))
+    structureIntentPanel.hidden = !structureIntentOpen || !intentPlan
+    structureIntentBalance.setAttribute(
+      "aria-pressed",
+      String(structureIntentCommand === "balance"),
+    )
+    structureIntentEmphasize.setAttribute(
+      "aria-pressed",
+      String(structureIntentCommand === "emphasize-active"),
+    )
+    structureIntentEmphasize.textContent =
+      selected.kind === "visual" || selected.kind === "image"
+        ? "Emphasize visual"
+        : "Emphasize active"
+    structureIntentApply.disabled = !intentPlan
+    structureIntentReceiptTitle.textContent = intentPlan?.title ?? "No safe plan"
+    structureIntentReceiptSummary.textContent = intentPlan?.summary ?? "Selection is not eligible"
+    const alignCapability = structureCapability("align", selected, region, selection, nodes)
+    for (const [button, title] of [
+      [structureAlignStart, "Align selected to start"],
+      [structureAlignCenter, "Align selected to center"],
+      [structureAlignEnd, "Align selected to end"],
+    ] as const)
+      applyCapabilityToButton(button, alignCapability, title)
+    applyCapabilityToButton(
+      structureFitHeight,
+      structureCapability("fit-height", selected, region, selection, nodes),
+      "Fit selected heights to their content",
+    )
+    applyCapabilityToButton(
+      structureSameWidth,
+      structureCapability("equalize-width", selected, region, selection, nodes),
+      "Match selected widths to the active element",
+    )
+    applyCapabilityToButton(
+      structureSameHeight,
+      structureCapability("equalize-height", selected, region, selection, nodes),
+      "Match selected heights to the active element",
+    )
+    applyCapabilityToButton(
+      structureDistribute,
+      structureCapability("distribute", selected, region, selection, nodes),
+      "Distribute all siblings vertically",
+    )
+    structureRemove.disabled = selection.length > 1
+    structureRemove.title =
+      selection.length > 1 ? "Remove one element at a time" : "Remove element (Delete)"
     structureAuto.setAttribute("aria-pressed", String(size === null && width === null))
     structureCompact.setAttribute("aria-pressed", String(size === "compact"))
     structureStandard.setAttribute("aria-pressed", String(size === "standard"))
@@ -3919,12 +4572,38 @@ interface ElReg {
       "aria-description",
       `${reportedWidth}% wide and ${reportedHeight} pixels high`,
     )
-    const transformDisabled = !structureTransformResizable(selected)
     const widthAxis = structureWidthAxisFor(selected, region)
     const heightAxis = structureHeightAxisFor(selected, region)
-    structureResizeHandle.disabled = transformDisabled || !widthAxis
-    structureHeightHandle.disabled = transformDisabled || !heightAxis
-    structureCornerHandle.disabled = transformDisabled || !widthAxis || !heightAxis
+    const batchSelected = selection.length > 1
+    structureExact.hidden = batchSelected
+    structureExact.setAttribute("aria-expanded", String(structurePrecisionOpen))
+    structurePrecisionPanel.hidden = !structurePrecisionOpen || batchSelected
+    structureAuto.disabled = batchSelected
+    for (const [button, availableTitle] of [
+      [structureCompact, "Compact size"],
+      [structureStandard, "Standard size"],
+      [structureFull, "Full size"],
+    ] as const) {
+      button.disabled = batchSelected || region.layout === "row"
+      const title =
+        region.layout === "row" ? "Use exact or drag resize for a row element" : availableTitle
+      button.title = title
+      button.setAttribute("aria-label", title)
+    }
+    const exactCapability = structureCapability("exact-size", selected, region, selection, nodes)
+    const widthCapability = structureCapability("resize-width", selected, region, selection, nodes)
+    const heightCapability = structureCapability(
+      "resize-height",
+      selected,
+      region,
+      selection,
+      nodes,
+    )
+    const bothCapability = structureCapability("resize-both", selected, region, selection, nodes)
+    structureExact.disabled = !exactCapability.available
+    structureResizeHandle.disabled = !widthCapability.available
+    structureHeightHandle.disabled = !heightCapability.available
+    structureCornerHandle.disabled = !bothCapability.available
     structureResizeHandle.classList.toggle(
       "derive-structure-resize-left",
       widthAxis?.edge === "left",
@@ -3941,21 +4620,15 @@ interface ElReg {
       "derive-structure-resize-top",
       heightAxis?.edge === "top",
     )
-    structureResizeHandle.title = structureResizeHandle.disabled
-      ? transformDisabled
-        ? "Transformed elements keep their authored width"
-        : "This authored layout controls horizontal distribution"
-      : "Drag or use arrow keys to resize width"
-    structureHeightHandle.title = structureHeightHandle.disabled
-      ? transformDisabled
-        ? "Transformed elements keep their authored height"
-        : "This authored stack controls vertical distribution"
-      : "Drag or use arrow keys to resize height"
-    structureCornerHandle.title = structureCornerHandle.disabled
-      ? transformDisabled
-        ? "Transformed elements keep their authored size"
-        : "This authored layout controls size distribution"
-      : "Drag to resize width and height"
+    structureResizeHandle.title = widthCapability.available
+      ? "Drag or use arrow keys to resize width"
+      : widthCapability.reason.message
+    structureHeightHandle.title = heightCapability.available
+      ? "Drag or use arrow keys to resize height"
+      : heightCapability.reason.message
+    structureCornerHandle.title = bothCapability.available
+      ? "Drag to resize width and height"
+      : bothCapability.reason.message
   }
   refreshResizeUi = () => {
     paintResizeUi()
@@ -3963,9 +4636,28 @@ interface ElReg {
   }
   hasSelectedResize = () => !!resizeSelectedEl || !!structureSelected
 
-  const selectStructure = (node: StructureNode | null) => {
+  const selectStructure = (node: StructureNode | null, extend = false) => {
+    structureLayoutOpen = false
+    structurePrecisionOpen = false
+    structureIntentOpen = false
     if (node && !structureNodeAvailable(node)) node = null
-    structureSelected = node
+    if (!node) {
+      structureSelection = []
+      structureSelected = null
+    } else if (
+      extend &&
+      structureSelected &&
+      regionForStructureNode(node) === regionForStructureNode(structureSelected)
+    ) {
+      const existing = structureSelection.indexOf(node)
+      if (existing >= 0) structureSelection.splice(existing, 1)
+      else structureSelection.push(node)
+      structureSelected = structureSelection.at(-1) ?? null
+    } else {
+      structureSelection = [node]
+      structureSelected = node
+    }
+    node = structureSelected
     if (!node) {
       structureSnapGuide.style.display = "none"
       structureHeightSnapGuide.style.display = "none"
@@ -3974,6 +4666,11 @@ interface ElReg {
       clearResizeUi()
       setEditHover(null)
     }
+    updateStructureInteraction(
+      node
+        ? { type: "select", selectedIds: structureSelection.map(({ id }) => id), activeId: node.id }
+        : { type: "clear" },
+    )
     paintStructureUi()
     if (node && innerWidth <= 640)
       requestAnimationFrame(() => {
@@ -3987,6 +4684,26 @@ interface ElReg {
   }
   dismissStructureUi = () => {
     if (!structureSelected) return false
+    if (structurePrecisionOpen || structureLayoutOpen || structureIntentOpen) {
+      const wasIntent = structureIntentOpen
+      const returnFocus = wasIntent
+        ? structureIntent
+        : structureLayoutOpen
+          ? structureLayout
+          : structureExact
+      structurePrecisionOpen = false
+      structureLayoutOpen = wasIntent
+      structureIntentOpen = false
+      paintStructureUi()
+      returnFocus.focus()
+      return true
+    }
+    if (structureSelection.length > 1) {
+      structureSelection = [structureSelected]
+      structureLayoutOpen = false
+      paintStructureUi()
+      return true
+    }
     const parent = parentStructureNode(structureSelected)
     if (parent) {
       selectStructure(parent)
@@ -3996,8 +4713,13 @@ interface ElReg {
     selectStructure(null)
     return true
   }
-  const showStructureToast = (message: string) => {
+  let structureToastActionRun: (() => void) | null = null
+  const showStructureToast = (message: string, action?: { label: string; run: () => void }) => {
     structureToastText.textContent = message
+    structureToastActionRun = action?.run ?? null
+    structureToastAction.hidden = !action
+    structureToastAction.textContent = action?.label ?? ""
+    structureToastUndo.hidden = !!action
     structureToast.style.display = "flex"
     if (structureToastTimer) clearTimeout(structureToastTimer)
     structureToastTimer = window.setTimeout(() => {
@@ -4005,9 +4727,23 @@ interface ElReg {
       structureToastTimer = 0
     }, 5000)
   }
+  const settleStructureInteraction = (
+    outcome: "commit" | "cancel",
+    reason?: StructuralConstraintReason,
+  ) => {
+    updateStructureInteraction(
+      outcome === "commit" ? { type: "commit" } : { type: "cancel", reason },
+    )
+    updateStructureInteraction({ type: "settle" })
+  }
+  const beginStructureLayoutInteraction = () =>
+    updateStructureInteraction({ type: "begin", gesture: "layout" })
   const markStructureChanged = () => {
     if (lastDirty <= 0) {
       lastDirty = 1
+      // See the generic resize path above: a partial optimistic state must never
+      // suppress the next authoritative history state.
+      lastState = ""
       post({ type: "edit-state", dirty: 1, canUndo: true })
     }
     paintStructureUi()
@@ -4081,30 +4817,356 @@ interface ElReg {
     return false
   }
   const moveStructure = (direction: -1 | 1) => {
-    const selected = structureSelected
-    if (!selected) return
-    const region = regionForStructureNode(selected)
+    const active = structureSelected
+    if (!active) return
+    const region = regionForStructureNode(active)
     if (!region) return
     const nodes = connectedStructureNodes(region)
-    const index = nodes.indexOf(selected)
-    const destination = index + direction
-    if (index < 0 || destination < 0 || destination >= nodes.length) return
-    const target = nodes[destination]
-    if (!target) return
-    const initial = placementOf(selected.el)
+    const selected = new Set(
+      structureSelection.filter((node) => regionForStructureNode(node) === region),
+    )
+    if (!selected.size) selected.add(active)
+    const canMove = nodes.some(
+      (node, index) =>
+        selected.has(node) &&
+        (direction < 0
+          ? index > 0 && !selected.has(nodes[index - 1] as StructureNode)
+          : index < nodes.length - 1 && !selected.has(nodes[index + 1] as StructureNode)),
+    )
+    if (!canMove) return
+    beginStructureLayoutInteraction()
+    const initial = structuralOrderOf(
+      region.el,
+      nodes.map((node) => node.el),
+    )
     const geometry = structureGeometry(region)
-    const initialPaintOrder = pairPaintOrder(selected, target)
-    if (direction < 0) region.el.insertBefore(selected.el, target.el)
-    else region.el.insertBefore(selected.el, target.el.nextSibling)
-    const paintOrderChanged =
-      initialPaintOrder !== null && pairPaintOrder(selected, target) !== initialPaintOrder
+    const initialPaintOrder = new Map<string, string>()
+    for (const chosen of selected)
+      for (const other of nodes) {
+        if (selected.has(other)) continue
+        const top = pairPaintOrder(chosen, other)
+        if (top) initialPaintOrder.set(`${chosen.id}\u0000${other.id}`, top.id)
+      }
+    const reordered = [...nodes]
+    if (direction < 0) {
+      for (let index = 1; index < reordered.length; index++) {
+        const node = reordered[index] as StructureNode
+        if (!selected.has(node) || selected.has(reordered[index - 1] as StructureNode)) continue
+        const previous = reordered[index - 1] as StructureNode
+        reordered[index - 1] = node
+        reordered[index] = previous
+      }
+    } else {
+      for (let index = reordered.length - 2; index >= 0; index--) {
+        const node = reordered[index] as StructureNode
+        if (!selected.has(node) || selected.has(reordered[index + 1] as StructureNode)) continue
+        const next = reordered[index + 1] as StructureNode
+        reordered[index] = next
+        reordered[index + 1] = node
+      }
+    }
+    for (const node of reordered) region.el.append(node.el)
+    let paintOrderChanged = false
+    for (const [pair, topId] of initialPaintOrder) {
+      const [chosenId, otherId] = pair.split("\u0000")
+      const chosen = nodes.find((node) => node.id === chosenId)
+      const other = nodes.find((node) => node.id === otherId)
+      if (chosen && other && pairPaintOrder(chosen, other)?.id !== topId) {
+        paintOrderChanged = true
+        break
+      }
+    }
     if (!structureGeometryChanged(geometry, region) && !paintOrderChanged) {
-      applyPlacement(initial)
-      showStructureToast("Authored layout controls this order")
+      applyStructuralOrder(initial)
+      const reason: StructuralConstraintReason = {
+        code: "authored-layout",
+        nodeId: active.id,
+        message: "Authored layout controls this order",
+      }
+      settleStructureInteraction("cancel", reason)
+      showStructureToast(reason.message)
       paintStructureUi()
       return
     }
     remember(initial)
+    settleStructureInteraction("commit")
+    markStructureChanged()
+  }
+  const selectedStructureNodes = (region: StructureRegion): StructureNode[] =>
+    structureSelection.filter(
+      (node) => regionForStructureNode(node) === region && structureNodeAvailable(node),
+    )
+  const equalizeStructure = (axis: "width" | "height") => {
+    const active = structureSelected
+    if (!active) return
+    const region = regionForStructureNode(active)
+    if (!region) return
+    const selected = selectedStructureNodes(region)
+    if (selected.length < 2) return
+    beginStructureLayoutInteraction()
+    const contentWidth = structureContentWidth(region)
+    const width =
+      currentStructureWidth(active) ?? Math.round((active.el.offsetWidth / contentWidth) * 100)
+    const height = currentStructureHeight(active) ?? active.el.offsetHeight
+    const snapshots = selected.map((node) => {
+      const { kind: _kind, ...sizing } = structuralSizingOf(
+        node.el,
+        structureSizeName(node),
+        structureWidthName(node),
+        structureHeightName(node),
+      )
+      return sizing
+    })
+    const heightChainBaselines = new Map(
+      selected.map((node) => [node, structureHeightChainBaseline(node)]),
+    )
+    let accepted =
+      contentWidth > 0 &&
+      width >= MIN_STRUCTURAL_WIDTH_PCT &&
+      width <= MAX_STRUCTURAL_WIDTH_PCT &&
+      height >= MIN_STRUCTURAL_HEIGHT_PX &&
+      height <= MAX_STRUCTURAL_HEIGHT_PX
+    for (const node of selected) {
+      if (
+        !structureTransformResizable(node) ||
+        (axis === "width"
+          ? !structureWidthAxisFor(node, region)
+          : !structureHeightAxisFor(node, region))
+      ) {
+        accepted = false
+        break
+      }
+      if (node === active) continue
+      if (axis === "width") applyStructureWidth(node, width)
+      else applyStructureHeight(node, height)
+      if (
+        (axis === "width" && !structureWidthFits(node, region, width)) ||
+        (axis === "height" &&
+          (!structureHeightFits(node, height) ||
+            !structureHeightChainFits(node, heightChainBaselines.get(node))))
+      ) {
+        accepted = false
+        break
+      }
+    }
+    if (!accepted) {
+      applyStructuralSizingBatch({ kind: "structural-sizing-batch", entries: snapshots })
+      showStructureToast(
+        axis === "width"
+          ? "Authored constraints prevent matching these widths"
+          : "Content or authored constraints prevent matching these heights",
+      )
+      settleStructureInteraction("cancel", {
+        code: "authored-layout",
+        nodeId: active.id,
+        message:
+          axis === "width"
+            ? "Authored constraints prevent matching these widths"
+            : "Content or authored constraints prevent matching these heights",
+        suggestion: axis === "width" ? "same-width" : "fit-height",
+      })
+      paintStructureUi()
+      return
+    }
+    remember({ kind: "structural-sizing-batch", entries: snapshots })
+    settleStructureInteraction("commit")
+    markStructureChanged()
+  }
+  const fitStructureHeight = () => {
+    const active = structureSelected
+    if (!active) return
+    const region = regionForStructureNode(active)
+    if (!region) return
+    const selected = selectedStructureNodes(region)
+    const changed = selected.filter((node) => currentStructureHeight(node) !== null)
+    if (selected.length < 2 || !changed.length) return
+    beginStructureLayoutInteraction()
+    const snapshots = selected.map((node) => {
+      const { kind: _kind, ...sizing } = structuralSizingOf(
+        node.el,
+        structureSizeName(node),
+        structureWidthName(node),
+        structureHeightName(node),
+      )
+      return sizing
+    })
+    const heightChainBaselines = new Map(
+      selected.map((node) => [node, structureHeightChainBaseline(node)]),
+    )
+    for (const node of changed) applyStructureHeight(node, null)
+    if (selected.some((node) => !structureHeightChainFits(node, heightChainBaselines.get(node)))) {
+      applyStructuralSizingBatch({ kind: "structural-sizing-batch", entries: snapshots })
+      showStructureToast("An authored wrapper prevents these elements from fitting content")
+      settleStructureInteraction("cancel", {
+        code: "authored-layout",
+        nodeId: active.id,
+        message: "An authored wrapper prevents these elements from fitting content",
+      })
+      paintStructureUi()
+      return
+    }
+    remember({ kind: "structural-sizing-batch", entries: snapshots })
+    settleStructureInteraction("commit")
+    markStructureChanged()
+  }
+  const distributeStructure = () => {
+    const active = structureSelected
+    const region = active ? regionForStructureNode(active) : null
+    if (!region) return
+    const gap = structureDistributionGap(region)
+    if (gap === null) return
+    beginStructureLayoutInteraction()
+    const nodes = connectedStructureNodes(region).filter((node) => structureNodeAvailable(node))
+    const initial = structuralGapOf(region.el, structureAttribute(region.prefix, "gap"))
+    const heights = nodes.map((node) => node.el.getBoundingClientRect().height)
+    const transition = region.el.style.getPropertyValue("transition")
+    const transitionPriority = region.el.style.getPropertyPriority("transition")
+    region.el.style.setProperty("transition", "none", "important")
+    void region.el.offsetWidth
+    region.el.setAttribute(structureAttribute(region.prefix, "gap"), String(gap))
+    region.el.style.setProperty(STRUCTURAL_GAP_PROPERTY, `${gap}px`)
+    const rects = nodes.map((node) => node.el.getBoundingClientRect())
+    const actualGaps = rects.slice(1).map((rect, index) => rect.top - (rects[index]?.bottom ?? 0))
+    const accepted =
+      getComputedStyle(region.el).rowGap === `${gap}px` &&
+      structuralDistributionIsValid({
+        targetGap: gap,
+        actualGaps,
+        beforeSizes: heights,
+        afterSizes: rects.map(({ height }) => height),
+        scrollSize: region.el.scrollHeight,
+        clientSize: region.el.clientHeight,
+      })
+    restoreStructureTransition(region, transition, transitionPriority)
+    if (!accepted) {
+      applyStructuralGap(initial)
+      showStructureToast("This authored stack cannot safely distribute its siblings")
+      settleStructureInteraction("cancel", {
+        code: "authored-layout",
+        nodeId: active?.id,
+        message: "This authored stack cannot safely distribute its siblings",
+      })
+      paintStructureUi()
+      postDirty()
+      return
+    }
+    remember(initial)
+    settleStructureInteraction("commit")
+    markStructureChanged()
+  }
+  const alignStructure = (align: StructuralAlignment) => {
+    const active = structureSelected
+    if (!active) return
+    const region = regionForStructureNode(active)
+    if (!region) return
+    const selected = selectedStructureNodes(region)
+    if (
+      selected.length < 2 ||
+      selected.some((node) => !structureCrossAxisAlignAvailable(node, region))
+    )
+      return
+    beginStructureLayoutInteraction()
+    const snapshots: StructuralAlignHistory[] = selected.map((node) => ({
+      el: node.el,
+      alignName: structureAlignName(node),
+      align: node.el.getAttribute(structureAlignName(node)),
+      style: rawStyle(node.el),
+    }))
+    const before = new Map(
+      selected.map((node) => {
+        const rect = node.el.getBoundingClientRect()
+        return [node, { width: rect.width, height: rect.height }]
+      }),
+    )
+    for (const node of selected) applyStructureAlign(node, align)
+    const regionRect = region.el.getBoundingClientRect()
+    const regionStyle = getComputedStyle(region.el)
+    const left = regionRect.left + (Number.parseFloat(regionStyle.paddingLeft) || 0)
+    const right = regionRect.right - (Number.parseFloat(regionStyle.paddingRight) || 0)
+    const accepted = selected.every((node) => {
+      const rect = node.el.getBoundingClientRect()
+      const original = before.get(node)
+      return (
+        getComputedStyle(node.el).alignSelf === align &&
+        !!original &&
+        Math.abs(rect.width - original.width) <= 1 &&
+        Math.abs(rect.height - original.height) <= 1 &&
+        rect.left >= left - 1 &&
+        rect.right <= right + 1
+      )
+    })
+    if (!accepted) {
+      applyStructuralAlignBatch({ kind: "structural-align-batch", entries: snapshots })
+      showStructureToast("This authored stack does not expose safe cross-axis alignment")
+      settleStructureInteraction("cancel", {
+        code: "authored-layout",
+        nodeId: active.id,
+        message: "This authored stack does not expose safe cross-axis alignment",
+      })
+      paintStructureUi()
+      return
+    }
+    remember({ kind: "structural-align-batch", entries: snapshots })
+    settleStructureInteraction("commit")
+    markStructureChanged()
+  }
+  const applyExactStructureSize = () => {
+    const node = structureSelected
+    const region = node ? regionForStructureNode(node) : null
+    if (!node || !region || structureSelection.length > 1) return
+    const width = structurePrecisionWidth.input.valueAsNumber
+    const heightText = structurePrecisionHeight.input.value.trim()
+    const height = heightText ? structurePrecisionHeight.input.valueAsNumber : null
+    if (
+      !Number.isInteger(width) ||
+      width < MIN_STRUCTURAL_WIDTH_PCT ||
+      width > MAX_STRUCTURAL_WIDTH_PCT ||
+      (height !== null &&
+        (!Number.isInteger(height) ||
+          height < MIN_STRUCTURAL_HEIGHT_PX ||
+          height > MAX_STRUCTURAL_HEIGHT_PX))
+    ) {
+      structurePrecisionPanel.reportValidity()
+      return
+    }
+    const initial = structuralSizingOf(
+      node.el,
+      structureSizeName(node),
+      structureWidthName(node),
+      structureHeightName(node),
+    )
+    const heightChainBaseline = structureHeightChainBaseline(node)
+    beginStructureLayoutInteraction()
+    const transition = node.el.style.getPropertyValue("transition")
+    const transitionPriority = node.el.style.getPropertyPriority("transition")
+    node.el.style.setProperty("transition", "none", "important")
+    void node.el.offsetWidth
+    applyStructureWidth(node, width)
+    applyStructureHeight(node, height)
+    const accepted =
+      structureTransformResizable(node) &&
+      !!structureWidthAxisFor(node, region) &&
+      !!structureHeightAxisFor(node, region) &&
+      structureWidthFits(node, region, width) &&
+      (height === null || structureHeightFits(node, height)) &&
+      structureHeightChainFits(node, heightChainBaseline)
+    restoreStructureTransition(node, transition, transitionPriority)
+    if (!accepted) {
+      applyStructuralSizing(initial)
+      showStructureToast("Authored content or constraints control this size")
+      settleStructureInteraction("cancel", {
+        code: "authored-layout",
+        nodeId: node.id,
+        message: "Authored content or constraints control this size",
+        suggestion: "fit-height",
+      })
+      paintStructureUi()
+      postDirty()
+      return
+    }
+    remember(initial)
+    structurePrecisionOpen = false
+    settleStructureInteraction("commit")
     markStructureChanged()
   }
   const sizeStructure = (size: StructureSize | null) => {
@@ -4117,6 +5179,10 @@ interface ElReg {
       return
     const region = regionForStructureNode(selected)
     if (!region) return
+    if (region.layout === "row" && size !== null) {
+      showStructureToast("Use exact or drag resize for a row element")
+      return
+    }
     rememberStructureSizing(selected)
     // An authored width transition reports the OLD geometry for its first frame,
     // which would make a valid explicit preset look constrained and roll it back.
@@ -4149,11 +5215,175 @@ interface ElReg {
   const removeStructure = () => {
     const selected = structureSelected
     if (!selected?.el.parentElement) return
+    if (structureSelection.length > 1) {
+      showStructureToast("Collapse the selection before removing an element")
+      return
+    }
     remember(placementOf(selected.el))
     structureExpectedRemoved.add(selected)
     selected.el.remove()
     selectStructure(null)
     showStructureToast(`Removed ${selected.id}`)
+    markStructureChanged()
+  }
+  const selectAllStructureSiblings = () => {
+    const active = structureSelected
+    const region = active ? regionForStructureNode(active) : null
+    if (!active || !region) return
+    structureSelection = connectedStructureNodes(region).filter((node) =>
+      structureNodeAvailable(node),
+    )
+    structureSelected = active
+    updateStructureInteraction({
+      type: "select",
+      selectedIds: structureSelection.map(({ id }) => id),
+      activeId: active.id,
+    })
+    paintStructureUi()
+  }
+  const checkStructureHealth = () => {
+    const active = structureSelected
+    const region = active ? regionForStructureNode(active) : null
+    if (!active || !region) return
+    const nodes = connectedStructureNodes(region).filter((node) => structureNodeAvailable(node))
+    const selected = selectedStructureNodes(region)
+    const issue = coachStructuralLayout({
+      selectionCount: selected.length,
+      siblingCount: nodes.length,
+      boundedStack: structureDistributionGap(region) !== null,
+      activeId: active.id,
+      clipping: selected.map((node) => ({
+        id: node.id,
+        overflow: node.el.scrollHeight - node.el.clientHeight,
+        fitHeight: currentStructureHeight(node) !== null,
+      })),
+      widths: selected.map((node) => node.el.getBoundingClientRect().width),
+      heights: selected.map((node) => node.el.getBoundingClientRect().height),
+    })
+    const viewport =
+      innerWidth <= 420
+        ? `Mobile · ${innerWidth}px`
+        : innerWidth <= 820
+          ? `Tablet · ${innerWidth}px`
+          : `Fluid · ${innerWidth}px`
+    if (!issue) {
+      showStructureToast(`${viewport}: layout health looks good`)
+      return
+    }
+    const action =
+      issue.suggestion === "select-all"
+        ? { label: "Select all", run: selectAllStructureSiblings }
+        : issue.suggestion === "fit-height"
+          ? { label: "Fit H", run: fitStructureHeight }
+          : issue.suggestion === "same-width"
+            ? { label: "Same W", run: () => equalizeStructure("width") }
+            : issue.suggestion === "same-height"
+              ? { label: "Same H", run: () => equalizeStructure("height") }
+              : undefined
+    showStructureToast(`${viewport}: ${issue.message}`, action)
+  }
+  const applyStructureIntent = () => {
+    const active = structureSelected
+    const region = active ? regionForStructureNode(active) : null
+    if (!active || !region) return
+    const selected = selectedStructureNodes(region)
+    const plan = structureIntentPlanFor(structureIntentCommand, active, region, selected)
+    if (!plan) return
+    const history: Extract<HistoryEntry, { kind: "structural-intent" }> = {
+      kind: "structural-intent",
+      sizing: selected.map((node) => {
+        const { kind: _kind, ...entry } = structuralSizingOf(
+          node.el,
+          structureSizeName(node),
+          structureWidthName(node),
+          structureHeightName(node),
+        )
+        return entry
+      }),
+      alignment: selected.map((node) => ({
+        el: node.el,
+        alignName: structureAlignName(node),
+        align: node.el.getAttribute(structureAlignName(node)),
+        style: rawStyle(node.el),
+      })),
+    }
+    const transitions = new Map(
+      selected.map((node) => [
+        node,
+        {
+          value: node.el.style.getPropertyValue("transition"),
+          priority: node.el.style.getPropertyPriority("transition"),
+        },
+      ]),
+    )
+    const heightChainBaselines = new Map(
+      selected.map((node) => [node, structureHeightChainBaseline(node)]),
+    )
+    for (const node of selected) node.el.style.setProperty("transition", "none", "important")
+    void region.el.offsetWidth
+    beginStructureLayoutInteraction()
+    const byId = new Map(selected.map((node) => [node.id, node]))
+    const expectedWidths = new Map<StructureNode, number>()
+    const fitted = new Set<StructureNode>()
+    const expectedAlign = new Map<StructureNode, StructuralAlignment>()
+    for (const operation of plan.operations) {
+      if (operation.kind === "set-width")
+        for (const id of operation.ids) {
+          const node = byId.get(id)
+          if (!node) continue
+          applyStructureWidth(node, operation.width)
+          expectedWidths.set(node, operation.width)
+        }
+      else if (operation.kind === "fit-height")
+        for (const id of operation.ids) {
+          const node = byId.get(id)
+          if (!node) continue
+          applyStructureHeight(node, null)
+          fitted.add(node)
+        }
+      else
+        for (const id of operation.ids) {
+          const node = byId.get(id)
+          if (!node) continue
+          applyStructureAlign(node, operation.alignment)
+          expectedAlign.set(node, operation.alignment)
+        }
+    }
+    const accepted = selected.every((node) => {
+      const width = expectedWidths.get(node)
+      const alignment = expectedAlign.get(node)
+      return (
+        structureTransformResizable(node) &&
+        !!structureWidthAxisFor(node, region) &&
+        (width === undefined ||
+          (currentStructureWidth(node) === width && structureWidthFits(node, region, width))) &&
+        (!fitted.has(node) || currentStructureHeight(node) === null) &&
+        (alignment === undefined ||
+          (structureCrossAxisAlignAvailable(node, region) &&
+            getComputedStyle(node.el).alignSelf === alignment)) &&
+        structureHeightChainFits(node, heightChainBaselines.get(node))
+      )
+    })
+    if (!accepted) {
+      applyStructuralIntentHistory(history)
+      settleStructureInteraction("cancel", {
+        code: "authored-layout",
+        nodeId: active.id,
+        message: `${plan.title} was blocked by authored constraints`,
+      })
+      showStructureToast(`${plan.title} was blocked by authored constraints`)
+      paintStructureUi()
+      postDirty()
+      return
+    }
+    for (const node of selected) {
+      const transition = transitions.get(node)
+      if (transition) restoreStructureTransition(node, transition.value, transition.priority)
+    }
+    remember(history)
+    settleStructureInteraction("commit")
+    structureIntentOpen = false
+    showStructureToast(`${plan.title} applied · ${plan.summary}`)
     markStructureChanged()
   }
   structureEarlier.addEventListener("click", (e) => {
@@ -4164,6 +5394,102 @@ interface ElReg {
     e.stopPropagation()
     moveStructure(1)
   })
+  structureSelectAll.addEventListener("click", (e) => {
+    e.stopPropagation()
+    selectAllStructureSiblings()
+  })
+  structureLayout.addEventListener("click", (e) => {
+    e.stopPropagation()
+    structureLayoutOpen = !structureLayoutOpen
+    paintStructureUi()
+  })
+  structureIntent.addEventListener("click", (e) => {
+    e.stopPropagation()
+    structureLayoutOpen = false
+    structureIntentOpen = true
+    paintStructureUi()
+  })
+  structureIntentBalance.addEventListener("click", (e) => {
+    e.stopPropagation()
+    structureIntentCommand = "balance"
+    paintStructureUi()
+  })
+  structureIntentEmphasize.addEventListener("click", (e) => {
+    e.stopPropagation()
+    structureIntentCommand = "emphasize-active"
+    paintStructureUi()
+  })
+  structureIntentCancel.addEventListener("click", (e) => {
+    e.stopPropagation()
+    structureIntentOpen = false
+    structureLayoutOpen = true
+    paintStructureUi()
+    structureIntent.focus()
+  })
+  structureIntentApply.addEventListener("click", (e) => {
+    e.stopPropagation()
+    applyStructureIntent()
+  })
+  structureExact.addEventListener("click", (e) => {
+    e.stopPropagation()
+    const node = structureSelected
+    const region = node ? regionForStructureNode(node) : null
+    if (!node || !region || structureSelection.length > 1) return
+    structureLayoutOpen = false
+    structurePrecisionOpen = !structurePrecisionOpen
+    if (structurePrecisionOpen) {
+      const contentWidth = structureContentWidth(region)
+      structurePrecisionWidth.input.value = String(
+        currentStructureWidth(node) ??
+          Math.round((node.el.offsetWidth / Math.max(1, contentWidth)) * 100),
+      )
+      const height = currentStructureHeight(node)
+      structurePrecisionHeight.input.value = height === null ? "" : String(height)
+      paintStructureUi()
+      structurePrecisionWidth.input.focus()
+    } else paintStructureUi()
+  })
+  structurePrecisionCancel.addEventListener("click", (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    structurePrecisionOpen = false
+    paintStructureUi()
+    structureExact.focus()
+  })
+  structurePrecisionPanel.addEventListener("submit", (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    applyExactStructureSize()
+  })
+  structureSameWidth.addEventListener("click", (e) => {
+    e.stopPropagation()
+    equalizeStructure("width")
+  })
+  structureSameHeight.addEventListener("click", (e) => {
+    e.stopPropagation()
+    equalizeStructure("height")
+  })
+  structureFitHeight.addEventListener("click", (e) => {
+    e.stopPropagation()
+    fitStructureHeight()
+  })
+  structureDistribute.addEventListener("click", (e) => {
+    e.stopPropagation()
+    distributeStructure()
+  })
+  structureHealth.addEventListener("click", (e) => {
+    e.stopPropagation()
+    checkStructureHealth()
+  })
+  for (const [button, align] of [
+    [structureAlignStart, "start"],
+    [structureAlignCenter, "center"],
+    [structureAlignEnd, "end"],
+  ] as const)
+    button.addEventListener("click", (e) => {
+      e.stopPropagation()
+      alignStructure(align)
+    })
   structureParent.addEventListener("click", (e) => {
     e.stopPropagation()
     const parent = structureSelected ? parentStructureNode(structureSelected) : null
@@ -4184,6 +5510,13 @@ interface ElReg {
   structureRemove.addEventListener("click", (e) => {
     e.stopPropagation()
     removeStructure()
+  })
+  structureToastAction.addEventListener("click", (e) => {
+    e.stopPropagation()
+    const run = structureToastActionRun
+    structureToast.style.display = "none"
+    structureToastActionRun = null
+    run?.()
   })
   structureToastUndo.addEventListener("click", (e) => {
     e.stopPropagation()
@@ -4307,6 +5640,7 @@ interface ElReg {
     transitionPriority: string
     width: number
     height: number
+    heightChainBaseline: StructureHeightChainBaseline
     moved: boolean
   }
   let structureResizeDrag: StructureResizeDrag | null = null
@@ -4364,8 +5698,10 @@ interface ElReg {
       transitionPriority,
       width: startWidth,
       height: node.el.offsetHeight,
+      heightChainBaseline: structureHeightChainBaseline(node),
       moved: false,
     }
+    updateStructureInteraction({ type: "begin", gesture: "resize" })
     structureBox.classList.add("derive-structure-resizing")
     structureWidthReadout.textContent = `${startWidth}% × ${node.el.offsetHeight}px`
     handle.setPointerCapture?.(e.pointerId)
@@ -4403,7 +5739,7 @@ interface ElReg {
         rawWidth =
           drag.startWidth + (dx / (drag.contentWidth * drag.screenScaleX * drag.widthMotion)) * 100
         const threshold = (8 / (drag.contentWidth * drag.screenScaleX)) * 100
-        widthSnap = e.altKey
+        widthSnap = structuralModifierIntent(e).bypassSnap
           ? { width: Math.round(rawWidth), snappedTo: null }
           : snapStructuralWidth(
               rawWidth,
@@ -4435,7 +5771,7 @@ interface ElReg {
         const heightCandidates = structureHeightCandidates(drag.node, drag.region)
         rawHeight = drag.startHeight + dy / (drag.screenScaleY * drag.heightMotion)
         const threshold = 8 / drag.screenScaleY
-        heightSnap = e.altKey
+        heightSnap = structuralModifierIntent(e).bypassSnap
           ? { height: Math.round(rawHeight), snappedTo: null }
           : snapStructuralHeight(
               rawHeight,
@@ -4526,6 +5862,9 @@ interface ElReg {
       else hideStructureHeightSnapGuide()
       if (drag.moved && lastDirty <= 0) {
         lastDirty = 1
+        // Force the settled/cancelled state to cross the frame even when its stack
+        // shape matches an older state from before this provisional gesture.
+        lastState = ""
         post({ type: "edit-state", dirty: 1, canUndo: true })
       }
       paintStructureUi()
@@ -4536,9 +5875,14 @@ interface ElReg {
     const drag = structureResizeDrag
     if (!drag || drag.pointerId !== e.pointerId) return
     structureResizeDrag = null
+    structureLayoutOpen = false
+    structurePrecisionOpen = false
+    structureIntentOpen = false
     structureBox.classList.remove("derive-structure-resizing")
     hideStructureSnapGuide()
+    hideStructureDropMarker()
     hideStructureHeightSnapGuide()
+    updateStructureInteraction({ type: "validate" })
     const widthAccepted =
       drag.mode === "height" || structureWidthFits(drag.node, drag.region, drag.width)
     const heightAccepted = drag.mode === "width" || structureHeightFits(drag.node, drag.height)
@@ -4559,23 +5903,29 @@ interface ElReg {
       axesAccepted &&
       sourceAccepted &&
       structureTransformResizable(drag.node) &&
-      structureHeightChainFits(drag.node)
+      structureHeightChainFits(drag.node, drag.heightChainBaseline)
     if (cancel || !accepted) {
       applyStructuralSizing(drag.initial)
-      if (drag.moved && !cancel)
-        showStructureToast(
+      const reason: StructuralConstraintReason = {
+        code: cancel ? "no-change" : "authored-layout",
+        nodeId: drag.node.id,
+        message:
           drag.mode === "width"
             ? "Authored constraints control this width"
             : drag.mode === "height"
               ? "Authored content or constraints control this height"
               : "Authored content or constraints control this size",
-        )
+        suggestion: drag.mode === "width" ? "same-width" : "fit-height",
+      }
+      if (drag.moved && !cancel) showStructureToast(reason.message)
+      settleStructureInteraction("cancel", reason)
       paintStructureUi()
       postDirty()
       return
     }
     remember(drag.initial)
     restoreStructureTransition(drag.node, drag.transition, drag.transitionPriority)
+    settleStructureInteraction("commit")
     markStructureChanged()
   }
   window.addEventListener("pointerup", (e) => finishStructureResize(e, false))
@@ -4588,16 +5938,14 @@ interface ElReg {
     hideStructureSnapGuide()
     hideStructureHeightSnapGuide()
     applyStructuralSizing(drag.initial)
+    updateStructureInteraction({ type: "cancel" })
+    updateStructureInteraction({ type: "settle" })
     paintStructureUi()
     postDirty()
     return true
   }
   for (const handle of [structureResizeHandle, structureHeightHandle, structureCornerHandle])
     handle.addEventListener("lostpointercapture", () => cancelStructureResize())
-  window.addEventListener("blur", () => cancelStructureResize())
-  document.addEventListener("visibilitychange", () => {
-    if (document.hidden) cancelStructureResize()
-  })
   const keyboardStructureResize = (e: KeyboardEvent, mode: StructureResizeMode) => {
     const horizontal = e.key === "ArrowLeft" || e.key === "ArrowRight"
     const vertical = e.key === "ArrowUp" || e.key === "ArrowDown"
@@ -4618,12 +5966,13 @@ interface ElReg {
     if (!(contentWidth > 0)) return
     const currentWidth = Math.round((node.el.offsetWidth / contentWidth) * 100)
     const currentHeight = Math.round(node.el.offsetHeight)
+    const modifiers = structuralModifierIntent(e)
     const width = horizontal
       ? Math.min(
           MAX_STRUCTURAL_WIDTH_PCT,
           Math.max(
             MIN_STRUCTURAL_WIDTH_PCT,
-            currentWidth + (e.shiftKey ? 5 : 1) * (e.key === "ArrowRight" ? 1 : -1),
+            currentWidth + modifiers.keyboardWidthStep * (e.key === "ArrowRight" ? 1 : -1),
           ),
         )
       : currentWidth
@@ -4632,17 +5981,19 @@ interface ElReg {
           MAX_STRUCTURAL_HEIGHT_PX,
           Math.max(
             MIN_STRUCTURAL_HEIGHT_PX,
-            currentHeight + (e.shiftKey ? 8 : 1) * (e.key === "ArrowDown" ? 1 : -1),
+            currentHeight + modifiers.keyboardHeightStep * (e.key === "ArrowDown" ? 1 : -1),
           ),
         )
       : currentHeight
     if (width === currentWidth && height === currentHeight) return
+    updateStructureInteraction({ type: "begin", gesture: "resize" })
     const initial = structuralSizingOf(
       node.el,
       structureSizeName(node),
       structureWidthName(node),
       structureHeightName(node),
     )
+    const heightChainBaseline = structureHeightChainBaseline(node)
     const transition = node.el.style.getPropertyValue("transition")
     const transitionPriority = node.el.style.getPropertyPriority("transition")
     node.el.style.setProperty("transition", "none", "important")
@@ -4652,7 +6003,8 @@ interface ElReg {
     const accepted =
       (!horizontal || structureWidthFits(node, region, width)) &&
       (!vertical || structureHeightFits(node, height)) &&
-      structureHeightChainFits(node)
+      structureHeightChainFits(node, heightChainBaseline)
+    updateStructureInteraction({ type: "validate" })
     restoreStructureTransition(node, transition, transitionPriority)
     if (!accepted) {
       applyStructuralSizing(initial)
@@ -4661,11 +6013,20 @@ interface ElReg {
           ? "Authored constraints control this width"
           : "Authored content or constraints control this height",
       )
+      settleStructureInteraction("cancel", {
+        code: "authored-layout",
+        nodeId: node.id,
+        message: horizontal
+          ? "Authored constraints control this width"
+          : "Authored content or constraints control this height",
+        suggestion: horizontal ? "same-width" : "fit-height",
+      })
       paintStructureUi()
       postDirty()
       return
     }
     remember(initial)
+    settleStructureInteraction("commit")
     structureBox.classList.add("derive-structure-resizing")
     structureWidthReadout.textContent = `${width}% × ${height}px`
     window.setTimeout(() => structureBox.classList.remove("derive-structure-resizing"), 800)
@@ -4686,6 +6047,36 @@ interface ElReg {
     moved: boolean
   }
   let structureDrag: StructureDrag | null = null
+  const hideStructureDropMarker = () => {
+    structureDropMarker.style.display = "none"
+  }
+  const showStructureDropMarker = (
+    region: StructureRegion,
+    before: StructureNode | undefined,
+    axis: "x" | "y",
+    others: readonly StructureNode[],
+  ) => {
+    const regionRect = region.el.getBoundingClientRect()
+    const anchor = before ?? others.at(-1)
+    if (!anchor) return hideStructureDropMarker()
+    const anchorRect = anchor.el.getBoundingClientRect()
+    const after = !before
+    structureDropMarker.style.display = "block"
+    structureDropMarker.classList.toggle("derive-structure-drop-marker-x", axis === "x")
+    structureDropMarkerLabel.textContent = `${after ? "After" : "Before"} ${anchor.id}`
+    structureDropMarker.setAttribute("data-label", structureDropMarkerLabel.textContent)
+    if (axis === "x") {
+      structureDropMarker.style.left = `${(after ? anchorRect.right : anchorRect.left) + (window.scrollX || 0)}px`
+      structureDropMarker.style.top = `${regionRect.top + scrollTop()}px`
+      structureDropMarker.style.width = "0"
+      structureDropMarker.style.height = `${regionRect.height}px`
+    } else {
+      structureDropMarker.style.left = `${regionRect.left + (window.scrollX || 0)}px`
+      structureDropMarker.style.top = `${(after ? anchorRect.bottom : anchorRect.top) + scrollTop()}px`
+      structureDropMarker.style.width = `${regionRect.width}px`
+      structureDropMarker.style.height = "0"
+    }
+  }
   const structureDragAxis = (nodes: readonly StructureNode[]): "x" | "y" => {
     if (nodes.length < 2) return "y"
     const centers = nodes.map((node) => {
@@ -4712,6 +6103,7 @@ interface ElReg {
       initialPaintOrder: structurePaintOrder(node, region),
       moved: false,
     }
+    updateStructureInteraction({ type: "begin", gesture: "drag" })
     node.el.classList.add("derive-structure-dragging")
     structureGrip.setPointerCapture?.(e.pointerId)
   })
@@ -4723,13 +6115,22 @@ interface ElReg {
       e.preventDefault()
       const others = connectedStructureNodes(drag.region).filter((node) => node !== drag.node)
       const axis = structureDragAxis(others)
-      const before = others.find((node) => {
-        const rect = node.el.getBoundingClientRect()
-        return axis === "x"
-          ? e.clientX < rect.left + rect.width / 2
-          : e.clientY < rect.top + rect.height / 2
-      })
+      const target = structuralDropTarget(
+        axis === "x" ? e.clientX : e.clientY,
+        others.map((node) => {
+          const rect = node.el.getBoundingClientRect()
+          return {
+            id: node.id,
+            start: axis === "x" ? rect.left : rect.top,
+            end: axis === "x" ? rect.right : rect.bottom,
+          }
+        }),
+      )
+      const before = target?.beforeId
+        ? others.find((node) => node.id === target.beforeId)
+        : undefined
       drag.region.el.insertBefore(drag.node.el, before?.el ?? null)
+      showStructureDropMarker(drag.region, before, axis, others)
       const order = connectedStructureNodes(drag.region).map((node) => node.id)
       drag.moved = order.some((id, index) => id !== drag.initialOrder[index])
       paintStructureUi()
@@ -4740,22 +6141,61 @@ interface ElReg {
     const drag = structureDrag
     if (!drag || drag.pointerId !== e.pointerId) return
     structureDrag = null
+    hideStructureDropMarker()
     drag.node.el.classList.remove("derive-structure-dragging")
+    updateStructureInteraction({ type: "validate" })
     const visuallyMoved =
       drag.moved &&
       (structureGeometryChanged(drag.initialGeometry, drag.region) ||
         structurePaintOrderChanged(drag.initialPaintOrder, drag.node, drag.region))
     if (cancel || !visuallyMoved) applyPlacement(drag.initial)
     else remember(drag.initial)
-    if (visuallyMoved && !cancel) markStructureChanged()
-    else if (drag.moved && !cancel) {
-      showStructureToast("Authored layout controls this order")
+    if (visuallyMoved && !cancel) {
+      settleStructureInteraction("commit")
+      markStructureChanged()
+    } else if (drag.moved && !cancel) {
+      const reason: StructuralConstraintReason = {
+        code: "authored-layout",
+        nodeId: drag.node.id,
+        message: "Authored layout controls this order",
+      }
+      settleStructureInteraction("cancel", reason)
+      showStructureToast(reason.message)
       paintStructureUi()
-    } else paintStructureUi()
+    } else {
+      settleStructureInteraction("cancel")
+      paintStructureUi()
+    }
+  }
+  const cancelStructureDrag = () => {
+    const drag = structureDrag
+    if (!drag) return false
+    structureDrag = null
+    drag.node.el.classList.remove("derive-structure-dragging")
+    hideStructureDropMarker()
+    applyPlacement(drag.initial)
+    updateStructureInteraction({ type: "cancel" })
+    updateStructureInteraction({ type: "settle" })
+    paintStructureUi()
+    postDirty()
+    return true
   }
   window.addEventListener("pointerup", (e) => finishStructureDrag(e, false))
   window.addEventListener("pointercancel", (e) => finishStructureDrag(e, true))
-  window.addEventListener("scroll", paintStructureUi, true)
+  structureGrip.addEventListener("lostpointercapture", () => cancelStructureDrag())
+  cancelStructuralGesture = () => cancelStructureResize() || cancelStructureDrag()
+  window.addEventListener("blur", () => cancelStructuralGesture())
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) cancelStructuralGesture()
+  })
+  window.addEventListener(
+    "scroll",
+    () => {
+      if (structureDrag) hideStructureDropMarker()
+      paintStructureUi()
+    },
+    true,
+  )
   window.addEventListener("resize", () => refreshStructureAvailability())
   focusStructureToolbar = () => {
     if (!editOn || !structureSelected || document.activeElement !== structureSelected.el)
@@ -4763,10 +6203,23 @@ interface ElReg {
     structureGrip.focus()
     return true
   }
+  document.addEventListener(
+    "mousedown",
+    (e) => {
+      const target = asEl(e.target)
+      const node = editOn && !target?.closest(".derive-edit-ui") ? structuralNodeAt(target) : null
+      structurePointerExtend = !!node && structuralModifierIntent(e).extendSelection
+      structurePointerSelectionHandled = false
+    },
+    true,
+  )
   document.addEventListener("focusin", (e) => {
     if (!editOn) return
     const node = structuralNodeAt(asEl(e.target))
-    if (node && e.target === node.el && structureNodeAvailable(node)) selectStructure(node)
+    if (node && e.target === node.el && structureNodeAvailable(node)) {
+      selectStructure(node, structurePointerExtend)
+      structurePointerSelectionHandled = structurePointerExtend
+    }
   })
   document.addEventListener(
     "keydown",
@@ -4779,9 +6232,7 @@ interface ElReg {
         e.stopImmediatePropagation()
         structureGrip.focus()
       } else if (
-        e.altKey &&
-        !e.metaKey &&
-        !e.ctrlKey &&
+        structuralModifierIntent(e).reorderShortcut &&
         (e.key === "ArrowUp" || e.key === "ArrowDown")
       ) {
         e.preventDefault()
@@ -4819,6 +6270,25 @@ interface ElReg {
         if (document.activeElement === structureSelected.el) structureSelected.el.blur()
         structureSelected = null
       }
+      structureSelection = structureSelection.filter((node) => structureNodeAvailable(node))
+      if (!structureSelected && structureSelection.length)
+        structureSelected = structureSelection.at(-1) ?? null
+      if (structureSelected && !structureSelection.includes(structureSelected))
+        structureSelection.push(structureSelected)
+      if (
+        structureInteraction.phase !== "dragging" &&
+        structureInteraction.phase !== "resizing" &&
+        structureInteraction.phase !== "validating"
+      )
+        updateStructureInteraction(
+          structureSelected
+            ? {
+                type: "select",
+                selectedIds: structureSelection.map(({ id }) => id),
+                activeId: structureSelected.id,
+              }
+            : { type: "clear" },
+        )
       paintStructureUi()
     }
     refreshStructureAvailability()
@@ -4855,6 +6325,7 @@ interface ElReg {
       })
     }
     structureSelected = null
+    structureSelection = []
     paintStructureUi()
   }
   const settleStructuralEditing = (restore: boolean) => {
@@ -4862,6 +6333,10 @@ interface ElReg {
     structureObserver = null
     if (restore)
       for (const region of structureRegions) {
+        const gapAttribute = structureAttribute(region.prefix, "gap")
+        if (region.origGap === null) region.el.removeAttribute(gapAttribute)
+        else region.el.setAttribute(gapAttribute, region.origGap)
+        restoreStyle(region.el, region.origStyle)
         const byId = new Map(region.nodes.map((node) => [node.id, node]))
         for (const id of region.origOrder) {
           const node = byId.get(id)
@@ -4875,6 +6350,9 @@ interface ElReg {
           const heightAttribute = structureAttribute(node.prefix, "height")
           if (node.origHeight === null) node.el.removeAttribute(heightAttribute)
           else node.el.setAttribute(heightAttribute, node.origHeight)
+          const alignAttribute = structureAttribute(node.prefix, "align")
+          if (node.origAlign === null) node.el.removeAttribute(alignAttribute)
+          else node.el.setAttribute(alignAttribute, node.origAlign)
           restoreStyle(node.el, node.origStyle)
           region.el.append(node.el)
         }
@@ -4885,7 +6363,13 @@ interface ElReg {
         else node.el.setAttribute("tabindex", node.origTabindex)
       }
     structureSelected = null
+    structureSelection = []
+    for (const box of structureMultiBoxes.values()) box.remove()
+    structureMultiBoxes.clear()
     structureResizeDrag = null
+    structureLayoutOpen = false
+    structurePrecisionOpen = false
+    structureIntentOpen = false
     structureExpectedRemoved = new Set()
     syncStructuralPlacement = () => {}
     refreshStructureAvailability = () => {}
@@ -4893,6 +6377,7 @@ interface ElReg {
     structureBox.style.display = "none"
     structureBox.classList.remove("derive-structure-resizing")
     hideStructureSnapGuide()
+    hideStructureDropMarker()
     structureToast.style.display = "none"
     if (structureToastTimer) clearTimeout(structureToastTimer)
     structureToastTimer = 0
@@ -5217,7 +6702,10 @@ interface ElReg {
     // inner copy just as editable as the container is movable.
     const structural = structuralNodeAt(el0)
     if (e.detail <= 1 && structural) {
-      selectStructure(structural)
+      const extend = structuralModifierIntent(e).extendSelection
+      if (!(extend && structurePointerSelectionHandled)) selectStructure(structural, extend)
+      structurePointerExtend = false
+      structurePointerSelectionHandled = false
       selectResize(null)
       return
     }
@@ -5639,6 +7127,19 @@ interface ElReg {
       }
     | {
         schema: typeof STRUCTURE_SCHEMA
+        op: "structural-align"
+        region: string
+        node: string
+        align: StructuralAlignment | null
+      }
+    | {
+        schema: typeof STRUCTURE_SCHEMA
+        op: "structural-gap"
+        region: string
+        gap_px: number | null
+      }
+    | {
+        schema: typeof STRUCTURE_SCHEMA
         op: "structural-order"
         region: string
         nodes: string[]
@@ -5730,6 +7231,20 @@ interface ElReg {
     if (!structureDocumentIntegrityValid()) return { edits, invalid: true }
     for (const region of activeStructureRegions()) {
       if (!structureIntegrityValid(region)) return { edits: [], invalid: true }
+      const gapRaw = region.el.getAttribute(structureAttribute(region.prefix, "gap"))
+      const gap = gapRaw === null ? null : Number.parseInt(gapRaw, 10)
+      if (
+        gap !== null &&
+        (!Number.isInteger(gap) || gap < MIN_STRUCTURAL_GAP_PX || gap > MAX_STRUCTURAL_GAP_PX)
+      )
+        return { edits: [], invalid: true }
+      if (gapRaw !== region.origGap)
+        edits.push({
+          schema: STRUCTURE_SCHEMA,
+          op: "structural-gap",
+          region: region.id,
+          gap_px: gap,
+        })
       const current = connectedStructureNodes(region)
       const ids = current.map((node) => node.id)
       const present = new Set(ids)
@@ -5775,6 +7290,12 @@ interface ElReg {
           return { edits: [], invalid: true }
         const widthChanged = widthRaw !== node.origWidth
         const heightChanged = heightRaw !== node.origHeight
+        const align = node.el.getAttribute(
+          structureAttribute(node.prefix, "align"),
+        ) as StructuralAlignment | null
+        if (align !== null && !/^(?:start|center|end)$/.test(align))
+          return { edits: [], invalid: true }
+        const alignChanged = align !== node.origAlign
         const sizeChanged = size !== node.origSize
         if (heightChanged && sizeChanged && width === null)
           edits.push({
@@ -5816,6 +7337,14 @@ interface ElReg {
             region: region.id,
             node: node.id,
             width_pct: null,
+          })
+        if (alignChanged)
+          edits.push({
+            schema: STRUCTURE_SCHEMA,
+            op: "structural-align",
+            region: region.id,
+            node: node.id,
+            align,
           })
       }
     }
@@ -5916,9 +7445,9 @@ interface ElReg {
     // The edit bar's controls, driven from the host. Same functions the keyboard
     // chords call, so a button and its shortcut can never mean different things.
     else if (d.type === "edit-undo") {
-      if (!cancelStructureResize()) undo()
+      if (!cancelStructuralGesture()) undo()
     } else if (d.type === "edit-redo") {
-      if (!cancelStructureResize()) redo()
+      if (!cancelStructuralGesture()) redo()
     } else if (d.type === "edit-format")
       applyFmt(
         d.kind === "i" ? "i" : d.kind === "a" ? "a" : "b",
