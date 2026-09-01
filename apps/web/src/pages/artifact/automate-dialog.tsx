@@ -10,8 +10,9 @@ import {
 import { workspaceQuery } from "@/lib/queries"
 import { AutomationForm } from "../workflows/automation-form"
 
-// Creates a single-Agent workflow scoped to this artifact and seeds its instruction. The API
-// requires a workspace Admin, so other artifact owners see the same permission boundary here.
+// Creates a workflow scoped to this artifact. AI tasks seed an instruction; direct GitHub
+// Actions keep the artifact binding but send only the workflow inputs the Admin explicitly adds.
+// The API requires a workspace Admin, so other artifact owners see the same permission boundary.
 export function AutomateDialog({
   shortId,
   title,
@@ -31,13 +32,13 @@ export function AutomateDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         data-testid="automate-dialog"
-        className="max-h-[calc(100dvh-2rem)] overflow-y-auto"
+        className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-2xl"
       >
         <DialogHeader>
           <DialogTitle>Automate this artifact</DialogTitle>
           <DialogDescription>
-            Ask an agent to keep {title ? `“${title}”` : "this artifact"} current on a schedule,
-            after an event, or on demand. Manage it later under Workflows.
+            Run an AI task or GitHub Action for {title ? `“${title}”` : "this artifact"} now. Manage
+            future runs under Workflows.
           </DialogDescription>
         </DialogHeader>
         {isAdmin ? (

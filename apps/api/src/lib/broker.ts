@@ -283,6 +283,7 @@ export const bearerFor = async (
         cn.broker_ref,
         githubProfile,
         githubRepository,
+        cn.base_url ?? undefined,
       )
     } catch (err) {
       // Installation removal/suspension must stop being advertised after the first live call.

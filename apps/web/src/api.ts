@@ -360,6 +360,14 @@ export interface AutomationTrigger {
   cron?: string
   tz?: string
   on?: string
+  action?: {
+    kind: "github_workflow"
+    owner: string
+    repo: string
+    workflow: string
+    ref: string
+    inputs?: Record<string, string | number | boolean>
+  }
 }
 /** A connected model-plan credential, as the settings UI sees it — never the secret. */
 export interface ModelCredentialHint {
@@ -1616,9 +1624,25 @@ export const api = {
     ).then(j),
   runWorkflow: (
     shortId: string,
-    body: { agentId?: string; diagramId: string; delivery?: "agent" | "copy" },
-  ): Promise<{ runId: string; prompt: string; requestId?: string }> =>
-    f(`/v1/artifacts/${shortId}/workflow-run`, opts(body)).then(j),
+    body:
+      | { agentId?: string; diagramId: string; delivery?: "agent" | "copy" }
+      | {
+          diagramId: string
+          delivery: "github"
+          github: {
+            connectionId: string
+            owner: string
+            repo: string
+            workflow: string
+            ref: string
+          }
+        },
+  ): Promise<{
+    runId: string
+    prompt: string
+    requestId?: string
+    github?: { runId: string; url: string }
+  }> => f(`/v1/artifacts/${shortId}/workflow-run`, opts(body)).then(j),
   workflowRuns: (
     shortId: string,
     diagramId: string,

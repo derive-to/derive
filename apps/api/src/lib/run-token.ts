@@ -10,10 +10,10 @@
  * additionally pin it to ITS item — a leaked token is a bounded liability: one agent, one
  * workspace, one job, minutes.
  *
- * TWO KINDS, ONE MACHINE. A `run` is an automation firing; a `session` is somebody asking a
- * context. They are the same call — (context, instruction) — differing only in what started them,
- * so they get the same credential shape and the same executor. The prefix (`dkrun_` / `dksess_`)
- * lets bearer resolution route without trial verification, and keeps the two scopes from ever
+ * THREE KINDS, ONE MACHINE. A `run` is an automation firing; a `session` is somebody asking a
+ * context; a `workflow` is one externally hosted, version-pinned graph run. They get the same
+ * credential shape and executor identity. The prefix (`dkrun_` / `dksess_` / `dkwfr_`)
+ * lets bearer resolution route without trial verification, and keeps the three scopes from ever
  * being confused for one another: a session token can never claim a run, or vice versa.
  *
  * A thin wrapper over lib/capability-token.ts (the HMAC format publish/upload tokens share).
@@ -22,13 +22,18 @@ import { signCapabilityToken, verifyCapabilityToken } from "./capability-token"
 import { RUN_TOKEN_TTL_MS } from "./run-lifecycle"
 
 /** What a capability token authorizes work on. */
-export type WorkKind = "run" | "session"
+export type WorkKind = "run" | "session" | "workflow"
 
 const DOMAIN: Record<WorkKind, string> = {
   run: "derive-run-token:",
   session: "derive-session-token:",
+  workflow: "derive-workflow-token:",
 }
-const PREFIX: Record<WorkKind, string> = { run: "dkrun_", session: "dksess_" }
+const PREFIX: Record<WorkKind, string> = {
+  run: "dkrun_",
+  session: "dksess_",
+  workflow: "dkwfr_",
+}
 
 // The TTL belongs to the run lifecycle clock (run-lifecycle.ts), not to this file: it must
 // EXCEED the work timeout so an honest job can still write its result, and fall SHORT of the
@@ -41,6 +46,7 @@ export { RUN_TOKEN_TTL_MS }
 export const workTokenKind = (bearer: string): WorkKind | null => {
   if (bearer.startsWith(PREFIX.run)) return "run"
   if (bearer.startsWith(PREFIX.session)) return "session"
+  if (bearer.startsWith(PREFIX.workflow)) return "workflow"
   return null
 }
 

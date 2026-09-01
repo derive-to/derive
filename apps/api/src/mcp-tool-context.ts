@@ -42,6 +42,8 @@ export interface ToolContextBase {
   /** This connection is itself a minted dkapi_ token: the mint refuses to chain off
    *  one, so a leaked token can't renew its own short TTL forever. */
   mintedToken: boolean
+  /** One workflow run for an external dkwfr_ harness. Null for ordinary connections. */
+  workflowScope: string | null
   defaultOrg: string
   defaultRole: Role
   pendingRequests: AgentMentionRecord[]

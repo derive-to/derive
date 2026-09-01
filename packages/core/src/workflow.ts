@@ -865,6 +865,10 @@ export interface WorkflowRunTarget {
   diagramId: string
   runId: string
   baseUrl: string
+  /** External one-shot harnesses receive the validated, pinned facts inline so their
+   * capability can stay on the single `use` tool instead of gaining broad read access. */
+  definition?: WorkflowDefinition
+  manifest?: LinkedBundleManifest
 }
 
 /** A version-pinned handoff for an authorized local harness. Derive stores the
@@ -876,15 +880,25 @@ export const workflowRunInstruction = ({
   diagramId,
   runId,
   baseUrl,
+  definition,
+  manifest,
 }: WorkflowRunTarget): string => {
   const origin = baseUrl.replace(/\/$/, "")
   return [
     `Run Derive workflow ${shortId}@v${version}, diagram "${diagramId}". Run id: ${runId}. This is explicit run intent.`,
-    `Read the pinned policy with read({short_id:"${shortId}", version:${version}, data:"workflow-definition"}) and the visible graph with data:"bundle-manifest"; never substitute the current head. Raw equivalents live under ${origin}/raw/${shortId}/v/${version}/data/.`,
+    definition && manifest
+      ? "Use only the exact validated workflow-definition and bundle-manifest included below; never substitute the current head or another artifact."
+      : `Read the pinned policy with read({short_id:"${shortId}", version:${version}, data:"workflow-definition"}) and the visible graph with data:"bundle-manifest"; never substitute the current head. Raw equivalents live under ${origin}/raw/${shortId}/v/${version}/data/.`,
     "Preview that exact definition again before opening a context session. Stop and report the blockers if it Needs changes.",
     `Open each ready context node with use({context, instruction, workflow:{run_id:"${runId}", node_id:"<node-id>", attempt:<n>}}). Derive assigns the exact ${runId}:<node-id>:<attempt> dedupe key; a retry increments the attempt number.`,
     `After evaluating an attempt, record its decision and authored destinations with use({workflow:{run_id:"${runId}", node_id:"<node-id>", attempt:<n>, status:"succeeded", selected_routes:["<next-node>"], route_basis:"<why>"}}). Pass finish_run on the terminal receipt.`,
     "Preserve the authored routes, loop bounds, forbidden actions, and human decisions. Open a human-gated effect context only after its referenced decision returned the matching option. Each approval authorizes one attempt; reuse it only when every gated effect declares idempotency. Otherwise stop and start a new run for fresh approval. Silence never authorizes it.",
     "Project only explicit session truth back into the visible graph. Derive stores the graph, artifacts, review, and receipts; this agent is the harness that performs the work.",
+    ...(definition && manifest
+      ? [
+          `PINNED WORKFLOW-DEFINITION\n${JSON.stringify(definition)}`,
+          `PINNED BUNDLE-MANIFEST\n${JSON.stringify(manifest)}`,
+        ]
+      : []),
   ].join("\n\n")
 }

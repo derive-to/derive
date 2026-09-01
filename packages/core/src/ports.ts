@@ -11,6 +11,7 @@ import type {
   WorkflowRunStatus,
   WorkflowStepAttemptStatus,
   WorkflowStepKind,
+  WorkflowStepTransitionGuard,
   WorkflowTransitionGuard,
 } from "./workflow-run"
 
@@ -2340,6 +2341,10 @@ export interface AgentStore {
 /** Durable workflow coordination. Automation runs and context sessions remain separate records. */
 export interface WorkflowRunStore {
   createWorkflowRun(run: NewWorkflowRun): Promise<WorkflowRunRecord>
+  /** Trusted execution callbacks resolve a run before its workspace is known. Callers must
+   * authenticate and re-check the stored assignment before acting on this unscoped lookup. */
+  getWorkflowRunById(id: string): Promise<WorkflowRunRecord | null>
+  getWorkflowRunByExternalRunId(externalRunId: string): Promise<WorkflowRunRecord | null>
   getWorkflowRun(id: string, orgId: string): Promise<WorkflowRunRecord | null>
   listWorkflowRuns(
     workflowArtifactId: string,
@@ -2351,6 +2356,24 @@ export interface WorkflowRunStore {
     orgId: string,
     expected: WorkflowTransitionGuard,
     transition: WorkflowRunTransition,
+  ): Promise<WorkflowRunRecord | null>
+  /** Attach an authenticated provider receipt without rewriting the graph's terminal outcome. */
+  setWorkflowRunExternalReceipt(
+    id: string,
+    orgId: string,
+    externalRunId: string,
+    externalExecution: string,
+    at: string,
+  ): Promise<WorkflowRunRecord | null>
+  /** A matching provider failure may supersede an internally-successful graph because the
+   * one-shot harness itself did not complete successfully. Exact external id is mandatory. */
+  overrideSuccessfulWorkflowRunFromExternal(
+    id: string,
+    orgId: string,
+    externalRunId: string,
+    status: Extract<WorkflowRunStatus, "failed" | "cancelled" | "timed_out">,
+    externalExecution: string,
+    at: string,
   ): Promise<WorkflowRunRecord | null>
   createWorkflowStepAttempt(
     orgId: string,
@@ -2368,7 +2391,7 @@ export interface WorkflowRunStore {
     id: string,
     workflowRunId: string,
     orgId: string,
-    expected: WorkflowTransitionGuard,
+    expected: WorkflowStepTransitionGuard,
     transition: WorkflowStepAttemptTransition,
   ): Promise<WorkflowStepAttemptRecord | null>
 }
@@ -2755,6 +2778,19 @@ export interface NewAgent {
 
 export type TriggerKind = "manual" | "schedule" | "event"
 
+/** A direct action executes without a coding agent or model plan. GitHub Actions is the first
+ * adapter; the tagged shape leaves room for other outbound runners without another column. */
+export interface GithubWorkflowAutomationAction {
+  kind: "github_workflow"
+  owner: string
+  repo: string
+  workflow: string
+  ref: string
+  inputs?: Record<string, string | number | boolean>
+}
+
+export type AutomationAction = GithubWorkflowAutomationAction
+
 /** How an automation fires. Open-ended JSON on the row — a new kind adds no columns. */
 export interface AutomationTrigger {
   kind: TriggerKind
@@ -2764,6 +2800,8 @@ export interface AutomationTrigger {
   tz?: string
   /** event: the event name (e.g. "comment.opened", "upstream.published", "webhook"). */
   on?: string
+  /** Optional direct outbound work. Omitted means the normal agent instruction lane. */
+  action?: AutomationAction
   /** event/webhook: sha256 of the fire secret. The raw secret rides only the create
    *  response that mints it; the fire endpoint verifies a presented bearer against this
    *  hash. Never surfaced on read — redacted to a boolean when an automation is presented. */
@@ -2885,6 +2923,11 @@ export interface WorkflowRunRecord {
   requested_execution: WorkflowRequestedExecution
   /** The lane that first started the run. */
   actual_execution: WorkflowExecutionLane | null
+  /** JSON-encoded, adapter-specific assignment and downstream receipt. The workflow run remains
+   * the sole ledger; this is not a second queue or execution record. */
+  external_execution: string | null
+  /** Provider run id used only to correlate an authenticated callback to this ledger row. */
+  external_run_id: string | null
   created_at: string
   updated_at: string
   started_at: string | null
@@ -2904,6 +2947,8 @@ export interface NewWorkflowRun {
   request_id?: string | null
   assigned_agent_id?: string | null
   requested_execution?: WorkflowRequestedExecution
+  external_execution?: string | null
+  external_run_id?: string | null
   created_at?: string
 }
 
@@ -2914,6 +2959,9 @@ export interface WorkflowRunTransition {
   actualExecution?: WorkflowExecutionLane
   /** Required when starting or advancing a claimed run. */
   executorId?: string
+  /** Replacement JSON receipt for an external execution assignment. */
+  externalExecution?: string | null
+  externalRunId?: string | null
 }
 
 /** One materialized attempt of a Workflow node. */

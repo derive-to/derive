@@ -80,6 +80,61 @@ does not execute nodes, call tools, or mutate external systems. It lists the Con
 an explicit run would open; the connected Codex or Claude harness runs the work through those
 existing Derive sessions.
 
+## Run one assigned graph from GitHub Actions
+
+`derive workflow run` is a one-shot adapter deliberately exposed as `derive-*.yml`. It does not
+accept a caller-authored prompt or standing Derive bearer. In GitHub Actions it requests an OIDC
+assertion with the fixed `derive-graph-runner` audience, exchanges the bounded run id and one-time
+nonce for a short-lived run capability, and only then fetches the pinned instruction.
+
+The command runs inside a repository-owned Codex environment. That environment must install and
+authenticate Codex before this step starts. Derive does not create an agent, select a sandbox,
+choose a model provider, or read model credentials. A managed-agent GitHub Action can own that
+setup and invoke this command after its environment is ready.
+
+```yaml
+name: Derive graph harness
+on:
+  workflow_dispatch:
+    inputs:
+      derive_run_id:
+        description: Derive workflow run id
+        required: true
+        type: string
+      derive_exchange_nonce:
+        description: One-time Derive exchange nonce
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  graph:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the pinned adapter
+        run: npm install --global "@derive-to/cli@0.6.0"
+      # Your repository or runner provider installs and authenticates Codex.
+      - name: Run the assigned graph
+        env:
+          DERIVE_WORKFLOW_RUN_ID: ${{ inputs.derive_run_id }}
+          DERIVE_EXCHANGE_NONCE: ${{ inputs.derive_exchange_nonce }}
+        run: derive workflow run
+```
+
+GitHub supplies `ACTIONS_ID_TOKEN_REQUEST_URL` and `ACTIONS_ID_TOKEN_REQUEST_TOKEN` when
+`id-token: write` is present. The command never prints those values, the nonce, the OIDC assertion,
+or the exchanged capability. The command uses the runner's existing Codex identity and limits its
+Derive connection to the one-run capability and the `use` tool. Agent provisioning and lifecycle
+stay outside Derive and remain the repository workflow's responsibility.
+
 ## Hosted and self-hosted servers
 
 The CLI resolves its server from `derive.json`, then `DERIVE_SERVER`, then

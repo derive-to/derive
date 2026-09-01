@@ -4814,6 +4814,83 @@ export function runStoreContract(
       ).rejects.toThrow("complete version pin")
     })
 
+    it("keeps GitHub dispatch and terminal receipts on the workflow run ledger", async () => {
+      const externalRunId = `Niftory/sift#${uuid()}`
+      const created = await store.createWorkflowRun({
+        id: `wfr_${uuid()}`,
+        org_id: ORG,
+        workflow_artifact_id: `art_${uuid()}`,
+        workflow_version: 1,
+        workflow_blob_key: `blob_${uuid()}`,
+        workflow_content_type: "text/x-derive-linked-bundle",
+        diagram_id: "main",
+        reason: "github-actions",
+        assigned_agent_id: "agt_github",
+        requested_execution: "github_actions",
+        external_execution: JSON.stringify({ kind: "github_actions", phase: "assigned" }),
+      })
+      expect(await store.getWorkflowRunById(created.id)).toMatchObject({ id: created.id })
+      expect(await store.getWorkflowRunByExternalRunId(externalRunId)).toBeNull()
+      const dispatched = await store.transitionWorkflowRun(
+        created.id,
+        ORG,
+        { status: "queued", stateRevision: 0 },
+        {
+          status: "dispatched",
+          at: "2026-08-31T00:00:01.000Z",
+          externalExecution: JSON.stringify({ kind: "github_actions", phase: "dispatched" }),
+          externalRunId,
+        },
+      )
+      expect(dispatched).toMatchObject({ status: "dispatched", external_run_id: externalRunId })
+      expect(await store.getWorkflowRunByExternalRunId(externalRunId)).toMatchObject({
+        id: created.id,
+      })
+      const running = await store.transitionWorkflowRun(
+        created.id,
+        ORG,
+        { status: "dispatched", stateRevision: dispatched?.state_revision ?? -1 },
+        {
+          status: "running",
+          at: "2026-08-31T00:00:02.000Z",
+          actualExecution: "github_actions",
+          executorId: "agt_github",
+        },
+      )
+      const succeeded = await store.transitionWorkflowRun(
+        created.id,
+        ORG,
+        { status: "running", stateRevision: running?.state_revision ?? -1 },
+        {
+          status: "succeeded",
+          at: "2026-08-31T00:00:03.000Z",
+          actualExecution: "github_actions",
+          executorId: "agt_github",
+        },
+      )
+      expect(succeeded?.status).toBe("succeeded")
+      const receipted = await store.setWorkflowRunExternalReceipt(
+        created.id,
+        ORG,
+        externalRunId,
+        JSON.stringify({ kind: "github_actions", conclusion: "success" }),
+        "2026-08-31T00:00:04.000Z",
+      )
+      expect(receipted).toMatchObject({ status: "succeeded" })
+      expect(JSON.parse(receipted?.external_execution ?? "{}")).toMatchObject({
+        conclusion: "success",
+      })
+      const overridden = await store.overrideSuccessfulWorkflowRunFromExternal(
+        created.id,
+        ORG,
+        externalRunId,
+        "timed_out",
+        JSON.stringify({ kind: "github_actions", conclusion: "timed_out" }),
+        "2026-08-31T00:00:05.000Z",
+      )
+      expect(overridden).toMatchObject({ status: "timed_out" })
+    })
+
     it("lists workflow runs newest first, scoped to the artifact, workspace, and diagram", async () => {
       const artifactId = `art_${uuid()}`
       const create = (id: string, createdAt: string, over: Partial<NewWorkflowRun> = {}) =>

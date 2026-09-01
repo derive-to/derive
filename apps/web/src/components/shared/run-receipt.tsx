@@ -6,25 +6,29 @@ import { StatusBadge, type StatusTone } from "./status-badge"
 
 export type RunDisplayStatus =
   | "queued"
+  | "dispatched"
   | "running"
   | "waiting"
   | "succeeded"
   | "failed"
   | "cancelled"
+  | "timed_out"
 
 export const runStatusLabel = (status: RunDisplayStatus): string =>
   ({
     queued: "Queued",
+    dispatched: "Dispatched",
     running: "Running",
     waiting: "Waiting",
     succeeded: "Completed",
     failed: "Failed",
     cancelled: "Cancelled",
+    timed_out: "Timed out",
   })[status]
 
 export const runStatusTone = (status: RunDisplayStatus): StatusTone => {
   if (status === "succeeded") return "ok"
-  if (status === "failed") return "error"
+  if (status === "failed" || status === "timed_out") return "error"
   if (status === "running") return "busy"
   if (status === "waiting") return "attention"
   return "muted"
@@ -33,6 +37,7 @@ export const runStatusTone = (status: RunDisplayStatus): StatusTone => {
 export function RunReceipt({
   id,
   status,
+  statusLabel,
   title,
   summary,
   facts,
@@ -43,6 +48,9 @@ export function RunReceipt({
 }: {
   id: string
   status: RunDisplayStatus
+  /** Override the generic lifecycle label when completion means a narrower boundary, such as
+   *  "GitHub accepted this dispatch" rather than "the remote workflow passed." */
+  statusLabel?: string
   title: string
   summary: string
   facts: string[]
@@ -56,7 +64,7 @@ export function RunReceipt({
     <div className="min-w-0 flex-1">
       <div className="flex flex-wrap items-center gap-2">
         <StatusBadge tone={runStatusTone(status)} shape="pill">
-          {runStatusLabel(status)}
+          {statusLabel ?? runStatusLabel(status)}
         </StatusBadge>
         <span className="w-full min-w-0 break-words text-sm font-medium text-foreground sm:w-auto sm:truncate">
           {title}

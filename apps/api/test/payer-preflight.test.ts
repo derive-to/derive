@@ -2,6 +2,36 @@ import { describe, expect, it } from "vitest"
 import { POOL_USER } from "../src/lib/payer"
 import { as, connectPoolPlan, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
+const mcpCall = async (
+  app: ReturnType<typeof makeAuthedApp>["app"],
+  token: string,
+  name: string,
+  args: Record<string, unknown>,
+) => {
+  const response = await app.request("/mcp", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name, arguments: args },
+    }),
+  })
+  const text = await response.text()
+  const envelope = JSON.parse(
+    (text.split("\n").find((line) => line.startsWith("data:")) ?? `data:${text}`).slice(5).trim(),
+  ) as { result?: { content?: { text: string }[]; isError?: boolean } }
+  return {
+    isError: envelope.result?.isError === true,
+    text: envelope.result?.content?.[0]?.text ?? "",
+  }
+}
+
 // The PAYER PREFLIGHT: never queue work that nothing can pay for.
 //
 // Before this, a workspace with no connected model plan could create an automation, press Run
@@ -103,6 +133,62 @@ describe("payer preflight: refusing work nothing can pay for", () => {
       jsonAs(as(owner.email), { body_md: "what changed this week?" }),
     )
     expect(res.status).toBe(402)
+  })
+
+  it("an online external runner is the execution plan for REST and MCP asks", async () => {
+    const answering = await mintAgent("ExternalRunner")
+    const asker = await mintAgent("ExternalAsker")
+    const manifest = (await (
+      await publishAs(
+        app,
+        "# BYO runner manifest",
+        { title: "BYO runner manifest" },
+        as(owner.email),
+      )
+    ).json()) as { short_id: string }
+    const create = await app.request(
+      "/v1/contexts",
+      jsonAs(as(owner.email), {
+        name: "BYO runner",
+        agent_id: answering.id,
+        manifest_short_id: manifest.short_id,
+      }),
+    )
+    expect(create.status).toBe(201)
+    const cx = (await create.json()) as { id: string }
+
+    // No Derive plan and no runner: keep refusing work that has nowhere to execute.
+    expect(
+      (
+        await app.request(
+          `/v1/contexts/${cx.id}/sessions`,
+          jsonAs(as(owner.email), { body_md: "before the runner is online" }),
+        )
+      ).status,
+    ).toBe(402)
+
+    // A real queue poll is the runner heartbeat; no separate trust knob can fake liveness.
+    expect(
+      (
+        await app.request(`/v1/contexts/${cx.id}/queue`, {
+          headers: { authorization: `Bearer ${answering.token}` },
+        })
+      ).status,
+    ).toBe(200)
+
+    const rest = await app.request(
+      `/v1/contexts/${cx.id}/sessions`,
+      jsonAs(as(owner.email), { body_md: "run through the external agent" }),
+    )
+    expect(rest.status).toBe(201)
+
+    const mcp = await mcpCall(app, asker.token, "use", {
+      context: cx.id,
+      instruction: "run through the external agent over MCP",
+      wait: 0,
+    })
+    expect(mcp.isError).toBe(false)
+    expect(JSON.parse(mcp.text)).toMatchObject({ context: "BYO runner", state: "open" })
   })
 
   it("connecting a plan unblocks the SAME request that was refused", async () => {

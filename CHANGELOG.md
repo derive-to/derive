@@ -110,6 +110,12 @@ for the recommended install and verification flow.
   always opens a review round — its reveal is never silent.
 
 ### Added
+- `@derive-to/cli` 0.6.0 adds `derive workflow run`, a one-shot Codex harness for
+  Derive graph runs dispatched through reviewed `derive-*.yml` GitHub Actions.
+  The job authenticates passwordlessly with GitHub OIDC, receives only the exact
+  version-pinned graph plus a short-lived run capability, and reports Context and
+  terminal receipts back to Derive; no standing Derive token or prompt is stored
+  in GitHub.
 - **Reversible artifact archiving.** Artifacts can leave the active library without being
   deleted, appear in a dedicated archive, and be restored later.
 - **A standalone public documentation site.** `docs.derive.to` now publishes the product,

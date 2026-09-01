@@ -1,9 +1,15 @@
 import { useQuery } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
 import { api, type WorkflowRunSummary } from "@/api"
-import { RunReceipt, runStatusLabel, runStatusTone } from "@/components/shared/run-receipt"
+import {
+  type RunDisplayStatus,
+  RunReceipt,
+  runStatusLabel,
+  runStatusTone,
+} from "@/components/shared/run-receipt"
 import { Eyebrow } from "@/components/shared/section-eyebrow"
 import { StatusBadge } from "@/components/shared/status-badge"
+import { workflowGithubReceipt } from "./workflow-github-presentation"
 import {
   compactWorkflowReceiptText,
   workflowAttemptRoute,
@@ -11,7 +17,7 @@ import {
   workflowRunSummary,
 } from "./workflow-run-presentation"
 
-const terminal = new Set<WorkflowRunSummary["status"]>(["succeeded", "failed", "cancelled"])
+const terminal = new Set<string>(["succeeded", "failed", "cancelled", "timed_out"])
 
 type WorkflowAttempt = WorkflowRunSummary["attempts"][number]
 
@@ -77,6 +83,52 @@ const WorkflowAttemptTimeline = ({ attempts }: { attempts: WorkflowAttempt[] }) 
   </ol>
 )
 
+const GithubExecutionReceipt = ({ run }: { run: WorkflowRunSummary }) => {
+  const receipt = workflowGithubReceipt(run)
+  if (!receipt) return null
+  return (
+    <div className="mb-3 min-w-0 rounded-lg border border-border-soft bg-background p-3">
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
+        <span className="font-medium text-foreground">GitHub Actions receipt</span>
+        {receipt.runUrl && receipt.runId ? (
+          <a
+            href={receipt.runUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="break-all text-xs font-medium text-primary hover:underline"
+            data-testid={`workflow-github-run-link-${run.id}`}
+          >
+            Run #{receipt.runId}
+          </a>
+        ) : (
+          <span className="text-xs text-muted-foreground">Awaiting GitHub run ID</span>
+        )}
+      </div>
+      <dl className="mt-2 grid gap-1.5">
+        <ReceiptField label="Repository" value={receipt.repository} />
+        <ReceiptField label="Adapter" value={`${receipt.workflow} · ${receipt.ref}`} />
+        <ReceiptField
+          label="GitHub"
+          value={
+            receipt.githubConclusion ??
+            receipt.githubStatus ??
+            (receipt.exchangedAt ? "OIDC authenticated" : "Dispatched")
+          }
+        />
+        <ReceiptField
+          label="Attempt"
+          value={receipt.runAttempt === null ? null : String(receipt.runAttempt)}
+        />
+        <ReceiptField label="Error" value={receipt.error} />
+      </dl>
+      <p className="mt-2 text-2xs leading-relaxed text-muted-foreground">
+        Dispatch proves only that GitHub accepted the request. Completion above reflects the
+        correlated GitHub job and Derive’s graph receipts.
+      </p>
+    </div>
+  )
+}
+
 export function WorkflowRunHistory({
   shortId,
   diagramId,
@@ -121,7 +173,7 @@ export function WorkflowRunHistory({
           <RunReceipt
             key={run.id}
             id={run.id}
-            status={run.status}
+            status={run.status as RunDisplayStatus}
             title={diagramTitle}
             summary={workflowRunSummary(run)}
             facts={[
@@ -135,8 +187,17 @@ export function WorkflowRunHistory({
             defaultOpen={index === 0}
             testId={`workflow-run-${run.id}`}
           >
-            {run.attempts.length > 0 ? (
-              <WorkflowAttemptTimeline attempts={run.attempts} />
+            {workflowGithubReceipt(run) || run.attempts.length > 0 ? (
+              <>
+                <GithubExecutionReceipt run={run} />
+                {run.attempts.length > 0 ? (
+                  <WorkflowAttemptTimeline attempts={run.attempts} />
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    No Context step receipt has been recorded yet.
+                  </p>
+                )}
+              </>
             ) : undefined}
           </RunReceipt>
         ))}

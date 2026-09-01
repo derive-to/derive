@@ -1,5 +1,11 @@
 import type { Automation, Run } from "@/api"
-import { runExecutionReceipt, runOutcome, runOutcomeLabel, runWrites } from "./automation-format"
+import {
+  githubActionRunReceipt,
+  runExecutionReceipt,
+  runOutcome,
+  runOutcomeLabel,
+  runWrites,
+} from "./automation-format"
 
 const countLabel = (count: number, singular: string): string =>
   `${count} ${singular}${count === 1 ? "" : "s"}`
@@ -40,8 +46,14 @@ export const presentAutomationRun = (
   const writes = runWrites(run.meta)
   const outcome = runOutcome(run.meta)
   const receipt = runExecutionReceipt(run.meta)
+  const githubReceipt = githubActionRunReceipt(run.meta)
   const duration = formatRunDuration(run.timeline?.ran_ms ?? null)
   const facts = [automationRunTrigger(run.reason)]
+  const isGithubWorkflow = automation?.trigger.action?.kind === "github_workflow"
+  if (isGithubWorkflow)
+    facts.push(
+      githubReceipt ? `${githubReceipt.repository} · ${githubReceipt.ref}` : "GitHub Actions",
+    )
   if (receipt)
     facts.push(
       `${receipt.location === "hosted" ? "Hosted" : "Local"} · ${receipt.provider === "codex" ? "Codex" : "Claude Code"}`,
@@ -61,6 +73,10 @@ export const presentAutomationRun = (
     summary = run.timeline?.last_error
       ? compactText(run.timeline.last_error)
       : "The Agent stopped after a failure."
+  } else if (isGithubWorkflow && outcome === "dispatched") {
+    summary = githubReceipt
+      ? `GitHub started ${githubReceipt.workflow} as run #${githubReceipt.runId}.`
+      : "GitHub accepted the workflow dispatch."
   } else if (writes.length > 0) {
     summary = `The Agent wrote ${countLabel(writes.length, "Artifact")}.`
   } else if (outcome) {
@@ -72,7 +88,7 @@ export const presentAutomationRun = (
   return {
     title:
       automation?.instruction ??
-      (run.automation_id ? "Removed single-Agent workflow" : "One-time Agent run"),
+      (run.automation_id ? "Removed automated workflow" : "One-time Agent run"),
     summary,
     facts,
   }

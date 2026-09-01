@@ -23,6 +23,12 @@ import {
   runMetaForAutomation,
 } from "../lib/automation"
 import {
+  DirectAutomationError,
+  githubWorkflowAction,
+  runDirectAutomation,
+  validateGithubWorkflowAutomation,
+} from "../lib/automation-action"
+import {
   brokerFor,
   callTool,
   connectionBindError,
@@ -86,11 +92,20 @@ const REF = z.union([
   z.object({ kind: z.literal("tag"), tag: z.string().min(1).max(128) }),
 ])
 const REFS = z.array(REF).max(100)
+const ACTION = z.object({
+  kind: z.literal("github_workflow"),
+  owner: z.string().min(1).max(100),
+  repo: z.string().min(1).max(100),
+  workflow: z.string().min(1).max(200),
+  ref: z.string().min(1).max(1024),
+  inputs: z.record(z.string(), z.union([z.string(), z.number().finite(), z.boolean()])).optional(),
+})
 const TRIGGER = z.object({
   kind: z.enum(["manual", "schedule", "event"]),
   cron: z.string().optional(),
   tz: z.string().optional(),
   on: z.string().optional(),
+  action: ACTION.optional(),
 })
 
 export const automationRoutes = (ctx: AppContext) => {
@@ -210,6 +225,16 @@ export const automationRoutes = (ctx: AppContext) => {
       )
       if (bindErr) return bail(fail(c, 400, bindErr))
     }
+    if (b.trigger.action) {
+      if (b.trigger.kind !== "manual")
+        return bail(fail(c, 400, "GitHub Actions currently supports manual runs only"))
+      try {
+        await validateGithubWorkflowAutomation(meta, org, b.connectionIds ?? [], b.trigger.action)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "invalid GitHub workflow"
+        return bail(fail(c, 400, message))
+      }
+    }
     let agentId = b.agentId ?? boundContext?.agent_id ?? null
     let agentToken: string | null = null
     if (!agentId) {
@@ -263,37 +288,49 @@ export const automationRoutes = (ctx: AppContext) => {
           await meta.deleteAutomation(rec.id, org).catch(() => {})
           if (agentToken && agentId) await meta.deleteAgent(agentId, org).catch(() => {})
         }
-        if (await overBudget(meta, org, initiator.id)) {
-          await unwind()
-          return bail(fail(c, 429, "monthly run budget reached"))
-        }
-        if (!(await canPay(rec, initiator.id))) {
-          await unwind()
-          return bail(fail(c, 402, NO_PAYER_MESSAGE))
-        }
         try {
-          firstRun = await meta.createRun({
-            id: newId("run"),
-            org_id: org,
-            automation_id: rec.id,
-            agent_id: rec.agent_id,
-            reason: `manual:${initiator.id}`,
-            initiated_by: initiator.id,
-            scheduled_for: isoNow(),
-            meta: runMetaForAutomation(rec),
-          })
+          if (githubWorkflowAction(rec)) {
+            firstRun = await runDirectAutomation({
+              meta,
+              automation: rec,
+              encryptionKey: deps.encryptionKey,
+              reason: `manual:${initiator.id}`,
+              initiatedBy: initiator.id,
+            })
+          } else {
+            if (await overBudget(meta, org, initiator.id)) {
+              await unwind()
+              return bail(fail(c, 429, "monthly run budget reached"))
+            }
+            if (!(await canPay(rec, initiator.id))) {
+              await unwind()
+              return bail(fail(c, 402, NO_PAYER_MESSAGE))
+            }
+            firstRun = await meta.createRun({
+              id: newId("run"),
+              org_id: org,
+              automation_id: rec.id,
+              agent_id: rec.agent_id,
+              reason: `manual:${initiator.id}`,
+              initiated_by: initiator.id,
+              scheduled_for: isoNow(),
+              meta: runMetaForAutomation(rec),
+            })
+          }
         } catch (e) {
           await unwind()
+          if (e instanceof DirectAutomationError) return bail(fail(c, e.status, e.message))
           throw e
         }
         // A dispatch nudge is only a latency optimization: the scheduled sweep will pick the
         // queued run up even when the platform binding is briefly unavailable. Never unwind an
         // otherwise valid automation + run because that best-effort signal threw synchronously.
-        try {
-          deps.pokeRun?.(firstRun.id)
-        } catch {
-          // The queued row is the durable handoff.
-        }
+        if (!githubWorkflowAction(rec))
+          try {
+            deps.pokeRun?.(firstRun.id)
+          } catch {
+            // The queued row is the durable handoff.
+          }
       }
       // The auto-mint token + the fire secret/URL ride this create response ONCE.
       return c.json(
@@ -302,7 +339,7 @@ export const automationRoutes = (ctx: AppContext) => {
           // Hosted dispatch authenticates with an expiring per-run capability; exposing the
           // standing bearer during create-and-run is unnecessary. Keep it only for the
           // existing polling-runner creation flow.
-          ...(agentToken && !b.runNow ? { agent_token: agentToken } : {}),
+          ...(agentToken && !b.runNow && !trigger.action ? { agent_token: agentToken } : {}),
           ...(firstRun ? { run_id: firstRun.id, run_status: firstRun.status } : {}),
           ...(fireSecret
             ? { fire_secret: fireSecret, fire_url: `/v1/automations/${rec.id}/fire` }
@@ -372,6 +409,24 @@ export const automationRoutes = (ctx: AppContext) => {
       )
       if (bindErr) return bail(fail(c, 400, bindErr))
     }
+    const effectiveTrigger = b.trigger ?? parseTrigger(a.trigger)
+    const effectiveConnectionIds =
+      b.connectionIds === undefined ? parseConnectionIds(a.connection_ids) : (b.connectionIds ?? [])
+    if (effectiveTrigger.action) {
+      if (effectiveTrigger.kind !== "manual")
+        return bail(fail(c, 400, "GitHub Actions currently supports manual runs only"))
+      try {
+        await validateGithubWorkflowAutomation(
+          meta,
+          org,
+          effectiveConnectionIds,
+          effectiveTrigger.action,
+        )
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "invalid GitHub workflow"
+        return bail(fail(c, 400, message))
+      }
+    }
     const rec = await meta.updateAutomation(a.id, org, {
       agent_id: nextContext?.agent_id ?? b.agentId,
       trigger: b.trigger ? JSON.stringify(b.trigger satisfies AutomationTrigger) : undefined,
@@ -431,6 +486,22 @@ export const automationRoutes = (ctx: AppContext) => {
     // A disabled automation takes no new runs — from ANY trigger: this path, and the
     // future schedule tick / event kick must all check the same flag.
     if (a.enabled !== 1) return fail(c, 400, "automation is disabled")
+    if (githubWorkflowAction(a)) {
+      try {
+        const rec = await runDirectAutomation({
+          meta,
+          automation: a,
+          encryptionKey: deps.encryptionKey,
+          reason: `manual:${me.id}`,
+          initiatedBy: me.id,
+        })
+        return c.json({ id: rec.id, status: rec.status }, 201)
+      } catch (error) {
+        const status = error instanceof DirectAutomationError ? error.status : 502
+        const message = error instanceof Error ? error.message : "GitHub workflow dispatch failed"
+        return fail(c, status, message)
+      }
+    }
     // Budget guard at enqueue (invariant 2): a run-now bills to the requester.
     if (await overBudget(meta, org, me.id)) return fail(c, 429, "monthly run budget reached")
     // PAYER guard: never queue work nothing can pay for. Without it the run is created,

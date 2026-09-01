@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest"
 import type { Automation, Run, WorkflowRunSummary } from "@/api"
 import { runStatusTone } from "@/components/shared/run-receipt"
-import { workflowRunSummary } from "@/pages/artifact/workflow-run-presentation"
+import {
+  workflowGithubReceipt,
+  workflowGithubStarterAdapter,
+} from "@/pages/artifact/workflow-github-presentation"
+import {
+  workflowDeliveryLabel,
+  workflowRunSummary,
+} from "@/pages/artifact/workflow-run-presentation"
 import { automationRunTrigger, presentAutomationRun } from "./run-presentation"
 
 const automation: Automation = {
@@ -45,6 +52,22 @@ const run: Run = {
     writes: [],
   },
 }
+
+const githubWorkflowRun = (externalExecution: unknown, status = "dispatched"): WorkflowRunSummary =>
+  ({
+    id: "wfr_github",
+    diagramId: "release",
+    workflowVersion: 7,
+    status,
+    reason: "manual:github",
+    requestedExecution: "github_actions",
+    actualExecution: status === "dispatched" ? null : "github_actions",
+    externalExecution,
+    createdAt: "2026-08-31T12:00:00.000Z",
+    startedAt: status === "dispatched" ? null : "2026-08-31T12:00:04.000Z",
+    finishedAt: null,
+    attempts: [],
+  }) as unknown as WorkflowRunSummary
 
 describe("run presentation", () => {
   it("explains a standing Agent run without exposing its internal reason value", () => {
@@ -91,5 +114,73 @@ describe("run presentation", () => {
   it("treats cancellation as a neutral stop, not a failure", () => {
     expect(runStatusTone("cancelled")).toBe("muted")
     expect(runStatusTone("failed")).toBe("error")
+    expect(runStatusTone("timed_out")).toBe("error")
+  })
+
+  it("keeps GitHub dispatch separate from downstream graph success", () => {
+    const coordinated = githubWorkflowRun({
+      kind: "github_actions",
+      owner: "Niftory",
+      repo: "sift",
+      workflow: "derive-graph-runner.yml",
+      ref: "main",
+      github_run_id: "998877",
+      github_run_url: "https://malicious.example/ignored",
+    })
+
+    expect(workflowRunSummary(coordinated)).toBe(
+      "GitHub run #998877 was dispatched; waiting for its OIDC-authenticated job.", // tokens-ignore
+    )
+    expect(workflowDeliveryLabel(coordinated)).toBe("GitHub Actions")
+    expect(workflowGithubReceipt(coordinated)?.runUrl).toBe(
+      "https://github.com/Niftory/sift/actions/runs/998877", // tokens-ignore
+    )
+  })
+
+  it("renders a no-prompt OIDC adapter without choosing the repository runner", () => {
+    const adapter = workflowGithubStarterAdapter()
+    expect(adapter).toContain("id-token: write")
+    expect(adapter).toContain("DERIVE_EXCHANGE_NONCE")
+    expect(adapter).toContain("repository's approved agent setup step")
+    expect(adapter).not.toContain("DERIVE_CLOUD_AGENT")
+    expect(adapter).not.toContain("OPENAI_API_KEY")
+    expect(adapter).not.toContain("DERIVE_TOKEN")
+    expect(adapter).not.toContain("prompt:")
+    expect(adapter).toContain("@derive-to/cli@0.6.0")
+    expect(adapter).not.toContain("@openai/codex")
+    expect(adapter).not.toContain("@latest")
+  })
+
+  it("shows an exact, safe GitHub Actions run receipt", () => {
+    const githubAutomation: Automation = {
+      ...automation,
+      trigger: {
+        kind: "manual",
+        action: {
+          kind: "github_workflow",
+          owner: "Niftory",
+          repo: "sift",
+          workflow: "derive-docs-refresh.yml",
+          ref: "main",
+        },
+      },
+      instruction: "Run Niftory/sift · derive-docs-refresh.yml",
+    }
+    const githubRun: Run = {
+      ...run,
+      meta: JSON.stringify({
+        outcome: "dispatched",
+        action: githubAutomation.trigger.action,
+        github_action: {
+          run_id: "7788",
+          url: "https://malicious.example/ignored",
+        },
+      }),
+    }
+    expect(presentAutomationRun(githubRun, githubAutomation)).toEqual({
+      title: "Run Niftory/sift · derive-docs-refresh.yml",
+      summary: "GitHub started derive-docs-refresh.yml as run #7788.", // tokens-ignore
+      facts: ["Started by webhook", "Niftory/sift · main", "Ran for 2m"],
+    })
   })
 })

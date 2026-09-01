@@ -147,6 +147,7 @@ async function buildServer(
   // This connection is itself authenticated by a minted dkapi_ token — the mint
   // refuses to chain off one (it would renew its own TTL indefinitely).
   mintedToken: boolean,
+  workflowScope: string | null,
   // The default workspace's Brandprint inputs can ride the opaque OAuth grant query.
   // Header re-homing passes undefined, which preserves the live workspace lookup.
   brandprintContext?: Parameters<typeof resolveBrandprintContext>[0],
@@ -155,6 +156,54 @@ async function buildServer(
   // stay inside their round-trip budgets.
   isInitialize = false,
 ): Promise<McpServer> {
+  if (workflowScope) {
+    const workflowSkill = CORE_SKILLS.find((skill) => skill.name === "workflows")
+    if (!workflowSkill) throw new Error("workflow skill is unavailable")
+    const server = new McpServer(
+      { name: "derive", version: "1.0.0" },
+      {
+        capabilities: { tools: { listChanged: true } },
+        instructions:
+          `You are the one-shot harness assigned to workflow run ${workflowScope}. ` +
+          "Read derive://skills/workflows, then coordinate only this run through use. " +
+          "Do not pull or answer Context runner queues.",
+      },
+    )
+    server.registerResource(
+      "skills:workflows",
+      "derive://skills/workflows",
+      {
+        title: "Graphs and bounded loops",
+        description: workflowSkill.summary,
+        mimeType: "text/markdown",
+        annotations: { audience: ["assistant"], priority: 1 },
+      },
+      async (uri) => ({
+        contents: [{ uri: uri.href, mimeType: "text/markdown", text: workflowSkill.body }],
+      }),
+    )
+    const base: ToolContextBase = {
+      server,
+      ctx,
+      agent,
+      actingFor,
+      ownerId,
+      scopeForCap,
+      registered,
+      boundWorkspaces,
+      grantWorkspaces,
+      clientId,
+      mintedToken,
+      workflowScope,
+      defaultOrg: agent.org_id,
+      defaultRole: agent.role,
+      pendingRequests: [],
+      bpProfile: undefined,
+      profileArt: null,
+    }
+    registerToolSurface(makeToolContext(base), undefined, new Set(["use"]))
+    return server
+  }
   // The always-loaded CORE SKILLS index: one line per skill (name: summary —
   // derive://skills/<name>), kept in lockstep with the skill bodies by iterating the
   // same array the resources register from. The workflow/protocol prose lives in those
@@ -496,13 +545,18 @@ async function buildServer(
     grantWorkspaces,
     clientId,
     mintedToken,
+    workflowScope,
     defaultOrg,
     defaultRole,
     pendingRequests,
     bpProfile,
     profileArt,
   }
-  registerToolSurface(makeToolContext(base), ctx.deps.codeSandbox)
+  registerToolSurface(
+    makeToolContext(base),
+    ctx.deps.codeSandbox,
+    workflowScope ? new Set(["use"]) : undefined,
+  )
 
   return server
 }
@@ -655,6 +709,7 @@ export function mountMcp(app: Hono, ctx: AppContext): void {
     // mint has to be told explicitly not to run off one (self-renewal — see
     // isMintedApiToken).
     const mintedToken = ctx.isMintedApiToken(c)
+    const workflowScope = ctx.agentWorkflowScope(c)
     // Peek the JSON-RPC method: the workspace-skills count in the instructions is only
     // read at initialize, and paying its query on every tool call is exactly the creep
     // the round-trip budget suite pins. A GET (SSE open) or unparsable body reads false.
@@ -677,6 +732,7 @@ export function mountMcp(app: Hono, ctx: AppContext): void {
       grant?.workspaces,
       grant?.clientId ?? "",
       mintedToken,
+      workflowScope,
       grant?.orgContext?.orgId === agent.org_id ? grant.orgContext : undefined,
       isInitialize,
     )

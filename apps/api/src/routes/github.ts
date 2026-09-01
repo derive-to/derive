@@ -1,5 +1,5 @@
 import { createHash, createHmac } from "node:crypto"
-import type { GitHubAppRecord } from "@derive/core"
+import { type GitHubAppRecord, workflowRunInstruction } from "@derive/core"
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { Handler } from "hono"
 import type { BlankEnv } from "hono/types"
@@ -25,7 +25,14 @@ import {
   listUserInstallations,
 } from "../lib/github-app"
 import { upsertGithubConnection } from "../lib/github-connection"
+import {
+  exchangeGithubWorkflowCapability,
+  GithubWorkflowHarnessError,
+  reconcileGithubWorkflowRun,
+} from "../lib/github-workflow-harness"
 import { bail, fail } from "../lib/http"
+import { verifyWorkToken } from "../lib/run-token"
+import { parseLinkedWorkflowFacts } from "../lib/workflow-facts"
 import { log } from "../log"
 
 interface InstallState {
@@ -73,6 +80,141 @@ export const githubRoutes = (ctx: AppContext) => {
     isSuperAdmin,
   } = ctx
   const app = new OpenAPIHono<BlankEnv>()
+
+  // authz-exempt: the GitHub job authenticates with a signed, audience-bound Actions OIDC JWT;
+  // the exchange also checks the one-time run assignment and nonce before minting a capability.
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/v1/workflow-runs/{runId}/github/exchange",
+      tags: ["GitHub"],
+      summary: "Exchange an assigned GitHub Actions OIDC identity for one run capability.",
+      request: {
+        params: z.object({ runId: z.string().min(1) }),
+        body: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: z.object({
+                nonce: z.string().min(16).max(500),
+                oidcToken: z.string().min(100).max(20_000),
+              }),
+            },
+          },
+        },
+      },
+      responses: {
+        200: {
+          description: "A short-lived capability and the exact pinned graph instruction.",
+          content: {
+            "application/json": {
+              schema: z.object({
+                token: z.string(),
+                instruction: z.string(),
+                expiresAt: z.string(),
+                mcpUrl: z.string().url(),
+              }),
+            },
+          },
+        },
+      },
+    }),
+    async (c) => {
+      if (!deps.encryptionKey) return bail(fail(c, 404, "not found"))
+      const body = c.req.valid("json")
+      try {
+        const exchanged = await exchangeGithubWorkflowCapability({
+          meta,
+          runId: c.req.param("runId"),
+          nonce: body.nonce,
+          oidcToken: body.oidcToken,
+          encryptionKey: deps.encryptionKey,
+          baseUrl: deps.baseUrl,
+          instruction: async (run) => {
+            const artifact = await meta.getArtifactById(run.workflow_artifact_id)
+            if (!artifact) throw new GithubWorkflowHarnessError("workflow source unavailable", 409)
+            const facts = parseLinkedWorkflowFacts(
+              await meta.getVersionData(run.workflow_artifact_id, run.workflow_version),
+            )
+            if (
+              !facts.definition ||
+              !facts.manifest ||
+              facts.preview?.status !== "ready" ||
+              !facts.definition.diagrams.some((diagram) => diagram.id === run.diagram_id)
+            )
+              throw new GithubWorkflowHarnessError("pinned workflow source is unavailable", 409)
+            return workflowRunInstruction({
+              shortId: artifact.short_id,
+              version: run.workflow_version,
+              diagramId: run.diagram_id,
+              runId: run.id,
+              baseUrl: deps.baseUrl,
+              definition: facts.definition,
+              manifest: facts.manifest,
+            })
+          },
+        })
+        return c.json(exchanged)
+      } catch (error) {
+        const status = error instanceof GithubWorkflowHarnessError ? error.status : 401
+        return bail(fail(c, status, "GitHub workflow exchange failed"))
+      }
+    },
+  )
+
+  // authz-exempt: the bearer is the same signed, expiring, one-run capability
+  // minted by the OIDC exchange. This narrow read lets an external harness
+  // prove the graph itself settled instead of treating process exit as success.
+  app.openapi(
+    createRoute({
+      method: "get",
+      path: "/v1/workflow-runs/{runId}/github/status",
+      tags: ["GitHub"],
+      summary: "Read terminal state for one OIDC-authenticated workflow capability.",
+      request: { params: z.object({ runId: z.string().min(1) }) },
+      responses: {
+        200: {
+          description: "The current Derive ledger state for this exact workflow run.",
+          content: {
+            "application/json": {
+              schema: z.object({
+                status: z.enum([
+                  "queued",
+                  "dispatched",
+                  "running",
+                  "waiting",
+                  "succeeded",
+                  "failed",
+                  "cancelled",
+                  "timed_out",
+                ]),
+                terminal: z.boolean(),
+              }),
+            },
+          },
+        },
+      },
+    }),
+    async (c) => {
+      if (!deps.encryptionKey) return bail(fail(c, 404, "not found"))
+      const authorization = c.req.header("authorization") ?? ""
+      const token = authorization.startsWith("Bearer ") ? authorization.slice(7) : ""
+      const runId = c.req.param("runId")
+      const claim = await verifyWorkToken("workflow", deps.encryptionKey, token, Date.now())
+      if (!claim || claim.id !== runId) return bail(fail(c, 401, "workflow capability is invalid"))
+      const run = await meta.getWorkflowRun(runId, claim.orgId)
+      if (!run || run.assigned_agent_id !== claim.agentId || run.org_id !== claim.orgId)
+        return bail(fail(c, 404, "not found"))
+      return c.json({
+        status: run.status,
+        terminal:
+          run.status === "succeeded" ||
+          run.status === "failed" ||
+          run.status === "cancelled" ||
+          run.status === "timed_out",
+      })
+    },
+  )
 
   const loadApp = async (): Promise<{ app: GitHubAppRecord; pem: string } | null> => {
     if (!deps.encryptionKey) return null
@@ -400,19 +542,59 @@ export const githubRoutes = (ctx: AppContext) => {
           status?: unknown
           conclusion?: unknown
           html_url?: unknown
+          run_attempt?: unknown
+          head_branch?: unknown
         }
       }
-      if (body.action === "completed")
+      if (body.action === "completed") {
+        const installationId =
+          typeof body.installation?.id === "number" || typeof body.installation?.id === "string"
+            ? String(body.installation.id)
+            : ""
+        const repository =
+          typeof body.repository?.full_name === "string" ? body.repository.full_name : ""
+        const workflowPath = typeof body.workflow?.path === "string" ? body.workflow.path : ""
+        const runId =
+          typeof body.workflow_run?.id === "number" || typeof body.workflow_run?.id === "string"
+            ? String(body.workflow_run.id)
+            : ""
+        const runAttempt = Number(body.workflow_run?.run_attempt)
+        const status = typeof body.workflow_run?.status === "string" ? body.workflow_run.status : ""
+        const conclusion =
+          typeof body.workflow_run?.conclusion === "string" ? body.workflow_run.conclusion : ""
+        const url =
+          typeof body.workflow_run?.html_url === "string" ? body.workflow_run.html_url : ""
+        const reconciled =
+          /^[1-9][0-9]{0,19}$/.test(installationId) &&
+          /^[1-9][0-9]{0,19}$/.test(runId) &&
+          Number.isSafeInteger(runAttempt) &&
+          runAttempt > 0 &&
+          status === "completed" &&
+          conclusion &&
+          url
+            ? await reconcileGithubWorkflowRun({
+                meta,
+                installationId,
+                repository,
+                workflowPath,
+                runId,
+                runAttempt,
+                status,
+                conclusion,
+                url,
+              })
+            : null
         log.info("github workflow run completed", {
           delivery_id: delivery,
-          installation_id: body.installation?.id,
-          repository: body.repository?.full_name,
-          workflow: body.workflow?.path,
-          run_id: body.workflow_run?.id,
-          status: body.workflow_run?.status,
-          conclusion: body.workflow_run?.conclusion,
-          url: body.workflow_run?.html_url,
+          installation_id: installationId,
+          repository,
+          workflow: workflowPath,
+          run_id: runId,
+          status,
+          conclusion,
+          correlated: !!reconciled,
         })
+      }
     }
     return c.body(null, 202)
   }

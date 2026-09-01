@@ -178,7 +178,7 @@ const DiagramPreview = ({
           data-testid={`workflow-run-${diagram.id}`}
           onClick={() => onRun(diagram.id)}
         >
-          Run with my agent
+          Run now
         </Button>
       ) : null}
     </header>

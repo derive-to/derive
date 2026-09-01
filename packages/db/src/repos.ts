@@ -119,6 +119,7 @@ import type {
   WorkflowRunTransition,
   WorkflowStepAttemptRecord,
   WorkflowStepAttemptTransition,
+  WorkflowStepTransitionGuard,
   WorkflowTransitionGuard,
   WorkspaceAccess,
   WorkspaceRecord,
@@ -4395,6 +4396,18 @@ export function makeRepos(db: SqliteDb) {
       .from(workflowRun)
       .where(and(eq(workflowRun.id, id), eq(workflowRun.org_id, orgId)))
       .get()) as WorkflowRunRecord | undefined) ?? null
+  const getWorkflowRunById = async (id: string): Promise<WorkflowRunRecord | null> =>
+    ((await db.select().from(workflowRun).where(eq(workflowRun.id, id)).get()) as
+      | WorkflowRunRecord
+      | undefined) ?? null
+  const getWorkflowRunByExternalRunId = async (
+    externalRunId: string,
+  ): Promise<WorkflowRunRecord | null> =>
+    ((await db
+      .select()
+      .from(workflowRun)
+      .where(eq(workflowRun.external_run_id, externalRunId))
+      .get()) as WorkflowRunRecord | undefined) ?? null
   const listWorkflowRuns = async (
     workflowArtifactId: string,
     orgId: string,
@@ -4423,12 +4436,18 @@ export function makeRepos(db: SqliteDb) {
   ): Promise<WorkflowRunRecord | null> => {
     if (!workflowRunCanTransition(expected.status, transition.status)) return null
     if (!Number.isInteger(expected.stateRevision) || expected.stateRevision < 0) return null
-    const firstStart = expected.status === "queued" && transition.status === "running"
+    const firstStart =
+      (expected.status === "queued" || expected.status === "dispatched") &&
+      transition.status === "running"
+    const dispatching = expected.status === "queued" && transition.status === "dispatched"
     const lane = transition.actualExecution
     const executorId = transition.executorId
     if (firstStart && (!lane || !executorId)) return null
-    if (expected.status === "queued" && !firstStart && (lane || executorId)) return null
-    if (expected.status !== "queued" && (!lane || !executorId)) return null
+    if (dispatching && (!transition.externalRunId || transition.externalExecution === undefined))
+      return null
+    const alreadyClaimed = expected.status === "running" || expected.status === "waiting"
+    if (!firstStart && !alreadyClaimed && (lane || executorId)) return null
+    if (alreadyClaimed && (!lane || !executorId)) return null
     return (
       ((await db
         .update(workflowRun)
@@ -4441,6 +4460,12 @@ export function makeRepos(db: SqliteDb) {
             : {}),
           ...(workflowStatusIsTerminal(transition.status) ? { finished_at: transition.at } : {}),
           ...(firstStart ? { actual_execution: lane, executor_id: executorId } : {}),
+          ...(transition.externalExecution !== undefined
+            ? { external_execution: transition.externalExecution }
+            : {}),
+          ...(transition.externalRunId !== undefined
+            ? { external_run_id: transition.externalRunId }
+            : {}),
         })
         .where(
           and(
@@ -4448,6 +4473,7 @@ export function makeRepos(db: SqliteDb) {
             eq(workflowRun.org_id, orgId),
             eq(workflowRun.status, expected.status),
             eq(workflowRun.state_revision, expected.stateRevision),
+            dispatching ? eq(workflowRun.requested_execution, "github_actions") : undefined,
             workflowStatusIsTerminal(transition.status)
               ? notExists(
                   db
@@ -4482,6 +4508,52 @@ export function makeRepos(db: SqliteDb) {
         .get()) as WorkflowRunRecord | undefined) ?? null
     )
   }
+  const setWorkflowRunExternalReceipt = async (
+    id: string,
+    orgId: string,
+    externalRunId: string,
+    externalExecution: string,
+    at: string,
+  ): Promise<WorkflowRunRecord | null> =>
+    ((await db
+      .update(workflowRun)
+      .set({ external_execution: externalExecution, updated_at: at })
+      .where(
+        and(
+          eq(workflowRun.id, id),
+          eq(workflowRun.org_id, orgId),
+          eq(workflowRun.external_run_id, externalRunId),
+        ),
+      )
+      .returning()
+      .get()) as WorkflowRunRecord | undefined) ?? null
+  const overrideSuccessfulWorkflowRunFromExternal = async (
+    id: string,
+    orgId: string,
+    externalRunId: string,
+    status: "failed" | "cancelled" | "timed_out",
+    externalExecution: string,
+    at: string,
+  ): Promise<WorkflowRunRecord | null> =>
+    ((await db
+      .update(workflowRun)
+      .set({
+        status,
+        state_revision: sql`${workflowRun.state_revision} + 1`,
+        external_execution: externalExecution,
+        updated_at: at,
+        finished_at: at,
+      })
+      .where(
+        and(
+          eq(workflowRun.id, id),
+          eq(workflowRun.org_id, orgId),
+          eq(workflowRun.external_run_id, externalRunId),
+          eq(workflowRun.status, "succeeded"),
+        ),
+      )
+      .returning()
+      .get()) as WorkflowRunRecord | undefined) ?? null
   const createWorkflowStepAttempt = async (
     orgId: string,
     a: NewWorkflowStepAttempt,
@@ -4596,7 +4668,7 @@ export function makeRepos(db: SqliteDb) {
     id: string,
     workflowRunId: string,
     orgId: string,
-    expected: WorkflowTransitionGuard,
+    expected: WorkflowStepTransitionGuard,
     transition: WorkflowStepAttemptTransition,
   ): Promise<WorkflowStepAttemptRecord | null> => {
     if (!workflowStepCanTransition(expected.status, transition.status)) return null
@@ -5717,8 +5789,12 @@ export function makeRepos(db: SqliteDb) {
     appendRunPayload,
     createWorkflowRun,
     getWorkflowRun,
+    getWorkflowRunById,
+    getWorkflowRunByExternalRunId,
     listWorkflowRuns,
     transitionWorkflowRun,
+    setWorkflowRunExternalReceipt,
+    overrideSuccessfulWorkflowRunFromExternal,
     createWorkflowStepAttempt,
     getWorkflowStepAttemptBySession,
     listWorkflowStepAttempts,

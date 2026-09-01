@@ -330,7 +330,11 @@ describe("hosted tool injection — least privilege (WO4)", () => {
         new URL(
           "https://api.github.com/repos/derive-to/derive/actions/workflows/derive-agent-qa.yml/dispatches",
         ),
-        { ref: "main", inputs: { derive_run_id: "run_123", deep: true } },
+        {
+          ref: "main",
+          return_run_details: true,
+          inputs: { derive_run_id: "run_123", deep: true },
+        },
       ),
     ).toEqual({
       apiVersion: "2026-03-10",
@@ -338,6 +342,15 @@ describe("hosted tool injection — least privilege (WO4)", () => {
       tokenProfile: "workflow-dispatch",
       verb: "POST",
     })
+    expect(() =>
+      githubSourcePolicy(
+        "github.post",
+        new URL(
+          "https://api.github.com/repos/derive-to/derive/actions/workflows/derive-agent-qa.yml/dispatches",
+        ),
+        { ref: "main", return_run_details: false },
+      ),
+    ).toThrow(/return_run_details=true/i)
     expect(() =>
       githubSourcePolicy(
         "github.post",

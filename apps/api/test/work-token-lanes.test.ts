@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest"
 import { dispatchPass, type Substrate } from "../src/lib/dispatch"
+import { signWorkToken } from "../src/lib/run-token"
 import { as, bearer, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
+import { call, rpc, toolText } from "./mcp-helpers"
 
 // WORK-TOKEN LANES — a pass minted for one job may act on that job, in its own lane, and
 // nowhere else.
@@ -184,5 +186,98 @@ describe("a run token cannot act in the session lane", () => {
       headers: bearer(ctx.agent_token),
     })
     expect(ownQueue.status).toBe(200)
+  })
+})
+
+describe("a workflow token is MCP-only and pinned to one graph run", () => {
+  const owner: TestUser = {
+    id: "u_wt_workflow",
+    email: "wt-workflow@derive.test",
+    name: "Owner",
+  }
+
+  it("registers only use and refuses runner mode, another run, and ordinary REST", async () => {
+    const { app, meta } = makeAuthedApp("work-token-workflow", [owner], "editor", {
+      deps: { encryptionKey: SECRET },
+    })
+    const agent = await meta.createAgent({
+      id: "agt_workflow_scope",
+      org_id: "default",
+      name: "GitHub graph runner",
+      token: "hashed-workflow-agent-token",
+      role: "editor",
+      created_by: owner.id,
+    })
+    const run = await meta.createWorkflowRun({
+      id: "wfr_workflow_scope",
+      org_id: "default",
+      workflow_artifact_id: "art_workflow_scope",
+      workflow_version: 1,
+      workflow_blob_key: "blob_workflow_scope",
+      workflow_content_type: "text/x-derive-linked-bundle",
+      diagram_id: "main",
+      reason: "github-actions",
+      initiated_by: owner.id,
+      assigned_agent_id: agent.id,
+      requested_execution: "github_actions",
+    })
+    const dispatched = await meta.transitionWorkflowRun(
+      run.id,
+      run.org_id,
+      { status: "queued", stateRevision: 0 },
+      {
+        status: "dispatched",
+        at: new Date().toISOString(),
+        externalExecution: JSON.stringify({ kind: "github_actions" }),
+        externalRunId: "Niftory/sift#91919",
+      },
+    )
+    expect(dispatched?.status).toBe("dispatched")
+    const token = await signWorkToken(
+      "workflow",
+      SECRET,
+      run.id,
+      agent.id,
+      run.org_id,
+      Date.now() + 60_000,
+    )
+
+    const rest = await app.request("/v1/agents", { headers: bearer(token) })
+    expect([401, 403]).toContain(rest.status)
+
+    const listed = await rpc(app, token, {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/list",
+      params: {},
+    })
+    expect(
+      (listed.parsed?.result as { tools?: { name: string }[] } | undefined)?.tools?.map(
+        (tool) => tool.name,
+      ),
+    ).toEqual(["use"])
+    const resources = await rpc(app, token, {
+      jsonrpc: "2.0",
+      id: 2,
+      method: "resources/list",
+      params: {},
+    })
+    expect(
+      (resources.parsed?.result as { resources?: { uri: string }[] } | undefined)?.resources?.map(
+        (resource) => resource.uri,
+      ),
+    ).toEqual(["derive://skills/workflows"])
+
+    const wrongRun = await call(app, token, "use", {
+      workflow: { run_id: "wfr_someone_else", node_id: "entry", attempt: 1 },
+      context: "Analyst",
+      instruction: "Run it",
+    })
+    expect(toolText(wrongRun)).toContain("scoped to a different run")
+    const runnerMode = await call(app, token, "use", {
+      session_id: "sess_not_this_run",
+      answer: "claim someone else's Context session",
+    })
+    expect(toolText(runnerMode)).toContain("cannot run or answer Context sessions")
   })
 })

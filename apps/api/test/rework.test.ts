@@ -1,4 +1,7 @@
-import { describe, expect, it } from "vitest"
+import { generateKeyPairSync } from "node:crypto"
+import { afterEach, describe, expect, it, vi } from "vitest"
+import { encryptSecret } from "../src/lib/crypto"
+import { upsertGithubConnection } from "../src/lib/github-connection"
 import { as, bearer, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
 // POST /v1/artifacts/:shortId/rework composes the canned Brandprint instruction
@@ -12,6 +15,12 @@ const owner: TestUser = {
   username: "rwown",
 }
 const editor: TestUser = { id: "u_rw_ed", email: "rwed@derive.test", name: "Ed", username: "rwed" }
+const { privateKey: GITHUB_APP_PEM } = generateKeyPairSync("rsa", {
+  modulusLength: 2048,
+  privateKeyEncoding: { type: "pkcs1", format: "pem" },
+  publicKeyEncoding: { type: "spki", format: "pem" },
+})
+afterEach(() => vi.unstubAllGlobals())
 
 type App = ReturnType<typeof makeAuthedApp>["app"]
 type Meta = ReturnType<typeof makeAuthedApp>["meta"]
@@ -506,6 +515,126 @@ describe("workflow run: explicit local-agent handoff", () => {
       initiated_by: editor.id,
       request_id: null,
       assigned_agent_id: null,
+    })
+  })
+
+  it("GitHub Run now auto-mints one hidden executor and dispatches without a standing token", async () => {
+    const key = "workflow-github-route-key"
+    const { app, meta } = makeAuthedApp("workflow-github-run", [owner], "editor", {
+      deps: { encryptionKey: key },
+    })
+    const published = await (
+      await publishAs(app, workflowHtml(), { title: "Workflow" }, as(owner.email))
+    ).json()
+    await meta.setOrgSettings("default", {
+      ...(await meta.getOrgSettings("default")),
+      automateBeta: true,
+    })
+    await meta.setGithubApp({
+      id: "default",
+      app_id: "553",
+      slug: "derive-test",
+      client_id: "Iv1.test",
+      client_secret: encryptSecret("client-secret", key),
+      private_key: encryptSecret(GITHUB_APP_PEM, key),
+      created_at: "2026-08-31T00:00:00.000Z",
+    })
+    const connection = await upsertGithubConnection(meta, {
+      orgId: "default",
+      userId: owner.id,
+      installationId: "9988",
+      accountLogin: "Niftory",
+    })
+    const caller = await addAgent(app, "Codex")
+    const calls: Array<{ path: string; body: unknown }> = []
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string | URL, init?: RequestInit) => {
+        const path = new URL(String(url)).pathname
+        calls.push({ path, body: init?.body ? JSON.parse(String(init.body)) : undefined })
+        if (path.endsWith("/access_tokens"))
+          return new Response(
+            JSON.stringify({
+              token: "github-actions-token",
+              expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+            }),
+            { status: 201 },
+          )
+        return new Response(JSON.stringify({ workflow_run_id: 778899 }), { status: 200 })
+      }),
+    )
+
+    const response = await app.request(
+      `/v1/artifacts/${published.short_id}/workflow-run`,
+      jsonAs(as(owner.email), {
+        diagramId: "brief",
+        delivery: "github",
+        github: {
+          connectionId: connection.id,
+          owner: "Niftory",
+          repo: "sift",
+          workflow: "derive-graph-runner.yml",
+          ref: "main",
+        },
+      }),
+    )
+
+    expect(response.status).toBe(201)
+    const started = (await response.json()) as { runId: string; githubRunId: string }
+    expect(started.githubRunId).toBe("778899")
+    expect(calls.at(-1)).toEqual({
+      path: "/repos/Niftory/sift/actions/workflows/derive-graph-runner.yml/dispatches",
+      body: {
+        ref: "main",
+        return_run_details: true,
+        inputs: expect.objectContaining({ derive_run_id: started.runId }),
+      },
+    })
+    const executors = (await meta.listAgents("default")).filter(
+      (agent) => agent.managed === 1 && agent.name === "GitHub Actions",
+    )
+    expect(executors).toHaveLength(1)
+    const run = await meta.getWorkflowRun(started.runId, "default")
+    expect(run).toMatchObject({
+      status: "dispatched",
+      requested_execution: "github_actions",
+      assigned_agent_id: executors[0]?.id,
+    })
+    const history = await app.request(
+      `/v1/artifacts/${published.short_id}/workflow-runs?diagram=brief`,
+      { headers: as(owner.email) },
+    )
+    const historyBody = (await history.json()) as { runs: Array<{ externalExecution: unknown }> }
+    expect(historyBody.runs[0]?.externalExecution).toMatchObject({
+      kind: "github_actions",
+      repository: "Niftory/sift",
+      github_run_id: "778899",
+    })
+    expect(JSON.stringify(historyBody)).not.toContain("nonce_hash")
+    expect(JSON.stringify(historyBody)).not.toContain("oidc_subject")
+
+    // A registered or OAuth-backed agent carries a synthetic actor id, but its standing is
+    // the creator/grantor's live standing capped by the agent role. The GitHub lane must
+    // authorize that principal rather than trying to find the synthetic id in membership.
+    const agentResponse = await app.request(`/v1/artifacts/${published.short_id}/workflow-run`, {
+      method: "POST",
+      headers: { ...bearer(caller.token), "content-type": "application/json" },
+      body: JSON.stringify({
+        diagramId: "brief",
+        delivery: "github",
+        github: {
+          connectionId: connection.id,
+          owner: "Niftory",
+          repo: "sift",
+          workflow: "derive-graph-runner.yml",
+          ref: "main",
+        },
+      }),
+    })
+    expect(agentResponse.status).toBe(201)
+    const agentStarted = (await agentResponse.json()) as { runId: string }
+    expect(await meta.getWorkflowRun(agentStarted.runId, "default")).toMatchObject({
+      initiated_by: owner.id,
     })
   })
 
