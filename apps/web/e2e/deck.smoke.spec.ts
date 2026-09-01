@@ -400,6 +400,21 @@ test.describe("deck", () => {
       "s1-beta",
     )
 
+    // Redo must replay the live moved order, not accidentally checkpoint and apply
+    // the original order again. Exercise both hierarchy levels, then return to the
+    // authored baseline for the sizing phase.
+    await owner.getByTestId("inline-edit-redo").click()
+    await owner.getByTestId("inline-edit-redo").click()
+    await expect(frame.locator("#cards > [data-derive-node]").nth(0)).toHaveAttribute(
+      "data-derive-node",
+      "s1-beta",
+    )
+    await expect(
+      frame.locator("[data-derive-region='slide-1'] > [data-derive-node]").nth(0),
+    ).toHaveAttribute("data-derive-node", "s1-board")
+    await owner.getByTestId("inline-edit-undo").click()
+    await owner.getByTestId("inline-edit-undo").click()
+
     // Two-axis sizing remains one transaction inside the scaled stage. Pointer-scale
     // math has its own focused E2E; this deck regression pins the deck integration,
     // row authority, and shared history without making the proof depend on CDP's

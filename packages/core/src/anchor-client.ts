@@ -2731,7 +2731,10 @@ interface ElReg {
       applyStructuralGap(entry)
     } else if (entry.kind === "structural-order") {
       if (!document.contains(entry.region)) return
-      const current = entry.nodes.filter((node) => node.parentElement === entry.region)
+      const tracked = new Set(entry.nodes)
+      const current = Array.from(entry.region.children).filter(
+        (node): node is HTMLElement => node instanceof HTMLElement && tracked.has(node),
+      )
       to.push(structuralOrderOf(entry.region, current))
       applyStructuralOrder(entry)
       for (const node of entry.nodes) syncStructuralPlacement(node)
