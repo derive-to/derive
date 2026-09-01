@@ -131,20 +131,18 @@ describe("run presentation", () => {
     expect(workflowRunSummary(coordinated)).toBe(
       "GitHub run #998877 was dispatched; waiting for its OIDC-authenticated job.", // tokens-ignore
     )
-    expect(workflowDeliveryLabel(coordinated)).toBe("GitHub Actions · Cloud agent")
+    expect(workflowDeliveryLabel(coordinated)).toBe("GitHub Actions")
     expect(workflowGithubReceipt(coordinated)?.runUrl).toBe(
       "https://github.com/Niftory/sift/actions/runs/998877", // tokens-ignore
     )
   })
 
-  it("renders a no-prompt OIDC adapter for an existing cloud-agent control plane", () => {
+  it("renders a no-prompt OIDC adapter without choosing the repository runner", () => {
     const adapter = workflowGithubStarterAdapter()
     expect(adapter).toContain("id-token: write")
     expect(adapter).toContain("DERIVE_EXCHANGE_NONCE")
-    expect(adapter).toMatch(
-      /DERIVE_CLOUD_AGENT_ACCESS_CLIENT_ID: \$\{\{ secrets\.DERIVE_CLOUD_AGENT_ACCESS_CLIENT_ID \}\}/,
-    )
-    expect(adapter).toContain("DERIVE_CLOUD_AGENT_URL")
+    expect(adapter).toContain("repository's approved agent setup step")
+    expect(adapter).not.toContain("DERIVE_CLOUD_AGENT")
     expect(adapter).not.toContain("OPENAI_API_KEY")
     expect(adapter).not.toContain("DERIVE_TOKEN")
     expect(adapter).not.toContain("prompt:")
