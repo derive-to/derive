@@ -87,12 +87,10 @@ accept a caller-authored prompt or standing Derive bearer. In GitHub Actions it 
 assertion with the fixed `derive-graph-runner` audience, exchanges the bounded run id and one-time
 nonce for a short-lived run capability, and only then fetches the pinned instruction.
 
-Set `DERIVE_CLOUD_AGENT_URL` to a compatible cloud-agent control plane. The CLI creates one Codex
-agent in its managed sandbox, sends the instruction as prompt text, and sends the short-lived
-Derive capability through the API's separate `deriveWorkflow` field. The capability never enters
-the prompt, repository, or Actions log. The sandbox supplies model access and its normal tools, so
-GitHub needs no OpenAI credential. The CLI polls the cloud run, requires a terminal successful
-Derive graph receipt, and archives the sandbox before it exits.
+The command runs inside a repository-owned Codex environment. That environment must install and
+authenticate Codex before this step starts. Derive does not create an agent, select a sandbox,
+choose a model provider, or read model credentials. A managed-agent GitHub Action can own that
+setup and invoke this command after its environment is ready.
 
 ```yaml
 name: Derive graph harness
@@ -123,26 +121,19 @@ jobs:
           persist-credentials: false
       - name: Install the pinned adapter
         run: npm install --global "@derive-to/cli@0.6.0"
+      # Your repository or runner provider installs and authenticates Codex.
       - name: Run the assigned graph
         env:
           DERIVE_WORKFLOW_RUN_ID: ${{ inputs.derive_run_id }}
           DERIVE_EXCHANGE_NONCE: ${{ inputs.derive_exchange_nonce }}
-          DERIVE_CLOUD_AGENT_URL: https://agents.example.com
-          DERIVE_CLOUD_AGENT_ACCESS_CLIENT_ID: ${{ secrets.DERIVE_CLOUD_AGENT_ACCESS_CLIENT_ID }}
-          DERIVE_CLOUD_AGENT_ACCESS_CLIENT_SECRET: ${{ secrets.DERIVE_CLOUD_AGENT_ACCESS_CLIENT_SECRET }}
         run: derive workflow run
 ```
 
 GitHub supplies `ACTIONS_ID_TOKEN_REQUEST_URL` and `ACTIONS_ID_TOKEN_REQUEST_TOKEN` when
 `id-token: write` is present. The command never prints those values, the nonce, the OIDC assertion,
-or the exchanged capability. A zero exit means both the cloud agent and the Derive workflow ledger
-recorded success. A clean agent exit without a terminal Derive receipt fails the job.
-
-The cloud-agent API must implement `POST /v1/agents`, `GET
-/v1/agents/{agentId}/runs/{runId}`, and `POST /v1/agents/{agentId}/archive`. Its create body must
-accept `deriveWorkflow: {token, mcpUrl}` as a control-plane secret and inject that capability only
-into the Codex process. The Sift Cloud Agents Worker is the first production adapter for this
-contract.
+or the exchanged capability. The command uses the runner's existing Codex identity and limits its
+Derive connection to the one-run capability and the `use` tool. Agent provisioning and lifecycle
+stay outside Derive and remain the repository workflow's responsibility.
 
 ## Hosted and self-hosted servers
 

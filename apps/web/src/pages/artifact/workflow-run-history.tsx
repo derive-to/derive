@@ -9,7 +9,7 @@ import {
 } from "@/components/shared/run-receipt"
 import { Eyebrow } from "@/components/shared/section-eyebrow"
 import { StatusBadge } from "@/components/shared/status-badge"
-import { workflowGithubProviderLabel, workflowGithubReceipt } from "./workflow-github-presentation"
+import { workflowGithubReceipt } from "./workflow-github-presentation"
 import {
   compactWorkflowReceiptText,
   workflowAttemptRoute,
@@ -107,7 +107,6 @@ const GithubExecutionReceipt = ({ run }: { run: WorkflowRunSummary }) => {
       <dl className="mt-2 grid gap-1.5">
         <ReceiptField label="Repository" value={receipt.repository} />
         <ReceiptField label="Adapter" value={`${receipt.workflow} · ${receipt.ref}`} />
-        <ReceiptField label="Agent" value={workflowGithubProviderLabel()} />
         <ReceiptField
           label="GitHub"
           value={

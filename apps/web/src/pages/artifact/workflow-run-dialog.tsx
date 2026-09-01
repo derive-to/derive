@@ -358,8 +358,8 @@ export function WorkflowRunDialog({
                           repository’s default branch.
                         </SetupCheck>
                         <SetupCheck ready={githubReady}>
-                          Grant id-token: write, set the cloud-agent URL, and add its two access
-                          credentials as GitHub secrets. No model key is needed in Actions.
+                          Grant id-token: write and let the repository workflow start its approved
+                          agent environment. Derive needs no provider or model credentials.
                         </SetupCheck>
                       </ul>
                     )}
@@ -458,20 +458,20 @@ export function WorkflowRunDialog({
                 <ShieldCheck className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
                 <div className="min-w-0 text-xs leading-relaxed text-muted-foreground">
                   <p className="font-medium text-foreground">
-                    The dispatch contains no prompt or Derive token
+                    The repository workflow owns the agent
                   </p>
                   <p className="mt-0.5">
                     GitHub receives only a bounded run ID and one-time exchange nonce. The job uses
                     GitHub OIDC to fetch the pinned instruction and a short-lived run capability.
-                    The adapter sends that capability to the cloud agent through a protected
-                    control-plane field, never through prompt text or logs.
+                    The workflow provisions and authenticates its agent. Derive never calls its
+                    provider API or receives its sandbox, login, or model credentials.
                   </p>
                 </div>
               </div>
 
               <details className="min-w-0 overflow-hidden rounded-lg border border-border bg-card">
                 <summary className="cursor-pointer px-3 py-2.5 text-xs font-medium text-foreground">
-                  Copy minimal cloud-agent adapter
+                  Copy runner-neutral adapter
                 </summary>
                 <div className="min-w-0 border-t border-border-soft">
                   <div className="flex items-center justify-between gap-2 px-3 py-2">

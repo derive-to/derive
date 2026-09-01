@@ -20,11 +20,8 @@ import {
   exchangeWorkflowCapability,
   githubOidcRequest,
   requestGithubOidc,
-  runCloudWorkflowAgent,
   runGithubWorkflowHarness,
   workflowAgentEnv,
-  workflowHarnessPrompt,
-  workflowStatusUrl,
 } from "../src/workflow-run.js"
 
 const dirs = []
@@ -398,6 +395,7 @@ describe("GitHub Actions one-shot workflow harness", () => {
         url: expect.stringContaining("audience=derive-graph-runner"),
         init: expect.objectContaining({
           method: "GET",
+          redirect: "error",
           headers: expect.objectContaining({ authorization: `Bearer ${requestToken}` }),
         }),
       }),
@@ -474,115 +472,6 @@ describe("GitHub Actions one-shot workflow harness", () => {
     ).rejects.toThrow(/expired/)
   })
 
-  it("runs through a cloud agent, keeps the capability out of its prompt, and proves the Derive receipt", async () => {
-    const calls = []
-    const logs = []
-    let runChecks = 0
-    const code = await runCloudWorkflowAgent({
-      server: "https://derive.to",
-      runId,
-      exchange: {
-        token: "dkwfr_workflow-capability-value",
-        instruction: "Execute exact pinned v7 graph.",
-        expiresAt,
-        mcpUrl: "https://derive.to/mcp",
-      },
-      apiUrl: "https://agents.example",
-      clientId: "access-client-id",
-      clientSecret: "access-client-secret",
-      timeoutMs: 60_000,
-      pollMs: 250,
-      sleepImpl: async () => {},
-      now: () => Date.parse("2029-01-01T00:00:00.000Z"),
-      log: (line) => logs.push(line),
-      fetchImpl: async (url, init) => {
-        calls.push({ url, init })
-        const path = new URL(url).pathname
-        if (path === "/v1/agents" && init.method === "POST")
-          return jsonResponse(
-            {
-              agent: { id: "sca_graph" },
-              run: { id: "run_graph", status: "queued" },
-            },
-            201,
-          )
-        if (path === "/v1/agents/sca_graph/runs/run_graph") {
-          runChecks += 1
-          return jsonResponse({
-            run: { id: "run_graph", status: runChecks === 1 ? "queued" : "finished" },
-          })
-        }
-        if (path === `/v1/workflow-runs/${runId}/github/status`)
-          return jsonResponse({ status: "succeeded", terminal: true })
-        if (path === "/v1/agents/sca_graph/archive") return jsonResponse({ agent: {} })
-        return jsonResponse({}, 404)
-      },
-    })
-    expect(code).toBe(0)
-    expect(workflowStatusUrl("https://derive.to", runId)).toContain("/github/status")
-    expect(workflowHarnessPrompt("Pinned.")).toContain("PINNED DERIVE WORKFLOW INSTRUCTION")
-
-    const create = calls.find(
-      ({ url, init }) => new URL(url).pathname === "/v1/agents" && init.method === "POST",
-    )
-    const body = JSON.parse(create.init.body)
-    expect(body).toMatchObject({
-      harness: "codex",
-      model: "gpt-5.6-terra",
-      deriveWorkflow: {
-        token: "dkwfr_workflow-capability-value",
-        mcpUrl: "https://derive.to/mcp",
-      },
-    })
-    expect(body.prompt.text).toContain("Execute exact pinned v7 graph.")
-    expect(body.prompt.text).not.toContain("dkwfr_workflow-capability-value")
-    expect(create.init.headers).toMatchObject({
-      "CF-Access-Client-Id": "access-client-id",
-      "CF-Access-Client-Secret": "access-client-secret",
-    })
-    const observable = JSON.stringify(logs)
-    for (const secret of [
-      "dkwfr_workflow-capability-value",
-      "access-client-id",
-      "access-client-secret",
-    ])
-      expect(observable).not.toContain(secret)
-    expect(calls.some(({ url }) => new URL(url).pathname === "/v1/agents/sca_graph/archive")).toBe(
-      true,
-    )
-  })
-
-  it("fails a clean cloud-agent exit when Derive has no terminal receipt", async () => {
-    const code = await runCloudWorkflowAgent({
-      server: "https://derive.to",
-      runId,
-      exchange: {
-        token: "dkwfr_workflow-capability-value",
-        instruction: "Pinned.",
-        expiresAt,
-        mcpUrl: "https://derive.to/mcp",
-      },
-      apiUrl: "https://agents.example",
-      clientId: "id",
-      clientSecret: "secret",
-      timeoutMs: 60_000,
-      pollMs: 250,
-      sleepImpl: async () => {},
-      now: () => Date.parse("2029-01-01T00:00:00.000Z"),
-      log: () => {},
-      fetchImpl: async (url) => {
-        const path = new URL(url).pathname
-        if (path === "/v1/agents")
-          return jsonResponse({ agent: { id: "sca_graph" }, run: { id: "run_graph" } }, 201)
-        if (path.endsWith("/runs/run_graph")) return jsonResponse({ run: { status: "finished" } })
-        if (path.endsWith("/github/status"))
-          return jsonResponse({ status: "running", terminal: false })
-        return jsonResponse({ agent: {} })
-      },
-    })
-    expect(code).toBe(1)
-  })
-
   it("spawns exactly one Codex process with only use and no exchange secret in argv or logs", async () => {
     const fetchCalls = []
     const spawnCalls = []
@@ -593,7 +482,7 @@ describe("GitHub Actions one-shot workflow harness", () => {
       DERIVE_EXCHANGE_NONCE: nonce,
       DERIVE_WORKFLOW_RUN_ID: runId,
       DERIVE_TOKEN: "ambient-derive-value",
-      OPENAI_API_KEY: "owner-model-value",
+      CODEX_HOME: "/runner-owned/codex",
       PATH: "/usr/bin",
     }
     const code = await runGithubWorkflowHarness({
@@ -629,7 +518,7 @@ describe("GitHub Actions one-shot workflow harness", () => {
     expect(call.args.join("\n")).toContain('mcp_servers.derive.enabled_tools=["use"]')
     expect(call.args.join("\n")).toContain("Execute exact pinned v7 graph.")
     expect(call.options.env).toMatchObject({
-      OPENAI_API_KEY: "owner-model-value",
+      CODEX_HOME: "/runner-owned/codex",
       DERIVE_WORKFLOW_TOKEN: "workflow-capability-value",
     })
     for (const removed of [
@@ -672,75 +561,7 @@ describe("GitHub Actions one-shot workflow harness", () => {
     expect(code).toBe(17)
   })
 
-  it("classifies a provider authentication failure without echoing raw diagnostics", async () => {
-    const logs = []
-    const rawDiagnostic =
-      "401 Unauthorized from wss://api.openai.com with leaked-secret-owner-model-value"
-    const responses = [
-      jsonResponse({ value: oidcToken }),
-      jsonResponse({
-        token: "workflow-capability-value",
-        instruction: "Pinned.",
-        expiresAt,
-      }),
-    ]
-    const code = await runGithubWorkflowHarness({
-      runId,
-      nonce,
-      server: "https://derive.to",
-      requestUrl: oidcUrl,
-      requestToken,
-      env: {},
-      timeoutMs: 60_000,
-      retryDelays: [0],
-      now: Date.parse("2029-01-01T00:00:00.000Z"),
-      log: (line) => logs.push(line),
-      fetchImpl: async () => responses.shift(),
-      spawnImpl: () => fakeChild(1, { stderr: rawDiagnostic }),
-    })
-    expect(code).toBe(1)
-    expect(logs).toContain(
-      "Codex provider authentication failed. Verify the model API key or configured workload identity in this GitHub environment.",
-    )
-    expect(JSON.stringify(logs)).not.toContain(rawDiagnostic)
-    expect(JSON.stringify(logs)).not.toContain("leaked-secret-owner-model-value")
-  })
-
-  it("classifies a missing Responses API without echoing the provider payload", async () => {
-    const logs = []
-    const rawDiagnostic =
-      "unexpected status 404 Not Found at https://provider.example/v1/responses provider-payload"
-    const responses = [
-      jsonResponse({ value: oidcToken }),
-      jsonResponse({
-        token: "workflow-capability-value",
-        instruction: "Pinned.",
-        expiresAt,
-      }),
-    ]
-    const code = await runGithubWorkflowHarness({
-      runId,
-      nonce,
-      server: "https://derive.to",
-      requestUrl: oidcUrl,
-      requestToken,
-      env: {},
-      timeoutMs: 60_000,
-      retryDelays: [0],
-      now: Date.parse("2029-01-01T00:00:00.000Z"),
-      log: (line) => logs.push(line),
-      fetchImpl: async () => responses.shift(),
-      spawnImpl: () => fakeChild(1, { stderr: rawDiagnostic }),
-    })
-    expect(code).toBe(1)
-    expect(logs).toContain(
-      "The Codex provider does not expose the required Responses API for this model.",
-    )
-    expect(JSON.stringify(logs)).not.toContain(rawDiagnostic)
-    expect(JSON.stringify(logs)).not.toContain("provider-payload")
-  })
-
-  it("keeps the capability out of Codex argv while preserving owner model configuration", () => {
+  it("keeps the capability out of Codex argv while preserving the runner-owned login", () => {
     const args = codexWorkflowArgs({
       instruction: "Pinned graph.",
       mcpUrl: "https://derive.to/mcp",
@@ -753,53 +574,13 @@ describe("GitHub Actions one-shot workflow harness", () => {
       workflowAgentEnv(
         {
           CODEX_HOME: "/repo-owned/codex",
-          OPENAI_API_KEY: "owner-model-value",
           ACTIONS_ID_TOKEN_REQUEST_TOKEN: requestToken,
         },
         "workflow-capability-value",
       ),
     ).toEqual({
       CODEX_HOME: "/repo-owned/codex",
-      OPENAI_API_KEY: "owner-model-value",
       DERIVE_WORKFLOW_TOKEN: "workflow-capability-value",
     })
-  })
-
-  it("configures a custom Responses provider without putting its credential in argv", () => {
-    const args = codexWorkflowArgs({
-      instruction: "Pinned graph.",
-      mcpUrl: "https://derive.to/mcp",
-      model: "accounts/example/models/agent",
-      provider: {
-        baseUrl: "https://inference.example/v1/",
-        apiKeyEnv: "OWNER_INFERENCE_KEY",
-      },
-    })
-    const observable = args.join("\n")
-    expect(observable).toContain('model_provider="derive-workflow-provider"')
-    expect(observable).toContain('base_url="https://inference.example/v1"')
-    expect(observable).toContain('env_key="OWNER_INFERENCE_KEY"')
-    expect(observable).toContain('wire_api="responses"')
-    expect(observable).toContain("requires_openai_auth=false")
-    expect(observable).not.toContain("owner-inference-secret")
-  })
-
-  it("rejects unsafe custom provider configuration before spawning Codex", () => {
-    expect(() =>
-      codexWorkflowArgs({
-        instruction: "Pinned graph.",
-        mcpUrl: "https://derive.to/mcp",
-        model: "agent",
-        provider: { baseUrl: "http://inference.example/v1", apiKeyEnv: "OWNER_KEY" },
-      }),
-    ).toThrow(/HTTPS/)
-    expect(() =>
-      codexWorkflowArgs({
-        instruction: "Pinned graph.",
-        mcpUrl: "https://derive.to/mcp",
-        model: "agent",
-        provider: { baseUrl: "https://inference.example/v1", apiKeyEnv: "OWNER-KEY" },
-      }),
-    ).toThrow(/environment name/)
   })
 })

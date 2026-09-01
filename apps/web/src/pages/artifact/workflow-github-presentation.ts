@@ -4,7 +4,6 @@ export interface WorkflowGithubReceipt {
   repository: string
   workflow: string
   ref: string
-  provider: "cloud-agent"
   runId: string | null
   runUrl: string | null
   runAttempt: number | null
@@ -75,7 +74,6 @@ export const workflowGithubReceipt = (run: WorkflowRunSummary): WorkflowGithubRe
     repository,
     workflow,
     ref,
-    provider: "cloud-agent",
     runId: runId === null ? null : String(runId),
     runUrl:
       runId === null ? null : `https://github.com/${repository}/actions/runs/${String(runId)}`,
@@ -87,8 +85,6 @@ export const workflowGithubReceipt = (run: WorkflowRunSummary): WorkflowGithubRe
     error: stringValue(github, "last_error", "lastError", "error"),
   }
 }
-
-export const workflowGithubProviderLabel = (): string => "Cloud agent"
 
 export const workflowGithubStarterAdapter = (): string => `name: Derive graph runner
 
@@ -119,13 +115,12 @@ jobs:
           persist-credentials: false
       - name: Install pinned adapter
         run: npm install --global "@derive-to/cli@0.6.0"
+      # Add your repository's approved agent setup step here.
+      # It owns all provider, sandbox, model, and login configuration.
       - name: Run the assigned graph
         run: derive workflow run
         env:
           DERIVE_SERVER: https://derive.to
           DERIVE_WORKFLOW_RUN_ID: \${{ inputs.derive_run_id }}
           DERIVE_EXCHANGE_NONCE: \${{ inputs.derive_exchange_nonce }}
-          DERIVE_CLOUD_AGENT_URL: \${{ vars.DERIVE_CLOUD_AGENT_URL }}
-          DERIVE_CLOUD_AGENT_ACCESS_CLIENT_ID: \${{ secrets.DERIVE_CLOUD_AGENT_ACCESS_CLIENT_ID }}
-          DERIVE_CLOUD_AGENT_ACCESS_CLIENT_SECRET: \${{ secrets.DERIVE_CLOUD_AGENT_ACCESS_CLIENT_SECRET }}
 `

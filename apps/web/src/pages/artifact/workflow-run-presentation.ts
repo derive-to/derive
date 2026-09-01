@@ -1,5 +1,5 @@
 import type { WorkflowRunSummary } from "@/api"
-import { workflowGithubProviderLabel, workflowGithubReceipt } from "./workflow-github-presentation"
+import { workflowGithubReceipt } from "./workflow-github-presentation"
 
 type WorkflowAttempt = WorkflowRunSummary["attempts"][number]
 
@@ -71,7 +71,7 @@ export const workflowRunSummary = (run: WorkflowRunSummary): string => {
 
 export const workflowDeliveryLabel = (run: WorkflowRunSummary): string => {
   const github = workflowGithubReceipt(run)
-  if (github) return `GitHub Actions · ${workflowGithubProviderLabel()}`
+  if (github) return "GitHub Actions"
   const actualExecution: string | null = run.actualExecution
   if (actualExecution)
     return `${
