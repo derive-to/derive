@@ -142,6 +142,74 @@ describe("gateway provider routing", () => {
       allow_fallbacks: true,
     })
   })
+
+  it("gives an OpenRouter-hosted model the bounded public read tool belt", async () => {
+    const body = await routedBody({
+      baseUrl: "https://openrouter.ai/api/v1",
+      apiKey: "k",
+      model: "deepseek/deepseek-v4-flash-0731",
+    })
+    expect(body?.tools).toEqual([
+      {
+        type: "openrouter:web_search",
+        parameters: {
+          engine: "auto",
+          max_results: 5,
+          max_total_results: 10,
+          max_uses: 2,
+        },
+      },
+      {
+        type: "openrouter:web_fetch",
+        parameters: {
+          engine: "openrouter",
+          max_uses: 2,
+          max_content_tokens: 20_000,
+        },
+      },
+      { type: "openrouter:datetime" },
+    ])
+    expect(body?.max_tool_calls).toBe(5)
+  })
+
+  it("combines OpenRouter server tools with Derive's ordinary function tools", async () => {
+    const { seen, impl } = capture()
+    vi.stubGlobal("fetch", impl)
+    try {
+      await callModelFromGateway(
+        {
+          baseUrl: "https://openrouter.ai/api/v1",
+          apiKey: "k",
+          model: "m",
+        },
+        "m",
+      )({
+        system: "s",
+        messages: [],
+        tools: [{ name: "read", description: "read a workspace document", params: {} }],
+      })
+    } finally {
+      vi.unstubAllGlobals()
+    }
+    const tools = seen[0]?.body.tools as { type?: string; function?: { name?: string } }[]
+    expect(tools.map((tool) => tool.type)).toEqual([
+      "function",
+      "openrouter:web_search",
+      "openrouter:web_fetch",
+      "openrouter:datetime",
+    ])
+    expect(tools[0]?.function?.name).toBe("read")
+  })
+
+  it("does not send OpenRouter-only tools to another compatible gateway", async () => {
+    const body = await routedBody({
+      baseUrl: "https://api.fireworks.ai/inference/v1",
+      apiKey: "k",
+      model: "accounts/fireworks/models/deepseek-v4-flash",
+    })
+    expect(body?.tools).toBeUndefined()
+    expect(body?.max_tool_calls).toBeUndefined()
+  })
 })
 
 describe("the response it reads", () => {

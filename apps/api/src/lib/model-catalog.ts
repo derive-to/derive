@@ -104,6 +104,53 @@ const NO_THINKING = { reasoning: { enabled: false } } as const
  *  pool for a large model. */
 const AUTO_MIN_THROUGHPUT = { p50: 50 } as const
 
+/**
+ * The PUBLIC, READ-ONLY baseline on the hosted OpenRouter gateway.
+ *
+ * These are server tools: OpenRouter executes them inside the model request, so they neither
+ * bypass a Derive write gate nor need a fake local executor. `auto` prefers a model provider's
+ * native search and falls back to OpenRouter's search backend, which means the same capability
+ * survives a model or upstream-provider switch. Every potentially metered or context-expanding
+ * path is bounded; datetime is free and deterministic.
+ *
+ * Keep this list deliberately boring. Shell, apply-patch, image generation, subagents and model
+ * advisors all have a wider side-effect, delivery or cost contract and do not belong in the
+ * default tool belt merely because the gateway offers them.
+ */
+const OPENROUTER_SERVER_TOOLS: readonly Record<string, unknown>[] = [
+  {
+    type: "openrouter:web_search",
+    parameters: {
+      engine: "auto",
+      max_results: 5,
+      max_total_results: 10,
+      max_uses: 2,
+    },
+  },
+  {
+    type: "openrouter:web_fetch",
+    parameters: {
+      // Direct extraction is enough for a linked page and avoids spending a search credit merely
+      // to read a URL the person already supplied.
+      engine: "openrouter",
+      max_uses: 2,
+      max_content_tokens: 20_000,
+    },
+  },
+  { type: "openrouter:datetime" },
+]
+
+const OPENROUTER_MAX_SERVER_TOOL_CALLS = 5
+
+const openRouterGateway = (baseUrl: string): boolean => {
+  try {
+    const host = new URL(baseUrl).hostname.toLowerCase()
+    return host === "openrouter.ai" || host.endsWith(".openrouter.ai")
+  } catch {
+    return false
+  }
+}
+
 const providerList = (raw: string | undefined): string[] => {
   const seen = new Set<string>()
   const out: string[] = []
@@ -146,11 +193,14 @@ export const callModelFromGateway = (
     ...(provider ? { provider } : {}),
     ...NO_THINKING,
   }
+  const serverTools = openRouterGateway(gw.baseUrl) ? OPENROUTER_SERVER_TOOLS : []
   return openAiCompatModel({
     baseUrl: gw.baseUrl,
     apiKey: gw.apiKey,
     model: id,
     extraBody,
+    serverTools,
+    ...(serverTools.length ? { maxServerToolCalls: OPENROUTER_MAX_SERVER_TOOL_CALLS } : {}),
   })
 }
 

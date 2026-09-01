@@ -24,6 +24,12 @@ export interface OpenAiCompatOptions {
   /** Extra top-level fields merged into every request body — the seam hosts use for their own
    *  knobs (routing, reasoning). Never overwrites what the adapter sets; see the merge below. */
   extraBody?: Record<string, unknown>
+  /** Provider-operated tools which execute inside one model request. Unlike `LoopTool`s these
+   *  never come back for Derive to execute: the gateway runs them and hands their results back
+   *  to the model before returning the final answer. */
+  serverTools?: readonly Record<string, unknown>[]
+  /** Hard ceiling across the provider-operated tools in one model request. */
+  maxServerToolCalls?: number
   /** Injected in tests so the turn mapping is exercised without a key or a network. */
   fetchImpl?: typeof fetch
 }
@@ -119,10 +125,35 @@ export const openAiCompatModel = (opts: OpenAiCompatOptions): AgentLoopInput["ca
     // would report cost as unknown.
     includeUsage: true,
     metadataExtractor: costMetadata,
+    ...(opts.serverTools?.length
+      ? {
+          // The AI SDK owns ordinary function tools. Provider-operated tools use non-standard
+          // `type` values, so append them AFTER the SDK has built the ordinary tool array. This
+          // is the provider adapter's explicit request-transform seam; custom and server tools
+          // then coexist on the wire without pretending Derive has an executor for the latter.
+          transformRequestBody: (body: Record<string, unknown>) => ({
+            ...body,
+            tools: [...(Array.isArray(body.tools) ? body.tools : []), ...(opts.serverTools ?? [])],
+            ...(opts.maxServerToolCalls === undefined
+              ? {}
+              : { max_tool_calls: opts.maxServerToolCalls }),
+          }),
+        }
+      : {}),
   })
-  return turnFor({
+  const turn = turnFor({
     model: provider.chatModel(opts.model),
     maxTokens: opts.maxTokens,
     price: priceFromGateway,
   })
+  if (!opts.serverTools?.length) return turn
+  return (input) =>
+    turn({
+      ...input,
+      system: `${input.system}
+
+PUBLIC DATA TOOLS: You can search the public web, fetch a supplied URL, and get the current date
+and time. When an answer depends on live public information or a linked page, use those tools
+rather than memory. Cite web facts inline with ordinary Markdown links to the source page.`,
+    })
 }
