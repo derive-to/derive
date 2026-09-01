@@ -102,6 +102,24 @@ describe("serveContent — single-file artifacts", () => {
     expect(await res.text()).not.toContain('__deriveStructuralSourceValid",{value:false}')
   })
 
+  it("keeps handles enabled for a valid horizontal row contract", async () => {
+    const valid = `<section data-derive-region="cards" data-derive-layout="row">
+  <article data-derive-node="a">A</article>
+  <article data-derive-node="b">B</article>
+</section>`
+    const res = await serveContent(
+      ctx(),
+      blobStore({ k: valid }),
+      { blob_key: "k", content_type: "text/x-derive-deck" },
+      "Row deck",
+      "/",
+      "",
+    )
+    const body = await res.text()
+    expect(body).not.toContain('__deriveStructuralSourceValid",{value:false}')
+    expect(body).toContain('data-derive-layout="row"')
+  })
+
   it("optimistically exposes safe legacy deck children as structural nodes", async () => {
     const deck = `<main>
   <section class="slide" data-derive-slide="0"><h2>A</h2><p>Alpha</p></section>

@@ -420,6 +420,45 @@ describe("inspectStructuralDocument", () => {
     ])
   })
 
+  it("treats a horizontal row as an ordered source-safe region", () => {
+    const html = `<section data-derive-region="cards" data-derive-layout="row">
+  <article data-derive-node="alpha">Alpha</article>
+  <article data-derive-node="beta">Beta</article>
+</section>`
+    expect(inspectStructuralDocument(html)).toEqual([
+      {
+        id: "cards",
+        layout: "row",
+        nodes: [
+          { id: "alpha", kind: null, size: null, width_pct: null, height_px: null },
+          { id: "beta", kind: null, size: null, width_pct: null, height_px: null },
+        ],
+      },
+    ])
+
+    const edited = applyStructuralEdits(html, [
+      op({ op: "structural-order", region: "cards", nodes: ["beta", "alpha"] }),
+      op({
+        op: "structural-dimensions",
+        region: "cards",
+        node: "beta",
+        width_pct: 42,
+        height_px: 144,
+      }),
+    ])
+    expect(edited.html.indexOf('data-derive-node="beta"')).toBeLessThan(
+      edited.html.indexOf('data-derive-node="alpha"'),
+    )
+    expect(edited.html).toContain('data-derive-width="42"')
+    expect(edited.html).toContain('data-derive-height="144"')
+    expect(applyStructuralEdits(edited.html, edited.receipt.inverses).html).toBe(html)
+    expect(() =>
+      applyStructuralEdits(html, [
+        op({ op: "structural-size", region: "cards", node: "alpha", size: "compact" }),
+      ]),
+    ).toThrow(/cannot apply a named size preset inside row region cards/)
+  })
+
   it.each([
     [
       "duplicate regions",
@@ -442,6 +481,11 @@ describe("inspectStructuralDocument", () => {
       /must be 1–128/,
     ],
     ["missing layout", '<div data-derive-region="r"></div>', /layout="stack"/],
+    [
+      "unknown layout",
+      '<div data-derive-region="r" data-derive-layout="grid"></div>',
+      /layout="stack" or data-derive-layout="row"/,
+    ],
     [
       "unknown size",
       '<div data-derive-region="r" data-derive-layout="stack"><p data-derive-node="n" data-derive-size="huge"></p></div>',

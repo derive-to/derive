@@ -2,8 +2,8 @@
  * Source-safe structural edits for explicitly authored regions.
  *
  * Structural editing is intentionally opt-in. Only direct children with stable
- * `data-derive-node` identities inside a `data-derive-region` whose layout is
- * `stack` can be changed. A node may explicitly own one nested region through
+ * `data-derive-node` identities inside an ordered `data-derive-region` whose layout is
+ * `stack` or `row` can be changed. A node may explicitly own one nested region through
  * `data-derive-owner`, forming a verified hierarchy without changing the local
  * operation grammar. Every operation edits the original source string; this module
  * never serializes a browser DOM.
@@ -32,6 +32,7 @@ export const STRUCTURAL_EDIT_SCHEMA = "derive.structural-edit/v1" as const
 export const STRUCTURAL_RECEIPT_SCHEMA = "derive.structural-edit-receipt/v1" as const
 
 export type StructuralSize = "compact" | "standard" | "full"
+export type StructuralLayout = "stack" | "row"
 
 interface StructuralEditBase {
   schema: typeof STRUCTURAL_EDIT_SCHEMA
@@ -141,7 +142,7 @@ export interface StructuralNodeInspection {
 
 export interface StructuralRegionInspection {
   id: string
-  layout: "stack"
+  layout: StructuralLayout
   nodes: StructuralNodeInspection[]
 }
 
@@ -183,6 +184,7 @@ export class StructuralEditError extends EditError {
 const MAX_STRUCTURAL_EDITS = 200
 const ID = /^[A-Za-z][A-Za-z0-9_-]{0,127}$/
 const SIZES = new Set<StructuralSize>(["compact", "standard", "full"])
+const LAYOUTS = new Set<StructuralLayout>(["stack", "row"])
 const STRUCTURAL_ATTRIBUTES = [
   "data-derive-region",
   "data-derive-layout",
@@ -399,8 +401,11 @@ const inspect = (html: string): Inspection => {
         `Structural region ${id} must declare data-derive-owner="${ownerNodeId}".`,
       )
     const layout = exactlyOne(element.tag, "data-derive-layout", `Structural region ${id}`)
-    if (layout !== "stack")
-      fail("invalid-structure", `Structural region ${id} must declare data-derive-layout="stack".`)
+    if (!LAYOUTS.has(layout as StructuralLayout))
+      fail(
+        "invalid-structure",
+        `Structural region ${id} must declare data-derive-layout="stack" or data-derive-layout="row".`,
+      )
     const gap = structuralGap(
       exactlyOne(element.tag, "data-derive-gap", `Structural region ${id}`),
       `Structural region ${id} data-derive-gap`,
@@ -417,7 +422,7 @@ const inspect = (html: string): Inspection => {
       )
     const region: OwnedRegion = {
       id,
-      layout: "stack",
+      layout: layout as StructuralLayout,
       nodes: [],
       ownedNodes: [],
       element,
@@ -445,7 +450,7 @@ const inspect = (html: string): Inspection => {
     if (!region)
       throw new StructuralEditError(
         "invalid-structure",
-        `Structural node ${id} must be a direct child of a declared stack region.`,
+        `Structural node ${id} must be a direct child of a declared ordered region.`,
       )
     const rawSize = exactlyOne(element.tag, "data-derive-size", `Structural node ${id}`)
     if (rawSize !== null && !SIZES.has(rawSize as StructuralSize))
@@ -664,13 +669,17 @@ const setAttribute = (opening: string, name: string, value: string | null): stri
 const backfillStyle = (runtime: boolean): string => {
   const prefix = runtime ? "data-derive-runtime" : "data-derive"
   return `<style data-derive-structural-backfill>
-[${prefix}-region][${prefix}-layout="stack"] > [${prefix}-node][${prefix}-size="compact"] { width: 50% !important; max-width: none !important; box-sizing: border-box !important }
-[${prefix}-region][${prefix}-layout="stack"] > [${prefix}-node][${prefix}-size="standard"] { width: 75% !important; max-width: none !important; box-sizing: border-box !important }
-[${prefix}-region][${prefix}-layout="stack"] > [${prefix}-node][${prefix}-size="full"] { width: 100% !important; max-width: none !important; box-sizing: border-box !important }
-[${prefix}-region][${prefix}-layout="stack"] > [${prefix}-node][${prefix}-width] { width: var(${STRUCTURAL_WIDTH_PROPERTY}) !important; max-width: none !important; box-sizing: border-box !important }
-[${prefix}-region][${prefix}-layout="stack"] > [${prefix}-node][${prefix}-height] { height: var(${STRUCTURAL_HEIGHT_PROPERTY}) !important; box-sizing: border-box !important }
-[${prefix}-region][${prefix}-layout="stack"] > [${prefix}-node][${prefix}-align] { align-self: var(${STRUCTURAL_ALIGN_PROPERTY}) !important }
-[${prefix}-region][${prefix}-layout="stack"][${prefix}-gap] { gap: var(${STRUCTURAL_GAP_PROPERTY}) !important }
+[${prefix}-region][${prefix}-layout] > [${prefix}-node][${prefix}-size="compact"] { width: 50% !important; max-width: none !important; box-sizing: border-box !important }
+[${prefix}-region][${prefix}-layout] > [${prefix}-node][${prefix}-size="standard"] { width: 75% !important; max-width: none !important; box-sizing: border-box !important }
+[${prefix}-region][${prefix}-layout] > [${prefix}-node][${prefix}-size="full"] { width: 100% !important; max-width: none !important; box-sizing: border-box !important }
+[${prefix}-region][${prefix}-layout] > [${prefix}-node][${prefix}-width] { width: var(${STRUCTURAL_WIDTH_PROPERTY}) !important; max-width: none !important; box-sizing: border-box !important }
+[${prefix}-region][${prefix}-layout="row"] > [${prefix}-node][${prefix}-size="compact"] { flex: 0 0 50% !important }
+[${prefix}-region][${prefix}-layout="row"] > [${prefix}-node][${prefix}-size="standard"] { flex: 0 0 75% !important }
+[${prefix}-region][${prefix}-layout="row"] > [${prefix}-node][${prefix}-size="full"] { flex: 0 0 100% !important }
+[${prefix}-region][${prefix}-layout="row"] > [${prefix}-node][${prefix}-width] { flex: 0 0 var(${STRUCTURAL_WIDTH_PROPERTY}) !important }
+[${prefix}-region][${prefix}-layout] > [${prefix}-node][${prefix}-height] { height: var(${STRUCTURAL_HEIGHT_PROPERTY}) !important; box-sizing: border-box !important }
+[${prefix}-region][${prefix}-layout] > [${prefix}-node][${prefix}-align] { align-self: var(${STRUCTURAL_ALIGN_PROPERTY}) !important }
+[${prefix}-region][${prefix}-layout][${prefix}-gap] { gap: var(${STRUCTURAL_GAP_PROPERTY}) !important }
 </style>`
 }
 
@@ -904,6 +913,11 @@ const sizeEdit = (
   const node = nodeFor(region, edit.node, label)
   if (edit.size !== null && !SIZES.has(edit.size))
     fail("invalid-operation", `${label} has unsupported size ${JSON.stringify(edit.size)}.`)
+  if (region.layout === "row" && edit.size !== null)
+    fail(
+      "invalid-operation",
+      `${label} cannot apply a named size preset inside row region ${region.id}; use an exact width instead.`,
+    )
   if (node.size === edit.size && node.width_pct === null)
     fail("no-change", `${label} leaves node ${node.id} unchanged.`)
   const start = node.element.tag.start
@@ -1107,7 +1121,7 @@ const restoreRegionOpeningEdit = (
     restored.name !== region.element.tag.name ||
     attrValues(restored.attrs, "data-derive-region").length !== 1 ||
     attrValues(restored.attrs, "data-derive-region")[0] !== region.id ||
-    attrValues(restored.attrs, "data-derive-layout")[0] !== "stack"
+    attrValues(restored.attrs, "data-derive-layout")[0] !== region.layout
   )
     fail("invalid-operation", `${label} opening-tag source does not match region ${region.id}.`)
   const start = region.element.tag.start

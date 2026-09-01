@@ -687,6 +687,21 @@ interface ElReg {
     ".derive-structure-toolbar{position:absolute;left:-2px;bottom:calc(100% + 8px);display:flex;align-items:center;gap:3px;max-width:min(560px,calc(100vw - 16px));padding:5px;border:1px solid rgba(71,85,105,.35);border-radius:8px;background:rgba(248,250,252,.98);color:#0f172a;box-shadow:0 8px 24px rgba(15,23,42,.24);pointer-events:auto;font:600 11px/1 system-ui,sans-serif;white-space:nowrap}" +
     ".derive-structure-box.derive-structure-below .derive-structure-toolbar{bottom:auto;top:calc(100% + 8px)}" +
     ".derive-structure-label{max-width:112px;padding:0 5px;overflow:hidden;text-overflow:ellipsis;color:#475569;font:600 10px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace}" +
+    /* Structural dimensions are product semantics, not a suggestion to every deck
+       author to recreate the same CSS. Runtime-only legacy nodes and canonical
+       authored nodes therefore render the same in a fixed stage. Row widths also
+       take flex-basis authority so a common `flex:1` card rail is resizable. */
+    ":is([data-derive-region],[data-derive-runtime-region]):is([data-derive-layout],[data-derive-runtime-layout])>:is([data-derive-node],[data-derive-runtime-node]):is([data-derive-size=compact],[data-derive-runtime-size=compact]){width:50%!important;max-width:none!important;box-sizing:border-box!important}" +
+    ":is([data-derive-region],[data-derive-runtime-region]):is([data-derive-layout],[data-derive-runtime-layout])>:is([data-derive-node],[data-derive-runtime-node]):is([data-derive-size=standard],[data-derive-runtime-size=standard]){width:75%!important;max-width:none!important;box-sizing:border-box!important}" +
+    ":is([data-derive-region],[data-derive-runtime-region]):is([data-derive-layout],[data-derive-runtime-layout])>:is([data-derive-node],[data-derive-runtime-node]):is([data-derive-size=full],[data-derive-runtime-size=full]){width:100%!important;max-width:none!important;box-sizing:border-box!important}" +
+    ":is([data-derive-region],[data-derive-runtime-region]):is([data-derive-layout],[data-derive-runtime-layout])>:is([data-derive-node],[data-derive-runtime-node]):is([data-derive-width],[data-derive-runtime-width]){width:var(--derive-structural-width)!important;max-width:none!important;box-sizing:border-box!important}" +
+    ":is([data-derive-region][data-derive-layout=row],[data-derive-runtime-region][data-derive-runtime-layout=row])>:is([data-derive-node],[data-derive-runtime-node]):is([data-derive-size=compact],[data-derive-runtime-size=compact]){flex:0 0 50%!important}" +
+    ":is([data-derive-region][data-derive-layout=row],[data-derive-runtime-region][data-derive-runtime-layout=row])>:is([data-derive-node],[data-derive-runtime-node]):is([data-derive-size=standard],[data-derive-runtime-size=standard]){flex:0 0 75%!important}" +
+    ":is([data-derive-region][data-derive-layout=row],[data-derive-runtime-region][data-derive-runtime-layout=row])>:is([data-derive-node],[data-derive-runtime-node]):is([data-derive-size=full],[data-derive-runtime-size=full]){flex:0 0 100%!important}" +
+    ":is([data-derive-region][data-derive-layout=row],[data-derive-runtime-region][data-derive-runtime-layout=row])>:is([data-derive-node],[data-derive-runtime-node]):is([data-derive-width],[data-derive-runtime-width]){flex:0 0 var(--derive-structural-width)!important}" +
+    ":is([data-derive-region],[data-derive-runtime-region]):is([data-derive-layout],[data-derive-runtime-layout])>:is([data-derive-node],[data-derive-runtime-node]):is([data-derive-height],[data-derive-runtime-height]){height:var(--derive-structural-height)!important;box-sizing:border-box!important}" +
+    ":is([data-derive-region],[data-derive-runtime-region]):is([data-derive-layout],[data-derive-runtime-layout])>:is([data-derive-node],[data-derive-runtime-node]):is([data-derive-align],[data-derive-runtime-align]){align-self:var(--derive-structural-align)!important}" +
+    ":is([data-derive-region],[data-derive-runtime-region]):is([data-derive-gap],[data-derive-runtime-gap]){gap:var(--derive-structural-gap)!important}" +
     ".derive-structure-button{height:28px;min-width:28px;padding:0 8px;border:1px solid #cbd5e1;border-radius:5px;background:#fff;color:#334155;font:650 11px/26px system-ui,sans-serif;cursor:pointer}" +
     ".derive-structure-button:hover:not(:disabled){border-color:#64748b;background:#f1f5f9}" +
     ".derive-structure-button:disabled{opacity:.38;cursor:default}" +
@@ -3310,6 +3325,10 @@ interface ElReg {
       // Arm the unsaved-work guard on the first movement, before the settled count.
       if (lastDirty <= 0) {
         lastDirty = 1
+        // This optimistic state is intentionally partial. Invalidate the full-state
+        // dedupe key so an immediate cancel/Undo can restore Redo even when that
+        // full state happens to match one posted earlier in the session.
+        lastState = ""
         post({ type: "edit-state", dirty: 1, canUndo: true })
       }
       paintResizeUi()
@@ -3336,7 +3355,7 @@ interface ElReg {
 
   /* ── Authored structural regions ─────────────────────────────────────────────
      This editor is deliberately capability-based: no data attributes, no tools.
-     A stack region owns only its direct data-derive-node children. The live DOM is
+     An ordered stack or row owns only its direct data-derive-node children. The live DOM is
      an interaction preview; collect emits stable-id intent and the server projects
      that intent back into exact source bytes. */
   const STRUCTURE_SCHEMA = "derive.structural-edit/v1" as const
@@ -3344,6 +3363,8 @@ interface ElReg {
   const STRUCTURE_ID = /^[A-Za-z][A-Za-z0-9_-]{0,127}$/
   type StructureSize = "compact" | "standard" | "full"
   const STRUCTURE_SIZES = new Set<StructureSize>(["compact", "standard", "full"])
+  type StructureLayout = "stack" | "row"
+  const STRUCTURE_LAYOUTS = new Set<StructureLayout>(["stack", "row"])
   type StructurePrefix = "data-derive" | "data-derive-runtime"
   const structureAttribute = (prefix: StructurePrefix, name: string) => `${prefix}-${name}`
   const structureNodeSelector = "[data-derive-node],[data-derive-runtime-node]"
@@ -3364,6 +3385,7 @@ interface ElReg {
     el: HTMLElement
     id: string
     prefix: StructurePrefix
+    layout: StructureLayout
     nodes: StructureNode[]
     owner: StructureNode | null
     origOrder: string[]
@@ -3729,7 +3751,7 @@ interface ElReg {
     if (
       !document.contains(region.el) ||
       region.el.getAttribute(structureAttribute(region.prefix, "region")) !== region.id ||
-      region.el.getAttribute(structureAttribute(region.prefix, "layout")) !== "stack" ||
+      region.el.getAttribute(structureAttribute(region.prefix, "layout")) !== region.layout ||
       region.el.getAttribute(structureAttribute(region.prefix, "owner")) !==
         (region.owner?.id ?? null) ||
       (region.owner?.el ?? null) !== (ownerEl instanceof HTMLElement ? ownerEl : null)
@@ -3789,10 +3811,8 @@ interface ElReg {
       const hasCanonical = regionEl.hasAttribute("data-derive-region")
       const hasRuntime = regionEl.hasAttribute("data-derive-runtime-region")
       const prefix: StructurePrefix = hasRuntime ? "data-derive-runtime" : "data-derive"
-      if (
-        hasCanonical === hasRuntime ||
-        regionEl.getAttribute(structureAttribute(prefix, "layout")) !== "stack"
-      ) {
+      const layout = regionEl.getAttribute(structureAttribute(prefix, "layout"))
+      if (hasCanonical === hasRuntime || !STRUCTURE_LAYOUTS.has(layout as StructureLayout)) {
         invalid = true
         continue
       }
@@ -3905,6 +3925,7 @@ interface ElReg {
         el: regionEl,
         id,
         prefix,
+        layout: layout as StructureLayout,
         nodes,
         owner: null,
         origOrder: nodes.map((node) => node.id),
@@ -4012,7 +4033,7 @@ interface ElReg {
     !style.gridAutoFlow.includes("column") &&
     (style.gridTemplateColumns === "none" || cssTrackCount(style.gridTemplateColumns) === 1)
   const structureStackLayoutResizable = (node: StructureNode, region: StructureRegion): boolean => {
-    if (!horizontalStructureWritingMode(node, region)) return false
+    if (region.layout !== "stack" || !horizontalStructureWritingMode(node, region)) return false
     const regionStyle = getComputedStyle(region.el)
     const nodeStyle = getComputedStyle(node.el)
     if (!/^(?:static|relative)$/.test(nodeStyle.position)) return false
@@ -4036,18 +4057,37 @@ interface ElReg {
     }
     return true
   }
+  const structureRowLayoutResizable = (node: StructureNode, region: StructureRegion): boolean => {
+    if (region.layout !== "row" || !horizontalStructureWritingMode(node, region)) return false
+    const regionStyle = getComputedStyle(region.el)
+    const nodeStyle = getComputedStyle(node.el)
+    if (
+      !regionStyle.display.includes("flex") ||
+      regionStyle.flexDirection !== "row" ||
+      regionStyle.flexWrap !== "nowrap" ||
+      !/^(?:static|relative)$/.test(nodeStyle.position)
+    )
+      return false
+    for (const child of connectedStructureNodes(region)) {
+      if (!structureNodeAvailable(child)) continue
+      const style = getComputedStyle(child.el)
+      if (!/^(?:static|relative)$/.test(style.position) || style.float !== "none") return false
+    }
+    return true
+  }
   const structureWidthAxisFor = (node: StructureNode, region: StructureRegion) => {
-    if (!structureStackLayoutResizable(node, region)) return null
+    if (!structureStackLayoutResizable(node, region) && !structureRowLayoutResizable(node, region))
+      return null
     return structureResizeAxisFor(node, region)
   }
   const structureHeightAxisFor = (node: StructureNode, region: StructureRegion) => {
-    if (!structureStackLayoutResizable(node, region)) return null
+    const row = structureRowLayoutResizable(node, region)
+    if (!row && !structureStackLayoutResizable(node, region)) return null
     const regionStyle = getComputedStyle(region.el)
     const nodeStyle = getComputedStyle(node.el)
     if (regionStyle.display.includes("flex")) {
-      if (regionStyle.flexDirection !== "column") return null
-      const alignment = regionStyle.justifyContent
-      if (!/^(?:normal|start|flex-start)$/.test(alignment)) return null
+      const alignment = row ? regionStyle.alignItems : regionStyle.justifyContent
+      if (!/^(?:normal|start|flex-start|stretch)$/.test(alignment)) return null
       return structuralBlockResizeAxis(0, 1)
     }
     if (regionStyle.display.includes("grid")) {
@@ -4069,13 +4109,15 @@ interface ElReg {
     return (
       horizontalStructureWritingMode(node, region) &&
       regionStyle.display.includes("flex") &&
-      regionStyle.flexDirection === "column" &&
+      ((region.layout === "stack" && regionStyle.flexDirection === "column") ||
+        (region.layout === "row" && regionStyle.flexDirection === "row")) &&
       regionStyle.flexWrap === "nowrap" &&
       /^(?:static|relative)$/.test(nodeStyle.position) &&
       nodeStyle.float === "none"
     )
   }
   const structureDistributionGap = (region: StructureRegion): number | null => {
+    if (region.layout !== "stack") return null
     const nodes = connectedStructureNodes(region).filter((node) => structureNodeAvailable(node))
     if (nodes.length < 3 || selectedStructureNodes(region).length !== nodes.length) return null
     const regionStyle = getComputedStyle(region.el)
@@ -4491,8 +4533,18 @@ interface ElReg {
     structureExact.hidden = batchSelected
     structureExact.setAttribute("aria-expanded", String(structurePrecisionOpen))
     structurePrecisionPanel.hidden = !structurePrecisionOpen || batchSelected
-    for (const button of [structureAuto, structureCompact, structureStandard, structureFull])
-      button.disabled = batchSelected
+    structureAuto.disabled = batchSelected
+    for (const [button, availableTitle] of [
+      [structureCompact, "Compact size"],
+      [structureStandard, "Standard size"],
+      [structureFull, "Full size"],
+    ] as const) {
+      button.disabled = batchSelected || region.layout === "row"
+      const title =
+        region.layout === "row" ? "Use exact or drag resize for a row element" : availableTitle
+      button.title = title
+      button.setAttribute("aria-label", title)
+    }
     const exactCapability = structureCapability("exact-size", selected, region, selection, nodes)
     const widthCapability = structureCapability("resize-width", selected, region, selection, nodes)
     const heightCapability = structureCapability(
@@ -4644,6 +4696,9 @@ interface ElReg {
   const markStructureChanged = () => {
     if (lastDirty <= 0) {
       lastDirty = 1
+      // See the generic resize path above: a partial optimistic state must never
+      // suppress the next authoritative history state.
+      lastState = ""
       post({ type: "edit-state", dirty: 1, canUndo: true })
     }
     paintStructureUi()
@@ -5071,6 +5126,10 @@ interface ElReg {
       return
     const region = regionForStructureNode(selected)
     if (!region) return
+    if (region.layout === "row" && size !== null) {
+      showStructureToast("Use exact or drag resize for a row element")
+      return
+    }
     rememberStructureSizing(selected)
     // An authored width transition reports the OLD geometry for its first frame,
     // which would make a valid explicit preset look constrained and roll it back.
@@ -5745,6 +5804,9 @@ interface ElReg {
       else hideStructureHeightSnapGuide()
       if (drag.moved && lastDirty <= 0) {
         lastDirty = 1
+        // Force the settled/cancelled state to cross the frame even when its stack
+        // shape matches an older state from before this provisional gesture.
+        lastState = ""
         post({ type: "edit-state", dirty: 1, canUndo: true })
       }
       paintStructureUi()
