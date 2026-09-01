@@ -4262,7 +4262,49 @@ interface ElReg {
     const clipsContent = node.el.scrollHeight > node.el.clientHeight + 1
     return Math.abs(rendered - height) <= tolerance && !clipsContent
   }
-  const structureHeightChainFits = (node: StructureNode): boolean => {
+  interface StructureHeightClipOverflow {
+    top: number
+    bottom: number
+  }
+  type StructureHeightChainBaseline = Map<HTMLElement, StructureHeightClipOverflow>
+  const structureHeightClipOverflow = (
+    node: StructureNode,
+    ancestor: HTMLElement,
+  ): StructureHeightClipOverflow => {
+    const ancestorRect = ancestor.getBoundingClientRect()
+    const screenScaleY = ancestor.offsetHeight > 0 ? ancestorRect.height / ancestor.offsetHeight : 1
+    const clipTop = ancestorRect.top + ancestor.clientTop * screenScaleY
+    const clipBottom = clipTop + ancestor.clientHeight * screenScaleY
+    const footprint = [node.el, ...node.el.querySelectorAll<HTMLElement>("*")].reduce(
+      (bounds, element) => {
+        const rect = element.getBoundingClientRect()
+        if (!(rect.width > 0 || rect.height > 0)) return bounds
+        return {
+          top: Math.min(bounds.top, rect.top),
+          bottom: Math.max(bounds.bottom, rect.bottom),
+        }
+      },
+      { top: node.el.getBoundingClientRect().top, bottom: node.el.getBoundingClientRect().bottom },
+    )
+    return {
+      top: Math.max(0, clipTop - footprint.top),
+      bottom: Math.max(0, footprint.bottom - clipBottom),
+    }
+  }
+  const structureHeightChainBaseline = (node: StructureNode): StructureHeightChainBaseline => {
+    const baseline: StructureHeightChainBaseline = new Map()
+    for (let ancestor = node.el.parentElement; ancestor && ancestor !== document.body; ) {
+      const overflowY = getComputedStyle(ancestor).overflowY
+      if (overflowY === "hidden" || overflowY === "clip")
+        baseline.set(ancestor, structureHeightClipOverflow(node, ancestor))
+      ancestor = ancestor.parentElement
+    }
+    return baseline
+  }
+  const structureHeightChainFits = (
+    node: StructureNode,
+    baseline?: StructureHeightChainBaseline,
+  ): boolean => {
     for (
       let current: StructureNode | null = node;
       current;
@@ -4276,11 +4318,11 @@ interface ElReg {
     // when that ancestor does not participate in Derive's sizing contract.
     for (let ancestor = node.el.parentElement; ancestor && ancestor !== document.body; ) {
       const overflowY = getComputedStyle(ancestor).overflowY
-      if (
-        (overflowY === "hidden" || overflowY === "clip") &&
-        ancestor.scrollHeight > ancestor.clientHeight + 1
-      )
-        return false
+      if (overflowY === "hidden" || overflowY === "clip") {
+        const overflow = structureHeightClipOverflow(node, ancestor)
+        const before = baseline?.get(ancestor) ?? { top: 0, bottom: 0 }
+        if (overflow.top > before.top + 1 || overflow.bottom > before.bottom + 1) return false
+      }
       ancestor = ancestor.parentElement
     }
     return true
@@ -4872,6 +4914,9 @@ interface ElReg {
       )
       return sizing
     })
+    const heightChainBaselines = new Map(
+      selected.map((node) => [node, structureHeightChainBaseline(node)]),
+    )
     let accepted =
       contentWidth > 0 &&
       width >= MIN_STRUCTURAL_WIDTH_PCT &&
@@ -4894,7 +4939,8 @@ interface ElReg {
       if (
         (axis === "width" && !structureWidthFits(node, region, width)) ||
         (axis === "height" &&
-          (!structureHeightFits(node, height) || !structureHeightChainFits(node)))
+          (!structureHeightFits(node, height) ||
+            !structureHeightChainFits(node, heightChainBaselines.get(node))))
       ) {
         accepted = false
         break
@@ -4941,8 +4987,11 @@ interface ElReg {
       )
       return sizing
     })
+    const heightChainBaselines = new Map(
+      selected.map((node) => [node, structureHeightChainBaseline(node)]),
+    )
     for (const node of changed) applyStructureHeight(node, null)
-    if (selected.some((node) => !structureHeightChainFits(node))) {
+    if (selected.some((node) => !structureHeightChainFits(node, heightChainBaselines.get(node)))) {
       applyStructuralSizingBatch({ kind: "structural-sizing-batch", entries: snapshots })
       showStructureToast("An authored wrapper prevents these elements from fitting content")
       settleStructureInteraction("cancel", {
@@ -5083,6 +5132,7 @@ interface ElReg {
       structureWidthName(node),
       structureHeightName(node),
     )
+    const heightChainBaseline = structureHeightChainBaseline(node)
     beginStructureLayoutInteraction()
     const transition = node.el.style.getPropertyValue("transition")
     const transitionPriority = node.el.style.getPropertyPriority("transition")
@@ -5096,7 +5146,7 @@ interface ElReg {
       !!structureHeightAxisFor(node, region) &&
       structureWidthFits(node, region, width) &&
       (height === null || structureHeightFits(node, height)) &&
-      structureHeightChainFits(node)
+      structureHeightChainFits(node, heightChainBaseline)
     restoreStructureTransition(node, transition, transitionPriority)
     if (!accepted) {
       applyStructuralSizing(initial)
@@ -5263,6 +5313,9 @@ interface ElReg {
         },
       ]),
     )
+    const heightChainBaselines = new Map(
+      selected.map((node) => [node, structureHeightChainBaseline(node)]),
+    )
     for (const node of selected) node.el.style.setProperty("transition", "none", "important")
     void region.el.offsetWidth
     beginStructureLayoutInteraction()
@@ -5305,7 +5358,7 @@ interface ElReg {
         (alignment === undefined ||
           (structureCrossAxisAlignAvailable(node, region) &&
             getComputedStyle(node.el).alignSelf === alignment)) &&
-        structureHeightChainFits(node)
+        structureHeightChainFits(node, heightChainBaselines.get(node))
       )
     })
     if (!accepted) {
@@ -5584,6 +5637,7 @@ interface ElReg {
     transitionPriority: string
     width: number
     height: number
+    heightChainBaseline: StructureHeightChainBaseline
     moved: boolean
   }
   let structureResizeDrag: StructureResizeDrag | null = null
@@ -5641,6 +5695,7 @@ interface ElReg {
       transitionPriority,
       width: startWidth,
       height: node.el.offsetHeight,
+      heightChainBaseline: structureHeightChainBaseline(node),
       moved: false,
     }
     updateStructureInteraction({ type: "begin", gesture: "resize" })
@@ -5845,7 +5900,7 @@ interface ElReg {
       axesAccepted &&
       sourceAccepted &&
       structureTransformResizable(drag.node) &&
-      structureHeightChainFits(drag.node)
+      structureHeightChainFits(drag.node, drag.heightChainBaseline)
     if (cancel || !accepted) {
       applyStructuralSizing(drag.initial)
       const reason: StructuralConstraintReason = {
@@ -5935,6 +5990,7 @@ interface ElReg {
       structureWidthName(node),
       structureHeightName(node),
     )
+    const heightChainBaseline = structureHeightChainBaseline(node)
     const transition = node.el.style.getPropertyValue("transition")
     const transitionPriority = node.el.style.getPropertyPriority("transition")
     node.el.style.setProperty("transition", "none", "important")
@@ -5944,7 +6000,7 @@ interface ElReg {
     const accepted =
       (!horizontal || structureWidthFits(node, region, width)) &&
       (!vertical || structureHeightFits(node, height)) &&
-      structureHeightChainFits(node)
+      structureHeightChainFits(node, heightChainBaseline)
     updateStructureInteraction({ type: "validate" })
     restoreStructureTransition(node, transition, transitionPriority)
     if (!accepted) {

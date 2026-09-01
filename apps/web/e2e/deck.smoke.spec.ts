@@ -337,6 +337,7 @@ test.describe("deck", () => {
     <section class="slide" data-derive-slide="2" data-derive-region="slide-2" data-derive-layout="stack">
       <h2 data-derive-node="s2-title">Isolation sentinel</h2><p id="sentinel" data-derive-node="s2-copy">Nothing on slide two may mutate this slide.</p>
     </section>
+    <i aria-hidden="true" style="position:absolute;top:540px;height:12px"></i>
   </main><script>
     var slides=[].slice.call(document.querySelectorAll('.slide')),at=0
     function report(){parent.postMessage({source:'derive-deck',type:'state',i:at,total:slides.length},'*')}
@@ -411,6 +412,15 @@ test.describe("deck", () => {
     await frame.getByRole("button", { name: "Apply exact width and height" }).click()
     await expect(beta).toHaveAttribute("data-derive-width", "36")
     await expect(beta).toHaveAttribute("data-derive-height", "128")
+
+    // Unrelated stage overflow must not block a valid edit, while new clipping from
+    // the selected subtree still fails closed and creates no history entry.
+    await frame.getByRole("button", { name: "Set exact width and height" }).click()
+    await dimensions.nth(0).fill("36")
+    await dimensions.nth(1).fill("600")
+    await frame.getByRole("button", { name: "Apply exact width and height" }).click()
+    await expect(beta).toHaveAttribute("data-derive-height", "128")
+    await expect(frame.getByText("Authored content or constraints control this size")).toBeVisible()
 
     await owner.getByTestId("inline-edit-undo").click()
     await expect(beta).toHaveAttribute("data-derive-width", "32")
