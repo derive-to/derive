@@ -123,6 +123,19 @@ CREATE TABLE IF NOT EXISTS comment (
   FOREIGN KEY (artifact_id) REFERENCES artifact(id)
 );
 
+CREATE TABLE IF NOT EXISTS artifact_rating (
+  id TEXT PRIMARY KEY,
+  artifact_id TEXT NOT NULL,
+  version_n INTEGER NOT NULL,
+  user_id TEXT NOT NULL,
+  value TEXT NOT NULL,
+  reason TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  UNIQUE (artifact_id, version_n, user_id),
+  FOREIGN KEY (artifact_id) REFERENCES artifact(id)
+);
+
 CREATE TABLE IF NOT EXISTS webhook (
   id TEXT PRIMARY KEY,
   org_id TEXT NOT NULL DEFAULT 'default',

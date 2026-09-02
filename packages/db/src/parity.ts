@@ -17,6 +17,7 @@ import type {
   AgentRecord,
   ArtifactInviteRecord,
   ArtifactMemberRecord,
+  ArtifactRatingRecord,
   ArtifactRecord,
   AssetRecord,
   AuditLogRecord,
@@ -75,6 +76,7 @@ export interface TypedTables {
   membership: MembershipRecord
   workspace: WorkspaceRecord
   artifactMember: ArtifactMemberRecord
+  artifactRating: ArtifactRatingRecord
   notification: NotificationRecord
   follow: FollowRecord
   reviewRound: ReviewRoundRecord

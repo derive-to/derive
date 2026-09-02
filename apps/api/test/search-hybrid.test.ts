@@ -1,12 +1,15 @@
-import type { ArtifactRecord, SearchIndex, VersionRecord } from "@derive/core"
+import type { ArtifactRecord, SearchIndex, UsefulnessSignals, VersionRecord } from "@derive/core"
 import { describe, expect, it } from "vitest"
 import {
   deleteArtifactAndUnindex,
   indexArtifactVersion,
+  rerankByUsefulness,
   rrfFuse,
   searchMatcher,
   searchWorkspace,
+  toSearchHits,
   type WorkspaceSearchDeps,
+  workspaceSearchReport,
 } from "../src/lib/search"
 
 // Hybrid (lexical FTS + dense/semantic) workspace search. These are pure-logic tests over the
@@ -26,6 +29,7 @@ interface Doc {
   body: string
   org_id?: string
   workspace_access?: "member" | "none"
+  current_version?: number
 }
 
 // A partial ArtifactRecord is castable because ArtifactRecord is assignable to it (same trick the
@@ -35,7 +39,7 @@ const artifact = (d: Doc): ArtifactRecord =>
     id: d.id,
     short_id: d.short_id,
     title: d.title,
-    current_version: 1,
+    current_version: d.current_version ?? 1,
     org_id: d.org_id ?? ORG,
     workspace_access: d.workspace_access ?? "member",
     password_hash: null,
@@ -67,7 +71,21 @@ const denseIndex = (
   search: async (_org, query, limit) => (byQuery[query] ?? []).slice(0, limit),
 })
 
-const makeDeps = (docs: Doc[], search?: SearchIndex): WorkspaceSearchDeps => {
+const selectRecord = <T>(ids: string[], values: Record<string, T>): Record<string, T> => {
+  const selected: Record<string, T> = {}
+  for (const id of ids) {
+    const value = values[id]
+    if (value !== undefined) selected[id] = value
+  }
+  return selected
+}
+
+const makeDeps = (
+  docs: Doc[],
+  search?: SearchIndex,
+  usefulness: Record<string, UsefulnessSignals> = {},
+  views: Record<string, number> = {},
+): WorkspaceSearchDeps => {
   const keyOf = (d: Doc) => `blob_${d.id}`
   const bodyForKey = (key: string) => docs.find((d) => keyOf(d) === key)?.body ?? null
   const version = (d: Doc) =>
@@ -109,6 +127,8 @@ const makeDeps = (docs: Doc[], search?: SearchIndex): WorkspaceSearchDeps => {
         return out
       },
       searchArtifactIds: async (orgId, query, limit) => lexical(docs, orgId, query, limit),
+      usefulnessSignals: async (ids) => selectRecord(ids, usefulness),
+      viewCounts: async (ids) => selectRecord(ids, views),
     },
     search,
   }
@@ -142,6 +162,90 @@ describe("rrfFuse", () => {
     expect(fused.map((f) => f.id)).toEqual(["a", "b", "c"]) // a in both ⇒ top; then b, c by rank
     expect(fused.find((f) => f.id === "a")?.chunk).toBe("A-chunk")
     expect(fused.find((f) => f.id === "b")?.chunk).toBeUndefined() // lexical-only ⇒ no chunk
+  })
+})
+
+describe("usefulness reranking", () => {
+  it("uses ratings, resolved revision loops, view buckets, then version buckets", () => {
+    const ranked = ["a", "b", "c", "d", "e", "f"].map((id) => ({
+      id,
+      current_version: id === "e" ? 5 : 1,
+    }))
+    const result = rerankByUsefulness(
+      ranked,
+      {
+        b: { not_useful: 0, useful: 2, essential: 1, resolved_revisions: 0 },
+        c: { not_useful: 0, useful: 0, essential: 0, resolved_revisions: 2 },
+        f: { not_useful: 0, useful: 2, essential: 1, resolved_revisions: 0 },
+      },
+      { d: 1000 },
+    )
+    expect(result.map((item) => item.id)).toEqual(["b", "c", "d", "e", "a", "f"])
+    // f is strong, but it cannot cross the fixed relevance-group boundary.
+    expect(result[5]?.id).toBe("f")
+  })
+
+  it("carries real signal batches through search results and agent reports", async () => {
+    const docs = ["a", "b", "c", "d", "e"].map((id) => ({
+      id,
+      short_id: `${id}1`,
+      title: `Guide ${id}`,
+      body: "shared workflow",
+      current_version: id === "b" ? 5 : 1,
+    }))
+    const usefulness = {
+      b: { not_useful: 0, useful: 0, essential: 0, resolved_revisions: 1 },
+      d: { not_useful: 0, useful: 0, essential: 0, resolved_revisions: 2 },
+      e: { not_useful: 0, useful: 2, essential: 1, resolved_revisions: 0 },
+    }
+    const { results } = await run(makeDeps(docs, undefined, usefulness, { c: 1000 }), "workflow")
+
+    expect(results.map((result) => result.short_id)).toEqual(["e1", "d1", "c1", "b1", "a1"])
+    expect(results[0]?.usefulness).toEqual({
+      label: "Essential",
+      evidence: "3 of 3 people found this useful",
+    })
+    expect(results[1]?.usefulness).toEqual({
+      label: "Improved through feedback",
+      evidence: "Improved across multiple revisions",
+    })
+    expect(results[2]?.usefulness).toEqual({
+      label: "Often referenced",
+      evidence: "Frequently opened",
+    })
+    expect(results[3]?.usefulness).toEqual({
+      label: "Frequently revised",
+      evidence: "Multiple published versions",
+    })
+    expect(results[4]?.usefulness).toBeUndefined()
+    expect(toSearchHits(results, "workflow")[0]?.usefulness?.label).toBe("Essential")
+    expect(workspaceSearchReport("workflow", "text", results, null)).toContain(
+      "> Essential: 3 of 3 people found this useful",
+    )
+  })
+
+  it("requires three ratings and places a majority-negative artifact below neutral peers", () => {
+    const ranked = ["a", "b", "c"].map((id) => ({ id }))
+    const result = rerankByUsefulness(
+      ranked,
+      {
+        a: { not_useful: 2, useful: 1, essential: 0, resolved_revisions: 0 },
+        b: { not_useful: 0, useful: 1, essential: 1, resolved_revisions: 0 },
+      },
+      {},
+    )
+    // b has only two ratings, so it stays neutral. a has enough negative evidence to move down.
+    expect(result.map((item) => item.id)).toEqual(["b", "c", "a"])
+  })
+
+  it("does not let one resolved thread reveal or influence review activity", () => {
+    const ranked = ["a", "b"].map((id) => ({ id }))
+    const result = rerankByUsefulness(
+      ranked,
+      { b: { not_useful: 0, useful: 0, essential: 0, resolved_revisions: 1 } },
+      {},
+    )
+    expect(result.map((item) => item.id)).toEqual(["a", "b"])
   })
 })
 

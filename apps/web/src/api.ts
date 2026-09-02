@@ -327,6 +327,22 @@ export const workspaceDisplayName = (w: { name: string; personal: boolean }): st
   w.personal ? "Personal" : w.name
 /** Per-artifact view stats. Generated from the OpenAPI spec. */
 export type Analytics = components["schemas"]["Analytics"]
+export type ArtifactRatingValue = "not_useful" | "useful" | "essential"
+export type ArtifactRatingReason =
+  | "clear"
+  | "current"
+  | "reusable"
+  | "saved_time"
+  | "outdated"
+  | "wrong_scope"
+  | "unclear"
+  | "duplicate"
+export interface ArtifactRatingResponse {
+  version: number
+  eligible: boolean
+  rating: { value: ArtifactRatingValue; reason: ArtifactRatingReason | null } | null
+  aggregate: { total: number; helpful_percent: number; essential: number } | null
+}
 /** A resolved @mention: the picked user's id + the display name shown inline. */
 /** A person/agent @mentioned in a comment. Generated from the OpenAPI spec. */
 export type Mention = components["schemas"]["Mention"]
@@ -838,6 +854,23 @@ export const api = {
     workspace: string
   }> => f("/v1/tags", opts()).then(j),
   getArtifact: (id: string): Promise<Artifact> => f(`/v1/artifacts/${id}`, opts()).then(j),
+  getArtifactRating: (id: string, version: number): Promise<ArtifactRatingResponse> =>
+    f(`/v1/artifacts/${id}/rating?version=${version}`, opts()).then(j),
+  setArtifactRating: (
+    id: string,
+    version: number,
+    value: ArtifactRatingValue,
+    reason: ArtifactRatingReason | null,
+  ): Promise<ArtifactRatingResponse> =>
+    f(`/v1/artifacts/${id}/rating`, {
+      ...opts({ version, value, reason }),
+      method: "PUT",
+    }).then(j),
+  clearArtifactRating: (id: string, version: number): Promise<ArtifactRatingResponse> =>
+    f(`/v1/artifacts/${id}/rating?version=${version}`, {
+      method: "DELETE",
+      credentials: "include",
+    }).then(j),
   getContent: (id: string, v?: number): Promise<string> =>
     f(`/v1/artifacts/${id}/content${v ? `?v=${v}` : ""}`, { credentials: "include" }).then((r) => {
       if (!r.ok) throw new Error(`HTTP ${r.status}`)

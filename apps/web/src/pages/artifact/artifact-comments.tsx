@@ -26,6 +26,7 @@ import {
   type Selection,
   selLabel,
 } from "./types"
+import { UsefulnessRating } from "./usefulness-rating"
 
 /**
  * All the comment surfaces for an artifact, in one place: the desktop activity rail,
@@ -67,6 +68,8 @@ export function ArtifactComments(p: {
    *  send-back write. */
   versions: Artifact["versions"]
   currentVersion: number
+  /** Current version shown by the reader. Historical versions cannot receive ratings. */
+  ratingVersion?: number
   rounds: ReviewRound[]
   pendingRound: ReviewRound | null
   meId: string
@@ -241,42 +244,47 @@ export function ArtifactComments(p: {
             ) : panel !== "hidden" && p.rail === "inspect" && p.inspectEnabled ? (
               p.inspectPanel
             ) : panel !== "hidden" ? (
-              <ActivityPanel
-                tabs={
-                  hasRailTabs && p.rail && p.onRail ? (
-                    <RailTabs
-                      tab={p.rail}
-                      commentCount={p.openCount}
-                      mapEnabled={p.mapEnabled}
-                      chatEnabled={p.chatBeta}
-                      inspectEnabled={p.inspectEnabled}
-                      onTab={p.onRail}
-                    />
-                  ) : undefined
-                }
-                items={items}
-                ready={p.ready}
-                openCount={p.openCount}
-                currentVersion={p.currentVersion}
-                pendingRound={p.pendingRound}
-                lens={lens}
-                onLens={setLens}
-                composer={p.composer}
-                onNewGeneral={newGeneralDesktop}
-                onSubmitNew={p.submitNew}
-                onCancelNew={cancelNew}
-                onHide={() => p.setPanel("hidden")}
-                visualPinAvailable={p.visualPinAvailable}
-                visualPinActive={p.visualPinActive}
-                onToggleVisualPin={p.onToggleVisualPin}
-                hints={p.hints}
-                editing={p.editing}
-                onGoToVersion={p.onGoToVersion}
-                onSendBack={p.onSendBack}
-                sendingBack={p.sendingBack}
-                anchorTops={p.anchorTops}
-                subscribeGeom={p.subscribeGeom}
-              />
+              <>
+                <ActivityPanel
+                  tabs={
+                    hasRailTabs && p.rail && p.onRail ? (
+                      <RailTabs
+                        tab={p.rail}
+                        commentCount={p.openCount}
+                        mapEnabled={p.mapEnabled}
+                        chatEnabled={p.chatBeta}
+                        inspectEnabled={p.inspectEnabled}
+                        onTab={p.onRail}
+                      />
+                    ) : undefined
+                  }
+                  items={items}
+                  ready={p.ready}
+                  openCount={p.openCount}
+                  currentVersion={p.currentVersion}
+                  pendingRound={p.pendingRound}
+                  lens={lens}
+                  onLens={setLens}
+                  composer={p.composer}
+                  onNewGeneral={newGeneralDesktop}
+                  onSubmitNew={p.submitNew}
+                  onCancelNew={cancelNew}
+                  onHide={() => p.setPanel("hidden")}
+                  visualPinAvailable={p.visualPinAvailable}
+                  visualPinActive={p.visualPinActive}
+                  onToggleVisualPin={p.onToggleVisualPin}
+                  hints={p.hints}
+                  editing={p.editing}
+                  onGoToVersion={p.onGoToVersion}
+                  onSendBack={p.onSendBack}
+                  sendingBack={p.sendingBack}
+                  anchorTops={p.anchorTops}
+                  subscribeGeom={p.subscribeGeom}
+                />
+                {p.ratingVersion !== undefined && (
+                  <UsefulnessRating shortId={p.shortId} version={p.ratingVersion} />
+                )}
+              </>
             ) : null}
           </aside>
         )}
@@ -310,6 +318,15 @@ export function ArtifactComments(p: {
             chatEnabled={p.chatBeta}
             inspectEnabled={p.inspectEnabled}
             openCount={p.openCount}
+            footer={
+              p.ratingVersion !== undefined ? (
+                <UsefulnessRating
+                  shortId={p.shortId}
+                  version={p.ratingVersion}
+                  className="pb-[max(10px,env(safe-area-inset-bottom))]"
+                />
+              ) : undefined
+            }
           />
         )}
         {/* Desktop: the anchored action menu above the selection (the mouse can

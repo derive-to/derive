@@ -237,8 +237,10 @@ export function Artifact({ template = false }: { template?: boolean }) {
   }, [search.use, loading, me, shortId, ref, selfRoute, nav])
   // The tab is named after the document, like the workbench header (title, else id).
   useDocumentTitle(art ? (art.title ?? shortId) : null)
-  const commentsAvailable =
-    !!me && !seeded && !!art && (!isGuest || canCommentWithRole(art.my_role))
+  // Comments are readable by every signed-in reader. The role only gates writes.
+  // Keep the activity rail available to link viewers so they can read feedback and
+  // rate the artifact without receiving a comment affordance they cannot use.
+  const commentsAvailable = !!me && !seeded && !!art
   const commentsQ = useQuery({
     ...commentsQuery(shortId),
     enabled: commentsAvailable,
@@ -1672,6 +1674,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
               onSheetHeight={setSheetInset}
               versions={art.versions}
               currentVersion={art.current_version}
+              ratingVersion={shown === art.current_version ? shown : undefined}
               rounds={review?.rounds ?? []}
               pendingRound={review?.pending ?? null}
               ready={streamReady}

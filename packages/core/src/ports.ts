@@ -906,6 +906,60 @@ export interface CommentStore {
   commentAuthorIds(artifactId: string): Promise<string[]>
 }
 
+export type ArtifactRatingValue = "not_useful" | "useful" | "essential"
+export type ArtifactRatingReason =
+  | "clear"
+  | "current"
+  | "reusable"
+  | "saved_time"
+  | "outdated"
+  | "wrong_scope"
+  | "unclear"
+  | "duplicate"
+
+/** One human's rating of one artifact version. Ratings stay version-scoped so a
+ *  new revision starts clean without erasing the old revision's history. */
+export interface ArtifactRatingRecord {
+  id: string
+  artifact_id: string
+  version_n: number
+  user_id: string
+  value: ArtifactRatingValue
+  reason: ArtifactRatingReason | null
+  created_at: string
+  updated_at: string
+}
+
+export interface NewArtifactRating {
+  id: string
+  artifact_id: string
+  version_n: number
+  user_id: string
+  value: ArtifactRatingValue
+  reason: ArtifactRatingReason | null
+}
+
+/** Batched, privacy-safe inputs for search ranking. No rater identity or reason
+ *  leaves the store. `resolved_revisions` counts threads resolved by a later version. */
+export interface UsefulnessSignals {
+  not_useful: number
+  useful: number
+  essential: number
+  resolved_revisions: number
+}
+
+export interface UsefulnessStore {
+  setArtifactRating(rating: NewArtifactRating): Promise<ArtifactRatingRecord>
+  getArtifactRating(
+    artifactId: string,
+    version: number,
+    userId: string,
+  ): Promise<ArtifactRatingRecord | null>
+  deleteArtifactRating(artifactId: string, version: number, userId: string): Promise<void>
+  /** Current-version rating totals plus resolved revision loops for many artifacts. */
+  usefulnessSignals(artifactIds: string[]): Promise<Record<string, UsefulnessSignals>>
+}
+
 export interface ArtifactQueryStore {
   /**
    * Newest-first artifact page. `cursor` is keyset pagination on created_at
@@ -2571,6 +2625,7 @@ export interface SharedStateStore {
 export interface MetaStore
   extends ArtifactStore,
     CommentStore,
+    UsefulnessStore,
     ArtifactQueryStore,
     WebhookStore,
     WorkspaceStore,

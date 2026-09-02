@@ -356,6 +356,12 @@ export const notificationsQuery = () =>
     queryFn: ({ signal }: { signal: AbortSignal }) => api.notifications({ signal }),
   })
 
+export const artifactRatingQuery = (shortId: string, version: number) =>
+  queryOptions({
+    queryKey: ["artifact-rating", shortId, version] as const,
+    queryFn: () => api.getArtifactRating(shortId, version),
+  })
+
 export const commentsQuery = (shortId: string) =>
   queryOptions({
     queryKey: ["comments", shortId] as const,

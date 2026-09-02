@@ -12,12 +12,13 @@ import {
   type SectionMarker,
   sectionMarkers,
   toMarkdown,
+  type UsefulnessSignals,
   type VersionRecord,
 } from "@derive/core"
 import { log } from "../log"
 import { cleanPath, manifestOf } from "./bundle"
 import { clip } from "./clip"
-import { visibleArtifacts } from "./visibility"
+import { LIST_ID_CHUNK, visibleArtifacts } from "./visibility"
 
 // The minimal store surface search needs — a BlobStore, a version→text resolver,
 // and (only for
@@ -47,6 +48,8 @@ export interface WorkspaceSearchDeps extends SearchDeps {
       query: string,
       limit: number,
     ): Promise<{ id: string; rank: number }[]>
+    usefulnessSignals(artifactIds: string[]): Promise<Record<string, UsefulnessSignals>>
+    viewCounts(artifactIds: string[]): Promise<Record<string, number>>
   }
   /** The optional dense/semantic arm (pgvector + an embedder). Absent when no embedder is
    *  configured (or on SQLite) ⇒ nomination stays pure-lexical, byte-identical to before. */
@@ -518,6 +521,115 @@ export interface WorkspaceSearchResult {
   /** Set only for a dense-nominated hit the literal grep-confirm couldn't reproduce
    *  (total === 0): the best-matching passage, shown as the match evidence. */
   semantic?: { snippet: string }
+  /** Privacy-safe reason this artifact won a tie inside its relevance group. */
+  usefulness?: {
+    label:
+      | "Essential"
+      | "Useful"
+      | "Improved through feedback"
+      | "Often referenced"
+      | "Frequently revised"
+      | "Mixed feedback"
+    evidence: string
+  }
+}
+
+const EMPTY_USEFULNESS: UsefulnessSignals = {
+  not_useful: 0,
+  useful: 0,
+  essential: 0,
+  resolved_revisions: 0,
+}
+
+/** A coarse confidence band, not a universal score. Three ratings are required
+ *  before human votes can move search order. */
+export const usefulnessBand = (signal: UsefulnessSignals): -1 | 0 | 1 | 2 => {
+  const total = signal.not_useful + signal.useful + signal.essential
+  if (total < 3) return 0
+  if (signal.not_useful / total >= 0.5) return -1
+  const helpful = signal.useful + signal.essential
+  if (helpful / total >= 0.75 && signal.essential >= 1) return 2
+  if (helpful / total >= 0.67) return 1
+  return 0
+}
+
+// A single resolved thread can reveal one person's private review activity. Require
+// repeated feedback before it can influence ranking or appear in result evidence.
+const revisionBucket = (count: number): number => (count >= 2 ? 1 : 0)
+const viewBucket = (count: number): number => {
+  if (count >= 1000) return 4
+  if (count >= 100) return 3
+  if (count >= 10) return 2
+  return count > 0 ? 1 : 0
+}
+const versionBucket = (currentVersion: number): number => {
+  if (currentVersion >= 10) return 3
+  if (currentVersion >= 5) return 2
+  return currentVersion >= 2 ? 1 : 0
+}
+
+/** Preserve relevance globally. Usefulness can reorder only inside each fixed
+ *  group, so a popular artifact cannot jump over a much better query match. */
+export const rerankByUsefulness = <T extends { id: string; current_version?: number }>(
+  ranked: T[],
+  signals: Record<string, UsefulnessSignals>,
+  views: Record<string, number>,
+  groupSize = 5,
+): T[] => {
+  const originalRank = new Map(ranked.map((item, index) => [item.id, index]))
+  const out: T[] = []
+  for (let start = 0; start < ranked.length; start += groupSize) {
+    const group = ranked.slice(start, start + groupSize)
+    group.sort((a, b) => {
+      const sa = signals[a.id] ?? EMPTY_USEFULNESS
+      const sb = signals[b.id] ?? EMPTY_USEFULNESS
+      return (
+        usefulnessBand(sb) - usefulnessBand(sa) ||
+        revisionBucket(sb.resolved_revisions) - revisionBucket(sa.resolved_revisions) ||
+        viewBucket(views[b.id] ?? 0) - viewBucket(views[a.id] ?? 0) ||
+        versionBucket(b.current_version ?? 1) - versionBucket(a.current_version ?? 1) ||
+        (originalRank.get(a.id) ?? 0) - (originalRank.get(b.id) ?? 0)
+      )
+    })
+    out.push(...group)
+  }
+  return out
+}
+
+const usefulnessNote = (
+  signal: UsefulnessSignals,
+  views: number,
+  currentVersion: number,
+): WorkspaceSearchResult["usefulness"] | undefined => {
+  const total = signal.not_useful + signal.useful + signal.essential
+  const helpful = signal.useful + signal.essential
+  const revisions = signal.resolved_revisions
+  const revisionEvidence = revisions >= 2 ? "Improved across multiple revisions" : null
+  const viewEvidence = views >= 10 ? "Frequently opened" : null
+  const versionEvidence = currentVersion >= 5 ? "Multiple published versions" : null
+  const evidence = (rating: string) =>
+    [rating, revisionEvidence, viewEvidence, versionEvidence].filter(Boolean).join("; ")
+  const band = usefulnessBand(signal)
+  if (band === 2)
+    return {
+      label: "Essential",
+      evidence: evidence(`${helpful} of ${total} people found this useful`),
+    }
+  if (band === 1)
+    return {
+      label: "Useful",
+      evidence: evidence(`${helpful} of ${total} people found this useful`),
+    }
+  if (band === -1)
+    return {
+      label: "Mixed feedback",
+      evidence: evidence(`${signal.not_useful} of ${total} people marked this not useful`),
+    }
+  if (total >= 3) return { label: "Mixed feedback", evidence: evidence(`${total} ratings`) }
+  if (revisionEvidence) return { label: "Improved through feedback", evidence: evidence("") }
+  if (viewEvidence) return { label: "Often referenced", evidence: evidence("") }
+  if (versionEvidence) return { label: "Frequently revised", evidence: versionEvidence }
+  return undefined
 }
 
 export const searchWorkspace = async (
@@ -594,12 +706,30 @@ export const searchWorkspace = async (
   // listArtifacts returns in its own (recency) order; restore relevance order.
   gated.sort((a, b) => (rankOf.get(a.id) ?? Infinity) - (rankOf.get(b.id) ?? Infinity))
 
+  // One shared usefulness pass for REST, MCP find, and Slack search. Read in D1-safe
+  // chunks, then reorder only inside fixed relevance groups of five. Only groups
+  // that can enter the grep window need signals; lower groups cannot cross it.
+  const grepCap = opts.limit ?? WORKSPACE_SEARCH_ARTIFACT_CAP
+  const signals: Record<string, UsefulnessSignals> = {}
+  const views: Record<string, number> = {}
+  const signalWindow = Math.ceil(grepCap / 5) * 5
+  const gatedIds = gated.slice(0, signalWindow).map((a) => a.id)
+  for (let i = 0; i < gatedIds.length; i += LIST_ID_CHUNK) {
+    const ids = gatedIds.slice(i, i + LIST_ID_CHUNK)
+    const [signalBatch, viewBatch] = await Promise.all([
+      deps.meta.usefulnessSignals(ids),
+      deps.meta.viewCounts(ids),
+    ])
+    Object.assign(signals, signalBatch)
+    Object.assign(views, viewBatch)
+  }
+  const usefulnessRanked = rerankByUsefulness(gated, signals, views)
+
   // Grep-confirm only the top-N most-relevant survivors — the blob-read+scan is the
   // real cost, so it stays bounded. A candidate the index nominated on token overlap
   // but whose exact literal/scope isn't actually present yields no hunks and drops out
   // here: the index is RECALL, the grep is PRECISION.
-  const grepCap = opts.limit ?? WORKSPACE_SEARCH_ARTIFACT_CAP
-  const toGrep = gated.slice(0, grepCap)
+  const toGrep = usefulnessRanked.slice(0, grepCap)
   // 4, not searchArtifactVersion's inner 8: the two fan-outs compose (a batch of
   // bundles each opens its own 8-wide page fan-out), so peak blob reads is the product
   // — 4×8=32 keeps that worst case reasonable without a cross-cutting semaphore.
@@ -637,6 +767,11 @@ export const searchWorkspace = async (
       groups,
       total,
       semantic: total === 0 && chunk ? { snippet: snippetAround(chunk, opts.query) } : undefined,
+      usefulness: usefulnessNote(
+        signals[a.id] ?? EMPTY_USEFULNESS,
+        views[a.id] ?? 0,
+        a.current_version,
+      ),
     }
   }
   const results: WorkspaceSearchResult[] = []
@@ -689,11 +824,12 @@ export const workspaceSearchReport = (
           note ? ` (${note})` : ""
         }`
   const body = results
-    .map((r) =>
-      r.total > 0
-        ? `## ${r.short_id} — ${r.title}\n${renderGroups(r.groups)}`
-        : `## ${r.short_id} — ${r.title}  (semantic match)\n  ~ ${r.semantic?.snippet ?? ""}`,
-    )
+    .map((r) => {
+      const useful = r.usefulness ? `\n> ${r.usefulness.label}: ${r.usefulness.evidence}\n` : ""
+      return r.total > 0
+        ? `## ${r.short_id} — ${r.title}${useful}\n${renderGroups(r.groups)}`
+        : `## ${r.short_id} — ${r.title}  (semantic match)${useful}\n  ~ ${r.semantic?.snippet ?? ""}`
+    })
     .join("\n\n")
   const fmt = where === "text" ? "text" : "html"
   const steer = `\n\nOpen one with search(short_id:"...", query:"${query}") for full context, or read(short_id:"...", lines:"from-to", format:"${fmt}").`
@@ -717,6 +853,7 @@ export interface SearchHit {
    *  the UI badge it as a meaning match. A hit found literally (with or without also matching
    *  semantically) is false. */
   semantic: boolean
+  usefulness?: WorkspaceSearchResult["usefulness"]
 }
 
 // A short lead of context BEFORE the match, then the rest trailing. The window is biased
@@ -768,5 +905,6 @@ export const toSearchHits = (results: WorkspaceSearchResult[], query: string): S
       snippet: hit ? snippetAround(stripMarkup(hit.text), query) : (r.semantic?.snippet ?? ""),
       // Semantic-only when there's no literal hit line but a dense passage carried it here.
       semantic: !hit && !!r.semantic?.snippet,
+      usefulness: r.usefulness,
     }
   })
