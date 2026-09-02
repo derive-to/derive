@@ -18,6 +18,7 @@ import type {
   ArtifactInviteRecord,
   ArtifactMemberRecord,
   ArtifactRecord,
+  ArtifactSkillLinkRecord,
   AssetRecord,
   AuditLogRecord,
   AutomationRecord,
@@ -46,6 +47,8 @@ import type {
   SharedStateActivityRecord,
   SharedStateRecord,
   SignupAttributionRecord,
+  SkillInstallationRecord,
+  SkillRelationRecord,
   SubscriptionRecord,
   TemplateLibraryEntryRecord,
   TemplateLibraryRecord,
@@ -84,6 +87,9 @@ export interface TypedTables {
   run: RunRecord
   workflowRun: WorkflowRunRecord
   workflowStepAttempt: WorkflowStepAttemptRecord
+  skillRelation: SkillRelationRecord
+  skillInstallation: SkillInstallationRecord
+  artifactSkillLink: ArtifactSkillLinkRecord
   plan: PlanRecord
   connection: ConnectionRecord
   artifactInvite: ArtifactInviteRecord

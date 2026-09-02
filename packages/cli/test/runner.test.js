@@ -1,6 +1,7 @@
 import { execSync } from "node:child_process"
 import {
   chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -26,7 +27,7 @@ import {
   serveSession,
   syncRepos,
 } from "../src/runner.js"
-import { materializeSkills, skillSlug } from "../src/skills.js"
+import { materializeSkills, skillDigest, skillSlug, writeSkill } from "../src/skills.js"
 
 describe("parseAnswer", () => {
   it("rejects a missing block, bad JSON, and an empty body", () => {
@@ -773,6 +774,39 @@ describe("skills", () => {
       )
       expect(cat[0]).toMatchObject({ id: "missing", ok: false })
       expect(cat[1]).toMatchObject({ id: "ok1", dir: "good", ok: true })
+    })
+
+    it("rejects a claimed Skill bundle that omits its root SKILL.md", async () => {
+      const api = mockApi({
+        bad: { 1: { entry: "SKILL.md", files: { "references/only.md": "not a skill" } } },
+      })
+      const root = mkdtempSync(join(tmpdir(), "skills-"))
+      const [result] = await materializeSkills(api, [{ id: "bad", version: 1 }], root)
+      expect(result).toMatchObject({ id: "bad", ok: false })
+      expect(existsSync(join(root, "bad"))).toBe(false)
+    })
+
+    it("atomically replaces a skill and rejects paths outside its directory", () => {
+      const root = mkdtempSync(join(tmpdir(), "skills-"))
+      writeSkill(root, "safe", new Map([["SKILL.md", "old"]]))
+      expect(() =>
+        writeSkill(
+          root,
+          "safe",
+          new Map([
+            ["SKILL.md", "new"],
+            ["../escape", "bad"],
+          ]),
+        ),
+      ).toThrow(/unsafe skill path/)
+      expect(readFileSync(join(root, "safe", "SKILL.md"), "utf8")).toBe("old")
+
+      const next = new Map([
+        ["references/readme.md", "ref"],
+        ["SKILL.md", "new"],
+      ])
+      expect(writeSkill(root, "safe", next)).toBe(skillDigest(next))
+      expect(readFileSync(join(root, "safe", "SKILL.md"), "utf8")).toBe("new")
     })
   })
 })

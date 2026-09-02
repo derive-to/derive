@@ -6,6 +6,7 @@ import type {
   ArtifactInviteRecord,
   ArtifactMemberRecord,
   ArtifactRecord,
+  ArtifactSkillLinkRecord,
   AssetRecord,
   AuditLogRecord,
   AutomationRecord,
@@ -51,6 +52,7 @@ import type {
   NewArtifact,
   NewArtifactInvite,
   NewArtifactMember,
+  NewArtifactSkillLink,
   NewAsset,
   NewAuditLog,
   NewAutomation,
@@ -78,6 +80,8 @@ import type {
   NewSessionMessage,
   NewSharedStateActivity,
   NewSignupAttribution,
+  NewSkillInstallation,
+  NewSkillRelation,
   NewSlackSubscription,
   NewTemplateLibrary,
   NewTemplateLibraryEntry,
@@ -111,6 +115,9 @@ import type {
   SharedStateRecord,
   SharedStateWrite,
   SignupAttributionRecord,
+  SkillInstallationRecord,
+  SkillRelationRecord,
+  SkillUsageBucket,
   SlackAuthorFilter,
   SlackInstallRecord,
   SlackSubscriptionRecord,
@@ -169,6 +176,7 @@ import {
   like,
   lt,
   lte,
+  max,
   ne,
   notExists,
   notInArray,
@@ -187,6 +195,7 @@ import {
   artifactFavorite,
   artifactInvite,
   artifactMember,
+  artifactSkillLink,
   artifactTag,
   asset,
   auditLog,
@@ -223,6 +232,8 @@ import {
   sharedState,
   sharedStateActivity,
   signupAttribution,
+  skillInstallation,
+  skillRelation,
   slackInstall,
   slackSubscription,
   slackThreadLink,
@@ -280,6 +291,9 @@ export const schema = {
   run,
   workflowRun,
   workflowStepAttempt,
+  skillRelation,
+  skillInstallation,
+  artifactSkillLink,
   plan,
   connection,
   artifactInvite,
@@ -333,6 +347,9 @@ const _schemaShapes: Shapes<typeof schema> = {
   run: true,
   workflowRun: true,
   workflowStepAttempt: true,
+  skillRelation: true,
+  skillInstallation: true,
+  artifactSkillLink: true,
   plan: true,
   connection: true,
   invitation: true,
@@ -5845,6 +5862,189 @@ export class PgMetaStore implements MetaStore {
       .returning()
     return rows[0] ?? null
   }
+  async replaceSkillRelations(
+    orgId: string,
+    skillArtifactId: string,
+    skillVersion: number,
+    relations: NewSkillRelation[],
+  ): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      await tx
+        .delete(skillRelation)
+        .where(
+          and(
+            eq(skillRelation.org_id, orgId),
+            eq(skillRelation.source_artifact_id, skillArtifactId),
+            eq(skillRelation.source_version, skillVersion),
+          ),
+        )
+      if (relations.length > 0) await tx.insert(skillRelation).values(relations)
+    })
+  }
+  listSkillRelations(skillArtifactId: string, orgId: string): Promise<SkillRelationRecord[]> {
+    return this.db
+      .select()
+      .from(skillRelation)
+      .where(
+        and(
+          eq(skillRelation.org_id, orgId),
+          or(
+            eq(skillRelation.source_artifact_id, skillArtifactId),
+            eq(skillRelation.target_artifact_id, skillArtifactId),
+          ),
+        ),
+      )
+      .orderBy(desc(skillRelation.source_version), asc(skillRelation.kind))
+  }
+  async upsertSkillInstallation(i: NewSkillInstallation): Promise<SkillInstallationRecord> {
+    const rows = await this.db
+      .insert(skillInstallation)
+      .values(i)
+      .onConflictDoUpdate({
+        target: [
+          skillInstallation.org_id,
+          skillInstallation.skill_artifact_id,
+          skillInstallation.scope_kind,
+          skillInstallation.opaque_scope_id,
+          skillInstallation.client,
+        ],
+        set: {
+          skill_version: i.skill_version,
+          digest: i.digest,
+          policy: i.policy,
+          installed_by: i.installed_by ?? null,
+          updated_at: i.updated_at,
+          removed_at: i.removed_at ?? null,
+        },
+      })
+      .returning()
+    return one(rows)
+  }
+  listSkillInstallations(
+    skillArtifactId: string,
+    orgId: string,
+  ): Promise<SkillInstallationRecord[]> {
+    return this.db
+      .select()
+      .from(skillInstallation)
+      .where(
+        and(
+          eq(skillInstallation.org_id, orgId),
+          eq(skillInstallation.skill_artifact_id, skillArtifactId),
+        ),
+      )
+      .orderBy(desc(skillInstallation.updated_at), asc(skillInstallation.client))
+  }
+  async linkArtifactSkill(link: NewArtifactSkillLink): Promise<ArtifactSkillLinkRecord> {
+    const rows = await this.db
+      .insert(artifactSkillLink)
+      .values(link)
+      .onConflictDoUpdate({
+        target: [
+          artifactSkillLink.artifact_id,
+          artifactSkillLink.artifact_version,
+          artifactSkillLink.skill_artifact_id,
+          artifactSkillLink.skill_version,
+          artifactSkillLink.role,
+        ],
+        set: { linked_by: link.linked_by },
+      })
+      .returning()
+    return one(rows)
+  }
+  listArtifactSkillLinks(
+    artifactId: string,
+    artifactVersion: number,
+    orgId: string,
+  ): Promise<ArtifactSkillLinkRecord[]> {
+    return this.db
+      .select()
+      .from(artifactSkillLink)
+      .where(
+        and(
+          eq(artifactSkillLink.org_id, orgId),
+          eq(artifactSkillLink.artifact_id, artifactId),
+          eq(artifactSkillLink.artifact_version, artifactVersion),
+        ),
+      )
+      .orderBy(asc(artifactSkillLink.role), asc(artifactSkillLink.skill_artifact_id))
+  }
+  listSkillArtifactLinks(
+    skillArtifactId: string,
+    orgId: string,
+    limit = 100,
+  ): Promise<ArtifactSkillLinkRecord[]> {
+    return this.db
+      .select()
+      .from(artifactSkillLink)
+      .where(
+        and(
+          eq(artifactSkillLink.org_id, orgId),
+          eq(artifactSkillLink.skill_artifact_id, skillArtifactId),
+        ),
+      )
+      .orderBy(desc(artifactSkillLink.created_at), desc(artifactSkillLink.id))
+      .limit(Math.max(1, Math.min(limit, 100)))
+  }
+  async skillUsage(
+    skillArtifactId: string,
+    orgId: string,
+  ): Promise<{ contexts: SkillUsageBucket[]; workflows: SkillUsageBucket[] }> {
+    const contextRows = await this.db
+      .select({
+        skill_version: contextSession.context_version,
+        count: count(),
+        last_used_at: max(contextSession.created_at),
+      })
+      .from(contextSession)
+      .innerJoin(context, eq(context.id, contextSession.context_id))
+      .where(and(eq(context.org_id, orgId), eq(context.manifest_artifact_id, skillArtifactId)))
+      .groupBy(contextSession.context_version)
+      .orderBy(desc(contextSession.context_version))
+    const workflowRows = await this.db
+      .select({
+        skill_version: artifactSkillLink.skill_version,
+        count: count(),
+        last_used_at: max(workflowRun.created_at),
+      })
+      .from(workflowRun)
+      .innerJoin(
+        artifactSkillLink,
+        and(
+          eq(artifactSkillLink.artifact_id, workflowRun.workflow_artifact_id),
+          eq(artifactSkillLink.artifact_version, workflowRun.workflow_version),
+        ),
+      )
+      .where(
+        and(
+          eq(workflowRun.org_id, orgId),
+          eq(artifactSkillLink.org_id, orgId),
+          eq(artifactSkillLink.skill_artifact_id, skillArtifactId),
+          eq(artifactSkillLink.role, "workflow-definition"),
+        ),
+      )
+      .groupBy(artifactSkillLink.skill_version)
+      .orderBy(desc(artifactSkillLink.skill_version))
+    const buckets = (
+      rows: Array<{
+        skill_version: number | null
+        count: number | bigint
+        last_used_at: string | null
+      }>,
+    ): SkillUsageBucket[] =>
+      rows.flatMap((row) =>
+        row.last_used_at && row.skill_version !== null
+          ? [
+              {
+                skill_version: row.skill_version,
+                count: Number(row.count),
+                last_used_at: row.last_used_at,
+              },
+            ]
+          : [],
+      )
+    return { contexts: buckets(contextRows), workflows: buckets(workflowRows) }
+  }
   async createPlan(p: NewPlan): Promise<PlanRecord> {
     const rows = await this.db.insert(plan).values(p).returning()
     return one(rows)
@@ -6618,6 +6818,17 @@ export class PgMetaStore implements MetaStore {
       await tx.delete(webhook).where(eq(webhook.artifact_id, id))
       await tx.delete(sharedStateActivity).where(eq(sharedStateActivity.artifact_id, id))
       await tx.delete(sharedState).where(eq(sharedState.artifact_id, id))
+      await tx
+        .delete(skillRelation)
+        .where(
+          or(eq(skillRelation.source_artifact_id, id), eq(skillRelation.target_artifact_id, id)),
+        )
+      await tx.delete(skillInstallation).where(eq(skillInstallation.skill_artifact_id, id))
+      await tx
+        .delete(artifactSkillLink)
+        .where(
+          or(eq(artifactSkillLink.artifact_id, id), eq(artifactSkillLink.skill_artifact_id, id)),
+        )
       await tx.delete(versionData).where(eq(versionData.artifact_id, id))
       await tx.delete(version).where(eq(version.artifact_id, id))
       await tx.delete(comment).where(eq(comment.artifact_id, id))

@@ -58,6 +58,75 @@ describe("contexts: create + wire an agent to a manifest", () => {
   })
 })
 
+describe("Context manifest to Skill migration", () => {
+  const owner: TestUser = {
+    id: "u_skill_migrate",
+    email: "skill-migrate@derive.test",
+    name: "Owner",
+  }
+  const { app, meta } = makeAuthedApp("contexts-skill-migrate", [owner])
+
+  it("previews without writing, then appends a private Skill version on the same artifact", async () => {
+    const files = zipSync({
+      "MANIFEST.md": new TextEncoder().encode(
+        "---\ndescription: Answers release questions.\n---\n\n# Release guide\n\nUse the repository evidence.",
+      ),
+      "references/checklist.md": new TextEncoder().encode("# Checklist"),
+    })
+    const form = new FormData()
+    form.append("file", new Blob([files as BlobPart]), "manifest.zip")
+    form.append("title", "Release Context")
+    const artifact = await (
+      await app.request("/v1/artifacts", { method: "POST", body: form, headers: as(owner.email) })
+    ).json()
+    const created = await app.request(
+      "/v1/contexts",
+      jsonAs(as(owner.email), {
+        name: "Release Context",
+        manifest_short_id: artifact.short_id,
+      }),
+    )
+    expect(created.status).toBe(201)
+
+    const preview = await app.request(
+      "/v1/skill-migrations",
+      jsonAs(as(owner.email), { apply: false }),
+    )
+    expect(preview.status).toBe(200)
+    expect(await preview.json()).toMatchObject({
+      applied: false,
+      report: [expect.objectContaining({ kind: "context", action: "migrate" })],
+    })
+    expect((await meta.getByShortId(artifact.short_id))?.current_version).toBe(1)
+
+    const applied = await app.request(
+      "/v1/skill-migrations",
+      jsonAs(as(owner.email), { apply: true }),
+    )
+    expect(applied.status).toBe(200)
+    const migrated = await meta.getByShortId(artifact.short_id)
+    expect(migrated).toMatchObject({
+      current_version: 2,
+      current_content_type: "derive/skill",
+    })
+    const detail = await (
+      await app.request(`/v1/artifacts/${artifact.short_id}`, { headers: as(owner.email) })
+    ).json()
+    expect(detail.bundle).toMatchObject({
+      isSkill: true,
+      name: "release-context",
+      description: "Answers release questions.",
+    })
+
+    const replay = await app.request(
+      "/v1/skill-migrations",
+      jsonAs(as(owner.email), { apply: true }),
+    )
+    expect(replay.status).toBe(200)
+    expect((await meta.getByShortId(artifact.short_id))?.current_version).toBe(2)
+  })
+})
+
 describe("sessions: the ask → answer → follow-up loop", () => {
   const owner: TestUser = { id: "u_ss_own", email: "ssown@derive.test", name: "Owner" }
   const daniel: TestUser = { id: "u_ss_dan", email: "ssdan@derive.test", name: "Daniel" }

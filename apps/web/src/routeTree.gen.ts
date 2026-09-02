@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as WorkflowsRouteImport } from './routes/workflows'
 import { Route as WelcomeRouteImport } from './routes/welcome'
 import { Route as UnlistedRouteImport } from './routes/unlisted'
+import { Route as SkillsRouteImport } from './routes/skills'
 import { Route as ShowcaseRouteImport } from './routes/showcase'
 import { Route as SharedRouteImport } from './routes/shared'
 import { Route as SettingsRouteImport } from './routes/settings'
@@ -62,6 +63,11 @@ const WelcomeRoute = WelcomeRouteImport.update({
 const UnlistedRoute = UnlistedRouteImport.update({
   id: '/unlisted',
   path: '/unlisted',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SkillsRoute = SkillsRouteImport.update({
+  id: '/skills',
+  path: '/skills',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ShowcaseRoute = ShowcaseRouteImport.update({
@@ -263,6 +269,7 @@ export interface FileRoutesByFullPath {
   '/settings': typeof SettingsRouteWithChildren
   '/shared': typeof SharedRoute
   '/showcase': typeof ShowcaseRoute
+  '/skills': typeof SkillsRoute
   '/unlisted': typeof UnlistedRoute
   '/welcome': typeof WelcomeRoute
   '/workflows': typeof WorkflowsRoute
@@ -303,6 +310,7 @@ export interface FileRoutesByTo {
   '/search': typeof SearchRoute
   '/shared': typeof SharedRoute
   '/showcase': typeof ShowcaseRoute
+  '/skills': typeof SkillsRoute
   '/unlisted': typeof UnlistedRoute
   '/welcome': typeof WelcomeRoute
   '/workflows': typeof WorkflowsRoute
@@ -345,6 +353,7 @@ export interface FileRoutesById {
   '/settings': typeof SettingsRouteWithChildren
   '/shared': typeof SharedRoute
   '/showcase': typeof ShowcaseRoute
+  '/skills': typeof SkillsRoute
   '/unlisted': typeof UnlistedRoute
   '/welcome': typeof WelcomeRoute
   '/workflows': typeof WorkflowsRoute
@@ -388,6 +397,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/shared'
     | '/showcase'
+    | '/skills'
     | '/unlisted'
     | '/welcome'
     | '/workflows'
@@ -428,6 +438,7 @@ export interface FileRouteTypes {
     | '/search'
     | '/shared'
     | '/showcase'
+    | '/skills'
     | '/unlisted'
     | '/welcome'
     | '/workflows'
@@ -469,6 +480,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/shared'
     | '/showcase'
+    | '/skills'
     | '/unlisted'
     | '/welcome'
     | '/workflows'
@@ -511,6 +523,7 @@ export interface RootRouteChildren {
   SettingsRoute: typeof SettingsRouteWithChildren
   SharedRoute: typeof SharedRoute
   ShowcaseRoute: typeof ShowcaseRoute
+  SkillsRoute: typeof SkillsRoute
   UnlistedRoute: typeof UnlistedRoute
   WelcomeRoute: typeof WelcomeRoute
   WorkflowsRoute: typeof WorkflowsRoute
@@ -554,6 +567,13 @@ declare module '@tanstack/react-router' {
       path: '/unlisted'
       fullPath: '/unlisted'
       preLoaderRoute: typeof UnlistedRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/skills': {
+      id: '/skills'
+      path: '/skills'
+      fullPath: '/skills'
+      preLoaderRoute: typeof SkillsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/showcase': {
@@ -843,6 +863,7 @@ const rootRouteChildren: RootRouteChildren = {
   SettingsRoute: SettingsRouteWithChildren,
   SharedRoute: SharedRoute,
   ShowcaseRoute: ShowcaseRoute,
+  SkillsRoute: SkillsRoute,
   UnlistedRoute: UnlistedRoute,
   WelcomeRoute: WelcomeRoute,
   WorkflowsRoute: WorkflowsRoute,

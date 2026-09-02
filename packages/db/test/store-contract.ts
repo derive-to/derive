@@ -3421,6 +3421,135 @@ export function runStoreContract(
     })
   })
 
+  describe(`${label}: Skill indexes and usage truth`, () => {
+    it("replaces version-scoped relations and keeps incoming/outgoing reads workspace-scoped", async () => {
+      const source = await store.createArtifact(newArtifact({ kind: "bundle" }))
+      const target = await store.createArtifact(newArtifact({ kind: "bundle" }))
+      await store.replaceSkillRelations(ORG, source.id, 2, [
+        {
+          id: uuid(),
+          org_id: ORG,
+          source_artifact_id: source.id,
+          source_version: 2,
+          target_artifact_id: target.id,
+          target_version: 4,
+          kind: "requires",
+        },
+      ])
+      expect(await store.listSkillRelations(source.id, ORG)).toMatchObject([
+        { source_version: 2, target_version: 4, kind: "requires" },
+      ])
+      expect(await store.listSkillRelations(target.id, ORG)).toHaveLength(1)
+      expect(await store.listSkillRelations(source.id, `org_${uuid()}`)).toEqual([])
+
+      await store.replaceSkillRelations(ORG, source.id, 2, [
+        {
+          id: uuid(),
+          org_id: ORG,
+          source_artifact_id: source.id,
+          source_version: 2,
+          target_artifact_id: target.id,
+          target_version: 5,
+          kind: "recommends",
+        },
+      ])
+      expect(await store.listSkillRelations(source.id, ORG)).toMatchObject([
+        { source_version: 2, target_version: 5, kind: "recommends" },
+      ])
+    })
+
+    it("upserts native installation state without recording a local path", async () => {
+      const skill = await store.createArtifact(newArtifact({ kind: "bundle" }))
+      const base = {
+        id: uuid(),
+        org_id: ORG,
+        skill_artifact_id: skill.id,
+        skill_version: 3,
+        scope_kind: "project" as const,
+        opaque_scope_id: "sha256:project-a",
+        client: "codex" as const,
+        digest: "sha256:bundle-v3",
+        policy: "pinned" as const,
+        installed_by: "u1",
+        updated_at: "2026-09-01T20:00:00.000Z",
+      }
+      await store.upsertSkillInstallation(base)
+      await store.upsertSkillInstallation({
+        ...base,
+        id: uuid(),
+        skill_version: 4,
+        digest: "sha256:bundle-v4",
+        updated_at: "2026-09-01T21:00:00.000Z",
+      })
+      expect(await store.listSkillInstallations(skill.id, ORG)).toMatchObject([
+        {
+          skill_version: 4,
+          opaque_scope_id: "sha256:project-a",
+          client: "codex",
+          removed_at: null,
+        },
+      ])
+    })
+
+    it("derives exact Context and Workflow usage and keeps Artifact provenance deterministic", async () => {
+      const skill = await store.createArtifact(newArtifact({ kind: "bundle" }))
+      await store.addVersion(skill.id, newVersion({ content_type: "derive/skill" }))
+      const context = await store.createContext({
+        id: uuid(),
+        org_id: ORG,
+        name: `skill-context-${uuid()}`,
+        agent_id: uuid(),
+        manifest_artifact_id: skill.id,
+        created_by: "u1",
+      })
+      for (const id of [uuid(), uuid()])
+        await store.createSession({
+          id,
+          context_id: context.id,
+          context_version: 1,
+          org_id: ORG,
+          asker_id: "u1",
+        })
+
+      const workflow = await store.createArtifact(newArtifact())
+      const workflowVersion = await store.addVersion(workflow.id, newVersion())
+      const binding = {
+        id: uuid(),
+        org_id: ORG,
+        artifact_id: workflow.id,
+        artifact_version: workflowVersion.n,
+        skill_artifact_id: skill.id,
+        skill_version: 1,
+        role: "workflow-definition" as const,
+        linked_by: "migration",
+      }
+      await store.linkArtifactSkill(binding)
+      await store.linkArtifactSkill({ ...binding, id: uuid() })
+      expect(await store.listArtifactSkillLinks(workflow.id, workflowVersion.n, ORG)).toHaveLength(
+        1,
+      )
+      expect(await store.listSkillArtifactLinks(skill.id, ORG)).toHaveLength(1)
+      await store.createWorkflowRun({
+        id: uuid(),
+        org_id: ORG,
+        workflow_artifact_id: workflow.id,
+        workflow_version: workflowVersion.n,
+        workflow_blob_key: workflowVersion.blob_key,
+        workflow_content_type: workflowVersion.content_type,
+        diagram_id: "main",
+        reason: "manual:u1",
+      })
+
+      const usage = await store.skillUsage(skill.id, ORG)
+      expect(usage.contexts).toMatchObject([{ skill_version: 1, count: 2 }])
+      expect(usage.workflows).toMatchObject([{ skill_version: 1, count: 1 }])
+      expect(await store.skillUsage(skill.id, `org_${uuid()}`)).toEqual({
+        contexts: [],
+        workflows: [],
+      })
+    })
+  })
+
   describe(`${label}: deleteArtifact`, () => {
     it("hard-deletes the artifact row and all FK-dependent rows", async () => {
       const a = await store.createArtifact(newArtifact())

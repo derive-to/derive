@@ -342,6 +342,48 @@ CREATE TABLE IF NOT EXISTS workflow_step_attempt (
   FOREIGN KEY (workflow_run_id) REFERENCES workflow_run(id)
 );
 
+CREATE TABLE IF NOT EXISTS skill_relation (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  source_artifact_id TEXT NOT NULL,
+  source_version INTEGER NOT NULL,
+  target_artifact_id TEXT NOT NULL,
+  target_version INTEGER NOT NULL,
+  kind TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  UNIQUE (source_artifact_id, source_version, target_artifact_id, target_version, kind)
+);
+
+CREATE TABLE IF NOT EXISTS skill_installation (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  skill_artifact_id TEXT NOT NULL,
+  skill_version INTEGER NOT NULL,
+  scope_kind TEXT NOT NULL,
+  opaque_scope_id TEXT NOT NULL,
+  client TEXT NOT NULL,
+  digest TEXT NOT NULL,
+  policy TEXT NOT NULL DEFAULT 'pinned',
+  installed_by TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL,
+  removed_at TEXT,
+  UNIQUE (org_id, skill_artifact_id, scope_kind, opaque_scope_id, client)
+);
+
+CREATE TABLE IF NOT EXISTS artifact_skill_link (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  artifact_id TEXT NOT NULL,
+  artifact_version INTEGER NOT NULL,
+  skill_artifact_id TEXT NOT NULL,
+  skill_version INTEGER NOT NULL,
+  role TEXT NOT NULL,
+  linked_by TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  UNIQUE (artifact_id, artifact_version, skill_artifact_id, skill_version, role)
+);
+
 CREATE TABLE IF NOT EXISTS plan (
   id TEXT PRIMARY KEY,
   org_id TEXT NOT NULL,
@@ -806,6 +848,12 @@ CREATE INDEX IF NOT EXISTS workflow_run_definition ON workflow_run (workflow_art
 CREATE INDEX IF NOT EXISTS workflow_run_external ON workflow_run (external_run_id);
 
 CREATE INDEX IF NOT EXISTS workflow_step_attempt_run ON workflow_step_attempt (workflow_run_id, created_at);
+
+CREATE INDEX IF NOT EXISTS skill_relation_incoming ON skill_relation (org_id, target_artifact_id, target_version);
+
+CREATE INDEX IF NOT EXISTS skill_installation_skill ON skill_installation (org_id, skill_artifact_id, updated_at);
+
+CREATE INDEX IF NOT EXISTS artifact_skill_link_skill ON artifact_skill_link (org_id, skill_artifact_id, created_at);
 
 CREATE INDEX IF NOT EXISTS invitation_org_email ON invitation (org_id, email);
 

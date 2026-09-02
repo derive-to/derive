@@ -152,10 +152,32 @@ export const collectionSiblingsQuery = (collectionId: string) =>
 export const workspaceSkillsQuery = () =>
   queryOptions({
     queryKey: ["artifacts", "workspace-skills"] as const,
-    queryFn: () =>
-      api
-        .listArtifacts({ limit: 100 })
-        .then((r) => r.artifacts.filter((a) => a.current_content_type === "derive/skill")),
+    queryFn: () => api.listSkills().then((r) => r.skills),
+  })
+
+export const skillsQuery = (query = "") =>
+  queryOptions({
+    queryKey: ["skills", query] as const,
+    queryFn: () => api.listSkills(query),
+  })
+
+export const skillGraphQuery = (shortId: string) =>
+  queryOptions({
+    queryKey: ["skills", shortId, "graph"] as const,
+    queryFn: () => api.skillGraph(shortId),
+  })
+
+export const skillUsageQuery = (shortId: string) =>
+  queryOptions({
+    queryKey: ["skills", shortId, "usage"] as const,
+    queryFn: () => api.skillUsage(shortId),
+    // Installs arrive from the CLI and provenance can be written by an external
+    // agent, so no in-app mutation exists to invalidate this cache. Always refresh
+    // when the workbench mounts or regains focus; persisted 30s-old data made a hard
+    // reload visibly contradict the API during acceptance testing.
+    staleTime: 0,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: "always",
   })
 
 // The caller's own connected sources. NO UI CONSUMES THIS YET, on purpose: the Sources

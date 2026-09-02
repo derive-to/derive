@@ -27,6 +27,7 @@ const SPA_EXACT = new Set([
   "/settings",
   "/showcase",
   "/shared",
+  "/skills",
   "/template-libraries",
   "/templates",
   "/unlisted",

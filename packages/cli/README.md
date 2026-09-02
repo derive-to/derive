@@ -177,5 +177,16 @@ and serves Context sessions. `derive --help` is the current command index;
 the [Derive documentation](https://docs.derive.to/)
 explains the surrounding workflows.
 
+Published Skills install natively into both Claude and Codex by default:
+
+```sh
+derive skill add <short_id>
+derive skill sync <short_id> --client codex
+derive skill remove <short_id> --scope project
+```
+
+Project installs use `.claude/skills` and `.agents/skills`; personal installs use
+`~/.claude/skills` and `~/.codex/skills`. Installs are atomic and pinned in `derive.json`.
+
 Derive is licensed under FSL-1.1-ALv2 and converts to Apache-2.0 on the schedule in
 the [license](https://github.com/derive-to/derive/blob/main/LICENSE).

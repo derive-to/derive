@@ -597,11 +597,65 @@ export function writeContextConfig(dir, patch) {
 /** Record (or replace) a skill pin in derive.json's top-level `skills` array — the
  *  lockfile `derive skill add` maintains, so a later `update` is an explicit, diffable
  *  act rather than silent drift. Same id ⇒ overwrite (a re-add repins). */
-export function writeSkillPin(dir, { id, version, name }) {
+export function writeSkillPin(dir, { id, version, name, clients = ["claude", "codex"] }) {
   const path = join(dir, CONFIG_FILE)
   const config = loadConfig(dir) ?? defaultConfig()
+  const existing = Array.isArray(config.skills) ? config.skills.find((s) => s.id === id) : null
   const kept = Array.isArray(config.skills) ? config.skills.filter((s) => s.id !== id) : []
-  config.skills = [...kept, { id, version, ...(name ? { name } : {}) }]
+  // Pre-client pins were written only by the old all-clients command. Expand them on
+  // first touch so a targeted sync/remove cannot lose the other local installation.
+  const installs = existing?.installs
+    ? { ...existing.installs }
+    : existing
+      ? {
+          claude: { version: existing.version, ...(existing.name ? { name: existing.name } : {}) },
+          codex: { version: existing.version, ...(existing.name ? { name: existing.name } : {}) },
+        }
+      : {}
+  for (const client of clients) installs[client] = { version, ...(name ? { name } : {}) }
+  config.skills = [...kept, { id, version, ...(name ? { name } : {}), installs }]
+  writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`)
+  return config
+}
+
+/** Forget only the native destinations actually removed. The top-level pin stays as
+ * a portable dependency while either Claude or Codex still has a local installation. */
+export function removeSkillClients(dir, id, clients) {
+  const path = join(dir, CONFIG_FILE)
+  const config = loadConfig(dir) ?? defaultConfig()
+  const skills = Array.isArray(config.skills) ? config.skills : []
+  const existing = skills.find((skill) => skill.id === id)
+  if (!existing) return config
+  const installs = existing.installs
+    ? { ...existing.installs }
+    : {
+        claude: { version: existing.version, ...(existing.name ? { name: existing.name } : {}) },
+        codex: { version: existing.version, ...(existing.name ? { name: existing.name } : {}) },
+      }
+  for (const client of clients) delete installs[client]
+  const remaining = Object.values(installs)
+  config.skills =
+    remaining.length === 0
+      ? skills.filter((skill) => skill.id !== id)
+      : skills.map((skill) =>
+          skill.id === id
+            ? {
+                ...skill,
+                version: remaining[0].version,
+                ...(remaining[0].name ? { name: remaining[0].name } : {}),
+                installs,
+              }
+            : skill,
+        )
+  writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`)
+  return config
+}
+
+/** Remove one project's skill pin, preserving every unrelated config key. */
+export function removeSkillPin(dir, id) {
+  const path = join(dir, CONFIG_FILE)
+  const config = loadConfig(dir) ?? defaultConfig()
+  config.skills = Array.isArray(config.skills) ? config.skills.filter((s) => s.id !== id) : []
   writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`)
   return config
 }

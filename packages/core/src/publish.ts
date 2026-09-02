@@ -15,7 +15,13 @@ import {
   type VersionRecord,
   type VersionSource,
 } from "./ports"
-import { isSkillBundle, parseFrontmatter } from "./skill"
+import {
+  isSkillBundle,
+  parseFrontmatter,
+  SKILL_SIDECAR_PATH,
+  type SkillSidecar,
+  validateSkillDefinition,
+} from "./skill"
 import { isVideoDocument, VIDEO_CONTENT_TYPE } from "./videos"
 
 /**
@@ -171,6 +177,8 @@ interface StoredContent {
   /** A skill bundle's frontmatter `name`, so a new artifact is titled from the skill
    *  rather than the zip's filename when the publisher gives no explicit title. */
   suggestedTitle?: string
+  /** Parsed only after the bundle passes the portable Skill contract. */
+  skillSidecar?: SkillSidecar | null
 }
 
 /**
@@ -232,10 +240,21 @@ async function storeContent(
     // frontmatter `name`, not the zip's filename, when no title is given.
     const isSkill = isSkillBundle(manifest)
     let suggestedTitle: string | undefined
+    let skillSidecar: SkillSidecar | null | undefined
     if (isSkill) {
       const entryKey = files[entry]?.key
       const entryBytes = entryKey ? await blobs.get(entryKey) : null
-      const name = entryBytes && parseFrontmatter(new TextDecoder().decode(entryBytes)).attrs.name
+      const skillMd = entryBytes ? new TextDecoder().decode(entryBytes) : ""
+      const sidecarKey = files[SKILL_SIDECAR_PATH]?.key
+      const sidecarBytes = sidecarKey ? await blobs.get(sidecarKey) : null
+      const checked = validateSkillDefinition(
+        skillMd,
+        sidecarBytes ? new TextDecoder().decode(sidecarBytes) : null,
+      )
+      if (checked.errors.length > 0)
+        throw new PublishError(400, `invalid skill: ${checked.errors.join("; ")}`)
+      skillSidecar = checked.sidecar
+      const name = parseFrontmatter(skillMd).attrs.name
       if (name) suggestedTitle = name
     }
     return {
@@ -244,6 +263,7 @@ async function storeContent(
       kind: "bundle",
       blobWriteMs,
       suggestedTitle,
+      skillSidecar,
     }
   }
   const text = new TextDecoder().decode(bytes)
@@ -291,6 +311,63 @@ async function storeContent(
   return { blobKey: await put(bytes), contentType, kind: "file", blobWriteMs }
 }
 
+/** Resolve every exact Skill reference before committing a version. Relations are part of the
+ * definition contract, so a missing/private-by-typo target is a publish error, not a graph edge
+ * that quietly disappears. Exact-version pinning makes cycles impossible during ordinary append
+ * publishes; the DFS also closes the replace-current case used by burst edits. */
+const validateSkillRelationsBeforePublish = async (
+  meta: MetaStore,
+  sidecar: SkillSidecar | null | undefined,
+  orgId: string,
+  sourceArtifactId?: string,
+  sourceVersion?: number,
+): Promise<void> => {
+  const declared = Object.entries(sidecar?.relations ?? {}).flatMap(([kind, refs]) =>
+    (refs ?? []).map((ref) => ({ kind, ref })),
+  )
+  if (declared.length === 0) return
+  const targets = await meta.getByShortIds([...new Set(declared.map(({ ref }) => ref.id))])
+  const byShortId = new Map(targets.map((target) => [target.short_id, target]))
+  for (const { ref } of declared) {
+    const target = byShortId.get(ref.id)
+    if (!target || target.org_id !== orgId)
+      throw new PublishError(400, `skill relation target ${ref.id}@v${ref.version} was not found`)
+    const version = await meta.getVersion(target.id, ref.version)
+    if (version?.content_type !== SKILL_CONTENT_TYPE)
+      throw new PublishError(400, `skill relation target ${ref.id}@v${ref.version} is not a Skill`)
+  }
+  if (!sourceArtifactId || !sourceVersion) return
+
+  const structural = declared.filter(({ kind }) => kind === "requires" || kind === "extends")
+  const seen = new Set<string>()
+  const reachesSource = async (artifactId: string, version: number): Promise<boolean> => {
+    if (artifactId === sourceArtifactId && version === sourceVersion) return true
+    const key = `${artifactId}@${version}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    if (seen.size > 500) throw new PublishError(400, "skill relation graph exceeds 500 nodes")
+    const artifact = await meta.getArtifactById(artifactId)
+    if (!artifact) return false
+    const outgoing = (await meta.listSkillRelations(artifactId, orgId)).filter(
+      (edge) =>
+        edge.source_artifact_id === artifactId &&
+        edge.source_version === version &&
+        (edge.kind === "requires" || edge.kind === "extends"),
+    )
+    for (const edge of outgoing)
+      if (await reachesSource(edge.target_artifact_id, edge.target_version)) return true
+    return false
+  }
+  for (const { ref } of structural) {
+    const target = byShortId.get(ref.id)
+    if (target && (await reachesSource(target.id, ref.version)))
+      throw new PublishError(
+        400,
+        `skill relation creates a cycle through ${ref.id}@v${ref.version}`,
+      )
+  }
+}
+
 /**
  * Stores content and creates a new artifact (shortId undefined)
  * or the next version of an existing one.
@@ -302,13 +379,8 @@ export async function publish(
   shortId?: string,
 ): Promise<PublishResult> {
   const storeStartedAt = performance.now()
-  const { blobKey, contentType, kind, suggestedTitle, blobWriteMs } = await storeContent(
-    blobs,
-    input.bytes,
-    input.filename,
-    input.isBundle,
-    !!input.spa,
-  )
+  const { blobKey, contentType, kind, suggestedTitle, skillSidecar, blobWriteMs } =
+    await storeContent(blobs, input.bytes, input.filename, input.isBundle, !!input.spa)
   const timings = { blobWriteMs, storeContentMs: performance.now() - storeStartedAt }
 
   const author = input.author ?? "anonymous"
@@ -321,6 +393,13 @@ export async function publish(
     if (!artifact) throw new PublishError(404, `no artifact with short_id ${shortId}`)
     if (artifact.kind !== kind)
       throw new PublishError(409, `artifact is a ${artifact.kind}; republish the same kind`)
+    await validateSkillRelationsBeforePublish(
+      meta,
+      skillSidecar,
+      artifact.org_id,
+      artifact.id,
+      input.replaceCurrent?.n ?? artifact.current_version + 1,
+    )
     const nextVersion = {
       id: newId("v"),
       blob_key: blobKey,
@@ -367,6 +446,7 @@ export async function publish(
     input.title ?? suggestedTitle ?? input.filename.replace(/\.(html?|md|markdown|zip)$/i, "")
   if (input.mintShortId && (await meta.getByShortId(input.mintShortId)))
     throw new PublishError(409, `short_id ${input.mintShortId} is already taken`)
+  await validateSkillRelationsBeforePublish(meta, skillSidecar, input.orgId ?? "local")
   const artifact = await meta.createArtifact({
     id: newId("a"),
     short_id: input.mintShortId ?? newShortId(),

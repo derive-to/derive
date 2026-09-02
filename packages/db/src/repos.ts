@@ -4,6 +4,7 @@ import type {
   ArtifactInviteRecord,
   ArtifactMemberRecord,
   ArtifactRecord,
+  ArtifactSkillLinkRecord,
   AssetRecord,
   AuditLogRecord,
   AutomationRecord,
@@ -42,6 +43,7 @@ import type {
   NewArtifact,
   NewArtifactInvite,
   NewArtifactMember,
+  NewArtifactSkillLink,
   NewAsset,
   NewAuditLog,
   NewAutomation,
@@ -69,6 +71,8 @@ import type {
   NewSessionMessage,
   NewSharedStateActivity,
   NewSignupAttribution,
+  NewSkillInstallation,
+  NewSkillRelation,
   NewSlackSubscription,
   NewTemplateLibrary,
   NewTemplateLibraryEntry,
@@ -99,6 +103,9 @@ import type {
   SharedStateRecord,
   SharedStateWrite,
   SignupAttributionRecord,
+  SkillInstallationRecord,
+  SkillRelationRecord,
+  SkillUsageBucket,
   SlackAuthorFilter,
   SlackInstallRecord,
   SlackSubscriptionRecord,
@@ -157,6 +164,7 @@ import {
   like,
   lt,
   lte,
+  max,
   ne,
   notExists,
   notInArray,
@@ -174,6 +182,7 @@ import {
   artifactFavorite,
   artifactInvite,
   artifactMember,
+  artifactSkillLink,
   artifactTag,
   asset,
   auditLog,
@@ -209,6 +218,8 @@ import {
   sharedState,
   sharedStateActivity,
   signupAttribution,
+  skillInstallation,
+  skillRelation,
   slackInstall,
   slackSubscription,
   slackThreadLink,
@@ -402,6 +413,9 @@ export const schema = {
   run,
   workflowRun,
   workflowStepAttempt,
+  skillRelation,
+  skillInstallation,
+  artifactSkillLink,
   plan,
   connection,
   artifactInvite,
@@ -455,6 +469,9 @@ const _schemaShapes: Shapes<typeof schema> = {
   run: true,
   workflowRun: true,
   workflowStepAttempt: true,
+  skillRelation: true,
+  skillInstallation: true,
+  artifactSkillLink: true,
   plan: true,
   connection: true,
   invitation: true,
@@ -4716,6 +4733,187 @@ export function makeRepos(db: SqliteDb) {
         .get()) as WorkflowStepAttemptRecord | undefined) ?? null
     )
   }
+  const replaceSkillRelations = async (
+    orgId: string,
+    skillArtifactId: string,
+    skillVersion: number,
+    relations: NewSkillRelation[],
+  ): Promise<void> => {
+    await db
+      .delete(skillRelation)
+      .where(
+        and(
+          eq(skillRelation.org_id, orgId),
+          eq(skillRelation.source_artifact_id, skillArtifactId),
+          eq(skillRelation.source_version, skillVersion),
+        ),
+      )
+      .run()
+    if (relations.length > 0) await db.insert(skillRelation).values(relations).run()
+  }
+  const listSkillRelations = async (
+    skillArtifactId: string,
+    orgId: string,
+  ): Promise<SkillRelationRecord[]> =>
+    (await db
+      .select()
+      .from(skillRelation)
+      .where(
+        and(
+          eq(skillRelation.org_id, orgId),
+          or(
+            eq(skillRelation.source_artifact_id, skillArtifactId),
+            eq(skillRelation.target_artifact_id, skillArtifactId),
+          ),
+        ),
+      )
+      .orderBy(desc(skillRelation.source_version), asc(skillRelation.kind))
+      .all()) as SkillRelationRecord[]
+  const upsertSkillInstallation = async (
+    i: NewSkillInstallation,
+  ): Promise<SkillInstallationRecord> =>
+    (await db
+      .insert(skillInstallation)
+      .values(i)
+      .onConflictDoUpdate({
+        target: [
+          skillInstallation.org_id,
+          skillInstallation.skill_artifact_id,
+          skillInstallation.scope_kind,
+          skillInstallation.opaque_scope_id,
+          skillInstallation.client,
+        ],
+        set: {
+          skill_version: i.skill_version,
+          digest: i.digest,
+          policy: i.policy,
+          installed_by: i.installed_by ?? null,
+          updated_at: i.updated_at,
+          removed_at: i.removed_at ?? null,
+        },
+      })
+      .returning()
+      .get()) as SkillInstallationRecord
+  const listSkillInstallations = async (
+    skillArtifactId: string,
+    orgId: string,
+  ): Promise<SkillInstallationRecord[]> =>
+    (await db
+      .select()
+      .from(skillInstallation)
+      .where(
+        and(
+          eq(skillInstallation.org_id, orgId),
+          eq(skillInstallation.skill_artifact_id, skillArtifactId),
+        ),
+      )
+      .orderBy(desc(skillInstallation.updated_at), asc(skillInstallation.client))
+      .all()) as SkillInstallationRecord[]
+  const linkArtifactSkill = async (link: NewArtifactSkillLink): Promise<ArtifactSkillLinkRecord> =>
+    (await db
+      .insert(artifactSkillLink)
+      .values(link)
+      .onConflictDoUpdate({
+        target: [
+          artifactSkillLink.artifact_id,
+          artifactSkillLink.artifact_version,
+          artifactSkillLink.skill_artifact_id,
+          artifactSkillLink.skill_version,
+          artifactSkillLink.role,
+        ],
+        set: { linked_by: link.linked_by },
+      })
+      .returning()
+      .get()) as ArtifactSkillLinkRecord
+  const listArtifactSkillLinks = async (
+    artifactId: string,
+    artifactVersion: number,
+    orgId: string,
+  ): Promise<ArtifactSkillLinkRecord[]> =>
+    (await db
+      .select()
+      .from(artifactSkillLink)
+      .where(
+        and(
+          eq(artifactSkillLink.org_id, orgId),
+          eq(artifactSkillLink.artifact_id, artifactId),
+          eq(artifactSkillLink.artifact_version, artifactVersion),
+        ),
+      )
+      .orderBy(asc(artifactSkillLink.role), asc(artifactSkillLink.skill_artifact_id))
+      .all()) as ArtifactSkillLinkRecord[]
+  const listSkillArtifactLinks = async (
+    skillArtifactId: string,
+    orgId: string,
+    limit = 100,
+  ): Promise<ArtifactSkillLinkRecord[]> =>
+    (await db
+      .select()
+      .from(artifactSkillLink)
+      .where(
+        and(
+          eq(artifactSkillLink.org_id, orgId),
+          eq(artifactSkillLink.skill_artifact_id, skillArtifactId),
+        ),
+      )
+      .orderBy(desc(artifactSkillLink.created_at), desc(artifactSkillLink.id))
+      .limit(Math.max(1, Math.min(limit, 100)))
+      .all()) as ArtifactSkillLinkRecord[]
+  const skillUsage = async (
+    skillArtifactId: string,
+    orgId: string,
+  ): Promise<{ contexts: SkillUsageBucket[]; workflows: SkillUsageBucket[] }> => {
+    const contextRows = await db
+      .select({
+        skill_version: contextSession.context_version,
+        count: count(),
+        last_used_at: max(contextSession.created_at),
+      })
+      .from(contextSession)
+      .innerJoin(context, eq(context.id, contextSession.context_id))
+      .where(and(eq(context.org_id, orgId), eq(context.manifest_artifact_id, skillArtifactId)))
+      .groupBy(contextSession.context_version)
+      .orderBy(desc(contextSession.context_version))
+      .all()
+    const workflowRows = await db
+      .select({
+        skill_version: artifactSkillLink.skill_version,
+        count: count(),
+        last_used_at: max(workflowRun.created_at),
+      })
+      .from(workflowRun)
+      .innerJoin(
+        artifactSkillLink,
+        and(
+          eq(artifactSkillLink.artifact_id, workflowRun.workflow_artifact_id),
+          eq(artifactSkillLink.artifact_version, workflowRun.workflow_version),
+        ),
+      )
+      .where(
+        and(
+          eq(workflowRun.org_id, orgId),
+          eq(artifactSkillLink.org_id, orgId),
+          eq(artifactSkillLink.skill_artifact_id, skillArtifactId),
+          eq(artifactSkillLink.role, "workflow-definition"),
+        ),
+      )
+      .groupBy(artifactSkillLink.skill_version)
+      .orderBy(desc(artifactSkillLink.skill_version))
+      .all()
+    const buckets = (rows: typeof contextRows): SkillUsageBucket[] =>
+      rows.flatMap((row) =>
+        row.last_used_at && row.skill_version !== null
+          ? [
+              {
+                skill_version: row.skill_version,
+                count: Number(row.count),
+                last_used_at: row.last_used_at,
+              },
+            ]
+          : [],
+      )
+    return { contexts: buckets(contextRows), workflows: buckets(workflowRows) }
+  }
   const createPlan = async (p: NewPlan): Promise<PlanRecord> =>
     (await db.insert(plan).values(p).returning().get()) as PlanRecord
   const getPlan = async (id: string): Promise<PlanRecord | null> =>
@@ -5407,6 +5605,15 @@ export function makeRepos(db: SqliteDb) {
     await db.delete(webhook).where(eq(webhook.artifact_id, id)).run()
     await db.delete(sharedStateActivity).where(eq(sharedStateActivity.artifact_id, id)).run()
     await db.delete(sharedState).where(eq(sharedState.artifact_id, id)).run()
+    await db
+      .delete(skillRelation)
+      .where(or(eq(skillRelation.source_artifact_id, id), eq(skillRelation.target_artifact_id, id)))
+      .run()
+    await db.delete(skillInstallation).where(eq(skillInstallation.skill_artifact_id, id)).run()
+    await db
+      .delete(artifactSkillLink)
+      .where(or(eq(artifactSkillLink.artifact_id, id), eq(artifactSkillLink.skill_artifact_id, id)))
+      .run()
     await db.delete(versionData).where(eq(versionData.artifact_id, id)).run()
     await db.delete(version).where(eq(version.artifact_id, id)).run()
     await db.delete(comment).where(eq(comment.artifact_id, id)).run()
@@ -5799,6 +6006,14 @@ export function makeRepos(db: SqliteDb) {
     getWorkflowStepAttemptBySession,
     listWorkflowStepAttempts,
     transitionWorkflowStepAttempt,
+    replaceSkillRelations,
+    listSkillRelations,
+    upsertSkillInstallation,
+    listSkillInstallations,
+    linkArtifactSkill,
+    listArtifactSkillLinks,
+    listSkillArtifactLinks,
+    skillUsage,
     createPlan,
     getPlan,
     listPlans,

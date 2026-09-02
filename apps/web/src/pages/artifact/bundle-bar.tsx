@@ -1,5 +1,9 @@
+import { useQuery } from "@tanstack/react-query"
+import { Link } from "@tanstack/react-router"
 import { API_BASE, type Artifact } from "@/api"
 import { Badge } from "@/components/ui/badge"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { skillGraphQuery, skillUsageQuery } from "@/lib/queries"
 
 /**
  * Header chrome for a markdown bundle (a skill — entry SKILL.md — or a plain docs
@@ -23,6 +27,8 @@ export function BundleBar({
   // The entry doc IS the page below; list only the supporting files.
   const files = bundle.files.filter((f) => f.path !== bundle.entry)
   if (!bundle.isSkill && files.length === 0) return null
+  if (bundle.isSkill)
+    return <SkillWorkbench bundle={bundle} shortId={shortId} version={version} files={files} />
   return (
     // Toolbar canon: matches the view bar in index.tsx (px-4 py-2 border-border).
     <div className="flex flex-col gap-2 border-b border-border px-4 py-2" data-testid="bundle-bar">
@@ -62,5 +68,186 @@ export function BundleBar({
         </div>
       )}
     </div>
+  )
+}
+
+function SkillWorkbench({
+  bundle,
+  shortId,
+  version,
+  files,
+}: {
+  bundle: NonNullable<Artifact["bundle"]>
+  shortId: string
+  version: number
+  files: NonNullable<Artifact["bundle"]>["files"]
+}) {
+  const graph = useQuery(skillGraphQuery(shortId))
+  const usage = useQuery(skillUsageQuery(shortId))
+  const nodeById = new Map((graph.data?.nodes ?? []).map((node) => [node.id, node]))
+  const activeInstalls = (usage.data?.installations ?? []).reduce(
+    (sum, item) => sum + item.count,
+    0,
+  )
+  const contextRuns = (usage.data?.contexts ?? []).reduce((sum, item) => sum + item.count, 0)
+  const workflowRuns = (usage.data?.workflows ?? []).reduce((sum, item) => sum + item.count, 0)
+  const fileUrl = (path: string) => `${API_BASE}/raw/${shortId}/v/${version}/${path}`
+
+  return (
+    <div className="border-b border-border bg-card/60" data-testid="skill-workbench">
+      <div className="flex flex-wrap items-start justify-between gap-3 px-4 pt-3">
+        <div>
+          <div className="flex items-center gap-2">
+            <Badge variant="brand" shape="pill" className="uppercase tracking-wide">
+              Skill
+            </Badge>
+            <span className="font-serif text-base font-medium tracking-tight text-foreground">
+              {bundle.name ?? shortId}
+            </span>
+            <span className="font-mono text-2xs text-muted-foreground">v{version}</span>
+          </div>
+          {bundle.description && (
+            <p className="mt-1 max-w-3xl text-sm text-muted-foreground">{bundle.description}</p>
+          )}
+        </div>
+        <div className="flex gap-1.5">
+          <Badge variant="outline" shape="pill">
+            Claude
+          </Badge>
+          <Badge variant="outline" shape="pill">
+            Codex
+          </Badge>
+        </div>
+      </div>
+
+      <Tabs defaultValue="overview" className="mt-2">
+        <TabsList variant="line" className="px-4" aria-label="Skill views">
+          <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="graph">Graph</TabsTrigger>
+          <TabsTrigger value="usage">Usage</TabsTrigger>
+          <TabsTrigger value="artifacts">Artifacts</TabsTrigger>
+          <TabsTrigger value="files">Files</TabsTrigger>
+        </TabsList>
+        <TabsContent value="overview" className="px-4 py-3">
+          <div className="grid gap-2 sm:grid-cols-4">
+            <Metric value={graph.data?.edges.length ?? 0} label="connections" />
+            <Metric value={activeInstalls} label="active installs" />
+            <Metric value={contextRuns} label="Context runs" />
+            <Metric value={workflowRuns} label="Workflow runs" />
+          </div>
+        </TabsContent>
+        <TabsContent value="graph" className="px-4 py-3">
+          {graph.isPending ? (
+            <Muted>Loading connections…</Muted>
+          ) : graph.isError ? (
+            <Muted>Connections couldn’t be loaded.</Muted>
+          ) : graph.data.edges.length ? (
+            <div className="flex flex-col gap-2">
+              {graph.data.edges.map((edge) => {
+                const incoming = edge.target_artifact_id === graph.data.root
+                const connected = nodeById.get(
+                  incoming ? edge.source_artifact_id : edge.target_artifact_id,
+                )
+                return (
+                  <div
+                    key={edge.id}
+                    className="flex flex-wrap items-center gap-2 rounded-lg border bg-background px-3 py-2 text-sm"
+                  >
+                    <Badge variant="outline" shape="pill">
+                      {incoming ? `used by · ${edge.kind}` : edge.kind}
+                    </Badge>
+                    {connected ? (
+                      <Link
+                        to="/artifacts/$ref"
+                        params={{ ref: connected.short_id }}
+                        className="font-medium hover:underline"
+                      >
+                        {connected.title ?? connected.short_id}
+                      </Link>
+                    ) : (
+                      <span>Unavailable skill</span>
+                    )}
+                    <span className="ml-auto font-mono text-2xs text-muted-foreground">
+                      v{incoming ? edge.source_version : edge.target_version}
+                    </span>
+                  </div>
+                )
+              })}
+            </div>
+          ) : (
+            <Muted>
+              This skill stands alone. Add requires, extends, or recommends in derive.skill.json.
+            </Muted>
+          )}
+        </TabsContent>
+        <TabsContent value="usage" className="px-4 py-3">
+          <div className="grid gap-2 sm:grid-cols-3">
+            <Metric value={activeInstalls} label="active installs" />
+            <Metric value={contextRuns} label="Context runs" />
+            <Metric value={workflowRuns} label="Workflow runs" />
+          </div>
+          <p className="mt-2 text-xs text-muted-foreground">
+            These are separate observed signals. Derive does not guess local activations or combine
+            them into a synthetic total.
+          </p>
+        </TabsContent>
+        <TabsContent value="artifacts" className="px-4 py-3">
+          {usage.isPending ? (
+            <Muted>Loading linked artifacts…</Muted>
+          ) : usage.data?.artifacts.length ? (
+            <div className="flex flex-wrap gap-2">
+              {usage.data.artifacts.map((item) => (
+                <Badge key={item.id} asChild={!!item.artifact} variant="outline" shape="pill">
+                  {item.artifact ? (
+                    <Link to="/artifacts/$ref" params={{ ref: item.artifact.short_id }}>
+                      {item.artifact.title ?? item.artifact.short_id} · {item.role} · v
+                      {item.artifact_version}
+                    </Link>
+                  ) : (
+                    <span>
+                      {item.role} · artifact v{item.artifact_version}
+                    </span>
+                  )}
+                </Badge>
+              ))}
+            </div>
+          ) : (
+            <Muted>No artifacts have declared this skill yet.</Muted>
+          )}
+        </TabsContent>
+        <TabsContent value="files" className="px-4 py-3">
+          {files.length ? (
+            <div className="flex flex-wrap gap-1.5">
+              {files.map((file) => (
+                <Badge key={file.path} asChild variant="outline" shape="pill">
+                  <a href={fileUrl(file.path)} target="_blank" rel="noopener noreferrer">
+                    {file.path}
+                  </a>
+                </Badge>
+              ))}
+            </div>
+          ) : (
+            <Muted>This skill contains only SKILL.md.</Muted>
+          )}
+        </TabsContent>
+      </Tabs>
+    </div>
+  )
+}
+
+function Metric({ value, label }: { value: number; label: string }) {
+  return (
+    <div className="rounded-lg border bg-background px-3 py-2">
+      <strong className="font-mono text-base font-medium tabular-nums">{value}</strong>
+      <span className="ml-2 text-xs text-muted-foreground">{label}</span>
+    </div>
+  )
+}
+
+function Muted({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="rounded-lg border border-dashed px-3 py-4 text-sm text-muted-foreground">
+      {children}
+    </p>
   )
 }

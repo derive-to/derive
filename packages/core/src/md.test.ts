@@ -4,7 +4,7 @@ import { renderMarkdown } from "./md"
 // The body content (between <main>…</main>) is the user-controlled markdown after
 // sanitization — assert against this so the page's own (trusted) script tag and
 // chrome don't muddy the checks.
-const bodyOf = (html: string) => html.split("<main>")[1]?.split("</main>")[0] ?? ""
+const bodyOf = (html: string) => html.match(/<main(?:\s[^>]*)?>([\s\S]*?)<\/main>/)?.[1] ?? ""
 
 describe("renderMarkdown — renders ordinary markdown", () => {
   it("turns common markdown into the expected HTML", async () => {
@@ -55,7 +55,7 @@ describe("renderMarkdown — document shell", () => {
   it("wraps the body in a full HTML document with the anchor client", async () => {
     const html = await renderMarkdown("hello", "My Doc")
     expect(html.startsWith("<!doctype html>")).toBe(true)
-    expect(html).toContain("<main>")
+    expect(html).toContain("<main data-derive-ready>")
     expect(html).toContain("<title>My Doc</title>")
     expect(html).toContain("/raw/derive-client.js") // SELECTION_SCRIPT
   })
