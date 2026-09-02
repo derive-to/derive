@@ -18,7 +18,7 @@ import {
 import { log } from "../log"
 import { cleanPath, manifestOf } from "./bundle"
 import { clip } from "./clip"
-import { visibleArtifacts } from "./visibility"
+import { LIST_ID_CHUNK, visibleArtifacts } from "./visibility"
 
 // The minimal store surface search needs — a BlobStore, a version→text resolver,
 // and (only for

@@ -54,6 +54,7 @@ export function MobileComments({
   chatEnabled,
   inspectEnabled,
   openCount,
+  footer,
   editing = false,
 }: {
   open: boolean
@@ -88,6 +89,8 @@ export function MobileComments({
   chatEnabled?: boolean
   inspectEnabled?: boolean
   openCount?: number
+  /** Current-version usefulness feedback, below the expanded activity stream. */
+  footer?: ReactNode
 }) {
   // The sheet is ALWAYS docked on a phone (peek is the floor — there is no hidden
   // state and no scrim; the doc above stays live). Two resting sizes: peek (the slim
@@ -383,7 +386,7 @@ export function MobileComments({
         <CommentTreeProvider value={sheetTree}>
           <div
             data-testid="activity-stream"
-            className="flex min-h-0 flex-1 flex-col overflow-auto px-3 pb-[max(14px,env(safe-area-inset-bottom))]"
+            className="flex min-h-0 flex-1 flex-col overflow-auto px-3 pb-3"
           >
             {!ready && <StreamSkeleton />}
             {ready && (
@@ -403,6 +406,7 @@ export function MobileComments({
               />
             )}
           </div>
+          {footer}
         </CommentTreeProvider>
       ) : latest ? (
         // Peek preview: a one-line teaser of the latest comment, so the resting

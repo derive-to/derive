@@ -8,7 +8,9 @@ import {
   rrfFuse,
   searchMatcher,
   searchWorkspace,
+  toSearchHits,
   type WorkspaceSearchDeps,
+  workspaceSearchReport,
 } from "../src/lib/search"
 
 // Hybrid (lexical FTS + dense/semantic) workspace search. These are pure-logic tests over the

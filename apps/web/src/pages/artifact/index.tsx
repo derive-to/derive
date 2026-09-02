@@ -1672,6 +1672,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
               onSheetHeight={setSheetInset}
               versions={art.versions}
               currentVersion={art.current_version}
+              ratingVersion={shown === art.current_version ? shown : undefined}
               rounds={review?.rounds ?? []}
               pendingRound={review?.pending ?? null}
               ready={streamReady}

@@ -33,7 +33,15 @@ const negativeReasons = [
   ["duplicate", "Duplicate"],
 ] as const satisfies readonly (readonly [ArtifactRatingReason, string])[]
 
-export function UsefulnessRating({ shortId, version }: { shortId: string; version: number }) {
+export function UsefulnessRating({
+  shortId,
+  version,
+  className,
+}: {
+  shortId: string
+  version: number
+  className?: string
+}) {
   const query = artifactRatingQuery(shortId, version)
   const { data, isError } = useQuery(query)
   const client = useQueryClient()
@@ -76,7 +84,14 @@ export function UsefulnessRating({ shortId, version }: { shortId: string; versio
   const aggregate = data.aggregate
 
   return (
-    <div className="flex shrink-0 items-center">
+    <div
+      data-testid="artifact-usefulness"
+      className={cn(
+        "flex shrink-0 items-center justify-between gap-3 border-t border-border-soft px-3 py-2",
+        className,
+      )}
+    >
+      <span className="text-xs text-muted-foreground">Was this useful?</span>
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverAnchor asChild>
           <fieldset className="flex items-center gap-0.5">
@@ -109,7 +124,7 @@ export function UsefulnessRating({ shortId, version }: { shortId: string; versio
             </Button>
           </fieldset>
         </PopoverAnchor>
-        <PopoverContent side="top" align="center" className="w-80">
+        <PopoverContent side="top" align="end" className="w-80">
           <PopoverHeader>
             <PopoverTitle>
               {mode === "positive" ? "What made it useful?" : "What should improve?"}
