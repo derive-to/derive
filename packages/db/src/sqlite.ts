@@ -29,6 +29,7 @@ import {
   artifact,
   artifactFavorite,
   artifactMember,
+  artifactRating,
   artifactTag,
   auditLog,
   CONTEXT_SESSION_RELAX_SQLITE,
@@ -315,6 +316,7 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
         db.delete(comment).where(eq(comment.artifact_id, id)).run()
         db.delete(artifactMember).where(eq(artifactMember.artifact_id, id)).run()
         db.delete(artifactFavorite).where(eq(artifactFavorite.artifact_id, id)).run()
+        db.delete(artifactRating).where(eq(artifactRating.artifact_id, id)).run()
         db.delete(artifactTag).where(eq(artifactTag.artifact_id, id)).run()
         db.delete(collectionItem).where(eq(collectionItem.artifact_id, id)).run()
         db.delete(domain).where(eq(domain.artifact_id, id)).run()

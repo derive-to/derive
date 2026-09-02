@@ -1172,6 +1172,64 @@ export function runStoreContract(
     })
   })
 
+  describe(`${label}: usefulness ratings`, () => {
+    it("keeps one rating per user and version, and batches current signals", async () => {
+      const a = await store.createArtifact(newArtifact())
+      await store.addVersion(a.id, newVersion({ author_id: "author" }))
+      await store.addVersion(a.id, newVersion({ author_id: "author" }))
+      const rate = (user: string, value: "not_useful" | "useful" | "essential", version = 2) =>
+        store.setArtifactRating({
+          id: uuid(),
+          artifact_id: a.id,
+          version_n: version,
+          user_id: user,
+          value,
+          reason: null,
+        })
+
+      await rate("u1", "useful")
+      await rate("u2", "essential")
+      await rate("u3", "not_useful")
+      await rate("u1", "essential") // upsert, not a fourth row
+      await rate("old", "not_useful", 1) // history; not a current-version signal
+
+      const revised = uuid()
+      await store.createComment({
+        id: uuid(),
+        artifact_id: a.id,
+        thread_id: revised,
+        base_version: 1,
+        body_md: "fix this",
+        author: "reviewer",
+      })
+      await store.setThreadState(a.id, revised, "resolved")
+      const sameVersion = uuid()
+      await store.createComment({
+        id: uuid(),
+        artifact_id: a.id,
+        thread_id: sameVersion,
+        base_version: 2,
+        body_md: "no revision",
+        author: "reviewer",
+      })
+      await store.setThreadState(a.id, sameVersion, "resolved")
+
+      expect(await store.getArtifactRating(a.id, 2, "u1")).toMatchObject({
+        value: "essential",
+      })
+      expect((await store.usefulnessSignals([a.id]))[a.id]).toEqual({
+        not_useful: 1,
+        useful: 0,
+        essential: 2,
+        resolved_revisions: 1,
+      })
+      expect(await store.usefulnessSignals([])).toEqual({})
+
+      await store.deleteArtifactRating(a.id, 2, "u3")
+      expect(await store.getArtifactRating(a.id, 2, "u3")).toBeNull()
+    })
+  })
+
   describe(`${label}: shares, favorites, tags`, () => {
     it("sets and removes a per-artifact member (share)", async () => {
       const a = await store.createArtifact(newArtifact())

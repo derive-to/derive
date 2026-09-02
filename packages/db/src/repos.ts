@@ -3,6 +3,7 @@ import type {
   AgentRecord,
   ArtifactInviteRecord,
   ArtifactMemberRecord,
+  ArtifactRatingRecord,
   ArtifactRecord,
   AssetRecord,
   AuditLogRecord,
@@ -42,6 +43,7 @@ import type {
   NewArtifact,
   NewArtifactInvite,
   NewArtifactMember,
+  NewArtifactRating,
   NewAsset,
   NewAuditLog,
   NewAutomation,
@@ -110,6 +112,7 @@ import type {
   TemplateLibraryEntryRecord,
   TemplateLibraryRecord,
   TemplateLibraryScope,
+  UsefulnessSignals,
   UserNotificationPrefRecord,
   UserProfile,
   VersionDataRecord,
@@ -174,6 +177,7 @@ import {
   artifactFavorite,
   artifactInvite,
   artifactMember,
+  artifactRating,
   artifactTag,
   asset,
   auditLog,
@@ -384,6 +388,7 @@ export const schema = {
   version,
   versionData,
   comment,
+  artifactRating,
   webhook,
   webhookDelivery,
   renderJob,
@@ -439,6 +444,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   version: true,
   versionData: true,
   comment: true,
+  artifactRating: true,
   webhook: true,
   webhookDelivery: true,
   renderJob: true,
@@ -1551,6 +1557,114 @@ export function makeRepos(db: SqliteDb) {
       const sig = out[id]
       if (sig) sig.open_threads = set.size
     }
+    return out
+  }
+
+  // ---- Human usefulness ratings ----------------------------------------
+  const setArtifactRating = async (rating: NewArtifactRating): Promise<ArtifactRatingRecord> => {
+    const now = new Date().toISOString()
+    await db
+      .insert(artifactRating)
+      .values({ ...rating, created_at: now, updated_at: now })
+      .onConflictDoUpdate({
+        target: [artifactRating.artifact_id, artifactRating.version_n, artifactRating.user_id],
+        set: { value: rating.value, reason: rating.reason, updated_at: now },
+      })
+      .run()
+    const row = await db
+      .select()
+      .from(artifactRating)
+      .where(
+        and(
+          eq(artifactRating.artifact_id, rating.artifact_id),
+          eq(artifactRating.version_n, rating.version_n),
+          eq(artifactRating.user_id, rating.user_id),
+        ),
+      )
+      .get()
+    if (!row) throw new Error("rating upsert did not persist")
+    return row
+  }
+
+  const getArtifactRating = async (
+    artifactId: string,
+    versionN: number,
+    userId: string,
+  ): Promise<ArtifactRatingRecord | null> =>
+    (await db
+      .select()
+      .from(artifactRating)
+      .where(
+        and(
+          eq(artifactRating.artifact_id, artifactId),
+          eq(artifactRating.version_n, versionN),
+          eq(artifactRating.user_id, userId),
+        ),
+      )
+      .get()) ?? null
+
+  const deleteArtifactRating = async (
+    artifactId: string,
+    versionN: number,
+    userId: string,
+  ): Promise<void> => {
+    await db
+      .delete(artifactRating)
+      .where(
+        and(
+          eq(artifactRating.artifact_id, artifactId),
+          eq(artifactRating.version_n, versionN),
+          eq(artifactRating.user_id, userId),
+        ),
+      )
+      .run()
+  }
+
+  const usefulnessSignals = async (
+    artifactIds: string[],
+  ): Promise<Record<string, UsefulnessSignals>> => {
+    const out: Record<string, UsefulnessSignals> = {}
+    if (artifactIds.length === 0) return out
+    const signalFor = (id: string): UsefulnessSignals => {
+      const existing = out[id]
+      if (existing) return existing
+      const created = { not_useful: 0, useful: 0, essential: 0, resolved_revisions: 0 }
+      out[id] = created
+      return created
+    }
+    const [ratings, resolvedThreads] = await Promise.all([
+      db
+        .select({
+          artifact_id: artifactRating.artifact_id,
+          value: artifactRating.value,
+          total: count(),
+        })
+        .from(artifactRating)
+        .innerJoin(artifact, eq(artifact.id, artifactRating.artifact_id))
+        .where(
+          and(
+            inArray(artifactRating.artifact_id, artifactIds),
+            eq(artifactRating.version_n, artifact.current_version),
+          ),
+        )
+        .groupBy(artifactRating.artifact_id, artifactRating.value)
+        .all(),
+      db
+        .select({
+          artifact_id: comment.artifact_id,
+          thread_id: comment.thread_id,
+          base_version: sql<number>`min(${comment.base_version})`,
+          current_version: artifact.current_version,
+        })
+        .from(comment)
+        .innerJoin(artifact, eq(artifact.id, comment.artifact_id))
+        .where(and(inArray(comment.artifact_id, artifactIds), eq(comment.state, "resolved")))
+        .groupBy(comment.artifact_id, comment.thread_id, artifact.current_version)
+        .all(),
+    ])
+    for (const row of ratings) signalFor(row.artifact_id)[row.value] = row.total
+    for (const row of resolvedThreads)
+      if (row.base_version < row.current_version) signalFor(row.artifact_id).resolved_revisions += 1
     return out
   }
 
@@ -5286,6 +5400,7 @@ export function makeRepos(db: SqliteDb) {
     await db.delete(collectionMember).where(eq(collectionMember.user_id, userId)).run()
     await db.delete(follow).where(eq(follow.user_id, userId)).run()
     await db.delete(artifactFavorite).where(eq(artifactFavorite.user_id, userId)).run()
+    await db.delete(artifactRating).where(eq(artifactRating.user_id, userId)).run()
     await db.delete(notification).where(eq(notification.user_id, userId)).run()
     // Their connected model-plan credentials — encrypted plan tokens must not linger after
     // the account is gone. Keyed on a real user id, so the workspace pool's sentinel row is
@@ -5413,6 +5528,7 @@ export function makeRepos(db: SqliteDb) {
     await db.delete(artifactMember).where(eq(artifactMember.artifact_id, id)).run()
     await db.delete(artifactInvite).where(eq(artifactInvite.artifact_id, id)).run()
     await db.delete(artifactFavorite).where(eq(artifactFavorite.artifact_id, id)).run()
+    await db.delete(artifactRating).where(eq(artifactRating.artifact_id, id)).run()
     await db.delete(artifactTag).where(eq(artifactTag.artifact_id, id)).run()
     await db.delete(collectionItem).where(eq(collectionItem.artifact_id, id)).run()
     await db.delete(domain).where(eq(domain.artifact_id, id)).run()
@@ -5571,6 +5687,10 @@ export function makeRepos(db: SqliteDb) {
     setThreadState,
     deleteThread,
     commentSignals,
+    setArtifactRating,
+    getArtifactRating,
+    deleteArtifactRating,
+    usefulnessSignals,
     artifactIdsNeedingFeedback,
     createWebhook,
     listWebhooks,

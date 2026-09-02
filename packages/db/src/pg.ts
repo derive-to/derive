@@ -5,6 +5,7 @@ import type {
   ArtifactDetailOpts,
   ArtifactInviteRecord,
   ArtifactMemberRecord,
+  ArtifactRatingRecord,
   ArtifactRecord,
   AssetRecord,
   AuditLogRecord,
@@ -51,6 +52,7 @@ import type {
   NewArtifact,
   NewArtifactInvite,
   NewArtifactMember,
+  NewArtifactRating,
   NewAsset,
   NewAuditLog,
   NewAutomation,
@@ -121,6 +123,7 @@ import type {
   TemplateLibraryEntryRecord,
   TemplateLibraryRecord,
   TemplateLibraryScope,
+  UsefulnessSignals,
   UserDir,
   UserNotificationPrefRecord,
   UserProfile,
@@ -187,6 +190,7 @@ import {
   artifactFavorite,
   artifactInvite,
   artifactMember,
+  artifactRating,
   artifactTag,
   asset,
   auditLog,
@@ -262,6 +266,7 @@ export const schema = {
   version,
   versionData,
   comment,
+  artifactRating,
   webhook,
   webhookDelivery,
   exportJob,
@@ -317,6 +322,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   version: true,
   versionData: true,
   comment: true,
+  artifactRating: true,
   webhook: true,
   webhookDelivery: true,
   renderJob: true,
@@ -1791,6 +1797,105 @@ export class PgMetaStore implements MetaStore {
       if (r.author_id === userId || this.commentMentionsUser(r.meta, userId)) ids.add(r.artifact_id)
     }
     return [...ids]
+  }
+
+  // ---- Human usefulness ratings ----------------------------------------
+  async setArtifactRating(rating: NewArtifactRating): Promise<ArtifactRatingRecord> {
+    const now = new Date().toISOString()
+    await this.db
+      .insert(artifactRating)
+      .values({ ...rating, created_at: now, updated_at: now })
+      .onConflictDoUpdate({
+        target: [artifactRating.artifact_id, artifactRating.version_n, artifactRating.user_id],
+        set: { value: rating.value, reason: rating.reason, updated_at: now },
+      })
+    const rows = await this.db
+      .select()
+      .from(artifactRating)
+      .where(
+        and(
+          eq(artifactRating.artifact_id, rating.artifact_id),
+          eq(artifactRating.version_n, rating.version_n),
+          eq(artifactRating.user_id, rating.user_id),
+        ),
+      )
+      .limit(1)
+    return one(rows)
+  }
+
+  async getArtifactRating(
+    artifactId: string,
+    versionN: number,
+    userId: string,
+  ): Promise<ArtifactRatingRecord | null> {
+    const rows = await this.db
+      .select()
+      .from(artifactRating)
+      .where(
+        and(
+          eq(artifactRating.artifact_id, artifactId),
+          eq(artifactRating.version_n, versionN),
+          eq(artifactRating.user_id, userId),
+        ),
+      )
+      .limit(1)
+    return rows[0] ?? null
+  }
+
+  async deleteArtifactRating(artifactId: string, versionN: number, userId: string): Promise<void> {
+    await this.db
+      .delete(artifactRating)
+      .where(
+        and(
+          eq(artifactRating.artifact_id, artifactId),
+          eq(artifactRating.version_n, versionN),
+          eq(artifactRating.user_id, userId),
+        ),
+      )
+  }
+
+  async usefulnessSignals(artifactIds: string[]): Promise<Record<string, UsefulnessSignals>> {
+    const out: Record<string, UsefulnessSignals> = {}
+    if (artifactIds.length === 0) return out
+    const signalFor = (id: string): UsefulnessSignals => {
+      const existing = out[id]
+      if (existing) return existing
+      const created = { not_useful: 0, useful: 0, essential: 0, resolved_revisions: 0 }
+      out[id] = created
+      return created
+    }
+    const [ratings, resolvedThreads] = await Promise.all([
+      this.db
+        .select({
+          artifact_id: artifactRating.artifact_id,
+          value: artifactRating.value,
+          total: count(),
+        })
+        .from(artifactRating)
+        .innerJoin(artifact, eq(artifact.id, artifactRating.artifact_id))
+        .where(
+          and(
+            inArray(artifactRating.artifact_id, artifactIds),
+            eq(artifactRating.version_n, artifact.current_version),
+          ),
+        )
+        .groupBy(artifactRating.artifact_id, artifactRating.value),
+      this.db
+        .select({
+          artifact_id: comment.artifact_id,
+          thread_id: comment.thread_id,
+          base_version: sql<number>`min(${comment.base_version})`,
+          current_version: artifact.current_version,
+        })
+        .from(comment)
+        .innerJoin(artifact, eq(artifact.id, comment.artifact_id))
+        .where(and(inArray(comment.artifact_id, artifactIds), eq(comment.state, "resolved")))
+        .groupBy(comment.artifact_id, comment.thread_id, artifact.current_version),
+    ])
+    for (const row of ratings) signalFor(row.artifact_id)[row.value] = row.total
+    for (const row of resolvedThreads)
+      if (row.base_version < row.current_version) signalFor(row.artifact_id).resolved_revisions += 1
+    return out
   }
 
   /** The list query as a BUILDER, so `listArtifacts` and `listPage` cannot diverge.
@@ -6483,6 +6588,7 @@ export class PgMetaStore implements MetaStore {
     await this.db.delete(collectionMember).where(eq(collectionMember.user_id, userId))
     await this.db.delete(follow).where(eq(follow.user_id, userId))
     await this.db.delete(artifactFavorite).where(eq(artifactFavorite.user_id, userId))
+    await this.db.delete(artifactRating).where(eq(artifactRating.user_id, userId))
     await this.db.delete(notification).where(eq(notification.user_id, userId))
     // Encrypted plan tokens must not linger after the account is gone; the workspace pool's
     // sentinel-user row is keyed differently, so it is never in scope.
@@ -6624,6 +6730,7 @@ export class PgMetaStore implements MetaStore {
       await tx.delete(artifactMember).where(eq(artifactMember.artifact_id, id))
       await tx.delete(artifactInvite).where(eq(artifactInvite.artifact_id, id))
       await tx.delete(artifactFavorite).where(eq(artifactFavorite.artifact_id, id))
+      await tx.delete(artifactRating).where(eq(artifactRating.artifact_id, id))
       await tx.delete(artifactTag).where(eq(artifactTag.artifact_id, id))
       await tx.delete(collectionItem).where(eq(collectionItem.artifact_id, id))
       await tx.delete(domain).where(eq(domain.artifact_id, id))

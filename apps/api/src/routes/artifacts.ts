@@ -43,6 +43,7 @@ import {
   toJson,
   toMarkdown,
   type WorkflowPreview,
+  type VersionRecord,
   type WorkspaceAccess,
 } from "@derive/core"
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
@@ -142,6 +143,20 @@ const SAFE_BINARY_CONTENT_TYPES = new Set([
  */
 const INLINE_EDIT_COALESCE_MS = 5 * 60_000
 
+const ratingValue = z.enum(["not_useful", "useful", "essential"])
+const ratingReason = z.enum([
+  "clear",
+  "current",
+  "reusable",
+  "saved_time",
+  "outdated",
+  "wrong_scope",
+  "unclear",
+  "duplicate",
+])
+const positiveRatingReasons = new Set(["clear", "current", "reusable", "saved_time"])
+const negativeRatingReasons = new Set(["outdated", "wrong_scope", "unclear", "duplicate"])
+
 /** The artifact lifecycle: browse + summary, publish/republish, detail, restore,
  *  source read-back, and version diffs. */
 export const artifactRoutes = (ctx: AppContext) => {
@@ -173,6 +188,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     resolveArtifact,
     requireArtifact,
     resolveArtifacts,
+    requireUser,
     workspaceCan,
     collectionRole,
     limited,
@@ -1522,6 +1538,116 @@ export const artifactRoutes = (ctx: AppContext) => {
     c.header("X-Content-Type-Options", "nosniff")
     c.header("Content-Type", "text/plain; charset=utf-8")
     return c.body(searchReport(c.req.param("shortId"), query, where, total, cap, groups, note))
+  })
+
+  // Human usefulness ratings. These routes stay deliberately small: one active
+  // rating per version and user, no public rater list, and no agent/static-token writes.
+  const ratingVersion = (c: Context, current: number): number | null => {
+    const raw = c.req.query("version")
+    const parsed = raw === undefined ? current : Number(raw)
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : null
+  }
+  const isRatingAuthor = (
+    artifact: ArtifactRecord,
+    version: VersionRecord,
+    originalVersion: VersionRecord | null,
+    userId: string,
+  ) =>
+    artifact.author_id === userId ||
+    version.author_id === userId ||
+    originalVersion?.author_id === userId
+  const ratingPayload = async (artifact: ArtifactRecord, versionN: number, userId: string) => {
+    const [version, originalVersion, mine, signals] = await Promise.all([
+      meta.getVersion(artifact.id, versionN),
+      meta.getVersion(artifact.id, 1),
+      meta.getArtifactRating(artifact.id, versionN, userId),
+      meta.usefulnessSignals([artifact.id]),
+    ])
+    if (!version) return null
+    const signal = signals[artifact.id] ?? {
+      not_useful: 0,
+      useful: 0,
+      essential: 0,
+      resolved_revisions: 0,
+    }
+    const total = signal.not_useful + signal.useful + signal.essential
+    const helpful = signal.useful + signal.essential
+    return {
+      version: versionN,
+      eligible: !isRatingAuthor(artifact, version, originalVersion, userId),
+      rating: mine ? { value: mine.value, reason: mine.reason } : null,
+      aggregate:
+        total >= 3
+          ? {
+              total,
+              helpful_percent: Math.round((helpful / total) * 100),
+              essential: signal.essential,
+            }
+          : null,
+    }
+  }
+
+  app.get("/v1/artifacts/:shortId/rating", async (c) => {
+    const me = await requireUser(c)
+    if (me instanceof Response) return me
+    const artifact = await requireArtifact(c, "read")
+    if (artifact instanceof Response) return artifact
+    const versionN = ratingVersion(c, artifact.current_version)
+    if (versionN === null) return fail(c, 400, "bad version")
+    if (versionN !== artifact.current_version) return fail(c, 409, "rate the current version")
+    const payload = await ratingPayload(artifact, versionN, me.id)
+    return payload ? c.json(payload) : fail(c, 404, `no version ${versionN}`)
+  })
+
+  app.put("/v1/artifacts/:shortId/rating", async (c) => {
+    const me = await requireUser(c)
+    if (me instanceof Response) return me
+    const artifact = await requireArtifact(c, "read")
+    if (artifact instanceof Response) return artifact
+    const body = await readJson(
+      c,
+      z.object({
+        version: z.number().int().positive(),
+        value: ratingValue,
+        reason: ratingReason.nullable(),
+      }),
+    )
+    if (body instanceof Response) return body
+    if (body.version !== artifact.current_version) return fail(c, 409, "rate the current version")
+    const allowedReasons =
+      body.value === "not_useful" ? negativeRatingReasons : positiveRatingReasons
+    if (body.reason && !allowedReasons.has(body.reason))
+      return fail(c, 400, "reason does not match rating")
+    const version = await meta.getVersion(artifact.id, body.version)
+    if (!version) return fail(c, 404, `no version ${body.version}`)
+    const originalVersion = body.version === 1 ? version : await meta.getVersion(artifact.id, 1)
+    if (isRatingAuthor(artifact, version, originalVersion, me.id))
+      return fail(c, 403, "authors cannot rate their own version")
+    await meta.setArtifactRating({
+      id: newId("ar"),
+      artifact_id: artifact.id,
+      version_n: body.version,
+      user_id: me.id,
+      value: body.value,
+      reason: body.reason,
+    })
+    const payload = await ratingPayload(artifact, body.version, me.id)
+    return c.json(payload)
+  })
+
+  app.delete("/v1/artifacts/:shortId/rating", async (c) => {
+    const me = await requireUser(c)
+    if (me instanceof Response) return me
+    const artifact = await requireArtifact(c, "read")
+    if (artifact instanceof Response) return artifact
+    const versionN = ratingVersion(c, artifact.current_version)
+    if (versionN === null) return fail(c, 400, "bad version")
+    if (versionN !== artifact.current_version) return fail(c, 409, "rate the current version")
+    if (!(await meta.getVersion(artifact.id, versionN)))
+      return fail(c, 404, `no version ${versionN}`)
+    await meta.deleteArtifactRating(artifact.id, versionN, me.id)
+    const payload = await ratingPayload(artifact, versionN, me.id)
+    return c.json(payload)
   })
 
   app.openapi(

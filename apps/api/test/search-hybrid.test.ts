@@ -1,8 +1,10 @@
-import type { ArtifactRecord, SearchIndex, VersionRecord } from "@derive/core"
+import type { ArtifactRecord, SearchIndex, UsefulnessSignals, VersionRecord } from "@derive/core"
 import { describe, expect, it } from "vitest"
 import {
   deleteArtifactAndUnindex,
   indexArtifactVersion,
+  reindexSearchBatch,
+  rerankByUsefulness,
   rrfFuse,
   searchMatcher,
   searchWorkspace,
@@ -67,7 +69,21 @@ const denseIndex = (
   search: async (_org, query, limit) => (byQuery[query] ?? []).slice(0, limit),
 })
 
-const makeDeps = (docs: Doc[], search?: SearchIndex): WorkspaceSearchDeps => {
+const selectRecord = <T>(ids: string[], values: Record<string, T>): Record<string, T> => {
+  const selected: Record<string, T> = {}
+  for (const id of ids) {
+    const value = values[id]
+    if (value !== undefined) selected[id] = value
+  }
+  return selected
+}
+
+const makeDeps = (
+  docs: Doc[],
+  search?: SearchIndex,
+  usefulness: Record<string, UsefulnessSignals> = {},
+  views: Record<string, number> = {},
+): WorkspaceSearchDeps => {
   const keyOf = (d: Doc) => `blob_${d.id}`
   const bodyForKey = (key: string) => docs.find((d) => keyOf(d) === key)?.body ?? null
   const version = (d: Doc) =>
@@ -109,6 +125,8 @@ const makeDeps = (docs: Doc[], search?: SearchIndex): WorkspaceSearchDeps => {
         return out
       },
       searchArtifactIds: async (orgId, query, limit) => lexical(docs, orgId, query, limit),
+      usefulnessSignals: async (ids) => selectRecord(ids, usefulness),
+      viewCounts: async (ids) => selectRecord(ids, views),
     },
     search,
   }
@@ -142,6 +160,78 @@ describe("rrfFuse", () => {
     expect(fused.map((f) => f.id)).toEqual(["a", "b", "c"]) // a in both ⇒ top; then b, c by rank
     expect(fused.find((f) => f.id === "a")?.chunk).toBe("A-chunk")
     expect(fused.find((f) => f.id === "b")?.chunk).toBeUndefined() // lexical-only ⇒ no chunk
+  })
+})
+
+describe("usefulness reranking", () => {
+  it("uses ratings, resolved revision loops, then view buckets inside groups of five", () => {
+    const ranked = ["a", "b", "c", "d", "e", "f"].map((id) => ({ id }))
+    const result = rerankByUsefulness(
+      ranked,
+      {
+        b: { not_useful: 0, useful: 2, essential: 1, resolved_revisions: 0 },
+        c: { not_useful: 0, useful: 0, essential: 0, resolved_revisions: 2 },
+        f: { not_useful: 0, useful: 2, essential: 1, resolved_revisions: 0 },
+      },
+      { d: 1000 },
+    )
+    expect(result.map((item) => item.id)).toEqual(["b", "c", "d", "a", "e", "f"])
+    // f is strong, but it cannot cross the fixed relevance-group boundary.
+    expect(result[5]?.id).toBe("f")
+  })
+
+  it("carries real signal batches through search results and agent reports", async () => {
+    const docs = ["a", "b", "c", "d", "e"].map((id) => ({
+      id,
+      short_id: `${id}1`,
+      title: `Guide ${id}`,
+      body: "shared workflow",
+    }))
+    const usefulness = {
+      b: { not_useful: 0, useful: 0, essential: 0, resolved_revisions: 1 },
+      d: { not_useful: 0, useful: 0, essential: 0, resolved_revisions: 2 },
+      e: { not_useful: 0, useful: 2, essential: 1, resolved_revisions: 0 },
+    }
+    const { results } = await run(makeDeps(docs, undefined, usefulness, { c: 1000 }), "workflow")
+
+    expect(results.map((result) => result.short_id)).toEqual(["e1", "d1", "c1", "a1", "b1"])
+    expect(results[0]?.usefulness).toEqual({
+      label: "Essential",
+      evidence: "3 of 3 people found this useful",
+    })
+    expect(results[1]?.usefulness).toEqual({
+      label: "Improved through feedback",
+      evidence: "Improved across multiple revisions",
+    })
+    expect(results[4]?.usefulness).toBeUndefined()
+    expect(toSearchHits(results, "workflow")[0]?.usefulness?.label).toBe("Essential")
+    expect(workspaceSearchReport("workflow", "text", results, null)).toContain(
+      "> Essential: 3 of 3 people found this useful",
+    )
+  })
+
+  it("requires three ratings and places a majority-negative artifact below neutral peers", () => {
+    const ranked = ["a", "b", "c"].map((id) => ({ id }))
+    const result = rerankByUsefulness(
+      ranked,
+      {
+        a: { not_useful: 2, useful: 1, essential: 0, resolved_revisions: 0 },
+        b: { not_useful: 0, useful: 1, essential: 1, resolved_revisions: 0 },
+      },
+      {},
+    )
+    // b has only two ratings, so it stays neutral. a has enough negative evidence to move down.
+    expect(result.map((item) => item.id)).toEqual(["b", "c", "a"])
+  })
+
+  it("does not let one resolved thread reveal or influence review activity", () => {
+    const ranked = ["a", "b"].map((id) => ({ id }))
+    const result = rerankByUsefulness(
+      ranked,
+      { b: { not_useful: 0, useful: 0, essential: 0, resolved_revisions: 1 } },
+      {},
+    )
+    expect(result.map((item) => item.id)).toEqual(["a", "b"])
   })
 })
 

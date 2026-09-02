@@ -2,6 +2,8 @@ import type {
   AgentMentionKind,
   AgentMentionState,
   ArtifactKind,
+  ArtifactRatingReason,
+  ArtifactRatingValue,
   AuditAction,
   CommentState,
   ConnectionKind,
@@ -245,6 +247,25 @@ export const comment = sqliteTable("comment", {
   created_at: text("created_at").notNull().default(now),
   meta: text("meta"),
 })
+
+// One active human rating per artifact version. A later artifact version gets a
+// fresh rating set while the old rows remain useful history.
+export const artifactRating = sqliteTable(
+  "artifact_rating",
+  {
+    id: text("id").primaryKey(),
+    artifact_id: text("artifact_id")
+      .notNull()
+      .references(() => artifact.id),
+    version_n: integer("version_n").notNull(),
+    user_id: text("user_id").notNull(),
+    value: text("value").$type<ArtifactRatingValue>().notNull(),
+    reason: text("reason").$type<ArtifactRatingReason>(),
+    created_at: text("created_at").notNull().default(now),
+    updated_at: text("updated_at").notNull().default(now),
+  },
+  (t) => [uniqueIndex("artifact_rating_user").on(t.artifact_id, t.version_n, t.user_id)],
+)
 
 export const webhook = sqliteTable("webhook", {
   id: text("id").primaryKey(),
@@ -1354,6 +1375,7 @@ const TABLES = [
   version,
   versionData,
   comment,
+  artifactRating,
   webhook,
   webhookDelivery,
   renderJob,
