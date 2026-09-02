@@ -7,6 +7,7 @@ describe("artifact usefulness ratings", () => {
     { id: "rate-one", email: "rate-one@x.test", name: "One" },
     { id: "rate-two", email: "rate-two@x.test", name: "Two" },
     { id: "rate-three", email: "rate-three@x.test", name: "Three" },
+    { id: "rate-editor", email: "rate-editor@x.test", name: "Editor" },
   ]
 
   const put = (
@@ -95,6 +96,45 @@ describe("artifact usefulness ratings", () => {
     })
     expect(await authorView.json()).toMatchObject({ eligible: false })
     expect((await put(app, shortId, "rate-author@x.test", "useful", null, 2)).status).toBe(403)
+  })
+
+  it("blocks every human author after a later agent revision", async () => {
+    const { app } = makeAuthedApp("usefulness-intermediate-author", users, "editor")
+    const published = await publishAs(
+      app,
+      "# First version",
+      { title: "Multi-author guide" },
+      as("rate-author@x.test"),
+    )
+    const { short_id: shortId } = (await published.json()) as { short_id: string }
+    expect(
+      (
+        await publishAs(
+          app,
+          "# Human revision",
+          { message: "Human revision" },
+          as("rate-editor@x.test"),
+          shortId,
+        )
+      ).status,
+    ).toBe(201)
+    expect(
+      (
+        await publishAs(
+          app,
+          "# Agent revision",
+          { message: "Agent revision" },
+          { authorization: "Bearer tok" },
+          shortId,
+        )
+      ).status,
+    ).toBe(201)
+
+    const editorView = await app.request(`/v1/artifacts/${shortId}/rating?version=3`, {
+      headers: as("rate-editor@x.test"),
+    })
+    expect(await editorView.json()).toMatchObject({ eligible: false })
+    expect((await put(app, shortId, "rate-editor@x.test", "useful", null, 3)).status).toBe(403)
   })
 
   it("rejects anonymous rating reads and writes", async () => {

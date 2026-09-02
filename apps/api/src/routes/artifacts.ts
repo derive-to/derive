@@ -42,8 +42,8 @@ import {
   sortKeyOf,
   toJson,
   toMarkdown,
-  type WorkflowPreview,
   type VersionRecord,
+  type WorkflowPreview,
   type WorkspaceAccess,
 } from "@derive/core"
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
@@ -1547,19 +1547,12 @@ export const artifactRoutes = (ctx: AppContext) => {
     const parsed = raw === undefined ? current : Number(raw)
     return Number.isInteger(parsed) && parsed > 0 ? parsed : null
   }
-  const isRatingAuthor = (
-    artifact: ArtifactRecord,
-    version: VersionRecord,
-    originalVersion: VersionRecord | null,
-    userId: string,
-  ) =>
-    artifact.author_id === userId ||
-    version.author_id === userId ||
-    originalVersion?.author_id === userId
+  const isRatingAuthor = (artifact: ArtifactRecord, versions: VersionRecord[], userId: string) =>
+    artifact.author_id === userId || versions.some((version) => version.author_id === userId)
   const ratingPayload = async (artifact: ArtifactRecord, versionN: number, userId: string) => {
-    const [version, originalVersion, mine, signals] = await Promise.all([
+    const [version, versions, mine, signals] = await Promise.all([
       meta.getVersion(artifact.id, versionN),
-      meta.getVersion(artifact.id, 1),
+      meta.listVersions(artifact.id),
       meta.getArtifactRating(artifact.id, versionN, userId),
       meta.usefulnessSignals([artifact.id]),
     ])
@@ -1574,7 +1567,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     const helpful = signal.useful + signal.essential
     return {
       version: versionN,
-      eligible: !isRatingAuthor(artifact, version, originalVersion, userId),
+      eligible: !isRatingAuthor(artifact, versions, userId),
       rating: mine ? { value: mine.value, reason: mine.reason } : null,
       aggregate:
         total >= 3
@@ -1620,8 +1613,8 @@ export const artifactRoutes = (ctx: AppContext) => {
       return fail(c, 400, "reason does not match rating")
     const version = await meta.getVersion(artifact.id, body.version)
     if (!version) return fail(c, 404, `no version ${body.version}`)
-    const originalVersion = body.version === 1 ? version : await meta.getVersion(artifact.id, 1)
-    if (isRatingAuthor(artifact, version, originalVersion, me.id))
+    const versions = await meta.listVersions(artifact.id)
+    if (isRatingAuthor(artifact, versions, me.id))
       return fail(c, 403, "authors cannot rate their own version")
     await meta.setArtifactRating({
       id: newId("ar"),

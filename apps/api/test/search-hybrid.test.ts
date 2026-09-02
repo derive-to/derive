@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest"
 import {
   deleteArtifactAndUnindex,
   indexArtifactVersion,
-  reindexSearchBatch,
   rerankByUsefulness,
   rrfFuse,
   searchMatcher,
@@ -215,8 +214,8 @@ describe("usefulness reranking", () => {
       evidence: "Frequently opened",
     })
     expect(results[3]?.usefulness).toEqual({
-      label: "Actively maintained",
-      evidence: "Maintained across multiple versions",
+      label: "Frequently revised",
+      evidence: "Multiple published versions",
     })
     expect(results[4]?.usefulness).toBeUndefined()
     expect(toSearchHits(results, "workflow")[0]?.usefulness?.label).toBe("Essential")

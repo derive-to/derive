@@ -528,7 +528,7 @@ export interface WorkspaceSearchResult {
       | "Useful"
       | "Improved through feedback"
       | "Often referenced"
-      | "Actively maintained"
+      | "Frequently revised"
       | "Mixed feedback"
     evidence: string
   }
@@ -606,7 +606,7 @@ const usefulnessNote = (
   const revisions = signal.resolved_revisions
   const revisionEvidence = revisions >= 2 ? "Improved across multiple revisions" : null
   const viewEvidence = views >= 10 ? "Frequently opened" : null
-  const versionEvidence = currentVersion >= 5 ? "Maintained across multiple versions" : null
+  const versionEvidence = currentVersion >= 5 ? "Multiple published versions" : null
   const evidence = (rating: string) =>
     [rating, revisionEvidence, viewEvidence, versionEvidence].filter(Boolean).join("; ")
   const band = usefulnessBand(signal)
@@ -628,7 +628,7 @@ const usefulnessNote = (
   if (total >= 3) return { label: "Mixed feedback", evidence: evidence(`${total} ratings`) }
   if (revisionEvidence) return { label: "Improved through feedback", evidence: evidence("") }
   if (viewEvidence) return { label: "Often referenced", evidence: evidence("") }
-  if (versionEvidence) return { label: "Actively maintained", evidence: versionEvidence }
+  if (versionEvidence) return { label: "Frequently revised", evidence: versionEvidence }
   return undefined
 }
 
