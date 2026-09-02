@@ -17,6 +17,7 @@ import { skillsQuery } from "@/lib/queries"
 import { useDocumentTitle } from "@/lib/use-document-title"
 import { cn } from "@/lib/utils"
 import { refFor } from "../artifact/parse-ref"
+import { NEW_SKILL_PROMPT } from "./new-skill-prompt"
 
 export function Skills() {
   useDocumentTitle("Skills")
@@ -50,11 +51,7 @@ export function Skills() {
             <Button
               size="sm"
               data-testid="skills-new"
-              onClick={() =>
-                openAssistant(
-                  "Help me create a reusable Skill. Start by clarifying when it should trigger, then publish a standards-compatible SKILL.md bundle.",
-                )
-              }
+              onClick={() => openAssistant(NEW_SKILL_PROMPT)}
             >
               <Icon name="plus" /> New skill
             </Button>
