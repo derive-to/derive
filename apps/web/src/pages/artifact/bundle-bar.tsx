@@ -1,9 +1,13 @@
 import { useQuery } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
 import { API_BASE, type Artifact } from "@/api"
+import { Icon } from "@/components/icons"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { useCopy } from "@/lib/clipboard"
 import { skillGraphQuery, skillUsageQuery } from "@/lib/queries"
+import { ago } from "@/lib/time"
 
 /**
  * Header chrome for a markdown bundle (a skill — entry SKILL.md — or a plain docs
@@ -84,6 +88,7 @@ function SkillWorkbench({
 }) {
   const graph = useQuery(skillGraphQuery(shortId))
   const usage = useQuery(skillUsageQuery(shortId))
+  const { copied, copy } = useCopy(2000)
   const nodeById = new Map((graph.data?.nodes ?? []).map((node) => [node.id, node]))
   const activeInstalls = (usage.data?.installations ?? []).reduce(
     (sum, item) => sum + item.count,
@@ -92,6 +97,7 @@ function SkillWorkbench({
   const contextRuns = (usage.data?.contexts ?? []).reduce((sum, item) => sum + item.count, 0)
   const workflowRuns = (usage.data?.workflows ?? []).reduce((sum, item) => sum + item.count, 0)
   const fileUrl = (path: string) => `${API_BASE}/raw/${shortId}/v/${version}/${path}`
+  const installCommand = `derive skill add ${shortId}`
 
   return (
     <div className="border-b border-border bg-card/60" data-testid="skill-workbench">
@@ -110,13 +116,32 @@ function SkillWorkbench({
             <p className="mt-1 max-w-3xl text-sm text-muted-foreground">{bundle.description}</p>
           )}
         </div>
-        <div className="flex gap-1.5">
-          <Badge variant="outline" shape="pill">
-            Claude
-          </Badge>
-          <Badge variant="outline" shape="pill">
-            Codex
-          </Badge>
+        <div className="flex min-w-0 flex-col items-end gap-2">
+          <div className="flex gap-1.5">
+            <Badge variant="outline" shape="pill">
+              Claude
+            </Badge>
+            <Badge variant="outline" shape="pill">
+              Codex
+            </Badge>
+          </div>
+          <div className="flex max-w-full items-center gap-1 rounded-lg border bg-background p-1 pl-2">
+            <code className="truncate font-mono text-2xs text-muted-foreground">
+              {installCommand}
+            </code>
+            <Button
+              size="xs"
+              variant="secondary"
+              data-testid="skill-copy-install"
+              aria-label={copied ? "Install command copied" : "Copy install command"}
+              title="Installs this Skill for Claude and Codex in the current project"
+              onClick={() => void copy(installCommand, { success: "Install command copied" })}
+            >
+              <Icon name={copied ? "check" : "copy"} />
+              {copied ? "Copied" : "Install locally"}
+            </Button>
+          </div>
+          <span className="text-2xs text-muted-foreground">Claude + Codex · current project</span>
         </div>
       </div>
 
@@ -190,6 +215,37 @@ function SkillWorkbench({
             These are separate observed signals. Derive does not guess local activations or combine
             them into a synthetic total.
           </p>
+          {usage.isPending ? (
+            <Muted>Loading installation details…</Muted>
+          ) : usage.data?.installations.length ? (
+            <div className="mt-3 flex flex-col gap-2" data-testid="skill-installations">
+              <p className="text-xs font-medium text-foreground">Active installations</p>
+              {usage.data.installations.map((installation) => (
+                <div
+                  key={`${installation.client}:${installation.scope_kind}`}
+                  className="flex flex-wrap items-center gap-2 rounded-lg border bg-background px-3 py-2 text-sm"
+                >
+                  <Badge variant="outline" shape="pill" className="capitalize">
+                    {installation.client}
+                  </Badge>
+                  <Badge variant="outline" shape="pill" className="capitalize">
+                    {installation.scope_kind}
+                  </Badge>
+                  <span>
+                    {installation.count} {installation.count === 1 ? "install" : "installs"}
+                  </span>
+                  <span
+                    className="ml-auto text-xs text-muted-foreground"
+                    title={new Date(installation.last_synced_at).toLocaleString()}
+                  >
+                    synced {ago(installation.last_synced_at)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="mt-3 text-xs text-muted-foreground">No active installations yet.</p>
+          )}
         </TabsContent>
         <TabsContent value="artifacts" className="px-4 py-3">
           {usage.isPending ? (
