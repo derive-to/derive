@@ -523,7 +523,13 @@ export interface WorkspaceSearchResult {
   semantic?: { snippet: string }
   /** Privacy-safe reason this artifact won a tie inside its relevance group. */
   usefulness?: {
-    label: "Essential" | "Useful" | "Improved through feedback" | "Mixed feedback"
+    label:
+      | "Essential"
+      | "Useful"
+      | "Improved through feedback"
+      | "Often referenced"
+      | "Actively maintained"
+      | "Mixed feedback"
     evidence: string
   }
 }
@@ -556,10 +562,15 @@ const viewBucket = (count: number): number => {
   if (count >= 10) return 2
   return count > 0 ? 1 : 0
 }
+const versionBucket = (currentVersion: number): number => {
+  if (currentVersion >= 10) return 3
+  if (currentVersion >= 5) return 2
+  return currentVersion >= 2 ? 1 : 0
+}
 
 /** Preserve relevance globally. Usefulness can reorder only inside each fixed
  *  group, so a popular artifact cannot jump over a much better query match. */
-export const rerankByUsefulness = <T extends { id: string }>(
+export const rerankByUsefulness = <T extends { id: string; current_version?: number }>(
   ranked: T[],
   signals: Record<string, UsefulnessSignals>,
   views: Record<string, number>,
@@ -576,6 +587,7 @@ export const rerankByUsefulness = <T extends { id: string }>(
         usefulnessBand(sb) - usefulnessBand(sa) ||
         revisionBucket(sb.resolved_revisions) - revisionBucket(sa.resolved_revisions) ||
         viewBucket(views[b.id] ?? 0) - viewBucket(views[a.id] ?? 0) ||
+        versionBucket(b.current_version ?? 1) - versionBucket(a.current_version ?? 1) ||
         (originalRank.get(a.id) ?? 0) - (originalRank.get(b.id) ?? 0)
       )
     })
@@ -586,12 +598,17 @@ export const rerankByUsefulness = <T extends { id: string }>(
 
 const usefulnessNote = (
   signal: UsefulnessSignals,
+  views: number,
+  currentVersion: number,
 ): WorkspaceSearchResult["usefulness"] | undefined => {
   const total = signal.not_useful + signal.useful + signal.essential
   const helpful = signal.useful + signal.essential
   const revisions = signal.resolved_revisions
   const revisionEvidence = revisions >= 2 ? "Improved across multiple revisions" : null
-  const evidence = (rating: string) => [rating, revisionEvidence].filter(Boolean).join("; ")
+  const viewEvidence = views >= 10 ? "Frequently opened" : null
+  const versionEvidence = currentVersion >= 5 ? "Maintained across multiple versions" : null
+  const evidence = (rating: string) =>
+    [rating, revisionEvidence, viewEvidence, versionEvidence].filter(Boolean).join("; ")
   const band = usefulnessBand(signal)
   if (band === 2)
     return {
@@ -609,8 +626,9 @@ const usefulnessNote = (
       evidence: evidence(`${signal.not_useful} of ${total} people marked this not useful`),
     }
   if (total >= 3) return { label: "Mixed feedback", evidence: evidence(`${total} ratings`) }
-  if (revisionEvidence)
-    return { label: "Improved through feedback", evidence: revisionEvidence ?? "Resolved feedback" }
+  if (revisionEvidence) return { label: "Improved through feedback", evidence: evidence("") }
+  if (viewEvidence) return { label: "Often referenced", evidence: evidence("") }
+  if (versionEvidence) return { label: "Actively maintained", evidence: versionEvidence }
   return undefined
 }
 
@@ -749,7 +767,11 @@ export const searchWorkspace = async (
       groups,
       total,
       semantic: total === 0 && chunk ? { snippet: snippetAround(chunk, opts.query) } : undefined,
-      usefulness: usefulnessNote(signals[a.id] ?? EMPTY_USEFULNESS),
+      usefulness: usefulnessNote(
+        signals[a.id] ?? EMPTY_USEFULNESS,
+        views[a.id] ?? 0,
+        a.current_version,
+      ),
     }
   }
   const results: WorkspaceSearchResult[] = []

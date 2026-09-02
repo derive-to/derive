@@ -16,7 +16,6 @@ import {
   PopoverHeader,
   PopoverTitle,
 } from "@/components/ui/popover"
-import { toast } from "@/components/ui/sonner"
 import { artifactRatingQuery } from "@/lib/queries"
 import { cn } from "@/lib/utils"
 
@@ -36,7 +35,7 @@ const negativeReasons = [
 
 export function UsefulnessRating({ shortId, version }: { shortId: string; version: number }) {
   const query = artifactRatingQuery(shortId, version)
-  const { data, isError, refetch } = useQuery(query)
+  const { data, isError } = useQuery(query)
   const client = useQueryClient()
   const [open, setOpen] = useState(false)
   const [mode, setMode] = useState<"positive" | "negative">("positive")
@@ -49,24 +48,9 @@ export function UsefulnessRating({ shortId, version }: { shortId: string; versio
         ? api.setArtifactRating(shortId, version, next.value, next.reason)
         : api.clearArtifactRating(shortId, version),
     onSuccess: (next: ArtifactRatingResponse) => client.setQueryData(query.queryKey, next),
-    onError: () => toast.error("Could not save your rating. Try again."),
   })
 
-  if (isError)
-    return (
-      <div className="flex shrink-0 items-center justify-center gap-2 border-t border-border bg-background px-4 py-3 text-xs text-muted-foreground">
-        Rating unavailable.
-        <Button
-          type="button"
-          size="xs"
-          variant="ghost"
-          data-testid="artifact-rating-retry"
-          onClick={() => void refetch()}
-        >
-          Retry
-        </Button>
-      </div>
-    )
+  if (isError) return null
   if (!data?.eligible) return null
 
   const selected = data.rating?.value
@@ -92,35 +76,36 @@ export function UsefulnessRating({ shortId, version }: { shortId: string; versio
   const aggregate = data.aggregate
 
   return (
-    <div className="flex shrink-0 justify-center border-t border-border bg-background px-4 py-3">
+    <div className="flex shrink-0 items-center">
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverAnchor asChild>
-          <fieldset className="flex items-center gap-2">
+          <fieldset className="flex items-center gap-0.5">
             <legend className="sr-only">Rate this artifact version</legend>
-            <span className="mr-1 text-xs text-muted-foreground">Was this useful?</span>
             <Button
               type="button"
-              size="xs"
+              size="icon-sm"
               variant={selected === "not_useful" ? "secondary" : "ghost"}
+              aria-label="Not useful"
+              title="Not useful"
               aria-pressed={selected === "not_useful"}
               data-testid="artifact-rating-not-useful"
               loading={mutation.isPending && mode === "negative"}
               onClick={() => void choose("not_useful", "negative")}
             >
-              <ThumbsDown aria-hidden />
-              Not useful
+              <ThumbsDown className="size-4" aria-hidden />
             </Button>
             <Button
               type="button"
-              size="xs"
+              size="icon-sm"
               variant={selected === "useful" || selected === "essential" ? "secondary" : "ghost"}
+              aria-label={selected === "essential" ? "Essential" : "Useful"}
+              title={selected === "essential" ? "Essential" : "Useful"}
               aria-pressed={selected === "useful" || selected === "essential"}
               data-testid="artifact-rating-useful"
               loading={mutation.isPending && mode === "positive"}
               onClick={() => void choose("useful", "positive")}
             >
-              <ThumbsUp aria-hidden />
-              Useful
+              <ThumbsUp className="size-4" aria-hidden />
             </Button>
           </fieldset>
         </PopoverAnchor>

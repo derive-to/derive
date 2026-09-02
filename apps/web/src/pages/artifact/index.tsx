@@ -78,7 +78,6 @@ import { useCommentsPanel } from "./use-comments-panel"
 import { unsavedEditsCopy, useInlineEdit } from "./use-inline-edit"
 import { useSeenCursor } from "./use-seen-cursor"
 import { useVersionDiff } from "./use-version-diff"
-import { UsefulnessRating } from "./usefulness-rating"
 import { WorkbenchSkeleton } from "./workbench-skeleton"
 
 // Heavy on-demand surfaces — split out of the artifact route's initial chunk and

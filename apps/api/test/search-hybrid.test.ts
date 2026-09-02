@@ -28,6 +28,7 @@ interface Doc {
   body: string
   org_id?: string
   workspace_access?: "member" | "none"
+  current_version?: number
 }
 
 // A partial ArtifactRecord is castable because ArtifactRecord is assignable to it (same trick the
@@ -37,7 +38,7 @@ const artifact = (d: Doc): ArtifactRecord =>
     id: d.id,
     short_id: d.short_id,
     title: d.title,
-    current_version: 1,
+    current_version: d.current_version ?? 1,
     org_id: d.org_id ?? ORG,
     workspace_access: d.workspace_access ?? "member",
     password_hash: null,
@@ -164,8 +165,11 @@ describe("rrfFuse", () => {
 })
 
 describe("usefulness reranking", () => {
-  it("uses ratings, resolved revision loops, then view buckets inside groups of five", () => {
-    const ranked = ["a", "b", "c", "d", "e", "f"].map((id) => ({ id }))
+  it("uses ratings, resolved revision loops, view buckets, then version buckets", () => {
+    const ranked = ["a", "b", "c", "d", "e", "f"].map((id) => ({
+      id,
+      current_version: id === "e" ? 5 : 1,
+    }))
     const result = rerankByUsefulness(
       ranked,
       {
@@ -175,7 +179,7 @@ describe("usefulness reranking", () => {
       },
       { d: 1000 },
     )
-    expect(result.map((item) => item.id)).toEqual(["b", "c", "d", "a", "e", "f"])
+    expect(result.map((item) => item.id)).toEqual(["b", "c", "d", "e", "a", "f"])
     // f is strong, but it cannot cross the fixed relevance-group boundary.
     expect(result[5]?.id).toBe("f")
   })
@@ -186,6 +190,7 @@ describe("usefulness reranking", () => {
       short_id: `${id}1`,
       title: `Guide ${id}`,
       body: "shared workflow",
+      current_version: id === "b" ? 5 : 1,
     }))
     const usefulness = {
       b: { not_useful: 0, useful: 0, essential: 0, resolved_revisions: 1 },
@@ -194,7 +199,7 @@ describe("usefulness reranking", () => {
     }
     const { results } = await run(makeDeps(docs, undefined, usefulness, { c: 1000 }), "workflow")
 
-    expect(results.map((result) => result.short_id)).toEqual(["e1", "d1", "c1", "a1", "b1"])
+    expect(results.map((result) => result.short_id)).toEqual(["e1", "d1", "c1", "b1", "a1"])
     expect(results[0]?.usefulness).toEqual({
       label: "Essential",
       evidence: "3 of 3 people found this useful",
@@ -202,6 +207,14 @@ describe("usefulness reranking", () => {
     expect(results[1]?.usefulness).toEqual({
       label: "Improved through feedback",
       evidence: "Improved across multiple revisions",
+    })
+    expect(results[2]?.usefulness).toEqual({
+      label: "Often referenced",
+      evidence: "Frequently opened",
+    })
+    expect(results[3]?.usefulness).toEqual({
+      label: "Actively maintained",
+      evidence: "Maintained across multiple versions",
     })
     expect(results[4]?.usefulness).toBeUndefined()
     expect(toSearchHits(results, "workflow")[0]?.usefulness?.label).toBe("Essential")
