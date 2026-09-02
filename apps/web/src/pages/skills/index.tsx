@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
+import { useCopy } from "@/lib/clipboard"
 import { REVEAL } from "@/lib/interaction"
 import { skillsQuery } from "@/lib/queries"
 import { useDocumentTitle } from "@/lib/use-document-title"
@@ -20,6 +21,7 @@ import { refFor } from "../artifact/parse-ref"
 export function Skills() {
   useDocumentTitle("Skills")
   const { openAssistant } = useShell()
+  const { copied, copy } = useCopy(2000)
   const [query, setQuery] = useState("")
   const { data, isPending, isError, refetch } = useQuery(skillsQuery(query))
   const skills = data?.skills ?? []
@@ -32,17 +34,31 @@ export function Skills() {
         title="Skills"
         subtitle="Shared instructions that Claude and Codex can install as local skills. Link them into graphs, see what they create, and keep every version reviewable."
         actions={
-          <Button
-            size="sm"
-            data-testid="skills-new"
-            onClick={() =>
-              openAssistant(
-                "Help me create a reusable Skill. Start by clarifying when it should trigger, then publish a standards-compatible SKILL.md bundle.",
-              )
-            }
-          >
-            <Icon name="plus" /> New skill
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              data-testid="skills-sync-all"
+              title="Copies a command that updates every Skill pinned in this project"
+              onClick={() =>
+                void copy("derive skill sync --all", { success: "Sync command copied" })
+              }
+            >
+              <Icon name={copied ? "check" : "copy"} />
+              {copied ? "Copied" : "Sync installed"}
+            </Button>
+            <Button
+              size="sm"
+              data-testid="skills-new"
+              onClick={() =>
+                openAssistant(
+                  "Help me create a reusable Skill. Start by clarifying when it should trigger, then publish a standards-compatible SKILL.md bundle.",
+                )
+              }
+            >
+              <Icon name="plus" /> New skill
+            </Button>
+          </div>
         }
       />
 

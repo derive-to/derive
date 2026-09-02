@@ -65,6 +65,7 @@ import {
   setDefaultAccount,
   setDefaultWorkspace,
   setWorkspaces,
+  skillSyncPlan,
   TEMPLATES,
   writeContextConfig,
   writeId,
@@ -1316,7 +1317,7 @@ if (LOOP.includes(cmd)) {
   process.exit(0)
 }
 
-// ---- derive skill (add) -----------------------------------------------------
+// ---- derive skill (add/sync/remove) -----------------------------------------
 // The consumption half of the skill loop: author with `init --template skill` +
 // `publish`, then INSTALL a published skill into ./.claude/skills/<name>/ where
 // this project's agent auto-discovers it. Pinned in derive.json so an update is a
@@ -1324,9 +1325,10 @@ if (LOOP.includes(cmd)) {
 if (cmd === "skill") {
   const sub = positional.shift()
   const shortId = positional[0]
-  if (!["add", "sync", "remove"].includes(sub) || !shortId) {
+  const syncAll = sub === "sync" && flags.all === "true"
+  if (!["add", "sync", "remove"].includes(sub) || (!shortId && !syncAll) || (syncAll && shortId)) {
     console.error(
-      "usage: derive skill add|sync|remove <short_id> [--client claude|codex|all] [--scope project|personal]",
+      "usage: derive skill add|sync|remove <short_id> [--client claude|codex|all] [--scope project|personal]\n       derive skill sync --all [--client claude|codex|all] [--scope project|personal]",
     )
     process.exit(cmd ? 1 : 0)
   }
@@ -1359,6 +1361,12 @@ if (cmd === "skill") {
     process.exit(1)
   }
   const deriveClient = new DeriveClient(r.server, r.token)
+
+  const syncPlan = syncAll ? skillSyncPlan(cfg, clients) : [{ id: shortId, clients }]
+  if (syncAll && syncPlan.length === 0) {
+    console.error(`error: no installed skills match in ${CONFIG_FILE}`)
+    process.exit(1)
+  }
 
   if (sub === "remove") {
     const pin = cfg?.skills?.find((skill) => skill.id === shortId)
@@ -1407,51 +1415,56 @@ if (cmd === "skill") {
     authorization: `Bearer ${r.token}`,
     ...(r.workspaceId ? { "x-derive-workspace": r.workspaceId } : {}),
   }
-  const detail = await (await fetch(`${r.server}/v1/artifacts/${shortId}`, { headers: auth }))
-    .json()
-    .catch(() => null)
-  if (!detail?.current_version) {
-    console.error(`error: no such artifact ${shortId}`)
-    process.exit(1)
-  }
-  if (!detail.bundle?.isSkill) {
-    console.error(`error: ${shortId} is not a skill (a bundle with a SKILL.md)`)
-    process.exit(1)
-  }
-  const version = detail.current_version
   const api = deriveClient.skillApi()
-  let done = null
-  for (const target of clients) {
-    const cat = await materializeSkills(api, [{ id: shortId, version }], targetRoot(target))
-    const installed = cat.find((s) => s.ok)
-    if (!installed) {
-      console.error(`error: could not materialize the skill for ${target}`)
+  let synced = 0
+  for (const item of syncPlan) {
+    const detail = await (await fetch(`${r.server}/v1/artifacts/${item.id}`, { headers: auth }))
+      .json()
+      .catch(() => null)
+    if (!detail?.current_version) {
+      console.error(`error: no such artifact ${item.id}`)
       process.exit(1)
     }
-    done ??= installed
-    // Record each filesystem success immediately. If the other client or the receipt
-    // request fails, derive.json still describes what is actually on disk, so retry or
-    // targeted remove can recover without an orphaned installation.
-    writeSkillPin(".", { id: shortId, version, name: installed.name, clients: [target] })
-    const scopeId = createHash("sha256")
-      .update(`${scope}\0${resolve(targetRoot(target))}`)
-      .digest("hex")
-    await deriveClient.call(`/v1/artifacts/${shortId}/skill-installation`, {
-      method: "PUT",
-      headers: r.workspaceId ? { "x-derive-workspace": r.workspaceId } : {},
-      body: JSON.stringify({
-        skill_version: version,
-        scope_kind: scope,
-        opaque_scope_id: scopeId,
-        client: target,
-        digest: installed.digest,
-        policy: "pinned",
-      }),
-    })
+    if (!detail.bundle?.isSkill) {
+      console.error(`error: ${item.id} is not a skill (a bundle with a SKILL.md)`)
+      process.exit(1)
+    }
+    const version = detail.current_version
+    let done = null
+    for (const target of item.clients) {
+      const cat = await materializeSkills(api, [{ id: item.id, version }], targetRoot(target))
+      const installed = cat.find((skill) => skill.ok)
+      if (!installed) {
+        console.error(`error: could not materialize ${item.id} for ${target}`)
+        process.exit(1)
+      }
+      done ??= installed
+      // Record each filesystem success immediately. If the other client or the receipt
+      // request fails, derive.json still describes what is actually on disk, so retry or
+      // targeted remove can recover without an orphaned installation.
+      writeSkillPin(".", { id: item.id, version, name: installed.name, clients: [target] })
+      const scopeId = createHash("sha256")
+        .update(`${scope}\0${resolve(targetRoot(target))}`)
+        .digest("hex")
+      await deriveClient.call(`/v1/artifacts/${item.id}/skill-installation`, {
+        method: "PUT",
+        headers: r.workspaceId ? { "x-derive-workspace": r.workspaceId } : {},
+        body: JSON.stringify({
+          skill_version: version,
+          scope_kind: scope,
+          opaque_scope_id: scopeId,
+          client: target,
+          digest: installed.digest,
+          policy: "pinned",
+        }),
+      })
+    }
+    synced++
+    console.log(
+      `✓ ${done.name} @v${version} installed for ${item.clients.join(" + ")} (${scope}; pinned in ${CONFIG_FILE})`,
+    )
   }
-  console.log(
-    `✓ ${done.name} @v${version} installed for ${clients.join(" + ")} (${scope}; pinned in ${CONFIG_FILE})`,
-  )
+  if (syncAll) console.log(`✓ synced ${synced} installed ${synced === 1 ? "skill" : "skills"}`)
   process.exit(0)
 }
 
@@ -1644,6 +1657,7 @@ if (cmd !== "publish") {
   derive workflow preview [file] [--json]  explain + validate a graph/loop before it runs
   derive workflow run [run_id]             execute one assigned graph from GitHub Actions OIDC
   derive skill add|sync|remove <short_id>  install a pinned Skill for Claude + Codex (--client/--scope)
+  derive skill sync --all                  update every locally pinned Skill
   derive brandprint pull                   materialize the workspace + your Brandprint into this repo`)
   process.exit(cmd && cmd !== "--help" && cmd !== "help" ? 1 : 0)
 }

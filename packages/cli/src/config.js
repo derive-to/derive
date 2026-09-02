@@ -618,6 +618,22 @@ export function writeSkillPin(dir, { id, version, name, clients = ["claude", "co
   return config
 }
 
+/** Build the `sync --all` worklist from the local lockfile. Modern pins retain
+ * client-specific install state, so syncing everything updates only destinations
+ * that already exist instead of silently broadening a Claude-only install into
+ * Codex (or vice versa). Legacy pins predate that state and therefore mean both. */
+export function skillSyncPlan(config, requestedClients = ["claude", "codex"]) {
+  const skills = Array.isArray(config?.skills) ? config.skills : []
+  return skills
+    .map((skill) => ({
+      id: skill.id,
+      clients: skill.installs
+        ? requestedClients.filter((client) => skill.installs[client])
+        : [...requestedClients],
+    }))
+    .filter((item) => item.id && item.clients.length > 0)
+}
+
 /** Forget only the native destinations actually removed. The top-level pin stays as
  * a portable dependency while either Claude or Codex still has a local installation. */
 export function removeSkillClients(dir, id, clients) {

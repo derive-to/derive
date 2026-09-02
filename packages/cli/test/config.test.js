@@ -27,6 +27,7 @@ import {
   setDefaultAccount,
   setDefaultWorkspace,
   setWorkspaces,
+  skillSyncPlan,
   writeContextConfig,
   writeId,
   writeSkillPin,
@@ -317,6 +318,30 @@ describe("writeSkillPin", () => {
     cfg = removeSkillClients(d, "sk1", ["claude"])
     expect(cfg.skills).toEqual([])
   })
+
+  it("plans an all-skill sync without broadening client-specific installs", () => {
+    expect(
+      skillSyncPlan(
+        {
+          skills: [
+            { id: "legacy", version: 1 },
+            { id: "claude-only", installs: { claude: { version: 2 } } },
+            { id: "codex-only", installs: { codex: { version: 3 } } },
+          ],
+        },
+        ["claude", "codex"],
+      ),
+    ).toEqual([
+      { id: "legacy", clients: ["claude", "codex"] },
+      { id: "claude-only", clients: ["claude"] },
+      { id: "codex-only", clients: ["codex"] },
+    ])
+    expect(
+      skillSyncPlan({ skills: [{ id: "claude-only", installs: { claude: { version: 2 } } }] }, [
+        "codex",
+      ]),
+    ).toEqual([])
+  })
 })
 
 describe("CLI help", () => {
@@ -325,6 +350,7 @@ describe("CLI help", () => {
     const result = spawnSync(process.execPath, [bin, "--help"], { encoding: "utf8" })
     expect(result.status).toBe(0)
     expect(result.stderr).toContain("derive skill add|sync|remove")
+    expect(result.stderr).toContain("derive skill sync --all")
   })
 })
 
