@@ -1354,6 +1354,12 @@ if (cmd === "skill") {
       ? join(homedir(), client === "codex" ? ".codex" : ".claude", "skills")
       : join(".", client === "codex" ? ".agents" : ".claude", "skills")
 
+  const syncPlan = syncAll ? skillSyncPlan(cfg, clients) : [{ id: shortId, clients }]
+  if (syncAll && syncPlan.length === 0) {
+    console.error(`error: no installed skills match in ${CONFIG_FILE}`)
+    process.exit(1)
+  }
+
   const r = resolvePublish(flags, cfg)
   r.token = flags.token ?? process.env.DERIVE_TOKEN ?? (await freshToken(r.server, r.accountId))
   if (!r.token) {
@@ -1361,12 +1367,6 @@ if (cmd === "skill") {
     process.exit(1)
   }
   const deriveClient = new DeriveClient(r.server, r.token)
-
-  const syncPlan = syncAll ? skillSyncPlan(cfg, clients) : [{ id: shortId, clients }]
-  if (syncAll && syncPlan.length === 0) {
-    console.error(`error: no installed skills match in ${CONFIG_FILE}`)
-    process.exit(1)
-  }
 
   if (sub === "remove") {
     const pin = cfg?.skills?.find((skill) => skill.id === shortId)

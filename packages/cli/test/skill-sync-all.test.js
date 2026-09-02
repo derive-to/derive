@@ -28,6 +28,28 @@ const run = (cwd, server, args) =>
   })
 
 describe("derive skill sync --all", () => {
+  it("reports an empty project before requiring authentication", async () => {
+    const project = mkdtempSync(join(tmpdir(), "derive-sync-all-empty-"))
+    dirs.push(project)
+    const child = spawn(
+      process.execPath,
+      [join(import.meta.dirname, "..", "bin", "derive.js"), "skill", "sync", "--all"],
+      {
+        cwd: project,
+        env: {
+          PATH: process.env.PATH,
+        },
+      },
+    )
+    let stderr = ""
+    child.stderr.on("data", (chunk) => (stderr += chunk))
+    const status = await new Promise((resolve) => child.on("close", resolve))
+
+    expect(status).toBe(1)
+    expect(stderr).toContain("no installed skills match")
+    expect(stderr).not.toContain("not signed in")
+  })
+
   it("updates every pin while preserving its installed clients", async () => {
     const receipts = []
     const names = { alpha: "Alpha Skill", beta: "Beta Skill" }
