@@ -7,6 +7,8 @@ import {
   type ArtifactRecord,
   type BlobStore,
   isHtmlLike,
+  isLatexLike,
+  latexTextParts,
   type MetaStore,
   mentionText,
   mentionTokens,
@@ -68,7 +70,12 @@ const markdownProse = (source: string): string => {
  * can visibly contain `/@handle`; it names a route, not a teammate, so remove URL tokens before
  * the mention matcher sees them. */
 export const contentMentionText = (source: string, contentType: string): string =>
-  (isHtmlLike(contentType) ? mentionText(source) : markdownProse(source))
+  (isHtmlLike(contentType)
+    ? mentionText(source)
+    : isLatexLike(contentType)
+      ? latexTextParts(source).text
+      : markdownProse(source)
+  )
     .replace(/\b(?:https?:\/\/|mailto:|www\.)[^\s<]+/gi, " ")
     .replace(/\s+/g, " ")
     .trim()
@@ -209,7 +216,12 @@ export const fanOutNewContentMentions = async (
   actorId: string | null = version.author_id,
   preparedSource?: string,
 ): Promise<void> => {
-  if (version.content_type !== "text/markdown" && !isHtmlLike(version.content_type)) return
+  if (
+    version.content_type !== "text/markdown" &&
+    !isHtmlLike(version.content_type) &&
+    !isLatexLike(version.content_type)
+  )
+    return
   let current = preparedSource
   if (current === undefined) {
     const bytes = await deps.blobs.get(version.blob_key)
