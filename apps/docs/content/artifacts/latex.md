@@ -76,11 +76,35 @@ had. Place them inside a `table` or `figure` environment with a `\caption`, as y
 ## Comments, edits and reads
 
 Comments anchor to the rendered prose and re-anchor on republish through the same
-projection. Select words rather than formulas: math is typeset in the browser and has no
-server-side text, so a quote across a formula goes outdated when the paper changes.
-Inline edits map back to the source through the projection; an edit that would cross a
-macro boundary or a generated label (a citation, a section number) is refused with a
-message instead of guessed.
+projection. Math is typeset in the browser and counts as no characters on both sides,
+so a quote that runs past a formula still anchors and survives a republish.
+
+### Editing a paper
+
+Edit on the page (the Edit button, or `e`) works for prose paragraphs, list items,
+figure and table captions, section headings, the title and the abstract. Formulas,
+tables, images, dynamic tables and figures, footnotes, theorem text, the author block,
+generated numbers and labels and the reference list are read-only on the page: a click
+on them says so, the caret steps over them, and a Backspace beside a formula cannot
+delete it. Everything else is a source edit: the source editor opens `main.tex` from the
+More menu, and the file chips above a paper bundle open its sections, `.bib` and style
+files in the same editor. Every save is a new version of the bundle, with the other files
+carried over. An inline edit whose words come from an `\input` file is refused with the
+file's name; open that file instead.
+
+### Bibliography
+
+A paper bundle's `.bib` is the source of truth for its references. The References tab
+in the right rail lists every entry with its key and whether the paper cites it, and
+lets an editor add an entry (paste its BibTeX), edit one as BibTeX, or remove one. Each
+save publishes a new version; comments, `@string` macros and the untouched entries keep
+their bytes. Agents see the same list in `read` and are told to cite with `\cite{key}`
+from it rather than invent keys; the publish receipt reports any `\cite` that did not
+resolve. The same edits are available over the API (`GET`/`PUT /v1/artifacts/:id/bib`)
+and per file (`GET`/`PUT /v1/artifacts/:id/files/*`).
+
+An edit that would cross a macro boundary or a generated label (a citation, a section
+number) is refused with a message instead of guessed.
 
 `GET /v1/artifacts/:id/content` returns the source; `?format=text` returns the rendered
 prose; `?outline=1` lists the sections with the ids the page uses; `?section=<slug>`

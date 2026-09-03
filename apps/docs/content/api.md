@@ -30,7 +30,12 @@ A LaTeX artifact (`text/x-latex`, or a `derive/latex` bundle whose entry is `mai
 served as a rendered page under `/raw/:ref/v/:n/index.html` and as its source at
 `/raw/:ref/v/:n/raw.tex`; the math typesetter it loads is served by the instance itself
 under `/raw/vendor/katex/<version>/`. `POST /v1/preview` renders a LaTeX draft when the
-body carries `content_type: "text/x-latex"`.
+body carries `content_type: "text/x-latex"`. A paper bundle takes `edits` on its entry
+file through `POST /v1/artifacts/:id/versions` like a single file; one text file of any
+bundle is read and written by path at `GET`/`PUT /v1/artifacts/:id/files/*`, and a
+paper's bibliography as entries at `GET`/`PUT /v1/artifacts/:id/bib` (`ops` of
+`{ op: "set", key?, raw }` and `{ op: "delete", key }`). Each write publishes a new
+version of the bundle.
 
 Access checks are identical to the rendered artifact. A raw URL is not a bypass around a
 private artifact, password, workspace boundary, or link role.

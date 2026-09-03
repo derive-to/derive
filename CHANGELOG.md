@@ -28,6 +28,18 @@ for the recommended install and verification flow.
   environments degrade to their text, with the publish receipt listing what the renderer
   could not honour and, for acmart, packages outside ACM TAPS's accepted list.
   `\derivetable{name}` and `\derivefigure{name}` bind dynamic slots in LaTeX.
+- **Editing a paper on the page, and its bibliography.** A paper's prose, list items,
+  captions, headings, title and abstract are edited inline like any document, on a
+  single `.tex` file and on a paper bundle (the edit lands in `main.tex` and the bundle
+  republishes with its other files carried over); math, tables, images, footnotes,
+  theorem text, the author block, generated numbers and the reference list are marked
+  read-only by the renderer and refused by the page, and typeset math no longer counts
+  as text on either side, so a comment beside a formula keeps its anchor. The source
+  editor opens any text file of a paper bundle from its file chips, and a References
+  tab lists the `.bib` entries with a cited mark and adds, edits or removes them as
+  BibTeX, each save a new version (`GET`/`PUT /v1/artifacts/:id/bib`,
+  `GET`/`PUT /v1/artifacts/:id/files/*`). Agents see the bibliography and the cited
+  keys in `read` and are told to cite from it.
 - **Dynamic tables and figures.** An agent that refreshed a results table or a figure as
   runs landed had one write path: publish a version, so a day of refreshes was a day of
   versions with no prose change, and no way to update one cell in place. A document can
