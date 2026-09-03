@@ -5,8 +5,11 @@ import {
   bracketMatching,
   HighlightStyle,
   indentOnInput,
+  StreamLanguage,
   syntaxHighlighting,
 } from "@codemirror/language"
+// LaTeX has no Lezer grammar; the legacy stream mode is small and lives in this lazy chunk.
+import { stex } from "@codemirror/legacy-modes/mode/stex"
 import { EditorState, StateEffect } from "@codemirror/state"
 import {
   placeholder as cmPlaceholder,
@@ -51,7 +54,7 @@ export function CodeEditor({
   shortId,
 }: {
   value: string
-  format: "md" | "html"
+  format: "md" | "html" | "tex"
   onChange: (v: string) => void
   /** First-use hint shown in the empty editor (the /new flow); omitted when editing. */
   placeholder?: string
@@ -88,7 +91,7 @@ export function CodeEditor({
           bracketMatching(),
           syntaxHighlighting(tokenHighlight, { fallback: true }),
           keymap.of([...defaultKeymap, ...historyKeymap]),
-          format === "md" ? markdown() : html(),
+          format === "md" ? markdown() : format === "tex" ? StreamLanguage.define(stex) : html(),
           ...(placeholder ? [cmPlaceholder(placeholder)] : []),
           EditorView.lineWrapping,
           EditorView.updateListener.of((u) => {
