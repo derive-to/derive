@@ -18,7 +18,7 @@ what compiles, and it stays the source of truth.
 - **A paper bundle** is a zip (or an MCP `files` map) with `main.tex` at its root, plus the
   `.bib`, the sections it `\input`s, its figures and any class or style files. The entry
   is `main.tex` (else the shallowest `.tex`); relative paths resolve inside the bundle. The
-  artifact's type is `derive/latex`, shown as "Paper", and the viewer lists the files
+  artifact's type is `derive/latex`, shown as "LaTeX" as well, and the viewer lists the files
   beside the page.
 - **Figures** in a bundle are referenced by relative path (`\includegraphics{figures/teaser}`
   tries `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.svg`). In a single file, upload the image
@@ -33,7 +33,7 @@ artifact stays LaTeX.
 Two paper starters ship with Derive: **ACM SIGGRAPH** (acmart in the sigconf format,
 author-year citations; switch to `acmtog` for the journal track) and **CVPR** (the author
 kit's layout in review mode, numeric citations). On the Templates page, choose one under
-Papers: the New page opens with `main.tex` in the editor, and publishing creates a paper
+Academic: the New page opens with `main.tex` in the editor, and publishing creates a paper
 bundle with the `.bib`, a README and `derive.sty`. Both starters bind a `results` table
 and a `teaser` figure, seeded empty at publish, so the [dynamic data](dynamic-data.md)
 API works from the first version.

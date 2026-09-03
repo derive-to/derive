@@ -21,7 +21,7 @@ reading of the paper, and the LaTeX source stays what compiles.
   "figures/teaser.png": "asset:<sha256>" } })`. The root `main.tex` is the entry (else the
   shallowest `.tex`); `\input{sec/intro}`, `\bibliography{refs}` and
   `\includegraphics{figures/teaser}` resolve inside the bundle. Stored as `derive/latex`,
-  labelled "Paper". Upload figures with `stage({target:'asset'})` and reference them as
+  labelled "LaTeX" as well. Upload figures with `stage({target:'asset'})` and reference them as
   `asset:<sha>` in the map, the same as any bundle.
 - **Figures in a single file.** `\includegraphics{/blob/<sha256>.png}` with the URL an asset
   upload returns. PNG and JPEG only if the paper is meant to compile with pdfLaTeX later.
