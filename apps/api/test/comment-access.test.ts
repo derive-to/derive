@@ -525,3 +525,204 @@ describe("open_comment_count on the artifact detail", () => {
     expect(detail.open_comment_count).toBeUndefined()
   })
 })
+
+// Dynamic tables and figures follow PUBLISH access, not comment access: a cell is document
+// content, so whoever could republish the table may write it and nobody else can. The
+// agent-write switch binds here as it does on publish, and every write lands on the
+// current version with a compare-and-swap revision.
+describe("dynamic data follows publish access", () => {
+  const alice: TestUser = {
+    id: "u_dd_alice",
+    email: "alice@dd.test",
+    name: "Alice",
+    username: "alice-dd",
+  }
+  const bob: TestUser = { id: "u_dd_bob", email: "bob@dd.test", name: "Bob", username: "bob-dd" }
+  const dyn = makeAuthedApp("dynamic-data", [alice, bob], undefined, { isolated: true })
+
+  const setAccess = (shortId: string, linkRole: "viewer" | "commenter" | "editor") =>
+    dyn.app.request(`/v1/artifacts/${shortId}/access`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json", ...as(alice.email) },
+      body: JSON.stringify({ linkRole }),
+    })
+  const table = (rows: Record<string, string | number | null>[]) => ({
+    kind: "table",
+    table: { columns: [{ key: "model" }, { key: "acc" }], rows, key: "model" },
+  })
+  const put = (shortId: string, headers: Record<string, string>, body: unknown) =>
+    dyn.app.request(`/v1/artifacts/${shortId}/dynamic/results`, {
+      ...jsonAs(headers, body),
+      method: "PUT",
+    })
+  const patch = (shortId: string, headers: Record<string, string>, body: unknown) =>
+    dyn.app.request(`/v1/artifacts/${shortId}/dynamic/results`, {
+      ...jsonAs(headers, body),
+      method: "PATCH",
+    })
+  const seedArtifact = async () => {
+    await dyn.app.request("/v1/me", { headers: as(alice.email) })
+    const shortId = (
+      await (await publishAs(dyn.app, "<h1>results</h1>", {}, as(alice.email))).json()
+    ).short_id as string
+    expect(
+      (await put(shortId, as(alice.email), table([{ model: "base", acc: null }]))).status,
+    ).toBe(200)
+    return shortId
+  }
+
+  it("viewers and commenters read, only edit access writes, anonymous never writes", async () => {
+    const shortId = await seedArtifact()
+    const cell = { kind: "table", cells: [{ row: "base", col: "acc", value: 0.5 }] }
+
+    expect((await setAccess(shortId, "viewer")).ok).toBe(true)
+    const read = await dyn.app.request(`/v1/artifacts/${shortId}/dynamic/results?format=html`, {
+      headers: as(bob.email),
+    })
+    expect(read.status).toBe(200)
+    const body = await read.json()
+    expect(body).toMatchObject({ name: "results", kind: "table", revision: 1 })
+    expect(body.html).toContain("<td>--</td>")
+    expect((await patch(shortId, as(bob.email), cell)).status).toBe(403)
+
+    expect((await setAccess(shortId, "commenter")).ok).toBe(true)
+    expect((await patch(shortId, as(bob.email), cell)).status).toBe(403)
+
+    expect((await setAccess(shortId, "editor")).ok).toBe(true)
+    const written = await patch(shortId, as(bob.email), cell)
+    expect(written.status).toBe(200)
+    await expect(written.json()).resolves.toMatchObject({
+      revision: 2,
+      updated_by: { name: "Bob" },
+      value: { table: { rows: [{ model: "base", acc: 0.5 }] } },
+    })
+
+    // Anonymous writes are refused before routing; anonymous reads follow the link.
+    const anon = await dyn.app.request(`/v1/artifacts/${shortId}/dynamic/results`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(cell),
+    })
+    expect(anon.status).toBe(403)
+    expect((await dyn.app.request(`/v1/artifacts/${shortId}/dynamic`)).status).toBe(200)
+
+    const history = await (
+      await dyn.app.request(`/v1/artifacts/${shortId}/dynamic/results/history`, {
+        headers: as(alice.email),
+      })
+    ).json()
+    expect(history.revisions.map((r: { revision: number }) => r.revision)).toEqual([2, 1])
+  })
+
+  it("compare-and-swaps, refuses ambiguity, and bounds slots and bytes", async () => {
+    const shortId = await seedArtifact()
+    const stale = await patch(shortId, as(alice.email), {
+      kind: "table",
+      expected_revision: 0,
+      cells: [{ row: "base", col: "acc", value: 1 }],
+    })
+    expect(stale.status).toBe(409)
+    expect(
+      (
+        await patch(shortId, as(alice.email), {
+          kind: "table",
+          cells: [{ row: "nope", col: "acc", value: 1 }],
+        })
+      ).status,
+    ).toBe(400)
+    // A binding's kind belongs to the document: a figure cannot overwrite a table.
+    expect(
+      (await put(shortId, as(alice.email), { kind: "figure", figure: { url: null } })).status,
+    ).toBe(409)
+    // No slot yet: PATCH says so; PUT creates.
+    expect(
+      (
+        await dyn.app.request(`/v1/artifacts/${shortId}/dynamic/missing`, {
+          ...jsonAs(as(alice.email), { kind: "figure", figure: { url: null } }),
+          method: "PATCH",
+        })
+      ).status,
+    ).toBe(404)
+    for (let i = 1; i < 32; i++) {
+      const res = await dyn.app.request(`/v1/artifacts/${shortId}/dynamic/slot-${i}`, {
+        ...jsonAs(as(alice.email), { kind: "figure", figure: { url: null } }),
+        method: "PUT",
+      })
+      expect(res.status).toBe(200)
+    }
+    const overflow = await dyn.app.request(`/v1/artifacts/${shortId}/dynamic/one-more`, {
+      ...jsonAs(as(alice.email), { kind: "figure", figure: { url: null } }),
+      method: "PUT",
+    })
+    expect(overflow.status).toBe(413)
+    const big = table(
+      Array.from({ length: 9_000 }, (_, i) => ({ model: `m${i}`, acc: "x".repeat(60) })),
+    )
+    expect((await put(shortId, as(alice.email), big)).status).toBe(413)
+    const list = await (
+      await dyn.app.request(`/v1/artifacts/${shortId}/dynamic`, { headers: as(alice.email) })
+    ).json()
+    expect(list.slots).toHaveLength(32)
+    expect(
+      (
+        await dyn.app.request(`/v1/artifacts/${shortId}/dynamic/slot-1`, {
+          method: "DELETE",
+          headers: as(alice.email),
+        })
+      ).status,
+    ).toBe(200)
+  })
+
+  it("the agentWrites switch refuses an agent bearer's slot write; a person's own is untouched", async () => {
+    const shortId = await seedArtifact()
+    const created = await dyn.app.request(
+      "/v1/agents",
+      jsonAs(as(alice.email), { name: "Tracker", role: "editor" }),
+    )
+    expect(created.status).toBe(201)
+    const agent = (await created.json()) as { token: string }
+    const org = (await dyn.meta.getByShortId(shortId))?.org_id as string
+    const cell = { kind: "table", cells: [{ row: "base", col: "acc", value: 0.7 }] }
+    expect((await patch(shortId, bearer(agent.token), cell)).status).toBe(200)
+
+    await dyn.meta.setOrgSettings(org, {
+      ...(await dyn.meta.getOrgSettings(org)),
+      agentWrites: false,
+    })
+    const refused = await patch(shortId, bearer(agent.token), cell)
+    expect(refused.status).toBe(403)
+    expect(await refused.text()).toMatch(/agent writes switched off/i)
+    expect((await patch(shortId, as(alice.email), cell)).status).toBe(200)
+    await dyn.meta.setOrgSettings(org, {
+      ...(await dyn.meta.getOrgSettings(org)),
+      agentWrites: true,
+    })
+    expect((await patch(shortId, bearer(agent.token), cell)).status).toBe(200)
+  })
+
+  it("explains when a production-backed preview is waiting for the dynamic tables", async () => {
+    const shortId = await seedArtifact()
+    const missingSchema = new Proxy(dyn.meta, {
+      get(target, prop, receiver) {
+        if (prop === "listDynamicSlots")
+          return async () => {
+            throw Object.assign(new Error('relation "dynamic_slot" does not exist'), {
+              code: "42P01",
+            })
+          }
+        return Reflect.get(target, prop, receiver)
+      },
+    })
+    const { app: preview } = makeAuthedApp("dynamic-data-schema", [alice], undefined, {
+      isolated: true,
+      deps: { meta: missingSchema },
+    })
+    const response = await preview.request(`/v1/artifacts/${shortId}/dynamic`, {
+      headers: as(alice.email),
+    })
+    expect(response.status).toBe(503)
+    await expect(response.json()).resolves.toMatchObject({
+      code: "dynamic_data_schema_unavailable",
+    })
+  })
+})

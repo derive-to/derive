@@ -19,6 +19,11 @@ const DOMAIN_EVENTS = [
   // A mini-app interaction changed one persistent JSON collection. The value is
   // authoritative state (not identity/activity, which stays comment-gated).
   "artifact.state.updated",
+  // A dynamic table or figure slot of one version changed (or was deleted) without a
+  // new version. A wake signal only: it carries the slot name, kind, version and new
+  // revision (null on delete), and the host refetches the value it can see. Not
+  // webhook-eligible yet; the version-bump webhook remains the published record.
+  "artifact.dynamic.updated",
   "presence",
   "cursor",
   "notification",

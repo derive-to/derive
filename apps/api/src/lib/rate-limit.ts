@@ -55,6 +55,11 @@ export interface RateLimiters {
   write: Limiter
   publish: Limiter
   comment: Limiter
+  /** Dynamic table and figure writes (PUT/PATCH/DELETE on a slot). One request is a
+   *  whole batch of cells, so the lane is sized for an experiment loop landing results at
+   *  machine cadence, while a runaway agent still cannot rewrite a workspace's tables
+   *  hundreds of times a minute. Keyed by the acting identity. */
+  dynamic: Limiter
   unlock: Limiter
   /** Invite creation (workspace + artifact). Each request emails an arbitrary,
    *  possibly unwilling address with caller-influenced content (the artifact
@@ -95,7 +100,7 @@ export interface RateLimiters {
  * rates.
  */
 export function inMemoryRateLimiters(
-  opts: { publishRate?: number; commentRate?: number; askRate?: number } = {},
+  opts: { publishRate?: number; commentRate?: number; dynamicRate?: number; askRate?: number } = {},
 ): RateLimiters {
   return {
     auth: inMemoryLimiter(60_000, 20),
@@ -106,6 +111,9 @@ export function inMemoryRateLimiters(
     write: inMemoryLimiter(60_000, 120),
     publish: inMemoryLimiter(60_000, opts.publishRate ?? 30),
     comment: inMemoryLimiter(60_000, opts.commentRate ?? 60),
+    // 120 slot writes per minute per actor: a batch per request, so this is two writes
+    // a second sustained, far above any experiment tracker and far below a flood.
+    dynamic: inMemoryLimiter(60_000, opts.dynamicRate ?? 120),
     unlock: inMemoryLimiter(5 * 60_000, 5),
     // 10 invite emails per minute per actor: a whole team invited in one sitting
     // clears it; a spam cannon doesn't.
