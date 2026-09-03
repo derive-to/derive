@@ -17,7 +17,7 @@ for the recommended install and verification flow.
 ### Added
 - **Paper templates and "Download LaTeX source".** Two starters, ACM SIGGRAPH (acmart,
   sigconf, author-year citations) and CVPR (the author kit's layout in review mode), are
-  available on the Templates page, as `derive://latex/templates/<id>` MCP resources, at
+  available under Academic on the Templates page, as `derive://latex/templates/<id>` MCP resources, at
   `GET /v1/latex/templates/<id>` and through `derive init --template siggraph|cvpr`. Each
   publishes as a paper bundle with a `results` table and a `teaser` figure bound as
   dynamic slots. The CVPR kit's `cvpr.sty` and `ieeenat_fullname.bst` are fetched from a
@@ -29,7 +29,7 @@ for the recommended install and verification flow.
 - **LaTeX papers.** A `.tex` upload was typed as Markdown and rendered as escaped source.
   A paper now publishes as its LaTeX source, single file (`text/x-latex`, "LaTeX") or a
   bundle whose root holds `main.tex` beside its `.bib`, sections and figures
-  (`derive/latex`, "Paper"), and is read as a web page rendered from the source at serve
+  (`derive/latex`, also "LaTeX"), and is read as a web page rendered from the source at serve
   time: sections, prose, lists, tables, floats with numbered captions, footnotes, math
   typeset in the browser by KaTeX served from the instance's own copy, and citations
   resolved from BibTeX (or a compiled `.bbl`), printed as `[1]`, `[2]` with matching

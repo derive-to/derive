@@ -171,11 +171,11 @@ test.describe("templates, signed out", () => {
 })
 
 test.describe("paper starters", () => {
-  test("Start a paper opens the starter, publishes a paper bundle and offers its source zip", async ({
+  test("Make a copy of a starter opens it, publishes a paper bundle and offers its source zip", async ({
     owner: page,
   }) => {
     await page.goto("/templates")
-    const start = page.getByTestId("templates-paper-acm-siggraph")
+    const start = page.getByTestId("template-academic-copy-acm-siggraph")
     await expect(start).toBeVisible()
     await start.click()
     await expect(page).toHaveURL(/\/new\?start=acm-siggraph/)
@@ -184,7 +184,7 @@ test.describe("paper starters", () => {
     await page.getByTestId("artifact-title-input").fill("Starter paper")
     await page.getByTestId("artifact-publish-version").click()
     await expect(page).toHaveURL(/\/artifacts\//)
-    await expect(page.getByText(/Paper · v1/)).toBeVisible()
+    await expect(page.getByText(/LaTeX · v1/)).toBeVisible()
 
     // The More menu offers the source zip, which carries the starter and its data fragments.
     await page.getByTestId("artifact-more").click()
