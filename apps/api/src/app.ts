@@ -32,6 +32,7 @@ import { conciergeRoutes } from "./routes/concierge"
 import { connectionRoutes } from "./routes/connections"
 import { contextRoutes } from "./routes/contexts"
 import { domainRoutes } from "./routes/domains"
+import { dynamicDataRoutes } from "./routes/dynamic-data"
 import { embedRoutes } from "./routes/embeds"
 import { exportRoutes } from "./routes/exports"
 import { favoriteRoutes } from "./routes/favorites"
@@ -151,6 +152,13 @@ export function createApp(deps: AppDeps): Hono {
     if (sharedStatePath && isMissingTable(err, ["shared_state", "shared_state_activity"]))
       return fail(c, 503, "shared state is waiting for the database update", {
         code: "shared_state_schema_unavailable",
+      })
+    const dynamicPath = /^\/v1\/artifacts\/[^/]+\/dynamic(?:\/[^/]+(?:\/history)?)?$/.test(
+      c.req.path,
+    )
+    if (dynamicPath && isMissingTable(err, ["dynamic_slot", "dynamic_revision"]))
+      return fail(c, 503, "dynamic tables and figures are waiting for the database update", {
+        code: "dynamic_data_schema_unavailable",
       })
     log.error("unhandled error", {
       method: c.req.method,
@@ -436,6 +444,7 @@ export function createApp(deps: AppDeps): Hono {
     agentRoutes,
     artifactRoutes,
     sharedStateRoutes,
+    dynamicDataRoutes,
     assetRoutes,
     exportRoutes,
     attributionRoutes,
