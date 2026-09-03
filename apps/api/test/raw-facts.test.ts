@@ -396,6 +396,42 @@ describe("dynamic slots follow the version boundary", () => {
     })
   })
 
+  it("serves each version's own data on its page and over the raw JSON route, never cached past a request", async () => {
+    const a = await (await publishMd(MD("--"))).json()
+    expect((await setCell(a.short_id, 0.5)).status).toBe(200)
+    await publishMd(MD("--", "\nv2\n"), a.short_id)
+    expect((await setCell(a.short_id, 0.9)).status).toBe(200)
+
+    const v1 = await app.request(`/raw/${a.short_id}/v/1/index.html`, { headers: TOKEN })
+    expect(v1.status).toBe(200)
+    expect(v1.headers.get("cache-control")).toBe("private, no-cache")
+    const v1Body = await v1.text()
+    expect(v1Body).toContain("<td>0.5</td>")
+    expect(v1Body).toContain("/raw/derive-dynamic.js")
+    const v2 = await app.request(`/raw/${a.short_id}/v/2/index.html`, { headers: TOKEN })
+    expect(await v2.text()).toContain("<td>0.9</td>")
+
+    const alias = await app.request(`/raw/${a.short_id}/dynamic/results.json`, { headers: TOKEN })
+    expect(alias.status).toBe(200)
+    expect(alias.headers.get("access-control-allow-origin")).toBe("*")
+    expect(alias.headers.get("cache-control")).toBe("private, no-cache")
+    await expect(alias.json()).resolves.toMatchObject({
+      name: "results",
+      kind: "table",
+      version: 2,
+      revision: 1,
+      value: { table: { rows: [{ model: "base", acc: 0.9 }] } },
+    })
+    const pinned = await app.request(`/raw/${a.short_id}/v/1/dynamic/results`, { headers: TOKEN })
+    expect(pinned.headers.get("cache-control")).toBe("private, no-cache")
+    await expect(pinned.json()).resolves.toMatchObject({ version: 1, revision: 1 })
+    // Anonymous on a gated artifact: nothing, not even existence.
+    expect((await app.request(`/raw/${a.short_id}/dynamic/results.json`)).status).toBe(404)
+    const runtime = await app.request("/raw/derive-dynamic.js")
+    expect(runtime.headers.get("content-type")).toContain("text/javascript")
+    expect(await runtime.text()).toContain("dynamic-updated")
+  })
+
   it("keeps a non-current version's slots behind the public-history gate", async () => {
     const a = await (await publishMd(MD("--"))).json()
     await publishMd(MD("--", "\nv2\n"), a.short_id)
