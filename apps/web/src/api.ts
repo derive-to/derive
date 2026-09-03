@@ -139,6 +139,31 @@ export type VersionSession = components["schemas"]["VersionSession"]
  *  from the OpenAPI spec (apps/api/openapi.json). `my_role` is `Role | null`;
  *  workspace_access/link_role/listed are the v2 access enums (see access-model.md). */
 export type Artifact = components["schemas"]["Artifact"]
+
+/** One text file of a bundle, read or written by path (routes/paper-files.ts). */
+export interface BundleFile {
+  path: string
+  source: string
+  version: number
+}
+/** A paper's bibliography entry, with its verbatim BibTeX for editing as a unit. */
+export interface BibEntry {
+  key: string
+  type: string
+  fields: Record<string, string>
+  line: number
+  raw: string
+}
+export interface Bibliography {
+  version: number
+  path: string
+  entries: BibEntry[]
+  /** Keys the paper cites, in first-cited order. */
+  cited: string[]
+  diagnostics: { code: string; message: string; line: number }[]
+}
+/** One change to the .bib: a complete entry over `key` (or appended), or a removal. */
+export type BibOp = { op: "set"; key?: string; raw: string } | { op: "delete"; key: string }
 export type WorkflowRunSummary =
   paths["/v1/artifacts/{shortId}/workflow-runs"]["get"]["responses"][200]["content"]["application/json"]["runs"][number]
 /** An abuse report against an artifact. Generated from the OpenAPI spec. */
@@ -929,6 +954,31 @@ export const api = {
       ...opts(input),
       method: "PUT",
     }).then(j),
+  // One file of a paper bundle (main.tex, refs.bib, an \input section) and the paper's
+  // bibliography as entries; each write republishes the bundle as a new version.
+  bundleFile: (shortId: string, path: string, v?: number): Promise<BundleFile> =>
+    f(
+      `/v1/artifacts/${encodeURIComponent(shortId)}/files/${path.split("/").map(encodeURIComponent).join("/")}${v ? `?v=${v}` : ""}`,
+      opts(),
+    ).then(j),
+  publishBundleFile: (
+    shortId: string,
+    path: string,
+    input: { source: string; base_version: number; message?: string; title?: string },
+  ): Promise<Artifact & { file: { path: string; version: number } }> =>
+    f(
+      `/v1/artifacts/${encodeURIComponent(shortId)}/files/${path.split("/").map(encodeURIComponent).join("/")}`,
+      { ...opts(input), method: "PUT" },
+    ).then(j),
+  bib: (shortId: string, v?: number): Promise<Bibliography> =>
+    f(`/v1/artifacts/${encodeURIComponent(shortId)}/bib${v ? `?v=${v}` : ""}`, opts()).then(j),
+  putBib: (
+    shortId: string,
+    input: { base_version: number; ops: BibOp[]; message?: string },
+  ): Promise<Artifact & { bib: Bibliography }> =>
+    f(`/v1/artifacts/${encodeURIComponent(shortId)}/bib`, { ...opts(input), method: "PUT" }).then(
+      j,
+    ),
   artifactSkills: (shortId: string): Promise<ArtifactSkills> =>
     f(`/v1/artifacts/${encodeURIComponent(shortId)}/skills`, opts()).then(j),
   // The batched boot read: exactly the four bodies below (tags summary, collections,

@@ -7,11 +7,16 @@ import type { Artifact } from "@/api"
 export const canPublishArtifact = (a: Artifact): boolean =>
   (a.my_role === "editor" || a.my_role === "owner") && !a.locked
 
+/** A paper bundle: main.tex beside its .bib, sections and figures. The string mirrors
+ *  @derive/core LATEX_BUNDLE_CONTENT_TYPE (the web imports core types only). */
+export const isPaperBundle = (a: Artifact | undefined): boolean =>
+  a?.kind === "bundle" && a.current_content_type === "derive/latex"
+
 /** The ONE eligibility base every manual-edit affordance shares — the inline mode,
  *  the in-document gesture that opens it, and the raw source editor: a single file
- *  at its current version that this viewer can PUBLISH to (editing is publishing;
- *  a commenter suggests changes in comments instead), unlocked, with no source
- *  editor already open. Kept here rather
+ *  (or a paper bundle, whose entry file takes the edit) at its current version that
+ *  this viewer can PUBLISH to (editing is publishing; a commenter suggests changes in
+ *  comments instead), unlocked, with no source editor already open. Kept here rather
  *  than inline on the page because the page and the frame's arming decide it at
  *  different points in the render, and a new rule must land in both. */
 export const canEditArtifactDoc = (
@@ -20,7 +25,7 @@ export const canEditArtifactDoc = (
   sourceEditorOpen: boolean,
 ): boolean =>
   !!a &&
-  a.kind === "file" &&
+  (a.kind === "file" || isPaperBundle(a)) &&
   shownVersion === a.current_version &&
   (a.my_role === "editor" || a.my_role === "owner") &&
   !a.locked &&
@@ -42,7 +47,7 @@ export const formatOf = (a: Artifact): "md" | "html" | "tex" => {
   const ct = a.versions.find((v) => v.n === a.current_version)?.content_type
   if (ct === "text/markdown") return "md"
   // Mirrored from @derive/core LATEX_CONTENT_TYPE (the web imports core types only).
-  if (ct === "text/x-latex") return "tex"
+  if (ct === "text/x-latex" || ct === "derive/latex") return "tex"
   return "html"
 }
 

@@ -1,8 +1,8 @@
 import { useQueryClient } from "@tanstack/react-query"
-import type { Dispatch, SetStateAction } from "react"
+import { type Dispatch, type SetStateAction, useRef } from "react"
 import { type Artifact, api, type Comment, type Mention } from "@/api"
 import { toast } from "@/components/ui/sonner"
-import { formatOf } from "@/lib/artifact"
+import { formatOf, isPaperBundle } from "@/lib/artifact"
 import { copyText } from "@/lib/clipboard"
 import { commentsQuery } from "@/lib/queries"
 import { snapshot, useApiMutation } from "@/lib/use-api-mutation"
@@ -55,13 +55,20 @@ export function useArtifactActions(p: {
   const qc = useQueryClient()
   const commentsKey = commentsQuery(shortId).queryKey
 
-  const startEdit = async () => {
+  // A paper bundle edits one file at a time: the entry (main.tex) by default, or the
+  // file a bundle-bar chip named. The path is remembered for the publish that follows.
+  const editPath = useRef<string | null>(null)
+  const startEdit = async (path?: string) => {
     // Load the source BEFORE opening the editor: if the fetch fails, opening an empty editor
     // over existing content lets Publish overwrite it with blank. Load first, open on success.
     try {
-      const src = p.art?.bundle?.isSkill
-        ? (await api.skillSource(shortId)).source
-        : await api.getContent(shortId)
+      const paperFile = isPaperBundle(p.art) ? (path ?? p.art?.bundle?.entry ?? null) : null
+      editPath.current = paperFile
+      const src = paperFile
+        ? (await api.bundleFile(shortId, paperFile)).source
+        : p.art?.bundle?.isSkill
+          ? (await api.skillSource(shortId)).source
+          : await api.getContent(shortId)
       p.setTitle(p.art?.title ?? "")
       p.setSrc(src)
       p.setEditing(true)
@@ -77,6 +84,13 @@ export function useArtifactActions(p: {
       // Only ever invoked from the loaded workbench, so `art` is present — the guard
       // encodes that invariant for the type system (mirrors useArtifactRoute's `!art`).
       if (!p.art) throw new Error("publish fired before the artifact loaded")
+      if (editPath.current)
+        return api.publishBundleFile(shortId, editPath.current, {
+          source: p.src,
+          base_version: p.art.current_version,
+          message: p.message.trim() || `Edited ${editPath.current} in browser`,
+          ...(p.title.trim() ? { title: p.title.trim() } : {}),
+        })
       if (p.art.bundle?.isSkill)
         return api.publishSkillSource(shortId, {
           source: p.src,

@@ -10,12 +10,19 @@ import { Button } from "@/components/ui/button"
 import { Kbd } from "@/components/ui/kbd"
 import { toast } from "@/components/ui/sonner"
 import { useAuth } from "@/ctx"
-import { artifactTypeLabel, canEditArtifactDoc, canPublishArtifact, formatOf } from "@/lib/artifact"
+import {
+  artifactTypeLabel,
+  canEditArtifactDoc,
+  canPublishArtifact,
+  formatOf,
+  isPaperBundle,
+} from "@/lib/artifact"
 import { guestPresenceId } from "@/lib/guest-id"
 import { bareHotkey } from "@/lib/hotkey"
 import {
   artifactAgentsQuery,
   artifactQuery,
+  bibQuery,
   commentsQuery,
   dynamicSlotsQuery,
   rawArtifactUrl,
@@ -68,6 +75,7 @@ import { parseRef, refFor } from "./parse-ref"
 import { PasswordGate } from "./password-gate"
 import { PublicViewer } from "./public-viewer"
 import { Presence } from "./rail-deck"
+import { ReferencesPanel } from "./references-panel"
 import { runtimeDiagnosticFor } from "./render-stage"
 import type { ArtifactSearch } from "./route-config"
 import { SharedStateAuthDialog } from "./shared-state-auth-dialog"
@@ -777,7 +785,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
       art?.current_content_type === "text/x-derive-deck" ||
       art?.current_content_type === "text/x-derive-video" ||
       art?.current_content_type === "text/x-derive-linked-bundle",
-    onOpenSourceEditor: startEdit,
+    onOpenSourceEditor: () => startEdit(),
     onEnter: () => {
       setSel(null)
       setComposer(null)
@@ -922,6 +930,12 @@ export function Artifact({ template = false }: { template?: boolean }) {
     ...dynamicSlotsQuery(shortId, shownVersion),
     enabled: shownVersion > 0,
   })
+  // A paper bundle's bibliography drives the References rail; a 404 (no .bib) leaves
+  // the tab out rather than showing an empty panel.
+  const bibQ = useQuery({
+    ...bibQuery(shortId, shownVersion),
+    enabled: shownVersion > 0 && isPaperBundle(art),
+  })
 
   if (locked) return <PasswordGate shortId={shortId} onUnlocked={() => refetch()} />
   // `failed && !art`: only show the full error page when there's NO artifact to show. A
@@ -967,6 +981,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
   const shown = version ?? inlineEdit.frozenVersion ?? art.current_version
   const dynamicSlots = dynamicQ.data?.slots ?? []
   const dataEnabled = dynamicSlots.length > 0
+  const referencesEnabled = isPaperBundle(art) && !!bibQ.data
   const pinnedForShown =
     pinnedRawToken.current?.shortId === shortId && pinnedRawToken.current.version === shown
   // A background failure may leave old metadata available, but an expired capability
@@ -1500,7 +1515,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
               }
               onInsights={() => setSurface("insights")}
               onHistory={() => setSurface("history")}
-              onStartEdit={startEdit}
+              onStartEdit={() => startEdit()}
               onToggleComments={() => setPanel((pn) => (pn === "open" ? "hidden" : "open"))}
               onFocus={() => setFocus(true)}
               onCopy={() => copyMut.mutate()}
@@ -1546,7 +1561,9 @@ export function Artifact({ template = false }: { template?: boolean }) {
                 bundle={art.bundle}
                 shortId={shortId}
                 version={shown}
-                onEdit={canEditSkill ? startEdit : undefined}
+                onEdit={canEditSkill ? () => startEdit() : undefined}
+                // A paper's sections, .bib and style files open in the source editor.
+                onEditFile={canEditDoc && isPaperBundle(art) ? startEdit : undefined}
               />
             )}
             {/* Inline edit mode's one piece of chrome: a slim band above the document
@@ -1632,7 +1649,9 @@ export function Artifact({ template = false }: { template?: boolean }) {
           {!focus && commentsAvailable && (
             <ArtifactComments
               rail={
-                (mapEnabled || rail !== "map") && (dataEnabled || rail !== "data")
+                (mapEnabled || rail !== "map") &&
+                (dataEnabled || rail !== "data") &&
+                (referencesEnabled || rail !== "references")
                   ? rail
                   : "comments"
               }
@@ -1647,6 +1666,18 @@ export function Artifact({ template = false }: { template?: boolean }) {
                     slots={dynamicSlots}
                     error={dynamicQ.isError}
                     canPublish={effectiveCanPublish}
+                  />
+                ) : undefined
+              }
+              referencesEnabled={referencesEnabled}
+              referencesPanel={
+                referencesEnabled && bibQ.data ? (
+                  <ReferencesPanel
+                    shortId={shortId}
+                    bib={bibQ.data}
+                    baseVersion={art.current_version}
+                    // Edits are to the current version only, like the source editor.
+                    canPublish={effectiveCanPublish && shown === art.current_version}
                   />
                 ) : undefined
               }

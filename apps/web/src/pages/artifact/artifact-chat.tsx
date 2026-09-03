@@ -65,12 +65,13 @@ export function ArtifactChat(props: {
  * default reading companion, the one stream of threads and changes. Chat is optional per
  * workspace, and Inspect is optional per artifact + role — neither gets to become a
  * parallel primary surface. */
-export type RailTab = "comments" | "map" | "data" | "chat" | "inspect"
+export type RailTab = "comments" | "map" | "data" | "references" | "chat" | "inspect"
 
 const RAIL_LABEL: Record<RailTab, string> = {
   comments: "Activity",
   map: "Map",
   data: "Data",
+  references: "References",
   chat: "Chat",
   inspect: "Inspect",
 }
@@ -85,6 +86,8 @@ export function RailTabs(props: {
   mapEnabled?: boolean
   /** The version binds dynamic tables or figures: show the Data tab. */
   dataEnabled?: boolean
+  /** A paper bundle with a .bib: show the References tab. */
+  referencesEnabled?: boolean
   chatEnabled?: boolean
   inspectEnabled?: boolean
 }) {
@@ -94,6 +97,7 @@ export function RailTabs(props: {
     onTab,
     mapEnabled = false,
     dataEnabled = false,
+    referencesEnabled = false,
     chatEnabled = false,
     inspectEnabled = false,
   } = props
@@ -101,6 +105,7 @@ export function RailTabs(props: {
     "comments",
     ...(mapEnabled ? (["map"] as const) : []),
     ...(dataEnabled ? (["data"] as const) : []),
+    ...(referencesEnabled ? (["references"] as const) : []),
     ...(chatEnabled ? (["chat"] as const) : []),
     ...(inspectEnabled ? (["inspect"] as const) : []),
   ]
