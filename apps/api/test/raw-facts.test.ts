@@ -511,3 +511,47 @@ describe("the KaTeX vendor route", () => {
     expect(KATEX_VERSION).toBe(pkg.version)
   })
 })
+
+describe("dynamic slots seed from LaTeX papers", () => {
+  const TOKEN = { authorization: "Bearer tok" }
+  const TEX =
+    "\\documentclass{article}\\begin{document}\\begin{table}\\caption{R}\\derivetable{results}\\end{table}\\begin{figure}\\derivefigure{teaser}\\end{figure}\\end{document}"
+  const publishFile = (name: string, bytes: Uint8Array) => {
+    const form = new FormData()
+    form.append("file", new Blob([bytes as BlobPart]), name)
+    return app.request("/v1/artifacts", { method: "POST", body: form, headers: TOKEN })
+  }
+  const slots = async (shortId: string) =>
+    (
+      (await (
+        await app.request(`/v1/artifacts/${shortId}/dynamic`, { headers: TOKEN })
+      ).json()) as {
+        slots: { name: string; kind: string; revision: number }[]
+      }
+    ).slots.map((s) => [s.name, s.kind, s.revision])
+
+  it("seeds a single .tex file's bindings as empty slots", async () => {
+    const a = await (await publishFile("paper.tex", enc(TEX))).json()
+    expect(a.current_content_type).toBe("text/x-latex")
+    expect((await slots(a.short_id)).sort()).toEqual([
+      ["results", "table", 0],
+      ["teaser", "figure", 0],
+    ])
+    const page = await (
+      await app.request(`/raw/${a.short_id}/v/1/index.html`, { headers: TOKEN })
+    ).text()
+    expect(page).toContain('data-derive-table="results"')
+    expect(page).toContain("/raw/derive-dynamic.js")
+  })
+
+  it("seeds a paper bundle's bindings from its entry", async () => {
+    const { zipSync } = await import("fflate")
+    const zip = zipSync({ "main.tex": enc(TEX), "refs.bib": enc("@misc{k, title={T}}") })
+    const a = await (await publishFile("paper.zip", zip)).json()
+    expect(a.current_content_type).toBe("derive/latex")
+    expect((await slots(a.short_id)).sort()).toEqual([
+      ["results", "table", 0],
+      ["teaser", "figure", 0],
+    ])
+  })
+})

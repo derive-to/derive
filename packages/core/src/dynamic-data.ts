@@ -17,8 +17,9 @@
  */
 import { decodeHTML } from "entities"
 import { marked } from "marked"
-import { isHtmlLike, isMarkdownLike } from "./content-types"
+import { isHtmlLike, isLatexLike, isMarkdownLike } from "./content-types"
 import { attrValue, elementEnd, type HtmlTag, tags } from "./html-tags"
+import { latexDynamicBindings } from "./latex-dynamic"
 
 /** Same grammar as facts: lowercase, never silently normalized. A string, not a RegExp,
  *  so the injected client can rebuild it and refuse the same names the server refuses. */
@@ -534,6 +535,12 @@ export const parseDynamicBindings = (source: string, contentType: string): Dynam
       advisories.push(`Dynamic ${kind} "${name}" seeds empty: ${seed}.`)
       bindings.push({ name, kind, seed: null })
     } else bindings.push({ name, kind, seed })
+  }
+  if (isLatexLike(contentType)) {
+    // \derivetable{name} / \derivefigure{name}: no inline seed in LaTeX (the macro's
+    // optional argument is layout, not data), so a new name starts empty.
+    for (const b of latexDynamicBindings(source)) add(b.name, b.kind, emptyDynamicValue(b.kind))
+    return { bindings, advisories }
   }
   if (isMarkdownLike(contentType)) {
     const walk = (tokens: MarkdownCodeToken[]) => {

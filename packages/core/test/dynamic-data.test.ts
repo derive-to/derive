@@ -349,3 +349,28 @@ describe("the in-frame client", () => {
     expect(bound.innerHTML).toBe("<tr><td>old</td></tr>")
   })
 })
+
+describe("parseDynamicBindings — LaTeX", () => {
+  it("reads \\derivetable and \\derivefigure, empty seeds, first name wins, names validated", () => {
+    const tex = [
+      "\\documentclass{article}\\begin{document}",
+      "\\begin{table}\\derivetable{results}\\end{table}",
+      "\\begin{figure}\\derivefigure[width=\\linewidth]{teaser}\\end{figure}",
+      "\\derivetable{results}",
+      "\\derivetable{Bad_Name}",
+      "\\end{document}",
+    ].join("\n")
+    const { bindings, advisories } = parseDynamicBindings(tex, "text/x-latex; charset=utf-8")
+    expect(bindings).toEqual([
+      {
+        name: "results",
+        kind: "table",
+        seed: { kind: "table", table: { columns: [{ key: "value" }], rows: [] } },
+      },
+      { name: "teaser", kind: "figure", seed: { kind: "figure", figure: { url: null } } },
+    ])
+    expect(advisories).toEqual([
+      'Dynamic table "Bad_Name" was ignored: names are lowercase letters, digits and dashes.',
+    ])
+  })
+})

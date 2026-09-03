@@ -22,6 +22,8 @@ import {
   isBundleContentType,
   isHtmlLike,
   isLatexLike,
+  LATEX_BUNDLE_CONTENT_TYPE,
+  LATEX_CONTENT_TYPE,
   type MetaStore,
   type NewVersionData,
   newId,
@@ -425,10 +427,23 @@ const seedDynamicSlots = async (
   seedFrom: number | undefined,
   preparedSource?: string,
 ): Promise<void> => {
-  const ct = version.content_type
-  // Bundles carry no bindings (their blob is a manifest), so skip the blob read entirely.
-  if (isBundleContentType(ct)) return
+  let ct = version.content_type
   let source = preparedSource
+  if (ct === LATEX_BUNDLE_CONTENT_TYPE) {
+    // A paper bundle binds through its entry (main.tex): read that file. Bindings inside
+    // an \input'd section are not seen here; the page still renders them as empty slots.
+    const manifestBytes = await blobs.get(version.blob_key)
+    if (!manifestBytes) return
+    const manifest = JSON.parse(new TextDecoder().decode(manifestBytes)) as BundleManifest
+    const entry = manifest.files[manifest.entry]
+    const bytes = entry ? await blobs.get(entry.key) : null
+    if (!bytes) return
+    source = new TextDecoder().decode(bytes)
+    ct = LATEX_CONTENT_TYPE
+  } else if (isBundleContentType(ct)) {
+    // Other bundles carry no bindings (their blob is a manifest), so skip the blob read.
+    return
+  }
   if (source === undefined) {
     const bytes = await blobs.get(version.blob_key)
     if (!bytes) return
