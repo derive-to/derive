@@ -507,6 +507,14 @@ export type SessionState = Session["state"]
 export type TemplateLibrary = components["schemas"]["TemplateLibrary"]
 export type TemplateLibraryEntry = components["schemas"]["TemplateLibraryEntry"]
 export type TemplateArtifact = components["schemas"]["TemplateArtifact"]
+// Mirrored from @derive/core LATEX_TEMPLATE_IDS (the web imports core types only).
+export type LatexTemplateId = "acm-siggraph" | "cvpr"
+export type LatexTemplateSummary = { id: LatexTemplateId; label: string; description: string }
+export type LatexTemplateBundle = LatexTemplateSummary & {
+  entry: string
+  files: Record<string, string>
+  notes: string[]
+}
 export type TemplateLibraryScope = TemplateLibrary["scope"]
 /** A live viewer of an artifact (presence). Identified by a handle-style `name`
  *  (never email — presence is broadcast to anonymous co-viewers); `role` is their
@@ -1701,6 +1709,17 @@ export const api = {
   // starters. MCP reads the same records as resources and keeps using publish.
   // The template shelf: artifacts tagged `template`, the active workspace's first, then
   // the world's public ones. Starting from one is the ordinary copy (`deriveArtifact`).
+  // The paper starters: what the Templates page lists, and one starter's files map the New
+  // page publishes as a bundle. The CVPR map carries the author kit's style files when the
+  // server could fetch them; `notes` says when it could not.
+  latexTemplates: (): Promise<{ templates: LatexTemplateSummary[] }> =>
+    f("/v1/latex/templates", opts()).then(j),
+  latexTemplate: (id: LatexTemplateId): Promise<LatexTemplateBundle> =>
+    f(`/v1/latex/templates/${encodeURIComponent(id)}`, opts()).then(j),
+  // "Download LaTeX source": a plain navigation to the authenticated route, so the browser
+  // saves the zip the way it saves any download.
+  sourceZipUrl: (id: string, v?: number): string =>
+    `${API_BASE}/v1/artifacts/${encodeURIComponent(id)}/source.zip${v ? `?v=${v}` : ""}`,
   listTemplates: (): Promise<{ templates: TemplateArtifact[] }> =>
     f("/v1/templates", { credentials: "include" }).then(j),
   listTemplateLibraries: (
