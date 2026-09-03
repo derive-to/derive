@@ -1,8 +1,11 @@
 import {
   ANCHOR_CLIENT_JS,
   type ArtifactRecord,
+  DYNAMIC_DATA_CLIENT_JS,
+  type DynamicSlotRecord,
   hasArtifactStanding,
   isDerivedFactName,
+  isDynamicName,
   SHARED_STATE_CLIENT_JS,
 } from "@derive/core"
 import type { Context } from "hono"
@@ -55,6 +58,16 @@ export const rawRoutes = (ctx: AppContext) => {
   // the same reason as the anchor client: published HTML is immutable, runtimes are not.
   app.get("/raw/derive-shared.js", (c) =>
     c.body(SHARED_STATE_CLIENT_JS, 200, {
+      "Content-Type": "text/javascript; charset=utf-8",
+      "Cache-Control": "public, max-age=300",
+    }),
+  )
+
+  // The dynamic-data runtime: swaps a bound table or figure in place when the host
+  // relays an update. Injected only into pages that bind a slot; short-cached like its
+  // siblings.
+  app.get("/raw/derive-dynamic.js", (c) =>
+    c.body(DYNAMIC_DATA_CLIENT_JS, 200, {
       "Content-Type": "text/javascript; charset=utf-8",
       "Cache-Control": "public, max-age=300",
     }),
@@ -162,6 +175,48 @@ export const rawRoutes = (ctx: AppContext) => {
     serveSlot(c, c.req.param("shortId"), null, c.req.param("slot")),
   )
 
+  // A dynamic table or figure slot as JSON, for a page that reads its own data and for
+  // anything that is not an MCP client. Same gates as a fact slot; unlike a fact it
+  // CHANGES within a version, so even the pinned form is never cached as immutable.
+  const serveDynamic = async (c: Context, shortId: string, n: number | null, nameRaw: string) => {
+    const name = nameRaw.replace(/\.json$/i, "")
+    if (!isDynamicName(name)) return fail(c, 400, "invalid dynamic slot name")
+    const artifact = await meta.getByShortId(shortId)
+    if (!artifact) return fail(c, 404, "not found")
+    if (artifact.removed_at) return fail(c, 410, TOMBSTONE)
+    const v = n ?? artifact.current_version
+    if (!Number.isInteger(v) || v < 1 || v > artifact.current_version)
+      return fail(c, 404, `no version ${v}`)
+    if (!(await authorize(c, "read", artifact))) return fail(c, 404, "not found")
+    if (await privateHistoryBlocked(c, artifact, v)) return fail(c, 404, "not found")
+    const row = await meta.getDynamicSlot(artifact.id, v, name)
+    if (!row) return fail(c, 404, `no dynamic slot "${name}" in v${v}`)
+    log.info("dynamic_read", { name, kind: row.kind, surface: "raw" })
+    return c.body(
+      JSON.stringify({
+        name: row.name,
+        kind: row.kind,
+        version: row.n,
+        revision: row.revision,
+        updated_at: row.updated_at,
+        value: safeJson(row.json),
+      }),
+      200,
+      {
+        "Content-Type": "application/json; charset=utf-8",
+        "Cache-Control": slotCache(artifact, "no-cache"),
+        "X-Content-Type-Options": "nosniff",
+        ...SLOT_CORS,
+      },
+    )
+  }
+  app.get("/raw/:shortId/v/:n/dynamic/:name", (c) =>
+    serveDynamic(c, c.req.param("shortId"), Number(c.req.param("n")), c.req.param("name")),
+  )
+  app.get("/raw/:shortId/dynamic/:name", (c) =>
+    serveDynamic(c, c.req.param("shortId"), null, c.req.param("name")),
+  )
+
   // Shared by both entry points below (cookie-authorized and token-authorized): once
   // `artifact` is known readable, serve version `n` under `prefix`. `prefix` carries
   // whatever the entry point needs relative asset references to inherit — for the
@@ -180,6 +235,22 @@ export const rawRoutes = (ctx: AppContext) => {
   //
   // Password-locked artifacts keep no-store: the lock is a per-view challenge, and
   // "cached until the token expires" is not the semantic anyone expects from it.
+  // A version that binds a dynamic slot is no longer immutable bytes: its table cells
+  // and figure images change without a new version, so it must not sit in any cache
+  // past the next request. `private` still keeps a gated artifact out of shared caches.
+  const mutableCache = (a: ArtifactRecord): string =>
+    a.link_role !== "none" && !a.password_hash ? "no-cache" : "private, no-cache"
+  // Fail-soft: a page view never fails on dynamic data. A missing table (a preview deploy
+  // ahead of its DDL) or a store hiccup renders the authored placeholder instead.
+  const dynamicSlotsOf = async (artifactId: string, n: number): Promise<DynamicSlotRecord[]> => {
+    try {
+      return await meta.listDynamicSlots(artifactId, n)
+    } catch (err) {
+      log.warn("dynamic slots unavailable for serve", { artifact: artifactId, n, err: String(err) })
+      return []
+    }
+  }
+
   const tokenRouteCache = (a: ArtifactRecord): string =>
     a.password_hash
       ? "private, no-store"
@@ -198,6 +269,7 @@ export const rawRoutes = (ctx: AppContext) => {
     const version = await meta.getVersion(artifact.id, n)
     if (!version) return c.text("not found", 404)
     const path = decodeURIComponent(c.req.path.slice(prefix.length))
+    const dynamic = await dynamicSlotsOf(artifact.id, n)
     return serveContent(
       c,
       blobs,
@@ -205,12 +277,18 @@ export const rawRoutes = (ctx: AppContext) => {
       artifact.title,
       prefix,
       path,
-      cacheControl ?? cacheControlFor(artifact.link_role, !!artifact.password_hash),
+      dynamic.length
+        ? mutableCache(artifact)
+        : (cacheControl ?? cacheControlFor(artifact.link_role, !!artifact.password_hash)),
       // Self-heal: this view just proved the bytes are HTML under a markdown label.
       // Fix the stored type off the hot path (waitUntil on edge, inline in tests) so
       // every view repairs it — the publish-time sniff stops new ones, this drains
       // the backlog as artifacts are opened, with no manual maintenance step needed.
       () => background(meta.reclassifyVersion(artifact.id, n, "text/html")),
+      undefined,
+      undefined,
+      "",
+      dynamic,
     )
   }
 
