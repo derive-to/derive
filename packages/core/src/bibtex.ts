@@ -19,6 +19,11 @@ export interface BibEntry {
   key: string
   fields: Record<string, string>
   line: number
+  /** Where the entry sits in the file: the `@`, and the offset after its closing bracket. */
+  start: number
+  end: number
+  /** The entry's own text, `@type{key, ...}` verbatim, so it can be edited as a unit. */
+  raw: string
 }
 
 export interface BibDiagnostic {
@@ -32,6 +37,14 @@ export interface ParsedBibtex {
   strings: Record<string, string>
   preambles: string[]
   diagnostics: BibDiagnostic[]
+  /** Keys that appear more than once; only the first occurrence is in `entries`. */
+  duplicates: string[]
+}
+
+export interface ParseBibtexOptions {
+  /** `@string` macros already defined elsewhere (another file, or the file an entry is
+   *  being added to), by lower-cased name. */
+  strings?: Record<string, string>
 }
 
 const MONTHS: Record<string, string> = {
@@ -53,12 +66,13 @@ const NAME_TOKEN = /^[A-Za-z0-9_:.+/-]+/
 
 /** Parse a `.bib` file. Never throws; a malformed entry becomes a diagnostic and the
  *  reader resumes at the next `@`. */
-export const parseBibtex = (source: string): ParsedBibtex => {
+export const parseBibtex = (source: string, opts: ParseBibtexOptions = {}): ParsedBibtex => {
   const s = source
   const entries: BibEntry[] = []
-  const strings: Record<string, string> = {}
+  const strings: Record<string, string> = { ...opts.strings }
   const preambles: string[] = []
   const diagnostics: BibDiagnostic[] = []
+  const duplicates: string[] = []
   const seen = new Set<string>()
   let pos = 0
   const lineAt = (at: number) => {
@@ -252,12 +266,113 @@ export const parseBibtex = (source: string): ParsedBibtex => {
     }
     if (seen.has(key)) {
       diag("duplicate-key", `citation key ${key} appears more than once`, at)
+      if (!duplicates.includes(key)) duplicates.push(key)
       continue
     }
     seen.add(key)
-    entries.push({ type, key, fields, line: lineAt(at) })
+    // A broken entry ends where the reader resumed; trim the whitespace before the next `@`.
+    let end = pos
+    if (!ok) while (end > at && /\s/.test(s[end - 1] as string)) end--
+    entries.push({ type, key, fields, line: lineAt(at), start: at, end, raw: s.slice(at, end) })
   }
-  return { entries, strings, preambles, diagnostics }
+  return { entries, strings, preambles, diagnostics, duplicates }
+}
+
+/** One change to a `.bib` file. `set` writes a complete entry (`@type{key, ...}`): over
+ *  the entry named by `key` (a rename when the text carries another key), else over the
+ *  entry with the text's own key, else appended at the end. `delete` removes an entry. */
+export type BibOp = { op: "set"; key?: string; raw: string } | { op: "delete"; key: string }
+
+/** A refused `spliceBibtex`. The message is written for the person who typed the entry. */
+export class BibtexError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = "BibtexError"
+  }
+}
+
+const KEY_GRAMMAR = /^[A-Za-z0-9_:.+/-]+$/
+
+/** One entry typed or pasted by hand: exactly `@type{key, ...}` and nothing else, read
+ *  with the file's `@string` macros so bare values keep resolving. */
+const parseOneEntry = (raw: string, strings: Record<string, string>): BibEntry => {
+  const text = typeof raw === "string" ? raw.trim() : ""
+  if (!text.startsWith("@")) throw new BibtexError("An entry starts with @type{key, ...}.")
+  const parsed = parseBibtex(text, { strings })
+  const d = parsed.diagnostics[0]
+  if (d) throw new BibtexError(`The entry could not be read: ${d.message} (line ${d.line}).`)
+  const entry = parsed.entries[0]
+  if (!entry) throw new BibtexError("The entry needs the shape @type{key, field = {value}}.")
+  if (parsed.entries.length > 1) throw new BibtexError("Save one entry at a time.")
+  if (entry.start !== 0 || entry.end !== text.length)
+    throw new BibtexError(
+      "Only the entry itself can be saved here; comments and @string lines belong in the source editor.",
+    )
+  if (!KEY_GRAMMAR.test(entry.key))
+    throw new BibtexError(
+      `The citation key ${entry.key} may only use letters, digits and _ : . + / -.`,
+    )
+  return entry
+}
+
+/** Apply `ops` to a `.bib` file by splicing entry spans, so comments, `@string` macros
+ *  and the spacing around untouched entries survive byte for byte. Throws `BibtexError`
+ *  and changes nothing when an op cannot be honoured. */
+export const spliceBibtex = (
+  source: string,
+  ops: BibOp[],
+): { source: string; entries: BibEntry[] } => {
+  if (!ops.length) throw new BibtexError("Nothing to change.")
+  const parsed = parseBibtex(source)
+  const byKey = new Map(parsed.entries.map((e) => [e.key, e]))
+  const touched = new Set<string>()
+  const claim = (key: string) => {
+    if (parsed.duplicates.includes(key))
+      throw new BibtexError(
+        `The key ${key} appears more than once in the file; fix that in the source editor first.`,
+      )
+    if (touched.has(key)) throw new BibtexError(`The key ${key} is changed twice in one save.`)
+    touched.add(key)
+  }
+  const edits: { start: number; end: number; text: string }[] = []
+  const appended: string[] = []
+  for (const op of ops) {
+    if (op.op === "delete") {
+      const target = byKey.get(op.key)
+      if (!target) throw new BibtexError(`There is no entry with the key ${op.key}.`)
+      claim(op.key)
+      // Take the blank line after it too, so the neighbours stay one blank line apart.
+      let end = target.end
+      let newlines = 0
+      while (end < source.length && newlines < 2 && /[ \t\r\n]/.test(source[end] as string)) {
+        if (source[end] === "\n") newlines++
+        end++
+      }
+      edits.push({ start: target.start, end, text: "" })
+      continue
+    }
+    const entry = parseOneEntry(op.raw, parsed.strings)
+    const targetKey = op.key ?? entry.key
+    const target = byKey.get(targetKey)
+    if (op.key !== undefined && !target)
+      throw new BibtexError(`There is no entry with the key ${op.key}.`)
+    if (target) claim(targetKey)
+    if (!target || entry.key !== targetKey) {
+      if (byKey.has(entry.key))
+        throw new BibtexError(`The key ${entry.key} is already used by another entry.`)
+      claim(entry.key)
+    }
+    if (target) edits.push({ start: target.start, end: target.end, text: entry.raw })
+    else appended.push(entry.raw)
+  }
+  edits.sort((a, b) => b.start - a.start)
+  let out = source
+  for (const e of edits) out = out.slice(0, e.start) + e.text + out.slice(e.end)
+  if (appended.length) {
+    const body = out.replace(/\s+$/, "")
+    out = `${body}${body ? "\n\n" : ""}${appended.join("\n\n")}\n`
+  }
+  return { source: out, entries: parseBibtex(out).entries }
 }
 
 export interface BibAuthor {
