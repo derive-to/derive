@@ -15,6 +15,17 @@ for the recommended install and verification flow.
 ## [Unreleased]
 
 ### Added
+- **Paper templates and "Download LaTeX source".** Two starters, ACM SIGGRAPH (acmart,
+  sigconf, author-year citations) and CVPR (the author kit's layout in review mode), are
+  available on the Templates page, as `derive://latex/templates/<id>` MCP resources, at
+  `GET /v1/latex/templates/<id>` and through `derive init --template siggraph|cvpr`. Each
+  publishes as a paper bundle with a `results` table and a `teaser` figure bound as
+  dynamic slots. The CVPR kit's `cvpr.sty` and `ieeenat_fullname.bst` are fetched from a
+  pinned commit at creation (they carry no license and are not vendored), fail-soft with a
+  README note. `GET /v1/artifacts/:id/source.zip` (and the viewer's More menu) downloads a
+  paper as a zip that compiles in Overleaf as the page shows it: every file, `derive.sty`,
+  one `derive-dynamic/<name>.tex` per binding from the slot's current value, uploaded
+  figures as files, and a README with provenance and caveats.
 - **LaTeX papers.** A `.tex` upload was typed as Markdown and rendered as escaped source.
   A paper now publishes as its LaTeX source, single file (`text/x-latex`, "LaTeX") or a
   bundle whose root holds `main.tex` beside its `.bib`, sections and figures

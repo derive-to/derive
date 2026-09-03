@@ -28,6 +28,37 @@ what compiles, and it stays the source of truth.
 Revisions keep the type: an inline edit, an `edits` batch or a full republish of a LaTeX
 artifact stays LaTeX.
 
+## Start from a template
+
+Two paper starters ship with Derive: **ACM SIGGRAPH** (acmart in the sigconf format,
+author-year citations; switch to `acmtog` for the journal track) and **CVPR** (the author
+kit's layout in review mode, numeric citations). On the Templates page, choose one under
+Papers: the New page opens with `main.tex` in the editor, and publishing creates a paper
+bundle with the `.bib`, a README and `derive.sty`. Both starters bind a `results` table
+and a `teaser` figure, seeded empty at publish, so the [dynamic data](dynamic-data.md)
+API works from the first version.
+
+Over MCP, `read("derive://latex/templates/<id>")` returns the same files map for
+`publish({ files })`; over REST it is `GET /v1/latex/templates/<id>`; the CLI has
+`derive init --template siggraph|cvpr`.
+
+The CVPR author kit publishes `cvpr.sty` and `ieeenat_fullname.bst` without a license, so
+Derive does not ship them. Creating a CVPR paper fetches both from a pinned commit of the
+kit into the bundle, verified against pinned hashes. If the fetch fails the paper is still
+created and its README says what to add.
+
+## Download the source
+
+"Download LaTeX source" in the viewer's More menu (or
+`GET /v1/artifacts/:id/source.zip`, with `?v=n` for an older version) is a zip that
+compiles as is: every bundle file, `derive.sty`, one `derive-dynamic/<name>.tex` fragment
+per dynamic binding written from the slot's current value (plus the image file for a
+figure), uploaded figures rewritten from their `/blob/<sha>` URLs to `figures/<sha>.<ext>`
+files, and a `README-derive.md` with the provenance, the Overleaf steps and every caveat
+the exporter found: a WebP or GIF figure pdfLaTeX cannot read, a slot without data, a
+style file the bundle lacks. Upload the zip to Overleaf, set `main.tex` as the main
+document and pdfLaTeX as the compiler.
+
 ## What renders
 
 Sectioning (`\section` to `\subparagraph`, `\appendix`), prose and formatting, footnotes,

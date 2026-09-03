@@ -168,7 +168,11 @@ A paper publishes as its LaTeX source: a single `paper.tex`, or a bundle whose r
 page (sections, tables, figures, math, citations from the `.bib`; acmart and the CVPR
 kit are understood), keeps the type across edits, and reports what it could not render
 in the publish advisories. `\derivetable{name}` and `\derivefigure{name}` bind the
-dynamic slots above. Read `derive://skills/latex` before publishing one.
+dynamic slots above. Start from `derive://latex/templates/acm-siggraph` or
+`derive://latex/templates/cvpr` (a files map for `publish({files})`), and download a
+paper's compilable source, dynamic data included, at
+`GET /v1/artifacts/<short_id>/source.zip`. Read `derive://skills/latex` before
+publishing one.
 
 ## Non-negotiable rules
 

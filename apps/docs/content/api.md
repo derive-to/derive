@@ -37,7 +37,10 @@ file through `POST /v1/artifacts/:id/versions` like a single file; one text file
 bundle is read and written by path at `GET`/`PUT /v1/artifacts/:id/files/*`, and a
 paper's bibliography as entries at `GET`/`PUT /v1/artifacts/:id/bib` (`ops` of
 `{ op: "set", key?, raw }` and `{ op: "delete", key }`). Each write publishes a new
-version of the bundle.
+version of the bundle. `GET /v1/latex/templates` lists the paper
+starters and `GET /v1/latex/templates/:id` returns one as a files map to publish;
+`GET /v1/artifacts/:ref/source.zip` (with `?v=n` for an older version) downloads a paper's
+source with its dynamic data and figures as a zip that compiles in Overleaf.
 
 Access checks are identical to the rendered artifact. A raw URL is not a bypass around a
 private artifact, password, workspace boundary, or link role.
