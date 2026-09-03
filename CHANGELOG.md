@@ -14,6 +14,25 @@ for the recommended install and verification flow.
 
 ## [Unreleased]
 
+### Added
+- **Dynamic tables and figures.** An agent that refreshed a results table or a figure as
+  runs landed had one write path: publish a version, so a day of refreshes was a day of
+  versions with no prose change, and no way to update one cell in place. A document can
+  now declare a named binding (a `derive-table` / `derive-figure` fence in Markdown, a
+  `data-derive-table` / `data-derive-figure` attribute in HTML) whose value Derive owns:
+  `PUT`, `PATCH` and `DELETE /v1/artifacts/:id/dynamic/:name` change it under a
+  compare-and-swap revision, with a retained history, at publish access. The model is
+  per version: publishing seeds each slot from the previous version's latest data (or the
+  inline placeholder for a new name), writes land only on the current version, older
+  versions keep the data they had, and a restore starts from the restored version's
+  final data. Values are substituted at serve time, so the viewer, screenshots, exports,
+  custom domains and search all show current data; open viewers swap the element live; a
+  Data tab in the viewer lists each slot with its revisions and lets an editor replace a
+  figure's image. The MCP `read` tool inventories and returns slots beside facts; writes
+  stay on REST via `stage({target:"api"})`, taught by the `dynamic-data` skill. Kept
+  small on purpose: 32 slots per version, 512 KB per table, the last 50 revisions plus
+  the seed.
+
 ### Removed
 - **The built-in template catalog and `@derive-to/templates`.** The 30 code-defined
   starters, the `derive://templates/catalog` and `derive://templates/<id>` MCP
