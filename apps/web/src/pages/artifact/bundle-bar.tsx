@@ -9,6 +9,9 @@ import { useCopy } from "@/lib/clipboard"
 import { skillGraphQuery, skillUsageQuery } from "@/lib/queries"
 import { ago } from "@/lib/time"
 
+// The files the source editor can open by path (mirrors routes/paper-files.ts).
+const EDITABLE_FILE = /\.(tex|latex|bib|bbl|sty|cls|bst|txt|md|html?|css|js|json)$/i
+
 /**
  * Header chrome for a markdown bundle (a skill — entry SKILL.md — or a plain docs
  * folder): a "Skill" badge + declared identity when it's a skill, plus a file tree.
@@ -17,17 +20,22 @@ import { ago } from "@/lib/time"
  * Self-contained — no app state — so it drops in above <ArtifactDocument> without
  * touching the comment/iframe bridge. Renders nothing for a single-file bundle with
  * no skill identity (there'd be nothing to show).
+ *
+ * A paper bundle passes `onEditFile`: its text chips (a section, the .bib, a style
+ * file) then open that file in the source editor instead of a raw tab.
  */
 export function BundleBar({
   bundle,
   shortId,
   version,
   onEdit,
+  onEditFile,
 }: {
   bundle: NonNullable<Artifact["bundle"]>
   shortId: string
   version: number
   onEdit?: () => void
+  onEditFile?: (path: string) => void
 }) {
   const fileUrl = (path: string) => `${API_BASE}/raw/${shortId}/v/${version}/${path}`
   // The entry doc IS the page below; list only the supporting files.
@@ -66,19 +74,33 @@ export function BundleBar({
       )}
       {files.length > 0 && (
         <div className="flex flex-wrap gap-1.5">
-          {files.map((f) => (
-            <Badge key={f.path} asChild variant="outline" shape="pill">
-              <a
-                href={fileUrl(f.path)}
-                target="_blank"
-                rel="noopener noreferrer"
-                title={f.type}
-                className="hover:border-foreground/25 hover:text-foreground"
-              >
-                {f.path}
-              </a>
-            </Badge>
-          ))}
+          {files.map((f) =>
+            onEditFile && EDITABLE_FILE.test(f.path) ? (
+              <Badge key={f.path} asChild variant="outline" shape="pill">
+                <button
+                  type="button"
+                  title={`Edit ${f.path}`}
+                  className="hover:border-foreground/25 hover:text-foreground"
+                  onClick={() => onEditFile(f.path)}
+                  data-testid={`bundle-edit-${f.path}`}
+                >
+                  {f.path}
+                </button>
+              </Badge>
+            ) : (
+              <Badge key={f.path} asChild variant="outline" shape="pill">
+                <a
+                  href={fileUrl(f.path)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title={f.type}
+                  className="hover:border-foreground/25 hover:text-foreground"
+                >
+                  {f.path}
+                </a>
+              </Badge>
+            ),
+          )}
         </div>
       )}
     </div>

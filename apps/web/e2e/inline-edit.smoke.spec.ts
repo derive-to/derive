@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test"
+import { zipSync } from "fflate"
 import { expect, openArtifact, publishArtifact, shareArtifact, test } from "./fixtures"
 
 /**
@@ -1588,4 +1589,176 @@ test("a newly published HTML artifact enters Inspect without a reload", async ({
   await expect(owner.getByTestId("rail-tab-inspect")).toHaveCount(0)
   await owner.getByTestId("artifact-inline-edit").click()
   await expect(owner.getByTestId("rail-tab-inspect")).toBeVisible()
+})
+
+/* === LaTeX papers ==========================================================
+   The renderer marks math, tables, images, generated labels and the author block as
+   read-only islands; the frame refuses them and steps the caret over them, while the
+   prose, captions and headings around them edit like any document. A paper bundle
+   edits its entry file and republishes with its other files carried over. */
+
+const TEX = `\\documentclass{article}
+\\begin{document}
+\\section{Intro}
+First sentence with math $E=mc^2$ after it.
+\\begin{figure}
+\\centering
+\\caption{A caption to edit.}
+\\end{figure}
+\\begin{table}
+\\centering
+\\begin{tabular}{lr}
+Method & PSNR \\\\
+Baseline & 21.4 \\\\
+\\end{tabular}
+\\caption{Numbers.}
+\\end{table}
+\\end{document}
+`
+
+async function seedTex(page: Page) {
+  const shortId = await publishArtifact(page, "paper.tex", TEX, "text/x-latex")
+  await openArtifact(page, shortId)
+  return shortId
+}
+// The frame is titled after the artifact (a .tex upload names it by its file stem).
+const paper = (page: Page) => page.frameLocator('iframe[title="paper"]')
+const READONLY_TOAST = "can't be edited inline"
+
+test("LaTeX: typing beside a formula edits the prose and leaves the math alone", async ({
+  owner,
+}) => {
+  const shortId = await seedTex(owner)
+  const p = paper(owner).locator("p").first()
+  await expect(p.locator(".katex").first()).toBeVisible()
+  await enterEditMode(owner)
+  // Click the first word, not the centre of the line (that could be the formula).
+  await p.click({ position: { x: 6, y: 8 } })
+  await owner.keyboard.press("End")
+  await owner.keyboard.type(" Amended.")
+  await expect(owner.getByTestId("inline-edit-bar")).toContainText("1 unsaved change")
+  await owner.getByTestId("inline-edit-save").click()
+  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+  // The owner published v1 moments ago, so the edit coalesces into it: read the source.
+  await expect(async () => {
+    expect(await contentOf(owner, shortId)).toContain("after it. Amended.")
+  }).toPass()
+  expect(await contentOf(owner, shortId)).toContain("$E=mc^2$")
+})
+
+test("LaTeX: a formula and a table cell are refused, a caption edits like prose", async ({
+  owner,
+}) => {
+  const shortId = await seedTex(owner)
+  await expect(paper(owner).locator(".katex").first()).toBeVisible()
+  await enterEditMode(owner)
+  await paper(owner).locator(".derive-math").first().click()
+  await expect(owner.getByText(READONLY_TOAST)).toBeVisible()
+  await paper(owner).getByRole("cell", { name: "Baseline" }).click()
+  await expect(paper(owner).locator("[data-derive-editable]")).toHaveCount(0)
+
+  const caption = paper(owner).locator("figcaption").first()
+  await caption.click({ position: { x: 120, y: 8 } })
+  await expect(caption).toHaveAttribute("contenteditable", /^(plaintext-only|true)$/)
+  // The generated label is an inert island inside the armed caption.
+  await expect(caption.locator(".derive-caption-label")).toHaveAttribute("contenteditable", "false")
+  await owner.keyboard.press("End")
+  await owner.keyboard.type(" More.")
+  await owner.getByTestId("inline-edit-save").click()
+  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+  await expect(async () => {
+    expect(await contentOf(owner, shortId)).toContain("\\caption{A caption to edit. More.}")
+  }).toPass()
+})
+
+test("LaTeX: Backspace right after a formula cannot swallow it", async ({ owner }) => {
+  const shortId = await seedTex(owner)
+  const p = paper(owner).locator("p").first()
+  await expect(p.locator(".katex").first()).toBeVisible()
+  await enterEditMode(owner)
+  await p.click({ position: { x: 6, y: 8 } })
+  await p.evaluate((el) => {
+    const after = el.querySelector(".derive-math")?.nextSibling
+    if (!after) throw new Error("no text after the formula")
+    const range = document.createRange()
+    range.setStart(after, 0)
+    range.collapse(true)
+    const sel = window.getSelection()
+    sel?.removeAllRanges()
+    sel?.addRange(range)
+  })
+  await owner.keyboard.press("Backspace")
+  await expect(p.locator(".derive-math")).toHaveCount(1)
+  await expect(p.locator(".katex")).toHaveCount(1)
+  await expect(p).toContainText("First sentence with math")
+  await expect(p).toContainText("after it.")
+  await owner.getByTestId("inline-edit-done").click()
+  expect(await versionOf(owner, shortId)).toBe(1)
+})
+
+const enc = (s: string) => new TextEncoder().encode(s)
+const PAPER_MAIN = `\\documentclass{article}
+\\begin{document}
+\\section{Intro}
+Bundle prose here \\cite{k}.
+\\bibliography{refs}
+\\end{document}
+`
+const PAPER_REFS = "@misc{k, title={Known}, author={A B}, year={2020}}\n"
+const paperZip = () =>
+  zipSync({ "main.tex": enc(PAPER_MAIN), "refs.bib": enc(PAPER_REFS), "README.md": enc("# notes") })
+
+test("LaTeX: a paper bundle edits main.tex on the page and keeps its other files", async ({
+  owner,
+}) => {
+  const shortId = await publishArtifact(owner, "paper.zip", paperZip(), "application/zip")
+  await openArtifact(owner, shortId)
+  await enterEditMode(owner)
+  const p = paper(owner).locator("p").first()
+  await p.click({ position: { x: 6, y: 8 } })
+  await owner.keyboard.press("End")
+  await owner.keyboard.type(" Amended.")
+  await owner.getByTestId("inline-edit-save").click()
+  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+  const mainOf = async () =>
+    (
+      (await (await owner.request.get(`/v1/artifacts/${shortId}/files/main.tex`)).json()) as {
+        source: string
+      }
+    ).source
+  // Typed right after the citation: the label word-snaps into the edit, and the server
+  // leaves it alone. The owner published moments ago, so the edit coalesces into v1.
+  await expect(async () => {
+    expect(await mainOf()).toContain("here \\cite{k}. Amended.")
+  }).toPass()
+  const detail = (await (await owner.request.get(`/v1/artifacts/${shortId}`)).json()) as {
+    current_content_type: string
+    bundle: { files: { path: string }[] }
+  }
+  expect(detail.current_content_type).toBe("derive/latex")
+  expect(detail.bundle.files.map((f) => f.path).sort()).toEqual([
+    "README.md",
+    "main.tex",
+    "refs.bib",
+  ])
+})
+
+test("LaTeX: the References tab adds an entry as a new version", async ({ owner }) => {
+  const shortId = await publishArtifact(owner, "paper.zip", paperZip(), "application/zip")
+  await openArtifact(owner, shortId)
+  await owner.getByTestId("rail-tab-references").click()
+  await expect(owner.getByTestId("references-entry-k")).toContainText("cited")
+  await owner.getByTestId("references-add").click()
+  await owner
+    .getByTestId("references-editor")
+    .fill("@misc{added, title={Added}, author={X Y}, year={2025}}")
+  await owner.getByTestId("references-save").click()
+  await expect(owner.getByTestId("references-entry-added")).toBeVisible()
+  await expect(async () => {
+    expect(await versionOf(owner, shortId)).toBe(2)
+  }).toPass()
+  const refs = await (await owner.request.get(`/v1/artifacts/${shortId}/files/refs.bib`)).json()
+  expect((refs as { source: string }).source).toBe(
+    `${PAPER_REFS}\n@misc{added, title={Added}, author={X Y}, year={2025}}\n`,
+  )
 })
