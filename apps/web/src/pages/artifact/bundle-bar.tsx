@@ -4,6 +4,13 @@ import { API_BASE, type Artifact } from "@/api"
 import { Icon } from "@/components/icons"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useCopy } from "@/lib/clipboard"
 import { skillGraphQuery, skillUsageQuery } from "@/lib/queries"
@@ -98,9 +105,12 @@ function SkillWorkbench({
   const workflowRuns = (usage.data?.workflows ?? []).reduce((sum, item) => sum + item.count, 0)
   const fileUrl = (path: string) => `${API_BASE}/raw/${shortId}/v/${version}/${path}`
   const installCommand = `derive skill add ${shortId}`
-  const workflow = usage.data?.artifacts.find(
-    (item) => item.role === "workflow-definition" && item.artifact,
-  )?.artifact
+  const workflowLinks = (usage.data?.artifacts ?? []).filter(
+    (item, index, all) =>
+      item.role === "workflow-definition" &&
+      item.artifact &&
+      all.findIndex((candidate) => candidate.artifact_id === item.artifact_id) === index,
+  )
 
   return (
     <div className="border-b border-border bg-card/60" data-testid="skill-workbench">
@@ -120,12 +130,47 @@ function SkillWorkbench({
           )}
         </div>
         <div className="flex min-w-0 flex-col items-end gap-2">
-          {workflow ? (
+          {workflowLinks.length === 1 && workflowLinks[0]?.artifact ? (
             <Button asChild size="sm" variant="outline" data-testid="skill-open-workflow">
-              <Link to="/artifacts/$ref" params={{ ref: workflow.short_id }}>
-                <Icon name="workflow" size={14} /> Open workflow
+              <Link
+                to="/artifacts/$ref"
+                params={{ ref: workflowLinks[0].artifact.short_id }}
+                title={`Linked from Workflow v${workflowLinks[0].artifact_version}`}
+              >
+                <Icon name="workflow" size={14} /> Workflow:{" "}
+                {workflowLinks[0].artifact.title ?? workflowLinks[0].artifact.short_id}
               </Link>
             </Button>
+          ) : workflowLinks.length > 1 ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button size="sm" variant="outline" data-testid="skill-open-workflows">
+                  <Icon name="workflow" size={14} /> {workflowLinks.length} linked workflows
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="max-w-sm">
+                <DropdownMenuLabel>Workflows using this Skill</DropdownMenuLabel>
+                {workflowLinks.map((link) =>
+                  link.artifact ? (
+                    <DropdownMenuItem
+                      key={link.artifact_id}
+                      asChild
+                      data-testid={`skill-workflow-${link.artifact_id}`}
+                    >
+                      <Link to="/artifacts/$ref" params={{ ref: link.artifact.short_id }}>
+                        <Icon name="workflow" size={14} />
+                        <span className="min-w-0 flex-1 truncate">
+                          {link.artifact.title ?? link.artifact.short_id}
+                        </span>
+                        <span className="font-mono text-2xs text-muted-foreground">
+                          v{link.artifact_version}
+                        </span>
+                      </Link>
+                    </DropdownMenuItem>
+                  ) : null,
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
           ) : null}
           <div className="flex gap-1.5">
             <Badge variant="outline" shape="pill">

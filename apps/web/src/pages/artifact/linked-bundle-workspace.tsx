@@ -6,6 +6,13 @@ import { Icon } from "@/components/icons"
 import { Count, Eyebrow } from "@/components/shared/section-eyebrow"
 import { SectionHeading, SectionTitle } from "@/components/shared/section-title"
 import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { artifactSkillsQuery } from "@/lib/queries"
 import { ago } from "@/lib/time"
 import { cn } from "@/lib/utils"
@@ -946,8 +953,12 @@ export function LinkedBundleWorkspace({
     ...artifactSkillsQuery(shortId),
     enabled: !!workflowPreview,
   })
-  const launcher = linkedSkills.data?.links.find(
-    (link) => link.role === "workflow-definition" && link.skill,
+  const launchers = (linkedSkills.data?.links ?? []).filter(
+    (link, index, all) =>
+      link.role === "workflow-definition" &&
+      link.skill &&
+      all.findIndex((candidate) => candidate.skill_artifact_id === link.skill_artifact_id) ===
+        index,
   )
   const diagrams = bundle.diagrams ?? []
   const counts = linkedBundleCommentCounts(comments)
@@ -1031,16 +1042,47 @@ export function LinkedBundleWorkspace({
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            {launcher?.skill ? (
+            {launchers.length === 1 && launchers[0]?.skill ? (
               <Button asChild variant="outline" size="sm" data-testid="workflow-open-skill">
                 <Link
                   to="/artifacts/$ref"
-                  params={{ ref: launcher.skill.short_id }}
-                  title={`Launcher Skill v${launcher.skill_version}, linked from Workflow v${launcher.artifact_version}`}
+                  params={{ ref: launchers[0].skill.short_id }}
+                  title={`Launcher Skill v${launchers[0].skill_version}, linked from Workflow v${launchers[0].artifact_version}`}
                 >
-                  <Icon name="sparkles" size={14} /> Open Skill
+                  <Icon name="sparkles" size={14} /> Skill:{" "}
+                  {launchers[0].skill.title ?? launchers[0].skill.short_id}
                 </Link>
               </Button>
+            ) : launchers.length > 1 ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="sm" data-testid="workflow-open-skills">
+                    <Icon name="sparkles" size={14} /> {launchers.length} linked Skills
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="max-w-sm">
+                  <DropdownMenuLabel>Launcher Skills</DropdownMenuLabel>
+                  {launchers.map((launcher) =>
+                    launcher.skill ? (
+                      <DropdownMenuItem
+                        key={launcher.skill_artifact_id}
+                        asChild
+                        data-testid={`workflow-skill-${launcher.skill_artifact_id}`}
+                      >
+                        <Link to="/artifacts/$ref" params={{ ref: launcher.skill.short_id }}>
+                          <Icon name="sparkles" size={14} />
+                          <span className="min-w-0 flex-1 truncate">
+                            {launcher.skill.title ?? launcher.skill.short_id}
+                          </span>
+                          <span className="font-mono text-2xs text-muted-foreground">
+                            v{launcher.skill_version}
+                          </span>
+                        </Link>
+                      </DropdownMenuItem>
+                    ) : null,
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
             ) : null}
             <fieldset className="flex rounded-lg border border-border p-0.5">
               <legend className="sr-only">Workspace view</legend>
