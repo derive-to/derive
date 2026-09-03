@@ -6,7 +6,12 @@
  * serves all three.
  */
 
-import { isDynamicName, renderDynamicFigureInner, renderDynamicTableInner } from "./dynamic-data"
+import {
+  emptyDynamicValue,
+  isDynamicName,
+  renderDynamicFigureInner,
+  renderDynamicTableInner,
+} from "./dynamic-data"
 import {
   attr,
   type DynamicFigureLike,
@@ -491,10 +496,12 @@ export const renderIncludeGraphics = (ctx: RenderContext, macro: MacroNode): voi
   ])
 }
 
-// The same empty values dynamic-data.ts seeds a slot with (emptyDynamicValue), spelled
-// out here so the placeholder a page shows before the slot exists is byte-identical to
-// the one it shows after seeding.
-const EMPTY_TABLE: DynamicTableLike = { columns: [], rows: [] }
+// The placeholder before a slot exists must be byte-identical to the seeded empty value
+// (emptyDynamicValue), so the first render and the first seeded render agree.
+const emptyTable = (): DynamicTableLike => {
+  const v = emptyDynamicValue("table")
+  return v.kind === "table" ? v.table : { columns: [], rows: [] }
+}
 const EMPTY_FIGURE: DynamicFigureLike = { url: null }
 
 /** `\derivetable[opts]{name}` / `\derivefigure[opts]{name}`: the bound element with the
@@ -525,7 +532,7 @@ export const renderDeriveBinding = (
   const opts = parseKeyVals(macro.opt?.raw)
   ctx.closeParagraph(macro.start)
   if (kind === "table") {
-    const table = value?.kind === "table" ? value.table : EMPTY_TABLE
+    const table = value?.kind === "table" ? value.table : emptyTable()
     out.markup(
       `<table data-derive-table="${attr(name)}" class="derive-tabular derive-dynamic"${READONLY_ATTR}>`,
       macro.start,

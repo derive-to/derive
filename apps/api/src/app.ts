@@ -40,6 +40,7 @@ import { folderRoutes } from "./routes/folders"
 import { followRoutes } from "./routes/follows"
 import { githubRoutes } from "./routes/github"
 import { githubAppRoutes } from "./routes/github-app"
+import { latexRoutes } from "./routes/latex"
 import { mcpOauthRoutes } from "./routes/mcp-oauth"
 import { modelCredentialRoutes } from "./routes/model-credentials"
 import { moderationRoutes } from "./routes/moderation"
@@ -458,6 +459,7 @@ export function createApp(deps: AppDeps): Hono {
     sharedStateRoutes,
     dynamicDataRoutes,
     paperFileRoutes,
+    latexRoutes,
     assetRoutes,
     exportRoutes,
     attributionRoutes,

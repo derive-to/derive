@@ -9,10 +9,12 @@ import {
   isHtmlLike,
   isLatexBundle,
   isLatexLike,
+  isLatexTemplateId,
   LINKED_BUNDLE_CONTENT_TYPE,
   LINKED_BUNDLE_FACT,
   landmarkSlice,
   landmarksOf,
+  latexTemplateSummaries,
   latexToText,
   mapJson,
   newId,
@@ -47,6 +49,7 @@ import {
 } from "../lib/focus-index"
 import { sniffImageType } from "../lib/image"
 import { paperBibliography } from "../lib/latex-bundle"
+import { latexTemplateBundle } from "../lib/latex-templates"
 import { baseType, isTextType, present, type ReadFormat, searchMatcher } from "../lib/search"
 import { WeightedLruCache } from "../lib/source-text-cache"
 import { canReadTemplateLibrary } from "../lib/template-library-access"
@@ -466,6 +469,19 @@ export function registerReadTool(tc: ToolContext): void {
             `No video resource "${short_id}". The starter is derive://videos/template; the guide is derive://skills/videos.`,
           )
         return json({ uri: short_id, mimeType: "text/html", content: VIDEO_TEMPLATE })
+      }
+      // The paper starters, as the MCP resources of the same URI: a files map for
+      // publish({ files }), with the CVPR kit's style files fetched in when they can be.
+      if (short_id.startsWith("derive://latex/")) {
+        const id = short_id.replace(/^derive:\/\/latex\/templates\//, "")
+        if (!short_id.startsWith("derive://latex/templates/") || !isLatexTemplateId(id))
+          return err(
+            `No paper resource "${short_id}". The starters are ${latexTemplateSummaries()
+              .map((t) => `derive://latex/templates/${t.id}`)
+              .join(" and ")}; the guide is derive://skills/latex.`,
+          )
+        const bundle = await latexTemplateBundle(id, ctx.deps.fetch ?? fetch)
+        return json({ uri: short_id, mimeType: "application/json", content: bundle })
       }
       // The built-in catalog is gone; a client on a cached instruction still asks for it.
       if (short_id.startsWith("derive://templates/"))

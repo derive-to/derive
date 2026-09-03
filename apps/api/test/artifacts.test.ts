@@ -3,6 +3,7 @@ import { zipSync } from "fflate"
 import { describe, expect, it, vi } from "vitest"
 import { runExportTick } from "../src/exports"
 import {
+  anonApp,
   app,
   as,
   jsonAs,
@@ -1838,5 +1839,177 @@ describe("inline edits on a paper bundle coalesce like a single file", () => {
       })
     ).text()
     expect(page).toContain("It was the best.")
+  })
+})
+describe("paper templates and the LaTeX source export", () => {
+  const owner: TestUser = { id: "u_paper", email: "paper@derive.test", name: "Paper Owner" }
+  // A stand-in for GitHub: the two kit files at their pinned URLs, anything else a miss.
+  const KIT: Record<string, string> = {}
+  const fetchStub: typeof fetch = async (input) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url
+    const body = KIT[url]
+    return body === undefined
+      ? new Response("not found", { status: 404 })
+      : new Response(body, { status: 200 })
+  }
+  const { app: authed } = makeAuthedApp("paper-templates", [owner], undefined, {
+    deps: { fetch: fetchStub },
+  })
+  const headers = as(owner.email)
+
+  it("lists the starters and hands out a files map, fetching the CVPR kit when it can", async () => {
+    const list = await (await authed.request("/v1/latex/templates", { headers })).json()
+    expect(list.templates.map((t: { id: string }) => t.id)).toEqual(["acm-siggraph", "cvpr"])
+    const acm = await (await authed.request("/v1/latex/templates/acm-siggraph", { headers })).json()
+    expect(acm.entry).toBe("main.tex")
+    expect(Object.keys(acm.files).sort()).toEqual([
+      "README.md",
+      "derive.sty",
+      "main.tex",
+      "references.bib",
+    ])
+    expect(acm.notes).toEqual([])
+    // The kit is unreachable: the paper still comes back, with the note in the README too.
+    const cvprMissing = await (await authed.request("/v1/latex/templates/cvpr", { headers })).json()
+    expect(cvprMissing.files["cvpr.sty"]).toBeUndefined()
+    expect(cvprMissing.notes).toHaveLength(1)
+    expect(cvprMissing.notes[0]).toContain("cvpr.sty")
+    expect(cvprMissing.files["README.md"]).toContain("could not be fetched")
+    // Reachable with the right bytes: included. Wrong bytes: refused like a miss.
+    const { CVPR_KIT_FILES } = await import("@derive/core")
+    const { sha256Hex } = await import("@derive/core")
+    for (const f of CVPR_KIT_FILES) KIT[f.url] = "% not the kit"
+    const wrongBytes = await (await authed.request("/v1/latex/templates/cvpr", { headers })).json()
+    expect(wrongBytes.files["cvpr.sty"]).toBeUndefined()
+    // Pin real bytes by computing their hash into the stub's answer: the route trusts the
+    // hash, so a stub that returns bytes matching it is indistinguishable from GitHub.
+    const { resetLatexTemplateCache } = await import("../src/lib/latex-templates")
+    resetLatexTemplateCache()
+    const styBody = "% cvpr.sty stand-in"
+    const bstBody = "% ieeenat stand-in"
+    const [sty, bst] = CVPR_KIT_FILES
+    if (!sty || !bst) throw new Error("kit pins missing")
+    const stubbed = [
+      { ...sty, sha256: await sha256Hex(new TextEncoder().encode(styBody)) },
+      { ...bst, sha256: await sha256Hex(new TextEncoder().encode(bstBody)) },
+    ]
+    const { latexTemplateBundle } = await import("../src/lib/latex-templates")
+    // The lib is exercised directly with the stubbed pins, since the route reads the
+    // real pins and only a real GitHub answer would match them.
+    KIT[sty.url] = styBody
+    KIT[bst.url] = bstBody
+    const withKit = await latexTemplateBundle("cvpr", fetchStub, stubbed)
+    expect(withKit.files["cvpr.sty"]).toBe(styBody)
+    expect(withKit.files["ieeenat_fullname.bst"]).toBe(bstBody)
+    expect(withKit.notes).toEqual([])
+    resetLatexTemplateCache()
+    delete KIT[sty.url]
+    delete KIT[bst.url]
+  })
+
+  it("refuses anonymous callers and unknown ids", async () => {
+    expect((await anonApp.request("/v1/latex/templates")).status).toBe(401)
+    expect((await authed.request("/v1/latex/templates/nope", { headers })).status).toBe(404)
+  })
+
+  it("publishes a starter through the ordinary bundle publish and exports its source with the latest data", async () => {
+    const acm = await (await authed.request("/v1/latex/templates/acm-siggraph", { headers })).json()
+    const enc = (s: string) => new TextEncoder().encode(s)
+    const zip = zipSync(
+      Object.fromEntries(
+        Object.entries(acm.files as Record<string, string>).map(([p, t]) => [p, enc(t)]),
+      ),
+    )
+    const form = new FormData()
+    form.append("file", new Blob([zip as BlobPart]), "paper.zip")
+    form.append("title", "My SIGGRAPH paper")
+    const created = await (
+      await authed.request("/v1/artifacts", { method: "POST", body: form, headers })
+    ).json()
+    expect(created.current_content_type).toBe("derive/latex")
+    const shortId = created.short_id as string
+    // The starter's bindings were seeded as empty slots at publish.
+    const slots = await (
+      await authed.request(`/v1/artifacts/${shortId}/dynamic`, { headers })
+    ).json()
+    expect(slots.slots.map((s: { name: string; kind: string }) => [s.name, s.kind]).sort()).toEqual(
+      [
+        ["results", "table"],
+        ["teaser", "figure"],
+      ],
+    )
+    // Fill the table without a new version, then export.
+    const put = await authed.request(`/v1/artifacts/${shortId}/dynamic/results`, {
+      method: "PUT",
+      headers: { ...headers, "content-type": "application/json" },
+      body: JSON.stringify({
+        kind: "table",
+        table: {
+          columns: [{ key: "model" }, { key: "psnr", align: "right" }],
+          rows: [{ model: "ours", psnr: 28.6 }],
+        },
+      }),
+    })
+    expect(put.status).toBe(200)
+    const res = await authed.request(`/v1/artifacts/${shortId}/source.zip`, { headers })
+    expect(res.status).toBe(200)
+    expect(res.headers.get("content-type")).toBe("application/zip")
+    expect(res.headers.get("content-disposition")).toBe(
+      'attachment; filename="My-SIGGRAPH-paper-v1-source.zip"',
+    )
+    expect(res.headers.get("cache-control")).toBe("private, no-store")
+    const { unzipSync, strFromU8 } = await import("fflate")
+    const files = unzipSync(new Uint8Array(await res.arrayBuffer()))
+    expect(Object.keys(files).sort()).toEqual([
+      "README-derive.md",
+      "README.md",
+      "derive-dynamic/results.tex",
+      "derive-dynamic/teaser.tex",
+      "derive.sty",
+      "main.tex",
+      "references.bib",
+    ])
+    expect(strFromU8(files["derive-dynamic/results.tex"] as Uint8Array)).toContain("ours & 28.6")
+    expect(strFromU8(files["derive-dynamic/teaser.tex"] as Uint8Array)).toContain(
+      "\\derivemissing{teaser}",
+    )
+    expect(strFromU8(files["main.tex"] as Uint8Array)).toContain("\\usepackage{derive}")
+    expect(strFromU8(files["README-derive.md"] as Uint8Array)).toContain(
+      "| `results` | table | 1 |",
+    )
+  })
+
+  it("exports a single .tex file with its uploaded figure, and refuses other kinds", async () => {
+    const png = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3])
+    const assetForm = new FormData()
+    assetForm.append("file", new Blob([png as BlobPart], { type: "image/png" }), "fig.png")
+    const asset = await (
+      await authed.request("/v1/assets", { method: "POST", body: assetForm, headers })
+    ).json()
+    const url = asset.url as string
+    const tex = `\\documentclass{article}\n\\begin{document}\n\\includegraphics{${url}}\n\\end{document}\n`
+    const form = new FormData()
+    form.append("file", new Blob([new TextEncoder().encode(tex) as BlobPart]), "paper.tex")
+    form.append("title", "Single")
+    const created = await (
+      await authed.request("/v1/artifacts", { method: "POST", body: form, headers })
+    ).json()
+    const res = await authed.request(`/v1/artifacts/${created.short_id}/source.zip`, { headers })
+    expect(res.status).toBe(200)
+    const { unzipSync, strFromU8 } = await import("fflate")
+    const files = unzipSync(new Uint8Array(await res.arrayBuffer()))
+    const sha = /\/blob\/([0-9a-f]{64})/.exec(url)?.[1]
+    expect(Object.keys(files).sort()).toEqual([
+      "README-derive.md",
+      `figures/${sha}.png`,
+      "main.tex",
+    ])
+    expect(strFromU8(files["main.tex"] as Uint8Array)).toContain(
+      `\\includegraphics{figures/${sha}.png}`,
+    )
+    expect(files[`figures/${sha}.png`]).toEqual(png)
+    // Not a paper: a plain markdown artifact has no source zip.
+    const md = await (await upload("notes.md", "# hi", { title: "Notes" })).json()
+    expect((await app.request(`/v1/artifacts/${md.short_id}/source.zip`)).status).toBe(400)
   })
 })

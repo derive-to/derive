@@ -311,6 +311,12 @@ export interface AppDeps {
    */
   vendorAsset?: (file: string) => Promise<Uint8Array | null>
   /**
+   * The outbound fetch used for the few upstream reads the API makes on a caller's behalf
+   * (today: the CVPR author kit's style files when a paper is created from that template).
+   * Unset ⇒ the global fetch. A test passes a stub so no suite reaches the network.
+   */
+  fetch?: typeof fetch
+  /**
    * gzip the responses. On for the Node/Fly entry (Fly's proxy gives HTTP/2 but
    * doesn't compress); left off for the Cloudflare Worker entry, where the edge
    * already compresses (gzip/brotli) and doubling it up wastes CPU.

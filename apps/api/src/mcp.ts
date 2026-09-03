@@ -73,6 +73,7 @@ import {
   type ArtifactRecord,
   brandprintInstructions,
   DECK_TEMPLATE,
+  latexTemplateSummaries,
   pendingRequestsPointer,
   profileState,
   type Role,
@@ -88,6 +89,7 @@ import { BRANDPRINT_REFERENCE, BRANDPRINT_TEMPLATE } from "./brandprint-referenc
 import type { AppContext } from "./context"
 import { resolveActorBrandprint, resolveBrandprintContext } from "./lib/brandprint"
 import type { Sandbox } from "./lib/code-sandbox"
+import { latexTemplateBundle } from "./lib/latex-templates"
 import { makeToolContext, type ToolContext, type ToolContextBase } from "./mcp-tool-context"
 import { registerAutomateTool, registerListAutomationsTool } from "./mcp-tools/automate"
 import { registerCallTool } from "./mcp-tools/call"
@@ -464,6 +466,32 @@ async function buildServer(
       contents: [{ uri: uri.href, mimeType: "text/html", text: DECK_TEMPLATE }],
     }),
   )
+
+  // The paper starters: derive://latex/templates/<id>, each a JSON files map that
+  // `publish({ files })` posts as-is (main.tex, the .bib, README, derive.sty, and for CVPR
+  // the author kit's style files fetched at read time). Registered unconditionally like the
+  // deck starter; the guide is derive://skills/latex.
+  for (const t of latexTemplateSummaries()) {
+    server.registerResource(
+      `latex:template:${t.id}`,
+      `derive://latex/templates/${t.id}`,
+      {
+        title: `Paper starter: ${t.label}`,
+        description: `${t.description} A files map for publish({ files }).`,
+        mimeType: "application/json",
+        annotations: { audience: ["assistant"], priority: 0.7 },
+      },
+      async (uri) => ({
+        contents: [
+          {
+            uri: uri.href,
+            mimeType: "application/json",
+            text: JSON.stringify(await latexTemplateBundle(t.id, ctx.deps.fetch ?? fetch)),
+          },
+        ],
+      }),
+    )
+  }
 
   // The CORE SKILLS as resources: derive://skills/<name>. Registered UNCONDITIONALLY,
   // exactly like the Brandprint reference/template — they're the always-available

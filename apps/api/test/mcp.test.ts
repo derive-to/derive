@@ -3584,3 +3584,47 @@ describe("MCP: editing a paper bundle", () => {
     expect(source).toContain("It was the best")
   })
 })
+
+describe("MCP: paper starters", () => {
+  it("serves the starters as resources and through read, and publishes one as a paper", async () => {
+    const { app, token } = appWithGrant(dir, "latex-starters", "openid derive:read derive:publish")
+    const listed = await rpc(app, token, { jsonrpc: "2.0", id: 3, method: "resources/list" })
+    const uris = (
+      (listed.parsed?.result as { resources?: { uri: string }[] } | undefined)?.resources ?? []
+    ).map((r) => r.uri)
+    expect(uris).toContain("derive://latex/templates/acm-siggraph")
+    expect(uris).toContain("derive://latex/templates/cvpr")
+    const read = JSON.parse(
+      toolText(
+        await call(app, token, "read", { short_id: "derive://latex/templates/acm-siggraph" }),
+      ),
+    )
+    expect(read.mimeType).toBe("application/json")
+    expect(read.content.entry).toBe("main.tex")
+    expect(Object.keys(read.content.files).sort()).toEqual([
+      "README.md",
+      "derive.sty",
+      "main.tex",
+      "references.bib",
+    ])
+    expect(
+      toolIsError(await call(app, token, "read", { short_id: "derive://latex/templates/nope" })),
+    ).toBe(true)
+    // The files map publishes as a paper through the ordinary tool, slots seeded.
+    const created = JSON.parse(
+      toolText(
+        await call(app, token, "publish", { title: "From starter", files: read.content.files }),
+      ),
+    )
+    const detail = await (
+      await app.request(`/v1/artifacts/${created.short_id}`, {
+        headers: { authorization: `Bearer ${token}` },
+      })
+    ).json()
+    expect(detail.current_content_type).toBe("derive/latex")
+    const inv = JSON.parse(
+      toolText(await call(app, token, "read", { short_id: created.short_id, data: "*" })),
+    )
+    expect(inv.dynamic.map((d: { name: string }) => d.name).sort()).toEqual(["results", "teaser"])
+  })
+})
