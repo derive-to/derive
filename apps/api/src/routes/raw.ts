@@ -6,6 +6,8 @@ import {
   hasArtifactStanding,
   isDerivedFactName,
   isDynamicName,
+  KATEX_FILE_PATTERN,
+  KATEX_VERSION,
   SHARED_STATE_CLIENT_JS,
 } from "@derive/core"
 import type { Context } from "hono"
@@ -19,6 +21,7 @@ import {
   RAW_TOKEN_MAX_AGE_MS,
   RAW_TOKEN_WINDOW_MS,
   TOMBSTONE,
+  toBody,
 } from "../lib/http"
 import { verifyPreviewToken } from "../lib/preview-token"
 import { serveContent } from "../lib/serve-content"
@@ -29,6 +32,14 @@ import { safeJson } from "../mcp-util"
 // doesn't re-check role/visibility live the way the cookie path's authorize() does, so
 // it's kept short — long enough to browse one sitting of a multi-page/image bundle,
 // short enough to bound exposure if the URL leaks (browser history, a proxy log, ...).
+
+const vendorMime = (file: string): string => {
+  if (file.endsWith(".js")) return "text/javascript; charset=utf-8"
+  if (file.endsWith(".css")) return "text/css; charset=utf-8"
+  if (file.endsWith(".woff2")) return "font/woff2"
+  if (file.endsWith(".woff")) return "font/woff"
+  return "font/ttf"
+}
 
 /** The sandbox: raw artifact bytes under /raw/*. Served with an
  *  opaque-origin CSP. */
@@ -72,6 +83,26 @@ export const rawRoutes = (ctx: AppContext) => {
       "Cache-Control": "public, max-age=300",
     }),
   )
+
+  // The math typesetter a rendered LaTeX page loads (see @derive/core latex.ts). Served
+  // from the API's own copy, version-pinned in the path, so the immutable cache is safe
+  // and no page ever reaches for a CDN the deployment did not choose. The allowlist is
+  // the two bundles and KaTeX's own fonts; anything else, including a path with `..`, is
+  // a 404 before the loader is asked. CORS is required, not optional: the page requesting
+  // these is a null origin (the sandbox CSP), and a font fetched without it is refused.
+  app.get("/raw/vendor/katex/:version/*", async (c) => {
+    const version = c.req.param("version")
+    const file = c.req.path.slice(`/raw/vendor/katex/${version}/`.length)
+    if (version !== KATEX_VERSION || !KATEX_FILE_PATTERN.test(file)) return c.text("not found", 404)
+    const bytes = deps.vendorAsset ? await deps.vendorAsset(file) : null
+    if (!bytes) return c.text("not found", 404)
+    return c.body(toBody(bytes), 200, {
+      "Access-Control-Allow-Origin": "*",
+      "X-Content-Type-Options": "nosniff",
+      "Content-Type": vendorMime(file),
+      "Cache-Control": IMMUTABLE_CACHE,
+    })
+  })
 
   // A version's facts as JSON, for everything that isn't an MCP client: a fetch()
   // from the artifact's own page (a chart reading its own history), a curl in a shell,
