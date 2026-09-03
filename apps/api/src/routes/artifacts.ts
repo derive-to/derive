@@ -19,6 +19,7 @@ import {
   hasArtifactStanding,
   heavyAssetsAdvisory,
   isHtmlLike,
+  isLatexBundle,
   isMarkdownBundle,
   LINKED_BUNDLE_CONTENT_TYPE,
   type LinkedBundleManifest,
@@ -1766,7 +1767,10 @@ export const artifactRoutes = (ctx: AppContext) => {
         const manifestBytes = await blobs.get(cur.blob_key)
         if (manifestBytes) {
           const manifest = JSON.parse(new TextDecoder().decode(manifestBytes)) as BundleManifest
-          if (isMarkdownBundle(manifest)) bundle = bundleDoc(manifest, await sourceText(cur))
+          // A paper (entry main.tex) gets the same block: the viewer lists its sources,
+          // figures and .bib beside the rendered page.
+          if (isMarkdownBundle(manifest) || isLatexBundle(manifest))
+            bundle = bundleDoc(manifest, await sourceText(cur))
         }
       }
       // Linked bundles stay ordinary HTML artifacts. Their one authored fact is the

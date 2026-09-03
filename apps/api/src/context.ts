@@ -302,6 +302,15 @@ export interface AppDeps {
    */
   shellFetch?: () => Promise<string | null>
   /**
+   * Bytes of a vendored browser library file (`katex.min.js`, `fonts/KaTeX_Main-Regular.woff2`),
+   * served by `/raw/vendor/katex/<version>/<file>` to rendered LaTeX pages. The artifact
+   * iframe is a null origin behind the sandbox CSP, so the typesetter has to come from a
+   * `/raw/*` route with CORS rather than the SPA bundle or a CDN. Node reads the package from
+   * node_modules; the edge reads the copy prep-edge-assets.mjs places in static assets.
+   * Unset ⇒ 404, and the page shows the TeX source in place of typeset math.
+   */
+  vendorAsset?: (file: string) => Promise<Uint8Array | null>
+  /**
    * gzip the responses. On for the Node/Fly entry (Fly's proxy gives HTTP/2 but
    * doesn't compress); left off for the Cloudflare Worker entry, where the edge
    * already compresses (gzip/brotli) and doubling it up wastes CPU.

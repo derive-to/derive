@@ -10,11 +10,13 @@ import {
   injectSharedStateScript,
   inspectStructuralDocument,
   isBundleContentType,
+  isLatexLike,
   looksLikeHtmlDocument,
   MARKS_SCRIPT,
   mimeFor,
   parseFrontmatter,
   reflowHtml,
+  renderLatex,
   renderMarkdown,
   SELECTION_SCRIPT,
   SHARED_STATE_SCRIPT,
@@ -22,6 +24,28 @@ import {
 } from "@derive/core"
 import type { Context } from "hono"
 import { IMMUTABLE_CACHE, RAW_HEADERS, rewriteAbsoluteUrls, toBody } from "./http"
+
+/** The text files a LaTeX page may `\input` or cite, decoded up front so the renderer's
+ *  synchronous lookups can answer. Capped so a bundle full of data files cannot make one
+ *  page read the whole store: past the cap a file is simply absent, and the page says so. */
+const MAX_BUNDLE_TEXT_BYTES = 4 * 1024 * 1024
+const TEXT_FILE = /\.(tex|latex|bib|bbl|sty|cls|bst|txt)$/i
+const bundleTextFiles = async (
+  blobs: BlobStore,
+  manifest: BundleManifest,
+): Promise<Map<string, string>> => {
+  const out = new Map<string, string>()
+  let bytes = 0
+  for (const [path, file] of Object.entries(manifest.files)) {
+    if (!TEXT_FILE.test(path)) continue
+    const data = await blobs.get(file.key)
+    if (!data) continue
+    bytes += data.byteLength
+    if (bytes > MAX_BUNDLE_TEXT_BYTES) break
+    out.set(path, new TextDecoder().decode(data))
+  }
+  return out
+}
 
 /**
  * Serve a stored artifact version's content under `prefix`, resolving
@@ -177,6 +201,25 @@ export const serveContent = async (
       const html = withSharedState(await renderMarkdown(body, title)) + append
       return c.body(html, 200, { ...headers, "Content-Type": "text/html; charset=utf-8" })
     }
+    // A paper's .tex pages render through the LaTeX path with the bundle's own files in
+    // reach: `\input{sec/intro}` and `\bibliography{refs}` resolve to sibling text files,
+    // `\includegraphics{fig/a.png}` to the image served under this prefix. `?raw=1`
+    // fetches the source, as for markdown. The style files a paper carries (.bib, .cls,
+    // .sty, .bst) are text/plain in the manifest and fall through to the raw serve.
+    if (isLatexLike(entry.type) && !["1", "true"].includes(c.req.query("raw") ?? "")) {
+      const files = await bundleTextFiles(blobs, manifest)
+      const rendered = renderLatex(new TextDecoder().decode(data), title, {
+        dynamic: slots,
+        resolve: (file) => files.get(`/${file.replace(/^\.?\//, "")}`) ?? null,
+        imageUrl: (file) => {
+          const clean = file.replace(/^\.?\//, "")
+          const f = manifest.files[`/${clean}`]
+          return f?.type.startsWith("image/") ? `${prefix}${clean}` : null
+        },
+      })
+      const html = withSharedState(rendered.html) + append
+      return c.body(html, 200, { ...headers, "Content-Type": "text/html; charset=utf-8" })
+    }
     return c.body(toBody(data), 200, { ...headers, "Content-Type": entry.type })
   }
 
@@ -204,6 +247,22 @@ export const serveContent = async (
       })
     }
     const html = withSharedState(await renderMarkdown(text, title, { dynamic: slots })) + append
+    return c.body(html, 200, { ...headers, "Content-Type": "text/html; charset=utf-8" })
+  }
+
+  if (isLatexLike(content.content_type)) {
+    if (path === "raw.tex")
+      return c.body(toBody(data), 200, {
+        ...headers,
+        "Content-Type": "text/x-latex; charset=utf-8",
+      })
+    // A single .tex file has no siblings: `\input` and `\bibliography` cannot resolve
+    // and say so on the page; figures reach it as asset URLs. The rendered shell carries
+    // SELECTION_SCRIPT already (renderDocShell), so only the shared-state runtime is added,
+    // as for markdown.
+    const text = new TextDecoder().decode(data)
+    const rendered = renderLatex(text, title, { dynamic: slots })
+    const html = withSharedState(rendered.html) + append
     return c.body(html, 200, { ...headers, "Content-Type": "text/html; charset=utf-8" })
   }
 

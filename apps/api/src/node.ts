@@ -1,5 +1,6 @@
 import { mkdirSync, readFileSync } from "node:fs"
-import { join, relative, resolve } from "node:path"
+import { createRequire } from "node:module"
+import { dirname, join, relative, resolve } from "node:path"
 import type { BlobStore, MetaStore, SearchIndex } from "@derive/core"
 import { PgMetaStore } from "@derive/db/pg"
 import { PgVectorStore } from "@derive/db/pgvector"
@@ -290,6 +291,25 @@ const blobs: BlobStore = cfg.objectStoreUrl
 // meta) and to mountWeb (the client-router fallback). Only when serving the web.
 const shellHtml = cfg.serveWeb ? readFileSync(cfg.webShell, "utf8") : undefined
 
+// KaTeX ships with the API (apps/api depends on the exact version core pins) and is read
+// from the package's dist on demand; the route validates the file name against the
+// allowlist, this guards the path anyway.
+const katexDist = (() => {
+  try {
+    return join(dirname(createRequire(import.meta.url).resolve("katex/package.json")), "dist")
+  } catch {
+    return null
+  }
+})()
+const vendorAsset = async (file: string): Promise<Uint8Array | null> => {
+  if (!katexDist || file.includes("..") || file.startsWith("/")) return null
+  try {
+    return new Uint8Array(readFileSync(join(katexDist, file)))
+  } catch {
+    return null
+  }
+}
+
 // The web build's 404 page, read once like the shell above.
 const readWebFile = (name: string): string | null => {
   try {
@@ -492,6 +512,7 @@ const app = createApp({
   search,
   baseUrl: cfg.baseUrl,
   shell: shellHtml,
+  vendorAsset,
   // The public site upstream (`/` for signed-out visitors + every navigation the
   // app does not own); unset on self-hosts, leaving the application the front door.
   site,

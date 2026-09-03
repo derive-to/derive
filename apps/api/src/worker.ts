@@ -9,6 +9,7 @@ import type {
   RateLimit,
   ScheduledController,
 } from "@cloudflare/workers-types"
+import { KATEX_VERSION } from "@derive/core"
 import { createD1Store } from "@derive/db/d1"
 import { PgMetaStore } from "@derive/db/pg"
 import { PgVectorStore } from "@derive/db/pgvector"
@@ -434,6 +435,18 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
             shellCache = null
           }
           return shellCache
+        },
+        // The typesetter's files, copied into static assets by prep-edge-assets.mjs under
+        // the version core pins; a miss returns null and the page falls back to TeX source.
+        vendorAsset: async (file: string) => {
+          try {
+            const res = await env.ASSETS.fetch(
+              new URL(`/vendor/katex/${KATEX_VERSION}/${file}`, baseUrl).toString(),
+            )
+            return res.ok ? new Uint8Array(await res.arrayBuffer()) : null
+          } catch {
+            return null
+          }
         },
         site: siteUpstream(env),
       })

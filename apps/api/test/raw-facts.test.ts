@@ -1,7 +1,8 @@
 import { mkdtempSync, rmSync } from "node:fs"
+import { createRequire } from "node:module"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { newId, publish } from "@derive/core"
+import { KATEX_VERSION, newId, publish } from "@derive/core"
 import { SqliteMetaStore } from "@derive/db/sqlite"
 import { FsBlobStore } from "@derive/storage/fs"
 import { afterAll, describe, expect, it } from "vitest"
@@ -13,7 +14,21 @@ import { createApp } from "../src/app"
 const dir = mkdtempSync(join(tmpdir(), "derive-rawslot-"))
 const meta = new SqliteMetaStore(join(dir, "r.db"))
 const blobs = new FsBlobStore(join(dir, "blobs"))
-const app = createApp({ meta, blobs, baseUrl: "http://derive.test", token: "tok" })
+// A stand-in for the KaTeX loader: two files exist, everything else is a miss.
+const vendorFiles: Record<string, string> = {
+  "katex.min.js": "window.katex={}",
+  "fonts/KaTeX_Main-Regular.woff2": "wOF2",
+}
+const app = createApp({
+  meta,
+  blobs,
+  baseUrl: "http://derive.test",
+  token: "tok",
+  vendorAsset: async (file) => {
+    const body = vendorFiles[file]
+    return body === undefined ? null : new TextEncoder().encode(body)
+  },
+})
 const enc = (s: string) => new TextEncoder().encode(s)
 
 afterAll(() => {
@@ -243,7 +258,21 @@ describe("raw render never white-screens + self-heals a mislabeled blob", () => 
   const dir = mkdtempSync(join(tmpdir(), "derive-rawheal-"))
   const meta = new SqliteMetaStore(join(dir, "r.db"))
   const blobs = new FsBlobStore(join(dir, "blobs"))
-  const app = createApp({ meta, blobs, baseUrl: "http://derive.test", token: "tok" })
+  // A stand-in for the KaTeX loader: two files exist, everything else is a miss.
+  const vendorFiles: Record<string, string> = {
+    "katex.min.js": "window.katex={}",
+    "fonts/KaTeX_Main-Regular.woff2": "wOF2",
+  }
+  const app = createApp({
+    meta,
+    blobs,
+    baseUrl: "http://derive.test",
+    token: "tok",
+    vendorAsset: async (file) => {
+      const body = vendorFiles[file]
+      return body === undefined ? null : new TextEncoder().encode(body)
+    },
+  })
   const enc = (s: string) => new TextEncoder().encode(s)
   // A full HTML document with a <style> head — the markdown renderer would strip the
   // head/style and emit a blank body (the white screen). The bytes lie under a
@@ -446,5 +475,39 @@ describe("dynamic slots follow the version boundary", () => {
     expect(
       (await app.request(`/v1/artifacts/${a.short_id}/dynamic?v=1`, { headers: TOKEN })).status,
     ).toBe(200)
+  })
+})
+
+describe("the KaTeX vendor route", () => {
+  const base = `/raw/vendor/katex/${KATEX_VERSION}`
+
+  it("serves an allowlisted file with CORS, nosniff and the immutable cache", async () => {
+    const js = await app.request(`${base}/katex.min.js`)
+    expect(js.status).toBe(200)
+    expect(js.headers.get("content-type")).toBe("text/javascript; charset=utf-8")
+    expect(js.headers.get("access-control-allow-origin")).toBe("*")
+    expect(js.headers.get("x-content-type-options")).toBe("nosniff")
+    expect(js.headers.get("cache-control")).toBe("public, max-age=31536000, immutable")
+    expect(await js.text()).toBe("window.katex={}")
+    const font = await app.request(`${base}/fonts/KaTeX_Main-Regular.woff2`)
+    expect(font.status).toBe(200)
+    expect(font.headers.get("content-type")).toBe("font/woff2")
+  })
+
+  it("404s another version, a file outside the allowlist, and a loader miss", async () => {
+    expect((await app.request("/raw/vendor/katex/0.0.1/katex.min.js")).status).toBe(404)
+    expect((await app.request(`${base}/katex.js`)).status).toBe(404)
+    expect((await app.request(`${base}/fonts/other.woff2`)).status).toBe(404)
+    // Allowed by the pattern, absent from the loader: still a plain 404.
+    expect((await app.request(`${base}/fonts/KaTeX_Main-Regular.ttf`)).status).toBe(404)
+    // Dotted segments never reach the route: the URL parser folds `..` (and `%2e%2e`)
+    // before routing, so this is the same request as the direct file, and each loader
+    // refuses `..` on its own for callers that are not URLs.
+    expect((await app.request(`${base}/fonts/../katex.min.js`)).status).toBe(200)
+  })
+
+  it("pins the version pages request to the package the API installs", () => {
+    const pkg = createRequire(import.meta.url)("katex/package.json") as { version: string }
+    expect(KATEX_VERSION).toBe(pkg.version)
   })
 })
