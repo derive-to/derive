@@ -1,0 +1,18 @@
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{derive}[2026/09/01 v1.0 Dynamic tables and figures exported by Derive]
+\RequirePackage{graphicx}
+\RequirePackage{booktabs}
+% The data behind each binding lives in derive-dynamic/<name>.tex, written by Derive
+% from the slot's value at export time. Edit the document, not the fragments: the next
+% export regenerates them.
+\newcommand{\derivefigopts}{width=\linewidth}
+\newcommand{\derivemissing}[1]{%
+  \fbox{\parbox{0.92\linewidth}{\centering\small\texttt{#1}: no data yet}}}
+% \derivetable[options]{name}: the table's current rows as a booktabs tabular.
+\newcommand{\derivetable}[2][]{%
+  \IfFileExists{derive-dynamic/#2.tex}{\input{derive-dynamic/#2.tex}}{\derivemissing{#2}}}
+% \derivefigure[width=...]{name}: the figure's current image via \includegraphics.
+\newcommand{\derivefigure}[2][width=\linewidth]{%
+  \renewcommand{\derivefigopts}{#1}%
+  \IfFileExists{derive-dynamic/#2.tex}{\input{derive-dynamic/#2.tex}}{\derivemissing{#2}}}
+\endinput
