@@ -80,8 +80,9 @@ export const headingSlug = (text: string): string =>
     .replace(/-+/g, "-")
     .replace(/^-+|-+$/g, "")
 
-/** Per-document slug dedup: second "goals" becomes "goals-1", then "goals-2" … */
-const slugger = () => {
+/** Per-document slug dedup: second "goals" becomes "goals-1", then "goals-2" … Exported
+ *  for the LaTeX renderer, whose section ids must match the outline built here. */
+export const headingSlugger = () => {
   const seen = new Map<string, number>()
   return (text: string): string => {
     const base = headingSlug(text) || "section"
@@ -538,7 +539,7 @@ const HEADING = /<h([1-6])\b[^>]*>([\s\S]*?)<\/h\1>/gi
 const DROP_SUBTREE = new RegExp(`<(${[...DROP].join("|")})\\b[^>]*>[\\s\\S]*?<\\/\\1>`, "gi")
 
 const headingSpans = (html: string): HeadingSpan[] => {
-  const slug = slugger()
+  const slug = headingSlugger()
   const spans: HeadingSpan[] = []
   // Ranges to exclude: a heading whose match starts inside one of these never became
   // part of the rendered document, so it must not become an outline entry (whose
@@ -811,7 +812,7 @@ interface MdHeading {
 }
 
 const mdHeadings = (src: string): MdHeading[] => {
-  const slug = slugger()
+  const slug = headingSlugger()
   const out: MdHeading[] = []
   let fence: string | null = null
   let offset = 0

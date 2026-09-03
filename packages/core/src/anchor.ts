@@ -148,7 +148,8 @@ const INVISIBLE_NAMES = [
 ]
 const SVG_INVISIBLE_NAMES = new Set(["desc", "metadata"])
 const MATH_INVISIBLE_NAMES = new Set(["annotation", "annotation-xml"])
-const BLOCK_TEXT_ELEMENTS = new Set([
+/** Exported so latex-emit.ts can pin its mirrored copy in a test. */
+export const BLOCK_TEXT_ELEMENTS = new Set([
   "address",
   "article",
   "aside",
