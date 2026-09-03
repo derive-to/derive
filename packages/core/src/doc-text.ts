@@ -10,7 +10,8 @@
 // testable — the same trade `pageText`/`reflow.ts` already make.
 
 import { decodeEntities, pageText } from "./anchor"
-import { isHtmlLike } from "./content-types"
+import { isHtmlLike, isLatexLike } from "./content-types"
+import { latexHeadings } from "./latex-render"
 
 export { DECK_CONTENT_TYPE, isAuthoredFactType, isHtmlLike, isLatexLike } from "./content-types"
 
@@ -695,6 +696,8 @@ export const sectionMarkers = (source: string, contentType: string): SectionMark
   if (isHtmlLike(contentType)) {
     for (const s of headingSpans(source)) raw.push({ text: s.text, offset: s.start })
     for (const s of labelledLandmarks(source)) raw.push({ text: s.label, offset: s.start })
+  } else if (isLatexLike(contentType)) {
+    for (const h of texHeadings(source)) raw.push({ text: h.text, offset: h.start })
   } else {
     for (const h of mdHeadings(source)) raw.push({ text: h.text, offset: h.start })
   }
@@ -783,6 +786,16 @@ export const sectionSpans = (source: string, contentType: string): SectionSpan[]
       end: sectionEnd(source, hs, i),
     }))
   }
+  if (isLatexLike(contentType)) {
+    const hs = texHeadings(source)
+    return hs.map((h, i) => ({
+      level: h.level,
+      text: h.text,
+      slug: h.slug,
+      start: h.start,
+      end: texSectionEnd(source, hs, i),
+    }))
+  }
   const hs = mdHeadings(source)
   return hs.map((h, i) => ({
     level: h.level,
@@ -844,6 +857,30 @@ const mdHeadings = (src: string): MdHeading[] => {
   return out
 }
 
+/** LaTeX sections in the markdown heading shape: `\section` and its relatives, with the
+ *  ids the rendered page gives them, starting at the macro. The renderer numbers the
+ *  heading text ("2.1 Predictor"); the spine keeps the number so a search label reads
+ *  like the paper. */
+const texHeadings = (src: string): MdHeading[] =>
+  latexHeadings(src, headingSlugger()).map((h) => ({
+    level: h.level,
+    text: h.text,
+    slug: h.slug,
+    start: h.start,
+  }))
+
+/** A LaTeX section ends where the next heading of the same or a higher level starts, or
+ *  at `\end{document}`, so the back matter never counts as the last section's prose. */
+const texSectionEnd = (src: string, hs: MdHeading[], i: number): number => {
+  const level = (hs[i] as MdHeading).level
+  for (let j = i + 1; j < hs.length; j++) {
+    const next = hs[j] as MdHeading
+    if (next.level <= level) return next.start
+  }
+  const end = src.lastIndexOf("\\end{document}")
+  return end > (hs[i] as MdHeading).start ? end : src.length
+}
+
 const mdSectionEnd = (src: string, hs: MdHeading[], i: number): number => {
   const level = (hs[i] as MdHeading).level
   for (let j = i + 1; j < hs.length; j++) {
@@ -862,7 +899,7 @@ const mdSectionEnd = (src: string, hs: MdHeading[], i: number): number => {
  *  needs pageText-style stripping) stay in sync with what actually gets converted —
  *  a local `=== "text/html"` check would silently drift on decks. */
 /** The agent-readable form of stored source: HTML converts to Markdown, everything
- *  else (markdown, plain text) already IS the readable form and passes through. */
+ *  else (markdown, LaTeX, plain text) already IS the readable form and passes through. */
 export const toMarkdown = (source: string, contentType: string): string =>
   isHtmlLike(contentType) ? htmlToMarkdown(source) : source
 
@@ -920,7 +957,8 @@ export const elideDataUrisToLimit = (s: string, maxChars: number): string => {
   return out
 }
 
-/** Outline for any text source (h1–h6 for HTML, ATX `#`–`######` for markdown). */
+/** Outline for any text source (h1–h6 for HTML, ATX `#`–`######` for markdown,
+ *  `\section` and its relatives for LaTeX). */
 export const outlineOf = (source: string, contentType: string): OutlineSection[] => {
   if (isHtmlLike(contentType)) return docOutline(source)
   return sectionSpans(source, contentType).map((h) => ({

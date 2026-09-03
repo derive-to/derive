@@ -1661,6 +1661,18 @@ export const renderLatexBody = (source: string, opts: RenderOptions): LatexRende
   }
 }
 
+/** The visible text of the rendered page and the segments that map it onto the source:
+ *  the LaTeX twin of `pageTextParts`. Section ids do not affect the text, so no slugger
+ *  is needed; callers that also render must pass the same `resolve`/`imageUrl` so
+ *  citation labels and figure placeholders agree with the page. */
+export const latexTextProjection = (
+  source: string,
+  opts: Omit<RenderOptions, "slug"> = {},
+): { text: string; segments: LatexTextSegment[] } => {
+  const r = renderLatexBody(source, { slug: (t) => t, ...opts })
+  return { text: r.text, segments: r.segments }
+}
+
 /** The section headings of a document with the ids the rendered page uses, for the
  *  outline and section reads. One pass, no HTML. */
 export const latexHeadings = (source: string, slug: (text: string) => string): LatexHeading[] => {

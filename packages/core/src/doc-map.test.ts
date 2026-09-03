@@ -257,3 +257,27 @@ describe("docMap: decks that never announced themselves", () => {
     expect(map.nodes.some((n) => n.type === "slide")).toBe(false)
   })
 })
+
+describe("docMap: LaTeX papers", () => {
+  const tex =
+    "\\documentclass{article}\n\\begin{document}\n\\maketitle\n\\section{A}\na\n\\subsection{B}\nb\n\\end{document}\n"
+
+  it("maps sections flat, tiled with the preamble and the tail", () => {
+    const map = docMap(tex, "text/x-latex")
+    expect(map.kind).toBe("latex")
+    const secs = map.nodes.filter((n) => n.type === "section")
+    expect(secs.map((s) => [s.ref, s.level, s.title])).toEqual([
+      ["sec:a", 2, "1 A"],
+      ["sec:b", 3, "1.1 B"],
+    ])
+    expect(map.nodes.map((n) => tex.slice(n.start, n.end)).join("")).toBe(tex)
+    expect(sectionOf(tex, "text/x-latex", "a")).toBe("\\section{A}\na\n\\subsection{B}\nb\n")
+    expect(outlineOf(tex, "text/x-latex").map((s) => s.slug)).toEqual(["a", "b"])
+  })
+
+  it("gives a paper without sections one body node", () => {
+    const map = docMap("\\begin{document}just prose\\end{document}", "text/x-latex")
+    expect(map.kind).toBe("latex")
+    expect(map.nodes.map((n) => n.ref)).toEqual(["doc:body"])
+  })
+})

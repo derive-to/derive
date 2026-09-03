@@ -1,7 +1,7 @@
 import { headingSlugger } from "./doc-text"
 import { LATEX_CSS } from "./latex-classes"
 import type { DynamicValueLike, LatexTextSegment } from "./latex-emit"
-import { type LatexRenderResult, renderLatexBody } from "./latex-render"
+import { type LatexRenderResult, latexTextProjection, renderLatexBody } from "./latex-render"
 import { renderDocShell } from "./md"
 import type { BundleManifest } from "./ports"
 import { tapsPackageAdvisories } from "./taps-packages"
@@ -113,10 +113,7 @@ export const renderLatex = (
 export const latexTextParts = (
   source: string,
   opts: RenderLatexOptions = {},
-): { text: string; segments: LatexTextSegment[] } => {
-  const r = renderLatexBody(source, { slug: headingSlugger(), ...opts })
-  return { text: r.text, segments: r.segments }
-}
+): { text: string; segments: LatexTextSegment[] } => latexTextProjection(source, opts)
 
 const ADVISORY_LIMIT = 8
 

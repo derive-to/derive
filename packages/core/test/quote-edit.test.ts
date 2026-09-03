@@ -562,3 +562,48 @@ describe("applyQuoteEdits — line breaks", () => {
     expect(out).toBe("<p>onetwo</p>")
   })
 })
+
+describe("applyQuoteEdits — LaTeX", () => {
+  const TEX = "text/x-latex"
+  const doc =
+    "\\documentclass{article}\n\\begin{document}\n\\section{Intro}\nThe quick brown fox jumps over the lazy dog. It was teh best of times \\emph{indeed}~\\cite{k}.\n\\end{document}\n"
+
+  it("replaces prose located by context, splicing the source bytes", () => {
+    const out = applyQuoteEdits(doc, TEX, [
+      qe("teh", "the", { prefix: "It was ", suffix: " best of times" }),
+    ])
+    expect(out).toContain("It was the best of times \\emph{indeed}")
+    expect(out).not.toContain("teh")
+  })
+
+  it("edits inside a macro's argument without touching the macro", () => {
+    const out = applyQuoteEdits(doc, TEX, [qe("indeed", "truly")])
+    expect(out).toContain("\\emph{truly}~\\cite{k}")
+  })
+
+  it("escapes LaTeX's special characters in typed text", () => {
+    const out = applyQuoteEdits(doc, TEX, [qe("lazy dog", "50% of dogs & cats")])
+    expect(out).toContain("50\\% of dogs \\& cats")
+  })
+
+  it("refuses a quote that crosses a macro boundary or a generated label", () => {
+    expect(() => applyQuoteEdits(doc, TEX, [qe("times indeed", "x")])).toThrow(
+      /crosses LaTeX markup/,
+    )
+    // The citation renders as "[k?]" (no bibliography); the label is made up from the
+    // macro, so it is not editable text.
+    expect(() => applyQuoteEdits(doc, TEX, [qe("[k?]", "x")])).toThrow(/generated from a macro/)
+  })
+
+  it("refuses HTML replacements the way markdown does", () => {
+    expect(() =>
+      applyQuoteEdits(doc, TEX, [{ quote: { exact: "quick" }, new_html: "<b>fast</b>" }]),
+    ).toThrow(/this document is LaTeX/)
+  })
+
+  it("lets a quote run through a ligature typed as plain characters", () => {
+    const src = "\\begin{document}Pages 10--20 are ``good'' here.\\end{document}"
+    const out = applyQuoteEdits(src, TEX, [qe("10–20 are “good”", "10--30 are fine")])
+    expect(out).toBe("\\begin{document}Pages 10--30 are fine here.\\end{document}")
+  })
+})

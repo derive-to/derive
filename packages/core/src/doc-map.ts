@@ -25,6 +25,7 @@
  * add later and impossible to remove once agents depend on it.
  */
 
+import { isLatexLike } from "./content-types"
 import { countSlideElements, isDeckDocument, sliceSlides } from "./decks"
 import { flatSectionSpans, isHtmlLike, landmarkSpans } from "./doc-text"
 import { attrValue, elementEnd, type HtmlTag, tags } from "./html-tags"
@@ -63,7 +64,7 @@ export interface DocNode {
 }
 
 export interface DocMap {
-  kind: "deck" | "video" | "page" | "markdown"
+  kind: "deck" | "video" | "page" | "markdown" | "latex"
   nodes: DocNode[]
 }
 
@@ -139,7 +140,9 @@ export const docMap = (source: string, contentType: string): DocMap => {
       : slideStructured
         ? "deck"
         : "page"
-    : "markdown"
+    : isLatexLike(contentType)
+      ? "latex"
+      : "markdown"
 
   // 1. Content anchors: what the document is made of.
   const anchors: DocNode[] = []

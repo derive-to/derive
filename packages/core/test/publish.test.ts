@@ -994,3 +994,28 @@ describe("looksLikeHtmlDocument", () => {
     expect(looksLikeHtmlDocument('<?xml version="1.0"?><svg></svg>')).toBe(false)
   })
 })
+
+describe("publishAdvisories — LaTeX", () => {
+  it("nudges a LaTeX document stored as markdown toward a .tex filename", () => {
+    expect(
+      publishAdvisories(
+        "\\documentclass{article}\n\\begin{document}x\\end{document}",
+        "text/markdown",
+      ),
+    ).toEqual([
+      "Stored as markdown, but the content is a LaTeX document — republish with " +
+        'filename:"paper.tex" so it renders as a paper.',
+    ])
+  })
+
+  it("reports what the renderer could not honour and TAPS-refused packages", () => {
+    const tex =
+      "\\documentclass[sigconf]{acmart}\n\\usepackage{tikz}\n\\begin{document}\n\\foo{x} \\ref{missing}\n\\end{document}"
+    expect(publishAdvisories(tex, "text/x-latex")).toEqual([
+      "latex: line 4: \\foo is not supported; its text is kept as written",
+      "latex: line 4: \\ref{missing}: no \\label with this key",
+      "\\usepackage{tikz}: tikz is not on ACM TAPS's accepted package list",
+    ])
+    expect(publishAdvisories("\\begin{document}clean\\end{document}", "text/x-latex")).toEqual([])
+  })
+})

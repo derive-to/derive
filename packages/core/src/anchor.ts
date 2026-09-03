@@ -1,6 +1,6 @@
 import { DecodingMode, decodeHTML, EntityDecoder, htmlDecodeTree } from "entities/decode"
 import { findQuoteWithContext } from "./anchor-shared"
-import { isHtmlLike } from "./content-types"
+import { isHtmlLike, isLatexLike } from "./content-types"
 import { elementResolvesIn, parseElementSelector } from "./element-anchor"
 import {
   elementEnd,
@@ -10,6 +10,7 @@ import {
   RCDATA_ELEMENTS,
   tags,
 } from "./html-tags"
+import { latexTextProjection } from "./latex-render"
 import { MENTION_NON_PROSE_TAGS } from "./mention-shared"
 import type { CommentState } from "./ports"
 
@@ -482,7 +483,11 @@ export type AnchorContent = string | { raw: string; text: string }
  *  content (html + decks) gets tag-stripped page text for quote matching; markdown/plain
  *  is matched as-is (its source IS the visible text, and stripping would eat autolinks). */
 export function anchorContentFor(raw: string, contentType: string): AnchorContent {
-  return isHtmlLike(contentType) ? { raw, text: pageText(raw) } : raw
+  if (isHtmlLike(contentType)) return { raw, text: pageText(raw) }
+  // A LaTeX source renders to a page whose visible text is prose without the macros;
+  // quotes are taken from that page, so they are matched against the same projection.
+  if (isLatexLike(contentType)) return { raw, text: latexTextProjection(raw).text }
+  return raw
 }
 
 /** True if the comment's stored anchor still resolves in `content` — a text quote
