@@ -139,6 +139,9 @@ function SkillWorkbench({
               >
                 <Icon name="workflow" size={14} /> Workflow:{" "}
                 {workflowLinks[0].artifact.title ?? workflowLinks[0].artifact.short_id}
+                <span className="font-mono text-2xs text-muted-foreground">
+                  v{workflowLinks[0].artifact_version}
+                </span>
               </Link>
             </Button>
           ) : workflowLinks.length > 1 ? (

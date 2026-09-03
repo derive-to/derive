@@ -1051,6 +1051,9 @@ export function LinkedBundleWorkspace({
                 >
                   <Icon name="sparkles" size={14} /> Skill:{" "}
                   {launchers[0].skill.title ?? launchers[0].skill.short_id}
+                  <span className="font-mono text-2xs text-muted-foreground">
+                    v{launchers[0].skill_version}
+                  </span>
                 </Link>
               </Button>
             ) : launchers.length > 1 ? (
