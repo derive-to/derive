@@ -221,6 +221,39 @@ export const skillRoutes = (ctx: AppContext) => {
     })
   })
 
+  app.get("/v1/artifacts/:shortId/skills", async (c) => {
+    const artifact = await requireArtifact(c, "read")
+    if (artifact instanceof Response) return artifact
+    const links = await meta.listArtifactSkillLinkHistory(artifact.id, artifact.org_id)
+    const skills = await meta.listArtifacts({
+      ids: [...new Set(links.map((link) => link.skill_artifact_id))],
+      orgId: artifact.org_id,
+      archived: "include",
+    })
+    const readable = new Map<string, (typeof skills)[number]>()
+    for (const skill of skills) {
+      if (skill.current_content_type !== SKILL_CONTENT_TYPE) continue
+      if (await authorize(c, "read", skill)) readable.set(skill.id, skill)
+    }
+    return c.json({
+      links: links
+        .filter((link) => readable.has(link.skill_artifact_id))
+        .map((link) => {
+          const skill = readable.get(link.skill_artifact_id)
+          return {
+            ...link,
+            skill: skill
+              ? {
+                  short_id: skill.short_id,
+                  title: skill.title,
+                  current_version: skill.current_version,
+                }
+              : null,
+          }
+        }),
+    })
+  })
+
   app.put("/v1/artifacts/:shortId/skill-installation", async (c) => {
     const skill = await requireArtifact(c, "read")
     if (skill instanceof Response) return skill

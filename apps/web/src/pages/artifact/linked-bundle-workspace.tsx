@@ -1,9 +1,12 @@
+import { useQuery } from "@tanstack/react-query"
+import { Link } from "@tanstack/react-router"
 import { useEffect, useMemo, useRef, useState } from "react"
 import type { Artifact, Comment, DirUser } from "@/api"
 import { Icon } from "@/components/icons"
 import { Count, Eyebrow } from "@/components/shared/section-eyebrow"
 import { SectionHeading, SectionTitle } from "@/components/shared/section-title"
 import { Button } from "@/components/ui/button"
+import { artifactSkillsQuery } from "@/lib/queries"
 import { ago } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { LinkedBundleFocusSearch, type LinkedBundleFocusTarget } from "./linked-bundle-focus"
@@ -937,6 +940,15 @@ export function LinkedBundleWorkspace({
   reviewState: LinkedBundleReviewState
   onReviewStateChange: (state: LinkedBundleReviewState) => void
 }) {
+  // surface-ignore: optional provenance chrome degrades to no launcher CTA; the
+  // Workflow workspace and all execution controls remain fully usable.
+  const linkedSkills = useQuery({
+    ...artifactSkillsQuery(shortId),
+    enabled: !!workflowPreview,
+  })
+  const launcher = linkedSkills.data?.links.find(
+    (link) => link.role === "workflow-definition" && link.skill,
+  )
   const diagrams = bundle.diagrams ?? []
   const counts = linkedBundleCommentCounts(comments)
   const members = useMemo(
@@ -1019,6 +1031,17 @@ export function LinkedBundleWorkspace({
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            {launcher?.skill ? (
+              <Button asChild variant="outline" size="sm" data-testid="workflow-open-skill">
+                <Link
+                  to="/artifacts/$ref"
+                  params={{ ref: launcher.skill.short_id }}
+                  title={`Launcher Skill v${launcher.skill_version}, linked from Workflow v${launcher.artifact_version}`}
+                >
+                  <Icon name="sparkles" size={14} /> Open Skill
+                </Link>
+              </Button>
+            ) : null}
             <fieldset className="flex rounded-lg border border-border p-0.5">
               <legend className="sr-only">Workspace view</legend>
               {workflowPreview ? (

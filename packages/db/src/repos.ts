@@ -4842,6 +4842,20 @@ export function makeRepos(db: SqliteDb) {
       )
       .orderBy(asc(artifactSkillLink.role), asc(artifactSkillLink.skill_artifact_id))
       .all()) as ArtifactSkillLinkRecord[]
+  const listArtifactSkillLinkHistory = async (
+    artifactId: string,
+    orgId: string,
+    limit = 100,
+  ): Promise<ArtifactSkillLinkRecord[]> =>
+    (await db
+      .select()
+      .from(artifactSkillLink)
+      .where(
+        and(eq(artifactSkillLink.org_id, orgId), eq(artifactSkillLink.artifact_id, artifactId)),
+      )
+      .orderBy(desc(artifactSkillLink.artifact_version), desc(artifactSkillLink.created_at))
+      .limit(Math.max(1, Math.min(limit, 100)))
+      .all()) as ArtifactSkillLinkRecord[]
   const listSkillArtifactLinks = async (
     skillArtifactId: string,
     orgId: string,
@@ -6012,6 +6026,7 @@ export function makeRepos(db: SqliteDb) {
     listSkillInstallations,
     linkArtifactSkill,
     listArtifactSkillLinks,
+    listArtifactSkillLinkHistory,
     listSkillArtifactLinks,
     skillUsage,
     createPlan,

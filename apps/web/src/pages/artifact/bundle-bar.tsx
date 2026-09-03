@@ -98,6 +98,9 @@ function SkillWorkbench({
   const workflowRuns = (usage.data?.workflows ?? []).reduce((sum, item) => sum + item.count, 0)
   const fileUrl = (path: string) => `${API_BASE}/raw/${shortId}/v/${version}/${path}`
   const installCommand = `derive skill add ${shortId}`
+  const workflow = usage.data?.artifacts.find(
+    (item) => item.role === "workflow-definition" && item.artifact,
+  )?.artifact
 
   return (
     <div className="border-b border-border bg-card/60" data-testid="skill-workbench">
@@ -117,6 +120,13 @@ function SkillWorkbench({
           )}
         </div>
         <div className="flex min-w-0 flex-col items-end gap-2">
+          {workflow ? (
+            <Button asChild size="sm" variant="outline" data-testid="skill-open-workflow">
+              <Link to="/artifacts/$ref" params={{ ref: workflow.short_id }}>
+                <Icon name="workflow" size={14} /> Open workflow
+              </Link>
+            </Button>
+          ) : null}
           <div className="flex gap-1.5">
             <Badge variant="outline" shape="pill">
               Claude

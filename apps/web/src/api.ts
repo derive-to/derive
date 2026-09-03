@@ -648,6 +648,18 @@ export interface SkillUsage {
     artifact: { short_id: string; title: string | null } | null
   }>
 }
+export interface ArtifactSkills {
+  links: Array<{
+    id: string
+    artifact_id: string
+    artifact_version: number
+    skill_artifact_id: string
+    skill_version: number
+    role: "created" | "revised" | "validated" | "example" | "anti-example" | "workflow-definition"
+    created_at: string
+    skill: { short_id: string; title: string | null; current_version: number } | null
+  }>
+}
 
 // A per-user connected external account (WO3) — a Source. Always the caller's own.
 export interface Connection {
@@ -871,6 +883,8 @@ export const api = {
     f(`/v1/artifacts/${encodeURIComponent(shortId)}/skill-graph`, opts()).then(j),
   skillUsage: (shortId: string): Promise<SkillUsage> =>
     f(`/v1/artifacts/${encodeURIComponent(shortId)}/skill-usage`, opts()).then(j),
+  artifactSkills: (shortId: string): Promise<ArtifactSkills> =>
+    f(`/v1/artifacts/${encodeURIComponent(shortId)}/skills`, opts()).then(j),
   // The batched boot read: exactly the four bodies below (tags summary, collections,
   // workspace settings, notifications), one authenticated request. The client seeds
   // the four individual query caches from it — see lib/bootstrap.ts. Typed against the

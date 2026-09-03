@@ -2508,6 +2508,12 @@ export interface SkillStore {
     artifactVersion: number,
     orgId: string,
   ): Promise<ArtifactSkillLinkRecord[]>
+  /** Exact-version provenance across an artifact's history, newest first. */
+  listArtifactSkillLinkHistory(
+    artifactId: string,
+    orgId: string,
+    limit?: number,
+  ): Promise<ArtifactSkillLinkRecord[]>
   listSkillArtifactLinks(
     skillArtifactId: string,
     orgId: string,

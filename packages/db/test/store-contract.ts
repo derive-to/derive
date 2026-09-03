@@ -3528,6 +3528,7 @@ export function runStoreContract(
       expect(await store.listArtifactSkillLinks(workflow.id, workflowVersion.n, ORG)).toHaveLength(
         1,
       )
+      expect(await store.listArtifactSkillLinkHistory(workflow.id, ORG)).toHaveLength(1)
       expect(await store.listSkillArtifactLinks(skill.id, ORG)).toHaveLength(1)
       await store.createWorkflowRun({
         id: uuid(),

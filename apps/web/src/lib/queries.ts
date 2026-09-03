@@ -180,6 +180,12 @@ export const skillUsageQuery = (shortId: string) =>
     refetchOnWindowFocus: "always",
   })
 
+export const artifactSkillsQuery = (shortId: string) =>
+  queryOptions({
+    queryKey: ["artifacts", shortId, "skills"] as const,
+    queryFn: () => api.artifactSkills(shortId),
+  })
+
 // The caller's own connected sources. NO UI CONSUMES THIS YET, on purpose: the Sources
 // settings screen was removed because neither broker can produce a usable connection. The
 // local broker reports `active` immediately and then echoes a tool's own arguments back

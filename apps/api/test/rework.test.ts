@@ -413,6 +413,22 @@ describe("workflow run: explicit local-agent handoff", () => {
     expect(validateSkillDefinition(skillMd, sidecar).errors).toEqual([])
     const catalog = await (await app.request("/v1/skills", { headers: as(owner.email) })).json()
     expect(catalog.skills).toContainEqual(expect.objectContaining({ short_id: skill?.short_id }))
+    const reverseLinks = await (
+      await app.request(`/v1/artifacts/${published.short_id}/skills`, {
+        headers: as(owner.email),
+      })
+    ).json()
+    expect(reverseLinks.links).toContainEqual(
+      expect.objectContaining({
+        artifact_version: 1,
+        skill_version: 1,
+        role: "workflow-definition",
+        skill: expect.objectContaining({
+          short_id: skill?.short_id,
+          current_version: 1,
+        }),
+      }),
+    )
     const workflows = await (
       await app.request("/v1/workflows", { headers: as(owner.email) })
     ).json()
@@ -439,6 +455,28 @@ describe("workflow run: explicit local-agent handoff", () => {
         (context) => context.manifest_artifact_id === skill?.id,
       ),
     ).toBe(true)
+
+    // The durable relationship survives later Workflow revisions while preserving
+    // the exact versions that originally established provenance.
+    const revised = await publishAs(
+      app,
+      workflowHtml(),
+      { title: "Weekly brief" },
+      as(owner.email),
+      published.short_id,
+    )
+    expect(revised.status).toBe(201)
+    const historicalReverseLinks = await (
+      await app.request(`/v1/artifacts/${published.short_id}/skills`, {
+        headers: as(owner.email),
+      })
+    ).json()
+    expect(historicalReverseLinks.links).toContainEqual(
+      expect.objectContaining({
+        artifact_version: 1,
+        skill: expect.objectContaining({ short_id: skill?.short_id }),
+      }),
+    )
   })
 
   it("reuses the deterministic launcher after a publish-to-link interruption", async () => {
