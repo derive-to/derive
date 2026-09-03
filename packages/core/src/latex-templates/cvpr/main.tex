@@ -1,0 +1,129 @@
+%% CVPR paper on Derive, in the shape of the CVPR author kit
+%% (https://github.com/cvpr-org/author-kit).
+%%
+%% cvpr.sty and ieeenat_fullname.bst come from the author kit. Derive adds them to this
+%% bundle when the paper is created from the template; if they are missing here (README.md
+%% says why), download them from the kit and put them next to this file.
+%%
+%% derive.sty is Derive's package for tables and figures that update without a new
+%% version: \derivetable{name} and \derivefigure{name}. The rendered page shows each
+%% slot's current value, and "Download LaTeX source" writes the current data next to this
+%% file as derive-dynamic/<name>.tex, so the paper compiles with what the page shows.
+\documentclass[10pt,twocolumn,letterpaper]{article}
+
+%%%%%%%%% PAPER TYPE - update for the final version
+% \usepackage{cvpr}              % camera-ready
+\usepackage[review]{cvpr}      % review (anonymous, with line numbers and the paper id)
+% \usepackage[pagenumbers]{cvpr} % page numbers, e.g. for an arXiv version
+
+\usepackage{graphicx}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{derive}
+
+%% hyperref last, as the kit recommends; cleveref after it.
+\definecolor{cvprblue}{rgb}{0.21,0.49,0.74}
+\usepackage[pagebackref,breaklinks,colorlinks,allcolors=cvprblue]{hyperref}
+\usepackage[capitalize]{cleveref}
+\crefname{section}{Sec.}{Secs.}
+\Crefname{section}{Section}{Sections}
+\crefname{table}{Tab.}{Tabs.}
+\Crefname{table}{Table}{Tables}
+
+%%%%%%%%% PAPER ID - update before submitting
+\def\paperID{*****}
+\def\confName{CVPR}
+\def\confYear{2026}
+
+\title{Paper Title}
+
+\author{First Author\\
+Institution1\\
+Institution1 address\\
+{\tt\small firstauthor@i1.org}
+\and
+Second Author\\
+Institution2\\
+First line of institution2 address\\
+{\tt\small secondauthor@i2.org}
+}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+One paragraph: the problem, why it matters, what this paper does, and what the reader
+gains. Replace this text.
+\end{abstract}
+
+\section{Introduction}
+\label{sec:intro}
+
+State the problem and why existing work leaves it open~\cite{example2020method}. Say
+what this paper contributes, in the order the sections deliver it; \cref{fig:teaser}
+should already make the point.
+
+\begin{figure}[t]
+  \centering
+  \derivefigure[width=\linewidth]{teaser}
+  \caption{Teaser caption: what the reader sees at a glance. The image is a dynamic
+  figure: replace it from Derive's Data tab and the page and the export follow.}
+  \label{fig:teaser}
+\end{figure}
+
+\section{Related Work}
+
+Group prior work by the approach it takes rather than by year. Cite with
+\verb|\cite{key}| for a numeric reference~\cite{example2023survey,example2016book}.
+
+\section{Method}
+\label{sec:method}
+
+Introduce notation once. A displayed equation gets a number when it is referenced:
+\begin{equation}
+  \mathcal{L} = \sum_{i=1}^{N} \big\| f_\theta(\mathbf{x}_i) - \mathbf{y}_i \big\|_2^2 .
+  \label{eq:loss}
+\end{equation}
+\Cref{eq:loss} is minimised over the training set; inline math such as $f_\theta$ reads
+well in running text.
+
+\section{Experiments}
+\label{sec:experiments}
+
+\Cref{tab:results} is a dynamic table: an agent (or you) fills it in through Derive's
+data API as runs finish, and every reader sees the current numbers.
+
+\begin{table}[t]
+  \centering
+  \derivetable{results}
+  \caption{Quantitative comparison on the benchmark. Higher is better.}
+  \label{tab:results}
+\end{table}
+
+A static table works too, with booktabs rules:
+
+\begin{table}[t]
+  \centering
+  \begin{tabular}{@{}lrr@{}}
+    \toprule
+    Method & mAP & FPS \\
+    \midrule
+    Baseline & 41.2 & 18 \\
+    Ours & \textbf{45.7} & \textbf{31} \\
+    \bottomrule
+  \end{tabular}
+  \caption{A static table.}
+  \label{tab:static}
+\end{table}
+
+\section{Conclusion}
+
+Close with what was shown, what it does not cover, and what comes next.
+
+{
+  \small
+  \bibliographystyle{ieeenat_fullname}
+  \bibliography{main}
+}
+
+\end{document}

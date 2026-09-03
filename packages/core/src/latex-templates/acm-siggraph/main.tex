@@ -1,0 +1,143 @@
+%% ACM SIGGRAPH paper (conference track) on Derive.
+%%
+%% The class is acmart, which Overleaf and TeX Live ship (SIGGRAPH needs acmart 2.16 or
+%% newer; CTAN carries 2.20). For the journal track (ACM Transactions on Graphics) change
+%% the first line to \documentclass[acmtog]{acmart}; add `anonymous,review` for a
+%% double-blind submission.
+%%
+%% derive.sty is Derive's package for tables and figures that update without a new
+%% version: \derivetable{name} and \derivefigure{name}. The rendered page shows each
+%% slot's current value, and "Download LaTeX source" writes the current data next to this
+%% file as derive-dynamic/<name>.tex, so the paper compiles with what the page shows.
+\documentclass[sigconf]{acmart}
+\usepackage{derive}
+
+%% SIGGRAPH requires author-year citations.
+\citestyle{acmauthoryear}
+
+%% Rights and venue. TAPS fills the DOI and ISBN at production; leave the placeholders.
+\setcopyright{acmlicensed}
+\copyrightyear{2026}
+\acmYear{2026}
+\acmDOI{XXXXXXX.XXXXXXX}
+\acmConference[SIGGRAPH '26]{Special Interest Group on Computer Graphics and Interactive Techniques Conference}{July 2026}{Vancouver, BC, Canada}
+\acmISBN{978-1-4503-XXXX-X/26/07}
+
+\begin{document}
+
+\title{Paper Title}
+
+\author{First Author}
+\email{first@example.edu}
+\orcid{0000-0000-0000-0000}
+\affiliation{%
+  \institution{Institution}
+  \city{City}
+  \country{Country}
+}
+
+\author{Second Author}
+\email{second@example.org}
+\affiliation{%
+  \institution{Institution}
+  \city{City}
+  \country{Country}
+}
+
+\begin{abstract}
+One paragraph: the problem, why it matters, what this paper does, and what the reader
+gains. Replace this text.
+\end{abstract}
+
+%% The CCS concepts block comes from https://dl.acm.org/ccs; paste the generated XML
+%% here and mirror it with \ccsdesc lines below.
+\begin{CCSXML}
+<ccs2012>
+   <concept>
+       <concept_id>10010147.10010371.10010372</concept_id>
+       <concept_desc>Computing methodologies~Rendering</concept_desc>
+       <concept_significance>500</concept_significance>
+   </concept>
+</ccs2012>
+\end{CCSXML}
+
+\ccsdesc[500]{Computing methodologies~Rendering}
+
+\keywords{keyword one, keyword two, keyword three}
+
+%% The teaser is a dynamic figure: replace its image from the Data tab (or PATCH the
+%% `teaser` slot) and the page and the export follow, without a new version.
+\begin{teaserfigure}
+  \derivefigure[width=\textwidth]{teaser}
+  \caption{Teaser caption: what the reader sees at a glance.}
+  \Description{Describe the teaser for readers who cannot see it.}
+  \label{fig:teaser}
+\end{teaserfigure}
+
+\maketitle
+
+\section{Introduction}
+\label{sec:intro}
+
+State the problem and why existing work leaves it open~\cite{example2020method}. Say
+what this paper contributes, in the order the sections deliver it. Figure~\ref{fig:teaser}
+should already make the point.
+
+\section{Related Work}
+
+Group prior work by the approach it takes rather than by year. Cite with
+\verb|\cite{key}| for a parenthetical reference~\cite{example2023survey} and
+\verb|\citet{key}| when the authors are the subject of the sentence, as
+\citet{example2020method} did.
+
+\section{Method}
+\label{sec:method}
+
+Introduce notation once. A displayed equation gets a number when it is referenced:
+\begin{equation}
+  L(\mathbf{x}, \omega_o) = L_e(\mathbf{x}, \omega_o) + \int_{\Omega} f_r(\mathbf{x}, \omega_i, \omega_o)\, L_i(\mathbf{x}, \omega_i)\, (\omega_i \cdot \mathbf{n})\, d\omega_i .
+  \label{eq:rendering}
+\end{equation}
+Equation~\eqref{eq:rendering} is the rendering equation; inline math such as
+$\omega_i \cdot \mathbf{n}$ reads well in running text.
+
+\section{Results}
+\label{sec:results}
+
+Table~\ref{tab:results} is a dynamic table: an agent (or you) fills it in through
+Derive's data API as runs finish, and every reader sees the current numbers.
+
+\begin{table}
+  \caption{Quantitative comparison. Higher is better.}
+  \label{tab:results}
+  \derivetable{results}
+\end{table}
+
+A static table works too, with booktabs rules:
+
+\begin{table}
+  \caption{A static table.}
+  \label{tab:static}
+  \begin{tabular}{lrr}
+    \toprule
+    Method & PSNR & SSIM \\
+    \midrule
+    Baseline & 27.1 & 0.91 \\
+    Ours & \textbf{28.6} & \textbf{0.94} \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\section{Conclusion}
+
+Close with what was shown, what it does not cover, and what comes next.
+
+\begin{acks}
+Thank the people and grants that made the work possible. This section is dropped under
+the \texttt{anonymous} option.
+\end{acks}
+
+\bibliographystyle{ACM-Reference-Format}
+\bibliography{references}
+
+\end{document}

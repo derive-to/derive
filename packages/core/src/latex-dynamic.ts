@@ -10,29 +10,14 @@
  * placeholder the web page shows for an unfilled slot.
  */
 
+import { DERIVE_STY } from "./derive-sty.gen"
 import type { DynamicTableLike } from "./latex-emit"
 import { type MacroNode, parseLatex } from "./latex-parse"
 
-/** The package text written to `derive.sty` in a source export. */
-export const DERIVE_STY = String.raw`\NeedsTeXFormat{LaTeX2e}
-\ProvidesPackage{derive}[2026/09/01 v1.0 Dynamic tables and figures exported by Derive]
-\RequirePackage{graphicx}
-\RequirePackage{booktabs}
-% The data behind each binding lives in derive-dynamic/<name>.tex, written by Derive
-% from the slot's value at export time. Edit the document, not the fragments: the next
-% export regenerates them.
-\newcommand{\derivefigopts}{width=\linewidth}
-\newcommand{\derivemissing}[1]{%
-  \fbox{\parbox{0.92\linewidth}{\centering\small\texttt{#1}: no data yet}}}
-% \derivetable[options]{name}: the table's current rows as a booktabs tabular.
-\newcommand{\derivetable}[2][]{%
-  \IfFileExists{derive-dynamic/#2.tex}{\input{derive-dynamic/#2.tex}}{\derivemissing{#2}}}
-% \derivefigure[width=...]{name}: the figure's current image via \includegraphics.
-\newcommand{\derivefigure}[2][width=\linewidth]{%
-  \renewcommand{\derivefigopts}{#1}%
-  \IfFileExists{derive-dynamic/#2.tex}{\input{derive-dynamic/#2.tex}}{\derivemissing{#2}}}
-\endinput
-`
+/** The package text written to `derive.sty` in a source export and shipped in every paper
+ *  starter. Canonical source: packages/core/src/latex-templates/derive.sty, mirrored here
+ *  by scripts/gen-latex-templates.mjs. */
+export { DERIVE_STY }
 
 /** Escape text for a LaTeX body: the ten special characters, in an order that never
  *  re-escapes its own output. */
@@ -128,9 +113,10 @@ const HAS_DERIVE = /^[ \t]*\\usepackage(?:\[[^\]]*\])?\{[^}]*\bderive\b[^}]*\}/m
 
 /** Add `\usepackage{derive}` after `\documentclass` when the document binds dynamic data
  *  and does not load the package already. Idempotent; a document without bindings is
- *  returned unchanged so an export never edits what it does not need to. */
-export const injectDerivePackage = (source: string): string => {
-  if (!latexDynamicBindings(source).length) return source
+ *  returned unchanged so an export never edits what it does not need to. `force` skips the
+ *  bindings check for an entry whose bindings live in the files it `\input`s. */
+export const injectDerivePackage = (source: string, force = false): string => {
+  if (!force && !latexDynamicBindings(source).length) return source
   if (HAS_DERIVE.test(source)) return source
   const m = DOCUMENTCLASS.exec(source)
   if (!m || m.index === undefined) return `\\usepackage{derive}\n${source}`
