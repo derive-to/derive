@@ -39,6 +39,8 @@ import {
   context,
   contextSession,
   domain,
+  dynamicRevision,
+  dynamicSlot,
   MIGRATION_STATEMENTS,
   notification,
   report,
@@ -310,6 +312,8 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
         db.delete(webhook).where(eq(webhook.artifact_id, id)).run()
         db.delete(sharedStateActivity).where(eq(sharedStateActivity.artifact_id, id)).run()
         db.delete(sharedState).where(eq(sharedState.artifact_id, id)).run()
+        db.delete(dynamicRevision).where(eq(dynamicRevision.artifact_id, id)).run()
+        db.delete(dynamicSlot).where(eq(dynamicSlot.artifact_id, id)).run()
         db.delete(versionData).where(eq(versionData.artifact_id, id)).run()
         db.delete(version).where(eq(version.artifact_id, id)).run()
         db.delete(comment).where(eq(comment.artifact_id, id)).run()
