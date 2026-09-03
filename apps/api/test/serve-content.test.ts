@@ -433,7 +433,9 @@ describe("serveContent — LaTeX", () => {
     expect(res.headers.get("content-type")).toContain("text/html")
     const body = await res.text()
     expect(body).toContain("<main data-derive-ready>")
-    expect(body).toContain('<h2 id="intro"><span class="derive-secnum">1</span> Intro</h2>')
+    expect(body).toContain(
+      '<h2 id="intro"><span class="derive-secnum" data-derive-readonly="1">1</span> Intro</h2>',
+    )
     expect(body).toContain('data-tex="E=mc^2"')
     expect(body).toContain(`${KATEX_ASSET_BASE}/katex.min.js`)
     expect(body.split(SCRIPT).length).toBe(2) // the anchor client exactly once

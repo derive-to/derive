@@ -1,5 +1,6 @@
 import {
   type ArtifactRecord,
+  type BundleManifest,
   backfillLegacyDeckStructure,
   EditError,
   fingerprintOf,
@@ -739,5 +740,57 @@ describe("materializeEdits: LaTeX documents", () => {
         1,
       ),
     ).rejects.toThrow(/not Markdown or LaTeX/)
+  })
+})
+
+describe("materializeEdits: paper bundles", () => {
+  const manifest: BundleManifest = {
+    entry: "/main.tex",
+    spa: false,
+    files: {
+      "/main.tex": { key: "m", type: "text/x-latex" },
+      "/sec/a.tex": { key: "s", type: "text/x-latex" },
+      "/refs.bib": { key: "r", type: "text/plain" },
+    },
+  }
+  const texts = new Map([
+    ["/main.tex", "\\begin{document}\nIt was teh best.\n\\input{sec/a}\n\\end{document}\n"],
+    ["/sec/a.tex", "Included words.\n"],
+    ["/refs.bib", "@misc{k, title={T}}"],
+  ])
+  const paper = { ...fileArtifact(1), kind: "bundle" as const }
+  const deps = {
+    ...mkDeps({ 1: { text: "", contentType: "derive/latex" } }),
+    manifestOf: async () => manifest,
+    bundleTexts: async () => texts,
+  }
+
+  it("edits the entry file and hands back the bundle to republish", async () => {
+    const out = await materializeEdits(
+      deps,
+      paper,
+      [{ quote: { exact: "teh" }, new_text: "the" }],
+      1,
+    )
+    expect(out.content).toContain("It was the best.")
+    expect(out.filename).toBe("index.tex")
+    expect(out.bundle).toEqual({ manifest, path: "main.tex" })
+  })
+
+  it("sees included text and names its file instead of guessing a splice", async () => {
+    await expect(
+      materializeEdits(deps, paper, [{ quote: { exact: "Included words" }, new_text: "x" }], 1),
+    ).rejects.toThrow(/comes from sec\/a\.tex/)
+  })
+
+  it("keeps refusing bundles for a caller that cannot read manifests", async () => {
+    await expect(
+      materializeEdits(
+        mkDeps({ 1: { text: "", contentType: "derive/latex" } }),
+        paper,
+        [{ quote: { exact: "teh" }, new_text: "the" }],
+        1,
+      ),
+    ).rejects.toThrow(/multi-page bundle/)
   })
 })

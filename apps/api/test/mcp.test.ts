@@ -3529,3 +3529,58 @@ describe("MCP: LaTeX papers", () => {
     expect(source).toContain("Included prose.")
   })
 })
+
+describe("MCP: editing a paper bundle", () => {
+  it("applies edits to main.tex, republishes the bundle and lists the bibliography in read", async () => {
+    const { app, token } = appWithGrant(dir, "latex-bib", "openid derive:read derive:publish")
+    const created = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          title: "Paper",
+          files: {
+            "main.tex":
+              "\\documentclass{article}\\begin{document}\nIt was teh best \\cite{k}.\n\\bibliography{refs}\\end{document}",
+            "refs.bib":
+              "@misc{k, title={T}, author={A B}, year={2020}}\n@misc{unused, title={U}, author={C D}, year={2021}}",
+          },
+        }),
+      ),
+    )
+    const listing = JSON.parse(
+      toolText(await call(app, token, "read", { short_id: created.short_id })),
+    )
+    expect(listing.bibliography).toEqual([
+      { key: "k", authors: "B", year: "2020", title: "T" },
+      { key: "unused", authors: "D", year: "2021", title: "U" },
+    ])
+    expect(listing.cited).toEqual(["k"])
+    expect(listing.next).toContain("\\cite{key}")
+    const edited = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          short_id: created.short_id,
+          edits: [{ quote: { exact: "teh" }, new_text: "the" }],
+        }),
+      ),
+    )
+    expect(edited.version).toBe(2)
+    const detail = await (
+      await app.request(`/v1/artifacts/${created.short_id}`, {
+        headers: { authorization: `Bearer ${token}` },
+      })
+    ).json()
+    expect(detail.current_content_type).toBe("derive/latex")
+    expect(detail.bundle.files.map((f: { path: string }) => f.path).sort()).toEqual([
+      "main.tex",
+      "refs.bib",
+    ])
+    const source = toolText(
+      await call(app, token, "read", {
+        short_id: created.short_id,
+        section: "main.tex",
+        format: "html",
+      }),
+    )
+    expect(source).toContain("It was the best")
+  })
+})

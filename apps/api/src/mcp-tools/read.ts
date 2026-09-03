@@ -1,16 +1,19 @@
 import {
   artifactUrl,
+  authorYearLabel,
   DECK_TEMPLATE,
   type DocMap,
   derivedGen,
   deriveFacts,
   isDerivedFactName,
   isHtmlLike,
+  isLatexBundle,
   isLatexLike,
   LINKED_BUNDLE_CONTENT_TYPE,
   LINKED_BUNDLE_FACT,
   landmarkSlice,
   landmarksOf,
+  latexToText,
   mapJson,
   newId,
   type OutlineSection,
@@ -43,6 +46,7 @@ import {
   focusCandidates,
 } from "../lib/focus-index"
 import { sniffImageType } from "../lib/image"
+import { paperBibliography } from "../lib/latex-bundle"
 import { baseType, isTextType, present, type ReadFormat, searchMatcher } from "../lib/search"
 import { WeightedLruCache } from "../lib/source-text-cache"
 import { canReadTemplateLibrary } from "../lib/template-library-access"
@@ -1443,6 +1447,20 @@ export function registerReadTool(tc: ToolContext): void {
           ),
         )
         const detail = new Map(detailEntries.filter((e) => e !== null))
+        // A paper's outline carries its bibliography, so an agent cites the keys the
+        // .bib already holds instead of inventing them, and sees which are cited.
+        const paper = isLatexBundle(manifest) ? await paperBibliography(ctx.blobs, manifest) : null
+        const bibliography =
+          paper && !("missing" in paper)
+            ? {
+                bibliography: paper.entries.slice(0, 200).map((e) => ({
+                  key: e.key,
+                  ...authorYearLabel(e),
+                  title: latexToText(e.fields.title ?? ""),
+                })),
+                cited: paper.cited,
+              }
+            : {}
         return json({
           short_id,
           title: a.title,
@@ -1450,6 +1468,7 @@ export function registerReadTool(tc: ToolContext): void {
           version: n,
           entry,
           url,
+          ...bibliography,
           pages: pages.map((p) => {
             const type = manifest.files[p]?.type ?? manifest.files[`/${p}`]?.type
             const d = detail.get(p)
@@ -1468,7 +1487,9 @@ export function registerReadTool(tc: ToolContext): void {
                 : {}),
             }
           }),
-          next: "Call read again with a `section` (a page path above, optionally page.html#slug for one heading's part) for content.",
+          next: paper
+            ? "Cite with \\cite{key} using a key from `bibliography`; add an entry with PUT /v1/artifacts/<short_id>/bib (see derive://skills/latex). Call read again with a `section` (a page path above) for content."
+            : "Call read again with a `section` (a page path above, optionally page.html#slug for one heading's part) for content.",
         })
       }
 

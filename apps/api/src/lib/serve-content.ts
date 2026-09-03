@@ -24,28 +24,7 @@ import {
 } from "@derive/core"
 import type { Context } from "hono"
 import { IMMUTABLE_CACHE, RAW_HEADERS, rewriteAbsoluteUrls, toBody } from "./http"
-
-/** The text files a LaTeX page may `\input` or cite, decoded up front so the renderer's
- *  synchronous lookups can answer. Capped so a bundle full of data files cannot make one
- *  page read the whole store: past the cap a file is simply absent, and the page says so. */
-const MAX_BUNDLE_TEXT_BYTES = 4 * 1024 * 1024
-const TEXT_FILE = /\.(tex|latex|bib|bbl|sty|cls|bst|txt)$/i
-const bundleTextFiles = async (
-  blobs: BlobStore,
-  manifest: BundleManifest,
-): Promise<Map<string, string>> => {
-  const out = new Map<string, string>()
-  let bytes = 0
-  for (const [path, file] of Object.entries(manifest.files)) {
-    if (!TEXT_FILE.test(path)) continue
-    const data = await blobs.get(file.key)
-    if (!data) continue
-    bytes += data.byteLength
-    if (bytes > MAX_BUNDLE_TEXT_BYTES) break
-    out.set(path, new TextDecoder().decode(data))
-  }
-  return out
-}
+import { bundleTextFiles, bundleTextResolver } from "./latex-bundle"
 
 /**
  * Serve a stored artifact version's content under `prefix`, resolving
@@ -210,7 +189,7 @@ export const serveContent = async (
       const files = await bundleTextFiles(blobs, manifest)
       const rendered = renderLatex(new TextDecoder().decode(data), title, {
         dynamic: slots,
-        resolve: (file) => files.get(`/${file.replace(/^\.?\//, "")}`) ?? null,
+        resolve: bundleTextResolver(files),
         imageUrl: (file) => {
           const clean = file.replace(/^\.?\//, "")
           const f = manifest.files[`/${clean}`]

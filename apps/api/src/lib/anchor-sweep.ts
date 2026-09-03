@@ -4,6 +4,8 @@ import {
   anchorContentFor,
   type BlobStore,
   type ElementSelector,
+  LATEX_BUNDLE_CONTENT_TYPE,
+  LATEX_CONTENT_TYPE,
   type MetaStore,
   parseElementSelector,
   planAnchorSweep,
@@ -11,7 +13,8 @@ import {
   type VersionRecord,
 } from "@derive/core"
 import type { Backplane } from "../bus"
-import { pageTextResolver } from "./bundle"
+import { manifestOf, pageTextResolver } from "./bundle"
+import { bundleTextFiles, bundleTextResolver } from "./latex-bundle"
 
 /**
  * Re-anchor an artifact's threads against a new version (see {@link sweepAnchors})
@@ -109,6 +112,12 @@ export async function sweepAnchors(
   }
 
   const resolveText = await pageTextResolver(blobs, version, preparedSource)
+  // A paper bundle's pages are projected the way they render, with the bundle's own
+  // files in reach, so a quote beside a citation label or inside an `\input` keeps
+  // matching the text the reader selected.
+  const paper =
+    version.content_type === LATEX_BUNDLE_CONTENT_TYPE ? await manifestOf(blobs, version) : null
+  const resolve = paper ? bundleTextResolver(await bundleTextFiles(blobs, paper)) : undefined
   // Group by page so each page's content is read once, then plan per page.
   const byPage = new Map<string | null, Thread[]>()
   for (const t of byThread.values()) {
@@ -124,8 +133,17 @@ export async function sweepAnchors(
     // Build the anchor content (tag-stripping HTML for text-quote matching). The entry
     // page (path == null) carries the version's authoritative content type; a bundle
     // sub-page's type isn't tracked per-file, so infer HTML from a .htm(l) extension.
-    const ct = path == null ? version.content_type : /\.html?$/i.test(path) ? "text/html" : path
-    const planned = planAnchorSweep(threads, anchorContentFor(raw, ct))
+    const ct =
+      path == null
+        ? paper
+          ? LATEX_CONTENT_TYPE
+          : version.content_type
+        : /\.html?$/i.test(path)
+          ? "text/html"
+          : paper && /\.tex$/i.test(path)
+            ? LATEX_CONTENT_TYPE
+            : path
+    const planned = planAnchorSweep(threads, anchorContentFor(raw, ct, { resolve }))
     // Element threads about to be marked outdated get a forward-walk rescue.
     const rescued = await rescueElements(meta, blobs, artifactId, version, threads, planned)
     transitions.push(...planned.filter((t) => !rescued.has(t.thread_id)))

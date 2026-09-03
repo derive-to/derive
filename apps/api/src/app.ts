@@ -45,6 +45,7 @@ import { modelCredentialRoutes } from "./routes/model-credentials"
 import { moderationRoutes } from "./routes/moderation"
 import { notificationRoutes } from "./routes/notifications"
 import { oauthRoutes } from "./routes/oauth"
+import { paperFileRoutes } from "./routes/paper-files"
 import { planRoutes } from "./routes/plans"
 import { rawRoutes } from "./routes/raw"
 import { realtimeRoutes } from "./routes/realtime"
@@ -456,6 +457,7 @@ export function createApp(deps: AppDeps): Hono {
     artifactRoutes,
     sharedStateRoutes,
     dynamicDataRoutes,
+    paperFileRoutes,
     assetRoutes,
     exportRoutes,
     attributionRoutes,

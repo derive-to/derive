@@ -64,4 +64,22 @@ them inside a `table` or `figure` environment with a `\caption` the way you woul
 `read(format:'text')` returns the rendered prose without macros; `format:'html'` returns
 the source for `edits`. Comments anchor to the rendered text; select prose, not a formula
 (math is typeset client-side and has no server-side text), and a quote that crosses a
-macro cannot be edited inline.
+macro cannot be edited inline. On a paper bundle, `edits` apply to the entry file
+(`main.tex`) and republish the whole bundle; text that comes from an `\input` file is
+refused with the file's name, so republish that file with `files` + `merge`.
+
+## Citing
+
+The bundle's `.bib` is the source of truth for references. `read(short_id)` on a paper
+bundle lists `bibliography` (key, authors, year, title) and `cited`; cite with
+`\cite{key}` (`\citep`/`\citet` in author-year classes) using a listed key, never an
+invented one. The publish receipt reports any `\cite` that did not resolve. To add,
+change or remove an entry without rewriting the file, send its BibTeX to
+`PUT /v1/artifacts/<short_id>/bib` with a bearer from `stage({ target: 'api' })`:
+`{ "base_version": <version>, "ops": [{ "op": "set", "raw": "@article{key, ...}" }] }`.
+`{ "op": "set", "key": "old", "raw": "..." }` replaces one entry (a new key in the text
+renames it) and `{ "op": "delete", "key": "old" }` removes one; every save is a new
+version, and comments, `@string` macros and untouched entries survive byte for byte.
+`GET` the same path to list entries with their `raw` text. `publish({ short_id, merge:
+true, files: { "refs.bib": <whole file> } })` rewrites the file instead. A single-file
+paper has no `.bib` to cite from; publish it as a bundle.

@@ -46,6 +46,7 @@ import {
   sortKeyOf,
   toJson,
   toMarkdown,
+  type VersionRecord,
   type WorkflowPreview,
   type WorkspaceAccess,
 } from "@derive/core"
@@ -63,7 +64,7 @@ import {
   resolveUserBylines,
 } from "../lib/author"
 import { BULK_MAX, BulkSummarySchema, bulkArtifactOp } from "../lib/bulk"
-import { cleanPath, manifestOf } from "../lib/bundle"
+import { cleanPath, manifestOf, mergeBundleZip } from "../lib/bundle"
 import { signClaimToken, verifyClaimToken } from "../lib/claim-token"
 import { contentMentionHandles, resolveContentMentionTargets } from "../lib/content-mentions"
 import {
@@ -98,6 +99,7 @@ import {
   toBody,
   workspaceAccessOf,
 } from "../lib/http"
+import { bundleTextFiles } from "../lib/latex-bundle"
 import { agentName } from "../lib/principal-kind"
 import { PUBLISH_TARGET_CREATE, verifyPublishToken } from "../lib/publish-token"
 import { agentPushFanout, openReviewRound } from "../lib/review-request"
@@ -659,6 +661,8 @@ export const artifactRoutes = (ctx: AppContext) => {
     let filename: string
     let isBundle: boolean
     let preparedSource: string | undefined
+    // An edit inside a paper bundle republishes the bundle; its SPA flag is kept as is.
+    let bundleSpa: boolean | undefined
     let editSummary: ReviewSummary | undefined
     let previousSearchSource:
       | { source: string; contentType: string | null; title: string | null }
@@ -695,6 +699,8 @@ export const artifactRoutes = (ctx: AppContext) => {
           captureSource: (source: string, contentType: string | null) => {
             previousSearchSource = { source, contentType, title: existing.title }
           },
+          manifestOf: (v: VersionRecord) => manifestOf(blobs, v),
+          bundleTexts: (m: BundleManifest) => bundleTextFiles(blobs, m),
         }
         materialized = structural
           ? await materializeSlideOps(deps, existing, parsed as SlideOp[], baseVersion)
@@ -707,8 +713,17 @@ export const artifactRoutes = (ctx: AppContext) => {
           e instanceof Error ? e.message : "edit failed",
         )
       }
-      bytes = new TextEncoder().encode(materialized.content)
-      preparedSource = materialized.content
+      if (materialized.bundle) {
+        // One file of a paper bundle changed: the new version is the whole bundle with
+        // that file replaced, so its siblings (.bib, sections, figures) carry over.
+        bytes = await mergeBundleZip(blobs, materialized.bundle.manifest, {
+          [materialized.bundle.path]: materialized.content,
+        })
+        bundleSpa = materialized.bundle.manifest.spa
+      } else {
+        bytes = new TextEncoder().encode(materialized.content)
+        preparedSource = materialized.content
+      }
       if (!structural) {
         const applied = parsed as AnyDocEdit[]
         const textEdits = applied.flatMap((edit) => {
@@ -745,8 +760,8 @@ export const artifactRoutes = (ctx: AppContext) => {
       if (bytes.length > MAX_UPLOAD_BYTES) return fail(c, 413, "upload too large")
       if (await overStorage(org, bytes.length))
         return fail(c, 413, blockCopy.storage.message, { code: blockCopy.storage.code })
-      filename = materialized.filename
-      isBundle = false
+      filename = materialized.bundle ? "paper.zip" : materialized.filename
+      isBundle = !!materialized.bundle
     } else {
       const file = body["file"]
       if (!(file instanceof File)) return fail(c, 400, "multipart field 'file' required")
@@ -937,7 +952,7 @@ export const artifactRoutes = (ctx: AppContext) => {
           isBundle,
           title: str(body["title"]),
           slug: str(body["slug"]),
-          spa: body["spa"] === "true" || body["spa"] === "1",
+          spa: bundleSpa ?? (body["spa"] === "true" || body["spa"] === "1"),
           message: str(body["message"]),
           // Author is the authenticated identity, never a client-supplied field — a
           // logged-in publish must be attributed to that person. The human behind the
@@ -2752,10 +2767,12 @@ export const artifactRoutes = (ctx: AppContext) => {
     const bytes = await blobs.get(file.key)
     if (!bytes) return fail(c, 500, "blob missing")
     const fileBaseType = file.type.split(";")[0]?.trim() ?? file.type
+    // text/plain covers a paper's .bib, .sty, .cls and .bst files.
     const isText =
       fileBaseType === "text/html" ||
       fileBaseType === "text/markdown" ||
-      fileBaseType === "text/x-latex"
+      fileBaseType === "text/x-latex" ||
+      fileBaseType === "text/plain"
     if (!isText) {
       // This route is a machine content API, not a rendering surface (unlike /raw/,
       // which applies a CSP sandbox to every bundle asset it serves). Native
