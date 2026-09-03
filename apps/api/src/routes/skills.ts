@@ -48,6 +48,13 @@ const artifactLinkBody = z.object({
   ]),
 })
 
+const skillSourceBody = z.object({
+  source: z.string().max(1_000_000),
+  base_version: z.number().int().positive(),
+  message: z.string().max(500).optional(),
+  title: z.string().trim().min(1).max(200).optional(),
+})
+
 /** Skill catalog, graph, usage, installation receipts, and exact-version provenance. */
 export const skillRoutes = (ctx: AppContext) => {
   const {
@@ -134,6 +141,84 @@ export const skillRoutes = (ctx: AppContext) => {
       skills: visible.slice(0, limit),
       has_more: visible.length > limit,
     })
+  })
+
+  // The authored heart of a Skill is ordinary Markdown. Expose it directly so the
+  // existing browser source editor can edit SKILL.md without making the person
+  // download, unzip, rebuild, and re-upload the whole bundle. The write overlays
+  // only that file; scripts, references, assets, and derive.skill.json are retained.
+  app.get("/v1/artifacts/:shortId/skill-source", async (c) => {
+    const skill = await requireArtifact(c, "read")
+    if (skill instanceof Response) return skill
+    if (skill.current_content_type !== SKILL_CONTENT_TYPE) return fail(c, 404, "not a skill")
+    const version = await meta.getVersion(skill.id, skill.current_version)
+    const text = version ? await pageTextResolver(blobs, version) : null
+    const source = text ? await text("/SKILL.md") : null
+    if (!version || source === null) return fail(c, 404, "SKILL.md not found")
+    return c.json({ source, version: version.n })
+  })
+
+  app.put("/v1/artifacts/:shortId/skill-source", async (c) => {
+    const skill = await requireArtifact(c, "publish", { split: true })
+    if (skill instanceof Response) return skill
+    if (skill.current_content_type !== SKILL_CONTENT_TYPE) return fail(c, 404, "not a skill")
+    if (skill.locked) return fail(c, 409, "artifact is locked — unlock it to publish")
+    const body = await readJson(c, skillSourceBody)
+    if (body instanceof Response) return body
+    if (body.base_version !== skill.current_version)
+      return fail(c, 409, `Skill changed since editing began (now v${skill.current_version})`)
+
+    const version = await meta.getVersion(skill.id, skill.current_version)
+    const manifest = version ? await manifestOf(blobs, version) : null
+    const text = version ? await pageTextResolver(blobs, version) : null
+    const sidecar = text ? await text(SKILL_SIDECAR_PATH) : null
+    if (!version || !manifest || sidecar === null) return fail(c, 404, "Skill bundle not found")
+    const checked = validateSkillDefinition(body.source, sidecar)
+    if (checked.errors.length) return fail(c, 400, checked.errors.join("; "))
+
+    const human = await actingHuman(c)
+    const actor = (await actingUser(c)) ?? human
+    const bytes = await mergeBundleZip(blobs, manifest, { "SKILL.md": body.source })
+    const saved = await publish(
+      meta,
+      blobs,
+      {
+        bytes,
+        filename: "skill.zip",
+        isBundle: true,
+        title: body.title ?? skill.title ?? checked.metadata?.name ?? undefined,
+        message: body.message?.trim() || "Edited SKILL.md in browser",
+        author: human?.name ?? actor?.name ?? undefined,
+        authorId: human?.id ?? null,
+        agentId: actor && actor.id !== human?.id ? actor.id : null,
+        agentName: actor && actor.id !== human?.id ? actor.name : null,
+        source: "web",
+        existingArtifact: skill,
+      },
+      skill.short_id,
+    )
+    await afterPublish(
+      {
+        meta,
+        blobs,
+        bus,
+        notify,
+        notifyRender,
+        background,
+        search,
+        summarize,
+        baseUrl: deps.baseUrl,
+      },
+      saved.artifact,
+      saved.version,
+      {
+        isNew: false,
+        onBehalf: human?.id ?? null,
+        actorId: actor?.id ?? null,
+        actorName: actor?.name ?? null,
+      },
+    )
+    return c.json(toJson(deps.baseUrl, saved.artifact, await meta.listVersions(saved.artifact.id)))
   })
 
   app.get("/v1/artifacts/:shortId/skill-graph", async (c) => {

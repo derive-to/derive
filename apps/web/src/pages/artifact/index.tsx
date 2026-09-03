@@ -980,7 +980,8 @@ export function Artifact({ template = false }: { template?: boolean }) {
   const canPublish = !isGuest && (art.my_role === "editor" || art.my_role === "owner")
   const runtimeDiagnostic = canPublish ? runtimeDiagnosticFor(runtimeError, shortId, shown) : null
   // md vs html drives syntax highlighting + how the live preview renders.
-  const format = formatOf(art)
+  const isSkill = art.bundle?.isSkill === true
+  const format = isSkill ? "md" : formatOf(art)
   // Lock: any editor can toggle it (advanced menu). While locked, nothing
   // publishes — the edit affordances hide until someone unlocks.
   const canLock = canPublish
@@ -991,6 +992,12 @@ export function Artifact({ template = false }: { template?: boolean }) {
   // a new rule can't land in one and not the other; the deck test likewise has a
   // single spelling that the isDeck prop and the inline gate both read.
   const canEditDoc = canEditArtifactDoc(art, shown, editing)
+  const canEditSkill =
+    isSkill &&
+    shown === art.current_version &&
+    (art.my_role === "editor" || art.my_role === "owner") &&
+    !art.locked &&
+    !editing
   // Inspect intentionally stays narrower than inline text editing: it is an editor
   // capability for source-safe HTML element operations. A slide deck reaches the
   // same path because its stored source is HTML; there is no separate deck editor.
@@ -1411,7 +1418,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
               commentsAvailable={commentsAvailable}
               // The source editor unmounts the iframe — mid-inline-session that
               // silently discards typed edits, so its entry hides while editing.
-              showEdit={canEditDoc && !inlineEdit.active}
+              showEdit={(canEditDoc || canEditSkill) && !inlineEdit.active}
               // The raw-source fallback. It is not a dev tool (the inline editor's
               // own errors send people here by name), so it no longer says "(dev)".
               editLabel="Edit source"
@@ -1494,7 +1501,12 @@ export function Artifact({ template = false }: { template?: boolean }) {
               <DerivedFromBanner art={art} />
             )}
             {art.bundle && !editing && (
-              <BundleBar bundle={art.bundle} shortId={shortId} version={shown} />
+              <BundleBar
+                bundle={art.bundle}
+                shortId={shortId}
+                version={shown}
+                onEdit={canEditSkill ? startEdit : undefined}
+              />
             )}
             {/* Inline edit mode's one piece of chrome: a slim band above the document
                 (in flow, so it can never cover or swallow clicks on the text you came
@@ -1536,6 +1548,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
                 onPublish={publishEdit}
                 publishing={publishing}
                 shortId={shortId}
+                stripFrontmatter={isSkill}
               />
             ) : (
               primaryEl

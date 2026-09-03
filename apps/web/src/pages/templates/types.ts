@@ -12,7 +12,7 @@ export type TemplatesSearch = {
 }
 
 export type NewArtifactSearch = {
-  start?: "deck"
+  start?: "deck" | "skill"
   source?: string
   library?: string
   entry?: string

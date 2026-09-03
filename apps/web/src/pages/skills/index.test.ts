@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { skillDisplayName } from "./index"
+import { skillDisplayName } from "@/lib/skill-source"
 
 describe("Skills catalog", () => {
   it("presents machine skill names as readable titles", () => {

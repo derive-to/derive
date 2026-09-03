@@ -1,7 +1,6 @@
 import { useQuery } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
 import { useState } from "react"
-import { useShell } from "@/components/chrome/shell-context"
 import { Icon } from "@/components/icons"
 import { EmptyState } from "@/components/shared/empty-state"
 import { LoadError } from "@/components/shared/load-error"
@@ -13,20 +12,12 @@ import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useCopy } from "@/lib/clipboard"
 import { skillsQuery } from "@/lib/queries"
+import { skillDisplayName } from "@/lib/skill-source"
 import { useDocumentTitle } from "@/lib/use-document-title"
 import { refFor } from "../artifact/parse-ref"
-import { NEW_SKILL_PROMPT } from "./new-skill-prompt"
-
-export const skillDisplayName = (title: string | null, name: string): string => {
-  const authored = title?.trim()
-  if (authored && authored !== name) return authored
-  const readable = name.replaceAll("-", " ")
-  return readable.charAt(0).toUpperCase() + readable.slice(1)
-}
 
 export function Skills() {
   useDocumentTitle("Skills")
-  const { openAssistant } = useShell()
   const { copied, copy } = useCopy(2000)
   const [query, setQuery] = useState("")
   const { data, isPending, isError, refetch } = useQuery(skillsQuery(query))
@@ -53,12 +44,10 @@ export function Skills() {
               <Icon name={copied ? "check" : "copy"} />
               {copied ? "Copied" : "Sync installed"}
             </Button>
-            <Button
-              size="sm"
-              data-testid="skills-new"
-              onClick={() => openAssistant(NEW_SKILL_PROMPT)}
-            >
-              <Icon name="plus" /> New skill
+            <Button size="sm" data-testid="skills-new" asChild>
+              <Link to="/new" search={{ start: "skill" }}>
+                <Icon name="plus" /> New skill
+              </Link>
             </Button>
           </div>
         }

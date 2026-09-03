@@ -5,6 +5,7 @@ import { type Artifact, api } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { toast } from "@/components/ui/sonner"
 import { artifactQuery, collectionsQuery, summaryQuery } from "@/lib/queries"
+import { NEW_SKILL_SOURCE, skillBundleBytes } from "@/lib/skill-source"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { useDocumentTitle } from "@/lib/use-document-title"
 import { refFor } from "./artifact/parse-ref"
@@ -40,13 +41,14 @@ export const seedPublishedArtifact = (qc: QueryClient, artifact: Artifact): Prom
 // title. Publishing creates the artifact (private by default; widen
 // access from its Share menu) and opens it.
 export function NewArtifact() {
-  useDocumentTitle("New artifact")
   const nav = useNavigate()
   const search = useSearch({ from: "/new" })
-  const [src, setSrc] = useState("")
-  const [title, setTitle] = useState("")
+  const isSkill = search.start === "skill"
+  useDocumentTitle(isSkill ? "New skill" : "New artifact")
+  const [src, setSrc] = useState(isSkill ? NEW_SKILL_SOURCE : "")
+  const [title, setTitle] = useState(isSkill ? "My skill" : "")
   const [message, setMessage] = useState("")
-  const format = detectFormat(src)
+  const format = isSkill ? "md" : detectFormat(src)
 
   // A draft is dirty once anything's been typed. Publishing must bypass the guard for its
   // own nav to the artifact — via a REF, not state: publish() sets it and calls nav() in the
@@ -73,6 +75,10 @@ export function NewArtifact() {
       const type = format === "md" ? "text/markdown" : "text/html"
       const fields: Record<string, string> = { title: name }
       if (message.trim()) fields.message = message.trim()
+      if (isSkill) {
+        const bundle = new Uint8Array(skillBundleBytes(src)).buffer
+        return api.publish(new File([bundle], "skill.zip", { type: "application/zip" }), fields)
+      }
       return api.publish(new File([src], `inline.${ext}`, { type }), fields)
     },
     // Freshen the library so the new artifact + bumped total are correct on return.
@@ -125,10 +131,15 @@ export function NewArtifact() {
         message={message}
         onSrc={setSrc}
         onMessage={setMessage}
-        onCancel={() => nav({ to: "/" })}
+        onCancel={() => nav({ to: isSkill ? "/skills" : "/" })}
         onPublish={publish}
         publishing={publishMut.isPending}
-        placeholder="Write or paste Markdown or HTML. The preview updates as you type."
+        placeholder={
+          isSkill
+            ? "Write instructions for Claude and Codex."
+            : "Write or paste Markdown or HTML. The preview updates as you type."
+        }
+        stripFrontmatter={isSkill}
       />
       {/* The unsaved-draft confirm: fires for any blocked departure (Cancel, a rail click,
           back). Discarding proceeds; keeping resets you to the editor with the draft intact. */}
