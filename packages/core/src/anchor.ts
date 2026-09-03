@@ -1,5 +1,5 @@
 import { DecodingMode, decodeHTML, EntityDecoder, htmlDecodeTree } from "entities/decode"
-import { findQuoteWithContext } from "./anchor-shared"
+import { BLOCK_TEXT_ELEMENTS, findQuoteWithContext } from "./anchor-shared"
 import { isHtmlLike, isLatexLike } from "./content-types"
 import { elementResolvesIn, parseElementSelector } from "./element-anchor"
 import {
@@ -149,52 +149,10 @@ const INVISIBLE_NAMES = [
 ]
 const SVG_INVISIBLE_NAMES = new Set(["desc", "metadata"])
 const MATH_INVISIBLE_NAMES = new Set(["annotation", "annotation-xml"])
-/** Exported so latex-emit.ts can pin its mirrored copy in a test. */
-export const BLOCK_TEXT_ELEMENTS = new Set([
-  "address",
-  "article",
-  "aside",
-  "blockquote",
-  "body",
-  "br",
-  "caption",
-  "dd",
-  "div",
-  "dl",
-  "dt",
-  "fieldset",
-  "figcaption",
-  "figure",
-  "footer",
-  "form",
-  "h1",
-  "h2",
-  "h3",
-  "h4",
-  "h5",
-  "h6",
-  "header",
-  "hgroup",
-  "hr",
-  "html",
-  "li",
-  "listing",
-  "main",
-  "nav",
-  "ol",
-  "p",
-  "pre",
-  "section",
-  "table",
-  "tbody",
-  "td",
-  "tfoot",
-  "th",
-  "thead",
-  "tr",
-  "ul",
-  "xmp",
-])
+
+/** The block-level elements the projection spaces on; lives in anchor-shared so the
+ *  in-frame client can mirror it (see the edit snapshot there). */
+export { BLOCK_TEXT_ELEMENTS } from "./anchor-shared"
 
 /** Memoized left-to-right indexOf. During a forward scan, thousands of failed
  *  searches for the same needle (unclosed "<!--" after unclosed "<!--") would each
@@ -482,11 +440,17 @@ export type AnchorContent = string | { raw: string; text: string }
 /** Build anchor content from a version's decoded bytes + its content type. HTML-like
  *  content (html + decks) gets tag-stripped page text for quote matching; markdown/plain
  *  is matched as-is (its source IS the visible text, and stripping would eat autolinks). */
-export function anchorContentFor(raw: string, contentType: string): AnchorContent {
+export function anchorContentFor(
+  raw: string,
+  contentType: string,
+  opts: { resolve?: (path: string) => string | null } = {},
+): AnchorContent {
   if (isHtmlLike(contentType)) return { raw, text: pageText(raw) }
   // A LaTeX source renders to a page whose visible text is prose without the macros;
   // quotes are taken from that page, so they are matched against the same projection.
-  if (isLatexLike(contentType)) return { raw, text: latexTextProjection(raw).text }
+  // A paper bundle passes `resolve` so citation labels and included files agree too.
+  if (isLatexLike(contentType))
+    return { raw, text: latexTextProjection(raw, { resolve: opts.resolve }).text }
   return raw
 }
 
