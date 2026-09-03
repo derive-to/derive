@@ -147,12 +147,18 @@ import type {
 } from "@derive/core"
 import {
   BILLABLE_ROLES,
+  DYNAMIC_REVISION_LIMIT,
+  type DynamicRevisionRecord,
+  type DynamicSlotRecord,
+  type DynamicSlotWrite,
   GLOBAL_FOLLOW_ORG,
   isValidWorkflowRunDefinitionPin,
   isValidWorkflowStepContextPin,
   LINKS_FACT,
   maxRole,
   mergeRunMeta,
+  type NewDynamicRevision,
+  type NewDynamicSlot,
   parseRunMeta,
   runCounter,
   SHARED_STATE_ACTIVITY_LIMIT,
@@ -211,6 +217,8 @@ import {
   contextAsker,
   contextSession,
   domain,
+  dynamicRevision,
+  dynamicSlot,
   exportJob,
   folder,
   follow,
@@ -270,6 +278,8 @@ export const schema = {
   artifact,
   sharedState,
   sharedStateActivity,
+  dynamicSlot,
+  dynamicRevision,
   version,
   versionData,
   comment,
@@ -328,6 +338,8 @@ const _schemaShapes: Shapes<typeof schema> = {
   artifact: true,
   sharedState: true,
   sharedStateActivity: true,
+  dynamicSlot: true,
+  dynamicRevision: true,
   version: true,
   versionData: true,
   comment: true,
@@ -897,6 +909,111 @@ export class PgMetaStore implements MetaStore {
       .where(and(eq(sharedStateActivity.artifact_id, artifactId), eq(sharedStateActivity.key, key)))
       .orderBy(desc(sharedStateActivity.version))
       .limit(limit)
+  }
+
+  // ---- Dynamic tables and figures ------------------------------------------
+  private dynamicSlotKey(artifactId: string, n: number, name: string) {
+    return and(
+      eq(dynamicSlot.artifact_id, artifactId),
+      eq(dynamicSlot.n, n),
+      eq(dynamicSlot.name, name),
+    )
+  }
+  private dynamicRevisionKey(artifactId: string, n: number, name: string) {
+    return and(
+      eq(dynamicRevision.artifact_id, artifactId),
+      eq(dynamicRevision.n, n),
+      eq(dynamicRevision.name, name),
+    )
+  }
+
+  async listDynamicSlots(artifactId: string, n: number): Promise<DynamicSlotRecord[]> {
+    return this.db
+      .select()
+      .from(dynamicSlot)
+      .where(and(eq(dynamicSlot.artifact_id, artifactId), eq(dynamicSlot.n, n)))
+      .orderBy(dynamicSlot.name)
+  }
+
+  async getDynamicSlot(
+    artifactId: string,
+    n: number,
+    name: string,
+  ): Promise<DynamicSlotRecord | null> {
+    const rows = await this.db
+      .select()
+      .from(dynamicSlot)
+      .where(this.dynamicSlotKey(artifactId, n, name))
+    return rows[0] ?? null
+  }
+
+  async countDynamicSlots(artifactId: string, n: number): Promise<number> {
+    const rows = await this.db
+      .select({ n: count() })
+      .from(dynamicSlot)
+      .where(and(eq(dynamicSlot.artifact_id, artifactId), eq(dynamicSlot.n, n)))
+    return Number(rows[0]?.n ?? 0)
+  }
+
+  async insertDynamicSlot(row: NewDynamicSlot): Promise<DynamicSlotRecord | null> {
+    const rows = await this.db.insert(dynamicSlot).values(row).onConflictDoNothing().returning()
+    return rows[0] ?? null
+  }
+
+  async updateDynamicSlot(write: DynamicSlotWrite): Promise<DynamicSlotRecord | null> {
+    const { expected_revision, ...values } = write
+    const rows = await this.db
+      .update(dynamicSlot)
+      .set({
+        json: values.json,
+        size_bytes: values.size_bytes,
+        revision: expected_revision + 1,
+        updated_by_id: values.updated_by_id,
+        updated_by_name: values.updated_by_name,
+        updated_at: values.updated_at,
+      })
+      .where(
+        and(
+          this.dynamicSlotKey(values.artifact_id, values.n, values.name),
+          eq(dynamicSlot.revision, expected_revision),
+        ),
+      )
+      .returning()
+    return rows[0] ?? null
+  }
+
+  async appendDynamicRevision(r: NewDynamicRevision): Promise<void> {
+    await this.db.insert(dynamicRevision).values(r)
+    if (r.revision <= DYNAMIC_REVISION_LIMIT) return
+    // Revision 0 is the version's start point and survives the window.
+    await this.db
+      .delete(dynamicRevision)
+      .where(
+        and(
+          this.dynamicRevisionKey(r.artifact_id, r.n, r.name),
+          gt(dynamicRevision.revision, 0),
+          lte(dynamicRevision.revision, r.revision - DYNAMIC_REVISION_LIMIT),
+        ),
+      )
+  }
+
+  async listDynamicRevisions(
+    artifactId: string,
+    n: number,
+    name: string,
+    limit: number,
+  ): Promise<DynamicRevisionRecord[]> {
+    return this.db
+      .select()
+      .from(dynamicRevision)
+      .where(this.dynamicRevisionKey(artifactId, n, name))
+      .orderBy(desc(dynamicRevision.revision))
+      .limit(limit)
+  }
+
+  async deleteDynamicSlot(artifactId: string, n: number, name: string): Promise<void> {
+    await this.db.delete(dynamicRevision).where(this.dynamicRevisionKey(artifactId, n, name))
+    await this.db.delete(dynamicSlot).where(this.dynamicSlotKey(artifactId, n, name))
   }
 
   async addVersion(artifactId: string, v: NewVersion): Promise<VersionRecord> {
@@ -6838,6 +6955,8 @@ export class PgMetaStore implements MetaStore {
       await tx.delete(webhook).where(eq(webhook.artifact_id, id))
       await tx.delete(sharedStateActivity).where(eq(sharedStateActivity.artifact_id, id))
       await tx.delete(sharedState).where(eq(sharedState.artifact_id, id))
+      await tx.delete(dynamicRevision).where(eq(dynamicRevision.artifact_id, id))
+      await tx.delete(dynamicSlot).where(eq(dynamicSlot.artifact_id, id))
       await tx
         .delete(skillRelation)
         .where(

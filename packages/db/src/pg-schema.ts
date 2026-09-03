@@ -12,6 +12,7 @@ import type {
   DeliveryStatus,
   DomainKind,
   DomainStatus,
+  DynamicKind,
   ExportJobStatus,
   ExportKind,
   FollowKind,
@@ -134,6 +135,48 @@ export const sharedStateActivity = pgTable(
     created_at: text("created_at").notNull().$defaultFn(isoNow),
   },
   (t) => [uniqueIndex("shared_state_activity_key_version").on(t.artifact_id, t.key, t.version)],
+)
+
+// Dynamic tables and figures, per version (mirrors schema.ts; see @derive/core
+// dynamic-data.ts). `revision` is the compare-and-swap guard, never the artifact version.
+export const dynamicSlot = pgTable(
+  "dynamic_slot",
+  {
+    id: text("id").primaryKey(),
+    artifact_id: text("artifact_id")
+      .notNull()
+      .references(() => artifact.id),
+    n: integer("n").notNull(),
+    name: text("name").notNull(),
+    kind: text("kind").$type<DynamicKind>().notNull(),
+    json: text("json").notNull(),
+    size_bytes: integer("size_bytes").notNull(),
+    revision: integer("revision").notNull(),
+    updated_by_id: text("updated_by_id").notNull(),
+    updated_by_name: text("updated_by_name").notNull(),
+    updated_at: text("updated_at").notNull().$defaultFn(isoNow),
+  },
+  (t) => [uniqueIndex("dynamic_slot_name").on(t.artifact_id, t.n, t.name)],
+)
+
+export const dynamicRevision = pgTable(
+  "dynamic_revision",
+  {
+    id: text("id").primaryKey(),
+    artifact_id: text("artifact_id")
+      .notNull()
+      .references(() => artifact.id),
+    n: integer("n").notNull(),
+    name: text("name").notNull(),
+    revision: integer("revision").notNull(),
+    json: text("json").notNull(),
+    size_bytes: integer("size_bytes").notNull(),
+    actor_id: text("actor_id").notNull(),
+    actor_name: text("actor_name").notNull(),
+    note: text("note"),
+    created_at: text("created_at").notNull().$defaultFn(isoNow),
+  },
+  (t) => [uniqueIndex("dynamic_revision_key").on(t.artifact_id, t.n, t.name, t.revision)],
 )
 
 export const version = pgTable(
@@ -1219,6 +1262,8 @@ const TABLES = [
   artifact,
   sharedState,
   sharedStateActivity,
+  dynamicSlot,
+  dynamicRevision,
   version,
   versionData,
   comment,
