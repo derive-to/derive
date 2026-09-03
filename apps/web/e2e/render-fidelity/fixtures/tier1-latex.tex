@@ -1,0 +1,33 @@
+\documentclass[sigconf]{acmart}
+\newcommand{\ours}{TierOne}
+\begin{document}
+\title{\ours{}: A Paper Rendered as a Page}
+\author{Ada Example}
+\affiliation{\institution{Institute of Examples}\country{Nowhere}}
+\begin{abstract}
+The viewer must reach Ready on a paper whose math is typeset in the browser.
+\end{abstract}
+\maketitle
+
+\section{Introduction}
+\label{sec:intro}
+A formula in running text, $E = mc^2$, and one on its own:
+\begin{equation}
+  \int_0^1 x^2 \, dx = \frac{1}{3}
+  \label{eq:third}
+\end{equation}
+Equation~\eqref{eq:third} is referenced from Section~\ref{sec:intro}.
+
+\begin{table}
+  \caption{Two rows.}
+  \begin{tabular}{lr}
+    \toprule
+    Method & Score \\
+    \midrule
+    \ours{} & 1.0 \\
+    Baseline & 0.5 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\end{document}
