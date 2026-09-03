@@ -774,3 +774,22 @@ describe("credentials (derive login)", () => {
     })
   })
 })
+
+describe("paper starters", () => {
+  it("scaffolds a SIGGRAPH or CVPR paper under paper/ with the entry set to the folder", () => {
+    for (const [template, bib] of [
+      ["siggraph", "references.bib"],
+      ["cvpr", "main.bib"],
+    ]) {
+      const files = scaffoldFiles("My paper", template)
+      expect(files["paper/main.tex"]).toContain("\\usepackage{derive}")
+      expect(files["paper/main.tex"]).toMatch(/\\derivetable(\[[^\]]*\])?\{results\}/)
+      expect(files[`paper/${bib}`]).toContain("@inproceedings")
+      expect(files["paper/derive.sty"]).toContain("\\ProvidesPackage{derive}")
+      expect(files["paper/README.md"]).toBeDefined()
+      expect(JSON.parse(files["derive.json"]).entry).toBe("paper")
+    }
+    expect(scaffoldFiles("x", "cvpr")["paper/main.tex"]).toContain("\\usepackage[review]{cvpr}")
+    expect(scaffoldFiles("x", "cvpr")["paper/cvpr.sty"]).toBeUndefined()
+  })
+})
