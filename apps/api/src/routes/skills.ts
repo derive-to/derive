@@ -292,7 +292,8 @@ export const skillRoutes = (ctx: AppContext) => {
     }> = []
 
     // Context definitions can change bundle entry type without changing artifact identity:
-    // append SKILL.md + the private catalog sidecar to the same bundle.
+    // append SKILL.md + a catalog-visible sidecar to the same bundle. The Context
+    // remains available in Contexts while its reusable definition also appears in Skills.
     const contexts = await meta.listContexts(orgId)
     const manifests = new Map<string, (typeof contexts)[number]>()
     for (const context of contexts) manifests.set(context.manifest_artifact_id, context)
@@ -335,7 +336,7 @@ export const skillRoutes = (ctx: AppContext) => {
       const bytes = await mergeBundleZip(blobs, manifest, {
         "SKILL.md": `---\nname: ${name}\ndescription: ${JSON.stringify(description)}\n---\n\n${parsed.body.trim()}\n`,
         "derive.skill.json": JSON.stringify(
-          { schema: "derive.skill/v1", catalog: false, runtime: { kind: "single" } },
+          { schema: "derive.skill/v1", catalog: true, runtime: { kind: "single" } },
           null,
           2,
         ),
@@ -461,7 +462,9 @@ export const skillRoutes = (ctx: AppContext) => {
         "derive.skill.json": JSON.stringify(
           {
             schema: "derive.skill/v1",
-            catalog: false,
+            // Keep the authored Workflow in Workflows and also expose its reusable
+            // launcher in Skills. These are two views of the same runtime definition.
+            catalog: true,
             runtime: { kind: runtimeKind, definition: parsed.definition },
           },
           null,
@@ -513,6 +516,16 @@ export const skillRoutes = (ctx: AppContext) => {
         launcherArtifact = published.artifact
         launcherVersion = published.version
       }
+      // This internal publish path does not pass through the HTTP/MCP adapters that
+      // normally stamp the human owner's artifact_member row. Stamp (or repair) it
+      // here so an unlisted launcher remains visible to its owner and can therefore
+      // appear in their Skills catalog without widening its access.
+      await meta.setArtifactMember({
+        id: newId("am"),
+        artifact_id: launcherArtifact.id,
+        user_id: human.id,
+        role: "owner",
+      })
       await afterPublish(
         {
           meta,

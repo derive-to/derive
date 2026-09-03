@@ -22,7 +22,7 @@ export interface SkillRelationRef {
 
 export interface SkillSidecar {
   schema: typeof SKILL_DEFINITION_SCHEMA
-  /** Embedded Context definitions stay private to their deployment until promoted. */
+  /** Whether this definition appears in the workspace Skills catalog. */
   catalog?: boolean
   relations?: Partial<Record<SkillRelationKind, SkillRelationRef[]>>
   runtime?: { kind: "single" } | { kind: "graph" | "loop"; definition: WorkflowDefinition }

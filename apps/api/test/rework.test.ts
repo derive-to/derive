@@ -1,5 +1,5 @@
 import { generateKeyPairSync } from "node:crypto"
-import { publish } from "@derive/core"
+import { publish, validateSkillDefinition } from "@derive/core"
 import { zipSync } from "fflate"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { encryptSecret } from "../src/lib/crypto"
@@ -402,6 +402,23 @@ describe("workflow run: explicit local-agent handoff", () => {
     })
     const skill = await meta.getArtifactById(links[0]?.skill_artifact_id ?? "")
     expect(skill?.current_content_type).toBe("derive/skill")
+    const skillMd = await (
+      await app.request(`/v1/artifacts/${skill?.short_id}/content`, { headers: as(owner.email) })
+    ).text()
+    const sidecar = await (
+      await app.request(`/v1/artifacts/${skill?.short_id}/content?section=derive.skill.json`, {
+        headers: as(owner.email),
+      })
+    ).text()
+    expect(validateSkillDefinition(skillMd, sidecar).errors).toEqual([])
+    const catalog = await (await app.request("/v1/skills", { headers: as(owner.email) })).json()
+    expect(catalog.skills).toContainEqual(expect.objectContaining({ short_id: skill?.short_id }))
+    const workflows = await (
+      await app.request("/v1/workflows", { headers: as(owner.email) })
+    ).json()
+    expect(workflows.workflows).toContainEqual(
+      expect.objectContaining({ shortId: published.short_id }),
+    )
     const launcher = (await meta.listContexts("default")).find(
       (context) => context.manifest_artifact_id === skill?.id,
     )

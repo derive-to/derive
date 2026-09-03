@@ -117,6 +117,14 @@ describe("Context manifest to Skill migration", () => {
       name: "release-context",
       description: "Answers release questions.",
     })
+    const catalog = await (await app.request("/v1/skills", { headers: as(owner.email) })).json()
+    expect(catalog.skills).toContainEqual(expect.objectContaining({ short_id: artifact.short_id }))
+    const contextList = await (
+      await app.request("/v1/contexts", { headers: as(owner.email) })
+    ).json()
+    expect(contextList.contexts).toContainEqual(
+      expect.objectContaining({ manifest_short_id: artifact.short_id }),
+    )
 
     const replay = await app.request(
       "/v1/skill-migrations",
