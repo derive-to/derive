@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test"
+import { unzipSync } from "fflate"
 import { expect, publishArtifact, test } from "./fixtures"
 
 // Tagging is the whole "offer" step: the shelf is artifacts tagged `template`.
@@ -166,5 +167,44 @@ test.describe("templates, signed out", () => {
     } finally {
       await anon.close()
     }
+  })
+})
+
+test.describe("paper starters", () => {
+  test("Start a paper opens the starter, publishes a paper bundle and offers its source zip", async ({
+    owner: page,
+  }) => {
+    await page.goto("/templates")
+    const start = page.getByTestId("templates-paper-acm-siggraph")
+    await expect(start).toBeVisible()
+    await start.click()
+    await expect(page).toHaveURL(/\/new\?start=acm-siggraph/)
+    // The starter's main.tex lands in the editor.
+    await expect(page.locator(".cm-content")).toContainText("\\documentclass[sigconf]{acmart}")
+    await page.getByTestId("artifact-title-input").fill("Starter paper")
+    await page.getByTestId("artifact-publish-version").click()
+    await expect(page).toHaveURL(/\/artifacts\//)
+    await expect(page.getByText(/Paper · v1/)).toBeVisible()
+
+    // The More menu offers the source zip, which carries the starter and its data fragments.
+    await page.getByTestId("artifact-more").click()
+    const item = page.getByTestId("artifact-download-source")
+    await expect(item).toBeVisible()
+    const href = await item.getAttribute("href")
+    expect(href).toMatch(/\/source\.zip(\?v=\d+)?$/)
+    const res = await page.request.get(href as string)
+    expect(res.ok(), await res.text()).toBeTruthy()
+    expect(res.headers()["content-type"]).toBe("application/zip")
+    const files = unzipSync(new Uint8Array(await res.body()))
+    expect(Object.keys(files)).toEqual(
+      expect.arrayContaining([
+        "main.tex",
+        "references.bib",
+        "derive.sty",
+        "derive-dynamic/results.tex",
+        "derive-dynamic/teaser.tex",
+        "README-derive.md",
+      ]),
+    )
   })
 })
