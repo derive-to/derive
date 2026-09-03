@@ -4507,7 +4507,13 @@ export const BUNDLE_CONTENT_TYPE = "derive/bundle"
  *  read in the list (the "Skill" badge) without opening the manifest, and it tracks the
  *  current version automatically (republish without a SKILL.md → back to a plain bundle). */
 export const SKILL_CONTENT_TYPE = "derive/skill"
-/** Is this stored content a bundle (plain bundle OR skill)? Use everywhere that branches
- *  on "is this a multi-file bundle", so a skill is never mistaken for a single file. */
+/** A paper is a bundle too: a .tex entry with its figures, bibliography, class and style
+ *  files beside it. Same reasoning as a skill: the distinct type rides the denormalized
+ *  current_content_type so the library badges it without opening the manifest. */
+export const LATEX_BUNDLE_CONTENT_TYPE = "derive/latex"
+/** Is this stored content a bundle (plain bundle, skill, OR paper)? Use everywhere that
+ *  branches on "is this a multi-file bundle", so none of them is mistaken for a single file. */
 export const isBundleContentType = (contentType: string | null | undefined): boolean =>
-  contentType === BUNDLE_CONTENT_TYPE || contentType === SKILL_CONTENT_TYPE
+  contentType === BUNDLE_CONTENT_TYPE ||
+  contentType === SKILL_CONTENT_TYPE ||
+  contentType === LATEX_BUNDLE_CONTENT_TYPE

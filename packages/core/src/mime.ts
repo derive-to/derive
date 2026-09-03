@@ -3,6 +3,15 @@ const TYPES: Record<string, string> = {
   htm: "text/html; charset=utf-8",
   md: "text/markdown; charset=utf-8",
   markdown: "text/markdown; charset=utf-8",
+  tex: "text/x-latex; charset=utf-8",
+  latex: "text/x-latex; charset=utf-8",
+  // The rest of a paper bundle. Served as plain text so a .bib or .cls reads truthfully
+  // under nosniff instead of falling to application/octet-stream.
+  bib: "text/plain; charset=utf-8",
+  bbl: "text/plain; charset=utf-8",
+  cls: "text/plain; charset=utf-8",
+  sty: "text/plain; charset=utf-8",
+  bst: "text/plain; charset=utf-8",
   css: "text/css; charset=utf-8",
   js: "text/javascript; charset=utf-8",
   mjs: "text/javascript; charset=utf-8",

@@ -1,11 +1,14 @@
+import { LATEX_CONTENT_TYPE } from "./latex"
 import { escapeHtml } from "./md"
-import { SKILL_CONTENT_TYPE } from "./ports"
+import { LATEX_BUNDLE_CONTENT_TYPE, SKILL_CONTENT_TYPE } from "./ports"
 
 /** A short, kind-aware label for an artifact, used on cards and in descriptions. */
 export const kindLabel = (contentType: string | null | undefined, isBundle: boolean): string => {
   if (contentType === SKILL_CONTENT_TYPE) return "Skill"
+  if (contentType === LATEX_BUNDLE_CONTENT_TYPE) return "Paper"
   if (isBundle) return "Site"
   if (contentType === "text/markdown") return "Markdown"
+  if (contentType === LATEX_CONTENT_TYPE) return "LaTeX"
   if (contentType === "text/x-derive-deck") return "Deck"
   if (contentType === "text/x-derive-linked-bundle") return "Bundle"
   if (contentType === "text/x-derive-video") return "Video"
