@@ -17,6 +17,7 @@ import {
   artifactAgentsQuery,
   artifactQuery,
   commentsQuery,
+  dynamicSlotsQuery,
   rawArtifactUrl,
   reviewQuery,
   workspaceSettingsQuery,
@@ -46,6 +47,7 @@ import { BundleBar } from "./bundle-bar"
 import { ActionsCtx } from "./comment-actions"
 import { DeckOrganizer, DeckOrganizerDiscardDialog, useDeckOrganizer } from "./deck-organizer"
 import { DerivedFromBanner } from "./derived-from-banner"
+import { DynamicDataPanel } from "./dynamic-data-panel"
 import { EditBar, type EditViewport } from "./edit-bar"
 import { FloatingControl } from "./floating-control"
 import { InlineMentionMenu } from "./inline-mention-menu"
@@ -479,6 +481,30 @@ export function Artifact({ template = false }: { template?: boolean }) {
     load()
     sharedPostRef.current({ type: "shared-resync" })
   }, [load])
+  // A dynamic table or figure changed without a version: refetch the Data rail, and when
+  // it is the version on screen, hand the frame the server-rendered fragment so the
+  // bound element swaps in place. The host fetches (not the frame) because the opaque
+  // origin cannot read a gated artifact's own data.
+  const shownRef = useRef(0)
+  const onDynamicLive = useCallback(
+    (u: { name: string; kind: string; n: number; revision: number | null }) => {
+      qc.invalidateQueries({ queryKey: ["artifact", shortId, "dynamic"] })
+      if (u.revision === null || u.n !== shownRef.current) return
+      api
+        .dynamicSlot(shortId, u.name, { v: u.n, format: "html" })
+        .then((slot) => {
+          if (slot.html !== undefined)
+            sharedPostRef.current({
+              type: "dynamic-updated",
+              name: slot.name,
+              kind: slot.kind,
+              html: slot.html,
+            })
+        })
+        .catch(() => {})
+    },
+    [qc, shortId],
+  )
 
   // Presence, live multiplayer cursors, the SSE stream, and view recording — see
   // use-artifact-live. The page feeds pointer moves in (from the iframe bridge
@@ -493,6 +519,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
     onVersion: onVersionLive,
     onReview,
     onSharedState: onSharedStateLive,
+    onDynamic: onDynamicLive,
     onResync: onLiveResync,
   })
 
@@ -884,6 +911,18 @@ export function Artifact({ template = false }: { template?: boolean }) {
     },
   })
 
+  // The version on screen, computed before the early returns below so the hooks that
+  // depend on it keep a stable order (the same expression `shown` uses once `art` is
+  // known to exist). Zero until the artifact loads, which disables the slots read.
+  const shownVersion = version ?? inlineEdit.frozenVersion ?? art?.current_version ?? 0
+  useEffect(() => {
+    shownRef.current = shownVersion
+  }, [shownVersion])
+  const dynamicQ = useQuery({
+    ...dynamicSlotsQuery(shortId, shownVersion),
+    enabled: shownVersion > 0,
+  })
+
   if (locked) return <PasswordGate shortId={shortId} onUnlocked={() => refetch()} />
   // `failed && !art`: only show the full error page when there's NO artifact to show. A
   // background-refetch failure sets isError while react-query keeps `art` (e.g. a blip right
@@ -926,6 +965,8 @@ export function Artifact({ template = false }: { template?: boolean }) {
   // While inline editing, the shown version stays frozen at the mode-entry head so
   // a concurrent publish can't reload the frame and wipe typed-but-unsaved text.
   const shown = version ?? inlineEdit.frozenVersion ?? art.current_version
+  const dynamicSlots = dynamicQ.data?.slots ?? []
+  const dataEnabled = dynamicSlots.length > 0
   const pinnedForShown =
     pinnedRawToken.current?.shortId === shortId && pinnedRawToken.current.version === shown
   // A background failure may leave old metadata available, but an expired capability
@@ -1590,9 +1631,25 @@ export function Artifact({ template = false }: { template?: boolean }) {
 
           {!focus && commentsAvailable && (
             <ArtifactComments
-              rail={mapEnabled || rail !== "map" ? rail : "comments"}
+              rail={
+                (mapEnabled || rail !== "map") && (dataEnabled || rail !== "data")
+                  ? rail
+                  : "comments"
+              }
               onRail={setRail}
               mapEnabled={mapEnabled}
+              dataEnabled={dataEnabled}
+              dataPanel={
+                dataEnabled ? (
+                  <DynamicDataPanel
+                    shortId={shortId}
+                    version={shown}
+                    slots={dynamicSlots}
+                    error={dynamicQ.isError}
+                    canPublish={effectiveCanPublish}
+                  />
+                ) : undefined
+              }
               mapPanel={
                 art.linked_bundle ? (
                   <LinkedBundlePanel
