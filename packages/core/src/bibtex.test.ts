@@ -6,6 +6,7 @@ import {
   parseBibtex,
   referenceParts,
   sortBibEntries,
+  spliceBibtex,
 } from "./bibtex"
 import { latexToText } from "./latex-chars"
 
@@ -179,5 +180,117 @@ describe("referenceParts", () => {
       "nerf",
       "pbrt",
     ])
+  })
+})
+
+describe("parseBibtex offsets", () => {
+  it("records where each entry sits and its verbatim text", () => {
+    const bib =
+      '% preamble comment\n@string{acm = "ACM"}\n\n@misc{one, title = {One}}\n\n@article(two,\n  title = {Two}\n)\n'
+    const p = parseBibtex(bib)
+    expect(p.entries.map((e) => bib.slice(e.start, e.end))).toEqual([
+      "@misc{one, title = {One}}",
+      "@article(two,\n  title = {Two}\n)",
+    ])
+    expect(p.entries[1]?.raw).toBe("@article(two,\n  title = {Two}\n)")
+    expect(p.duplicates).toEqual([])
+  })
+
+  it("lists duplicated keys and ends a broken entry before the next one", () => {
+    const p = parseBibtex(
+      "@misc{a, title={x}}\n@misc{a, title={y}}\n@book{b, year = 2020, title = {No\n\n@misc{c}",
+    )
+    expect(p.duplicates).toEqual(["a"])
+    expect(p.entries.map((e) => e.key)).toEqual(["a", "b", "c"])
+    expect(p.entries[1]?.raw).toBe("@book{b, year = 2020, title = {No")
+  })
+})
+
+describe("spliceBibtex", () => {
+  const bib = `% Shared references
+@string{eccv = "European Conference on Computer Vision (ECCV)"}
+
+@inproceedings{nerf,
+  title     = {NeRF},
+  booktitle = eccv,
+  year      = 2020
+}
+
+@book{pbrt,
+  title = {Physically Based Rendering},
+  year  = {2016}
+}
+`
+  const PBRT = "@book{pbrt,\n  title = {Physically Based Rendering},\n  year  = {2016}\n}"
+
+  it("replaces one entry in place and leaves every other byte alone", () => {
+    const raw = "@book{pbrt,\n  title = {PBRT},\n  year = {2023}\n}"
+    const { source, entries } = spliceBibtex(bib, [{ op: "set", key: "pbrt", raw }])
+    expect(source).toBe(bib.replace(PBRT, raw))
+    expect(entries.map((e) => e.key)).toEqual(["nerf", "pbrt"])
+    expect(entries[1]?.fields.title).toBe("PBRT")
+  })
+
+  it("appends a new entry after a blank line, reading bare values with the file's macros", () => {
+    const { source, entries } = spliceBibtex(bib, [
+      { op: "set", raw: "  @misc{new, title = {New}, booktitle = eccv}\n" },
+    ])
+    expect(source).toBe(`${bib}\n@misc{new, title = {New}, booktitle = eccv}\n`)
+    expect(entries.map((e) => e.key)).toEqual(["nerf", "pbrt", "new"])
+    expect(entries[2]?.fields.booktitle).toBe("European Conference on Computer Vision (ECCV)")
+  })
+
+  it("renames an entry through the key it was opened under", () => {
+    const raw = "@inproceedings{mildenhall2020nerf,\n  title = {NeRF},\n  year = 2020\n}"
+    const { source, entries } = spliceBibtex(bib, [{ op: "set", key: "nerf", raw }])
+    expect(entries.map((e) => e.key)).toEqual(["mildenhall2020nerf", "pbrt"])
+    expect(source).toContain("@string{eccv")
+    expect(source).not.toContain("@inproceedings{nerf,")
+  })
+
+  it("deletes an entry together with the blank line after it", () => {
+    const { source, entries } = spliceBibtex(bib, [{ op: "delete", key: "nerf" }])
+    expect(entries.map((e) => e.key)).toEqual(["pbrt"])
+    expect(source).toBe(
+      `% Shared references\n@string{eccv = "European Conference on Computer Vision (ECCV)"}\n\n${PBRT}\n`,
+    )
+  })
+
+  it("applies several changes in one save", () => {
+    const { entries } = spliceBibtex(bib, [
+      { op: "delete", key: "pbrt" },
+      { op: "set", key: "nerf", raw: "@inproceedings{nerf, title = {NeRF v2}, year = 2020}" },
+      { op: "set", raw: "@misc{a, title = {A}}" },
+      { op: "set", raw: "@misc{b, title = {B}}" },
+    ])
+    expect(entries.map((e) => [e.key, e.fields.title])).toEqual([
+      ["nerf", "NeRF v2"],
+      ["a", "A"],
+      ["b", "B"],
+    ])
+  })
+
+  it("refuses what it cannot honour, with a reason a person can act on", () => {
+    const refuse = (ops: Parameters<typeof spliceBibtex>[1], re: RegExp) =>
+      expect(() => spliceBibtex(bib, ops)).toThrow(re)
+    refuse([{ op: "delete", key: "ghost" }], /no entry with the key ghost/)
+    refuse([{ op: "set", key: "ghost", raw: "@misc{ghost, title={x}}" }], /no entry with the key/)
+    refuse(
+      [
+        { op: "set", raw: "@misc{nerf, title={x}}" },
+        { op: "delete", key: "nerf" },
+      ],
+      /changed twice/,
+    )
+    refuse([{ op: "set", key: "pbrt", raw: "@misc{nerf, title={x}}" }], /already used/)
+    refuse([{ op: "set", raw: "@misc{bad key, title={x}}" }], /could not be read/)
+    refuse([{ op: "set", raw: "@misc{we!rd, title={x}}" }], /may only use/)
+    refuse([{ op: "set", raw: "@misc{a, title={x}}\n@misc{b, title={y}}" }], /one entry at a time/)
+    refuse([{ op: "set", raw: "@string{x = {y}}\n@misc{a, title = x}" }], /Only the entry itself/)
+    refuse([{ op: "set", raw: "@misc{a, title={x}}\n% trailing note" }], /Only the entry itself/)
+    refuse([{ op: "set", raw: "not bibtex" }], /starts with @type/)
+    refuse([], /Nothing to change/)
+    const dup = "@misc{a, title={x}}\n@misc{a, title={y}}\n"
+    expect(() => spliceBibtex(dup, [{ op: "delete", key: "a" }])).toThrow(/more than once/)
   })
 })
