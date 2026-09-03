@@ -3444,3 +3444,88 @@ describe("automate record — local work lands in the same ledger", () => {
     expect(run?.meta).toContain("published")
   })
 })
+
+describe("MCP: LaTeX papers", () => {
+  it("types unnamed \\documentclass content as LaTeX, reads it as text and keeps the type across edits", async () => {
+    const { app, token } = appWithGrant(dir, "latex", "openid derive:read derive:publish")
+    const created = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          title: "Paper",
+          content:
+            "\\documentclass{article}\n\\begin{document}\n\\section{Intro}\nIt was teh best.\n\\end{document}\n",
+        }),
+      ),
+    )
+    const detail = await (
+      await app.request(`/v1/artifacts/${created.short_id}`, {
+        headers: { authorization: `Bearer ${token}` },
+      })
+    ).json()
+    expect(detail.current_content_type).toBe("text/x-latex")
+    const text = toolText(
+      await call(app, token, "read", { short_id: created.short_id, format: "text" }),
+    )
+    expect(text).toContain("1 Intro")
+    expect(text).not.toContain("\\section")
+    const edited = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          short_id: created.short_id,
+          edits: [{ quote: { exact: "teh" }, new_text: "the" }],
+        }),
+      ),
+    )
+    expect(edited.version).toBe(2)
+    const after = await (
+      await app.request(`/v1/artifacts/${created.short_id}`, {
+        headers: { authorization: `Bearer ${token}` },
+      })
+    ).json()
+    expect(after.current_content_type).toBe("text/x-latex")
+    const source = toolText(
+      await call(app, token, "read", { short_id: created.short_id, format: "html" }),
+    )
+    expect(source).toContain("It was the best.")
+  })
+
+  it("publishes a files map with main.tex as a paper bundle", async () => {
+    const { app, token } = appWithGrant(dir, "latex-bundle", "openid derive:read derive:publish")
+    const created = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          title: "Bundle paper",
+          files: {
+            "main.tex": "\\documentclass{article}\\begin{document}\\input{sec/a}\\end{document}",
+            "sec/a.tex": "Included prose.",
+            "README.md": "# notes",
+          },
+        }),
+      ),
+    )
+    const detail = await (
+      await app.request(`/v1/artifacts/${created.short_id}`, {
+        headers: { authorization: `Bearer ${token}` },
+      })
+    ).json()
+    expect(detail.current_content_type).toBe("derive/latex")
+    // A bundle read lists its pages; the entry is read by section, like a docs bundle.
+    const listing = JSON.parse(
+      toolText(await call(app, token, "read", { short_id: created.short_id })),
+    )
+    expect(listing.entry).toBe("main.tex")
+    expect(listing.pages.map((p: { path: string }) => p.path)).toEqual([
+      "main.tex",
+      "sec/a.tex",
+      "README.md",
+    ])
+    const source = toolText(
+      await call(app, token, "read", {
+        short_id: created.short_id,
+        section: "sec/a.tex",
+        format: "html",
+      }),
+    )
+    expect(source).toContain("Included prose.")
+  })
+})

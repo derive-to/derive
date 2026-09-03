@@ -21,6 +21,7 @@ import {
   isAuthoredFactType,
   isBundleContentType,
   isHtmlLike,
+  isLatexLike,
   type MetaStore,
   type NewVersionData,
   newId,
@@ -348,8 +349,10 @@ const extractVersionData = async (
   // is exactly what a map is for. Found on the preview: a freshly published deck carried no
   // $map at all. Same second-order blast radius the sniff fix documented — typing decks
   // correctly moves them off every path that asks `content_type === "text/html"`.
+  // A LaTeX paper embeds no fact block either, but its outline, links and stats derive
+  // like a deck's.
   const authored = isAuthoredFactType(ct)
-  if (!authored && !isHtmlLike(ct)) return []
+  if (!authored && !isHtmlLike(ct) && !isLatexLike(ct)) return []
   let source = preparedSource
   if (source === undefined) {
     const bytes = await blobs.get(version.blob_key)

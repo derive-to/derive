@@ -6,6 +6,7 @@ import {
   deriveFacts,
   isDerivedFactName,
   isHtmlLike,
+  isLatexLike,
   LINKED_BUNDLE_CONTENT_TYPE,
   LINKED_BUNDLE_FACT,
   landmarkSlice,
@@ -81,8 +82,10 @@ import { CORE_SKILLS } from "../skills-reference.gen"
 const kindCarriesFacts = (v: VersionRecord | null): boolean =>
   v?.content_type === "text/html" ||
   v?.content_type === "text/markdown" ||
-  // A deck carries DERIVED rows ($map above all) though it can embed none of its own.
-  isHtmlLike(v?.content_type ?? "")
+  // A deck carries DERIVED rows ($map above all) though it can embed none of its own;
+  // so does a paper.
+  isHtmlLike(v?.content_type ?? "") ||
+  isLatexLike(v?.content_type ?? "")
 
 interface StoredMap {
   kind: string
@@ -186,7 +189,7 @@ const lazyDeriveVersion = async (
   n: number,
 ): Promise<VersionDataRecord[] | null> => {
   const ct = v?.content_type ?? ""
-  if (!v || (ct !== "text/markdown" && !isHtmlLike(ct))) return null
+  if (!v || (ct !== "text/markdown" && !isHtmlLike(ct) && !isLatexLike(ct))) return null
   const source = await ctx.sourceText(v)
   if (source == null) return null
   const derived = deriveFacts(source, ct)

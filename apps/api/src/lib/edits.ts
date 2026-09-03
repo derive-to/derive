@@ -15,6 +15,7 @@ import {
   type ElementEdit,
   isElementEdit,
   isHtmlLike,
+  isLatexLike,
   isQuoteEdit,
   isSceneEdit,
   isStructuralUserEdit,
@@ -94,8 +95,12 @@ export const MAX_EDITS_PER_BATCH = 500
  *  by filename first). Any revision of an existing single-file artifact that doesn't
  *  carry an explicit filename must go through this — an `index.html` default silently
  *  re-types a markdown doc as HTML, and the browser then swallows its text as markup. */
-export const preservingFilename = (contentType: string | null): string =>
-  (contentType ?? "").split(";")[0]?.trim() === "text/markdown" ? "index.md" : "index.html"
+export const preservingFilename = (contentType: string | null): string => {
+  const base = (contentType ?? "").split(";")[0]?.trim() ?? ""
+  if (base === "text/markdown") return "index.md"
+  if (isLatexLike(base)) return "index.tex"
+  return "index.html"
+}
 
 // diffLines is O(n·m) in line count. Single-file artifacts scale up to
 // MAX_UPLOAD_BYTES, and this path fires on every stale-base_version conflict —
@@ -314,7 +319,7 @@ export async function materializeEdits(
     // This lets one Save carry typed text and resized media atomically.
     if (elementEdits.length) {
       if (!isHtmlLike(contentType ?? "text/html"))
-        throw new EditError("Element edits apply to HTML documents, not Markdown.")
+        throw new EditError("Element edits apply to HTML documents, not Markdown or LaTeX.")
       content = applyElementEdits(content, elementEdits)
     }
     if (quoteEdits.length) content = applyQuoteEdits(content, contentType ?? "", quoteEdits)
@@ -323,7 +328,7 @@ export async function materializeEdits(
     // selectors above still see the exact base-version projection they captured.
     if (structuralEdits.length) {
       if (!isHtmlLike(contentType ?? "text/html"))
-        throw new EditError("Structural edits apply to HTML documents, not Markdown.")
+        throw new EditError("Structural edits apply to HTML documents, not Markdown or LaTeX.")
       content = applyStructuralEdits(content, structuralEdits).html
     }
     // Structural scene operations run last, so duplicating a scene also carries any

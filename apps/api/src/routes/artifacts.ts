@@ -20,9 +20,11 @@ import {
   heavyAssetsAdvisory,
   isHtmlLike,
   isLatexBundle,
+  isLatexLike,
   isMarkdownBundle,
   LINKED_BUNDLE_CONTENT_TYPE,
   type LinkedBundleManifest,
+  latexTextParts,
   maxRole,
   missingBlobAdvisory,
   newId,
@@ -34,6 +36,7 @@ import {
   publish,
   publishAdvisories,
   type Role,
+  renderLatex,
   renderMarkdown,
   roleAllows,
   type SlideOp,
@@ -714,7 +717,11 @@ export const artifactRoutes = (ctx: AppContext) => {
               {
                 before: edit.old_str,
                 after: edit.new_str,
-                contentType: materialized.filename.endsWith(".md") ? "text/markdown" : "text/html",
+                contentType: materialized.filename.endsWith(".md")
+                  ? "text/markdown"
+                  : materialized.filename.endsWith(".tex")
+                    ? "text/x-latex"
+                    : "text/html",
               },
             ]
           if ("quote" in edit && typeof edit.new_text === "string")
@@ -2630,7 +2637,11 @@ export const artifactRoutes = (ctx: AppContext) => {
     if (artifact.removed_at) return fail(c, 410, TOMBSTONE)
     const version = await meta.getVersion(artifact.id, artifact.current_version)
     if (!version) return fail(c, 404, "version not found")
-    if (version.content_type !== "text/markdown" && !isHtmlLike(version.content_type))
+    if (
+      version.content_type !== "text/markdown" &&
+      !isHtmlLike(version.content_type) &&
+      !isLatexLike(version.content_type)
+    )
       return c.json({ handles: [] })
     const source = await sourceText(version)
     if (source === null) return fail(c, 500, "blob missing")
@@ -2671,7 +2682,12 @@ export const artifactRoutes = (ctx: AppContext) => {
     const outline = c.req.query("outline") === "1"
     const present = (source: string, contentType: string): string => {
       if (!format) return source
-      if (format === "text") return isHtmlLike(contentType) ? pageText(source) : source
+      if (format === "text")
+        return isHtmlLike(contentType)
+          ? pageText(source)
+          : isLatexLike(contentType)
+            ? latexTextParts(source).text
+            : source
       return elideDataUris(toMarkdown(source, contentType))
     }
 
@@ -2736,7 +2752,10 @@ export const artifactRoutes = (ctx: AppContext) => {
     const bytes = await blobs.get(file.key)
     if (!bytes) return fail(c, 500, "blob missing")
     const fileBaseType = file.type.split(";")[0]?.trim() ?? file.type
-    const isText = fileBaseType === "text/html" || fileBaseType === "text/markdown"
+    const isText =
+      fileBaseType === "text/html" ||
+      fileBaseType === "text/markdown" ||
+      fileBaseType === "text/x-latex"
     if (!isText) {
       // This route is a machine content API, not a rendering surface (unlike /raw/,
       // which applies a CSP sandbox to every bundle asset it serves). Native
@@ -2766,16 +2785,17 @@ export const artifactRoutes = (ctx: AppContext) => {
     return c.body(present(raw, file.type))
   })
 
-  // Live editor preview: render a markdown draft to the exact published HTML.
+  // Live editor preview: render a markdown or LaTeX draft to the exact published HTML.
   // Stateless (renders the caller's text, stores nothing) and signed-in only, so
   // it can't be used as an anonymous render farm. HTML drafts preview in the
-  // browser, so this is markdown-only.
+  // browser, so this covers the two source languages that need a render.
   app.openapi(
     createRoute({
       method: "post",
       path: "/v1/preview",
       tags: ["Artifacts"],
-      summary: "Render a markdown draft to the exact published HTML (stateless; signed-in only).",
+      summary:
+        "Render a markdown or LaTeX draft to the exact published HTML (stateless; signed-in only).",
       responses: {
         200: {
           description: "The rendered HTML.",
@@ -2787,10 +2807,20 @@ export const artifactRoutes = (ctx: AppContext) => {
       if (!(await actingUser(c))) return bail(fail(c, 401, "unauthenticated"))
       const body = await readJson(
         c,
-        z.object({ source: z.string().max(500_000), title: z.string().max(300).nullish() }),
+        z.object({
+          source: z.string().max(500_000),
+          title: z.string().max(300).nullish(),
+          // Defaults to markdown, the only draft the route used to take; a .tex draft
+          // names its type to reach the LaTeX renderer.
+          content_type: z.enum(["text/markdown", "text/x-latex"]).optional(),
+        }),
       )
       if (body instanceof Response) return bail(body)
-      return c.json({ html: await renderMarkdown(body.source, body.title ?? null) })
+      const html =
+        body.content_type === "text/x-latex"
+          ? renderLatex(body.source, body.title ?? null).html
+          : await renderMarkdown(body.source, body.title ?? null)
+      return c.json({ html })
     },
   )
 

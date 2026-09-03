@@ -712,3 +712,32 @@ describe("slide_ops that change nothing", () => {
     expect(out.content).toContain('data-derive-slide="0"')
   })
 })
+
+describe("materializeEdits: LaTeX documents", () => {
+  const tex =
+    "\\documentclass{article}\n\\begin{document}\nIt was teh best of times.\n\\end{document}\n"
+
+  it("applies a quote edit through the rendered projection and keeps the .tex filename", async () => {
+    const deps = mkDeps({ 1: { text: tex, contentType: "text/x-latex" } })
+    const out = await materializeEdits(
+      deps,
+      fileArtifact(1),
+      [{ quote: { exact: "teh", prefix: "It was ", suffix: " best" }, new_text: "the" }],
+      1,
+    )
+    expect(out.content).toContain("It was the best of times.")
+    expect(out.filename).toBe("index.tex")
+  })
+
+  it("refuses element and structural edits, which need HTML", async () => {
+    const deps = mkDeps({ 1: { text: tex, contentType: "text/x-latex" } })
+    await expect(
+      materializeEdits(
+        deps,
+        fileArtifact(1),
+        [{ op: "resize", target: { fingerprint: "x", role: "img", path: "img" } } as never],
+        1,
+      ),
+    ).rejects.toThrow(/not Markdown or LaTeX/)
+  })
+})

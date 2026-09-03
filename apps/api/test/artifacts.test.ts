@@ -1430,3 +1430,71 @@ describe("renaming an artifact re-derives its slug", () => {
     expect(after?.slug).toBe("keep-this-name")
   })
 })
+
+describe("LaTeX artifacts over REST", () => {
+  const paper =
+    "\\documentclass[sigconf]{acmart}\n\\usepackage{tikz}\n\\begin{document}\n\\title{P}\\maketitle\n\\section{Intro}\nHello $x$.\n\\end{document}\n"
+
+  it("types a .tex upload as text/x-latex and advises on TAPS-refused packages", async () => {
+    const res = await upload("paper.tex", paper, { title: "Paper" })
+    expect(res.status).toBe(201)
+    const json = await res.json()
+    expect(json.current_content_type).toBe("text/x-latex")
+    expect(json.advisories).toEqual([
+      "\\usepackage{tikz}: tikz is not on ACM TAPS's accepted package list",
+    ])
+    const page = await app.request(`/raw/${json.short_id}/v/1/index.html`)
+    expect(page.status).toBe(200)
+    expect(await page.text()).toContain('<h1 class="derive-title">P</h1>')
+  })
+
+  it("types an unnamed LaTeX upload by its content", async () => {
+    const res = await upload("notes.txt", paper, { title: "Sniffed" })
+    expect((await res.json()).current_content_type).toBe("text/x-latex")
+  })
+
+  it("publishes a zip with main.tex, refs.bib and a README as a paper bundle", async () => {
+    const enc = (s: string) => new TextEncoder().encode(s)
+    const zip = zipSync({
+      "main.tex": enc(
+        "\\documentclass{article}\\begin{document}\\section{A}x \\cite{k}\\bibliography{refs}\\end{document}",
+      ),
+      "refs.bib": enc("@misc{k, title={T}, author={A B}, year={2020}}"),
+      "README.md": enc("# Paper\n"),
+    })
+    const res = await upload("paper.zip", zip, { title: "Bundle paper" })
+    expect(res.status).toBe(201)
+    const json = await res.json()
+    expect(json.current_content_type).toBe("derive/latex")
+    expect(json.kind).toBe("bundle")
+    const detail = await (await app.request(`/v1/artifacts/${json.short_id}`)).json()
+    expect(detail.bundle).toMatchObject({ isSkill: false, entry: "main.tex" })
+    expect(detail.bundle.files.map((f: { path: string }) => f.path)).toEqual([
+      "README.md",
+      "main.tex",
+      "refs.bib",
+    ])
+    const page = await app.request(`/raw/${json.short_id}/v/1/index.html`)
+    expect(await page.text()).toContain("A B. T. 2020.")
+  })
+})
+
+describe("live editor preview of LaTeX (/v1/preview)", () => {
+  const owner: TestUser = { id: "u_prev_tex", email: "prev-tex@derive.test", name: "Prev" }
+  const { app: authed } = makeAuthedApp("preview-tex-org", [owner])
+
+  it("renders a .tex draft when the caller names the type", async () => {
+    const r = await authed.request(
+      "/v1/preview",
+      jsonAs(as(owner.email), {
+        source: "\\begin{document}\\section{Hi}$x$\\end{document}",
+        title: "Draft",
+        content_type: "text/x-latex",
+      }),
+    )
+    expect(r.status).toBe(200)
+    const { html } = (await r.json()) as { html: string }
+    expect(html).toContain('<h2 id="hi">')
+    expect(html).toContain('data-tex="x"')
+  })
+})
