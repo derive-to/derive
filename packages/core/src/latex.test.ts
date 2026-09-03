@@ -21,6 +21,8 @@ const imageUrl = (path: string) => (path === "figures/teaser.png" ? "/blob/tease
 
 const normWs = (s: string) => s.replace(/\s+/g, " ").trim()
 const bodyOf = (html: string) => html.match(/<main(?:\s[^>]*)?>([\s\S]*?)<\/main>/)?.[1] ?? ""
+/** What the renderer puts on regions the in-page editor must not arm. */
+const RO = ' data-derive-readonly="1"'
 
 describe("LaTeX type detection", () => {
   it("recognises a document by \\documentclass or \\begin{document} at a line start", () => {
@@ -59,7 +61,7 @@ describe("renderLatex: the acmart sigconf sample", () => {
 
   it("hoists the abstract, CCS concepts, keywords and teaser to \\maketitle, in that order", () => {
     const abstract = body.indexOf('<section class="derive-abstract">')
-    const ccs = body.indexOf('<section class="derive-ccs">')
+    const ccs = body.indexOf(`<section class="derive-ccs"${RO}>`)
     const keywords = body.indexOf('<section class="derive-keywords">')
     const teaser = body.indexOf("derive-teaser")
     const intro = body.indexOf('<h2 id="introduction">')
@@ -79,12 +81,12 @@ describe("renderLatex: the acmart sigconf sample", () => {
 
   it("numbers sections and appendices, with slugs the outline shares", () => {
     expect(body).toContain(
-      '<h2 id="introduction"><span class="derive-secnum">1</span> Introduction</h2>',
+      `<h2 id="introduction"><span class="derive-secnum"${RO}>1</span> Introduction</h2>`,
     )
     expect(body).toContain(
-      '<h3 id="predictor"><span class="derive-secnum">2.1</span> Predictor</h3>',
+      `<h3 id="predictor"><span class="derive-secnum"${RO}>2.1</span> Predictor</h3>`,
     )
-    expect(body).toContain('<span class="derive-secnum">A</span> Implementation Details')
+    expect(body).toContain(`<span class="derive-secnum"${RO}>A</span> Implementation Details`)
     expect(r.headings.map((h) => [h.level, h.slug, h.text])).toEqual([
       [2, "introduction", "1 Introduction"],
       [2, "method", "2 Method"],
@@ -104,11 +106,11 @@ describe("renderLatex: the acmart sigconf sample", () => {
 
   it("keeps math as placeholders the client typesets, with equation numbers", () => {
     expect(body).toContain(
-      '<span class="derive-math" data-derive-math="inline" data-tex="I"></span>',
+      `<span class="derive-math" data-derive-math="inline" data-tex="I"${RO}></span>`,
     )
     expect(body).toContain('data-tex="\\sigma(\\vect{x})"')
     expect(body).toMatch(
-      /<div class="derive-math-display" id="eq-1">.*<span class="derive-eqnum">\(1\)<\/span><\/div>/,
+      /<div class="derive-math-display" id="eq-1" data-derive-readonly="1">.*<span class="derive-eqnum">\(1\)<\/span><\/div>/,
     )
     // align gets one number per line and the \label inside it is stripped from the TeX.
     expect(body).toContain('<span class="derive-eqnum">(2)–(3)</span>')
@@ -120,23 +122,35 @@ describe("renderLatex: the acmart sigconf sample", () => {
   })
 
   it("resolves \\ref and \\eqref to numbered links, including forward references", () => {
-    expect(body).toContain('As Figure&nbsp;<a class="derive-ref" href="#fig-1">1</a> shows')
-    expect(body).toContain('(Section&nbsp;<a class="derive-ref" href="#method">2</a>)')
-    expect(body).toContain('(Table&nbsp;<a class="derive-ref" href="#tab-1">1</a>)')
-    expect(body).toContain('Equation&nbsp;<a class="derive-ref" href="#eq-1">(1)</a>')
-    expect(body).toContain('<a class="derive-ref" href="#eq-3">(3)</a>')
-    expect(body).toContain('<strong>Figure&nbsp;<a class="derive-ref" href="#fig-2">2</a></strong>')
+    expect(body).toContain(
+      `As Figure&nbsp;<span class="derive-refs"${RO}><a class="derive-ref" href="#fig-1">1</a></span> shows`,
+    )
+    expect(body).toContain(
+      `(Section&nbsp;<span class="derive-refs"${RO}><a class="derive-ref" href="#method">2</a></span>)`,
+    )
+    expect(body).toContain(
+      `(Table&nbsp;<span class="derive-refs"${RO}><a class="derive-ref" href="#tab-1">1</a></span>)`,
+    )
+    expect(body).toContain(
+      `Equation&nbsp;<span class="derive-refs"${RO}><a class="derive-ref" href="#eq-1">(1)</a></span>`,
+    )
+    expect(body).toContain(
+      `<span class="derive-refs"${RO}><a class="derive-ref" href="#eq-3">(3)</a></span>`,
+    )
+    expect(body).toContain(
+      `<strong>Figure&nbsp;<span class="derive-refs"${RO}><a class="derive-ref" href="#fig-2">2</a></span></strong>`,
+    )
   })
 
   it("renders author-year citations from the .bib and a sorted References section", () => {
     expect(body).toContain(
-      '[<a class="derive-cite" href="#ref-mildenhall2020nerf">Mildenhall et al. 2020</a>]',
+      `<span class="derive-citation"${RO}>[<a class="derive-cite" href="#ref-mildenhall2020nerf">Mildenhall et al. 2020</a>]</span>`,
     )
     expect(body).toContain(
-      '[<a class="derive-cite" href="#ref-mildenhall2020nerf">Mildenhall et al. 2020</a>; <a class="derive-cite" href="#ref-kerbl2023gaussians">Kerbl et al. 2023</a>]',
+      `<span class="derive-citation"${RO}>[<a class="derive-cite" href="#ref-mildenhall2020nerf">Mildenhall et al. 2020</a>; <a class="derive-cite" href="#ref-kerbl2023gaussians">Kerbl et al. 2023</a>]</span>`,
     )
     expect(body).toContain(
-      'Kerbl et al. <a class="derive-cite" href="#ref-kerbl2023gaussians">[2023]</a>',
+      `<span class="derive-citation"${RO}>Kerbl et al. <a class="derive-cite" href="#ref-kerbl2023gaussians">[2023]</a></span>`,
     )
     const refs = body.slice(body.indexOf('<section class="derive-references"'))
     expect(refs).toContain("<h2>References</h2>")
@@ -155,7 +169,7 @@ describe("renderLatex: the acmart sigconf sample", () => {
     const table = body.slice(body.indexOf('id="tab-1"'), body.indexOf('id="tab-2"'))
     expect(table.indexOf("<figcaption>")).toBeLessThan(table.indexOf("<table"))
     expect(table).toContain(
-      '<span class="derive-caption-label">Table 1: </span>PSNR on three datasets.',
+      `<span class="derive-caption-label"${RO}>Table 1: </span>PSNR on three datasets.`,
     )
     expect(table).toMatch(/<thead><tr[^>]*><th>Method<\/th><th align="center">LLFF<\/th>/)
     expect(table).toContain("<tbody>")
@@ -170,7 +184,7 @@ describe("renderLatex: the acmart sigconf sample", () => {
       'alt="A photograph of a room next to three rendered viewpoints of the same room."',
     )
     expect(teaser).toContain('style="width:100%"')
-    expect(teaser).toContain('<span class="derive-caption-label">Figure 1: </span>')
+    expect(teaser).toContain(`<span class="derive-caption-label"${RO}>Figure 1: </span>`)
     expect(pageText(teaser)).not.toContain("A photograph of a room")
   })
 
@@ -180,9 +194,9 @@ describe("renderLatex: the acmart sigconf sample", () => {
       ["qualitative", "figure"],
     ])
     expect(body).toContain(
-      '<table data-derive-table="ablation" class="derive-tabular derive-dynamic">',
+      `<table data-derive-table="ablation" class="derive-tabular derive-dynamic"${RO}>`,
     )
-    expect(body).toContain('<figure data-derive-figure="qualitative" class="derive-dynamic">')
+    expect(body).toContain(`<figure data-derive-figure="qualitative" class="derive-dynamic"${RO}>`)
     expect(body).toContain("No image yet")
     expect(latexDynamicBindings(SIGCONF).map((b) => b.name)).toEqual(["ablation", "qualitative"])
   })
@@ -202,7 +216,7 @@ describe("renderLatex: the acmart sigconf sample", () => {
     })
     const live = renderLatex(SIGCONF, null, { resolve, imageUrl, dynamic }).body
     expect(live).toContain(
-      '<table data-derive-table="ablation" class="derive-tabular derive-dynamic"><thead><tr><th>run</th><th align="right">psnr</th></tr></thead><tbody><tr><td>full</td><td align="right">27.9</td></tr></tbody></table>',
+      `<table data-derive-table="ablation" class="derive-tabular derive-dynamic"${RO}><thead><tr><th>run</th><th align="right">psnr</th></tr></thead><tbody><tr><td>full</td><td align="right">27.9</td></tr></tbody></table>`,
     )
     expect(live).toContain(`<img src="/blob/${"a".repeat(64)}.png"`)
     expect(live).toContain("<figcaption>Held-out scenes</figcaption>")
@@ -211,7 +225,7 @@ describe("renderLatex: the acmart sigconf sample", () => {
   it("handles ligatures, footnotes, theorems, lists and the acknowledgments", () => {
     expect(body).toContain("baselines — see")
     expect(body).toContain("“Quoted” text and a non-breaking&nbsp;space survive.")
-    expect(body).toContain('<sup class="derive-footnote-mark">1</sup>')
+    expect(body).toContain(`<sup class="derive-footnote-mark"${RO}>1</sup>`)
     expect(body).toContain("We use the quadrature")
     expect(body).toContain('<span class="derive-theorem-head">Theorem 1 (Consistency).</span>')
     expect(body).toContain("<ul><li>a feed-forward predictor")
@@ -260,7 +274,7 @@ describe("renderLatex: the acmtog journal sample (anonymous, review)", () => {
     expect(body).not.toContain("ada@example.edu")
     expect(body).toContain("Submission Id: papers_0042")
     expect(body).toContain(
-      '<p class="derive-review-band">Unpublished working draft. Not for distribution.</p>',
+      `<p class="derive-review-band"${RO}>Unpublished working draft. Not for distribution.</p>`,
     )
     expect(body).toContain(
       "ACM Trans. Graph., Vol. 45, No. 4, Article 88. Publication date: August 2026.",
@@ -268,9 +282,9 @@ describe("renderLatex: the acmtog journal sample (anonymous, review)", () => {
   })
 
   it("uses journal float labels and author-year citations by default", () => {
-    expect(body).toContain('<span class="derive-caption-label">Fig. 1. </span>')
+    expect(body).toContain(`<span class="derive-caption-label"${RO}>Fig. 1. </span>`)
     expect(body).toContain(
-      '[<a class="derive-cite" href="#ref-pharr2016pbrt">Pharr et al. 2016</a>]',
+      `<span class="derive-citation"${RO}>[<a class="derive-cite" href="#ref-pharr2016pbrt">Pharr et al. 2016</a>]</span>`,
     )
     expect(body).toContain('<ul class="derive-reflist-unnumbered">')
   })
@@ -320,14 +334,26 @@ describe("renderLatex: the CVPR author kit sample", () => {
   })
 
   it("renders sorted, compressed numeric citations and cleveref wording", () => {
-    expect(body).toContain('[<a class="derive-cite" href="#ref-kerbl2023gaussians">1–3</a>]')
-    expect(body).toContain('[<a class="derive-cite" href="#ref-example2025dataset">4</a>]')
-    expect(body).toContain('<a class="derive-ref" href="#method">Section 2</a>')
-    expect(body).toContain('<a class="derive-ref" href="#tab-1">Tab. 1</a>')
-    expect(body).toContain('<a class="derive-ref" href="#fig-1">Fig. 1</a>')
-    expect(body).toContain('<a class="derive-ref" href="#eq-1">Eq. (1)</a>')
-    expect(body).toContain('<span class="derive-caption-label">Figure 1. </span>')
-    expect(body).toContain('<span class="derive-caption-label">Table 1. </span>')
+    expect(body).toContain(
+      `<span class="derive-citation"${RO}>[<a class="derive-cite" href="#ref-kerbl2023gaussians">1–3</a>]</span>`,
+    )
+    expect(body).toContain(
+      `<span class="derive-citation"${RO}>[<a class="derive-cite" href="#ref-example2025dataset">4</a>]</span>`,
+    )
+    expect(body).toContain(
+      `<span class="derive-refs"${RO}><a class="derive-ref" href="#method">Section 2</a></span>`,
+    )
+    expect(body).toContain(
+      `<span class="derive-refs"${RO}><a class="derive-ref" href="#tab-1">Tab. 1</a></span>`,
+    )
+    expect(body).toContain(
+      `<span class="derive-refs"${RO}><a class="derive-ref" href="#fig-1">Fig. 1</a></span>`,
+    )
+    expect(body).toContain(
+      `<span class="derive-refs"${RO}><a class="derive-ref" href="#eq-1">Eq. (1)</a></span>`,
+    )
+    expect(body).toContain(`<span class="derive-caption-label"${RO}>Figure 1. </span>`)
+    expect(body).toContain(`<span class="derive-caption-label"${RO}>Table 1. </span>`)
   })
 
   it("formats references in the ieeenat_fullname shape, numbered", () => {
@@ -419,7 +445,7 @@ describe("renderLatex: fail-soft on unsupported and hostile input", () => {
       "\\documentclass{article}\\begin{document}\\foo{kept} and \\foo{again}\\end{document}",
     )
     expect(r.body).toContain(
-      '<p>kept and <span class="derive-unknown" data-latex-unknown="foo"></span>again</p>',
+      `<p>kept and <span class="derive-unknown" data-latex-unknown="foo"${RO}></span>again</p>`,
     )
     expect(r.diagnostics).toEqual([
       {
@@ -447,7 +473,9 @@ describe("renderLatex: fail-soft on unsupported and hostile input", () => {
 
   it("reports unresolved references and citations without breaking the page", () => {
     const r = renderLatex("\\begin{document}See \\ref{nope} and \\cite{ghost}.\\end{document}")
-    expect(r.body).toContain("See ?? and [ghost?].")
+    expect(r.body).toContain(
+      `See <span class="derive-refs"${RO}>??</span> and <span class="derive-citation"${RO}>[ghost?]</span>.`,
+    )
     expect(r.diagnostics.map((d) => d.code).sort()).toEqual(["unresolved-cite", "unresolved-ref"])
   })
 
@@ -498,12 +526,71 @@ describe("renderLatex: fail-soft on unsupported and hostile input", () => {
       resolve: (p) => (p === "main.bbl" ? bbl : p === "refs.bib" ? REFS : null),
     })
     expect(r.body).toContain("Precompiled Entry. 2020.")
-    expect(r.body).toContain('[<a class="derive-cite" href="#ref-k">1</a>]')
+    expect(r.body).toContain(
+      `<span class="derive-citation"${RO}>[<a class="derive-cite" href="#ref-k">1</a>]</span>`,
+    )
     expect(r.body).not.toContain("Mildenhall")
   })
 
   it("pins the KaTeX version the head requests", () => {
     expect(KATEX_ASSET_BASE).toBe(`/raw/vendor/katex/${KATEX_VERSION}`)
     expect(renderLatex("\\begin{document}no math\\end{document}").html).not.toContain("katex")
+  })
+})
+
+describe("read-only regions for the in-page editor", () => {
+  const body = renderLatex(SIGCONF, null, { resolve, imageUrl }).body
+
+  it("marks math, numbers, labels, tables, images, the author block and the references", () => {
+    for (const open of [
+      '<span class="derive-math"',
+      '<div class="derive-math-display"',
+      '<span class="derive-secnum"',
+      '<span class="derive-caption-label"',
+      '<table class="derive-tabular"',
+      "<img ",
+      '<div class="derive-authors"',
+      '<section class="derive-references"',
+      '<span class="derive-citation"',
+      '<span class="derive-refs"',
+      '<sup class="derive-footnote-mark"',
+      '<span class="derive-footnote"',
+      '<div class="derive-theorem ',
+      '<h2 class="derive-frontmatter-title"',
+      "<table data-derive-table=",
+      "<figure data-derive-figure=",
+    ]) {
+      const at = body.indexOf(open)
+      expect(at, open).toBeGreaterThanOrEqual(0)
+      expect(body.slice(at, body.indexOf(">", at)), open).toContain(RO)
+    }
+  })
+
+  it("leaves prose, list items, captions, headings, the title and the abstract plain", () => {
+    for (const open of [
+      "<p>",
+      "<li>",
+      "<figcaption>",
+      '<h1 class="derive-title">',
+      '<h2 id="introduction">',
+      '<section class="derive-abstract">',
+    ])
+      expect(body, open).toContain(open)
+    // The mark never changes what a reader can select, so the projection pin still holds.
+    expect(normWs(latexTextParts(SIGCONF, { resolve, imageUrl }).text)).toBe(normWs(pageText(body)))
+  })
+
+  it("exposes the cited keys in first-cited order and the bibliography files", () => {
+    const r = renderLatex(CVPR, null, { resolve })
+    expect(r.bibFiles).toEqual(["refs"])
+    expect(r.cited).toEqual([
+      "mildenhall2020nerf",
+      "kerbl2023gaussians",
+      "pharr2016pbrt",
+      "example2025dataset",
+    ])
+    const plain = renderLatex("\\begin{document}Hi\\end{document}")
+    expect(plain.cited).toEqual([])
+    expect(plain.bibFiles).toEqual([])
   })
 })
