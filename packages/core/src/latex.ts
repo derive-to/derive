@@ -78,7 +78,10 @@ export interface RenderLatexOptions {
 }
 
 export interface RenderedLatex
-  extends Pick<LatexRenderResult, "headings" | "bindings" | "diagnostics" | "profile" | "hasMath"> {
+  extends Pick<
+    LatexRenderResult,
+    "headings" | "bindings" | "diagnostics" | "profile" | "hasMath" | "cited" | "bibFiles"
+  > {
   /** The full document, ready to serve (shell + selection runtime). */
   html: string
   /** The `<article>` alone, for callers that wrap it themselves. */
@@ -102,6 +105,8 @@ export const renderLatex = (
     diagnostics: r.diagnostics,
     profile: r.profile,
     hasMath: r.hasMath,
+    cited: r.cited,
+    bibFiles: r.bibFiles,
   }
 }
 

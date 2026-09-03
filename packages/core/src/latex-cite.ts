@@ -15,7 +15,13 @@ import {
   referenceParts,
   sortBibEntries,
 } from "./bibtex"
-import { attr, type Bibliography, type LabelTarget, type RenderContext } from "./latex-emit"
+import {
+  attr,
+  type Bibliography,
+  type LabelTarget,
+  READONLY_ATTR,
+  type RenderContext,
+} from "./latex-emit"
 import type { EnvNode, LatexArg, LatexNode, MacroNode } from "./latex-parse"
 import { plainTextOf } from "./latex-parse"
 
@@ -187,19 +193,22 @@ export const renderCite = (ctx: RenderContext, macro: MacroNode): void => {
     if (i > 0) say(s)
   }
   const ay = (l: CiteLabel) => (l.resolved ? `${l.authors} ${l.year}` : `${l.key}?`)
+  // The whole label is made up from the macro, so the in-page editor treats it as one
+  // read-only island; the brackets and separators are entities over the macro too.
+  out.markup(`<span class="derive-citation"${READONLY_ATTR}>`, macro.start)
   switch (name) {
     case "citeauthor":
       labels.forEach((l, i) => {
         sep(i)
         link(l, l.resolved ? l.authors : `${l.key}?`)
       })
-      return
+      break
     case "citeyear":
       labels.forEach((l, i) => {
         sep(i)
         link(l, l.resolved ? l.year || (l.number ?? "") : `${l.key}?`)
       })
-      return
+      break
     case "citeyearpar":
       bracket(() =>
         labels.forEach((l, i) => {
@@ -207,7 +216,7 @@ export const renderCite = (ctx: RenderContext, macro: MacroNode): void => {
           link(l, l.resolved ? l.year || (l.number ?? "") : `${l.key}?`)
         }),
       )
-      return
+      break
     case "citet":
     case "Citet":
       if (numeric) {
@@ -223,7 +232,7 @@ export const renderCite = (ctx: RenderContext, macro: MacroNode): void => {
           link(l, l.resolved ? `[${l.year}]` : `[${l.key}?]`)
         })
       }
-      return
+      break
     case "citealp":
     case "citealt":
       if (numeric) {
@@ -238,7 +247,7 @@ export const renderCite = (ctx: RenderContext, macro: MacroNode): void => {
         })
       }
       if (note) say(`, ${note}`)
-      return
+      break
     default:
       // \cite, \citep, \Citep, \shortcite
       if (numeric) {
@@ -257,6 +266,7 @@ export const renderCite = (ctx: RenderContext, macro: MacroNode): void => {
         )
       }
   }
+  out.markup("</span>", macro.end)
 }
 
 const KIND_WORDS: Record<LabelTarget["kind"], [string, string]> = {
@@ -276,6 +286,7 @@ export const renderRef = (ctx: RenderContext, macro: MacroNode): void => {
   const { out } = ctx
   const keys = keysOf(macro.args[0])
   const say = (text: string) => out.entity(text, macro.start, macro.end)
+  out.markup(`<span class="derive-refs"${READONLY_ATTR}>`, macro.start)
   keys.forEach((key, i) => {
     if (i > 0) say(keys.length === 2 || i < keys.length - 1 ? ", " : ", and ")
     const target = ctx.labels.get(key)
@@ -314,6 +325,7 @@ export const renderRef = (ctx: RenderContext, macro: MacroNode): void => {
     say(text)
     if (target.id) out.markup("</a>", macro.end)
   })
+  out.markup("</span>", macro.end)
 }
 
 /** The label text a `\bibitem[label]{key}` prints; acmart `.bbl` files spell it as
@@ -344,7 +356,7 @@ export const renderTheBibliography = (ctx: RenderContext, env: EnvNode): void =>
   const { out } = ctx
   ctx.closeParagraph(env.start)
   const numbered = ctx.profile.citeStyle === "numeric"
-  out.markup('<section class="derive-references" id="references">', env.start)
+  out.markup(`<section class="derive-references" id="references"${READONLY_ATTR}>`, env.start)
   out.markup("<h2>")
   out.entity("References", env.start, env.bodyStart)
   out.markup("</h2>")
@@ -399,7 +411,7 @@ export const renderReferences = (ctx: RenderContext, at: { start: number; end: n
   const { out, profile } = ctx
   const numbered = profile.citeStyle === "numeric"
   ctx.closeParagraph(at.start)
-  out.markup('<section class="derive-references" id="references">', at.start)
+  out.markup(`<section class="derive-references" id="references"${READONLY_ATTR}>`, at.start)
   out.markup("<h2>")
   out.entity("References", at.start, at.end)
   out.markup("</h2>")

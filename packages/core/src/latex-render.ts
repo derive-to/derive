@@ -36,6 +36,7 @@ import {
   type LatexBindingRef,
   type LatexHeading,
   type LatexTextSegment,
+  READONLY_ATTR,
   type RenderContext,
   type RenderOptions,
   step,
@@ -75,6 +76,9 @@ export interface LatexRenderResult {
   macros: Record<string, string>
   title: string | null
   hasMath: boolean
+  /** Citation keys in first-cited order, and the files `\bibliography{}` names. */
+  cited: string[]
+  bibFiles: string[]
 }
 
 const SECTION_LEVELS: Record<string, number> = {
@@ -526,7 +530,7 @@ const makeContext = (
     diag: (code, message, at) => {
       // Pass 2 repeats pass 1's walk; dedupe on code+message so a diagnostic is reported
       // once, and cap the list so a hostile document cannot grow it without bound.
-      const key = `${code} ${message}`
+      const key = `${code}\u0000${message}`
       if (shared.seenDiagnostics.has(key) || shared.diagnostics.length >= MAX_DIAGNOSTICS) return
       shared.seenDiagnostics.add(key)
       const inputAt = ctx.counters.inputAt
@@ -840,10 +844,10 @@ const renderMacro = (
   // The marker is inline: between blocks there is no paragraph to put it in, and the
   // diagnostic already names the macro.
   if (ctx.inlineDepth > 0 || ctx.paragraph !== "none")
-    out.markup(`<span class="derive-unknown" data-latex-unknown="${attr(name)}"></span>`, [
-      n.start,
-      n.end,
-    ])
+    out.markup(
+      `<span class="derive-unknown" data-latex-unknown="${attr(name)}"${READONLY_ATTR}></span>`,
+      [n.start, n.end],
+    )
   return 0
 }
 
@@ -932,10 +936,12 @@ const renderFootnote = (ctx: RenderContext, n: MacroNode): void => {
   if (!arg) return
   if (ctx.inlineDepth === 0) ctx.ensureParagraph(n.start)
   const num = String(step(ctx, "footnote"))
-  out.markup('<sup class="derive-footnote-mark">', n.start)
+  out.markup(`<sup class="derive-footnote-mark"${READONLY_ATTR}>`, n.start)
   out.entity(num, n.start, arg.start)
   out.markup("</sup>")
-  out.markup('<span class="derive-footnote" role="note"><span class="derive-footnote-num">')
+  out.markup(
+    `<span class="derive-footnote" role="note"${READONLY_ATTR}><span class="derive-footnote-num">`,
+  )
   out.entity(num, n.start, arg.start)
   out.markup("</span> ")
   ctx.inlineDepth++
@@ -1024,7 +1030,7 @@ const renderSection = (ctx: RenderContext, shared: Shared, n: MacroNode): void =
   const cls = ctx.counters.appendix && level === 2 ? ' class="derive-appendix-title"' : ""
   out.markup(`<${tag} id="${attr(heading.slug)}"${cls}>`, n.start)
   if (number) {
-    out.markup('<span class="derive-secnum">')
+    out.markup(`<span class="derive-secnum"${READONLY_ATTR}>`)
     out.entity(number, n.start, title ? title.start : n.end)
     out.markup("</span> ")
   }
@@ -1155,7 +1161,7 @@ const renderInput = (ctx: RenderContext, shared: Shared, n: MacroNode): void => 
       n.start,
     )
     if (ctx.inlineDepth === 0) ctx.ensureParagraph(n.start)
-    out.markup('<span class="derive-unknown">', n.start)
+    out.markup(`<span class="derive-unknown"${READONLY_ATTR}>`, n.start)
     out.entity(`\\${n.name}{${name}}`, n.start, n.end)
     out.markup("</span>", n.end)
     return
@@ -1403,7 +1409,7 @@ const renderTheorem = (
   ctx.labelTarget = { number: String(num), kind: "theorem", id }
   ctx.closeParagraph(n.start)
   out.markup(
-    `<div class="derive-theorem derive-theorem-${attr(n.name)}" id="${attr(id)}">`,
+    `<div class="derive-theorem derive-theorem-${attr(n.name)}" id="${attr(id)}"${READONLY_ATTR}>`,
     n.start,
   )
   out.markup("<p>")
@@ -1502,14 +1508,14 @@ const emitMath = (
 ): void => {
   const { out } = ctx
   shared.hasMath.value = true
-  const span = `<span class="derive-math" data-derive-math="${display ? "display" : "inline"}" data-tex="${attr(tex)}"></span>`
+  const span = `<span class="derive-math" data-derive-math="${display ? "display" : "inline"}" data-tex="${attr(tex)}"${READONLY_ATTR}></span>`
   if (!display) {
     out.markup(span, [start, end])
     return
   }
   ctx.closeParagraph(start)
   const id = numbers[0] ? ` id="eq-${attr(numbers[0])}"` : ""
-  out.markup(`<div class="derive-math-display"${id}>`, start)
+  out.markup(`<div class="derive-math-display"${id}${READONLY_ATTR}>`, start)
   out.markup(span, [start, end])
   if (numbers.length) {
     out.markup('<span class="derive-eqnum">')
@@ -1635,7 +1641,7 @@ export const renderLatexBody = (source: string, opts: RenderOptions): LatexRende
   const parsed = parseLatex(source)
   const shared = makeShared(parsed)
   for (const d of parsed.diagnostics.slice(0, 8)) {
-    shared.seenDiagnostics.add(`${d.code} ${d.message}`)
+    shared.seenDiagnostics.add(`${d.code}\u0000${d.message}`)
     shared.diagnostics.push(d)
   }
   const first = runPass(source, opts, shared, 1, null)
@@ -1658,6 +1664,8 @@ export const renderLatexBody = (source: string, opts: RenderOptions): LatexRende
     macros,
     title: titleText || null,
     hasMath: shared.hasMath.value,
+    cited: [...ctx.cited.keys()],
+    bibFiles: ctx.bibFiles,
   }
 }
 

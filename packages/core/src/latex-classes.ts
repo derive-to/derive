@@ -10,7 +10,7 @@
  * the PDF would, not the order the macros were typed.
  */
 
-import { attr, type ClassProfile, type RenderContext } from "./latex-emit"
+import { attr, type ClassProfile, READONLY_ATTR, type RenderContext } from "./latex-emit"
 import {
   type EnvNode,
   type LatexArg,
@@ -494,13 +494,13 @@ export const renderMakeTitle = (ctx: RenderContext, top: TopMatter, at: MacroNod
   }
   ctx.closeParagraph(at.start)
   if (profile.review && profile.kind === "cvpr") {
-    out.markup('<p class="derive-review-band">', at.start)
+    out.markup(`<p class="derive-review-band"${READONLY_ATTR}>`, at.start)
     say(
       `${top.confName ?? "CVPR"} ${top.confYear ?? ""} Submission #${top.paperId ?? "*****"}. CONFIDENTIAL REVIEW COPY. DO NOT DISTRIBUTE.`,
     )
     out.markup("</p>")
   } else if (profile.review) {
-    out.markup('<p class="derive-review-band">', at.start)
+    out.markup(`<p class="derive-review-band"${READONLY_ATTR}>`, at.start)
     say("Unpublished working draft. Not for distribution.")
     out.markup("</p>")
   }
@@ -518,7 +518,7 @@ export const renderMakeTitle = (ctx: RenderContext, top: TopMatter, at: MacroNod
   }
   if (profile.anonymous) {
     out.markup(
-      '<div class="derive-authors"><div class="derive-author"><span class="derive-author-name">',
+      `<div class="derive-authors"${READONLY_ATTR}><div class="derive-author"><span class="derive-author-name">`,
     )
     say(
       profile.kind === "cvpr"
@@ -527,12 +527,12 @@ export const renderMakeTitle = (ctx: RenderContext, top: TopMatter, at: MacroNod
     )
     out.markup("</span></div></div>")
     if (profile.kind === "acm" && top.submissionId) {
-      out.markup('<p class="derive-submission-id">')
+      out.markup(`<p class="derive-submission-id"${READONLY_ATTR}>`)
       say(`Submission Id: ${top.submissionId}`)
       out.markup("</p>")
     }
   } else if (profile.kind === "acm") {
-    out.markup('<div class="derive-authors">')
+    out.markup(`<div class="derive-authors"${READONLY_ATTR}>`)
     for (const author of top.authors) {
       out.markup('<div class="derive-author">', author.macro.start)
       out.markup('<span class="derive-author-name">')
@@ -577,7 +577,7 @@ export const renderMakeTitle = (ctx: RenderContext, top: TopMatter, at: MacroNod
     }
     out.markup("</div>")
     if (top.authorNotes.length) {
-      out.markup('<div class="derive-author-notes">')
+      out.markup(`<div class="derive-author-notes"${READONLY_ATTR}>`)
       top.authorNotes.forEach((note, idx) => {
         out.markup("<p>", note.start)
         out.entity(`${NOTE_MARKS[idx % NOTE_MARKS.length]} `, note.start, note.start)
@@ -593,7 +593,7 @@ export const renderMakeTitle = (ctx: RenderContext, top: TopMatter, at: MacroNod
       if (n.type === "macro" && n.name === "and") columns.push([])
       else (columns[columns.length - 1] as LatexNode[]).push(n)
     }
-    out.markup('<div class="derive-authors">', top.authorsRaw.start)
+    out.markup(`<div class="derive-authors"${READONLY_ATTR}>`, top.authorsRaw.start)
     for (const col of columns) {
       out.markup('<div class="derive-author">')
       ctx.inlineDepth++
@@ -603,7 +603,7 @@ export const renderMakeTitle = (ctx: RenderContext, top: TopMatter, at: MacroNod
     }
     out.markup("</div>", top.authorsRaw.end)
     if (top.date?.args[0]) {
-      out.markup('<p class="derive-date">', top.date.start)
+      out.markup(`<p class="derive-date"${READONLY_ATTR}>`, top.date.start)
       inlineArg(top.date.args[0])
       out.markup("</p>", top.date.end)
     }
@@ -613,8 +613,8 @@ export const renderMakeTitle = (ctx: RenderContext, top: TopMatter, at: MacroNod
   if (profile.kind === "acm") {
     if (top.abstract) renderAbstract(ctx, top.abstract)
     if (top.ccs.length) {
-      out.markup('<section class="derive-ccs">', at.start)
-      out.markup('<h2 class="derive-frontmatter-title">')
+      out.markup(`<section class="derive-ccs"${READONLY_ATTR}>`, at.start)
+      out.markup(`<h2 class="derive-frontmatter-title"${READONLY_ATTR}>`)
       say("CCS Concepts")
       out.markup("</h2>")
       for (const c of top.ccs) {
@@ -643,7 +643,7 @@ export const renderMakeTitle = (ctx: RenderContext, top: TopMatter, at: MacroNod
     }
     if (top.keywords?.args[0]) {
       out.markup('<section class="derive-keywords">', top.keywords.start)
-      out.markup('<h2 class="derive-frontmatter-title">')
+      out.markup(`<h2 class="derive-frontmatter-title"${READONLY_ATTR}>`)
       say("Keywords")
       out.markup("</h2><p>")
       inlineArg(top.keywords.args[0])
@@ -669,7 +669,7 @@ const renderAcmVenue = (ctx: RenderContext, top: TopMatter, at: MacroNode): void
       top.number ? `No. ${top.number}` : null,
       top.article ? `Article ${top.article}` : null,
     ].filter(Boolean)
-    out.markup('<p class="derive-venue">', at.start)
+    out.markup(`<p class="derive-venue"${READONLY_ATTR}>`, at.start)
     say(
       `${bits.join(", ")}.${month || top.year ? ` Publication date: ${[month, top.year].filter(Boolean).join(" ")}.` : ""}`,
     )
@@ -677,7 +677,7 @@ const renderAcmVenue = (ctx: RenderContext, top: TopMatter, at: MacroNode): void
   } else if (top.conference) {
     const [name, date, venue] = top.conference.args.map((a) => plainTextOf(a.nodes).trim())
     const short = top.conference.opt ? plainTextOf(top.conference.opt.nodes).trim() : null
-    out.markup('<p class="derive-venue">', top.conference.start)
+    out.markup(`<p class="derive-venue"${READONLY_ATTR}>`, top.conference.start)
     out.entity(
       [short ?? name, date, venue].filter(Boolean).join(", "),
       top.conference.start,
@@ -691,7 +691,7 @@ const renderAcmVenue = (ctx: RenderContext, top: TopMatter, at: MacroNode): void
   if (rights) lines.push(`© ${year ? `${year} ` : ""}${rights}`)
   if (top.isbn) lines.push(`ACM ISBN ${top.isbn}`)
   if (!lines.length && !top.doi) return
-  out.markup('<p class="derive-rights">', at.start)
+  out.markup(`<p class="derive-rights"${READONLY_ATTR}>`, at.start)
   say(lines.join(" "))
   if (top.doi) {
     const url = /^https?:\/\//.test(top.doi) ? top.doi : `https://doi.org/${top.doi}`
@@ -709,7 +709,7 @@ export const renderAbstract = (ctx: RenderContext, env: EnvNode): void => {
   const { out } = ctx
   ctx.closeParagraph(env.start)
   out.markup('<section class="derive-abstract">', env.start)
-  out.markup('<h2 class="derive-frontmatter-title">')
+  out.markup(`<h2 class="derive-frontmatter-title"${READONLY_ATTR}>`)
   out.entity("Abstract", env.start, env.bodyStart)
   out.markup("</h2>")
   ctx.walk(env.body)

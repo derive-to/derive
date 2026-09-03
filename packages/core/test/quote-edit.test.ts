@@ -607,3 +607,48 @@ describe("applyQuoteEdits — LaTeX", () => {
     expect(out).toBe("\\begin{document}Pages 10--30 are fine here.\\end{document}")
   })
 })
+
+describe("applyQuoteEdits — LaTeX bundles", () => {
+  const TEX = "text/x-latex"
+  const main =
+    "\\begin{document}\n\\section{Intro}\nLocal prose here.\n\\input{sec/method}\n\\end{document}\n"
+  const resolve = (path: string) =>
+    path === "sec/method.tex" ? "Included prose lives elsewhere.\n" : null
+
+  it("follows \\input through resolve and names the file a quote comes from", () => {
+    expect(() => applyQuoteEdits(main, TEX, [qe("Included prose", "x")], { resolve })).toThrow(
+      /comes from sec\/method\.tex; open that file in the source editor/,
+    )
+    expect(applyQuoteEdits(main, TEX, [qe("Local prose", "Own prose")], { resolve })).toContain(
+      "Own prose here.",
+    )
+  })
+
+  it("cannot see included text without resolve", () => {
+    expect(() => applyQuoteEdits(main, TEX, [qe("Included prose", "x")])).toThrow(/Edit 1/)
+  })
+})
+
+describe("applyQuoteEdits — LaTeX, typing beside a generated label", () => {
+  const TEX = "text/x-latex"
+  const doc = "\\begin{document}\nSee \\cite{k}. Next sentence.\n\\end{document}\n"
+
+  it("leaves a citation label at the edge of the quote alone and splices the rest", () => {
+    // The differ word-snaps the label into the changed run when text is typed after it.
+    expect(applyQuoteEdits(doc, TEX, [qe("[k?].", "[k?]. Amended.")])).toBe(
+      "\\begin{document}\nSee \\cite{k}. Amended. Next sentence.\n\\end{document}\n",
+    )
+    expect(applyQuoteEdits(doc, TEX, [qe("See [k?]", "Look [k?]")])).toBe(
+      "\\begin{document}\nLook \\cite{k}. Next sentence.\n\\end{document}\n",
+    )
+    expect(applyQuoteEdits(doc, TEX, [qe("[k?]", "[k?] indeed")])).toBe(
+      "\\begin{document}\nSee \\cite{k} indeed. Next sentence.\n\\end{document}\n",
+    )
+  })
+
+  it("still refuses a change to the label itself", () => {
+    expect(() => applyQuoteEdits(doc, TEX, [qe("[k?].", "[x?].")])).toThrow(
+      /generated from a macro/,
+    )
+  })
+})

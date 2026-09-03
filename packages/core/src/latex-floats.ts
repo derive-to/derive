@@ -12,6 +12,7 @@ import {
   type DynamicFigureLike,
   type DynamicTableLike,
   type FloatState,
+  READONLY_ATTR,
   type RenderContext,
   step,
 } from "./latex-emit"
@@ -225,7 +226,7 @@ export const renderTabular = (ctx: RenderContext, env: EnvNode): void => {
   if (firstMidrule === -1 && rows.length > 1 && rows[0]?.ruleAbove && rows[1]?.ruleAbove)
     headerRows = 1
   ctx.closeParagraph(env.start)
-  out.markup(`<table class="derive-tabular">`, env.start)
+  out.markup(`<table class="derive-tabular"${READONLY_ATTR}>`, env.start)
   const pending = new Map<number, number>()
   const emitRow = (row: Row, header: boolean) => {
     out.markup(`<tr${row.ruleAbove ? ' class="derive-rule-above"' : ""}>`, row.start)
@@ -333,7 +334,7 @@ export const renderCaption = (ctx: RenderContext, macro: MacroNode): void => {
   ctx.closeParagraph(macro.start)
   out.markup("<figcaption>", macro.start)
   if (label) {
-    out.markup('<span class="derive-caption-label">')
+    out.markup(`<span class="derive-caption-label"${READONLY_ATTR}>`)
     out.entity(label, macro.start, text ? text.start : macro.end)
     out.markup("</span>")
   }
@@ -370,7 +371,7 @@ export const renderSubFloat = (ctx: RenderContext, node: EnvNode | MacroNode): v
     ctx.closeParagraph(node.end)
     if (node.opt) {
       out.markup("<figcaption>", node.opt.start)
-      out.markup('<span class="derive-caption-label">')
+      out.markup(`<span class="derive-caption-label"${READONLY_ATTR}>`)
       out.entity(state.captionLabel, node.start, node.opt.start)
       out.markup("</span>")
       ctx.inline(node.opt.nodes)
@@ -484,7 +485,10 @@ export const renderIncludeGraphics = (ctx: RenderContext, macro: MacroNode): voi
     return
   }
   const alt = ctx.float?.description ?? ""
-  out.markup(`<img src="${attr(url)}" alt="${attr(alt)}"${style}>`, [macro.start, macro.end])
+  out.markup(`<img src="${attr(url)}" alt="${attr(alt)}"${style}${READONLY_ATTR}>`, [
+    macro.start,
+    macro.end,
+  ])
 }
 
 // The same empty values dynamic-data.ts seeds a slot with (emptyDynamicValue), spelled
@@ -510,7 +514,7 @@ export const renderDeriveBinding = (
       macro.start,
     )
     ctx.ensureParagraph(macro.start)
-    out.markup('<span class="derive-unknown">', macro.start)
+    out.markup(`<span class="derive-unknown"${READONLY_ATTR}>`, macro.start)
     out.entity(`\\derive${kind}{${name}}`, macro.start, macro.end)
     out.markup("</span>", macro.end)
     return
@@ -523,7 +527,7 @@ export const renderDeriveBinding = (
   if (kind === "table") {
     const table = value?.kind === "table" ? value.table : EMPTY_TABLE
     out.markup(
-      `<table data-derive-table="${attr(name)}" class="derive-tabular derive-dynamic">`,
+      `<table data-derive-table="${attr(name)}" class="derive-tabular derive-dynamic"${READONLY_ATTR}>`,
       macro.start,
     )
     out.markup(renderDynamicTableInner(table), [macro.start, macro.end])
@@ -531,7 +535,10 @@ export const renderDeriveBinding = (
     return
   }
   const figure = value?.kind === "figure" ? value.figure : EMPTY_FIGURE
-  out.markup(`<figure data-derive-figure="${attr(name)}" class="derive-dynamic">`, macro.start)
+  out.markup(
+    `<figure data-derive-figure="${attr(name)}" class="derive-dynamic"${READONLY_ATTR}>`,
+    macro.start,
+  )
   out.markup(renderDynamicFigureInner(figure, opts.caption ?? ""), [macro.start, macro.end])
   out.markup("</figure>", macro.end)
 }

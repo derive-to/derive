@@ -405,3 +405,8 @@ export const numberOf = (ctx: RenderContext, name: string): number => ctx.counte
 
 /** Attribute-safe text: escaped, and with the quotes that would end an attribute. */
 export const attr = (s: string): string => escapeHtmlText(s).replace(/'/g, "&#39;")
+
+/** Marks a region the in-page editor must not arm: math, tables, images, generated
+ *  labels and numbers, the author block, the reference list. The frame reads the
+ *  attribute; an HTML author can set it by hand. It never touches the text projection. */
+export const READONLY_ATTR = ' data-derive-readonly="1"'
