@@ -161,6 +161,15 @@ a bearer from `stage({target:"api", access:"publish"})`. Each version keeps the 
 had; a new version starts from the previous one's latest data. Read
 `derive://skills/dynamic-data` for the body shapes, row addressing and limits.
 
+## LaTeX papers
+
+A paper publishes as its LaTeX source: a single `paper.tex`, or a bundle whose root holds
+`main.tex` beside its `.bib`, `\input` files and figures. Derive renders the source to a
+page (sections, tables, figures, math, citations from the `.bib`; acmart and the CVPR
+kit are understood), keeps the type across edits, and reports what it could not render
+in the publish advisories. `\derivetable{name}` and `\derivefigure{name}` bind the
+dynamic slots above. Read `derive://skills/latex` before publishing one.
+
 ## Non-negotiable rules
 
 - Do not widen access or listing without the user's explicit request.

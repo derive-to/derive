@@ -96,6 +96,14 @@ export const docsSections = [
         stripHeading: false,
       },
       {
+        source: "apps/docs/content/artifacts/latex.md",
+        slug: "artifacts/latex",
+        title: "LaTeX papers",
+        description:
+          "Publish a paper as LaTeX source and read it as a page, with BibTeX citations and math.",
+        stripHeading: false,
+      },
+      {
         source: "examples/README.md",
         slug: "artifacts/examples",
         title: "Official artifact examples",
