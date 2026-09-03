@@ -412,6 +412,16 @@ export const dynamicSlotsQuery = (shortId: string, version: number) =>
     staleTime: 30_000,
   })
 
+/** A paper bundle's bibliography (routes/paper-files.ts), keyed under the artifact so a
+ *  publish invalidates it with the rest. A 404 (no .bib) is the panel's "absent". */
+export const bibQuery = (shortId: string, version: number) =>
+  queryOptions({
+    queryKey: ["artifact", shortId, "bib", version] as const,
+    queryFn: () => api.bib(shortId, version),
+    staleTime: 30_000,
+    retry: false,
+  })
+
 export const dynamicHistoryQuery = (shortId: string, name: string, version: number) =>
   queryOptions({
     queryKey: ["artifact", shortId, "dynamic", version, "history", name] as const,
