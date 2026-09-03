@@ -14,9 +14,13 @@ import { SourceEditor } from "./artifact/source-editor"
 // Guess Markdown vs HTML from the content, so paste just works (the editor drives
 // highlighting + live preview off it). An opening structural tag or any closing
 // tag reads as HTML; everything else is Markdown.
-const detectFormat = (t: string): "md" | "html" => {
+const detectFormat = (t: string): "md" | "html" | "tex" => {
   const s = t.trim()
   if (!s) return "md"
+  // Mirrors @derive/core isLatexDocument (line-anchored, so prose that quotes the macro
+  // does not count).
+  if (/^[ \t]*\\documentclass\s*[[{]/m.test(s) || /^[ \t]*\\begin\{document\}/m.test(s))
+    return "tex"
   if (
     /^<(?:!doctype|html|body|head|div|section|article|main|header|footer|nav|h[1-6]|p|ul|ol|li|table|span|a|img|svg|style|script)\b/i.test(
       s,
@@ -71,8 +75,9 @@ export function NewArtifact() {
   const publishMut = useApiMutation({
     mutationFn: () => {
       const name = title.trim() || "Untitled"
-      const ext = format === "md" ? "md" : "html"
-      const type = format === "md" ? "text/markdown" : "text/html"
+      const ext = format === "md" ? "md" : format === "tex" ? "tex" : "html"
+      const type =
+        format === "md" ? "text/markdown" : format === "tex" ? "text/x-latex" : "text/html"
       const fields: Record<string, string> = { title: name }
       if (message.trim()) fields.message = message.trim()
       if (isSkill) {

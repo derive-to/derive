@@ -38,10 +38,13 @@ export const canRenameArtifact = (a: Artifact): boolean =>
  *  hook both decide this. Note this reads the version list, not
  *  `current_content_type` — the denormalized field also carries deck/skill types
  *  that the md-or-html question deliberately flattens. */
-export const formatOf = (a: Artifact): "md" | "html" =>
-  a.versions.find((v) => v.n === a.current_version)?.content_type === "text/markdown"
-    ? "md"
-    : "html"
+export const formatOf = (a: Artifact): "md" | "html" | "tex" => {
+  const ct = a.versions.find((v) => v.n === a.current_version)?.content_type
+  if (ct === "text/markdown") return "md"
+  // Mirrored from @derive/core LATEX_CONTENT_TYPE (the web imports core types only).
+  if (ct === "text/x-latex") return "tex"
+  return "html"
+}
 
 // The short type badge for an artifact (Skill / Site / Deck / MD / HTML / Doc),
 // derived from its kind + denormalized content type without opening the bundle.
@@ -49,9 +52,12 @@ export function artifactTypeLabel(a: Artifact): string {
   // A skill rides the denormalized content type (derive/skill), so the grid badges it
   // without opening the bundle — string mirrored from @derive/core SKILL_CONTENT_TYPE.
   if (a.current_content_type === "derive/skill") return "Skill"
+  // A paper bundle (entry main.tex) likewise: derive/latex mirrors LATEX_BUNDLE_CONTENT_TYPE.
+  if (a.current_content_type === "derive/latex") return "Paper"
   if (a.kind === "bundle") return "Site"
   const ct = a.current_content_type
   if (ct === "text/x-derive-deck") return "Deck"
+  if (ct === "text/x-latex") return "LaTeX"
   if (ct === "text/x-derive-linked-bundle") return "Bundle"
   if (ct === "text/x-derive-video") return "Video"
   if (ct === "text/markdown") return "MD"
