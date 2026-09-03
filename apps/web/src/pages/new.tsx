@@ -1,7 +1,8 @@
-import { type QueryClient, useQueryClient } from "@tanstack/react-query"
+import { type QueryClient, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useBlocker, useNavigate, useSearch } from "@tanstack/react-router"
-import { useRef, useState } from "react"
-import { type Artifact, api } from "@/api"
+import { zipSync } from "fflate"
+import { useEffect, useRef, useState } from "react"
+import { type Artifact, api, type LatexTemplateId } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { toast } from "@/components/ui/sonner"
 import { artifactQuery, collectionsQuery, summaryQuery } from "@/lib/queries"
@@ -48,11 +49,29 @@ export function NewArtifact() {
   const nav = useNavigate()
   const search = useSearch({ from: "/new" })
   const isSkill = search.start === "skill"
-  useDocumentTitle(isSkill ? "New skill" : "New artifact")
+  // A paper starter: the New page opens on its main.tex, and publishing sends the whole
+  // starter (the .bib, README, derive.sty, any fetched style files) as one bundle.
+  const paperId: LatexTemplateId | null =
+    search.start === "acm-siggraph" || search.start === "cvpr" ? search.start : null
+  useDocumentTitle(isSkill ? "New skill" : paperId ? "New paper" : "New artifact")
   const [src, setSrc] = useState(isSkill ? NEW_SKILL_SOURCE : "")
   const [title, setTitle] = useState(isSkill ? "My skill" : "")
   const [message, setMessage] = useState("")
-  const format = isSkill ? "md" : detectFormat(src)
+  const paper = useQuery({
+    queryKey: ["latex-template", paperId],
+    queryFn: () => api.latexTemplate(paperId as LatexTemplateId),
+    enabled: paperId !== null,
+    staleTime: Number.POSITIVE_INFINITY,
+  })
+  // Seed the editor once the starter arrives; what was seeded is not a draft yet.
+  const seeded = useRef("")
+  useEffect(() => {
+    const main = paper.data?.files["main.tex"]
+    if (main === undefined || seeded.current) return
+    seeded.current = main
+    setSrc(main)
+  }, [paper.data])
+  const format = isSkill ? "md" : paperId ? "tex" : detectFormat(src)
 
   // A draft is dirty once anything's been typed. Publishing must bypass the guard for its
   // own nav to the artifact — via a REF, not state: publish() sets it and calls nav() in the
@@ -61,7 +80,7 @@ export function NewArtifact() {
   // A ref updates synchronously, so shouldBlockFn sees the bypass immediately.
   const publishing = useRef(false)
   const qc = useQueryClient()
-  const dirty = !!(src.trim() || title.trim() || message.trim())
+  const dirty = !!((src.trim() && src !== seeded.current) || title.trim() || message.trim())
 
   // Guard leaving with an unsaved draft — BOTH in-app navigation (rail click, Cancel) and
   // a browser close/refresh (enableBeforeUnload). withResolver gives us proceed/reset to
@@ -84,6 +103,16 @@ export function NewArtifact() {
         const bundle = new Uint8Array(skillBundleBytes(src)).buffer
         return api.publish(new File([bundle], "skill.zip", { type: "application/zip" }), fields)
       }
+      if (paperId) {
+        if (!paper.data) throw new Error("the paper starter has not loaded yet")
+        const encoder = new TextEncoder()
+        const files = { ...paper.data.files, "main.tex": src }
+        const zip = zipSync(
+          Object.fromEntries(Object.entries(files).map(([p, t]) => [p, encoder.encode(t)])),
+        )
+        const bundle = new Uint8Array(zip).buffer
+        return api.publish(new File([bundle], "paper.zip", { type: "application/zip" }), fields)
+      }
       return api.publish(new File([src], `inline.${ext}`, { type }), fields)
     },
     // Freshen the library so the new artifact + bumped total are correct on return.
@@ -100,6 +129,9 @@ export function NewArtifact() {
       // The helper also invalidates the lean seed so native content-type chrome does
       // not remain incomplete until a manual reload.
       void seedPublishedArtifact(qc, a)
+      // The starter could not fetch everything (the CVPR kit): say so once, here, since
+      // the README in the bundle is the only other place that does.
+      for (const note of paper.data?.notes ?? []) toast(note)
       // Drop the unsaved guard before navigating to the artifact (this nav IS the save,
       // not an abandon), so the blocker doesn't intercept it. Ref, so it's in effect the
       // instant nav() runs — see the note on `publishing` above.
@@ -123,6 +155,10 @@ export function NewArtifact() {
       toast.error("Add some content first.")
       return
     }
+    if (paperId && !paper.data) {
+      toast.error("The paper starter is still loading.")
+      return
+    }
     publishMut.mutate()
   }
 
@@ -142,7 +178,11 @@ export function NewArtifact() {
         placeholder={
           isSkill
             ? "Write instructions for Claude and Codex."
-            : "Write or paste Markdown or HTML. The preview updates as you type."
+            : paperId
+              ? paper.isError
+                ? "Derive couldn't load the paper starter. Reload to try again."
+                : "Loading the paper starter…"
+              : "Write or paste Markdown or HTML. The preview updates as you type."
         }
         stripFrontmatter={isSkill}
       />

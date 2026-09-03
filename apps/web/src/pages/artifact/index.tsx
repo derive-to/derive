@@ -1181,6 +1181,10 @@ export function Artifact({ template = false }: { template?: boolean }) {
   const inspectEnabled = canInspect && inlineEdit.active
   const mapEnabled = !!art.linked_bundle && !inlineEdit.active
   const isDeckLike = !!deck || art.current_content_type === "text/x-derive-deck"
+  // A paper (single .tex or a derive/latex bundle) offers its compilable source as a zip.
+  // Literals mirrored from @derive/core (the web imports core types only).
+  const isPaper =
+    art.current_content_type === "text/x-latex" || art.current_content_type === "derive/latex"
   // Commenting needs commenter+ (matches the API's `comment` gate). An outside
   // view-link holder gets no conversation surface; commenter/editor links do.
   // Anonymous visitors never qualify — PublicViewer carries their sign-in nudge.
@@ -1643,6 +1647,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
               }}
               isDeck={isDeckLike}
               videoMoment={video ? { scene: video.id, timeMs: video.elapsedMs } : undefined}
+              sourceZipHref={isPaper ? api.sourceZipUrl(shortId, shown) : null}
               canLock={canLock}
               canMove={canMove}
               automateBeta={automateBeta}

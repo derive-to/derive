@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query"
-import { useNavigate, useSearch } from "@tanstack/react-router"
+import { Link, useNavigate, useSearch } from "@tanstack/react-router"
 import { useDeferredValue, useEffect, useState } from "react"
 import { api, type TemplateArtifact } from "@/api"
 import { Icon } from "@/components/icons"
@@ -53,6 +53,14 @@ export function Templates() {
   const templates = (shelfState.data?.templates ?? []).filter((template) =>
     templateMatches(template, query),
   )
+  // The paper starters ship with Derive rather than living on the shelf: they are
+  // generated files, not artifacts, so they come from their own route.
+  const papers = useQuery({
+    queryKey: ["latex-templates"],
+    queryFn: api.latexTemplates,
+    enabled: signedIn,
+    staleTime: Number.POSITIVE_INFINITY,
+  })
   const workspaceShelf = templates.filter((template) => template.shelf === "workspace")
   const publicShelf = templates.filter((template) => template.shelf === "public")
   const [agentTarget, setAgentTarget] = useState<AgentTemplateTarget | null>(null)
@@ -181,6 +189,32 @@ export function Templates() {
           }}
         />
       )}
+
+      {!librariesOpen && signedIn && papers.data?.templates.length ? (
+        <section className="flex flex-col gap-3" data-testid="templates-papers">
+          <SectionHeading count={papers.data.templates.length}>Papers</SectionHeading>
+          <CardGrid>
+            {papers.data.templates.map((t) => (
+              <div key={t.id} className="flex flex-col gap-3 rounded-lg border bg-card p-4">
+                <div className="flex flex-col gap-1">
+                  <div className="font-medium">{t.label}</div>
+                  <p className="text-sm text-muted-foreground">{t.description}</p>
+                </div>
+                <Button
+                  size="sm"
+                  className="self-start"
+                  data-testid={`templates-paper-${t.id}`}
+                  asChild
+                >
+                  <Link to="/new" search={{ start: t.id }}>
+                    <Icon name="plus" /> Start a paper
+                  </Link>
+                </Button>
+              </div>
+            ))}
+          </CardGrid>
+        </section>
+      ) : null}
 
       {librariesOpen ? (
         <LibraryShelf
