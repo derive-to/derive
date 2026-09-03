@@ -872,6 +872,10 @@ export function registerReadTool(tc: ToolContext): void {
         }
         if (data === "*") {
           const rows = await ctx.meta.getVersionData(a.id, n)
+          // Dynamic tables and figures list beside the facts: same version, a different
+          // lifecycle (they change without a publish; see derive://skills/dynamic-data).
+          // Fail-soft so a store that predates the tables still inventories its facts.
+          const dynamic = await ctx.meta.listDynamicSlots(a.id, n).catch(() => [])
           return json({
             short_id,
             version: n,
@@ -883,7 +887,20 @@ export function registerReadTool(tc: ToolContext): void {
               bytes: r.size_bytes,
               ...(isDerivedFactName(r.slot) ? { derived: true } : {}),
             })),
-            ...(rows.length ? {} : { note: absenceNote(null, v, `Version ${n} of "${short_id}"`) }),
+            ...(dynamic.length
+              ? {
+                  dynamic: dynamic.map((d) => ({
+                    name: d.name,
+                    kind: d.kind,
+                    revision: d.revision,
+                    bytes: d.size_bytes,
+                    updated_at: d.updated_at,
+                  })),
+                }
+              : {}),
+            ...(rows.length || dynamic.length
+              ? {}
+              : { note: absenceNote(null, v, `Version ${n} of "${short_id}"`) }),
           })
         }
         let rows =
@@ -914,6 +931,23 @@ export function registerReadTool(tc: ToolContext): void {
         }
         const row = rows[0]
         if (!row) {
+          // A name that is not a fact may be a dynamic slot of this version: same
+          // addressing, a value that moves without a publish. Reads only what is stored.
+          const slot = isDerivedFactName(data)
+            ? null
+            : await ctx.meta.getDynamicSlot(a.id, n, data).catch(() => null)
+          if (slot) {
+            log.info("dynamic_read", { name: slot.name, kind: slot.kind, surface: "read" })
+            return json({
+              short_id,
+              version: n,
+              dynamic: slot.name,
+              kind: slot.kind,
+              revision: slot.revision,
+              updated_at: slot.updated_at,
+              data: safeJson(slot.json),
+            })
+          }
           if (r.public && isDerivedFactName(data))
             return err(
               `"${short_id}" v${n} has no stored "${data}". Derived facts are computed for readers with a seat in its workspace; the world link serves only what is stored.`,
