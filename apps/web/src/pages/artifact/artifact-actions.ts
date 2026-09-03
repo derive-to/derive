@@ -59,7 +59,9 @@ export function useArtifactActions(p: {
     // Load the source BEFORE opening the editor: if the fetch fails, opening an empty editor
     // over existing content lets Publish overwrite it with blank. Load first, open on success.
     try {
-      const src = await api.getContent(shortId)
+      const src = p.art?.bundle?.isSkill
+        ? (await api.skillSource(shortId)).source
+        : await api.getContent(shortId)
       p.setTitle(p.art?.title ?? "")
       p.setSrc(src)
       p.setEditing(true)
@@ -75,6 +77,13 @@ export function useArtifactActions(p: {
       // Only ever invoked from the loaded workbench, so `art` is present — the guard
       // encodes that invariant for the type system (mirrors useArtifactRoute's `!art`).
       if (!p.art) throw new Error("publish fired before the artifact loaded")
+      if (p.art.bundle?.isSkill)
+        return api.publishSkillSource(shortId, {
+          source: p.src,
+          base_version: p.art.current_version,
+          message: p.message.trim() || "Edited SKILL.md in browser",
+          ...(p.title.trim() ? { title: p.title.trim() } : {}),
+        })
       return api.publishText(
         shortId,
         p.src,

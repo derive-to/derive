@@ -1,7 +1,6 @@
 import { useQuery } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
 import { useState } from "react"
-import { useShell } from "@/components/chrome/shell-context"
 import { Icon } from "@/components/icons"
 import { EmptyState } from "@/components/shared/empty-state"
 import { LoadError } from "@/components/shared/load-error"
@@ -12,16 +11,13 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useCopy } from "@/lib/clipboard"
-import { REVEAL } from "@/lib/interaction"
 import { skillsQuery } from "@/lib/queries"
+import { skillDisplayName } from "@/lib/skill-source"
 import { useDocumentTitle } from "@/lib/use-document-title"
-import { cn } from "@/lib/utils"
 import { refFor } from "../artifact/parse-ref"
-import { NEW_SKILL_PROMPT } from "./new-skill-prompt"
 
 export function Skills() {
   useDocumentTitle("Skills")
-  const { openAssistant } = useShell()
   const { copied, copy } = useCopy(2000)
   const [query, setQuery] = useState("")
   const { data, isPending, isError, refetch } = useQuery(skillsQuery(query))
@@ -29,7 +25,7 @@ export function Skills() {
   const connected = skills.filter((skill) => skill.skill.runtime !== "single").length
 
   return (
-    <PageShell width="wide" className="flex flex-col gap-6">
+    <PageShell width="wide" className="flex flex-col gap-5">
       <PageHeader
         eyebrow="Workspace"
         title="Skills"
@@ -48,36 +44,40 @@ export function Skills() {
               <Icon name={copied ? "check" : "copy"} />
               {copied ? "Copied" : "Sync installed"}
             </Button>
-            <Button
-              size="sm"
-              data-testid="skills-new"
-              onClick={() => openAssistant(NEW_SKILL_PROMPT)}
-            >
-              <Icon name="plus" /> New skill
+            <Button size="sm" data-testid="skills-new" asChild>
+              <Link to="/new" search={{ start: "skill" }}>
+                <Icon name="plus" /> New skill
+              </Link>
             </Button>
           </div>
         }
       />
 
-      <div className="grid gap-2 sm:grid-cols-3">
-        <Summary value={skills.length} label="shared skills" />
-        <Summary value={connected} label="graphs or loops" />
-        <Summary value={Math.max(0, skills.length - connected)} label="single skills" />
-      </div>
-
-      <div className="relative max-w-md">
-        <Icon
-          name="search"
-          className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-muted-foreground"
-        />
-        <Input
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder="Search skills"
-          aria-label="Search skills"
-          data-testid="skills-search"
-          className="pl-9"
-        />
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="relative w-full sm:max-w-md">
+          <Icon
+            name="search"
+            className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-muted-foreground"
+          />
+          <Input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search skills"
+            aria-label="Search skills"
+            data-testid="skills-search"
+            className="pl-9"
+          />
+        </div>
+        {!isPending && !isError ? (
+          <p
+            className="shrink-0 font-mono text-2xs text-muted-foreground"
+            data-testid="skills-counts"
+          >
+            {skills.length}
+            {data?.has_more ? "+" : ""} {skills.length === 1 ? "skill" : "skills"}
+            {connected > 0 ? ` · ${connected} connected` : ""}
+          </p>
+        ) : null}
       </div>
 
       {isPending ? (
@@ -90,40 +90,30 @@ export function Skills() {
           onRetry={() => refetch()}
         />
       ) : skills.length ? (
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3" data-testid="skills-grid">
+        <div className="grid gap-3 lg:grid-cols-2" data-testid="skills-grid">
           {skills.map((skill) => (
             <Link
               key={skill.short_id}
               to="/artifacts/$ref"
               params={{ ref: refFor(skill) }}
-              className="group flex min-h-44 flex-col rounded-xl border bg-card p-4 transition-colors hover:border-foreground/20 hover:bg-secondary/20"
+              data-testid={`skill-card-${skill.short_id}`}
+              className="flex min-h-40 flex-col rounded-xl border border-border bg-card px-5 py-4 outline-none transition-colors hover:border-foreground/25 hover:bg-secondary/30 focus-visible:ring-2 focus-visible:ring-ring sm:min-h-44 sm:px-6 sm:py-5"
             >
-              <div className="flex items-start justify-between gap-3">
-                <span className="grid size-9 place-items-center rounded-lg bg-primary/10 text-primary">
-                  <Icon name="skill" />
-                </span>
-                <div className="flex flex-wrap justify-end gap-1.5">
-                  {skill.skill.workflow_launcher ? (
-                    <Badge variant="brand" shape="pill">
-                      Workflow launcher
-                    </Badge>
-                  ) : null}
-                  <Badge variant="outline" shape="pill" className="capitalize">
-                    {skill.skill.runtime}
-                  </Badge>
-                </div>
-              </div>
-              <h2 className="mt-4 font-serif text-lg font-medium tracking-tight">
-                {skill.skill.name}
+              <h2 className="font-serif text-xl font-medium tracking-tight text-foreground [overflow-wrap:anywhere]">
+                {skillDisplayName(skill.title, skill.skill.name)}
               </h2>
-              <p className="mt-1 line-clamp-3 text-sm text-muted-foreground">
+              <p className="mt-2 line-clamp-4 text-sm leading-relaxed text-muted-foreground sm:line-clamp-3">
                 {skill.skill.description}
               </p>
-              <div className="mt-auto flex items-center justify-between pt-4 font-mono text-2xs text-muted-foreground">
-                <span>v{skill.current_version}</span>
-                <span className={cn("flex items-center gap-1 text-foreground", REVEAL)}>
-                  Open <Icon name="arrow" size={12} />
-                </span>
+              <div className="mt-auto flex flex-wrap items-center gap-2 pt-5 text-2xs text-muted-foreground">
+                {skill.skill.workflow_launcher ? (
+                  <Badge variant="brand" shape="pill">
+                    Workflow launcher
+                  </Badge>
+                ) : null}
+                <span className="capitalize">{skill.skill.runtime}</span>
+                <span aria-hidden>·</span>
+                <span className="font-mono">v{skill.current_version}</span>
               </div>
             </Link>
           ))}
@@ -155,22 +145,9 @@ export function Skills() {
   )
 }
 
-function Summary({ value, label }: { value: number; label: string }) {
-  return (
-    <div className="flex items-baseline gap-2 rounded-xl border bg-card px-4 py-3">
-      <strong className="font-mono text-lg font-medium tabular-nums">{value}</strong>
-      <span className="text-xs text-muted-foreground">{label}</span>
-    </div>
-  )
-}
-
 function SkillGridSkeleton() {
   return (
-    <div
-      className="grid gap-3 md:grid-cols-2 xl:grid-cols-3"
-      role="status"
-      aria-label="Loading skills"
-    >
+    <div className="grid gap-3 lg:grid-cols-2" role="status" aria-label="Loading skills">
       {[0, 1, 2].map((item) => (
         <Skeleton key={item} className="h-44 rounded-xl" />
       ))}
@@ -182,11 +159,7 @@ export function SkillsPending() {
   return (
     <PageShell width="wide" className="flex flex-col gap-6">
       <Skeleton className="h-20 w-full max-w-3xl" />
-      <div className="grid gap-2 sm:grid-cols-3">
-        <Skeleton className="h-14 rounded-xl" />
-        <Skeleton className="h-14 rounded-xl" />
-        <Skeleton className="h-14 rounded-xl" />
-      </div>
+      <Skeleton className="h-8 w-full max-w-md rounded-lg" />
       <SkillGridSkeleton />
     </PageShell>
   )

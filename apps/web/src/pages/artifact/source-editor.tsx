@@ -5,6 +5,7 @@ import { StatusPanel } from "@/components/shared/status-panel"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { skillPreviewSource } from "@/lib/skill-source"
 import { cn } from "@/lib/utils"
 
 // CodeMirror (+ the markdown renderer the preview pulls in) load only when the
@@ -33,6 +34,7 @@ export function SourceEditor({
   placeholder,
   publishing,
   shortId,
+  stripFrontmatter = false,
 }: {
   title: string
   format: "md" | "html"
@@ -52,6 +54,9 @@ export function SourceEditor({
   publishing?: boolean
   /** Existing artifact id used to scope the source editor's @mention directory. */
   shortId?: string
+  /** Skill metadata lives in YAML frontmatter but the published reader intentionally
+   *  hides it. Remove that block from the live preview while keeping it editable. */
+  stripFrontmatter?: boolean
 }) {
   const [pane, setPane] = useState<"edit" | "preview">("edit")
   // Desktop preview-pane visibility (mobile uses the Edit/Preview tabs instead).
@@ -74,8 +79,9 @@ export function SourceEditor({
         setPreviewStale(false)
         return
       }
+      const previewSource = stripFrontmatter ? skillPreviewSource(src) : src
       api
-        .renderPreview(src, title)
+        .renderPreview(previewSource, title)
         .then(({ html }) => {
           if (!cancelled) {
             setPreview(html)
@@ -92,7 +98,7 @@ export function SourceEditor({
       cancelled = true
       clearTimeout(t)
     }
-  }, [src, format, title, previewOpen])
+  }, [src, format, title, previewOpen, stripFrontmatter])
 
   return (
     // In-flow (fills the document column), not a fullscreen overlay: the app

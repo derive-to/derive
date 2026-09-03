@@ -653,6 +653,10 @@ export interface SkillUsage {
     artifact: { short_id: string; title: string | null } | null
   }>
 }
+export interface SkillSource {
+  source: string
+  version: number
+}
 export interface ArtifactSkills {
   links: Array<{
     id: string
@@ -888,6 +892,16 @@ export const api = {
     f(`/v1/artifacts/${encodeURIComponent(shortId)}/skill-graph`, opts()).then(j),
   skillUsage: (shortId: string): Promise<SkillUsage> =>
     f(`/v1/artifacts/${encodeURIComponent(shortId)}/skill-usage`, opts()).then(j),
+  skillSource: (shortId: string): Promise<SkillSource> =>
+    f(`/v1/artifacts/${encodeURIComponent(shortId)}/skill-source`, opts()).then(j),
+  publishSkillSource: (
+    shortId: string,
+    input: { source: string; base_version: number; message?: string; title?: string },
+  ): Promise<Artifact> =>
+    f(`/v1/artifacts/${encodeURIComponent(shortId)}/skill-source`, {
+      ...opts(input),
+      method: "PUT",
+    }).then(j),
   artifactSkills: (shortId: string): Promise<ArtifactSkills> =>
     f(`/v1/artifacts/${encodeURIComponent(shortId)}/skills`, opts()).then(j),
   // The batched boot read: exactly the four bodies below (tags summary, collections,

@@ -1009,15 +1009,59 @@ describe("Skills product surface", () => {
   const publishSkill = async (
     name: string,
     sidecar: Record<string, unknown> = { schema: "derive.skill/v1" },
+    extraFiles: Record<string, Uint8Array> = {},
   ) => {
     const zip = zipSync({
       "SKILL.md": new TextEncoder().encode(
         `---\nname: ${name}\ndescription: Use ${name}.\n---\n\n# ${name}`,
       ),
       "derive.skill.json": new TextEncoder().encode(JSON.stringify(sidecar)),
+      ...extraFiles,
     })
     return (await upload(`${name}.zip`, zip, { title: name })).json()
   }
+
+  it("edits SKILL.md in place while preserving the rest of the bundle", async () => {
+    const skill = await publishSkill(
+      "browser-editable",
+      { schema: "derive.skill/v1", runtime: { kind: "single" } },
+      { "references/notes.md": new TextEncoder().encode("keep me") },
+    )
+    const opened = await (await app.request(`/v1/artifacts/${skill.short_id}/skill-source`)).json()
+    expect(opened).toMatchObject({ version: 1 })
+    expect(opened.source).toContain("# browser-editable")
+
+    const source =
+      "---\nname: browser-editable\ndescription: Edit this Skill in Derive.\n---\n\n# Better instructions"
+    const updated = await app.request(`/v1/artifacts/${skill.short_id}/skill-source`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ source, base_version: 1, message: "Improve instructions" }),
+    })
+    expect(updated.status).toBe(200)
+    expect((await updated.json()).current_version).toBe(2)
+    expect(
+      await (await app.request(`/v1/artifacts/${skill.short_id}/skill-source`)).json(),
+    ).toMatchObject({ source, version: 2 })
+    expect(
+      await (await app.request(`/raw/${skill.short_id}/v/2/references/notes.md`)).text(),
+    ).toContain("keep me")
+
+    const stale = await app.request(`/v1/artifacts/${skill.short_id}/skill-source`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ source, base_version: 1 }),
+    })
+    expect(stale.status).toBe(409)
+
+    const invalid = await app.request(`/v1/artifacts/${skill.short_id}/skill-source`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ source: "# Missing metadata", base_version: 2 }),
+    })
+    expect(invalid.status).toBe(400)
+    expect((await meta.getByShortId(skill.short_id))?.current_version).toBe(2)
+  })
 
   it("lists catalog skills, hides embedded ones, and returns permission-filtered graph edges", async () => {
     const target = await publishSkill("graph-target")

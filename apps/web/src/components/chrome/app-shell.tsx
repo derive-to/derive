@@ -84,6 +84,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   // window defer to the boot hint, so a returning user keeps the rail (and an anon keeps
   // chrome-light) instead of popping when me() resolves.
   const pathname = useRouterState({ select: (s) => s.location.pathname })
+  const newSkill = useRouterState({ select: (s) => s.location.search.start === "skill" })
   const bare = !me && !(loading && authedHint)
 
   // ⌘K / Ctrl+K opens the command palette from anywhere. "/" (outside inputs)
@@ -275,7 +276,11 @@ export function AppShell({ children }: { children: ReactNode }) {
                 navigation + search reachable mid-scroll. Desktop has no top bar
                 at all — the sidebar is the only persistent chrome. */}
             {isMobile && !immersive && (
-              <MobileTopBar pathname={pathname} onOpenPalette={() => setPaletteOpen(true)} />
+              <MobileTopBar
+                pathname={pathname}
+                newSkill={newSkill}
+                onOpenPalette={() => setPaletteOpen(true)}
+              />
             )}
             {children}
           </SidebarInset>
@@ -296,9 +301,11 @@ export function AppShell({ children }: { children: ReactNode }) {
 // desktop trigger in the rail header doesn't render below sm, so it stays unique).
 function MobileTopBar({
   pathname,
+  newSkill,
   onOpenPalette,
 }: {
   pathname: string
+  newSkill: boolean
   onOpenPalette: () => void
 }) {
   const { setOpenMobile } = useSidebar()
@@ -314,7 +321,7 @@ function MobileTopBar({
         <Icon name="sidebar" size={16} />
       </Button>
       <span className="min-w-0 flex-1 truncate text-sm font-medium">
-        <PageLabel pathname={pathname} />
+        <PageLabel pathname={pathname} newSkill={newSkill} />
       </span>
       <Button variant="ghost" size="icon-sm" aria-label="Search" onClick={onOpenPalette}>
         <Icon name="search" size={16} />
@@ -325,12 +332,12 @@ function MobileTopBar({
 
 // Where am I, for the mobile navbar (the sidebar is hidden behind the drawer).
 // A pathname switch, not route metadata — labels are chrome, not content.
-function PageLabel({ pathname }: { pathname: string }) {
+function PageLabel({ pathname, newSkill }: { pathname: string; newSkill: boolean }) {
   if (pathname === "/") return "Artifacts"
   if (pathname === "/favorites") return "Favorites"
   if (pathname === "/following") return "Following"
   if (pathname === "/archived") return "Archived"
-  if (pathname === "/new") return "New artifact"
+  if (pathname === "/new") return newSkill ? "New skill" : "New artifact"
   if (pathname.startsWith("/templates")) return "Templates"
   if (pathname.startsWith("/template-libraries")) return "Template library"
   if (pathname.startsWith("/contexts") || pathname.startsWith("/agents")) return "Contexts"
