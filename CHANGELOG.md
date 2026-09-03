@@ -15,6 +15,19 @@ for the recommended install and verification flow.
 ## [Unreleased]
 
 ### Added
+- **LaTeX papers.** A `.tex` upload was typed as Markdown and rendered as escaped source.
+  A paper now publishes as its LaTeX source, single file (`text/x-latex`, "LaTeX") or a
+  bundle whose root holds `main.tex` beside its `.bib`, sections and figures
+  (`derive/latex`, "Paper"), and is read as a web page rendered from the source at serve
+  time: sections, prose, lists, tables, floats with numbered captions, footnotes, math
+  typeset in the browser by KaTeX served from the instance's own copy, and citations
+  resolved from BibTeX (or a compiled `.bbl`) in the class's style. acmart (ACM SIGGRAPH
+  and journals) and the CVPR author kit are read with their title blocks, anonymous and
+  review modes and citation styles; other classes render generically. Comments anchor to
+  the rendered prose and inline edits map back to the source; unknown macros and
+  environments degrade to their text, with the publish receipt listing what the renderer
+  could not honour and, for acmart, packages outside ACM TAPS's accepted list.
+  `\derivetable{name}` and `\derivefigure{name}` bind dynamic slots in LaTeX.
 - **Dynamic tables and figures.** An agent that refreshed a results table or a figure as
   runs landed had one write path: publish a version, so a day of refreshes was a day of
   versions with no prose change, and no way to update one cell in place. A document can
