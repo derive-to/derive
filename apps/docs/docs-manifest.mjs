@@ -88,6 +88,14 @@ export const docsSections = [
         stripHeading: false,
       },
       {
+        source: "apps/docs/content/artifacts/dynamic-data.md",
+        slug: "artifacts/dynamic-data",
+        title: "Dynamic tables and figures",
+        description:
+          "Update a table or a figure in a published artifact without creating a new version.",
+        stripHeading: false,
+      },
+      {
         source: "examples/README.md",
         slug: "artifacts/examples",
         title: "Official artifact examples",

@@ -204,6 +204,8 @@ Rules worth knowing before you author one:
   browser). Write it `<\/script>`.
 - Facts are per VERSION and immutable, like the version itself. Republishing without the
   block simply means that new version carries no slot; the old version keeps its own.
+  Numbers that must change BETWEEN publishes (a results table an agent refreshes as runs
+  land) are dynamic slots, not facts: see derive://skills/dynamic-data.
 - Single-file HTML and markdown artifacts only (not bundles).
 
 ## content_sha256 verification
