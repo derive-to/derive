@@ -268,6 +268,7 @@ export function CommandPalette() {
   const showFav = "favorites".includes(q)
   const showFollowing = "following".includes(q)
   const showTemplates = "templates".includes(q) || "start from a template".includes(q)
+  const showSkills = "skills".includes(q) || "shared skills".includes(q)
   // The way back to the connection instructions after onboarding.
   const showConnect =
     "connect an agent".includes(q) || "getting started".includes(q) || "mcp setup".includes(q)
@@ -292,6 +293,7 @@ export function CommandPalette() {
     !showFav &&
     !showFollowing &&
     !showTemplates &&
+    !showSkills &&
     !showConnect
 
   return (
@@ -376,7 +378,12 @@ export function CommandPalette() {
               </CommandGroup>
             )}
 
-            {(showAll || showFav || showFollowing || showTemplates || showConnect) && (
+            {(showAll ||
+              showFav ||
+              showFollowing ||
+              showTemplates ||
+              showSkills ||
+              showConnect) && (
               <CommandGroup heading="Jump to">
                 {showAll && (
                   <CommandItem
@@ -408,6 +415,14 @@ export function CommandPalette() {
                     onSelect={() => go(() => nav({ to: "/templates" }))}
                   >
                     <Icon name="templates" size={16} /> Templates
+                  </CommandItem>
+                )}
+                {showSkills && (
+                  <CommandItem
+                    value="jump-skills"
+                    onSelect={() => go(() => nav({ to: "/skills" }))}
+                  >
+                    <Icon name="skill" size={16} /> Skills
                   </CommandItem>
                 )}
                 {showConnect && (

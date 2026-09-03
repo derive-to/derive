@@ -7,7 +7,188 @@
  * and read frontmatter, with NO new artifact kind and no heavy YAML dependency
  * (this module must run on Cloudflare Workers).
  */
-import type { BundleManifest } from "./ports"
+import type { BundleManifest, SkillRelationKind } from "./ports"
+import { validateWorkflowDefinition, type WorkflowDefinition } from "./workflow"
+
+export const SKILL_SIDECAR_PATH = "/derive.skill.json"
+export const SKILL_DEFINITION_SCHEMA = "derive.skill/v1" as const
+
+export type SkillRuntimeKind = "single" | "graph" | "loop"
+
+export interface SkillRelationRef {
+  id: string
+  version: number
+}
+
+export interface SkillSidecar {
+  schema: typeof SKILL_DEFINITION_SCHEMA
+  /** Whether this definition appears in the workspace Skills catalog. */
+  catalog?: boolean
+  /** Why Derive created this Skill rather than a person publishing it directly. */
+  origin?: {
+    kind: "workflow-launcher"
+    workflow: { short_id: string; version: number }
+  }
+  relations?: Partial<Record<SkillRelationKind, SkillRelationRef[]>>
+  runtime?: { kind: "single" } | { kind: "graph" | "loop"; definition: WorkflowDefinition }
+}
+
+export interface SkillDefinitionValidation {
+  metadata: { name: string | null; description: string | null; compatibility: string | null }
+  sidecar: SkillSidecar | null
+  errors: string[]
+  warnings: string[]
+}
+
+const object = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === "object" && !Array.isArray(value)
+
+const relationKinds: readonly SkillRelationKind[] = ["requires", "extends", "recommends"]
+
+/** Validate the portable Agent Skills contract plus Derive's optional typed sidecar. */
+export const validateSkillDefinition = (
+  skillMd: string,
+  sidecarSource?: string | null,
+): SkillDefinitionValidation => {
+  const attrs = parseFrontmatter(skillMd).attrs
+  const name = attrs.name?.trim() || null
+  const description = attrs.description?.trim() || null
+  const compatibility = attrs.compatibility?.trim() || null
+  const errors: string[] = []
+  const warnings: string[] = []
+
+  if (!name) errors.push("SKILL.md frontmatter requires name")
+  else {
+    if (name.length > 64) errors.push("SKILL.md name must be at most 64 characters")
+    if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(name))
+      errors.push("SKILL.md name must use lowercase letters, numbers, and single hyphens")
+  }
+  if (!description) errors.push("SKILL.md frontmatter requires description")
+  else if (description.length > 1024)
+    errors.push("SKILL.md description must be at most 1024 characters")
+  if (compatibility && compatibility.length > 500)
+    errors.push("SKILL.md compatibility must be at most 500 characters")
+
+  if (!sidecarSource) {
+    return { metadata: { name, description, compatibility }, sidecar: null, errors, warnings }
+  }
+
+  let raw: unknown
+  try {
+    raw = JSON.parse(sidecarSource)
+  } catch {
+    errors.push("derive.skill.json must be valid JSON")
+    return { metadata: { name, description, compatibility }, sidecar: null, errors, warnings }
+  }
+  if (!object(raw)) {
+    errors.push("derive.skill.json must be an object")
+    return { metadata: { name, description, compatibility }, sidecar: null, errors, warnings }
+  }
+  if (raw.schema !== SKILL_DEFINITION_SCHEMA)
+    errors.push(`derive.skill.json schema must be "${SKILL_DEFINITION_SCHEMA}"`)
+  if (raw.catalog !== undefined && typeof raw.catalog !== "boolean")
+    errors.push("derive.skill.json catalog must be boolean")
+
+  let origin: SkillSidecar["origin"]
+  if (raw.origin !== undefined) {
+    const workflow = object(raw.origin) ? raw.origin.workflow : null
+    if (
+      !object(raw.origin) ||
+      raw.origin.kind !== "workflow-launcher" ||
+      !object(workflow) ||
+      typeof workflow.short_id !== "string" ||
+      !workflow.short_id.trim() ||
+      !Number.isInteger(workflow.version) ||
+      Number(workflow.version) < 1
+    )
+      errors.push(
+        "derive.skill.json origin must be a workflow-launcher with workflow short_id and version",
+      )
+    else
+      origin = {
+        kind: "workflow-launcher",
+        workflow: { short_id: workflow.short_id.trim(), version: Number(workflow.version) },
+      }
+  }
+
+  const relations: Partial<Record<SkillRelationKind, SkillRelationRef[]>> = {}
+  if (raw.relations !== undefined) {
+    if (!object(raw.relations)) errors.push("derive.skill.json relations must be an object")
+    else {
+      for (const kind of relationKinds) {
+        const list = raw.relations[kind]
+        if (list === undefined) continue
+        if (!Array.isArray(list)) {
+          errors.push(`derive.skill.json relations.${kind} must be an array`)
+          continue
+        }
+        const parsed: SkillRelationRef[] = []
+        const seen = new Set<string>()
+        for (const [index, item] of list.entries()) {
+          if (
+            !object(item) ||
+            typeof item.id !== "string" ||
+            !item.id.trim() ||
+            !Number.isInteger(item.version) ||
+            Number(item.version) < 1
+          ) {
+            errors.push(`derive.skill.json relations.${kind}[${index}] needs id and version`)
+            continue
+          }
+          const ref = { id: item.id.trim(), version: Number(item.version) }
+          const key = `${ref.id}@${ref.version}`
+          if (seen.has(key)) {
+            warnings.push(`duplicate ${kind} relation ${key} was ignored`)
+            continue
+          }
+          seen.add(key)
+          parsed.push(ref)
+        }
+        relations[kind] = parsed
+      }
+    }
+  }
+
+  let runtime: SkillSidecar["runtime"]
+  if (raw.runtime !== undefined) {
+    if (!object(raw.runtime)) errors.push("derive.skill.json runtime must be an object")
+    else if (raw.runtime.kind === "single") runtime = { kind: "single" }
+    else if (raw.runtime.kind === "graph" || raw.runtime.kind === "loop") {
+      const checked = validateWorkflowDefinition(raw.runtime.definition, null, {
+        allowUnlinked: true,
+      })
+      errors.push(...checked.errors.map((error) => `derive.skill.json runtime: ${error}`))
+      warnings.push(...checked.warnings.map((warning) => `derive.skill.json runtime: ${warning}`))
+      if (checked.definition) {
+        const loops = checked.definition.diagrams.flatMap((diagram) => diagram.loops ?? [])
+        if (raw.runtime.kind === "graph" && loops.length > 0)
+          errors.push("derive.skill.json graph runtime cannot declare loops")
+        if (raw.runtime.kind === "loop" && loops.length === 0)
+          errors.push("derive.skill.json loop runtime must declare at least one bounded loop")
+        runtime = { kind: raw.runtime.kind, definition: checked.definition }
+      }
+    } else errors.push('derive.skill.json runtime.kind must be "single", "graph", or "loop"')
+  }
+
+  return {
+    metadata: { name, description, compatibility },
+    sidecar:
+      errors.length === 0
+        ? {
+            schema: SKILL_DEFINITION_SCHEMA,
+            ...(typeof raw.catalog === "boolean" ? { catalog: raw.catalog } : {}),
+            ...(origin ? { origin } : {}),
+            ...(Object.keys(relations).length > 0 ? { relations } : {}),
+            ...(runtime ? { runtime } : {}),
+          }
+        : null,
+    errors,
+    warnings,
+  }
+}
+
+export const skillCatalogEnabled = (sidecar: SkillSidecar | null): boolean =>
+  sidecar?.catalog !== false
 
 /** A bundle whose entry document is a root `SKILL.md` is a skill. `pickBundleEntry`
  *  selects `/SKILL.md` as the entry for an HTML-less folder that contains one. */

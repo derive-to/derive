@@ -607,6 +607,65 @@ export interface SearchHit {
   semantic: boolean
 }
 
+export interface SkillCard {
+  short_id: string
+  title: string | null
+  current_version: number
+  current_content_type: string | null
+  updated_at: string | null
+  created_at: string
+  skill: {
+    name: string
+    description: string
+    runtime: "single" | "graph" | "loop"
+    workflow_launcher: boolean
+  }
+}
+export interface SkillRelation {
+  id: string
+  source_artifact_id: string
+  source_version: number
+  target_artifact_id: string
+  target_version: number
+  kind: "requires" | "extends" | "recommends"
+}
+export interface SkillGraph {
+  root: string
+  nodes: Array<{ id: string; short_id: string; title: string | null; version: number }>
+  edges: SkillRelation[]
+}
+export interface SkillUsage {
+  contexts: Array<{ skill_version: number; count: number; last_used_at: string }>
+  workflows: Array<{ skill_version: number; count: number; last_used_at: string }>
+  installations: Array<{
+    scope_kind: "project" | "personal" | "runner"
+    client: "claude" | "codex"
+    count: number
+    last_synced_at: string
+  }>
+  artifacts: Array<{
+    id: string
+    artifact_id: string
+    artifact_version: number
+    skill_version: number
+    role: "created" | "revised" | "validated" | "example" | "anti-example" | "workflow-definition"
+    created_at: string
+    artifact: { short_id: string; title: string | null } | null
+  }>
+}
+export interface ArtifactSkills {
+  links: Array<{
+    id: string
+    artifact_id: string
+    artifact_version: number
+    skill_artifact_id: string
+    skill_version: number
+    role: "created" | "revised" | "validated" | "example" | "anti-example" | "workflow-definition"
+    created_at: string
+    skill: { short_id: string; title: string | null; current_version: number } | null
+  }>
+}
+
 // A per-user connected external account (WO3) — a Source. Always the caller's own.
 export interface Connection {
   id: string
@@ -820,6 +879,17 @@ export const api = {
   }> => {
     return f(artifactsListPath(params), opts(undefined, init)).then(j)
   },
+  listSkills: (query?: string): Promise<{ skills: SkillCard[]; has_more: boolean }> =>
+    f(
+      `/v1/skills${query?.trim() ? `?query=${encodeURIComponent(query.trim())}` : ""}`,
+      opts(),
+    ).then(j),
+  skillGraph: (shortId: string): Promise<SkillGraph> =>
+    f(`/v1/artifacts/${encodeURIComponent(shortId)}/skill-graph`, opts()).then(j),
+  skillUsage: (shortId: string): Promise<SkillUsage> =>
+    f(`/v1/artifacts/${encodeURIComponent(shortId)}/skill-usage`, opts()).then(j),
+  artifactSkills: (shortId: string): Promise<ArtifactSkills> =>
+    f(`/v1/artifacts/${encodeURIComponent(shortId)}/skills`, opts()).then(j),
   // The batched boot read: exactly the four bodies below (tags summary, collections,
   // workspace settings, notifications), one authenticated request. The client seeds
   // the four individual query caches from it — see lib/bootstrap.ts. Typed against the

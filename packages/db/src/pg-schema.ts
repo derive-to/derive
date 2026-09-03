@@ -2,6 +2,7 @@ import type {
   AgentMentionKind,
   AgentMentionState,
   ArtifactKind,
+  ArtifactSkillRole,
   AuditAction,
   CommentState,
   ConnectionKind,
@@ -27,6 +28,10 @@ import type {
   SessionMessageAuthor,
   SessionState,
   SharedStateAction,
+  SkillClient,
+  SkillInstallPolicy,
+  SkillInstallScope,
+  SkillRelationKind,
   SlackAuthorFilter,
   SlackScopeKind,
   SlackThreadSurface,
@@ -383,6 +388,86 @@ export const workflowStepAttempt = pgTable(
     uniqueIndex("workflow_step_attempt_number").on(t.workflow_run_id, t.node_id, t.attempt),
     uniqueIndex("workflow_step_attempt_session").on(t.session_id),
     index("workflow_step_attempt_run").on(t.workflow_run_id, t.created_at),
+  ],
+)
+
+export const skillRelation = pgTable(
+  "skill_relation",
+  {
+    id: text("id").primaryKey(),
+    org_id: text("org_id").notNull(),
+    source_artifact_id: text("source_artifact_id").notNull(),
+    source_version: integer("source_version").notNull(),
+    target_artifact_id: text("target_artifact_id").notNull(),
+    target_version: integer("target_version").notNull(),
+    kind: text("kind").$type<SkillRelationKind>().notNull(),
+    created_at: text("created_at").notNull().$defaultFn(isoNow),
+  },
+  (t) => [
+    uniqueIndex("skill_relation_edge").on(
+      t.source_artifact_id,
+      t.source_version,
+      t.target_artifact_id,
+      t.target_version,
+      t.kind,
+    ),
+    index("skill_relation_incoming").on(t.org_id, t.target_artifact_id, t.target_version),
+  ],
+)
+
+// One receipt per physical opaque scope + client. installed_by is the latest synchronizer,
+// not part of identity, so a shared checkout counts as one native installation.
+export const skillInstallation = pgTable(
+  "skill_installation",
+  {
+    id: text("id").primaryKey(),
+    org_id: text("org_id").notNull(),
+    skill_artifact_id: text("skill_artifact_id").notNull(),
+    skill_version: integer("skill_version").notNull(),
+    scope_kind: text("scope_kind").$type<SkillInstallScope>().notNull(),
+    opaque_scope_id: text("opaque_scope_id").notNull(),
+    client: text("client").$type<SkillClient>().notNull(),
+    digest: text("digest").notNull(),
+    policy: text("policy").$type<SkillInstallPolicy>().notNull().default("pinned"),
+    installed_by: text("installed_by"),
+    created_at: text("created_at").notNull().$defaultFn(isoNow),
+    updated_at: text("updated_at").notNull(),
+    removed_at: text("removed_at"),
+  },
+  (t) => [
+    uniqueIndex("skill_installation_scope").on(
+      t.org_id,
+      t.skill_artifact_id,
+      t.scope_kind,
+      t.opaque_scope_id,
+      t.client,
+    ),
+    index("skill_installation_skill").on(t.org_id, t.skill_artifact_id, t.updated_at),
+  ],
+)
+
+export const artifactSkillLink = pgTable(
+  "artifact_skill_link",
+  {
+    id: text("id").primaryKey(),
+    org_id: text("org_id").notNull(),
+    artifact_id: text("artifact_id").notNull(),
+    artifact_version: integer("artifact_version").notNull(),
+    skill_artifact_id: text("skill_artifact_id").notNull(),
+    skill_version: integer("skill_version").notNull(),
+    role: text("role").$type<ArtifactSkillRole>().notNull(),
+    linked_by: text("linked_by").notNull(),
+    created_at: text("created_at").notNull().$defaultFn(isoNow),
+  },
+  (t) => [
+    uniqueIndex("artifact_skill_link_exact").on(
+      t.artifact_id,
+      t.artifact_version,
+      t.skill_artifact_id,
+      t.skill_version,
+      t.role,
+    ),
+    index("artifact_skill_link_skill").on(t.org_id, t.skill_artifact_id, t.created_at),
   ],
 )
 
@@ -1151,6 +1236,9 @@ const TABLES = [
   run,
   workflowRun,
   workflowStepAttempt,
+  skillRelation,
+  skillInstallation,
+  artifactSkillLink,
   plan,
   connection,
   invitation,

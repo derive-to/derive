@@ -182,6 +182,7 @@ const nodeLabel = (node: LinkedBundleNode | undefined, fallback: string): string
 export const validateWorkflowDefinition = (
   value: unknown,
   linked?: LinkedBundleManifest | null,
+  options?: { allowUnlinked?: boolean },
 ): WorkflowValidation => {
   const errors: string[] = []
   const warnings: string[] = []
@@ -642,7 +643,7 @@ export const validateWorkflowDefinition = (
     for (const diagram of linked.diagrams ?? [])
       if (!diagramIds.has(diagram.id))
         errors.push(`WF-02 visible diagram "${diagram.id}" has no workflow definition`)
-  } else if (diagrams.length) {
+  } else if (diagrams.length && !options?.allowUnlinked) {
     errors.push("WF-02 workflow-definition requires a valid bundle-manifest in the same artifact")
   }
 

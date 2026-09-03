@@ -9,8 +9,31 @@
 //   outline(id, version)  → { entry, pages: [{ path, type }] }   (bundle file tree)
 //   file(id, path, version) → bytes | string                     (one bundle file, raw)
 //   content(id, version)  → string                               (a single-file doc's source)
-import { mkdirSync, rmSync, writeFileSync } from "node:fs"
-import { dirname, join } from "node:path"
+import { createHash, randomBytes } from "node:crypto"
+import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs"
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
+
+const MAX_SKILL_FILES = 2_000
+const MAX_SKILL_BYTES = 50 * 1024 * 1024
+
+const safeSkillPath = (path) => {
+  const clean = String(path).replaceAll("\\", "/").replace(/^\.\//, "")
+  if (!clean || isAbsolute(clean) || clean.split("/").some((part) => !part || part === ".."))
+    throw new Error(`unsafe skill path: ${path}`)
+  return clean
+}
+
+/** Stable digest of exact paths + bytes, independent of map insertion order. */
+export function skillDigest(files) {
+  const hash = createHash("sha256")
+  for (const [rawPath, value] of [...files].sort(([a], [b]) => a.localeCompare(b))) {
+    const path = safeSkillPath(rawPath)
+    const bytes = Buffer.isBuffer(value) ? value : Buffer.from(value)
+    hash.update(`${path}\0${bytes.byteLength}\0`)
+    hash.update(bytes)
+  }
+  return hash.digest("hex")
+}
 
 /** Read the frontmatter `name:` from a SKILL.md. Dependency-free (the CLI can't import
  *  @derive/core's parseFrontmatter) and deliberately minimal: the leading `--- … ---`
@@ -47,12 +70,14 @@ export async function fetchSkill(api, { id, version }) {
     const outline = await api.outline(id, v)
     const pages = outline?.pages ?? []
     if (pages.length === 0) throw new Error("no files in this version")
-    const entry = String(outline.entry ?? "SKILL.md").replace(/^\//, "")
+    const entry = safeSkillPath(String(outline.entry ?? "SKILL.md").replace(/^\//, ""))
+    if (entry !== "SKILL.md") throw new Error("skill entry must be the root SKILL.md")
     const files = new Map()
     for (const p of pages) {
-      const path = String(p.path).replace(/^\//, "")
+      const path = safeSkillPath(String(p.path).replace(/^\//, ""))
       files.set(path, await api.file(id, path, v))
     }
+    if (!files.has("SKILL.md")) throw new Error("skill bundle is missing its root SKILL.md")
     return { name: skillNameFrom(files.get(entry)), entry, files }
   }
   return fetchAt(version ?? null)
@@ -62,13 +87,48 @@ export async function fetchSkill(api, { id, version }) {
  *  runner's repos/), so it's replaced wholesale, never merged — a removed file at the
  *  source must not linger on disk. */
 export function writeSkill(destRoot, dir, files) {
-  const root = join(destRoot, dir)
-  rmSync(root, { recursive: true, force: true })
-  for (const [path, bytes] of files) {
-    const dest = join(root, path)
-    mkdirSync(dirname(dest), { recursive: true })
-    writeFileSync(dest, bytes)
+  const safeDir = skillSlug(dir)
+  if (!safeDir || safeDir !== dir) throw new Error(`unsafe skill directory: ${dir}`)
+  if (files.size > MAX_SKILL_FILES) throw new Error(`skill exceeds ${MAX_SKILL_FILES} files`)
+  let total = 0
+  const prepared = []
+  for (const [rawPath, value] of files) {
+    const path = safeSkillPath(rawPath)
+    const bytes = Buffer.isBuffer(value) ? value : Buffer.from(value)
+    total += bytes.byteLength
+    if (total > MAX_SKILL_BYTES) throw new Error("skill exceeds 50 MB")
+    prepared.push([path, bytes])
   }
+
+  const parent = resolve(destRoot)
+  const root = resolve(parent, safeDir)
+  if (relative(parent, root).startsWith(`..${sep}`)) throw new Error("unsafe skill destination")
+  mkdirSync(parent, { recursive: true })
+  const nonce = `${process.pid}-${randomBytes(6).toString("hex")}`
+  const staging = resolve(parent, `.${safeDir}.staging-${nonce}`)
+  const backup = resolve(parent, `.${safeDir}.backup-${nonce}`)
+  mkdirSync(staging)
+  try {
+    for (const [path, bytes] of prepared) {
+      const dest = resolve(staging, path)
+      if (dest !== staging && !dest.startsWith(`${staging}${sep}`))
+        throw new Error(`unsafe skill path: ${path}`)
+      mkdirSync(dirname(dest), { recursive: true })
+      writeFileSync(dest, bytes)
+    }
+    const hadExisting = existsSync(root)
+    if (hadExisting) renameSync(root, backup)
+    try {
+      renameSync(staging, root)
+    } catch (error) {
+      if (hadExisting && existsSync(backup)) renameSync(backup, root)
+      throw error
+    }
+    if (hadExisting) rmSync(backup, { recursive: true, force: true })
+  } finally {
+    rmSync(staging, { recursive: true, force: true })
+  }
+  return skillDigest(files)
 }
 
 /** Merge the ambient Brandprint skill layer with the manifest's own `skills:` into one
@@ -94,8 +154,8 @@ export async function materializeSkills(api, skills, destRoot) {
       const base = skillSlug(name) ?? s.id
       const dir = used.has(base) ? `${base}-${s.id}` : base
       used.add(dir)
-      writeSkill(destRoot, dir, files)
-      out.push({ id: s.id, version: s.version, dir, name: name ?? dir, ok: true })
+      const digest = writeSkill(destRoot, dir, files)
+      out.push({ id: s.id, version: s.version, dir, name: name ?? dir, digest, ok: true })
       console.log(`[skills] ${dir} @v${s.version}`)
     } catch (e) {
       console.error(`[skills] ${s.id}: ${e?.message ?? e}`)

@@ -2396,6 +2396,136 @@ export interface WorkflowRunStore {
   ): Promise<WorkflowStepAttemptRecord | null>
 }
 
+export type SkillRelationKind = "requires" | "extends" | "recommends"
+export type SkillClient = "claude" | "codex"
+export type SkillInstallScope = "project" | "personal" | "runner"
+export type SkillInstallPolicy = "pinned" | "latest"
+export type ArtifactSkillRole =
+  | "created"
+  | "revised"
+  | "validated"
+  | "example"
+  | "anti-example"
+  | "workflow-definition"
+
+export interface SkillRelationRecord {
+  id: string
+  org_id: string
+  source_artifact_id: string
+  source_version: number
+  target_artifact_id: string
+  target_version: number
+  kind: SkillRelationKind
+  created_at: string
+}
+
+export interface NewSkillRelation {
+  id: string
+  org_id: string
+  source_artifact_id: string
+  source_version: number
+  target_artifact_id: string
+  target_version: number
+  kind: SkillRelationKind
+}
+
+export interface SkillInstallationRecord {
+  id: string
+  org_id: string
+  skill_artifact_id: string
+  skill_version: number
+  scope_kind: SkillInstallScope
+  opaque_scope_id: string
+  client: SkillClient
+  digest: string
+  policy: SkillInstallPolicy
+  installed_by: string | null
+  created_at: string
+  updated_at: string
+  removed_at: string | null
+}
+
+export interface NewSkillInstallation {
+  id: string
+  org_id: string
+  skill_artifact_id: string
+  skill_version: number
+  scope_kind: SkillInstallScope
+  /** Stable one-way identifier supplied by the CLI; never a raw filesystem path. */
+  opaque_scope_id: string
+  client: SkillClient
+  digest: string
+  policy: SkillInstallPolicy
+  installed_by?: string | null
+  updated_at: string
+  removed_at?: string | null
+}
+
+export interface ArtifactSkillLinkRecord {
+  id: string
+  org_id: string
+  artifact_id: string
+  artifact_version: number
+  skill_artifact_id: string
+  skill_version: number
+  role: ArtifactSkillRole
+  linked_by: string
+  created_at: string
+}
+
+export interface NewArtifactSkillLink {
+  id: string
+  org_id: string
+  artifact_id: string
+  artifact_version: number
+  skill_artifact_id: string
+  skill_version: number
+  role: ArtifactSkillRole
+  linked_by: string
+}
+
+export interface SkillUsageBucket {
+  skill_version: number
+  count: number
+  last_used_at: string
+}
+
+/** Additive Skill indexes. Skill bundle bytes and the existing run ledgers stay authoritative. */
+export interface SkillStore {
+  replaceSkillRelations(
+    orgId: string,
+    skillArtifactId: string,
+    skillVersion: number,
+    relations: NewSkillRelation[],
+  ): Promise<void>
+  /** Direct incoming and outgoing semantic edges. Authorization stays at the route. */
+  listSkillRelations(skillArtifactId: string, orgId: string): Promise<SkillRelationRecord[]>
+  upsertSkillInstallation(installation: NewSkillInstallation): Promise<SkillInstallationRecord>
+  listSkillInstallations(skillArtifactId: string, orgId: string): Promise<SkillInstallationRecord[]>
+  linkArtifactSkill(link: NewArtifactSkillLink): Promise<ArtifactSkillLinkRecord>
+  listArtifactSkillLinks(
+    artifactId: string,
+    artifactVersion: number,
+    orgId: string,
+  ): Promise<ArtifactSkillLinkRecord[]>
+  /** Exact-version provenance across an artifact's history, newest first. */
+  listArtifactSkillLinkHistory(
+    artifactId: string,
+    orgId: string,
+    limit?: number,
+  ): Promise<ArtifactSkillLinkRecord[]>
+  listSkillArtifactLinks(
+    skillArtifactId: string,
+    orgId: string,
+    limit?: number,
+  ): Promise<ArtifactSkillLinkRecord[]>
+  /** Separate exact-version buckets; callers must not collapse them into a synthetic total. */
+  skillUsage(
+    skillArtifactId: string,
+    orgId: string,
+  ): Promise<{ contexts: SkillUsageBucket[]; workflows: SkillUsageBucket[] }>
+}
+
 export interface ModerationStore {
   // ---- Moderation: abuse reports, takedown, audit log --------------------
   createReport(r: NewReport): Promise<ReportRecord>
@@ -2583,6 +2713,7 @@ export interface MetaStore
     DirectoryStore,
     AgentStore,
     WorkflowRunStore,
+    SkillStore,
     ModerationStore,
     AssetStore,
     SharedStateStore {}

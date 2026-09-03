@@ -61,6 +61,7 @@ import {
   Undo2,
   User,
   Users,
+  WandSparkles,
   X,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
@@ -80,6 +81,7 @@ const REG = {
   repo: FolderGit2,
   context: Bot,
   workflow: GitFork,
+  skill: WandSparkles,
   templates: LayoutTemplate,
   derive: GitFork,
   // Brandprint — the brand's fingerprint.

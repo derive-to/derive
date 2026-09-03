@@ -16,6 +16,7 @@ import {
   loadConfig,
   mergeChosenWorkspaces,
   removeAccount,
+  removeSkillClients,
   resolveAccountRef,
   resolvePublish,
   resolveWorkspaceRef,
@@ -26,6 +27,7 @@ import {
   setDefaultAccount,
   setDefaultWorkspace,
   setWorkspaces,
+  skillSyncPlan,
   writeContextConfig,
   writeId,
   writeSkillPin,
@@ -270,14 +272,85 @@ describe("writeSkillPin", () => {
     writeSkillPin(d, { id: "sk1", version: 3, name: "chart-style" })
     let cfg = writeSkillPin(d, { id: "sk2", version: 1 })
     expect(cfg.skills).toEqual([
-      { id: "sk1", version: 3, name: "chart-style" },
-      { id: "sk2", version: 1 },
+      {
+        id: "sk1",
+        version: 3,
+        name: "chart-style",
+        installs: {
+          claude: { version: 3, name: "chart-style" },
+          codex: { version: 3, name: "chart-style" },
+        },
+      },
+      {
+        id: "sk2",
+        version: 1,
+        installs: { claude: { version: 1 }, codex: { version: 1 } },
+      },
     ])
     // Re-adding sk1 at a new version replaces it in place (still 2 entries).
     cfg = writeSkillPin(d, { id: "sk1", version: 4, name: "chart-style" })
     expect(cfg.skills).toHaveLength(2)
     expect(cfg.skills.find((s) => s.id === "sk1").version).toBe(4)
     expect(cfg.title).toBe("T") // untouched
+  })
+
+  it("tracks Claude and Codex independently across targeted syncs and removals", () => {
+    const d = tmp()
+    writeFileSync(join(d, CONFIG_FILE), JSON.stringify({ title: "T", entry: "context" }))
+    writeSkillPin(d, { id: "sk1", version: 7, name: "brief", clients: ["claude", "codex"] })
+    let cfg = writeSkillPin(d, {
+      id: "sk1",
+      version: 8,
+      name: "brief",
+      clients: ["codex"],
+    })
+    expect(cfg.skills[0].installs).toEqual({
+      claude: { version: 7, name: "brief" },
+      codex: { version: 8, name: "brief" },
+    })
+
+    cfg = removeSkillClients(d, "sk1", ["codex"])
+    expect(cfg.skills[0]).toMatchObject({
+      id: "sk1",
+      version: 7,
+      installs: { claude: { version: 7, name: "brief" } },
+    })
+    cfg = removeSkillClients(d, "sk1", ["claude"])
+    expect(cfg.skills).toEqual([])
+  })
+
+  it("plans an all-skill sync without broadening client-specific installs", () => {
+    expect(
+      skillSyncPlan(
+        {
+          skills: [
+            { id: "legacy", version: 1 },
+            { id: "claude-only", installs: { claude: { version: 2 } } },
+            { id: "codex-only", installs: { codex: { version: 3 } } },
+          ],
+        },
+        ["claude", "codex"],
+      ),
+    ).toEqual([
+      { id: "legacy", clients: ["claude", "codex"] },
+      { id: "claude-only", clients: ["claude"] },
+      { id: "codex-only", clients: ["codex"] },
+    ])
+    expect(
+      skillSyncPlan({ skills: [{ id: "claude-only", installs: { claude: { version: 2 } } }] }, [
+        "codex",
+      ]),
+    ).toEqual([])
+  })
+})
+
+describe("CLI help", () => {
+  it("prints the command index and exits successfully", () => {
+    const bin = join(import.meta.dirname, "..", "bin", "derive.js")
+    const result = spawnSync(process.execPath, [bin, "--help"], { encoding: "utf8" })
+    expect(result.status).toBe(0)
+    expect(result.stderr).toContain("derive skill add|sync|remove")
+    expect(result.stderr).toContain("derive skill sync --all")
   })
 })
 

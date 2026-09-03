@@ -132,7 +132,7 @@ export const renderDocShell = (bodyHtml: string, title: string | null): string =
 <title>${escapeHtml(title ?? "Document")}</title>
 <style>${PAGE_CSS}</style>
 </head>
-<body><main>${bodyHtml}</main>${SELECTION_SCRIPT}</body>
+<body><main data-derive-ready>${bodyHtml}</main>${SELECTION_SCRIPT}</body>
 </html>`
 
 export async function renderMarkdown(source: string, title: string | null): Promise<string> {

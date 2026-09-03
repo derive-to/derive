@@ -54,6 +54,7 @@ import { sessionRoutes } from "./routes/session"
 import { sharedStateRoutes } from "./routes/shared-state"
 import { sharingRoutes } from "./routes/sharing"
 import { siteRoutes } from "./routes/site"
+import { skillRoutes } from "./routes/skills"
 import { slackRoutes } from "./routes/slack"
 import { systemRoutes } from "./routes/system"
 import { templateLibraryRoutes } from "./routes/template-libraries"
@@ -459,6 +460,7 @@ export function createApp(deps: AppDeps): Hono {
     mcpOauthRoutes,
     modelCredentialRoutes,
     conciergeRoutes,
+    skillRoutes,
     workflowRoutes,
     reworkRoutes,
     commentRoutes,

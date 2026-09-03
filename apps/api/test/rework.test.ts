@@ -1,4 +1,6 @@
 import { generateKeyPairSync } from "node:crypto"
+import { publish, validateSkillDefinition } from "@derive/core"
+import { zipSync } from "fflate"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { encryptSecret } from "../src/lib/crypto"
 import { upsertGithubConnection } from "../src/lib/github-connection"
@@ -363,6 +365,178 @@ describe("workflow run: explicit local-agent handoff", () => {
       status: "ready",
     })
     expect(body.workflows.some((workflow) => workflow.shortId === hidden.short_id)).toBe(false)
+  })
+
+  it("migrates a Workflow to a linked launcher Skill without changing the original", async () => {
+    const { app, meta } = makeAuthedApp("workflow-skill-migrate", [owner])
+    const published = await (
+      await publishAs(app, workflowHtml(), { title: "Weekly brief" }, as(owner.email))
+    ).json()
+    const source = await meta.getByShortId(published.short_id)
+    expect(source?.current_content_type).toBe("text/x-derive-linked-bundle")
+
+    const migrated = await app.request(
+      "/v1/skill-migrations",
+      jsonAs(as(owner.email), { apply: true }),
+    )
+    expect(migrated.status).toBe(200)
+    const body = await migrated.json()
+    expect(body.report).toContainEqual(
+      expect.objectContaining({
+        kind: "workflow",
+        id: published.short_id,
+        action: "migrate",
+        skill_short_id: expect.any(String),
+      }),
+    )
+    expect(await meta.getByShortId(published.short_id)).toMatchObject({
+      current_version: 1,
+      current_content_type: "text/x-derive-linked-bundle",
+    })
+    const links = await meta.listArtifactSkillLinks(source?.id ?? "", 1, "default")
+    expect(links).toHaveLength(1)
+    expect(links[0]).toMatchObject({
+      role: "workflow-definition",
+      artifact_version: 1,
+      skill_version: 1,
+    })
+    const skill = await meta.getArtifactById(links[0]?.skill_artifact_id ?? "")
+    expect(skill?.current_content_type).toBe("derive/skill")
+    const skillMd = await (
+      await app.request(`/v1/artifacts/${skill?.short_id}/content`, { headers: as(owner.email) })
+    ).text()
+    const sidecar = await (
+      await app.request(`/v1/artifacts/${skill?.short_id}/content?section=derive.skill.json`, {
+        headers: as(owner.email),
+      })
+    ).text()
+    expect(validateSkillDefinition(skillMd, sidecar).errors).toEqual([])
+    const catalog = await (await app.request("/v1/skills", { headers: as(owner.email) })).json()
+    expect(catalog.skills).toContainEqual(
+      expect.objectContaining({
+        short_id: skill?.short_id,
+        skill: expect.objectContaining({ workflow_launcher: true }),
+      }),
+    )
+    const reverseLinks = await (
+      await app.request(`/v1/artifacts/${published.short_id}/skills`, {
+        headers: as(owner.email),
+      })
+    ).json()
+    expect(reverseLinks.links).toContainEqual(
+      expect.objectContaining({
+        artifact_version: 1,
+        skill_version: 1,
+        role: "workflow-definition",
+        skill: expect.objectContaining({
+          short_id: skill?.short_id,
+          current_version: 1,
+        }),
+      }),
+    )
+    const workflows = await (
+      await app.request("/v1/workflows", { headers: as(owner.email) })
+    ).json()
+    expect(workflows.workflows).toContainEqual(
+      expect.objectContaining({ shortId: published.short_id }),
+    )
+    const launcher = (await meta.listContexts("default")).find(
+      (context) => context.manifest_artifact_id === skill?.id,
+    )
+    expect(launcher).toBeDefined()
+
+    // The link and root Context are separate durable writes. A replay repairs a
+    // missing Context instead of treating the provenance receipt as fully complete.
+    await meta.deleteContext(launcher?.id ?? "", "default")
+
+    const replay = await app.request(
+      "/v1/skill-migrations",
+      jsonAs(as(owner.email), { apply: true }),
+    )
+    expect(replay.status).toBe(200)
+    expect(await meta.listArtifactSkillLinks(source?.id ?? "", 1, "default")).toHaveLength(1)
+    expect(
+      (await meta.listContexts("default")).some(
+        (context) => context.manifest_artifact_id === skill?.id,
+      ),
+    ).toBe(true)
+
+    // The durable relationship survives later Workflow revisions while preserving
+    // the exact versions that originally established provenance.
+    const revised = await publishAs(
+      app,
+      workflowHtml(),
+      { title: "Weekly brief" },
+      as(owner.email),
+      published.short_id,
+    )
+    expect(revised.status).toBe(201)
+    const historicalReverseLinks = await (
+      await app.request(`/v1/artifacts/${published.short_id}/skills`, {
+        headers: as(owner.email),
+      })
+    ).json()
+    expect(historicalReverseLinks.links).toContainEqual(
+      expect.objectContaining({
+        artifact_version: 1,
+        skill: expect.objectContaining({ short_id: skill?.short_id }),
+      }),
+    )
+  })
+
+  it("reuses the deterministic launcher after a publish-to-link interruption", async () => {
+    const { app, meta, ctx } = makeAuthedApp("workflow-skill-publish-link-repair", [owner])
+    const published = await (
+      await publishAs(app, workflowHtml(), { title: "Interrupted brief" }, as(owner.email))
+    ).json()
+    const source = await meta.getByShortId(published.short_id)
+    expect(source).toBeDefined()
+    // Seed the durable state left by an interruption immediately after publish but
+    // before linkArtifactSkill. This uses only the MetaStore contract, so the same
+    // recovery case runs against SQLite, D1, and the Postgres proxy facade.
+    await publish(meta, ctx.blobs, {
+      bytes: zipSync({
+        "SKILL.md": new TextEncoder().encode(
+          "---\nname: interrupted-brief\ndescription: Resume an interrupted workflow migration.\n---\n\n# Launcher",
+        ),
+        "derive.skill.json": new TextEncoder().encode(
+          JSON.stringify({ schema: "derive.skill/v1", catalog: false }),
+        ),
+      }),
+      filename: "skill.zip",
+      isBundle: true,
+      title: "Interrupted brief Skill",
+      author: owner.name ?? "Owner",
+      authorId: owner.id,
+      source: "api",
+      orgId: "default",
+      workspaceAccess: "member",
+      linkRole: "none",
+      listed: "none",
+      derivedFrom: source?.id,
+      mintShortId: `skill-${published.short_id}`,
+    })
+    const afterFailure = (
+      await meta.listArtifacts({ orgId: "default", contentType: "derive/skill" })
+    ).filter((artifact) => artifact.derived_from === source?.id)
+    expect(afterFailure).toHaveLength(1)
+    expect(afterFailure[0]?.short_id).toBe(`skill-${published.short_id}`)
+
+    const replay = await app.request(
+      "/v1/skill-migrations",
+      jsonAs(as(owner.email), { apply: true }),
+    )
+    expect(replay.status).toBe(200)
+    const afterReplay = (
+      await meta.listArtifacts({ orgId: "default", contentType: "derive/skill" })
+    ).filter((artifact) => artifact.derived_from === source?.id)
+    expect(afterReplay).toHaveLength(1)
+    expect(await meta.listArtifactSkillLinks(source?.id ?? "", 1, "default")).toHaveLength(1)
+    expect(
+      (await meta.listContexts("default")).some(
+        (context) => context.manifest_artifact_id === afterReplay[0]?.id,
+      ),
+    ).toBe(true)
   })
 
   it("GET previews without running; POST pins a fresh run and queues its instruction", async () => {

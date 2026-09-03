@@ -265,7 +265,13 @@ describe("MCP surface budget (thin tools, thick skills)", () => {
     const form = new FormData()
     form.append(
       "file",
-      new Blob([zipSync({ "SKILL.md": new TextEncoder().encode("---\nname: probe\n---\n# P") })]),
+      new Blob([
+        zipSync({
+          "SKILL.md": new TextEncoder().encode(
+            "---\nname: probe\ndescription: Budget probe.\n---\n# P",
+          ),
+        }),
+      ]),
       "skill.zip",
     )
     form.append("title", "Budget probe")

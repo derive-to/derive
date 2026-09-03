@@ -150,7 +150,7 @@ function NavItem({
   icon: IconName
   label: string
   count?: number
-  to: "/following" | "/contexts" | "/workflows" | "/templates" | "/chat"
+  to: "/following" | "/contexts" | "/skills" | "/workflows" | "/templates" | "/chat"
   active: boolean
   testId?: string
 }) {
@@ -380,6 +380,7 @@ export function NavRail() {
   const isAll = onLibrary && !search.collection
   const onContexts = loc.pathname.startsWith("/contexts") || loc.pathname.startsWith("/agents")
   const onWorkflows = loc.pathname.startsWith("/workflows")
+  const onSkills = loc.pathname.startsWith("/skills")
   const onTemplates = loc.pathname.startsWith("/templates")
   const onSettings = loc.pathname.startsWith("/settings")
   const onChat = loc.pathname.startsWith("/chat")
@@ -429,6 +430,13 @@ export function NavRail() {
                 to="/templates"
                 active={onTemplates}
                 testId="nav-templates"
+              />
+              <NavItem
+                icon="skill"
+                label="Skills"
+                to="/skills"
+                active={onSkills}
+                testId="nav-skills"
               />
               <NavItem
                 icon="context"

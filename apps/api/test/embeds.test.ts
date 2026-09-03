@@ -258,7 +258,8 @@ describe("agent-readable share URLs (.md + Accept: text/markdown)", () => {
   it("passes a markdown-entry bundle (a skill) through verbatim", async () => {
     // pickBundleEntry prefers SKILL.md over non-root HTML, so a skill's entry is
     // markdown — running it through the HTML converter would strip its structure.
-    const source = "---\nname: my-skill\n---\n\n# My Skill\n\nUse when X.\n"
+    const source =
+      "---\nname: my-skill\ndescription: Use when X.\n---\n\n# My Skill\n\nUse when X.\n"
     const zip = zipSync({
       "SKILL.md": new TextEncoder().encode(source),
       "assets/demo.html": new TextEncoder().encode("<h1>demo</h1>"),

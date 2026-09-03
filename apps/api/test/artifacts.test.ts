@@ -964,7 +964,9 @@ describe("api surface", () => {
     // store-level filter is what makes a skills listing cheap. Both dialects run
     // this file (sqlite by default, pg via DERIVE_TEST_DB=pg).
     const zip = zipSync({
-      "SKILL.md": new TextEncoder().encode("---\nname: filter-probe\n---\n# P"),
+      "SKILL.md": new TextEncoder().encode(
+        "---\nname: filter-probe\ndescription: Filters skills.\n---\n# P",
+      ),
     })
     const { short_id: skillShort } = await (
       await upload("skill.zip", zip, { title: "Filter probe" })
@@ -1000,6 +1002,126 @@ describe("api surface", () => {
     expect((await app.request("/v1/artifacts/zzzzzzzz")).status).toBe(404)
     const bad = await upload("dist.zip", zipSync({}))
     expect(bad.status).toBe(400)
+  })
+})
+
+describe("Skills product surface", () => {
+  const publishSkill = async (
+    name: string,
+    sidecar: Record<string, unknown> = { schema: "derive.skill/v1" },
+  ) => {
+    const zip = zipSync({
+      "SKILL.md": new TextEncoder().encode(
+        `---\nname: ${name}\ndescription: Use ${name}.\n---\n\n# ${name}`,
+      ),
+      "derive.skill.json": new TextEncoder().encode(JSON.stringify(sidecar)),
+    })
+    return (await upload(`${name}.zip`, zip, { title: name })).json()
+  }
+
+  it("lists catalog skills, hides embedded ones, and returns permission-filtered graph edges", async () => {
+    const target = await publishSkill("graph-target")
+    const hidden = await publishSkill("embedded-only", {
+      schema: "derive.skill/v1",
+      catalog: false,
+    })
+    const source = await publishSkill("graph-source", {
+      schema: "derive.skill/v1",
+      relations: { requires: [{ id: target.short_id, version: 1 }] },
+    })
+    const catalog = await (await app.request("/v1/skills")).json()
+    expect(catalog.skills.map((skill: { short_id: string }) => skill.short_id)).toContain(
+      source.short_id,
+    )
+    expect(catalog.skills.map((skill: { short_id: string }) => skill.short_id)).not.toContain(
+      hidden.short_id,
+    )
+    const graph = await (await app.request(`/v1/artifacts/${source.short_id}/skill-graph`)).json()
+    const sourceArtifact = await meta.getByShortId(source.short_id)
+    const targetArtifact = await meta.getByShortId(target.short_id)
+    expect(graph.edges).toContainEqual(
+      expect.objectContaining({
+        source_artifact_id: sourceArtifact?.id,
+        target_artifact_id: targetArtifact?.id,
+        source_version: 1,
+        target_version: 1,
+        kind: "requires",
+      }),
+    )
+  })
+
+  it("pages past embedded Skills instead of letting them crowd catalog results out", async () => {
+    const visible = await publishSkill("crowding-visible")
+    for (let index = 0; index < 5; index += 1) {
+      await publishSkill(`crowding-hidden-${index}`, {
+        schema: "derive.skill/v1",
+        catalog: false,
+      })
+    }
+
+    const catalog = await (await app.request("/v1/skills?limit=1&query=crowding")).json()
+    expect(catalog.skills).toHaveLength(1)
+    expect(catalog.skills[0]?.short_id).toBe(visible.short_id)
+    expect(catalog.has_more).toBe(false)
+  })
+
+  it("records installation receipts and exact-version artifact provenance", async () => {
+    const skill = await publishSkill("receipt-skill")
+    const output = await (await upload("output.md", "# made with skill")).json()
+    const outputArtifact = await meta.getByShortId(output.short_id)
+    const receipt = await app.request(`/v1/artifacts/${skill.short_id}/skill-installation`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        skill_version: 1,
+        scope_kind: "project",
+        opaque_scope_id: "a".repeat(64),
+        client: "codex",
+        digest: "b".repeat(64),
+        policy: "pinned",
+      }),
+    })
+    expect(receipt.status).toBe(200)
+    const linked = await app.request(`/v1/artifacts/${output.short_id}/skills`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        artifact_version: 1,
+        skill_short_id: skill.short_id,
+        skill_version: 1,
+        role: "created",
+      }),
+    })
+    expect(linked.status).toBe(201)
+    const usage = await (await app.request(`/v1/artifacts/${skill.short_id}/skill-usage`)).json()
+    expect(usage.installations).toContainEqual(
+      expect.objectContaining({ client: "codex", scope_kind: "project", count: 1 }),
+    )
+    expect(usage.artifacts).toContainEqual(
+      expect.objectContaining({
+        artifact_id: outputArtifact?.id,
+        artifact_version: 1,
+        role: "created",
+      }),
+    )
+    expect(usage).toMatchObject({ contexts: [], workflows: [] })
+  })
+
+  it("rejects unresolved exact-version relations before a Skill version goes live", async () => {
+    const zip = zipSync({
+      "SKILL.md": new TextEncoder().encode(
+        "---\nname: broken-relation\ndescription: Broken on purpose.\n---\n# Broken",
+      ),
+      "derive.skill.json": new TextEncoder().encode(
+        JSON.stringify({
+          schema: "derive.skill/v1",
+          relations: { requires: [{ id: "missing99", version: 7 }] },
+        }),
+      ),
+    })
+    const response = await upload("broken.zip", zip)
+    expect(response.status).toBe(400)
+    expect(await response.text()).toContain("missing99@v7 was not found")
   })
 })
 

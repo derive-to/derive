@@ -10,6 +10,7 @@
 import {
   type ArtifactRecord,
   type BlobStore,
+  type BundleManifest,
   DECK_CONTENT_TYPE,
   deriveFacts,
   FACT_GEN,
@@ -20,7 +21,10 @@ import {
   newId,
   parseFacts,
   type SearchIndex,
+  SKILL_CONTENT_TYPE,
+  SKILL_SIDECAR_PATH,
   type VersionRecord,
+  validateSkillDefinition,
 } from "@derive/core"
 import type { Backplane } from "../bus"
 import type { WebhookEvent } from "../events"
@@ -97,6 +101,17 @@ export const emitVersionBump = async (
   } catch (err) {
     log.error("data-slot extraction failed", { artifact: artifact.id, err: String(err) })
   }
+  // Skill relations are a query index over immutable bundle bytes, not another definition.
+  // Run on every canonical version bump (publish, restore, agent edit) so no surface can drift.
+  try {
+    await indexSkillVersion(meta, blobs, artifact, version)
+  } catch (err) {
+    log.error("skill relation indexing failed", {
+      artifact: artifact.id,
+      n: version.n,
+      err: String(err),
+    })
+  }
   // What this version SAYS, for the cards that describe it to someone who has not opened it.
   // Third sibling of the two above and the same contract in every respect: a failure logs and
   // the publish stands, because a link preview is never worth failing a write that already
@@ -120,6 +135,66 @@ export const emitVersionBump = async (
     await (deps.background ? deps.background(work) : work)
   }
   return storedRows
+}
+
+const indexSkillVersion = async (
+  meta: MetaStore,
+  blobs: BlobStore,
+  artifact: ArtifactRecord,
+  version: VersionRecord,
+): Promise<void> => {
+  if (version.content_type !== SKILL_CONTENT_TYPE) return
+  const manifestBytes = await blobs.get(version.blob_key)
+  if (!manifestBytes) throw new Error("skill manifest blob missing")
+  const manifest = JSON.parse(new TextDecoder().decode(manifestBytes)) as BundleManifest
+  const skillKey = manifest.files[manifest.entry]?.key
+  if (!skillKey) throw new Error("SKILL.md missing from skill manifest")
+  const skillBytes = await blobs.get(skillKey)
+  if (!skillBytes) throw new Error("SKILL.md blob missing")
+  const sidecarKey = manifest.files[SKILL_SIDECAR_PATH]?.key
+  const sidecarBytes = sidecarKey ? await blobs.get(sidecarKey) : null
+  const checked = validateSkillDefinition(
+    new TextDecoder().decode(skillBytes),
+    sidecarBytes ? new TextDecoder().decode(sidecarBytes) : null,
+  )
+  if (checked.errors.length > 0) throw new Error(checked.errors.join("; "))
+  const declared = Object.entries(checked.sidecar?.relations ?? {}).flatMap(([kind, refs]) =>
+    (refs ?? []).map((ref) => ({ kind: kind as "requires" | "extends" | "recommends", ref })),
+  )
+  const targets = await meta.getByShortIds([...new Set(declared.map(({ ref }) => ref.id))])
+  const byShortId = new Map(targets.map((target) => [target.short_id, target]))
+  const relations = []
+  for (const { kind, ref } of declared) {
+    const target = byShortId.get(ref.id)
+    if (!target || target.org_id !== artifact.org_id) {
+      log.warn("skill relation target unavailable", {
+        artifact: artifact.id,
+        n: version.n,
+        target: ref.id,
+      })
+      continue
+    }
+    const targetVersion = await meta.getVersion(target.id, ref.version)
+    if (targetVersion?.content_type !== SKILL_CONTENT_TYPE) {
+      log.warn("skill relation target version is not a Skill", {
+        artifact: artifact.id,
+        n: version.n,
+        target: ref.id,
+        target_version: ref.version,
+      })
+      continue
+    }
+    relations.push({
+      id: newId("skr"),
+      org_id: artifact.org_id,
+      source_artifact_id: artifact.id,
+      source_version: version.n,
+      target_artifact_id: target.id,
+      target_version: ref.version,
+      kind,
+    })
+  }
+  await meta.replaceSkillRelations(artifact.org_id, artifact.id, version.n, relations)
 }
 
 /** sha256 of the exact text handed to the model, hex. Web Crypto only — this runs on Workers

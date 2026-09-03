@@ -1,9 +1,19 @@
+import { useQuery } from "@tanstack/react-query"
+import { Link } from "@tanstack/react-router"
 import { useEffect, useMemo, useRef, useState } from "react"
 import type { Artifact, Comment, DirUser } from "@/api"
 import { Icon } from "@/components/icons"
 import { Count, Eyebrow } from "@/components/shared/section-eyebrow"
 import { SectionHeading, SectionTitle } from "@/components/shared/section-title"
 import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import { artifactSkillsQuery } from "@/lib/queries"
 import { ago } from "@/lib/time"
 import { cn } from "@/lib/utils"
 import { LinkedBundleFocusSearch, type LinkedBundleFocusTarget } from "./linked-bundle-focus"
@@ -937,6 +947,19 @@ export function LinkedBundleWorkspace({
   reviewState: LinkedBundleReviewState
   onReviewStateChange: (state: LinkedBundleReviewState) => void
 }) {
+  // surface-ignore: optional provenance chrome degrades to no launcher CTA; the
+  // Workflow workspace and all execution controls remain fully usable.
+  const linkedSkills = useQuery({
+    ...artifactSkillsQuery(shortId),
+    enabled: !!workflowPreview,
+  })
+  const launchers = (linkedSkills.data?.links ?? []).filter(
+    (link, index, all) =>
+      link.role === "workflow-definition" &&
+      link.skill &&
+      all.findIndex((candidate) => candidate.skill_artifact_id === link.skill_artifact_id) ===
+        index,
+  )
   const diagrams = bundle.diagrams ?? []
   const counts = linkedBundleCommentCounts(comments)
   const members = useMemo(
@@ -1019,6 +1042,51 @@ export function LinkedBundleWorkspace({
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            {launchers.length === 1 && launchers[0]?.skill ? (
+              <Button asChild variant="outline" size="sm" data-testid="workflow-open-skill">
+                <Link
+                  to="/artifacts/$ref"
+                  params={{ ref: launchers[0].skill.short_id }}
+                  title={`Launcher Skill v${launchers[0].skill_version}, linked from Workflow v${launchers[0].artifact_version}`}
+                >
+                  <Icon name="sparkles" size={14} /> Skill:{" "}
+                  {launchers[0].skill.title ?? launchers[0].skill.short_id}
+                  <span className="font-mono text-2xs text-muted-foreground">
+                    v{launchers[0].skill_version}
+                  </span>
+                </Link>
+              </Button>
+            ) : launchers.length > 1 ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="sm" data-testid="workflow-open-skills">
+                    <Icon name="sparkles" size={14} /> {launchers.length} linked Skills
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="max-w-sm">
+                  <DropdownMenuLabel>Launcher Skills</DropdownMenuLabel>
+                  {launchers.map((launcher) =>
+                    launcher.skill ? (
+                      <DropdownMenuItem
+                        key={launcher.skill_artifact_id}
+                        asChild
+                        data-testid={`workflow-skill-${launcher.skill_artifact_id}`}
+                      >
+                        <Link to="/artifacts/$ref" params={{ ref: launcher.skill.short_id }}>
+                          <Icon name="sparkles" size={14} />
+                          <span className="min-w-0 flex-1 truncate">
+                            {launcher.skill.title ?? launcher.skill.short_id}
+                          </span>
+                          <span className="font-mono text-2xs text-muted-foreground">
+                            v{launcher.skill_version}
+                          </span>
+                        </Link>
+                      </DropdownMenuItem>
+                    ) : null,
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : null}
             <fieldset className="flex rounded-lg border border-border p-0.5">
               <legend className="sr-only">Workspace view</legend>
               {workflowPreview ? (
