@@ -58,7 +58,8 @@ export function artifactTypeLabel(a: Artifact): string {
   // without opening the bundle — string mirrored from @derive/core SKILL_CONTENT_TYPE.
   if (a.current_content_type === "derive/skill") return "Skill"
   // A paper bundle (entry main.tex) likewise: derive/latex mirrors LATEX_BUNDLE_CONTENT_TYPE.
-  if (a.current_content_type === "derive/latex") return "Paper"
+  // Badged by language like MD and HTML, single file or bundle.
+  if (a.current_content_type === "derive/latex") return "LaTeX"
   if (a.kind === "bundle") return "Site"
   const ct = a.current_content_type
   if (ct === "text/x-derive-deck") return "Deck"

@@ -5,7 +5,7 @@ import { LATEX_BUNDLE_CONTENT_TYPE, SKILL_CONTENT_TYPE } from "./ports"
 /** A short, kind-aware label for an artifact, used on cards and in descriptions. */
 export const kindLabel = (contentType: string | null | undefined, isBundle: boolean): string => {
   if (contentType === SKILL_CONTENT_TYPE) return "Skill"
-  if (contentType === LATEX_BUNDLE_CONTENT_TYPE) return "Paper"
+  if (contentType === LATEX_BUNDLE_CONTENT_TYPE) return "LaTeX"
   if (isBundle) return "Site"
   if (contentType === "text/markdown") return "Markdown"
   if (contentType === LATEX_CONTENT_TYPE) return "LaTeX"

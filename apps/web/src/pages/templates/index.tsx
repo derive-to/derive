@@ -12,7 +12,9 @@ import { PublicFrame } from "@/components/shared/public-frame"
 import { SearchField } from "@/components/shared/search-field"
 import { SectionHeading } from "@/components/shared/section-title"
 import { StatusPanel } from "@/components/shared/status-panel"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardFooter } from "@/components/ui/card"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useAuth } from "@/ctx"
 import { useApiMutation } from "@/lib/use-api-mutation"
@@ -191,26 +193,58 @@ export function Templates() {
       )}
 
       {!librariesOpen && signedIn && papers.data?.templates.length ? (
-        <section className="flex flex-col gap-3" data-testid="templates-papers">
-          <SectionHeading count={papers.data.templates.length}>Papers</SectionHeading>
+        <section className="flex flex-col gap-3" data-testid="templates-academic">
+          <SectionHeading count={papers.data.templates.length}>Academic</SectionHeading>
           <CardGrid>
             {papers.data.templates.map((t) => (
-              <div key={t.id} className="flex flex-col gap-3 rounded-lg border bg-card p-4">
-                <div className="flex flex-col gap-1">
-                  <div className="font-medium">{t.label}</div>
+              <Card
+                key={t.id}
+                data-testid={`template-academic-${t.id}`}
+                className="h-full gap-0 py-0"
+              >
+                <CardContent className="flex min-w-0 flex-col gap-2 p-4">
+                  <div className="flex items-center gap-2">
+                    <Badge variant="outline" shape="pill">
+                      Derive
+                    </Badge>
+                    <Badge variant="outline" shape="pill">
+                      LaTeX
+                    </Badge>
+                  </div>
+                  <h2 className="font-serif text-lg font-medium tracking-tight text-foreground">
+                    {t.label}
+                  </h2>
                   <p className="text-sm text-muted-foreground">{t.description}</p>
-                </div>
-                <Button
-                  size="sm"
-                  className="self-start"
-                  data-testid={`templates-paper-${t.id}`}
-                  asChild
-                >
-                  <Link to="/new" search={{ start: t.id }}>
-                    <Icon name="plus" /> Start a paper
-                  </Link>
-                </Button>
-              </div>
+                </CardContent>
+                <CardFooter className="mt-auto flex gap-2 p-2">
+                  <Button
+                    asChild
+                    className="flex-1"
+                    size="sm"
+                    data-testid={`template-academic-copy-${t.id}`}
+                  >
+                    <Link to="/new" search={{ start: t.id }}>
+                      <Icon name="copy" /> Make a copy
+                    </Link>
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    data-testid={`template-academic-ask-${t.id}`}
+                    onClick={() =>
+                      setAgentTarget({
+                        uri: `derive://latex/templates/${t.id}`,
+                        title: t.label,
+                        description: t.description,
+                        kind: "artifact",
+                        category: "Academic",
+                      })
+                    }
+                  >
+                    <Icon name="sparkles" /> Ask your agent
+                  </Button>
+                </CardFooter>
+              </Card>
             ))}
           </CardGrid>
         </section>
