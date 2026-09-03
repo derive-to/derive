@@ -37,7 +37,7 @@ export function SourceEditor({
   stripFrontmatter = false,
 }: {
   title: string
-  format: "md" | "html"
+  format: "md" | "html" | "tex"
   src: string
   message: string
   onSrc: (v: string) => void
@@ -66,8 +66,8 @@ export function SourceEditor({
   // so flag it stale rather than silently freezing on an out-of-date preview.
   const [previewStale, setPreviewStale] = useState(false)
 
-  // Debounced, faithful preview. HTML renders in-browser as-is; markdown is
-  // rendered by the server's real renderer (the same one publish uses), so what
+  // Debounced, faithful preview. HTML renders in-browser as-is; markdown and LaTeX
+  // are rendered by the server's real renderer (the same one publish uses), so what
   // you see is exactly what ships. Skipped while the preview is hidden so we don't
   // render on every keystroke for nothing.
   useEffect(() => {
@@ -81,7 +81,7 @@ export function SourceEditor({
       }
       const previewSource = stripFrontmatter ? skillPreviewSource(src) : src
       api
-        .renderPreview(previewSource, title)
+        .renderPreview(previewSource, title, format === "tex" ? "text/x-latex" : undefined)
         .then(({ html }) => {
           if (!cancelled) {
             setPreview(html)

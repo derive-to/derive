@@ -963,8 +963,13 @@ export const api = {
     f(`/v1/exports/${id}/cancel`, opts({})).then(j),
   // Render a markdown draft to the exact published HTML, for the live editor
   // preview (markdown only; HTML drafts preview in-browser).
-  renderPreview: (source: string, title: string | null): Promise<{ html: string }> =>
-    f("/v1/preview", opts({ source, title })).then(j),
+  // `contentType` names a LaTeX draft; omitted, the server renders markdown.
+  renderPreview: (
+    source: string,
+    title: string | null,
+    contentType?: "text/x-latex",
+  ): Promise<{ html: string }> =>
+    f("/v1/preview", opts({ source, title, content_type: contentType })).then(j),
   // Verify a password artifact's password; on success the server sets the unlock
   // cookie and subsequent reads of this artifact succeed.
   unlock: (id: string, password: string): Promise<{ ok: true }> =>
