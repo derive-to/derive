@@ -121,6 +121,7 @@ export const skillRoutes = (ctx: AppContext) => {
             name: definition.metadata?.name ?? row.title ?? row.short_id,
             description: definition.metadata?.description ?? "",
             runtime: definition.sidecar?.runtime?.kind ?? "single",
+            workflow_launcher: definition.sidecar?.origin?.kind === "workflow-launcher",
           },
         })
         if (visible.length > limit) break
@@ -498,6 +499,10 @@ export const skillRoutes = (ctx: AppContext) => {
             // Keep the authored Workflow in Workflows and also expose its reusable
             // launcher in Skills. These are two views of the same runtime definition.
             catalog: true,
+            origin: {
+              kind: "workflow-launcher",
+              workflow: { short_id: row.short_id, version: row.n },
+            },
             runtime: { kind: runtimeKind, definition: parsed.definition },
           },
           null,

@@ -199,7 +199,9 @@ function SkillWorkbench({
               {copied ? "Copied" : "Install locally"}
             </Button>
           </div>
-          <span className="text-2xs text-muted-foreground">Claude + Codex · current project</span>
+          <span className="text-2xs text-muted-foreground">
+            One command installs for Claude and Codex in this project.
+          </span>
         </div>
       </div>
 
@@ -213,10 +215,10 @@ function SkillWorkbench({
         </TabsList>
         <TabsContent value="overview" className="px-4 py-3">
           <div className="grid gap-2 sm:grid-cols-4">
-            <Metric value={graph.data?.edges.length ?? 0} label="connections" />
-            <Metric value={activeInstalls} label="active installs" />
-            <Metric value={contextRuns} label="Context runs" />
-            <Metric value={workflowRuns} label="Workflow runs" />
+            <Metric value={graph.data ? graph.data.edges.length : null} label="connections" />
+            <Metric value={usage.data ? activeInstalls : null} label="active installs" />
+            <Metric value={usage.data ? contextRuns : null} label="Context runs" />
+            <Metric value={usage.data ? workflowRuns : null} label="Workflow runs" />
           </div>
         </TabsContent>
         <TabsContent value="graph" className="px-4 py-3">
@@ -265,9 +267,9 @@ function SkillWorkbench({
         </TabsContent>
         <TabsContent value="usage" className="px-4 py-3">
           <div className="grid gap-2 sm:grid-cols-3">
-            <Metric value={activeInstalls} label="active installs" />
-            <Metric value={contextRuns} label="Context runs" />
-            <Metric value={workflowRuns} label="Workflow runs" />
+            <Metric value={usage.data ? activeInstalls : null} label="active installs" />
+            <Metric value={usage.data ? contextRuns : null} label="Context runs" />
+            <Metric value={usage.data ? workflowRuns : null} label="Workflow runs" />
           </div>
           <p className="mt-2 text-xs text-muted-foreground">
             These are separate observed signals. Derive does not guess local activations or combine
@@ -349,10 +351,10 @@ function SkillWorkbench({
   )
 }
 
-function Metric({ value, label }: { value: number; label: string }) {
+function Metric({ value, label }: { value: number | null; label: string }) {
   return (
     <div className="rounded-lg border bg-background px-3 py-2">
-      <strong className="font-mono text-base font-medium tabular-nums">{value}</strong>
+      <strong className="font-mono text-base font-medium tabular-nums">{value ?? "—"}</strong>
       <span className="ml-2 text-xs text-muted-foreground">{label}</span>
     </div>
   )

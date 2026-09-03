@@ -38,6 +38,10 @@ describe("validateSkillDefinition", () => {
       JSON.stringify({
         schema: SKILL_DEFINITION_SCHEMA,
         catalog: false,
+        origin: {
+          kind: "workflow-launcher",
+          workflow: { short_id: "brief123", version: 4 },
+        },
         relations: {
           requires: [{ id: "research-core", version: 3 }],
           recommends: [
@@ -52,6 +56,10 @@ describe("validateSkillDefinition", () => {
     expect(checked.warnings).toEqual(["duplicate recommends relation tone-guide@2 was ignored"])
     expect(checked.sidecar).toMatchObject({
       catalog: false,
+      origin: {
+        kind: "workflow-launcher",
+        workflow: { short_id: "brief123", version: 4 },
+      },
       relations: {
         requires: [{ id: "research-core", version: 3 }],
         recommends: [{ id: "tone-guide", version: 2 }],

@@ -102,9 +102,16 @@ export function Skills() {
                 <span className="grid size-9 place-items-center rounded-lg bg-primary/10 text-primary">
                   <Icon name="skill" />
                 </span>
-                <Badge variant="outline" shape="pill" className="capitalize">
-                  {skill.skill.runtime}
-                </Badge>
+                <div className="flex flex-wrap justify-end gap-1.5">
+                  {skill.skill.workflow_launcher ? (
+                    <Badge variant="brand" shape="pill">
+                      Workflow launcher
+                    </Badge>
+                  ) : null}
+                  <Badge variant="outline" shape="pill" className="capitalize">
+                    {skill.skill.runtime}
+                  </Badge>
+                </div>
               </div>
               <h2 className="mt-4 font-serif text-lg font-medium tracking-tight">
                 {skill.skill.name}

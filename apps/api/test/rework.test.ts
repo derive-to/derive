@@ -412,7 +412,12 @@ describe("workflow run: explicit local-agent handoff", () => {
     ).text()
     expect(validateSkillDefinition(skillMd, sidecar).errors).toEqual([])
     const catalog = await (await app.request("/v1/skills", { headers: as(owner.email) })).json()
-    expect(catalog.skills).toContainEqual(expect.objectContaining({ short_id: skill?.short_id }))
+    expect(catalog.skills).toContainEqual(
+      expect.objectContaining({
+        short_id: skill?.short_id,
+        skill: expect.objectContaining({ workflow_launcher: true }),
+      }),
+    )
     const reverseLinks = await (
       await app.request(`/v1/artifacts/${published.short_id}/skills`, {
         headers: as(owner.email),

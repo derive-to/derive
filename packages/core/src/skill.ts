@@ -24,6 +24,11 @@ export interface SkillSidecar {
   schema: typeof SKILL_DEFINITION_SCHEMA
   /** Whether this definition appears in the workspace Skills catalog. */
   catalog?: boolean
+  /** Why Derive created this Skill rather than a person publishing it directly. */
+  origin?: {
+    kind: "workflow-launcher"
+    workflow: { short_id: string; version: number }
+  }
   relations?: Partial<Record<SkillRelationKind, SkillRelationRef[]>>
   runtime?: { kind: "single" } | { kind: "graph" | "loop"; definition: WorkflowDefinition }
 }
@@ -83,6 +88,28 @@ export const validateSkillDefinition = (
     errors.push(`derive.skill.json schema must be "${SKILL_DEFINITION_SCHEMA}"`)
   if (raw.catalog !== undefined && typeof raw.catalog !== "boolean")
     errors.push("derive.skill.json catalog must be boolean")
+
+  let origin: SkillSidecar["origin"]
+  if (raw.origin !== undefined) {
+    const workflow = object(raw.origin) ? raw.origin.workflow : null
+    if (
+      !object(raw.origin) ||
+      raw.origin.kind !== "workflow-launcher" ||
+      !object(workflow) ||
+      typeof workflow.short_id !== "string" ||
+      !workflow.short_id.trim() ||
+      !Number.isInteger(workflow.version) ||
+      Number(workflow.version) < 1
+    )
+      errors.push(
+        "derive.skill.json origin must be a workflow-launcher with workflow short_id and version",
+      )
+    else
+      origin = {
+        kind: "workflow-launcher",
+        workflow: { short_id: workflow.short_id.trim(), version: Number(workflow.version) },
+      }
+  }
 
   const relations: Partial<Record<SkillRelationKind, SkillRelationRef[]>> = {}
   if (raw.relations !== undefined) {
@@ -150,6 +177,7 @@ export const validateSkillDefinition = (
         ? {
             schema: SKILL_DEFINITION_SCHEMA,
             ...(typeof raw.catalog === "boolean" ? { catalog: raw.catalog } : {}),
+            ...(origin ? { origin } : {}),
             ...(Object.keys(relations).length > 0 ? { relations } : {}),
             ...(runtime ? { runtime } : {}),
           }

@@ -614,7 +614,12 @@ export interface SkillCard {
   current_content_type: string | null
   updated_at: string | null
   created_at: string
-  skill: { name: string; description: string; runtime: "single" | "graph" | "loop" }
+  skill: {
+    name: string
+    description: string
+    runtime: "single" | "graph" | "loop"
+    workflow_launcher: boolean
+  }
 }
 export interface SkillRelation {
   id: string
