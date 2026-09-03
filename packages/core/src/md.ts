@@ -136,14 +136,20 @@ const inlineSanitizer = new FilterXSS({
 export const sanitizeInline = (html: string): string => inlineSanitizer.process(html)
 
 /** Wrap clean body HTML in Derive's responsive document shell (the same mobile-safe
- *  typography the markdown renderer uses). Shared by renderMarkdown + Reader view. */
-export const renderDocShell = (bodyHtml: string, title: string | null): string => `<!doctype html>
+ *  typography the markdown renderer uses). Shared by renderMarkdown + Reader view. `head`
+ *  is extra markup for the `<head>` (the LaTeX page adds its stylesheet and the math
+ *  typesetter there); it is trusted, renderer-authored markup, never user content. */
+export const renderDocShell = (
+  bodyHtml: string,
+  title: string | null,
+  head = "",
+): string => `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escapeHtml(title ?? "Document")}</title>
-<style>${PAGE_CSS}</style>
+<style>${PAGE_CSS}</style>${head}
 </head>
 <body><main data-derive-ready>${bodyHtml}</main>${SELECTION_SCRIPT}</body>
 </html>`
