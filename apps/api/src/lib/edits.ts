@@ -7,6 +7,7 @@ import {
   applySceneEdits,
   applySlideOps,
   applyStructuralEdits,
+  type BundleManifest,
   backfillLegacyDeckStructure,
   type DiffOp,
   type DocEdit,
@@ -19,6 +20,8 @@ import {
   isQuoteEdit,
   isSceneEdit,
   isStructuralUserEdit,
+  LATEX_BUNDLE_CONTENT_TYPE,
+  LATEX_CONTENT_TYPE,
   type QuoteEdit,
   type SceneEdit,
   type SlideOp,
@@ -27,6 +30,8 @@ import {
   type VersionRecord,
 } from "@derive/core"
 import { log } from "../log"
+import { cleanPath } from "./bundle"
+import { bundleTextResolver } from "./latex-bundle"
 
 /** A conflict with the artifact's actual state (wrong kind, or it moved past the
  *  version you read) — distinct from a malformed edit itself (bad JSON, 0/multi-match)
@@ -81,11 +86,19 @@ export interface MaterializeEditsDeps {
   getVersion: (artifactId: string, n: number) => Promise<VersionRecord | null>
   sourceText: (v: Pick<VersionRecord, "blob_key" | "content_type">) => Promise<string | null>
   captureSource?: (source: string, contentType: string | null, blobKey: string) => void
+  /** For a paper bundle (`derive/latex`): its manifest, and its text files by manifest
+   *  path (`/main.tex`). Edits then land in the entry file; a caller without these keeps
+   *  refusing every bundle. */
+  manifestOf?: (v: VersionRecord) => Promise<BundleManifest | null>
+  bundleTexts?: (manifest: BundleManifest) => Promise<Map<string, string>>
 }
 
 export interface MaterializedEdits {
   content: string
   filename: string
+  /** Set when `content` is one file of a paper bundle: republish the bundle with `path`
+   *  replaced by it, rather than `content` as a single file. */
+  bundle?: { manifest: BundleManifest; path: string }
 }
 
 /** Hard cap on edits per request — see the guard in materializeEdits. */
@@ -170,8 +183,20 @@ async function currentSource(
   artifact: Pick<ArtifactRecord, "id" | "short_id" | "kind" | "current_version">,
   baseVersion: number | undefined,
   field: string,
-): Promise<{ src: string; contentType: string | null }> {
-  if (artifact.kind !== "file")
+): Promise<{
+  src: string
+  contentType: string | null
+  bundle?: MaterializedEdits["bundle"]
+  resolve?: (path: string) => string | null
+}> {
+  // A paper bundle takes edits in its entry file (main.tex), the file the page renders;
+  // every other bundle is refused, since one source string cannot name its pages.
+  const candidate =
+    artifact.kind !== "file" && deps.manifestOf
+      ? await deps.getVersion(artifact.id, artifact.current_version)
+      : null
+  const paper = candidate?.content_type === LATEX_BUNDLE_CONTENT_TYPE ? candidate : null
+  if (artifact.kind !== "file" && !paper)
     throw new EditConflictError(
       `"${artifact.short_id}" is a multi-page bundle — \`${field}\` applies to single-file artifacts; republish the changed page via \`files\` (+ \`merge\`).`,
     )
@@ -179,9 +204,25 @@ async function currentSource(
     const head = `"${artifact.short_id}" moved to v${artifact.current_version} while you were editing (you read v${baseVersion}).`
     // Show WHAT changed, not just that it did — a human (or another agent) may have
     // published in between, and seeing the delta often tells you whether your edit
-    // still makes sense at all, without a separate catch_up round trip.
-    const diffNote = await conflictDiffNote(deps, artifact, baseVersion)
+    // still makes sense at all, without a separate catch_up round trip. (A bundle's
+    // stored bytes are its manifest, so the note is skipped for a paper.)
+    const diffNote = paper ? "" : await conflictDiffNote(deps, artifact, baseVersion)
     throw new EditConflictError(`${head}${diffNote} Re-read, then retry.`)
+  }
+  if (paper && deps.manifestOf) {
+    const manifest = await deps.manifestOf(paper)
+    const texts = manifest && deps.bundleTexts ? await deps.bundleTexts(manifest) : null
+    const path = manifest ? cleanPath(manifest.entry) : ""
+    const src = texts?.get(`/${path}`)
+    if (!manifest || !texts || src === undefined)
+      throw new EditError(`Couldn't load the current source of "${artifact.short_id}".`)
+    deps.captureSource?.(src, LATEX_CONTENT_TYPE, paper.blob_key)
+    return {
+      src,
+      contentType: LATEX_CONTENT_TYPE,
+      bundle: { manifest, path },
+      resolve: bundleTextResolver(texts),
+    }
   }
   const cur = await deps.getVersion(artifact.id, artifact.current_version)
   const src = cur ? await deps.sourceText(cur) : null
@@ -235,7 +276,12 @@ export async function materializeEdits(
   edits: AnyDocEdit[],
   baseVersion: number | undefined,
 ): Promise<MaterializedEdits> {
-  const { src, contentType } = await currentSource(deps, artifact, baseVersion, "edits")
+  const { src, contentType, bundle, resolve } = await currentSource(
+    deps,
+    artifact,
+    baseVersion,
+    "edits",
+  )
   // Three edit shapes share the field: quote-scoped text edits, element-scoped
   // operations from the rendered editor, and exact-source {old_str,new_str} edits.
   // Quote + element edits may be one atomic inline-editor save; exact-source edits
@@ -322,7 +368,8 @@ export async function materializeEdits(
         throw new EditError("Element edits apply to HTML documents, not Markdown or LaTeX.")
       content = applyElementEdits(content, elementEdits)
     }
-    if (quoteEdits.length) content = applyQuoteEdits(content, contentType ?? "", quoteEdits)
+    if (quoteEdits.length)
+      content = applyQuoteEdits(content, contentType ?? "", quoteEdits, { resolve })
     // Structural operations run after text and media edits. Their stable authored
     // identities resolve against the updated source while the quote/element
     // selectors above still see the exact base-version projection they captured.
@@ -341,7 +388,7 @@ export async function materializeEdits(
   }
   // Keep the artifact's content type: the sniffer types by filename first, and the
   // default index.html would silently re-type an edited markdown doc as HTML.
-  return { content, filename: preservingFilename(contentType) }
+  return { content, filename: preservingFilename(contentType), ...(bundle ? { bundle } : {}) }
 }
 
 /** Parse a `base_version` value from an untyped form field: `undefined` when absent,
