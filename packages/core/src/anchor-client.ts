@@ -22,7 +22,7 @@
  * Keep its imports DOM-free + pure so it bundles into one small self-contained script.
  */
 
-import { findQuoteWithContext, fingerprintFrom, normWs } from "./anchor-shared"
+import { BLOCK_TEXT_ELEMENTS, findQuoteWithContext, fingerprintFrom, normWs } from "./anchor-shared"
 import {
   isMentionHandle,
   MENTION_NON_PROSE_SELECTOR,
@@ -1245,6 +1245,10 @@ interface ElReg {
         // a badge glyph can't resolve against the stored source.
         const el = (n as Text).parentElement
         if (el?.closest?.(".derive-el-hl,.derive-edit-ui")) return NodeFilter.FILTER_REJECT
+        // Typeset math is glyph soup the server never has: the TeX rides in an
+        // attribute and the source projection counts a formula as no characters.
+        // Skipping it keeps quotes, context windows and edit snapshots in step.
+        if (el?.closest?.("[data-derive-math]")) return NodeFilter.FILTER_REJECT
         return NodeFilter.FILTER_ACCEPT
       },
     })
@@ -2435,7 +2439,13 @@ interface ElReg {
   const structSigOf = (el: Element): string => {
     const list = el.querySelectorAll("*")
     let sig = ""
-    for (let i = 0; i < list.length; i++) sig += `${(list[i] as Element).tagName},`
+    for (let i = 0; i < list.length; i++) {
+      const node = list[i] as Element
+      // Inside a read-only island the markup belongs to the typesetter (KaTeX fills
+      // a formula after load); only the island itself is part of the block's shape.
+      if (node.parentElement?.closest("[data-derive-readonly]")) continue
+      sig += `${node.tagName},`
+    }
     return sig
   }
   const targetFor = (el: Element): EditTarget | null => {
@@ -6383,6 +6393,29 @@ interface ElReg {
     structureToastTimer = 0
   }
 
+  const isBlockEl = (n: Node | null): boolean =>
+    !!n && n.nodeType === 1 && BLOCK_TEXT_ELEMENTS.has((n as Element).tagName.toLowerCase())
+  /** Whether the server projection puts whitespace between two adjacent text nodes:
+   *  a block element closes or opens on the way from one to the other, or a block-level
+   *  void (<br>, <hr>) or an empty block sits between them. */
+  const blockSeam = (a: Text, b: Text): boolean => {
+    const above = new Set<Node>()
+    for (let n: Node | null = a.parentNode; n; n = n.parentNode) above.add(n)
+    let common: Node | null = b.parentNode
+    while (common && !above.has(common)) common = common.parentNode
+    for (let n: Node | null = a.parentNode; n && n !== common; n = n.parentNode)
+      if (isBlockEl(n)) return true
+    for (let n: Node | null = b.parentNode; n && n !== common; n = n.parentNode)
+      if (isBlockEl(n)) return true
+    // Siblings-in-between: walk document order from a to b, one element at a time.
+    const w = document.createTreeWalker(common ?? document, NodeFilter.SHOW_ELEMENT)
+    w.currentNode = a
+    for (let el = w.nextNode(); el; el = w.nextNode()) {
+      if (el.contains(b)) break
+      if (isBlockEl(el)) return true
+    }
+    return false
+  }
   /** The mode was opened from the host's Edit verb on the live selection (as opposed
    *  to the header button, where the first click chooses the block). */
   type EditEntry = { fromSelection?: boolean }
@@ -6400,17 +6433,23 @@ interface ElReg {
       enableResizeFocus()
       // The pre-edit snapshot every quote is built from. normalize() first so the
       // per-node offsets recorded at enable time can't be split later by typing.
-      // "\n" between nodes: every node seam is a tag boundary in the source, which
-      // the server projection renders as a space — the separator makes context
-      // windows sliced across seams whitespace-flexible-matchable there.
+      // "\n" between nodes only where the server projection has whitespace too: a
+      // block element (pageText's BLOCK_TEXT_ELEMENTS, a <br> included) opens or
+      // closes between them. An inline seam — the brackets of a citation around its
+      // link, a <b> inside a sentence — renders as nothing, and a separator there
+      // would make the context window sliced across it unmatchable.
       ;(document.body || document.documentElement).normalize()
       const nodes = textNodes(document.body)
       const starts = new Map<Text, number>()
       let full = ""
+      let prev: Text | null = null
       for (const n of nodes) {
+        if (prev && blockSeam(prev, n)) full += "\n"
         starts.set(n, full.length)
-        full += `${n.nodeValue}\n`
+        full += n.nodeValue
+        prev = n
       }
+      full += "\n"
       editBase = { text: full, starts }
       sceneEdits = []
       enableStructuralEditing()
@@ -6449,6 +6488,8 @@ interface ElReg {
   const disableTarget = (t: EditTarget) => {
     t.el.removeAttribute("contenteditable")
     t.el.removeAttribute("data-derive-editable")
+    for (const ro of t.el.querySelectorAll("[data-derive-readonly]"))
+      ro.removeAttribute("contenteditable")
     t.el.classList.remove("derive-edited")
     t.el.classList.remove("derive-edit-hover")
   }
@@ -6545,6 +6586,65 @@ interface ElReg {
     return cand
   }
   const BLOCKED_EDIT = "input,textarea,select,button,video,audio,canvas,svg,iframe,embed,object"
+  /* Regions the renderer marked `data-derive-readonly` (math, tables, images, generated
+     labels and numbers, the author block, the reference list of a paper): a click there
+     is refused with its own reason, and inside an armed block they stay inert islands. */
+  const READONLY = "[data-derive-readonly]"
+  const readonlyAt = (el: Element | null | undefined): boolean => !!el?.closest(READONLY)
+  /** The read-only island a delete from the caret would reach first in `dir`, if the
+   *  only thing between them is nothing (a character delete) or whitespace (a word or
+   *  line delete). Chromium reports NO target range when a delete would remove a
+   *  non-editable element whole, so the caret's neighbourhood is the only tell. */
+  const islandBesideCaret = (
+    t: Element,
+    e: InputEvent,
+    dir: "backward" | "forward",
+  ): Element | null => {
+    const sel = window.getSelection()
+    if (!sel?.rangeCount || !sel.isCollapsed) return null
+    const { startContainer: c, startOffset: o } = sel.getRangeAt(0)
+    if (!t.contains(c)) return null
+    const wide = /Word|Line|Entire/.test(e.inputType)
+    let node: Node | null
+    if (c.nodeType === 3) {
+      const text = c.nodeValue ?? ""
+      const between = dir === "backward" ? text.slice(0, o) : text.slice(o)
+      if (between.length && !(wide && !between.trim())) return null
+      node = dir === "backward" ? c.previousSibling : c.nextSibling
+    } else {
+      node = (dir === "backward" ? c.childNodes[o - 1] : c.childNodes[o]) ?? null
+    }
+    for (;;) {
+      while (node && node.nodeType === 3 && !(node.nodeValue ?? "").trim())
+        node = dir === "backward" ? node.previousSibling : node.nextSibling
+      if (!(node instanceof Element)) return null
+      if (node.matches(READONLY)) return node
+      // Descend into a wrapper (an <em>, a link) whose edge is the island itself.
+      node = dir === "backward" ? node.lastChild : node.firstChild
+    }
+  }
+  /** Whether a delete is about to remove a read-only island: the caret steps over one,
+   *  but Backspace beside it would still swallow it whole. */
+  const deleteHitsReadonly = (t: Element, e: InputEvent): boolean => {
+    const islands = t.querySelectorAll(READONLY)
+    if (!islands.length) return false
+    const ranges = typeof e.getTargetRanges === "function" ? e.getTargetRanges() : []
+    for (const sr of ranges) {
+      const r = document.createRange()
+      try {
+        r.setStart(sr.startContainer, sr.startOffset)
+        r.setEnd(sr.endContainer, sr.endOffset)
+      } catch (_e) {
+        continue
+      }
+      for (const ro of islands) if (r.intersectsNode(ro)) return true
+    }
+    if (ranges.length) return false
+    const it = e.inputType
+    if (/Backward$/.test(it)) return !!islandBesideCaret(t, e, "backward")
+    if (/Forward$/.test(it)) return !!islandBesideCaret(t, e, "forward")
+    return false
+  }
   /* Arm the block containing `node` and put the caret in it. Shared by the click
      inside the mode and by the ENTRY gestures (double-click, the host's Edit verb),
      so what a double-click opens is exactly what a click would have activated.
@@ -6555,6 +6655,10 @@ interface ElReg {
   const editActivate = (node: Text, caret: { node: Node; offset: number } | null): void => {
     const base = editBase
     if (!base) return
+    if (readonlyAt(node.parentElement)) {
+      post({ type: "edit-blocked", reason: "readonly" })
+      return
+    }
     const cand = editContainerFor(node)
     if (!cand) return
     // Belt and braces for the hidden-slide trap (see maskOffscreenSlides): if a
@@ -6599,6 +6703,7 @@ interface ElReg {
       // unsupported (beforeinput below still blocks structure).
       cand.setAttribute("contenteditable", "plaintext-only")
       if (cand.contentEditable !== "plaintext-only") cand.setAttribute("contenteditable", "true")
+      for (const ro of cand.querySelectorAll(READONLY)) ro.setAttribute("contenteditable", "false")
     }
     // Snapshot the selection BEFORE focus: turning an ancestor contenteditable and
     // focusing it can drop a selection made while the block was still inert, which
@@ -6686,6 +6791,10 @@ interface ElReg {
     if (el0?.closest(".derive-edit-ui")) return
     // Never navigate while editing — a click on a link edits its text instead.
     if (el0?.closest("a[href]")) e.preventDefault()
+    if (readonlyAt(el0)) {
+      post({ type: "edit-blocked", reason: "readonly" })
+      return
+    }
     // Once a text block is active, a double/triple click belongs to the browser's
     // native word/paragraph selection. Re-focusing that same contenteditable from
     // the click handler collapses Chromium's just-created selection to a caret,
@@ -6816,6 +6925,7 @@ interface ElReg {
       const resize = resizableAt(target)
       setResizeHover(resize)
       if (asEl(target)?.closest(BLOCKED_EDIT)) return setEditHover(null)
+      if (readonlyAt(asEl(target))) return setEditHover(null)
       // Media uses the bounding box; text keeps the quieter block invitation.
       const overImg = asEl(target)?.closest("img")
       if (overImg instanceof HTMLElement) return setEditHover(null)
@@ -6866,6 +6976,11 @@ interface ElReg {
             return
           }
         }
+      }
+      if (it.indexOf("delete") === 0 && deleteHitsReadonly(t, e)) {
+        e.preventDefault()
+        post({ type: "edit-blocked", reason: "readonly" })
+        return
       }
       // Before the mutation, not after: this is the only place we can capture what
       // the block looked like a keystroke ago.
