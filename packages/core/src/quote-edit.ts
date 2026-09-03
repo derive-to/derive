@@ -422,10 +422,21 @@ const latexSpanToRaw = (
       throw new EditError(
         `${label} failed: the quoted text crosses LaTeX markup (a macro, math, or a line break). Quote a plain run of prose, or open the source editor.`,
       )
-    if (seg.kind === "entity" && src[seg.rStart] === "\\")
+    if (seg.kind === "entity" && src[seg.rStart] === "\\") {
+      const included = /^\\(?:input|include|subfile)\s*\{([^}]*)\}/.exec(
+        src.slice(seg.rStart, seg.rEnd),
+      )
+      if (included) {
+        const name = (included[1] as string).trim()
+        const file = /\.\w+$/.test(name) ? name : `${name}.tex`
+        throw new EditError(
+          `${label} failed: that text comes from ${file}; open that file in the source editor.`,
+        )
+      }
       throw new EditError(
         `${label} failed: the quoted text includes text generated from a macro (a citation, a reference number, or an accented letter). Edit the source instead.`,
       )
+    }
     if (i > firstIdx && seg.rStart !== (segments[i - 1] as PageTextSegment).rEnd)
       throw new EditError(
         `${label} failed: the quoted text is not one run in the source. Open the source editor.`,
@@ -443,6 +454,49 @@ const latexSpanToRaw = (
   const rStart = first.kind === "entity" ? first.rStart : first.rStart + (start - first.tStart)
   const rEnd = last.kind === "entity" ? last.rEnd : last.rStart + (end - last.tStart)
   return { rStart, rEnd, before: "", after: "", crossesMarkup: false }
+}
+
+/** Shrink a LaTeX quote past the macro-made text at either edge that the replacement
+ *  repeats unchanged. Typing right after `\cite{k}.` word-snaps the label into the
+ *  changed run (`[1].` becomes `[1]. Amended.`), and the label is the one part that must
+ *  not be spliced; leaving it out makes the edit the plain insertion it is. `anchor` is
+ *  the raw offset to splice at when nothing of the quote is left. */
+const trimUnchangedEntities = (
+  src: string,
+  text: string,
+  segments: PageTextSegment[],
+  span: { start: number; end: number },
+  newText: string,
+): { start: number; end: number; newText: string; anchor?: number } => {
+  let { start, end } = span
+  let head = 0
+  let tail = newText.length
+  let anchor: number | undefined
+  const macroEntityAt = (t: number): PageTextSegment | null => {
+    const seg = segments[segmentIndexAt(segments, t)]
+    return seg && seg.kind === "entity" && src[seg.rStart] === "\\" ? seg : null
+  }
+  for (;;) {
+    const seg = start < end ? macroEntityAt(start) : null
+    if (!seg || seg.tStart !== start || seg.tEnd > end) break
+    const len = seg.tEnd - seg.tStart
+    if (head + len > tail || newText.slice(head, head + len) !== text.slice(seg.tStart, seg.tEnd))
+      break
+    start = seg.tEnd
+    head += len
+    anchor = seg.rEnd
+  }
+  for (;;) {
+    const seg = start < end ? macroEntityAt(end - 1) : null
+    if (!seg || seg.tEnd !== end || seg.tStart < start) break
+    const len = seg.tEnd - seg.tStart
+    if (tail - len < head || newText.slice(tail - len, tail) !== text.slice(seg.tStart, seg.tEnd))
+      break
+    end = seg.tStart
+    tail -= len
+    if (anchor === undefined) anchor = seg.rStart
+  }
+  return { start, end, newText: newText.slice(head, tail), anchor }
 }
 
 const sameMarkdownWrapper = (a: MarkdownInlineWrapper, b: MarkdownInlineWrapper): boolean =>
@@ -582,7 +636,18 @@ const markdownSpanToRaw = (
  * never shift each other's targets. Any failure throws `EditError` (with which edit
  * and why) and applies nothing, matching `applyEdits`' contract.
  */
-export function applyQuoteEdits(src: string, contentType: string, edits: QuoteEdit[]): string {
+export interface QuoteEditOptions {
+  /** Text of a bundled file by bundle-relative path, so a LaTeX projection can follow
+   *  `\input{}` and `\bibliography{}` the way the served page does. */
+  resolve?: (path: string) => string | null
+}
+
+export function applyQuoteEdits(
+  src: string,
+  contentType: string,
+  edits: QuoteEdit[],
+  opts: QuoteEditOptions = {},
+): string {
   if (!edits.length) return src
   const isHtml = isHtmlLike(contentType || "")
   const isLatex = isLatexLike(contentType || "")
@@ -594,7 +659,7 @@ export function applyQuoteEdits(src: string, contentType: string, edits: QuoteEd
     text = parts.text
     segments = parts.segments
   } else if (isLatex) {
-    const parts = latexTextProjection(src)
+    const parts = latexTextProjection(src, { resolve: opts.resolve })
     text = parts.text
     segments = parts.segments
   } else if (isMarkdownLike(contentType)) {
@@ -656,6 +721,23 @@ export function applyQuoteEdits(src: string, contentType: string, edits: QuoteEd
       throw new EditError(
         `${label} failed: the edit would split a character, emoji, or grapheme. Select the whole character.`,
       )
+    let newText = e.new_text
+    if (isLatex && segments && typeof newText === "string") {
+      const trimmed = trimUnchangedEntities(src, text, segments, span, newText)
+      span = { start: trimmed.start, end: trimmed.end }
+      newText = trimmed.newText
+      if (span.start === span.end && trimmed.anchor !== undefined) {
+        spans.push({
+          rStart: trimmed.anchor,
+          rEnd: trimmed.anchor,
+          replacement: escapeLatex(newText),
+          label,
+          before: "",
+          after: "",
+        })
+        continue
+      }
+    }
     const raw = segments
       ? isLatex
         ? latexSpanToRaw(src, segments, span.start, span.end, label)
@@ -689,7 +771,7 @@ export function applyQuoteEdits(src: string, contentType: string, edits: QuoteEd
         : isHtml
           ? escapeHtml(e.new_text ?? "")
           : isLatex
-            ? escapeLatex(e.new_text ?? "")
+            ? escapeLatex(newText ?? "")
             : (e.new_text ?? "")
     spans.push({ ...raw, replacement: raw.before + replacement + raw.after, label })
   }
