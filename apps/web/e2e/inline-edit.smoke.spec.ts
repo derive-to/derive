@@ -1716,13 +1716,21 @@ const PAPER_PNG = new Uint8Array([
   0x02, 0x00, 0x01, 0x48, 0xaf, 0xa4, 0x71, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae,
   0x42, 0x60, 0x82,
 ])
+// Fourteen more figures beside fig/a.png: a folder card shows twelve rows and scrolls
+// past that, so fig/ has to hold more than twelve.
+const PAPER_EXTRA_FIGURES = Array.from(
+  { length: 14 },
+  (_, i) => `fig/b${String(i + 1).padStart(2, "0")}.png`,
+)
 const paperZip = () =>
   zipSync({
     "main.tex": enc(PAPER_MAIN),
     "refs.bib": enc(PAPER_REFS),
     "README.md": enc("# notes"),
     "sec/method.tex": enc(PAPER_SECTION),
+    "sec/app/notes.tex": enc("Appendix notes.\n"),
     "fig/a.png": PAPER_PNG,
+    ...Object.fromEntries(PAPER_EXTRA_FIGURES.map((path) => [path, PAPER_PNG])),
   })
 
 test("LaTeX: a paper bundle edits main.tex on the page and keeps its other files", async ({
@@ -1756,8 +1764,10 @@ test("LaTeX: a paper bundle edits main.tex on the page and keeps its other files
   expect(detail.bundle.files.map((f) => f.path).sort()).toEqual([
     "README.md",
     "fig/a.png",
+    ...PAPER_EXTRA_FIGURES,
     "main.tex",
     "refs.bib",
+    "sec/app/notes.tex",
     "sec/method.tex",
   ])
 })
@@ -1783,11 +1793,11 @@ test("LaTeX: the References tab adds an entry as a new version", async ({ owner 
 })
 
 /* === The paper file bar + source editor ====================================
-   A paper's bar lists its files as chips: the entry first, then the text files a writer
-   edits, with the figures folded into one menu. The bar stays up while the source editor
-   is open, so the chips are how you move between files; the preview renders the whole
-   paper with the open file's draft substituted, and a dirty editor asks before it drops
-   typed text. */
+   A paper's bar lists its files as chips: the entry first, then the root files, then one
+   chip per folder whose card (a small tree, opened by hover, pinned by a click) holds the
+   folder's files. The bar stays up while the source editor is open, so the chips are how
+   you move between files; the preview renders the whole paper with the open file's draft
+   substituted, and a dirty editor asks before it drops typed text. */
 
 const openPaper = async (page: Page) => {
   const shortId = await publishArtifact(page, "paper.zip", paperZip(), "application/zip")
@@ -1796,10 +1806,21 @@ const openPaper = async (page: Page) => {
 }
 const preview = (page: Page) => page.frameLocator('[data-testid="artifact-preview"]')
 const editor = (page: Page) => page.locator(".cm-content")
+// A root file is a chip; a nested one is a row in its root folder's card, which opens on
+// hover. Either way the bar says where the editor is: the chip's aria-current, or the
+// folder chip's data-active.
 const openFile = async (page: Page, path: string) => {
-  await page.getByTestId(`bundle-edit-${path}`).click()
+  const root = path.split("/")[0] ?? path
+  if (root === path) {
+    await page.getByTestId(`bundle-edit-${path}`).click()
+    await expect(editor(page)).toBeVisible()
+    await expect(page.getByTestId(`bundle-edit-${path}`)).toHaveAttribute("aria-current", "true")
+    return
+  }
+  await page.getByTestId(`bundle-folder-${root}`).hover()
+  await page.getByTestId(`bundle-tree-${path}`).click()
   await expect(editor(page)).toBeVisible()
-  await expect(page.getByTestId(`bundle-edit-${path}`)).toHaveAttribute("aria-current", "true")
+  await expect(page.getByTestId(`bundle-folder-${root}`)).toHaveAttribute("data-active", "true")
 }
 // Type at the end of the open file (the caret lands wherever the click did).
 const typeAtEnd = async (page: Page, text: string) => {
@@ -1808,22 +1829,54 @@ const typeAtEnd = async (page: Page, text: string) => {
   await page.keyboard.type(text)
 }
 
-test("LaTeX: the bar lists the entry first, the text files as chips, the figures as a menu", async ({
+test("LaTeX: the bar lists the entry first, root files as chips and each folder as a card", async ({
   owner,
 }) => {
   await openPaper(owner)
   const bar = owner.getByTestId("bundle-bar")
   await expect(bar.locator('[data-testid^="bundle-edit-"]').first()).toHaveText("main.tex")
-  await expect(owner.getByTestId("bundle-edit-sec/method.tex")).toBeVisible()
+  // A root README is repository notes, not part of the paper: no chip, file kept.
+  await expect(owner.getByTestId("bundle-edit-README.md")).toHaveCount(0)
   await expect(owner.getByTestId("bundle-edit-refs.bib")).toBeVisible()
-  await expect(owner.getByTestId("bundle-edit-fig/a.png")).toHaveCount(0)
+  const fig = owner.getByTestId("bundle-folder-fig")
+  const sec = owner.getByTestId("bundle-folder-sec")
+  await expect(fig).toHaveAttribute("aria-expanded", "false")
+  await expect(sec).toHaveAttribute("aria-expanded", "false")
   await expect(bar.getByText("fig/a.png")).toHaveCount(0)
-  await expect(owner.getByTestId("bundle-figures")).toHaveText("1 figure")
-  await owner.getByTestId("bundle-figures").click()
-  const figure = owner.getByTestId("bundle-figure-fig/a.png")
+
+  // Pointing at a folder chip opens its card (the row itself never reflows); a figure
+  // in it is a link to the raw file in a new tab.
+  await fig.hover()
+  const figure = owner.getByTestId("bundle-open-fig/a.png")
   await expect(figure).toBeVisible()
   await expect(figure).toHaveAttribute("href", /\/raw\/.+\/fig\/a\.png$/)
   await expect(figure).toHaveAttribute("target", "_blank")
+  // Fifteen figures, twelve rows: the list scrolls rather than the card growing.
+  const list = owner.locator('[data-slot="popover-content"] ul[role="tree"]')
+  expect(await list.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true)
+  // Leaving closes the card after a beat...
+  await owner.mouse.move(0, 0)
+  await expect(figure).toBeHidden()
+  // ...unless a click pinned it.
+  await fig.click()
+  await owner.mouse.move(0, 0)
+  await owner.waitForTimeout(400)
+  await expect(fig).toHaveAttribute("aria-expanded", "true")
+  await expect(figure).toBeVisible()
+
+  // A nested folder expands in place inside the card, and a row opens the editor.
+  await sec.hover()
+  await expect(owner.getByTestId("bundle-tree-sec/method.tex")).toBeVisible()
+  const app = owner.getByTestId("bundle-folder-sec/app")
+  await expect(app).toHaveAttribute("aria-expanded", "false")
+  await app.click()
+  const notes = owner.getByTestId("bundle-tree-sec/app/notes.tex")
+  await expect(notes).toBeVisible()
+  await notes.click()
+  await expect(editor(owner)).toBeVisible()
+  await expect(editor(owner)).toContainText("Appendix notes.")
+  await expect(notes).toBeHidden()
+  await expect(sec).toHaveAttribute("data-active", "true")
 })
 
 test("LaTeX: a section chip opens that file with the bar still up and previews it in the paper", async ({
@@ -1837,6 +1890,13 @@ test("LaTeX: a section chip opens that file with the bar still up and previews i
     "aria-current",
     "true",
   )
+  // Reopening the card marks the row the editor holds.
+  await owner.getByTestId("bundle-folder-sec").hover()
+  await expect(owner.getByTestId("bundle-tree-sec/method.tex")).toHaveAttribute(
+    "aria-current",
+    "true",
+  )
+  await owner.mouse.move(0, 0)
   // The whole paper renders around the open file: the heading comes from main.tex, the
   // body from the draft of the section.
   const body = preview(owner).locator("body")
@@ -1864,17 +1924,11 @@ test("LaTeX: switching files over unsaved text asks first, then opens the other 
   await expect(owner.getByTestId("source-edit-discard-confirm")).toBeVisible()
   await expect(owner.getByTestId("source-edit-discard-confirm")).toContainText("sec/method.tex")
   // The editor still holds the section until the question is answered.
-  await expect(owner.getByTestId("bundle-edit-sec/method.tex")).toHaveAttribute(
-    "aria-current",
-    "true",
-  )
+  await expect(owner.getByTestId("bundle-folder-sec")).toHaveAttribute("data-active", "true")
   await owner.getByTestId("source-edit-discard").click()
   await expect(owner.getByTestId("source-edit-discard-confirm")).toBeHidden()
   await expect(owner.getByTestId("bundle-edit-main.tex")).toHaveAttribute("aria-current", "true")
-  await expect(owner.getByTestId("bundle-edit-sec/method.tex")).not.toHaveAttribute(
-    "aria-current",
-    "true",
-  )
+  await expect(owner.getByTestId("bundle-folder-sec")).not.toHaveAttribute("data-active", "true")
   await expect(editor(owner)).toContainText("\\bibliography{refs}")
   await expect(editor(owner)).not.toContainText("Unsaved.")
 })
@@ -1896,8 +1950,5 @@ test("LaTeX: Cancel over unsaved text asks first, and discarding closes the edit
   await expect(editor(owner)).toBeHidden()
   await expect(paper(owner).locator("p").first()).toBeVisible()
   // Nothing published: the paper is still v1 and the section is untouched.
-  await expect(owner.getByTestId("bundle-edit-sec/method.tex")).not.toHaveAttribute(
-    "aria-current",
-    "true",
-  )
+  await expect(owner.getByTestId("bundle-folder-sec")).not.toHaveAttribute("data-active", "true")
 })

@@ -46,6 +46,11 @@ for the recommended install and verification flow.
   editor, whose preview now renders the whole paper with the edited file substituted
   (`POST /v1/preview` takes `short_id` and `path`), and the chips stay in view while
   editing so files can be switched, with a prompt before unsaved changes are dropped.
+- **A paper's files as a tree, and Save.** The file bar above a paper lists its root files
+  as chips and each folder as a chip with a folder glyph that opens a small tree on hover
+  (twelve rows visible per list, the rest scroll; nested folders expand inside it; root
+  images open in a tab). A root `README.md` is no longer shown on papers, and the source
+  editor's button reads Save for LaTeX artifacts.
 - **Dynamic tables and figures.** An agent that refreshed a results table or a figure as
   runs landed had one write path: publish a version, so a day of refreshes was a day of
   versions with no prose change, and no way to update one cell in place. A document can
