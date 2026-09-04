@@ -1499,6 +1499,109 @@ describe("live editor preview of LaTeX (/v1/preview)", () => {
   })
 })
 
+describe("bundle-aware live preview (/v1/preview with short_id)", () => {
+  const owner: TestUser = { id: "u_prev_bundle", email: "prev-bundle@derive.test", name: "Owner" }
+  const teammate: TestUser = {
+    id: "u_prev_bundle_mate",
+    email: "prev-bundle-mate@derive.test",
+    name: "Mate",
+  }
+  const { app: authed } = makeAuthedApp("preview-bundle-org", [owner, teammate], "editor")
+  const h = as(owner.email)
+  const enc = (s: string) => new TextEncoder().encode(s)
+  const MAIN =
+    "\\documentclass{article}\n\\begin{document}\n\\section{Intro}\nStored prose \\cite{k}.\n\\input{sec/method}\n\\begin{figure}\\includegraphics{fig/a.png}\\caption{A}\\end{figure}\n\\bibliography{refs}\n\\end{document}\n"
+  const REFS = "@misc{k, title={Stored Title}, author={A B}, year={2020}}\n"
+  const publishPaper = async (fields: Record<string, string> = {}) => {
+    const form = new FormData()
+    const zip = zipSync({
+      "main.tex": enc(MAIN),
+      "sec/method.tex": enc("Included prose lives here.\n"),
+      "refs.bib": enc(REFS),
+      // PNG magic bytes: the publish path types the file by its name, not its pixels.
+      "fig/a.png": new Uint8Array([137, 80, 78, 71]),
+    })
+    form.append("file", new Blob([zip as BlobPart]), "paper.zip")
+    form.append("title", "Paper")
+    for (const [k, v] of Object.entries(fields)) form.append(k, v)
+    const res = await authed.request("/v1/artifacts", { method: "POST", body: form, headers: h })
+    const text = await res.text()
+    expect(res.status, text).toBe(201)
+    return JSON.parse(text) as { short_id: string; current_version: number }
+  }
+  const preview = async (body: Record<string, unknown>, headers = h) => {
+    const r = await authed.request("/v1/preview", jsonAs(headers, body))
+    const html = r.status === 200 ? ((await r.json()) as { html: string }).html : ""
+    return { status: r.status, html }
+  }
+
+  it("renders a main.tex draft with the bundle's inputs and bibliography resolved", async () => {
+    const { short_id } = await publishPaper()
+    const { status, html } = await preview({
+      short_id,
+      path: "main.tex",
+      content_type: "text/x-latex",
+      source: MAIN.replace("Stored prose", "Draft prose"),
+    })
+    expect(status).toBe(200)
+    expect(html).toContain("Draft prose")
+    expect(html).toContain("Included prose lives here.")
+    expect(html).toContain('href="#ref-k">1</a>')
+    expect(html).not.toContain("[k?]")
+    expect(html).toContain("Stored Title")
+  })
+
+  it("previews a refs.bib draft against the stored main.tex and stores nothing", async () => {
+    const { short_id } = await publishPaper()
+    const { status, html } = await preview({
+      short_id,
+      path: "refs.bib",
+      source: REFS.replace("Stored Title", "Draft Title"),
+    })
+    expect(status).toBe(200)
+    expect(html).toContain("Draft Title")
+    expect(html).not.toContain("Stored Title")
+    const stored = await (
+      await authed.request(`/v1/artifacts/${short_id}/files/refs.bib`, { headers: h })
+    ).json()
+    expect(stored).toEqual({ path: "refs.bib", source: REFS, version: 1 })
+    const detail = await (await authed.request(`/v1/artifacts/${short_id}`, { headers: h })).json()
+    expect(detail.current_version).toBe(1)
+  })
+
+  it("points a figure at the raw token route, which serves it without a cookie", async () => {
+    const { short_id } = await publishPaper()
+    const { html } = await preview({ short_id, path: "main.tex", source: MAIN })
+    const src = /<img src="([^"]+)"/.exec(html)?.[1]
+    expect(src).toMatch(new RegExp(`^/raw/${short_id}/v/1/t/[^/]+/fig/a\\.png$`))
+    // No headers: the sandboxed preview frame sends none, so the token is the whole proof.
+    const img = await authed.request(src ?? "")
+    expect(img.status).toBe(200)
+    expect(img.headers.get("content-type")).toBe("image/png")
+  })
+
+  it("renders the draft alone when the short_id is not a paper bundle", async () => {
+    const form = new FormData()
+    form.append("file", new Blob([enc("# Stored page\n")]), "notes.md")
+    form.append("title", "Notes")
+    const md = await (
+      await authed.request("/v1/artifacts", { method: "POST", body: form, headers: h })
+    ).json()
+    const { status, html } = await preview({ short_id: md.short_id, source: "# Draft heading" })
+    expect(status).toBe(200)
+    expect(html).toContain("<h1>Draft heading</h1>")
+    expect(html).not.toContain("Stored page")
+  })
+
+  it("is a 404 for a bundle the caller cannot read, and for an unknown short_id", async () => {
+    const { short_id } = await publishPaper({ workspace_access: "none", link_role: "none" })
+    expect((await preview({ short_id, path: "main.tex", source: MAIN })).status).toBe(200)
+    const other = await preview({ short_id, path: "main.tex", source: MAIN }, as(teammate.email))
+    expect(other.status).toBe(404)
+    expect((await preview({ short_id: "nope", source: "x" })).status).toBe(404)
+  })
+})
+
 describe("editing a paper bundle over REST", () => {
   const enc = (s: string) => new TextEncoder().encode(s)
   const MAIN =
