@@ -7,6 +7,11 @@
 //  - remove the Pages-style `_redirects` (`/*  /_shell.html  200`): on Workers that
 //    catch-all also rewrites `/assets/*`, so JS/CSS get served as HTML and the SPA never
 //    boots. `not_found_handling` replaces it correctly (real files win over the fallback).
+//  - copy KaTeX (the typesetter rendered LaTeX pages load through
+//    `/raw/vendor/katex/<version>/`) into `vendor/katex/<version>/`, where the worker's
+//    `vendorAsset` reads it from static assets. Only the two bundles and the woff2 fonts:
+//    every browser the app supports prefers woff2, so the woff/ttf fallbacks are dead
+//    weight on the edge.
 //  - write a `_headers` file so Vite's content-hashed `/assets/*` get a one-year
 //    immutable Cache-Control. Static Assets defaults to `max-age=0, must-revalidate`
 //    (right for the shell, which changes every deploy) but that re-validates every
@@ -15,7 +20,8 @@
 //    static layer serves directly — `/assets/*` is not in run_worker_first, so it does.
 //
 // Run via `pnpm --filter @derive/api build:web` (which builds apps/web first). Idempotent.
-import { copyFileSync, existsSync, rmSync, writeFileSync } from "node:fs"
+import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs"
+import { createRequire } from "node:module"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 
@@ -28,6 +34,16 @@ if (!existsSync(shell)) {
 copyFileSync(shell, join(dist, "index.html"))
 const redirects = join(dist, "_redirects")
 if (existsSync(redirects)) rmSync(redirects)
+// KaTeX under the version the package reports: the route only serves the version core
+// pins, and a test keeps the two equal, so the path here is the path pages request.
+const require = createRequire(import.meta.url)
+const katexPkg = require("katex/package.json")
+const katexDist = join(dirname(require.resolve("katex/package.json")), "dist")
+const vendor = join(dist, "vendor", "katex", katexPkg.version)
+mkdirSync(join(vendor, "fonts"), { recursive: true })
+for (const f of ["katex.min.js", "katex.min.css"]) copyFileSync(join(katexDist, f), join(vendor, f))
+for (const f of readdirSync(join(katexDist, "fonts")).filter((f) => f.endsWith(".woff2")))
+  copyFileSync(join(katexDist, "fonts", f), join(vendor, "fonts", f))
 // `_headers` for everything the static layer serves (the SPA shell + /assets/*).
 // The worker sets these on its own routes (/v1, /api, /raw, /a, …), but the SPA
 // shell and assets are served directly by Static Assets and bypass that middleware
@@ -48,8 +64,11 @@ writeFileSync(
     "/assets/*",
     "  Cache-Control: public, max-age=31536000, immutable",
     "",
+    "/vendor/*",
+    "  Cache-Control: public, max-age=31536000, immutable",
+    "",
   ].join("\n"),
 )
 process.stdout.write(
-  `prepped edge assets in ${dist} (index.html written, _redirects removed, _headers written)\n`,
+  `prepped edge assets in ${dist} (index.html written, _redirects removed, _headers written, katex ${katexPkg.version} vendored)\n`,
 )

@@ -260,7 +260,11 @@ const landInProcess =
     // only for a document that somehow has no recorded type.
     const contentType =
       input.artifact.current_content_type ??
-      (revision.filename.endsWith(".md") ? "text/markdown" : "text/html")
+      (revision.filename.endsWith(".md")
+        ? "text/markdown"
+        : revision.filename.endsWith(".tex")
+          ? "text/x-latex"
+          : "text/html")
     const author = input.onBehalf?.name ?? "Derive"
 
     // A human published while the model was thinking. Surface rather than clobber: their write

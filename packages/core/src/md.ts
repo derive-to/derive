@@ -1,7 +1,13 @@
-import { marked } from "marked"
+import { Marked } from "marked"
 // xss is CJS; named ESM imports fail at runtime under Node's interop.
 import xssPkg from "xss"
 import { decodeEntities, SELECTION_SCRIPT } from "./anchor"
+import {
+  type DynamicValue,
+  parseDynamicFence,
+  renderDynamicSeed,
+  renderDynamicValue,
+} from "./dynamic-data"
 
 const { FilterXSS, whiteList } = xssPkg as unknown as typeof import("xss")
 
@@ -15,6 +21,13 @@ const sanitizer = new FilterXSS({
     input: ["type", "checked", "disabled"],
     th: ["align"],
     td: ["align"],
+    // The two dynamic-data bindings (dynamic-data.ts). A data attribute carries no
+    // execution; keeping it is what lets the in-frame runtime find the element a live
+    // update belongs to. Nothing else about the whitelist changes: the cells a slot
+    // renders pass through this same sanitizer.
+    table: [...(whiteList.table ?? []), "data-derive-table"],
+    figure: [...(whiteList.figure ?? []), "data-derive-figure"],
+    figcaption: whiteList.figcaption ?? [],
     details: [],
     summary: [],
     ins: [],
@@ -123,20 +136,53 @@ const inlineSanitizer = new FilterXSS({
 export const sanitizeInline = (html: string): string => inlineSanitizer.process(html)
 
 /** Wrap clean body HTML in Derive's responsive document shell (the same mobile-safe
- *  typography the markdown renderer uses). Shared by renderMarkdown + Reader view. */
-export const renderDocShell = (bodyHtml: string, title: string | null): string => `<!doctype html>
+ *  typography the markdown renderer uses). Shared by renderMarkdown + Reader view. `head`
+ *  is extra markup for the `<head>` (the LaTeX page adds its stylesheet and the math
+ *  typesetter there); it is trusted, renderer-authored markup, never user content. */
+export const renderDocShell = (
+  bodyHtml: string,
+  title: string | null,
+  head = "",
+): string => `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escapeHtml(title ?? "Document")}</title>
-<style>${PAGE_CSS}</style>
+<style>${PAGE_CSS}</style>${head}
 </head>
 <body><main data-derive-ready>${bodyHtml}</main>${SELECTION_SCRIPT}</body>
 </html>`
 
-export async function renderMarkdown(source: string, title: string | null): Promise<string> {
-  return renderDocShell(sanitizeHtml(await marked.parse(source, { gfm: true })), title)
+export interface RenderMarkdownOptions {
+  /** Dynamic slots of the version being served, by name. A `derive-table` /
+   *  `derive-figure` fence renders its slot's current value when one exists, else its
+   *  inline placeholder (the seed), so a page never renders blank while seeding is
+   *  still in flight. Omitted for previews, which have no version. */
+  dynamic?: ReadonlyMap<string, DynamicValue>
+}
+
+export async function renderMarkdown(
+  source: string,
+  title: string | null,
+  opts: RenderMarkdownOptions = {},
+): Promise<string> {
+  // A per-call instance: the dynamic map is request state, and the shared `marked`
+  // singleton must not carry one request's slots into the next.
+  const md = new Marked({
+    gfm: true,
+    renderer: {
+      code({ text, lang }) {
+        const fence = parseDynamicFence(lang)
+        if (!fence) return false
+        const slot = opts.dynamic?.get(fence.name)
+        return slot && slot.kind === fence.kind
+          ? renderDynamicValue(fence.name, slot)
+          : renderDynamicSeed(fence.kind, fence.name, text)
+      },
+    },
+  })
+  return renderDocShell(sanitizeHtml(await md.parse(source)), title)
 }
 
 export const escapeHtml = (s: string): string =>

@@ -25,7 +25,11 @@ derive publish
 ```
 
 `derive login` uses browser OAuth and defaults to the hosted service. `derive init`
-creates `derive.json` plus the selected starter. The first publish records the artifact
+creates `derive.json` plus the selected starter. Templates: `md`, `html`, `workflow`,
+`slides`, `site`, `skill`, `context`, and two papers, `siggraph` (acmart) and `cvpr`
+(the CVPR author kit's layout; add its `cvpr.sty` and `ieeenat_fullname.bst` next to
+`paper/main.tex` before compiling). `derive publish` zips the `paper/` folder and Derive
+renders `main.tex` as a page. The first publish records the artifact
 ID locally; later publishes create new versions at the same URL.
 
 You can also publish an existing file or built site directly:

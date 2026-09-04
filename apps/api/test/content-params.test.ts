@@ -176,3 +176,22 @@ describe("/v1 publish — edits form field", () => {
     expect(await res.text()).toContain("not a valid version number")
   })
 })
+
+describe("LaTeX content reads", () => {
+  const tex =
+    "\\documentclass{article}\n\\begin{document}\n\\section{Alpha}\nSee \\emph{this} and $x^2$.\n\\section{Beta}\nMore.\n\\end{document}\n"
+
+  it("format=text is the rendered prose; the outline and sections follow \\section", async () => {
+    const { short_id } = await (await upload("p.tex", tex, { title: "Paper" })).json()
+    const raw = await (await app.request(`/v1/artifacts/${short_id}/content`)).text()
+    expect(raw).toBe(tex)
+    const flat = await (await app.request(`/v1/artifacts/${short_id}/content?format=text`)).text()
+    expect(flat).toContain("1 Alpha")
+    expect(flat).toContain("See this and")
+    expect(flat).not.toContain("\\emph")
+    const outline = await (await app.request(`/v1/artifacts/${short_id}/content?outline=1`)).json()
+    expect(outline.sections.map((s: { slug: string }) => s.slug)).toEqual(["alpha", "beta"])
+    const sec = await (await app.request(`/v1/artifacts/${short_id}/content?section=beta`)).text()
+    expect(sec).toBe("\\section{Beta}\nMore.\n")
+  })
+})

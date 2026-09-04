@@ -1,6 +1,6 @@
 export type ArtifactTemplateFormat = {
-  category: "Deck" | "Doc" | "Site"
-  label: "Derive deck" | "Markdown" | "HTML"
+  category: "Deck" | "Doc" | "Site" | "Academic"
+  label: "Derive deck" | "Markdown" | "HTML" | "LaTeX"
 }
 
 export const artifactTemplateFormat = (
@@ -8,6 +8,7 @@ export const artifactTemplateFormat = (
 ): ArtifactTemplateFormat | null => {
   if (contentType === "text/x-derive-deck") return { category: "Deck", label: "Derive deck" }
   if (contentType === "text/markdown") return { category: "Doc", label: "Markdown" }
+  if (contentType === "text/x-latex") return { category: "Academic", label: "LaTeX" }
   if (contentType === "text/html") return { category: "Site", label: "HTML" }
   return null
 }

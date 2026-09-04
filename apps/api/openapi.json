@@ -5651,7 +5651,7 @@
         "tags": [
           "Artifacts"
         ],
-        "summary": "Render a markdown draft to the exact published HTML (stateless; signed-in only).",
+        "summary": "Render a markdown or LaTeX draft to the exact published HTML (stateless; signed-in only).",
         "responses": {
           "200": {
             "description": "The rendered HTML.",

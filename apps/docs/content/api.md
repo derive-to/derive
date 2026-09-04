@@ -22,7 +22,25 @@ embed a static token in browser code or commit one to source control.
 
 Artifact content is available below `/raw/:ref` when the caller's access permits it. Pin a
 version with `/raw/:ref/v/:number`. Bundles preserve their internal paths beneath the version,
-and extracted fact slots are available as JSON or JSONL.
+extracted fact slots are available as JSON or JSONL, and a version's dynamic table or figure
+slots are available as JSON at `/raw/:ref/dynamic/:name.json` (or pinned beneath the
+version). Dynamic slots change without a new version, so they are never cached as immutable.
+
+A LaTeX artifact (`text/x-latex`, or a `derive/latex` bundle whose entry is `main.tex`) is
+served as a rendered page under `/raw/:ref/v/:n/index.html` and as its source at
+`/raw/:ref/v/:n/raw.tex`; the math typesetter it loads is served by the instance itself
+under `/raw/vendor/katex/<version>/`. `POST /v1/preview` renders a LaTeX draft when the
+body carries `content_type: "text/x-latex"`; with `short_id` and `path` it renders that
+paper bundle with the draft substituted for the named file, so sections, citations,
+figures and dynamic data appear as they will on the page. A paper bundle takes `edits` on its entry
+file through `POST /v1/artifacts/:id/versions` like a single file; one text file of any
+bundle is read and written by path at `GET`/`PUT /v1/artifacts/:id/files/*`, and a
+paper's bibliography as entries at `GET`/`PUT /v1/artifacts/:id/bib` (`ops` of
+`{ op: "set", key?, raw }` and `{ op: "delete", key }`). Each write publishes a new
+version of the bundle. `GET /v1/latex/templates` lists the paper
+starters and `GET /v1/latex/templates/:id` returns one as a files map to publish;
+`GET /v1/artifacts/:ref/source.zip` (with `?v=n` for an older version) downloads a paper's
+source with its dynamic data and figures as a zip that compiles in Overleaf.
 
 Access checks are identical to the rendered artifact. A raw URL is not a bypass around a
 private artifact, password, workspace boundary, or link role.

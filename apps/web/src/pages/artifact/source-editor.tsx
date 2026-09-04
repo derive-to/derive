@@ -35,9 +35,11 @@ export function SourceEditor({
   publishing,
   shortId,
   stripFrontmatter = false,
+  previewContext,
+  publishLabel = "Publish",
 }: {
   title: string
-  format: "md" | "html"
+  format: "md" | "html" | "tex"
   src: string
   message: string
   onSrc: (v: string) => void
@@ -57,6 +59,13 @@ export function SourceEditor({
   /** Skill metadata lives in YAML frontmatter but the published reader intentionally
    *  hides it. Remove that block from the live preview while keeping it editable. */
   stripFrontmatter?: boolean
+  /** Set when the draft is ONE file of a paper bundle: the preview then renders the
+   *  whole paper with this draft substituted for that file, so a section shows in its
+   *  place and the .bib resolves the paper's citations. */
+  previewContext?: { shortId: string; path: string }
+  /** The publish button's text. A paper's edit is a save of one of its files, and the
+   *  artifact page names it so; /new keeps Publish because it creates the artifact. */
+  publishLabel?: string
 }) {
   const [pane, setPane] = useState<"edit" | "preview">("edit")
   // Desktop preview-pane visibility (mobile uses the Edit/Preview tabs instead).
@@ -65,9 +74,13 @@ export function SourceEditor({
   // True when the last render failed: the pane still shows the previous good HTML,
   // so flag it stale rather than silently freezing on an out-of-date preview.
   const [previewStale, setPreviewStale] = useState(false)
+  // The effect keys off these primitives, not the object: the parent builds it fresh
+  // each render, and an identity dep would re-render the preview on every keystroke twice.
+  const previewShortId = previewContext?.shortId
+  const previewPath = previewContext?.path
 
-  // Debounced, faithful preview. HTML renders in-browser as-is; markdown is
-  // rendered by the server's real renderer (the same one publish uses), so what
+  // Debounced, faithful preview. HTML renders in-browser as-is; markdown and LaTeX
+  // are rendered by the server's real renderer (the same one publish uses), so what
   // you see is exactly what ships. Skipped while the preview is hidden so we don't
   // render on every keystroke for nothing.
   useEffect(() => {
@@ -81,7 +94,14 @@ export function SourceEditor({
       }
       const previewSource = stripFrontmatter ? skillPreviewSource(src) : src
       api
-        .renderPreview(previewSource, title)
+        .renderPreview(
+          previewSource,
+          title,
+          format === "tex" ? "text/x-latex" : undefined,
+          previewShortId && previewPath
+            ? { shortId: previewShortId, path: previewPath }
+            : undefined,
+        )
         .then(({ html }) => {
           if (!cancelled) {
             setPreview(html)
@@ -98,7 +118,7 @@ export function SourceEditor({
       cancelled = true
       clearTimeout(t)
     }
-  }, [src, format, title, previewOpen, stripFrontmatter])
+  }, [src, format, title, previewOpen, stripFrontmatter, previewShortId, previewPath])
 
   return (
     // In-flow (fills the document column), not a fullscreen overlay: the app
@@ -177,7 +197,7 @@ export function SourceEditor({
             loading={publishing}
             onClick={onPublish}
           >
-            Publish
+            {publishLabel}
           </Button>
         </span>
       </div>

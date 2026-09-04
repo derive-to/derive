@@ -41,6 +41,7 @@ const CHECKS = {
   "agent-package-files": script("check-agent-package-files.mjs"),
   skills: script("gen-skills.mjs", "--check"),
   "deck-template": script("gen-deck-template.mjs", "--check"),
+  "latex-templates": script("gen-latex-templates.mjs", "--check"),
   "app-map": script("check-app-map.mjs"),
   "mcp-coercion": script("check-mcp-coercion.mjs"),
   "local-data": script("check-local-data.mjs"),

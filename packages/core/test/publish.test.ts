@@ -230,6 +230,45 @@ describe("publish: single file", () => {
     expect(version.content_type).toBe("text/x-derive-linked-bundle")
   })
 
+  it("types LaTeX by name or by a line-anchored \\documentclass, never by a mention", async () => {
+    const paper = "\\documentclass[sigconf]{acmart}\n\\begin{document}\nHi\n\\end{document}\n"
+    const named = await publish(makeMeta(), makeBlobs(), file(paper, { filename: "paper.tex" }))
+    expect(named.version.content_type).toBe("text/x-latex")
+    expect(named.artifact.title).toBe("paper")
+    // A chapter with no preamble is LaTeX because it is NAMED .tex.
+    const chapter = await publish(
+      makeMeta(),
+      makeBlobs(),
+      file("\\section{Intro}", { filename: "intro.tex" }),
+    )
+    expect(chapter.version.content_type).toBe("text/x-latex")
+    // An unnamed payload (an inline MCP publish) is caught by the content sniff.
+    const unnamed = await publish(makeMeta(), makeBlobs(), file(paper, { filename: "report" }))
+    expect(unnamed.version.content_type).toBe("text/x-latex")
+    // Prose that MENTIONS the macro mid-line stays what its name says it is.
+    const md = await publish(
+      makeMeta(),
+      makeBlobs(),
+      file("# LaTeX tips\n\nStart with \\documentclass{article} then \\begin{document}.", {
+        filename: "tips.md",
+      }),
+    )
+    expect(md.version.content_type).toBe("text/markdown")
+    const fragment = await publish(
+      makeMeta(),
+      makeBlobs(),
+      file("<p>Write \\begin{document} to start.</p>", { filename: "snippet.html" }),
+    )
+    expect(fragment.version.content_type).toBe("text/html")
+    // Content wins over the name when the bytes are unmistakably an HTML page.
+    const html = await publish(
+      makeMeta(),
+      makeBlobs(),
+      file("<!doctype html><html><body>x</body></html>", { filename: "page.tex" }),
+    )
+    expect(html.version.content_type).toBe("text/html")
+  })
+
   it("honors explicit title, access, and author", async () => {
     const { artifact, version } = await publish(
       makeMeta(),
@@ -708,6 +747,41 @@ describe("publish: bundles (zip)", () => {
     expect(manifest.entry).toBe("/top.html")
   })
 
+  it("a root main.tex beats the README, types the bundle as a paper, and a lone .tex still enters", async () => {
+    const blobs = makeBlobs()
+    const { artifact, version } = await publish(
+      makeMeta(),
+      blobs,
+      bundle({
+        "README.md": "# About",
+        "main.tex": "\\documentclass{article}\\begin{document}x\\end{document}",
+        "figures/a.png": "png",
+        "references.bib": "@article{k, title={T}}",
+      }),
+    )
+    expect(artifact.kind).toBe("bundle")
+    expect(version.content_type).toBe("derive/latex")
+    const manifest = JSON.parse(
+      new TextDecoder().decode((await blobs.get(version.blob_key)) ?? undefined),
+    )
+    expect(manifest.entry).toBe("/main.tex")
+    expect(manifest.files["/references.bib"].type).toContain("text/plain")
+    // An HTML site with a stray .tex beside it is still a site.
+    const site = await publish(
+      makeMeta(),
+      makeBlobs(),
+      bundle({ "index.html": "<h1>s</h1>", "main.tex": "x" }),
+    )
+    expect(site.version.content_type).toBe("derive/bundle")
+    // A paper named anything else, with no html or markdown, publishes rather than 400s.
+    const lone = await publish(
+      makeMeta(),
+      makeBlobs(),
+      bundle({ "paper.tex": "x", "fig.png": "p" }),
+    )
+    expect(lone.version.content_type).toBe("derive/latex")
+  })
+
   it("strips path-traversal, __MACOSX, and .DS_Store entries", async () => {
     const blobs = makeBlobs()
     const { version } = await publish(
@@ -918,5 +992,30 @@ describe("looksLikeHtmlDocument", () => {
     expect(looksLikeHtmlDocument("<p>a paragraph</p>")).toBe(false)
     expect(looksLikeHtmlDocument("<h1>title</h1>")).toBe(false)
     expect(looksLikeHtmlDocument('<?xml version="1.0"?><svg></svg>')).toBe(false)
+  })
+})
+
+describe("publishAdvisories — LaTeX", () => {
+  it("nudges a LaTeX document stored as markdown toward a .tex filename", () => {
+    expect(
+      publishAdvisories(
+        "\\documentclass{article}\n\\begin{document}x\\end{document}",
+        "text/markdown",
+      ),
+    ).toEqual([
+      "Stored as markdown, but the content is a LaTeX document — republish with " +
+        'filename:"paper.tex" so it renders as a paper.',
+    ])
+  })
+
+  it("reports what the renderer could not honour and TAPS-refused packages", () => {
+    const tex =
+      "\\documentclass[sigconf]{acmart}\n\\usepackage{tikz}\n\\begin{document}\n\\foo{x} \\ref{missing}\n\\end{document}"
+    expect(publishAdvisories(tex, "text/x-latex")).toEqual([
+      "latex: line 4: \\foo is not supported; its text is kept as written",
+      "latex: line 4: \\ref{missing}: no \\label with this key",
+      "\\usepackage{tikz}: tikz is not on ACM TAPS's accepted package list",
+    ])
+    expect(publishAdvisories("\\begin{document}clean\\end{document}", "text/x-latex")).toEqual([])
   })
 })

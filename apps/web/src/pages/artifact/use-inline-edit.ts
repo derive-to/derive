@@ -78,6 +78,8 @@ const BLOCKED_COPY: Record<string, string> = {
     "That selection is part of something bigger. Select a run of plain words instead.",
   "protected-structure":
     "That selection includes linked or annotated content. Edit inside one element at a time.",
+  readonly:
+    "Math, tables, figures and generated text can't be edited inline. Open the source editor to change them.",
 }
 
 /**

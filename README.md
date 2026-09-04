@@ -59,8 +59,8 @@ Then pick a plan, report, or designed page we've worked on recently and publish 
 
 ## What is Derive
 
-Derive is a workspace for work made with agents. Give an HTML page, Markdown document, deck,
-or built site a lasting URL and version history. Publish from the browser, CLI, HTTP API, or
+Derive is a workspace for work made with agents. Give an HTML page, Markdown document, LaTeX
+paper, deck, or built site a lasting URL and version history. Publish from the browser, CLI, HTTP API, or
 a compatible agent over MCP. Keep the work private or share it, leave comments, edit it directly,
 and publish the next version at the same URL.
 
@@ -85,7 +85,7 @@ use the hosted app.
 
 ### Publish anything, get a permanent URL
 
-HTML, Markdown, or a whole built site. Every revision is a new version at the same URL, so a link you shared last week still resolves, and still shows its history.
+HTML, Markdown, a LaTeX paper, or a whole built site. Every revision is a new version at the same URL, so a link you shared last week still resolves, and still shows its history.
 
 </td>
 </tr>

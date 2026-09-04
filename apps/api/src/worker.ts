@@ -9,6 +9,7 @@ import type {
   RateLimit,
   ScheduledController,
 } from "@cloudflare/workers-types"
+import { KATEX_VERSION } from "@derive/core"
 import { createD1Store } from "@derive/db/d1"
 import { PgMetaStore } from "@derive/db/pg"
 import { PgVectorStore } from "@derive/db/pgvector"
@@ -377,6 +378,9 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
           write: nativeLimiter(env.RL_WRITE, 60),
           publish: nativeLimiter(env.RL_PUBLISH, 60),
           comment: nativeLimiter(env.RL_COMMENT, 60),
+          // Rides the write binding, namespaced so slot writes and general writes keep
+          // separate counts on the same per-colo limiter.
+          dynamic: nativeLimiter(env.RL_WRITE, 60, "dynamic"),
           // Both ride RL_STRICT (3/60); the prefix keeps their counts separate.
           unlock: nativeLimiter(env.RL_STRICT, 60, "unlock"),
           oauthRegister: nativeLimiter(env.RL_STRICT, 60, "oauth-register"),
@@ -431,6 +435,18 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
             shellCache = null
           }
           return shellCache
+        },
+        // The typesetter's files, copied into static assets by prep-edge-assets.mjs under
+        // the version core pins; a miss returns null and the page falls back to TeX source.
+        vendorAsset: async (file: string) => {
+          try {
+            const res = await env.ASSETS.fetch(
+              new URL(`/vendor/katex/${KATEX_VERSION}/${file}`, baseUrl).toString(),
+            )
+            return res.ok ? new Uint8Array(await res.arrayBuffer()) : null
+          } catch {
+            return null
+          }
         },
         site: siteUpstream(env),
       })

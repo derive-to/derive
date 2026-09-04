@@ -99,9 +99,10 @@ curl -X POST https://derive.to/v1/artifacts/nk0dsral/versions \
 The `filename` parameter is a hint for content type detection:
 
 - `*.md` → Markdown artifact (rendered via GFM + sanitization)
+- `*.tex` → LaTeX artifact (rendered to a page server-side; see formats/derive-latex.md)
 - `*.html` → HTML artifact (served in sandbox)
 - `*.html` with `<section class="slide">` elements → HTML deck (gets nav + present mode)
-- `*.zip` → Bundle (multi-file site)
+- `*.zip` → Bundle (multi-file site, or a paper when its root holds `main.tex`)
 
 ---
 

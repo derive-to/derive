@@ -171,3 +171,36 @@ describe("$map", () => {
     expect(slots).toContain("$stats")
   })
 })
+
+describe("LaTeX sources", () => {
+  const tex = [
+    "\\documentclass{article}",
+    "\\begin{document}",
+    "\\section{Intro}",
+    "See \\href{/artifacts/facts-mcqx8w9l}{the how-to} and \\url{https://derive.to/artifacts/derived-facts-wl1tu7zk@v3}.",
+    "\\begin{tabular}{lr} a & 1 \\\\ \\end{tabular}",
+    "\\derivetable{results}",
+    "\\begin{verbatim}",
+    "code",
+    "\\end{verbatim}",
+    "\\section{Outro}",
+    "The \\emph{end}.",
+    "\\end{document}",
+  ].join("\n")
+
+  it("derives outline, links and stats from the rendered reading of a paper", () => {
+    const d = byName(tex, "text/x-latex")
+    expect(d.$outline.sections.map((s: { label: string }) => s.label)).toEqual([
+      "1 Intro",
+      "2 Outro",
+    ])
+    expect(d.$links.refs).toEqual(["mcqx8w9l", "wl1tu7zk"])
+    expect(d.$stats.tables).toBe(2)
+    expect(d.$stats.code_blocks).toBe(1)
+    expect(d.$stats.sections).toBe(2)
+    // Words are counted on the visible text: no macro names, no preamble.
+    const visible = d.$stats.words
+    expect(visible).toBeGreaterThan(5)
+    expect(visible).toBeLessThan(tex.split(/\s+/).length)
+  })
+})

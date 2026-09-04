@@ -32,6 +32,7 @@ import { conciergeRoutes } from "./routes/concierge"
 import { connectionRoutes } from "./routes/connections"
 import { contextRoutes } from "./routes/contexts"
 import { domainRoutes } from "./routes/domains"
+import { dynamicDataRoutes } from "./routes/dynamic-data"
 import { embedRoutes } from "./routes/embeds"
 import { exportRoutes } from "./routes/exports"
 import { favoriteRoutes } from "./routes/favorites"
@@ -39,11 +40,13 @@ import { folderRoutes } from "./routes/folders"
 import { followRoutes } from "./routes/follows"
 import { githubRoutes } from "./routes/github"
 import { githubAppRoutes } from "./routes/github-app"
+import { latexRoutes } from "./routes/latex"
 import { mcpOauthRoutes } from "./routes/mcp-oauth"
 import { modelCredentialRoutes } from "./routes/model-credentials"
 import { moderationRoutes } from "./routes/moderation"
 import { notificationRoutes } from "./routes/notifications"
 import { oauthRoutes } from "./routes/oauth"
+import { paperFileRoutes } from "./routes/paper-files"
 import { planRoutes } from "./routes/plans"
 import { rawRoutes } from "./routes/raw"
 import { realtimeRoutes } from "./routes/realtime"
@@ -152,6 +155,13 @@ export function createApp(deps: AppDeps): Hono {
       return fail(c, 503, "shared state is waiting for the database update", {
         code: "shared_state_schema_unavailable",
       })
+    const dynamicPath = /^\/v1\/artifacts\/[^/]+\/dynamic(?:\/[^/]+(?:\/history)?)?$/.test(
+      c.req.path,
+    )
+    if (dynamicPath && isMissingTable(err, ["dynamic_slot", "dynamic_revision"]))
+      return fail(c, 503, "dynamic tables and figures are waiting for the database update", {
+        code: "dynamic_data_schema_unavailable",
+      })
     log.error("unhandled error", {
       method: c.req.method,
       path: redactPath(c.req.path),
@@ -230,6 +240,10 @@ export function createApp(deps: AppDeps): Hono {
         return c.html(expiredDraftPage(deps.baseUrl), 410, { "Cache-Control": "no-store" })
       const version = await ctx.meta.getVersion(a.id, n)
       if (!version) return c.text("not found", 404)
+      // Dynamic slots substitute here too, so a vanity host shows current data; fail-soft
+      // like the raw route (a page view never fails on dynamic data). A bound version is
+      // never cacheable past the next request.
+      const dynamic = await ctx.meta.listDynamicSlots(a.id, n).catch(() => [])
       return serveContent(
         c,
         ctx.blobs,
@@ -237,7 +251,13 @@ export function createApp(deps: AppDeps): Hono {
         a.title,
         prefix,
         rawPath,
-        a.expires_at ? "no-store" : cacheControlFor(a.link_role, !!a.password_hash),
+        a.expires_at
+          ? "no-store"
+          : dynamic.length
+            ? a.link_role !== "none" && !a.password_hash
+              ? "no-cache"
+              : "private, no-cache"
+            : cacheControlFor(a.link_role, !!a.password_hash),
         undefined, // onMismatch: the raw route owns content-type self-healing
         true, // reflow
         // No anchor client: these hosts are top-level pages, never embedded by the
@@ -247,6 +267,7 @@ export function createApp(deps: AppDeps): Hono {
         // An unclaimed draft (the only artifact carrying an expiry) serves the
         // discovery chip: attribution + the expiry nudge, gone once claimed.
         a.expires_at ? draftChip(a.expires_at, deps.baseUrl) : "",
+        dynamic,
       )
     }
     app.use("*", async (c, next) => {
@@ -436,6 +457,9 @@ export function createApp(deps: AppDeps): Hono {
     agentRoutes,
     artifactRoutes,
     sharedStateRoutes,
+    dynamicDataRoutes,
+    paperFileRoutes,
+    latexRoutes,
     assetRoutes,
     exportRoutes,
     attributionRoutes,

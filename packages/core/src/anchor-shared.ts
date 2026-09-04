@@ -183,3 +183,53 @@ export function findQuoteMatches(
   }
   return out
 }
+
+/** The elements whose boundaries the server's page-text projection renders as
+ *  whitespace (everything else, an inline seam, renders as nothing). Shared by
+ *  anchor.ts (pageText), latex-emit.ts (which pins its mirror equal in a test) and the
+ *  in-frame client, whose edit snapshot must put a seam exactly where pageText does. */
+export const BLOCK_TEXT_ELEMENTS = new Set([
+  "address",
+  "article",
+  "aside",
+  "blockquote",
+  "body",
+  "br",
+  "caption",
+  "dd",
+  "div",
+  "dl",
+  "dt",
+  "fieldset",
+  "figcaption",
+  "figure",
+  "footer",
+  "form",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "header",
+  "hgroup",
+  "hr",
+  "html",
+  "li",
+  "listing",
+  "main",
+  "nav",
+  "ol",
+  "p",
+  "pre",
+  "section",
+  "table",
+  "tbody",
+  "td",
+  "tfoot",
+  "th",
+  "thead",
+  "tr",
+  "ul",
+  "xmp",
+])

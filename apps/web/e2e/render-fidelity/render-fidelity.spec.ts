@@ -621,3 +621,28 @@ test.describe("render fidelity — pinning what the sandbox CSP permits", () => 
     await expect(page.getByTestId("tier3-home-heading")).toBeVisible()
   })
 })
+
+test.describe("render fidelity — LaTeX papers", () => {
+  // A paper is rendered server-side and its math typeset in the browser by KaTeX, which
+  // the page loads from the API's own /raw/vendor route (a null-origin fetch under the
+  // sandbox CSP). Pins that the typesetter arrives, renders, and logs nothing.
+  test("a LaTeX paper reaches Ready with its math typeset", async ({ owner: page }) => {
+    const tex = readFileSync(join(FIXTURES, "tier1-latex.tex"), "utf8")
+    const shortId = await publishArtifact(page, "paper.tex", tex, "text/x-latex")
+
+    const errors = await withErrorCapture(page, async () => {
+      await page.goto(`/artifacts/${shortId}`)
+    })
+    expect(errors).toEqual([])
+    await expect(page.getByTestId("render-degraded")).toHaveCount(0)
+    // The frame is titled after the artifact, which a .tex upload names by its file stem.
+    const artifact = page.frameLocator('iframe[title="paper"]')
+    await expect(
+      artifact.getByRole("heading", { name: "TierOne: A Paper Rendered as a Page" }),
+    ).toBeVisible()
+    await expect(artifact.getByRole("heading", { name: "1 Introduction" })).toBeVisible()
+    await expect(artifact.locator(".katex").first()).toBeVisible()
+    await expect(artifact.locator(".derive-eqnum")).toHaveText("(1)")
+    await expect(artifact.getByRole("cell", { name: "Baseline" })).toBeVisible()
+  })
+})

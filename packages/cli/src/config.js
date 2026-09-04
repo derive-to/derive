@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 import { deckTemplate } from "./deck-template.gen.js"
+import { LATEX_TEMPLATES } from "./latex-templates.gen.js"
 
 export const CONFIG_FILE = "derive.json"
 
@@ -469,7 +470,17 @@ export const defaultConfig = (title = "My artifact", entry = "index.md") => ({
   id: null,
 })
 
-export const TEMPLATES = ["md", "html", "workflow", "slides", "site", "skill", "context"]
+export const TEMPLATES = [
+  "md",
+  "html",
+  "workflow",
+  "slides",
+  "site",
+  "skill",
+  "context",
+  "siggraph",
+  "cvpr",
+]
 
 /** Read derive.json from `dir`, or null if absent. Throws on malformed JSON. */
 export function loadConfig(dir = ".") {
@@ -706,6 +717,14 @@ const STARTERS = {
       "skill/references/example.md": STARTER_SKILL_REFERENCE,
     }),
   },
+  // A paper: main.tex beside its .bib and derive.sty, in `paper/`. `derive publish paper/`
+  // zips the folder and Derive renders main.tex as the page. The files come from
+  // packages/core/src/latex-templates/ through scripts/gen-latex-templates.mjs, so the CLI
+  // hands out the same paper the web and MCP starters do. The CVPR starter's style files
+  // (cvpr.sty, ieeenat_fullname.bst) are not bundled here: the kit publishes them without a
+  // license, so the comment at the top of main.tex says where to get them.
+  siggraph: { entry: "paper", files: () => paperFiles("acm-siggraph") },
+  cvpr: { entry: "paper", files: () => paperFiles("cvpr") },
   // A Context project contains instructions, local references, MCP configuration, and an
   // ignored environment file. `derive context push` excludes `.env*`.
   context: {
@@ -720,6 +739,11 @@ const STARTERS = {
     extend: (config, title) => ({ ...config, context: { id: null, agent_id: null, name: title } }),
   },
 }
+
+const paperFiles = (id) =>
+  Object.fromEntries(
+    Object.entries(LATEX_TEMPLATES[id].files).map(([path, text]) => [`paper/${path}`, text]),
+  )
 
 /**
  * Files a new project gets for a template. derive.json drives publishing; AGENTS.md

@@ -1,22 +1,46 @@
 import {
+  applyDynamicBindings,
   type BlobStore,
   type BundleManifest,
   backfillLegacyDeckStructure,
+  DYNAMIC_DATA_SCRIPT,
+  type DynamicSlotRecord,
+  type DynamicValue,
   injectArtifactRuntimeScripts,
   injectSharedStateScript,
   inspectStructuralDocument,
   isBundleContentType,
+  isLatexLike,
   looksLikeHtmlDocument,
   MARKS_SCRIPT,
   mimeFor,
   parseFrontmatter,
   reflowHtml,
+  renderLatex,
   renderMarkdown,
   SELECTION_SCRIPT,
   SHARED_STATE_SCRIPT,
+  validateDynamicValue,
 } from "@derive/core"
 import type { Context } from "hono"
 import { IMMUTABLE_CACHE, RAW_HEADERS, rewriteAbsoluteUrls, toBody } from "./http"
+import { bundleTextFiles, bundleTextResolver } from "./latex-bundle"
+
+/** The slot values a version's dynamic rows carry, by name, in the shape the renderers
+ *  substitute (see @derive/core dynamic-data.ts). Shared by every render of stored
+ *  content: the served page here and the editor's live preview of a bundle. */
+export const slotValuesOf = (rows: DynamicSlotRecord[]): Map<string, DynamicValue> => {
+  const slots = new Map<string, DynamicValue>()
+  for (const row of rows) {
+    // A row the contract no longer accepts renders its placeholder rather than failing
+    // the page; the write path validated it, so this is a defensive parse, not a gate.
+    try {
+      const value = validateDynamicValue(JSON.parse(row.json))
+      if (typeof value !== "string") slots.set(row.name, value)
+    } catch {}
+  }
+  return slots
+}
 
 /**
  * Serve a stored artifact version's content under `prefix`, resolving
@@ -58,8 +82,16 @@ export const serveContent = async (
    *  discovery chip, lib/draft-chip.ts). Same contract as the anchor client:
    *  never part of the stored bytes, never on non-HTML responses. */
   append = "",
+  /** The version's dynamic table and figure slots (see @derive/core dynamic-data.ts),
+   *  loaded by the caller that knows the artifact and version. Substituted at serve
+   *  time so every consumer of these bytes (the viewer, screenshots, exports, a vanity
+   *  host, search) sees the current data; the in-frame runtime is injected only when
+   *  something is bound, so an unbound page pays nothing. */
+  dynamic: DynamicSlotRecord[] = [],
 ) => {
   const headers = { ...RAW_HEADERS, "Cache-Control": cacheControl }
+  const slots = slotValuesOf(dynamic)
+  const runtimeScripts = SHARED_STATE_SCRIPT + (slots.size ? DYNAMIC_DATA_SCRIPT : "")
   const rf = (doc: string) => (reflow ? reflowHtml(doc) : doc)
   // ?marks=1 draws numbered @N badges on the page's top-level landmark regions — the
   // marked-render variant of the render rung (see marks-script.ts). Gated on a query
@@ -85,13 +117,18 @@ export const serveContent = async (
     ? (doc: string) =>
         injectArtifactRuntimeScripts(
           doc,
-          structuralSourceValidity(doc) + SHARED_STATE_SCRIPT + SELECTION_SCRIPT,
+          structuralSourceValidity(doc) + runtimeScripts + SELECTION_SCRIPT,
         )
     : (doc: string) => doc
   // renderMarkdown already carries SELECTION_SCRIPT in its generated shell, so it
-  // needs only the early shared-state runtime. Injecting the full pair would execute
-  // the anchor client twice.
-  const withSharedState = anchors ? injectSharedStateScript : (doc: string) => doc
+  // needs only the early shared-state runtime (plus the dynamic-data runtime when a
+  // slot is bound). Injecting the full pair would execute the anchor client twice.
+  const withSharedState = anchors
+    ? (doc: string) =>
+        slots.size
+          ? injectArtifactRuntimeScripts(doc, runtimeScripts)
+          : injectSharedStateScript(doc)
+    : (doc: string) => doc
   // Runtime scripts precede authored meta CSP and execute in parse-safe order. Marks and
   // route-specific chrome remain appended because they are optional DOM enhancements.
   const htmlBody = (doc: string): string => withRuntime(rf(doc)) + marks + append
@@ -151,6 +188,25 @@ export const serveContent = async (
       const html = withSharedState(await renderMarkdown(body, title)) + append
       return c.body(html, 200, { ...headers, "Content-Type": "text/html; charset=utf-8" })
     }
+    // A paper's .tex pages render through the LaTeX path with the bundle's own files in
+    // reach: `\input{sec/intro}` and `\bibliography{refs}` resolve to sibling text files,
+    // `\includegraphics{fig/a.png}` to the image served under this prefix. `?raw=1`
+    // fetches the source, as for markdown. The style files a paper carries (.bib, .cls,
+    // .sty, .bst) are text/plain in the manifest and fall through to the raw serve.
+    if (isLatexLike(entry.type) && !["1", "true"].includes(c.req.query("raw") ?? "")) {
+      const files = await bundleTextFiles(blobs, manifest)
+      const rendered = renderLatex(new TextDecoder().decode(data), title, {
+        dynamic: slots,
+        resolve: bundleTextResolver(files),
+        imageUrl: (file) => {
+          const clean = file.replace(/^\.?\//, "")
+          const f = manifest.files[`/${clean}`]
+          return f?.type.startsWith("image/") ? `${prefix}${clean}` : null
+        },
+      })
+      const html = withSharedState(rendered.html) + append
+      return c.body(html, 200, { ...headers, "Content-Type": "text/html; charset=utf-8" })
+    }
     return c.body(toBody(data), 200, { ...headers, "Content-Type": entry.type })
   }
 
@@ -177,14 +233,32 @@ export const serveContent = async (
         "Content-Type": "text/html; charset=utf-8",
       })
     }
-    const html = withSharedState(await renderMarkdown(text, title)) + append
+    const html = withSharedState(await renderMarkdown(text, title, { dynamic: slots })) + append
+    return c.body(html, 200, { ...headers, "Content-Type": "text/html; charset=utf-8" })
+  }
+
+  if (isLatexLike(content.content_type)) {
+    if (path === "raw.tex")
+      return c.body(toBody(data), 200, {
+        ...headers,
+        "Content-Type": "text/x-latex; charset=utf-8",
+      })
+    // A single .tex file has no siblings: `\input` and `\bibliography` cannot resolve
+    // and say so on the page; figures reach it as asset URLs. The rendered shell carries
+    // SELECTION_SCRIPT already (renderDocShell), so only the shared-state runtime is added,
+    // as for markdown.
+    const text = new TextDecoder().decode(data)
+    const rendered = renderLatex(text, title, { dynamic: slots })
+    const html = withSharedState(rendered.html) + append
     return c.body(html, 200, { ...headers, "Content-Type": "text/html; charset=utf-8" })
   }
 
   // html file artifact — any path serves the document (+ selection capture)
   const ct = mimeFor(path || "index.html")
   if (ct.startsWith("text/html")) {
-    const html = await htmlBody(withDeckStructure(new TextDecoder().decode(data)))
+    const html = await htmlBody(
+      applyDynamicBindings(withDeckStructure(new TextDecoder().decode(data)), slots),
+    )
     return c.body(html, 200, { ...headers, "Content-Type": ct })
   }
   return c.body(toBody(data), 200, { ...headers, "Content-Type": ct })

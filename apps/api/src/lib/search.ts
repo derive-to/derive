@@ -6,6 +6,8 @@ import {
   enclosingMarker,
   isBundleContentType,
   isHtmlLike,
+  isLatexLike,
+  latexTextParts,
   type MetaStore,
   pageText,
   type SearchIndex,
@@ -67,12 +69,18 @@ export const baseType = (t: string): string => t.split(";")[0]?.trim() ?? t
  *  text/html check made `versionIndexText` contribute nothing and decks silently dropped
  *  out of workspace search. (Bundle call sites pass per-file types derived from the path
  *  extension, which are never the deck type, so they are unaffected either way.) */
-export const isTextType = (t: string): boolean => isHtmlLike(t) || baseType(t) === "text/markdown"
+export const isTextType = (t: string): boolean =>
+  isHtmlLike(t) || isLatexLike(t) || baseType(t) === "text/markdown"
 // Only the `markdown` format elides data: URIs (never `html`, which `edits` matches
 // byte-for-byte against, or `text`, the comment-anchor source) — see elideDataUris.
 export const present = (source: string, contentType: string, format: ReadFormat): string => {
   if (format === "html") return source
-  if (format === "text") return isHtmlLike(contentType) ? pageText(source) : source
+  if (format === "text")
+    return isHtmlLike(contentType)
+      ? pageText(source)
+      : isLatexLike(contentType)
+        ? latexTextParts(source).text
+        : source
   return elideDataUris(toMarkdown(source, contentType))
 }
 
@@ -212,7 +220,7 @@ export const searchArtifactVersion = async (
   // text-scope search (its text IS the source). An HTML text-scope search greps the
   // tag-stripped text, whose lines don't map to the source markers, so skip it.
   const markersFor = (raw: string, ct: string): SectionMarker[] =>
-    where === "source" || !isHtmlLike(ct) ? sectionMarkers(raw, ct) : []
+    where === "source" || (!isHtmlLike(ct) && !isLatexLike(ct)) ? sectionMarkers(raw, ct) : []
   const manifest = await manifestOf(deps.blobs, v)
 
   if (!manifest) {

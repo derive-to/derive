@@ -1,7 +1,8 @@
 import { mkdtempSync, rmSync } from "node:fs"
+import { createRequire } from "node:module"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { newId, publish } from "@derive/core"
+import { KATEX_VERSION, newId, publish } from "@derive/core"
 import { SqliteMetaStore } from "@derive/db/sqlite"
 import { FsBlobStore } from "@derive/storage/fs"
 import { afterAll, describe, expect, it } from "vitest"
@@ -13,7 +14,21 @@ import { createApp } from "../src/app"
 const dir = mkdtempSync(join(tmpdir(), "derive-rawslot-"))
 const meta = new SqliteMetaStore(join(dir, "r.db"))
 const blobs = new FsBlobStore(join(dir, "blobs"))
-const app = createApp({ meta, blobs, baseUrl: "http://derive.test", token: "tok" })
+// A stand-in for the KaTeX loader: two files exist, everything else is a miss.
+const vendorFiles: Record<string, string> = {
+  "katex.min.js": "window.katex={}",
+  "fonts/KaTeX_Main-Regular.woff2": "wOF2",
+}
+const app = createApp({
+  meta,
+  blobs,
+  baseUrl: "http://derive.test",
+  token: "tok",
+  vendorAsset: async (file) => {
+    const body = vendorFiles[file]
+    return body === undefined ? null : new TextEncoder().encode(body)
+  },
+})
 const enc = (s: string) => new TextEncoder().encode(s)
 
 afterAll(() => {
@@ -243,7 +258,21 @@ describe("raw render never white-screens + self-heals a mislabeled blob", () => 
   const dir = mkdtempSync(join(tmpdir(), "derive-rawheal-"))
   const meta = new SqliteMetaStore(join(dir, "r.db"))
   const blobs = new FsBlobStore(join(dir, "blobs"))
-  const app = createApp({ meta, blobs, baseUrl: "http://derive.test", token: "tok" })
+  // A stand-in for the KaTeX loader: two files exist, everything else is a miss.
+  const vendorFiles: Record<string, string> = {
+    "katex.min.js": "window.katex={}",
+    "fonts/KaTeX_Main-Regular.woff2": "wOF2",
+  }
+  const app = createApp({
+    meta,
+    blobs,
+    baseUrl: "http://derive.test",
+    token: "tok",
+    vendorAsset: async (file) => {
+      const body = vendorFiles[file]
+      return body === undefined ? null : new TextEncoder().encode(body)
+    },
+  })
   const enc = (s: string) => new TextEncoder().encode(s)
   // A full HTML document with a <style> head — the markdown renderer would strip the
   // head/style and emit a blank body (the white screen). The bytes lie under a
@@ -301,5 +330,228 @@ describe("raw render never white-screens + self-heals a mislabeled blob", () => 
     // the reclassify has landed by the time the request resolves.
     expect((await meta.getByShortId("htmlmd2"))?.current_content_type).toBe("text/html")
     expect((await meta.getVersion(a.id, 1))?.content_type).toBe("text/html")
+  })
+})
+
+// Dynamic slots are PER VERSION: a publish seeds each declared binding from the previous
+// version's latest data (or the placeholder for a new name), writes land only on the
+// current version, older versions keep what they had, and a restore starts from the
+// restored version's final data. Pinned through the surfaces an agent uses: publish,
+// the dynamic API, and restore.
+describe("dynamic slots follow the version boundary", () => {
+  const TOKEN = { authorization: "Bearer tok" }
+  const MD = (acc: string, extra = "") =>
+    [
+      "# Results",
+      "",
+      "```derive-table results",
+      "| Model | Acc |",
+      "| --- | --- |",
+      `| base | ${acc} |`,
+      "```",
+      extra,
+    ].join("\n")
+  const publishMd = (content: string, shortId?: string) => {
+    const form = new FormData()
+    form.append("file", new Blob([enc(content)]), "results.md")
+    return app.request(shortId ? `/v1/artifacts/${shortId}/versions` : "/v1/artifacts", {
+      method: "POST",
+      body: form,
+      headers: TOKEN,
+    })
+  }
+  const slot = async (shortId: string, v?: number) =>
+    (
+      await app.request(`/v1/artifacts/${shortId}/dynamic/results${v ? `?v=${v}` : ""}`, {
+        headers: TOKEN,
+      })
+    ).json()
+  const setCell = (shortId: string, value: number) =>
+    app.request(`/v1/artifacts/${shortId}/dynamic/results`, {
+      method: "PATCH",
+      headers: { ...TOKEN, "content-type": "application/json" },
+      body: JSON.stringify({ kind: "table", cells: [{ row: 0, col: "acc", value }] }),
+    })
+
+  it("seeds from the document, then carries the latest data forward version by version", async () => {
+    const a = await (await publishMd(MD("--"))).json()
+    expect(await slot(a.short_id)).toMatchObject({
+      version: 1,
+      revision: 0,
+      value: { kind: "table", table: { rows: [{ model: "base", acc: null }] } },
+    })
+    expect((await setCell(a.short_id, 0.5)).status).toBe(200)
+
+    // v2 changes prose only; its slot starts from v1's LATEST value, not the placeholder.
+    expect((await publishMd(MD("--", "\nMore prose.\n"), a.short_id)).status).toBe(201)
+    expect(await slot(a.short_id, 2)).toMatchObject({
+      version: 2,
+      revision: 0,
+      value: { table: { rows: [{ model: "base", acc: 0.5 }] } },
+    })
+    expect(await slot(a.short_id, 1)).toMatchObject({ version: 1, revision: 1 })
+
+    // Writes land on the current version and leave v1 alone.
+    expect((await setCell(a.short_id, 0.9)).status).toBe(200)
+    expect(await slot(a.short_id, 2)).toMatchObject({
+      revision: 1,
+      value: { table: { rows: [{ model: "base", acc: 0.9 }] } },
+    })
+    expect(await slot(a.short_id, 1)).toMatchObject({
+      revision: 1,
+      value: { table: { rows: [{ model: "base", acc: 0.5 }] } },
+    })
+    const history = await (
+      await app.request(`/v1/artifacts/${a.short_id}/dynamic/results/history?v=2`, {
+        headers: TOKEN,
+      })
+    ).json()
+    expect(history.revisions).toMatchObject([
+      { revision: 1 },
+      { revision: 0, note: "seeded from v1" },
+    ])
+
+    // A restore of v1 starts the new version from v1's final data, not v2's.
+    const restored = await app.request(`/v1/artifacts/${a.short_id}/restore`, {
+      method: "POST",
+      headers: { ...TOKEN, "content-type": "application/json" },
+      body: JSON.stringify({ version: 1 }),
+    })
+    expect(restored.status).toBe(201)
+    expect(await slot(a.short_id, 3)).toMatchObject({
+      version: 3,
+      revision: 0,
+      value: { table: { rows: [{ model: "base", acc: 0.5 }] } },
+    })
+  })
+
+  it("serves each version's own data on its page and over the raw JSON route, never cached past a request", async () => {
+    const a = await (await publishMd(MD("--"))).json()
+    expect((await setCell(a.short_id, 0.5)).status).toBe(200)
+    await publishMd(MD("--", "\nv2\n"), a.short_id)
+    expect((await setCell(a.short_id, 0.9)).status).toBe(200)
+
+    const v1 = await app.request(`/raw/${a.short_id}/v/1/index.html`, { headers: TOKEN })
+    expect(v1.status).toBe(200)
+    expect(v1.headers.get("cache-control")).toBe("private, no-cache")
+    const v1Body = await v1.text()
+    expect(v1Body).toContain("<td>0.5</td>")
+    expect(v1Body).toContain("/raw/derive-dynamic.js")
+    const v2 = await app.request(`/raw/${a.short_id}/v/2/index.html`, { headers: TOKEN })
+    expect(await v2.text()).toContain("<td>0.9</td>")
+
+    const alias = await app.request(`/raw/${a.short_id}/dynamic/results.json`, { headers: TOKEN })
+    expect(alias.status).toBe(200)
+    expect(alias.headers.get("access-control-allow-origin")).toBe("*")
+    expect(alias.headers.get("cache-control")).toBe("private, no-cache")
+    await expect(alias.json()).resolves.toMatchObject({
+      name: "results",
+      kind: "table",
+      version: 2,
+      revision: 1,
+      value: { table: { rows: [{ model: "base", acc: 0.9 }] } },
+    })
+    const pinned = await app.request(`/raw/${a.short_id}/v/1/dynamic/results`, { headers: TOKEN })
+    expect(pinned.headers.get("cache-control")).toBe("private, no-cache")
+    await expect(pinned.json()).resolves.toMatchObject({ version: 1, revision: 1 })
+    // Anonymous on a gated artifact: nothing, not even existence.
+    expect((await app.request(`/raw/${a.short_id}/dynamic/results.json`)).status).toBe(404)
+    const runtime = await app.request("/raw/derive-dynamic.js")
+    expect(runtime.headers.get("content-type")).toContain("text/javascript")
+    expect(await runtime.text()).toContain("dynamic-updated")
+  })
+
+  it("keeps a non-current version's slots behind the public-history gate", async () => {
+    const a = await (await publishMd(MD("--"))).json()
+    await publishMd(MD("--", "\nv2\n"), a.short_id)
+    const grant = await app.request(`/v1/artifacts/${a.short_id}/access`, {
+      method: "PATCH",
+      headers: { ...TOKEN, "content-type": "application/json" },
+      body: JSON.stringify({ linkRole: "viewer" }),
+    })
+    expect(grant.ok).toBe(true)
+    expect((await app.request(`/v1/artifacts/${a.short_id}/dynamic`)).status).toBe(200)
+    expect((await app.request(`/v1/artifacts/${a.short_id}/dynamic?v=1`)).status).toBe(404)
+    expect(
+      (await app.request(`/v1/artifacts/${a.short_id}/dynamic?v=1`, { headers: TOKEN })).status,
+    ).toBe(200)
+  })
+})
+
+describe("the KaTeX vendor route", () => {
+  const base = `/raw/vendor/katex/${KATEX_VERSION}`
+
+  it("serves an allowlisted file with CORS, nosniff and the immutable cache", async () => {
+    const js = await app.request(`${base}/katex.min.js`)
+    expect(js.status).toBe(200)
+    expect(js.headers.get("content-type")).toBe("text/javascript; charset=utf-8")
+    expect(js.headers.get("access-control-allow-origin")).toBe("*")
+    expect(js.headers.get("x-content-type-options")).toBe("nosniff")
+    expect(js.headers.get("cache-control")).toBe("public, max-age=31536000, immutable")
+    expect(await js.text()).toBe("window.katex={}")
+    const font = await app.request(`${base}/fonts/KaTeX_Main-Regular.woff2`)
+    expect(font.status).toBe(200)
+    expect(font.headers.get("content-type")).toBe("font/woff2")
+  })
+
+  it("404s another version, a file outside the allowlist, and a loader miss", async () => {
+    expect((await app.request("/raw/vendor/katex/0.0.1/katex.min.js")).status).toBe(404)
+    expect((await app.request(`${base}/katex.js`)).status).toBe(404)
+    expect((await app.request(`${base}/fonts/other.woff2`)).status).toBe(404)
+    // Allowed by the pattern, absent from the loader: still a plain 404.
+    expect((await app.request(`${base}/fonts/KaTeX_Main-Regular.ttf`)).status).toBe(404)
+    // Dotted segments never reach the route: the URL parser folds `..` (and `%2e%2e`)
+    // before routing, so this is the same request as the direct file, and each loader
+    // refuses `..` on its own for callers that are not URLs.
+    expect((await app.request(`${base}/fonts/../katex.min.js`)).status).toBe(200)
+  })
+
+  it("pins the version pages request to the package the API installs", () => {
+    const pkg = createRequire(import.meta.url)("katex/package.json") as { version: string }
+    expect(KATEX_VERSION).toBe(pkg.version)
+  })
+})
+
+describe("dynamic slots seed from LaTeX papers", () => {
+  const TOKEN = { authorization: "Bearer tok" }
+  const TEX =
+    "\\documentclass{article}\\begin{document}\\begin{table}\\caption{R}\\derivetable{results}\\end{table}\\begin{figure}\\derivefigure{teaser}\\end{figure}\\end{document}"
+  const publishFile = (name: string, bytes: Uint8Array) => {
+    const form = new FormData()
+    form.append("file", new Blob([bytes as BlobPart]), name)
+    return app.request("/v1/artifacts", { method: "POST", body: form, headers: TOKEN })
+  }
+  const slots = async (shortId: string) =>
+    (
+      (await (
+        await app.request(`/v1/artifacts/${shortId}/dynamic`, { headers: TOKEN })
+      ).json()) as {
+        slots: { name: string; kind: string; revision: number }[]
+      }
+    ).slots.map((s) => [s.name, s.kind, s.revision])
+
+  it("seeds a single .tex file's bindings as empty slots", async () => {
+    const a = await (await publishFile("paper.tex", enc(TEX))).json()
+    expect(a.current_content_type).toBe("text/x-latex")
+    expect((await slots(a.short_id)).sort()).toEqual([
+      ["results", "table", 0],
+      ["teaser", "figure", 0],
+    ])
+    const page = await (
+      await app.request(`/raw/${a.short_id}/v/1/index.html`, { headers: TOKEN })
+    ).text()
+    expect(page).toContain('data-derive-table="results"')
+    expect(page).toContain("/raw/derive-dynamic.js")
+  })
+
+  it("seeds a paper bundle's bindings from its entry", async () => {
+    const { zipSync } = await import("fflate")
+    const zip = zipSync({ "main.tex": enc(TEX), "refs.bib": enc("@misc{k, title={T}}") })
+    const a = await (await publishFile("paper.zip", zip)).json()
+    expect(a.current_content_type).toBe("derive/latex")
+    expect((await slots(a.short_id)).sort()).toEqual([
+      ["results", "table", 0],
+      ["teaser", "figure", 0],
+    ])
   })
 })

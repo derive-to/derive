@@ -1,15 +1,21 @@
 import {
   artifactUrl,
+  authorYearLabel,
   DECK_TEMPLATE,
   type DocMap,
   derivedGen,
   deriveFacts,
   isDerivedFactName,
   isHtmlLike,
+  isLatexBundle,
+  isLatexLike,
+  isLatexTemplateId,
   LINKED_BUNDLE_CONTENT_TYPE,
   LINKED_BUNDLE_FACT,
   landmarkSlice,
   landmarksOf,
+  latexTemplateSummaries,
+  latexToText,
   mapJson,
   newId,
   type OutlineSection,
@@ -42,6 +48,8 @@ import {
   focusCandidates,
 } from "../lib/focus-index"
 import { sniffImageType } from "../lib/image"
+import { paperBibliography } from "../lib/latex-bundle"
+import { latexTemplateBundle } from "../lib/latex-templates"
 import { baseType, isTextType, present, type ReadFormat, searchMatcher } from "../lib/search"
 import { WeightedLruCache } from "../lib/source-text-cache"
 import { canReadTemplateLibrary } from "../lib/template-library-access"
@@ -81,8 +89,10 @@ import { CORE_SKILLS } from "../skills-reference.gen"
 const kindCarriesFacts = (v: VersionRecord | null): boolean =>
   v?.content_type === "text/html" ||
   v?.content_type === "text/markdown" ||
-  // A deck carries DERIVED rows ($map above all) though it can embed none of its own.
-  isHtmlLike(v?.content_type ?? "")
+  // A deck carries DERIVED rows ($map above all) though it can embed none of its own;
+  // so does a paper.
+  isHtmlLike(v?.content_type ?? "") ||
+  isLatexLike(v?.content_type ?? "")
 
 interface StoredMap {
   kind: string
@@ -186,7 +196,7 @@ const lazyDeriveVersion = async (
   n: number,
 ): Promise<VersionDataRecord[] | null> => {
   const ct = v?.content_type ?? ""
-  if (!v || (ct !== "text/markdown" && !isHtmlLike(ct))) return null
+  if (!v || (ct !== "text/markdown" && !isHtmlLike(ct) && !isLatexLike(ct))) return null
   const source = await ctx.sourceText(v)
   if (source == null) return null
   const derived = deriveFacts(source, ct)
@@ -459,6 +469,19 @@ export function registerReadTool(tc: ToolContext): void {
             `No video resource "${short_id}". The starter is derive://videos/template; the guide is derive://skills/videos.`,
           )
         return json({ uri: short_id, mimeType: "text/html", content: VIDEO_TEMPLATE })
+      }
+      // The paper starters, as the MCP resources of the same URI: a files map for
+      // publish({ files }), with the CVPR kit's style files fetched in when they can be.
+      if (short_id.startsWith("derive://latex/")) {
+        const id = short_id.replace(/^derive:\/\/latex\/templates\//, "")
+        if (!short_id.startsWith("derive://latex/templates/") || !isLatexTemplateId(id))
+          return err(
+            `No paper resource "${short_id}". The starters are ${latexTemplateSummaries()
+              .map((t) => `derive://latex/templates/${t.id}`)
+              .join(" and ")}; the guide is derive://skills/latex.`,
+          )
+        const bundle = await latexTemplateBundle(id, ctx.deps.fetch ?? fetch)
+        return json({ uri: short_id, mimeType: "application/json", content: bundle })
       }
       // The built-in catalog is gone; a client on a cached instruction still asks for it.
       if (short_id.startsWith("derive://templates/"))
@@ -872,6 +895,10 @@ export function registerReadTool(tc: ToolContext): void {
         }
         if (data === "*") {
           const rows = await ctx.meta.getVersionData(a.id, n)
+          // Dynamic tables and figures list beside the facts: same version, a different
+          // lifecycle (they change without a publish; see derive://skills/dynamic-data).
+          // Fail-soft so a store that predates the tables still inventories its facts.
+          const dynamic = await ctx.meta.listDynamicSlots(a.id, n).catch(() => [])
           return json({
             short_id,
             version: n,
@@ -883,7 +910,20 @@ export function registerReadTool(tc: ToolContext): void {
               bytes: r.size_bytes,
               ...(isDerivedFactName(r.slot) ? { derived: true } : {}),
             })),
-            ...(rows.length ? {} : { note: absenceNote(null, v, `Version ${n} of "${short_id}"`) }),
+            ...(dynamic.length
+              ? {
+                  dynamic: dynamic.map((d) => ({
+                    name: d.name,
+                    kind: d.kind,
+                    revision: d.revision,
+                    bytes: d.size_bytes,
+                    updated_at: d.updated_at,
+                  })),
+                }
+              : {}),
+            ...(rows.length || dynamic.length
+              ? {}
+              : { note: absenceNote(null, v, `Version ${n} of "${short_id}"`) }),
           })
         }
         let rows =
@@ -914,6 +954,23 @@ export function registerReadTool(tc: ToolContext): void {
         }
         const row = rows[0]
         if (!row) {
+          // A name that is not a fact may be a dynamic slot of this version: same
+          // addressing, a value that moves without a publish. Reads only what is stored.
+          const slot = isDerivedFactName(data)
+            ? null
+            : await ctx.meta.getDynamicSlot(a.id, n, data).catch(() => null)
+          if (slot) {
+            log.info("dynamic_read", { name: slot.name, kind: slot.kind, surface: "read" })
+            return json({
+              short_id,
+              version: n,
+              dynamic: slot.name,
+              kind: slot.kind,
+              revision: slot.revision,
+              updated_at: slot.updated_at,
+              data: safeJson(slot.json),
+            })
+          }
           if (r.public && isDerivedFactName(data))
             return err(
               `"${short_id}" v${n} has no stored "${data}". Derived facts are computed for readers with a seat in its workspace; the world link serves only what is stored.`,
@@ -1406,6 +1463,20 @@ export function registerReadTool(tc: ToolContext): void {
           ),
         )
         const detail = new Map(detailEntries.filter((e) => e !== null))
+        // A paper's outline carries its bibliography, so an agent cites the keys the
+        // .bib already holds instead of inventing them, and sees which are cited.
+        const paper = isLatexBundle(manifest) ? await paperBibliography(ctx.blobs, manifest) : null
+        const bibliography =
+          paper && !("missing" in paper)
+            ? {
+                bibliography: paper.entries.slice(0, 200).map((e) => ({
+                  key: e.key,
+                  ...authorYearLabel(e),
+                  title: latexToText(e.fields.title ?? ""),
+                })),
+                cited: paper.cited,
+              }
+            : {}
         return json({
           short_id,
           title: a.title,
@@ -1413,6 +1484,7 @@ export function registerReadTool(tc: ToolContext): void {
           version: n,
           entry,
           url,
+          ...bibliography,
           pages: pages.map((p) => {
             const type = manifest.files[p]?.type ?? manifest.files[`/${p}`]?.type
             const d = detail.get(p)
@@ -1431,7 +1503,9 @@ export function registerReadTool(tc: ToolContext): void {
                 : {}),
             }
           }),
-          next: "Call read again with a `section` (a page path above, optionally page.html#slug for one heading's part) for content.",
+          next: paper
+            ? "Cite with \\cite{key} using a key from `bibliography`; add an entry with PUT /v1/artifacts/<short_id>/bib (see derive://skills/latex). Call read again with a `section` (a page path above) for content."
+            : "Call read again with a `section` (a page path above, optionally page.html#slug for one heading's part) for content.",
         })
       }
 

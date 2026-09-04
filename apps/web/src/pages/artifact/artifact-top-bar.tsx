@@ -1,4 +1,4 @@
-import { Maximize2, MousePointer2Off, Zap } from "lucide-react"
+import { Download, Maximize2, MousePointer2Off, Zap } from "lucide-react"
 import { useState } from "react"
 import type { CollectionGrant, LinkRole, Listed, Role, WorkspaceAccess } from "@/api"
 import { Icon } from "@/components/icons"
@@ -81,6 +81,9 @@ export function ArtifactTopBar(props: {
   onPresent: () => void
   /** Open this artifact's current source as an independent draft. */
   onCreateFrom: () => void
+  /** "Download LaTeX source": the zip route for the shown version of a paper, null for
+   *  every other kind. A plain link, so the browser saves it like any download. */
+  sourceZipHref?: string | null
   onLockToggle: () => void
   onArchive: () => void
   /** Enter focus/hero mode — strip the chrome to just the render. */
@@ -212,6 +215,13 @@ export function ArtifactTopBar(props: {
             {(!isGuest || props.publicHistory) && (
               <DropdownMenuItem data-testid="artifact-history" onSelect={props.onHistory}>
                 <Icon name="history" size={16} /> Version history
+              </DropdownMenuItem>
+            )}
+            {props.sourceZipHref && (
+              <DropdownMenuItem asChild data-testid="artifact-download-source">
+                <a href={props.sourceZipHref} download>
+                  <Download className="size-4" aria-hidden /> Download LaTeX source
+                </a>
               </DropdownMenuItem>
             )}
 

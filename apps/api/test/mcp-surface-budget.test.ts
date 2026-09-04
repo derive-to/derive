@@ -181,10 +181,26 @@ import { CORE_SKILLS } from "../src/skills-reference.gen"
 // enumeration it sits under ("gets none of that") instead of restating it.
 // Measured: descriptions 3,438 of 3,500; params 9,884 of 9,900; total 13,322 of 13,350;
 // instructions 2,579 of 2,650.
+// INSTRUCTIONS RAISED 2650 → 2750 (2026-09-03) for the `dynamic-data` skill: a new core skill,
+// and the first about data that changes WITHOUT a version (a results table an agent refreshes
+// as runs land). Its index line is the only always-loaded cost: the body, the REST shapes and
+// the row-addressing rule live in derive://skills/dynamic-data, and no tool description or
+// param changed (descriptions 3,438, params 9,884, total 13,322, exactly as before). Trimmed
+// the summary first (88 → 70 chars); measured instructions ~2,700, so the cap keeps the ~2%
+// headroom the previous raises settled on.
+// INSTRUCTIONS RAISED 2750 → 2850 (2026-09-03) for the `latex` skill: the second new core
+// skill of the day and the first about a third source language (a paper stored as LaTeX,
+// rendered as a page). Its index line is again the only always-loaded cost; publishing,
+// bundle layout, class awareness and the fail-soft rules live in derive://skills/latex.
+// The `publish` description grew by 13 chars to name the kind ("or LaTeX paper"), so a
+// keyword-based tool choice surfaces it for "write up the paper" the way it does for a deck
+// (descriptions 3,451 of 3,500, total 13,335 of 13,350); no param changed. Trimmed the
+// summary first (78 → 61 chars); measured instructions ~2,795, so the raise keeps the ~2%
+// headroom rather than landing on the ceiling.
 const TOOL_DESCRIPTIONS_BUDGET = 3_500
 const PARAM_DESCRIPTIONS_BUDGET = 9_900
 const SURFACE_BUDGET = 13_350
-const INSTRUCTIONS_BUDGET = 2_650
+const INSTRUCTIONS_BUDGET = 2_850
 
 /** No single tool may sprawl: one sentence of routing, the one thing that silently breaks,
  *  and a pointer to its skill. */

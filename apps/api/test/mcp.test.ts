@@ -17,7 +17,15 @@ import { createApp } from "../src/app"
 import { sha256 } from "../src/lib/crypto"
 import { searchMatcher, searchWorkspace } from "../src/lib/search"
 import { PNG_BYTES } from "./fixtures"
-import { appWithGrant, call, type McpApp, type RpcOut, rpc, toolText } from "./mcp-helpers"
+import {
+  appWithGrant,
+  call,
+  type McpApp,
+  type RpcOut,
+  rpc,
+  toolIsError,
+  toolText,
+} from "./mcp-helpers"
 
 // The remote MCP endpoint (/mcp) authenticated by an OAuth bearer. We seed a grant
 // straight into the oauth-provider tables (what the consent dance produces), publish
@@ -569,6 +577,46 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(
       toolText(await call(app, token, "find", { links_to: "zzzz9999", version: 2 })),
     ).toContain("no version dimension")
+  })
+
+  it("inventories dynamic slots beside facts and reads one by name, stored rows only", async () => {
+    const { app, token } = appWithGrant(dir, "dynread", "openid derive:read derive:publish")
+    const md = [
+      "# Results",
+      "",
+      "```derive-table results",
+      "| Model | Acc |",
+      "| --- | --- |",
+      "| base | -- |",
+      "```",
+      "",
+    ].join("\n")
+    const pub = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          title: "Results",
+          content: md,
+          filename: "results.md",
+        }),
+      ),
+    )
+    const inv = JSON.parse(
+      toolText(await call(app, token, "read", { short_id: pub.short_id, data: "*" })),
+    )
+    expect(inv.dynamic).toMatchObject([{ name: "results", kind: "table", revision: 0 }])
+    const one = JSON.parse(
+      toolText(await call(app, token, "read", { short_id: pub.short_id, data: "results" })),
+    )
+    expect(one).toMatchObject({
+      dynamic: "results",
+      kind: "table",
+      revision: 0,
+      data: { kind: "table", table: { rows: [{ model: "base", acc: null }] } },
+    })
+    // A name that is neither a fact nor a slot still explains its absence.
+    expect(
+      toolIsError(await call(app, token, "read", { short_id: pub.short_id, data: "nope" })),
+    ).toBe(true)
   })
 
   it("NEVER surfaces an invite-only artifact's slot data to a co-member (regression)", async () => {
@@ -3394,5 +3442,188 @@ describe("automate record — local work lands in the same ledger", () => {
     expect(run?.meta).toContain("qa1rep0rt")
     expect(run?.meta).toContain('"lane":"local"')
     expect(run?.meta).toContain("published")
+  })
+})
+
+describe("MCP: LaTeX papers", () => {
+  it("types unnamed \\documentclass content as LaTeX, reads it as text and keeps the type across edits", async () => {
+    const { app, token } = appWithGrant(dir, "latex", "openid derive:read derive:publish")
+    const created = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          title: "Paper",
+          content:
+            "\\documentclass{article}\n\\begin{document}\n\\section{Intro}\nIt was teh best.\n\\end{document}\n",
+        }),
+      ),
+    )
+    const detail = await (
+      await app.request(`/v1/artifacts/${created.short_id}`, {
+        headers: { authorization: `Bearer ${token}` },
+      })
+    ).json()
+    expect(detail.current_content_type).toBe("text/x-latex")
+    const text = toolText(
+      await call(app, token, "read", { short_id: created.short_id, format: "text" }),
+    )
+    expect(text).toContain("1 Intro")
+    expect(text).not.toContain("\\section")
+    const edited = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          short_id: created.short_id,
+          edits: [{ quote: { exact: "teh" }, new_text: "the" }],
+        }),
+      ),
+    )
+    expect(edited.version).toBe(2)
+    const after = await (
+      await app.request(`/v1/artifacts/${created.short_id}`, {
+        headers: { authorization: `Bearer ${token}` },
+      })
+    ).json()
+    expect(after.current_content_type).toBe("text/x-latex")
+    const source = toolText(
+      await call(app, token, "read", { short_id: created.short_id, format: "html" }),
+    )
+    expect(source).toContain("It was the best.")
+  })
+
+  it("publishes a files map with main.tex as a paper bundle", async () => {
+    const { app, token } = appWithGrant(dir, "latex-bundle", "openid derive:read derive:publish")
+    const created = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          title: "Bundle paper",
+          files: {
+            "main.tex": "\\documentclass{article}\\begin{document}\\input{sec/a}\\end{document}",
+            "sec/a.tex": "Included prose.",
+            "README.md": "# notes",
+          },
+        }),
+      ),
+    )
+    const detail = await (
+      await app.request(`/v1/artifacts/${created.short_id}`, {
+        headers: { authorization: `Bearer ${token}` },
+      })
+    ).json()
+    expect(detail.current_content_type).toBe("derive/latex")
+    // A bundle read lists its pages; the entry is read by section, like a docs bundle.
+    const listing = JSON.parse(
+      toolText(await call(app, token, "read", { short_id: created.short_id })),
+    )
+    expect(listing.entry).toBe("main.tex")
+    expect(listing.pages.map((p: { path: string }) => p.path)).toEqual([
+      "main.tex",
+      "sec/a.tex",
+      "README.md",
+    ])
+    const source = toolText(
+      await call(app, token, "read", {
+        short_id: created.short_id,
+        section: "sec/a.tex",
+        format: "html",
+      }),
+    )
+    expect(source).toContain("Included prose.")
+  })
+})
+
+describe("MCP: editing a paper bundle", () => {
+  it("applies edits to main.tex, republishes the bundle and lists the bibliography in read", async () => {
+    const { app, token } = appWithGrant(dir, "latex-bib", "openid derive:read derive:publish")
+    const created = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          title: "Paper",
+          files: {
+            "main.tex":
+              "\\documentclass{article}\\begin{document}\nIt was teh best \\cite{k}.\n\\bibliography{refs}\\end{document}",
+            "refs.bib":
+              "@misc{k, title={T}, author={A B}, year={2020}}\n@misc{unused, title={U}, author={C D}, year={2021}}",
+          },
+        }),
+      ),
+    )
+    const listing = JSON.parse(
+      toolText(await call(app, token, "read", { short_id: created.short_id })),
+    )
+    expect(listing.bibliography).toEqual([
+      { key: "k", authors: "B", year: "2020", title: "T" },
+      { key: "unused", authors: "D", year: "2021", title: "U" },
+    ])
+    expect(listing.cited).toEqual(["k"])
+    expect(listing.next).toContain("\\cite{key}")
+    const edited = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          short_id: created.short_id,
+          edits: [{ quote: { exact: "teh" }, new_text: "the" }],
+        }),
+      ),
+    )
+    expect(edited.version).toBe(2)
+    const detail = await (
+      await app.request(`/v1/artifacts/${created.short_id}`, {
+        headers: { authorization: `Bearer ${token}` },
+      })
+    ).json()
+    expect(detail.current_content_type).toBe("derive/latex")
+    expect(detail.bundle.files.map((f: { path: string }) => f.path).sort()).toEqual([
+      "main.tex",
+      "refs.bib",
+    ])
+    const source = toolText(
+      await call(app, token, "read", {
+        short_id: created.short_id,
+        section: "main.tex",
+        format: "html",
+      }),
+    )
+    expect(source).toContain("It was the best")
+  })
+})
+
+describe("MCP: paper starters", () => {
+  it("serves the starters as resources and through read, and publishes one as a paper", async () => {
+    const { app, token } = appWithGrant(dir, "latex-starters", "openid derive:read derive:publish")
+    const listed = await rpc(app, token, { jsonrpc: "2.0", id: 3, method: "resources/list" })
+    const uris = (
+      (listed.parsed?.result as { resources?: { uri: string }[] } | undefined)?.resources ?? []
+    ).map((r) => r.uri)
+    expect(uris).toContain("derive://latex/templates/acm-siggraph")
+    expect(uris).toContain("derive://latex/templates/cvpr")
+    const read = JSON.parse(
+      toolText(
+        await call(app, token, "read", { short_id: "derive://latex/templates/acm-siggraph" }),
+      ),
+    )
+    expect(read.mimeType).toBe("application/json")
+    expect(read.content.entry).toBe("main.tex")
+    expect(Object.keys(read.content.files).sort()).toEqual([
+      "derive.sty",
+      "main.tex",
+      "references.bib",
+    ])
+    expect(
+      toolIsError(await call(app, token, "read", { short_id: "derive://latex/templates/nope" })),
+    ).toBe(true)
+    // The files map publishes as a paper through the ordinary tool, slots seeded.
+    const created = JSON.parse(
+      toolText(
+        await call(app, token, "publish", { title: "From starter", files: read.content.files }),
+      ),
+    )
+    const detail = await (
+      await app.request(`/v1/artifacts/${created.short_id}`, {
+        headers: { authorization: `Bearer ${token}` },
+      })
+    ).json()
+    expect(detail.current_content_type).toBe("derive/latex")
+    const inv = JSON.parse(
+      toolText(await call(app, token, "read", { short_id: created.short_id, data: "*" })),
+    )
+    expect(inv.dynamic.map((d: { name: string }) => d.name).sort()).toEqual(["results", "teaser"])
   })
 })
