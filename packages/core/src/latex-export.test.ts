@@ -192,7 +192,9 @@ describe("the paper starters", () => {
       expect(main).toMatch(/\\derivetable(\[[^\]]*\])?\{results\}/)
       expect(main).toMatch(/\\derivefigure(\[[^\]]*\])?\{teaser\}/)
       expect(t.files["derive.sty"]).toBe(DERIVE_STY)
-      expect(t.files["README.md"]).toBeDefined()
+      // The starters ship no README: the export writes README-derive.md, and the web bar
+      // hides a root README on papers.
+      expect(t.files["README.md"]).toBeUndefined()
     }
     expect(latexTemplate("acm-siggraph").files["references.bib"]).toContain("@inproceedings")
     expect(latexTemplate("cvpr").files["main.bib"]).toContain("@inproceedings")

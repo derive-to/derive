@@ -786,7 +786,7 @@ describe("paper starters", () => {
       expect(files["paper/main.tex"]).toMatch(/\\derivetable(\[[^\]]*\])?\{results\}/)
       expect(files[`paper/${bib}`]).toContain("@inproceedings")
       expect(files["paper/derive.sty"]).toContain("\\ProvidesPackage{derive}")
-      expect(files["paper/README.md"]).toBeDefined()
+      expect(files["paper/README.md"]).toBeUndefined()
       expect(JSON.parse(files["derive.json"]).entry).toBe("paper")
     }
     expect(scaffoldFiles("x", "cvpr")["paper/main.tex"]).toContain("\\usepackage[review]{cvpr}")

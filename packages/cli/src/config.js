@@ -717,12 +717,12 @@ const STARTERS = {
       "skill/references/example.md": STARTER_SKILL_REFERENCE,
     }),
   },
-  // A paper: main.tex beside its .bib, README and derive.sty, in `paper/`. `derive publish
-  // paper/` zips the folder and Derive renders main.tex as the page. The files come from
+  // A paper: main.tex beside its .bib and derive.sty, in `paper/`. `derive publish paper/`
+  // zips the folder and Derive renders main.tex as the page. The files come from
   // packages/core/src/latex-templates/ through scripts/gen-latex-templates.mjs, so the CLI
   // hands out the same paper the web and MCP starters do. The CVPR starter's style files
   // (cvpr.sty, ieeenat_fullname.bst) are not bundled here: the kit publishes them without a
-  // license, so its README says where to get them.
+  // license, so the comment at the top of main.tex says where to get them.
   siggraph: { entry: "paper", files: () => paperFiles("acm-siggraph") },
   cvpr: { entry: "paper", files: () => paperFiles("cvpr") },
   // A Context project contains instructions, local references, MCP configuration, and an

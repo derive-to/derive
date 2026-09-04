@@ -22,7 +22,7 @@ for the recommended install and verification flow.
   publishes as a paper bundle with a `results` table and a `teaser` figure bound as
   dynamic slots. The CVPR kit's `cvpr.sty` and `ieeenat_fullname.bst` are fetched from a
   pinned commit at creation (they carry no license and are not vendored), fail-soft with a
-  README note. `GET /v1/artifacts/:id/source.zip` (and the viewer's More menu) downloads a
+  note. `GET /v1/artifacts/:id/source.zip` (and the viewer's More menu) downloads a
   paper as a zip that compiles in Overleaf as the page shows it: every file, `derive.sty`,
   one `derive-dynamic/<name>.tex` per binding from the slot's current value, uploaded
   figures as files, and a README with provenance and caveats.
@@ -65,7 +65,9 @@ for the recommended install and verification flow.
   (twelve rows visible per list, the rest scroll; nested folders expand inside it; root
   images open in a tab). A root `README.md` is no longer shown on papers, and the source
   editor's button reads Save for LaTeX artifacts, and the header's Edit opens that editor
-  for them (inline prose editing stays on `e` and on a selection).
+  for them (inline prose editing stays on `e` and on a selection). The paper starters ship
+  without a README; when the CVPR kit could not be fetched, the note sits as a comment at
+  the top of `main.tex`.
 - **Dynamic tables and figures.** An agent that refreshed a results table or a figure as
   runs landed had one write path: publish a version, so a day of refreshes was a day of
   versions with no prose change, and no way to update one cell in place. A document can

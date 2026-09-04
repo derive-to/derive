@@ -196,7 +196,8 @@ test.describe("paper starters", () => {
     expect(res.ok(), await res.text()).toBeTruthy()
     expect(res.headers()["content-type"]).toBe("application/zip")
     const files = unzipSync(new Uint8Array(await res.body()))
-    expect(Object.keys(files)).toEqual(
+    const names = Object.keys(files)
+    expect(names).toEqual(
       expect.arrayContaining([
         "main.tex",
         "references.bib",
@@ -206,5 +207,7 @@ test.describe("paper starters", () => {
         "README-derive.md",
       ]),
     )
+    // The starter ships no README of its own; the export's handoff note is the one README.
+    expect(names).not.toContain("README.md")
   })
 })
