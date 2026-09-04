@@ -257,8 +257,6 @@ export interface ClassProfile {
   journal: boolean
   anonymous: boolean
   review: boolean
-  /** Numeric `[3]` or author-year `[Smith et al. 2024]` citations. */
-  citeStyle: "numeric" | "authoryear"
   /** Whether natbib compresses `[1, 2, 3]` to `[1-3]`. */
   compressCitations: boolean
   /** Which reference formatter approximates the class's `.bst`. */

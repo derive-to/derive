@@ -24,6 +24,30 @@ const bodyOf = (html: string) => html.match(/<main(?:\s[^>]*)?>([\s\S]*?)<\/main
 /** What the renderer puts on regions the in-page editor must not arm. */
 const RO = ' data-derive-readonly="1"'
 
+/** A hand-written reference list: one plain `\bibitem`, one with a label. */
+const BIBITEMS =
+  "\\documentclass{article}\\begin{document}\\citet{b} and \\cite{b,a}.\\begin{thebibliography}{9}\\bibitem{a} First Entry.\\bibitem[Kerbl et al. 2023]{b} Second Entry.\\end{thebibliography}\\end{document}"
+
+const referencesOf = (body: string) =>
+  body.slice(body.indexOf('<section class="derive-references"'))
+/** The `[n]` markers of the References list, in list order. */
+const referenceMarkers = (body: string): string[] =>
+  [
+    ...referencesOf(body).matchAll(/<span class="derive-reference-label">(\[[^\]]*\])<\/span> /g),
+  ].map((m) => m[1] as string)
+/** Every number the text cites for a key is that key's position in the References list
+ *  (a compressed run `1–3` is checked by its first number). */
+const expectCitationsToMatchList = (body: string) => {
+  const position = new Map<string, number>()
+  for (const [i, m] of [...referencesOf(body).matchAll(/<li id="([^"]+)">/g)].entries())
+    position.set(m[1] as string, i + 1)
+  const cites = [
+    ...body.matchAll(/<a class="derive-cite" href="#([^"]+)">\[?(\d+)(?:–\d+)?\]?<\/a>/g),
+  ]
+  expect(cites.length).toBeGreaterThan(0)
+  for (const m of cites) expect(Number(m[2]), `cite of ${m[1]}`).toBe(position.get(m[1] as string))
+}
+
 describe("LaTeX type detection", () => {
   it("recognises a document by \\documentclass or \\begin{document} at a line start", () => {
     expect(isLatexDocument("\\documentclass[sigconf]{acmart}\n")).toBe(true)
@@ -43,7 +67,7 @@ describe("renderLatex: the acmart sigconf sample", () => {
   const body = r.body
 
   it("reads the class profile and the front matter", () => {
-    expect(r.profile).toMatchObject({ kind: "acm", format: "sigconf", citeStyle: "authoryear" })
+    expect(r.profile).toMatchObject({ kind: "acm", format: "sigconf", bibStyle: "acm" })
     expect(r.title).toBe("LumenField: Radiance Fields from a Single Photograph")
     expect(body).toContain('<h1 class="derive-title">LumenField: Radiance Fields')
     expect(body).toContain('<span class="derive-author-name">Ada Example</span>')
@@ -142,25 +166,29 @@ describe("renderLatex: the acmart sigconf sample", () => {
     )
   })
 
-  it("renders author-year citations from the .bib and a sorted References section", () => {
+  it("cites by number from the .bib whatever \\citestyle says, with a sorted References list", () => {
+    // The fixture asks for acmauthoryear; the page is one reading and cites [n] anyway.
+    expect(SIGCONF).toContain("\\citestyle{acmauthoryear}")
     expect(body).toContain(
-      `<span class="derive-citation"${RO}>[<a class="derive-cite" href="#ref-mildenhall2020nerf">Mildenhall et al. 2020</a>]</span>`,
+      `<span class="derive-citation"${RO}>[<a class="derive-cite" href="#ref-mildenhall2020nerf">2</a>]</span>`,
     )
+    // Several keys print in list order, not the order they were typed.
     expect(body).toContain(
-      `<span class="derive-citation"${RO}>[<a class="derive-cite" href="#ref-mildenhall2020nerf">Mildenhall et al. 2020</a>; <a class="derive-cite" href="#ref-kerbl2023gaussians">Kerbl et al. 2023</a>]</span>`,
+      `<span class="derive-citation"${RO}>[<a class="derive-cite" href="#ref-kerbl2023gaussians">1</a>, <a class="derive-cite" href="#ref-mildenhall2020nerf">2</a>]</span>`,
     )
+    // \citet keeps the names in the text and adds the number.
     expect(body).toContain(
-      `<span class="derive-citation"${RO}>Kerbl et al. <a class="derive-cite" href="#ref-kerbl2023gaussians">[2023]</a></span>`,
+      `<span class="derive-citation"${RO}>Kerbl et al. <a class="derive-cite" href="#ref-kerbl2023gaussians">[1]</a></span>`,
     )
-    const refs = body.slice(body.indexOf('<section class="derive-references"'))
+    expect(body).not.toContain("Mildenhall et al. 2020")
+    const refs = referencesOf(body)
     expect(refs).toContain("<h2>References</h2>")
-    expect(refs.indexOf('id="ref-kerbl2023gaussians"')).toBeLessThan(
-      refs.indexOf('id="ref-mildenhall2020nerf"'),
-    )
     expect(refs).toContain(
-      "Bernhard Kerbl, Georgios Kopanas, Thomas Leimkühler, and George Drettakis. 2023. 3D Gaussian Splatting for Real-Time Radiance Field Rendering. <em>ACM Transactions on Graphics</em> 42, 4 (2023), 139:1–139:14.",
+      '<ol class="derive-reflist"><li id="ref-kerbl2023gaussians"><span class="derive-reference-label">[1]</span> Bernhard Kerbl, Georgios Kopanas, Thomas Leimkühler, and George Drettakis. 2023. 3D Gaussian Splatting for Real-Time Radiance Field Rendering. <em>ACM Transactions on Graphics</em> 42, 4 (2023), 139:1–139:14.',
     )
     expect(refs).toContain('<a href="https://doi.org/10.1145/3592433">')
+    expect(referenceMarkers(body)).toEqual(["[1]", "[2]"])
+    expectCitationsToMatchList(body)
     // Only cited entries appear.
     expect(refs).not.toContain("pharr2016pbrt")
   })
@@ -281,12 +309,15 @@ describe("renderLatex: the acmtog journal sample (anonymous, review)", () => {
     )
   })
 
-  it("uses journal float labels and author-year citations by default", () => {
+  it("uses journal float labels but still cites by number", () => {
     expect(body).toContain(`<span class="derive-caption-label"${RO}>Fig. 1. </span>`)
     expect(body).toContain(
-      `<span class="derive-citation"${RO}>[<a class="derive-cite" href="#ref-pharr2016pbrt">Pharr et al. 2016</a>]</span>`,
+      `<span class="derive-citation"${RO}>[<a class="derive-cite" href="#ref-pharr2016pbrt">3</a>]</span>`,
     )
-    expect(body).toContain('<ul class="derive-reflist-unnumbered">')
+    expect(body).not.toContain("Pharr et al. 2016")
+    expect(body).toContain('<ol class="derive-reflist">')
+    expect(referenceMarkers(body)).toEqual(["[1]", "[2]", "[3]"])
+    expectCitationsToMatchList(body)
   })
 
   it("drops acks and anonsuppress under anonymous and reports the missing figure", () => {
@@ -322,7 +353,6 @@ describe("renderLatex: the CVPR author kit sample", () => {
     expect(r.profile).toMatchObject({
       kind: "cvpr",
       review: true,
-      citeStyle: "numeric",
       compressCitations: true,
       bibStyle: "ieeenat",
     })
@@ -357,8 +387,12 @@ describe("renderLatex: the CVPR author kit sample", () => {
   })
 
   it("formats references in the ieeenat_fullname shape, numbered", () => {
-    const refs = body.slice(body.indexOf('<section class="derive-references"'))
-    expect(refs).toContain('<ol><li id="ref-kerbl2023gaussians" value="1">')
+    const refs = referencesOf(body)
+    expect(refs).toContain(
+      '<ol class="derive-reflist"><li id="ref-kerbl2023gaussians"><span class="derive-reference-label">[1]</span> ',
+    )
+    expect(referenceMarkers(body)).toEqual(["[1]", "[2]", "[3]", "[4]"])
+    expectCitationsToMatchList(body)
     expect(refs).toContain(
       "3D Gaussian Splatting for Real-Time Radiance Field Rendering. <em>ACM Transactions on Graphics</em>, 42(4):139:1–139:14, 2023.",
     )
@@ -394,6 +428,7 @@ describe("the text projection agrees with pageText of the rendered page", () => 
     ["sigconf", SIGCONF],
     ["acmtog", ACMTOG],
     ["cvpr", CVPR],
+    ["thebibliography", BIBITEMS],
   ])("%s", (_name, source) => {
     const parts = latexTextParts(source, { resolve, imageUrl })
     const rendered = renderLatex(source, null, { resolve, imageUrl })
@@ -429,13 +464,20 @@ describe("the text projection agrees with pageText of the rendered page", () => 
     expect(SIGCONF.slice(rStart, rStart + quote.length)).toBe(quote)
   })
 
-  it("attributes made-up text (a citation label) to the macro that produced it", () => {
+  it("attributes made-up text (a citation number, a list marker) to the macro that produced it", () => {
     const parts = latexTextParts(SIGCONF, { resolve })
-    const at = parts.text.indexOf("Mildenhall et al. 2020")
-    const seg = parts.segments.find((s) => s.tStart <= at && at < s.tEnd)
-    expect(seg?.kind).toBe("entity")
-    if (!seg) return
-    expect(SIGCONF.slice(seg.rStart, seg.rEnd)).toBe("\\cite{mildenhall2020nerf}")
+    const sourceOf = (quote: string): string => {
+      const at = parts.text.indexOf(quote)
+      expect(at, quote).toBeGreaterThan(0)
+      const seg = parts.segments.find((s) => s.tStart <= at && at < s.tEnd)
+      expect(seg?.kind, quote).toBe("entity")
+      return seg ? SIGCONF.slice(seg.rStart, seg.rEnd) : ""
+    }
+    expect(sourceOf("[2]")).toBe("\\cite{mildenhall2020nerf}")
+    // The names \citet prints belong to the macro too.
+    expect(sourceOf("Kerbl et al.")).toBe("\\citet{kerbl2023gaussians}")
+    // A list marker belongs to the \bibliography that placed the list.
+    expect(sourceOf("[1] Bernhard Kerbl")).toBe("\\bibliography{refs}")
   })
 })
 
@@ -530,6 +572,23 @@ describe("renderLatex: fail-soft on unsupported and hostile input", () => {
       `<span class="derive-citation"${RO}>[<a class="derive-cite" href="#ref-k">1</a>]</span>`,
     )
     expect(r.body).not.toContain("Mildenhall")
+  })
+
+  it("numbers a hand-written thebibliography, a \\bibitem[label] included", () => {
+    const r = renderLatex(BIBITEMS)
+    expect(r.body).toContain(
+      `<span class="derive-citation"${RO}>Kerbl et al. <a class="derive-cite" href="#ref-b">[2]</a></span> and <span class="derive-citation"${RO}>[<a class="derive-cite" href="#ref-a">1</a>, <a class="derive-cite" href="#ref-b">2</a>]</span>.`,
+    )
+    expect(r.body).toContain(
+      '<ol class="derive-reflist"><li id="ref-a"><span class="derive-reference-label">[1]</span> First Entry.',
+    )
+    // An author-year .bbl label stays available to \citeauthor but never becomes the
+    // marker: the text cites [2], so the list says [2].
+    expect(r.body).toContain(
+      '<li id="ref-b"><span class="derive-reference-label">[2]</span> Second Entry.',
+    )
+    expect(referenceMarkers(r.body)).toEqual(["[1]", "[2]"])
+    expectCitationsToMatchList(r.body)
   })
 
   it("pins the KaTeX version the head requests", () => {
