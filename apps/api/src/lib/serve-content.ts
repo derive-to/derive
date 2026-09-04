@@ -26,6 +26,22 @@ import type { Context } from "hono"
 import { IMMUTABLE_CACHE, RAW_HEADERS, rewriteAbsoluteUrls, toBody } from "./http"
 import { bundleTextFiles, bundleTextResolver } from "./latex-bundle"
 
+/** The slot values a version's dynamic rows carry, by name, in the shape the renderers
+ *  substitute (see @derive/core dynamic-data.ts). Shared by every render of stored
+ *  content: the served page here and the editor's live preview of a bundle. */
+export const slotValuesOf = (rows: DynamicSlotRecord[]): Map<string, DynamicValue> => {
+  const slots = new Map<string, DynamicValue>()
+  for (const row of rows) {
+    // A row the contract no longer accepts renders its placeholder rather than failing
+    // the page; the write path validated it, so this is a defensive parse, not a gate.
+    try {
+      const value = validateDynamicValue(JSON.parse(row.json))
+      if (typeof value !== "string") slots.set(row.name, value)
+    } catch {}
+  }
+  return slots
+}
+
 /**
  * Serve a stored artifact version's content under `prefix`, resolving
  * a sub-`path` for bundles. Shared by the `/raw/*` sandbox routes and domain mode:
@@ -83,15 +99,7 @@ export const serveContent = async (
    *  (callers that serve a snapshot, never a live page). */
   boundCacheControl?: string,
 ) => {
-  const slots = new Map<string, DynamicValue>()
-  for (const row of dynamic) {
-    // A row the contract no longer accepts renders its placeholder rather than failing
-    // the page; the write path validated it, so this is a defensive parse, not a gate.
-    try {
-      const value = validateDynamicValue(JSON.parse(row.json))
-      if (typeof value !== "string") slots.set(row.name, value)
-    } catch {}
-  }
+  const slots = slotValuesOf(dynamic)
   // Bound by declaration: the rendered document carries a binding attribute on a real
   // table or figure tag (every carrier emits one for a declared name, rows or not), or a
   // slot row was substituted. Tag-anchored, so prose about the feature cannot match.
