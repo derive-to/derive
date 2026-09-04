@@ -21,7 +21,8 @@ for the recommended install and verification flow.
   (`derive/latex`, "Paper"), and is read as a web page rendered from the source at serve
   time: sections, prose, lists, tables, floats with numbered captions, footnotes, math
   typeset in the browser by KaTeX served from the instance's own copy, and citations
-  resolved from BibTeX (or a compiled `.bbl`) in the class's style. acmart (ACM SIGGRAPH
+  resolved from BibTeX (or a compiled `.bbl`), printed as `[1]`, `[2]` with matching
+  markers in the References section and entries in the class's style. acmart (ACM SIGGRAPH
   and journals) and the CVPR author kit are read with their title blocks, anonymous and
   review modes and citation styles; other classes render generically. Comments anchor to
   the rendered prose and inline edits map back to the source; unknown macros and
@@ -40,6 +41,11 @@ for the recommended install and verification flow.
   BibTeX, each save a new version (`GET`/`PUT /v1/artifacts/:id/bib`,
   `GET`/`PUT /v1/artifacts/:id/files/*`). Agents see the bibliography and the cited
   keys in `read` and are told to cite from it.
+- **Editing a paper bundle file by file.** The file chips above a paper list `main.tex`
+  first and fold its images into one figures menu; a chip opens the file in the source
+  editor, whose preview now renders the whole paper with the edited file substituted
+  (`POST /v1/preview` takes `short_id` and `path`), and the chips stay in view while
+  editing so files can be switched, with a prompt before unsaved changes are dropped.
 - **Dynamic tables and figures.** An agent that refreshed a results table or a figure as
   runs landed had one write path: publish a version, so a day of refreshes was a day of
   versions with no prose change, and no way to update one cell in place. A document can

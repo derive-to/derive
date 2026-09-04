@@ -28,8 +28,9 @@ citations resolved from BibTeX. The source you publish is exactly what you get b
 
 - **acmart** (SIGGRAPH and the ACM journals): the title block with authors, affiliations,
   ORCID and email; `\acmConference` or the journal line; abstract; CCS concepts from
-  `\ccsdesc`; keywords; `teaserfigure`; `anonymous`/`review` options;
-  `\citestyle{acmauthoryear}`; journal float labels (`Fig. 1.`)
+  `\ccsdesc`; keywords; `teaserfigure`; `anonymous`/`review` options; journal float
+  labels (`Fig. 1.`). Citations print as `[1]`, `[2]` on the page whatever the class's
+  own style; the References section carries matching `[n]` markers
 - **CVPR author kit** (`\documentclass{article}` + `\usepackage[review|final]{cvpr}`):
   the review band with the paper id, author columns in final mode, numeric compressed
   citations (`[1–3]`), cleveref wording (`Fig. 1`, `Tab. 1`, `Sec. 2`)

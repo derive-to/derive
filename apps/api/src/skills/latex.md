@@ -35,9 +35,10 @@ reading of the paper, and the LaTeX source stays what compiles.
 booktabs rules, `\multicolumn`), `figure`/`table` floats with captions, sub-floats,
 footnotes, theorem-like environments, `\ref`/`\eqref`/`\cref`, `\url`/`\href`, and math
 (`$…$`, `\[…\]`, `equation`, `align`, `gather`) typeset in the browser by KaTeX. Citations
-resolve against the bundle's `.bib` (or a compiled `.bbl`, which wins when present) in the
-class's style: author-year for acmart journals and `\citestyle{acmauthoryear}`, numeric
-otherwise; a References section is printed where `\bibliography` stands.
+resolve against the bundle's `.bib` (or a compiled `.bbl`, which wins when present) and
+print as `[1]`, `[2]` on the page whatever the class says (the compiled PDF keeps the
+class's own style); a References section with matching `[n]` markers, entries formatted
+in the class's style and sorted alphabetically, is printed where `\bibliography` stands.
 
 Class awareness: **acmart** (title block, authors with affiliations and ORCID, the
 conference or journal line, abstract, CCS concepts from `\ccsdesc`, keywords, the teaser,
@@ -72,7 +73,7 @@ refused with the file's name, so republish that file with `files` + `merge`.
 
 The bundle's `.bib` is the source of truth for references. `read(short_id)` on a paper
 bundle lists `bibliography` (key, authors, year, title) and `cited`; cite with
-`\cite{key}` (`\citep`/`\citet` in author-year classes) using a listed key, never an
+`\cite{key}` (or `\citep`/`\citet`; the page prints `[n]` either way) using a listed key, never an
 invented one. The publish receipt reports any `\cite` that did not resolve. To add,
 change or remove an entry without rewriting the file, send its BibTeX to
 `PUT /v1/artifacts/<short_id>/bib` with a bearer from `stage({ target: 'api' })`:
