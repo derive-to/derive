@@ -11,6 +11,7 @@ import {
   hashPassword as scryptPassword,
   verifyPassword as verifyScryptPassword,
 } from "better-auth/crypto"
+import { RAW_TOKEN_WINDOW_MS } from "./http"
 
 export const sha256 = (s: string): string => createHash("sha256").update(s).digest("hex")
 
@@ -57,6 +58,20 @@ export const signState = (
   const body = Buffer.from(JSON.stringify({ ...payload, iat: nowMs })).toString("base64url")
   const sig = createHmac("sha256", stateKey(secret)).update(body).digest("base64url")
   return `${body}.${sig}`
+}
+
+/** The raw-content capability the sandboxed viewer carries in its URL path (raw.ts's
+ *  `t/:token` route): `rid` binds it to one artifact, `history` says whether its older
+ *  versions are in reach too. One minting place, so every surface that embeds raw content
+ *  (the artifact record, the editor's live preview) hands out the same token for the same
+ *  claim inside a window and the browser's cache entry stays reachable. `issuedAt` is the
+ *  bucketed stamp the token carries, for callers that state its expiry. */
+export const signRawToken = (
+  secret: string,
+  claim: { rid: string; history: boolean },
+): { token: string; issuedAt: number } => {
+  const issuedAt = bucketedNow(RAW_TOKEN_WINDOW_MS)
+  return { token: signState(claim, secret, issuedAt), issuedAt }
 }
 
 export const verifyState = <T>(
