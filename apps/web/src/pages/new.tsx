@@ -50,7 +50,7 @@ export function NewArtifact() {
   const search = useSearch({ from: "/new" })
   const isSkill = search.start === "skill"
   // A paper starter: the New page opens on its main.tex, and publishing sends the whole
-  // starter (the .bib, README, derive.sty, any fetched style files) as one bundle.
+  // starter (the .bib, derive.sty, any fetched style files) as one bundle.
   const paperId: LatexTemplateId | null =
     search.start === "acm-siggraph" || search.start === "cvpr" ? search.start : null
   useDocumentTitle(isSkill ? "New skill" : paperId ? "New paper" : "New artifact")
@@ -130,7 +130,7 @@ export function NewArtifact() {
       // not remain incomplete until a manual reload.
       void seedPublishedArtifact(qc, a)
       // The starter could not fetch everything (the CVPR kit): say so once, here, since
-      // the README in the bundle is the only other place that does.
+      // the comment at the top of main.tex is the only other place that does.
       for (const note of paper.data?.notes ?? []) toast(note)
       // Drop the unsaved guard before navigating to the artifact (this nav IS the save,
       // not an abandon), so the blocker doesn't intercept it. Ref, so it's in effect the

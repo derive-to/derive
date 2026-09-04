@@ -16,9 +16,9 @@ import { log } from "../log"
  * so they are not in this repository. They are fetched from a pinned commit, verified
  * against pinned hashes, and added to the user's own bundle (their content, like any file
  * they upload). A fetch that fails, times out or returns other bytes degrades to a note:
- * the paper is still created, the README says what to add, and the publish receipt
- * carries the same line. Fetched bytes are cached per process, keyed by URL, so a busy
- * instance asks GitHub once.
+ * the paper is still created, a comment on the first line of main.tex says what to add,
+ * and the publish receipt carries the same line. Fetched bytes are cached per process,
+ * keyed by URL, so a busy instance asks GitHub once.
  */
 export interface LatexTemplateBundle {
   id: LatexTemplateId
@@ -77,9 +77,10 @@ export const latexTemplateBundle = async (
   }
   if (missing) {
     notes.push(CVPR_KIT_MISSING_NOTE)
-    // The README travels with the bundle; the receipt does not.
-    const readme = files["README.md"]
-    if (readme !== undefined) files["README.md"] = `> ${CVPR_KIT_MISSING_NOTE}\n\n${readme}`
+    // main.tex travels with the bundle; the receipt does not. A leading TeX comment is
+    // the first thing the author sees when they open the paper to compile it.
+    const main = files["main.tex"]
+    if (main !== undefined) files["main.tex"] = `%% ${CVPR_KIT_MISSING_NOTE}\n${main}`
   }
   return { id, label: t.label, description: t.description, entry: t.entry, files, notes }
 }
