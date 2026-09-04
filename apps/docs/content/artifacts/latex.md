@@ -42,8 +42,7 @@ The renderer knows two classes well:
 - **acmart** (ACM SIGGRAPH and the ACM journals): authors with affiliations, ORCID and
   email, the conference or journal line, the abstract, CCS concepts from `\ccsdesc`,
   keywords and the teaser figure are typeset at `\maketitle` the way the class does;
-  `anonymous` and `review` behave as in the class; citations are author-year for journals
-  and with `\citestyle{acmauthoryear}`, numeric otherwise; journal formats label floats
+  `anonymous` and `review` behave as in the class; journal formats label floats
   `Fig. 1.`.
 - **The CVPR author kit** (`article` with `\usepackage[review|final]{cvpr}`): the review
   band with the paper id in review mode, author columns in final mode, numeric compressed
@@ -51,10 +50,12 @@ The renderer knows two classes well:
 
 Other classes render generically.
 
-Citations resolve against the `.bib` files named in `\bibliography{...}`, formatted in the
-class's style (ACM-Reference-Format for acmart, ieeenat_fullname for CVPR) and sorted
-alphabetically. A compiled `.bbl` beside `main.tex` takes precedence: it is what the PDF
-shows.
+Citations resolve against the `.bib` files named in `\bibliography{...}` and print as
+`[1]`, `[2]` in the text on every paper, whatever the class's own citation style (the
+compiled PDF keeps that style); the References section carries the matching `[n]`
+markers, with entries formatted in the class's style (ACM-Reference-Format for acmart,
+ieeenat_fullname for CVPR) and sorted alphabetically, so `[3]` in the text is the third
+entry. A compiled `.bbl` beside `main.tex` takes precedence: it is what the PDF shows.
 
 ## When something is unsupported
 
@@ -86,11 +87,15 @@ figure and table captions, section headings, the title and the abstract. Formula
 tables, images, dynamic tables and figures, footnotes, theorem text, the author block,
 generated numbers and labels and the reference list are read-only on the page: a click
 on them says so, the caret steps over them, and a Backspace beside a formula cannot
-delete it. Everything else is a source edit: the source editor opens `main.tex` from the
-More menu, and the file chips above a paper bundle open its sections, `.bib` and style
-files in the same editor. Every save is a new version of the bundle, with the other files
-carried over. An inline edit whose words come from an `\input` file is refused with the
-file's name; open that file instead.
+delete it. Everything else is a source edit. The file chips above a paper bundle list
+`main.tex` first, then its sections, `.bib` and style files; a paper's images sit in one
+"figures" menu at the end of the row. A chip opens that file in the source editor, whose
+right pane renders the whole paper with the file you are typing substituted (sections,
+citations, figures and dynamic tables included), and the chips stay in view while you
+edit so you can move between files; leaving a file with unsaved changes asks first. Every
+save is a new version of the bundle, with the other files carried over. An inline edit
+whose words come from an `\input` file is refused with the file's name; open that file
+instead.
 
 ### Bibliography
 
