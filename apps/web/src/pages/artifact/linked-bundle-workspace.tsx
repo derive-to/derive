@@ -953,7 +953,7 @@ export function LinkedBundleWorkspace({
     ...artifactSkillsQuery(shortId),
     enabled: !!workflowPreview,
   })
-  const launchers = (linkedSkills.data?.links ?? []).filter(
+  const workflowSkills = (linkedSkills.data?.links ?? []).filter(
     (link, index, all) =>
       link.role === "workflow-definition" &&
       link.skill &&
@@ -1042,43 +1042,41 @@ export function LinkedBundleWorkspace({
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            {launchers.length === 1 && launchers[0]?.skill ? (
+            {workflowSkills.length === 1 && workflowSkills[0]?.skill ? (
               <Button asChild variant="outline" size="sm" data-testid="workflow-open-skill">
                 <Link
                   to="/artifacts/$ref"
-                  params={{ ref: launchers[0].skill.short_id }}
-                  title={`Launcher Skill v${launchers[0].skill_version}, linked from Workflow v${launchers[0].artifact_version}`}
+                  params={{ ref: workflowSkills[0].skill.short_id }}
+                  title={`Skill v${workflowSkills[0].skill_version}, linked from Workflow v${workflowSkills[0].artifact_version}`}
                 >
-                  <Icon name="sparkles" size={14} /> Skill:{" "}
-                  {launchers[0].skill.title ?? launchers[0].skill.short_id}
+                  Skill: {workflowSkills[0].skill.title ?? workflowSkills[0].skill.short_id}
                   <span className="font-mono text-2xs text-muted-foreground">
-                    v{launchers[0].skill_version}
+                    v{workflowSkills[0].skill_version}
                   </span>
                 </Link>
               </Button>
-            ) : launchers.length > 1 ? (
+            ) : workflowSkills.length > 1 ? (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button variant="outline" size="sm" data-testid="workflow-open-skills">
-                    <Icon name="sparkles" size={14} /> {launchers.length} linked Skills
+                    {workflowSkills.length} linked Skills
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="start" className="max-w-sm">
-                  <DropdownMenuLabel>Launcher Skills</DropdownMenuLabel>
-                  {launchers.map((launcher) =>
-                    launcher.skill ? (
+                  <DropdownMenuLabel>Skills used by this workflow</DropdownMenuLabel>
+                  {workflowSkills.map((link) =>
+                    link.skill ? (
                       <DropdownMenuItem
-                        key={launcher.skill_artifact_id}
+                        key={link.skill_artifact_id}
                         asChild
-                        data-testid={`workflow-skill-${launcher.skill_artifact_id}`}
+                        data-testid={`workflow-skill-${link.skill_artifact_id}`}
                       >
-                        <Link to="/artifacts/$ref" params={{ ref: launcher.skill.short_id }}>
-                          <Icon name="sparkles" size={14} />
+                        <Link to="/artifacts/$ref" params={{ ref: link.skill.short_id }}>
                           <span className="min-w-0 flex-1 truncate">
-                            {launcher.skill.title ?? launcher.skill.short_id}
+                            {link.skill.title ?? link.skill.short_id}
                           </span>
                           <span className="font-mono text-2xs text-muted-foreground">
-                            v{launcher.skill_version}
+                            v{link.skill_version}
                           </span>
                         </Link>
                       </DropdownMenuItem>
@@ -1153,7 +1151,7 @@ export function LinkedBundleWorkspace({
             ) : null}
             {canEdit ? (
               <Button variant="outline" size="sm" onClick={onEdit} data-testid="bundle-edit-source">
-                <Icon name="edit" size={14} /> Edit manifest
+                <Icon name="edit" size={14} /> Edit workflow
               </Button>
             ) : null}
             <Button

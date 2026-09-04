@@ -3608,6 +3608,13 @@ export function makeRepos(db: SqliteDb) {
   ): Promise<void> => {
     await db.update(context).set({ ask_policy: policy }).where(eq(context.id, id)).run()
   }
+  const setContextManifest = async (id: string, manifestArtifactId: string): Promise<void> => {
+    await db
+      .update(context)
+      .set({ manifest_artifact_id: manifestArtifactId })
+      .where(eq(context.id, id))
+      .run()
+  }
   const setContextConnections = async (id: string, connectionIds: string | null): Promise<void> => {
     await db.update(context).set({ connection_ids: connectionIds }).where(eq(context.id, id)).run()
   }
@@ -5952,6 +5959,7 @@ export function makeRepos(db: SqliteDb) {
     deleteContext,
     touchContextSeen,
     setContextAskPolicy,
+    setContextManifest,
     setContextConnections,
     listContextAskers,
     getContextAsker,

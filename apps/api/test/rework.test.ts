@@ -484,6 +484,115 @@ describe("workflow run: explicit local-agent handoff", () => {
     )
   })
 
+  it("automatically links a Workflow to the Skills pinned by its Context nodes", async () => {
+    const { app, meta } = makeAuthedApp("workflow-context-skill-links", [owner])
+    const skillFiles = zipSync({
+      "SKILL.md": new TextEncoder().encode(
+        "---\nname: brief-craft\ndescription: Draft a concise brief.\n---\n\n# Brief craft",
+      ),
+      "derive.skill.json": new TextEncoder().encode(
+        JSON.stringify({ schema: "derive.skill/v1", catalog: true }),
+      ),
+    })
+    const skillForm = new FormData()
+    skillForm.append("file", new Blob([skillFiles as BlobPart]), "brief-craft.zip")
+    skillForm.append("title", "Brief craft")
+    const skill = await (
+      await app.request("/v1/artifacts", {
+        method: "POST",
+        body: skillForm,
+        headers: as(owner.email),
+      })
+    ).json()
+    const manifest = await (
+      await publishAs(
+        app,
+        `---\nskills:\n  - id: ${skill.short_id}\n    version: 1\n---\n\n# Brief writer`,
+        { title: "Brief writer" },
+        as(owner.email),
+      )
+    ).json()
+    await app.request(
+      "/v1/contexts",
+      jsonAs(as(owner.email), {
+        name: "brief-writer",
+        manifest_short_id: manifest.short_id,
+      }),
+    )
+
+    const workflow = await (
+      await publishAs(app, workflowHtml(), { title: "Weekly brief" }, as(owner.email))
+    ).json()
+    const source = await meta.getByShortId(workflow.short_id)
+    const links = await meta.listArtifactSkillLinks(source?.id ?? "", 1, "default")
+    expect(links).toContainEqual(
+      expect.objectContaining({
+        artifact_version: 1,
+        skill_artifact_id: (await meta.getByShortId(skill.short_id))?.id,
+        skill_version: 1,
+        role: "workflow-definition",
+      }),
+    )
+    const reverse = await (
+      await app.request(`/v1/artifacts/${skill.short_id}/skill-usage`, {
+        headers: as(owner.email),
+      })
+    ).json()
+    expect(reverse.artifacts).toContainEqual(
+      expect.objectContaining({
+        role: "workflow-definition",
+        artifact: expect.objectContaining({ short_id: workflow.short_id }),
+      }),
+    )
+  })
+
+  it("does not mistake an operational Skill link for the generated launcher", async () => {
+    const { app, meta } = makeAuthedApp("workflow-operational-skill-link", [owner])
+    const published = await (
+      await publishAs(app, workflowHtml(), { title: "Weekly brief" }, as(owner.email))
+    ).json()
+    const workflow = await meta.getByShortId(published.short_id)
+    const skillFiles = zipSync({
+      "SKILL.md": new TextEncoder().encode(
+        "---\nname: workflow-helper\ndescription: Help one workflow step.\n---\n\n# Helper",
+      ),
+      "derive.skill.json": new TextEncoder().encode(
+        JSON.stringify({ schema: "derive.skill/v1", catalog: true }),
+      ),
+    })
+    const form = new FormData()
+    form.append("file", new Blob([skillFiles as BlobPart]), "helper.zip")
+    form.append("title", "Workflow helper")
+    const helper = await (
+      await app.request("/v1/artifacts", { method: "POST", body: form, headers: as(owner.email) })
+    ).json()
+    await app.request(
+      `/v1/artifacts/${published.short_id}/skills`,
+      jsonAs(as(owner.email), {
+        artifact_version: 1,
+        skill_short_id: helper.short_id,
+        skill_version: 1,
+        role: "workflow-definition",
+      }),
+    )
+
+    const migrated = await app.request(
+      "/v1/skill-migrations",
+      jsonAs(as(owner.email), { apply: true }),
+    )
+    expect(migrated.status).toBe(200)
+    const links = await meta.listArtifactSkillLinks(workflow?.id ?? "", 1, "default")
+    const linkedArtifacts = await meta.listArtifacts({
+      ids: links.map((link) => link.skill_artifact_id),
+      orgId: "default",
+      archived: "include",
+    })
+    expect(linkedArtifacts.map((artifact) => artifact.short_id)).toContain(helper.short_id)
+    expect(linkedArtifacts.map((artifact) => artifact.short_id)).toContain(
+      `skill-${published.short_id}`,
+    )
+  })
+
   it("reuses the deterministic launcher after a publish-to-link interruption", async () => {
     const { app, meta, ctx } = makeAuthedApp("workflow-skill-publish-link-repair", [owner])
     const published = await (

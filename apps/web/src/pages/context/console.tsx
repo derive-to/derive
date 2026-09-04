@@ -211,7 +211,7 @@ function Console({ id }: { id: string }) {
         </div>
         <Eyebrow>
           Context
-          {context.manifest_version != null && <> · manifest v{context.manifest_version}</>}
+          {context.manifest_version != null && <> · definition v{context.manifest_version}</>}
           {" · "}
           {skillsCount} {skillsCount === 1 ? "skill" : "skills"}
           {sourcesCount > 0 && (
@@ -244,7 +244,7 @@ function Console({ id }: { id: string }) {
             Chat
           </TabsTrigger>
           <TabsTrigger value="manifest" data-testid="console-tab-manifest">
-            Manifest
+            Definition
           </TabsTrigger>
           <TabsTrigger value="output" data-testid="console-tab-output">
             Output
@@ -518,7 +518,7 @@ function ContextStatusWorkspace({
           ) : null}
           {context.manifest_version != null ? (
             <span className="rounded-md border border-share/20 bg-share/10 px-1.5 py-0.5 font-semibold text-share">
-              manifest v{context.manifest_version}
+              definition v{context.manifest_version}
             </span>
           ) : null}
         </div>
@@ -926,7 +926,14 @@ function SkillsCard({
       <ul className="flex flex-col gap-1.5">
         {skills.slice(0, 6).map((s) => (
           <li key={s.short_id} className="flex items-center gap-2 text-sm text-foreground">
-            <span className="truncate">{s.title ?? s.short_id}</span>
+            <Link
+              to="/artifacts/$ref"
+              params={{ ref: s.short_id }}
+              className="min-w-0 truncate underline-offset-4 hover:underline"
+              data-testid={`rail-skill-${s.short_id}`}
+            >
+              {s.title ?? s.short_id}
+            </Link>
             <span
               className={cn(
                 "ml-auto shrink-0 font-mono text-2xs tabular-nums",
@@ -948,7 +955,7 @@ function SkillsCard({
         onClick={onSeeManifest}
         className="self-start text-xs text-muted-foreground underline-offset-4 hover:underline"
       >
-        see manifest →
+        View Context definition →
       </button>
     </div>
   )
@@ -968,7 +975,7 @@ function SourcesCard({ count }: { count: number }) {
   )
 }
 
-// The manifest, framed as a package rather than a raw document: pin health (each
+// The Context definition, framed as a package rather than a raw document: pin health (each
 // skill's pinned version against its actual current one), the frontmatter's repo
 // pointers, and the body as a doc — the YAML never renders raw, because a human
 // reading "id: cd34y version: 3" learns nothing a title + a status column can't say
@@ -981,8 +988,8 @@ function ManifestTab({ context }: { context: ContextDetail }) {
     return (
       <EmptyState
         icon={<Icon name="context" strokeWidth={1.75} />}
-        title="No manifest"
-        description="This Context's manifest artifact can't be resolved."
+        title="No definition"
+        description="This Context's definition artifact can't be resolved."
       />
     )
   }
@@ -990,7 +997,7 @@ function ManifestTab({ context }: { context: ContextDetail }) {
     <div className="flex flex-col gap-6" data-testid="manifest-tab">
       <div className="flex flex-wrap items-center gap-3">
         <Eyebrow>
-          manifest · {manifest.title ?? context.name} · v{manifest.version} · pushed{" "}
+          definition · {manifest.title ?? context.name} · v{manifest.version} · pushed{" "}
           {ago(manifest.pushed_at)}
         </Eyebrow>
         <Link
@@ -1082,7 +1089,7 @@ function ManifestTab({ context }: { context: ContextDetail }) {
           <p className="text-xs text-muted-foreground">
             A pin is exact. The runner uses the pinned version, not the latest one.{" "}
             <code className="font-mono">derive context push</code> re-pins to current and publishes
-            a new manifest version; the runner picks it up on its next pull. No deploy.
+            a new definition version; the runner picks it up on its next pull. No deploy.
           </p>
         </div>
       )}

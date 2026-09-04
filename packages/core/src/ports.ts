@@ -1642,6 +1642,9 @@ export interface ContextStore {
   touchContextSeen(id: string, at: string): Promise<void>
   /** Set who may ask (workspace | invited). Does not touch the roster. */
   setContextAskPolicy(id: string, policy: "workspace" | "invited"): Promise<void>
+  /** Repoint the Context to a replacement definition artifact. Used by migrations that
+   *  cannot preserve artifact identity because the immutable artifact kind changes. */
+  setContextManifest(id: string, manifestArtifactId: string): Promise<void>
   /** Replace the context's bound connections (a JSON array of ids, or null for none).
    *  Whole-list semantics: the caller has already checked every id is attachable. */
   setContextConnections(id: string, connectionIds: string | null): Promise<void>
