@@ -2,15 +2,48 @@ import { useQuery } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
 import { API_BASE, type Artifact } from "@/api"
 import { Icon } from "@/components/icons"
-import { Badge } from "@/components/ui/badge"
+import { Badge, badgeVariants } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useCopy } from "@/lib/clipboard"
 import { skillGraphQuery, skillUsageQuery } from "@/lib/queries"
 import { ago } from "@/lib/time"
+import { cn } from "@/lib/utils"
 
 // The files the source editor can open by path (mirrors routes/paper-files.ts).
 const EDITABLE_FILE = /\.(tex|latex|bib|bbl|sty|cls|bst|txt|md|html?|css|js|json)$/i
+
+type Bundle = NonNullable<Artifact["bundle"]>
+type BundleFile = Bundle["files"][number]
+
+/**
+ * A paper's files in the order the bar shows them: the entry (main.tex) first because
+ * it is the file most edits touch, then the text files a writer edits (sections, the
+ * .bib, style files), and the figures apart. Figures open in a tab, never in the
+ * editor, and a paper can carry dozens of them, so they fold into one menu rather than
+ * crowding the row. Server (sorted) order within each group.
+ */
+export function splitBundleFiles(bundle: Bundle): {
+  entry: BundleFile | undefined
+  texts: BundleFile[]
+  figures: BundleFile[]
+} {
+  const entry = bundle.files.find((f) => f.path === bundle.entry)
+  const texts: BundleFile[] = []
+  const figures: BundleFile[] = []
+  for (const f of bundle.files) {
+    if (f.path === bundle.entry) continue
+    if (f.type.startsWith("image/") || f.type === "application/pdf") figures.push(f)
+    else texts.push(f)
+  }
+  return { entry, texts, figures }
+}
 
 /**
  * Header chrome for a markdown bundle (a skill — entry SKILL.md — or a plain docs
@@ -22,7 +55,9 @@ const EDITABLE_FILE = /\.(tex|latex|bib|bbl|sty|cls|bst|txt|md|html?|css|js|json
  * no skill identity (there'd be nothing to show).
  *
  * A paper bundle passes `onEditFile`: its text chips (a section, the .bib, a style
- * file) then open that file in the source editor instead of a raw tab.
+ * file) then open that file in the source editor instead of a raw tab, the entry gets
+ * a chip of its own (the bar stays up while the editor is open, so it is how you move
+ * between files), and `activePath` marks the file the editor holds.
  */
 export function BundleBar({
   bundle,
@@ -30,17 +65,24 @@ export function BundleBar({
   version,
   onEdit,
   onEditFile,
+  activePath,
 }: {
-  bundle: NonNullable<Artifact["bundle"]>
+  bundle: Bundle
   shortId: string
   version: number
   onEdit?: () => void
   onEditFile?: (path: string) => void
+  activePath?: string | null
 }) {
   const fileUrl = (path: string) => `${API_BASE}/raw/${shortId}/v/${version}/${path}`
-  // The entry doc IS the page below; list only the supporting files.
+  // The entry doc IS the page below; list only the supporting files. A paper is the
+  // exception: its entry is a chip too (the one you switch back to from a section).
   const files = bundle.files.filter((f) => f.path !== bundle.entry)
-  if (!bundle.isSkill && files.length === 0) return null
+  const paper = onEditFile ? splitBundleFiles(bundle) : null
+  const chipCount = paper
+    ? (paper.entry ? 1 : 0) + paper.texts.length + paper.figures.length
+    : files.length
+  if (!bundle.isSkill && chipCount === 0) return null
   if (bundle.isSkill)
     return (
       <SkillWorkbench
@@ -72,38 +114,105 @@ export function BundleBar({
       {bundle.description && (
         <p className="line-clamp-2 text-sm text-muted-foreground">{bundle.description}</p>
       )}
-      {files.length > 0 && (
+      {paper && onEditFile ? (
         <div className="flex flex-wrap gap-1.5">
-          {files.map((f) =>
-            onEditFile && EDITABLE_FILE.test(f.path) ? (
-              <Badge key={f.path} asChild variant="outline" shape="pill">
+          {[...(paper.entry ? [paper.entry] : []), ...paper.texts].map((f) => (
+            <FileChip
+              key={f.path}
+              file={f}
+              href={fileUrl(f.path)}
+              active={f.path === activePath}
+              onEditFile={onEditFile}
+            />
+          ))}
+          {paper.figures.length > 0 && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
                 <button
                   type="button"
-                  title={`Edit ${f.path}`}
-                  className="hover:border-foreground/25 hover:text-foreground"
-                  onClick={() => onEditFile(f.path)}
-                  data-testid={`bundle-edit-${f.path}`}
+                  className={cn(
+                    badgeVariants({ variant: "outline", shape: "pill" }),
+                    "hover:border-foreground/25 hover:text-foreground",
+                  )}
+                  data-testid="bundle-figures"
                 >
-                  {f.path}
+                  {paper.figures.length} {paper.figures.length === 1 ? "figure" : "figures"}
                 </button>
-              </Badge>
-            ) : (
-              <Badge key={f.path} asChild variant="outline" shape="pill">
-                <a
-                  href={fileUrl(f.path)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  title={f.type}
-                  className="hover:border-foreground/25 hover:text-foreground"
-                >
-                  {f.path}
-                </a>
-              </Badge>
-            ),
+              </DropdownMenuTrigger>
+              <DropdownMenuContent className="max-w-sm">
+                {paper.figures.map((f) => (
+                  <DropdownMenuItem key={f.path} asChild data-testid={`bundle-figure-${f.path}`}>
+                    <a
+                      href={fileUrl(f.path)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title={f.type}
+                    >
+                      <span className="min-w-0 flex-1 truncate font-mono text-2xs">{f.path}</span>
+                    </a>
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
           )}
         </div>
+      ) : (
+        files.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {files.map((f) => (
+              <FileChip key={f.path} file={f} href={fileUrl(f.path)} active={false} />
+            ))}
+          </div>
+        )
       )}
     </div>
+  )
+}
+
+/**
+ * One file chip. Editable text (given `onEditFile`) opens in the source editor; anything
+ * else opens raw in a new tab. The active file reads as the selected state: the neutral
+ * fill, no hover treatment (a hover must never repaint a selection), and aria-current so
+ * assistive tech and the e2e read the same signal.
+ */
+function FileChip({
+  file,
+  href,
+  active,
+  onEditFile,
+}: {
+  file: BundleFile
+  href: string
+  active: boolean
+  onEditFile?: (path: string) => void
+}) {
+  if (onEditFile && EDITABLE_FILE.test(file.path))
+    return (
+      <Badge asChild variant={active ? "default" : "outline"} shape="pill">
+        <button
+          type="button"
+          title={`Edit ${file.path}`}
+          aria-current={active ? "true" : undefined}
+          className={active ? undefined : "hover:border-foreground/25 hover:text-foreground"}
+          onClick={() => onEditFile(file.path)}
+          data-testid={`bundle-edit-${file.path}`}
+        >
+          {file.path}
+        </button>
+      </Badge>
+    )
+  return (
+    <Badge asChild variant="outline" shape="pill">
+      <a
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+        title={file.type}
+        className="hover:border-foreground/25 hover:text-foreground"
+      >
+        {file.path}
+      </a>
+    </Badge>
   )
 }
 
@@ -114,10 +223,10 @@ function SkillWorkbench({
   files,
   onEdit,
 }: {
-  bundle: NonNullable<Artifact["bundle"]>
+  bundle: Bundle
   shortId: string
   version: number
-  files: NonNullable<Artifact["bundle"]>["files"]
+  files: Bundle["files"]
   onEdit?: () => void
 }) {
   const graph = useQuery(skillGraphQuery(shortId))

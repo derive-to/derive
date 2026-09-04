@@ -1011,15 +1011,21 @@ export const api = {
   exportStatus: (id: string): Promise<ExportJob> => f(`/v1/exports/${id}`, opts()).then(j),
   cancelExport: (id: string): Promise<{ ok: true }> =>
     f(`/v1/exports/${id}/cancel`, opts({})).then(j),
-  // Render a markdown draft to the exact published HTML, for the live editor
-  // preview (markdown only; HTML drafts preview in-browser).
-  // `contentType` names a LaTeX draft; omitted, the server renders markdown.
+  // Render a markdown or LaTeX draft to the exact published HTML, for the live editor
+  // preview (HTML drafts preview in-browser). `contentType` names a LaTeX draft;
+  // omitted, the server renders markdown. `ctx` names one file of a paper bundle: the
+  // server then renders the WHOLE paper with the draft standing in for that file, so a
+  // section or the .bib previews in the context of the paper rather than on its own.
   renderPreview: (
     source: string,
     title: string | null,
     contentType?: "text/x-latex",
+    ctx?: { shortId: string; path: string },
   ): Promise<{ html: string }> =>
-    f("/v1/preview", opts({ source, title, content_type: contentType })).then(j),
+    f(
+      "/v1/preview",
+      opts({ source, title, content_type: contentType, short_id: ctx?.shortId, path: ctx?.path }),
+    ).then(j),
   // Verify a password artifact's password; on success the server sets the unlock
   // cookie and subsequent reads of this artifact succeed.
   unlock: (id: string, password: string): Promise<{ ok: true }> =>

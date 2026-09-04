@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query"
-import { type Dispatch, type SetStateAction, useRef } from "react"
+import { type Dispatch, type SetStateAction, useState } from "react"
 import { type Artifact, api, type Comment, type Mention } from "@/api"
 import { toast } from "@/components/ui/sonner"
 import { formatOf, isPaperBundle } from "@/lib/artifact"
@@ -43,6 +43,9 @@ export function useArtifactActions(p: {
   load: () => void
   refetchComments: () => void
   onRestoredJump: () => void
+  /** True while the source editor is open. A file switch inside it keeps the title the
+   *  writer typed, where a fresh open seeds it from the artifact. */
+  editing: boolean
   /** Open the review overlay (from an agent-request card whose revision is ready). */
   setEditing: Dispatch<SetStateAction<boolean>>
   setSrc: Dispatch<SetStateAction<string>>
@@ -56,26 +59,44 @@ export function useArtifactActions(p: {
   const commentsKey = commentsQuery(shortId).queryKey
 
   // A paper bundle edits one file at a time: the entry (main.tex) by default, or the
-  // file a bundle-bar chip named. The path is remembered for the publish that follows.
-  const editPath = useRef<string | null>(null)
+  // file a bundle-bar chip named. The path is remembered for the publish that follows;
+  // the source AS LOADED is kept beside it so the page can tell typed changes from a
+  // clean open (that is what the discard prompts key off). State, not refs: the bar
+  // highlights the open file, and a highlight has to re-render.
+  const [editPath, setEditPath] = useState<string | null>(null)
+  const [editBase, setEditBase] = useState("")
   const startEdit = async (path?: string) => {
     // Load the source BEFORE opening the editor: if the fetch fails, opening an empty editor
     // over existing content lets Publish overwrite it with blank. Load first, open on success.
+    // The same order guards a switch between files: nothing, not even the path, changes
+    // until the new file's text is in hand, so a failed load can never leave one file's
+    // text queued to publish under another file's path.
     try {
       const paperFile = isPaperBundle(p.art) ? (path ?? p.art?.bundle?.entry ?? null) : null
-      editPath.current = paperFile
       const src = paperFile
         ? (await api.bundleFile(shortId, paperFile)).source
         : p.art?.bundle?.isSkill
           ? (await api.skillSource(shortId)).source
           : await api.getContent(shortId)
-      p.setTitle(p.art?.title ?? "")
+      // A switch inside the open editor keeps the title (and the version message) the
+      // writer already typed; only a fresh open seeds the title from the artifact.
+      if (!p.editing) p.setTitle(p.art?.title ?? "")
       p.setSrc(src)
+      setEditBase(src)
+      setEditPath(paperFile)
       p.setEditing(true)
     } catch {
       toast.error("Couldn't load the source to edit. Try again.")
     }
   }
+  // Closing the editor, by Cancel or by the publish that follows, forgets the file it
+  // held: a later open must not inherit a stale path or a stale baseline.
+  const resetEdit = () => {
+    p.setEditing(false)
+    setEditPath(null)
+    setEditBase("")
+  }
+  const editDirty = p.editing && p.src !== editBase
 
   // Keep the artifact's format: editing an HTML artifact must stay .html (publishing it
   // as .md would flip its type). The title rides along, so editing the name renames it.
@@ -84,11 +105,11 @@ export function useArtifactActions(p: {
       // Only ever invoked from the loaded workbench, so `art` is present — the guard
       // encodes that invariant for the type system (mirrors useArtifactRoute's `!art`).
       if (!p.art) throw new Error("publish fired before the artifact loaded")
-      if (editPath.current)
-        return api.publishBundleFile(shortId, editPath.current, {
+      if (editPath)
+        return api.publishBundleFile(shortId, editPath, {
           source: p.src,
           base_version: p.art.current_version,
-          message: p.message.trim() || `Edited ${editPath.current} in browser`,
+          message: p.message.trim() || `Edited ${editPath} in browser`,
           ...(p.title.trim() ? { title: p.title.trim() } : {}),
         })
       if (p.art.bundle?.isSkill)
@@ -108,7 +129,7 @@ export function useArtifactActions(p: {
     },
     success: (a) => `Published v${a.current_version}`,
     onSuccess: () => {
-      p.setEditing(false)
+      resetEdit()
       load()
     },
   })
@@ -287,6 +308,9 @@ export function useArtifactActions(p: {
 
   return {
     startEdit,
+    resetEdit,
+    editPath,
+    editDirty,
     publishEdit: () => publish.mutate(),
     reply,
     submitNew,

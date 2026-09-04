@@ -90,6 +90,18 @@ import { useSeenCursor } from "./use-seen-cursor"
 import { useVersionDiff } from "./use-version-diff"
 import { WorkbenchSkeleton } from "./workbench-skeleton"
 
+// The source editor's discard wording: one spelling for the three doors out of a dirty
+// editor (a file switch, Cancel, and leaving the page), the way the inline mode has one.
+const sourceEditDiscardCopy = (path: string | null) => ({
+  title: path ? `Discard unsaved changes to ${path}?` : "Discard unsaved changes?",
+  description: "The file you are editing has changes that were not published.",
+  confirmLabel: "Discard",
+})
+// The paper files the preview can render IN the paper (the server substitutes the draft
+// for that file and renders the whole document). Mirrors the API's own list; a README.md
+// inside a paper bundle previews as plain markdown instead.
+const PAPER_PREVIEW_FILE = /\.(tex|latex|bib|bbl|sty|cls|bst|txt)$/i
+
 // Heavy on-demand surfaces — split out of the artifact route's initial chunk and
 // loaded only when the user opens them (insights / history).
 const Insights = lazy(() => import("./insights-history").then((m) => ({ default: m.Insights })))
@@ -282,6 +294,11 @@ export function Artifact({ template = false }: { template?: boolean }) {
   // password prompt rather than the not-found state or a bounce to login.
   const locked = failed && error instanceof ApiError && error.status === 401
   const [editing, setEditing] = useState(false)
+  // A dirty source editor asks before it drops typed text. The pending door: the file a
+  // bar chip named (a switch) or a plain close (Cancel). Null when no question is open.
+  const [pendingEdit, setPendingEdit] = useState<
+    { kind: "switch"; path: string } | { kind: "close" } | null
+  >(null)
   const [bundleView, setBundleView] = useState<"workspace" | "document">("workspace")
   const [bundleEditorOpen, setBundleEditorOpen] = useState(false)
   // Keep the reviewer's exact visual context above artifact refetches and authored
@@ -726,6 +743,9 @@ export function Artifact({ template = false }: { template?: boolean }) {
   // from the loaded workbench, where it's present.
   const {
     startEdit,
+    resetEdit,
+    editPath,
+    editDirty,
     publishEdit,
     reply,
     submitNew,
@@ -755,6 +775,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
         // Same artifact — keep the search (the ?collection switcher context, deep links).
         search: (s) => s,
       }),
+    editing,
     setEditing,
     setSrc,
     setTitle: setEditTitle,
@@ -762,6 +783,24 @@ export function Artifact({ template = false }: { template?: boolean }) {
     setSel,
     setActiveThread,
   })
+  // A paper's bar chip while the editor is open: the same file is a no-op, a clean
+  // editor switches at once, a dirty one asks first (the confirm below runs the switch).
+  const requestEditFile = (path: string) => {
+    if (editing && path === editPath) return
+    if (editing && editDirty) {
+      setPendingEdit({ kind: "switch", path })
+      return
+    }
+    void startEdit(path)
+  }
+  // Cancel: the same question when there is typed text to lose, otherwise just close.
+  const cancelEdit = () => {
+    if (editDirty) {
+      setPendingEdit({ kind: "close" })
+      return
+    }
+    resetEdit()
+  }
 
   // Inline (click-to-type) editing: the frame owns the caret and the diffs, this
   // hook owns the mode + save. Entering clears any parked selection so the
@@ -848,8 +887,11 @@ export function Artifact({ template = false }: { template?: boolean }) {
     // asked for — then re-pops it the moment they cancel, because the rewrite is
     // still pending. Same-artifact navigations carry no risk to unsaved edits: the
     // frame is not remounted.
-    shouldBlockFn: ({ next }) => inlineEdit.blocking && !next.pathname.includes(shortId),
-    enableBeforeUnload: () => inlineEdit.blocking,
+    // The source editor's typed text lives only in React state, which the same
+    // navigation drops, so a dirty editor blocks the same way.
+    shouldBlockFn: ({ next }) =>
+      (inlineEdit.blocking || editDirty) && !next.pathname.includes(shortId),
+    enableBeforeUnload: () => inlineEdit.blocking || editDirty,
     withResolver: true,
   })
 
@@ -1038,6 +1080,24 @@ export function Artifact({ template = false }: { template?: boolean }) {
   // md vs html drives syntax highlighting + how the live preview renders.
   const isSkill = art.bundle?.isSkill === true
   const format = isSkill ? "md" : formatOf(art)
+  // A paper file highlights and previews by ITS extension: a README.md inside a paper
+  // bundle is markdown, not LaTeX. Anything else keeps the artifact's format.
+  const editFormat: typeof format =
+    editPath && /\.md$/i.test(editPath)
+      ? "md"
+      : editPath && /\.html?$/i.test(editPath)
+        ? "html"
+        : format
+  // Preview a paper file IN the paper (see renderPreview): only for the files the server
+  // can substitute, and only while that file is the one open.
+  const previewContext =
+    editing && isPaperBundle(art) && editPath && PAPER_PREVIEW_FILE.test(editPath)
+      ? { shortId, path: editPath }
+      : undefined
+  // The bar's chips open paper files in the source editor. Gated on the base eligibility
+  // WITHOUT the "no editor open" clause: the bar stays up while a paper is being edited,
+  // because its chips are how you move between the paper's files.
+  const canEditPaperFiles = canEditArtifactDoc(art, shown, false) && isPaperBundle(art)
   // Lock: any editor can toggle it (advanced menu). While locked, nothing
   // publishes — the edit affordances hide until someone unlocks.
   const canLock = canPublish
@@ -1334,6 +1394,11 @@ export function Artifact({ template = false }: { template?: boolean }) {
     )
 
   const unsaved = unsavedEditsCopy(inlineEdit.dirty)
+  // Which mode holds the unsaved work decides the leave dialog's wording and what
+  // "discard" means: the two modes never hold text at the same time (the source editor
+  // unmounts the frame, and the inline mode can't be entered over it).
+  const sourceUnsaved = sourceEditDiscardCopy(editPath)
+  const leave = editDirty ? sourceUnsaved : unsaved
 
   return (
     <ActionsCtx.Provider value={actions}>
@@ -1357,15 +1422,35 @@ export function Artifact({ template = false }: { template?: boolean }) {
         onOpenChange={(o) => {
           if (!o && editBlocker.status === "blocked") editBlocker.reset()
         }}
-        title={unsaved.title}
-        description={unsaved.description}
-        confirmLabel={unsaved.confirmLabel}
+        title={leave.title}
+        description={leave.description}
+        confirmLabel={leave.confirmLabel}
         confirmTestId="inline-edit-leave-confirm"
         onConfirm={() => {
           if (editBlocker.status === "blocked") {
-            inlineEdit.confirmExit()
+            if (editDirty) resetEdit()
+            else inlineEdit.confirmExit()
             editBlocker.proceed()
           }
+        }}
+      />
+      {/* The source editor's own discard question: a bar chip named another file, or
+          Cancel was pressed, over typed text that was never published. */}
+      <ConfirmDialog
+        open={pendingEdit !== null}
+        onOpenChange={(o) => {
+          if (!o) setPendingEdit(null)
+        }}
+        title={sourceUnsaved.title}
+        description={sourceUnsaved.description}
+        confirmLabel={sourceUnsaved.confirmLabel}
+        tone="destructive"
+        confirmTestId="source-edit-discard"
+        contentTestId="source-edit-discard-confirm"
+        onConfirm={async () => {
+          if (!pendingEdit) return
+          if (pendingEdit.kind === "switch") await startEdit(pendingEdit.path)
+          else resetEdit()
         }}
       />
       <DeckOrganizerDiscardDialog organizer={deckOrganizer} />
@@ -1556,14 +1641,16 @@ export function Artifact({ template = false }: { template?: boolean }) {
             {art.current_version === 1 && canEditDoc && !editing && !inlineEdit.active && (
               <DerivedFromBanner art={art} />
             )}
-            {art.bundle && !editing && (
+            {/* A paper keeps its bar above the open editor: the chips switch files. */}
+            {art.bundle && (!editing || isPaperBundle(art)) && (
               <BundleBar
                 bundle={art.bundle}
                 shortId={shortId}
                 version={shown}
                 onEdit={canEditSkill ? () => startEdit() : undefined}
                 // A paper's sections, .bib and style files open in the source editor.
-                onEditFile={canEditDoc && isPaperBundle(art) ? startEdit : undefined}
+                onEditFile={canEditPaperFiles ? requestEditFile : undefined}
+                activePath={editing ? editPath : null}
               />
             )}
             {/* Inline edit mode's one piece of chrome: a slim band above the document
@@ -1597,16 +1684,17 @@ export function Artifact({ template = false }: { template?: boolean }) {
               <SourceEditor
                 title={editTitle}
                 onTitle={setEditTitle}
-                format={format}
+                format={editFormat}
                 message={message}
                 src={src}
                 onMessage={setMessage}
                 onSrc={setSrc}
-                onCancel={() => setEditing(false)}
+                onCancel={cancelEdit}
                 onPublish={publishEdit}
                 publishing={publishing}
                 shortId={shortId}
                 stripFrontmatter={isSkill}
+                previewContext={previewContext}
               />
             ) : (
               primaryEl
