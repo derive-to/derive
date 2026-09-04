@@ -35,7 +35,7 @@ export function ReferencesPanel({
   const save = useApiMutation<Awaited<ReturnType<typeof api.putBib>>, BibOp[]>({
     mutationFn: (ops) => api.putBib(shortId, { base_version: baseVersion, ops }),
     invalidate: [["artifact", shortId]],
-    success: (a) => `Published v${a.current_version}`,
+    success: (a) => `Saved v${a.current_version}`,
     onSuccess: () => {
       setEditing(null)
       setError(null)

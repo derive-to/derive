@@ -36,6 +36,7 @@ export function SourceEditor({
   shortId,
   stripFrontmatter = false,
   previewContext,
+  publishLabel = "Publish",
 }: {
   title: string
   format: "md" | "html" | "tex"
@@ -62,6 +63,9 @@ export function SourceEditor({
    *  whole paper with this draft substituted for that file, so a section shows in its
    *  place and the .bib resolves the paper's citations. */
   previewContext?: { shortId: string; path: string }
+  /** The publish button's text. A paper's edit is a save of one of its files, and the
+   *  artifact page names it so; /new keeps Publish because it creates the artifact. */
+  publishLabel?: string
 }) {
   const [pane, setPane] = useState<"edit" | "preview">("edit")
   // Desktop preview-pane visibility (mobile uses the Edit/Preview tabs instead).
@@ -193,7 +197,7 @@ export function SourceEditor({
             loading={publishing}
             onClick={onPublish}
           >
-            Publish
+            {publishLabel}
           </Button>
         </span>
       </div>
