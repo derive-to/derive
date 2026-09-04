@@ -6,6 +6,10 @@
  * entries in the style's order; pass 2 prints labels that resolve. Everything printed
  * here is made up from the source rather than copied from it, so it is emitted as
  * entities over the macro that asked for it (see latex-emit.ts).
+ *
+ * The page cites by number (`[1]`, `[2]`) whatever the class's citation style, and the
+ * reference list shows the matching markers. The compiled PDF keeps the class's style
+ * (author-year for acmart journals, say); the page is one reading of every paper.
  */
 
 import {
@@ -181,22 +185,24 @@ export const renderCite = (ctx: RenderContext, macro: MacroNode): void => {
     say(text)
     if (l.id) out.markup("</a>", macro.end)
   }
-  const name = macro.name
-  const numeric = profile.citeStyle === "numeric"
   const bracket = (fn: () => void) => {
     say("[")
     fn()
     if (note) say(`, ${note}`)
     say("]")
   }
-  const sep = (i: number, s = ", ") => {
-    if (i > 0) say(s)
+  const sep = (i: number) => {
+    if (i > 0) say(", ")
   }
-  const ay = (l: CiteLabel) => (l.resolved ? `${l.authors} ${l.year}` : `${l.key}?`)
+  const numbers = () =>
+    numberList(labels, profile.compressCitations).forEach((item, i) => {
+      sep(i)
+      link(item.label, item.text)
+    })
   // The whole label is made up from the macro, so the in-page editor treats it as one
   // read-only island; the brackets and separators are entities over the macro too.
   out.markup(`<span class="derive-citation"${READONLY_ATTR}>`, macro.start)
-  switch (name) {
+  switch (macro.name) {
     case "citeauthor":
       labels.forEach((l, i) => {
         sep(i)
@@ -219,52 +225,21 @@ export const renderCite = (ctx: RenderContext, macro: MacroNode): void => {
       break
     case "citet":
     case "Citet":
-      if (numeric) {
-        labels.forEach((l, i) => {
-          sep(i)
-          say(l.resolved ? `${l.authors} ` : "")
-          link(l, `[${l.number ?? `${l.key}?`}]`)
-        })
-      } else {
-        labels.forEach((l, i) => {
-          sep(i, "; ")
-          say(l.resolved ? `${l.authors} ` : "")
-          link(l, l.resolved ? `[${l.year}]` : `[${l.key}?]`)
-        })
-      }
+      // natbib's textual form in a numeric style: `Kerbl et al. [1]`.
+      labels.forEach((l, i) => {
+        sep(i)
+        say(l.resolved ? `${l.authors} ` : "")
+        link(l, `[${l.number ?? `${l.key}?`}]`)
+      })
       break
     case "citealp":
     case "citealt":
-      if (numeric) {
-        numberList(labels, profile.compressCitations).forEach((item, i) => {
-          sep(i)
-          link(item.label, item.text)
-        })
-      } else {
-        labels.forEach((l, i) => {
-          sep(i, "; ")
-          link(l, ay(l))
-        })
-      }
+      numbers()
       if (note) say(`, ${note}`)
       break
     default:
       // \cite, \citep, \Citep, \shortcite
-      if (numeric) {
-        bracket(() =>
-          numberList(labels, profile.compressCitations).forEach((item, i) => {
-            sep(i)
-            link(item.label, item.text)
-          }),
-        )
-      } else {
-        bracket(() =>
-          labels.forEach((l, i) => {
-            sep(i, "; ")
-            link(l, ay(l))
-          }),
-        )
-      }
+      bracket(numbers)
   }
   out.markup("</span>", macro.end)
 }
@@ -350,17 +325,35 @@ const bibItemLabel = (opt: LatexArg): string => {
   return plainTextOf(opt.nodes)
 }
 
-/** `thebibliography` (hand-written or a compiled `.bbl`): an ordered list whose items
- *  are the citation targets. */
+/** The `[n]` (or `\bibitem[label]`) marker that opens a reference entry. The list draws
+ *  no browser marker, so the number is real text that reads, copies and projects like
+ *  the citation it answers; it is an entity over the producing span (the `\bibitem`, or
+ *  the `\bibliography` macro) like every other made-up label. One space follows so the
+ *  projection reads `[1] Author`, unless the source spells that space itself. */
+const referenceMarker = (
+  ctx: RenderContext,
+  text: string,
+  rStart: number,
+  rEnd: number,
+  space = true,
+) => {
+  const { out } = ctx
+  out.markup('<span class="derive-reference-label">', rStart)
+  out.entity(`[${text}]`, rStart, rEnd)
+  out.markup("</span>")
+  if (space) out.entity(" ", rStart, rEnd)
+}
+
+/** `thebibliography` (hand-written or a compiled `.bbl`): the numbered list whose items
+ *  are the citation targets. A `\bibitem[label]` keeps its label as the marker. */
 export const renderTheBibliography = (ctx: RenderContext, env: EnvNode): void => {
   const { out } = ctx
   ctx.closeParagraph(env.start)
-  const numbered = ctx.profile.citeStyle === "numeric"
   out.markup(`<section class="derive-references" id="references"${READONLY_ATTR}>`, env.start)
   out.markup("<h2>")
   out.entity("References", env.start, env.bodyStart)
   out.markup("</h2>")
-  out.markup(numbered ? "<ol>" : '<ul class="derive-reflist-unnumbered">')
+  out.markup('<ol class="derive-reflist">')
   let index = 0
   let open = false
   const closeItem = (at: number) => {
@@ -369,7 +362,7 @@ export const renderTheBibliography = (ctx: RenderContext, env: EnvNode): void =>
     out.markup("</li>", at)
     open = false
   }
-  for (const n of env.body) {
+  env.body.forEach((n, i) => {
     if (n.type === "macro" && n.name === "bibitem") {
       closeItem(n.start)
       index++
@@ -378,21 +371,23 @@ export const renderTheBibliography = (ctx: RenderContext, env: EnvNode): void =>
       const label = n.opt ? bibItemLabel(n.opt) : null
       if (ctx.pass === 1 && key && !ctx.bibItems.has(key))
         ctx.bibItems.set(key, { label, index, id })
-      out.markup(`<li id="${attr(id)}"${numbered ? ` value="${index}"` : ""}>`, n.start)
-      if (!numbered && label) {
-        out.markup('<span class="derive-reference-label">')
-        out.entity(`[${label}] `, n.start, n.end)
-        out.markup("</span>")
-      }
+      out.markup(`<li id="${attr(id)}">`, n.start)
+      // A `.bbl` breaks the line after `\bibitem{key}` and a hand-written list puts a
+      // space there; that whitespace already separates the marker from the entry.
+      const next = env.body[i + 1]
+      const spaced = next?.type === "text" && /^\s/.test(next.value)
+      // The marker is the item's number even when \bibitem carries its own label (an
+      // author-year .bbl): the text cites by number, and the two must agree.
+      referenceMarker(ctx, String(index), n.start, n.end, !spaced)
       ctx.paragraph = "implicit"
       open = true
-      continue
+      return
     }
-    if (!open) continue
+    if (!open) return
     ctx.walk([n])
-  }
+  })
   closeItem(env.bodyEnd)
-  out.markup(numbered ? "</ol></section>" : "</ul></section>", env.end)
+  out.markup("</ol></section>", env.end)
 }
 
 /** The reference list built from `.bib` files, printed where `\bibliography` stands. */
@@ -409,15 +404,15 @@ export const renderReferences = (ctx: RenderContext, at: { start: number; end: n
     return
   }
   const { out, profile } = ctx
-  const numbered = profile.citeStyle === "numeric"
   ctx.closeParagraph(at.start)
   out.markup(`<section class="derive-references" id="references"${READONLY_ATTR}>`, at.start)
   out.markup("<h2>")
   out.entity("References", at.start, at.end)
   out.markup("</h2>")
-  out.markup(numbered ? "<ol>" : '<ul class="derive-reflist-unnumbered">')
+  out.markup('<ol class="derive-reflist">')
   bib.entries.forEach((entry, i) => {
-    out.markup(`<li id="${attr(refId(entry.key))}"${numbered ? ` value="${i + 1}"` : ""}>`)
+    out.markup(`<li id="${attr(refId(entry.key))}">`)
+    referenceMarker(ctx, String(i + 1), at.start, at.end)
     for (const part of referenceParts(entry, profile.bibStyle)) {
       if (part.href) {
         out.markup(`<a href="${attr(part.href)}">`)
@@ -431,7 +426,7 @@ export const renderReferences = (ctx: RenderContext, at: { start: number; end: n
     }
     out.markup("</li>")
   })
-  out.markup(numbered ? "</ol></section>" : "</ul></section>", at.end)
+  out.markup("</ol></section>", at.end)
 }
 
 /** Record what a `\label{key}` names: the most recent numbered thing. */

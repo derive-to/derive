@@ -40,12 +40,14 @@ const optionsOf = (macro: MacroNode): string[] =>
     .map((o) => o.trim())
     .filter(Boolean)
 
-/** Read the class and the options that change how the document reads. */
+/** Read the class and the options that change how the document reads. The citation
+ *  style (`\citestyle`, `\setcitestyle`, the journal default) is deliberately not one of
+ *  them: the page cites by number whatever the class prints, and only the reference
+ *  formatter (`bibStyle`) follows the class. */
 export const detectProfile = (nodes: LatexNode[]): ClassProfile => {
   let documentClass = "article"
   let classOptions: string[] = []
   let cvprOptions: string[] | null = null
-  let citeStyle: "numeric" | "authoryear" | null = null
   const visit = (list: LatexNode[]) => {
     for (const n of list) {
       if (n.type === "macro") {
@@ -55,14 +57,6 @@ export const detectProfile = (nodes: LatexNode[]): ClassProfile => {
         } else if ((n.name === "usepackage" || n.name === "RequirePackage") && n.args[0]) {
           const names = n.args[0].raw.split(",").map((s) => s.trim())
           if (names.includes("cvpr")) cvprOptions = optionsOf(n)
-        } else if (n.name === "citestyle" && n.args[0]) {
-          const v = n.args[0].raw.trim()
-          if (v === "acmauthoryear") citeStyle = "authoryear"
-          else if (v === "acmnumeric") citeStyle = "numeric"
-        } else if (n.name === "setcitestyle" && n.args[0]) {
-          const v = n.args[0].raw
-          if (/authoryear/.test(v)) citeStyle = "authoryear"
-          else if (/numbers/.test(v)) citeStyle = "numeric"
         }
       } else if (n.type === "env" && n.name === "document") visit(n.body)
     }
@@ -79,7 +73,6 @@ export const detectProfile = (nodes: LatexNode[]): ClassProfile => {
       journal,
       anonymous: classOptions.includes("anonymous"),
       review: classOptions.includes("review"),
-      citeStyle: citeStyle ?? (journal ? "authoryear" : "numeric"),
       compressCitations: false,
       bibStyle: "acm",
     }
@@ -95,7 +88,6 @@ export const detectProfile = (nodes: LatexNode[]): ClassProfile => {
       journal: false,
       anonymous: review,
       review,
-      citeStyle: "numeric",
       compressCitations: true,
       bibStyle: "ieeenat",
     }
@@ -107,7 +99,6 @@ export const detectProfile = (nodes: LatexNode[]): ClassProfile => {
     journal: false,
     anonymous: false,
     review: false,
-    citeStyle: citeStyle ?? "numeric",
     compressCitations: false,
     bibStyle: "plain",
   }
@@ -778,10 +769,10 @@ export const LATEX_CSS = `
   .derive-footnote-mark{font-size:.75em;vertical-align:super;line-height:0}
   .derive-cite,.derive-ref{text-decoration:none;color:var(--ink)}
   .derive-cite:hover,.derive-ref:hover{text-decoration:underline}
-  .derive-references ol{padding-left:2.4em}
-  .derive-references li{margin:.7em 0;font-size:.92em;line-height:1.5}
-  .derive-references li::marker{color:var(--muted)}
-  .derive-reference-label{display:inline-block;min-width:2.2em;color:var(--muted)}
+  .derive-reflist{list-style:none;padding-left:2.6em}
+  .derive-reflist li{position:relative;margin:.7em 0;font-size:.92em;line-height:1.5}
+  .derive-reference-label{display:inline-block;width:2.6em;margin-left:-2.6em;color:var(--muted);
+    font-variant-numeric:tabular-nums}
   .derive-unknown{color:var(--muted);font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.85em}
   .derive-unsupported{font-size:.8em}
   .derive-minipage{display:inline-block;vertical-align:top;margin:.4em .6em;text-align:left}
