@@ -31,8 +31,9 @@ artifact stays LaTeX.
 ## Start from a template
 
 Two paper starters ship with Derive: **ACM SIGGRAPH** (acmart in the sigconf format,
-author-year citations; switch to `acmtog` for the journal track) and **CVPR** (the author
-kit's layout in review mode, numeric citations). On the Templates page, choose one under
+author-year citations in the compiled PDF; switch to `acmtog` for the journal track) and
+**CVPR** (the author kit's layout in review mode, numeric citations). The page cites by
+number for both, as every paper does. On the Templates page, choose one under
 Academic: the New page opens with `main.tex` in the editor, and publishing creates a paper
 bundle with the `.bib`, a README and `derive.sty`. Both starters bind a `results` table
 and a `teaser` figure, seeded empty at publish, so the [dynamic data](dynamic-data.md)

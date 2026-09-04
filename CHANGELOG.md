@@ -16,7 +16,7 @@ for the recommended install and verification flow.
 
 ### Added
 - **Paper templates and "Download LaTeX source".** Two starters, ACM SIGGRAPH (acmart,
-  sigconf, author-year citations) and CVPR (the author kit's layout in review mode), are
+  sigconf, author-year citations in the compiled PDF) and CVPR (the author kit's layout in review mode), are
   available under Academic on the Templates page, as `derive://latex/templates/<id>` MCP resources, at
   `GET /v1/latex/templates/<id>` and through `derive init --template siggraph|cvpr`. Each
   publishes as a paper bundle with a `results` table and a `teaser` figure bound as
