@@ -1695,6 +1695,9 @@ export function Artifact({ template = false }: { template?: boolean }) {
                 shortId={shortId}
                 stripFrontmatter={isSkill}
                 previewContext={previewContext}
+                // The artifact's format, not editFormat: a README inside a paper is
+                // still a save of the paper.
+                publishLabel={format === "tex" ? "Save" : "Publish"}
               />
             ) : (
               primaryEl

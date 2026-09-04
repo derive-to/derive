@@ -127,7 +127,9 @@ export function useArtifactActions(p: {
         p.title,
       )
     },
-    success: (a) => `Published v${a.current_version}`,
+    // A paper's edit is a save of one of its files, and the editor's button says so.
+    success: (a) =>
+      `${p.art && formatOf(p.art) === "tex" ? "Saved" : "Published"} v${a.current_version}`,
     onSuccess: () => {
       resetEdit()
       load()
