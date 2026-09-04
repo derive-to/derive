@@ -327,7 +327,10 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
         modelGateway: workerGateway(env),
         // Code Mode stays read-only in mcp-tools/code.ts. The dynamic Worker receives no parent
         // bindings or network access; its find/read calls return through Workers RPC to this host.
-        codeSandbox: cloudflareSandbox(env.LOADER),
+        codeSandbox: cloudflareSandbox(env.LOADER, () => {
+          const connection = requestPg.getStore()
+          return connection ? (call) => requestPg.run(connection, call) : (call) => call()
+        }),
         // Multi-tenant, so the allowlist matters here more than anywhere: without it any
         // workspace owner could enable chat and spend Derive's key.
         chatAllowlist: (env.DERIVE_CHAT_ALLOWLIST ?? "")

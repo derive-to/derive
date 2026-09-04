@@ -18,6 +18,7 @@ import {
 const MAX_CODE_CPU_MS = 5_000
 type CodemodeModule = typeof import("@cloudflare/codemode")
 type CodemodeLoader = ConstructorParameters<CodemodeModule["DynamicWorkerExecutor"]>[0]["loader"]
+type HostCallRunner = <T>(call: () => Promise<T>) => Promise<T>
 
 const messageOf = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
@@ -100,12 +101,18 @@ console.error = (...values) => __derive_emit_log(__derive_console_error, values)
  * Each call creates a Dynamic Worker with no parent bindings or outbound network. Tool calls
  * cross Workers RPC back into the static Derive Worker, which owns the caller-scoped handlers.
  */
-export const cloudflareSandbox = (loader: WorkerLoader): Sandbox => ({
+export const cloudflareSandbox = (
+  loader: WorkerLoader,
+  captureHostCallRunner: () => HostCallRunner = () => (call) => call(),
+): Sandbox => ({
   name: "cloudflare-dynamic-worker",
   async run({ code, host, timeoutMs }): Promise<SandboxResult> {
     // Keep the Cloudflare-only package out of the Node module graph. The Node test suite imports
     // worker.ts to verify fail-closed startup, but it never runs this adapter.
     const { DynamicWorkerExecutor } = await import("@cloudflare/codemode")
+    // Worker RPC callbacks run in a separate async context. Capture the host request context
+    // before entering the Dynamic Worker, then restore it around each caller-scoped tool handler.
+    const runHostCall = captureHostCallRunner()
     const toolCalls: string[] = []
     const fns = {
       toolNames: async () => host.toolNames,
@@ -121,12 +128,12 @@ export const cloudflareSandbox = (loader: WorkerLoader): Sandbox => ({
           return { error: `tool call limit exceeded (${MAX_CODE_TOOL_CALLS})` }
         toolCalls.push(name)
         try {
-          return await host.callTool(
-            name,
+          const args =
             record.args && typeof record.args === "object" && !Array.isArray(record.args)
               ? (record.args as Record<string, unknown>)
-              : {},
-          )
+              : {}
+          const call = () => host.callTool(name, args)
+          return await runHostCall(call)
         } catch (error) {
           return { error: messageOf(error) }
         }
