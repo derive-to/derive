@@ -27,7 +27,7 @@ export function NewContextForm({
   // "" = auto-mint (the default; nobody picks an agent). A non-empty id = run as
   // an existing service agent — an opt-in the roster's presence (admins) reveals.
   const [agentId, setAgentId] = useState("")
-  const [manifest, setManifest] = useState("")
+  const [definition, setDefinition] = useState("")
   // Creating a dedicated connection may return a bearer once. Defer navigation until
   // the user dismisses the reveal.
   const [minted, setMinted] = useState<{ contextId: string; name: string; token: string } | null>(
@@ -40,13 +40,13 @@ export function NewContextForm({
       api.createContext({
         name: name.trim(),
         ...(agentId ? { agent_id: agentId } : {}),
-        manifest_short_id: manifest.trim(),
+        manifest_short_id: definition.trim(),
       }),
     success: "Context created",
     onSuccess: (ctx) => {
       const created = name.trim()
       setName("")
-      setManifest("")
+      setDefinition("")
       onCreated()
       if (ctx.agent_token) {
         setMinted({ contextId: ctx.id, name: created, token: ctx.agent_token })
@@ -57,7 +57,7 @@ export function NewContextForm({
     },
   })
   const submit = () => {
-    if (name.trim() && manifest.trim()) create.mutate()
+    if (name.trim() && definition.trim()) create.mutate()
   }
 
   return (
@@ -73,10 +73,10 @@ export function NewContextForm({
         />
         <Input
           data-testid="context-create-manifest"
-          aria-label="Manifest short id"
-          placeholder="Manifest short id"
-          value={manifest}
-          onChange={(e) => setManifest(e.target.value)}
+          aria-label="Definition artifact short id"
+          placeholder="Definition artifact id"
+          value={definition}
+          onChange={(e) => setDefinition(e.target.value)}
           className="w-44 font-mono"
         />
         {/* Only admins can even load the roster; everyone else auto-mints. */}
@@ -103,7 +103,7 @@ export function NewContextForm({
           data-testid="context-create-submit"
           onClick={submit}
           loading={create.isPending}
-          disabled={create.isPending || !name.trim() || !manifest.trim()}
+          disabled={create.isPending || !name.trim() || !definition.trim()}
         >
           Create
         </Button>

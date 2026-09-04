@@ -122,11 +122,11 @@ function ContextRow({ context: x }: { context: ContextInfo }) {
       <span className="flex flex-wrap items-center gap-1.5 pl-6 font-mono text-2xs">
         {x.manifest_version != null ? (
           <span className="rounded-md border border-share/20 bg-share/10 px-1.5 py-0.5 font-semibold text-share">
-            manifest v{x.manifest_version}
+            definition v{x.manifest_version}
           </span>
         ) : (
           <span className="rounded-md border border-border bg-muted/45 px-1.5 py-0.5 text-muted-foreground">
-            manifest unresolved
+            definition unresolved
           </span>
         )}
         {x.skills_count ? (
