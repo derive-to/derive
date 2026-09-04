@@ -60,6 +60,28 @@ describe("Cloudflare Dynamic Worker resource limits", () => {
     expect(calls).toEqual([])
     expect(result.toolCalls).toEqual([])
   })
+
+  it("restores the request Postgres connection inside RPC callbacks", async () => {
+    let insideCapturedContext = false
+    const sandbox = cloudflareSandbox(env.LOADER, () => async (call) => {
+      insideCapturedContext = true
+      try {
+        return await call()
+      } finally {
+        insideCapturedContext = false
+      }
+    })
+    const result = await sandbox.run({
+      code: `return await tools.read({ short_id: "abc" })`,
+      host: {
+        toolNames: ["read"],
+        callTool: async () => ({ insideCapturedContext }),
+      },
+      timeoutMs: 10_000,
+    })
+
+    expect(result.value).toEqual({ insideCapturedContext: true })
+  })
 })
 
 // This suite runs the actual Cloudflare SDK executor through Miniflare's Worker Loader. It proves
