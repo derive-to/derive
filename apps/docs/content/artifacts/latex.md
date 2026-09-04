@@ -35,7 +35,7 @@ author-year citations in the compiled PDF; switch to `acmtog` for the journal tr
 **CVPR** (the author kit's layout in review mode, numeric citations). The page cites by
 number for both, as every paper does. On the Templates page, choose one under
 Academic: the New page opens with `main.tex` in the editor, and publishing creates a paper
-bundle with the `.bib`, a README and `derive.sty`. Both starters bind a `results` table
+bundle with the `.bib` and `derive.sty`. Both starters bind a `results` table
 and a `teaser` figure, seeded empty at publish, so the [dynamic data](dynamic-data.md)
 API works from the first version.
 
@@ -46,7 +46,7 @@ Over MCP, `read("derive://latex/templates/<id>")` returns the same files map for
 The CVPR author kit publishes `cvpr.sty` and `ieeenat_fullname.bst` without a license, so
 Derive does not ship them. Creating a CVPR paper fetches both from a pinned commit of the
 kit into the bundle, verified against pinned hashes. If the fetch fails the paper is still
-created and its README says what to add.
+created and a comment at the top of `main.tex` says what to add.
 
 ## Download the source
 

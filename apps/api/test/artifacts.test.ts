@@ -1862,19 +1862,15 @@ describe("paper templates and the LaTeX source export", () => {
     expect(list.templates.map((t: { id: string }) => t.id)).toEqual(["acm-siggraph", "cvpr"])
     const acm = await (await authed.request("/v1/latex/templates/acm-siggraph", { headers })).json()
     expect(acm.entry).toBe("main.tex")
-    expect(Object.keys(acm.files).sort()).toEqual([
-      "README.md",
-      "derive.sty",
-      "main.tex",
-      "references.bib",
-    ])
+    expect(Object.keys(acm.files).sort()).toEqual(["derive.sty", "main.tex", "references.bib"])
     expect(acm.notes).toEqual([])
-    // The kit is unreachable: the paper still comes back, with the note in the README too.
+    // The kit is unreachable: the paper still comes back, with the note as the first line
+    // of main.tex too, so it travels with the bundle.
     const cvprMissing = await (await authed.request("/v1/latex/templates/cvpr", { headers })).json()
     expect(cvprMissing.files["cvpr.sty"]).toBeUndefined()
     expect(cvprMissing.notes).toHaveLength(1)
     expect(cvprMissing.notes[0]).toContain("cvpr.sty")
-    expect(cvprMissing.files["README.md"]).toContain("could not be fetched")
+    expect(cvprMissing.files["main.tex"]).toMatch(/^%% .*could not be fetched/)
     // Reachable with the right bytes: included. Wrong bytes: refused like a miss.
     const { CVPR_KIT_FILES } = await import("@derive/core")
     const { sha256Hex } = await import("@derive/core")
@@ -1902,6 +1898,8 @@ describe("paper templates and the LaTeX source export", () => {
     expect(withKit.files["cvpr.sty"]).toBe(styBody)
     expect(withKit.files["ieeenat_fullname.bst"]).toBe(bstBody)
     expect(withKit.notes).toEqual([])
+    // A complete bundle carries the starter's main.tex untouched: no note on top.
+    expect(withKit.files["main.tex"]).not.toContain("could not be fetched")
     resetLatexTemplateCache()
     delete KIT[sty.url]
     delete KIT[bst.url]
@@ -1962,7 +1960,6 @@ describe("paper templates and the LaTeX source export", () => {
     const files = unzipSync(new Uint8Array(await res.arrayBuffer()))
     expect(Object.keys(files).sort()).toEqual([
       "README-derive.md",
-      "README.md",
       "derive-dynamic/results.tex",
       "derive-dynamic/teaser.tex",
       "derive.sty",

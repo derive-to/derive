@@ -3602,7 +3602,6 @@ describe("MCP: paper starters", () => {
     expect(read.mimeType).toBe("application/json")
     expect(read.content.entry).toBe("main.tex")
     expect(Object.keys(read.content.files).sort()).toEqual([
-      "README.md",
       "derive.sty",
       "main.tex",
       "references.bib",

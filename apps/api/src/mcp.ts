@@ -468,8 +468,8 @@ async function buildServer(
   )
 
   // The paper starters: derive://latex/templates/<id>, each a JSON files map that
-  // `publish({ files })` posts as-is (main.tex, the .bib, README, derive.sty, and for CVPR
-  // the author kit's style files fetched at read time). Registered unconditionally like the
+  // `publish({ files })` posts as-is (main.tex, the .bib, derive.sty, and for CVPR the
+  // author kit's style files fetched at read time). Registered unconditionally like the
   // deck starter; the guide is derive://skills/latex.
   for (const t of latexTemplateSummaries()) {
     server.registerResource(

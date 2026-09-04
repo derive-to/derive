@@ -10,7 +10,8 @@
  * `ieeenat_fullname.bst` without a license, so this repository does not vendor them. A
  * paper created from the template fetches them from a pinned commit into the user's own
  * bundle (user content, like any file they upload), verified against the hashes below, and
- * degrades to a README note when the fetch fails. Bump the commit and hashes together.
+ * degrades to a comment at the top of main.tex when the fetch fails. Bump the commit and
+ * hashes together.
  */
 
 import {
@@ -74,6 +75,7 @@ export const latexTemplateUpstreamFiles = (id: LatexTemplateId): readonly Pinned
   id === "cvpr" ? CVPR_KIT_FILES : []
 
 /** The note a CVPR paper carries when the kit could not be fetched. Shown in the publish
- *  advisories and in the bundle's README, so the author knows before compiling. */
+ *  advisories and as a comment on the first line of main.tex, so the author knows before
+ *  compiling. */
 export const CVPR_KIT_MISSING_NOTE =
   "cvpr.sty and ieeenat_fullname.bst could not be fetched from the CVPR author kit; add them from https://github.com/cvpr-org/author-kit next to main.tex before compiling."

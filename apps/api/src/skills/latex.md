@@ -63,12 +63,13 @@ them inside a `table` or `figure` environment with a `\caption` the way you woul
 ## Start from a template
 
 `read("derive://latex/templates/acm-siggraph")` or `read("derive://latex/templates/cvpr")`
-returns a files map (`main.tex`, the `.bib`, `README.md`, `derive.sty`; for CVPR the author
-kit's `cvpr.sty` and `ieeenat_fullname.bst`, fetched at read time). Publish it as is:
+returns a files map (`main.tex`, the `.bib`, `derive.sty`; for CVPR the author kit's
+`cvpr.sty` and `ieeenat_fullname.bst`, fetched at read time). Publish it as is:
 `publish({ title, files })`. Both starters bind `results` (table) and `teaser` (figure),
 seeded empty at publish, so the data API works from the first version. The same maps are
 at `GET /v1/latex/templates/<id>`; `derive init --template siggraph|cvpr` scaffolds one.
-If the CVPR kit could not be fetched the map's `notes` say so and the README repeats it.
+If the CVPR kit could not be fetched the map's `notes` say so and a comment at the top of
+`main.tex` repeats it.
 
 ## Download the source
 
