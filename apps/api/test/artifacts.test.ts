@@ -1094,6 +1094,32 @@ describe("Skills product surface", () => {
     )
   })
 
+  it("infers a version-pinned reference from a SKILL.md artifact link", async () => {
+    const target = await publishSkill("linked-target")
+    const source = await publishSkill("linked-source")
+    const opened = await (await app.request(`/v1/artifacts/${source.short_id}/skill-source`)).json()
+    const updated = await app.request(`/v1/artifacts/${source.short_id}/skill-source`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        source: `${opened.source}\n\nUse [the linked Skill](/artifacts/${target.short_id}@v1).`,
+        base_version: 1,
+      }),
+    })
+    expect(updated.status).toBe(200)
+
+    const graph = await (await app.request(`/v1/artifacts/${source.short_id}/skill-graph`)).json()
+    expect(graph.edges).toContainEqual(
+      expect.objectContaining({
+        source_version: 2,
+        target_version: 1,
+        kind: "references",
+      }),
+    )
+    const reverse = await (await app.request(`/v1/artifacts/${target.short_id}/skill-graph`)).json()
+    expect(reverse.edges).toContainEqual(expect.objectContaining({ kind: "references" }))
+  })
+
   it("pages past embedded Skills instead of letting them crowd catalog results out", async () => {
     const visible = await publishSkill("crowding-visible")
     for (let index = 0; index < 5; index += 1) {

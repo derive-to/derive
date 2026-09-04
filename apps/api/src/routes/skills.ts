@@ -17,13 +17,14 @@ import { OpenAPIHono } from "@hono/zod-openapi"
 import type { BlankEnv } from "hono/types"
 import { z } from "zod"
 import type { AppContext } from "../context"
-import { afterPublish } from "../lib/after-publish"
+import { afterPublish, indexSkillVersion } from "../lib/after-publish"
 import { manifestOf, mergeBundleZip, pageTextResolver, zipBundleFiles } from "../lib/bundle"
 import { ContextConflictError, createContextCore } from "../lib/create-context"
 import { fail, readJson } from "../lib/http"
 import { visibleArtifactIds } from "../lib/visibility"
 import { parseLinkedWorkflowFacts } from "../lib/workflow-facts"
 import { indexWorkflowSkillLinks } from "../lib/workflow-skill-links"
+import { log } from "../log"
 
 const installationBody = z.object({
   skill_version: z.number().int().positive(),
@@ -732,6 +733,40 @@ export const skillRoutes = (ctx: AppContext) => {
       }
       const reportRow = report.at(-1)
       if (reportRow) reportRow.skill_short_id = launcherArtifact.short_id
+    }
+
+    // Rebuild current Skill relation indexes so this migration also backfills references
+    // inferred from Skills published before inference existed. This is idempotent and does not
+    // create a new artifact version: the index remains a cache over immutable version bytes.
+    if (body.apply) {
+      let cursor: { key: string; id: string } | undefined
+      for (;;) {
+        const skills = await meta.listArtifacts({
+          orgId,
+          contentType: SKILL_CONTENT_TYPE,
+          archived: "include",
+          limit: 100,
+          cursor,
+        })
+        for (const skill of skills) {
+          const version = await meta.getVersion(skill.id, skill.current_version)
+          if (!version) continue
+          try {
+            await indexSkillVersion(meta, blobs, skill, version)
+          } catch (error) {
+            // One damaged historical bundle must not prevent every healthy Skill from being
+            // backfilled. The same best-effort boundary is used by the live publish indexer.
+            log.warn("skill relation backfill failed", {
+              artifact: skill.id,
+              n: version.n,
+              error: String(error),
+            })
+          }
+        }
+        const last = skills.at(-1)
+        if (skills.length < 100 || !last) break
+        cursor = { key: last.created_at, id: last.id }
+      }
     }
 
     return c.json({ applied: body.apply, report })

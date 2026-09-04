@@ -225,7 +225,8 @@ function SkillWorkbench({
               </div>
             ) : (
               <Muted>
-                This skill stands alone. Add requires, extends, or recommends in derive.skill.json.
+                This skill stands alone. Link another Skill in SKILL.md, or declare requires,
+                extends, or recommends in derive.skill.json.
               </Muted>
             )}
           </TabsContent>

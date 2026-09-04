@@ -7,6 +7,8 @@
  * and read frontmatter, with NO new artifact kind and no heavy YAML dependency
  * (this module must run on Cloudflare Workers).
  */
+
+import { parseRef } from "./ids"
 import type { BundleManifest, SkillRelationKind } from "./ports"
 import { validateWorkflowDefinition, type WorkflowDefinition } from "./workflow"
 
@@ -44,6 +46,66 @@ const object = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value)
 
 const relationKinds: readonly SkillRelationKind[] = ["requires", "extends", "recommends"]
+
+export interface InferredSkillRelationRef {
+  id: string
+  version?: number
+}
+
+// A Skill reference is inferred only from an authored link target. Bare short ids in prose
+// are deliberately ignored: they are indistinguishable from examples, hashes, and unrelated
+// identifiers. Both Markdown links and inline HTML are valid inside SKILL.md.
+const SKILL_HTML_HREF = /\bhref\s*=\s*("([^"]*)"|'([^']*)'|([^\s>]+))/gi
+
+// Index walking keeps this linear on adversarial Markdown. A compact regex for the same
+// grammar is easy to make polynomial when a long malformed target never closes.
+const markdownLinkTargets = (source: string): string[] => {
+  const targets: string[] = []
+  let cursor = 0
+  while (cursor < source.length) {
+    const marker = source.indexOf("](", cursor)
+    if (marker < 0) break
+    const start = marker + 2
+    let end = start
+    while (end < source.length && source[end] !== ")" && !/\s/.test(source[end] ?? "")) end += 1
+    if (end > start && source[end] === ")") targets.push(source.slice(start, end))
+    cursor = Math.max(end + 1, start + 1)
+  }
+  return targets
+}
+
+/** Mechanically extract exact Derive artifact refs from SKILL.md. This records only that the
+ * Skill points at another artifact; the publisher later verifies that target is actually a
+ * readable Skill in the same workspace. */
+export const inferredSkillRelationRefs = (skillMd: string): InferredSkillRelationRef[] => {
+  const targets: string[] = []
+  targets.push(...markdownLinkTargets(skillMd))
+  for (const match of skillMd.matchAll(SKILL_HTML_HREF))
+    targets.push(match[2] ?? match[3] ?? match[4] ?? "")
+
+  const refs: InferredSkillRelationRef[] = []
+  const seen = new Set<string>()
+  for (const target of targets) {
+    let decoded = target
+    try {
+      decoded = decodeURIComponent(target)
+    } catch {
+      // A malformed escape cannot make the whole Skill invalid; parse the raw target.
+    }
+    const match = /\/artifacts\/([^/?#\s]+)/.exec(decoded)
+    if (!match?.[1]) continue
+    const parsed = parseRef(match[1])
+    if (!/^[0-9a-z]{6,12}$/.test(parsed.shortId) || seen.has(parsed.shortId)) continue
+    seen.add(parsed.shortId)
+    refs.push({
+      id: parsed.shortId,
+      ...(Number.isInteger(parsed.version) && Number(parsed.version) > 0
+        ? { version: parsed.version }
+        : {}),
+    })
+  }
+  return refs
+}
 
 /** Validate the portable Agent Skills contract plus Derive's optional typed sidecar. */
 export const validateSkillDefinition = (

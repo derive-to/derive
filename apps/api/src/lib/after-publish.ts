@@ -14,6 +14,7 @@ import {
   DECK_CONTENT_TYPE,
   deriveFacts,
   FACT_GEN,
+  inferredSkillRelationRefs,
   isAuthoredFactType,
   isHtmlLike,
   type MetaStore,
@@ -150,7 +151,7 @@ export const emitVersionBump = async (
   return storedRows
 }
 
-const indexSkillVersion = async (
+export const indexSkillVersion = async (
   meta: MetaStore,
   blobs: BlobStore,
   artifact: ArtifactRecord,
@@ -174,7 +175,12 @@ const indexSkillVersion = async (
   const declared = Object.entries(checked.sidecar?.relations ?? {}).flatMap(([kind, refs]) =>
     (refs ?? []).map((ref) => ({ kind: kind as "requires" | "extends" | "recommends", ref })),
   )
-  const targets = await meta.getByShortIds([...new Set(declared.map(({ ref }) => ref.id))])
+  const skillMd = new TextDecoder().decode(skillBytes)
+  const inferred = inferredSkillRelationRefs(skillMd)
+  const targetIds = [
+    ...new Set([...declared.map(({ ref }) => ref.id), ...inferred.map((ref) => ref.id)]),
+  ]
+  const targets = await meta.getByShortIds(targetIds)
   const byShortId = new Map(targets.map((target) => [target.short_id, target]))
   const relations = []
   for (const { kind, ref } of declared) {
@@ -205,6 +211,27 @@ const indexSkillVersion = async (
       target_artifact_id: target.id,
       target_version: ref.version,
       kind,
+    })
+  }
+  // Explicit sidecar relationships carry authored semantics and always win. A plain link in
+  // SKILL.md becomes the intentionally weaker `references` edge, pinned to the linked version
+  // when present and otherwise to the target's current version at publication time.
+  const declaredTargets = new Set(declared.map(({ ref }) => ref.id))
+  for (const ref of inferred) {
+    const target = byShortId.get(ref.id)
+    if (!target || target.id === artifact.id || target.org_id !== artifact.org_id) continue
+    if (declaredTargets.has(ref.id)) continue
+    const targetVersionNumber = ref.version ?? target.current_version
+    const targetVersion = await meta.getVersion(target.id, targetVersionNumber)
+    if (targetVersion?.content_type !== SKILL_CONTENT_TYPE) continue
+    relations.push({
+      id: newId("skr"),
+      org_id: artifact.org_id,
+      source_artifact_id: artifact.id,
+      source_version: version.n,
+      target_artifact_id: target.id,
+      target_version: targetVersionNumber,
+      kind: "references" as const,
     })
   }
   await meta.replaceSkillRelations(artifact.org_id, artifact.id, version.n, relations)
