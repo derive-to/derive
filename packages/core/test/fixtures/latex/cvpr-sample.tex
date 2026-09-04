@@ -1,0 +1,80 @@
+%% A paper in the shape of the CVPR author kit (article + cvpr.sty), review mode.
+\documentclass[10pt,twocolumn,letterpaper]{article}
+
+\usepackage[review]{cvpr}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{booktabs}
+\usepackage[pagebackref,breaklinks,colorlinks]{hyperref}
+\usepackage[capitalize]{cleveref}
+
+\def\confName{CVPR}
+\def\confYear{2026}
+\def\cvprPaperID{1234}
+
+\begin{document}
+
+\title{Seeing Around Corners with Commodity Cameras}
+
+\author{First Author\\
+Institution1\\
+Institution1 address\\
+{\tt\small firstauthor@i1.org}
+\and
+Second Author\\
+Institution2\\
+{\tt\small secondauthor@i2.org}
+}
+
+\maketitle
+
+\begin{abstract}
+We recover hidden geometry from the faint reflections a wall carries. Our method
+runs on a phone and beats prior work~\cite{mildenhall2020nerf,kerbl2023gaussians,pharr2016pbrt}
+by a wide margin.
+\end{abstract}
+
+\section{Introduction}
+\label{sec:intro}
+
+Non-line-of-sight imaging usually needs a laser~\cite{example2025dataset}. We show
+that a wall is enough. \Cref{sec:method} describes the method and \cref{tab:main}
+the results; \cref{fig:overview} gives an overview.
+
+\section{Method}
+\label{sec:method}
+
+We model the wall as a mirror with a blur kernel $k$:
+\begin{equation}
+  I = k * R + n .
+  \label{eq:image}
+\end{equation}
+Solving \cref{eq:image} for $R$ is ill-posed, so we add a learned prior.
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=0.9\linewidth]{fig/overview.png}
+  \caption{Overview of the pipeline.}
+  \label{fig:overview}
+\end{figure}
+
+\begin{table}[t]
+  \centering
+  \begin{tabular}{@{}lrr@{}}
+    \toprule
+    Method & PSNR $\uparrow$ & Time (s) $\downarrow$ \\
+    \midrule
+    Laser NLOS & 21.4 & 120 \\
+    Ours & \textbf{24.1} & \textbf{0.3} \\
+    \bottomrule
+  \end{tabular}
+  \caption{Reconstruction quality on the corner benchmark.}
+  \label{tab:main}
+\end{table}
+
+{\small
+\bibliographystyle{ieeenat_fullname}
+\bibliography{refs}
+}
+
+\end{document}

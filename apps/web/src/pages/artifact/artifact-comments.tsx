@@ -53,6 +53,12 @@ export function ArtifactComments(p: {
    *  becomes a generic alternative to commenting or a deck-specific surface. */
   inspectEnabled?: boolean
   inspectPanel?: ReactNode
+  /** The version binds dynamic tables or figures; the Data tab lists them. */
+  dataEnabled?: boolean
+  dataPanel?: ReactNode
+  /** A paper bundle with a .bib; the References tab lists and edits its entries. */
+  referencesEnabled?: boolean
+  referencesPanel?: ReactNode
   isAnon: boolean
   /** May the caller create comments here (commenter+)? Gates every write affordance;
    *  reading stays open to any authenticated viewer. */
@@ -125,7 +131,8 @@ export function ArtifactComments(p: {
   anchorConf?: AnchorConf
 }) {
   const { isMobile, isAnon, canComment, panel, sel } = p
-  const hasRailTabs = !!p.mapEnabled || !!p.chatBeta || !!p.inspectEnabled
+  const hasRailTabs =
+    !!p.mapEnabled || !!p.dataEnabled || !!p.referencesEnabled || !!p.chatBeta || !!p.inspectEnabled
   // THE STREAM, built once for both surfaces: the versions (grouped by the server's
   // sessions), the threads, the review rounds, and — after the reader's last visit —
   // the replies. The lens is rail state like `rail` itself.
@@ -228,6 +235,8 @@ export function ArtifactComments(p: {
                   tab={p.rail}
                   commentCount={p.openCount}
                   mapEnabled={p.mapEnabled}
+                  dataEnabled={p.dataEnabled}
+                  referencesEnabled={p.referencesEnabled}
                   chatEnabled={p.chatBeta}
                   inspectEnabled={p.inspectEnabled}
                   onTab={p.onRail}
@@ -236,6 +245,10 @@ export function ArtifactComments(p: {
             )}
             {panel !== "hidden" && p.rail === "map" && p.mapEnabled ? (
               p.mapPanel
+            ) : panel !== "hidden" && p.rail === "data" && p.dataEnabled ? (
+              p.dataPanel
+            ) : panel !== "hidden" && p.rail === "references" && p.referencesEnabled ? (
+              p.referencesPanel
             ) : panel !== "hidden" && p.rail === "chat" && p.chatBeta ? (
               p.chatPanel
             ) : panel !== "hidden" && p.rail === "inspect" && p.inspectEnabled ? (
@@ -248,6 +261,8 @@ export function ArtifactComments(p: {
                       tab={p.rail}
                       commentCount={p.openCount}
                       mapEnabled={p.mapEnabled}
+                      dataEnabled={p.dataEnabled}
+                      referencesEnabled={p.referencesEnabled}
                       chatEnabled={p.chatBeta}
                       inspectEnabled={p.inspectEnabled}
                       onTab={p.onRail}
@@ -306,6 +321,10 @@ export function ArtifactComments(p: {
             chatPanel={p.chatPanel}
             mapPanel={p.mapPanel}
             mapEnabled={p.mapEnabled}
+            dataPanel={p.dataPanel}
+            dataEnabled={p.dataEnabled}
+            referencesPanel={p.referencesPanel}
+            referencesEnabled={p.referencesEnabled}
             inspectPanel={p.inspectPanel}
             chatEnabled={p.chatBeta}
             inspectEnabled={p.inspectEnabled}

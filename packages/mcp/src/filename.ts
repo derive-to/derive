@@ -21,10 +21,21 @@ export const looksLikeHtmlDocument = (s: string): boolean => {
   return /^<(!doctype\s+html|html|head|body|meta|style|title)[\s/>]/i.test(head.slice(0, 64))
 }
 
+/** A LaTeX document: `\documentclass` or `\begin{document}` at a line start. Mirrors
+ *  @derive/core's isLatexDocument exactly (line-anchored so prose quoting the macro
+ *  does not count). */
+export const isLatexDocument = (s: string): boolean =>
+  /^[ \t]*\\documentclass\s*[[{]/m.test(s) || /^[ \t]*\\begin\{document\}/m.test(s)
+
 /** The fallback filename for inline content with none given: an HTML page →
- *  `index.html`, anything else → `index.md`. So Markdown is never stored as HTML.
+ *  `index.html`, a LaTeX document → `index.tex`, anything else → `index.md`. So
+ *  Markdown is never stored as HTML and a paper is never stored as Markdown.
  *  Caveat: fragment HTML that opens with a `<div>` (indistinguishable from
  *  HTML-flavored Markdown) still lands as `.md` — pass an explicit
  *  `filename` (or use `edits`) to keep it HTML. */
 export const fallbackFilename = (content: string | undefined): string =>
-  looksLikeHtmlDocument(content ?? "") ? "index.html" : "index.md"
+  looksLikeHtmlDocument(content ?? "")
+    ? "index.html"
+    : isLatexDocument(content ?? "")
+      ? "index.tex"
+      : "index.md"

@@ -1,0 +1,54 @@
+%% A journal-track paper (SIGGRAPH via ACM Transactions on Graphics) in the acmtog
+%% format, submitted anonymously for review.
+\documentclass[acmtog,anonymous,review]{acmart}
+
+\acmJournal{TOG}
+\acmVolume{45}
+\acmNumber{4}
+\acmArticle{88}
+\acmMonth{8}
+\acmYear{2026}
+\acmSubmissionID{papers_0042}
+\setcopyright{rightsretained}
+
+\begin{document}
+
+\title{Differentiable Caustics}
+
+\author{Ada Example}
+\email{ada@example.edu}
+\affiliation{\institution{Institute of Light Transport}\country{Canada}}
+
+\begin{abstract}
+Caustics are hard to differentiate. We make them easy.
+\end{abstract}
+
+\maketitle
+
+\section{Overview}
+
+The light path $L$ satisfies $\nabla L = 0$ at a caustic. See \cite{pharr2016pbrt}
+for the standard treatment and \cite{kerbl2023gaussians,mildenhall2020nerf} for
+neural alternatives.
+
+\begin{figure}
+  \centering
+  \includegraphics[width=0.5\columnwidth]{missing-figure}
+  \caption{A caustic under a glass sphere.}
+  \label{fig:caustic}
+\end{figure}
+
+Figure~\ref{fig:caustic} shows the setup.
+
+\begin{anonsuppress}
+This paragraph names the authors and is hidden under review.
+\end{anonsuppress}
+
+\begin{acks}
+Hidden while anonymous.
+\end{acks}
+
+\bibliographystyle{ACM-Reference-Format}
+\bibliography{refs}
+
+\end{document}

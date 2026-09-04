@@ -19,9 +19,13 @@ import {
   hasArtifactStanding,
   heavyAssetsAdvisory,
   isHtmlLike,
+  isLatexBundle,
+  isLatexLike,
   isMarkdownBundle,
+  LATEX_BUNDLE_CONTENT_TYPE,
   LINKED_BUNDLE_CONTENT_TYPE,
   type LinkedBundleManifest,
+  latexTextParts,
   maxRole,
   missingBlobAdvisory,
   newId,
@@ -33,6 +37,7 @@ import {
   publish,
   publishAdvisories,
   type Role,
+  renderLatex,
   renderMarkdown,
   roleAllows,
   type SlideOp,
@@ -42,6 +47,7 @@ import {
   sortKeyOf,
   toJson,
   toMarkdown,
+  type VersionRecord,
   type WorkflowPreview,
   type WorkspaceAccess,
 } from "@derive/core"
@@ -59,13 +65,12 @@ import {
   resolveUserBylines,
 } from "../lib/author"
 import { BULK_MAX, BulkSummarySchema, bulkArtifactOp } from "../lib/bulk"
-import { cleanPath, manifestOf } from "../lib/bundle"
+import { cleanPath, manifestOf, mergeBundleZip } from "../lib/bundle"
 import { signClaimToken, verifyClaimToken } from "../lib/claim-token"
 import { contentMentionHandles, resolveContentMentionTargets } from "../lib/content-mentions"
 import {
-  bucketedNow,
   hashPassword,
-  signState,
+  signRawToken,
   unlockCookie,
   unlockToken,
   verifyPassword,
@@ -87,13 +92,13 @@ import {
   listedOf,
   MAX_UPLOAD_BYTES,
   RAW_TOKEN_MAX_AGE_MS,
-  RAW_TOKEN_WINDOW_MS,
   readJson,
   str,
   TOMBSTONE,
   toBody,
   workspaceAccessOf,
 } from "../lib/http"
+import { bundleTextFiles, bundleTextResolver } from "../lib/latex-bundle"
 import { agentName } from "../lib/principal-kind"
 import { PUBLISH_TARGET_CREATE, verifyPublishToken } from "../lib/publish-token"
 import { agentPushFanout, openReviewRound } from "../lib/review-request"
@@ -109,6 +114,7 @@ import {
   toSearchHits,
   workspaceSearchReport,
 } from "../lib/search"
+import { slotValuesOf } from "../lib/serve-content"
 import { normalizeTags, parseTagsField } from "../lib/tags"
 import { parseLinkedWorkflowFacts } from "../lib/workflow-facts"
 import { log } from "../log"
@@ -655,6 +661,8 @@ export const artifactRoutes = (ctx: AppContext) => {
     let filename: string
     let isBundle: boolean
     let preparedSource: string | undefined
+    // An edit inside a paper bundle republishes the bundle; its SPA flag is kept as is.
+    let bundleSpa: boolean | undefined
     let editSummary: ReviewSummary | undefined
     let previousSearchSource:
       | { source: string; contentType: string | null; title: string | null }
@@ -691,6 +699,8 @@ export const artifactRoutes = (ctx: AppContext) => {
           captureSource: (source: string, contentType: string | null) => {
             previousSearchSource = { source, contentType, title: existing.title }
           },
+          manifestOf: (v: VersionRecord) => manifestOf(blobs, v),
+          bundleTexts: (m: BundleManifest) => bundleTextFiles(blobs, m),
         }
         materialized = structural
           ? await materializeSlideOps(deps, existing, parsed as SlideOp[], baseVersion)
@@ -703,8 +713,17 @@ export const artifactRoutes = (ctx: AppContext) => {
           e instanceof Error ? e.message : "edit failed",
         )
       }
-      bytes = new TextEncoder().encode(materialized.content)
-      preparedSource = materialized.content
+      if (materialized.bundle) {
+        // One file of a paper bundle changed: the new version is the whole bundle with
+        // that file replaced, so its siblings (.bib, sections, figures) carry over.
+        bytes = await mergeBundleZip(blobs, materialized.bundle.manifest, {
+          [materialized.bundle.path]: materialized.content,
+        })
+        bundleSpa = materialized.bundle.manifest.spa
+      } else {
+        bytes = new TextEncoder().encode(materialized.content)
+        preparedSource = materialized.content
+      }
       if (!structural) {
         const applied = parsed as AnyDocEdit[]
         const textEdits = applied.flatMap((edit) => {
@@ -713,7 +732,11 @@ export const artifactRoutes = (ctx: AppContext) => {
               {
                 before: edit.old_str,
                 after: edit.new_str,
-                contentType: materialized.filename.endsWith(".md") ? "text/markdown" : "text/html",
+                contentType: materialized.filename.endsWith(".md")
+                  ? "text/markdown"
+                  : materialized.filename.endsWith(".tex")
+                    ? "text/x-latex"
+                    : "text/html",
               },
             ]
           if ("quote" in edit && typeof edit.new_text === "string")
@@ -737,8 +760,8 @@ export const artifactRoutes = (ctx: AppContext) => {
       if (bytes.length > MAX_UPLOAD_BYTES) return fail(c, 413, "upload too large")
       if (await overStorage(org, bytes.length))
         return fail(c, 413, blockCopy.storage.message, { code: blockCopy.storage.code })
-      filename = materialized.filename
-      isBundle = false
+      filename = materialized.bundle ? "paper.zip" : materialized.filename
+      isBundle = !!materialized.bundle
     } else {
       const file = body["file"]
       if (!(file instanceof File)) return fail(c, 400, "multipart field 'file' required")
@@ -929,7 +952,7 @@ export const artifactRoutes = (ctx: AppContext) => {
           isBundle,
           title: str(body["title"]),
           slug: str(body["slug"]),
-          spa: body["spa"] === "true" || body["spa"] === "1",
+          spa: bundleSpa ?? (body["spa"] === "true" || body["spa"] === "1"),
           message: str(body["message"]),
           // Author is the authenticated identity, never a client-supplied field — a
           // logged-in publish must be attributed to that person. The human behind the
@@ -1766,7 +1789,10 @@ export const artifactRoutes = (ctx: AppContext) => {
         const manifestBytes = await blobs.get(cur.blob_key)
         if (manifestBytes) {
           const manifest = JSON.parse(new TextDecoder().decode(manifestBytes)) as BundleManifest
-          if (isMarkdownBundle(manifest)) bundle = bundleDoc(manifest, await sourceText(cur))
+          // A paper (entry main.tex) gets the same block: the viewer lists its sources,
+          // figures and .bib beside the rendered page.
+          if (isMarkdownBundle(manifest) || isLatexBundle(manifest))
+            bundle = bundleDoc(manifest, await sourceText(cur))
         }
       }
       // Linked bundles stay ordinary HTML artifacts. Their one authored fact is the
@@ -1863,7 +1889,10 @@ export const artifactRoutes = (ctx: AppContext) => {
         ? await meta.getArtifactById(artifact.derived_from)
         : null
       const base = toJson(deps.baseUrl, artifact, versions)
-      const rawTokenIssuedAt = bucketedNow(RAW_TOKEN_WINDOW_MS)
+      const rawToken = signRawToken(deps.encryptionKey ?? "", {
+        rid: artifact.id,
+        history: !!artifact.public_history || hasArtifactStanding(actor, artifact.workspace_access),
+      })
       // `versions` stays at revision granularity (machines/agents); `sessions` is
       // the time-grouped view the UI shows by default. `my_role` tells the client
       // which actions to surface.
@@ -1944,19 +1973,11 @@ export const artifactRoutes = (ctx: AppContext) => {
         // a different URL every fetch, which silently defeated the cache — measured, an
         // open whose URL matched served in 13ms from cache; the next one re-downloaded
         // 15KB. Validity is unchanged (verifyState still enforces the same max age).
-        raw_token: signState(
-          {
-            rid: artifact.id,
-            history:
-              artifact.public_history || hasArtifactStanding(actor, artifact.workspace_access),
-          },
-          deps.encryptionKey ?? "",
-          rawTokenIssuedAt,
-        ),
+        raw_token: rawToken.token,
         // The detail record can outlive the capability in the browser query cache.
         // Make the lifetime explicit so the viewer never pins an expired token while
         // React Query refreshes the record in the background.
-        raw_token_expires_at: new Date(rawTokenIssuedAt + RAW_TOKEN_MAX_AGE_MS).toISOString(),
+        raw_token_expires_at: new Date(rawToken.issuedAt + RAW_TOKEN_MAX_AGE_MS).toISOString(),
       })
     },
   )
@@ -2475,6 +2496,9 @@ export const artifactRoutes = (ctx: AppContext) => {
           isNew: false,
           onBehalf: null,
           actorId: (await actingUser(c))?.id ?? null,
+          // The restored version's dynamic data comes back with it: v7 restored from v3
+          // starts from the numbers v3 ended with, not from whatever v6 had.
+          dynamicSeedFrom: src.n,
         },
       )
       const fresh = (await meta.getByShortId(artifact.short_id)) as ArtifactRecord
@@ -2623,7 +2647,11 @@ export const artifactRoutes = (ctx: AppContext) => {
     if (artifact.removed_at) return fail(c, 410, TOMBSTONE)
     const version = await meta.getVersion(artifact.id, artifact.current_version)
     if (!version) return fail(c, 404, "version not found")
-    if (version.content_type !== "text/markdown" && !isHtmlLike(version.content_type))
+    if (
+      version.content_type !== "text/markdown" &&
+      !isHtmlLike(version.content_type) &&
+      !isLatexLike(version.content_type)
+    )
       return c.json({ handles: [] })
     const source = await sourceText(version)
     if (source === null) return fail(c, 500, "blob missing")
@@ -2664,7 +2692,12 @@ export const artifactRoutes = (ctx: AppContext) => {
     const outline = c.req.query("outline") === "1"
     const present = (source: string, contentType: string): string => {
       if (!format) return source
-      if (format === "text") return isHtmlLike(contentType) ? pageText(source) : source
+      if (format === "text")
+        return isHtmlLike(contentType)
+          ? pageText(source)
+          : isLatexLike(contentType)
+            ? latexTextParts(source).text
+            : source
       return elideDataUris(toMarkdown(source, contentType))
     }
 
@@ -2729,7 +2762,12 @@ export const artifactRoutes = (ctx: AppContext) => {
     const bytes = await blobs.get(file.key)
     if (!bytes) return fail(c, 500, "blob missing")
     const fileBaseType = file.type.split(";")[0]?.trim() ?? file.type
-    const isText = fileBaseType === "text/html" || fileBaseType === "text/markdown"
+    // text/plain covers a paper's .bib, .sty, .cls and .bst files.
+    const isText =
+      fileBaseType === "text/html" ||
+      fileBaseType === "text/markdown" ||
+      fileBaseType === "text/x-latex" ||
+      fileBaseType === "text/plain"
     if (!isText) {
       // This route is a machine content API, not a rendering surface (unlike /raw/,
       // which applies a CSP sandbox to every bundle asset it serves). Native
@@ -2759,16 +2797,22 @@ export const artifactRoutes = (ctx: AppContext) => {
     return c.body(present(raw, file.type))
   })
 
-  // Live editor preview: render a markdown draft to the exact published HTML.
+  // Live editor preview: render a markdown or LaTeX draft to the exact published HTML.
   // Stateless (renders the caller's text, stores nothing) and signed-in only, so
   // it can't be used as an anonymous render farm. HTML drafts preview in the
-  // browser, so this is markdown-only.
+  // browser, so this covers the two source languages that need a render.
+  //
+  // A paper bundle's page previews with its siblings in reach: `short_id` names the
+  // bundle and `path` the file the draft stands in for (main.tex, sec/method.tex,
+  // refs.bib), so `\input`, `\cite` and `\includegraphics` resolve exactly as they
+  // will once published, instead of every keystroke showing "[k?]" and a missing figure.
   app.openapi(
     createRoute({
       method: "post",
       path: "/v1/preview",
       tags: ["Artifacts"],
-      summary: "Render a markdown draft to the exact published HTML (stateless; signed-in only).",
+      summary:
+        "Render a markdown or LaTeX draft to the exact published HTML (stateless; signed-in only).",
       responses: {
         200: {
           description: "The rendered HTML.",
@@ -2780,10 +2824,64 @@ export const artifactRoutes = (ctx: AppContext) => {
       if (!(await actingUser(c))) return bail(fail(c, 401, "unauthenticated"))
       const body = await readJson(
         c,
-        z.object({ source: z.string().max(500_000), title: z.string().max(300).nullish() }),
+        z.object({
+          // The per-file editor's own ceiling (paper-files.ts): what can be saved can
+          // be previewed.
+          source: z.string().max(1_000_000),
+          title: z.string().max(300).nullish(),
+          // Defaults to markdown, the only draft the route used to take; a .tex draft
+          // names its type to reach the LaTeX renderer.
+          content_type: z.enum(["text/markdown", "text/x-latex"]).optional(),
+          short_id: z.string().max(64).optional(),
+          path: z.string().max(500).optional(),
+        }),
       )
       if (body instanceof Response) return bail(body)
-      return c.json({ html: await renderMarkdown(body.source, body.title ?? null) })
+      const plain = async () =>
+        body.content_type === "text/x-latex"
+          ? renderLatex(body.source, body.title ?? null).html
+          : await renderMarkdown(body.source, body.title ?? null)
+      if (!body.short_id) return c.json({ html: await plain() })
+      // Read access, proven the way every other read of the bundle is; a short_id the
+      // caller cannot read is a 404, never a render of its files.
+      const artifact = await requireArtifact(c, "read", { shortId: body.short_id })
+      if (artifact instanceof Response) return bail(artifact)
+      const n = artifact.current_version
+      const version = await meta.getVersion(artifact.id, n)
+      const manifest = version ? await manifestOf(blobs, version) : null
+      // A non-paper short_id (a markdown page, a site bundle) has no siblings for the
+      // draft to resolve against: it renders alone, exactly as without a short_id.
+      if (!version || !manifest || version.content_type !== LATEX_BUNDLE_CONTENT_TYPE)
+        return c.json({ html: await plain() })
+      const files = await bundleTextFiles(blobs, manifest)
+      // The draft stands in for one stored file; without a path, for the entry page.
+      files.set(`/${cleanPath(body.path ?? manifest.entry)}`, body.source)
+      const entry = files.get(`/${cleanPath(manifest.entry)}`)
+      if (entry === undefined) return c.json({ html: await plain() })
+      const dynamic = slotValuesOf(await meta.listDynamicSlots(artifact.id, n).catch(() => []))
+      // The preview pane is a sandboxed srcdoc frame with no cookie to send, so a figure
+      // reaches it only through the raw token route, the way the viewer's iframe reaches
+      // a private bundle's assets. The token lives RAW_TOKEN_MAX_AGE_MS (five minutes):
+      // an idle pane shows broken figures until the next keystroke re-renders with a
+      // fresh one, the price of handing the editor no long-lived capability.
+      const actor = await actorFor(c, artifact)
+      const { token } = signRawToken(deps.encryptionKey ?? "", {
+        rid: artifact.id,
+        history: !!artifact.public_history || hasArtifactStanding(actor, artifact.workspace_access),
+      })
+      const prefix = `/raw/${artifact.short_id}/v/${n}/t/${token}/`
+      // No shared-state or dynamic-data runtime: the pane has no host bridge to talk to,
+      // as for a single-file draft.
+      const rendered = renderLatex(entry, body.title ?? artifact.title, {
+        dynamic,
+        resolve: bundleTextResolver(files),
+        imageUrl: (file) => {
+          const clean = file.replace(/^\.?\//, "")
+          const f = manifest.files[`/${clean}`]
+          return f?.type.startsWith("image/") ? `${prefix}${clean}` : null
+        },
+      })
+      return c.json({ html: rendered.html })
     },
   )
 

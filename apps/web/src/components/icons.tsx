@@ -29,6 +29,7 @@ import {
   Flag,
   Folder,
   FolderGit2,
+  FolderOpen,
   Folders,
   GitFork,
   GitPullRequest,
@@ -78,6 +79,8 @@ const REG = {
   following: Users,
   collections: Folders,
   collection: Folder,
+  // The same folder, open: a folder chip whose card is showing.
+  "collection-open": FolderOpen,
   repo: FolderGit2,
   context: Bot,
   workflow: GitFork,

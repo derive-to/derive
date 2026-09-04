@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test"
+import { zipSync } from "fflate"
 import { expect, openArtifact, publishArtifact, shareArtifact, test } from "./fixtures"
 
 /**
@@ -1588,4 +1589,366 @@ test("a newly published HTML artifact enters Inspect without a reload", async ({
   await expect(owner.getByTestId("rail-tab-inspect")).toHaveCount(0)
   await owner.getByTestId("artifact-inline-edit").click()
   await expect(owner.getByTestId("rail-tab-inspect")).toBeVisible()
+})
+
+/* === LaTeX papers ==========================================================
+   The renderer marks math, tables, images, generated labels and the author block as
+   read-only islands; the frame refuses them and steps the caret over them, while the
+   prose, captions and headings around them edit like any document. A paper bundle
+   edits its entry file and republishes with its other files carried over. */
+
+const TEX = `\\documentclass{article}
+\\begin{document}
+\\section{Intro}
+First sentence with math $E=mc^2$ after it.
+\\begin{figure}
+\\centering
+\\caption{A caption to edit.}
+\\end{figure}
+\\begin{table}
+\\centering
+\\begin{tabular}{lr}
+Method & PSNR \\\\
+Baseline & 21.4 \\\\
+\\end{tabular}
+\\caption{Numbers.}
+\\end{table}
+\\end{document}
+`
+
+async function seedTex(page: Page) {
+  const shortId = await publishArtifact(page, "paper.tex", TEX, "text/x-latex")
+  await openArtifact(page, shortId)
+  return shortId
+}
+// The frame is titled after the artifact (a .tex upload names it by its file stem).
+const paper = (page: Page) => page.frameLocator('iframe[title="paper"]')
+const READONLY_TOAST = "can't be edited inline"
+
+test("LaTeX: typing beside a formula edits the prose and leaves the math alone", async ({
+  owner,
+}) => {
+  const shortId = await seedTex(owner)
+  const p = paper(owner).locator("p").first()
+  await expect(p.locator(".katex").first()).toBeVisible()
+  await enterEditMode(owner)
+  // Click the first word, not the centre of the line (that could be the formula).
+  await p.click({ position: { x: 6, y: 8 } })
+  await owner.keyboard.press("End")
+  await owner.keyboard.type(" Amended.")
+  await expect(owner.getByTestId("inline-edit-bar")).toContainText("1 unsaved change")
+  await owner.getByTestId("inline-edit-save").click()
+  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+  // The owner published v1 moments ago, so the edit coalesces into it: read the source.
+  await expect(async () => {
+    expect(await contentOf(owner, shortId)).toContain("after it. Amended.")
+  }).toPass()
+  expect(await contentOf(owner, shortId)).toContain("$E=mc^2$")
+})
+
+test("LaTeX: a formula and a table cell are refused, a caption edits like prose", async ({
+  owner,
+}) => {
+  const shortId = await seedTex(owner)
+  await expect(paper(owner).locator(".katex").first()).toBeVisible()
+  await enterEditMode(owner)
+  await paper(owner).locator(".derive-math").first().click()
+  await expect(owner.getByText(READONLY_TOAST)).toBeVisible()
+  await paper(owner).getByRole("cell", { name: "Baseline" }).click()
+  await expect(paper(owner).locator("[data-derive-editable]")).toHaveCount(0)
+
+  const caption = paper(owner).locator("figcaption").first()
+  await caption.click({ position: { x: 120, y: 8 } })
+  await expect(caption).toHaveAttribute("contenteditable", /^(plaintext-only|true)$/)
+  // The generated label is an inert island inside the armed caption.
+  await expect(caption.locator(".derive-caption-label")).toHaveAttribute("contenteditable", "false")
+  await owner.keyboard.press("End")
+  await owner.keyboard.type(" More.")
+  await owner.getByTestId("inline-edit-save").click()
+  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+  await expect(async () => {
+    expect(await contentOf(owner, shortId)).toContain("\\caption{A caption to edit. More.}")
+  }).toPass()
+})
+
+test("LaTeX: Backspace right after a formula cannot swallow it", async ({ owner }) => {
+  const shortId = await seedTex(owner)
+  const p = paper(owner).locator("p").first()
+  await expect(p.locator(".katex").first()).toBeVisible()
+  await enterEditMode(owner)
+  await p.click({ position: { x: 6, y: 8 } })
+  await p.evaluate((el) => {
+    const after = el.querySelector(".derive-math")?.nextSibling
+    if (!after) throw new Error("no text after the formula")
+    const range = document.createRange()
+    range.setStart(after, 0)
+    range.collapse(true)
+    const sel = window.getSelection()
+    sel?.removeAllRanges()
+    sel?.addRange(range)
+  })
+  await owner.keyboard.press("Backspace")
+  await expect(p.locator(".derive-math")).toHaveCount(1)
+  await expect(p.locator(".katex")).toHaveCount(1)
+  await expect(p).toContainText("First sentence with math")
+  await expect(p).toContainText("after it.")
+  await owner.getByTestId("inline-edit-done").click()
+  expect(await versionOf(owner, shortId)).toBe(1)
+})
+
+const enc = (s: string) => new TextEncoder().encode(s)
+const PAPER_MAIN = `\\documentclass{article}
+\\begin{document}
+\\section{Intro}
+Bundle prose here \\cite{k}.
+\\input{sec/method}
+\\bibliography{refs}
+\\end{document}
+`
+const PAPER_REFS = "@misc{k, title={Known}, author={A B}, year={2020}}\n"
+const PAPER_SECTION = "Included method text.\n"
+// A real 1x1 8-bit grayscale PNG (signature, IHDR, one deflated row, IEND): the publish
+// path may sniff image bytes, so the figure has to be a genuine image, not a label.
+const PAPER_PNG = new Uint8Array([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+  0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x00, 0x00, 0x00, 0x00, 0x3a, 0x7e, 0x9b,
+  0x55, 0x00, 0x00, 0x00, 0x0a, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0x60, 0x00, 0x00, 0x00,
+  0x02, 0x00, 0x01, 0x48, 0xaf, 0xa4, 0x71, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae,
+  0x42, 0x60, 0x82,
+])
+// Fourteen more figures beside fig/a.png: a folder card shows twelve rows and scrolls
+// past that, so fig/ has to hold more than twelve.
+const PAPER_EXTRA_FIGURES = Array.from(
+  { length: 14 },
+  (_, i) => `fig/b${String(i + 1).padStart(2, "0")}.png`,
+)
+const paperZip = () =>
+  zipSync({
+    "main.tex": enc(PAPER_MAIN),
+    "refs.bib": enc(PAPER_REFS),
+    "README.md": enc("# notes"),
+    "sec/method.tex": enc(PAPER_SECTION),
+    "sec/app/notes.tex": enc("Appendix notes.\n"),
+    "fig/a.png": PAPER_PNG,
+    ...Object.fromEntries(PAPER_EXTRA_FIGURES.map((path) => [path, PAPER_PNG])),
+  })
+
+test("LaTeX: a paper bundle edits main.tex on the page and keeps its other files", async ({
+  owner,
+}) => {
+  const shortId = await publishArtifact(owner, "paper.zip", paperZip(), "application/zip")
+  await openArtifact(owner, shortId)
+  await enterEditMode(owner)
+  const p = paper(owner).locator("p").first()
+  await p.click({ position: { x: 6, y: 8 } })
+  await owner.keyboard.press("End")
+  await owner.keyboard.type(" Amended.")
+  await owner.getByTestId("inline-edit-save").click()
+  await expect(owner.getByTestId("inline-edit-bar")).toBeHidden()
+  const mainOf = async () =>
+    (
+      (await (await owner.request.get(`/v1/artifacts/${shortId}/files/main.tex`)).json()) as {
+        source: string
+      }
+    ).source
+  // Typed right after the citation: the label word-snaps into the edit, and the server
+  // leaves it alone. The owner published moments ago, so the edit coalesces into v1.
+  await expect(async () => {
+    expect(await mainOf()).toContain("here \\cite{k}. Amended.")
+  }).toPass()
+  const detail = (await (await owner.request.get(`/v1/artifacts/${shortId}`)).json()) as {
+    current_content_type: string
+    bundle: { files: { path: string }[] }
+  }
+  expect(detail.current_content_type).toBe("derive/latex")
+  expect(detail.bundle.files.map((f) => f.path).sort()).toEqual([
+    "README.md",
+    "fig/a.png",
+    ...PAPER_EXTRA_FIGURES,
+    "main.tex",
+    "refs.bib",
+    "sec/app/notes.tex",
+    "sec/method.tex",
+  ])
+})
+
+test("LaTeX: the References tab adds an entry as a new version", async ({ owner }) => {
+  const shortId = await publishArtifact(owner, "paper.zip", paperZip(), "application/zip")
+  await openArtifact(owner, shortId)
+  await owner.getByTestId("rail-tab-references").click()
+  await expect(owner.getByTestId("references-entry-k")).toContainText("cited")
+  await owner.getByTestId("references-add").click()
+  await owner
+    .getByTestId("references-editor")
+    .fill("@misc{added, title={Added}, author={X Y}, year={2025}}")
+  await owner.getByTestId("references-save").click()
+  await expect(owner.getByTestId("references-entry-added")).toBeVisible()
+  await expect(async () => {
+    expect(await versionOf(owner, shortId)).toBe(2)
+  }).toPass()
+  const refs = await (await owner.request.get(`/v1/artifacts/${shortId}/files/refs.bib`)).json()
+  expect((refs as { source: string }).source).toBe(
+    `${PAPER_REFS}\n@misc{added, title={Added}, author={X Y}, year={2025}}\n`,
+  )
+})
+
+/* === The paper file bar + source editor ====================================
+   A paper's bar lists its files as chips: the entry first, then the root files, then one
+   chip per folder whose card (a small tree, opened by hover, pinned by a click) holds the
+   folder's files. The bar stays up while the source editor is open, so the chips are how
+   you move between files; the preview renders the whole paper with the open file's draft
+   substituted, and a dirty editor asks before it drops typed text. */
+
+const openPaper = async (page: Page) => {
+  const shortId = await publishArtifact(page, "paper.zip", paperZip(), "application/zip")
+  await openArtifact(page, shortId)
+  return shortId
+}
+const preview = (page: Page) => page.frameLocator('[data-testid="artifact-preview"]')
+const editor = (page: Page) => page.locator(".cm-content")
+// A root file is a chip; a nested one is a row in its root folder's card, which opens on
+// hover. Either way the bar says where the editor is: the chip's aria-current, or the
+// folder chip's data-active.
+const openFile = async (page: Page, path: string) => {
+  const root = path.split("/")[0] ?? path
+  if (root === path) {
+    await page.getByTestId(`bundle-edit-${path}`).click()
+    await expect(editor(page)).toBeVisible()
+    await expect(page.getByTestId(`bundle-edit-${path}`)).toHaveAttribute("aria-current", "true")
+    return
+  }
+  await page.getByTestId(`bundle-folder-${root}`).hover()
+  await page.getByTestId(`bundle-tree-${path}`).click()
+  await expect(editor(page)).toBeVisible()
+  await expect(page.getByTestId(`bundle-folder-${root}`)).toHaveAttribute("data-active", "true")
+}
+// Type at the end of the open file (the caret lands wherever the click did).
+const typeAtEnd = async (page: Page, text: string) => {
+  await editor(page).click()
+  await page.keyboard.press("Control+End")
+  await page.keyboard.type(text)
+}
+
+test("LaTeX: the bar lists the entry first, root files as chips and each folder as a card", async ({
+  owner,
+}) => {
+  await openPaper(owner)
+  const bar = owner.getByTestId("bundle-bar")
+  await expect(bar.locator('[data-testid^="bundle-edit-"]').first()).toHaveText("main.tex")
+  // A root README is repository notes, not part of the paper: no chip, file kept.
+  await expect(owner.getByTestId("bundle-edit-README.md")).toHaveCount(0)
+  await expect(owner.getByTestId("bundle-edit-refs.bib")).toBeVisible()
+  const fig = owner.getByTestId("bundle-folder-fig")
+  const sec = owner.getByTestId("bundle-folder-sec")
+  await expect(fig).toHaveAttribute("aria-expanded", "false")
+  await expect(sec).toHaveAttribute("aria-expanded", "false")
+  await expect(bar.getByText("fig/a.png")).toHaveCount(0)
+
+  // Pointing at a folder chip opens its card (the row itself never reflows); a figure
+  // in it is a link to the raw file in a new tab.
+  await fig.hover()
+  const figure = owner.getByTestId("bundle-open-fig/a.png")
+  await expect(figure).toBeVisible()
+  await expect(figure).toHaveAttribute("href", /\/raw\/.+\/fig\/a\.png$/)
+  await expect(figure).toHaveAttribute("target", "_blank")
+  // Fifteen figures, twelve rows: the list scrolls rather than the card growing.
+  const list = owner.locator('[data-slot="popover-content"] ul[role="tree"]')
+  expect(await list.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true)
+  // Leaving closes the card after a beat...
+  await owner.mouse.move(0, 0)
+  await expect(figure).toBeHidden()
+  // ...unless a click pinned it.
+  await fig.click()
+  await owner.mouse.move(0, 0)
+  await owner.waitForTimeout(400)
+  await expect(fig).toHaveAttribute("aria-expanded", "true")
+  await expect(figure).toBeVisible()
+
+  // A nested folder expands in place inside the card, and a row opens the editor.
+  await sec.hover()
+  await expect(owner.getByTestId("bundle-tree-sec/method.tex")).toBeVisible()
+  const app = owner.getByTestId("bundle-folder-sec/app")
+  await expect(app).toHaveAttribute("aria-expanded", "false")
+  await app.click()
+  const notes = owner.getByTestId("bundle-tree-sec/app/notes.tex")
+  await expect(notes).toBeVisible()
+  await notes.click()
+  await expect(editor(owner)).toBeVisible()
+  await expect(editor(owner)).toContainText("Appendix notes.")
+  await expect(notes).toBeHidden()
+  await expect(sec).toHaveAttribute("data-active", "true")
+})
+
+test("LaTeX: a section chip opens that file with the bar still up and previews it in the paper", async ({
+  owner,
+}) => {
+  await openPaper(owner)
+  await openFile(owner, "sec/method.tex")
+  await expect(owner.getByTestId("bundle-bar")).toBeVisible()
+  await expect(editor(owner)).toContainText("Included method text.")
+  await expect(owner.getByTestId("bundle-edit-main.tex")).not.toHaveAttribute(
+    "aria-current",
+    "true",
+  )
+  // Reopening the card marks the row the editor holds.
+  await owner.getByTestId("bundle-folder-sec").hover()
+  await expect(owner.getByTestId("bundle-tree-sec/method.tex")).toHaveAttribute(
+    "aria-current",
+    "true",
+  )
+  await owner.mouse.move(0, 0)
+  // The whole paper renders around the open file: the heading comes from main.tex, the
+  // body from the draft of the section.
+  const body = preview(owner).locator("body")
+  await expect(body).toContainText("Intro")
+  await expect(body).toContainText("Included method text.")
+})
+
+test("LaTeX: typing into a section re-renders the paper preview", async ({ owner }) => {
+  await openPaper(owner)
+  await openFile(owner, "sec/method.tex")
+  const body = preview(owner).locator("body")
+  await expect(body).toContainText("Included method text.")
+  await typeAtEnd(owner, " Typed more.")
+  await expect(body).toContainText("Included method text. Typed more.")
+  await expect(body).toContainText("Intro")
+})
+
+test("LaTeX: switching files over unsaved text asks first, then opens the other file", async ({
+  owner,
+}) => {
+  await openPaper(owner)
+  await openFile(owner, "sec/method.tex")
+  await typeAtEnd(owner, " Unsaved.")
+  await owner.getByTestId("bundle-edit-main.tex").click()
+  await expect(owner.getByTestId("source-edit-discard-confirm")).toBeVisible()
+  await expect(owner.getByTestId("source-edit-discard-confirm")).toContainText("sec/method.tex")
+  // The editor still holds the section until the question is answered.
+  await expect(owner.getByTestId("bundle-folder-sec")).toHaveAttribute("data-active", "true")
+  await owner.getByTestId("source-edit-discard").click()
+  await expect(owner.getByTestId("source-edit-discard-confirm")).toBeHidden()
+  await expect(owner.getByTestId("bundle-edit-main.tex")).toHaveAttribute("aria-current", "true")
+  await expect(owner.getByTestId("bundle-folder-sec")).not.toHaveAttribute("data-active", "true")
+  await expect(editor(owner)).toContainText("\\bibliography{refs}")
+  await expect(editor(owner)).not.toContainText("Unsaved.")
+})
+
+test("LaTeX: Cancel over unsaved text asks first, and discarding closes the editor", async ({
+  owner,
+}) => {
+  await openPaper(owner)
+  await openFile(owner, "sec/method.tex")
+  await typeAtEnd(owner, " Unsaved.")
+  await owner.getByTestId("artifact-edit-cancel").click()
+  await expect(owner.getByTestId("source-edit-discard-confirm")).toBeVisible()
+  // Backing out keeps the editor and the typed text.
+  await owner.getByTestId("confirm-dialog-cancel").click()
+  await expect(owner.getByTestId("source-edit-discard-confirm")).toBeHidden()
+  await expect(editor(owner)).toContainText("Unsaved.")
+  await owner.getByTestId("artifact-edit-cancel").click()
+  await owner.getByTestId("source-edit-discard").click()
+  await expect(editor(owner)).toBeHidden()
+  await expect(paper(owner).locator("p").first()).toBeVisible()
+  // Nothing published: the paper is still v1 and the section is untouched.
+  await expect(owner.getByTestId("bundle-folder-sec")).not.toHaveAttribute("data-active", "true")
 })

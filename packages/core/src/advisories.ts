@@ -6,9 +6,10 @@
 // looking at the render afterward: correct-by-construction beats
 // correct-by-vigilance.
 
-import { isHtmlLike } from "./content-types"
+import { isHtmlLike, isLatexLike } from "./content-types"
 import { countSlideElements, isUnannouncedDeck } from "./decks"
 import { factDriftAdvisories, missingFactAdvisory, parseFacts, shapeOfJson } from "./facts"
+import { isLatexDocument, latexAdvisories } from "./latex"
 import { linkedBundleAdvisories } from "./linked-bundle"
 import type { BlobStore } from "./ports"
 import { needsReflow } from "./reflow"
@@ -77,6 +78,19 @@ export const publishAdvisories = (content: string, contentType: string): string[
       "Stored as markdown, but the content contains HTML page markup (<style>/<meta viewport>) — " +
         'if this is a styled page, republish with filename:"index.html" so it renders as HTML.',
     )
+
+  // A LaTeX paper stored as markdown renders as escaped source. The type sniffer catches
+  // a `\documentclass` opener; this catches the document that was named `.md` anyway.
+  if (contentType === "text/markdown" && isLatexDocument(content))
+    out.push(
+      "Stored as markdown, but the content is a LaTeX document — republish with " +
+        'filename:"paper.tex" so it renders as a paper.',
+    )
+
+  // What the LaTeX renderer could not honour (unknown macros, a missing figure or .bib,
+  // an unresolved \ref) and, for acmart, packages ACM TAPS refuses. The page still renders;
+  // the receipt is where the author learns what to fix before submission.
+  if (isLatexLike(contentType)) out.push(...latexAdvisories(content))
 
   // Browser storage is unavailable in the artifact sandbox's opaque origin. A direct
   // access throws a SecurityError, commonly during the first render, leaving an otherwise

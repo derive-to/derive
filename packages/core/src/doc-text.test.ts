@@ -6,6 +6,7 @@ import {
   EditError,
   elideDataUris,
   elideDataUrisToLimit,
+  enclosingMarker,
   htmlToMarkdown,
   LANDMARK_TAGS,
   landmarkMap,
@@ -560,5 +561,50 @@ describe("MARKS_SCRIPT", () => {
     expect(arrayLiteral).toBeTruthy()
     const tags = JSON.parse(arrayLiteral as string) as string[]
     expect(tags.sort()).toEqual(LANDMARK_TAGS.map((t) => t.toUpperCase()).sort())
+  })
+})
+
+describe("LaTeX twins (outlineOf / sectionOf / sectionMarkers / toMarkdown)", () => {
+  const tex = [
+    "\\documentclass{article}",
+    "\\begin{document}",
+    "\\title{T}\\maketitle",
+    "\\section{Intro}",
+    "intro text",
+    "\\subsection{Setup}",
+    "setup text",
+    "\\section{Results}",
+    "results text",
+    "\\end{document}",
+    "",
+  ].join("\n")
+
+  it("outlines \\section and \\subsection with numbered labels and page ids", () => {
+    expect(outlineOf(tex, "text/x-latex").map((s) => [s.level, s.slug, s.text])).toEqual([
+      [2, "intro", "1 Intro"],
+      [3, "setup", "1.1 Setup"],
+      [2, "results", "2 Results"],
+    ])
+  })
+
+  it("slices a section from its macro to the next peer, stopping at \\end{document}", () => {
+    expect(sectionOf(tex, "text/x-latex", "intro")).toBe(
+      "\\section{Intro}\nintro text\n\\subsection{Setup}\nsetup text\n",
+    )
+    expect(sectionOf(tex, "text/x-latex", "results")).toBe("\\section{Results}\nresults text\n")
+    expect(sectionOf(tex, "text/x-latex", "nope")).toBeNull()
+  })
+
+  it("marks sections by source line for self-locating search", () => {
+    expect(sectionMarkers(tex, "text/x-latex")).toEqual([
+      { text: "1 Intro", line: 4 },
+      { text: "1.1 Setup", line: 6 },
+      { text: "2 Results", line: 8 },
+    ])
+    expect(enclosingMarker(sectionMarkers(tex, "text/x-latex"), 7)).toBe("1.1 Setup")
+  })
+
+  it("passes LaTeX through as the readable form", () => {
+    expect(toMarkdown(tex, "text/x-latex")).toBe(tex)
   })
 })

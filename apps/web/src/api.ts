@@ -1,4 +1,7 @@
 import type {
+  DynamicKind,
+  DynamicPatch,
+  DynamicValue,
   ElementSelector,
   LinkRole,
   Listed,
@@ -19,6 +22,30 @@ import { guestQuery } from "./lib/guest-id"
  *  import core at runtime — see .dependency-cruiser.mjs) and re-exported so this
  *  stays the one place other web modules name them from. */
 export type { LinkRole, Listed, Role, WorkspaceAccess }
+
+/** One dynamic table or figure slot as the API returns it (routes/dynamic-data.ts). */
+export interface DynamicSlot {
+  name: string
+  kind: DynamicKind
+  version: number
+  revision: number
+  updated_at: string
+  updated_by: { id: string; name: string }
+  value: DynamicValue
+  /** The server-rendered inner fragment, present when asked for with `format: "html"`. */
+  html?: string
+}
+export interface DynamicRevision {
+  revision: number
+  actor: { id: string; name: string }
+  note: string | null
+  bytes: number
+  at: string
+  value?: unknown
+}
+type DynamicWriteMeta = { expected_revision?: number; note?: string }
+export type DynamicWrite = DynamicValue & DynamicWriteMeta
+export type DynamicPatchBody = DynamicPatch & DynamicWriteMeta
 
 /** A pointer to the conventions collection a workspace or an account likes its
  *  artifacts built from. Mirrors packages/core/src/ports.ts Brandprint, minus
@@ -112,6 +139,31 @@ export type VersionSession = components["schemas"]["VersionSession"]
  *  from the OpenAPI spec (apps/api/openapi.json). `my_role` is `Role | null`;
  *  workspace_access/link_role/listed are the v2 access enums (see access-model.md). */
 export type Artifact = components["schemas"]["Artifact"]
+
+/** One text file of a bundle, read or written by path (routes/paper-files.ts). */
+export interface BundleFile {
+  path: string
+  source: string
+  version: number
+}
+/** A paper's bibliography entry, with its verbatim BibTeX for editing as a unit. */
+export interface BibEntry {
+  key: string
+  type: string
+  fields: Record<string, string>
+  line: number
+  raw: string
+}
+export interface Bibliography {
+  version: number
+  path: string
+  entries: BibEntry[]
+  /** Keys the paper cites, in first-cited order. */
+  cited: string[]
+  diagnostics: { code: string; message: string; line: number }[]
+}
+/** One change to the .bib: a complete entry over `key` (or appended), or a removal. */
+export type BibOp = { op: "set"; key?: string; raw: string } | { op: "delete"; key: string }
 export type WorkflowRunSummary =
   paths["/v1/artifacts/{shortId}/workflow-runs"]["get"]["responses"][200]["content"]["application/json"]["runs"][number]
 /** An abuse report against an artifact. Generated from the OpenAPI spec. */
@@ -902,6 +954,31 @@ export const api = {
       ...opts(input),
       method: "PUT",
     }).then(j),
+  // One file of a paper bundle (main.tex, refs.bib, an \input section) and the paper's
+  // bibliography as entries; each write republishes the bundle as a new version.
+  bundleFile: (shortId: string, path: string, v?: number): Promise<BundleFile> =>
+    f(
+      `/v1/artifacts/${encodeURIComponent(shortId)}/files/${path.split("/").map(encodeURIComponent).join("/")}${v ? `?v=${v}` : ""}`,
+      opts(),
+    ).then(j),
+  publishBundleFile: (
+    shortId: string,
+    path: string,
+    input: { source: string; base_version: number; message?: string; title?: string },
+  ): Promise<Artifact & { file: { path: string; version: number } }> =>
+    f(
+      `/v1/artifacts/${encodeURIComponent(shortId)}/files/${path.split("/").map(encodeURIComponent).join("/")}`,
+      { ...opts(input), method: "PUT" },
+    ).then(j),
+  bib: (shortId: string, v?: number): Promise<Bibliography> =>
+    f(`/v1/artifacts/${encodeURIComponent(shortId)}/bib${v ? `?v=${v}` : ""}`, opts()).then(j),
+  putBib: (
+    shortId: string,
+    input: { base_version: number; ops: BibOp[]; message?: string },
+  ): Promise<Artifact & { bib: Bibliography }> =>
+    f(`/v1/artifacts/${encodeURIComponent(shortId)}/bib`, { ...opts(input), method: "PUT" }).then(
+      j,
+    ),
   artifactSkills: (shortId: string): Promise<ArtifactSkills> =>
     f(`/v1/artifacts/${encodeURIComponent(shortId)}/skills`, opts()).then(j),
   // The batched boot read: exactly the four bodies below (tags summary, collections,
@@ -934,10 +1011,21 @@ export const api = {
   exportStatus: (id: string): Promise<ExportJob> => f(`/v1/exports/${id}`, opts()).then(j),
   cancelExport: (id: string): Promise<{ ok: true }> =>
     f(`/v1/exports/${id}/cancel`, opts({})).then(j),
-  // Render a markdown draft to the exact published HTML, for the live editor
-  // preview (markdown only; HTML drafts preview in-browser).
-  renderPreview: (source: string, title: string | null): Promise<{ html: string }> =>
-    f("/v1/preview", opts({ source, title })).then(j),
+  // Render a markdown or LaTeX draft to the exact published HTML, for the live editor
+  // preview (HTML drafts preview in-browser). `contentType` names a LaTeX draft;
+  // omitted, the server renders markdown. `ctx` names one file of a paper bundle: the
+  // server then renders the WHOLE paper with the draft standing in for that file, so a
+  // section or the .bib previews in the context of the paper rather than on its own.
+  renderPreview: (
+    source: string,
+    title: string | null,
+    contentType?: "text/x-latex",
+    ctx?: { shortId: string; path: string },
+  ): Promise<{ html: string }> =>
+    f(
+      "/v1/preview",
+      opts({ source, title, content_type: contentType, short_id: ctx?.shortId, path: ctx?.path }),
+    ).then(j),
   // Verify a password artifact's password; on success the server sets the unlock
   // cookie and subsequent reads of this artifact succeed.
   unlock: (id: string, password: string): Promise<{ ok: true }> =>
@@ -1095,6 +1183,45 @@ export const api = {
     f(`/v1/artifacts/${id}/state/${encodeURIComponent(key)}`, opts(mutation)).then(j),
   sharedStateActivity: (id: string, key: string): Promise<{ activity: SharedStateActivity[] }> =>
     f(`/v1/artifacts/${id}/state/${encodeURIComponent(key)}/activity`, opts()).then(j),
+
+  // Dynamic tables and figures: per-version data that changes without a new version
+  // (see @derive/core dynamic-data.ts). A plain-Hono router like shared state, so the
+  // wire shapes are declared here rather than generated.
+  dynamicSlots: (id: string, v?: number): Promise<{ version: number; slots: DynamicSlot[] }> =>
+    f(`/v1/artifacts/${id}/dynamic${v ? `?v=${v}` : ""}`, opts()).then(j),
+  dynamicSlot: (
+    id: string,
+    name: string,
+    q: { v?: number; format?: "html" } = {},
+  ): Promise<DynamicSlot> => {
+    const params = new URLSearchParams()
+    if (q.v) params.set("v", String(q.v))
+    if (q.format) params.set("format", q.format)
+    const qs = params.toString()
+    return f(
+      `/v1/artifacts/${id}/dynamic/${encodeURIComponent(name)}${qs ? `?${qs}` : ""}`,
+      opts(),
+    ).then(j)
+  },
+  putDynamicSlot: (id: string, name: string, body: DynamicWrite): Promise<DynamicSlot> =>
+    f(`/v1/artifacts/${id}/dynamic/${encodeURIComponent(name)}`, {
+      ...opts(body),
+      method: "PUT",
+    }).then(j),
+  patchDynamicSlot: (id: string, name: string, body: DynamicPatchBody): Promise<DynamicSlot> =>
+    f(`/v1/artifacts/${id}/dynamic/${encodeURIComponent(name)}`, {
+      ...opts(body),
+      method: "PATCH",
+    }).then(j),
+  dynamicHistory: (
+    id: string,
+    name: string,
+    v?: number,
+  ): Promise<{ version: number; revisions: DynamicRevision[] }> =>
+    f(
+      `/v1/artifacts/${id}/dynamic/${encodeURIComponent(name)}/history${v ? `?v=${v}` : ""}`,
+      opts(),
+    ).then(j),
 
   favorite: (id: string, on: boolean): Promise<{ favorite: boolean }> =>
     f(`/v1/artifacts/${id}/favorite`, { ...opts(), method: on ? "PUT" : "DELETE" }).then(j),

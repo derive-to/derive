@@ -1430,3 +1430,413 @@ describe("renaming an artifact re-derives its slug", () => {
     expect(after?.slug).toBe("keep-this-name")
   })
 })
+
+describe("LaTeX artifacts over REST", () => {
+  const paper =
+    "\\documentclass[sigconf]{acmart}\n\\usepackage{tikz}\n\\begin{document}\n\\title{P}\\maketitle\n\\section{Intro}\nHello $x$.\n\\end{document}\n"
+
+  it("types a .tex upload as text/x-latex and advises on TAPS-refused packages", async () => {
+    const res = await upload("paper.tex", paper, { title: "Paper" })
+    expect(res.status).toBe(201)
+    const json = await res.json()
+    expect(json.current_content_type).toBe("text/x-latex")
+    expect(json.advisories).toEqual([
+      "\\usepackage{tikz}: tikz is not on ACM TAPS's accepted package list",
+    ])
+    const page = await app.request(`/raw/${json.short_id}/v/1/index.html`)
+    expect(page.status).toBe(200)
+    expect(await page.text()).toContain('<h1 class="derive-title">P</h1>')
+  })
+
+  it("types an unnamed LaTeX upload by its content", async () => {
+    const res = await upload("notes.txt", paper, { title: "Sniffed" })
+    expect((await res.json()).current_content_type).toBe("text/x-latex")
+  })
+
+  it("publishes a zip with main.tex, refs.bib and a README as a paper bundle", async () => {
+    const enc = (s: string) => new TextEncoder().encode(s)
+    const zip = zipSync({
+      "main.tex": enc(
+        "\\documentclass{article}\\begin{document}\\section{A}x \\cite{k}\\bibliography{refs}\\end{document}",
+      ),
+      "refs.bib": enc("@misc{k, title={T}, author={A B}, year={2020}}"),
+      "README.md": enc("# Paper\n"),
+    })
+    const res = await upload("paper.zip", zip, { title: "Bundle paper" })
+    expect(res.status).toBe(201)
+    const json = await res.json()
+    expect(json.current_content_type).toBe("derive/latex")
+    expect(json.kind).toBe("bundle")
+    const detail = await (await app.request(`/v1/artifacts/${json.short_id}`)).json()
+    expect(detail.bundle).toMatchObject({ isSkill: false, entry: "main.tex" })
+    expect(detail.bundle.files.map((f: { path: string }) => f.path)).toEqual([
+      "README.md",
+      "main.tex",
+      "refs.bib",
+    ])
+    const page = await app.request(`/raw/${json.short_id}/v/1/index.html`)
+    expect(await page.text()).toContain("A B. T. 2020.")
+  })
+})
+
+describe("live editor preview of LaTeX (/v1/preview)", () => {
+  const owner: TestUser = { id: "u_prev_tex", email: "prev-tex@derive.test", name: "Prev" }
+  const { app: authed } = makeAuthedApp("preview-tex-org", [owner])
+
+  it("renders a .tex draft when the caller names the type", async () => {
+    const r = await authed.request(
+      "/v1/preview",
+      jsonAs(as(owner.email), {
+        source: "\\begin{document}\\section{Hi}$x$\\end{document}",
+        title: "Draft",
+        content_type: "text/x-latex",
+      }),
+    )
+    expect(r.status).toBe(200)
+    const { html } = (await r.json()) as { html: string }
+    expect(html).toContain('<h2 id="hi">')
+    expect(html).toContain('data-tex="x"')
+  })
+})
+
+describe("bundle-aware live preview (/v1/preview with short_id)", () => {
+  const owner: TestUser = { id: "u_prev_bundle", email: "prev-bundle@derive.test", name: "Owner" }
+  const teammate: TestUser = {
+    id: "u_prev_bundle_mate",
+    email: "prev-bundle-mate@derive.test",
+    name: "Mate",
+  }
+  const { app: authed } = makeAuthedApp("preview-bundle-org", [owner, teammate], "editor")
+  const h = as(owner.email)
+  const enc = (s: string) => new TextEncoder().encode(s)
+  const MAIN =
+    "\\documentclass{article}\n\\begin{document}\n\\section{Intro}\nStored prose \\cite{k}.\n\\input{sec/method}\n\\begin{figure}\\includegraphics{fig/a.png}\\caption{A}\\end{figure}\n\\bibliography{refs}\n\\end{document}\n"
+  const REFS = "@misc{k, title={Stored Title}, author={A B}, year={2020}}\n"
+  const publishPaper = async (fields: Record<string, string> = {}) => {
+    const form = new FormData()
+    const zip = zipSync({
+      "main.tex": enc(MAIN),
+      "sec/method.tex": enc("Included prose lives here.\n"),
+      "refs.bib": enc(REFS),
+      // PNG magic bytes: the publish path types the file by its name, not its pixels.
+      "fig/a.png": new Uint8Array([137, 80, 78, 71]),
+    })
+    form.append("file", new Blob([zip as BlobPart]), "paper.zip")
+    form.append("title", "Paper")
+    for (const [k, v] of Object.entries(fields)) form.append(k, v)
+    const res = await authed.request("/v1/artifacts", { method: "POST", body: form, headers: h })
+    const text = await res.text()
+    expect(res.status, text).toBe(201)
+    return JSON.parse(text) as { short_id: string; current_version: number }
+  }
+  const preview = async (body: Record<string, unknown>, headers = h) => {
+    const r = await authed.request("/v1/preview", jsonAs(headers, body))
+    const html = r.status === 200 ? ((await r.json()) as { html: string }).html : ""
+    return { status: r.status, html }
+  }
+
+  it("renders a main.tex draft with the bundle's inputs and bibliography resolved", async () => {
+    const { short_id } = await publishPaper()
+    const { status, html } = await preview({
+      short_id,
+      path: "main.tex",
+      content_type: "text/x-latex",
+      source: MAIN.replace("Stored prose", "Draft prose"),
+    })
+    expect(status).toBe(200)
+    expect(html).toContain("Draft prose")
+    expect(html).toContain("Included prose lives here.")
+    expect(html).toContain('href="#ref-k">1</a>')
+    expect(html).not.toContain("[k?]")
+    expect(html).toContain("Stored Title")
+  })
+
+  it("previews a refs.bib draft against the stored main.tex and stores nothing", async () => {
+    const { short_id } = await publishPaper()
+    const { status, html } = await preview({
+      short_id,
+      path: "refs.bib",
+      source: REFS.replace("Stored Title", "Draft Title"),
+    })
+    expect(status).toBe(200)
+    expect(html).toContain("Draft Title")
+    expect(html).not.toContain("Stored Title")
+    const stored = await (
+      await authed.request(`/v1/artifacts/${short_id}/files/refs.bib`, { headers: h })
+    ).json()
+    expect(stored).toEqual({ path: "refs.bib", source: REFS, version: 1 })
+    const detail = await (await authed.request(`/v1/artifacts/${short_id}`, { headers: h })).json()
+    expect(detail.current_version).toBe(1)
+  })
+
+  it("points a figure at the raw token route, which serves it without a cookie", async () => {
+    const { short_id } = await publishPaper()
+    const { html } = await preview({ short_id, path: "main.tex", source: MAIN })
+    const src = /<img src="([^"]+)"/.exec(html)?.[1]
+    expect(src).toMatch(new RegExp(`^/raw/${short_id}/v/1/t/[^/]+/fig/a\\.png$`))
+    // No headers: the sandboxed preview frame sends none, so the token is the whole proof.
+    const img = await authed.request(src ?? "")
+    expect(img.status).toBe(200)
+    expect(img.headers.get("content-type")).toBe("image/png")
+  })
+
+  it("renders the draft alone when the short_id is not a paper bundle", async () => {
+    const form = new FormData()
+    form.append("file", new Blob([enc("# Stored page\n")]), "notes.md")
+    form.append("title", "Notes")
+    const md = await (
+      await authed.request("/v1/artifacts", { method: "POST", body: form, headers: h })
+    ).json()
+    const { status, html } = await preview({ short_id: md.short_id, source: "# Draft heading" })
+    expect(status).toBe(200)
+    expect(html).toContain("<h1>Draft heading</h1>")
+    expect(html).not.toContain("Stored page")
+  })
+
+  it("is a 404 for a bundle the caller cannot read, and for an unknown short_id", async () => {
+    const { short_id } = await publishPaper({ workspace_access: "none", link_role: "none" })
+    expect((await preview({ short_id, path: "main.tex", source: MAIN })).status).toBe(200)
+    const other = await preview({ short_id, path: "main.tex", source: MAIN }, as(teammate.email))
+    expect(other.status).toBe(404)
+    expect((await preview({ short_id: "nope", source: "x" })).status).toBe(404)
+  })
+})
+
+describe("editing a paper bundle over REST", () => {
+  const enc = (s: string) => new TextEncoder().encode(s)
+  const MAIN =
+    "\\documentclass{article}\n\\begin{document}\n\\section{Intro}\nIt was teh best of times $x$ here \\cite{k}.\n\\input{sec/method}\n\\bibliography{refs}\n\\end{document}\n"
+  const REFS = "% refs\n@string{pub = {Pub}}\n\n@misc{k, title={T}, author={A B}, year={2020}}\n"
+  const paperZip = () =>
+    zipSync({
+      "main.tex": enc(MAIN),
+      "sec/method.tex": enc("Included prose lives here.\n"),
+      "refs.bib": enc(REFS),
+      "README.md": enc("# Paper\n"),
+    })
+  const publishPaper = async () => {
+    const res = await upload("paper.zip", paperZip(), { title: "Paper" })
+    expect(res.status).toBe(201)
+    return (await res.json()) as { short_id: string; current_version: number }
+  }
+  const jsonReq = (method: string, body: unknown) => ({
+    method,
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  })
+  const edits = (shortId: string, list: unknown[], baseVersion = 1) => {
+    const form = new FormData()
+    form.append("edits", JSON.stringify(list))
+    form.append("base_version", String(baseVersion))
+    return app.request(`/v1/artifacts/${shortId}/versions`, { method: "POST", body: form })
+  }
+  const paths = (detail: { bundle: { files: { path: string }[] } }) =>
+    detail.bundle.files.map((f) => f.path).sort()
+
+  it("applies a quote edit to main.tex and republishes the bundle with its siblings", async () => {
+    const { short_id } = await publishPaper()
+    const res = await edits(short_id, [{ quote: { exact: "teh" }, new_text: "the" }])
+    expect(res.status).toBe(201)
+    const json = await res.json()
+    expect(json.current_version).toBe(2)
+    expect(json.current_content_type).toBe("derive/latex")
+    expect(json.kind).toBe("bundle")
+    const main = await (await app.request(`/v1/artifacts/${short_id}/files/main.tex`)).json()
+    expect(main.source).toContain("It was the best of times")
+    expect(main.version).toBe(2)
+    const detail = await (await app.request(`/v1/artifacts/${short_id}`)).json()
+    expect(paths(detail)).toEqual(["README.md", "main.tex", "refs.bib", "sec/method.tex"])
+    const page = await (await app.request(`/raw/${short_id}/v/2/index.html`)).text()
+    expect(page).toContain("It was the best of times")
+    expect(page).toContain("Included prose lives here.")
+  })
+
+  it("names the included file when the quoted text lives in an \\input", async () => {
+    const { short_id } = await publishPaper()
+    const res = await edits(short_id, [{ quote: { exact: "Included prose" }, new_text: "x" }])
+    expect(res.status).toBe(400)
+    expect((await res.json()).error).toMatch(/comes from sec\/method\.tex/)
+  })
+
+  it("still refuses edits on an ordinary site bundle", async () => {
+    const site = await (
+      await upload("site.zip", zipSync({ "index.html": enc("<h1>Hi</h1>") }), { title: "Site" })
+    ).json()
+    const res = await edits(site.short_id, [{ old_str: "Hi", new_str: "Yo" }])
+    expect(res.status).toBe(409)
+  })
+
+  it("reads and writes one text file of the bundle by path", async () => {
+    const { short_id } = await publishPaper()
+    const get = await app.request(`/v1/artifacts/${short_id}/files/sec/method.tex`)
+    expect(get.status).toBe(200)
+    expect(await get.json()).toEqual({
+      path: "sec/method.tex",
+      source: "Included prose lives here.\n",
+      version: 1,
+    })
+    expect((await app.request(`/v1/artifacts/${short_id}/files/nope.tex`)).status).toBe(404)
+    expect((await app.request(`/v1/artifacts/${short_id}/files/..%2Fmain.tex`)).status).toBe(400)
+    const put = await app.request(
+      `/v1/artifacts/${short_id}/files/sec/method.tex`,
+      jsonReq("PUT", { source: "Rewritten section.\n", base_version: 1, message: "Rewrite" }),
+    )
+    expect(put.status).toBe(200)
+    const saved = await put.json()
+    expect(saved.current_version).toBe(2)
+    expect(saved.file).toEqual({ path: "sec/method.tex", version: 2 })
+    expect(saved.versions[1].message).toBe("Rewrite")
+    const page = await (await app.request(`/raw/${short_id}/v/2/index.html`)).text()
+    expect(page).toContain("Rewritten section.")
+    // A stale base version is a conflict; the other files rode along untouched.
+    const stale = await app.request(
+      `/v1/artifacts/${short_id}/files/main.tex`,
+      jsonReq("PUT", { source: "x", base_version: 1 }),
+    )
+    expect(stale.status).toBe(409)
+    const refs = await (await app.request(`/v1/artifacts/${short_id}/files/refs.bib`)).json()
+    expect(refs.source).toBe(REFS)
+    const detail = await (await app.request(`/v1/artifacts/${short_id}`)).json()
+    expect(paths(detail)).toEqual(["README.md", "main.tex", "refs.bib", "sec/method.tex"])
+  })
+
+  it("serves the .bib as text through /content", async () => {
+    const { short_id } = await publishPaper()
+    const res = await app.request(`/v1/artifacts/${short_id}/content?section=refs.bib`)
+    expect(res.status).toBe(200)
+    expect(await res.text()).toContain("@misc{k,")
+  })
+
+  it("lists, adds, edits and removes bibliography entries, each as a new version", async () => {
+    const { short_id } = await publishPaper()
+    const listed = await (await app.request(`/v1/artifacts/${short_id}/bib`)).json()
+    expect(listed).toMatchObject({ version: 1, path: "refs.bib", cited: ["k"], diagnostics: [] })
+    expect(listed.entries.map((e: { key: string }) => e.key)).toEqual(["k"])
+    expect(listed.entries[0].raw).toBe("@misc{k, title={T}, author={A B}, year={2020}}")
+
+    const entry =
+      "@article{new,\n  title = {New},\n  author = {C D},\n  journal = pub,\n  year = {2024}\n}"
+    const added = await app.request(
+      `/v1/artifacts/${short_id}/bib`,
+      jsonReq("PUT", { base_version: 1, ops: [{ op: "set", raw: entry }] }),
+    )
+    expect(added.status).toBe(200)
+    const a = await added.json()
+    expect(a.current_version).toBe(2)
+    expect(a.bib.version).toBe(2)
+    expect(a.bib.entries.map((e: { key: string }) => e.key)).toEqual(["k", "new"])
+    expect(a.bib.entries[1].fields.journal).toBe("Pub")
+    expect(a.versions[1].message).toBe("Added a reference to refs.bib")
+    // The comment and the @string survive; the new entry follows one blank line.
+    const refs = await (await app.request(`/v1/artifacts/${short_id}/files/refs.bib`)).json()
+    expect(refs.source).toBe(`${REFS}\n${entry}\n`)
+
+    const edited = await app.request(
+      `/v1/artifacts/${short_id}/bib`,
+      jsonReq("PUT", {
+        base_version: 2,
+        ops: [{ op: "set", key: "k", raw: "@misc{k, title={Better}, author={A B}, year={2021}}" }],
+      }),
+    )
+    expect(edited.status).toBe(200)
+    expect((await edited.json()).bib.entries[0].fields.title).toBe("Better")
+    const page = await (await app.request(`/raw/${short_id}/v/3/index.html`)).text()
+    expect(page).toContain("Better")
+
+    const removed = await app.request(
+      `/v1/artifacts/${short_id}/bib`,
+      jsonReq("PUT", { base_version: 3, ops: [{ op: "delete", key: "new" }] }),
+    )
+    expect(removed.status).toBe(200)
+    expect((await removed.json()).bib.entries.map((e: { key: string }) => e.key)).toEqual(["k"])
+
+    const stale = await app.request(
+      `/v1/artifacts/${short_id}/bib`,
+      jsonReq("PUT", { base_version: 1, ops: [{ op: "delete", key: "k" }] }),
+    )
+    expect(stale.status).toBe(409)
+    const bad = await app.request(
+      `/v1/artifacts/${short_id}/bib`,
+      jsonReq("PUT", { base_version: 4, ops: [{ op: "delete", key: "ghost" }] }),
+    )
+    expect(bad.status).toBe(400)
+    expect((await bad.json()).error).toMatch(/no entry with the key ghost/)
+    const detail = await (await app.request(`/v1/artifacts/${short_id}`)).json()
+    expect(detail.current_version).toBe(4)
+    expect(paths(detail)).toEqual(["README.md", "main.tex", "refs.bib", "sec/method.tex"])
+  })
+
+  it("has no bibliography for a single-file paper or a paper that names none", async () => {
+    const single = await (
+      await upload("p.tex", "\\begin{document}Hi\\end{document}", { title: "S" })
+    ).json()
+    expect((await app.request(`/v1/artifacts/${single.short_id}/bib`)).status).toBe(404)
+    const bare = await (
+      await upload(
+        "paper.zip",
+        zipSync({ "main.tex": enc("\\begin{document}Hi\\end{document}") }),
+        {
+          title: "B",
+        },
+      )
+    ).json()
+    const res = await app.request(`/v1/artifacts/${bare.short_id}/bib`)
+    expect(res.status).toBe(404)
+    expect((await res.json()).error).toMatch(/names no bibliography/)
+  })
+})
+
+describe("inline edits on a paper bundle coalesce like a single file", () => {
+  const owner: TestUser = { id: "paper-owner", email: "paper-owner@test.dev", name: "Owner" }
+  const { app: paperApp } = makeAuthedApp("paper-coalescing", [owner])
+  const enc = (s: string) => new TextEncoder().encode(s)
+
+  it("replaces the current version in place and keeps the bundle's files", async () => {
+    const form = new FormData()
+    const zip = zipSync({
+      "main.tex": enc("\\begin{document}\nIt was teh best.\n\\end{document}\n"),
+      "refs.bib": enc("@misc{k, title={T}}\n"),
+    })
+    form.append("file", new Blob([zip as BlobPart]), "paper.zip")
+    form.append("title", "Paper")
+    const created = await (
+      await paperApp.request("/v1/artifacts", {
+        method: "POST",
+        body: form,
+        headers: as(owner.email),
+      })
+    ).json()
+    expect(created.current_content_type).toBe("derive/latex")
+    const edit = new FormData()
+    edit.append("edits", JSON.stringify([{ quote: { exact: "teh" }, new_text: "the" }]))
+    edit.append("base_version", "1")
+    edit.append("coalesce", "true")
+    const res = await paperApp.request(`/v1/artifacts/${created.short_id}/versions`, {
+      method: "POST",
+      body: edit,
+      headers: as(owner.email),
+    })
+    expect(res.status, await res.text()).toBe(201)
+    const detail = await (
+      await paperApp.request(`/v1/artifacts/${created.short_id}`, { headers: as(owner.email) })
+    ).json()
+    expect(detail.current_version).toBe(1)
+    expect(detail.current_content_type).toBe("derive/latex")
+    expect(detail.bundle.files.map((f: { path: string }) => f.path).sort()).toEqual([
+      "main.tex",
+      "refs.bib",
+    ])
+    const main = await (
+      await paperApp.request(`/v1/artifacts/${created.short_id}/files/main.tex`, {
+        headers: as(owner.email),
+      })
+    ).json()
+    expect(main.source).toContain("It was the best.")
+    const page = await (
+      await paperApp.request(`/raw/${created.short_id}/v/1/index.html`, {
+        headers: as(owner.email),
+      })
+    ).text()
+    expect(page).toContain("It was the best.")
+  })
+})

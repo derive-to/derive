@@ -2,6 +2,9 @@ import {
   type BlobStore,
   BUNDLE_CONTENT_TYPE,
   type BundleManifest,
+  KATEX_ASSET_BASE,
+  LATEX_BUNDLE_CONTENT_TYPE,
+  LATEX_CONTENT_TYPE,
   SKILL_CONTENT_TYPE,
 } from "@derive/core"
 import type { Context } from "hono"
@@ -216,6 +219,92 @@ describe("serveContent — single-file artifacts", () => {
   })
 })
 
+describe("serveContent — dynamic tables and figures", () => {
+  const DYNAMIC = "/raw/derive-dynamic.js"
+  const fence = [
+    "# Results",
+    "",
+    "```derive-table results",
+    "| Model | Acc |",
+    "| --- | --- |",
+    "| base | -- |",
+    "```",
+    "",
+  ].join("\n")
+  const slot = (json: string) => ({
+    id: "dyn_1",
+    artifact_id: "a",
+    n: 1,
+    name: "results",
+    kind: "table" as const,
+    json,
+    size_bytes: json.length,
+    revision: 3,
+    updated_by_id: "amy",
+    updated_by_name: "Amy",
+    updated_at: "2026-01-01T00:00:00.000Z",
+  })
+  const results = JSON.stringify({
+    kind: "table",
+    table: { columns: [{ key: "model" }, { key: "acc" }], rows: [{ model: "ours", acc: 0.9 }] },
+  })
+  const serve = (content: { blob_key: string; content_type: string }, dynamic = [slot(results)]) =>
+    serveContent(
+      ctx(),
+      blobStore({
+        md: fence,
+        html: '<table data-derive-table="results"><caption>Totals</caption><tr><td>old</td></tr></table><table><tr><td>plain</td></tr></table>',
+      }),
+      content,
+      "T",
+      "/",
+      "",
+      IMMUTABLE,
+      undefined,
+      true,
+      true,
+      "",
+      dynamic,
+    )
+
+  it("substitutes a markdown fence with the slot's current value and injects the runtime", async () => {
+    const res = await serve({ blob_key: "md", content_type: "text/markdown" })
+    const body = await res.text()
+    expect(body).toContain('<table data-derive-table="results">')
+    expect(body).toContain("<td>ours</td><td>0.9</td>")
+    expect(body).not.toContain("base")
+    expect(body).toContain(DYNAMIC)
+    expect(body).toContain(SHARED)
+    expect(body.split(SCRIPT).length).toBe(2) // the anchor client exactly once
+    expectSandbox(res)
+  })
+
+  it("renders the placeholder and skips the runtime when no slot is bound", async () => {
+    const res = await serve({ blob_key: "md", content_type: "text/markdown" }, [])
+    const body = await res.text()
+    expect(body).toContain("<td>base</td><td>--</td>")
+    expect(body).not.toContain(DYNAMIC)
+  })
+
+  it("replaces a bound HTML table's rows, keeps its caption, leaves unbound tables alone", async () => {
+    const res = await serve({ blob_key: "html", content_type: "text/html" })
+    const body = await res.text()
+    expect(body).toContain('<table data-derive-table="results"><caption>Totals</caption><thead>')
+    expect(body).toContain("<td>ours</td><td>0.9</td>")
+    expect(body).not.toContain("old")
+    expect(body).toContain("<table><tr><td>plain</td></tr></table>")
+    expect(body).toContain(DYNAMIC)
+    expectSandbox(res)
+  })
+
+  it("renders the placeholder when a stored value no longer validates", async () => {
+    const res = await serve({ blob_key: "md", content_type: "text/markdown" }, [slot("{not json")])
+    const body = await res.text()
+    expect(body).toContain("<td>base</td><td>--</td>")
+    expect(body).not.toContain(DYNAMIC)
+  })
+})
+
 describe("serveContent — bundles", () => {
   const manifest: BundleManifest = {
     entry: "/index.html",
@@ -320,5 +409,142 @@ describe("serveContent — skill / markdown bundles", () => {
     )
     expect(res.headers.get("content-type")).toContain("text/markdown")
     expect(await res.text()).toBe(skillMd)
+  })
+})
+
+describe("serveContent — LaTeX", () => {
+  const paper =
+    "\\documentclass{article}\n\\begin{document}\n\\section{Intro}\nA formula $E=mc^2$ and a \\cite{k}.\n\\bibliography{refs}\n\\end{document}\n"
+  const content = { blob_key: "k", content_type: LATEX_CONTENT_TYPE }
+
+  it("renders a single .tex file as a paper with the typesetter in the head", async () => {
+    const onMismatch = vi.fn()
+    const res = await serveContent(
+      ctx(),
+      blobStore({ k: paper }),
+      content,
+      "Paper",
+      "/",
+      "",
+      IMMUTABLE,
+      onMismatch,
+    )
+    expect(res.status).toBe(200)
+    expect(res.headers.get("content-type")).toContain("text/html")
+    const body = await res.text()
+    expect(body).toContain("<main data-derive-ready>")
+    expect(body).toContain(
+      '<h2 id="intro"><span class="derive-secnum" data-derive-readonly="1">1</span> Intro</h2>',
+    )
+    expect(body).toContain('data-tex="E=mc^2"')
+    expect(body).toContain(`${KATEX_ASSET_BASE}/katex.min.js`)
+    expect(body.split(SCRIPT).length).toBe(2) // the anchor client exactly once
+    expect(body).toContain(SHARED)
+    // Alone, the paper cannot reach refs.bib: the citation shows its key, never a blank.
+    expect(body).toContain("[k?]")
+    expect(onMismatch).not.toHaveBeenCalled()
+    expectSandbox(res)
+  })
+
+  it("serves the source at raw.tex", async () => {
+    const res = await serveContent(ctx(), blobStore({ k: paper }), content, "Paper", "/", "raw.tex")
+    expect(res.headers.get("content-type")).toBe("text/x-latex; charset=utf-8")
+    expect(await res.text()).toBe(paper)
+    expectSandbox(res)
+  })
+
+  it("leaves the typesetter out of a paper with no math", async () => {
+    const res = await serveContent(
+      ctx(),
+      blobStore({ k: "\\begin{document}Prose only.\\end{document}" }),
+      content,
+      "Paper",
+      "/",
+      "",
+    )
+    expect(await res.text()).not.toContain("katex")
+  })
+
+  it("renders a bound \\derivetable with the slot's current value and the runtime", async () => {
+    const bound = "\\begin{document}\\derivetable{results}\\end{document}"
+    const slot = {
+      name: "results",
+      kind: "table",
+      json: JSON.stringify({
+        kind: "table",
+        table: { columns: [{ key: "m" }], rows: [{ m: "live" }] },
+      }),
+    }
+    const res = await serveContent(
+      ctx(),
+      blobStore({ k: bound }),
+      content,
+      "Paper",
+      "/",
+      "",
+      IMMUTABLE,
+      undefined,
+      true,
+      true,
+      "",
+      [slot as never],
+    )
+    const body = await res.text()
+    expect(body).toContain('<table data-derive-table="results"')
+    expect(body).toContain("<td>live</td>")
+    expect(body).toContain("/raw/derive-dynamic.js")
+  })
+})
+
+describe("serveContent — paper bundles", () => {
+  const manifest: BundleManifest = {
+    entry: "/main.tex",
+    spa: false,
+    files: {
+      "/main.tex": { key: "k_main", type: "text/x-latex; charset=utf-8" },
+      "/sec/intro.tex": { key: "k_intro", type: "text/x-latex; charset=utf-8" },
+      "/refs.bib": { key: "k_bib", type: "text/plain; charset=utf-8" },
+      "/fig/plot.png": { key: "k_png", type: "image/png" },
+      "/README.md": { key: "k_readme", type: "text/markdown; charset=utf-8" },
+    },
+  }
+  const prefix = "/raw/pp/v/3/"
+  const main =
+    "\\documentclass{article}\n\\begin{document}\n\\section{Intro}\n\\input{sec/intro}\n\\begin{figure}\\includegraphics[width=\\linewidth]{fig/plot}\\caption{Plot}\\end{figure}\n\\bibliography{refs}\n\\end{document}\n"
+  const blobs = blobStore({
+    kManifest: JSON.stringify(manifest),
+    k_main: main,
+    k_intro: "Included text cites \\cite{doe2024}.",
+    k_bib: "@misc{doe2024, author={Jane Doe}, title={A Note}, year={2024}}",
+    k_png: Uint8Array.from([137, 80, 78, 71]),
+    k_readme: "# Paper\n",
+  })
+  const content = { blob_key: "kManifest", content_type: LATEX_BUNDLE_CONTENT_TYPE }
+
+  it("renders main.tex with its inputs, bibliography and figures resolved", async () => {
+    const res = await serveContent(ctx(), blobs, content, "Paper", prefix, "")
+    expect(res.headers.get("content-type")).toContain("text/html")
+    const body = await res.text()
+    expect(body).toContain("Included text cites")
+    expect(body).toContain('[<a class="derive-cite" href="#ref-doe2024">1</a>]')
+    expect(body).toContain("Jane Doe. A Note. 2024.")
+    expect(body).toContain(`<img src="${prefix}fig/plot.png"`)
+    expect(body).toContain(SCRIPT)
+    expectSandbox(res)
+  })
+
+  it("serves a .tex source with ?raw=1 and the .bib as text", async () => {
+    const raw = await serveContent(ctx({ raw: "1" }), blobs, content, "Paper", prefix, "main.tex")
+    expect(raw.headers.get("content-type")).toBe("text/x-latex; charset=utf-8")
+    expect(await raw.text()).toBe(main)
+    const bib = await serveContent(ctx(), blobs, content, "Paper", prefix, "refs.bib")
+    expect(bib.headers.get("content-type")).toBe("text/plain; charset=utf-8")
+    expect(await bib.text()).toContain("@misc{doe2024")
+    expectSandbox(bib)
+  })
+
+  it("still renders a markdown sibling through the markdown path", async () => {
+    const res = await serveContent(ctx(), blobs, content, "Paper", prefix, "README.md")
+    expect(await res.text()).toContain("<h1")
   })
 })

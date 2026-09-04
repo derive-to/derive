@@ -150,6 +150,26 @@ when the UI must distinguish loading or load failure from an empty initial value
 new versioned key for an incompatible data shape. Use this primitive for artifact
 interaction, not secrets, server-side compute, or a general application backend.
 
+## Tables and figures that change without a new version
+
+When an agent refreshes a results table or a figure as work lands (an experiment
+tracker, a nightly report), do not republish the document each time. Declare a dynamic
+slot in the document (a ```derive-table <name>``` or ```derive-figure <name>``` fence in
+Markdown, `data-derive-table` / `data-derive-figure` on an HTML table or figure), publish
+once, then update the value through `PATCH /v1/artifacts/<short_id>/dynamic/<name>` with
+a bearer from `stage({target:"api", access:"publish"})`. Each version keeps the data it
+had; a new version starts from the previous one's latest data. Read
+`derive://skills/dynamic-data` for the body shapes, row addressing and limits.
+
+## LaTeX papers
+
+A paper publishes as its LaTeX source: a single `paper.tex`, or a bundle whose root holds
+`main.tex` beside its `.bib`, `\input` files and figures. Derive renders the source to a
+page (sections, tables, figures, math, citations from the `.bib`; acmart and the CVPR
+kit are understood), keeps the type across edits, and reports what it could not render
+in the publish advisories. `\derivetable{name}` and `\derivefigure{name}` bind the
+dynamic slots above. Read `derive://skills/latex` before publishing one.
+
 ## Non-negotiable rules
 
 - Do not widen access or listing without the user's explicit request.

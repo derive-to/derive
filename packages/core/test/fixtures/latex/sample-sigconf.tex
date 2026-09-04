@@ -1,0 +1,163 @@
+%% A short paper in the shape of the acmart sigconf sample (SIGGRAPH conference track).
+%% Written for the renderer's golden tests; every construct here has a test that pins it.
+\documentclass[sigconf]{acmart}
+\usepackage{booktabs}
+\usepackage{tikz}
+
+\citestyle{acmauthoryear}
+
+\newcommand{\ours}{LumenField}
+\newcommand{\vect}[1]{\mathbf{#1}}
+\newtheorem{theorem}{Theorem}
+
+\setcopyright{acmlicensed}
+\copyrightyear{2026}
+\acmYear{2026}
+\acmDOI{10.1145/0000000.0000000}
+\acmConference[SIGGRAPH '26]{Special Interest Group on Computer Graphics and Interactive Techniques Conference}{July 2026}{Vancouver, BC, Canada}
+\acmISBN{978-1-4503-XXXX-X/26/07}
+
+\begin{document}
+
+\title[\ours{}: Radiance Fields]{\ours{}: Radiance Fields from a Single Photograph}
+
+\author{Ada Example}
+\orcid{0000-0002-1825-0097}
+\email{ada@example.edu}
+\affiliation{%
+  \institution{Institute of Light Transport}
+  \city{Vancouver}
+  \country{Canada}
+}
+
+\author{Fran\c{c}ois M\"uller}
+\authornote{Both authors contributed equally to this research.}
+\email{francois@example.org}
+\affiliation{%
+  \institution{Example Graphics Lab}
+  \city{Z\"urich}
+  \country{Switzerland}
+}
+
+\begin{abstract}
+We present \ours{}, a method that recovers a radiance field from one photograph
+in under a second. Prior work needs dozens of views~\cite{mildenhall2020nerf};
+ours needs one, and it runs on a laptop.
+\end{abstract}
+
+\begin{CCSXML}
+<ccs2012>
+   <concept>
+       <concept_id>10010147.10010371.10010372</concept_id>
+       <concept_desc>Computing methodologies~Rendering</concept_desc>
+       <concept_significance>500</concept_significance>
+   </concept>
+</ccs2012>
+\end{CCSXML}
+
+\ccsdesc[500]{Computing methodologies~Rendering}
+\ccsdesc[300]{Computing methodologies~Neural networks}
+
+\keywords{radiance fields, single-view reconstruction, real-time rendering}
+
+\begin{teaserfigure}
+  \includegraphics[width=\textwidth]{figures/teaser.png}
+  \caption{\ours{} turns one photograph (left) into a navigable scene (right).}
+  \Description{A photograph of a room next to three rendered viewpoints of the same room.}
+  \label{fig:teaser}
+\end{teaserfigure}
+
+\maketitle
+
+\section{Introduction}
+\label{sec:intro}
+
+Radiance fields changed how we think about scene capture~\cite{mildenhall2020nerf, kerbl2023gaussians}.
+They also made capture slow: a good field needs many photographs and minutes of
+optimisation. \ours{} removes both costs. As Figure~\ref{fig:teaser} shows, a single
+photograph is enough, and \citet{kerbl2023gaussians} report similar quality only with
+hundreds of views.
+
+Our contributions are:
+\begin{itemize}
+  \item a feed-forward predictor for the field parameters (Section~\ref{sec:method});
+  \item a training objective that needs no ground-truth geometry;
+  \item an evaluation on three public datasets (Table~\ref{tab:results}).
+\end{itemize}
+
+\section{Method}
+\label{sec:method}
+
+Given an image $I$ we predict a density $\sigma(\vect{x})$ and a colour
+$c(\vect{x}, \vect{d})$ for every point $\vect{x}$ and direction $\vect{d}$. The
+rendered colour of a ray is
+\begin{equation}
+  C(\mathbf{r}) = \int_{t_n}^{t_f} T(t)\,\sigma(\mathbf{r}(t))\,c(\mathbf{r}(t), \mathbf{d})\,dt,
+  \label{eq:volume}
+\end{equation}
+where $T(t)$ is the accumulated transmittance. Equation~\eqref{eq:volume} is
+differentiable, so the predictor trains end to end.\footnote{We use the quadrature
+of \citet{mildenhall2020nerf} with 64 samples per ray.}
+
+\begin{theorem}[Consistency]
+  If the predictor is Lipschitz then the rendered views are consistent under small
+  camera motion.
+\end{theorem}
+
+\subsection{Predictor}
+
+The predictor is a transformer over image patches. We write its layers as
+\begin{align}
+  h_0 &= \mathrm{Embed}(I), \\
+  h_{\ell+1} &= h_\ell + \mathrm{Attn}(h_\ell) \label{eq:layer}
+\end{align}
+and read the field parameters from $h_L$ (see Equation~\eqref{eq:layer}).
+
+\section{Results}
+
+\begin{table}
+  \caption{PSNR on three datasets. Higher is better.}
+  \label{tab:results}
+  \begin{tabular}{lccc}
+    \toprule
+    Method & LLFF & DTU & Mip-360 \\
+    \midrule
+    NeRF & 26.5 & 27.1 & 24.9 \\
+    3DGS & 27.2 & 28.0 & 27.4 \\
+    \ours{} & \textbf{27.9} & \textbf{28.6} & 27.1 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+Table~\ref{tab:results} reports PSNR; the live numbers are kept in the dynamic table
+below, which updates without a new version.
+
+\begin{table}
+  \caption{Ablations, updated as runs finish.}
+  \label{tab:ablation}
+  \derivetable{ablation}
+\end{table}
+
+\begin{figure}
+  \derivefigure[width=0.8\linewidth]{qualitative}
+  \caption{Qualitative results on held-out scenes.}
+  \label{fig:qual}
+\end{figure}
+
+We also compare against \emph{fast} baselines --- see \textbf{Figure~\ref{fig:qual}} and
+Figure~\ref{fig:teaser}. ``Quoted'' text and a non-breaking~space survive.
+
+\begin{acks}
+We thank the anonymous reviewers. This work was supported by grant~1234.
+\end{acks}
+
+\bibliographystyle{ACM-Reference-Format}
+\bibliography{refs}
+
+\appendix
+
+\section{Implementation Details}
+
+We train for 100k iterations with Adam.
+
+\end{document}

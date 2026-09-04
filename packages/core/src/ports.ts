@@ -2,6 +2,8 @@
  * Core owns the ports; packages/db and packages/storage provide the adapters.
  * Everything here must run on Node AND Cloudflare Workers — no Node APIs.
  */
+
+import type { DynamicKind } from "./dynamic-data"
 import type { LinkRole, Listed, Role, WorkspaceAccess } from "./roles"
 import type { SharedStateAction } from "./shared-state"
 import type { SortMode } from "./sort"
@@ -2686,6 +2688,107 @@ export interface NewSharedStateActivity {
   created_at: string
 }
 
+/** One dynamic table or figure slot of ONE VERSION (see dynamic-data.ts). Publishing
+ * v(n+1) seeds a fresh row for that version from v(n)'s latest value, so every version
+ * keeps the data it had; `revision` is the compare-and-swap guard for writes, and
+ * revision 0 is the seed. */
+export interface DynamicSlotRecord {
+  id: string
+  artifact_id: string
+  n: number
+  name: string
+  kind: DynamicKind
+  json: string
+  size_bytes: number
+  revision: number
+  updated_by_id: string
+  updated_by_name: string
+  updated_at: string
+}
+
+/** One retained revision of a slot: the value as it was after that write, with the
+ * actor the API stamped from the principal (never accepted from the caller) and an
+ * optional note. Revision 0 is the seed and is always retained. */
+export interface DynamicRevisionRecord {
+  id: string
+  artifact_id: string
+  n: number
+  name: string
+  revision: number
+  json: string
+  size_bytes: number
+  actor_id: string
+  actor_name: string
+  note: string | null
+  created_at: string
+}
+
+export interface NewDynamicSlot {
+  id: string
+  artifact_id: string
+  n: number
+  name: string
+  kind: DynamicKind
+  json: string
+  size_bytes: number
+  revision: number
+  updated_by_id: string
+  updated_by_name: string
+  updated_at: string
+}
+
+export interface DynamicSlotWrite {
+  artifact_id: string
+  n: number
+  name: string
+  json: string
+  size_bytes: number
+  expected_revision: number
+  updated_by_id: string
+  updated_by_name: string
+  updated_at: string
+}
+
+export interface NewDynamicRevision {
+  id: string
+  artifact_id: string
+  n: number
+  name: string
+  revision: number
+  json: string
+  size_bytes: number
+  actor_id: string
+  actor_name: string
+  note: string | null
+  created_at: string
+}
+
+export interface DynamicDataStore {
+  /** Every slot of one version, by name. One indexed read per page view of a bound
+   * version, so the row carries the value rather than forcing a second read. */
+  listDynamicSlots(artifactId: string, n: number): Promise<DynamicSlotRecord[]>
+  getDynamicSlot(artifactId: string, n: number, name: string): Promise<DynamicSlotRecord | null>
+  countDynamicSlots(artifactId: string, n: number): Promise<number>
+  /** Insert-if-absent on the (artifact, version, name) key. Null means the row already
+   * exists, which is what makes a replayed version bump and a create race harmless:
+   * neither can overwrite data a writer has since landed. */
+  insertDynamicSlot(row: NewDynamicSlot): Promise<DynamicSlotRecord | null>
+  /** Update only the matching revision, advancing it by one. Null means another writer
+   * won the race and the caller retries from a fresh read (the shared-state contract). */
+  updateDynamicSlot(write: DynamicSlotWrite): Promise<DynamicSlotRecord | null>
+  /** Append one attributed revision and prune to the bounded recent window, keeping
+   * revision 0 (the seed) whatever happens after it. */
+  appendDynamicRevision(revision: NewDynamicRevision): Promise<void>
+  listDynamicRevisions(
+    artifactId: string,
+    n: number,
+    name: string,
+    limit: number,
+  ): Promise<DynamicRevisionRecord[]>
+  /** Remove a slot and its revisions from one version. Older versions are untouched. */
+  deleteDynamicSlot(artifactId: string, n: number, name: string): Promise<void>
+}
+
 export interface SharedStateStore {
   getSharedState(artifactId: string, key: string): Promise<SharedStateRecord | null>
   countSharedStateKeys(artifactId: string): Promise<number>
@@ -2719,7 +2822,8 @@ export interface MetaStore
     SkillStore,
     ModerationStore,
     AssetStore,
-    SharedStateStore {}
+    SharedStateStore,
+    DynamicDataStore {}
 
 /** What a user follows: another Derive person (`target` = their user id). */
 export type FollowKind = "user"
@@ -4403,7 +4507,13 @@ export const BUNDLE_CONTENT_TYPE = "derive/bundle"
  *  read in the list (the "Skill" badge) without opening the manifest, and it tracks the
  *  current version automatically (republish without a SKILL.md → back to a plain bundle). */
 export const SKILL_CONTENT_TYPE = "derive/skill"
-/** Is this stored content a bundle (plain bundle OR skill)? Use everywhere that branches
- *  on "is this a multi-file bundle", so a skill is never mistaken for a single file. */
+/** A paper is a bundle too: a .tex entry with its figures, bibliography, class and style
+ *  files beside it. Same reasoning as a skill: the distinct type rides the denormalized
+ *  current_content_type so the library badges it without opening the manifest. */
+export const LATEX_BUNDLE_CONTENT_TYPE = "derive/latex"
+/** Is this stored content a bundle (plain bundle, skill, OR paper)? Use everywhere that
+ *  branches on "is this a multi-file bundle", so none of them is mistaken for a single file. */
 export const isBundleContentType = (contentType: string | null | undefined): boolean =>
-  contentType === BUNDLE_CONTENT_TYPE || contentType === SKILL_CONTENT_TYPE
+  contentType === BUNDLE_CONTENT_TYPE ||
+  contentType === SKILL_CONTENT_TYPE ||
+  contentType === LATEX_BUNDLE_CONTENT_TYPE

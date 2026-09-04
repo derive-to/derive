@@ -562,3 +562,93 @@ describe("applyQuoteEdits — line breaks", () => {
     expect(out).toBe("<p>onetwo</p>")
   })
 })
+
+describe("applyQuoteEdits — LaTeX", () => {
+  const TEX = "text/x-latex"
+  const doc =
+    "\\documentclass{article}\n\\begin{document}\n\\section{Intro}\nThe quick brown fox jumps over the lazy dog. It was teh best of times \\emph{indeed}~\\cite{k}.\n\\end{document}\n"
+
+  it("replaces prose located by context, splicing the source bytes", () => {
+    const out = applyQuoteEdits(doc, TEX, [
+      qe("teh", "the", { prefix: "It was ", suffix: " best of times" }),
+    ])
+    expect(out).toContain("It was the best of times \\emph{indeed}")
+    expect(out).not.toContain("teh")
+  })
+
+  it("edits inside a macro's argument without touching the macro", () => {
+    const out = applyQuoteEdits(doc, TEX, [qe("indeed", "truly")])
+    expect(out).toContain("\\emph{truly}~\\cite{k}")
+  })
+
+  it("escapes LaTeX's special characters in typed text", () => {
+    const out = applyQuoteEdits(doc, TEX, [qe("lazy dog", "50% of dogs & cats")])
+    expect(out).toContain("50\\% of dogs \\& cats")
+  })
+
+  it("refuses a quote that crosses a macro boundary or a generated label", () => {
+    expect(() => applyQuoteEdits(doc, TEX, [qe("times indeed", "x")])).toThrow(
+      /crosses LaTeX markup/,
+    )
+    // The citation renders as "[k?]" (no bibliography); the label is made up from the
+    // macro, so it is not editable text.
+    expect(() => applyQuoteEdits(doc, TEX, [qe("[k?]", "x")])).toThrow(/generated from a macro/)
+  })
+
+  it("refuses HTML replacements the way markdown does", () => {
+    expect(() =>
+      applyQuoteEdits(doc, TEX, [{ quote: { exact: "quick" }, new_html: "<b>fast</b>" }]),
+    ).toThrow(/this document is LaTeX/)
+  })
+
+  it("lets a quote run through a ligature typed as plain characters", () => {
+    const src = "\\begin{document}Pages 10--20 are ``good'' here.\\end{document}"
+    const out = applyQuoteEdits(src, TEX, [qe("10–20 are “good”", "10--30 are fine")])
+    expect(out).toBe("\\begin{document}Pages 10--30 are fine here.\\end{document}")
+  })
+})
+
+describe("applyQuoteEdits — LaTeX bundles", () => {
+  const TEX = "text/x-latex"
+  const main =
+    "\\begin{document}\n\\section{Intro}\nLocal prose here.\n\\input{sec/method}\n\\end{document}\n"
+  const resolve = (path: string) =>
+    path === "sec/method.tex" ? "Included prose lives elsewhere.\n" : null
+
+  it("follows \\input through resolve and names the file a quote comes from", () => {
+    expect(() => applyQuoteEdits(main, TEX, [qe("Included prose", "x")], { resolve })).toThrow(
+      /comes from sec\/method\.tex; open that file in the source editor/,
+    )
+    expect(applyQuoteEdits(main, TEX, [qe("Local prose", "Own prose")], { resolve })).toContain(
+      "Own prose here.",
+    )
+  })
+
+  it("cannot see included text without resolve", () => {
+    expect(() => applyQuoteEdits(main, TEX, [qe("Included prose", "x")])).toThrow(/Edit 1/)
+  })
+})
+
+describe("applyQuoteEdits — LaTeX, typing beside a generated label", () => {
+  const TEX = "text/x-latex"
+  const doc = "\\begin{document}\nSee \\cite{k}. Next sentence.\n\\end{document}\n"
+
+  it("leaves a citation label at the edge of the quote alone and splices the rest", () => {
+    // The differ word-snaps the label into the changed run when text is typed after it.
+    expect(applyQuoteEdits(doc, TEX, [qe("[k?].", "[k?]. Amended.")])).toBe(
+      "\\begin{document}\nSee \\cite{k}. Amended. Next sentence.\n\\end{document}\n",
+    )
+    expect(applyQuoteEdits(doc, TEX, [qe("See [k?]", "Look [k?]")])).toBe(
+      "\\begin{document}\nLook \\cite{k}. Next sentence.\n\\end{document}\n",
+    )
+    expect(applyQuoteEdits(doc, TEX, [qe("[k?]", "[k?] indeed")])).toBe(
+      "\\begin{document}\nSee \\cite{k} indeed. Next sentence.\n\\end{document}\n",
+    )
+  })
+
+  it("still refuses a change to the label itself", () => {
+    expect(() => applyQuoteEdits(doc, TEX, [qe("[k?].", "[x?].")])).toThrow(
+      /generated from a macro/,
+    )
+  })
+})

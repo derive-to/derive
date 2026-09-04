@@ -133,12 +133,18 @@ import type {
 } from "@derive/core"
 import {
   DEFAULT_ORG_SETTINGS,
+  DYNAMIC_REVISION_LIMIT,
+  type DynamicRevisionRecord,
+  type DynamicSlotRecord,
+  type DynamicSlotWrite,
   GLOBAL_FOLLOW_ORG,
   isValidWorkflowRunDefinitionPin,
   isValidWorkflowStepContextPin,
   LINKS_FACT,
   maxRole,
   mergeRunMeta,
+  type NewDynamicRevision,
+  type NewDynamicSlot,
   parseRunMeta,
   runCounter,
   SHARED_STATE_ACTIVITY_LIMIT,
@@ -198,6 +204,8 @@ import {
   contextAsker,
   contextSession,
   domain,
+  dynamicRevision,
+  dynamicSlot,
   exportJob,
   folder,
   follow,
@@ -392,6 +400,8 @@ export const schema = {
   artifact,
   sharedState,
   sharedStateActivity,
+  dynamicSlot,
+  dynamicRevision,
   version,
   versionData,
   comment,
@@ -450,6 +460,8 @@ const _schemaShapes: Shapes<typeof schema> = {
   artifact: true,
   sharedState: true,
   sharedStateActivity: true,
+  dynamicSlot: true,
+  dynamicRevision: true,
   version: true,
   versionData: true,
   comment: true,
@@ -694,6 +706,103 @@ export function makeRepos(db: SqliteDb) {
       .orderBy(desc(sharedStateActivity.version))
       .limit(limit)
       .all()
+
+  // ---- Dynamic tables and figures ------------------------------------------
+  const dynamicSlotKey = (artifactId: string, n: number, name: string) =>
+    and(eq(dynamicSlot.artifact_id, artifactId), eq(dynamicSlot.n, n), eq(dynamicSlot.name, name))
+  const dynamicRevisionKey = (artifactId: string, n: number, name: string) =>
+    and(
+      eq(dynamicRevision.artifact_id, artifactId),
+      eq(dynamicRevision.n, n),
+      eq(dynamicRevision.name, name),
+    )
+  const listDynamicSlots = async (artifactId: string, n: number): Promise<DynamicSlotRecord[]> =>
+    db
+      .select()
+      .from(dynamicSlot)
+      .where(and(eq(dynamicSlot.artifact_id, artifactId), eq(dynamicSlot.n, n)))
+      .orderBy(dynamicSlot.name)
+      .all()
+  const getDynamicSlot = async (
+    artifactId: string,
+    n: number,
+    name: string,
+  ): Promise<DynamicSlotRecord | null> =>
+    (await db
+      .select()
+      .from(dynamicSlot)
+      .where(dynamicSlotKey(artifactId, n, name))
+      .get()) ?? null
+  const countDynamicSlots = async (artifactId: string, n: number): Promise<number> => {
+    const row = await db
+      .select({ n: count() })
+      .from(dynamicSlot)
+      .where(and(eq(dynamicSlot.artifact_id, artifactId), eq(dynamicSlot.n, n)))
+      .get()
+    return Number(row?.n ?? 0)
+  }
+  const insertDynamicSlot = async (row: NewDynamicSlot): Promise<DynamicSlotRecord | null> =>
+    (await db.insert(dynamicSlot).values(row).onConflictDoNothing().returning().get()) ?? null
+  const updateDynamicSlot = async (write: DynamicSlotWrite): Promise<DynamicSlotRecord | null> => {
+    const { expected_revision, ...values } = write
+    const updated = await db
+      .update(dynamicSlot)
+      .set({
+        json: values.json,
+        size_bytes: values.size_bytes,
+        revision: expected_revision + 1,
+        updated_by_id: values.updated_by_id,
+        updated_by_name: values.updated_by_name,
+        updated_at: values.updated_at,
+      })
+      .where(
+        and(
+          dynamicSlotKey(values.artifact_id, values.n, values.name),
+          eq(dynamicSlot.revision, expected_revision),
+        ),
+      )
+      .returning()
+      .get()
+    return (updated as DynamicSlotRecord | undefined) ?? null
+  }
+  const appendDynamicRevision = async (r: NewDynamicRevision): Promise<void> => {
+    await db.insert(dynamicRevision).values(r).run()
+    if (r.revision <= DYNAMIC_REVISION_LIMIT) return
+    // Revision 0 is the version's start point and survives the window.
+    await db
+      .delete(dynamicRevision)
+      .where(
+        and(
+          dynamicRevisionKey(r.artifact_id, r.n, r.name),
+          gt(dynamicRevision.revision, 0),
+          lte(dynamicRevision.revision, r.revision - DYNAMIC_REVISION_LIMIT),
+        ),
+      )
+      .run()
+  }
+  const listDynamicRevisions = async (
+    artifactId: string,
+    n: number,
+    name: string,
+    limit: number,
+  ): Promise<DynamicRevisionRecord[]> =>
+    db
+      .select()
+      .from(dynamicRevision)
+      .where(dynamicRevisionKey(artifactId, n, name))
+      .orderBy(desc(dynamicRevision.revision))
+      .limit(limit)
+      .all()
+  const deleteDynamicSlot = async (artifactId: string, n: number, name: string): Promise<void> => {
+    await db
+      .delete(dynamicRevision)
+      .where(dynamicRevisionKey(artifactId, n, name))
+      .run()
+    await db
+      .delete(dynamicSlot)
+      .where(dynamicSlotKey(artifactId, n, name))
+      .run()
+  }
 
   const createArtifact = async (a: NewArtifact): Promise<ArtifactRecord> => {
     await db.insert(artifact).values(a).run()
@@ -5626,6 +5735,8 @@ export function makeRepos(db: SqliteDb) {
     await db.delete(webhook).where(eq(webhook.artifact_id, id)).run()
     await db.delete(sharedStateActivity).where(eq(sharedStateActivity.artifact_id, id)).run()
     await db.delete(sharedState).where(eq(sharedState.artifact_id, id)).run()
+    await db.delete(dynamicRevision).where(eq(dynamicRevision.artifact_id, id)).run()
+    await db.delete(dynamicSlot).where(eq(dynamicSlot.artifact_id, id)).run()
     await db
       .delete(skillRelation)
       .where(or(eq(skillRelation.source_artifact_id, id), eq(skillRelation.target_artifact_id, id)))
@@ -5753,6 +5864,14 @@ export function makeRepos(db: SqliteDb) {
     putSharedState,
     appendSharedStateActivity,
     listSharedStateActivity,
+    listDynamicSlots,
+    getDynamicSlot,
+    countDynamicSlots,
+    insertDynamicSlot,
+    updateDynamicSlot,
+    appendDynamicRevision,
+    listDynamicRevisions,
+    deleteDynamicSlot,
     addVersion,
     replaceCurrentVersion,
     listVersions,

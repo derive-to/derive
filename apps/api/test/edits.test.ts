@@ -1,5 +1,6 @@
 import {
   type ArtifactRecord,
+  type BundleManifest,
   backfillLegacyDeckStructure,
   EditError,
   fingerprintOf,
@@ -710,5 +711,86 @@ describe("slide_ops that change nothing", () => {
       1,
     )
     expect(out.content).toContain('data-derive-slide="0"')
+  })
+})
+
+describe("materializeEdits: LaTeX documents", () => {
+  const tex =
+    "\\documentclass{article}\n\\begin{document}\nIt was teh best of times.\n\\end{document}\n"
+
+  it("applies a quote edit through the rendered projection and keeps the .tex filename", async () => {
+    const deps = mkDeps({ 1: { text: tex, contentType: "text/x-latex" } })
+    const out = await materializeEdits(
+      deps,
+      fileArtifact(1),
+      [{ quote: { exact: "teh", prefix: "It was ", suffix: " best" }, new_text: "the" }],
+      1,
+    )
+    expect(out.content).toContain("It was the best of times.")
+    expect(out.filename).toBe("index.tex")
+  })
+
+  it("refuses element and structural edits, which need HTML", async () => {
+    const deps = mkDeps({ 1: { text: tex, contentType: "text/x-latex" } })
+    await expect(
+      materializeEdits(
+        deps,
+        fileArtifact(1),
+        [{ op: "resize", target: { fingerprint: "x", role: "img", path: "img" } } as never],
+        1,
+      ),
+    ).rejects.toThrow(/not Markdown or LaTeX/)
+  })
+})
+
+describe("materializeEdits: paper bundles", () => {
+  const manifest: BundleManifest = {
+    entry: "/main.tex",
+    spa: false,
+    files: {
+      "/main.tex": { key: "m", type: "text/x-latex" },
+      "/sec/a.tex": { key: "s", type: "text/x-latex" },
+      "/refs.bib": { key: "r", type: "text/plain" },
+    },
+  }
+  const texts = new Map([
+    ["/main.tex", "\\begin{document}\nIt was teh best.\n\\input{sec/a}\n\\end{document}\n"],
+    ["/sec/a.tex", "Included words.\n"],
+    ["/refs.bib", "@misc{k, title={T}}"],
+  ])
+  const paper = { ...fileArtifact(1), kind: "bundle" as const }
+  const deps = {
+    ...mkDeps({ 1: { text: "", contentType: "derive/latex" } }),
+    manifestOf: async () => manifest,
+    bundleTexts: async () => texts,
+  }
+
+  it("edits the entry file and hands back the bundle to republish", async () => {
+    const out = await materializeEdits(
+      deps,
+      paper,
+      [{ quote: { exact: "teh" }, new_text: "the" }],
+      1,
+    )
+    expect(out.content).toContain("It was the best.")
+    expect(out.filename).toBe("index.tex")
+    expect(out.bundle).toEqual({ manifest, path: "main.tex" })
+  })
+
+  it("sees included text and names its file instead of guessing a splice", async () => {
+    await expect(
+      materializeEdits(deps, paper, [{ quote: { exact: "Included words" }, new_text: "x" }], 1),
+    ).rejects.toThrow(/comes from sec\/a\.tex/)
+  })
+
+  it("keeps refusing bundles for a caller that cannot read manifests", async () => {
+    await expect(
+      materializeEdits(
+        mkDeps({ 1: { text: "", contentType: "derive/latex" } }),
+        paper,
+        [{ quote: { exact: "teh" }, new_text: "the" }],
+        1,
+      ),
+    ).rejects.toThrow(/multi-page bundle/)
   })
 })
