@@ -23,6 +23,7 @@ import { ContextConflictError, createContextCore } from "../lib/create-context"
 import { fail, readJson } from "../lib/http"
 import { visibleArtifactIds } from "../lib/visibility"
 import { parseLinkedWorkflowFacts } from "../lib/workflow-facts"
+import { indexWorkflowSkillLinks } from "../lib/workflow-skill-links"
 
 const installationBody = z.object({
   skill_version: z.number().int().positive(),
@@ -410,13 +411,20 @@ export const skillRoutes = (ctx: AppContext) => {
       skill_short_id?: string
     }> = []
 
-    // Context definitions can change bundle entry type without changing artifact identity:
-    // append SKILL.md + a catalog-visible sidecar to the same bundle. The Context
-    // remains available in Contexts while its reusable definition also appears in Skills.
+    // A bundled Context definition can become a Skill without changing artifact identity.
+    // A legacy single-file definition cannot change artifact kind, so publish a replacement
+    // Skill and repoint every Context that shared it. In both cases the original definition is kept
+    // as MANIFEST.md and complete frontmatter survives in SKILL.md.
     const contexts = await meta.listContexts(orgId)
-    const manifests = new Map<string, (typeof contexts)[number]>()
-    for (const context of contexts) manifests.set(context.manifest_artifact_id, context)
-    for (const [artifactId, context] of manifests) {
+    const manifests = new Map<string, typeof contexts>()
+    for (const context of contexts) {
+      const attached = manifests.get(context.manifest_artifact_id) ?? []
+      attached.push(context)
+      manifests.set(context.manifest_artifact_id, attached)
+    }
+    for (const [artifactId, attachedContexts] of manifests) {
+      const context = attachedContexts[0]
+      if (!context) continue
       const artifact = (
         await meta.listArtifacts({ ids: [artifactId], orgId, archived: "include" })
       )[0]
@@ -436,13 +444,18 @@ export const skillRoutes = (ctx: AppContext) => {
       const version = await meta.getVersion(artifact.id, artifact.current_version)
       const manifest = version ? await manifestOf(blobs, version) : null
       const text = version ? await pageTextResolver(blobs, version) : null
-      const manifestMd = manifest && text ? await text("/MANIFEST.md") : null
-      if (!version || !manifest || !manifestMd) {
+      const manifestMd = text
+        ? await text(manifest?.files["/MANIFEST.md"] ? "/MANIFEST.md" : null)
+        : null
+      const markdown = version
+        ? version.content_type === "text/markdown" || !!manifest?.entry.match(/\.md$/i)
+        : false
+      if (!version || !manifestMd || !markdown) {
         report.push({
           kind: "context",
           id: context.id,
           action: "skip",
-          reason: "no bundle MANIFEST.md",
+          reason: "definition is not Markdown",
         })
         continue
       }
@@ -452,14 +465,23 @@ export const skillRoutes = (ctx: AppContext) => {
       const name = skillName(context.name, artifact.short_id)
       const description =
         parsed.attrs.description?.trim() || `Run the ${context.name} Derive Context.`
-      const bytes = await mergeBundleZip(blobs, manifest, {
-        "SKILL.md": `---\nname: ${name}\ndescription: ${JSON.stringify(description)}\n---\n\n${parsed.body.trim()}\n`,
-        "derive.skill.json": JSON.stringify(
-          { schema: "derive.skill/v1", catalog: true, runtime: { kind: "single" } },
-          null,
-          2,
-        ),
-      })
+      const skillMd = contextSkillSource(manifestMd, name, description)
+      const sidecar = JSON.stringify(
+        { schema: "derive.skill/v1", catalog: true, runtime: { kind: "single" } },
+        null,
+        2,
+      )
+      const bytes = manifest
+        ? await mergeBundleZip(blobs, manifest, {
+            "SKILL.md": skillMd,
+            "derive.skill.json": sidecar,
+          })
+        : await zipBundleFiles({
+            "MANIFEST.md": manifestMd,
+            "SKILL.md": skillMd,
+            "derive.skill.json": sidecar,
+          })
+      const existingArtifact = manifest ? artifact : undefined
       const published = await publish(
         meta,
         blobs,
@@ -474,10 +496,16 @@ export const skillRoutes = (ctx: AppContext) => {
           agentId: actor.id === human.id ? null : actor.id,
           agentName: actor.id === human.id ? null : actor.name,
           source: "api",
-          existingArtifact: artifact,
+          ...(existingArtifact ? { existingArtifact } : {}),
         },
-        artifact.short_id,
+        existingArtifact?.short_id,
       )
+      if (!existingArtifact)
+        await Promise.all(
+          attachedContexts.map((attached) =>
+            meta.setContextManifest(attached.id, published.artifact.id),
+          ),
+        )
       await afterPublish(
         {
           meta,
@@ -492,8 +520,15 @@ export const skillRoutes = (ctx: AppContext) => {
         },
         published.artifact,
         published.version,
-        { isNew: false, onBehalf: human.id, actorId: actor.id, actorName: actor.name },
+        {
+          isNew: !existingArtifact,
+          onBehalf: human.id,
+          actorId: actor.id,
+          actorName: actor.name,
+        },
       )
+      const reportEntry = report.at(-1)
+      if (reportEntry) reportEntry.skill_short_id = published.artifact.short_id
     }
 
     // A Workflow is a visual artifact and cannot become a bundle in place. Create a private
@@ -517,17 +552,41 @@ export const skillRoutes = (ctx: AppContext) => {
     )
     for (const fact of workflowFacts) factsByArtifact.get(fact.artifact_id)?.push(fact)
     for (const row of workflowRows) {
-      const existing = (await meta.listArtifactSkillLinks(row.id, row.n, orgId)).find(
-        (link) => link.role === "workflow-definition",
+      const parsed = parseLinkedWorkflowFacts(factsByArtifact.get(row.id) ?? [])
+      if (!parsed.definition) {
+        report.push({
+          kind: "workflow",
+          id: row.short_id,
+          action: "skip",
+          reason: "invalid definition",
+        })
+        continue
+      }
+      const sourceArtifact = (
+        await meta.listArtifacts({ ids: [row.id], orgId, archived: "include" })
+      )[0]
+      const sourceVersion = sourceArtifact ? await meta.getVersion(sourceArtifact.id, row.n) : null
+      if (!sourceArtifact || !sourceVersion) continue
+      if (body.apply)
+        await indexWorkflowSkillLinks(
+          meta,
+          blobs,
+          sourceArtifact,
+          sourceVersion,
+          factsByArtifact.get(row.id) ?? [],
+        )
+
+      // Supporting Skills and the launcher use the same provenance role. Identify the
+      // launcher by its deterministic id, never by whichever link happened to sort first.
+      const existingLinks = await meta.listArtifactSkillLinks(row.id, row.n, orgId)
+      const linkedIds = [...new Set(existingLinks.map((link) => link.skill_artifact_id))]
+      const linkedSkills = linkedIds.length
+        ? await meta.listArtifacts({ ids: linkedIds, orgId, archived: "include" })
+        : []
+      const linkedSkill = linkedSkills.find(
+        (skill) => skill.short_id === workflowSkillShortId(row.short_id),
       )
-      if (existing) {
-        const linkedSkill = (
-          await meta.listArtifacts({
-            ids: [existing.skill_artifact_id],
-            orgId,
-            archived: "include",
-          })
-        )[0]
+      if (linkedSkill) {
         // The exact provenance link is the durable migration receipt, but the root
         // Context is a separate write. Repair that second half on replay if a prior
         // attempt stopped between the two writes.
@@ -554,16 +613,6 @@ export const skillRoutes = (ctx: AppContext) => {
           action: "skip",
           reason: "already linked",
           ...(linkedSkill ? { skill_short_id: linkedSkill.short_id } : {}),
-        })
-        continue
-      }
-      const parsed = parseLinkedWorkflowFacts(factsByArtifact.get(row.id) ?? [])
-      if (!parsed.definition) {
-        report.push({
-          kind: "workflow",
-          id: row.short_id,
-          action: "skip",
-          reason: "invalid definition",
         })
         continue
       }
@@ -594,10 +643,6 @@ export const skillRoutes = (ctx: AppContext) => {
           2,
         ),
       })
-      const sourceArtifact = (
-        await meta.listArtifacts({ ids: [row.id], orgId, archived: "include" })
-      )[0]
-      if (!sourceArtifact) continue
       // The deterministic id is the recovery receipt for the one unavoidable gap
       // between creating the launcher artifact and writing its provenance link. A
       // replay reuses that exact derived Skill instead of publishing a duplicate.
@@ -712,3 +757,34 @@ const skillName = (value: string, fallback: string): string => {
 }
 
 const workflowSkillShortId = (sourceShortId: string): string => `skill-${sourceShortId}`
+
+const FRONTMATTER = /^﻿?---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n)*/
+
+/** Turn the existing Context definition into a portable SKILL.md without discarding
+ * nested frontmatter such as skills:, repos:, sources:, or future keys. */
+const contextSkillSource = (source: string, name: string, description: string): string => {
+  const match = FRONTMATTER.exec(source)
+  const existing = match?.[1]?.trimEnd() ?? ""
+  // Skill identity has a stricter schema than a legacy Context definition. Replace its
+  // top-level identity while leaving every composition/config key byte-for-byte intact.
+  const preserved: string[] = []
+  let skippedBlock = false
+  for (const line of existing.split(/\r?\n/)) {
+    if (/^(?:name|description)\s*:/.test(line)) {
+      skippedBlock = true
+      continue
+    }
+    if (skippedBlock && (/^[ \t]/.test(line) || !line.trim())) continue
+    skippedBlock = false
+    preserved.push(line)
+  }
+  const header = [
+    `name: ${name}`,
+    `description: ${JSON.stringify(description)}`,
+    preserved.join("\n").trim(),
+  ]
+    .filter(Boolean)
+    .join("\n")
+  const body = match ? source.slice(match[0].length) : source
+  return `---\n${header}\n---\n\n${body.trim()}\n`
+}

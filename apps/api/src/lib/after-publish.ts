@@ -36,6 +36,7 @@ import { documentStructure } from "./doc-structure-cache"
 import { EMAIL_LAYOUT_FACT } from "./email-layout"
 import { indexArtifactVersion, isTextType } from "./search"
 import { recordThreadResolution } from "./thread-actions"
+import { indexWorkflowSkillLinks } from "./workflow-skill-links"
 
 /** The realtime + render + re-anchor core shared by every version bump (publish, restore):
  *  announce the new version so open tabs live-reload, enqueue its preview
@@ -107,6 +108,18 @@ export const emitVersionBump = async (
     await indexSkillVersion(meta, blobs, artifact, version)
   } catch (err) {
     log.error("skill relation indexing failed", {
+      artifact: artifact.id,
+      n: version.n,
+      err: String(err),
+    })
+  }
+  // A Workflow's Context refs resolve to exact Skill pins. Materialize those links on
+  // every version bump so the graph and every Skill can navigate to each other without
+  // relying on a one-off migration or parsing human prose in the browser.
+  try {
+    await indexWorkflowSkillLinks(meta, blobs, artifact, version, storedRows)
+  } catch (err) {
+    log.error("workflow skill link indexing failed", {
       artifact: artifact.id,
       n: version.n,
       err: String(err),

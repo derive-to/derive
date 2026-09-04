@@ -69,7 +69,7 @@ describe("Context manifest to Skill migration", () => {
   it("previews without writing, then appends a private Skill version on the same artifact", async () => {
     const files = zipSync({
       "MANIFEST.md": new TextEncoder().encode(
-        "---\ndescription: Answers release questions.\n---\n\n# Release guide\n\nUse the repository evidence.",
+        "---\nname: Release Context\ndescription: Answers release questions.\nskills:\n  - id: release-proof\n    version: 3\n---\n\n# Release guide\n\nUse the repository evidence.",
       ),
       "references/checklist.md": new TextEncoder().encode("# Checklist"),
     })
@@ -87,6 +87,7 @@ describe("Context manifest to Skill migration", () => {
       }),
     )
     expect(created.status).toBe(201)
+    const context = await created.json()
 
     const preview = await app.request(
       "/v1/skill-migrations",
@@ -125,6 +126,13 @@ describe("Context manifest to Skill migration", () => {
     expect(contextList.contexts).toContainEqual(
       expect.objectContaining({ manifest_short_id: artifact.short_id }),
     )
+    const contextDetail = await (
+      await app.request(`/v1/contexts/${context.id}`, { headers: as(owner.email) })
+    ).json()
+    expect(contextDetail.manifest.md).toContain("  - id: release-proof\n    version: 3")
+    expect(contextDetail.skills).toContainEqual(
+      expect.objectContaining({ short_id: "release-proof", pinned: 3 }),
+    )
 
     const replay = await app.request(
       "/v1/skill-migrations",
@@ -132,6 +140,70 @@ describe("Context manifest to Skill migration", () => {
     )
     expect(replay.status).toBe(200)
     expect((await meta.getByShortId(artifact.short_id))?.current_version).toBe(2)
+  })
+
+  it("migrates a single-file Markdown definition without losing its Skill pins", async () => {
+    const definition = new FormData()
+    definition.append(
+      "file",
+      new Blob(
+        [
+          "---\nskills:\n  - id: evidence-check\n    version: 2\n---\n\n# Evidence Context\n\nCheck every claim.",
+        ],
+        { type: "text/markdown" },
+      ),
+      "evidence-context.md",
+    )
+    definition.append("title", "Evidence Context")
+    const manifest = await (
+      await app.request("/v1/artifacts", {
+        method: "POST",
+        body: definition,
+        headers: as(owner.email),
+      })
+    ).json()
+    const created = await (
+      await app.request(
+        "/v1/contexts",
+        jsonAs(as(owner.email), {
+          name: "Evidence Context",
+          manifest_short_id: manifest.short_id,
+        }),
+      )
+    ).json()
+    const sibling = await (
+      await app.request(
+        "/v1/contexts",
+        jsonAs(as(owner.email), {
+          name: "Evidence Context Copy",
+          manifest_short_id: manifest.short_id,
+        }),
+      )
+    ).json()
+
+    const applied = await app.request(
+      "/v1/skill-migrations",
+      jsonAs(as(owner.email), { apply: true }),
+    )
+    expect(applied.status).toBe(200)
+    expect(await meta.getByShortId(manifest.short_id)).toMatchObject({
+      current_version: 1,
+      current_content_type: "text/markdown",
+    })
+    const migratedContext = await meta.getContext(created.id)
+    const migratedSibling = await meta.getContext(sibling.id)
+    expect(migratedSibling?.manifest_artifact_id).toBe(migratedContext?.manifest_artifact_id)
+    expect(await meta.getArtifactById(migratedContext?.manifest_artifact_id ?? "")).toMatchObject({
+      current_version: 1,
+      current_content_type: "derive/skill",
+    })
+    const detail = await (
+      await app.request(`/v1/contexts/${created.id}`, { headers: as(owner.email) })
+    ).json()
+    expect(detail.manifest.md).toContain("  - id: evidence-check\n    version: 2")
+    expect(detail.skills).toContainEqual(
+      expect.objectContaining({ short_id: "evidence-check", pinned: 2 }),
+    )
   })
 })
 

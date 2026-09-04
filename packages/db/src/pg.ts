@@ -4477,6 +4477,12 @@ export class PgMetaStore implements MetaStore {
   async setContextAskPolicy(id: string, policy: "workspace" | "invited"): Promise<void> {
     await this.db.update(context).set({ ask_policy: policy }).where(eq(context.id, id))
   }
+  async setContextManifest(id: string, manifestArtifactId: string): Promise<void> {
+    await this.db
+      .update(context)
+      .set({ manifest_artifact_id: manifestArtifactId })
+      .where(eq(context.id, id))
+  }
   async setContextConnections(id: string, connectionIds: string | null): Promise<void> {
     await this.db.update(context).set({ connection_ids: connectionIds }).where(eq(context.id, id))
   }
