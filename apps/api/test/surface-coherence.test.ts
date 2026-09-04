@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { AGENT_SKILL_MD } from "../src/agent-skill.gen"
+import type { Sandbox } from "../src/lib/code-sandbox"
 import { CORE_SKILLS } from "../src/skills-reference.gen"
 import { anonApp, as, jsonAs, makeAuthedApp, type TestUser } from "./helpers"
 
@@ -14,6 +15,11 @@ import { anonApp, as, jsonAs, makeAuthedApp, type TestUser } from "./helpers"
 
 const owner: TestUser = { id: "u_sc", email: "sc@derive.test", name: "Owner" }
 type App = ReturnType<typeof makeAuthedApp>["app"]
+
+const listedCodeSandbox: Sandbox = {
+  name: "surface-test",
+  run: async () => ({ value: null, logs: [], toolCalls: [] }),
+}
 
 const rpc = async (app: App, token: string, method: string, params: object) => {
   const res = await app.request("/mcp", {
@@ -39,7 +45,9 @@ const callTool = async (app: App, token: string, name: string, args: object) => 
 }
 
 const setup = async (name: string) => {
-  const { app } = makeAuthedApp(name, [owner], "editor")
+  const { app } = makeAuthedApp(name, [owner], "editor", {
+    deps: { codeSandbox: listedCodeSandbox },
+  })
   await app.request("/v1/me", { headers: as(owner.email) })
   const bot = await (
     await app.request("/v1/agents", jsonAs(as(owner.email), { name: "Bot", role: "editor" }))
@@ -157,9 +165,8 @@ describe("the published skill agrees with the served surface", () => {
 
     // Equality both ways on purpose: a tool that ships undocumented is the drift that
     // happened, and a tool documented after it was removed is the same bug pointing the
-    // other way. The fixture registers the hosted shape — a tool that registers only when
-    // a deploy configures something extra (a code sandbox, connected sources) is absent
-    // here and absent from the skill, which is what this document should describe.
+    // other way. The fixture registers the hosted shape, including its configured code
+    // sandbox. Connected sources can still add deployment-specific tools and stay absent here.
     expect(documented).toEqual(served)
   })
 })

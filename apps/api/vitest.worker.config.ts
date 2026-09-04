@@ -24,6 +24,7 @@ export default defineConfig({
       miniflare: {
         compatibilityDate: "2025-05-01",
         compatibilityFlags: ["nodejs_compat", "nodejs_compat_populate_process_env"],
+        workerLoaders: { LOADER: {} },
       },
     }),
   ],

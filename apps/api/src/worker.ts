@@ -8,6 +8,7 @@ import type {
   R2Bucket,
   RateLimit,
   ScheduledController,
+  WorkerLoader,
 } from "@cloudflare/workers-types"
 import { createD1Store } from "@derive/db/d1"
 import { PgMetaStore } from "@derive/db/pg"
@@ -25,6 +26,7 @@ import { bindingEmbedder, EMBED_DIMENSIONS, type WorkersAiLike } from "./embedde
 import { purgeUserDataAndSyncSeats, workspacesBlockingDeletion } from "./lib/account"
 import { makeBillingDriver } from "./lib/billing"
 import { customDomainsFromEnv } from "./lib/cloudflare-saas"
+import { cloudflareSandbox } from "./lib/code-sandbox-cloudflare"
 import { type DispatchDeps, dispatchPass, dispatchRunNow } from "./lib/dispatch"
 import { buildAuthEmail } from "./lib/email"
 import {
@@ -92,6 +94,8 @@ const PREVIEW_NAME = "previews"
  */
 export interface Env {
   DB: D1Database
+  /** Isolated, short-lived Workers for the read-only derive_code MCP tool. */
+  LOADER: WorkerLoader
   // Hyperdrive → Postgres (the hosted tier). Bound ⇒ metadata + auth live in
   // Postgres and DB (D1) sits idle (the binding stays because the runtime requires
   // every declared binding to resolve). Unbound ⇒ D1 is the store (the default).
@@ -321,6 +325,9 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
         // id the environment never named — same endpoint, same key, no new secret. Without it
         // the library can still relabel and pin a lane, but not ADD. See lib/model-library.ts.
         modelGateway: workerGateway(env),
+        // Code Mode stays read-only in mcp-tools/code.ts. The dynamic Worker receives no parent
+        // bindings or network access; its find/read calls return through Workers RPC to this host.
+        codeSandbox: cloudflareSandbox(env.LOADER),
         // Multi-tenant, so the allowlist matters here more than anywhere: without it any
         // workspace owner could enable chat and spend Derive's key.
         chatAllowlist: (env.DERIVE_CHAT_ALLOWLIST ?? "")

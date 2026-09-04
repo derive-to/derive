@@ -27,7 +27,7 @@ unavailable, or project policy forbids publishing.
 1. Confirm Derive tools are connected. The current remote surface is:
    <!-- tools:start -->
    `automate`, `browse_library`, `catch_up`, `checkpoint`, `clear_queue`, `comment`,
-   `find`, `list_automations`, `list_workspaces`, `organize`, `publish`, `read`,
+   `derive_code`, `find`, `list_automations`, `list_workspaces`, `organize`, `publish`, `read`,
    `shelve`, `stage`, `use`.
    <!-- tools:end -->
    An installed copy of this file goes stale. `list_workspaces` reports what the server
@@ -52,6 +52,10 @@ unavailable, or project policy forbids publishing.
 
 Workspace-specific procedures may also be published as skills. Discover them with
 `find({skills:true})`, then `read` the relevant one before acting.
+
+Use `derive_code` when one task needs many `find` and `read` calls. Run the calls in
+parallel, filter inside the code, and return only the focused answer. The sandbox is
+read-only and cannot call publishing or organization tools.
 
 ## No MCP? Publish an anonymous draft
 
@@ -166,9 +170,10 @@ interaction, not secrets, server-side compute, or a general application backend.
 - If multiple workspaces are reachable and the destination is unclear, call
   `list_workspaces` and use the workspace descriptions. Ask only when the evidence does
   not identify the intended destination.
-- Derive hosts documents, pages, and versioned artifacts. It does not run compute. Do not use it
-  for server-side code execution, general-purpose data storage, secrets, or as an app
-  backend; publish the artifact and keep the system elsewhere.
+- Derive hosts documents, pages, and versioned artifacts. `derive_code` runs bounded,
+  read-only data processing for one MCP call. It is not persistent application compute. Do not
+  use Derive for general-purpose data storage, secrets, or as an app backend; publish the
+  artifact and keep the system elsewhere.
 - If this file and the live server disagree about a tool, parameter, or behavior, trust
   the live server: installed copies of this file go stale. The server's tool
   descriptions and `derive://skills/*` resources are current; re-read them before

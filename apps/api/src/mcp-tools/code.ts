@@ -9,61 +9,73 @@ import type { ToolContext } from "../mcp-tool-context"
 import { err, json } from "../mcp-util"
 
 /**
- * The DERIVE_CODE tool: do several things in one call.
+ * The DERIVE_CODE tool: do many reads in one call.
  *
- * The problem it solves is APPROVALS, not tokens. "Read these five artifacts, find the ones
- * mentioning Q3, and publish a summary" is a dozen tool calls, and in a supervised session that
- * is a dozen prompts for one intention. Here it is one call, one decision, and only the answer
- * comes back — the intermediate reads stay in the sandbox instead of crossing the context window.
+ * The problem it solves is both latency and tokens. A broad find followed by parallel focused
+ * reads should cross the MCP boundary once, and only the selected result should enter context.
  *
- * EVERY registered tool is available, deliberately. There is no read-only subset and no special
- * policy for writes, because Derive already HAS a policy for that: a write publishes as a kept,
- * restorable version through the same authorization the wrapped tool enforces — locks, roles,
- * the workspace's agent-write switch — and the publish fan-out tells the people watching. A
- * second, tool-specific rule would contradict the first, and the annoying kind of surprise is a
- * tool that follows different rules than the tool it wraps. `publish` called from here IS
- * `publish`.
+ * Only `find` and `read` are available. Code Mode is one outer MCP approval, so including a write
+ * would hide the operation that needed approval. The allow-list is constructed here rather than
+ * in model-written code: an omitted handler is unreachable, even by adversarial code.
  *
  * The permissions are the CALLER'S. The sandbox never holds a credential; it posts a tool name
  * to the host, which runs that tool through the same handler and the same grant checks an
  * ordinary MCP call would hit. Code can therefore do exactly what this session could already do
- * by hand — no more — and `tool_calls` in the result records what it did.
+ * by hand. `tool_calls` in the result records the reads it did.
  */
+const CODE_TOOL_NAMES = ["find", "read"] as const
+
+/** Give sandbox code the useful value, not the MCP transport envelope around it. */
+const unwrapToolResult = (result: unknown): unknown => {
+  if (!result || typeof result !== "object") return result
+  const value = result as {
+    toolResult?: unknown
+    structuredContent?: unknown
+    isError?: boolean
+    content?: { type?: string; text?: string }[]
+  }
+  if ("toolResult" in value) return value.toolResult
+  const content = Array.isArray(value.content) ? value.content : []
+  const text = content
+    .filter((part) => part.type === "text")
+    .map((part) => part.text ?? "")
+    .join("\n")
+  if (value.isError) return { error: text || "tool call failed" }
+  if (value.structuredContent !== undefined) return value.structuredContent
+  if (content.length && content.every((part) => part.type === "text")) {
+    try {
+      return JSON.parse(text)
+    } catch {
+      return text
+    }
+  }
+  return result
+}
+
 export function registerCodeTool(
   tc: ToolContext,
-  /** Every other tool, by name, captured as they registered. */
+  /** The handlers captured from the caller-scoped MCP surface. */
   registry: Map<string, (input: Record<string, unknown>) => Promise<unknown>>,
   sandbox: Sandbox,
 ): void {
   const { server } = tc
-  // Itself excluded: a code tool that can call the code tool is a recursion the timeout would
-  // eventually stop, expensively and confusingly.
-  const toolNames = [...registry.keys()].filter((n) => n !== "derive_code").sort()
+  const toolNames = CODE_TOOL_NAMES.filter((name) => registry.has(name))
 
   server.registerTool(
     "derive_code",
     {
-      title: "Run code across Derive's tools",
+      title: "Run code across Derive reads",
       description:
-        `Do SEVERAL things in one call, instead of a chain of separate calls.\n\n` +
+        `Run many find and read calls in one MCP call. Use loops or Promise.all.\n\n` +
         // The SHARED description (lib/code-sandbox.ts), so the tool and the sandbox that runs
         // the code cannot drift into describing different surfaces.
         `${AGENT_SURFACE_HELP}\n\n` +
-        `Available: ${toolNames.join(", ")}.\n\n` +
-        `Tools behave exactly as they do when called directly, including where writes land.\n\n` +
-        `Example: const found = []; for (const a of (await tools.find({ query: "roadmap" })).results) ` +
-        `{ const doc = await tools.read({ short_id: a.short_id }); if (doc.markdown.includes("Q3")) found.push(a.short_id) } ` +
-        `return found`,
-      // EVERY registered tool is reachable from inside the sandbox (see the file header),
-      // including organize's `state:'deleted'` permanent-delete path — so this can do
-      // anything any other tool here can do, including the one irreversible action on
-      // the whole surface. destructive is the honest reflection of that, not of what any
-      // one script happens to do. The tools it reaches are Derive's own (never `call`,
-      // which the registry excludes unless opted in — see mcp.ts registerToolSurface).
+        `Available read-only tools: ${toolNames.join(", ")}.`,
       annotations: {
-        title: "Run code across Derive's tools",
-        readOnlyHint: false,
-        destructiveHint: true,
+        title: "Run code across Derive reads",
+        readOnlyHint: true,
+        idempotentHint: true,
+        destructiveHint: false,
         openWorldHint: false,
       },
       inputSchema: {
@@ -89,7 +101,7 @@ export function registerCodeTool(
             // rather than as a sandbox crash — hence a value, not a throw.
             if (!handler || name === "derive_code")
               return { error: `unknown tool: ${name}. Available: ${toolNames.join(", ")}` }
-            return handler(args)
+            return unwrapToolResult(await handler(args))
           },
         },
       })

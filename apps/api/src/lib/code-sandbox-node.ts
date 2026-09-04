@@ -1,7 +1,10 @@
 import { Worker } from "node:worker_threads"
 import {
+  clipSandboxLogs,
+  clipSandboxValue,
+  formatSandboxLog,
+  MAX_CODE_TOOL_CALLS,
   MAX_LOG_ENTRIES,
-  MAX_RESULT_CHARS,
   SANDBOX_PRELUDE,
   type Sandbox,
   type SandboxResult,
@@ -84,7 +87,7 @@ export const nodeSandbox = (): Sandbox => ({
         settled = true
         clearTimeout(timer)
         void worker.terminate()
-        resolve({ ...r, logs, toolCalls })
+        resolve({ ...r, logs: clipSandboxLogs(r.logs), toolCalls: r.toolCalls })
       }
       // Wall clock, enforced HERE rather than inside the vm: the inner timeout only bounds
       // synchronous work, so a promise that never settles would otherwise hang the request.
@@ -97,16 +100,19 @@ export const nodeSandbox = (): Sandbox => ({
         if (m.type === "log") {
           // Bounded: a loop logging forever must not become the response.
           if (logs.length < MAX_LOG_ENTRIES)
-            logs.push(
-              (m.values as unknown[])
-                .map((v) => (typeof v === "string" ? v : safeJson(v)))
-                .join(" ")
-                .slice(0, 2_000),
-            )
+            logs.push(formatSandboxLog((m.values as unknown[]) ?? []))
           return
         }
         if (m.type === "call_tool") {
           const name = String(m.name)
+          if (toolCalls.length >= MAX_CODE_TOOL_CALLS) {
+            worker.postMessage({
+              type: "tool_result",
+              id: m.id,
+              result: { error: `tool call limit exceeded (${MAX_CODE_TOOL_CALLS})` },
+            })
+            return
+          }
           toolCalls.push(name)
           // The host runs the real tool. Errors come back as a VALUE so the model can read and
           // correct them, rather than as an opaque sandbox crash.
@@ -122,8 +128,15 @@ export const nodeSandbox = (): Sandbox => ({
             )
           return
         }
-        if (m.type === "done") finish({ value: clipValue(m.value), logs, toolCalls })
-        if (m.type === "error") finish({ value: null, logs, toolCalls, error: String(m.error) })
+        if (m.type === "done")
+          finish({ value: clipSandboxValue(m.value), logs: clipSandboxLogs(logs), toolCalls })
+        if (m.type === "error")
+          finish({
+            value: null,
+            logs: clipSandboxLogs(logs),
+            toolCalls,
+            error: String(m.error),
+          })
       })
       worker.on("error", (e: unknown) =>
         finish({
@@ -140,28 +153,3 @@ export const nodeSandbox = (): Sandbox => ({
       })
     }),
 })
-
-const safeJson = (v: unknown): string => {
-  try {
-    return JSON.stringify(v) ?? String(v)
-  } catch {
-    return String(v)
-  }
-}
-
-/** Cap what crosses back into the model's context — returning a megabyte of JSON is the problem
- *  code mode exists to solve, not a feature of it.
- *
- *  Named clipVALUE, not clip: lib/clip.ts already owns `clip` for TEXT (it appends a
- *  "…[truncated]" suffix to a string). This takes an arbitrary value and returns a structured
- *  marker instead, so two different jobs should not share one name in the same app. */
-const clipValue = (v: unknown): unknown => {
-  const s = safeJson(v)
-  if (s.length <= MAX_RESULT_CHARS) return v
-  return {
-    truncated: true,
-    chars: s.length,
-    preview: s.slice(0, MAX_RESULT_CHARS),
-    hint: "Return a summary rather than the whole result — filter inside the code.",
-  }
-}

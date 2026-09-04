@@ -170,11 +170,9 @@ export interface AppDeps {
    *  whose `execute` returns the caller's own arguments — which is a fixture, not an integration,
    *  and in production is a run that reports success over data that never existed. */
   allowEchoStub?: boolean
-  /** The isolate `derive_code` runs model-written JavaScript in. The Node entry passes a worker
-   *  thread; the Worker entry passes nothing until Cloudflare's Worker Loader is out of beta, and
-   *  the tool simply does not register without one — no runtime sniffing, no half-working tool.
-   *  Injected rather than imported so the API never drags `node:worker_threads` into a Workers
-   *  bundle, and so a test can supply a fake. */
+  /** The isolate `derive_code` runs model-written JavaScript in. Node passes a worker thread;
+   *  Cloudflare passes a Dynamic Worker. Injected so neither runtime imports the other's code and
+   *  so tests can supply a fake. The tool stays absent when a deployment provides no isolate. */
   codeSandbox?: Sandbox
   /** How an ATTENDED turn calls the model — the chat path, where someone is waiting and the work
    *  runs in this request rather than through the queue. Unattended runs do NOT use this: they

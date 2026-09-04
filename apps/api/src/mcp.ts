@@ -82,7 +82,7 @@ import {
   workspaceSkillsInstructions,
 } from "@derive/core"
 import { StreamableHTTPTransport } from "@hono/mcp"
-import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js"
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import type { Hono } from "hono"
 import { BRANDPRINT_REFERENCE, BRANDPRINT_TEMPLATE } from "./brandprint-reference"
 import type { AppContext } from "./context"
@@ -571,7 +571,7 @@ export type ToolHandler = (input: Record<string, unknown>) => Promise<unknown>
  * The tool surface a set of registrations produced, captured as they register.
  *
  * `registry` maps name -> handler so a caller can invoke a tool BY NAME without any of the tool
- * modules knowing it exists (derive_code does this in-sandbox; attended chat does it in the turn
+ * modules knowing it exists (derive_code does this for find/read; attended chat does it in the turn
  * loop). `names` answers "is my cached tool list stale?" — which only means anything if it
  * reflects what the server actually serves, so a hand-kept list would eventually lie about the
  * very thing it reports on. `defs` carries each tool's description + input schema, which is what
@@ -666,9 +666,8 @@ export function registerToolSurface(
   // client already has its own; that is a wider blast radius for no gain. Chat passes an
   // explicit set, so it opts in by naming the tool, and any future surface must do so too.
   if (only?.has("call")) registerCallTool(tc)
-  // LAST, so the registry it reads is complete. Registers only when an isolate exists: the Node
-  // entry injects a worker-thread sandbox, and the Cloudflare entry injects nothing until the
-  // Worker Loader is out of beta — so the tool is absent there rather than present and broken.
+  // LAST, so the registry it reads is complete. Both entries inject an isolate: a worker thread
+  // on Node and Cloudflare's Dynamic Worker executor on the hosted tier.
   if (codeSandbox && wanted("derive_code")) registerCodeTool(tc, registry, codeSandbox)
 
   return { registry, names, defs }

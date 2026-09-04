@@ -30,6 +30,7 @@ const NON_CONFIG = new Set([
   "WEBHOOK_OUTBOX",
   "PREVIEW_RENDERER",
   "BROWSER",
+  "LOADER",
   // Injected only by scripts/preview-config.mjs for same-repo PR deployments. These
   // are deployment-isolation invariants, not self-host operator configuration.
   "DERIVE_EXPORTS_ONLY",

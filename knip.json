@@ -12,7 +12,7 @@
         "test/**/*.manual.ts",
         "test/weather-mcp-server.mjs"
       ],
-      "ignoreDependencies": ["express"]
+      "ignoreDependencies": ["cloudflare", "express"]
     },
     "apps/docs": {
       "entry": ["scripts/*.mjs"],
