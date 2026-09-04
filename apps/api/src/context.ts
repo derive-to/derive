@@ -276,10 +276,11 @@ export interface AppDeps {
    * Per-actor (signed-in user or agent, falling back to IP) write rate limits,
    * in actions per minute. Applied only when rateLimit is on; identity-keyed so
    * one noisy account can't drown the workspace. Default: 30 publishes/min,
-   * 60 comments/min.
+   * 60 comments/min, 120 dynamic table/figure writes/min.
    */
   publishRate?: number
   commentRate?: number
+  dynamicRate?: number
   /**
    * The web SPA is served from this same process (single-container self-host).
    * When true, the bare `/` placeholder is dropped so the bundled SPA's index
@@ -407,6 +408,7 @@ export function buildContext(deps: AppDeps) {
   const limiters = deps.rateLimiters ?? inMemoryRateLimiters(deps)
   const publishLimiter = deps.rateLimit ? limiters.publish : null
   const commentLimiter = deps.rateLimit ? limiters.comment : null
+  const dynamicLimiter = deps.rateLimit ? limiters.dynamic : null
   const unlockLimiter = deps.rateLimit ? limiters.unlock : null
   const inviteLimiter = deps.rateLimit ? limiters.invite : null
   const askLimiter = deps.rateLimit ? limiters.ask : null
@@ -1774,6 +1776,7 @@ export function buildContext(deps: AppDeps) {
     defaultRole,
     publishLimiter,
     commentLimiter,
+    dynamicLimiter,
     unlockLimiter,
     inviteLimiter,
     askLimiter,

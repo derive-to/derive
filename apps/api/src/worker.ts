@@ -377,6 +377,9 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
           write: nativeLimiter(env.RL_WRITE, 60),
           publish: nativeLimiter(env.RL_PUBLISH, 60),
           comment: nativeLimiter(env.RL_COMMENT, 60),
+          // Rides the write binding, namespaced so slot writes and general writes keep
+          // separate counts on the same per-colo limiter.
+          dynamic: nativeLimiter(env.RL_WRITE, 60, "dynamic"),
           // Both ride RL_STRICT (3/60); the prefix keeps their counts separate.
           unlock: nativeLimiter(env.RL_STRICT, 60, "unlock"),
           oauthRegister: nativeLimiter(env.RL_STRICT, 60, "oauth-register"),

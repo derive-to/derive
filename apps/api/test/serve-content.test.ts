@@ -216,6 +216,92 @@ describe("serveContent — single-file artifacts", () => {
   })
 })
 
+describe("serveContent — dynamic tables and figures", () => {
+  const DYNAMIC = "/raw/derive-dynamic.js"
+  const fence = [
+    "# Results",
+    "",
+    "```derive-table results",
+    "| Model | Acc |",
+    "| --- | --- |",
+    "| base | -- |",
+    "```",
+    "",
+  ].join("\n")
+  const slot = (json: string) => ({
+    id: "dyn_1",
+    artifact_id: "a",
+    n: 1,
+    name: "results",
+    kind: "table" as const,
+    json,
+    size_bytes: json.length,
+    revision: 3,
+    updated_by_id: "amy",
+    updated_by_name: "Amy",
+    updated_at: "2026-01-01T00:00:00.000Z",
+  })
+  const results = JSON.stringify({
+    kind: "table",
+    table: { columns: [{ key: "model" }, { key: "acc" }], rows: [{ model: "ours", acc: 0.9 }] },
+  })
+  const serve = (content: { blob_key: string; content_type: string }, dynamic = [slot(results)]) =>
+    serveContent(
+      ctx(),
+      blobStore({
+        md: fence,
+        html: '<table data-derive-table="results"><caption>Totals</caption><tr><td>old</td></tr></table><table><tr><td>plain</td></tr></table>',
+      }),
+      content,
+      "T",
+      "/",
+      "",
+      IMMUTABLE,
+      undefined,
+      true,
+      true,
+      "",
+      dynamic,
+    )
+
+  it("substitutes a markdown fence with the slot's current value and injects the runtime", async () => {
+    const res = await serve({ blob_key: "md", content_type: "text/markdown" })
+    const body = await res.text()
+    expect(body).toContain('<table data-derive-table="results">')
+    expect(body).toContain("<td>ours</td><td>0.9</td>")
+    expect(body).not.toContain("base")
+    expect(body).toContain(DYNAMIC)
+    expect(body).toContain(SHARED)
+    expect(body.split(SCRIPT).length).toBe(2) // the anchor client exactly once
+    expectSandbox(res)
+  })
+
+  it("renders the placeholder and skips the runtime when no slot is bound", async () => {
+    const res = await serve({ blob_key: "md", content_type: "text/markdown" }, [])
+    const body = await res.text()
+    expect(body).toContain("<td>base</td><td>--</td>")
+    expect(body).not.toContain(DYNAMIC)
+  })
+
+  it("replaces a bound HTML table's rows, keeps its caption, leaves unbound tables alone", async () => {
+    const res = await serve({ blob_key: "html", content_type: "text/html" })
+    const body = await res.text()
+    expect(body).toContain('<table data-derive-table="results"><caption>Totals</caption><thead>')
+    expect(body).toContain("<td>ours</td><td>0.9</td>")
+    expect(body).not.toContain("old")
+    expect(body).toContain("<table><tr><td>plain</td></tr></table>")
+    expect(body).toContain(DYNAMIC)
+    expectSandbox(res)
+  })
+
+  it("renders the placeholder when a stored value no longer validates", async () => {
+    const res = await serve({ blob_key: "md", content_type: "text/markdown" }, [slot("{not json")])
+    const body = await res.text()
+    expect(body).toContain("<td>base</td><td>--</td>")
+    expect(body).not.toContain(DYNAMIC)
+  })
+})
+
 describe("serveContent — bundles", () => {
   const manifest: BundleManifest = {
     entry: "/index.html",

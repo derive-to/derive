@@ -303,3 +303,148 @@ describe("raw render never white-screens + self-heals a mislabeled blob", () => 
     expect((await meta.getVersion(a.id, 1))?.content_type).toBe("text/html")
   })
 })
+
+// Dynamic slots are PER VERSION: a publish seeds each declared binding from the previous
+// version's latest data (or the placeholder for a new name), writes land only on the
+// current version, older versions keep what they had, and a restore starts from the
+// restored version's final data. Pinned through the surfaces an agent uses: publish,
+// the dynamic API, and restore.
+describe("dynamic slots follow the version boundary", () => {
+  const TOKEN = { authorization: "Bearer tok" }
+  const MD = (acc: string, extra = "") =>
+    [
+      "# Results",
+      "",
+      "```derive-table results",
+      "| Model | Acc |",
+      "| --- | --- |",
+      `| base | ${acc} |`,
+      "```",
+      extra,
+    ].join("\n")
+  const publishMd = (content: string, shortId?: string) => {
+    const form = new FormData()
+    form.append("file", new Blob([enc(content)]), "results.md")
+    return app.request(shortId ? `/v1/artifacts/${shortId}/versions` : "/v1/artifacts", {
+      method: "POST",
+      body: form,
+      headers: TOKEN,
+    })
+  }
+  const slot = async (shortId: string, v?: number) =>
+    (
+      await app.request(`/v1/artifacts/${shortId}/dynamic/results${v ? `?v=${v}` : ""}`, {
+        headers: TOKEN,
+      })
+    ).json()
+  const setCell = (shortId: string, value: number) =>
+    app.request(`/v1/artifacts/${shortId}/dynamic/results`, {
+      method: "PATCH",
+      headers: { ...TOKEN, "content-type": "application/json" },
+      body: JSON.stringify({ kind: "table", cells: [{ row: 0, col: "acc", value }] }),
+    })
+
+  it("seeds from the document, then carries the latest data forward version by version", async () => {
+    const a = await (await publishMd(MD("--"))).json()
+    expect(await slot(a.short_id)).toMatchObject({
+      version: 1,
+      revision: 0,
+      value: { kind: "table", table: { rows: [{ model: "base", acc: null }] } },
+    })
+    expect((await setCell(a.short_id, 0.5)).status).toBe(200)
+
+    // v2 changes prose only; its slot starts from v1's LATEST value, not the placeholder.
+    expect((await publishMd(MD("--", "\nMore prose.\n"), a.short_id)).status).toBe(201)
+    expect(await slot(a.short_id, 2)).toMatchObject({
+      version: 2,
+      revision: 0,
+      value: { table: { rows: [{ model: "base", acc: 0.5 }] } },
+    })
+    expect(await slot(a.short_id, 1)).toMatchObject({ version: 1, revision: 1 })
+
+    // Writes land on the current version and leave v1 alone.
+    expect((await setCell(a.short_id, 0.9)).status).toBe(200)
+    expect(await slot(a.short_id, 2)).toMatchObject({
+      revision: 1,
+      value: { table: { rows: [{ model: "base", acc: 0.9 }] } },
+    })
+    expect(await slot(a.short_id, 1)).toMatchObject({
+      revision: 1,
+      value: { table: { rows: [{ model: "base", acc: 0.5 }] } },
+    })
+    const history = await (
+      await app.request(`/v1/artifacts/${a.short_id}/dynamic/results/history?v=2`, {
+        headers: TOKEN,
+      })
+    ).json()
+    expect(history.revisions).toMatchObject([
+      { revision: 1 },
+      { revision: 0, note: "seeded from v1" },
+    ])
+
+    // A restore of v1 starts the new version from v1's final data, not v2's.
+    const restored = await app.request(`/v1/artifacts/${a.short_id}/restore`, {
+      method: "POST",
+      headers: { ...TOKEN, "content-type": "application/json" },
+      body: JSON.stringify({ version: 1 }),
+    })
+    expect(restored.status).toBe(201)
+    expect(await slot(a.short_id, 3)).toMatchObject({
+      version: 3,
+      revision: 0,
+      value: { table: { rows: [{ model: "base", acc: 0.5 }] } },
+    })
+  })
+
+  it("serves each version's own data on its page and over the raw JSON route, never cached past a request", async () => {
+    const a = await (await publishMd(MD("--"))).json()
+    expect((await setCell(a.short_id, 0.5)).status).toBe(200)
+    await publishMd(MD("--", "\nv2\n"), a.short_id)
+    expect((await setCell(a.short_id, 0.9)).status).toBe(200)
+
+    const v1 = await app.request(`/raw/${a.short_id}/v/1/index.html`, { headers: TOKEN })
+    expect(v1.status).toBe(200)
+    expect(v1.headers.get("cache-control")).toBe("private, no-cache")
+    const v1Body = await v1.text()
+    expect(v1Body).toContain("<td>0.5</td>")
+    expect(v1Body).toContain("/raw/derive-dynamic.js")
+    const v2 = await app.request(`/raw/${a.short_id}/v/2/index.html`, { headers: TOKEN })
+    expect(await v2.text()).toContain("<td>0.9</td>")
+
+    const alias = await app.request(`/raw/${a.short_id}/dynamic/results.json`, { headers: TOKEN })
+    expect(alias.status).toBe(200)
+    expect(alias.headers.get("access-control-allow-origin")).toBe("*")
+    expect(alias.headers.get("cache-control")).toBe("private, no-cache")
+    await expect(alias.json()).resolves.toMatchObject({
+      name: "results",
+      kind: "table",
+      version: 2,
+      revision: 1,
+      value: { table: { rows: [{ model: "base", acc: 0.9 }] } },
+    })
+    const pinned = await app.request(`/raw/${a.short_id}/v/1/dynamic/results`, { headers: TOKEN })
+    expect(pinned.headers.get("cache-control")).toBe("private, no-cache")
+    await expect(pinned.json()).resolves.toMatchObject({ version: 1, revision: 1 })
+    // Anonymous on a gated artifact: nothing, not even existence.
+    expect((await app.request(`/raw/${a.short_id}/dynamic/results.json`)).status).toBe(404)
+    const runtime = await app.request("/raw/derive-dynamic.js")
+    expect(runtime.headers.get("content-type")).toContain("text/javascript")
+    expect(await runtime.text()).toContain("dynamic-updated")
+  })
+
+  it("keeps a non-current version's slots behind the public-history gate", async () => {
+    const a = await (await publishMd(MD("--"))).json()
+    await publishMd(MD("--", "\nv2\n"), a.short_id)
+    const grant = await app.request(`/v1/artifacts/${a.short_id}/access`, {
+      method: "PATCH",
+      headers: { ...TOKEN, "content-type": "application/json" },
+      body: JSON.stringify({ linkRole: "viewer" }),
+    })
+    expect(grant.ok).toBe(true)
+    expect((await app.request(`/v1/artifacts/${a.short_id}/dynamic`)).status).toBe(200)
+    expect((await app.request(`/v1/artifacts/${a.short_id}/dynamic?v=1`)).status).toBe(404)
+    expect(
+      (await app.request(`/v1/artifacts/${a.short_id}/dynamic?v=1`, { headers: TOKEN })).status,
+    ).toBe(200)
+  })
+})

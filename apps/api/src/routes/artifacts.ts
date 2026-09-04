@@ -2475,6 +2475,9 @@ export const artifactRoutes = (ctx: AppContext) => {
           isNew: false,
           onBehalf: null,
           actorId: (await actingUser(c))?.id ?? null,
+          // The restored version's dynamic data comes back with it: v7 restored from v3
+          // starts from the numbers v3 ended with, not from whatever v6 had.
+          dynamicSeedFrom: src.n,
         },
       )
       const fresh = (await meta.getByShortId(artifact.short_id)) as ArtifactRecord

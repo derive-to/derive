@@ -181,10 +181,17 @@ import { CORE_SKILLS } from "../src/skills-reference.gen"
 // enumeration it sits under ("gets none of that") instead of restating it.
 // Measured: descriptions 3,438 of 3,500; params 9,884 of 9,900; total 13,322 of 13,350;
 // instructions 2,579 of 2,650.
+// INSTRUCTIONS RAISED 2650 → 2750 (2026-09-03) for the `dynamic-data` skill: a new core skill,
+// and the first about data that changes WITHOUT a version (a results table an agent refreshes
+// as runs land). Its index line is the only always-loaded cost: the body, the REST shapes and
+// the row-addressing rule live in derive://skills/dynamic-data, and no tool description or
+// param changed (descriptions 3,438, params 9,884, total 13,322, exactly as before). Trimmed
+// the summary first (88 → 70 chars); measured instructions ~2,700, so the cap keeps the ~2%
+// headroom the previous raises settled on.
 const TOOL_DESCRIPTIONS_BUDGET = 3_500
 const PARAM_DESCRIPTIONS_BUDGET = 9_900
 const SURFACE_BUDGET = 13_350
-const INSTRUCTIONS_BUDGET = 2_650
+const INSTRUCTIONS_BUDGET = 2_750
 
 /** No single tool may sprawl: one sentence of routing, the one thing that silently breaks,
  *  and a pointer to its skill. */

@@ -1,4 +1,7 @@
 import type {
+  DynamicKind,
+  DynamicPatch,
+  DynamicValue,
   ElementSelector,
   LinkRole,
   Listed,
@@ -19,6 +22,30 @@ import { guestQuery } from "./lib/guest-id"
  *  import core at runtime — see .dependency-cruiser.mjs) and re-exported so this
  *  stays the one place other web modules name them from. */
 export type { LinkRole, Listed, Role, WorkspaceAccess }
+
+/** One dynamic table or figure slot as the API returns it (routes/dynamic-data.ts). */
+export interface DynamicSlot {
+  name: string
+  kind: DynamicKind
+  version: number
+  revision: number
+  updated_at: string
+  updated_by: { id: string; name: string }
+  value: DynamicValue
+  /** The server-rendered inner fragment, present when asked for with `format: "html"`. */
+  html?: string
+}
+export interface DynamicRevision {
+  revision: number
+  actor: { id: string; name: string }
+  note: string | null
+  bytes: number
+  at: string
+  value?: unknown
+}
+type DynamicWriteMeta = { expected_revision?: number; note?: string }
+export type DynamicWrite = DynamicValue & DynamicWriteMeta
+export type DynamicPatchBody = DynamicPatch & DynamicWriteMeta
 
 /** A pointer to the conventions collection a workspace or an account likes its
  *  artifacts built from. Mirrors packages/core/src/ports.ts Brandprint, minus
@@ -1095,6 +1122,45 @@ export const api = {
     f(`/v1/artifacts/${id}/state/${encodeURIComponent(key)}`, opts(mutation)).then(j),
   sharedStateActivity: (id: string, key: string): Promise<{ activity: SharedStateActivity[] }> =>
     f(`/v1/artifacts/${id}/state/${encodeURIComponent(key)}/activity`, opts()).then(j),
+
+  // Dynamic tables and figures: per-version data that changes without a new version
+  // (see @derive/core dynamic-data.ts). A plain-Hono router like shared state, so the
+  // wire shapes are declared here rather than generated.
+  dynamicSlots: (id: string, v?: number): Promise<{ version: number; slots: DynamicSlot[] }> =>
+    f(`/v1/artifacts/${id}/dynamic${v ? `?v=${v}` : ""}`, opts()).then(j),
+  dynamicSlot: (
+    id: string,
+    name: string,
+    q: { v?: number; format?: "html" } = {},
+  ): Promise<DynamicSlot> => {
+    const params = new URLSearchParams()
+    if (q.v) params.set("v", String(q.v))
+    if (q.format) params.set("format", q.format)
+    const qs = params.toString()
+    return f(
+      `/v1/artifacts/${id}/dynamic/${encodeURIComponent(name)}${qs ? `?${qs}` : ""}`,
+      opts(),
+    ).then(j)
+  },
+  putDynamicSlot: (id: string, name: string, body: DynamicWrite): Promise<DynamicSlot> =>
+    f(`/v1/artifacts/${id}/dynamic/${encodeURIComponent(name)}`, {
+      ...opts(body),
+      method: "PUT",
+    }).then(j),
+  patchDynamicSlot: (id: string, name: string, body: DynamicPatchBody): Promise<DynamicSlot> =>
+    f(`/v1/artifacts/${id}/dynamic/${encodeURIComponent(name)}`, {
+      ...opts(body),
+      method: "PATCH",
+    }).then(j),
+  dynamicHistory: (
+    id: string,
+    name: string,
+    v?: number,
+  ): Promise<{ version: number; revisions: DynamicRevision[] }> =>
+    f(
+      `/v1/artifacts/${id}/dynamic/${encodeURIComponent(name)}/history${v ? `?v=${v}` : ""}`,
+      opts(),
+    ).then(j),
 
   favorite: (id: string, on: boolean): Promise<{ favorite: boolean }> =>
     f(`/v1/artifacts/${id}/favorite`, { ...opts(), method: on ? "PUT" : "DELETE" }).then(j),
