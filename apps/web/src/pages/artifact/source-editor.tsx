@@ -35,6 +35,7 @@ export function SourceEditor({
   publishing,
   shortId,
   stripFrontmatter = false,
+  previewContext,
 }: {
   title: string
   format: "md" | "html" | "tex"
@@ -57,6 +58,10 @@ export function SourceEditor({
   /** Skill metadata lives in YAML frontmatter but the published reader intentionally
    *  hides it. Remove that block from the live preview while keeping it editable. */
   stripFrontmatter?: boolean
+  /** Set when the draft is ONE file of a paper bundle: the preview then renders the
+   *  whole paper with this draft substituted for that file, so a section shows in its
+   *  place and the .bib resolves the paper's citations. */
+  previewContext?: { shortId: string; path: string }
 }) {
   const [pane, setPane] = useState<"edit" | "preview">("edit")
   // Desktop preview-pane visibility (mobile uses the Edit/Preview tabs instead).
@@ -65,6 +70,10 @@ export function SourceEditor({
   // True when the last render failed: the pane still shows the previous good HTML,
   // so flag it stale rather than silently freezing on an out-of-date preview.
   const [previewStale, setPreviewStale] = useState(false)
+  // The effect keys off these primitives, not the object: the parent builds it fresh
+  // each render, and an identity dep would re-render the preview on every keystroke twice.
+  const previewShortId = previewContext?.shortId
+  const previewPath = previewContext?.path
 
   // Debounced, faithful preview. HTML renders in-browser as-is; markdown and LaTeX
   // are rendered by the server's real renderer (the same one publish uses), so what
@@ -81,7 +90,14 @@ export function SourceEditor({
       }
       const previewSource = stripFrontmatter ? skillPreviewSource(src) : src
       api
-        .renderPreview(previewSource, title, format === "tex" ? "text/x-latex" : undefined)
+        .renderPreview(
+          previewSource,
+          title,
+          format === "tex" ? "text/x-latex" : undefined,
+          previewShortId && previewPath
+            ? { shortId: previewShortId, path: previewPath }
+            : undefined,
+        )
         .then(({ html }) => {
           if (!cancelled) {
             setPreview(html)
@@ -98,7 +114,7 @@ export function SourceEditor({
       cancelled = true
       clearTimeout(t)
     }
-  }, [src, format, title, previewOpen, stripFrontmatter])
+  }, [src, format, title, previewOpen, stripFrontmatter, previewShortId, previewPath])
 
   return (
     // In-flow (fills the document column), not a fullscreen overlay: the app
