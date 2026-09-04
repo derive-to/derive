@@ -88,14 +88,16 @@ tables, images, dynamic tables and figures, footnotes, theorem text, the author 
 generated numbers and labels and the reference list are read-only on the page: a click
 on them says so, the caret steps over them, and a Backspace beside a formula cannot
 delete it. Everything else is a source edit. The file chips above a paper bundle list
-`main.tex` first, then its sections, `.bib` and style files; a paper's images sit in one
-"figures" menu at the end of the row. A chip opens that file in the source editor, whose
-right pane renders the whole paper with the file you are typing substituted (sections,
-citations, figures and dynamic tables included), and the chips stay in view while you
-edit so you can move between files; leaving a file with unsaved changes asks first. Every
-save is a new version of the bundle, with the other files carried over. An inline edit
-whose words come from an `\input` file is refused with the file's name; open that file
-instead.
+`main.tex` first, then the files at the bundle's root, then one chip per folder: a folder
+glyph, the folder's name and a count of the files inside. Pointing at a folder chip opens
+a small tree of its contents (twelve rows visible per list, the rest scroll; a nested
+folder expands inside it); a root `README.md` is not shown. A chip or a tree row opens
+that file in the source editor, whose right pane renders the whole paper with the file
+you are typing substituted (sections, citations, figures and dynamic tables included),
+and the chips stay in view while you edit so you can move between files; an image opens
+in a new tab. Leaving a file with unsaved changes asks first. Every save is a new version
+of the bundle, with the other files carried over. An inline edit whose words come from an
+`\input` file is refused with the file's name; open that file instead.
 
 ### Bibliography
 
