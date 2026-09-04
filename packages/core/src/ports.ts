@@ -2399,7 +2399,7 @@ export interface WorkflowRunStore {
   ): Promise<WorkflowStepAttemptRecord | null>
 }
 
-export type SkillRelationKind = "requires" | "extends" | "recommends"
+export type SkillRelationKind = "requires" | "extends" | "recommends" | "references"
 export type SkillClient = "claude" | "codex"
 export type SkillInstallScope = "project" | "personal" | "runner"
 export type SkillInstallPolicy = "pinned" | "latest"

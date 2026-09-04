@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest"
-import { SKILL_DEFINITION_SCHEMA, skillCatalogEnabled, validateSkillDefinition } from "../src/skill"
+import {
+  inferredSkillRelationRefs,
+  SKILL_DEFINITION_SCHEMA,
+  skillCatalogEnabled,
+  validateSkillDefinition,
+} from "../src/skill"
 
 const skill = (name = "weekly-brief") => `---
 name: ${name}
@@ -11,6 +16,16 @@ compatibility: Requires the Derive MCP for graph execution.
 `
 
 describe("validateSkillDefinition", () => {
+  it("infers exact Derive artifact links without treating bare ids as relationships", () => {
+    expect(
+      inferredSkillRelationRefs(`See [research](/artifacts/research-core-abc12345@v3) and
+<a href="https://derive.to/artifacts/tone-guide-def67890">tone</a>.
+The bare id zzz99999 and [an artifact-shaped external link](https://example.com/artifacts/nope1234).`),
+    ).toEqual([{ id: "abc12345", version: 3 }, { id: "nope1234" }, { id: "def67890" }])
+    expect(inferredSkillRelationRefs("The bare id abc12345 is not a relationship.")).toEqual([])
+    expect(inferredSkillRelationRefs("](!".repeat(10_000))).toEqual([])
+  })
+
   it("accepts a portable skill without a Derive sidecar", () => {
     const checked = validateSkillDefinition(skill())
     expect(checked.errors).toEqual([])

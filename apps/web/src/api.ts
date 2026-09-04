@@ -627,7 +627,7 @@ export interface SkillRelation {
   source_version: number
   target_artifact_id: string
   target_version: number
-  kind: "requires" | "extends" | "recommends"
+  kind: "requires" | "extends" | "recommends" | "references"
 }
 export interface SkillGraph {
   root: string
