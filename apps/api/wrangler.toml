@@ -7,6 +7,11 @@ compatibility_date = "2024-11-01"
 # (GOOGLE_*, GITHUB_LOGIN_*, OIDC_*) there, same as on Node.
 compatibility_flags = ["nodejs_compat", "nodejs_compat_populate_process_env"]
 
+# Isolated short-lived Workers for the read-only derive_code MCP tool. The generated Worker gets
+# no credentials or network binding; find/read dispatch back to this authenticated host by RPC.
+[[worker_loaders]]
+binding = "LOADER"
+
 # Workers Logs: persist + index every invocation's structured logs (queryable in the
 # dashboard; retention per plan). Without this block console output is live-tail-only
 # and "what happened yesterday" is unanswerable. log.ts emits JSON on workerd, so

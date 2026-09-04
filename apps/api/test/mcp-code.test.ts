@@ -2,10 +2,10 @@ import { describe, expect, it } from "vitest"
 import { nodeSandbox } from "../src/lib/code-sandbox-node"
 import { as, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
-// derive_code over the REAL MCP server: one call, several tools, the caller's own permissions.
+// derive_code over the REAL MCP server: one call, many reads, the caller's own permissions.
 //
-// The value is approvals. "Read these artifacts, find the ones mentioning Q3, publish a summary"
-// is a dozen tool calls and, in a supervised session, a dozen prompts for one intention.
+// The value is a single boundary and a small result. A find plus many reads happens server-side;
+// only the selected answer enters the model's context.
 //
 // The property that makes it safe is that it is not a new permission surface: the sandbox posts a
 // tool NAME to the host, which runs the same handler with the same grant checks an ordinary call
@@ -74,6 +74,22 @@ const listTools = async (app: ReturnType<typeof makeAuthedApp>["app"], token: st
   )
 }
 
+const toolDefs = async (app: ReturnType<typeof makeAuthedApp>["app"], token: string) => {
+  const res = await app.request("/mcp", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+    },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+  })
+  return (JSON.parse(frameOf(await res.text())).result?.tools ?? []) as {
+    name: string
+    annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean }
+  }[]
+}
+
 describe("derive_code: registration", () => {
   const owner: TestUser = { id: "u_dc_own", email: "dcown@derive.test", name: "Owner" }
 
@@ -87,6 +103,11 @@ describe("derive_code: registration", () => {
       await withBox.app.request("/v1/agents", jsonAs(as(owner.email), { name: "A" }))
     ).json()) as { token: string }
     expect(await listTools(withBox.app, agentOn.token)).toContain("derive_code")
+    const code = (await toolDefs(withBox.app, agentOn.token)).find(
+      (tool) => tool.name === "derive_code",
+    )
+    expect(code?.annotations?.readOnlyHint).toBe(true)
+    expect(code?.annotations?.destructiveHint).toBe(false)
 
     const without = makeAuthedApp("dc-off", [owner], "editor")
     const agentOff = (await (
@@ -113,10 +134,9 @@ describe("derive_code: composing real tools", () => {
     return body.token
   }
 
-  it("runs several tools in ONE call and returns only the answer", async () => {
-    // The whole point: the reads happen INSIDE, and only the conclusion crosses back. Driven off
-    // known short_ids rather than a search, so this tests composition rather than whether the
-    // search index happens to be populated — a distinction that cost a debugging round.
+  it("finds, reads in parallel, and returns only the answer", async () => {
+    // Browse mode is deterministic in this fixture. It proves the real find -> Promise.all(read)
+    // path without making the test depend on asynchronous search indexing.
     const token = await agentToken()
     const hit = (await (
       await publishAs(app, "# Roadmap\n\nQ3 ships the thing.", { title: "R" }, as(owner.email))
@@ -126,19 +146,20 @@ describe("derive_code: composing real tools", () => {
     ).json()) as { short_id: string }
 
     const out = await mcp(app, token, "derive_code", {
-      code: `const ids = ${JSON.stringify([hit.short_id, miss.short_id])}
-             const found = []
-             for (const id of ids) {
-               const doc = await tools.read({ short_id: id })
-               if (JSON.stringify(doc).includes("Q3")) found.push(id)
-             }
-             return { matched: found, checked: ids.length }`,
+      code: `const wanted = new Set(${JSON.stringify([hit.short_id, miss.short_id])})
+             const found = await tools.find({})
+             const ids = found.results.map((row) => row.short_id).filter((id) => wanted.has(id))
+             const docs = await Promise.all(ids.map((short_id) => tools.read({ short_id })))
+             return {
+               matched: ids.filter((_, index) => docs[index].includes("Q3")),
+               checked: docs.length,
+             }`,
     })
     expect(out.isError).toBe(false)
     expect(out.parsed?.result?.checked).toBe(2)
     expect(out.parsed?.result?.matched).toEqual([hit.short_id])
-    // Two reads, one approval — and the transcript records what that approval authorized.
-    expect(out.parsed?.tool_calls).toEqual(["read", "read"])
+    // One find plus two reads, one MCP call. The transcript records the internal operations.
+    expect(out.parsed?.tool_calls).toEqual(["find", "read", "read"])
   })
 
   it("surfaces logs and the calls made when the code FAILS halfway", async () => {
@@ -156,20 +177,22 @@ describe("derive_code: composing real tools", () => {
     expect(out.text).toContain("starting")
   })
 
-  it("runs with the CALLER's permissions — no more than the session already had", async () => {
-    // The security claim, asserted. The sandbox holds no credential: it posts a name, and the
-    // host runs that tool through the same handler and the same grant checks a direct call hits.
-    // So a tool the session cannot use is not usable from code either.
+  it("exposes only find and read", async () => {
     const token = await agentToken()
-    const direct = await mcp(app, token, "list_workspaces", {})
     const viaCode = await mcp(app, token, "derive_code", {
-      code: `return await tools.list_workspaces({})`,
+      code: `return {
+        find: typeof tools.find,
+        read: typeof tools.read,
+        publish: typeof tools.publish,
+        list_workspaces: typeof tools.list_workspaces,
+      }`,
     })
-    expect(direct.isError).toBe(false)
     expect(viaCode.isError).toBe(false)
-    // Same data either way — code is a composition mechanism, not an escalation.
-    expect(JSON.stringify(viaCode.parsed?.result)).toContain(
-      JSON.stringify(direct.parsed?.workspaces?.[0]?.id ?? "").replaceAll('"', ""),
-    )
+    expect(viaCode.parsed?.result).toEqual({
+      find: "function",
+      read: "function",
+      publish: "undefined",
+      list_workspaces: "undefined",
+    })
   })
 })

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import type { Sandbox } from "../src/lib/code-sandbox"
+import { MAX_LOG_CHARS, type Sandbox } from "../src/lib/code-sandbox"
 
 /**
  * THE SANDBOX CONTRACT — one behavioural suite every implementation must pass.
@@ -19,7 +19,11 @@ import type { Sandbox } from "../src/lib/code-sandbox"
  * Adversarial cases first, because this runs text a model wrote and that model may have read a
  * hostile page.
  */
-export function runSandboxContract(label: string, make: () => Sandbox): void {
+export function runSandboxContract(
+  label: string,
+  make: () => Sandbox,
+  options: { skipSynchronousLoop?: boolean } = {},
+): void {
   const run = (
     code: string,
     opts: Partial<{ tools: Record<string, unknown>; timeoutMs: number }> = {},
@@ -138,6 +142,13 @@ export function runSandboxContract(label: string, make: () => Sandbox): void {
       expect(r.value).not.toBe("GOT REQUIRE")
     })
 
+    it("cannot make a direct network request", async () => {
+      const r = await run(
+        `try { await fetch("https://example.com"); return "GOT NETWORK" } catch { return "no network" }`,
+      )
+      expect(r.value).toBe("no network")
+    })
+
     it("closes the constructor.constructor escape out of the vm realm", async () => {
       // The classic Node-vm escape: any host-created object exposes a path to the host `Function`,
       // and from there to `process` and `require`. The prelude keeps bridges and results in-realm
@@ -159,7 +170,8 @@ export function runSandboxContract(label: string, make: () => Sandbox): void {
       expect(r.value).toBe("undefined")
     })
 
-    it("terminates a runaway synchronous loop", async () => {
+    const synchronousLoopTest = options.skipSynchronousLoop ? it.skip : it
+    synchronousLoopTest("terminates a runaway synchronous loop", async () => {
       const r = await run(`while (true) {}`, { timeoutMs: 1_500 })
       expect(r.error).toBeTruthy()
     })
@@ -173,8 +185,22 @@ export function runSandboxContract(label: string, make: () => Sandbox): void {
     })
 
     it("bounds a flood of logs rather than returning them all", async () => {
-      const r = await run(`for (let i = 0; i < 5000; i++) console.log("x" + i); return "done"`)
+      const r = await run(
+        `for (let i = 0; i < 5000; i++) console.log(i, "x".repeat(2000)); return "done"`,
+      )
       expect(r.logs.length).toBeLessThanOrEqual(200)
+      expect(r.logs.reduce((total, log) => total + log.length, 0)).toBeLessThanOrEqual(
+        MAX_LOG_CHARS,
+      )
+    })
+
+    it("bounds tool fan-out", async () => {
+      const r = await run(
+        `const out = await Promise.all(Array.from({ length: 101 }, (_, i) => tools.echo({ i })))
+         return { errors: out.filter((x) => x.error).length }`,
+      )
+      expect(r.calls).toHaveLength(100)
+      expect(r.value).toEqual({ errors: 1 })
     })
 
     it("truncates an oversized return value", async () => {

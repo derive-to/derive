@@ -7,6 +7,7 @@ import Database from "better-sqlite3"
 import { zipSync } from "fflate"
 import { afterAll, describe, expect, it } from "vitest"
 import { createApp } from "../src/app"
+import type { Sandbox } from "../src/lib/code-sandbox"
 import { sha256 } from "../src/lib/crypto"
 import { CORE_SKILLS } from "../src/skills-reference.gen"
 
@@ -179,11 +180,12 @@ import { CORE_SKILLS } from "../src/skills-reference.gen"
 // read AFTER the agent has already chosen Derive, which is the decision this buys.
 // Reclaim paid for part of the instructions growth: the claim leans on the artifact
 // enumeration it sits under ("gets none of that") instead of restating it.
-// Measured: descriptions 3,438 of 3,500; params 9,884 of 9,900; total 13,322 of 13,350;
-// instructions 2,579 of 2,650.
-const TOOL_DESCRIPTIONS_BUDGET = 3_500
-const PARAM_DESCRIPTIONS_BUDGET = 9_900
-const SURFACE_BUDGET = 13_350
+// Raised for `derive_code`, the 16th hosted tool. Its short description and two parameters are
+// the minimum discoverable contract for batching find/read work. Measured after the addition:
+// descriptions 3,708; params 9,960; total 13,668; instructions 2,579.
+const TOOL_DESCRIPTIONS_BUDGET = 3_800
+const PARAM_DESCRIPTIONS_BUDGET = 10_050
+const SURFACE_BUDGET = 13_850
 const INSTRUCTIONS_BUDGET = 2_650
 
 /** No single tool may sprawl: one sentence of routing, the one thing that silently breaks,
@@ -194,6 +196,11 @@ const MAX_PARAM_DESCRIPTION = 250
 
 const dir = mkdtempSync(join(tmpdir(), "derive-mcp-budget-"))
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
+
+const listedCodeSandbox: Sandbox = {
+  name: "surface-budget",
+  run: async () => ({ value: null, logs: [], toolCalls: [] }),
+}
 
 // A representative connection: an OAuth grant with read+publish (the common
 // claude.ai / Claude Code hookup), no Brandprint, no pending requests.
@@ -221,7 +228,13 @@ function appWithGrant(name: string, scopes: string) {
   )
   db.close()
   const blobs = new FsBlobStore(join(dir, `${name}-blobs`))
-  const app = createApp({ meta, blobs, baseUrl: "http://derive.test", token: "tok" })
+  const app = createApp({
+    meta,
+    blobs,
+    baseUrl: "http://derive.test",
+    token: "tok",
+    codeSandbox: listedCodeSandbox,
+  })
   return { app, token: `tok_${name}` }
 }
 

@@ -65,7 +65,52 @@ export const MAX_CODE_TIMEOUT_MS = 120_000
 /** Cap what crosses back. A sandbox returning a megabyte of JSON would blow up the model's
  *  context — the very thing code mode exists to avoid. */
 export const MAX_LOG_ENTRIES = 200
-export const MAX_RESULT_CHARS = 100_000
+// Match Cloudflare's Code Mode response ceiling: about 6,000 tokens. The exact limit is in
+// characters because that is deterministic before the MCP response reaches a tokenizer.
+export const MAX_RESULT_CHARS = 24_000
+export const MAX_LOG_CHARS = 4_000
+/** One code call may fan out, but it must not become an unbounded database workload. */
+export const MAX_CODE_TOOL_CALLS = 100
+
+export const safeSandboxJson = (v: unknown): string => {
+  try {
+    return JSON.stringify(v) ?? String(v)
+  } catch {
+    return String(v)
+  }
+}
+
+/** Keep one log entry useful without allowing a single value to consume the response. */
+export const formatSandboxLog = (values: unknown[]): string =>
+  values
+    .map((v) => (typeof v === "string" ? v : safeSandboxJson(v)))
+    .join(" ")
+    .slice(0, 2_000)
+
+/** Keep all captured logs inside one response budget, not only each entry. */
+export const clipSandboxLogs = (logs: string[]): string[] => {
+  const clipped: string[] = []
+  let remaining = MAX_LOG_CHARS
+  for (const log of logs.slice(0, MAX_LOG_ENTRIES)) {
+    if (remaining <= 0) break
+    const entry = log.slice(0, Math.min(2_000, remaining))
+    clipped.push(entry)
+    remaining -= entry.length
+  }
+  return clipped
+}
+
+/** Cap what crosses back into the model's context. */
+export const clipSandboxValue = (v: unknown): unknown => {
+  const s = safeSandboxJson(v)
+  if (s.length <= MAX_RESULT_CHARS) return v
+  return {
+    truncated: true,
+    chars: s.length,
+    preview: s.slice(0, MAX_RESULT_CHARS),
+    hint: "Return a summary rather than the whole result — filter inside the code.",
+  }
+}
 
 /**
  * How to describe the surface to a model, in one place beside the prelude that creates it.
@@ -76,11 +121,8 @@ export const MAX_RESULT_CHARS = 100_000
  * reuse rather than inventing a second vocabulary for the same four things.
  */
 export const AGENT_SURFACE_HELP =
-  `\`tools["<name>"]({ ...args })\` calls a tool (names contain dots, so index rather than ` +
-  `destructure); \`call_tool(name, args)\` does the same for a name computed at runtime; ` +
-  `\`console.log\` is captured; whatever you \`return\` is the result. Loop, filter and join here ` +
-  `and return only the answer — intermediate data should stay in the code rather than passing ` +
-  `through your reply.`
+  `Call \`tools.<name>(args)\`, or \`call_tool(name, args)\` for a computed name. ` +
+  `Logs are captured. Filter intermediate data in code and return only the answer.`
 
 /**
  * The in-context hardening prelude, run BEFORE the model's code.
