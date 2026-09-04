@@ -41,6 +41,25 @@ describe("Cloudflare Dynamic Worker resource limits", () => {
     expect(loaded?.limits?.cpuMs).toBe(1_234)
     expect(entrypointOptions?.limits?.cpuMs).toBe(1_234)
   })
+
+  it("rechecks the allow-list at the single host bridge", async () => {
+    const calls: string[] = []
+    const result = await cloudflareSandbox(env.LOADER).run({
+      code: `return await __derive_tools.callTool({ name: "secret", args: {} })`,
+      host: {
+        toolNames: ["read"],
+        callTool: async (name) => {
+          calls.push(name)
+          return "called"
+        },
+      },
+      timeoutMs: 10_000,
+    })
+
+    expect(result.value).toEqual({ error: "unknown tool: secret. Available: read" })
+    expect(calls).toEqual([])
+    expect(result.toolCalls).toEqual([])
+  })
 })
 
 // This suite runs the actual Cloudflare SDK executor through Miniflare's Worker Loader. It proves

@@ -57,29 +57,21 @@ const boundedLoader = (loader: WorkerLoader, timeoutMs: number): WorkerLoader =>
   load: (code) => boundedStub(loader.load(withLimits(code, timeoutMs)), timeoutMs),
 })
 
-const sandboxPrelude = (
-  toolNames: string[],
-  sanitizeToolName: (name: string) => string,
-): string => {
-  const available = toolNames.join(", ")
-  const entries = toolNames
-    .map(
-      (name) =>
-        `${JSON.stringify(name)}: (args) => __derive_tools[${JSON.stringify(
-          sanitizeToolName(name),
-        )}](args ?? {})`,
-    )
-    .join(",\n")
-
-  return `
-const tools = Object.freeze({
-${entries}
-})
+const SANDBOX_PRELUDE = `
+const __derive_tool_names = await __derive_tools.toolNames({})
+const __derive_available_tools = __derive_tool_names.join(", ")
+const tools = Object.freeze(Object.fromEntries(
+  __derive_tool_names.map((name) => [
+    name,
+    (args) => __derive_tools.callTool({ name, args: args ?? {} }),
+  ]),
+))
 const call_tool = async (name, args) => {
-  const fn = tools[String(name)]
+  const normalized = String(name)
+  const fn = tools[normalized]
   return typeof fn === "function"
     ? fn(args ?? {})
-    : { error: "unknown tool: " + String(name) + ". Available: ${available}" }
+    : { error: "unknown tool: " + normalized + ". Available: " + __derive_available_tools }
 }
 let __derive_log_count = 0
 let __derive_log_chars = 0
@@ -101,7 +93,6 @@ console.log = (...values) => __derive_emit_log(__derive_console_log, values)
 console.warn = (...values) => __derive_emit_log(__derive_console_warn, values)
 console.error = (...values) => __derive_emit_log(__derive_console_error, values)
 `
-}
 
 /**
  * The hosted sandbox recommended by Cloudflare for Code Mode MCP servers.
@@ -114,28 +105,33 @@ export const cloudflareSandbox = (loader: WorkerLoader): Sandbox => ({
   async run({ code, host, timeoutMs }): Promise<SandboxResult> {
     // Keep the Cloudflare-only package out of the Node module graph. The Node test suite imports
     // worker.ts to verify fail-closed startup, but it never runs this adapter.
-    const { DynamicWorkerExecutor, sanitizeToolName } = await import("@cloudflare/codemode")
+    const { DynamicWorkerExecutor } = await import("@cloudflare/codemode")
     const toolCalls: string[] = []
-    const fns = Object.fromEntries(
-      host.toolNames.map((name) => [
-        name,
-        async (args: unknown) => {
-          if (toolCalls.length >= MAX_CODE_TOOL_CALLS)
-            return { error: `tool call limit exceeded (${MAX_CODE_TOOL_CALLS})` }
-          toolCalls.push(name)
-          try {
-            return await host.callTool(
-              name,
-              args && typeof args === "object" && !Array.isArray(args)
-                ? (args as Record<string, unknown>)
-                : {},
-            )
-          } catch (error) {
-            return { error: messageOf(error) }
-          }
-        },
-      ]),
-    )
+    const fns = {
+      toolNames: async () => host.toolNames,
+      callTool: async (input: unknown) => {
+        const record =
+          input && typeof input === "object" && !Array.isArray(input)
+            ? (input as Record<string, unknown>)
+            : {}
+        const name = typeof record.name === "string" ? record.name : ""
+        if (!host.toolNames.includes(name))
+          return { error: `unknown tool: ${name}. Available: ${host.toolNames.join(", ")}` }
+        if (toolCalls.length >= MAX_CODE_TOOL_CALLS)
+          return { error: `tool call limit exceeded (${MAX_CODE_TOOL_CALLS})` }
+        toolCalls.push(name)
+        try {
+          return await host.callTool(
+            name,
+            record.args && typeof record.args === "object" && !Array.isArray(record.args)
+              ? (record.args as Record<string, unknown>)
+              : {},
+          )
+        } catch (error) {
+          return { error: messageOf(error) }
+        }
+      },
+    }
 
     const executor = new DynamicWorkerExecutor({
       // The SDK ships its WorkerLoader type through `cloudflare:workers`; this app gets the same
@@ -151,7 +147,7 @@ export const cloudflareSandbox = (loader: WorkerLoader): Sandbox => ({
         {
           name: "__derive_tools",
           fns,
-          prelude: sandboxPrelude(host.toolNames, sanitizeToolName),
+          prelude: SANDBOX_PRELUDE,
         },
       ])
       return {
