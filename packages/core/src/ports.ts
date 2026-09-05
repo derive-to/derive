@@ -66,6 +66,14 @@ export interface SearchIndex {
     query: string,
     limit: number,
   ): Promise<{ id: string; score: number; chunk: string }[]>
+  /** Batch several independent queries through one embedding and vector-store pass. Results stay
+   *  aligned with the input queries. Optional so third-party indexes retain the single-query
+   *  contract; callers fall back to `search` when it is absent. */
+  searchMany?(
+    orgId: string,
+    queries: string[],
+    limit: number,
+  ): Promise<{ id: string; score: number; chunk: string }[][]>
   /** The most semantically-similar OTHER artifacts to one already-indexed artifact,
    *  ranked like {@link search} and with the same NO-visibility-filter contract. Reads
    *  the artifact's stored lead vector — no embed call at query time — so it's cheap
@@ -955,6 +963,14 @@ export interface ArtifactQueryStore {
     query: string,
     limit: number,
   ): Promise<{ id: string; rank: number }[]>
+  /** Batch lexical nominations in one store round trip. Results stay aligned with `queries`.
+   *  Optional for embedded and third-party stores; workspace search falls back to individual
+   *  calls when absent. */
+  searchArtifactIdsMany?(
+    orgId: string,
+    queries: string[],
+    limit: number,
+  ): Promise<{ id: string; rank: number }[][]>
   /** Artifact ids carrying a tag (server-side tag filtering). */
   artifactIdsByTag(tag: string): Promise<string[]>
   /** Artifact ids in a workspace whose current author_login matches `login`

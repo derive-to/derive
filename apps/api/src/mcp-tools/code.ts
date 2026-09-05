@@ -7,6 +7,7 @@ import {
 } from "../lib/code-sandbox"
 import type { ToolContext } from "../mcp-tool-context"
 import { err, json } from "../mcp-util"
+import { CODE_FIND_ENVELOPE, type CodeFindEnvelope, prepareCodeFindMany } from "./find"
 import { CODE_READ_ENVELOPE, type CodeReadEnvelope } from "./read"
 
 /**
@@ -250,13 +251,32 @@ export function registerCodeTool(
         preloaded = new Map()
       }
     }
+    let preparedFinds = new Map<Record<string, unknown>, Record<string, unknown>>()
+    if (name === "find" && compact) {
+      try {
+        preparedFinds = await prepareCodeFindMany(
+          tc,
+          [...unique.values()].map(({ args }) => args),
+        )
+      } catch {
+        // Batch preparation is an optimization. Each find still runs with bounded compact limits.
+        preparedFinds = new Map()
+      }
+    }
     const outcomes = await mapLimit([...unique.values()], BULK_CONCURRENCY, async (entry) => {
       try {
         const shortId = typeof entry.args.short_id === "string" ? entry.args.short_id : null
-        const args =
+        let args =
           name === "read" && shortId && preloaded.has(shortId)
             ? Object.assign({}, entry.args, { [CODE_READ_ENVELOPE]: preloaded.get(shortId) })
             : entry.args
+        if (name === "find" && compact) {
+          const envelope: CodeFindEnvelope = {
+            compact: true,
+            prepared: preparedFinds.get(entry.args),
+          }
+          args = Object.assign({}, args, { [CODE_FIND_ENVELOPE]: envelope })
+        }
         const value = await callOne(name, args)
         return { entry, value, failed: hasError(value) }
       } catch {
@@ -283,6 +303,7 @@ export function registerCodeTool(
         unique: unique.size,
         elapsed_ms: Date.now() - started,
         compact,
+        ...(name === "find" && compact ? { batched: preparedFinds.size } : {}),
       },
     }
   }

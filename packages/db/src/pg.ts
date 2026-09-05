@@ -2055,6 +2055,44 @@ export class PgMetaStore implements MetaStore {
     )
     return r.rows.map((row) => ({ id: row.artifact_id, rank: Number(row.rank) }))
   }
+  async searchArtifactIdsMany(
+    orgId: string,
+    queries: string[],
+    limit: number,
+  ): Promise<{ id: string; rank: number }[][]> {
+    const out = queries.map(() => [] as { id: string; rank: number }[])
+    const searchable = queries
+      .map((query, index) => ({ ts: this.tsPrefixQuery(query), index }))
+      .filter((item): item is { ts: string; index: number } => item.ts !== null)
+    if (!searchable.length) return out
+    const r = await this.pool.query<{
+      input_index: number
+      artifact_id: string
+      rank: number
+    }>(
+      `SELECT input.input_index, hit.artifact_id, hit.rank
+         FROM unnest($2::int[], $3::text[]) AS input(input_index, query)
+         CROSS JOIN LATERAL (
+           SELECT artifact_id, ts_rank_cd(tsv, to_tsquery('simple', input.query)) AS rank
+             FROM artifact_search
+            WHERE org_id = $1 AND tsv @@ to_tsquery('simple', input.query)
+            ORDER BY rank DESC
+            LIMIT $4
+         ) AS hit
+        ORDER BY input.input_index, hit.rank DESC`,
+      [
+        orgId,
+        searchable.map(({ index }) => index),
+        searchable.map(({ ts }) => ts),
+        Math.max(limit, 1),
+      ],
+    )
+    for (const row of r.rows) {
+      const bucket = out[Number(row.input_index)]
+      if (bucket) bucket.push({ id: row.artifact_id, rank: Number(row.rank) })
+    }
+    return out
+  }
   async artifactIdsByTag(tag: string): Promise<string[]> {
     const rows = await this.db
       .select({ id: artifactTag.artifact_id })

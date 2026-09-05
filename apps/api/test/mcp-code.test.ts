@@ -200,6 +200,55 @@ describe("derive_code: composing real tools", () => {
     expect(out.parsed?.tool_calls).toEqual(["find", "read", "read", "read", "read"])
   })
 
+  it("batches compact workspace concepts and bounds browse before returning", async () => {
+    const token = await agentToken()
+    const shared = (await (
+      await publishAs(
+        app,
+        "# Batch target\n\nquartz-agent-marker and quartz-workflow-marker",
+        { title: "Batch target" },
+        as(owner.email),
+      )
+    ).json()) as { short_id: string }
+    await Promise.all(
+      Array.from({ length: 9 }, (_, index) =>
+        publishAs(
+          app,
+          `# Browse row ${index}\n\ncontent ${index}`,
+          { title: `Browse row ${index}` },
+          as(owner.email),
+        ),
+      ),
+    )
+
+    const out = await mcp(app, token, "derive_code", {
+      code: `const searched = await tools.findMany([
+               { query: "quartz-agent-marker" },
+               { query: "quartz-workflow-marker" },
+             ], { mode: "compact" })
+             const browsed = await tools.findMany([{}], { mode: "compact" })
+             return {
+               searchHits: searched.results.map((row) =>
+                 row.value.results.map((hit) => hit.short_id)),
+               searchStats: searched.stats,
+               browseRows: browsed.results[0].value.results.length,
+               browseTruncated: browsed.results[0].value.truncated,
+             }`,
+    })
+
+    expect(out.isError).toBe(false)
+    expect(out.parsed?.result?.searchHits).toEqual([[shared.short_id], [shared.short_id]])
+    expect(out.parsed?.result?.searchStats).toMatchObject({
+      requested: 2,
+      completed: 2,
+      unique: 2,
+      compact: true,
+      batched: 2,
+    })
+    expect(out.parsed?.result?.browseRows).toBe(8)
+    expect(out.parsed?.result?.browseTruncated).toBe(true)
+  })
+
   it("surfaces logs and the calls made when the code FAILS halfway", async () => {
     // A composed script that dies partway is the case where "what did it already do" matters
     // most — returning a bare error would hide it.

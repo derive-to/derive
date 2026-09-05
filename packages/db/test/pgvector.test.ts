@@ -101,6 +101,16 @@ if (PG_URL) {
       expect(hits[0]?.chunk).toBe("head") // snippet returned as `chunk`
       expect(hits[0]?.score).toBeGreaterThan(hits[1]?.score ?? 1) // cosine desc
       expect(hits[0]?.score).toBeCloseTo(0.995, 2)
+      const batch = await store.queryMany(
+        "o1",
+        [
+          [1, 0, 0, 0],
+          [0, 0, 1, 0],
+        ],
+        2,
+      )
+      expect(batch[0]?.map((hit) => hit.artifactId)).toEqual(["a1", "a1"])
+      expect(batch[1]?.map((hit) => hit.artifactId)).toEqual(["a2", "a1"])
     })
 
     it("upsert is idempotent on vector_id (re-index overwrites, no duplicate rows)", async () => {

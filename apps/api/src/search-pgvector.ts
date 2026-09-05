@@ -96,6 +96,27 @@ export class PgvectorSearchIndex implements SearchIndex {
     return rollupBestChunk(matches, limit, this.embedder.minScore)
   }
 
+  async searchMany(
+    orgId: string,
+    queries: string[],
+    limit: number,
+  ): Promise<{ id: string; score: number; chunk: string }[][]> {
+    const out = queries.map(() => [] as { id: string; score: number; chunk: string }[])
+    const nonempty = queries
+      .map((query, index) => ({ query: query.trim(), index }))
+      .filter(({ query }) => query.length > 0)
+    if (!nonempty.length) return out
+    const vectors = await this.embedder.embed(nonempty.map(({ query }) => query))
+    if (vectors.length !== nonempty.length)
+      throw new Error(`embedder returned ${vectors.length} vectors for ${nonempty.length} queries`)
+    const matches = this.store.queryMany
+      ? await this.store.queryMany(orgId, vectors, SEARCH_TOPK)
+      : await Promise.all(vectors.map((vector) => this.store.query(orgId, vector, SEARCH_TOPK)))
+    for (const [i, item] of nonempty.entries())
+      out[item.index] = rollupBestChunk(matches[i] ?? [], limit, this.embedder.minScore)
+    return out
+  }
+
   // Nearest OTHER artifacts to one already-indexed artifact — same rollup, floor, and
   // no-visibility contract as `search`, but the query vector is the artifact's stored
   // LEAD chunk (chunk 0 = title + opening, the closest thing to a whole-doc summary

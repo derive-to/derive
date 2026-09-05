@@ -47,6 +47,11 @@ export interface WorkspaceSearchDeps extends SearchDeps {
       query: string,
       limit: number,
     ): Promise<{ id: string; rank: number }[]>
+    searchArtifactIdsMany?(
+      orgId: string,
+      queries: string[],
+      limit: number,
+    ): Promise<{ id: string; rank: number }[][]>
   }
   /** The optional dense/semantic arm (pgvector + an embedder). Absent when no embedder is
    *  configured (or on SQLite) ⇒ nomination stays pure-lexical, byte-identical to before. */
@@ -195,31 +200,40 @@ export interface ArtifactSearchResult {
   note: string | null
 }
 
-export const searchArtifactVersion = async (
+export interface ArtifactSearchRequest {
+  re: RegExp
+  where: "source" | "text"
+  ctxLines: number
+  cap: number
+}
+
+/** Load one artifact version once, then scan it for several independent literals. This is the
+ *  content-side counterpart to batched nomination: a document selected by several concepts pays
+ *  one blob read, not one read per concept. Results stay aligned with `requests`. */
+export const searchArtifactVersionMany = async (
   deps: SearchDeps,
   v: VersionRecord,
-  re: RegExp,
-  where: "source" | "text",
-  ctxLines: number,
-  cap: number,
-): Promise<ArtifactSearchResult> => {
+  requests: ArtifactSearchRequest[],
+): Promise<ArtifactSearchResult[]> => {
   // What each page's searchable content is, in the chosen scope: exact source, or
   // the visible text (tags stripped) for HTML — Markdown/plain ARE their own text.
-  const contentFor = (raw: string, ct: string) =>
+  const contentFor = (raw: string, ct: string, where: "source" | "text") =>
     where === "text" ? present(raw, ct, "text") : raw
   // Section markers align with the searched content's line numbers only when that
   // content IS the raw source — i.e. any source-scope search, or a markdown/plain
   // text-scope search (its text IS the source). An HTML text-scope search greps the
   // tag-stripped text, whose lines don't map to the source markers, so skip it.
-  const markersFor = (raw: string, ct: string): SectionMarker[] =>
+  const markersFor = (raw: string, ct: string, where: "source" | "text"): SectionMarker[] =>
     where === "source" || !isHtmlLike(ct) ? sectionMarkers(raw, ct) : []
   const manifest = await manifestOf(deps.blobs, v)
 
   if (!manifest) {
     const src = (await deps.sourceText(v)) ?? ""
-    const { hunks, total } = scanLines(contentFor(src, v.content_type), re, ctxLines, cap)
-    annotateSections(hunks, markersFor(src, v.content_type))
-    return { groups: [{ path: null, hunks }], total, note: null }
+    return requests.map(({ re, where, ctxLines, cap }) => {
+      const { hunks, total } = scanLines(contentFor(src, v.content_type, where), re, ctxLines, cap)
+      annotateSections(hunks, markersFor(src, v.content_type, where))
+      return { groups: [{ path: null, hunks }], total, note: null }
+    })
   }
 
   // Bundle: search every text page (capped), grouped by page. Blob reads run in
@@ -239,22 +253,43 @@ export const searchArtifactVersion = async (
     const bytes = await deps.blobs.get(file.key)
     if (!bytes) return null
     const raw = new TextDecoder().decode(bytes)
-    const { hunks, total } = scanLines(contentFor(raw, file.type), re, ctxLines, cap)
-    annotateSections(hunks, markersFor(raw, file.type))
-    return total ? { path: cleanPath(p), hunks, total } : null
+    return requests.map(({ re, where, ctxLines, cap }) => {
+      const { hunks, total } = scanLines(contentFor(raw, file.type, where), re, ctxLines, cap)
+      annotateSections(hunks, markersFor(raw, file.type, where))
+      return total ? { path: cleanPath(p), hunks, total } : null
+    })
   }
-  const groups: { path: string; hunks: SearchHunk[]; total: number }[] = []
+  const groups = requests.map(() => [] as { path: string; hunks: SearchHunk[]; total: number }[])
   for (let i = 0; i < scanned.length; i += CONCURRENCY) {
     const batch = await Promise.all(scanned.slice(i, i + CONCURRENCY).map(scanPage))
-    for (const g of batch) if (g) groups.push(g)
+    for (const pageResults of batch) {
+      if (!pageResults) continue
+      for (const [requestIndex, group] of pageResults.entries())
+        if (group) groups[requestIndex]?.push(group)
+    }
   }
-  const total = groups.reduce((sum, g) => sum + g.total, 0)
   const note =
     pages.length > ARTIFACT_PAGE_SCAN_CAP
       ? `first ${ARTIFACT_PAGE_SCAN_CAP} of ${pages.length} pages`
       : null
-  return { groups, total, note }
+  return groups.map((requestGroups) => ({
+    groups: requestGroups,
+    total: requestGroups.reduce((sum, group) => sum + group.total, 0),
+    note,
+  }))
 }
+
+export const searchArtifactVersion = async (
+  deps: SearchDeps,
+  v: VersionRecord,
+  re: RegExp,
+  where: "source" | "text",
+  ctxLines: number,
+  cap: number,
+): Promise<ArtifactSearchResult> =>
+  (
+    await searchArtifactVersionMany(deps, v, [{ re, where, ctxLines, cap }])
+  )[0] as ArtifactSearchResult
 
 // Assemble the ripgrep-style one-artifact report: a header with the total, each
 // page's hunks (bundle pages labelled), and a steer to act. `cap` names the
@@ -659,6 +694,176 @@ export const searchWorkspace = async (
       ? `ranked by relevance — more than ${candidateCap} artifacts matched the index; refine the query to narrow`
       : null
   return { results, note }
+}
+
+export interface WorkspaceSearchManyQuery {
+  query: string
+  re: RegExp
+  where: "source" | "text"
+  ctxLines: number
+  cap: number
+  limit?: number
+  candidateCap?: number
+}
+
+/** Search several concepts while sharing every stage that is keyed by the same workspace or
+ *  artifact. The single-query function remains the general path; code mode uses this fast path
+ *  for independent compact workspace searches. */
+export const searchWorkspaceMany = async (
+  deps: WorkspaceSearchDeps,
+  opts: { orgId: string; viewerId?: string; publicOnly?: boolean },
+  queries: WorkspaceSearchManyQuery[],
+): Promise<{ results: WorkspaceSearchResult[]; note: string | null }[]> => {
+  if (!queries.length) return []
+  const started = Date.now()
+  const candidateCaps = queries.map((query) => query.candidateCap ?? WORKSPACE_SEARCH_CANDIDATE_CAP)
+  const nominationLimit = Math.max(...candidateCaps) + 1
+  const queryTexts = queries.map(({ query }) => query)
+  const lexicalPromise = deps.meta.searchArtifactIdsMany
+    ? deps.meta.searchArtifactIdsMany(opts.orgId, queryTexts, nominationLimit)
+    : Promise.all(
+        queryTexts.map((query) => deps.meta.searchArtifactIds(opts.orgId, query, nominationLimit)),
+      )
+  const densePromise = deps.search
+    ? (deps.search.searchMany
+        ? deps.search.searchMany(opts.orgId, queryTexts, nominationLimit - 1)
+        : Promise.all(
+            queryTexts.map(
+              (query) =>
+                deps.search?.search(opts.orgId, query, nominationLimit - 1) ?? Promise.resolve([]),
+            ),
+          )
+      ).catch((err) => {
+        log.error("semantic search batch failed; falling back to lexical", { err: String(err) })
+        return queries.map(() => [] as { id: string; score: number; chunk: string }[])
+      })
+    : Promise.resolve(queries.map(() => [] as { id: string; score: number; chunk: string }[]))
+  const [lexicalByQuery, denseByQuery] = await Promise.all([lexicalPromise, densePromise])
+  const nominationMs = Date.now() - started
+
+  const states = queries.map((query, index) => {
+    const candidateCap = candidateCaps[index] as number
+    const lexical = lexicalByQuery[index] ?? []
+    const dense = denseByQuery[index] ?? []
+    const nominated: { id: string; chunk?: string }[] = deps.search
+      ? rrfFuse(lexical, dense, candidateCap + 1)
+      : lexical.slice(0, candidateCap + 1).map((row) => ({ id: row.id }))
+    const candidates = nominated.slice(0, candidateCap)
+    return {
+      query,
+      candidateCap,
+      candidates,
+      moreCandidates: nominated.length > candidateCap,
+      chunkOf: new Map(
+        candidates.flatMap((candidate) =>
+          candidate.chunk ? [[candidate.id, candidate.chunk] as const] : [],
+        ),
+      ),
+    }
+  })
+
+  const candidateIds = [
+    ...new Set(states.flatMap(({ candidates }) => candidates.map(({ id }) => id))),
+  ]
+  const visibilityStarted = Date.now()
+  const visible = candidateIds.length
+    ? await visibleArtifacts(deps.meta, candidateIds, opts)
+    : ([] as ArtifactRecord[])
+  const visibilityMs = Date.now() - visibilityStarted
+  const artifactById = new Map(visible.map((artifact) => [artifact.id, artifact]))
+  const selected = states.map((state) => {
+    const grepCap = state.query.limit ?? WORKSPACE_SEARCH_ARTIFACT_CAP
+    const gated = state.candidates
+      .map(({ id }) => artifactById.get(id))
+      .filter((artifact): artifact is ArtifactRecord => artifact !== undefined)
+    return { ...state, grepCap, gated, toGrep: gated.slice(0, grepCap) }
+  })
+
+  const selectedIds = [...new Set(selected.flatMap(({ toGrep }) => toGrep.map(({ id }) => id)))]
+  const versionsStarted = Date.now()
+  const versionByArtifact = selectedIds.length
+    ? await deps.meta.currentVersions(selectedIds)
+    : ({} as Record<string, VersionRecord>)
+  const versionsMs = Date.now() - versionsStarted
+  const queryIndexesByArtifact = new Map<string, number[]>()
+  for (const [queryIndex, state] of selected.entries())
+    for (const artifact of state.toGrep) {
+      const indexes = queryIndexesByArtifact.get(artifact.id) ?? []
+      indexes.push(queryIndex)
+      queryIndexesByArtifact.set(artifact.id, indexes)
+    }
+
+  const resultByQuery = queries.map(() => new Map<string, WorkspaceSearchResult>())
+  const artifacts = [...queryIndexesByArtifact.keys()]
+  const scanStarted = Date.now()
+  const CONCURRENCY = 4
+  const scanOne = async (artifactId: string) => {
+    const artifact = artifactById.get(artifactId)
+    const version = versionByArtifact[artifactId]
+    const queryIndexes = queryIndexesByArtifact.get(artifactId) ?? []
+    if (!artifact || !version || !queryIndexes.length) return
+    const scans = await searchArtifactVersionMany(
+      deps,
+      version,
+      queryIndexes.map((queryIndex) => {
+        const query = queries[queryIndex] as WorkspaceSearchManyQuery
+        return {
+          re: query.re,
+          where: query.where,
+          ctxLines: query.ctxLines,
+          cap: query.cap,
+        }
+      }),
+    )
+    for (const [localIndex, scan] of scans.entries()) {
+      const queryIndex = queryIndexes[localIndex] as number
+      const state = selected[queryIndex] as (typeof selected)[number]
+      const chunk = state.chunkOf.get(artifactId)
+      if (scan.total === 0 && !chunk) continue
+      resultByQuery[queryIndex]?.set(artifactId, {
+        short_id: artifact.short_id,
+        title: artifact.title ?? artifact.short_id,
+        current_version: artifact.current_version,
+        groups: scan.groups,
+        total: scan.total,
+        semantic:
+          scan.total === 0 && chunk
+            ? { snippet: snippetAround(chunk, state.query.query) }
+            : undefined,
+      })
+    }
+  }
+  for (let i = 0; i < artifacts.length; i += CONCURRENCY)
+    await Promise.all(artifacts.slice(i, i + CONCURRENCY).map(scanOne))
+  const scanMs = Date.now() - scanStarted
+
+  const output = selected.map((state, queryIndex) => {
+    const results = state.toGrep.flatMap((artifact) => {
+      const result = resultByQuery[queryIndex]?.get(artifact.id)
+      return result ? [result] : []
+    })
+    const grepTruncated = state.gated.length > state.grepCap
+    const note = grepTruncated
+      ? `ranked by relevance — grep-confirmed the top ${state.grepCap} of ${state.gated.length}${
+          state.moreCandidates ? "+" : ""
+        } candidate artifacts you can see; refine the query to reach the rest`
+      : state.moreCandidates
+        ? `ranked by relevance — more than ${state.candidateCap} artifacts matched the index; refine the query to narrow`
+        : null
+    return { results, note }
+  })
+  log.info("workspace_search_batch", {
+    queries: queries.length,
+    candidate_artifacts: candidateIds.length,
+    visible_artifacts: visible.length,
+    scanned_artifacts: artifacts.length,
+    nomination_ms: nominationMs,
+    visibility_ms: visibilityMs,
+    versions_ms: versionsMs,
+    scan_ms: scanMs,
+    ms: Date.now() - started,
+  })
+  return output
 }
 
 // Assemble a workspace-wide search report: one `## short_id — title` section per
