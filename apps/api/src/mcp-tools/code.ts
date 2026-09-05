@@ -7,6 +7,7 @@ import {
 } from "../lib/code-sandbox"
 import type { ToolContext } from "../mcp-tool-context"
 import { err, json } from "../mcp-util"
+import { CODE_READ_ENVELOPE, type CodeReadEnvelope } from "./read"
 
 /**
  * The DERIVE_CODE tool: do many reads in one call.
@@ -24,6 +25,92 @@ import { err, json } from "../mcp-util"
  * by hand. `tool_calls` in the result records the reads it did.
  */
 const CODE_TOOL_NAMES = ["find", "read"] as const
+const BULK_MAX = 50
+const BULK_CONCURRENCY = 12
+const COMPACT_DEFAULT_CHARS = 2_000
+const COMPACT_MIN_CHARS = 300
+const COMPACT_MAX_CHARS = 6_000
+
+type BulkOptions = { mode?: unknown; max_chars?: unknown }
+type BulkItem = { index: number; value: unknown }
+
+const stableJson = (value: unknown): string => {
+  if (!value || typeof value !== "object") return JSON.stringify(value) ?? String(value)
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`
+  const record = value as Record<string, unknown>
+  return `{${Object.keys(record)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`)
+    .join(",")}}`
+}
+
+const hasError = (value: unknown): boolean =>
+  !!value &&
+  typeof value === "object" &&
+  !Array.isArray(value) &&
+  typeof (value as Record<string, unknown>).error === "string"
+
+const compactValue = (value: unknown, maxChars: number): unknown => {
+  const serialized = JSON.stringify(value) ?? String(value)
+  if (serialized.length <= maxChars) return value
+  if (typeof value === "string")
+    return { preview: value.slice(0, maxChars), chars: value.length, truncated: true }
+  const record =
+    value && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : null
+  if (!record)
+    return { preview: serialized.slice(0, maxChars), chars: serialized.length, truncated: true }
+
+  const compact: Record<string, unknown> = {}
+  for (const key of [
+    "short_id",
+    "title",
+    "version",
+    "kind",
+    "format",
+    "url",
+    "focus",
+    "count",
+    "total",
+    "truncated",
+  ]) {
+    if (record[key] !== undefined) compact[key] = record[key]
+  }
+  if (Array.isArray(record.matches)) {
+    compact.matches = record.matches.slice(0, 3).map((match) => {
+      if (!match || typeof match !== "object" || Array.isArray(match)) return match
+      const row = match as Record<string, unknown>
+      return Object.fromEntries(
+        Object.entries(row).map(([key, item]) => [
+          key,
+          typeof item === "string" ? item.slice(0, Math.floor(maxChars / 3)) : item,
+        ]),
+      )
+    })
+  }
+  const compactJson = JSON.stringify(compact)
+  if (compactJson.length > 2 && compactJson.length <= maxChars)
+    return { ...compact, chars: serialized.length, truncated: true }
+  return { preview: serialized.slice(0, maxChars), chars: serialized.length, truncated: true }
+}
+
+const mapLimit = async <T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> => {
+  const results = new Array<R>(items.length)
+  let next = 0
+  const worker = async () => {
+    while (next < items.length) {
+      const index = next++
+      results[index] = await fn(items[index] as T)
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
+  return results
+}
 
 /** Give sandbox code the useful value, not the MCP transport envelope around it. */
 const unwrapToolResult = (result: unknown): unknown => {
@@ -61,13 +148,134 @@ export function registerCodeTool(
   const { server } = tc
   const toolNames = CODE_TOOL_NAMES.filter((name) => registry.has(name))
 
+  const callOne = async (name: string, args: Record<string, unknown>): Promise<unknown> => {
+    const handler = registry.get(name)
+    if (!handler || name === "derive_code")
+      return { error: `unknown tool: ${name}. Available: ${toolNames.join(", ")}` }
+    return unwrapToolResult(await handler(args))
+  }
+
+  const preloadReads = async (
+    requests: Record<string, unknown>[],
+  ): Promise<Map<string, CodeReadEnvelope>> => {
+    const shortIds = [
+      ...new Set(
+        requests
+          .filter(
+            (request) =>
+              typeof request.short_id === "string" &&
+              request.version === undefined &&
+              request.data === undefined &&
+              request.versions === undefined &&
+              !String(request.short_id).startsWith("derive://") &&
+              !String(request.short_id).startsWith("ctx_"),
+          )
+          .map((request) => String(request.short_id)),
+      ),
+    ]
+    if (shortIds.length === 0) return new Map()
+    const artifacts = await tc.ctx.meta.getByShortIds(shortIds)
+    const versions = artifacts.length
+      ? await tc.ctx.meta.currentVersions(artifacts.map((artifact) => artifact.id))
+      : {}
+    const byShortId = new Map(artifacts.map((artifact) => [artifact.short_id, artifact]))
+    return new Map(
+      shortIds.map((shortId) => {
+        const artifact = byShortId.get(shortId)
+        return [
+          shortId,
+          artifact ? { artifact, version: versions[artifact.id] ?? null } : null,
+        ] as const
+      }),
+    )
+  }
+
+  const callMany = async (
+    name: string,
+    requests: Record<string, unknown>[],
+    options: BulkOptions = {},
+  ): Promise<unknown> => {
+    if (!Array.isArray(requests) || requests.length === 0)
+      return { error: `${name}Many needs a non-empty array.` }
+    if (requests.length > BULK_MAX)
+      return { error: `${name}Many accepts at most ${BULK_MAX} items.` }
+    if (
+      requests.some((request) => !request || typeof request !== "object" || Array.isArray(request))
+    )
+      return { error: `${name}Many items must be argument objects.` }
+
+    const started = Date.now()
+    const compact = options.mode === "compact"
+    const requestedMax = Number(options.max_chars)
+    const maxChars = Number.isFinite(requestedMax)
+      ? Math.min(COMPACT_MAX_CHARS, Math.max(COMPACT_MIN_CHARS, Math.floor(requestedMax)))
+      : COMPACT_DEFAULT_CHARS
+    const unique = new Map<string, { args: Record<string, unknown>; indexes: number[] }>()
+    requests.forEach((args, index) => {
+      let key: string
+      try {
+        key = stableJson(args)
+      } catch {
+        // Cyclic or otherwise non-JSON arguments can still run. They only forfeit deduplication.
+        key = `__unique_${index}`
+      }
+      const found = unique.get(key)
+      if (found) found.indexes.push(index)
+      else unique.set(key, { args, indexes: [index] })
+    })
+
+    let preloaded = new Map<string, CodeReadEnvelope>()
+    if (name === "read") {
+      try {
+        preloaded = await preloadReads([...unique.values()].map(({ args }) => args))
+      } catch {
+        // The optimization is optional. Ordinary reads retain their established path.
+        preloaded = new Map()
+      }
+    }
+    const outcomes = await mapLimit([...unique.values()], BULK_CONCURRENCY, async (entry) => {
+      try {
+        const shortId = typeof entry.args.short_id === "string" ? entry.args.short_id : null
+        const args =
+          name === "read" && shortId && preloaded.has(shortId)
+            ? Object.assign({}, entry.args, { [CODE_READ_ENVELOPE]: preloaded.get(shortId) })
+            : entry.args
+        const value = await callOne(name, args)
+        return { entry, value, failed: hasError(value) }
+      } catch {
+        return { entry, value: null, failed: true }
+      }
+    })
+    const results: BulkItem[] = []
+    const skipped: { index: number; reason: "unavailable" }[] = []
+    for (const { entry, value, failed } of outcomes) {
+      for (const index of entry.indexes) {
+        if (failed) skipped.push({ index, reason: "unavailable" })
+        else results.push({ index, value: compact ? compactValue(value, maxChars) : value })
+      }
+    }
+    results.sort((a, b) => a.index - b.index)
+    skipped.sort((a, b) => a.index - b.index)
+    return {
+      results,
+      skipped,
+      stats: {
+        requested: requests.length,
+        completed: results.length,
+        skipped: skipped.length,
+        unique: unique.size,
+        elapsed_ms: Date.now() - started,
+        compact,
+      },
+    }
+  }
+
   server.registerTool(
     "derive_code",
     {
       title: "Run code across Derive reads",
       description:
-        `Prefer for 2+ searches/reads. Use Promise.all; return answer. ` +
-        `For one call, renders, or source edits, use find/read.\n\n` +
+        `Prefer for 2+ searches/reads. Singles/renders/edits: find/read.\n\n` +
         // The SHARED description (lib/code-sandbox.ts), so the tool and the sandbox that runs
         // the code cannot drift into describing different surfaces.
         `${AGENT_SURFACE_HELP}\n\n` +
@@ -96,14 +304,9 @@ export function registerCodeTool(
         timeoutMs: input.timeout_ms ?? DEFAULT_CODE_TIMEOUT_MS,
         host: {
           toolNames,
-          callTool: async (name, args) => {
-            const handler = registry.get(name)
-            // An unknown name is the model's mistake, and it should read as data it can correct
-            // rather than as a sandbox crash — hence a value, not a throw.
-            if (!handler || name === "derive_code")
-              return { error: `unknown tool: ${name}. Available: ${toolNames.join(", ")}` }
-            return unwrapToolResult(await handler(args))
-          },
+          bulkToolNames: toolNames,
+          callTool: callOne,
+          callTools: callMany,
         },
       })
 

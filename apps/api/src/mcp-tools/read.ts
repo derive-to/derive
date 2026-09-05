@@ -1,4 +1,5 @@
 import {
+  type ArtifactRecord,
   artifactUrl,
   DECK_TEMPLATE,
   type DocMap,
@@ -131,6 +132,14 @@ const clipFocusBody = (body: string): string =>
   body.length > FOCUS_BODY_MAX
     ? `${body.slice(0, FOCUS_BODY_MAX)}\n\n…[truncated ${body.length - FOCUS_BODY_MAX} chars — read this node for the full clipped part]`
     : body
+
+/** Host-only preload for code-mode bulk reads. The symbol cannot cross the sandbox
+ * bridge, so model-written code cannot forge an artifact or bypass `reach`. */
+export const CODE_READ_ENVELOPE = Symbol("derive-code-read-envelope")
+export type CodeReadEnvelope = {
+  artifact: ArtifactRecord
+  version: VersionRecord | null
+} | null
 
 // MCP is stateless: mcp.ts builds a fresh server and registers its tools for every
 // request. Prepared caches therefore live at module scope, beside the Worker isolate,
@@ -326,21 +335,25 @@ export function registerReadTool(tc: ToolContext): void {
         workspace: wsArg,
       },
     },
-    async ({
-      short_id,
-      section,
-      format,
-      version,
-      lines,
-      map: wantMap,
-      node,
-      focus,
-      render,
-      wait,
-      data,
-      versions,
-      workspace,
-    }) => {
+    async (input) => {
+      const bulkEnvelope = (input as typeof input & { [CODE_READ_ENVELOPE]?: CodeReadEnvelope })[
+        CODE_READ_ENVELOPE
+      ]
+      const {
+        short_id,
+        section,
+        format,
+        version,
+        lines,
+        map: wantMap,
+        node,
+        focus,
+        render,
+        wait,
+        data,
+        versions,
+        workspace,
+      } = input
       const fmt: ReadFormat = format ?? "markdown"
       // `derive://brandprint/*` URIs are readable through `read`, not only as MCP
       // resources — the exact strings the server instructions name, reachable by every
@@ -637,11 +650,13 @@ export function registerReadTool(tc: ToolContext): void {
           ? await ctx.meta.artifactWithVersionData(docId, selectedDataSlot, version)
           : undefined
       const envelope =
-        dataEnvelope !== undefined
-          ? dataEnvelope
-          : ctx.meta.artifactWithVersion
-            ? await ctx.meta.artifactWithVersion(docId, version)
-            : undefined
+        bulkEnvelope !== undefined
+          ? bulkEnvelope
+          : dataEnvelope !== undefined
+            ? dataEnvelope
+            : ctx.meta.artifactWithVersion
+              ? await ctx.meta.artifactWithVersion(docId, version)
+              : undefined
       // Opted into the world link: a public artifact outside the grant reads at viewer.
       const r =
         envelope === null

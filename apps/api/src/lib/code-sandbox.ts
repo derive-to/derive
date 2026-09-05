@@ -37,8 +37,17 @@ export interface SandboxHost {
    *  because a thrown host error would surface as an opaque sandbox crash instead of something
    *  the model can read and correct. */
   callTool: (name: string, args: Record<string, unknown>) => Promise<unknown>
+  /** Invoke many logical calls through one sandbox bridge message. The host controls
+   * concurrency and item error handling; each item still counts as one audited call. */
+  callTools?: (
+    name: string,
+    args: Record<string, unknown>[],
+    options?: Record<string, unknown>,
+  ) => Promise<unknown>
   /** The tool names the code may call, used to build the in-sandbox surface. */
   toolNames: string[]
+  /** Base tool names which also expose `<name>Many` inside code. */
+  bulkToolNames?: string[]
 }
 
 export interface SandboxResult {
@@ -121,8 +130,8 @@ export const clipSandboxValue = (v: unknown): unknown => {
  * reuse rather than inventing a second vocabulary for the same four things.
  */
 export const AGENT_SURFACE_HELP =
-  `Call \`tools.<name>(args)\`, or \`call_tool(name, args)\` for a computed name. ` +
-  `Logs are captured. Filter intermediate data in code and return only the answer.`
+  `Bulk: \`tools.findMany([...])\`, \`tools.readMany([...], {mode:"compact"})\`. ` +
+  `Single: \`tools.<name>(args)\`. Return only the answer.`
 
 /**
  * The in-context hardening prelude, run BEFORE the model's code.
@@ -138,6 +147,7 @@ export const AGENT_SURFACE_HELP =
 export const SANDBOX_PRELUDE = `
 const { tools, call_tool, console } = (() => {
   const __hcall = __derive_host_call_tool
+  const __hcalls = __derive_host_call_tools
   const __hlog = __derive_host_log
   const __clone = (v, depth) => {
     if (depth > 64 || v === null || typeof v !== "object") return v
@@ -149,6 +159,10 @@ const { tools, call_tool, console } = (() => {
   const call = async (name, args) => __clone(await __hcall(String(name), args || {}), 0)
   const tools = {}
   for (const n of __derive_tool_names) tools[n] = (args) => call(n, args)
+  for (const n of __derive_bulk_tool_names) {
+    tools[n + "Many"] = async (args, options) =>
+      __clone(await __hcalls(String(n), Array.isArray(args) ? args : [], options || {}), 0)
+  }
   return {
     tools,
     call_tool: call,
@@ -156,6 +170,7 @@ const { tools, call_tool, console } = (() => {
   }
 })()
 __derive_host_call_tool = undefined
+__derive_host_call_tools = undefined
 __derive_host_log = undefined
 const Function = undefined
 `

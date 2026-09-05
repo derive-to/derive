@@ -125,7 +125,8 @@ describe("derive_code: registration", () => {
 
 describe("derive_code: composing real tools", () => {
   const owner: TestUser = { id: "u_dc2_own", email: "dc2own@derive.test", name: "Owner" }
-  const { app } = makeAuthedApp("dc-run", [owner], "editor", {
+  const other: TestUser = { id: "u_dc2_other", email: "dc2other@derive.test", name: "Other" }
+  const { app } = makeAuthedApp("dc-run", [owner, other], "editor", {
     deps: { codeSandbox: nodeSandbox() },
   })
 
@@ -140,32 +141,63 @@ describe("derive_code: composing real tools", () => {
     return body.token
   }
 
-  it("finds, reads in parallel, and returns only the answer", async () => {
-    // Browse mode is deterministic in this fixture. It proves the real find -> Promise.all(read)
-    // path without making the test depend on asynchronous search indexing.
+  it("bulk finds and reads while inaccessible items skip cleanly", async () => {
+    // Browse mode is deterministic in this fixture. The model makes one findMany and one
+    // readMany call. The host batches the bridge and metadata work behind each call.
     const token = await agentToken()
     const hit = (await (
-      await publishAs(app, "# Roadmap\n\nQ3 ships the thing.", { title: "R" }, as(owner.email))
+      await publishAs(
+        app,
+        `# Roadmap\n\nQ3 ships the thing.\n\n${"detail ".repeat(800)}END-OF-LONG-DOC`,
+        { title: "R" },
+        as(owner.email),
+      )
     ).json()) as { short_id: string }
     const miss = (await (
       await publishAs(app, "# Notes\n\nNothing here.", { title: "N" }, as(owner.email))
     ).json()) as { short_id: string }
+    const secret = (await (
+      await publishAs(
+        app,
+        "# Secret\n\nPRIVATE-MARKER",
+        { title: "Secret", workspace_access: "none", link_role: "none", listed: "none" },
+        as(other.email),
+      )
+    ).json()) as { short_id: string }
 
     const out = await mcp(app, token, "derive_code", {
       code: `const wanted = new Set(${JSON.stringify([hit.short_id, miss.short_id])})
-             const found = await tools.find({})
+             const foundBatch = await tools.findMany([{}])
+             const found = foundBatch.results[0].value
              const ids = found.results.map((row) => row.short_id).filter((id) => wanted.has(id))
-             const docs = await Promise.all(ids.map((short_id) => tools.read({ short_id })))
+             const docs = await tools.readMany([
+               ...ids.map((short_id) => ({ short_id })),
+               { short_id: ${JSON.stringify(miss.short_id)} },
+               { short_id: ${JSON.stringify(secret.short_id)} },
+             ], { mode: "compact", max_chars: 500 })
              return {
-               matched: ids.filter((_, index) => docs[index].includes("Q3")),
-               checked: docs.length,
+               matched: docs.results
+                 .filter((row) => JSON.stringify(row.value).includes("Q3"))
+                 .map((row) => ids[row.index]),
+               stats: docs.stats,
+               skipped: docs.skipped,
+               resultText: JSON.stringify(docs.results),
              }`,
     })
     expect(out.isError).toBe(false)
-    expect(out.parsed?.result?.checked).toBe(2)
     expect(out.parsed?.result?.matched).toEqual([hit.short_id])
-    // One find plus two reads, one MCP call. The transcript records the internal operations.
-    expect(out.parsed?.tool_calls).toEqual(["find", "read", "read"])
+    expect(out.parsed?.result?.stats).toMatchObject({
+      requested: 4,
+      completed: 3,
+      skipped: 1,
+      unique: 3,
+      compact: true,
+    })
+    expect(out.parsed?.result?.skipped).toEqual([{ index: 3, reason: "unavailable" }])
+    expect(out.parsed?.result?.resultText).not.toContain("END-OF-LONG-DOC")
+    expect(out.parsed?.result?.resultText).not.toContain("PRIVATE-MARKER")
+    // One logical find plus three logical reads stay visible in the audit line.
+    expect(out.parsed?.tool_calls).toEqual(["find", "read", "read", "read", "read"])
   })
 
   it("surfaces logs and the calls made when the code FAILS halfway", async () => {
@@ -188,7 +220,9 @@ describe("derive_code: composing real tools", () => {
     const viaCode = await mcp(app, token, "derive_code", {
       code: `return {
         find: typeof tools.find,
+        findMany: typeof tools.findMany,
         read: typeof tools.read,
+        readMany: typeof tools.readMany,
         publish: typeof tools.publish,
         list_workspaces: typeof tools.list_workspaces,
       }`,
@@ -196,7 +230,9 @@ describe("derive_code: composing real tools", () => {
     expect(viaCode.isError).toBe(false)
     expect(viaCode.parsed?.result).toEqual({
       find: "function",
+      findMany: "function",
       read: "function",
+      readMany: "function",
       publish: "undefined",
       list_workspaces: "undefined",
     })

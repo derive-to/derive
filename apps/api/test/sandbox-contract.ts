@@ -29,6 +29,7 @@ export function runSandboxContract(
     opts: Partial<{ tools: Record<string, unknown>; timeoutMs: number }> = {},
   ) => {
     const calls: { name: string; args: unknown }[] = []
+    const batches: { name: string; args: unknown[]; options: unknown }[] = []
     const table = opts.tools ?? { echo: (a: unknown) => ({ echoed: a }) }
     return make()
       .run({
@@ -36,15 +37,22 @@ export function runSandboxContract(
         timeoutMs: opts.timeoutMs ?? 10_000,
         host: {
           toolNames: Object.keys(table),
+          bulkToolNames: Object.keys(table),
           callTool: async (name, args) => {
             calls.push({ name, args })
             const fn = table[name] as ((a: unknown) => unknown) | undefined
             if (!fn) throw new Error(`unknown tool: ${name}`)
             return fn(args)
           },
+          callTools: async (name, args, options) => {
+            batches.push({ name, args, options })
+            const fn = table[name] as ((a: unknown) => unknown) | undefined
+            if (!fn) throw new Error(`unknown tool: ${name}`)
+            return Promise.all(args.map((item) => fn(item)))
+          },
         },
       })
-      .then((r) => ({ ...r, calls }))
+      .then((r) => ({ ...r, calls, batches }))
   }
 
   describe(`${label}: it runs code`, () => {
@@ -69,6 +77,20 @@ export function runSandboxContract(
       )
       expect(r.value).toEqual({ count: 3, title: "art i1" })
       expect(r.calls.map((c) => c.name)).toEqual(["list", "get"])
+    })
+
+    it("calls many items through one bridge without model-side promises", async () => {
+      const r = await run(`return await tools.echoMany([{ i: 1 }, { i: 2 }], { mode: "compact" })`)
+      expect(r.value).toEqual([{ echoed: { i: 1 } }, { echoed: { i: 2 } }])
+      expect(r.calls).toHaveLength(0)
+      expect(r.batches).toEqual([
+        {
+          name: "echo",
+          args: [{ i: 1 }, { i: 2 }],
+          options: { mode: "compact" },
+        },
+      ])
+      expect(r.toolCalls).toEqual(["echo", "echo"])
     })
 
     it("captures console.log in order", async () => {
@@ -201,6 +223,15 @@ export function runSandboxContract(
       )
       expect(r.calls).toHaveLength(100)
       expect(r.value).toEqual({ errors: 1 })
+    })
+
+    it("bounds one bulk call by its logical item count", async () => {
+      const r = await run(
+        `return await tools.echoMany(Array.from({ length: 101 }, (_, i) => ({ i })))`,
+      )
+      expect(r.batches).toHaveLength(0)
+      expect(r.value).toEqual({ error: "tool call limit exceeded (100)" })
+      expect(r.toolCalls).toHaveLength(0)
     })
 
     it("truncates an oversized return value", async () => {
