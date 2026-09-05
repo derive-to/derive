@@ -183,12 +183,19 @@ Published Skills install natively into both Claude and Codex by default:
 derive skill add <short_id>
 derive skill sync <short_id> --client codex
 derive skill sync --all
+derive skill used <short_id> --client codex
+derive skill used <short_id> --client codex --event <event_id> --useful yes
 derive skill remove <short_id> --scope project
 ```
 
 Project installs use `.claude/skills` and `.agents/skills`; personal installs use
 `~/.claude/skills` and `~/.codex/skills`. Installs are atomic and pinned in `derive.json`.
 `sync --all` updates every pinned Skill while preserving any Claude-only or Codex-only installs.
+
+Run `skill used` after a local agent invokes a pinned Skill. Derive generates an event ID unless
+the caller supplies one. Reuse an event ID to add or change its usefulness rating without adding
+another use. Derive stores the signed-in user, workspace, pinned version, client, and time on the
+server. The Skill page shows aggregate counts. It does not store prompts or generated content.
 
 Derive is licensed under FSL-1.1-ALv2 and converts to Apache-2.0 on the schedule in
 the [license](https://github.com/derive-to/derive/blob/main/LICENSE).

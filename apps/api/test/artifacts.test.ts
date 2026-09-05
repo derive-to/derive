@@ -1177,6 +1177,61 @@ describe("Skills product surface", () => {
     expect(usage).toMatchObject({ contexts: [], workflows: [] })
   })
 
+  it("counts one local Skill use and updates its usefulness without double counting", async () => {
+    const user: TestUser = {
+      id: "local-skill-user",
+      email: "local-skill-user@test.dev",
+      name: "Local Skill User",
+    }
+    const { app: localUseApp } = makeAuthedApp("local-skill-use", [user])
+    const zip = zipSync({
+      "SKILL.md": new TextEncoder().encode(
+        "---\nname: locally-used-skill\ndescription: Use locally-used-skill.\n---\n\n# locally-used-skill",
+      ),
+      "derive.skill.json": new TextEncoder().encode(JSON.stringify({ schema: "derive.skill/v1" })),
+    })
+    const form = new FormData()
+    form.append("file", new Blob([zip]), "locally-used-skill.zip")
+    form.append("title", "locally-used-skill")
+    const skill = await (
+      await localUseApp.request("/v1/artifacts", {
+        method: "POST",
+        headers: as(user.email),
+        body: form,
+      })
+    ).json()
+    const event = {
+      event_id: "local-use-fixture-1",
+      skill_version: 1,
+      client: "codex",
+    }
+    for (const body of [event, { ...event, useful: true }]) {
+      const response = await localUseApp.request(`/v1/artifacts/${skill.short_id}/skill-usage`, {
+        method: "POST",
+        headers: { ...as(user.email), "content-type": "application/json" },
+        body: JSON.stringify(body),
+      })
+      expect(response.status).toBe(200)
+    }
+
+    const usage = await (
+      await localUseApp.request(`/v1/artifacts/${skill.short_id}/skill-usage`, {
+        headers: as(user.email),
+      })
+    ).json()
+    expect(usage.local).toEqual([
+      {
+        skill_version: 1,
+        client: "codex",
+        count: 1,
+        useful: 1,
+        not_useful: 0,
+        unrated: 0,
+        last_used_at: expect.any(String),
+      },
+    ])
+  })
+
   it("rejects unresolved exact-version relations before a Skill version goes live", async () => {
     const zip = zipSync({
       "SKILL.md": new TextEncoder().encode(

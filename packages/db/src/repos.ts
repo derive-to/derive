@@ -73,6 +73,7 @@ import type {
   NewSignupAttribution,
   NewSkillInstallation,
   NewSkillRelation,
+  NewSkillUse,
   NewSlackSubscription,
   NewTemplateLibrary,
   NewTemplateLibraryEntry,
@@ -104,8 +105,10 @@ import type {
   SharedStateWrite,
   SignupAttributionRecord,
   SkillInstallationRecord,
+  SkillLocalUsageBucket,
   SkillRelationRecord,
   SkillUsageBucket,
+  SkillUseRecord,
   SlackAuthorFilter,
   SlackInstallRecord,
   SlackSubscriptionRecord,
@@ -220,6 +223,7 @@ import {
   signupAttribution,
   skillInstallation,
   skillRelation,
+  skillUse,
   slackInstall,
   slackSubscription,
   slackThreadLink,
@@ -415,6 +419,7 @@ export const schema = {
   workflowStepAttempt,
   skillRelation,
   skillInstallation,
+  skillUse,
   artifactSkillLink,
   plan,
   connection,
@@ -471,6 +476,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   workflowStepAttempt: true,
   skillRelation: true,
   skillInstallation: true,
+  skillUse: true,
   artifactSkillLink: true,
   plan: true,
   connection: true,
@@ -4816,6 +4822,38 @@ export function makeRepos(db: SqliteDb) {
       )
       .orderBy(desc(skillInstallation.updated_at), asc(skillInstallation.client))
       .all()) as SkillInstallationRecord[]
+  const recordSkillUse = async (use: NewSkillUse): Promise<SkillUseRecord> =>
+    (await db
+      .insert(skillUse)
+      .values(use)
+      .onConflictDoUpdate({
+        target: [skillUse.org_id, skillUse.skill_artifact_id, skillUse.used_by, skillUse.event_id],
+        set: {
+          ...(use.useful !== undefined ? { useful: use.useful } : {}),
+          updated_at: use.updated_at,
+        },
+      })
+      .returning()
+      .get()) as SkillUseRecord
+  const skillLocalUsage = async (
+    skillArtifactId: string,
+    orgId: string,
+  ): Promise<SkillLocalUsageBucket[]> =>
+    (await db
+      .select({
+        skill_version: skillUse.skill_version,
+        client: skillUse.client,
+        count: sql<number>`count(*)`,
+        useful: sql<number>`sum(case when ${skillUse.useful} = 1 then 1 else 0 end)`,
+        not_useful: sql<number>`sum(case when ${skillUse.useful} = 0 then 1 else 0 end)`,
+        unrated: sql<number>`sum(case when ${skillUse.useful} is null then 1 else 0 end)`,
+        last_used_at: sql<string>`max(${skillUse.occurred_at})`,
+      })
+      .from(skillUse)
+      .where(and(eq(skillUse.org_id, orgId), eq(skillUse.skill_artifact_id, skillArtifactId)))
+      .groupBy(skillUse.skill_version, skillUse.client)
+      .orderBy(desc(sql`max(${skillUse.occurred_at})`))
+      .all()) as SkillLocalUsageBucket[]
   const linkArtifactSkill = async (link: NewArtifactSkillLink): Promise<ArtifactSkillLinkRecord> =>
     (await db
       .insert(artifactSkillLink)
@@ -5631,6 +5669,7 @@ export function makeRepos(db: SqliteDb) {
       .where(or(eq(skillRelation.source_artifact_id, id), eq(skillRelation.target_artifact_id, id)))
       .run()
     await db.delete(skillInstallation).where(eq(skillInstallation.skill_artifact_id, id)).run()
+    await db.delete(skillUse).where(eq(skillUse.skill_artifact_id, id)).run()
     await db
       .delete(artifactSkillLink)
       .where(or(eq(artifactSkillLink.artifact_id, id), eq(artifactSkillLink.skill_artifact_id, id)))
@@ -6032,6 +6071,8 @@ export function makeRepos(db: SqliteDb) {
     listSkillRelations,
     upsertSkillInstallation,
     listSkillInstallations,
+    recordSkillUse,
+    skillLocalUsage,
     linkArtifactSkill,
     listArtifactSkillLinks,
     listArtifactSkillLinkHistory,
