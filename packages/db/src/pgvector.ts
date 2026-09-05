@@ -43,6 +43,8 @@ export interface VectorStore {
   deleteByIds(ids: string[]): Promise<void>
   deleteByArtifact(artifactId: string): Promise<void>
   query(orgId: string, vector: number[], topK: number): Promise<VectorMatch[]>
+  /** Query several vectors in one database round trip. Results stay aligned with `vectors`. */
+  queryMany?(orgId: string, vectors: number[][], topK: number): Promise<VectorMatch[][]>
   /** One stored embedding by its vector id, or null when absent — lets a caller run a
    *  similarity query FROM an already-indexed chunk without re-embedding anything. */
   getVector(vectorId: string): Promise<number[] | null>
@@ -203,5 +205,43 @@ export class PgVectorStore implements VectorStore {
       chunk: typeof r.snippet === "string" ? r.snippet : "",
       score: Number(r.score),
     }))
+  }
+
+  async queryMany(orgId: string, vectors: number[][], topK: number): Promise<VectorMatch[][]> {
+    if (!vectors.length) return []
+    const literals = vectors.map(toVectorLiteral)
+    const params: unknown[] = [orgId]
+    // Each branch has a constant query vector, so PostgreSQL can use the HNSW ORDER BY path.
+    // A correlated LATERAL over an unnested vector array looks tidier but prevents that indexed
+    // plan on the hosted database and turns every concept into a full vector-table scan.
+    const branches = literals.map((literal, index) => {
+      const first = params.length + 1
+      params.push(index, literal, Math.max(topK, 1))
+      return `(SELECT $${first}::int AS query_index,
+                      artifact_id,
+                      snippet,
+                      1 - (embedding <=> $${first + 1}::vector) AS score
+                 FROM ${this.table}
+                WHERE org_id = $1
+                ORDER BY embedding <=> $${first + 1}::vector
+                LIMIT $${first + 2})`
+    })
+    const { rows } = await this.sql.query(
+      `SELECT * FROM (${branches.join(" UNION ALL ")}) AS batch
+        ORDER BY query_index, score DESC`,
+      params,
+    )
+    const out = vectors.map(() => [] as VectorMatch[])
+    for (const row of rows) {
+      const index = Number(row.query_index)
+      const bucket = out[index]
+      if (!bucket) continue
+      bucket.push({
+        artifactId: String(row.artifact_id),
+        chunk: typeof row.snippet === "string" ? row.snippet : "",
+        score: Number(row.score),
+      })
+    }
+    return out
   }
 }

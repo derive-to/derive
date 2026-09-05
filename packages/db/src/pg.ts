@@ -2055,6 +2055,66 @@ export class PgMetaStore implements MetaStore {
     )
     return r.rows.map((row) => ({ id: row.artifact_id, rank: Number(row.rank) }))
   }
+  async searchArtifactIdsMany(
+    orgId: string,
+    queries: string[],
+    limit: number,
+  ): Promise<{ id: string; rank: number }[][]> {
+    const out = queries.map(() => [] as { id: string; rank: number }[])
+    const searchable = queries
+      .map((query, index) => ({ ts: this.tsPrefixQuery(query), index }))
+      .filter((item): item is { ts: string; index: number } => item.ts !== null)
+    if (!searchable.length) return out
+    const perQueryLimit = Math.max(limit, 1)
+    const combined = searchable.map(({ ts }) => `(${ts})`).join(" | ")
+    // One GIN scan nominates a generous shared pool. Ranking that small pool per query is CPU-local
+    // and avoids one edge database scan per concept. The 2× headroom protects a query whose best
+    // rows do not also rank highly for the combined OR expression.
+    const poolLimit = Math.min(perQueryLimit * searchable.length * 2, 5_000)
+    const r = await this.pool.query<{
+      input_index: number
+      artifact_id: string
+      rank: number
+    }>(
+      `WITH candidates AS MATERIALIZED (
+         SELECT artifact_id, tsv
+           FROM artifact_search
+          WHERE org_id = $1 AND tsv @@ to_tsquery('simple', $4)
+          ORDER BY ts_rank_cd(tsv, to_tsquery('simple', $4)) DESC
+          LIMIT $5
+       ), input AS (
+         SELECT input_index, query
+           FROM unnest($2::int[], $3::text[]) AS q(input_index, query)
+       ), ranked AS (
+         SELECT input.input_index,
+                candidates.artifact_id,
+                ts_rank_cd(candidates.tsv, to_tsquery('simple', input.query)) AS rank,
+                row_number() OVER (
+                  PARTITION BY input.input_index
+                  ORDER BY ts_rank_cd(candidates.tsv, to_tsquery('simple', input.query)) DESC
+                ) AS position
+           FROM input
+           JOIN candidates ON candidates.tsv @@ to_tsquery('simple', input.query)
+       )
+       SELECT input_index, artifact_id, rank
+         FROM ranked
+        WHERE position <= $6
+        ORDER BY input_index, rank DESC`,
+      [
+        orgId,
+        searchable.map(({ index }) => index),
+        searchable.map(({ ts }) => ts),
+        combined,
+        poolLimit,
+        perQueryLimit,
+      ],
+    )
+    for (const row of r.rows) {
+      const bucket = out[Number(row.input_index)]
+      if (bucket) bucket.push({ id: row.artifact_id, rank: Number(row.rank) })
+    }
+    return out
+  }
   async artifactIdsByTag(tag: string): Promise<string[]> {
     const rows = await this.db
       .select({ id: artifactTag.artifact_id })

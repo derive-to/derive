@@ -30,13 +30,18 @@ import {
 const WORKER_SOURCE = `
 const { parentPort, workerData } = require('node:worker_threads')
 const vm = require('node:vm')
-const { code, prelude, toolNames, timeoutMs } = workerData
+const { code, prelude, toolNames, bulkToolNames, timeoutMs } = workerData
 let __id = 0
 const __pending = new Map()
 const __call = (name, args) => new Promise((resolve) => {
   const id = ++__id
   __pending.set(id, resolve)
   parentPort.postMessage({ type: 'call_tool', id, name, args })
+})
+const __calls = (name, args, options) => new Promise((resolve) => {
+  const id = ++__id
+  __pending.set(id, resolve)
+  parentPort.postMessage({ type: 'call_tools', id, name, args, options })
 })
 parentPort.on('message', (m) => {
   if (m && m.type === 'tool_result') {
@@ -46,8 +51,10 @@ parentPort.on('message', (m) => {
 })
 const sandbox = {
   __derive_host_call_tool: __call,
+  __derive_host_call_tools: __calls,
   __derive_host_log: (values) => parentPort.postMessage({ type: 'log', values }),
   __derive_tool_names: toolNames,
+  __derive_bulk_tool_names: bulkToolNames,
   // Explicitly undefined rather than merely absent: a bare identifier reference should read as
   // undefined instead of walking up to a real global on some future Node.
   process: undefined, require: undefined, module: undefined, globalThis: undefined,
@@ -75,7 +82,13 @@ export const nodeSandbox = (): Sandbox => ({
       let settled = false
       const worker = new Worker(WORKER_SOURCE, {
         eval: true,
-        workerData: { code, prelude: SANDBOX_PRELUDE, toolNames: host.toolNames, timeoutMs },
+        workerData: {
+          code,
+          prelude: SANDBOX_PRELUDE,
+          toolNames: host.toolNames,
+          bulkToolNames: host.bulkToolNames ?? [],
+          timeoutMs,
+        },
         // THE boundary. An empty environment means an escape finds no secrets to take.
         env: {},
         // No stdio inheritance: the code must not be able to write to the server's logs.
@@ -124,6 +137,44 @@ export const nodeSandbox = (): Sandbox => ({
                 type: "tool_result",
                 id: m.id,
                 result: { error: e?.message ?? "tool failed" },
+              }),
+            )
+          return
+        }
+        if (m.type === "call_tools") {
+          const name = String(m.name)
+          const args = Array.isArray(m.args) ? (m.args as Record<string, unknown>[]) : []
+          if (!host.callTools || !host.bulkToolNames?.includes(name)) {
+            worker.postMessage({
+              type: "tool_result",
+              id: m.id,
+              result: { error: `bulk tool unavailable: ${name}Many` },
+            })
+            return
+          }
+          if (toolCalls.length + args.length > MAX_CODE_TOOL_CALLS) {
+            worker.postMessage({
+              type: "tool_result",
+              id: m.id,
+              result: { error: `tool call limit exceeded (${MAX_CODE_TOOL_CALLS})` },
+            })
+            return
+          }
+          toolCalls.push(...args.map(() => name))
+          host
+            .callTools(
+              name,
+              args,
+              m.options && typeof m.options === "object"
+                ? (m.options as Record<string, unknown>)
+                : {},
+            )
+            .then((result) => worker.postMessage({ type: "tool_result", id: m.id, result }))
+            .catch((e: Error) =>
+              worker.postMessage({
+                type: "tool_result",
+                id: m.id,
+                result: { error: e?.message ?? "bulk tool failed" },
               }),
             )
           return

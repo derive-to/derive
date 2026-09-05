@@ -54,10 +54,12 @@ Workspace-specific procedures may also be published as skills. Discover them wit
 `find({skills:true})`, then `read` the relevant one before acting.
 
 Prefer `derive_code` when a task needs multiple searches, multiple reads, or one search
-followed by reading several candidates. Run independent calls in parallel, filter inside
-the code, and return only the focused answer. Use direct `find` or `read` for one operation,
-rendered output, or exact-source editing. The sandbox is read-only and cannot call
-publishing or organization tools.
+followed by reading several candidates. Use `tools.findMany([...])` and
+`tools.readMany([...], {mode:"compact"})`. The host batches these calls, limits concurrency,
+deduplicates equal requests, and continues when one item is unavailable. Results keep their
+input indexes. Filter inside the code and return only the focused answer. Use direct `find` or
+`read` for one operation, rendered output, or exact-source editing. The sandbox is read-only
+and cannot call publishing or organization tools.
 
 ## No MCP? Publish an anonymous draft
 

@@ -3721,6 +3721,10 @@ export function runStoreContract(
       // Relevance: "revenue" finds a, not b; "costs" finds b, not a.
       expect(ids(await store.searchArtifactIds(ORG, "revenue", 10))).toEqual([a.id])
       expect(ids(await store.searchArtifactIds(ORG, "costs", 10))).toEqual([b.id])
+      if (store.searchArtifactIdsMany) {
+        const batch = await store.searchArtifactIdsMany(ORG, ["revenue", "costs", "!!!"], 10)
+        expect(batch.map(ids)).toEqual([[a.id], [b.id], []])
+      }
       // Org isolation: the same-word artifact in another org never leaks into ORG.
       expect(ids(await store.searchArtifactIds(ORG, "revenue", 10))).not.toContain(elsewhere.id)
       expect(ids(await store.searchArtifactIds(elsewhere.org_id, "revenue", 10))).toEqual([

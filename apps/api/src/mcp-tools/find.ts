@@ -15,6 +15,7 @@ import {
   searchMatcher,
   searchReport,
   searchWorkspace,
+  searchWorkspaceMany,
   toSearchHits,
 } from "../lib/search"
 import { listTemplateArtifacts } from "../lib/template-artifacts"
@@ -50,6 +51,17 @@ const FACT_RESULT_CAP = 200
  *  find(data:). An index capped by a payload-shaped constant is capped for the wrong
  *  reason, and this one is capping the thing it exists to be exhaustive about. */
 const BACKLINK_RESULT_CAP = 500
+const CODE_COMPACT_RESULT_CAP = 8
+const CODE_COMPACT_SEARCH_LIMIT = 8
+const CODE_COMPACT_CANDIDATE_CAP = 60
+
+/** Host-only execution data for code-mode bulk find. Symbols cannot cross the sandbox bridge, so
+ *  model-written code cannot choose internal search limits or forge a prepared response. */
+export const CODE_FIND_ENVELOPE = Symbol("derive-code-find-envelope")
+export interface CodeFindEnvelope {
+  compact: true
+  prepared?: Record<string, unknown>
+}
 
 /** The refs a stored $links payload actually asserts. The CONFIRM half of the store's
  *  narrow-then-confirm: its LIKE is a substring match over raw JSON, and a substring match
@@ -103,19 +115,121 @@ export const backlinkNotes = (o: {
   }
 }
 
+const contextFindRowsFor = async (
+  tc: ToolContext,
+  org: string,
+  matches?: (name: string) => boolean,
+) => {
+  const { actingFor, askableContexts, ctx } = tc
+  if (!actingFor) return []
+  const rows = await askableContexts(org, actingFor.id)
+  const picked = matches ? rows.filter(({ x }) => matches(x.name)) : rows
+  return Promise.all(
+    picked.map(async ({ x, manifest }) => {
+      const open = (await ctx.meta.listSessions(x.id, { askerId: actingFor.id, limit: 10 }))
+        .filter((session) => session.state !== "closed")
+        .map((session) => ({
+          id: session.id,
+          state: session.state,
+          updated_at: session.updated_at ?? session.created_at,
+        }))
+      return {
+        type: "context" as const,
+        id: x.id,
+        name: x.name,
+        online: runnerOnline(x),
+        manifest: manifest ? { short_id: manifest.short_id, title: manifest.title } : null,
+        your_open_sessions: open,
+        note: "read({short_id: id}) loads its package (manifest + skill pointers); use({context, instruction}) starts a run with it.",
+      }
+    }),
+  )
+}
+
+const codeFindEligible = (
+  args: Record<string, unknown>,
+): args is Record<string, unknown> & {
+  query: string
+} => {
+  if (typeof args.query !== "string" || !args.query) return false
+  const allowed = new Set(["query", "case_sensitive", "in", "context", "max_matches", "workspace"])
+  return Object.keys(args).every((key) => allowed.has(key))
+}
+
+/** Prepare compact workspace searches as workspace batches. The returned map is keyed by the
+ *  original argument objects, so only the host can attach a prepared result to a handler call. */
+export const prepareCodeFindMany = async (
+  tc: ToolContext,
+  requests: Record<string, unknown>[],
+): Promise<Map<Record<string, unknown>, Record<string, unknown>>> => {
+  const eligible = requests.filter(codeFindEligible)
+  const prepared = new Map<Record<string, unknown>, Record<string, unknown>>()
+  const byWorkspace = new Map<string, typeof eligible>()
+  for (const request of eligible) {
+    const key = typeof request.workspace === "string" ? request.workspace : ""
+    const rows = byWorkspace.get(key) ?? []
+    rows.push(request)
+    byWorkspace.set(key, rows)
+  }
+  for (const rows of byWorkspace.values()) {
+    const workspace = typeof rows[0]?.workspace === "string" ? rows[0].workspace : undefined
+    const target = await tc.resolveWs(workspace)
+    if ("error" in target) continue
+    const queries = rows.map((request) => {
+      const context = Number(request.context)
+      const maxMatches = Number(request.max_matches)
+      const query = request.query
+      return {
+        query,
+        re: searchMatcher(query, request.case_sensitive === true),
+        where: request.in === "text" ? ("text" as const) : ("source" as const),
+        ctxLines: Number.isFinite(context) ? Math.min(Math.max(context, 0), 5) : 0,
+        cap: Number.isFinite(maxMatches) ? Math.min(Math.max(maxMatches, 1), 200) : 40,
+        limit: CODE_COMPACT_SEARCH_LIMIT,
+        candidateCap: CODE_COMPACT_CANDIDATE_CAP,
+        denseFallbackBelow: CODE_COMPACT_RESULT_CAP,
+      }
+    })
+    const searched = await searchWorkspaceMany(
+      tc.ctx,
+      {
+        orgId: target.org,
+        viewerId: tc.actingFor?.id ?? tc.agent.id,
+      },
+      queries,
+    )
+    const needles = rows.map(({ query }) => query.toLowerCase())
+    const contextRows = await contextFindRowsFor(tc, target.org, (name) => {
+      const lower = name.toLowerCase()
+      return needles.some((needle) => lower.includes(needle))
+    })
+    for (const [index, request] of rows.entries()) {
+      const query = request.query
+      const search = searched[index]
+      if (!search) continue
+      const matches = toSearchHits(search.results, query).map((hit) => ({
+        type: "match" as const,
+        ...hit,
+      }))
+      const contexts = contextRows.filter((row) =>
+        row.name.toLowerCase().includes(query.toLowerCase()),
+      )
+      prepared.set(request, {
+        workspace: target.org,
+        query,
+        where: queries[index]?.where ?? "source",
+        count: matches.length + contexts.length,
+        results: [...matches, ...contexts],
+        ...(search.note ? { note: search.note } : {}),
+        ...(tc.actingFor ? {} : { contexts_note: CONTEXTS_NEED_HUMAN }),
+      })
+    }
+  }
+  return prepared
+}
+
 export function registerFindTool(tc: ToolContext): void {
-  const {
-    server,
-    ctx,
-    agent,
-    actingFor,
-    ownerId,
-    reach,
-    notFound,
-    resolveWs,
-    wsArg,
-    askableContexts,
-  } = tc
+  const { server, ctx, agent, actingFor, ownerId, reach, notFound, resolveWs, wsArg } = tc
 
   // Askable contexts as typed `find` rows — INVARIANT (A): sourced ONLY from
   // askableContexts (the per-human canUserAskContext gate), so a roster-gated context this
@@ -123,28 +237,8 @@ export function registerFindTool(tc: ToolContext): void {
   // caller adds an explicit note rather than erroring. Each row carries its own open
   // sessions and the steer to reach it with `use`. (askableContexts/runnerOnline are
   // defined further down; referenced here from a handler that runs at call-time.)
-  const contextFindRows = async (org: string, matches?: (name: string) => boolean) => {
-    if (!actingFor) return []
-    const human = actingFor
-    const rows = await askableContexts(org, human.id)
-    const picked = matches ? rows.filter(({ x }) => matches(x.name)) : rows
-    return Promise.all(
-      picked.map(async ({ x, manifest }) => {
-        const open = (await ctx.meta.listSessions(x.id, { askerId: human.id, limit: 10 }))
-          .filter((s) => s.state !== "closed")
-          .map((s) => ({ id: s.id, state: s.state, updated_at: s.updated_at ?? s.created_at }))
-        return {
-          type: "context" as const,
-          id: x.id,
-          name: x.name,
-          online: runnerOnline(x),
-          manifest: manifest ? { short_id: manifest.short_id, title: manifest.title } : null,
-          your_open_sessions: open,
-          note: "read({short_id: id}) loads its package (manifest + skill pointers); use({context, instruction}) starts a run with it.",
-        }
-      }),
-    )
-  }
+  const contextFindRows = (org: string, matches?: (name: string) => boolean) =>
+    contextFindRowsFor(tc, org, matches)
   server.registerTool(
     "find",
     {
@@ -228,22 +322,26 @@ export function registerFindTool(tc: ToolContext): void {
         workspace: wsArg,
       },
     },
-    async ({
-      query,
-      short_id,
-      tag,
-      data,
-      links_to,
-      skills,
-      archived,
-      templates,
-      case_sensitive,
-      in: scope,
-      context,
-      max_matches,
-      version,
-      workspace,
-    }) => {
+    async (input) => {
+      const codeEnvelope = (input as typeof input & { [CODE_FIND_ENVELOPE]?: CodeFindEnvelope })[
+        CODE_FIND_ENVELOPE
+      ]
+      const {
+        query,
+        short_id,
+        tag,
+        data,
+        links_to,
+        skills,
+        archived,
+        templates,
+        case_sensitive,
+        in: scope,
+        context,
+        max_matches,
+        version,
+        workspace,
+      } = input
       if (
         archived &&
         (query || short_id || data !== undefined || links_to !== undefined || templates)
@@ -354,6 +452,7 @@ export function registerFindTool(tc: ToolContext): void {
       // MODE 2 — SEARCH THE WORKSPACE (ranked artifacts + a snippet each), plus any askable
       // context whose NAME matches the query. Typed rows: {type:"match"} + {type:"context"}.
       if (query) {
+        if (codeEnvelope?.prepared) return json(codeEnvelope.prepared)
         const t = await resolveWs(workspace)
         if ("error" in t) return err(t.error)
         const re = searchMatcher(query, case_sensitive ?? false)
@@ -368,6 +467,12 @@ export function registerFindTool(tc: ToolContext): void {
           where,
           ctxLines,
           cap,
+          ...(codeEnvelope?.compact
+            ? {
+                limit: CODE_COMPACT_SEARCH_LIMIT,
+                candidateCap: CODE_COMPACT_CANDIDATE_CAP,
+              }
+            : {}),
         })
         const matchRows = toSearchHits(results, query).map((h) => ({
           type: "match" as const,
@@ -571,9 +676,12 @@ export function registerFindTool(tc: ToolContext): void {
               archived: archived ? "only" : "exclude",
               // Skill-ness is the denormalized content type; the store filters it.
               ...(skills ? { contentType: SKILL_CONTENT_TYPE } : {}),
+              ...(codeEnvelope?.compact ? { limit: CODE_COMPACT_RESULT_CAP + 1 } : {}),
             })
-      const tagMap = await ctx.meta.tagsForArtifacts(rows.map((a) => a.id))
-      const artifactRows = rows.map((a) => ({
+      const browseTruncated = codeEnvelope?.compact && rows.length > CODE_COMPACT_RESULT_CAP
+      const boundedRows = codeEnvelope?.compact ? rows.slice(0, CODE_COMPACT_RESULT_CAP) : rows
+      const tagMap = await ctx.meta.tagsForArtifacts(boundedRows.map((a) => a.id))
+      const artifactRows = boundedRows.map((a) => ({
         type: "artifact" as const,
         ...summarizeArtifact(a),
         tags: tagMap[a.id] ?? [],
@@ -583,6 +691,7 @@ export function registerFindTool(tc: ToolContext): void {
         workspace: t.org,
         count: artifactRows.length + contextRows.length,
         results: [...artifactRows, ...contextRows],
+        ...(browseTruncated ? { truncated: true } : {}),
         ...(actingFor ? {} : { contexts_note: CONTEXTS_NEED_HUMAN }),
       })
     },

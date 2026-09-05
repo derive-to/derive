@@ -60,12 +60,19 @@ const boundedLoader = (loader: WorkerLoader, timeoutMs: number): WorkerLoader =>
 
 const SANDBOX_PRELUDE = `
 const __derive_tool_names = await __derive_tools.toolNames({})
+const __derive_bulk_tool_names = await __derive_tools.bulkToolNames({})
 const __derive_available_tools = __derive_tool_names.join(", ")
 const tools = Object.freeze(Object.fromEntries(
-  __derive_tool_names.map((name) => [
-    name,
-    (args) => __derive_tools.callTool({ name, args: args ?? {} }),
-  ]),
+  [
+    ...__derive_tool_names.map((name) => [
+      name,
+      (args) => __derive_tools.callTool({ name, args: args ?? {} }),
+    ]),
+    ...__derive_bulk_tool_names.map((name) => [
+      name + "Many",
+      (args, options) => __derive_tools.callTools({ name, args, options: options ?? {} }),
+    ]),
+  ],
 ))
 const call_tool = async (name, args) => {
   const normalized = String(name)
@@ -116,6 +123,7 @@ export const cloudflareSandbox = (
     const toolCalls: string[] = []
     const fns = {
       toolNames: async () => host.toolNames,
+      bulkToolNames: async () => host.bulkToolNames ?? [],
       callTool: async (input: unknown) => {
         const record =
           input && typeof input === "object" && !Array.isArray(input)
@@ -134,6 +142,29 @@ export const cloudflareSandbox = (
               : {}
           const call = () => host.callTool(name, args)
           return await runHostCall(call)
+        } catch (error) {
+          return { error: messageOf(error) }
+        }
+      },
+      callTools: async (input: unknown) => {
+        const record =
+          input && typeof input === "object" && !Array.isArray(input)
+            ? (input as Record<string, unknown>)
+            : {}
+        const name = typeof record.name === "string" ? record.name : ""
+        const args = Array.isArray(record.args) ? (record.args as Record<string, unknown>[]) : []
+        const callTools = host.callTools
+        if (!callTools || !host.bulkToolNames?.includes(name))
+          return { error: `bulk tool unavailable: ${name}Many` }
+        if (toolCalls.length + args.length > MAX_CODE_TOOL_CALLS)
+          return { error: `tool call limit exceeded (${MAX_CODE_TOOL_CALLS})` }
+        toolCalls.push(...args.map(() => name))
+        try {
+          const options =
+            record.options && typeof record.options === "object" && !Array.isArray(record.options)
+              ? (record.options as Record<string, unknown>)
+              : {}
+          return await runHostCall(() => callTools(name, args, options))
         } catch (error) {
           return { error: messageOf(error) }
         }

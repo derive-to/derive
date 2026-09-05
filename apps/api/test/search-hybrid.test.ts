@@ -6,6 +6,7 @@ import {
   rrfFuse,
   searchMatcher,
   searchWorkspace,
+  searchWorkspaceMany,
   type WorkspaceSearchDeps,
 } from "../src/lib/search"
 
@@ -204,6 +205,121 @@ describe("searchWorkspace — hybrid retrieval", () => {
     }
     const { results } = await run(makeDeps([doc], boom), "onboarding")
     expect(results.map((r) => r.short_id)).toEqual(["onb1"]) // the lexical hit still comes back
+  })
+})
+
+describe("searchWorkspaceMany — shared retrieval", () => {
+  it("batches nomination and authorization, then loads a shared artifact once", async () => {
+    const docs: Doc[] = [
+      {
+        id: "shared",
+        short_id: "shared1",
+        title: "Agent workflow",
+        body: "the agent follows this workflow",
+      },
+      { id: "agent", short_id: "agent1", title: "Agent", body: "agent only" },
+      { id: "flow", short_id: "flow1", title: "Workflow", body: "workflow only" },
+    ]
+    const base = makeDeps(docs)
+    let lexicalBatches = 0
+    let denseBatches = 0
+    let visibilityCalls = 0
+    let versionCalls = 0
+    const sourceReads = new Map<string, number>()
+    const originalList = base.meta.listArtifacts
+    const originalVersions = base.meta.currentVersions
+    const originalSource = base.sourceText
+    base.search = {
+      indexArtifact: async () => {},
+      indexArtifacts: async () => {},
+      unindexArtifact: async () => {},
+      search: async () => {
+        throw new Error("single dense search should not run")
+      },
+      searchMany: async (_orgId, queries) => {
+        denseBatches += 1
+        return queries.map(() => [])
+      },
+    }
+    base.meta.searchArtifactIdsMany = async (orgId, queries, limit) => {
+      lexicalBatches += 1
+      return queries.map((query) => lexical(docs, orgId, query, limit))
+    }
+    base.meta.listArtifacts = async (opts) => {
+      visibilityCalls += 1
+      return originalList(opts)
+    }
+    base.meta.currentVersions = async (ids) => {
+      versionCalls += 1
+      return originalVersions(ids)
+    }
+    base.sourceText = async (version) => {
+      sourceReads.set(version.blob_key, (sourceReads.get(version.blob_key) ?? 0) + 1)
+      return originalSource(version)
+    }
+
+    const results = await searchWorkspaceMany(
+      base,
+      { orgId: ORG, viewerId: "u1" },
+      ["agent", "workflow"].map((query) => ({
+        query,
+        re: searchMatcher(query, false),
+        where: "text" as const,
+        ctxLines: 0,
+        cap: 40,
+        limit: 16,
+        candidateCap: 64,
+        denseFallbackBelow: 2,
+      })),
+    )
+
+    expect(results.map(({ results: rows }) => rows.map(({ short_id }) => short_id))).toEqual([
+      ["shared1", "agent1"],
+      ["shared1", "flow1"],
+    ])
+    expect(lexicalBatches).toBe(1)
+    expect(denseBatches).toBe(0)
+    expect(visibilityCalls).toBe(1)
+    expect(versionCalls).toBe(1)
+    expect(sourceReads.get("blob_shared")).toBe(1)
+  })
+
+  it("uses one dense fallback batch for concepts with too few lexical candidates", async () => {
+    const docs: Doc[] = [
+      {
+        id: "guide",
+        short_id: "guide1",
+        title: "Onboarding",
+        body: "the golden path for new users",
+      },
+    ]
+    let denseBatches = 0
+    const search = denseIndex({})
+    search.searchMany = async (_orgId, queries) => {
+      denseBatches += 1
+      return queries.map(() => [
+        { id: "guide", score: 0.9, chunk: "the golden path for new users" },
+      ])
+    }
+    const [result] = await searchWorkspaceMany(
+      makeDeps(docs, search),
+      { orgId: ORG, viewerId: "u1" },
+      [
+        {
+          query: "getting started",
+          re: searchMatcher("getting started", false),
+          where: "text",
+          ctxLines: 0,
+          cap: 40,
+          limit: 8,
+          candidateCap: 60,
+          denseFallbackBelow: 8,
+        },
+      ],
+    )
+    expect(denseBatches).toBe(1)
+    expect(result?.results[0]?.short_id).toBe("guide1")
+    expect(result?.results[0]?.semantic?.snippet).toContain("golden path")
   })
 })
 
