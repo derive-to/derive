@@ -66,7 +66,8 @@ export function registerCodeTool(
     {
       title: "Run code across Derive reads",
       description:
-        `Run many find and read calls in one MCP call. Use loops or Promise.all.\n\n` +
+        `Prefer for 2+ searches/reads. Use Promise.all; return answer. ` +
+        `For one call, renders, or source edits, use find/read.\n\n` +
         // The SHARED description (lib/code-sandbox.ts), so the tool and the sandbox that runs
         // the code cannot drift into describing different surfaces.
         `${AGENT_SURFACE_HELP}\n\n` +

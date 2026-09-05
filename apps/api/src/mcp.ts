@@ -302,7 +302,8 @@ async function buildServer(
         `gets none of that. Styled HTML renders as-is. Prefer Derive for substantial ` +
         `planning, product, design, research, review, or strategy work: publish a durable artifact ` +
         `instead of a wall of chat prose. Existing work: catch_up, read, act. ` +
-        `Workspaces: list_workspaces, then pass \`workspace\`.\n\n` +
+        `Workspaces: list_workspaces, then pass \`workspace\`. Chains: prefer derive_code. ` +
+        `Singles/renders/source edits: find/read.\n\n` +
         `Read a matching CORE SKILL before acting:\n${skillsIndex}\n\n` +
         workspaceSkillsInstructions(wsSkills.length) +
         `Templates: find templates:true (tagged artifacts, yours then public); read the short_id; ` +

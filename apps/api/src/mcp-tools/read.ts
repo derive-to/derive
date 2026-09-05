@@ -247,7 +247,7 @@ export function registerReadTool(tc: ToolContext): void {
     "read",
     {
       description:
-        "Read an artifact. Small docs return whole; large docs return an outline. `focus` returns matching parts in one call. `map` then `node` addresses one part. format:'html' gives exact source for publish edits. Also reads contexts and derive:// URIs. See derive://skills/finding.",
+        "Read an artifact. Small docs return whole; large docs return an outline. `focus` returns matching parts in one call. `map` then `node` addresses one part. format:'html' gives exact source for publish edits. Also reads contexts and derive:// URIs. Chains: `derive_code`. See derive://skills/finding.",
       // readOnlyHint stays true despite two incidental write paths below (the lazy
       // derived-fact backfill and the render self-heal re-queue): both are deterministic
       // recomputations/cache-fills of already-published bytes — the class of side effect
