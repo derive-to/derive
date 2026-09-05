@@ -2148,6 +2148,17 @@
           "linked": {
             "type": "boolean",
             "description": "Whether the caller has linked their Slack identity for the connected team"
+          },
+          "account_email": {
+            "type": "string",
+            "format": "email",
+            "description": "The caller's Derive account email"
+          },
+          "slack_email": {
+            "type": "string",
+            "nullable": true,
+            "format": "email",
+            "description": "The caller's explicit Slack lookup email for this Derive workspace"
           }
         },
         "required": [
@@ -2157,7 +2168,9 @@
           "needs_reauth",
           "slack_dm",
           "review_email",
-          "linked"
+          "linked",
+          "account_email",
+          "slack_email"
         ]
       },
       "SlackSubscription": {

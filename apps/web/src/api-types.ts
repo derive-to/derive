@@ -7614,6 +7614,16 @@ export interface components {
             review_email: boolean;
             /** @description Whether the caller has linked their Slack identity for the connected team */
             linked: boolean;
+            /**
+             * Format: email
+             * @description The caller's Derive account email
+             */
+            account_email: string;
+            /**
+             * Format: email
+             * @description The caller's explicit Slack lookup email for this Derive workspace
+             */
+            slack_email: string | null;
         };
         SlackSubscription: {
             id: string;

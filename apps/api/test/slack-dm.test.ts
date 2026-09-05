@@ -545,6 +545,42 @@ describe("makeSlackDmSender (delivery)", () => {
     expect(calls.some((c) => c.url.endsWith("/conversations.open"))).toBe(true)
   })
 
+  it("uses the active workspace's saved Slack email before the Derive account email", async () => {
+    const meta = make("slack-dm-workspace-email")
+    await connect(meta)
+    await meta.setUserNotificationPref({
+      id: "pref-workspace-email",
+      org_id: "default",
+      user_id: linked.id,
+      prefs: JSON.stringify({ slackEmail: "lin@workspace.example" }),
+      created_at: new Date().toISOString(),
+    })
+    const { artifact, comment } = await artifactAndComment(meta)
+    await enqueueSlackMentionDms({ meta, baseUrl }, artifact, comment, [
+      { id: linked.id, name: "Lin" },
+    ])
+
+    const lookups: string[] = []
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (url.includes("/users.lookupByEmail")) {
+          lookups.push(new URL(url).searchParams.get("email") ?? "")
+          return Response.json({ ok: true, user: { id: "U-WORKSPACE" } })
+        }
+        if (url.endsWith("/conversations.open"))
+          return Response.json({ ok: true, channel: { id: "D-WORKSPACE" } })
+        const body = JSON.parse(String(init?.body)) as { channel: string }
+        return Response.json({ ok: true, ts: "1.1", channel: body.channel })
+      }),
+    )
+    const [row] = (await claim(meta)).filter((delivery) => delivery.kind === "slack_dm")
+    if (!row) throw new Error("no slack_dm row")
+
+    expect((await makeSlackDmSender(meta, KEY)(row)).ok).toBe(true)
+    expect(lookups).toEqual(["lin@workspace.example"])
+  })
+
   it("prefers a linked Slack identity over the email lookup", async () => {
     const meta = make("slack-dm-linked")
     await connect(meta)
