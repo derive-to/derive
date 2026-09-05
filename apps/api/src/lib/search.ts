@@ -796,7 +796,10 @@ export const searchWorkspaceMany = async (
   const resultByQuery = queries.map(() => new Map<string, WorkspaceSearchResult>())
   const artifacts = [...queryIndexesByArtifact.keys()]
   const scanStarted = Date.now()
-  const CONCURRENCY = 4
+  // One artifact can satisfy several queries, so eight workers load each shared body once. This
+  // stays below the old findMany peak (12 searches × four artifact workers) while removing the
+  // long tail from serial waves across a compact multi-concept batch.
+  const CONCURRENCY = 8
   const scanOne = async (artifactId: string) => {
     const artifact = artifactById.get(artifactId)
     const version = versionByArtifact[artifactId]

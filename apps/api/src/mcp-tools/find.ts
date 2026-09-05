@@ -52,8 +52,8 @@ const FACT_RESULT_CAP = 200
  *  reason, and this one is capping the thing it exists to be exhaustive about. */
 const BACKLINK_RESULT_CAP = 500
 const CODE_COMPACT_RESULT_CAP = 8
-const CODE_COMPACT_SEARCH_LIMIT = 16
-const CODE_COMPACT_CANDIDATE_CAP = 64
+const CODE_COMPACT_SEARCH_LIMIT = 8
+const CODE_COMPACT_CANDIDATE_CAP = 60
 
 /** Host-only execution data for code-mode bulk find. Symbols cannot cross the sandbox bridge, so
  *  model-written code cannot choose internal search limits or forge a prepared response. */
