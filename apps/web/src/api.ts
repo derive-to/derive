@@ -637,6 +637,15 @@ export interface SkillGraph {
 export interface SkillUsage {
   contexts: Array<{ skill_version: number; count: number; last_used_at: string }>
   workflows: Array<{ skill_version: number; count: number; last_used_at: string }>
+  local: Array<{
+    skill_version: number
+    client: "claude" | "codex" | "other"
+    count: number
+    useful: number
+    not_useful: number
+    unrated: number
+    last_used_at: string
+  }>
   installations: Array<{
     scope_kind: "project" | "personal" | "runner"
     client: "claude" | "codex"

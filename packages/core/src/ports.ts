@@ -2419,6 +2419,7 @@ export type SkillRelationKind = "requires" | "extends" | "recommends" | "referen
 export type SkillClient = "claude" | "codex"
 export type SkillInstallScope = "project" | "personal" | "runner"
 export type SkillInstallPolicy = "pinned" | "latest"
+export type SkillUseClient = "claude" | "codex" | "other"
 export type ArtifactSkillRole =
   | "created"
   | "revised"
@@ -2480,6 +2481,42 @@ export interface NewSkillInstallation {
   removed_at?: string | null
 }
 
+export interface SkillUseRecord {
+  id: string
+  event_id: string
+  org_id: string
+  skill_artifact_id: string
+  skill_version: number
+  used_by: string
+  client: SkillUseClient
+  useful: number | null
+  occurred_at: string
+  updated_at: string
+}
+
+export interface NewSkillUse {
+  id: string
+  event_id: string
+  org_id: string
+  skill_artifact_id: string
+  skill_version: number
+  used_by: string
+  client: SkillUseClient
+  useful?: number | null
+  occurred_at: string
+  updated_at: string
+}
+
+export interface SkillLocalUsageBucket {
+  skill_version: number
+  client: SkillUseClient
+  count: number
+  useful: number
+  not_useful: number
+  unrated: number
+  last_used_at: string
+}
+
 export interface ArtifactSkillLinkRecord {
   id: string
   org_id: string
@@ -2521,6 +2558,8 @@ export interface SkillStore {
   listSkillRelations(skillArtifactId: string, orgId: string): Promise<SkillRelationRecord[]>
   upsertSkillInstallation(installation: NewSkillInstallation): Promise<SkillInstallationRecord>
   listSkillInstallations(skillArtifactId: string, orgId: string): Promise<SkillInstallationRecord[]>
+  recordSkillUse(use: NewSkillUse): Promise<SkillUseRecord>
+  skillLocalUsage(skillArtifactId: string, orgId: string): Promise<SkillLocalUsageBucket[]>
   linkArtifactSkill(link: NewArtifactSkillLink): Promise<ArtifactSkillLinkRecord>
   listArtifactSkillLinks(
     artifactId: string,

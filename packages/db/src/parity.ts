@@ -49,6 +49,7 @@ import type {
   SignupAttributionRecord,
   SkillInstallationRecord,
   SkillRelationRecord,
+  SkillUseRecord,
   SubscriptionRecord,
   TemplateLibraryEntryRecord,
   TemplateLibraryRecord,
@@ -89,6 +90,7 @@ export interface TypedTables {
   workflowStepAttempt: WorkflowStepAttemptRecord
   skillRelation: SkillRelationRecord
   skillInstallation: SkillInstallationRecord
+  skillUse: SkillUseRecord
   artifactSkillLink: ArtifactSkillLinkRecord
   plan: PlanRecord
   connection: ConnectionRecord

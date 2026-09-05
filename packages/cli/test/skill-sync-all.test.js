@@ -137,3 +137,76 @@ describe("derive skill sync --all", () => {
     })
   })
 })
+
+describe("derive skill used", () => {
+  it("reports the pinned version and can rate the same event", async () => {
+    const receipts = []
+    const server = http.createServer((request, response) => {
+      const send = (status, value) => {
+        response.writeHead(status, { "content-type": "application/json" })
+        response.end(JSON.stringify(value))
+      }
+      if (request.url === "/v1/artifacts/review-skill/skill-usage" && request.method === "POST") {
+        let body = ""
+        request.on("data", (chunk) => (body += chunk))
+        request.on("end", () => {
+          receipts.push(JSON.parse(body))
+          send(200, { ok: true })
+        })
+        return
+      }
+      send(404, { error: "not found" })
+    })
+    servers.push(server)
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve))
+    const base = `http://127.0.0.1:${server.address().port}`
+    const project = mkdtempSync(join(tmpdir(), "derive-skill-used-"))
+    dirs.push(project)
+    writeFileSync(
+      join(project, "derive.json"),
+      JSON.stringify({
+        skills: [
+          {
+            id: "review-skill",
+            version: 4,
+            name: "Review",
+            installs: { codex: { version: 4, name: "Review" } },
+          },
+        ],
+      }),
+    )
+
+    const first = await run(project, base, [
+      "skill",
+      "used",
+      "review-skill",
+      "--client",
+      "codex",
+      "--event",
+      "dogfood-event-1",
+    ])
+    const rated = await run(project, base, [
+      "skill",
+      "used",
+      "review-skill",
+      "--client",
+      "codex",
+      "--event",
+      "dogfood-event-1",
+      "--useful",
+      "yes",
+    ])
+
+    expect(first).toMatchObject({ status: 0 })
+    expect(first.stdout).toContain("Review @v4 used by codex")
+    expect(receipts).toHaveLength(2)
+    expect(receipts[0]).not.toHaveProperty("useful")
+    expect(receipts[1]).toMatchObject({
+      event_id: "dogfood-event-1",
+      skill_version: 4,
+      client: "codex",
+      useful: true,
+    })
+    expect(rated.status).toBe(0)
+  })
+})

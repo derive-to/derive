@@ -32,6 +32,7 @@ import type {
   SkillInstallPolicy,
   SkillInstallScope,
   SkillRelationKind,
+  SkillUseClient,
   SlackAuthorFilter,
   SlackScopeKind,
   SlackThreadSurface,
@@ -443,6 +444,26 @@ export const skillInstallation = pgTable(
       t.client,
     ),
     index("skill_installation_skill").on(t.org_id, t.skill_artifact_id, t.updated_at),
+  ],
+)
+
+export const skillUse = pgTable(
+  "skill_use",
+  {
+    id: text("id").primaryKey(),
+    event_id: text("event_id").notNull(),
+    org_id: text("org_id").notNull(),
+    skill_artifact_id: text("skill_artifact_id").notNull(),
+    skill_version: integer("skill_version").notNull(),
+    used_by: text("used_by").notNull(),
+    client: text("client").$type<SkillUseClient>().notNull(),
+    useful: integer("useful"),
+    occurred_at: text("occurred_at").notNull(),
+    updated_at: text("updated_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("skill_use_event").on(t.org_id, t.skill_artifact_id, t.used_by, t.event_id),
+    index("skill_use_skill").on(t.org_id, t.skill_artifact_id, t.occurred_at),
   ],
 )
 
@@ -1238,6 +1259,7 @@ const TABLES = [
   workflowStepAttempt,
   skillRelation,
   skillInstallation,
+  skillUse,
   artifactSkillLink,
   plan,
   connection,

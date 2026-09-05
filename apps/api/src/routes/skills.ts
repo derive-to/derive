@@ -36,6 +36,13 @@ const installationBody = z.object({
   removed: z.boolean().optional(),
 })
 
+const localUseBody = z.object({
+  event_id: z.string().min(8).max(128),
+  skill_version: z.number().int().positive(),
+  client: z.enum(["claude", "codex", "other"]),
+  useful: z.boolean().optional(),
+})
+
 const artifactLinkBody = z.object({
   artifact_version: z.number().int().positive(),
   skill_short_id: z.string().min(1),
@@ -262,8 +269,9 @@ export const skillRoutes = (ctx: AppContext) => {
     const skill = await requireArtifact(c, "read")
     if (skill instanceof Response) return skill
     if (skill.current_content_type !== SKILL_CONTENT_TYPE) return fail(c, 404, "not a skill")
-    const [usage, installations, links] = await Promise.all([
+    const [usage, local, installations, links] = await Promise.all([
       meta.skillUsage(skill.id, skill.org_id),
+      meta.skillLocalUsage(skill.id, skill.org_id),
       meta.listSkillInstallations(skill.id, skill.org_id),
       meta.listSkillArtifactLinks(skill.id, skill.org_id, 100),
     ])
@@ -296,6 +304,7 @@ export const skillRoutes = (ctx: AppContext) => {
     return c.json({
       contexts: usage.contexts,
       workflows: usage.workflows,
+      local,
       installations: [...installSummary.values()],
       artifacts: links
         .filter((link) => readable.has(link.artifact_id))
@@ -307,6 +316,32 @@ export const skillRoutes = (ctx: AppContext) => {
           }
         }),
     })
+  })
+
+  app.post("/v1/artifacts/:shortId/skill-usage", async (c) => {
+    const skill = await requireArtifact(c, "read")
+    if (skill instanceof Response) return skill
+    if (skill.current_content_type !== SKILL_CONTENT_TYPE) return fail(c, 404, "not a skill")
+    const body = await readJson(c, localUseBody)
+    if (body instanceof Response) return body
+    if (!(await skillDefinition(skill.id, body.skill_version)))
+      return fail(c, 400, "skill version not found")
+    const actor = (await actingHuman(c)) ?? (await actingUser(c))
+    if (!actor) return fail(c, 401, "a signed-in user or user-authorized agent is required")
+    const now = new Date().toISOString()
+    const use = await meta.recordSkillUse({
+      id: newId("sku"),
+      event_id: body.event_id,
+      org_id: skill.org_id,
+      skill_artifact_id: skill.id,
+      skill_version: body.skill_version,
+      used_by: actor.id,
+      client: body.client,
+      ...(body.useful !== undefined ? { useful: body.useful ? 1 : 0 } : {}),
+      occurred_at: now,
+      updated_at: now,
+    })
+    return c.json({ use })
   })
 
   app.get("/v1/artifacts/:shortId/skills", async (c) => {

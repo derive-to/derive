@@ -1317,7 +1317,7 @@ if (LOOP.includes(cmd)) {
   process.exit(0)
 }
 
-// ---- derive skill (add/sync/remove) -----------------------------------------
+// ---- derive skill (add/sync/remove/used) ------------------------------------
 // The consumption half of the skill loop: author with `init --template skill` +
 // `publish`, then INSTALL a published skill into ./.claude/skills/<name>/ where
 // this project's agent auto-discovers it. Pinned in derive.json so an update is a
@@ -1326,9 +1326,13 @@ if (cmd === "skill") {
   const sub = positional.shift()
   const shortId = positional[0]
   const syncAll = sub === "sync" && flags.all === "true"
-  if (!["add", "sync", "remove"].includes(sub) || (!shortId && !syncAll) || (syncAll && shortId)) {
+  if (
+    !["add", "sync", "remove", "used"].includes(sub) ||
+    (!shortId && !syncAll) ||
+    (syncAll && shortId)
+  ) {
     console.error(
-      "usage: derive skill add|sync|remove <short_id> [--client claude|codex|all] [--scope project|personal]\n       derive skill sync --all [--client claude|codex|all] [--scope project|personal]",
+      "usage: derive skill add|sync|remove <short_id> [--client claude|codex|all] [--scope project|personal]\n       derive skill used <short_id> --client claude|codex|other [--useful yes|no] [--event id]\n       derive skill sync --all [--client claude|codex|all] [--scope project|personal]",
     )
     process.exit(cmd ? 1 : 0)
   }
@@ -1337,6 +1341,48 @@ if (cmd === "skill") {
     cfg = loadConfig(".")
   } catch {
     /* no derive.json yet — the pin creates one */
+  }
+  if (sub === "used") {
+    const client = flags.client ?? "other"
+    if (!["claude", "codex", "other"].includes(client)) {
+      console.error("error: --client must be claude, codex, or other")
+      process.exit(1)
+    }
+    if (flags.useful && !["yes", "no"].includes(flags.useful)) {
+      console.error("error: --useful must be yes or no")
+      process.exit(1)
+    }
+    const pin = cfg?.skills?.find((skill) => skill.id === shortId)
+    const installed = pin?.installs?.[client]
+    const version = installed?.version ?? pin?.version
+    if (!version) {
+      console.error(`error: ${shortId} is not pinned in ${CONFIG_FILE}; run derive skill add first`)
+      process.exit(1)
+    }
+    const r = resolvePublish(flags, cfg)
+    r.token = flags.token ?? process.env.DERIVE_TOKEN ?? (await freshToken(r.server, r.accountId))
+    if (!r.token) {
+      console.error("error: not signed in — run `derive login` first")
+      process.exit(1)
+    }
+    const eventId = flags.event ?? randomBytes(16).toString("hex")
+    const deriveClient = new DeriveClient(r.server, r.token)
+    await deriveClient.call(`/v1/artifacts/${shortId}/skill-usage`, {
+      method: "POST",
+      headers: r.workspaceId ? { "x-derive-workspace": r.workspaceId } : {},
+      body: JSON.stringify({
+        event_id: eventId,
+        skill_version: version,
+        client,
+        ...(flags.useful ? { useful: flags.useful === "yes" } : {}),
+      }),
+    })
+    console.log(
+      `✓ recorded ${pin.name ?? shortId} @v${version} used by ${client} (${eventId})${
+        flags.useful ? ` · ${flags.useful === "yes" ? "useful" : "not useful"}` : " · unrated"
+      }`,
+    )
+    process.exit(0)
   }
   const clients =
     flags.client === "claude" || flags.client === "codex" ? [flags.client] : ["claude", "codex"]
@@ -1657,6 +1703,7 @@ if (cmd !== "publish") {
   derive workflow preview [file] [--json]  explain + validate a graph/loop before it runs
   derive workflow run [run_id]             execute one assigned graph from GitHub Actions OIDC
   derive skill add|sync|remove <short_id>  install a pinned Skill for Claude + Codex (--client/--scope)
+  derive skill used <short_id>             record one local use (--client; optional --useful yes|no)
   derive skill sync --all                  update every locally pinned Skill
   derive brandprint pull                   materialize the workspace + your Brandprint into this repo`)
   process.exit(cmd && cmd !== "--help" && cmd !== "help" ? 1 : 0)

@@ -82,6 +82,7 @@ import type {
   NewSignupAttribution,
   NewSkillInstallation,
   NewSkillRelation,
+  NewSkillUse,
   NewSlackSubscription,
   NewTemplateLibrary,
   NewTemplateLibraryEntry,
@@ -116,8 +117,10 @@ import type {
   SharedStateWrite,
   SignupAttributionRecord,
   SkillInstallationRecord,
+  SkillLocalUsageBucket,
   SkillRelationRecord,
   SkillUsageBucket,
+  SkillUseRecord,
   SlackAuthorFilter,
   SlackInstallRecord,
   SlackSubscriptionRecord,
@@ -234,6 +237,7 @@ import {
   signupAttribution,
   skillInstallation,
   skillRelation,
+  skillUse,
   slackInstall,
   slackSubscription,
   slackThreadLink,
@@ -293,6 +297,7 @@ export const schema = {
   workflowStepAttempt,
   skillRelation,
   skillInstallation,
+  skillUse,
   artifactSkillLink,
   plan,
   connection,
@@ -349,6 +354,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   workflowStepAttempt: true,
   skillRelation: true,
   skillInstallation: true,
+  skillUse: true,
   artifactSkillLink: true,
   plan: true,
   connection: true,
@@ -6000,6 +6006,36 @@ export class PgMetaStore implements MetaStore {
         ),
       )
       .orderBy(desc(skillInstallation.updated_at), asc(skillInstallation.client))
+  }
+  async recordSkillUse(use: NewSkillUse): Promise<SkillUseRecord> {
+    const rows = await this.db
+      .insert(skillUse)
+      .values(use)
+      .onConflictDoUpdate({
+        target: [skillUse.org_id, skillUse.skill_artifact_id, skillUse.used_by, skillUse.event_id],
+        set: {
+          ...(use.useful !== undefined ? { useful: use.useful } : {}),
+          updated_at: use.updated_at,
+        },
+      })
+      .returning()
+    return one(rows)
+  }
+  skillLocalUsage(skillArtifactId: string, orgId: string): Promise<SkillLocalUsageBucket[]> {
+    return this.db
+      .select({
+        skill_version: skillUse.skill_version,
+        client: skillUse.client,
+        count: count(),
+        useful: sql<number>`cast(sum(case when ${skillUse.useful} = 1 then 1 else 0 end) as integer)`,
+        not_useful: sql<number>`cast(sum(case when ${skillUse.useful} = 0 then 1 else 0 end) as integer)`,
+        unrated: sql<number>`cast(sum(case when ${skillUse.useful} is null then 1 else 0 end) as integer)`,
+        last_used_at: max(skillUse.occurred_at),
+      })
+      .from(skillUse)
+      .where(and(eq(skillUse.org_id, orgId), eq(skillUse.skill_artifact_id, skillArtifactId)))
+      .groupBy(skillUse.skill_version, skillUse.client)
+      .orderBy(desc(max(skillUse.occurred_at))) as Promise<SkillLocalUsageBucket[]>
   }
   async linkArtifactSkill(link: NewArtifactSkillLink): Promise<ArtifactSkillLinkRecord> {
     const rows = await this.db
