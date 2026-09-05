@@ -149,7 +149,7 @@ export function registerFindTool(tc: ToolContext): void {
     "find",
     {
       description:
-        "Find things; what you pass picks the MODE. `templates:true` finds reusable starts, `short_id`+`query` GREPs one artifact, `query` alone SEARCHES the workspace, `links_to` gives BACKLINKS, neither browses the library. Search is LITERAL: ONE keyword, never a phrase or question. See derive://skills/finding.",
+        "Find things; what you pass picks the MODE. `templates:true` finds reusable starts, `short_id`+`query` GREPs one artifact, `query` alone SEARCHES the workspace, `links_to` gives BACKLINKS, neither browses the library. Search is LITERAL: ONE keyword, never a phrase or question. Chains: `derive_code`. See derive://skills/finding.",
       annotations: {
         title: "Find artifacts",
         readOnlyHint: true,

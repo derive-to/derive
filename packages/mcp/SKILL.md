@@ -53,9 +53,11 @@ unavailable, or project policy forbids publishing.
 Workspace-specific procedures may also be published as skills. Discover them with
 `find({skills:true})`, then `read` the relevant one before acting.
 
-Use `derive_code` when one task needs many `find` and `read` calls. Run the calls in
-parallel, filter inside the code, and return only the focused answer. The sandbox is
-read-only and cannot call publishing or organization tools.
+Prefer `derive_code` when a task needs multiple searches, multiple reads, or one search
+followed by reading several candidates. Run independent calls in parallel, filter inside
+the code, and return only the focused answer. Use direct `find` or `read` for one operation,
+rendered output, or exact-source editing. The sandbox is read-only and cannot call
+publishing or organization tools.
 
 ## No MCP? Publish an anonymous draft
 

@@ -86,6 +86,7 @@ const toolDefs = async (app: ReturnType<typeof makeAuthedApp>["app"], token: str
   })
   return (JSON.parse(frameOf(await res.text())).result?.tools ?? []) as {
     name: string
+    description?: string
     annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean }
   }[]
 }
@@ -103,11 +104,16 @@ describe("derive_code: registration", () => {
       await withBox.app.request("/v1/agents", jsonAs(as(owner.email), { name: "A" }))
     ).json()) as { token: string }
     expect(await listTools(withBox.app, agentOn.token)).toContain("derive_code")
-    const code = (await toolDefs(withBox.app, agentOn.token)).find(
-      (tool) => tool.name === "derive_code",
-    )
+    const definitions = await toolDefs(withBox.app, agentOn.token)
+    const code = definitions.find((tool) => tool.name === "derive_code")
     expect(code?.annotations?.readOnlyHint).toBe(true)
     expect(code?.annotations?.destructiveHint).toBe(false)
+    expect(code?.description).toContain("Prefer for 2+ searches/reads")
+
+    for (const name of ["find", "read"]) {
+      const tool = definitions.find((item) => item.name === name)
+      expect(tool?.description).toContain("Chains: `derive_code`")
+    }
 
     const without = makeAuthedApp("dc-off", [owner], "editor")
     const agentOff = (await (

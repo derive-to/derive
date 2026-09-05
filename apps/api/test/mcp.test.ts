@@ -109,6 +109,7 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(result.instructions).toContain("don't copy")
     expect(result.instructions).toContain("untrusted")
     expect(result.instructions).toContain("inspect render")
+    expect(result.instructions).toContain("prefer derive_code")
 
     const list = await rpc(app, token, { jsonrpc: "2.0", id: 2, method: "tools/list" })
     const names = toolNames(list)
