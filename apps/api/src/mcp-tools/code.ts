@@ -70,12 +70,29 @@ const compactValue = (value: unknown, maxChars: number): unknown => {
     "kind",
     "format",
     "url",
+    "workspace",
+    "query",
+    "where",
     "focus",
     "count",
     "total",
     "truncated",
   ]) {
     if (record[key] !== undefined) compact[key] = record[key]
+  }
+  if (Array.isArray(record.results)) {
+    const rows = record.results.slice(0, 8).map((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) return item
+      return Object.fromEntries(
+        Object.entries(item as Record<string, unknown>)
+          .filter(
+            ([, field]) => field === null || ["string", "number", "boolean"].includes(typeof field),
+          )
+          .map(([key, field]) => [key, typeof field === "string" ? field.slice(0, 240) : field]),
+      )
+    })
+    compact.results = rows
+    while (rows.length > 1 && JSON.stringify(compact).length > maxChars) rows.pop()
   }
   if (Array.isArray(record.matches)) {
     compact.matches = record.matches.slice(0, 3).map((match) => {

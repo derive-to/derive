@@ -167,7 +167,7 @@ describe("derive_code: composing real tools", () => {
 
     const out = await mcp(app, token, "derive_code", {
       code: `const wanted = new Set(${JSON.stringify([hit.short_id, miss.short_id])})
-             const foundBatch = await tools.findMany([{}])
+             const foundBatch = await tools.findMany([{}], { mode: "compact", max_chars: 2000 })
              const found = foundBatch.results[0].value
              const ids = found.results.map((row) => row.short_id).filter((id) => wanted.has(id))
              const docs = await tools.readMany([
