@@ -187,6 +187,7 @@ export const prepareCodeFindMany = async (
         cap: Number.isFinite(maxMatches) ? Math.min(Math.max(maxMatches, 1), 200) : 40,
         limit: CODE_COMPACT_SEARCH_LIMIT,
         candidateCap: CODE_COMPACT_CANDIDATE_CAP,
+        denseFallbackBelow: CODE_COMPACT_RESULT_CAP,
       }
     })
     const searched = await searchWorkspaceMany(

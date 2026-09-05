@@ -704,6 +704,9 @@ export interface WorkspaceSearchManyQuery {
   cap: number
   limit?: number
   candidateCap?: number
+  /** Skip dense nomination when lexical search already fills this many candidates. Compact code
+   *  mode uses its response depth; sparse and synonym queries still get semantic fallback. */
+  denseFallbackBelow?: number
 }
 
 /** Search several concepts while sharing every stage that is keyed by the same workspace or
@@ -719,26 +722,33 @@ export const searchWorkspaceMany = async (
   const candidateCaps = queries.map((query) => query.candidateCap ?? WORKSPACE_SEARCH_CANDIDATE_CAP)
   const nominationLimit = Math.max(...candidateCaps) + 1
   const queryTexts = queries.map(({ query }) => query)
-  const lexicalPromise = deps.meta.searchArtifactIdsMany
+  const lexicalByQuery = await (deps.meta.searchArtifactIdsMany
     ? deps.meta.searchArtifactIdsMany(opts.orgId, queryTexts, nominationLimit)
     : Promise.all(
         queryTexts.map((query) => deps.meta.searchArtifactIds(opts.orgId, query, nominationLimit)),
-      )
-  const densePromise = deps.search
+      ))
+  const denseIndexes = queries.flatMap((query, index) => {
+    const enough = query.denseFallbackBelow
+    return enough !== undefined && (lexicalByQuery[index]?.length ?? 0) >= enough ? [] : [index]
+  })
+  const denseQueries = denseIndexes.map((index) => queryTexts[index] as string)
+  const searchedDense = await (deps.search && denseQueries.length
     ? (deps.search.searchMany
-        ? deps.search.searchMany(opts.orgId, queryTexts, nominationLimit - 1)
+        ? deps.search.searchMany(opts.orgId, denseQueries, nominationLimit - 1)
         : Promise.all(
-            queryTexts.map(
+            denseQueries.map(
               (query) =>
                 deps.search?.search(opts.orgId, query, nominationLimit - 1) ?? Promise.resolve([]),
             ),
           )
       ).catch((err) => {
         log.error("semantic search batch failed; falling back to lexical", { err: String(err) })
-        return queries.map(() => [] as { id: string; score: number; chunk: string }[])
+        return denseQueries.map(() => [] as { id: string; score: number; chunk: string }[])
       })
-    : Promise.resolve(queries.map(() => [] as { id: string; score: number; chunk: string }[]))
-  const [lexicalByQuery, denseByQuery] = await Promise.all([lexicalPromise, densePromise])
+    : Promise.resolve([]))
+  const denseByQuery = queries.map(() => [] as { id: string; score: number; chunk: string }[])
+  for (const [denseIndex, queryIndex] of denseIndexes.entries())
+    denseByQuery[queryIndex] = searchedDense[denseIndex] ?? []
   const nominationMs = Date.now() - started
 
   const states = queries.map((query, index) => {

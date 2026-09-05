@@ -269,6 +269,7 @@ describe("searchWorkspaceMany — shared retrieval", () => {
         cap: 40,
         limit: 16,
         candidateCap: 64,
+        denseFallbackBelow: 2,
       })),
     )
 
@@ -277,10 +278,48 @@ describe("searchWorkspaceMany — shared retrieval", () => {
       ["shared1", "flow1"],
     ])
     expect(lexicalBatches).toBe(1)
-    expect(denseBatches).toBe(1)
+    expect(denseBatches).toBe(0)
     expect(visibilityCalls).toBe(1)
     expect(versionCalls).toBe(1)
     expect(sourceReads.get("blob_shared")).toBe(1)
+  })
+
+  it("uses one dense fallback batch for concepts with too few lexical candidates", async () => {
+    const docs: Doc[] = [
+      {
+        id: "guide",
+        short_id: "guide1",
+        title: "Onboarding",
+        body: "the golden path for new users",
+      },
+    ]
+    let denseBatches = 0
+    const search = denseIndex({})
+    search.searchMany = async (_orgId, queries) => {
+      denseBatches += 1
+      return queries.map(() => [
+        { id: "guide", score: 0.9, chunk: "the golden path for new users" },
+      ])
+    }
+    const [result] = await searchWorkspaceMany(
+      makeDeps(docs, search),
+      { orgId: ORG, viewerId: "u1" },
+      [
+        {
+          query: "getting started",
+          re: searchMatcher("getting started", false),
+          where: "text",
+          ctxLines: 0,
+          cap: 40,
+          limit: 8,
+          candidateCap: 60,
+          denseFallbackBelow: 8,
+        },
+      ],
+    )
+    expect(denseBatches).toBe(1)
+    expect(result?.results[0]?.short_id).toBe("guide1")
+    expect(result?.results[0]?.semantic?.snippet).toContain("golden path")
   })
 })
 
