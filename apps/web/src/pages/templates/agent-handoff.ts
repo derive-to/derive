@@ -1,3 +1,5 @@
+import { TEMPLATE_PROTOCOL_INSTRUCTION } from "./template-protocol-instruction.gen"
+
 export type AgentTemplateTarget = {
   uri: string
   title: string
@@ -53,7 +55,7 @@ ${request}
 
 Use the template as a reference, then make the decisions this brief needs:
 1. ${confirmWorkspace} Use Derive's read tool to inspect the exact reference before creating anything.
-2. Keep the useful structure, visual language, interactions, and narrative rhythm. Adapt the content and other decisions to my brief. Use find when workspace evidence would improve the result.
+2. Keep the useful structure, visual language, interactions, and narrative rhythm. ${TEMPLATE_PROTOCOL_INSTRUCTION} Adapt the content and other decisions to my brief. Use find when workspace evidence would improve the result.
 3. Leave the original unchanged and publish a new artifact with \`derived_from: "${target.uri}"\` so Derive records the exact reference.
 4. Render and visually inspect the finished result before reporting success. Revise it if the rendered result is weak.
 5. Return the new shareable Derive URL and briefly explain the important adaptations.`
