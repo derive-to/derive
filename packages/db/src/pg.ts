@@ -2065,27 +2065,28 @@ export class PgMetaStore implements MetaStore {
       .map((query, index) => ({ ts: this.tsPrefixQuery(query), index }))
       .filter((item): item is { ts: string; index: number } => item.ts !== null)
     if (!searchable.length) return out
+    const params: unknown[] = [orgId]
+    // Keep each tsquery constant within its branch. PostgreSQL can then use the GIN index for
+    // every concept while the whole batch still crosses the database boundary once.
+    const branches = searchable.map(({ index, ts }) => {
+      const first = params.length + 1
+      params.push(index, ts, Math.max(limit, 1))
+      return `(SELECT $${first}::int AS input_index,
+                      artifact_id,
+                      ts_rank_cd(tsv, to_tsquery('simple', $${first + 1})) AS rank
+                 FROM artifact_search
+                WHERE org_id = $1 AND tsv @@ to_tsquery('simple', $${first + 1})
+                ORDER BY rank DESC
+                LIMIT $${first + 2})`
+    })
     const r = await this.pool.query<{
       input_index: number
       artifact_id: string
       rank: number
     }>(
-      `SELECT input.input_index, hit.artifact_id, hit.rank
-         FROM unnest($2::int[], $3::text[]) AS input(input_index, query)
-         CROSS JOIN LATERAL (
-           SELECT artifact_id, ts_rank_cd(tsv, to_tsquery('simple', input.query)) AS rank
-             FROM artifact_search
-            WHERE org_id = $1 AND tsv @@ to_tsquery('simple', input.query)
-            ORDER BY rank DESC
-            LIMIT $4
-         ) AS hit
-        ORDER BY input.input_index, hit.rank DESC`,
-      [
-        orgId,
-        searchable.map(({ index }) => index),
-        searchable.map(({ ts }) => ts),
-        Math.max(limit, 1),
-      ],
+      `SELECT * FROM (${branches.join(" UNION ALL ")}) AS batch
+        ORDER BY input_index, rank DESC`,
+      params,
     )
     for (const row of r.rows) {
       const bucket = out[Number(row.input_index)]
