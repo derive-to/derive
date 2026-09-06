@@ -2017,6 +2017,31 @@ describe("paper templates and the LaTeX source export", () => {
     expect((await authed.request("/v1/latex/templates/nope", { headers })).status).toBe(404)
   })
 
+  it("exports only safe archive paths whatever a binding is named", async () => {
+    // A binding name becomes a zip entry (`derive-dynamic/<name>.tex`): one the slot
+    // grammar refuses is skipped, as the renderer skips it, so the archive never carries
+    // a path that unpacks outside its folder.
+    const enc = (s: string) => new TextEncoder().encode(s)
+    const zip = zipSync({
+      "main.tex": enc(
+        "\\documentclass{article}\\begin{document}\\input{sec/results}\\end{document}",
+      ),
+      "sec/results.tex": enc("\\derivetable{../../outside}\\derivetable{results}"),
+    })
+    const form = new FormData()
+    form.append("file", new Blob([zip as BlobPart]), "paper.zip")
+    form.append("title", "Traversal")
+    const created = await (
+      await authed.request("/v1/artifacts", { method: "POST", body: form, headers })
+    ).json()
+    const res = await authed.request(`/v1/artifacts/${created.short_id}/source.zip`, { headers })
+    expect(res.status).toBe(200)
+    const { unzipSync } = await import("fflate")
+    const names = Object.keys(unzipSync(new Uint8Array(await res.arrayBuffer())))
+    expect(names).toContain("derive-dynamic/results.tex")
+    expect(names.filter((n) => n.startsWith("/") || n.split("/").includes(".."))).toEqual([])
+  })
+
   it("publishes a starter through the ordinary bundle publish and exports its source with the latest data", async () => {
     const acm = await (await authed.request("/v1/latex/templates/acm-siggraph", { headers })).json()
     const enc = (s: string) => new TextEncoder().encode(s)

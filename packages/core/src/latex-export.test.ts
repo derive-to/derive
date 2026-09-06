@@ -134,6 +134,27 @@ describe("planLatexExport", () => {
     )
   })
 
+  it("never builds a fragment path from a name the slot grammar refuses", () => {
+    // A binding name becomes a zip entry: `derive-dynamic/<name>.tex`. Anything outside the
+    // grammar (a traversal, a space, an uppercase letter) is skipped with a note, exactly
+    // as the renderer skips it, so the archive can never unpack outside its folder.
+    const plan = planLatexExport({
+      entry: "main.tex",
+      files: {
+        "main.tex": "\\documentclass{article}\\begin{document}\\input{sec/results}\\end{document}",
+        "sec/results.tex": "\\derivetable{../../outside}\\derivetable{results}",
+      },
+      slots: {},
+      blobs: {},
+      meta,
+    })
+    expect(Object.keys(plan.files).filter((p) => p.includes(".."))).toEqual([])
+    expect(Object.keys(plan.files)).toContain("derive-dynamic/results.tex")
+    expect(plan.notes).toContain(
+      'Dynamic binding "../../outside" was ignored: names are lowercase letters, digits and dashes.',
+    )
+  })
+
   it("leaves a paper without bindings alone apart from the README", () => {
     const plan = planLatexExport({
       entry: "main.tex",

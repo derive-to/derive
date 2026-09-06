@@ -25,6 +25,15 @@ import { log } from "../log"
 /** The unzipped ceiling of a source export, the same bound a bundle publish has. */
 const MAX_EXPORT_BYTES = 50 * 1024 * 1024
 
+/** A zip entry that unpacks inside its own folder: relative, forward slashes, no empty,
+ *  `.` or `..` segment, no NUL. The same rule publish applies to a bundle on the way in. */
+const isSafeZipPath = (path: string): boolean =>
+  path.length > 0 &&
+  !path.startsWith("/") &&
+  !path.includes("\\") &&
+  !path.includes("\0") &&
+  path.split("/").every((segment) => segment !== "" && segment !== "." && segment !== "..")
+
 /** Bundle files read as text into the export plan (the rest travel as bytes). */
 const TEXT_FILE = /\.(tex|latex|bib|bbl|sty|cls|bst|txt|md)$/i
 
@@ -168,6 +177,15 @@ export const latexRoutes = (ctx: AppContext) => {
         exportedAt: new Date().toISOString(),
       },
     })
+    // Every entry name is a relative path inside the archive: the bundle's paths were
+    // cleaned at publish and the plan builds its own from validated slot names, so a
+    // failure here is a bug, and refusing beats writing a zip that unpacks outside its
+    // folder.
+    const unsafe = Object.keys(plan.files).find((path) => !isSafeZipPath(path))
+    if (unsafe !== undefined) {
+      log.error("latex_export_unsafe_path", { short_id: artifact.short_id, n, path: unsafe })
+      return fail(c, 500, "the export produced an unsafe path")
+    }
     const encoder = new TextEncoder()
     const zip = zipSync(
       Object.fromEntries(
