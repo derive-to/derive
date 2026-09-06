@@ -196,12 +196,46 @@ describe("parseDynamicBindings", () => {
   })
 
   it("keeps a binding whose seed is unusable and says why", () => {
-    const { bindings, advisories } = parseDynamicBindings(
+    const { bindings, advisories, errors } = parseDynamicBindings(
       "```derive-figure hero\nnot json\n```",
       "text/markdown",
     )
     expect(bindings).toEqual([{ name: "hero", kind: "figure", seed: null }])
     expect(advisories[0]).toMatch(/seeds empty/)
+    expect(errors).toEqual([])
+  })
+
+  it("refuses a placeholder that parses but breaks the slot contract", () => {
+    // A typo is soft (the slot seeds empty); a table the store would never accept is hard,
+    // because every read of the seeded slot would fail. Same validator as a PUT.
+    const wide = Array.from({ length: 65 }, (_, i) => `c${i}`)
+    const md = [
+      "```derive-table wide",
+      `| ${wide.join(" | ")} |`,
+      `| ${wide.map(() => "---").join(" | ")} |`,
+      "```",
+      "",
+      "```derive-table ok",
+      "| a |",
+      "| - |",
+      "```",
+      "",
+      "```derive-figure bad",
+      '{"url":"javascript:alert(1)"}',
+      "```",
+    ].join("\n")
+    const { bindings, advisories, errors } = parseDynamicBindings(md, "text/markdown")
+    expect(bindings.map((b) => b.name)).toEqual(["ok"])
+    expect(advisories).toEqual([])
+    expect(errors).toEqual([
+      'Dynamic table "wide" cannot be published: a table is limited to 64 columns.',
+      expect.stringMatching(/^Dynamic figure "bad" cannot be published: /),
+    ])
+    const rows = Array.from({ length: 10_001 }, () => "<tr><td>x</td></tr>").join("")
+    const html = `<table data-derive-table="tall"><tr><th>a</th></tr>${rows}</table>`
+    expect(parseDynamicBindings(html, "text/html").errors).toEqual([
+      'Dynamic table "tall" cannot be published: a table is limited to 10000 rows.',
+    ])
   })
 
   it("reads HTML tables and figures through their data attributes", () => {

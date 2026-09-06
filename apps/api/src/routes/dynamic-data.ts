@@ -76,19 +76,28 @@ const Patch = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("figure"), figure: Figure.partial(), ...Meta }),
 ])
 
-const parseStored = (row: DynamicSlotRecord): DynamicValue => {
-  const value = validateDynamicValue(JSON.parse(row.json))
-  if (typeof value === "string") throw new Error(`stored dynamic slot is invalid: ${value}`)
-  return value
+// A stored row the contract no longer accepts (written before a cap existed) is named,
+// never a 500: the list leaves it out, a read or patch says why, and a PUT replaces it.
+const parseStored = (row: DynamicSlotRecord): DynamicValue | string => {
+  try {
+    return validateDynamicValue(JSON.parse(row.json))
+  } catch {
+    return "the stored value is not valid JSON"
+  }
 }
+const invalidStored = (c: Context, name: string, reason: string) =>
+  fail(
+    c,
+    409,
+    `dynamic slot "${name}" holds a value the contract no longer accepts (${reason}); PUT a full value to replace it`,
+  )
 
 const fragmentOf = (value: DynamicValue): string =>
   value.kind === "table"
     ? renderDynamicTableInner(value.table)
     : renderDynamicFigureInner(value.figure)
 
-const slotJson = (row: DynamicSlotRecord, withHtml = false) => {
-  const value = parseStored(row)
+const slotJson = (row: DynamicSlotRecord, value: DynamicValue, withHtml = false) => {
   return {
     name: row.name,
     kind: row.kind,
@@ -159,7 +168,16 @@ export const dynamicDataRoutes = (ctx: AppContext) => {
     const n = await versionFor(c, artifact)
     if (n instanceof Response) return n
     const rows = await meta.listDynamicSlots(artifact.id, n)
-    return c.json({ version: n, slots: rows.map((row) => slotJson(row)) })
+    const slots = []
+    for (const row of rows) {
+      const value = parseStored(row)
+      if (typeof value === "string") {
+        log.warn("dynamic slot skipped", { name: row.name, n, reason: value })
+        continue
+      }
+      slots.push(slotJson(row, value))
+    }
+    return c.json({ version: n, slots })
   })
 
   app.get("/v1/artifacts/:shortId/dynamic/:name", async (c) => {
@@ -171,8 +189,10 @@ export const dynamicDataRoutes = (ctx: AppContext) => {
     if (n instanceof Response) return n
     const row = await meta.getDynamicSlot(artifact.id, n, name)
     if (!row) return fail(c, 404, `no dynamic slot "${name}" in version ${n}`)
+    const value = parseStored(row)
+    if (typeof value === "string") return invalidStored(c, name, value)
     log.info("dynamic_read", { name, kind: row.kind, surface: "api" })
-    return c.json(slotJson(row, c.req.query("format") === "html"))
+    return c.json(slotJson(row, value, c.req.query("format") === "html"))
   })
 
   app.get("/v1/artifacts/:shortId/dynamic/:name/history", async (c) => {
@@ -236,6 +256,7 @@ export const dynamicDataRoutes = (ctx: AppContext) => {
     c: Context,
     w: Writable,
     row: DynamicSlotRecord,
+    value: DynamicValue,
     note: string | undefined,
   ) => {
     // The value and its live broadcast are the hot path; the revision ledger is
@@ -264,7 +285,7 @@ export const dynamicDataRoutes = (ctx: AppContext) => {
       }),
     )
     log.info("dynamic_write", { name: row.name, kind: row.kind, n: row.n, revision: row.revision })
-    return c.json(slotJson(row))
+    return c.json(slotJson(row, value))
   }
 
   const tooBig = (c: Context) =>
@@ -318,7 +339,7 @@ export const dynamicDataRoutes = (ctx: AppContext) => {
           if (gone) return gone
           continue
         }
-        return settle(c, w, inserted, body.note)
+        return settle(c, w, inserted, value, body.note)
       }
       // A binding's kind is the document's decision; changing it is a delete + put.
       if (current.kind !== value.kind)
@@ -342,7 +363,7 @@ export const dynamicDataRoutes = (ctx: AppContext) => {
         if (gone) return gone
         continue
       }
-      return settle(c, w, updated, body.note)
+      return settle(c, w, updated, value, body.note)
     }
     return fail(c, 409, "dynamic slot changed; try again")
   })
@@ -359,7 +380,9 @@ export const dynamicDataRoutes = (ctx: AppContext) => {
         return fail(c, 404, `no dynamic slot "${w.name}" in version ${w.n}; PUT creates one`)
       if (body.expected_revision !== undefined && body.expected_revision !== current.revision)
         return fail(c, 409, `dynamic slot "${w.name}" is at revision ${current.revision}`)
-      const next = applyDynamicPatch(parseStored(current), body)
+      const stored = parseStored(current)
+      if (typeof stored === "string") return invalidStored(c, w.name, stored)
+      const next = applyDynamicPatch(stored, body)
       if (typeof next === "string") return fail(c, 400, next)
       const json = JSON.stringify(next)
       const size = dynamicValueBytes(next)
@@ -381,7 +404,7 @@ export const dynamicDataRoutes = (ctx: AppContext) => {
         if (gone) return gone
         continue
       }
-      return settle(c, w, updated, body.note)
+      return settle(c, w, updated, next, body.note)
     }
     return fail(c, 409, "dynamic slot changed; try again")
   })

@@ -11,6 +11,7 @@ import {
   isHtmlLike,
   mapJson,
   NO_EDITS_BLOCK,
+  PublishError,
   parseAsk,
   parseEdits,
   parseRevision,
@@ -351,6 +352,10 @@ export interface TurnOutcome {
      *  BillingBlockedError) — never set for any other reason. Lets a lane's apology surface
      *  the copy verbatim without re-deriving it from the error string. */
     billingBlocked?: boolean
+    /** True when the publish contract itself refused the content (a PublishError: a dynamic
+     *  placeholder over its caps, say). The model turn succeeded and the same content can
+     *  never land, so the reason is surfaced verbatim and the failure is not retryable. */
+    refused?: boolean
   }
 }
 
@@ -418,8 +423,9 @@ export const runTurn = async (input: TurnInput): Promise<TurnOutcome> => {
       failure: {
         reason: "write",
         error: e instanceof Error ? e.message : String(e),
-        retryable: !(e instanceof BillingBlockedError),
+        retryable: !(e instanceof BillingBlockedError || e instanceof PublishError),
         ...(e instanceof BillingBlockedError ? { billingBlocked: true } : {}),
+        ...(e instanceof PublishError ? { refused: true } : {}),
       },
     }
   }

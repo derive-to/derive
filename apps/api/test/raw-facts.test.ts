@@ -487,6 +487,43 @@ describe("dynamic slots follow the version boundary", () => {
     expect(body).toContain("/raw/derive-dynamic.js")
   })
 
+  it("refuses a publish whose placeholder breaks the slot contract, naming the table", async () => {
+    // A slot the store would never accept must not be seeded (every read of it would
+    // fail): the publish is refused up front, on every carrier, with the limit named.
+    const wide = Array.from({ length: 65 }, (_, i) => `c${i}`)
+    const md = [
+      "# Results",
+      "",
+      "```derive-table results",
+      `| ${wide.join(" | ")} |`,
+      `| ${wide.map(() => "---").join(" | ")} |`,
+      "```",
+    ].join("\n")
+    const refused = await publishMd(md)
+    expect(refused.status).toBe(413)
+    await expect(refused.json()).resolves.toMatchObject({
+      error: 'Dynamic table "results" cannot be published: a table is limited to 64 columns.',
+    })
+    const rows = Array.from({ length: 10_001 }, () => "<tr><td>x</td></tr>").join("")
+    const form = new FormData()
+    form.append(
+      "file",
+      new Blob([
+        enc(`<!doctype html><table data-derive-table="tall"><tr><th>a</th></tr>${rows}</table>`),
+      ]),
+      "tall.html",
+    )
+    const tall = await app.request("/v1/artifacts", { method: "POST", body: form, headers: TOKEN })
+    expect(tall.status).toBe(413)
+    expect((await tall.json()).error).toContain("10000 rows")
+    // A placeholder that is merely malformed still publishes: it seeds empty and says so.
+    const typo = await publishMd("```derive-table results\n| a |\nno separator\n```")
+    expect(typo.status).toBe(201)
+    await expect(typo.json()).resolves.toMatchObject({
+      advisories: [expect.stringMatching(/seeds empty/)],
+    })
+  })
+
   it("keeps a non-current version's slots behind the public-history gate", async () => {
     const a = await (await publishMd(MD("--"))).json()
     await publishMd(MD("--", "\nv2\n"), a.short_id)

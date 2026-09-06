@@ -76,8 +76,10 @@ curl -X PATCH $BASE/v1/artifacts/<short_id>/dynamic/results \
   Stage the image first (`stage({target:"asset"})`, POST the bytes, use the returned
   `url`); a null `url` renders a placeholder box.
 
-Writes need edit access on the artifact, exactly like a republish, and honor the
-workspace's agent-write switch. Column keys in a fence come from the header labels
+A placeholder that parses but breaks the slot contract (over 64 columns, 10,000 rows,
+512 KB, a bad figure url) refuses the publish with a 413 naming the table; trim it and
+publish again. Writes need edit access on the artifact, exactly like a republish, and honor
+the workspace's agent-write switch. Column keys in a fence come from the header labels
 (`PSNR` becomes `psnr`); read the slot once to see them.
 
 ## Read it back

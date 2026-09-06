@@ -30,6 +30,7 @@ import {
   SKILL_CONTENT_TYPE,
   SKILL_SIDECAR_PATH,
   type VersionRecord,
+  validateDynamicValue,
   validateSkillDefinition,
 } from "@derive/core"
 import type { Backplane } from "../bus"
@@ -411,6 +412,15 @@ const extractVersionData = async (
   return rows
 }
 
+const storedValue = (json: string): DynamicValue | null => {
+  try {
+    const value = validateDynamicValue(JSON.parse(json))
+    return typeof value === "string" ? null : value
+  } catch {
+    return null
+  }
+}
+
 /** Seed every dynamic slot a just-published version declares (see @derive/core
  *  dynamic-data.ts). `seedFrom` names the version whose LATEST data starts this one;
  *  a publish copies forward from n-1, a restore from the version being restored, so a
@@ -440,10 +450,11 @@ const seedDynamicSlots = async (
   for (const binding of bindings) {
     const prev =
       from >= 1 ? await meta.getDynamicSlot(version.artifact_id, from, binding.name) : null
-    const carried = prev && prev.kind === binding.kind
-    const value: DynamicValue = carried
-      ? (JSON.parse(prev.json) as DynamicValue)
-      : (binding.seed ?? emptyDynamicValue(binding.kind))
+    // Carry the previous value forward only when it still passes the contract: a row the
+    // write path accepted is valid, but rows from before a cap existed may not be, and a
+    // seed that every read refuses is worse than starting over from the placeholder.
+    const carried = prev && prev.kind === binding.kind ? storedValue(prev.json) : null
+    const value: DynamicValue = carried ?? binding.seed ?? emptyDynamicValue(binding.kind)
     const json = JSON.stringify(value)
     const row = {
       id: newId("dyn"),

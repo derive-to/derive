@@ -37,7 +37,11 @@ image and caption are the seed.
 ```
 
 A missing or null cell renders as `--`; a figure without an image renders a placeholder
-box. Names use lowercase letters, digits and dashes.
+box. Names use lowercase letters, digits and dashes. A placeholder the slot contract
+refuses (more than 64 columns or 10,000 rows, over 512 KB, a figure url that is not an
+asset or an https link) refuses the publish and names the table, since a slot that cannot
+be stored would answer every read with an error; a placeholder that is merely malformed
+seeds an empty slot and is reported in the publish receipt.
 
 ## The API
 

@@ -300,6 +300,26 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect((await meta.getVersion(rec.id, 1))?.source).toBe("mcp")
   })
 
+  it("refuses a dynamic placeholder that breaks the slot contract, naming the table", async () => {
+    const { app, token } = appWithGrant(dir, "wide-table", "openid derive:read derive:publish", {
+      encryptionKey: "wide-table-signing-secret",
+    })
+    const wide = Array.from({ length: 65 }, (_, i) => `c${i}`)
+    const content = [
+      "# Results",
+      "",
+      "```derive-table results",
+      `| ${wide.join(" | ")} |`,
+      `| ${wide.map(() => "---").join(" | ")} |`,
+      "```",
+    ].join("\n")
+    const refused = toolText(
+      await call(app, token, "publish", { title: "Wide", content, filename: "results.md" }),
+    )
+    expect(refused).toMatch(/^Publish failed: Dynamic table "results" cannot be published/)
+    expect(refused).toContain("64 columns")
+  })
+
   it("the agentWrites switch refuses a live publish — the brake reaches every grant", async () => {
     // The switch is not only the claim gate: a standing MCP connection can publish with no
     // claim in sight, so the live path itself refuses. The draft is steered into the reply

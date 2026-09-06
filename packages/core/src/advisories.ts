@@ -8,6 +8,7 @@
 
 import { isHtmlLike } from "./content-types"
 import { countSlideElements, isUnannouncedDeck } from "./decks"
+import { parseDynamicBindings } from "./dynamic-data"
 import { factDriftAdvisories, missingFactAdvisory, parseFacts, shapeOfJson } from "./facts"
 import { linkedBundleAdvisories } from "./linked-bundle"
 import type { BlobStore } from "./ports"
@@ -51,6 +52,10 @@ export const publishAdvisories = (content: string, contentType: string): string[
   // duplicate, over the per-version cap). The SAME parser persists the good facts in the
   // version-bump chain, so what's advised here and what's stored can never disagree.
   out.push(...parseFacts(content, contentType).advisories)
+  // Dynamic tables and figures that could not be bound as written (a bad name, a
+  // placeholder that seeds empty). The SAME parser seeds the good ones in the version-bump
+  // chain; what it refuses outright never reaches here (the publish itself is refused).
+  out.push(...parseDynamicBindings(content, contentType).advisories)
   out.push(...linkedBundleAdvisories(content))
   out.push(...workflowDefinitionAdvisories(content))
 

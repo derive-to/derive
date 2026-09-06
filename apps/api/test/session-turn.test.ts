@@ -147,6 +147,33 @@ describe("a turn that edits", () => {
   })
 })
 
+describe("a revision the publish contract refuses", () => {
+  it("fails the write with the reason, and writes nothing", async () => {
+    const { meta, blobs, artifact } = await setup()
+    const wide = Array.from({ length: 65 }, (_, i) => `c${i}`)
+    const content = [
+      "# Results",
+      "",
+      "```derive-table results",
+      `| ${wide.join(" | ")} |`,
+      `| ${wide.map(() => "---").join(" | ")} |`,
+      "```",
+    ].join("\n")
+    const res = await runSessionTurn(deps(meta, blobs, revision(content)), {
+      session: session(),
+      subject: { kind: "artifact", id: "doc1" },
+      artifact,
+      transcript: transcript("add the results table"),
+      onBehalf: ED,
+    })
+    expect(res.outcome).toBe("failed")
+    expect(res.wrote).toBeNull()
+    expect(res.reply).toContain('Dynamic table "results" cannot be published')
+    expect(res.reply).toContain("64 columns")
+    expect((await meta.getArtifactById("a1"))?.current_version).toBe(1)
+  })
+})
+
 describe("a blocked write surfaces its draft instead of landing", () => {
   const cases = [
     {

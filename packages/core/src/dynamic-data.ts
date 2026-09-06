@@ -383,16 +383,18 @@ const parseSeedBody = (kind: DynamicKind, body: string): DynamicValue | string =
     } catch {
       return "the placeholder body is not valid JSON"
     }
+    // Shape only: the contract (caps, column keys, url grammar) is checked by the caller,
+    // so a placeholder that parses but breaks it is a refusal, not a typo.
     if (kind === "table") {
       const table = isRecord(parsed) && "columns" in parsed ? parsed : null
       return table
-        ? validateDynamicValue({ kind: "table", table })
+        ? ({ kind: "table", table } as unknown as DynamicValue)
         : "a JSON table needs columns and rows"
     }
-    return validateDynamicValue({
+    return {
       kind: "figure",
       figure: { url: null, ...(isRecord(parsed) ? parsed : {}) },
-    })
+    } as unknown as DynamicValue
   }
   if (kind === "figure") return "a figure placeholder body must be JSON"
   const table = parsePipeTable(trimmed)
@@ -408,10 +410,12 @@ export const parseDynamicFence = (
   return m ? { kind: m[1] as DynamicKind, name: m[2] as string } : null
 }
 
-/** Render one markdown fence body as its seed (used when no slot exists yet). */
+/** Render one markdown fence body as its seed (used when no slot exists yet). A body the
+ *  contract refuses renders empty: a publish refuses it now, and older versions carry on. */
 export const renderDynamicSeed = (kind: DynamicKind, name: string, body: string): string => {
   const seed = parseSeedBody(kind, body)
-  return renderDynamicValue(name, typeof seed === "string" ? emptyDynamicValue(kind) : seed)
+  const value = typeof seed === "string" ? seed : validateDynamicValue(seed)
+  return renderDynamicValue(name, typeof value === "string" ? emptyDynamicValue(kind) : value)
 }
 
 interface MarkdownCodeToken {
@@ -504,16 +508,25 @@ const htmlFigureSeed = (html: string, all: HtmlTag[], i: number, close: number):
 
 export interface DynamicBindings {
   bindings: DynamicBinding[]
+  /** Soft: a bad name, one slot too many, a placeholder that is not a placeholder at all
+   *  (a typo'd separator, invalid JSON). The document publishes; the binding is dropped or
+   *  seeds empty, and the receipt says so. */
   advisories: string[]
+  /** Hard: a placeholder that parses but breaks the slot contract (over the column, row,
+   *  cell or byte caps, an undeclared column, a bad figure url). A publish refuses these,
+   *  because a slot that cannot be stored would answer every read with an error. */
+  errors: string[]
 }
 
 /** Every binding a document declares, with its seed. HTML-like carriers bind through
  *  `data-derive-table` / `data-derive-figure`; Markdown through the two fences. First
  *  occurrence of a name wins; an unusable seed keeps the binding (it seeds empty) and says
- *  so, because a document must never lose a slot over a typo in its placeholder. */
+ *  so, because a document must never lose a slot over a typo in its placeholder; a seed
+ *  the contract refuses is an error the publish must not swallow. */
 export const parseDynamicBindings = (source: string, contentType: string): DynamicBindings => {
   const bindings: DynamicBinding[] = []
   const advisories: string[] = []
+  const errors: string[] = []
   const seen = new Set<string>()
   const add = (name: string, kind: DynamicKind, seed: DynamicValue | string) => {
     if (!isDynamicName(name)) {
@@ -533,7 +546,23 @@ export const parseDynamicBindings = (source: string, contentType: string): Dynam
     if (typeof seed === "string") {
       advisories.push(`Dynamic ${kind} "${name}" seeds empty: ${seed}.`)
       bindings.push({ name, kind, seed: null })
-    } else bindings.push({ name, kind, seed })
+      return
+    }
+    // The one validator the write path uses, so what a publish refuses and what a PUT
+    // refuses can never disagree; the byte cap is the route's other gate.
+    const checked = validateDynamicValue(seed)
+    if (typeof checked === "string") {
+      errors.push(`Dynamic ${kind} "${name}" cannot be published: ${checked}.`)
+      return
+    }
+    const bytes = dynamicValueBytes(checked)
+    if (bytes > DYNAMIC_MAX_BYTES) {
+      errors.push(
+        `Dynamic ${kind} "${name}" cannot be published: its placeholder is ${Math.ceil(bytes / 1024)} KB and a slot is limited to ${DYNAMIC_MAX_BYTES / 1024} KB.`,
+      )
+      return
+    }
+    bindings.push({ name, kind, seed: checked })
   }
   if (isMarkdownLike(contentType)) {
     const walk = (tokens: MarkdownCodeToken[]) => {
@@ -547,9 +576,9 @@ export const parseDynamicBindings = (source: string, contentType: string): Dynam
       }
     }
     walk(marked.lexer(source, { gfm: true }) as unknown as MarkdownCodeToken[])
-    return { bindings, advisories }
+    return { bindings, advisories, errors }
   }
-  if (!isHtmlLike(contentType)) return { bindings, advisories }
+  if (!isHtmlLike(contentType)) return { bindings, advisories, errors }
   const all = tags(source)
   for (let i = 0; i < all.length; i++) {
     const tag = all[i] as HtmlTag
@@ -574,8 +603,12 @@ export const parseDynamicBindings = (source: string, contentType: string): Dynam
       })
     }
   }
-  return { bindings, advisories }
+  return { bindings, advisories, errors }
 }
+
+/** Only the refusals: what a publish checks before it stores a single file. */
+export const dynamicSeedErrors = (source: string, contentType: string): string[] =>
+  parseDynamicBindings(source, contentType).errors
 
 /** Serve-time substitution for an HTML carrier: every bound element whose slot exists gets
  *  its inner markup replaced by the slot's render; a leading authored `<caption>` is kept
