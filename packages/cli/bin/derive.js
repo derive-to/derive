@@ -94,7 +94,7 @@ import {
 } from "../src/workflow.js"
 import { runGithubWorkflowHarness } from "../src/workflow-run.js"
 
-const SKILL_USAGE_BATCH_SIZE = 500
+const SKILL_USAGE_BATCH_SIZE = 20
 
 const args = process.argv.slice(2)
 const cmd = args.shift()
