@@ -34,6 +34,10 @@ import { IMMUTABLE_CACHE, RAW_HEADERS, rewriteAbsoluteUrls, toBody } from "./htt
  * `cacheControlFor`): a shared cache must never store a gated artifact's bytes and
  * replay them to an unauthorized viewer, so only fully-public content is immutable.
  */
+/** A binding attribute on a real table or figure tag: what every carrier emits for a
+ *  declared dynamic name (markdown from its fence, HTML as authored), rows or not. */
+const BOUND_TAG = /<(?:table|figure)\b[^>]*\sdata-derive-(?:table|figure)="/
+
 export const serveContent = async (
   c: Context,
   blobs: BlobStore,
@@ -67,10 +71,15 @@ export const serveContent = async (
    *  loaded by the caller that knows the artifact and version. Substituted at serve
    *  time so every consumer of these bytes (the viewer, screenshots, exports, a vanity
    *  host, search) sees the current data; the in-frame runtime is injected only when
-   *  something is bound, so an unbound page pays nothing. */
+   *  the page is bound, so an unbound page pays nothing. */
   dynamic: DynamicSlotRecord[] = [],
+  /** The Cache-Control for a BOUND page: one that declares a dynamic table or figure,
+   *  whether or not a slot row exists yet (the seed pass may still be running, or every
+   *  slot was deleted). Its cells change without a new version, so it must never sit in
+   *  a cache past the next request; omitted, the plain policy applies to bound pages too
+   *  (callers that serve a snapshot, never a live page). */
+  boundCacheControl?: string,
 ) => {
-  const headers = { ...RAW_HEADERS, "Cache-Control": cacheControl }
   const slots = new Map<string, DynamicValue>()
   for (const row of dynamic) {
     // A row the contract no longer accepts renders its placeholder rather than failing
@@ -80,7 +89,17 @@ export const serveContent = async (
       if (typeof value !== "string") slots.set(row.name, value)
     } catch {}
   }
-  const runtimeScripts = SHARED_STATE_SCRIPT + (slots.size ? DYNAMIC_DATA_SCRIPT : "")
+  // Bound by declaration: the rendered document carries a binding attribute on a real
+  // table or figure tag (every carrier emits one for a declared name, rows or not), or a
+  // slot row was substituted. Tag-anchored, so prose about the feature cannot match.
+  const bound = (doc: string): boolean => slots.size > 0 || BOUND_TAG.test(doc)
+  const hdrs = (isBound: boolean) => ({
+    ...RAW_HEADERS,
+    "Cache-Control": isBound && boundCacheControl ? boundCacheControl : cacheControl,
+  })
+  const headers = hdrs(false)
+  const runtimeScripts = (isBound: boolean) =>
+    SHARED_STATE_SCRIPT + (isBound ? DYNAMIC_DATA_SCRIPT : "")
   const rf = (doc: string) => (reflow ? reflowHtml(doc) : doc)
   // ?marks=1 draws numbered @N badges on the page's top-level landmark regions — the
   // marked-render variant of the render rung (see marks-script.ts). Gated on a query
@@ -103,24 +122,25 @@ export const serveContent = async (
     }
   }
   const withRuntime = anchors
-    ? (doc: string) =>
+    ? (doc: string, isBound = bound(doc)) =>
         injectArtifactRuntimeScripts(
           doc,
-          structuralSourceValidity(doc) + runtimeScripts + SELECTION_SCRIPT,
+          structuralSourceValidity(doc) + runtimeScripts(isBound) + SELECTION_SCRIPT,
         )
     : (doc: string) => doc
   // renderMarkdown already carries SELECTION_SCRIPT in its generated shell, so it
-  // needs only the early shared-state runtime (plus the dynamic-data runtime when a
-  // slot is bound). Injecting the full pair would execute the anchor client twice.
+  // needs only the early shared-state runtime (plus the dynamic-data runtime when the
+  // page is bound). Injecting the full pair would execute the anchor client twice.
   const withSharedState = anchors
-    ? (doc: string) =>
-        slots.size
-          ? injectArtifactRuntimeScripts(doc, runtimeScripts)
+    ? (doc: string, isBound = bound(doc)) =>
+        isBound
+          ? injectArtifactRuntimeScripts(doc, runtimeScripts(true))
           : injectSharedStateScript(doc)
     : (doc: string) => doc
   // Runtime scripts precede authored meta CSP and execute in parse-safe order. Marks and
   // route-specific chrome remain appended because they are optional DOM enhancements.
-  const htmlBody = (doc: string): string => withRuntime(rf(doc)) + marks + append
+  const htmlBody = (doc: string, isBound?: boolean): string =>
+    withRuntime(rf(doc), isBound) + marks + append
   // Legacy decks already have a source-level slide boundary. Optimistically expose
   // their safe direct children as movable nodes in the app render; the identical
   // pure transform is persisted by materializeEdits on the first save. A malformed
@@ -156,8 +176,9 @@ export const serveContent = async (
     if (entry.type.startsWith("text/html") || entry.type.startsWith("text/css")) {
       const rewritten = rewriteAbsoluteUrls(new TextDecoder().decode(data), prefix.slice(0, -1))
       // Bundle pages get the anchor client too — comments stick everywhere.
+      // Bundle pages are never seeded, so only a substituted row makes one bound.
       const out = entry.type.startsWith("text/html")
-        ? withRuntime(rf(rewritten)) + marks + append
+        ? withRuntime(rf(rewritten), slots.size > 0) + marks + append
         : rewritten
       return c.body(out, 200, { ...headers, "Content-Type": entry.type })
     }
@@ -174,7 +195,7 @@ export const serveContent = async (
       // would otherwise render it as a stray `<hr>` + heading. The parsed fields surface
       // as skill chrome around this iframe, not in the document body.
       const body = parseFrontmatter(new TextDecoder().decode(data)).body
-      const html = withSharedState(await renderMarkdown(body, title)) + append
+      const html = withSharedState(await renderMarkdown(body, title), slots.size > 0) + append
       return c.body(html, 200, { ...headers, "Content-Type": "text/html; charset=utf-8" })
     }
     return c.body(toBody(data), 200, { ...headers, "Content-Type": entry.type })
@@ -198,22 +219,25 @@ export const serveContent = async (
     // the label says — the type sniff is a hint, this is the backstop.
     if (looksLikeHtmlDocument(text)) {
       onMismatch?.()
-      return c.body(await htmlBody(text), 200, {
-        ...headers,
+      const doc = applyDynamicBindings(text, slots)
+      const isBound = bound(doc)
+      return c.body(htmlBody(doc, isBound), 200, {
+        ...hdrs(isBound),
         "Content-Type": "text/html; charset=utf-8",
       })
     }
-    const html = withSharedState(await renderMarkdown(text, title, { dynamic: slots })) + append
-    return c.body(html, 200, { ...headers, "Content-Type": "text/html; charset=utf-8" })
+    const rendered = await renderMarkdown(text, title, { dynamic: slots })
+    const isBound = bound(rendered)
+    const html = withSharedState(rendered, isBound) + append
+    return c.body(html, 200, { ...hdrs(isBound), "Content-Type": "text/html; charset=utf-8" })
   }
 
   // html file artifact — any path serves the document (+ selection capture)
   const ct = mimeFor(path || "index.html")
   if (ct.startsWith("text/html")) {
-    const html = await htmlBody(
-      applyDynamicBindings(withDeckStructure(new TextDecoder().decode(data)), slots),
-    )
-    return c.body(html, 200, { ...headers, "Content-Type": ct })
+    const doc = applyDynamicBindings(withDeckStructure(new TextDecoder().decode(data)), slots)
+    const isBound = bound(doc)
+    return c.body(htmlBody(doc, isBound), 200, { ...hdrs(isBound), "Content-Type": ct })
   }
   return c.body(toBody(data), 200, { ...headers, "Content-Type": ct })
 }

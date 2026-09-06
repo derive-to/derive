@@ -250,6 +250,7 @@ describe("serveContent — dynamic tables and figures", () => {
       ctx(),
       blobStore({
         md: fence,
+        plain: "# Results\n\nNo table here.\n",
         html: '<table data-derive-table="results"><caption>Totals</caption><tr><td>old</td></tr></table><table><tr><td>plain</td></tr></table>',
       }),
       content,
@@ -262,6 +263,7 @@ describe("serveContent — dynamic tables and figures", () => {
       true,
       "",
       dynamic,
+      "no-cache",
     )
 
   it("substitutes a markdown fence with the slot's current value and injects the runtime", async () => {
@@ -273,14 +275,26 @@ describe("serveContent — dynamic tables and figures", () => {
     expect(body).toContain(DYNAMIC)
     expect(body).toContain(SHARED)
     expect(body.split(SCRIPT).length).toBe(2) // the anchor client exactly once
-    expectSandbox(res)
+    // A bound page is served with the mutable policy the caller passed for it.
+    expectSandbox(res, "no-cache")
   })
 
-  it("renders the placeholder and skips the runtime when no slot is bound", async () => {
+  it("serves a declared binding mutable with the runtime before any slot row exists", async () => {
+    // The seed pass may still be running, or every slot was deleted: the document still
+    // declares the table, so the page must not be cached as immutable bytes, and the
+    // runtime must be there to swap the cells in when the data lands.
     const res = await serve({ blob_key: "md", content_type: "text/markdown" }, [])
     const body = await res.text()
     expect(body).toContain("<td>base</td><td>--</td>")
+    expect(body).toContain(DYNAMIC)
+    expect(res.headers.get("cache-control")).toBe("no-cache")
+  })
+
+  it("keeps an unbound page immutable and free of the runtime", async () => {
+    const res = await serve({ blob_key: "plain", content_type: "text/markdown" }, [])
+    const body = await res.text()
     expect(body).not.toContain(DYNAMIC)
+    expect(res.headers.get("cache-control")).toBe(IMMUTABLE)
   })
 
   it("replaces a bound HTML table's rows, keeps its caption, leaves unbound tables alone", async () => {
@@ -291,14 +305,15 @@ describe("serveContent — dynamic tables and figures", () => {
     expect(body).not.toContain("old")
     expect(body).toContain("<table><tr><td>plain</td></tr></table>")
     expect(body).toContain(DYNAMIC)
-    expectSandbox(res)
+    expectSandbox(res, "no-cache")
   })
 
   it("renders the placeholder when a stored value no longer validates", async () => {
     const res = await serve({ blob_key: "md", content_type: "text/markdown" }, [slot("{not json")])
     const body = await res.text()
     expect(body).toContain("<td>base</td><td>--</td>")
-    expect(body).not.toContain(DYNAMIC)
+    expect(body).toContain(DYNAMIC)
+    expect(res.headers.get("cache-control")).toBe("no-cache")
   })
 })
 

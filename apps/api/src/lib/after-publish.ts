@@ -78,6 +78,18 @@ export const emitVersionBump = async (
   dynamicSeedFrom?: number,
 ): Promise<NewVersionData[]> => {
   const { meta, blobs, bus, notifyRender } = deps
+  // Give this version its dynamic tables and figures their START POINT first: each binding
+  // the document declares gets a slot seeded from the previous version's latest value (or
+  // from the inline placeholder for a brand-new name). First, because everything below
+  // reads the version as it will be seen: the viewer reloads on the version event, the
+  // renderer screenshots it, and the search index projects its data. Best-effort: a hiccup
+  // here must never fail a publish that already went live, and a page whose slot is
+  // missing renders its placeholder rather than nothing.
+  try {
+    await seedDynamicSlots(meta, blobs, version, dynamicSeedFrom, preparedSource)
+  } catch (err) {
+    log.error("dynamic slot seeding failed", { artifact: artifact.id, err: String(err) })
+  }
   bus.publish(artifact.id, { type: "version.published", n: version.n, message: version.message })
   await notifyRender?.(artifact, version.n)
   await publishSweepEvents(meta, blobs, bus, artifact.id, version, preparedSource)
@@ -108,16 +120,6 @@ export const emitVersionBump = async (
     storedRows = await extractVersionData(meta, blobs, version, deps.background, preparedSource)
   } catch (err) {
     log.error("data-slot extraction failed", { artifact: artifact.id, err: String(err) })
-  }
-  // Give this version its dynamic tables and figures their START POINT: each binding the
-  // document declares gets a slot seeded from the previous version's latest value (or
-  // from the inline placeholder for a brand-new name). Same best-effort contract as the
-  // facts pass above: a hiccup here must never fail a publish that already went live, and
-  // a page whose slot is missing renders its placeholder rather than nothing.
-  try {
-    await seedDynamicSlots(meta, blobs, version, dynamicSeedFrom, preparedSource)
-  } catch (err) {
-    log.error("dynamic slot seeding failed", { artifact: artifact.id, err: String(err) })
   }
   // Skill relations are a query index over immutable bundle bytes, not another definition.
   // Run on every canonical version bump (publish, restore, agent edit) so no surface can drift.

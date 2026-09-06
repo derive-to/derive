@@ -469,6 +469,24 @@ describe("dynamic slots follow the version boundary", () => {
       })
   })
 
+  it("keeps a bound page mutable and live after its last slot is deleted", async () => {
+    const a = await (await publishMd(MD("--"))).json()
+    expect((await setCell(a.short_id, 0.5)).status).toBe(200)
+    const gone = await app.request(`/v1/artifacts/${a.short_id}/dynamic/results`, {
+      method: "DELETE",
+      headers: TOKEN,
+    })
+    expect(gone.status).toBe(200)
+    // No row now, but the document still declares the table: the page falls back to the
+    // authored placeholder, keeps the runtime for the next write, and is never cached as
+    // immutable bytes.
+    const page = await app.request(`/raw/${a.short_id}/v/1/index.html`, { headers: TOKEN })
+    expect(page.headers.get("cache-control")).toBe("private, no-cache")
+    const body = await page.text()
+    expect(body).toContain("<td>base</td><td>--</td>")
+    expect(body).toContain("/raw/derive-dynamic.js")
+  })
+
   it("keeps a non-current version's slots behind the public-history gate", async () => {
     const a = await (await publishMd(MD("--"))).json()
     await publishMd(MD("--", "\nv2\n"), a.short_id)

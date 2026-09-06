@@ -235,7 +235,7 @@ export const rawRoutes = (ctx: AppContext) => {
   //
   // Password-locked artifacts keep no-store: the lock is a per-view challenge, and
   // "cached until the token expires" is not the semantic anyone expects from it.
-  // A version that binds a dynamic slot is no longer immutable bytes: its table cells
+  // A version that declares a dynamic slot is no longer immutable bytes: its table cells
   // and figure images change without a new version, so it must not sit in any cache
   // past the next request. `private` still keeps a gated artifact out of shared caches.
   const mutableCache = (a: ArtifactRecord): string =>
@@ -277,9 +277,7 @@ export const rawRoutes = (ctx: AppContext) => {
       artifact.title,
       prefix,
       path,
-      dynamic.length
-        ? mutableCache(artifact)
-        : (cacheControl ?? cacheControlFor(artifact.link_role, !!artifact.password_hash)),
+      cacheControl ?? cacheControlFor(artifact.link_role, !!artifact.password_hash),
       // Self-heal: this view just proved the bytes are HTML under a markdown label.
       // Fix the stored type off the hot path (waitUntil on edge, inline in tests) so
       // every view repairs it — the publish-time sniff stops new ones, this drains
@@ -289,6 +287,10 @@ export const rawRoutes = (ctx: AppContext) => {
       undefined,
       "",
       dynamic,
+      // A page that declares a binding is served mutable whether or not its rows exist
+      // yet: serveContent decides from the document, so a version read in the seed
+      // window (or after its last slot was deleted) is never cached as immutable bytes.
+      mutableCache(artifact),
     )
   }
 
