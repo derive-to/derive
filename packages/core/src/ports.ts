@@ -4394,7 +4394,7 @@ export interface NewView {
   artifact_id: string
   version: number
   viewer: string
-  viewer_kind: "user" | "anon"
+  viewer_kind: "user" | "anon" | "agent"
 }
 
 export interface ViewStats {
@@ -4413,6 +4413,13 @@ export interface ViewStats {
   daily: { day: string; count: number }[]
   /** Most-recent distinct viewers, newest first. `avatar` is set for users. */
   recent: { viewer: string; kind: "user" | "anon"; at: string; avatar?: string | null }[]
+  /** MCP artifact reads. These stay separate from browser views so an agent cannot
+   *  inflate the audience metrics. Each successful read tool call is one event. */
+  agentReads: {
+    total: number
+    last24h: number
+    recent: { agent: string; version: number; at: string }[]
+  }
 }
 
 // open      — live feedback awaiting a reply/resolution

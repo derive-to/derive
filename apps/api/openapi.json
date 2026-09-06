@@ -3571,6 +3571,49 @@
                 "at"
               ]
             }
+          },
+          "agentReads": {
+            "type": "object",
+            "properties": {
+              "total": {
+                "type": "number",
+                "description": "Artifact reads through the Derive MCP read tool"
+              },
+              "last24h": {
+                "type": "number",
+                "description": "MCP reads in the trailing 24 hours"
+              },
+              "recent": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "agent": {
+                      "type": "string",
+                      "description": "Agent or OAuth client name"
+                    },
+                    "version": {
+                      "type": "number",
+                      "description": "Artifact version returned to the agent"
+                    },
+                    "at": {
+                      "type": "string",
+                      "description": "When that agent last read the artifact"
+                    }
+                  },
+                  "required": [
+                    "agent",
+                    "version",
+                    "at"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "total",
+              "last24h",
+              "recent"
+            ]
           }
         },
         "required": [
@@ -3581,7 +3624,8 @@
           "reads",
           "perVersion",
           "daily",
-          "recent"
+          "recent",
+          "agentReads"
         ]
       },
       "Webhook": {

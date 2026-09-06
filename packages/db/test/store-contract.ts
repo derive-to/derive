@@ -1862,7 +1862,15 @@ export function runStoreContract(
         viewer: "anon1",
         viewer_kind: "anon",
       })
+      await store.recordView({
+        id: uuid(),
+        artifact_id: a.id,
+        version: 1,
+        viewer: "Claude",
+        viewer_kind: "agent",
+      })
       const stats = await store.viewStats(a.id)
+      // Agent reads use the same retained event ledger but never inflate audience.
       expect(stats.total).toBe(2)
       expect(stats.unique).toBe(2)
       expect(stats.anonViewers).toBe(1)
@@ -1871,6 +1879,8 @@ export function runStoreContract(
       // The rolling 24h window powers the Insights "24h" tile. Both rows were just
       // recorded, so all of them fall inside it.
       expect(stats.last24h).toBe(2)
+      expect(stats.agentReads).toMatchObject({ total: 1, last24h: 1 })
+      expect(stats.agentReads.recent[0]).toMatchObject({ agent: "Claude", version: 1 })
       expect((await store.viewCounts([a.id]))[a.id]).toBe(2)
       expect(await store.viewedSince(a.id, "amy", 1, "2000-01-01T00:00:00.000Z")).toBe(true)
       // Cleanup helpers.
@@ -1911,6 +1921,15 @@ export function runStoreContract(
 
     it("stamps first_foreign_view_at on the first view only (the activation moment)", async () => {
       const a = await store.createArtifact(newArtifact())
+      expect((await store.getByShortId(a.short_id))?.first_foreign_view_at).toBeNull()
+
+      await store.recordView({
+        id: uuid(),
+        artifact_id: a.id,
+        version: 1,
+        viewer: "Claude",
+        viewer_kind: "agent",
+      })
       expect((await store.getByShortId(a.short_id))?.first_foreign_view_at).toBeNull()
 
       await store.recordView({

@@ -182,6 +182,11 @@ export interface ViewStatsJson {
   perVersion: { version: number; count: number }[]
   daily: { day: string; count: number }[]
   recent: { viewer: string; kind: "user" | "anon"; at: string }[]
+  agentReads: {
+    total: number
+    last24h: number
+    recent: { agent: string; version: number; at: string }[]
+  }
 }
 
 /** A library is an access-scoped catalog of immutable template starters. */

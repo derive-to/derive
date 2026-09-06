@@ -8062,6 +8062,20 @@ export interface components {
                 /** @description The user's avatar URL, or null/absent for anonymous viewers */
                 avatar?: string | null;
             }[];
+            agentReads: {
+                /** @description Artifact reads through the Derive MCP read tool */
+                total: number;
+                /** @description MCP reads in the trailing 24 hours */
+                last24h: number;
+                recent: {
+                    /** @description Agent or OAuth client name */
+                    agent: string;
+                    /** @description Artifact version returned to the agent */
+                    version: number;
+                    /** @description When that agent last read the artifact */
+                    at: string;
+                }[];
+            };
         };
         Webhook: {
             id: string;

@@ -383,13 +383,13 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
           `INSERT INTO view (id, artifact_id, version, viewer, viewer_kind) VALUES (?,?,?,?,?)`,
         )
         .run(v.id, v.artifact_id, v.version, v.viewer, v.viewer_kind)
-      // Activation stamp: first non-author view only (the route already excluded
-      // owner self-views). WHERE IS NULL keeps it a one-time write.
-      raw
-        .prepare(
-          `UPDATE artifact SET first_foreign_view_at = ? WHERE id = ? AND first_foreign_view_at IS NULL`,
-        )
-        .run(new Date().toISOString(), v.artifact_id)
+      // Agent reads are activity, not audience activation.
+      if (v.viewer_kind !== "agent")
+        raw
+          .prepare(
+            `UPDATE artifact SET first_foreign_view_at = ? WHERE id = ? AND first_foreign_view_at IS NULL`,
+          )
+          .run(new Date().toISOString(), v.artifact_id)
     },
     // See MetaStore.confirmRead. One idempotent statement, so the repeat heartbeats
     // that follow cost a single indexed probe.
@@ -433,13 +433,19 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
       const dayAgo = new Date(Date.now() - LAST_24H_MS).toISOString()
       const n = (q: string, ...p: unknown[]) => (raw.prepare(q).get(...p) as { n: number }).n
       return {
-        total: n(`SELECT count(*) n FROM view WHERE artifact_id=?`, artifactId),
+        total: n(
+          `SELECT count(*) n FROM view WHERE artifact_id=? AND viewer_kind!='agent'`,
+          artifactId,
+        ),
         last24h: n(
-          `SELECT count(*) n FROM view WHERE artifact_id=? AND created_at>=?`,
+          `SELECT count(*) n FROM view WHERE artifact_id=? AND viewer_kind!='agent' AND created_at>=?`,
           artifactId,
           dayAgo,
         ),
-        unique: n(`SELECT count(DISTINCT viewer) n FROM view WHERE artifact_id=?`, artifactId),
+        unique: n(
+          `SELECT count(DISTINCT viewer) n FROM view WHERE artifact_id=? AND viewer_kind!='agent'`,
+          artifactId,
+        ),
         anonViewers: n(
           `SELECT count(DISTINCT viewer) n FROM view WHERE artifact_id=? AND viewer_kind='anon'`,
           artifactId,
@@ -447,19 +453,31 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
         reads: n(`SELECT count(*) n FROM view_read WHERE artifact_id=?`, artifactId),
         perVersion: raw
           .prepare(
-            `SELECT version, count(*) count FROM view WHERE artifact_id=? GROUP BY version ORDER BY version`,
+            `SELECT version, count(*) count FROM view WHERE artifact_id=? AND viewer_kind!='agent' GROUP BY version ORDER BY version`,
           )
           .all(artifactId) as { version: number; count: number }[],
         daily: raw
           .prepare(
-            `SELECT substr(created_at,1,10) day, count(*) count FROM view WHERE artifact_id=? AND created_at>=? GROUP BY day ORDER BY day`,
+            `SELECT substr(created_at,1,10) day, count(*) count FROM view WHERE artifact_id=? AND viewer_kind!='agent' AND created_at>=? GROUP BY day ORDER BY day`,
           )
           .all(artifactId, cutoff) as { day: string; count: number }[],
         recent: raw
           .prepare(
-            `SELECT viewer, viewer_kind kind, max(created_at) at FROM view WHERE artifact_id=? GROUP BY viewer, viewer_kind ORDER BY at DESC LIMIT 8`,
+            `SELECT viewer, viewer_kind kind, max(created_at) at FROM view WHERE artifact_id=? AND viewer_kind!='agent' GROUP BY viewer, viewer_kind ORDER BY at DESC LIMIT 8`,
           )
           .all(artifactId) as { viewer: string; kind: "user" | "anon"; at: string }[],
+        agentReads: {
+          ...(raw
+            .prepare(
+              `SELECT count(*) total, count(CASE WHEN created_at>=? THEN 1 END) last24h FROM view WHERE artifact_id=? AND viewer_kind='agent'`,
+            )
+            .get(dayAgo, artifactId) as { total: number; last24h: number }),
+          recent: raw
+            .prepare(
+              `SELECT viewer agent, version, created_at at FROM view WHERE artifact_id=? AND viewer_kind='agent' ORDER BY created_at DESC LIMIT 8`,
+            )
+            .all(artifactId) as { agent: string; version: number; at: string }[],
+        },
       }
     },
     viewCounts: async (artifactIds): Promise<Record<string, number>> => {
@@ -467,7 +485,7 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
       const ph = artifactIds.map(() => "?").join(",")
       const rows = raw
         .prepare(
-          `SELECT artifact_id, count(*) c FROM view WHERE artifact_id IN (${ph}) GROUP BY artifact_id`,
+          `SELECT artifact_id, count(*) c FROM view WHERE viewer_kind!='agent' AND artifact_id IN (${ph}) GROUP BY artifact_id`,
         )
         .all(...artifactIds) as { artifact_id: string; c: number }[]
       const out: Record<string, number> = {}

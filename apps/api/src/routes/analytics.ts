@@ -53,6 +53,17 @@ export const analyticsRoutes = (ctx: AppContext) => {
             .describe("The user's avatar URL, or null/absent for anonymous viewers"),
         }),
       ),
+      agentReads: z.object({
+        total: z.number().describe("Artifact reads through the Derive MCP read tool"),
+        last24h: z.number().describe("MCP reads in the trailing 24 hours"),
+        recent: z.array(
+          z.object({
+            agent: z.string().describe("Agent or OAuth client name"),
+            version: z.number().describe("Artifact version returned to the agent"),
+            at: z.string().describe("When that agent last read the artifact"),
+          }),
+        ),
+      }),
     })
     .openapi("Analytics")
 

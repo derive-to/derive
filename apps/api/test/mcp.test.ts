@@ -96,6 +96,27 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(r.wwwAuth).toContain("oauth-protected-resource")
   })
 
+  it("records artifact reads as agent activity without inflating browser views", async () => {
+    const { app, token, meta } = appWithGrant(
+      dir,
+      "read-activity",
+      "openid derive:read derive:publish",
+    )
+    const { short_id: shortId } = (await (await publish(app, token, "Read activity")).json()) as {
+      short_id: string
+    }
+    const artifact = await meta.getByShortId(shortId)
+    if (!artifact) throw new Error("artifact was not published")
+
+    expect(toolText(await call(app, token, "read", { short_id: shortId }))).toContain(
+      "Read activity",
+    )
+    const stats = await meta.viewStats(artifact.id)
+    expect(stats.total).toBe(0)
+    expect(stats.agentReads).toMatchObject({ total: 1, last24h: 1 })
+    expect(stats.agentReads.recent[0]).toMatchObject({ agent: "Claude", version: 1 })
+  })
+
   it("initializes (identity in instructions) and lists the consolidated tools", async () => {
     const { app, token } = appWithGrant(dir, "init", "openid derive:read derive:publish")
     const init = await rpc(app, token, initBody)

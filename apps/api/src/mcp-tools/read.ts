@@ -251,6 +251,21 @@ export function registerReadTool(tc: ToolContext): void {
     return documentStructure(v.blob_key, source, contentType)
   }
 
+  // Reuse the browser view ledger with a distinct actor kind. This keeps one retention
+  // path and one analytics query surface. The background helper keeps the write outside
+  // the hosted response path; no model call or observer is involved.
+  const recordAgentRead = (artifact: ArtifactRecord, version: number): void => {
+    ctx.background(
+      ctx.meta.recordView({
+        id: newId("v"),
+        artifact_id: artifact.id,
+        version,
+        viewer: agent.name,
+        viewer_kind: "agent",
+      }),
+    )
+  }
+
   // READ CONTENT --------------------------------------------------------------
   server.registerTool(
     "read",
@@ -443,7 +458,8 @@ export function registerReadTool(tc: ToolContext): void {
         if (r && "error" in r) return err(r.error)
         if (r && r.a.current_content_type === SKILL_CONTENT_TYPE) {
           const reading = await skillReading(ctx, r.a)
-          if (reading)
+          if (reading) {
+            recordAgentRead(r.a, r.a.current_version)
             return json({
               uri: short_id,
               mimeType: "text/markdown",
@@ -451,6 +467,7 @@ export function registerReadTool(tc: ToolContext): void {
               // 100MB zip upload, and this response has no outline rung to fall to.
               content: clip(reading.body + skillFilesFooter(r.a.short_id, reading.others)),
             })
+          }
         }
         return err(
           `No skill "${name}". Core: ${CORE_SKILLS.map((s) => s.name).join(", ")}; workspace skills: read derive://skills for the catalog.`,
@@ -681,6 +698,7 @@ export function registerReadTool(tc: ToolContext): void {
       const v =
         envelope?.artifact.id === a.id ? envelope.version : await ctx.meta.getVersion(a.id, n)
       if (!v) return err(`Version ${n} of "${short_id}" is unavailable.`)
+      recordAgentRead(a, n)
       const url = artifactUrl(ctx.deps.baseUrl, a)
 
       // The render rung: the version's screenshot, so an agent SEES what it shipped.

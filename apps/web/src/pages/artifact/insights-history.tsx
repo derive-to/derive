@@ -25,7 +25,7 @@ function StatTile({ value, label }: { value: number; label: string }) {
   )
 }
 
-const INSIGHT_STATS = ["viewers", "views", "last24h"]
+const INSIGHT_STATS = ["viewers", "views", "last24h", "agentReads"]
 const INSIGHT_ROWS = ["a", "b", "c", "d"]
 
 // First-load placeholder that mirrors the resolved dialog's own layout: the stat row
@@ -138,6 +138,10 @@ export function Insights({
                 <StatTile value={data.unique} label={data.unique === 1 ? "viewer" : "viewers"} />
                 <StatTile value={data.total} label={data.total === 1 ? "view" : "views"} />
                 <StatTile value={data.last24h} label="last 24hrs" />
+                <StatTile
+                  value={data.agentReads.total}
+                  label={data.agentReads.total === 1 ? "AI read" : "AI reads"}
+                />
               </div>
               {data.total > 0 && (
                 <div className="ml-auto min-w-40 flex-1">
@@ -196,8 +200,10 @@ export function Insights({
                 <Eyebrow as="div" className="mb-2">
                   Viewed by
                 </Eyebrow>
-                {namedRecent.length === 0 && data.anonViewers === 0 ? (
-                  <div className="text-sm text-muted-foreground">No views yet.</div>
+                {namedRecent.length === 0 &&
+                data.anonViewers === 0 &&
+                data.agentReads.recent.length === 0 ? (
+                  <div className="text-sm text-muted-foreground">No activity yet.</div>
                 ) : (
                   <div className="flex flex-col gap-1.5">
                     {namedRecent.map((r) => (
@@ -219,6 +225,20 @@ export function Insights({
                         + {data.anonViewers.toLocaleString()} anonymous
                       </div>
                     )}
+                    {data.agentReads.recent.map((r) => (
+                      <div
+                        key={`${r.agent}:${r.version}:${r.at}`}
+                        className="flex items-center gap-2 text-sm"
+                      >
+                        <Icon name="sparkles" className="size-4.5 text-muted-foreground" />
+                        <span className="flex-1 truncate font-medium">
+                          {r.agent} · v{r.version}
+                        </span>
+                        <span className="font-mono text-2xs text-muted-foreground">
+                          {ago(r.at)}
+                        </span>
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>
