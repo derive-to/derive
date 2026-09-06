@@ -73,6 +73,8 @@ import type {
   NewSignupAttribution,
   NewSkillInstallation,
   NewSkillRelation,
+  NewSkillScanCoverage,
+  NewSkillUse,
   NewSlackSubscription,
   NewTemplateLibrary,
   NewTemplateLibraryEntry,
@@ -104,8 +106,11 @@ import type {
   SharedStateWrite,
   SignupAttributionRecord,
   SkillInstallationRecord,
+  SkillLocalUsageBucket,
   SkillRelationRecord,
+  SkillScanCoverageRecord,
   SkillUsageBucket,
+  SkillUseRecord,
   SlackAuthorFilter,
   SlackInstallRecord,
   SlackSubscriptionRecord,
@@ -220,6 +225,8 @@ import {
   signupAttribution,
   skillInstallation,
   skillRelation,
+  skillScanCoverage,
+  skillUse,
   slackInstall,
   slackSubscription,
   slackThreadLink,
@@ -415,6 +422,8 @@ export const schema = {
   workflowStepAttempt,
   skillRelation,
   skillInstallation,
+  skillScanCoverage,
+  skillUse,
   artifactSkillLink,
   plan,
   connection,
@@ -471,6 +480,8 @@ const _schemaShapes: Shapes<typeof schema> = {
   workflowStepAttempt: true,
   skillRelation: true,
   skillInstallation: true,
+  skillScanCoverage: true,
+  skillUse: true,
   artifactSkillLink: true,
   plan: true,
   connection: true,
@@ -4816,6 +4827,71 @@ export function makeRepos(db: SqliteDb) {
       )
       .orderBy(desc(skillInstallation.updated_at), asc(skillInstallation.client))
       .all()) as SkillInstallationRecord[]
+  const recordSkillUse = async (use: NewSkillUse): Promise<SkillUseRecord> =>
+    (await db
+      .insert(skillUse)
+      .values(use)
+      .onConflictDoUpdate({
+        target: [skillUse.org_id, skillUse.skill_artifact_id, skillUse.used_by, skillUse.event_id],
+        set: {
+          stage: use.stage,
+          evidence: use.evidence,
+          skill_digest: use.skill_digest ?? null,
+          opaque_session_id: use.opaque_session_id ?? null,
+          ...(use.useful !== undefined ? { useful: use.useful } : {}),
+          occurred_at: use.occurred_at,
+          updated_at: use.updated_at,
+        },
+      })
+      .returning()
+      .get()) as SkillUseRecord
+  const skillLocalUsage = async (
+    skillArtifactId: string,
+    orgId: string,
+  ): Promise<SkillLocalUsageBucket[]> =>
+    (await db
+      .select({
+        skill_version: skillUse.skill_version,
+        client: skillUse.client,
+        stage: skillUse.stage,
+        evidence: skillUse.evidence,
+        count: sql<number>`count(*)`,
+        useful: sql<number>`sum(case when ${skillUse.useful} = 1 then 1 else 0 end)`,
+        not_useful: sql<number>`sum(case when ${skillUse.useful} = 0 then 1 else 0 end)`,
+        unrated: sql<number>`sum(case when ${skillUse.useful} is null then 1 else 0 end)`,
+        last_used_at: sql<string>`max(${skillUse.occurred_at})`,
+      })
+      .from(skillUse)
+      .where(and(eq(skillUse.org_id, orgId), eq(skillUse.skill_artifact_id, skillArtifactId)))
+      .groupBy(skillUse.skill_version, skillUse.client, skillUse.stage, skillUse.evidence)
+      .orderBy(desc(sql`max(${skillUse.occurred_at})`))
+      .all()) as SkillLocalUsageBucket[]
+  const upsertSkillScanCoverage = async (
+    coverage: NewSkillScanCoverage,
+  ): Promise<SkillScanCoverageRecord> =>
+    (await db
+      .insert(skillScanCoverage)
+      .values(coverage)
+      .onConflictDoUpdate({
+        target: [skillScanCoverage.org_id, skillScanCoverage.scanned_by, skillScanCoverage.client],
+        set: {
+          source_files: coverage.source_files,
+          sessions_scanned: coverage.sessions_scanned,
+          records_scanned: coverage.records_scanned,
+          parser_version: coverage.parser_version,
+          scanned_at: coverage.scanned_at,
+          updated_at: coverage.updated_at,
+        },
+      })
+      .returning()
+      .get()) as SkillScanCoverageRecord
+  const listSkillScanCoverage = async (orgId: string): Promise<SkillScanCoverageRecord[]> =>
+    (await db
+      .select()
+      .from(skillScanCoverage)
+      .where(eq(skillScanCoverage.org_id, orgId))
+      .orderBy(desc(skillScanCoverage.scanned_at))
+      .all()) as SkillScanCoverageRecord[]
   const linkArtifactSkill = async (link: NewArtifactSkillLink): Promise<ArtifactSkillLinkRecord> =>
     (await db
       .insert(artifactSkillLink)
@@ -5631,6 +5707,7 @@ export function makeRepos(db: SqliteDb) {
       .where(or(eq(skillRelation.source_artifact_id, id), eq(skillRelation.target_artifact_id, id)))
       .run()
     await db.delete(skillInstallation).where(eq(skillInstallation.skill_artifact_id, id)).run()
+    await db.delete(skillUse).where(eq(skillUse.skill_artifact_id, id)).run()
     await db
       .delete(artifactSkillLink)
       .where(or(eq(artifactSkillLink.artifact_id, id), eq(artifactSkillLink.skill_artifact_id, id)))
@@ -6032,6 +6109,10 @@ export function makeRepos(db: SqliteDb) {
     listSkillRelations,
     upsertSkillInstallation,
     listSkillInstallations,
+    recordSkillUse,
+    skillLocalUsage,
+    upsertSkillScanCoverage,
+    listSkillScanCoverage,
     linkArtifactSkill,
     listArtifactSkillLinks,
     listArtifactSkillLinkHistory,

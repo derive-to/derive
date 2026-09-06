@@ -108,6 +108,7 @@ function SkillWorkbench({
   )
   const contextRuns = (usage.data?.contexts ?? []).reduce((sum, item) => sum + item.count, 0)
   const workflowRuns = (usage.data?.workflows ?? []).reduce((sum, item) => sum + item.count, 0)
+  const localUses = (usage.data?.local ?? []).reduce((sum, item) => sum + item.count, 0)
   const fileUrl = (path: string) => `${API_BASE}/raw/${shortId}/v/${version}/${path}`
   const installCommand = `derive skill add ${shortId}`
   const workflowLinks = (usage.data?.artifacts ?? []).filter(
@@ -231,15 +232,44 @@ function SkillWorkbench({
             )}
           </TabsContent>
           <TabsContent value="usage" className="px-4 py-3">
-            <div className="grid gap-2 sm:grid-cols-3">
+            <div className="grid gap-2 sm:grid-cols-4">
               <Metric value={usage.data ? activeInstalls : null} label="active installs" />
+              <Metric value={usage.data ? localUses : null} label="local uses" />
               <Metric value={usage.data ? contextRuns : null} label="Context runs" />
               <Metric value={usage.data ? workflowRuns : null} label="Workflow runs" />
             </div>
             <p className="mt-2 text-xs text-muted-foreground">
-              These are separate observed signals. Derive does not guess local activations or
-              combine them into a synthetic total.
+              Local activity comes from explicit receipts and private on-device log scans. Installs
+              and hosted runs stay separate.
             </p>
+            {usage.data?.coverage.length ? (
+              <div className="mt-3 flex flex-col gap-2" data-testid="skill-scan-coverage">
+                <p className="text-xs font-medium text-foreground">Scan coverage</p>
+                {usage.data.coverage.map((item) => (
+                  <div
+                    key={item.client}
+                    className="flex flex-wrap items-center gap-2 rounded-lg border bg-background px-3 py-2 text-sm"
+                  >
+                    <Badge variant="outline" shape="pill" className="capitalize">
+                      {item.client}
+                    </Badge>
+                    <span>
+                      {item.sessions_scanned} scanned{" "}
+                      {item.sessions_scanned === 1 ? "session" : "sessions"}
+                    </span>
+                    <span className="text-xs text-muted-foreground">
+                      {item.source_files} log files · parser v{item.parser_version}
+                    </span>
+                    <span
+                      className="ml-auto text-xs text-muted-foreground"
+                      title={new Date(item.last_scanned_at).toLocaleString()}
+                    >
+                      scanned {ago(item.last_scanned_at)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : null}
             {usage.isPending ? (
               <Muted>Loading installation details…</Muted>
             ) : usage.data?.installations.length ? (
@@ -270,6 +300,42 @@ function SkillWorkbench({
               </div>
             ) : (
               <p className="mt-3 text-xs text-muted-foreground">No active installations yet.</p>
+            )}
+            {usage.data?.local.length ? (
+              <div className="mt-3 flex flex-col gap-2" data-testid="skill-local-usage">
+                <p className="text-xs font-medium text-foreground">Local use</p>
+                {usage.data.local.map((item) => (
+                  <div
+                    key={`${item.client}:${item.skill_version}`}
+                    className="flex flex-wrap items-center gap-2 rounded-lg border bg-background px-3 py-2 text-sm"
+                  >
+                    <Badge variant="outline" shape="pill" className="capitalize">
+                      {item.client}
+                    </Badge>
+                    <Badge variant="outline" shape="pill" className="capitalize">
+                      {item.stage}
+                    </Badge>
+                    <span>
+                      {item.count} {item.count === 1 ? "use" : "uses"}
+                    </span>
+                    <span className="text-xs text-muted-foreground">
+                      {item.evidence.replaceAll("_", " ")} · {item.useful} useful ·{" "}
+                      {item.not_useful} not useful · {item.unrated} unrated
+                    </span>
+                    <span
+                      className="ml-auto text-xs text-muted-foreground"
+                      title={new Date(item.last_used_at).toLocaleString()}
+                    >
+                      used {ago(item.last_used_at)} · v{item.skill_version}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="mt-3 text-xs text-muted-foreground">
+                No local use reported yet. Run <code>derive skill scan --since 30d</code> to
+                backfill private local logs.
+              </p>
             )}
           </TabsContent>
           <TabsContent value="artifacts" className="px-4 py-3">

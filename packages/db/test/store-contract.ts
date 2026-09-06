@@ -3491,6 +3491,61 @@ export function runStoreContract(
       ])
     })
 
+    it("deduplicates observed Skill use and stores scan coverage", async () => {
+      const skill = await store.createArtifact(newArtifact({ kind: "bundle" }))
+      const use = {
+        id: uuid(),
+        event_id: "scan-event-1",
+        org_id: ORG,
+        skill_artifact_id: skill.id,
+        skill_version: 2,
+        used_by: "u1",
+        client: "claude" as const,
+        stage: "loaded" as const,
+        evidence: "structured_log" as const,
+        skill_digest: "a".repeat(64),
+        opaque_session_id: "b".repeat(64),
+        occurred_at: "2026-09-05T20:00:00.000Z",
+        updated_at: "2026-09-05T20:00:00.000Z",
+      }
+      await store.recordSkillUse(use)
+      await store.recordSkillUse({ ...use, id: uuid(), useful: 1 })
+      expect(await store.skillLocalUsage(skill.id, ORG)).toMatchObject([
+        {
+          skill_version: 2,
+          client: "claude",
+          stage: "loaded",
+          evidence: "structured_log",
+          count: 1,
+          useful: 1,
+        },
+      ])
+
+      const coverage = {
+        id: uuid(),
+        org_id: ORG,
+        scanned_by: "u1",
+        client: "claude" as const,
+        source_files: 4,
+        sessions_scanned: 4,
+        records_scanned: 200,
+        parser_version: 1,
+        scanned_at: "2026-09-05T20:01:00.000Z",
+        updated_at: "2026-09-05T20:01:00.000Z",
+      }
+      await store.upsertSkillScanCoverage(coverage)
+      await store.upsertSkillScanCoverage({
+        ...coverage,
+        id: uuid(),
+        sessions_scanned: 5,
+        updated_at: "2026-09-05T20:02:00.000Z",
+      })
+      expect(await store.listSkillScanCoverage(ORG)).toMatchObject([
+        { client: "claude", sessions_scanned: 5 },
+      ])
+      expect(await store.listSkillScanCoverage(`org_${uuid()}`)).toEqual([])
+    })
+
     it("derives exact Context and Workflow usage and keeps Artifact provenance deterministic", async () => {
       const skill = await store.createArtifact(newArtifact({ kind: "bundle" }))
       await store.addVersion(skill.id, newVersion({ content_type: "derive/skill" }))

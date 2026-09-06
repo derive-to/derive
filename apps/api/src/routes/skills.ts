@@ -9,6 +9,7 @@ import {
   type SkillClient,
   type SkillInstallPolicy,
   type SkillInstallScope,
+  type SkillUseClient,
   toJson,
   validateSkillDefinition,
   WORKFLOW_DEFINITION_FACT,
@@ -34,6 +35,38 @@ const installationBody = z.object({
   digest: z.string().regex(/^[a-f0-9]{64}$/i),
   policy: z.enum(["pinned", "latest"]),
   removed: z.boolean().optional(),
+})
+
+const localUseBody = z.object({
+  event_id: z.string().min(8).max(128),
+  skill_version: z.number().int().positive(),
+  client: z.enum(["claude", "codex", "other"]),
+  stage: z.enum(["selected", "loaded", "acted", "completed"]).optional(),
+  evidence: z.enum(["native_hook", "structured_log", "skill_file_read", "claimed"]).optional(),
+  skill_digest: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/i)
+    .optional(),
+  opaque_session_id: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/i)
+    .optional(),
+  occurred_at: z.string().datetime().optional(),
+  useful: z.boolean().optional(),
+})
+
+const scannedUseBody = localUseBody.extend({ skill_short_id: z.string().min(1).max(128) })
+const scanCoverageBody = z.object({
+  client: z.enum(["claude", "codex"]),
+  source_files: z.number().int().nonnegative(),
+  sessions_scanned: z.number().int().nonnegative(),
+  records_scanned: z.number().int().nonnegative(),
+  parser_version: z.number().int().positive(),
+  scanned_at: z.string().datetime(),
+})
+const scanBatchBody = z.object({
+  uses: z.array(scannedUseBody).max(500),
+  coverage: z.array(scanCoverageBody).max(10),
 })
 
 const artifactLinkBody = z.object({
@@ -262,10 +295,12 @@ export const skillRoutes = (ctx: AppContext) => {
     const skill = await requireArtifact(c, "read")
     if (skill instanceof Response) return skill
     if (skill.current_content_type !== SKILL_CONTENT_TYPE) return fail(c, 404, "not a skill")
-    const [usage, installations, links] = await Promise.all([
+    const [usage, local, installations, links, coverageRows] = await Promise.all([
       meta.skillUsage(skill.id, skill.org_id),
+      meta.skillLocalUsage(skill.id, skill.org_id),
       meta.listSkillInstallations(skill.id, skill.org_id),
       meta.listSkillArtifactLinks(skill.id, skill.org_id, 100),
+      meta.listSkillScanCoverage(skill.org_id),
     ])
     const linked = await meta.listArtifacts({
       ids: [...new Set(links.map((l) => l.artifact_id))],
@@ -293,10 +328,39 @@ export const skillRoutes = (ctx: AppContext) => {
             : current.last_synced_at,
       })
     }
+    const coverage = new Map<
+      SkillUseClient,
+      {
+        client: SkillUseClient
+        contributors: number
+        source_files: number
+        sessions_scanned: number
+        records_scanned: number
+        parser_version: number
+        last_scanned_at: string
+      }
+    >()
+    for (const row of coverageRows) {
+      const current = coverage.get(row.client)
+      coverage.set(row.client, {
+        client: row.client,
+        contributors: (current?.contributors ?? 0) + 1,
+        source_files: (current?.source_files ?? 0) + row.source_files,
+        sessions_scanned: (current?.sessions_scanned ?? 0) + row.sessions_scanned,
+        records_scanned: (current?.records_scanned ?? 0) + row.records_scanned,
+        parser_version: Math.max(current?.parser_version ?? 0, row.parser_version),
+        last_scanned_at:
+          !current || row.scanned_at > current.last_scanned_at
+            ? row.scanned_at
+            : current.last_scanned_at,
+      })
+    }
     return c.json({
       contexts: usage.contexts,
       workflows: usage.workflows,
+      local,
       installations: [...installSummary.values()],
+      coverage: [...coverage.values()],
       artifacts: links
         .filter((link) => readable.has(link.artifact_id))
         .map((link) => {
@@ -307,6 +371,86 @@ export const skillRoutes = (ctx: AppContext) => {
           }
         }),
     })
+  })
+
+  app.post("/v1/artifacts/:shortId/skill-usage", async (c) => {
+    const skill = await requireArtifact(c, "read")
+    if (skill instanceof Response) return skill
+    if (skill.current_content_type !== SKILL_CONTENT_TYPE) return fail(c, 404, "not a skill")
+    const body = await readJson(c, localUseBody)
+    if (body instanceof Response) return body
+    if (!(await skillDefinition(skill.id, body.skill_version)))
+      return fail(c, 400, "skill version not found")
+    const actor = (await actingHuman(c)) ?? (await actingUser(c))
+    if (!actor) return fail(c, 401, "a signed-in user or user-authorized agent is required")
+    const now = new Date().toISOString()
+    const use = await meta.recordSkillUse({
+      id: newId("sku"),
+      event_id: body.event_id,
+      org_id: skill.org_id,
+      skill_artifact_id: skill.id,
+      skill_version: body.skill_version,
+      used_by: actor.id,
+      client: body.client,
+      stage: body.stage ?? "completed",
+      evidence: body.evidence ?? "claimed",
+      ...(body.skill_digest ? { skill_digest: body.skill_digest } : {}),
+      ...(body.opaque_session_id ? { opaque_session_id: body.opaque_session_id } : {}),
+      ...(body.useful !== undefined ? { useful: body.useful ? 1 : 0 } : {}),
+      occurred_at: body.occurred_at ?? now,
+      updated_at: now,
+    })
+    return c.json({ use })
+  })
+
+  app.post("/v1/skill-usage/batch", async (c) => {
+    const body = await readJson(c, scanBatchBody)
+    if (body instanceof Response) return body
+    const actor = (await actingHuman(c)) ?? (await actingUser(c))
+    if (!actor) return fail(c, 401, "a signed-in user or user-authorized agent is required")
+    const orgId = await activeWorkspace(c)
+    const definitions = []
+    for (const item of body.uses) {
+      const skill = await requireArtifact(c, "read", { shortId: item.skill_short_id })
+      if (skill instanceof Response) return skill
+      if (skill.org_id !== orgId || skill.current_content_type !== SKILL_CONTENT_TYPE)
+        return fail(c, 404, `not a skill: ${item.skill_short_id}`)
+      if (!(await skillDefinition(skill.id, item.skill_version)))
+        return fail(c, 400, `skill version not found: ${item.skill_short_id}`)
+      definitions.push({ item, skill })
+    }
+    const now = new Date().toISOString()
+    for (const { item, skill } of definitions)
+      await meta.recordSkillUse({
+        id: newId("sku"),
+        event_id: item.event_id,
+        org_id: orgId,
+        skill_artifact_id: skill.id,
+        skill_version: item.skill_version,
+        used_by: actor.id,
+        client: item.client,
+        stage: item.stage ?? "loaded",
+        evidence: item.evidence ?? "structured_log",
+        ...(item.skill_digest ? { skill_digest: item.skill_digest } : {}),
+        ...(item.opaque_session_id ? { opaque_session_id: item.opaque_session_id } : {}),
+        ...(item.useful !== undefined ? { useful: item.useful ? 1 : 0 } : {}),
+        occurred_at: item.occurred_at ?? now,
+        updated_at: now,
+      })
+    for (const row of body.coverage)
+      await meta.upsertSkillScanCoverage({
+        id: newId("skc"),
+        org_id: orgId,
+        scanned_by: actor.id,
+        client: row.client,
+        source_files: row.source_files,
+        sessions_scanned: row.sessions_scanned,
+        records_scanned: row.records_scanned,
+        parser_version: row.parser_version,
+        scanned_at: row.scanned_at,
+        updated_at: now,
+      })
+    return c.json({ recorded: definitions.length, coverage: body.coverage.length })
   })
 
   app.get("/v1/artifacts/:shortId/skills", async (c) => {

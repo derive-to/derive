@@ -637,6 +637,26 @@ export interface SkillGraph {
 export interface SkillUsage {
   contexts: Array<{ skill_version: number; count: number; last_used_at: string }>
   workflows: Array<{ skill_version: number; count: number; last_used_at: string }>
+  local: Array<{
+    skill_version: number
+    client: "claude" | "codex" | "other"
+    stage: "selected" | "loaded" | "acted" | "completed"
+    evidence: "native_hook" | "structured_log" | "skill_file_read" | "claimed"
+    count: number
+    useful: number
+    not_useful: number
+    unrated: number
+    last_used_at: string
+  }>
+  coverage: Array<{
+    client: "claude" | "codex" | "other"
+    contributors: number
+    source_files: number
+    sessions_scanned: number
+    records_scanned: number
+    parser_version: number
+    last_scanned_at: string
+  }>
   installations: Array<{
     scope_kind: "project" | "personal" | "runner"
     client: "claude" | "codex"

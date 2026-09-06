@@ -2419,6 +2419,9 @@ export type SkillRelationKind = "requires" | "extends" | "recommends" | "referen
 export type SkillClient = "claude" | "codex"
 export type SkillInstallScope = "project" | "personal" | "runner"
 export type SkillInstallPolicy = "pinned" | "latest"
+export type SkillUseClient = "claude" | "codex" | "other"
+export type SkillUseStage = "selected" | "loaded" | "acted" | "completed"
+export type SkillUseEvidence = "native_hook" | "structured_log" | "skill_file_read" | "claimed"
 export type ArtifactSkillRole =
   | "created"
   | "revised"
@@ -2480,6 +2483,67 @@ export interface NewSkillInstallation {
   removed_at?: string | null
 }
 
+export interface SkillUseRecord {
+  id: string
+  event_id: string
+  org_id: string
+  skill_artifact_id: string
+  skill_version: number
+  used_by: string
+  client: SkillUseClient
+  stage: SkillUseStage
+  evidence: SkillUseEvidence
+  skill_digest: string | null
+  opaque_session_id: string | null
+  useful: number | null
+  occurred_at: string
+  updated_at: string
+}
+
+export interface NewSkillUse {
+  id: string
+  event_id: string
+  org_id: string
+  skill_artifact_id: string
+  skill_version: number
+  used_by: string
+  client: SkillUseClient
+  stage: SkillUseStage
+  evidence: SkillUseEvidence
+  skill_digest?: string | null
+  opaque_session_id?: string | null
+  useful?: number | null
+  occurred_at: string
+  updated_at: string
+}
+
+export interface SkillLocalUsageBucket {
+  skill_version: number
+  client: SkillUseClient
+  stage: SkillUseStage
+  evidence: SkillUseEvidence
+  count: number
+  useful: number
+  not_useful: number
+  unrated: number
+  last_used_at: string
+}
+
+export interface SkillScanCoverageRecord {
+  id: string
+  org_id: string
+  scanned_by: string
+  client: SkillUseClient
+  source_files: number
+  sessions_scanned: number
+  records_scanned: number
+  parser_version: number
+  scanned_at: string
+  updated_at: string
+}
+
+export type NewSkillScanCoverage = SkillScanCoverageRecord
+
 export interface ArtifactSkillLinkRecord {
   id: string
   org_id: string
@@ -2521,6 +2585,10 @@ export interface SkillStore {
   listSkillRelations(skillArtifactId: string, orgId: string): Promise<SkillRelationRecord[]>
   upsertSkillInstallation(installation: NewSkillInstallation): Promise<SkillInstallationRecord>
   listSkillInstallations(skillArtifactId: string, orgId: string): Promise<SkillInstallationRecord[]>
+  recordSkillUse(use: NewSkillUse): Promise<SkillUseRecord>
+  skillLocalUsage(skillArtifactId: string, orgId: string): Promise<SkillLocalUsageBucket[]>
+  upsertSkillScanCoverage(coverage: NewSkillScanCoverage): Promise<SkillScanCoverageRecord>
+  listSkillScanCoverage(orgId: string): Promise<SkillScanCoverageRecord[]>
   linkArtifactSkill(link: NewArtifactSkillLink): Promise<ArtifactSkillLinkRecord>
   listArtifactSkillLinks(
     artifactId: string,
