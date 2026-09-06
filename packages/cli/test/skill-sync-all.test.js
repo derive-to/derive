@@ -529,15 +529,16 @@ describe("derive skill scan", () => {
     })
     expect(result.status).toBe(0)
     expect(JSON.parse(result.stdout)).toMatchObject({ found: 501, uploaded: 501, pending: 0 })
-    expect(received).toHaveLength(2)
-    expect(received.map((batch) => batch.uses.length)).toEqual([500, 1])
+    expect(received).toHaveLength(26)
+    expect(received.slice(0, -1).every((batch) => batch.uses.length === 20)).toBe(true)
+    expect(received.at(-1).uses).toHaveLength(1)
     expect(received[0].coverage).toEqual([])
     expect(received[0].uses[0]).toMatchObject({
       skill_short_id: "review123",
       client: "claude",
       evidence: "structured_log",
     })
-    expect(received[1].coverage).toEqual([
+    expect(received.at(-1).coverage).toEqual([
       expect.objectContaining({ client: "claude", sessions_scanned: 1 }),
     ])
   })
