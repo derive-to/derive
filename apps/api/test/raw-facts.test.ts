@@ -651,6 +651,44 @@ describe("dynamic slots seed from LaTeX papers", () => {
     expect(page).toContain("/raw/derive-dynamic.js")
   })
 
+  it("seeds a binding declared in a file the paper inputs, and carries it forward", async () => {
+    const { zipSync } = await import("fflate")
+    const zip = zipSync({
+      "main.tex": enc(
+        "\\documentclass{article}\\begin{document}\\input{sec/results}\\end{document}",
+      ),
+      "sec/results.tex": enc("\\begin{table}\\derivetable{results}\\end{table}"),
+    })
+    const a = await (await publishFile("paper.zip", zip)).json()
+    expect(await slots(a.short_id)).toEqual([["results", "table", 0]])
+    const put = await app.request(`/v1/artifacts/${a.short_id}/dynamic/results`, {
+      method: "PUT",
+      headers: { ...TOKEN, "content-type": "application/json" },
+      body: JSON.stringify({
+        kind: "table",
+        table: { columns: [{ key: "acc" }], rows: [{ acc: 0.9 }] },
+      }),
+    })
+    expect(put.status).toBe(200)
+    // A republish seeds v2 from v1's latest value, exactly as for a binding in the entry.
+    const form = new FormData()
+    form.append("file", new Blob([zip as BlobPart]), "paper.zip")
+    const v2 = await app.request(`/v1/artifacts/${a.short_id}/versions`, {
+      method: "POST",
+      body: form,
+      headers: TOKEN,
+    })
+    expect(v2.status).toBe(201)
+    const carried = await app.request(`/v1/artifacts/${a.short_id}/dynamic/results?v=2`, {
+      headers: TOKEN,
+    })
+    await expect(carried.json()).resolves.toMatchObject({
+      version: 2,
+      revision: 0,
+      value: { table: { rows: [{ acc: 0.9 }] } },
+    })
+  })
+
   it("seeds a paper bundle's bindings from its entry", async () => {
     const { zipSync } = await import("fflate")
     const zip = zipSync({ "main.tex": enc(TEX), "refs.bib": enc("@misc{k, title={T}}") })
