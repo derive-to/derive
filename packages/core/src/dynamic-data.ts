@@ -569,7 +569,7 @@ export const parseDynamicBindings = (source: string, contentType: string): Dynam
     // \derivetable{name} / \derivefigure{name}: no inline seed in LaTeX (the macro's
     // optional argument is layout, not data), so a new name starts empty.
     for (const b of latexDynamicBindings(source)) add(b.name, b.kind, emptyDynamicValue(b.kind))
-    return { bindings, advisories }
+    return { bindings, advisories, errors }
   }
   if (isMarkdownLike(contentType)) {
     const walk = (tokens: MarkdownCodeToken[]) => {

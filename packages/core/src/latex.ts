@@ -110,6 +110,16 @@ export const renderLatex = (
   }
 }
 
+/** The dynamic bindings a paper declares, as the renderer finds them: the entry and every
+ *  file it inputs (with `resolve`), under the renderer's own depth and size limits, names
+ *  validated, first occurrence wins. What the seed pass uses, so a slot exists for
+ *  exactly the tables and figures the page shows, including one declared in a section. */
+export const latexBindings = (
+  source: string,
+  opts: RenderLatexOptions = {},
+): LatexRenderResult["bindings"] =>
+  renderLatexBody(source, { slug: headingSlugger(), ...opts }).bindings
+
 /** The visible text of the rendered page and how it maps onto the source: what comment
  *  re-anchoring and quote edits read for LaTeX, the way `pageTextParts` serves HTML and
  *  `markdownTextParts` serves Markdown. Math is a gap (its text is typeset client-side
