@@ -31,7 +31,12 @@ for the recommended install and verification flow.
   figure's image. The MCP `read` tool inventories and returns slots beside facts; writes
   stay on REST via `stage({target:"api"})`, taught by the `dynamic-data` skill. Kept
   small on purpose: 32 slots per version, 512 KB per table, the last 50 revisions plus
-  the seed.
+  the seed. A write applies only while its version is still the head (a publish racing
+  a write leaves the old version frozen and answers the writer with a 409 naming the new
+  one), honours the artifact lock, and can name the version it read to be refused once
+  the artifact has moved on. A placeholder the slot contract refuses (over the caps)
+  refuses the publish and names the table rather than seeding a slot every read would
+  fail on. Text-scope and workspace search see the slot values, refreshed on every write.
 
 ### Removed
 - **The built-in template catalog and `@derive-to/templates`.** The 30 code-defined
