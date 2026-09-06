@@ -1213,23 +1213,75 @@ describe("Skills product surface", () => {
       })
       expect(response.status).toBe(200)
     }
+    const scannedAt = new Date().toISOString()
+    const batch = await localUseApp.request("/v1/skill-usage/batch", {
+      method: "POST",
+      headers: { ...as(user.email), "content-type": "application/json" },
+      body: JSON.stringify({
+        uses: [
+          {
+            event_id: "scan-use-fixture-1",
+            skill_short_id: skill.short_id,
+            skill_version: 1,
+            client: "claude",
+            stage: "loaded",
+            evidence: "structured_log",
+            skill_digest: "d".repeat(64),
+            opaque_session_id: "e".repeat(64),
+            occurred_at: scannedAt,
+          },
+        ],
+        coverage: [
+          {
+            client: "claude",
+            source_files: 3,
+            sessions_scanned: 3,
+            records_scanned: 120,
+            parser_version: 1,
+            scanned_at: scannedAt,
+          },
+        ],
+      }),
+    })
+    expect(batch.status).toBe(200)
 
     const usage = await (
       await localUseApp.request(`/v1/artifacts/${skill.short_id}/skill-usage`, {
         headers: as(user.email),
       })
     ).json()
-    expect(usage.local).toEqual([
-      {
+    expect(usage.local).toContainEqual(
+      expect.objectContaining({
         skill_version: 1,
         client: "codex",
+        stage: "completed",
+        evidence: "claimed",
         count: 1,
         useful: 1,
         not_useful: 0,
         unrated: 0,
         last_used_at: expect.any(String),
-      },
-    ])
+      }),
+    )
+    expect(usage.local).toContainEqual(
+      expect.objectContaining({
+        skill_version: 1,
+        client: "claude",
+        stage: "loaded",
+        evidence: "structured_log",
+        count: 1,
+      }),
+    )
+    expect(usage.coverage).toContainEqual(
+      expect.objectContaining({
+        client: "claude",
+        contributors: 1,
+        source_files: 3,
+        sessions_scanned: 3,
+        records_scanned: 120,
+        parser_version: 1,
+      }),
+    )
   })
 
   it("rejects unresolved exact-version relations before a Skill version goes live", async () => {

@@ -33,6 +33,7 @@
 //   derive context push|dev                ship a Context dir as its manifest / tune it live
 //   derive workflow sync|preview [file] [--json] sync the visible graph, then explain + validate
 //   derive workflow run [run_id]          one authorized GitHub Actions graph harness
+//   derive skill scan [setup|status]      scan local agent logs for installed Skill use
 import { spawn } from "node:child_process"
 import { createHash, randomBytes } from "node:crypto"
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
@@ -74,6 +75,17 @@ import {
 import { createAgent, createContext, saveAgentToken } from "../src/context.js"
 import { readTarget, uploadArtifact } from "../src/publish.js"
 import { DeriveClient, parseManifest } from "../src/runner.js"
+import {
+  addToSkillScanSpool,
+  groupSkillScanSpool,
+  listSkillInstalls,
+  recordSkillInstall,
+  removeFromSkillScanSpool,
+  removeSkillInstall,
+  scanSkillLogs,
+  skillScanStatus,
+} from "../src/skill-scan.js"
+import { setupSkillScan } from "../src/skill-scan-setup.js"
 import { materializeNotes, materializeSkills, pinManifestSkills, skillSlug } from "../src/skills.js"
 import {
   formatWorkflowPreview,
@@ -102,6 +114,9 @@ for (let i = 0; i < args.length; i++) {
   else if (a === "--manage") flags.manage = "true"
   else if (a === "--suggest") flags.suggest = "true"
   else if (a === "--update") flags.update = "true"
+  else if (a === "--dry-run") flags["dry-run"] = "true"
+  else if (a === "--schedule") flags.schedule = "true"
+  else if (a === "--quiet") flags.quiet = "true"
   // Boolean, so it must be listed here: the catch-all below would otherwise eat the next
   // argument as its value, and `derive delete abc --yes` would silently not be confirmed.
   else if (a === "--yes") flags.yes = "true"
@@ -1317,7 +1332,7 @@ if (LOOP.includes(cmd)) {
   process.exit(0)
 }
 
-// ---- derive skill (add/sync/remove/used) ------------------------------------
+// ---- derive skill (add/sync/remove/used/scan) -------------------------------
 // The consumption half of the skill loop: author with `init --template skill` +
 // `publish`, then INSTALL a published skill into ./.claude/skills/<name>/ where
 // this project's agent auto-discovers it. Pinned in derive.json so an update is a
@@ -1327,12 +1342,12 @@ if (cmd === "skill") {
   const shortId = positional[0]
   const syncAll = sub === "sync" && flags.all === "true"
   if (
-    !["add", "sync", "remove", "used"].includes(sub) ||
-    (!shortId && !syncAll) ||
+    !["add", "sync", "remove", "used", "scan"].includes(sub) ||
+    (!shortId && !syncAll && sub !== "scan") ||
     (syncAll && shortId)
   ) {
     console.error(
-      "usage: derive skill add|sync|remove <short_id> [--client claude|codex|all] [--scope project|personal]\n       derive skill used <short_id> --client claude|codex|other [--useful yes|no] [--event id]\n       derive skill sync --all [--client claude|codex|all] [--scope project|personal]",
+      "usage: derive skill add|sync|remove <short_id> [--client claude|codex|all] [--scope project|personal]\n       derive skill used <short_id> --client claude|codex|other [--useful yes|no] [--event id]\n       derive skill scan [setup|status] [--since 30d] [--dry-run] [--schedule]\n       derive skill sync --all [--client claude|codex|all] [--scope project|personal]",
     )
     process.exit(cmd ? 1 : 0)
   }
@@ -1341,6 +1356,167 @@ if (cmd === "skill") {
     cfg = loadConfig(".")
   } catch {
     /* no derive.json yet — the pin creates one */
+  }
+  if (sub === "scan") {
+    const action = positional[0] ?? "run"
+    if (!["run", "setup", "status"].includes(action)) {
+      console.error(
+        "usage: derive skill scan [setup|status] [--since 30d] [--dry-run] [--schedule]",
+      )
+      process.exit(1)
+    }
+    if (flags.client && !["claude", "codex"].includes(flags.client)) {
+      console.error("error: --client must be claude or codex")
+      process.exit(1)
+    }
+
+    const r = resolvePublish(flags, cfg)
+    // Backfill the local install registry for pins created before Skill scan existed.
+    for (const pin of cfg?.skills ?? []) {
+      for (const client of ["claude", "codex"]) {
+        const installed = pin.installs?.[client]
+        if (!installed) continue
+        const dir = skillSlug(installed.name ?? pin.name)
+        if (!dir) continue
+        const candidates = [
+          {
+            scope: "project",
+            path: join(".", client === "codex" ? ".agents" : ".claude", "skills", dir),
+          },
+          {
+            scope: "personal",
+            path: join(homedir(), client === "codex" ? ".codex" : ".claude", "skills", dir),
+          },
+        ]
+        for (const candidate of candidates) {
+          if (!existsSync(candidate.path)) continue
+          recordSkillInstall({
+            id: pin.id,
+            version: installed.version ?? pin.version,
+            name: installed.name ?? pin.name,
+            client,
+            path: candidate.path,
+            digest: installed.digest ?? null,
+            scope: candidate.scope,
+            server: r.server,
+            workspaceId: r.workspaceId,
+            accountId: r.accountId,
+          })
+        }
+      }
+    }
+
+    if (action === "status") {
+      const status = skillScanStatus()
+      if (flags.json) console.log(JSON.stringify(status))
+      else {
+        console.log(`Skill scan parser v${status.parser_version}`)
+        console.log(`last scan: ${status.last_scan_at ?? "never"}`)
+        console.log(`installed Skills tracked: ${status.installs}`)
+        console.log(`pending receipts: ${status.pending}`)
+        for (const source of status.sources)
+          console.log(
+            `  ${source.client}: ${source.files} log files · ${source.tracked} tracked · ${source.sessions_90d} sessions in coverage`,
+          )
+      }
+      process.exit(0)
+    }
+
+    if (action === "setup") {
+      await scanSkillLogs({ baseline: true, client: flags.client })
+      const setup = setupSkillScan({ schedule: flags.schedule === "true" })
+      if (flags.json) console.log(JSON.stringify(setup))
+      else {
+        for (const hook of setup.hooks)
+          console.log(
+            `✓ ${hook.client} session-end hook ${hook.changed ? "installed" : "already installed"}`,
+          )
+        if (setup.schedule)
+          console.log(`✓ 30-minute system schedule installed at ${setup.schedule}`)
+        console.log(
+          "Existing logs were left untouched. Run `derive skill scan --since 30d` to backfill.",
+        )
+      }
+      process.exit(0)
+    }
+
+    const result = await scanSkillLogs({
+      since: flags.since,
+      dryRun: flags["dry-run"] === "true",
+      client: flags.client,
+    })
+    if (flags["dry-run"] === "true") {
+      const output = {
+        dry_run: true,
+        events: result.events.map(({ target: _target, ...event }) => event),
+        coverage: result.coverage,
+      }
+      if (flags.json) console.log(JSON.stringify(output))
+      else {
+        console.log(
+          `Dry run found ${result.events.length} Skill ${result.events.length === 1 ? "use" : "uses"}.`,
+        )
+        for (const row of result.coverage)
+          console.log(
+            `  ${row.client}: ${row.source_files} files · ${row.records_scanned} records · ${row.matched_events} matches`,
+          )
+      }
+      process.exit(0)
+    }
+
+    let spool = addToSkillScanSpool(result.events, result.coverage)
+    const sentIds = []
+    const sentCoverage = new Set()
+    const failedCoverage = new Set()
+    let failed = null
+    for (const group of groupSkillScanSpool(spool, listSkillInstalls())) {
+      const token =
+        flags.token ??
+        process.env.DERIVE_TOKEN ??
+        (await freshToken(group.target.server, group.target.account_id))
+      if (!token) {
+        failed = `not signed in to ${group.target.server}`
+        for (const row of group.coverage) failedCoverage.add(row.client)
+        continue
+      }
+      const deriveClient = new DeriveClient(group.target.server, token)
+      try {
+        await deriveClient.call("/v1/skill-usage/batch", {
+          method: "POST",
+          headers: group.target.workspace_id
+            ? { "x-derive-workspace": group.target.workspace_id }
+            : {},
+          body: JSON.stringify({
+            uses: group.events.map(({ target: _target, ...event }) => event),
+            coverage: group.coverage,
+          }),
+        })
+        sentIds.push(...group.events.map((event) => event.event_id))
+        for (const row of group.coverage) sentCoverage.add(row.client)
+      } catch (error) {
+        failed = error.message
+        for (const row of group.coverage) failedCoverage.add(row.client)
+      }
+    }
+    spool = removeFromSkillScanSpool(
+      sentIds,
+      [...sentCoverage].filter((client) => !failedCoverage.has(client)),
+    )
+    const output = {
+      found: result.events.length,
+      uploaded: sentIds.length,
+      pending: spool.pending.length,
+      coverage: result.coverage,
+      ...(failed ? { error: failed } : {}),
+    }
+    if (flags.json) console.log(JSON.stringify(output))
+    else if (!flags.quiet) {
+      console.log(
+        `✓ found ${output.found} · uploaded ${output.uploaded} · ${output.pending} pending receipt${output.pending === 1 ? "" : "s"}`,
+      )
+      if (failed) console.error(`error: ${failed}; receipts remain in the local spool`)
+    }
+    process.exit(failed && !flags.quiet ? 1 : 0)
   }
   if (sub === "used") {
     const client = flags.client ?? "other"
@@ -1451,6 +1627,12 @@ if (cmd === "skill") {
           removed: true,
         }),
       })
+      removeSkillInstall({
+        client: target,
+        path: join(targetRoot(target), dir),
+        server: r.server,
+        workspaceId: r.workspaceId,
+      })
     }
     removeSkillClients(".", shortId, installedClients)
     console.log(`✓ removed ${pin.name} from ${installedClients.join(" + ")}`)
@@ -1503,6 +1685,18 @@ if (cmd === "skill") {
           digest: installed.digest,
           policy: "pinned",
         }),
+      })
+      recordSkillInstall({
+        id: item.id,
+        version,
+        name: installed.name,
+        client: target,
+        path: join(targetRoot(target), installed.name),
+        digest: installed.digest,
+        scope,
+        server: r.server,
+        workspaceId: r.workspaceId,
+        accountId: r.accountId,
       })
     }
     synced++
@@ -1704,6 +1898,10 @@ if (cmd !== "publish") {
   derive workflow run [run_id]             execute one assigned graph from GitHub Actions OIDC
   derive skill add|sync|remove <short_id>  install a pinned Skill for Claude + Codex (--client/--scope)
   derive skill used <short_id>             record one local use (--client; optional --useful yes|no)
+  derive skill scan [--since 30d]          scan appended Codex + Claude logs and sync receipts
+  derive skill scan --dry-run              preview matches without changing local or server state
+  derive skill scan setup [--schedule]     add session-end hooks; optionally scan every 30 minutes
+  derive skill scan status                 show sources, cursors, coverage, and pending receipts
   derive skill sync --all                  update every locally pinned Skill
   derive brandprint pull                   materialize the workspace + your Brandprint into this repo`)
   process.exit(cmd && cmd !== "--help" && cmd !== "help" ? 1 : 0)

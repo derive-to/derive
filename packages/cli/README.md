@@ -185,6 +185,11 @@ derive skill sync <short_id> --client codex
 derive skill sync --all
 derive skill used <short_id> --client codex
 derive skill used <short_id> --client codex --event <event_id> --useful yes
+derive skill scan --dry-run --since 30d
+derive skill scan --since 30d
+derive skill scan setup
+derive skill scan setup --schedule
+derive skill scan status
 derive skill remove <short_id> --scope project
 ```
 
@@ -196,6 +201,17 @@ Run `skill used` after a local agent invokes a pinned Skill. Derive generates an
 the caller supplies one. Reuse an event ID to add or change its usefulness rating without adding
 another use. Derive stores the signed-in user, workspace, pinned version, client, and time on the
 server. The Skill page shows aggregate counts. It does not store prompts or generated content.
+
+`skill scan` reads structured local Codex and Claude logs. It reads only records added after its
+saved cursor. Claude provides an explicit Skill attribution. For Codex, the scanner detects a
+structured tool call that reads a known installed `SKILL.md`. The scanner uploads the Skill ID,
+version, digest, client, evidence type, an opaque session hash, and the event time. It does not
+upload prompts, responses, tool arguments, file contents, repository paths, or user names.
+
+Run `skill scan --dry-run --since 30d` before the first backfill. `skill scan setup` installs an
+asynchronous session-end command hook for Codex and Claude. The hook does not call an LLM. Add
+`--schedule` to install a 30-minute launchd, systemd, or Windows Task Scheduler fallback. Failed
+uploads stay in a local spool and retry on the next scan.
 
 Derive is licensed under FSL-1.1-ALv2 and converts to Apache-2.0 on the schedule in
 the [license](https://github.com/derive-to/derive/blob/main/LICENSE).

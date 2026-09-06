@@ -33,6 +33,8 @@ import type {
   SkillInstallScope,
   SkillRelationKind,
   SkillUseClient,
+  SkillUseEvidence,
+  SkillUseStage,
   SlackAuthorFilter,
   SlackScopeKind,
   SlackThreadSurface,
@@ -457,6 +459,10 @@ export const skillUse = pgTable(
     skill_version: integer("skill_version").notNull(),
     used_by: text("used_by").notNull(),
     client: text("client").$type<SkillUseClient>().notNull(),
+    stage: text("stage").$type<SkillUseStage>().notNull().default("completed"),
+    evidence: text("evidence").$type<SkillUseEvidence>().notNull().default("claimed"),
+    skill_digest: text("skill_digest"),
+    opaque_session_id: text("opaque_session_id"),
     useful: integer("useful"),
     occurred_at: text("occurred_at").notNull(),
     updated_at: text("updated_at").notNull(),
@@ -464,6 +470,26 @@ export const skillUse = pgTable(
   (t) => [
     uniqueIndex("skill_use_event").on(t.org_id, t.skill_artifact_id, t.used_by, t.event_id),
     index("skill_use_skill").on(t.org_id, t.skill_artifact_id, t.occurred_at),
+  ],
+)
+
+export const skillScanCoverage = pgTable(
+  "skill_scan_coverage",
+  {
+    id: text("id").primaryKey(),
+    org_id: text("org_id").notNull(),
+    scanned_by: text("scanned_by").notNull(),
+    client: text("client").$type<SkillUseClient>().notNull(),
+    source_files: integer("source_files").notNull(),
+    sessions_scanned: integer("sessions_scanned").notNull(),
+    records_scanned: integer("records_scanned").notNull(),
+    parser_version: integer("parser_version").notNull(),
+    scanned_at: text("scanned_at").notNull(),
+    updated_at: text("updated_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("skill_scan_coverage_actor").on(t.org_id, t.scanned_by, t.client),
+    index("skill_scan_coverage_workspace").on(t.org_id, t.scanned_at),
   ],
 )
 
@@ -1259,6 +1285,7 @@ const TABLES = [
   workflowStepAttempt,
   skillRelation,
   skillInstallation,
+  skillScanCoverage,
   skillUse,
   artifactSkillLink,
   plan,

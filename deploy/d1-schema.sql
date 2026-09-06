@@ -371,6 +371,20 @@ CREATE TABLE IF NOT EXISTS skill_installation (
   UNIQUE (org_id, skill_artifact_id, scope_kind, opaque_scope_id, client)
 );
 
+CREATE TABLE IF NOT EXISTS skill_scan_coverage (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  scanned_by TEXT NOT NULL,
+  client TEXT NOT NULL,
+  source_files INTEGER NOT NULL,
+  sessions_scanned INTEGER NOT NULL,
+  records_scanned INTEGER NOT NULL,
+  parser_version INTEGER NOT NULL,
+  scanned_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE (org_id, scanned_by, client)
+);
+
 CREATE TABLE IF NOT EXISTS skill_use (
   id TEXT PRIMARY KEY,
   event_id TEXT NOT NULL,
@@ -379,6 +393,10 @@ CREATE TABLE IF NOT EXISTS skill_use (
   skill_version INTEGER NOT NULL,
   used_by TEXT NOT NULL,
   client TEXT NOT NULL,
+  stage TEXT NOT NULL DEFAULT 'completed',
+  evidence TEXT NOT NULL DEFAULT 'claimed',
+  skill_digest TEXT,
+  opaque_session_id TEXT,
   useful INTEGER,
   occurred_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
@@ -866,6 +884,8 @@ CREATE INDEX IF NOT EXISTS workflow_step_attempt_run ON workflow_step_attempt (w
 CREATE INDEX IF NOT EXISTS skill_relation_incoming ON skill_relation (org_id, target_artifact_id, target_version);
 
 CREATE INDEX IF NOT EXISTS skill_installation_skill ON skill_installation (org_id, skill_artifact_id, updated_at);
+
+CREATE INDEX IF NOT EXISTS skill_scan_coverage_workspace ON skill_scan_coverage (org_id, scanned_at);
 
 CREATE INDEX IF NOT EXISTS skill_use_skill ON skill_use (org_id, skill_artifact_id, occurred_at);
 

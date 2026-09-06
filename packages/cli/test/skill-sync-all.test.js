@@ -1,9 +1,11 @@
 import { spawn } from "node:child_process"
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import http from "node:http"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
+import { recordSkillInstall, scanSkillLogs } from "../src/skill-scan.js"
+import { setupSkillScan } from "../src/skill-scan-setup.js"
 
 const dirs = []
 const servers = []
@@ -13,12 +15,20 @@ afterEach(async () => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true })
 })
 
-const run = (cwd, server, args) =>
+const run = (cwd, server, args, extraEnv = {}) =>
   new Promise((resolve) => {
     const child = spawn(
       process.execPath,
       [join(import.meta.dirname, "..", "bin", "derive.js"), ...args, "--server", server],
-      { cwd, env: { ...process.env, DERIVE_TOKEN: "test-token" } },
+      {
+        cwd,
+        env: {
+          ...process.env,
+          DERIVE_TOKEN: "test-token",
+          DERIVE_CONFIG_DIR: join(cwd, ".derive-test-config"),
+          ...extraEnv,
+        },
+      },
     )
     let stdout = ""
     let stderr = ""
@@ -208,5 +218,225 @@ describe("derive skill used", () => {
       useful: true,
     })
     expect(rated.status).toBe(0)
+  })
+})
+
+describe("derive skill scan", () => {
+  it("finds structured Claude attribution and Codex Skill file reads incrementally", async () => {
+    const root = mkdtempSync(join(tmpdir(), "derive-skill-scan-"))
+    dirs.push(root)
+    const home = join(root, "home")
+    const config = join(root, "config")
+    const priorConfig = process.env.DERIVE_CONFIG_DIR
+    process.env.DERIVE_CONFIG_DIR = config
+    try {
+      const codexSkill = join(home, ".codex", "skills", "review-skill")
+      const claudeSkill = join(home, ".claude", "skills", "review-skill")
+      recordSkillInstall({
+        id: "review123",
+        version: 4,
+        name: "review-skill",
+        client: "codex",
+        path: codexSkill,
+        digest: "a".repeat(64),
+        scope: "personal",
+        server: "https://derive.test",
+        workspaceId: "workspace-test",
+        accountId: "account-test",
+      })
+      recordSkillInstall({
+        id: "review123",
+        version: 4,
+        name: "review-skill",
+        client: "claude",
+        path: claudeSkill,
+        digest: "a".repeat(64),
+        scope: "personal",
+        server: "https://derive.test",
+        workspaceId: "workspace-test",
+        accountId: "account-test",
+      })
+
+      const codexLog = join(home, ".codex", "sessions", "rollout-session-a.jsonl")
+      mkdirSync(join(home, ".codex", "sessions"), { recursive: true })
+      writeFileSync(
+        codexLog,
+        `${[
+          {
+            type: "session_meta",
+            timestamp: "2026-09-05T12:00:00.000Z",
+            payload: { id: "session-a" },
+          },
+          {
+            type: "turn_context",
+            timestamp: "2026-09-05T12:01:00.000Z",
+            payload: { turn_id: "turn-a" },
+          },
+          {
+            type: "response_item",
+            timestamp: "2026-09-05T12:01:01.000Z",
+            payload: {
+              type: "function_call",
+              name: "exec_command",
+              call_id: "call-a",
+              arguments: JSON.stringify({ cmd: `cat ${codexSkill}/SKILL.md` }),
+            },
+          },
+        ]
+          .map((row) => JSON.stringify(row))
+          .join("\n")}\n`,
+      )
+      const claudeLog = join(home, ".claude", "projects", "project-a", "session-b.jsonl")
+      mkdirSync(join(home, ".claude", "projects", "project-a"), { recursive: true })
+      writeFileSync(
+        claudeLog,
+        `${[
+          {
+            type: "user",
+            timestamp: "2026-09-05T12:02:00.000Z",
+            sessionId: "session-b",
+            promptId: "prompt-b",
+          },
+          {
+            type: "assistant",
+            timestamp: "2026-09-05T12:02:01.000Z",
+            sessionId: "session-b",
+            attributionSkill: "review-skill",
+          },
+        ]
+          .map((row) => JSON.stringify(row))
+          .join("\n")}\n`,
+      )
+
+      const first = await scanSkillLogs({ home, since: "30d", now: Date.parse("2026-09-06") })
+      expect(first.events).toHaveLength(2)
+      expect(first.events).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            client: "codex",
+            evidence: "skill_file_read",
+            stage: "loaded",
+          }),
+          expect.objectContaining({
+            client: "claude",
+            evidence: "structured_log",
+            stage: "loaded",
+          }),
+        ]),
+      )
+      expect(first.events.every((event) => !JSON.stringify(event).includes(home))).toBe(true)
+
+      const second = await scanSkillLogs({ home, now: Date.parse("2026-09-06") })
+      expect(second.events).toEqual([])
+    } finally {
+      if (priorConfig === undefined) delete process.env.DERIVE_CONFIG_DIR
+      else process.env.DERIVE_CONFIG_DIR = priorConfig
+    }
+  })
+
+  it("installs idempotent session-end hooks and a macOS schedule", () => {
+    const root = mkdtempSync(join(tmpdir(), "derive-skill-scan-setup-"))
+    dirs.push(root)
+    const codexHooks = join(root, ".codex", "hooks.json")
+    mkdirSync(join(root, ".codex"), { recursive: true })
+    writeFileSync(codexHooks, JSON.stringify({ description: "keep me" }))
+
+    const first = setupSkillScan({
+      home: root,
+      node: "/usr/bin/node",
+      cli: "/usr/local/bin/derive",
+      platform: "darwin",
+      schedule: true,
+      activate: false,
+    })
+    const second = setupSkillScan({
+      home: root,
+      node: "/usr/bin/node",
+      cli: "/usr/local/bin/derive",
+      platform: "darwin",
+      schedule: true,
+      activate: false,
+    })
+
+    expect(first.hooks.every((hook) => hook.changed)).toBe(true)
+    expect(second.hooks.every((hook) => !hook.changed)).toBe(true)
+    expect(JSON.parse(readFileSync(codexHooks, "utf8"))).toMatchObject({ description: "keep me" })
+    expect(readFileSync(first.schedule, "utf8")).toContain("to.derive.skill-scan")
+  })
+
+  it("uploads scanned receipts and coverage as one batch", async () => {
+    const received = []
+    const server = http.createServer((request, response) => {
+      if (request.url === "/v1/skill-usage/batch" && request.method === "POST") {
+        let body = ""
+        request.on("data", (chunk) => (body += chunk))
+        request.on("end", () => {
+          received.push(JSON.parse(body))
+          response.writeHead(200, { "content-type": "application/json" })
+          response.end(JSON.stringify({ recorded: 1, coverage: 1 }))
+        })
+        return
+      }
+      response.writeHead(404, { "content-type": "application/json" })
+      response.end(JSON.stringify({ error: "not found" }))
+    })
+    servers.push(server)
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve))
+    const base = `http://127.0.0.1:${server.address().port}`
+    const project = mkdtempSync(join(tmpdir(), "derive-skill-scan-cli-"))
+    dirs.push(project)
+    const home = join(project, "home")
+    const config = join(project, ".derive-test-config")
+    const skillPath = join(home, ".claude", "skills", "review-skill")
+    mkdirSync(config, { recursive: true })
+    writeFileSync(
+      join(config, "skill-installs.json"),
+      JSON.stringify({
+        version: 1,
+        installs: [
+          {
+            id: "review123",
+            version: 4,
+            name: "review-skill",
+            client: "claude",
+            path: skillPath,
+            digest: "a".repeat(64),
+            scope: "personal",
+            server: base,
+            workspace_id: null,
+            account_id: null,
+            updated_at: "2026-09-05T12:00:00.000Z",
+          },
+        ],
+      }),
+    )
+    const log = join(home, ".claude", "projects", "project-a", "session-a.jsonl")
+    mkdirSync(join(home, ".claude", "projects", "project-a"), { recursive: true })
+    writeFileSync(
+      log,
+      `${JSON.stringify({
+        type: "assistant",
+        timestamp: new Date().toISOString(),
+        sessionId: "session-a",
+        attributionSkill: "review-skill",
+      })}\n`,
+    )
+
+    const result = await run(project, base, ["skill", "scan", "--since", "30d", "--json"], {
+      HOME: home,
+    })
+    expect(result.status).toBe(0)
+    expect(JSON.parse(result.stdout)).toMatchObject({ found: 1, uploaded: 1, pending: 0 })
+    expect(received).toHaveLength(1)
+    expect(received[0]).toMatchObject({
+      uses: [
+        expect.objectContaining({
+          skill_short_id: "review123",
+          client: "claude",
+          evidence: "structured_log",
+        }),
+      ],
+      coverage: [expect.objectContaining({ client: "claude", sessions_scanned: 1 })],
+    })
   })
 })
