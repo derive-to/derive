@@ -26,7 +26,9 @@ what compiles, and it stays the source of truth.
   figures cannot be shown in the browser; keep a PNG or JPEG export beside them.
 
 Revisions keep the type: an inline edit, an `edits` batch or a full republish of a LaTeX
-artifact stays LaTeX.
+artifact stays LaTeX. The Edit button on a LaTeX artifact opens the source editor, since a
+paper is written in its source; a quick fix to a sentence on the page is still one `e`
+keystroke, or Edit on a selection, away.
 
 ## What renders
 
