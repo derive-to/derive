@@ -28,7 +28,10 @@ for the recommended install and verification flow.
   the rendered prose and inline edits map back to the source; unknown macros and
   environments degrade to their text, with the publish receipt listing what the renderer
   could not honour and, for acmart, packages outside ACM TAPS's accepted list.
-  `\derivetable{name}` and `\derivefigure{name}` bind dynamic slots in LaTeX.
+  `\derivetable{name}` and `\derivefigure{name}` bind dynamic slots in LaTeX, in the
+  entry or in any file it inputs, seeded and carried forward alike. A reference being
+  edited survives a publish that lands meanwhile: the draft stays, a notice names the new
+  version, and Save applies it there.
 - **Editing a paper on the page, and its bibliography.** A paper's prose, list items,
   captions, headings, title and abstract are edited inline like any document, on a
   single `.tex` file and on a paper bundle (the edit lands in `main.tex` and the bundle

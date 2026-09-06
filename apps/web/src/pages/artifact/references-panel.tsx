@@ -31,7 +31,15 @@ export function ReferencesPanel({
   const [editing, setEditing] = useState<string | null>(null)
   const [draft, setDraft] = useState("")
   const [error, setError] = useState<string | null>(null)
+  // The version and the entry as they were when the editor opened. A publish that lands
+  // meanwhile (another tab, an agent) moves `baseVersion`: the draft is kept, the notice
+  // below says so, and Save applies it to the new head; when that publish changed this
+  // very entry, the notice says that too, so the choice to overwrite it is deliberate.
+  const [opened, setOpened] = useState<{ version: number; raw: string } | null>(null)
   const cited = new Set(bib.cited)
+  const moved = editing !== null && opened !== null && opened.version !== baseVersion
+  const current = editing ? bib.entries.find((e) => e.key === editing) : undefined
+  const changed = moved && current !== undefined && current.raw !== opened.raw
   const save = useApiMutation<Awaited<ReturnType<typeof api.putBib>>, BibOp[]>({
     mutationFn: (ops) => api.putBib(shortId, { base_version: baseVersion, ops }),
     invalidate: [["artifact", shortId]],
@@ -39,6 +47,7 @@ export function ReferencesPanel({
     onSuccess: () => {
       setEditing(null)
       setError(null)
+      setOpened(null)
     },
     errorToast: false,
     onError: (e) => setError(e instanceof Error ? e.message : "The reference could not be saved."),
@@ -47,6 +56,7 @@ export function ReferencesPanel({
     setEditing(key ?? "")
     setDraft(raw)
     setError(null)
+    setOpened({ version: baseVersion, raw })
   }
   const submit = () => {
     const raw = draft.trim()
@@ -94,6 +104,41 @@ export function ReferencesPanel({
             submit()
           }}
         >
+          {moved && (
+            <div
+              className="rounded-md border border-border bg-secondary/30 p-2 text-xs text-muted-foreground"
+              data-testid="references-moved"
+            >
+              <p>
+                This paper moved to v{baseVersion} while you were editing. Save applies your draft
+                to v{baseVersion}.
+                {changed &&
+                  ` The entry ${editing} changed in v${baseVersion}; saving replaces it with your draft.`}
+              </p>
+              <div className="mt-1 flex items-center gap-1">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  onClick={() =>
+                    setOpened({ version: baseVersion, raw: current?.raw ?? opened.raw })
+                  }
+                  data-testid="references-keep-editing"
+                >
+                  Keep editing
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setEditing(null)}
+                  data-testid="references-discard-draft"
+                >
+                  Discard draft
+                </Button>
+              </div>
+            </div>
+          )}
           <textarea
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
