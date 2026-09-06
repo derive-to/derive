@@ -94,6 +94,8 @@ import {
 } from "../src/workflow.js"
 import { runGithubWorkflowHarness } from "../src/workflow-run.js"
 
+const SKILL_USAGE_BATCH_SIZE = 500
+
 const args = process.argv.slice(2)
 const cmd = args.shift()
 
@@ -1481,17 +1483,29 @@ if (cmd === "skill") {
       }
       const deriveClient = new DeriveClient(group.target.server, token)
       try {
-        await deriveClient.call("/v1/skill-usage/batch", {
-          method: "POST",
-          headers: group.target.workspace_id
-            ? { "x-derive-workspace": group.target.workspace_id }
-            : {},
-          body: JSON.stringify({
-            uses: group.events.map(({ target: _target, ...event }) => event),
-            coverage: group.coverage,
-          }),
-        })
-        sentIds.push(...group.events.map((event) => event.event_id))
+        const batches = group.events.length
+          ? Array.from(
+              { length: Math.ceil(group.events.length / SKILL_USAGE_BATCH_SIZE) },
+              (_, index) =>
+                group.events.slice(
+                  index * SKILL_USAGE_BATCH_SIZE,
+                  (index + 1) * SKILL_USAGE_BATCH_SIZE,
+                ),
+            )
+          : [[]]
+        for (const [index, batch] of batches.entries()) {
+          await deriveClient.call("/v1/skill-usage/batch", {
+            method: "POST",
+            headers: group.target.workspace_id
+              ? { "x-derive-workspace": group.target.workspace_id }
+              : {},
+            body: JSON.stringify({
+              uses: batch.map(({ target: _target, ...event }) => event),
+              coverage: index === batches.length - 1 ? group.coverage : [],
+            }),
+          })
+          sentIds.push(...batch.map((event) => event.event_id))
+        }
         for (const row of group.coverage) sentCoverage.add(row.client)
       } catch (error) {
         failed = error.message

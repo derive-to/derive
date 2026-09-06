@@ -460,7 +460,7 @@ describe("derive skill scan", () => {
     expect(existsSync(join(root, ".claude", "settings.json"))).toBe(false)
   })
 
-  it("uploads scanned receipts and coverage as one batch", async () => {
+  it("uploads scanned receipts in API-sized batches", async () => {
     const received = []
     const server = http.createServer((request, response) => {
       if (request.url === "/v1/skill-usage/batch" && request.method === "POST") {
@@ -508,32 +508,38 @@ describe("derive skill scan", () => {
     )
     const log = join(home, ".claude", "projects", "project-a", "session-a.jsonl")
     mkdirSync(join(home, ".claude", "projects", "project-a"), { recursive: true })
-    writeFileSync(
-      log,
-      `${JSON.stringify({
+    const records = Array.from({ length: 501 }, (_, index) => [
+      {
+        type: "user",
+        timestamp: new Date().toISOString(),
+        sessionId: "session-a",
+        promptId: `prompt-${index}`,
+      },
+      {
         type: "assistant",
         timestamp: new Date().toISOString(),
         sessionId: "session-a",
         attributionSkill: "review-skill",
-      })}\n`,
-    )
+      },
+    ]).flat()
+    writeFileSync(log, `${records.map((record) => JSON.stringify(record)).join("\n")}\n`)
 
     const result = await run(project, base, ["skill", "scan", "--since", "30d", "--json"], {
       HOME: home,
     })
     expect(result.status).toBe(0)
-    expect(JSON.parse(result.stdout)).toMatchObject({ found: 1, uploaded: 1, pending: 0 })
-    expect(received).toHaveLength(1)
-    expect(received[0]).toMatchObject({
-      uses: [
-        expect.objectContaining({
-          skill_short_id: "review123",
-          client: "claude",
-          evidence: "structured_log",
-        }),
-      ],
-      coverage: [expect.objectContaining({ client: "claude", sessions_scanned: 1 })],
+    expect(JSON.parse(result.stdout)).toMatchObject({ found: 501, uploaded: 501, pending: 0 })
+    expect(received).toHaveLength(2)
+    expect(received.map((batch) => batch.uses.length)).toEqual([500, 1])
+    expect(received[0].coverage).toEqual([])
+    expect(received[0].uses[0]).toMatchObject({
+      skill_short_id: "review123",
+      client: "claude",
+      evidence: "structured_log",
     })
+    expect(received[1].coverage).toEqual([
+      expect.objectContaining({ client: "claude", sessions_scanned: 1 }),
+    ])
   })
 
   it("keeps a nonzero status for a quiet failed upload", async () => {
