@@ -181,6 +181,13 @@ async function enterEditMode(page: Page) {
   await expect(page.getByTestId("inline-edit-bar")).toBeVisible()
 }
 
+/** The keyboard way in. On a LaTeX artifact the header's Edit opens the source editor,
+ *  so inline prose editing starts from `e` (or a selection) there. */
+async function enterEditModeByKey(page: Page) {
+  await page.keyboard.press("e")
+  await expect(page.getByTestId("inline-edit-bar")).toBeVisible()
+}
+
 /**
  * Append text to a paragraph in the frame: click it (which is what arms the block),
  * jump to the end, and type. An append is the one edit whose expected result is
@@ -1631,7 +1638,7 @@ test("LaTeX: typing beside a formula edits the prose and leaves the math alone",
   const shortId = await seedTex(owner)
   const p = paper(owner).locator("p").first()
   await expect(p.locator(".katex").first()).toBeVisible()
-  await enterEditMode(owner)
+  await enterEditModeByKey(owner)
   // Click the first word, not the centre of the line (that could be the formula).
   await p.click({ position: { x: 6, y: 8 } })
   await owner.keyboard.press("End")
@@ -1651,7 +1658,7 @@ test("LaTeX: a formula and a table cell are refused, a caption edits like prose"
 }) => {
   const shortId = await seedTex(owner)
   await expect(paper(owner).locator(".katex").first()).toBeVisible()
-  await enterEditMode(owner)
+  await enterEditModeByKey(owner)
   await paper(owner).locator(".derive-math").first().click()
   await expect(owner.getByText(READONLY_TOAST)).toBeVisible()
   await paper(owner).getByRole("cell", { name: "Baseline" }).click()
@@ -1675,7 +1682,7 @@ test("LaTeX: Backspace right after a formula cannot swallow it", async ({ owner 
   const shortId = await seedTex(owner)
   const p = paper(owner).locator("p").first()
   await expect(p.locator(".katex").first()).toBeVisible()
-  await enterEditMode(owner)
+  await enterEditModeByKey(owner)
   await p.click({ position: { x: 6, y: 8 } })
   await p.evaluate((el) => {
     const after = el.querySelector(".derive-math")?.nextSibling
@@ -1738,7 +1745,14 @@ test("LaTeX: a paper bundle edits main.tex on the page and keeps its other files
 }) => {
   const shortId = await publishArtifact(owner, "paper.zip", paperZip(), "application/zip")
   await openArtifact(owner, shortId)
-  await enterEditMode(owner)
+  // On a paper the header's Edit is the source editor (a paper is written in its
+  // source); inline editing of the prose starts from `e`.
+  await owner.getByTestId("artifact-inline-edit").click()
+  await expect(owner.locator(".cm-content")).toBeVisible()
+  await expect(owner.getByTestId("artifact-publish-version")).toHaveText("Save")
+  await owner.getByTestId("artifact-edit-cancel").click()
+  await expect(owner.locator(".cm-content")).toBeHidden()
+  await enterEditModeByKey(owner)
   const p = paper(owner).locator("p").first()
   await p.click({ position: { x: 6, y: 8 } })
   await owner.keyboard.press("End")

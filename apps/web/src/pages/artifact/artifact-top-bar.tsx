@@ -55,6 +55,9 @@ export function ArtifactTopBar(props: {
    *  button ahead of Share. The ⋯ "Edit source" item stays the raw fallback. */
   showInlineEdit: boolean
   inlineEditLabel: string
+  /** Whether `e` is this button's keyboard twin (the title says so). Off when the button
+   *  opens the source editor instead, as it does for a LaTeX artifact. */
+  inlineEditShortcut?: boolean
   /** This artifact is a slide deck — offer Present (fullscreen) in the ⋯ menu. */
   isDeck: boolean
   videoMoment?: { scene: string; timeMs: number }
@@ -108,7 +111,11 @@ export function ArtifactTopBar(props: {
           <Button
             variant="ghost"
             size="sm"
-            title={`${props.inlineEditLabel} (e)`}
+            title={
+              props.inlineEditShortcut === false
+                ? props.inlineEditLabel
+                : `${props.inlineEditLabel} (e)`
+            }
             data-testid="artifact-inline-edit"
             onClick={props.onInlineEdit}
           >

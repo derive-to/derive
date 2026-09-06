@@ -53,7 +53,8 @@ for the recommended install and verification flow.
   as chips and each folder as a chip with a folder glyph that opens a small tree on hover
   (twelve rows visible per list, the rest scroll; nested folders expand inside it; root
   images open in a tab). A root `README.md` is no longer shown on papers, and the source
-  editor's button reads Save for LaTeX artifacts.
+  editor's button reads Save for LaTeX artifacts, and the header's Edit opens that editor
+  for them (inline prose editing stays on `e` and on a selection).
 - **Dynamic tables and figures.** An agent that refreshed a results table or a figure as
   runs landed had one write path: publish a version, so a day of refreshes was a day of
   versions with no prose change, and no way to update one cell in place. A document can

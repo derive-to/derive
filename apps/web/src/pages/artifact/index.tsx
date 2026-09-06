@@ -1633,7 +1633,14 @@ export function Artifact({ template = false }: { template?: boolean }) {
               // frame: while a caret is in a block, the page's keyboard is off.
               showInlineEdit={canEditDoc && !inlineEdit.active && !bundleWorkspaceActive}
               inlineEditLabel="Edit"
-              onInlineEdit={() => inlineEdit.start()}
+              // A paper is written in its source, so on a LaTeX artifact the header's Edit
+              // opens the source editor. The inline path (a quick fix to a sentence) stays
+              // reachable from a selection and from `e`.
+              inlineEditShortcut={format !== "tex"}
+              onInlineEdit={() => {
+                if (format === "tex") void startEdit()
+                else inlineEdit.start()
+              }}
               isDeck={isDeckLike}
               videoMoment={video ? { scene: video.id, timeMs: video.elapsedMs } : undefined}
               canLock={canLock}
