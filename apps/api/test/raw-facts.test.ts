@@ -469,6 +469,21 @@ describe("dynamic slots follow the version boundary", () => {
       })
   })
 
+  it("lists a version's slots with their rendered fragments on request", async () => {
+    const a = await (await publishMd(MD("--"))).json()
+    expect((await setCell(a.short_id, 0.5)).status).toBe(200)
+    const listed = await (
+      await app.request(`/v1/artifacts/${a.short_id}/dynamic?format=html`, { headers: TOKEN })
+    ).json()
+    expect(listed.slots).toMatchObject([
+      { name: "results", revision: 1, html: expect.stringContaining("<td>0.5</td>") },
+    ])
+    const plain = await (
+      await app.request(`/v1/artifacts/${a.short_id}/dynamic`, { headers: TOKEN })
+    ).json()
+    expect(plain.slots[0]).not.toHaveProperty("html")
+  })
+
   it("keeps a bound page mutable and live after its last slot is deleted", async () => {
     const a = await (await publishMd(MD("--"))).json()
     expect((await setCell(a.short_id, 0.5)).status).toBe(200)

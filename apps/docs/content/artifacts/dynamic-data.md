@@ -45,8 +45,9 @@ seeds an empty slot and is reported in the publish receipt.
 
 ## The API
 
-- `GET /v1/artifacts/:id/dynamic` lists a version's slots (`?v=n` for an older version);
-  `GET …/dynamic/:name` returns one (`&format=html` adds the rendered fragment);
+- `GET /v1/artifacts/:id/dynamic` lists a version's slots (`?v=n` for an older version,
+  `&format=html` adds each rendered fragment); `GET …/dynamic/:name` returns one (the same
+  `format=html` applies);
   `GET …/dynamic/:name/history` returns its retained revisions.
 - `PATCH …/dynamic/:name` applies a batch to the current version: `cells`
   (`{row, col, value}`), `delete_rows`, then `append_rows`, atomically or not at all. Rows

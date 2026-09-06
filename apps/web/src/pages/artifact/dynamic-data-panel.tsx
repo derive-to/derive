@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useState } from "react"
 import { api, type DynamicSlot } from "@/api"
 import { Eyebrow } from "@/components/shared/section-eyebrow"
@@ -38,6 +38,7 @@ export function DynamicDataPanel({
         <SectionTitle as="h2">Data</SectionTitle>
         <p className="text-2xs text-muted-foreground">
           Tables and figures updated without a new version. Showing v{version}.
+          {!canPublish && " Data is edited on the current version."}
         </p>
       </div>
       {error && (
@@ -71,17 +72,24 @@ function DynamicSlotRow({
     enabled: open,
   })
   // Replace a figure's image: upload the file as an asset, then point the slot at it.
-  // No version is minted; the served page and every open viewer swap the image.
+  // No version is minted; the served page and every open viewer swap the image. The
+  // write names the version and revision this row shows, so a publish or another write
+  // that landed meanwhile is refused (409, with the reason toasted) rather than
+  // overwritten; the rail then refetches to show what is current.
+  const qc = useQueryClient()
   const replace = useApiMutation<DynamicSlot, File>({
     mutationFn: async (file) => {
       const asset = await api.uploadAsset(file)
       return api.patchDynamicSlot(shortId, slot.name, {
         kind: "figure",
         figure: { url: asset.url },
+        version: slot.version,
+        expected_revision: slot.revision,
       })
     },
     invalidate: [["artifact", shortId, "dynamic"]],
     success: "Figure replaced.",
+    onError: () => qc.invalidateQueries({ queryKey: ["artifact", shortId, "dynamic"] }),
   })
   const pickImage = () => {
     const input = document.createElement("input")

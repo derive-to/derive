@@ -171,6 +171,9 @@ export const dynamicDataRoutes = (ctx: AppContext) => {
     const n = await versionFor(c, artifact)
     if (n instanceof Response) return n
     const rows = await meta.listDynamicSlots(artifact.id, n)
+    // `format=html` adds each slot's rendered fragment, so a viewer reconciling after a
+    // reconnect refreshes every bound element from one read.
+    const withHtml = c.req.query("format") === "html"
     const slots = []
     for (const row of rows) {
       const value = parseStored(row)
@@ -178,7 +181,7 @@ export const dynamicDataRoutes = (ctx: AppContext) => {
         log.warn("dynamic slot skipped", { name: row.name, n, reason: value })
         continue
       }
-      slots.push(slotJson(row, value))
+      slots.push(slotJson(row, value, withHtml))
     }
     return c.json({ version: n, slots })
   })

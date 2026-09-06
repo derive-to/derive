@@ -43,7 +43,9 @@ export interface DynamicRevision {
   at: string
   value?: unknown
 }
-type DynamicWriteMeta = { expected_revision?: number; note?: string }
+/** `version` is the version the caller read: the write is refused (409) once the artifact
+ *  has moved past it, so an edit made while looking at one version never lands on another. */
+type DynamicWriteMeta = { version?: number; expected_revision?: number; note?: string }
 export type DynamicWrite = DynamicValue & DynamicWriteMeta
 export type DynamicPatchBody = DynamicPatch & DynamicWriteMeta
 
@@ -1146,8 +1148,17 @@ export const api = {
   // Dynamic tables and figures: per-version data that changes without a new version
   // (see @derive/core dynamic-data.ts). A plain-Hono router like shared state, so the
   // wire shapes are declared here rather than generated.
-  dynamicSlots: (id: string, v?: number): Promise<{ version: number; slots: DynamicSlot[] }> =>
-    f(`/v1/artifacts/${id}/dynamic${v ? `?v=${v}` : ""}`, opts()).then(j),
+  dynamicSlots: (
+    id: string,
+    v?: number,
+    q: { format?: "html" } = {},
+  ): Promise<{ version: number; slots: DynamicSlot[] }> => {
+    const params = new URLSearchParams()
+    if (v) params.set("v", String(v))
+    if (q.format) params.set("format", q.format)
+    const qs = params.toString()
+    return f(`/v1/artifacts/${id}/dynamic${qs ? `?${qs}` : ""}`, opts()).then(j)
+  },
   dynamicSlot: (
     id: string,
     name: string,

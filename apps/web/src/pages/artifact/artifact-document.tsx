@@ -58,6 +58,7 @@ export function ArtifactDocument({
   onDeckArrange,
   readOnlyView = false,
   viewportWidth,
+  reloadKey,
 }: {
   shown: number
   currentVersion: number
@@ -67,6 +68,8 @@ export function ArtifactDocument({
   /** null = the record is still a list-row seed (no raw_token yet) — RenderStage
    *  holds its boot state and mounts the frame once the real source arrives. */
   rawSrc: string | null
+  /** Bumped to reload the same source (see RenderStage). */
+  reloadKey?: number
   view: "preview" | "diff"
   diff: Diff | null
   diffFailed?: boolean
@@ -171,6 +174,7 @@ export function ArtifactDocument({
       ) : (
         <RenderStage
           rawSrc={rawSrc}
+          reloadKey={reloadKey}
           title={title}
           subject={subject}
           version={shown}
