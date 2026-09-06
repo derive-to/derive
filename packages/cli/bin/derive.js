@@ -1516,7 +1516,10 @@ if (cmd === "skill") {
       )
       if (failed) console.error(`error: ${failed}; receipts remain in the local spool`)
     }
-    process.exit(failed && !flags.quiet ? 1 : 0)
+    // Quiet suppresses routine scheduler output. It must not hide a failed
+    // upload from the scheduler, which otherwise cannot report that the spool
+    // needs another run.
+    process.exit(failed ? 1 : 0)
   }
   if (sub === "used") {
     const client = flags.client ?? "other"

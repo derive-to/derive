@@ -535,4 +535,57 @@ describe("derive skill scan", () => {
       coverage: [expect.objectContaining({ client: "claude", sessions_scanned: 1 })],
     })
   })
+
+  it("keeps a nonzero status for a quiet failed upload", async () => {
+    const project = mkdtempSync(join(tmpdir(), "derive-skill-scan-quiet-failure-"))
+    dirs.push(project)
+    const home = join(project, "home")
+    const config = join(project, ".derive-test-config")
+    const skillPath = join(home, ".claude", "skills", "review-skill")
+    mkdirSync(config, { recursive: true })
+    writeFileSync(
+      join(config, "skill-installs.json"),
+      JSON.stringify({
+        version: 1,
+        installs: [
+          {
+            id: "review123",
+            version: 4,
+            name: "review-skill",
+            client: "claude",
+            path: skillPath,
+            scope: "personal",
+            server: "https://derive.test",
+            workspace_id: null,
+            account_id: null,
+          },
+        ],
+      }),
+    )
+    const log = join(home, ".claude", "projects", "project-a", "session-a.jsonl")
+    mkdirSync(join(home, ".claude", "projects", "project-a"), { recursive: true })
+    writeFileSync(
+      log,
+      `${JSON.stringify({
+        type: "assistant",
+        timestamp: new Date().toISOString(),
+        sessionId: "session-a",
+        attributionSkill: "review-skill",
+      })}\n`,
+    )
+
+    const child = spawn(
+      process.execPath,
+      [join(import.meta.dirname, "..", "bin", "derive.js"), "skill", "scan", "--quiet"],
+      {
+        cwd: project,
+        env: { PATH: process.env.PATH, HOME: home, DERIVE_CONFIG_DIR: config },
+      },
+    )
+    const status = await new Promise((resolve) => child.on("close", resolve))
+    expect(status).toBe(1)
+    expect(
+      JSON.parse(readFileSync(join(config, "skill-scan-spool.json"), "utf8")).pending,
+    ).toHaveLength(1)
+  })
 })
