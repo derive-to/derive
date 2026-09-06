@@ -25,7 +25,9 @@ for the recommended install and verification flow.
   note. `GET /v1/artifacts/:id/source.zip` (and the viewer's More menu) downloads a
   paper as a zip that compiles in Overleaf as the page shows it: every file, `derive.sty`,
   one `derive-dynamic/<name>.tex` per binding from the slot's current value, uploaded
-  figures as files, and a README with provenance and caveats.
+  figures as files, and a README with provenance and caveats. A binding whose name the
+  slot grammar refuses is skipped with a note, so the archive never carries a path that
+  unpacks outside its folder.
 - **LaTeX papers.** A `.tex` upload was typed as Markdown and rendered as escaped source.
   A paper now publishes as its LaTeX source, single file (`text/x-latex`, "LaTeX") or a
   bundle whose root holds `main.tex` beside its `.bib`, sections and figures

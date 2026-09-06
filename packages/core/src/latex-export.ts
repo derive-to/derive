@@ -12,6 +12,7 @@
  * hands in the bytes and zips the result.
  */
 
+import { isDynamicName } from "./dynamic-data"
 import {
   DERIVE_STY,
   dynamicFigureTex,
@@ -20,6 +21,7 @@ import {
   injectDerivePackage,
   latexDynamicBindings,
 } from "./latex-dynamic"
+
 import type { DynamicValueLike } from "./latex-emit"
 
 export interface LatexExportInput {
@@ -75,6 +77,9 @@ const PDFLATEX_IMAGE = new Set(["png", "jpg", "jpeg", "pdf"])
 
 const isTex = (path: string): boolean => /\.tex$/i.test(path)
 
+const ignoredName = (name: string): string =>
+  `Dynamic binding "${name}" was ignored: names are lowercase letters, digits and dashes.`
+
 export const planLatexExport = (input: LatexExportInput): LatexExportPlan => {
   const files: Record<string, string | Uint8Array> = { ...input.files }
   const notes: string[] = []
@@ -83,10 +88,17 @@ export const planLatexExport = (input: LatexExportInput): LatexExportPlan => {
   )
 
   // 1. The bindings, across every .tex file: an \input'd section can hold a table too.
+  // Only names the slot grammar accepts: a name is about to become a zip entry path, and
+  // the renderer ignores anything else anyway, so the export does the same and says so.
   const bindings = new Map<string, "table" | "figure">()
   for (const [, source] of texSources)
-    for (const b of latexDynamicBindings(source))
+    for (const b of latexDynamicBindings(source)) {
+      if (!isDynamicName(b.name)) {
+        if (!notes.includes(ignoredName(b.name))) notes.push(ignoredName(b.name))
+        continue
+      }
       if (!bindings.has(b.name)) bindings.set(b.name, b.kind)
+    }
 
   // 2. derive.sty and \usepackage{derive} in the entry, so the fragments resolve.
   if (bindings.size) {
