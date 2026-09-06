@@ -8,6 +8,7 @@ import {
   DYNAMIC_REVISION_LIMIT,
   type DynamicSlotRecord,
   type DynamicValue,
+  dynamicIndexText,
   dynamicValueBytes,
   hasArtifactStanding,
   isDynamicName,
@@ -21,6 +22,7 @@ import { type Context, Hono } from "hono"
 import type { AppContext } from "../context"
 import { AGENT_WRITES_OFF, agentWritesOff } from "../lib/agent-writes"
 import { fail, readJson } from "../lib/http"
+import { indexArtifactVersion } from "../lib/search"
 import { log } from "../log"
 
 const CAS_ATTEMPTS = 8
@@ -125,6 +127,7 @@ const slotJson = (row: DynamicSlotRecord, value: DynamicValue, withHtml = false)
 export const dynamicDataRoutes = (ctx: AppContext) => {
   const {
     meta,
+    blobs,
     bus,
     background,
     requireArtifact,
@@ -237,6 +240,31 @@ export const dynamicDataRoutes = (ctx: AppContext) => {
 
   type Writable = Exclude<Awaited<ReturnType<typeof writable>>, Response>
 
+  // A write changed what the page says: refresh the lexical index so workspace search
+  // finds the new cells (one blob read plus an FTS upsert, off the hot path and bounded
+  // by the write lane). The dense arm is left alone on purpose: an embedding per cell
+  // edit is not worth it, and the next publish re-embeds. Best-effort, like every index
+  // write: a hiccup here never fails a write that already landed.
+  const reindex = async (artifact: Writable["artifact"], n: number) => {
+    try {
+      const version = await meta.getVersion(artifact.id, n)
+      if (!version) return
+      const rows = await meta.listDynamicSlots(artifact.id, n)
+      await indexArtifactVersion(
+        meta,
+        blobs,
+        artifact,
+        version,
+        undefined,
+        undefined,
+        undefined,
+        dynamicIndexText(rows),
+      )
+    } catch (err) {
+      log.warn("dynamic reindex failed", { artifact: artifact.id, n, err: String(err) })
+    }
+  }
+
   // The artifact moved on: the version the caller read is no longer current.
   const stale = (c: Context, w: Writable, current: number, read: number) =>
     fail(
@@ -284,6 +312,7 @@ export const dynamicDataRoutes = (ctx: AppContext) => {
         created_at: row.updated_at,
       }),
     )
+    await background(reindex(w.artifact, row.n))
     log.info("dynamic_write", { name: row.name, kind: row.kind, n: row.n, revision: row.revision })
     return c.json(slotJson(row, value))
   }
@@ -430,6 +459,7 @@ export const dynamicDataRoutes = (ctx: AppContext) => {
       n: w.n,
       revision: null,
     })
+    await background(reindex(w.artifact, w.n))
     log.info("dynamic_delete", { name: w.name, kind: current.kind, n: w.n })
     return c.json({ ok: true })
   })

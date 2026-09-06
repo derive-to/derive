@@ -1523,6 +1523,10 @@ export function buildContext(deps: AppDeps) {
   /**
    * Source text of a stored version (entry document for bundles); null if missing.
    */
+  // The search engine's view of a version's dynamic slots (lib/search.ts SearchDeps):
+  // fail-soft, so a store hiccup costs the data, never the search.
+  const dynamicSlots = (v: { artifact_id: string; n: number }) =>
+    meta.listDynamicSlots(v.artifact_id, v.n).catch(() => [])
   const sourceText = async (content: {
     blob_key: string
     content_type: string
@@ -1856,6 +1860,7 @@ export function buildContext(deps: AppDeps) {
     collectionRole,
     collectionStandingRole,
     sourceText,
+    dynamicSlots,
     resolveArtifact,
     requireArtifact,
     resolveArtifacts,

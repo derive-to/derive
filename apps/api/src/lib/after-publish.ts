@@ -14,6 +14,7 @@ import {
   DECK_CONTENT_TYPE,
   type DynamicValue,
   deriveFacts,
+  dynamicIndexText,
   dynamicValueBytes,
   emptyDynamicValue,
   FACT_GEN,
@@ -99,6 +100,8 @@ export const emitVersionBump = async (
   // and move on — the artifact re-indexes on its next publish (and the backfill
   // sweep is the safety net for anything missed).
   try {
+    // The slots were seeded above, so the index carries their values beside the source.
+    const slots = await meta.listDynamicSlots(artifact.id, version.n).catch(() => [])
     await indexArtifactVersion(
       meta,
       blobs,
@@ -107,6 +110,7 @@ export const emitVersionBump = async (
       deps.search,
       preparedSource,
       previousSearchSource,
+      dynamicIndexText(slots),
     )
   } catch (err) {
     log.error("search index update failed", { artifact: artifact.id, err: String(err) })

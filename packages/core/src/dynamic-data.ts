@@ -610,6 +610,54 @@ export const parseDynamicBindings = (source: string, contentType: string): Dynam
 export const dynamicSeedErrors = (source: string, contentType: string): string[] =>
   parseDynamicBindings(source, contentType).errors
 
+/** A stored row's value, or null when the JSON no longer passes the contract. */
+export const parseStoredDynamicValue = (json: string): DynamicValue | null => {
+  try {
+    const value = validateDynamicValue(JSON.parse(json))
+    return typeof value === "string" ? null : value
+  } catch {
+    return null
+  }
+}
+
+/** A slot's value as searchable text, one row or field per line: a table as GFM rows
+ *  (labels, then each row's cells, `--` for an empty cell), a figure as its caption, alt
+ *  and url. What a text-scope search greps and the workspace index carries for a slot,
+ *  so a number that lives only in the data is as findable as prose. */
+export const dynamicValueText = (value: DynamicValue): string => {
+  if (value.kind === "table") {
+    const columns = value.table.columns
+    return [
+      `| ${columns.map((c) => c.label ?? c.key).join(" | ")} |`,
+      `| ${columns.map(() => "---").join(" | ")} |`,
+      ...value.table.rows.map(
+        (row) => `| ${columns.map((c) => cellText(row[c.key])).join(" | ")} |`,
+      ),
+    ].join("\n")
+  }
+  const { caption, alt, url } = value.figure
+  return [caption, alt, url]
+    .filter((s): s is string => typeof s === "string" && s !== "")
+    .join("\n")
+}
+
+/** Every readable slot of a version as `{ name, text }`, for search. A row the contract
+ *  no longer accepts contributes nothing, the same way the page renders its placeholder. */
+export const dynamicSlotTexts = (
+  rows: readonly { name: string; json: string }[],
+): { name: string; text: string }[] =>
+  rows.flatMap((row) => {
+    const value = parseStoredDynamicValue(row.json)
+    return value ? [{ name: row.name, text: dynamicValueText(value) }] : []
+  })
+
+/** The block a version's slots add to its search-index text: each slot named, so the
+ *  index nominates an artifact for a value that appears nowhere in its source. */
+export const dynamicIndexText = (rows: readonly { name: string; json: string }[]): string =>
+  dynamicSlotTexts(rows)
+    .map(({ name, text }) => `dynamic/${name}\n${text}`)
+    .join("\n\n")
+
 /** Serve-time substitution for an HTML carrier: every bound element whose slot exists gets
  *  its inner markup replaced by the slot's render; a leading authored `<caption>` is kept
  *  (it is prose, not data); an element whose name has no slot is left byte-identical. */
