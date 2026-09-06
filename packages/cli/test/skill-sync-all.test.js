@@ -5,7 +5,7 @@ import http from "node:http"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
-import { recordSkillInstall, scanSkillLogs } from "../src/skill-scan.js"
+import { addToSkillScanSpool, recordSkillInstall, scanSkillLogs } from "../src/skill-scan.js"
 import { setupSkillScan } from "../src/skill-scan-setup.js"
 
 const dirs = []
@@ -587,5 +587,20 @@ describe("derive skill scan", () => {
     expect(
       JSON.parse(readFileSync(join(config, "skill-scan-spool.json"), "utf8")).pending,
     ).toHaveLength(1)
+  })
+
+  it("does not overwrite a malformed receipt spool", () => {
+    const root = mkdtempSync(join(tmpdir(), "derive-skill-scan-spool-"))
+    dirs.push(root)
+    const priorConfig = process.env.DERIVE_CONFIG_DIR
+    process.env.DERIVE_CONFIG_DIR = root
+    try {
+      writeFileSync(join(root, "skill-scan-spool.json"), "{broken")
+      expect(() => addToSkillScanSpool([], [])).toThrow("cannot read Skill scan spool")
+      expect(readFileSync(join(root, "skill-scan-spool.json"), "utf8")).toBe("{broken")
+    } finally {
+      if (priorConfig === undefined) delete process.env.DERIVE_CONFIG_DIR
+      else process.env.DERIVE_CONFIG_DIR = priorConfig
+    }
   })
 })

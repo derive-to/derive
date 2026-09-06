@@ -358,7 +358,7 @@ export async function scanSkillLogs(options = {}) {
 }
 
 export function addToSkillScanSpool(events, coverage) {
-  const spool = readJson(spoolPath(), { version: 1, pending: [], coverage: [] })
+  const spool = readSkillScanSpool()
   const pending = new Map((spool.pending ?? []).map((event) => [event.event_id, event]))
   for (const event of events) pending.set(event.event_id, event)
   const coverageByClient = new Map((spool.coverage ?? []).map((row) => [row.client, row]))
@@ -373,7 +373,21 @@ export function addToSkillScanSpool(events, coverage) {
 }
 
 export function readSkillScanSpool() {
-  return readJson(spoolPath(), { version: 1, pending: [], coverage: [] })
+  const path = spoolPath()
+  try {
+    const spool = JSON.parse(readFileSync(path, "utf8"))
+    if (
+      !spool ||
+      typeof spool !== "object" ||
+      !Array.isArray(spool.pending) ||
+      !Array.isArray(spool.coverage)
+    )
+      throw new Error("expected pending and coverage arrays")
+    return spool
+  } catch (error) {
+    if (error?.code === "ENOENT") return { version: 1, pending: [], coverage: [] }
+    throw new Error(`cannot read Skill scan spool at ${path}: ${error.message}`)
+  }
 }
 
 export function removeFromSkillScanSpool(eventIds, clients = []) {
