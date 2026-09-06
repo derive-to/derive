@@ -420,6 +420,10 @@ export const bibQuery = (shortId: string, version: number) =>
     queryFn: () => api.bib(shortId, version),
     staleTime: 30_000,
     retry: false,
+    // A publish moves the shown version, and with it this key. Keep the previous
+    // bibliography on screen while the new one loads, so the References rail (and a
+    // draft being typed in it) stays mounted across the change instead of blinking away.
+    placeholderData: keepPreviousData,
   })
 
 export const dynamicHistoryQuery = (shortId: string, name: string, version: number) =>
