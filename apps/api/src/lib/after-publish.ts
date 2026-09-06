@@ -87,8 +87,9 @@ export const emitVersionBump = async (
   // renderer screenshots it, and the search index projects its data. Best-effort: a hiccup
   // here must never fail a publish that already went live, and a page whose slot is
   // missing renders its placeholder rather than nothing.
+  let seeded: { name: string; json: string }[] = []
   try {
-    await seedDynamicSlots(meta, blobs, version, dynamicSeedFrom, preparedSource)
+    seeded = await seedDynamicSlots(meta, blobs, version, dynamicSeedFrom, preparedSource)
   } catch (err) {
     log.error("dynamic slot seeding failed", { artifact: artifact.id, err: String(err) })
   }
@@ -100,8 +101,8 @@ export const emitVersionBump = async (
   // and move on — the artifact re-indexes on its next publish (and the backfill
   // sweep is the safety net for anything missed).
   try {
-    // The slots were seeded above, so the index carries their values beside the source.
-    const slots = await meta.listDynamicSlots(artifact.id, version.n).catch(() => [])
+    // The rows seeded above are this version's slots, so the index carries their values
+    // beside the source without a second read (an unbound document costs nothing).
     await indexArtifactVersion(
       meta,
       blobs,
@@ -110,7 +111,7 @@ export const emitVersionBump = async (
       deps.search,
       preparedSource,
       previousSearchSource,
-      dynamicIndexText(slots),
+      dynamicIndexText(seeded),
     )
   } catch (err) {
     log.error("search index update failed", { artifact: artifact.id, err: String(err) })
@@ -426,7 +427,8 @@ const storedValue = (json: string): DynamicValue | null => {
 }
 
 /** Seed every dynamic slot a just-published version declares (see @derive/core
- *  dynamic-data.ts). `seedFrom` names the version whose LATEST data starts this one;
+ *  dynamic-data.ts) and return the rows this version now holds, for the search index.
+ *  `seedFrom` names the version whose LATEST data starts this one;
  *  a publish copies forward from n-1, a restore from the version being restored, so a
  *  restore of v3 as v7 starts v7 from v3's final numbers. Insert-if-absent throughout:
  *  a replayed bump (the amend path re-runs this for the same n) and a write that raced
@@ -437,18 +439,19 @@ const seedDynamicSlots = async (
   version: VersionRecord,
   seedFrom: number | undefined,
   preparedSource?: string,
-): Promise<void> => {
+): Promise<{ name: string; json: string }[]> => {
+  const seeded: { name: string; json: string }[] = []
   const ct = version.content_type
   // Bundles carry no bindings (their blob is a manifest), so skip the blob read entirely.
-  if (isBundleContentType(ct)) return
+  if (isBundleContentType(ct)) return seeded
   let source = preparedSource
   if (source === undefined) {
     const bytes = await blobs.get(version.blob_key)
-    if (!bytes) return
+    if (!bytes) return seeded
     source = new TextDecoder().decode(bytes)
   }
   const { bindings } = parseDynamicBindings(source, ct)
-  if (bindings.length === 0) return
+  if (bindings.length === 0) return seeded
   const from = seedFrom ?? version.n - 1
   const at = new Date().toISOString()
   for (const binding of bindings) {
@@ -474,7 +477,13 @@ const seedDynamicSlots = async (
       updated_at: at,
     }
     const inserted = await meta.insertDynamicSlot(row)
-    if (!inserted) continue
+    if (!inserted) {
+      // A replayed bump, or a write that raced the seed: the row that exists is the slot.
+      const existing = await meta.getDynamicSlot(version.artifact_id, version.n, binding.name)
+      if (existing) seeded.push({ name: existing.name, json: existing.json })
+      continue
+    }
+    seeded.push({ name: row.name, json })
     await meta.appendDynamicRevision({
       id: newId("dynrev"),
       artifact_id: row.artifact_id,
@@ -489,6 +498,7 @@ const seedDynamicSlots = async (
       created_at: at,
     })
   }
+  return seeded
 }
 
 /** Versions walked back when a fact first appears. Bounded because each one costs a blob
