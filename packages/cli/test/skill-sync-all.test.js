@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process"
+import { createHash } from "node:crypto"
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import http from "node:http"
 import { tmpdir } from "node:os"
@@ -334,6 +335,68 @@ describe("derive skill scan", () => {
     }
   })
 
+  it("keeps Codex session context across an incremental append", async () => {
+    const root = mkdtempSync(join(tmpdir(), "derive-skill-scan-context-"))
+    dirs.push(root)
+    const home = join(root, "home")
+    const config = join(root, "config")
+    const priorConfig = process.env.DERIVE_CONFIG_DIR
+    process.env.DERIVE_CONFIG_DIR = config
+    try {
+      const skillPath = join(home, ".codex", "skills", "review-skill")
+      recordSkillInstall({
+        id: "review123",
+        version: 4,
+        name: "review-skill",
+        client: "codex",
+        path: skillPath,
+        digest: "a".repeat(64),
+        scope: "personal",
+        server: "https://derive.test",
+        workspaceId: "workspace-test",
+        accountId: "account-test",
+      })
+      const log = join(home, ".codex", "sessions", "rollout.jsonl")
+      mkdirSync(join(home, ".codex", "sessions"), { recursive: true })
+      writeFileSync(
+        log,
+        `${JSON.stringify({
+          type: "session_meta",
+          timestamp: "2026-09-05T12:00:00.000Z",
+          payload: { id: "session-a" },
+        })}\n${JSON.stringify({
+          type: "turn_context",
+          timestamp: "2026-09-05T12:01:00.000Z",
+          payload: { turn_id: "turn-a" },
+        })}\n`,
+      )
+      expect((await scanSkillLogs({ home })).events).toEqual([])
+      writeFileSync(
+        log,
+        `${JSON.stringify({
+          type: "response_item",
+          timestamp: "2026-09-05T12:01:01.000Z",
+          payload: {
+            type: "function_call",
+            call_id: "call-a",
+            arguments: JSON.stringify({ cmd: `cat ${skillPath}/SKILL.md` }),
+          },
+        })}\n`,
+        { flag: "a" },
+      )
+      const result = await scanSkillLogs({ home })
+      expect(result.events).toHaveLength(1)
+      expect(result.events[0].opaque_session_id).toBe(
+        createHash("sha256")
+          .update(["derive-skill-session-v1", "codex", "session-a"].join("\0"))
+          .digest("hex"),
+      )
+    } finally {
+      if (priorConfig === undefined) delete process.env.DERIVE_CONFIG_DIR
+      else process.env.DERIVE_CONFIG_DIR = priorConfig
+    }
+  })
+
   it("installs idempotent session-end hooks and a macOS schedule", () => {
     const root = mkdtempSync(join(tmpdir(), "derive-skill-scan-setup-"))
     dirs.push(root)
@@ -362,6 +425,39 @@ describe("derive skill scan", () => {
     expect(second.hooks.every((hook) => !hook.changed)).toBe(true)
     expect(JSON.parse(readFileSync(codexHooks, "utf8"))).toMatchObject({ description: "keep me" })
     expect(readFileSync(first.schedule, "utf8")).toContain("to.derive.skill-scan")
+  })
+
+  it("limits setup hooks and schedules to the selected client", () => {
+    const root = mkdtempSync(join(tmpdir(), "derive-skill-scan-client-"))
+    dirs.push(root)
+    const setup = setupSkillScan({
+      home: root,
+      node: "/usr/bin/node",
+      cli: "/usr/local/bin/derive",
+      platform: "darwin",
+      client: "codex",
+      schedule: true,
+      activate: false,
+    })
+
+    expect(setup.hooks).toHaveLength(1)
+    expect(setup.hooks[0].client).toBe("codex")
+    expect(existsSync(join(root, ".claude", "settings.json"))).toBe(false)
+    expect(readFileSync(join(root, ".codex", "hooks.json"), "utf8")).toContain("--client codex")
+    expect(readFileSync(setup.schedule, "utf8")).toContain(
+      "<string>--client</string><string>codex</string>",
+    )
+  })
+
+  it("does not install hooks when scheduling is unsupported", () => {
+    const root = mkdtempSync(join(tmpdir(), "derive-skill-scan-unsupported-"))
+    dirs.push(root)
+
+    expect(() =>
+      setupSkillScan({ home: root, platform: "freebsd", schedule: true, activate: false }),
+    ).toThrow("automatic schedule is not supported on freebsd")
+    expect(existsSync(join(root, ".codex", "hooks.json"))).toBe(false)
+    expect(existsSync(join(root, ".claude", "settings.json"))).toBe(false)
   })
 
   it("uploads scanned receipts and coverage as one batch", async () => {

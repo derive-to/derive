@@ -43,7 +43,7 @@ const addSessionEndHook = (path, command) => {
 const xml = (value) =>
   String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
 
-const installMacSchedule = ({ home, node, cli, activate }) => {
+const installMacSchedule = ({ home, node, cli, client, activate }) => {
   const path = join(home, "Library", "LaunchAgents", "to.derive.skill-scan.plist")
   mkdirSync(dirname(path), { recursive: true })
   const source = `<?xml version="1.0" encoding="UTF-8"?>
@@ -51,7 +51,7 @@ const installMacSchedule = ({ home, node, cli, activate }) => {
 <plist version="1.0"><dict>
   <key>Label</key><string>to.derive.skill-scan</string>
   <key>ProgramArguments</key><array>
-    <string>${xml(node)}</string><string>${xml(cli)}</string><string>skill</string><string>scan</string><string>--quiet</string>
+    <string>${xml(node)}</string><string>${xml(cli)}</string><string>skill</string><string>scan</string><string>--quiet</string>${client ? `<string>--client</string><string>${xml(client)}</string>` : ""}
   </array>
   <key>StartInterval</key><integer>1800</integer>
   <key>RunAtLoad</key><true/>
@@ -69,14 +69,14 @@ const installMacSchedule = ({ home, node, cli, activate }) => {
 
 const shellQuote = (value) => `'${String(value).replaceAll("'", `'\\''`)}'`
 
-const installLinuxSchedule = ({ home, node, cli, activate }) => {
+const installLinuxSchedule = ({ home, node, cli, client, activate }) => {
   const root = join(home, ".config", "systemd", "user")
   const service = join(root, "derive-skill-scan.service")
   const timer = join(root, "derive-skill-scan.timer")
   mkdirSync(root, { recursive: true })
   writeFileSync(
     service,
-    `[Unit]\nDescription=Scan local agent logs for Derive Skill use\n\n[Service]\nType=oneshot\nExecStart=${shellQuote(node)} ${shellQuote(cli)} skill scan --quiet\n`,
+    `[Unit]\nDescription=Scan local agent logs for Derive Skill use\n\n[Service]\nType=oneshot\nExecStart=${shellQuote(node)} ${shellQuote(cli)} skill scan --quiet${client ? ` --client ${shellQuote(client)}` : ""}\n`,
   )
   writeFileSync(
     timer,
@@ -96,8 +96,8 @@ const installLinuxSchedule = ({ home, node, cli, activate }) => {
   return timer
 }
 
-const installWindowsSchedule = ({ node, cli, activate }) => {
-  const command = `"${node}" "${cli}" skill scan --quiet`
+const installWindowsSchedule = ({ node, cli, client, activate }) => {
+  const command = `"${node}" "${cli}" skill scan --quiet${client ? ` --client ${client}` : ""}`
   if (activate) {
     const result = spawnSync(
       "schtasks",
@@ -115,7 +115,11 @@ export function setupSkillScan(options = {}) {
   const cli = options.cli ?? process.argv[1]
   const platform = options.platform ?? process.platform
   const activate = options.activate ?? true
-  const command = `"${node}" "${cli}" skill scan --quiet`
+  if (options.schedule && !["darwin", "linux", "win32"].includes(platform))
+    throw new Error(`automatic schedule is not supported on ${platform}`)
+  const command = `"${node}" "${cli}" skill scan --quiet${
+    options.client ? ` --client ${options.client}` : ""
+  }`
   const hooks = [
     {
       client: "codex",
@@ -125,14 +129,18 @@ export function setupSkillScan(options = {}) {
       client: "claude",
       path: join(home, ".claude", "settings.json"),
     },
-  ].map((target) => ({ ...target, changed: addSessionEndHook(target.path, command) }))
+  ]
+    .filter((target) => !options.client || target.client === options.client)
+    .map((target) => ({ ...target, changed: addSessionEndHook(target.path, command) }))
 
   let schedule = null
   if (options.schedule) {
-    if (platform === "darwin") schedule = installMacSchedule({ home, node, cli, activate })
-    else if (platform === "linux") schedule = installLinuxSchedule({ home, node, cli, activate })
-    else if (platform === "win32") schedule = installWindowsSchedule({ node, cli, activate })
-    else throw new Error(`automatic schedule is not supported on ${platform}`)
+    if (platform === "darwin")
+      schedule = installMacSchedule({ home, node, cli, client: options.client, activate })
+    else if (platform === "linux")
+      schedule = installLinuxSchedule({ home, node, cli, client: options.client, activate })
+    else if (platform === "win32")
+      schedule = installWindowsSchedule({ node, cli, client: options.client, activate })
   }
   return { hooks, schedule }
 }

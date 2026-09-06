@@ -291,7 +291,16 @@ export async function scanSkillLogs(options = {}) {
       state.sources[source.path] = { identity, offset: stats.size, client: source.client }
       continue
     }
-    const context = { session: basename(source.path, ".jsonl"), turn: null }
+    // A session header is normally written once, before later turns. Keep the
+    // parser context beside the byte offset so an incremental scan can attribute
+    // a newly appended tool call to that same session and turn.
+    const context =
+      start > 0 && saved?.identity === identity
+        ? {
+            session: saved.session ?? basename(source.path, ".jsonl"),
+            turn: saved.turn ?? null,
+          }
+        : { session: basename(source.path, ".jsonl"), turn: null }
     const clientInstalls = installs.filter((install) => install.client === source.client)
     const end = await completeLines(source.path, start, async (lineBytes) => {
       coverage[source.client].records_scanned++
@@ -317,7 +326,13 @@ export async function scanSkillLogs(options = {}) {
     })
     const sessionHash = hash(["derive-skill-session-v1", source.client, context.session].join("\0"))
     state.sessions[source.client][sessionHash] = new Date(stats.mtimeMs).toISOString()
-    state.sources[source.path] = { identity, offset: end, client: source.client }
+    state.sources[source.path] = {
+      identity,
+      offset: end,
+      client: source.client,
+      session: context.session,
+      turn: context.turn,
+    }
   }
 
   const cutoff = now - 90 * 86_400_000

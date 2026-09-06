@@ -1424,7 +1424,7 @@ if (cmd === "skill") {
 
     if (action === "setup") {
       await scanSkillLogs({ baseline: true, client: flags.client })
-      const setup = setupSkillScan({ schedule: flags.schedule === "true" })
+      const setup = setupSkillScan({ schedule: flags.schedule === "true", client: flags.client })
       if (flags.json) console.log(JSON.stringify(setup))
       else {
         for (const hook of setup.hooks)
