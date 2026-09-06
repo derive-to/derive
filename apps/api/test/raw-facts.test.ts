@@ -432,6 +432,43 @@ describe("dynamic slots follow the version boundary", () => {
     expect(await runtime.text()).toContain("dynamic-updated")
   })
 
+  it("refuses a write that lost the race with a publish instead of changing the frozen version", async () => {
+    const a = await (await publishMd(MD("--"))).json()
+    // The head moves between the route's read of it and the store write: exactly the
+    // window the head-guarded write closes.
+    let raced = false
+    const racing = new Proxy(meta, {
+      get(target, prop, receiver) {
+        if (prop === "updateDynamicSlot")
+          return async (write: Parameters<typeof meta.updateDynamicSlot>[0]) => {
+            if (!raced) {
+              raced = true
+              expect((await publishMd(MD("--", "\nv2\n"), a.short_id)).status).toBe(201)
+            }
+            return target.updateDynamicSlot(write)
+          }
+        return Reflect.get(target, prop, receiver)
+      },
+    })
+    const late = createApp({ meta: racing, blobs, baseUrl: "http://derive.test", token: "tok" })
+    const res = await late.request(`/v1/artifacts/${a.short_id}/dynamic/results`, {
+      method: "PATCH",
+      headers: { ...TOKEN, "content-type": "application/json" },
+      body: JSON.stringify({ kind: "table", cells: [{ row: 0, col: "acc", value: 0.5 }] }),
+    })
+    expect(res.status).toBe(409)
+    await expect(res.json()).resolves.toMatchObject({
+      error: expect.stringContaining("moved to v2 while you were writing"),
+    })
+    // v1 is frozen with its seed, and v2 was seeded from that seed, not from the lost write.
+    for (const v of [1, 2])
+      expect(await slot(a.short_id, v)).toMatchObject({
+        version: v,
+        revision: 0,
+        value: { table: { rows: [{ model: "base", acc: null }] } },
+      })
+  })
+
   it("keeps a non-current version's slots behind the public-history gate", async () => {
     const a = await (await publishMd(MD("--"))).json()
     await publishMd(MD("--", "\nv2\n"), a.short_id)

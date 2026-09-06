@@ -52,6 +52,10 @@ box. Names use lowercase letters, digits and dashes.
 - `PUT …/dynamic/:name` replaces a whole value or creates a slot; `DELETE` removes one.
 - `expected_revision` on a write is a compare-and-swap guard: a stale value answers 409.
   Omit it to retry against the live revision.
+- `version` on a write (`?v=` on a `DELETE`) names the version the caller read; once the
+  artifact has moved past it the write answers 409 naming the current version. A write
+  that lands while a publish is in flight is refused the same way rather than changing
+  the version that publish just froze. A locked artifact refuses every write.
 - The artifact's own page can read a slot at `/raw/:id/dynamic/:name.json` (current
   version) or `/raw/:id/v/:n/dynamic/:name.json`, with the same access as the artifact.
 

@@ -849,6 +849,54 @@ export function runStoreContract(
       expect(await store.getDynamicSlot(a.id, 1, "results")).not.toBeNull()
     })
 
+    it("applies a head-only write only while its version is still current", async () => {
+      const a = await store.createArtifact(newArtifact())
+      const head = (await store.addVersion(a.id, newVersion())).n
+      const write = {
+        artifact_id: a.id,
+        n: head,
+        name: "results",
+        json: `{"acc":0.9}`,
+        size_bytes: 11,
+        updated_by_id: "bob",
+        updated_by_name: "Bob",
+        updated_at: "2026-01-01T00:00:01.000Z",
+      }
+      // At the head, the guarded create, update and delete all apply.
+      expect(
+        await store.insertDynamicSlot(slotRow(a.id, head, "results"), { head_only: true }),
+      ).toMatchObject({ n: head, revision: 0 })
+      expect(
+        await store.updateDynamicSlot({ ...write, expected_revision: 0, head_only: true }),
+      ).toMatchObject({ revision: 1 })
+      await store.insertDynamicSlot(slotRow(a.id, head, "extra"))
+      expect(await store.deleteDynamicSlot(a.id, head, "extra", { head_only: true })).toBe(true)
+
+      // The next version freezes this one for guarded writes, and only for them: the seed
+      // pass still inserts rows for the version it was handed.
+      await store.addVersion(a.id, newVersion())
+      expect(
+        await store.updateDynamicSlot({ ...write, expected_revision: 1, head_only: true }),
+      ).toBeNull()
+      expect((await store.getDynamicSlot(a.id, head, "results"))?.revision).toBe(1)
+      expect(
+        await store.insertDynamicSlot(slotRow(a.id, head, "late"), { head_only: true }),
+      ).toBeNull()
+      expect(await store.getDynamicSlot(a.id, head, "late")).toBeNull()
+      expect(await store.deleteDynamicSlot(a.id, head, "results", { head_only: true })).toBe(false)
+      expect(await store.getDynamicSlot(a.id, head, "results")).not.toBeNull()
+      expect(await store.insertDynamicSlot(slotRow(a.id, head, "late"))).not.toBeNull()
+      expect(await store.deleteDynamicSlot(a.id, head, "late")).toBe(true)
+      expect(await store.deleteDynamicSlot(a.id, head, "late")).toBe(false)
+      // The new head takes guarded writes as before.
+      expect(
+        await store.insertDynamicSlot(slotRow(a.id, head + 1, "results"), { head_only: true }),
+      ).not.toBeNull()
+      expect(await store.deleteDynamicSlot(a.id, head + 1, "results", { head_only: true })).toBe(
+        true,
+      )
+    })
+
     it("retains the seed plus the bounded recent revisions", async () => {
       const a = await store.createArtifact(newArtifact())
       for (let revision = 0; revision <= DYNAMIC_REVISION_LIMIT + 2; revision++)

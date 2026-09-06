@@ -156,6 +156,7 @@ import {
   type DynamicRevisionRecord,
   type DynamicSlotRecord,
   type DynamicSlotWrite,
+  type DynamicWriteOptions,
   GLOBAL_FOLLOW_ORG,
   isValidWorkflowRunDefinitionPin,
   isValidWorkflowStepContextPin,
@@ -650,6 +651,9 @@ const mapOverviewRows = (rows: OverviewRow[]): CollectionsOverviewRead => {
   return { collections, starred, workedIn, previews, previewBylines }
 }
 
+/** What a dynamic write needs from the connection or the transaction it runs on. */
+type PgWriter = Pick<NodePgDatabase<typeof schema>, "insert" | "update" | "delete">
+
 export class PgMetaStore implements MetaStore {
   /** Postgres binds an id array as ONE parameter and caps a statement at 65535, so the
    *  shared visibility gate does not need to split a candidate list the way D1 does. Well
@@ -966,31 +970,60 @@ export class PgMetaStore implements MetaStore {
     return Number(rows[0]?.n ?? 0)
   }
 
-  async insertDynamicSlot(row: NewDynamicSlot): Promise<DynamicSlotRecord | null> {
-    const rows = await this.db.insert(dynamicSlot).values(row).onConflictDoNothing().returning()
-    return rows[0] ?? null
+  /** Runs a dynamic write; with `head_only` (see DynamicWriteOptions) inside a transaction
+   * that first takes a FOR SHARE read of the artifact row, so addVersion's FOR UPDATE
+   * either waits for this write to commit (the seed then carries it forward) or this
+   * write sees the bump and misses. Lock order is artifact then dynamic_slot in both. */
+  private async atHead<T>(
+    artifactId: string,
+    n: number,
+    headOnly: boolean | undefined,
+    miss: T,
+    run: (db: PgWriter) => Promise<T>,
+  ): Promise<T> {
+    if (!headOnly) return run(this.db)
+    return this.db.transaction(async (tx) => {
+      const head = await tx
+        .select({ cv: artifact.current_version })
+        .from(artifact)
+        .where(eq(artifact.id, artifactId))
+        .for("share")
+      return head[0]?.cv === n ? run(tx) : miss
+    })
+  }
+
+  async insertDynamicSlot(
+    row: NewDynamicSlot,
+    opts?: DynamicWriteOptions,
+  ): Promise<DynamicSlotRecord | null> {
+    return this.atHead(row.artifact_id, row.n, opts?.head_only, null, async (db) => {
+      const rows = await db.insert(dynamicSlot).values(row).onConflictDoNothing().returning()
+      return rows[0] ?? null
+    })
   }
 
   async updateDynamicSlot(write: DynamicSlotWrite): Promise<DynamicSlotRecord | null> {
-    const { expected_revision, ...values } = write
-    const rows = await this.db
-      .update(dynamicSlot)
-      .set({
-        json: values.json,
-        size_bytes: values.size_bytes,
-        revision: expected_revision + 1,
-        updated_by_id: values.updated_by_id,
-        updated_by_name: values.updated_by_name,
-        updated_at: values.updated_at,
-      })
-      .where(
-        and(
-          this.dynamicSlotKey(values.artifact_id, values.n, values.name),
-          eq(dynamicSlot.revision, expected_revision),
-        ),
-      )
-      .returning()
-    return rows[0] ?? null
+    const { expected_revision, head_only, ...values } = write
+    return this.atHead(values.artifact_id, values.n, head_only, null, async (db) => {
+      const rows = await db
+        .update(dynamicSlot)
+        .set({
+          json: values.json,
+          size_bytes: values.size_bytes,
+          revision: expected_revision + 1,
+          updated_by_id: values.updated_by_id,
+          updated_by_name: values.updated_by_name,
+          updated_at: values.updated_at,
+        })
+        .where(
+          and(
+            this.dynamicSlotKey(values.artifact_id, values.n, values.name),
+            eq(dynamicSlot.revision, expected_revision),
+          ),
+        )
+        .returning()
+      return rows[0] ?? null
+    })
   }
 
   async appendDynamicRevision(r: NewDynamicRevision): Promise<void> {
@@ -1022,9 +1055,21 @@ export class PgMetaStore implements MetaStore {
       .limit(limit)
   }
 
-  async deleteDynamicSlot(artifactId: string, n: number, name: string): Promise<void> {
-    await this.db.delete(dynamicRevision).where(this.dynamicRevisionKey(artifactId, n, name))
-    await this.db.delete(dynamicSlot).where(this.dynamicSlotKey(artifactId, n, name))
+  async deleteDynamicSlot(
+    artifactId: string,
+    n: number,
+    name: string,
+    opts?: DynamicWriteOptions,
+  ): Promise<boolean> {
+    return this.atHead(artifactId, n, opts?.head_only, false, async (db) => {
+      const gone = await db
+        .delete(dynamicSlot)
+        .where(this.dynamicSlotKey(artifactId, n, name))
+        .returning({ id: dynamicSlot.id })
+      if (!gone[0]) return false
+      await db.delete(dynamicRevision).where(this.dynamicRevisionKey(artifactId, n, name))
+      return true
+    })
   }
 
   async addVersion(artifactId: string, v: NewVersion): Promise<VersionRecord> {

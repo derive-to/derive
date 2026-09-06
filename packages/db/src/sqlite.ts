@@ -1,4 +1,5 @@
 import type {
+  DynamicWriteOptions,
   GithubUserMapping,
   MetaStore,
   NewVersion,
@@ -242,6 +243,48 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
       })
       return (await repos.getVersion(artifactId, n)) as VersionRecord
     },
+
+    // A head-guarded delete as one synchronous transaction: the head read, the slot row
+    // (the statement that decides) and its revisions, all-or-nothing, the way the shared
+    // repo cannot pair them on D1.
+    deleteDynamicSlot: async (
+      artifactId: string,
+      n: number,
+      name: string,
+      opts?: DynamicWriteOptions,
+    ): Promise<boolean> =>
+      db.transaction((tx) => {
+        if (opts?.head_only) {
+          const head = tx
+            .select({ cv: artifact.current_version })
+            .from(artifact)
+            .where(eq(artifact.id, artifactId))
+            .get()
+          if (head?.cv !== n) return false
+        }
+        const gone = tx
+          .delete(dynamicSlot)
+          .where(
+            and(
+              eq(dynamicSlot.artifact_id, artifactId),
+              eq(dynamicSlot.n, n),
+              eq(dynamicSlot.name, name),
+            ),
+          )
+          .returning({ id: dynamicSlot.id })
+          .get()
+        if (!gone) return false
+        tx.delete(dynamicRevision)
+          .where(
+            and(
+              eq(dynamicRevision.artifact_id, artifactId),
+              eq(dynamicRevision.n, n),
+              eq(dynamicRevision.name, name),
+            ),
+          )
+          .run()
+        return true
+      }),
 
     setArtifactTags: async (artifactId: string, tags: string[]): Promise<void> => {
       raw.transaction(() => {

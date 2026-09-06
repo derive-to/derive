@@ -700,6 +700,53 @@ describe("dynamic data follows publish access", () => {
     expect((await patch(shortId, bearer(agent.token), cell)).status).toBe(200)
   })
 
+  it("refuses writes while the artifact is locked or past the version the caller read", async () => {
+    const shortId = await seedArtifact()
+    const cell = { kind: "table", cells: [{ row: "base", col: "acc", value: 0.7 }] }
+    const lock = (locked: boolean) =>
+      dyn.app.request(`/v1/artifacts/${shortId}/locked`, {
+        ...jsonAs(as(alice.email), { locked }),
+        method: "PATCH",
+      })
+    expect((await lock(true)).ok).toBe(true)
+    const frozen = await patch(shortId, as(alice.email), cell)
+    expect(frozen.status).toBe(409)
+    await expect(frozen.json()).resolves.toMatchObject({ error: expect.stringContaining("locked") })
+    expect((await lock(false)).ok).toBe(true)
+
+    // A republish makes v2 the head: a write that names v1 is refused, on every verb.
+    const v2 = await publishAs(dyn.app, "<h1>results v2</h1>", {}, as(alice.email), shortId)
+    expect(v2.status).toBe(201)
+    const stale = await patch(shortId, as(alice.email), { ...cell, version: 1 })
+    expect(stale.status).toBe(409)
+    await expect(stale.json()).resolves.toMatchObject({
+      error: expect.stringContaining("moved to v2 while you were writing (you read v1)"),
+    })
+    expect(
+      (
+        await dyn.app.request(`/v1/artifacts/${shortId}/dynamic/results?v=1`, {
+          method: "DELETE",
+          headers: as(alice.email),
+        })
+      ).status,
+    ).toBe(409)
+    // Naming the current version writes as before (v2 declares no binding, so PUT
+    // creates its slot); v1 keeps the data it had.
+    const current = await put(shortId, as(alice.email), {
+      ...table([{ model: "base", acc: 0.7 }]),
+      version: 2,
+    })
+    expect(current.status).toBe(200)
+    await expect(current.json()).resolves.toMatchObject({ version: 2, revision: 1 })
+    const v1 = await dyn.app.request(`/v1/artifacts/${shortId}/dynamic/results?v=1`, {
+      headers: as(alice.email),
+    })
+    await expect(v1.json()).resolves.toMatchObject({
+      version: 1,
+      value: { table: { rows: [{ acc: null }] } },
+    })
+  })
+
   it("explains when a production-backed preview is waiting for the dynamic tables", async () => {
     const shortId = await seedArtifact()
     const missingSchema = new Proxy(dyn.meta, {

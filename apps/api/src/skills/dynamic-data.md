@@ -68,6 +68,10 @@ curl -X PATCH $BASE/v1/artifacts/<short_id>/dynamic/results \
 - `expected_revision` is the compare-and-swap guard: read the slot, pass its revision,
   and a stale write gets 409 instead of overwriting someone else's. Omit it to retry
   against the live revision.
+- `version` is the version you read (`?v=` on DELETE): once the artifact has moved past
+  it the write gets 409 naming the current version, and so does a write that lands while
+  a publish is in flight, rather than changing the version that publish just froze.
+  Reload, then retry. A locked artifact refuses every write, as it refuses a republish.
 - A figure takes `{"kind":"figure","figure":{"url":"/blob/<sha256>.png","caption":"…"}}`.
   Stage the image first (`stage({target:"asset"})`, POST the bytes, use the returned
   `url`); a null `url` renders a placeholder box.

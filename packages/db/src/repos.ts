@@ -142,6 +142,7 @@ import {
   type DynamicRevisionRecord,
   type DynamicSlotRecord,
   type DynamicSlotWrite,
+  type DynamicWriteOptions,
   GLOBAL_FOLLOW_ORG,
   isValidWorkflowRunDefinitionPin,
   isValidWorkflowStepContextPin,
@@ -166,6 +167,7 @@ import {
   count,
   desc,
   eq,
+  exists,
   getTableColumns,
   gt,
   gte,
@@ -752,10 +754,41 @@ export function makeRepos(db: SqliteDb) {
       .get()
     return Number(row?.n ?? 0)
   }
-  const insertDynamicSlot = async (row: NewDynamicSlot): Promise<DynamicSlotRecord | null> =>
-    (await db.insert(dynamicSlot).values(row).onConflictDoNothing().returning().get()) ?? null
+  // The head guard of a `head_only` write (see DynamicWriteOptions): a subselect on the
+  // artifact row inside the write's own statement, which is the one atomic unit SQLite
+  // and D1 offer without an interactive transaction.
+  const atHead = (artifactId: string, n: number) =>
+    exists(
+      db
+        .select({ one: sql`1` })
+        .from(artifact)
+        .where(and(eq(artifact.id, artifactId), eq(artifact.current_version, n))),
+    )
+  const insertDynamicSlot = async (
+    row: NewDynamicSlot,
+    opts?: DynamicWriteOptions,
+  ): Promise<DynamicSlotRecord | null> => {
+    if (!opts?.head_only)
+      return (
+        (await db.insert(dynamicSlot).values(row).onConflictDoNothing().returning().get()) ?? null
+      )
+    // INSERT ... SELECT with the artifact row at the expected head as its only source: no
+    // row at that head, no insert. The read-back keys on this attempt's fresh id, so a
+    // same-name row that already existed (the seed, or a create that won) reads as null.
+    await db.run(sql`
+      INSERT INTO dynamic_slot
+        (id, artifact_id, n, name, kind, json, size_bytes, revision,
+         updated_by_id, updated_by_name, updated_at)
+      SELECT ${row.id}, ${row.artifact_id}, ${row.n}, ${row.name}, ${row.kind}, ${row.json},
+        ${row.size_bytes}, ${row.revision}, ${row.updated_by_id}, ${row.updated_by_name},
+        ${row.updated_at}
+      FROM artifact WHERE id = ${row.artifact_id} AND current_version = ${row.n}
+      ON CONFLICT DO NOTHING`)
+    const stored = await getDynamicSlot(row.artifact_id, row.n, row.name)
+    return stored?.id === row.id ? stored : null
+  }
   const updateDynamicSlot = async (write: DynamicSlotWrite): Promise<DynamicSlotRecord | null> => {
-    const { expected_revision, ...values } = write
+    const { expected_revision, head_only, ...values } = write
     const updated = await db
       .update(dynamicSlot)
       .set({
@@ -770,6 +803,7 @@ export function makeRepos(db: SqliteDb) {
         and(
           dynamicSlotKey(values.artifact_id, values.n, values.name),
           eq(dynamicSlot.revision, expected_revision),
+          ...(head_only ? [atHead(values.artifact_id, values.n)] : []),
         ),
       )
       .returning()
@@ -804,15 +838,31 @@ export function makeRepos(db: SqliteDb) {
       .orderBy(desc(dynamicRevision.revision))
       .limit(limit)
       .all()
-  const deleteDynamicSlot = async (artifactId: string, n: number, name: string): Promise<void> => {
+  // The slot row goes first because it is the guarded statement whose outcome decides;
+  // its revisions follow. D1 has no transaction to pair them, and a revision row that
+  // outlives its slot is inert (nothing lists revisions of a slot that does not exist).
+  const deleteDynamicSlot = async (
+    artifactId: string,
+    n: number,
+    name: string,
+    opts?: DynamicWriteOptions,
+  ): Promise<boolean> => {
+    const gone = await db
+      .delete(dynamicSlot)
+      .where(
+        and(
+          dynamicSlotKey(artifactId, n, name),
+          ...(opts?.head_only ? [atHead(artifactId, n)] : []),
+        ),
+      )
+      .returning({ id: dynamicSlot.id })
+      .get()
+    if (!gone) return false
     await db
       .delete(dynamicRevision)
       .where(dynamicRevisionKey(artifactId, n, name))
       .run()
-    await db
-      .delete(dynamicSlot)
-      .where(dynamicSlotKey(artifactId, n, name))
-      .run()
+    return true
   }
 
   const createArtifact = async (a: NewArtifact): Promise<ArtifactRecord> => {

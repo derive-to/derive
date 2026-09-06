@@ -52,6 +52,9 @@ const Meta = {
   /** Compare-and-swap guard. Omitted: the write retries against the live revision.
    *  Given and stale: 409 at once, because the caller asked to be told. */
   expected_revision: z.number().int().min(0).optional(),
+  /** The version the caller read. Given and no longer current: 409 at once, so a write
+   *  meant for the version a person was looking at never lands on a newer one. */
+  version: z.number().int().min(1).optional(),
   note: z.string().trim().max(200).optional(),
 }
 const Put = z.discriminatedUnion("kind", [
@@ -106,7 +109,9 @@ const slotJson = (row: DynamicSlotRecord, withHtml = false) => {
  * follow PUBLISH permission exactly as a republish would: a link that grants edit can
  * write a cell because it could already republish the whole table; a commenter cannot,
  * because a cell is not a reaction. Every write targets the CURRENT version: older
- * versions keep the data they had, by design.
+ * versions keep the data they had, by design, and the store applies a write only while
+ * its version is still the head (DynamicWriteOptions), so a publish racing a write
+ * freezes the old version intact and the writer gets a 409 naming the new one.
  */
 export const dynamicDataRoutes = (ctx: AppContext) => {
   const {
@@ -122,7 +127,8 @@ export const dynamicDataRoutes = (ctx: AppContext) => {
   } = ctx
   const app = new Hono()
 
-  // `?v=` reads any version the caller may see; writes never take it.
+  // `?v=` reads any version the caller may see. A write takes the version the caller
+  // READ (`version` in the body, `?v=` on DELETE) only to be refused once it is stale.
   const versionFor = async (
     c: Context,
     artifact: NonNullable<Awaited<ReturnType<typeof meta.getByShortId>>>,
@@ -197,6 +203,8 @@ export const dynamicDataRoutes = (ctx: AppContext) => {
   const writable = async (c: Context) => {
     const artifact = await requireArtifact(c, "publish", { split: true })
     if (artifact instanceof Response) return artifact
+    // Locked: a cell is content, so the freeze that stops a republish stops this too.
+    if (artifact.locked) return fail(c, 409, "artifact is locked — unlock it to publish")
     const name = slotName(c)
     if (name instanceof Response) return name
     if ((await agentFor(c)) && (await agentWritesOff(meta, artifact.org_id)))
@@ -208,6 +216,21 @@ export const dynamicDataRoutes = (ctx: AppContext) => {
   }
 
   type Writable = Exclude<Awaited<ReturnType<typeof writable>>, Response>
+
+  // The artifact moved on: the version the caller read is no longer current.
+  const stale = (c: Context, w: Writable, current: number, read: number) =>
+    fail(
+      c,
+      409,
+      `"${w.artifact.short_id}" moved to v${current} while you were writing (you read v${read}). Reload, then retry.`,
+    )
+  // After a null store result: re-read the head to tell a publish that landed since the
+  // gate (409 naming the new head) from a plain revision race (null, so the loop retries).
+  const moved = async (c: Context, w: Writable) => {
+    const fresh = await meta.getArtifactById(w.artifact.id)
+    const current = fresh?.current_version ?? w.n
+    return current === w.n ? null : stale(c, w, current, w.n)
+  }
 
   const settle = async (
     c: Context,
@@ -252,6 +275,7 @@ export const dynamicDataRoutes = (ctx: AppContext) => {
     if (w instanceof Response) return w
     const body = await readJson(c, Put)
     if (body instanceof Response) return body
+    if (body.version !== undefined && body.version !== w.n) return stale(c, w, w.n, body.version)
     const value = validateDynamicValue(
       body.kind === "table"
         ? { kind: "table", table: body.table }
@@ -270,22 +294,30 @@ export const dynamicDataRoutes = (ctx: AppContext) => {
           return fail(c, 409, `no dynamic slot "${w.name}" yet; expected_revision must be 0`)
         if ((await meta.countDynamicSlots(w.artifact.id, w.n)) >= DYNAMIC_MAX_SLOTS)
           return fail(c, 413, `a version is limited to ${DYNAMIC_MAX_SLOTS} dynamic slots`)
-        const inserted = await meta.insertDynamicSlot({
-          id: newId("dyn"),
-          artifact_id: w.artifact.id,
-          n: w.n,
-          name: w.name,
-          kind: value.kind,
-          json,
-          size_bytes: size,
-          revision: 1,
-          updated_by_id: w.actor.id,
-          updated_by_name: w.actor.name,
-          updated_at: at,
-        })
-        // A same-name create won between the read and the insert (or the seeding pass
-        // landed): it is an ordinary CAS update now, so read again.
-        if (!inserted) continue
+        const inserted = await meta.insertDynamicSlot(
+          {
+            id: newId("dyn"),
+            artifact_id: w.artifact.id,
+            n: w.n,
+            name: w.name,
+            kind: value.kind,
+            json,
+            size_bytes: size,
+            revision: 1,
+            updated_by_id: w.actor.id,
+            updated_by_name: w.actor.name,
+            updated_at: at,
+          },
+          { head_only: true },
+        )
+        // Either the artifact moved on (409), or a same-name create won between the read
+        // and the insert (or the seeding pass landed): an ordinary CAS update now, so
+        // read again.
+        if (!inserted) {
+          const gone = await moved(c, w)
+          if (gone) return gone
+          continue
+        }
         return settle(c, w, inserted, body.note)
       }
       // A binding's kind is the document's decision; changing it is a delete + put.
@@ -300,11 +332,16 @@ export const dynamicDataRoutes = (ctx: AppContext) => {
         json,
         size_bytes: size,
         expected_revision: current.revision,
+        head_only: true,
         updated_by_id: w.actor.id,
         updated_by_name: w.actor.name,
         updated_at: at,
       })
-      if (!updated) continue
+      if (!updated) {
+        const gone = await moved(c, w)
+        if (gone) return gone
+        continue
+      }
       return settle(c, w, updated, body.note)
     }
     return fail(c, 409, "dynamic slot changed; try again")
@@ -315,6 +352,7 @@ export const dynamicDataRoutes = (ctx: AppContext) => {
     if (w instanceof Response) return w
     const body = await readJson(c, Patch)
     if (body instanceof Response) return body
+    if (body.version !== undefined && body.version !== w.n) return stale(c, w, w.n, body.version)
     for (let attempt = 0; attempt < CAS_ATTEMPTS; attempt++) {
       const current = await meta.getDynamicSlot(w.artifact.id, w.n, w.name)
       if (!current)
@@ -333,11 +371,16 @@ export const dynamicDataRoutes = (ctx: AppContext) => {
         json,
         size_bytes: size,
         expected_revision: current.revision,
+        head_only: true,
         updated_by_id: w.actor.id,
         updated_by_name: w.actor.name,
         updated_at: new Date().toISOString(),
       })
-      if (!updated) continue
+      if (!updated) {
+        const gone = await moved(c, w)
+        if (gone) return gone
+        continue
+      }
       return settle(c, w, updated, body.note)
     }
     return fail(c, 409, "dynamic slot changed; try again")
@@ -346,9 +389,17 @@ export const dynamicDataRoutes = (ctx: AppContext) => {
   app.delete("/v1/artifacts/:shortId/dynamic/:name", async (c) => {
     const w = await writable(c)
     if (w instanceof Response) return w
+    const read = c.req.query("v")
+    if (read !== undefined && read !== "") {
+      const v = Number(read)
+      if (!Number.isInteger(v) || v < 1) return fail(c, 400, "v must be a positive integer")
+      if (v !== w.n) return stale(c, w, w.n, v)
+    }
     const current = await meta.getDynamicSlot(w.artifact.id, w.n, w.name)
     if (!current) return fail(c, 404, `no dynamic slot "${w.name}" in version ${w.n}`)
-    await meta.deleteDynamicSlot(w.artifact.id, w.n, w.name)
+    const gone = await meta.deleteDynamicSlot(w.artifact.id, w.n, w.name, { head_only: true })
+    if (!gone)
+      return (await moved(c, w)) ?? fail(c, 404, `no dynamic slot "${w.name}" in version ${w.n}`)
     bus.publish(w.artifact.id, {
       type: "artifact.dynamic.updated",
       name: w.name,
