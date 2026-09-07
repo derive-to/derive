@@ -159,3 +159,31 @@ export const readableWorkflowActivity = async (args: {
   )
   return args.rows.filter((item) => allowed.has(item.artifact_short_id))
 }
+
+export const loadWorkflowRunArtifactState = async (args: {
+  meta: MetaStore
+  workflowArtifact: ArtifactRecord
+  run: WorkflowRunRecord
+  canRead: (artifact: ArtifactRecord) => Promise<boolean>
+}): Promise<{
+  attempts: WorkflowStepAttemptRecord[]
+  activity: WorkflowArtifactActivityRecord[]
+  suggestions: WorkflowArtifactSuggestion[]
+}> => {
+  const [attempts, recorded] = await Promise.all([
+    args.meta.listWorkflowStepAttempts(args.run.id, args.run.org_id),
+    args.meta.listWorkflowArtifactActivity(args.run.id, args.run.org_id),
+  ])
+  const [activity, suggestions] = await Promise.all([
+    readableWorkflowActivity({ meta: args.meta, rows: recorded, canRead: args.canRead }),
+    workflowActivitySuggestions({
+      meta: args.meta,
+      workflowArtifact: args.workflowArtifact,
+      run: args.run,
+      attempts,
+      recorded,
+      canRead: args.canRead,
+    }),
+  ])
+  return { attempts, activity, suggestions }
+}

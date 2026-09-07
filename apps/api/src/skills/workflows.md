@@ -141,7 +141,17 @@ The companion fact has this shape:
 
 ## Run through Contexts
 
-When the person explicitly says to run, use the fresh run id from the handoff. Begin at the
+When the person explicitly says to run, start the pinned run through `use`:
+
+```text
+use({workflow_run:{
+  action: "start",
+  short_id: workflow.short_id,
+  diagram_id: diagram.id
+}})
+```
+
+The response contains the run id and the version-pinned execution prompt. Begin at the
 diagram's declared `entry`, then start one Context session per ready node attempt:
 
 ```text
@@ -212,6 +222,16 @@ Call `catch_up` on the workflow artifact during normal agent work. Its
 `workflow_receipt_gaps` field returns the same permission-checked candidates with a prepared
 `use` payload. Fill any unknown node or attempt from the work you performed, then confirm the
 exact version. If the candidate belongs to another run, leave it unconfirmed.
+
+Inspect the run ledger before each route transition and before the final receipt:
+
+```text
+use({workflow_run:{action:"inspect", run_id:run.id}})
+```
+
+The response contains the pinned run, attempts, observed exact artifact versions, and suggested
+missing receipts. Use its prepared confirmation call after you verify each candidate. This makes
+recovery part of normal execution instead of a separate cleanup task.
 
 Human and terminal nodes use the same receipt shape without a Context session. A human receipt's
 `decision` must be one of that node's authored options. Pass `finish_run:"succeeded"` (or the

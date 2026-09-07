@@ -1,12 +1,14 @@
-import { type ContextRecord, newId, type SessionRecord } from "@derive/core"
+import { type ContextRecord, newId, roleAllows, type SessionRecord } from "@derive/core"
 import { z } from "zod"
 import { metaForWire } from "../lib/context-builder-card"
 import { canPayForAgent, NO_PAYER_MESSAGE } from "../lib/payer"
+import { loadWorkflowRunArtifactState } from "../lib/workflow-activity"
 import {
   bindWorkflowContextSession,
   prepareWorkflowContextUse,
   recordWorkflowArtifact,
   recordWorkflowReceipt,
+  startLocalWorkflowRun,
   syncWorkflowContextSession,
 } from "../lib/workflow-coordination"
 import type { ToolContext } from "../mcp-tool-context"
@@ -43,6 +45,30 @@ const workflowInput = z.object({
     .optional(),
 })
 
+const workflowRunInput = z.discriminatedUnion("action", [
+  z.object({
+    action: z.literal("start"),
+    short_id: z.string().trim().min(1),
+    diagram_id: z.string().trim().min(1).max(200),
+  }),
+  z.object({
+    action: z.literal("inspect"),
+    run_id: z.string().trim().min(1),
+  }),
+])
+
+const parseSelectedRoutes = (value: string | null): string[] | null => {
+  if (!value) return null
+  try {
+    const parsed: unknown = JSON.parse(value)
+    return Array.isArray(parsed) && parsed.every((route) => typeof route === "string")
+      ? parsed
+      : null
+  } catch {
+    return null
+  }
+}
+
 export function registerUseTool(tc: ToolContext): void {
   const {
     server,
@@ -53,6 +79,7 @@ export function registerUseTool(tc: ToolContext): void {
     askableContexts,
     inGrant,
     resolveWs,
+    reach,
     wsArg,
     workflowScope,
   } = tc
@@ -63,7 +90,7 @@ export function registerUseTool(tc: ToolContext): void {
     "use",
     {
       description:
-        "Use a Context for work or check its session. `workflow` binds a run attempt, records its route, or attaches an existing artifact version as activity. See derive://skills/contexts and derive://skills/workflows.",
+        "Use a Context or workflow run. `workflow_run` starts or inspects. `workflow` binds an attempt, records a receipt, or attaches an exact artifact version. See derive://skills/contexts and derive://skills/workflows.",
       // Opens/advances a session (a write — messages accumulate, budget is spent) but
       // deletes nothing; a session can be followed up or checked, never destroyed from
       // here. Not idempotent by default (each open mints a new session — `dedupe_key` is
@@ -141,6 +168,7 @@ export function registerUseTool(tc: ToolContext): void {
         workflow: workflowInput
           .optional()
           .describe("Bind a run attempt, record its receipt, or attach an artifact version."),
+        workflow_run: workflowRunInput.optional().describe("Start/inspect a workflow run."),
         workspace: wsArg,
       },
     },
@@ -156,11 +184,31 @@ export function registerUseTool(tc: ToolContext): void {
       result_artifact_id,
       answers,
       workflow,
+      workflow_run,
       workspace,
     }) => {
+      if (
+        workflow_run &&
+        (workflow ||
+          context ||
+          session_id ||
+          instruction ||
+          answer ||
+          progress !== undefined ||
+          state ||
+          result_artifact_id ||
+          answers ||
+          dedupe_key ||
+          wait !== undefined)
+      )
+        return err("Manage a workflow run without Context, receipt, or runner fields.")
       if (workflowScope) {
         if (answer || progress !== undefined || state || result_artifact_id || answers)
           return err("This workflow capability cannot run or answer Context sessions.")
+        if (workflow_run?.action === "start")
+          return err("This workflow capability cannot start another workflow run.")
+        if (workflow_run?.action === "inspect" && workflow_run.run_id !== workflowScope)
+          return err("This workflow capability is scoped to a different run.")
         if (workflow && workflow.run_id !== workflowScope)
           return err("This workflow capability is scoped to a different run.")
         if (session_id) {
@@ -171,7 +219,10 @@ export function registerUseTool(tc: ToolContext): void {
           const attempt = await ctx.meta.getWorkflowStepAttemptBySession(session_id, agent.org_id)
           if (!attempt || attempt.workflow_run_id !== workflowScope)
             return err("This Context session is not bound to the scoped workflow run.")
-        } else if (!workflow || workflow.run_id !== workflowScope) {
+        } else if (
+          (!workflow || workflow.run_id !== workflowScope) &&
+          (workflow_run?.action !== "inspect" || workflow_run.run_id !== workflowScope)
+        ) {
           return err("This workflow capability must name its assigned workflow run.")
         }
       }
@@ -216,6 +267,131 @@ export function registerUseTool(tc: ToolContext): void {
           askerId: run.initiated_by,
           executorId: isAssignedAgent ? agent.id : run.initiated_by,
         }
+      }
+      if (workflow_run?.action === "start") {
+        if (!actingFor) return err(NO_HUMAN)
+        const reached = await reach(workflow_run.short_id, workspace)
+        if (reached && "error" in reached) return err(reached.error)
+        if (!reached) return err(`No artifact "${workflow_run.short_id}" you can reach.`)
+        if (!roleAllows(reached.role, "comment"))
+          return err("Starting a workflow run requires comment access to the workflow artifact.")
+        const started = await startLocalWorkflowRun({
+          meta: ctx.meta,
+          workflowArtifact: reached.a,
+          diagramId: workflow_run.diagram_id,
+          initiatorId: actingFor.id,
+          assignedAgentId: registered ? agent.id : undefined,
+          baseUrl: ctx.deps.baseUrl,
+          at: new Date().toISOString(),
+        })
+        if (typeof started === "string") return err(started)
+        return json({
+          workflow_run: {
+            id: started.run.id,
+            artifact: {
+              short_id: reached.a.short_id,
+              version: started.run.workflow_version,
+            },
+            diagram_id: started.run.diagram_id,
+            status: started.run.status,
+          },
+          prompt: started.prompt,
+          next: `Inspect receipts with use({workflow_run:{action:"inspect",run_id:"${started.run.id}"}}).`,
+        })
+      }
+      if (workflow_run?.action === "inspect") {
+        const principal = await workflowPrincipal(workflow_run.run_id)
+        if (typeof principal === "string") return err(principal)
+        const workflowArtifact = await ctx.meta.getArtifactById(principal.run.workflow_artifact_id)
+        if (!workflowArtifact) return err("The workflow artifact is unavailable.")
+        const graphReach = await reach(workflowArtifact.short_id, workspace, {
+          artifact: workflowArtifact,
+        })
+        if (!graphReach || "error" in graphReach)
+          return err("The workflow artifact is unavailable to this connection.")
+        const snapshot = await loadWorkflowRunArtifactState({
+          meta: ctx.meta,
+          workflowArtifact,
+          run: principal.run,
+          canRead: async (artifact) => {
+            const candidate = await reach(artifact.short_id, workspace, { artifact })
+            return !!candidate && !("error" in candidate)
+          },
+        })
+        return json({
+          workflow_run: {
+            id: principal.run.id,
+            artifact: {
+              short_id: workflowArtifact.short_id,
+              version: principal.run.workflow_version,
+            },
+            diagram_id: principal.run.diagram_id,
+            status: principal.run.status,
+            reason: principal.run.reason,
+            requested_execution: principal.run.requested_execution,
+            actual_execution: principal.run.actual_execution,
+            created_at: principal.run.created_at,
+            started_at: principal.run.started_at,
+            finished_at: principal.run.finished_at,
+          },
+          attempts: snapshot.attempts.map((attempt) => ({
+            id: attempt.id,
+            node_id: attempt.node_id,
+            attempt: attempt.attempt,
+            kind: attempt.kind,
+            status: attempt.status,
+            selected_routes: parseSelectedRoutes(attempt.selected_routes),
+            route_basis: attempt.route_basis,
+            result_artifact_id: attempt.result_artifact_id,
+            error: attempt.error,
+            created_at: attempt.created_at,
+            started_at: attempt.started_at,
+            finished_at: attempt.finished_at,
+          })),
+          activity: snapshot.activity.map((item) => ({
+            id: item.id,
+            node_id: item.node_id,
+            attempt: item.attempt,
+            artifact: {
+              short_id: item.artifact_short_id,
+              version: item.artifact_version,
+              title: item.artifact_title,
+            },
+            role: item.role,
+            source: item.source,
+            created_at: item.created_at,
+          })),
+          suggestions: snapshot.suggestions.map((item) => ({
+            artifact: {
+              short_id: item.artifactShortId,
+              version: item.artifactVersion,
+              title: item.artifactTitle,
+            },
+            node_id: item.nodeId,
+            attempt: item.attempt,
+            role: item.role,
+            reason: item.reason,
+            created_at: item.createdAt,
+            confirm_with: {
+              tool: "use",
+              workflow: {
+                run_id: principal.run.id,
+                node_id: item.nodeId,
+                attempt: item.attempt,
+                artifact: {
+                  short_id: item.artifactShortId,
+                  version: item.artifactVersion,
+                  role: item.role,
+                },
+              },
+              note:
+                item.nodeId && item.attempt
+                  ? "Confirm this exact version if it belongs to this attempt."
+                  : "Choose the correct node and attempt before confirmation.",
+            },
+          })),
+          note: "Activity records exact observed versions. Suggestions require confirmation and never complete a node.",
+        })
       }
       if (
         workflow &&

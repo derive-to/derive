@@ -195,16 +195,23 @@ describe("MCP publish reaches the human (event parity + auto-open)", () => {
       content: activityWorkflowHtml(linked.short_id as string),
       title: "Publish workflow",
     })
-    const startedResponse = await app.request(`/v1/artifacts/${workflow.short_id}/workflow-run`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${token}`,
+    const startedResult = await call(app, token, "use", {
+      workflow_run: {
+        action: "start",
+        short_id: workflow.short_id,
+        diagram_id: "publish-once",
       },
-      body: JSON.stringify({ diagramId: "publish-once", delivery: "copy" }),
     })
-    expect(startedResponse.status).toBe(201)
-    const started = (await startedResponse.json()) as { runId: string }
+    expect(startedResult).toMatchObject({
+      workflow_run: {
+        artifact: { short_id: workflow.short_id, version: 1 },
+        diagram_id: "publish-once",
+        status: "queued",
+      },
+      prompt: expect.stringContaining("This is explicit run intent."),
+      next: expect.stringContaining('action:"inspect"'),
+    })
+    const started = { runId: (startedResult.workflow_run as { id: string }).id }
 
     const result = await call(app, token, "publish", {
       content: "# Result",
@@ -324,6 +331,41 @@ describe("MCP publish reaches the human (event parity + auto-open)", () => {
         .map((item) => item.artifactVersion)
         .sort((left, right) => left - right),
     ).toEqual([2, 3])
+    const inspected = await call(app, token, "use", {
+      workflow_run: { action: "inspect", run_id: started.runId },
+    })
+    expect(inspected).toMatchObject({
+      workflow_run: {
+        id: started.runId,
+        artifact: { short_id: workflow.short_id, version: 1 },
+        diagram_id: "publish-once",
+        status: "queued",
+      },
+      attempts: [],
+      activity: expect.arrayContaining([
+        expect.objectContaining({
+          node_id: "publish",
+          attempt: 1,
+          artifact: expect.objectContaining({ short_id: result.short_id, version: 1 }),
+          role: "output",
+        }),
+      ]),
+      suggestions: expect.arrayContaining([
+        expect.objectContaining({
+          artifact: expect.objectContaining({
+            short_id: missed.short_id,
+            version: 2,
+            title: "Linked workflow evidence",
+          }),
+          node_id: "publish",
+          attempt: null,
+          confirm_with: expect.objectContaining({
+            tool: "use",
+            note: "Choose the correct node and attempt before confirmation.",
+          }),
+        }),
+      ]),
+    })
     const caughtUp = await call(app, token, "catch_up", { short_id: workflow.short_id })
     expect(caughtUp.summary).toContain("3 possible workflow artifact receipts need confirmation")
     expect(caughtUp.workflow_receipt_gaps).toEqual([
@@ -383,6 +425,55 @@ describe("MCP publish reaches the human (event parity + auto-open)", () => {
       },
     })
     expect(await meta.listWorkflowArtifactActivity(started.runId, run.org_id)).toHaveLength(4)
+    const inspectedAfterRecovery = await call(app, token, "use", {
+      workflow_run: { action: "inspect", run_id: started.runId },
+    })
+    expect(inspectedAfterRecovery).toMatchObject({
+      attempts: [],
+      activity: expect.arrayContaining([
+        expect.objectContaining({
+          artifact: expect.objectContaining({ short_id: missed.short_id, version: 2 }),
+        }),
+        expect.objectContaining({
+          artifact: expect.objectContaining({ short_id: missedLatest.short_id, version: 3 }),
+        }),
+        expect.objectContaining({
+          artifact: expect.objectContaining({ short_id: late.short_id, version: 1 }),
+        }),
+      ]),
+      suggestions: [],
+    })
+    const finished = await call(app, token, "use", {
+      workflow: {
+        run_id: started.runId,
+        node_id: "publish",
+        attempt: 1,
+        status: "succeeded",
+        output: { result: result.short_id },
+        finish_run: "succeeded",
+      },
+    })
+    expect(finished).toEqual({
+      workflow_run_id: started.runId,
+      run_status: "succeeded",
+      node_id: "publish",
+      attempt: 1,
+      attempt_status: "succeeded",
+    })
+    const inspectedAfterFinish = await call(app, token, "use", {
+      workflow_run: { action: "inspect", run_id: started.runId },
+    })
+    expect(inspectedAfterFinish).toMatchObject({
+      workflow_run: { id: started.runId, status: "succeeded" },
+      attempts: [
+        expect.objectContaining({
+          node_id: "publish",
+          attempt: 1,
+          status: "succeeded",
+        }),
+      ],
+      suggestions: [],
+    })
     const recoveredHistoryResponse = await app.request(
       `/v1/artifacts/${workflow.short_id}/workflow-runs?diagram=publish-once`,
       { headers: { authorization: `Bearer ${token}` } },

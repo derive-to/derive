@@ -13,6 +13,7 @@ import {
   type WorkflowRunStatus,
   type WorkflowStepAttemptRecord,
   type WorkflowStepAttemptStatus,
+  workflowRunInstruction,
   workflowStatusIsTerminal,
 } from "@derive/core"
 import { parseLinkedWorkflowFacts } from "./workflow-facts"
@@ -35,6 +36,57 @@ export interface WorkflowReceipt extends WorkflowUseRef {
 
 export interface WorkflowArtifactRef extends WorkflowUseRef {
   role: WorkflowArtifactActivityRole
+}
+
+export const startLocalWorkflowRun = async (args: {
+  meta: MetaStore
+  workflowArtifact: ArtifactRecord
+  diagramId: string
+  initiatorId: string
+  assignedAgentId?: string
+  baseUrl: string
+  at: string
+}): Promise<{ run: WorkflowRunRecord; prompt: string } | string> => {
+  const { meta, workflowArtifact } = args
+  if (workflowArtifact.current_version < 1) return "The workflow has no published version."
+  const facts = parseLinkedWorkflowFacts(
+    await meta.getVersionData(workflowArtifact.id, workflowArtifact.current_version),
+  )
+  if (!facts.bundleFound || !facts.workflowFound)
+    return "This artifact does not contain a runnable workflow."
+  if (!facts.manifest)
+    return `The visible workflow graph needs changes: ${facts.bundleErrors.join("; ")}`
+  if (facts.preview?.status !== "ready")
+    return `The workflow Preview needs changes: ${(facts.preview?.errors ?? []).join("; ")}`
+  const diagram = facts.preview.diagrams.find((candidate) => candidate.id === args.diagramId)
+  if (!diagram) return "No such workflow diagram."
+  const version = await meta.getVersion(workflowArtifact.id, workflowArtifact.current_version)
+  if (!version) return "The workflow version is unavailable."
+  const runId = newId("wfr")
+  const run = await meta.createWorkflowRun({
+    id: runId,
+    org_id: workflowArtifact.org_id,
+    workflow_artifact_id: workflowArtifact.id,
+    workflow_version: version.n,
+    workflow_blob_key: version.blob_key,
+    workflow_content_type: version.content_type,
+    diagram_id: diagram.id,
+    reason: "mcp:local",
+    initiated_by: args.initiatorId,
+    assigned_agent_id: args.assignedAgentId,
+    requested_execution: "local",
+    created_at: args.at,
+  })
+  return {
+    run,
+    prompt: workflowRunInstruction({
+      shortId: workflowArtifact.short_id,
+      version: version.n,
+      diagramId: diagram.id,
+      runId,
+      baseUrl: args.baseUrl,
+    }),
+  }
 }
 
 interface PinnedNode {
