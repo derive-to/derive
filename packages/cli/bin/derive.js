@@ -129,6 +129,7 @@ for (let i = 0; i < args.length; i++) {
   else if (a === "--dry-run") flags["dry-run"] = "true"
   else if (a === "--schedule") flags.schedule = "true"
   else if (a === "--quiet") flags.quiet = "true"
+  else if (a === "--baseline") flags.baseline = "true"
   // Boolean, so it must be listed here: the catch-all below would otherwise eat the next
   // argument as its value, and `derive delete abc --yes` would silently not be confirmed.
   else if (a === "--yes") flags.yes = "true"

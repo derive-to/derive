@@ -977,6 +977,43 @@ describe("derive scan", () => {
     )
   })
 
+  it("baselines both scanners on the first generic command", async () => {
+    const project = mkdtempSync(join(tmpdir(), "derive-generic-scan-baseline-"))
+    dirs.push(project)
+    const home = join(project, "home")
+    const server = http.createServer((request, response) => {
+      request.resume()
+      request.on("end", () => {
+        response.writeHead(200, { "content-type": "application/json" })
+        response.end(JSON.stringify({ recorded: [], rejected: [], coverage: 1 }))
+      })
+    })
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve))
+    servers.push(server)
+    const base = `http://127.0.0.1:${server.address().port}`
+    const log = join(home, ".codex", "sessions", "session.jsonl")
+    mkdirSync(join(home, ".codex", "sessions"), { recursive: true })
+    writeFileSync(
+      log,
+      `${JSON.stringify({
+        type: "response_item",
+        timestamp: new Date().toISOString(),
+        payload: {
+          type: "function_call_output",
+          call_id: "old-read",
+          output: JSON.stringify({ short_id: "artifact123", version: 1 }),
+        },
+      })}\n`,
+    )
+
+    const result = await run(project, base, ["scan", "--json"], { HOME: home })
+    expect(result.status).toBe(0)
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      artifacts: { found: 0, uploaded: 0, rejected: 0, pending: 0 },
+      skills: { found: 0, uploaded: 0, pending: 0 },
+    })
+  })
+
   it("uploads generic artifact receipts and removes accepted events from the spool", async () => {
     const project = mkdtempSync(join(tmpdir(), "derive-generic-scan-upload-"))
     dirs.push(project)
