@@ -5864,7 +5864,12 @@ export class PgMetaStore implements MetaStore {
   async listWorkflowRuns(
     workflowArtifactId: string,
     orgId: string,
-    opts: { diagramId?: string; limit?: number } = {},
+    opts: {
+      diagramId?: string
+      initiatedBy?: string
+      assignedAgentId?: string
+      limit?: number
+    } = {},
   ): Promise<WorkflowRunRecord[]> {
     const limit = Math.max(1, Math.min(opts.limit ?? 20, 100))
     return this.db
@@ -5875,6 +5880,14 @@ export class PgMetaStore implements MetaStore {
           eq(workflowRun.workflow_artifact_id, workflowArtifactId),
           eq(workflowRun.org_id, orgId),
           opts.diagramId ? eq(workflowRun.diagram_id, opts.diagramId) : undefined,
+          opts.initiatedBy || opts.assignedAgentId
+            ? or(
+                opts.initiatedBy ? eq(workflowRun.initiated_by, opts.initiatedBy) : undefined,
+                opts.assignedAgentId
+                  ? eq(workflowRun.assigned_agent_id, opts.assignedAgentId)
+                  : undefined,
+              )
+            : undefined,
         ),
       )
       .orderBy(desc(workflowRun.created_at), desc(workflowRun.id))
@@ -6052,7 +6065,7 @@ export class PgMetaStore implements MetaStore {
             and(
               eq(workflowRun.id, a.workflow_run_id),
               eq(workflowRun.org_id, orgId),
-              notInArray(workflowRun.status, ["succeeded", "failed", "cancelled"]),
+              notInArray(workflowRun.status, ["succeeded", "failed", "cancelled", "timed_out"]),
             ),
           )
           .for("update"),
@@ -6086,15 +6099,17 @@ export class PgMetaStore implements MetaStore {
     return rows[0] ?? null
   }
   listWorkflowStepAttempts(
-    workflowRunId: string,
+    workflowRunId: string | string[],
     orgId: string,
   ): Promise<WorkflowStepAttemptRecord[]> {
+    const runIds = Array.isArray(workflowRunId) ? workflowRunId : [workflowRunId]
+    if (runIds.length === 0) return Promise.resolve([])
     return this.db
       .select()
       .from(workflowStepAttempt)
       .where(
         and(
-          eq(workflowStepAttempt.workflow_run_id, workflowRunId),
+          inArray(workflowStepAttempt.workflow_run_id, runIds),
           inArray(
             workflowStepAttempt.workflow_run_id,
             this.db
@@ -6188,15 +6203,17 @@ export class PgMetaStore implements MetaStore {
     return existing[0]
   }
   listWorkflowArtifactActivity(
-    workflowRunId: string,
+    workflowRunId: string | string[],
     orgId: string,
   ): Promise<WorkflowArtifactActivityRecord[]> {
+    const runIds = Array.isArray(workflowRunId) ? workflowRunId : [workflowRunId]
+    if (runIds.length === 0) return Promise.resolve([])
     return this.db
       .select()
       .from(workflowArtifactActivity)
       .where(
         and(
-          eq(workflowArtifactActivity.workflow_run_id, workflowRunId),
+          inArray(workflowArtifactActivity.workflow_run_id, runIds),
           eq(workflowArtifactActivity.org_id, orgId),
         ),
       )

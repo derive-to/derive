@@ -147,11 +147,15 @@ When the person explicitly says to run, start the pinned run through `use`:
 use({workflow_run:{
   action: "start",
   short_id: workflow.short_id,
-  diagram_id: diagram.id
+  diagram_id: diagram.id,
+  dedupe_key: "<stable id for this run intent>"
 }})
 ```
 
-The response contains the run id and the version-pinned execution prompt. Begin at the
+Reuse the same `dedupe_key` after a timeout. Derive returns the same run. If the start response is
+lost, recover recent runs with
+`use({workflow_run:{action:"list",short_id:workflow.short_id,diagram_id:diagram.id}})`.
+The start response contains the run id and the version-pinned execution prompt. Begin at the
 diagram's declared `entry`, then start one Context session per ready node attempt:
 
 ```text
@@ -230,8 +234,16 @@ use({workflow_run:{action:"inspect", run_id:run.id}})
 ```
 
 The response contains the pinned run, attempts, observed exact artifact versions, and suggested
-missing receipts. Use its prepared confirmation call after you verify each candidate. This makes
-recovery part of normal execution instead of a separate cleanup task.
+missing receipts. A complete suggestion includes `confirm_with`. An ambiguous suggestion includes
+`confirm_template` and names the fields you must resolve. Never call an incomplete template. This
+makes recovery part of normal execution instead of a separate cleanup task.
+
+If a suggestion is unrelated, call its `dismiss_with` operation. Derive stores the dismissal and
+stops showing the candidate. A dismissal does not create provenance or workflow activity.
+
+If the person stops a run before an attempt exists, call
+`use({workflow_run:{action:"cancel",run_id:run.id}})`. Cancellation is idempotent. Inspect the run
+after a concurrent change, then retry if Derive reports a conflict.
 
 Human and terminal nodes use the same receipt shape without a Context session. A human receipt's
 `decision` must be one of that node's authored options. Pass `finish_run:"succeeded"` (or the

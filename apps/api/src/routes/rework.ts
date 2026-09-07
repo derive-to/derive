@@ -8,6 +8,7 @@ import {
   profileState,
   reworkInstruction,
   saveAsSkillInstruction,
+  type VersionDataRecord,
   workflowRunInstruction,
 } from "@derive/core"
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
@@ -27,7 +28,10 @@ import {
 import { bail, fail, readJson } from "../lib/http"
 import { notifyMentions } from "../lib/mentions"
 import { notifyCommentBells } from "../lib/notify-comment"
-import { readableWorkflowActivity, workflowActivitySuggestions } from "../lib/workflow-activity"
+import {
+  readableWorkflowActivity,
+  workflowActivitySuggestionsForRuns,
+} from "../lib/workflow-activity"
 import { parseLinkedWorkflowFacts } from "../lib/workflow-facts"
 
 const parseWorkflowSelectedRoutes = (value: string | null): string[] | null => {
@@ -448,32 +452,54 @@ export const reworkRoutes = (ctx: AppContext) => {
         diagramId: query.diagram,
         limit: query.limit ?? 10,
       })
-      const [attempts, activity] = await Promise.all([
-        Promise.all(runs.map((run) => meta.listWorkflowStepAttempts(run.id, artifact.org_id))),
-        Promise.all(runs.map((run) => meta.listWorkflowArtifactActivity(run.id, artifact.org_id))),
+      const runIds = runs.map((run) => run.id)
+      const [allAttempts, allActivity] = await Promise.all([
+        meta.listWorkflowStepAttempts(runIds, artifact.org_id),
+        meta.listWorkflowArtifactActivity(runIds, artifact.org_id),
       ])
+      const attempts = runs.map((run) =>
+        allAttempts.filter((attempt) => attempt.workflow_run_id === run.id),
+      )
+      const activity = runs.map((run) =>
+        allActivity.filter((item) => item.workflow_run_id === run.id),
+      )
+      const workflowReadability = new Map<string, Promise<boolean>>()
+      const workflowFacts = new Map<number, Promise<VersionDataRecord[]>>()
+      const loadWorkflowFacts = (version: number): Promise<VersionDataRecord[]> => {
+        const existing = workflowFacts.get(version)
+        if (existing) return existing
+        const result = meta.getVersionData(artifact.id, version)
+        workflowFacts.set(version, result)
+        return result
+      }
+      const canReadWorkflowArtifact = (candidate: ArtifactRecord): Promise<boolean> => {
+        const existing = workflowReadability.get(candidate.id)
+        if (existing) return existing
+        const result = authorize(c, "read", candidate)
+        workflowReadability.set(candidate.id, result)
+        return result
+      }
       const [readableActivity, suggestions] = await Promise.all([
         Promise.all(
           activity.map((items) =>
             readableWorkflowActivity({
               meta,
               rows: items,
-              canRead: (candidate) => authorize(c, "read", candidate),
+              canRead: canReadWorkflowArtifact,
             }),
           ),
         ),
-        Promise.all(
-          runs.map((run, index) =>
-            workflowActivitySuggestions({
-              meta,
-              workflowArtifact: artifact,
-              run,
-              attempts: attempts[index] ?? [],
-              recorded: activity[index] ?? [],
-              canRead: (candidate) => authorize(c, "read", candidate),
-            }),
-          ),
-        ),
+        workflowActivitySuggestionsForRuns({
+          meta,
+          workflowArtifact: artifact,
+          states: runs.map((run, index) => ({
+            run,
+            attempts: attempts[index] ?? [],
+            recorded: activity[index] ?? [],
+          })),
+          canRead: canReadWorkflowArtifact,
+          loadVersionData: loadWorkflowFacts,
+        }),
       ])
       return c.json({
         runs: runs.map((run, index) => ({
@@ -513,7 +539,7 @@ export const reworkRoutes = (ctx: AppContext) => {
             source: item.source,
             createdAt: item.created_at,
           })),
-          suggestions: suggestions[index] ?? [],
+          suggestions: suggestions.get(run.id) ?? [],
         })),
       })
     },

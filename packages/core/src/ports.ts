@@ -2378,7 +2378,12 @@ export interface WorkflowRunStore {
   listWorkflowRuns(
     workflowArtifactId: string,
     orgId: string,
-    opts?: { diagramId?: string; limit?: number },
+    opts?: {
+      diagramId?: string
+      initiatedBy?: string
+      assignedAgentId?: string
+      limit?: number
+    },
   ): Promise<WorkflowRunRecord[]>
   transitionWorkflowRun(
     id: string,
@@ -2413,7 +2418,7 @@ export interface WorkflowRunStore {
     orgId: string,
   ): Promise<WorkflowStepAttemptRecord | null>
   listWorkflowStepAttempts(
-    workflowRunId: string,
+    workflowRunId: string | string[],
     orgId: string,
   ): Promise<WorkflowStepAttemptRecord[]>
   transitionWorkflowStepAttempt(
@@ -2427,7 +2432,7 @@ export interface WorkflowRunStore {
     activity: NewWorkflowArtifactActivity,
   ): Promise<WorkflowArtifactActivityRecord>
   listWorkflowArtifactActivity(
-    workflowRunId: string,
+    workflowRunId: string | string[],
     orgId: string,
   ): Promise<WorkflowArtifactActivityRecord[]>
 }
@@ -3398,10 +3403,10 @@ export interface WorkflowStepAttemptTransition {
 }
 
 export type WorkflowArtifactActivityRole = "output" | "evidence" | "input"
-export type WorkflowArtifactActivitySource = "observed" | "suggested"
+export type WorkflowArtifactActivitySource = "observed" | "suggested" | "dismissed"
 
-/** One exact artifact version observed during a workflow run. This records provenance only.
- * It never implies that the node succeeded or that the artifact passed evaluation. */
+/** One exact artifact version observed during a workflow run, or a durable suggestion dismissal.
+ * Observed rows record provenance only. They never imply success or evaluation quality. */
 export interface WorkflowArtifactActivityRecord {
   id: string
   org_id: string

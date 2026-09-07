@@ -1,4 +1,10 @@
-import { type ContextRecord, newId, roleAllows, type SessionRecord } from "@derive/core"
+import {
+  type ContextRecord,
+  newId,
+  roleAllows,
+  type SessionRecord,
+  workflowStatusIsTerminal,
+} from "@derive/core"
 import { z } from "zod"
 import { metaForWire } from "../lib/context-builder-card"
 import { canPayForAgent, NO_PAYER_MESSAGE } from "../lib/payer"
@@ -50,10 +56,31 @@ const workflowRunInput = z.discriminatedUnion("action", [
     action: z.literal("start"),
     short_id: z.string().trim().min(1),
     diagram_id: z.string().trim().min(1).max(200),
+    dedupe_key: z.string().trim().min(1).max(200),
   }),
   z.object({
     action: z.literal("inspect"),
     run_id: z.string().trim().min(1),
+  }),
+  z.object({
+    action: z.literal("list"),
+    short_id: z.string().trim().min(1),
+    diagram_id: z.string().trim().min(1).max(200).optional(),
+    limit: z.coerce.number().int().min(1).max(50).default(20),
+  }),
+  z.object({
+    action: z.literal("cancel"),
+    run_id: z.string().trim().min(1),
+  }),
+  z.object({
+    action: z.literal("dismiss"),
+    run_id: z.string().trim().min(1),
+    node_id: z.string().trim().min(1),
+    artifact: z.object({
+      short_id: z.string().trim().min(1),
+      version: z.coerce.number().int().min(1),
+      role: z.enum(["output", "evidence", "input"]),
+    }),
   }),
 ])
 
@@ -90,7 +117,7 @@ export function registerUseTool(tc: ToolContext): void {
     "use",
     {
       description:
-        "Use a Context or workflow run. `workflow_run` starts or inspects. `workflow` binds an attempt, records a receipt, or attaches an exact artifact version. See derive://skills/contexts and derive://skills/workflows.",
+        "Use Contexts or workflow runs. `workflow_run` manages runs. `workflow` binds attempts, records receipts, or attaches exact versions. See derive://skills/contexts and derive://skills/workflows.",
       // Opens/advances a session (a write — messages accumulate, budget is spent) but
       // deletes nothing; a session can be followed up or checked, never destroyed from
       // here. Not idempotent by default (each open mints a new session — `dedupe_key` is
@@ -168,7 +195,7 @@ export function registerUseTool(tc: ToolContext): void {
         workflow: workflowInput
           .optional()
           .describe("Bind a run attempt, record its receipt, or attach an artifact version."),
-        workflow_run: workflowRunInput.optional().describe("Start/inspect a workflow run."),
+        workflow_run: workflowRunInput.optional().describe("Manage a workflow run."),
         workspace: wsArg,
       },
     },
@@ -205,9 +232,14 @@ export function registerUseTool(tc: ToolContext): void {
       if (workflowScope) {
         if (answer || progress !== undefined || state || result_artifact_id || answers)
           return err("This workflow capability cannot run or answer Context sessions.")
-        if (workflow_run?.action === "start")
-          return err("This workflow capability cannot start another workflow run.")
-        if (workflow_run?.action === "inspect" && workflow_run.run_id !== workflowScope)
+        if (workflow_run?.action === "start" || workflow_run?.action === "list")
+          return err("This workflow capability cannot start or list workflow runs.")
+        if (
+          (workflow_run?.action === "inspect" ||
+            workflow_run?.action === "cancel" ||
+            workflow_run?.action === "dismiss") &&
+          workflow_run.run_id !== workflowScope
+        )
           return err("This workflow capability is scoped to a different run.")
         if (workflow && workflow.run_id !== workflowScope)
           return err("This workflow capability is scoped to a different run.")
@@ -221,7 +253,10 @@ export function registerUseTool(tc: ToolContext): void {
             return err("This Context session is not bound to the scoped workflow run.")
         } else if (
           (!workflow || workflow.run_id !== workflowScope) &&
-          (workflow_run?.action !== "inspect" || workflow_run.run_id !== workflowScope)
+          ((workflow_run?.action !== "inspect" &&
+            workflow_run?.action !== "cancel" &&
+            workflow_run?.action !== "dismiss") ||
+            workflow_run.run_id !== workflowScope)
         ) {
           return err("This workflow capability must name its assigned workflow run.")
         }
@@ -281,6 +316,7 @@ export function registerUseTool(tc: ToolContext): void {
           diagramId: workflow_run.diagram_id,
           initiatorId: actingFor.id,
           assignedAgentId: registered ? agent.id : undefined,
+          idempotencyKey: workflow_run.dedupe_key,
           baseUrl: ctx.deps.baseUrl,
           at: new Date().toISOString(),
         })
@@ -297,6 +333,136 @@ export function registerUseTool(tc: ToolContext): void {
           },
           prompt: started.prompt,
           next: `Inspect receipts with use({workflow_run:{action:"inspect",run_id:"${started.run.id}"}}).`,
+        })
+      }
+      if (workflow_run?.action === "list") {
+        const reached = await reach(workflow_run.short_id, workspace)
+        if (reached && "error" in reached) return err(reached.error)
+        if (!reached) return err(`No artifact "${workflow_run.short_id}" you can reach.`)
+        if (!roleAllows(reached.role, "comment"))
+          return err("Listing workflow runs requires comment access to the workflow artifact.")
+        const initiatedBy = actingFor?.id
+        const assignedAgentId = registered ? agent.id : undefined
+        const runs =
+          initiatedBy || assignedAgentId
+            ? await ctx.meta.listWorkflowRuns(reached.a.id, reached.org, {
+                diagramId: workflow_run.diagram_id,
+                initiatedBy,
+                assignedAgentId,
+                limit: workflow_run.limit,
+              })
+            : []
+        return json({
+          workflow_runs: runs.map((run) => ({
+            id: run.id,
+            artifact: { short_id: reached.a.short_id, version: run.workflow_version },
+            diagram_id: run.diagram_id,
+            status: run.status,
+            reason: run.reason,
+            created_at: run.created_at,
+            started_at: run.started_at,
+            finished_at: run.finished_at,
+          })),
+        })
+      }
+      if (workflow_run?.action === "cancel") {
+        const principal = await workflowPrincipal(workflow_run.run_id)
+        if (typeof principal === "string") return err(principal)
+        let run = principal.run
+        for (let tryNumber = 0; tryNumber < 3; tryNumber += 1) {
+          if (run.status === "cancelled")
+            return json({ workflow_run_id: run.id, status: run.status })
+          if (workflowStatusIsTerminal(run.status))
+            return err(`Workflow run ${run.id} is already ${run.status}.`)
+          const claimed = run.status === "running" || run.status === "waiting"
+          if (claimed) {
+            const attempts = await ctx.meta.listWorkflowStepAttempts(run.id, run.org_id)
+            if (attempts.some((attempt) => !workflowStatusIsTerminal(attempt.status)))
+              return err(
+                "This run has an active attempt. Close or settle its Context session before cancellation.",
+              )
+          }
+          const cancelled = await ctx.meta.transitionWorkflowRun(
+            run.id,
+            run.org_id,
+            { status: run.status, stateRevision: run.state_revision },
+            {
+              status: "cancelled",
+              at: new Date().toISOString(),
+              ...(claimed && run.actual_execution && run.executor_id
+                ? { actualExecution: run.actual_execution, executorId: run.executor_id }
+                : {}),
+            },
+          )
+          if (cancelled) return json({ workflow_run_id: cancelled.id, status: cancelled.status })
+          const fresh = await ctx.meta.getWorkflowRun(run.id, run.org_id)
+          if (!fresh) return err("The workflow run is unavailable.")
+          run = fresh
+        }
+        return err("The workflow run changed while cancellation was recorded. Inspect and retry.")
+      }
+      if (workflow_run?.action === "dismiss") {
+        const principal = await workflowPrincipal(workflow_run.run_id)
+        if (typeof principal === "string") return err(principal)
+        const recorded = await ctx.meta.listWorkflowArtifactActivity(
+          principal.run.id,
+          principal.run.org_id,
+        )
+        const existing = recorded.find(
+          (item) =>
+            item.source === "dismissed" &&
+            item.node_id === workflow_run.node_id &&
+            item.artifact_short_id === workflow_run.artifact.short_id &&
+            item.artifact_version === workflow_run.artifact.version &&
+            item.role === workflow_run.artifact.role,
+        )
+        if (existing)
+          return json({
+            workflow_run_id: principal.run.id,
+            dismissal_id: existing.id,
+            dismissed: true,
+          })
+        const workflowArtifact = await ctx.meta.getArtifactById(principal.run.workflow_artifact_id)
+        if (!workflowArtifact) return err("The workflow artifact is unavailable.")
+        const graphReach = await reach(workflowArtifact.short_id, workspace, {
+          artifact: workflowArtifact,
+        })
+        if (!graphReach || "error" in graphReach)
+          return err("The workflow artifact is unavailable to this connection.")
+        const snapshot = await loadWorkflowRunArtifactState({
+          meta: ctx.meta,
+          workflowArtifact,
+          run: principal.run,
+          canRead: async (artifact) => {
+            const candidate = await reach(artifact.short_id, workspace, { artifact })
+            return !!candidate && !("error" in candidate)
+          },
+        })
+        const suggestion = snapshot.suggestions.find(
+          (item) =>
+            item.nodeId === workflow_run.node_id &&
+            item.artifactShortId === workflow_run.artifact.short_id &&
+            item.artifactVersion === workflow_run.artifact.version &&
+            item.role === workflow_run.artifact.role,
+        )
+        if (!suggestion) return err("No matching readable workflow suggestion to dismiss.")
+        const dismissed = await ctx.meta.recordWorkflowArtifactActivity({
+          id: newId("wfa"),
+          org_id: principal.run.org_id,
+          workflow_run_id: principal.run.id,
+          node_id: suggestion.nodeId ?? workflow_run.node_id,
+          attempt: 0,
+          artifact_short_id: suggestion.artifactShortId,
+          artifact_version: suggestion.artifactVersion,
+          artifact_title: suggestion.artifactTitle,
+          role: suggestion.role,
+          source: "dismissed",
+          created_at: new Date().toISOString(),
+        })
+        return json({
+          workflow_run_id: principal.run.id,
+          dismissal_id: dismissed.id,
+          dismissed: true,
         })
       }
       if (workflow_run?.action === "inspect") {
@@ -372,23 +538,58 @@ export function registerUseTool(tc: ToolContext): void {
             role: item.role,
             reason: item.reason,
             created_at: item.createdAt,
-            confirm_with: {
-              tool: "use",
-              workflow: {
-                run_id: principal.run.id,
-                node_id: item.nodeId,
-                attempt: item.attempt,
-                artifact: {
-                  short_id: item.artifactShortId,
-                  version: item.artifactVersion,
-                  role: item.role,
-                },
-              },
-              note:
-                item.nodeId && item.attempt
-                  ? "Confirm this exact version if it belongs to this attempt."
-                  : "Choose the correct node and attempt before confirmation.",
-            },
+            ...(item.nodeId
+              ? {
+                  dismiss_with: {
+                    tool: "use",
+                    workflow_run: {
+                      action: "dismiss",
+                      run_id: principal.run.id,
+                      node_id: item.nodeId,
+                      artifact: {
+                        short_id: item.artifactShortId,
+                        version: item.artifactVersion,
+                        role: item.role,
+                      },
+                    },
+                  },
+                }
+              : {}),
+            ...(item.nodeId && item.attempt
+              ? {
+                  confirm_with: {
+                    tool: "use",
+                    workflow: {
+                      run_id: principal.run.id,
+                      node_id: item.nodeId,
+                      attempt: item.attempt,
+                      artifact: {
+                        short_id: item.artifactShortId,
+                        version: item.artifactVersion,
+                        role: item.role,
+                      },
+                    },
+                  },
+                }
+              : {
+                  confirm_template: {
+                    tool: "use",
+                    known: {
+                      run_id: principal.run.id,
+                      node_id: item.nodeId,
+                      artifact: {
+                        short_id: item.artifactShortId,
+                        version: item.artifactVersion,
+                        role: item.role,
+                      },
+                    },
+                    missing: [
+                      ...(item.nodeId ? [] : ["node_id"]),
+                      ...(item.attempt ? [] : ["attempt"]),
+                    ],
+                    note: "Resolve the missing fields before you call use.",
+                  },
+                }),
           })),
           note: "Activity records exact observed versions. Suggestions require confirmation and never complete a node.",
         })
@@ -423,7 +624,10 @@ export function registerUseTool(tc: ToolContext): void {
         if (typeof principal === "string") return err(principal)
         const artifact = await ctx.meta.getByShortId(workflow.artifact.short_id)
         if (!artifact || artifact.org_id !== principal.orgId)
-          return err("No such artifact in this workflow's workspace.")
+          return err("No such readable artifact in this workflow's workspace.")
+        const readable = await reach(artifact.short_id, workspace, { artifact })
+        if (!readable || "error" in readable || readable.org !== principal.orgId)
+          return err("No such readable artifact in this workflow's workspace.")
         const version = await ctx.meta.getVersion(artifact.id, workflow.artifact.version)
         if (!version) return err("No such artifact version.")
         const recorded = await recordWorkflowArtifact({

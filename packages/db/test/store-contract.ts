@@ -5139,6 +5139,50 @@ export function runStoreContract(
           kind: "terminal",
         }),
       ).rejects.toThrow("already terminal")
+      const timedOutRun = await store.createWorkflowRun({
+        id: uuid(),
+        org_id: ORG,
+        workflow_artifact_id: workflow.workflow_artifact_id,
+        workflow_version: workflow.workflow_version,
+        workflow_blob_key: workflow.workflow_blob_key,
+        workflow_content_type: workflow.workflow_content_type,
+        diagram_id: workflow.diagram_id,
+        reason: "timeout-test",
+      })
+      const timedOutRunning = await store.transitionWorkflowRun(
+        timedOutRun.id,
+        ORG,
+        { status: "queued", stateRevision: 0 },
+        {
+          status: "running",
+          at: started,
+          actualExecution: "local",
+          executorId: "timeout-runner",
+        },
+      )
+      expect(timedOutRunning).not.toBeNull()
+      expect(
+        await store.transitionWorkflowRun(
+          timedOutRun.id,
+          ORG,
+          { status: "running", stateRevision: timedOutRunning?.state_revision ?? -1 },
+          {
+            status: "timed_out",
+            at: finished,
+            actualExecution: "local",
+            executorId: "timeout-runner",
+          },
+        ),
+      ).not.toBeNull()
+      await expect(
+        store.createWorkflowStepAttempt(ORG, {
+          id: uuid(),
+          workflow_run_id: timedOutRun.id,
+          node_id: "late-timeout-node",
+          attempt: 1,
+          kind: "terminal",
+        }),
+      ).rejects.toThrow("already terminal")
       expect(
         await store.transitionWorkflowRun(
           workflow.id,

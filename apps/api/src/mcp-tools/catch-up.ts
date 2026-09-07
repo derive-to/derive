@@ -1,4 +1,5 @@
 import {
+  type ArtifactRecord,
   assertedOnly,
   type CommentRecord,
   diffLines,
@@ -17,7 +18,7 @@ import {
   getChangedPartsReceipt,
 } from "../lib/changed-parts"
 import { clip } from "../lib/clip"
-import { workflowActivitySuggestions } from "../lib/workflow-activity"
+import { workflowActivitySuggestionsForRuns } from "../lib/workflow-activity"
 import type { ToolContext } from "../mcp-tool-context"
 import {
   bundleFileChanges,
@@ -289,63 +290,117 @@ export function registerCatchUpTool(tc: ToolContext): void {
           ? ` Review requested on v${review.version} — waiting for the human.`
           : ` The human sent back their review of v${review.version} — read the open threads and their note, then revise and re-request, or stop if the note says it's good.${noteBit}`
         : ""
-      const receiptGaps = (
-        await Promise.all(
-          workflowRuns.map(async (run) => {
-            const [attempts, recorded] = await Promise.all([
-              ctx.meta.listWorkflowStepAttempts(run.id, a.org_id),
-              ctx.meta.listWorkflowArtifactActivity(run.id, a.org_id),
-            ])
-            const suggestions = await workflowActivitySuggestions({
-              meta: ctx.meta,
-              workflowArtifact: a,
-              run,
-              attempts,
-              recorded,
-              canRead: async (candidate) => {
-                const reached = await reach(candidate.short_id, workspace, {
-                  artifact: candidate,
-                })
-                return Boolean(reached && !("error" in reached))
-              },
-            })
-            if (suggestions.length === 0) return null
-            return {
-              run_id: run.id,
-              diagram_id: run.diagram_id,
-              run_status: run.status,
-              suggestions: suggestions.map((suggestion) => ({
-                artifact: {
-                  short_id: suggestion.artifactShortId,
-                  version: suggestion.artifactVersion,
-                  title: suggestion.artifactTitle,
-                },
-                node_id: suggestion.nodeId,
-                attempt: suggestion.attempt,
-                role: suggestion.role,
-                reason: suggestion.reason,
-                confirm_with: {
-                  tool: "use",
-                  workflow: {
-                    run_id: run.id,
-                    node_id: suggestion.nodeId,
-                    attempt: suggestion.attempt,
-                    artifact: {
-                      short_id: suggestion.artifactShortId,
-                      version: suggestion.artifactVersion,
-                      role: suggestion.role,
-                    },
-                  },
-                  note:
-                    suggestion.nodeId && suggestion.attempt
-                      ? "Confirm this exact version if it belongs to the run."
-                      : "Choose the correct node and attempt before confirmation.",
-                },
-              })),
-            }
-          }),
+      const workflowReadability = new Map<string, Promise<boolean>>()
+      const workflowFacts = new Map<number, Promise<VersionDataRecord[]>>()
+      const loadWorkflowFacts = (version: number): Promise<VersionDataRecord[]> => {
+        const existing = workflowFacts.get(version)
+        if (existing) return existing
+        const result = ctx.meta.getVersionData(a.id, version)
+        workflowFacts.set(version, result)
+        return result
+      }
+      const canReadWorkflowArtifact = (candidate: ArtifactRecord): Promise<boolean> => {
+        const existing = workflowReadability.get(candidate.id)
+        if (existing) return existing
+        const result = reach(candidate.short_id, workspace, { artifact: candidate }).then(
+          (reached) => Boolean(reached && !("error" in reached)),
         )
-      ).filter((item) => item !== null)
+        workflowReadability.set(candidate.id, result)
+        return result
+      }
+      const workflowRunIds = workflowRuns.map((run) => run.id)
+      const [workflowAttempts, workflowActivity] =
+        workflowRunIds.length > 0
+          ? await Promise.all([
+              ctx.meta.listWorkflowStepAttempts(workflowRunIds, a.org_id),
+              ctx.meta.listWorkflowArtifactActivity(workflowRunIds, a.org_id),
+            ])
+          : [[], []]
+      const workflowSuggestions = await workflowActivitySuggestionsForRuns({
+        meta: ctx.meta,
+        workflowArtifact: a,
+        states: workflowRuns.map((run) => ({
+          run,
+          attempts: workflowAttempts.filter((item) => item.workflow_run_id === run.id),
+          recorded: workflowActivity.filter((item) => item.workflow_run_id === run.id),
+        })),
+        canRead: canReadWorkflowArtifact,
+        loadVersionData: loadWorkflowFacts,
+      })
+      const receiptGaps = workflowRuns
+        .map((run) => {
+          const suggestions = workflowSuggestions.get(run.id) ?? []
+          if (suggestions.length === 0) return null
+          return {
+            run_id: run.id,
+            diagram_id: run.diagram_id,
+            run_status: run.status,
+            suggestions: suggestions.map((suggestion) => ({
+              artifact: {
+                short_id: suggestion.artifactShortId,
+                version: suggestion.artifactVersion,
+                title: suggestion.artifactTitle,
+              },
+              node_id: suggestion.nodeId,
+              attempt: suggestion.attempt,
+              role: suggestion.role,
+              reason: suggestion.reason,
+              ...(suggestion.nodeId
+                ? {
+                    dismiss_with: {
+                      tool: "use",
+                      workflow_run: {
+                        action: "dismiss",
+                        run_id: run.id,
+                        node_id: suggestion.nodeId,
+                        artifact: {
+                          short_id: suggestion.artifactShortId,
+                          version: suggestion.artifactVersion,
+                          role: suggestion.role,
+                        },
+                      },
+                    },
+                  }
+                : {}),
+              ...(suggestion.nodeId && suggestion.attempt
+                ? {
+                    confirm_with: {
+                      tool: "use",
+                      workflow: {
+                        run_id: run.id,
+                        node_id: suggestion.nodeId,
+                        attempt: suggestion.attempt,
+                        artifact: {
+                          short_id: suggestion.artifactShortId,
+                          version: suggestion.artifactVersion,
+                          role: suggestion.role,
+                        },
+                      },
+                    },
+                  }
+                : {
+                    confirm_template: {
+                      tool: "use",
+                      known: {
+                        run_id: run.id,
+                        node_id: suggestion.nodeId,
+                        artifact: {
+                          short_id: suggestion.artifactShortId,
+                          version: suggestion.artifactVersion,
+                          role: suggestion.role,
+                        },
+                      },
+                      missing: [
+                        ...(suggestion.nodeId ? [] : ["node_id"]),
+                        ...(suggestion.attempt ? [] : ["attempt"]),
+                      ],
+                      note: "Resolve the missing fields before you call use.",
+                    },
+                  }),
+            })),
+          }
+        })
+        .filter((item) => item !== null)
       const receiptGapCount = receiptGaps.reduce(
         (total, item) => total + item.suggestions.length,
         0,

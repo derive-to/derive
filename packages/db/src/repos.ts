@@ -4658,7 +4658,12 @@ export function makeRepos(db: SqliteDb) {
   const listWorkflowRuns = async (
     workflowArtifactId: string,
     orgId: string,
-    opts: { diagramId?: string; limit?: number } = {},
+    opts: {
+      diagramId?: string
+      initiatedBy?: string
+      assignedAgentId?: string
+      limit?: number
+    } = {},
   ): Promise<WorkflowRunRecord[]> => {
     const limit = Math.max(1, Math.min(opts.limit ?? 20, 100))
     return (await db
@@ -4669,6 +4674,14 @@ export function makeRepos(db: SqliteDb) {
           eq(workflowRun.workflow_artifact_id, workflowArtifactId),
           eq(workflowRun.org_id, orgId),
           opts.diagramId ? eq(workflowRun.diagram_id, opts.diagramId) : undefined,
+          opts.initiatedBy || opts.assignedAgentId
+            ? or(
+                opts.initiatedBy ? eq(workflowRun.initiated_by, opts.initiatedBy) : undefined,
+                opts.assignedAgentId
+                  ? eq(workflowRun.assigned_agent_id, opts.assignedAgentId)
+                  : undefined,
+              )
+            : undefined,
         ),
       )
       .orderBy(desc(workflowRun.created_at), desc(workflowRun.id))
@@ -4854,7 +4867,7 @@ export function makeRepos(db: SqliteDb) {
             and(
               eq(workflowRun.id, a.workflow_run_id),
               eq(workflowRun.org_id, orgId),
-              notInArray(workflowRun.status, ["succeeded", "failed", "cancelled"]),
+              notInArray(workflowRun.status, ["succeeded", "failed", "cancelled", "timed_out"]),
             ),
           ),
       )
@@ -4886,15 +4899,17 @@ export function makeRepos(db: SqliteDb) {
       )
       .get()) as WorkflowStepAttemptRecord | undefined) ?? null
   const listWorkflowStepAttempts = async (
-    workflowRunId: string,
+    workflowRunId: string | string[],
     orgId: string,
-  ): Promise<WorkflowStepAttemptRecord[]> =>
-    (await db
+  ): Promise<WorkflowStepAttemptRecord[]> => {
+    const runIds = Array.isArray(workflowRunId) ? workflowRunId : [workflowRunId]
+    if (runIds.length === 0) return []
+    return (await db
       .select()
       .from(workflowStepAttempt)
       .where(
         and(
-          eq(workflowStepAttempt.workflow_run_id, workflowRunId),
+          inArray(workflowStepAttempt.workflow_run_id, runIds),
           inArray(
             workflowStepAttempt.workflow_run_id,
             db
@@ -4911,6 +4926,7 @@ export function makeRepos(db: SqliteDb) {
         asc(workflowStepAttempt.id),
       )
       .all()) as WorkflowStepAttemptRecord[]
+  }
   const transitionWorkflowStepAttempt = async (
     id: string,
     workflowRunId: string,
@@ -4991,20 +5007,23 @@ export function makeRepos(db: SqliteDb) {
     return existing
   }
   const listWorkflowArtifactActivity = async (
-    workflowRunId: string,
+    workflowRunId: string | string[],
     orgId: string,
-  ): Promise<WorkflowArtifactActivityRecord[]> =>
-    db
+  ): Promise<WorkflowArtifactActivityRecord[]> => {
+    const runIds = Array.isArray(workflowRunId) ? workflowRunId : [workflowRunId]
+    if (runIds.length === 0) return []
+    return db
       .select()
       .from(workflowArtifactActivity)
       .where(
         and(
-          eq(workflowArtifactActivity.workflow_run_id, workflowRunId),
+          inArray(workflowArtifactActivity.workflow_run_id, runIds),
           eq(workflowArtifactActivity.org_id, orgId),
         ),
       )
       .orderBy(asc(workflowArtifactActivity.created_at), asc(workflowArtifactActivity.id))
       .all()
+  }
   const replaceSkillRelations = async (
     orgId: string,
     skillArtifactId: string,
