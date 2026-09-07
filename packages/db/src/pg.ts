@@ -152,12 +152,19 @@ import type {
 } from "@derive/core"
 import {
   BILLABLE_ROLES,
+  DYNAMIC_REVISION_LIMIT,
+  type DynamicRevisionRecord,
+  type DynamicSlotRecord,
+  type DynamicSlotWrite,
+  type DynamicWriteOptions,
   GLOBAL_FOLLOW_ORG,
   isValidWorkflowRunDefinitionPin,
   isValidWorkflowStepContextPin,
   LINKS_FACT,
   maxRole,
   mergeRunMeta,
+  type NewDynamicRevision,
+  type NewDynamicSlot,
   parseRunMeta,
   runCounter,
   SHARED_STATE_ACTIVITY_LIMIT,
@@ -191,6 +198,12 @@ import {
 } from "drizzle-orm"
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres"
 import { Pool } from "pg"
+import {
+  DYNAMIC_STATE_PREFIX,
+  dynamicRecord,
+  dynamicStateKey,
+  dynamicStatePrefix,
+} from "./dynamic-storage"
 import type { Exhaustive, Shapes } from "./parity"
 import {
   activitySeen,
@@ -216,6 +229,7 @@ import {
   contextAsker,
   contextSession,
   domain,
+  dynamicRevision,
   exportJob,
   folder,
   follow,
@@ -277,6 +291,7 @@ export const schema = {
   artifact,
   sharedState,
   sharedStateActivity,
+  dynamicRevision,
   version,
   versionData,
   comment,
@@ -337,6 +352,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   artifact: true,
   sharedState: true,
   sharedStateActivity: true,
+  dynamicRevision: true,
   version: true,
   versionData: true,
   comment: true,
@@ -638,6 +654,9 @@ const mapOverviewRows = (rows: OverviewRow[]): CollectionsOverviewRead => {
   return { collections, starred, workedIn, previews, previewBylines }
 }
 
+/** What a dynamic write needs from the connection or the transaction it runs on. */
+type PgWriter = Pick<NodePgDatabase<typeof schema>, "insert" | "update" | "delete">
+
 export class PgMetaStore implements MetaStore {
   /** Postgres binds an id array as ONE parameter and caps a statement at 65535, so the
    *  shared visibility gate does not need to split a candidate list the way D1 does. Well
@@ -849,7 +868,12 @@ export class PgMetaStore implements MetaStore {
     const rows = await this.db
       .select({ n: count() })
       .from(sharedState)
-      .where(eq(sharedState.artifact_id, artifactId))
+      .where(
+        and(
+          eq(sharedState.artifact_id, artifactId),
+          sql`${sharedState.key} NOT LIKE ${`${DYNAMIC_STATE_PREFIX}%`}`,
+        ),
+      )
     return Number(rows[0]?.n ?? 0)
   }
 
@@ -908,6 +932,168 @@ export class PgMetaStore implements MetaStore {
       .where(and(eq(sharedStateActivity.artifact_id, artifactId), eq(sharedStateActivity.key, key)))
       .orderBy(desc(sharedStateActivity.version))
       .limit(limit)
+  }
+
+  // ---- Dynamic tables and figures ------------------------------------------
+  private dynamicRevisionKey(artifactId: string, n: number, name: string) {
+    return and(
+      eq(dynamicRevision.artifact_id, artifactId),
+      eq(dynamicRevision.n, n),
+      eq(dynamicRevision.name, name),
+    )
+  }
+
+  async listDynamicSlots(artifactId: string, n: number): Promise<DynamicSlotRecord[]> {
+    const prefix = dynamicStatePrefix(n)
+    const rows = await this.db
+      .select()
+      .from(sharedState)
+      .where(and(eq(sharedState.artifact_id, artifactId), like(sharedState.key, `${prefix}%`)))
+      .orderBy(sharedState.key)
+    return rows.map((row) => dynamicRecord(row, n, row.key.slice(prefix.length)))
+  }
+
+  async getDynamicSlot(
+    artifactId: string,
+    n: number,
+    name: string,
+  ): Promise<DynamicSlotRecord | null> {
+    const rows = await this.db
+      .select()
+      .from(sharedState)
+      .where(
+        and(eq(sharedState.artifact_id, artifactId), eq(sharedState.key, dynamicStateKey(n, name))),
+      )
+    return rows[0] ? dynamicRecord(rows[0], n, name) : null
+  }
+
+  async countDynamicSlots(artifactId: string, n: number): Promise<number> {
+    const prefix = dynamicStatePrefix(n)
+    const rows = await this.db
+      .select({ n: count() })
+      .from(sharedState)
+      .where(and(eq(sharedState.artifact_id, artifactId), like(sharedState.key, `${prefix}%`)))
+    return Number(rows[0]?.n ?? 0)
+  }
+
+  /** Runs a dynamic write; with `head_only` (see DynamicWriteOptions) inside a transaction
+   * that first takes a FOR SHARE read of the artifact row, so addVersion's FOR UPDATE
+   * either waits for this write to commit (the seed then carries it forward) or this
+   * write sees the bump and misses. Lock order is artifact then shared_state in both. */
+  private async atHead<T>(
+    artifactId: string,
+    n: number,
+    headOnly: boolean | undefined,
+    miss: T,
+    run: (db: PgWriter) => Promise<T>,
+  ): Promise<T> {
+    if (!headOnly) return run(this.db)
+    return this.db.transaction(async (tx) => {
+      const head = await tx
+        .select({ cv: artifact.current_version })
+        .from(artifact)
+        .where(eq(artifact.id, artifactId))
+        .for("share")
+      return head[0]?.cv === n ? run(tx) : miss
+    })
+  }
+
+  async insertDynamicSlot(
+    row: NewDynamicSlot,
+    opts?: DynamicWriteOptions,
+  ): Promise<DynamicSlotRecord | null> {
+    return this.atHead(row.artifact_id, row.n, opts?.head_only, null, async (db) => {
+      const rows = await db
+        .insert(sharedState)
+        .values({
+          id: row.id,
+          artifact_id: row.artifact_id,
+          key: dynamicStateKey(row.n, row.name),
+          json: row.json,
+          version: row.revision,
+          updated_by_id: row.updated_by_id,
+          updated_by_name: row.updated_by_name,
+          updated_at: row.updated_at,
+        })
+        .onConflictDoNothing()
+        .returning()
+      return rows[0] ? dynamicRecord(rows[0], row.n, row.name) : null
+    })
+  }
+
+  async updateDynamicSlot(write: DynamicSlotWrite): Promise<DynamicSlotRecord | null> {
+    const { expected_revision, head_only, ...values } = write
+    return this.atHead(values.artifact_id, values.n, head_only, null, async (db) => {
+      const rows = await db
+        .update(sharedState)
+        .set({
+          json: values.json,
+          version: expected_revision + 1,
+          updated_by_id: values.updated_by_id,
+          updated_by_name: values.updated_by_name,
+          updated_at: values.updated_at,
+        })
+        .where(
+          and(
+            eq(sharedState.artifact_id, values.artifact_id),
+            eq(sharedState.key, dynamicStateKey(values.n, values.name)),
+            eq(sharedState.version, expected_revision),
+          ),
+        )
+        .returning()
+      return rows[0] ? dynamicRecord(rows[0], values.n, values.name) : null
+    })
+  }
+
+  async appendDynamicRevision(r: NewDynamicRevision): Promise<void> {
+    await this.db.insert(dynamicRevision).values(r)
+    if (r.revision <= DYNAMIC_REVISION_LIMIT) return
+    // Revision 0 is the version's start point and survives the window.
+    await this.db
+      .delete(dynamicRevision)
+      .where(
+        and(
+          this.dynamicRevisionKey(r.artifact_id, r.n, r.name),
+          gt(dynamicRevision.revision, 0),
+          lte(dynamicRevision.revision, r.revision - DYNAMIC_REVISION_LIMIT),
+        ),
+      )
+  }
+
+  async listDynamicRevisions(
+    artifactId: string,
+    n: number,
+    name: string,
+    limit: number,
+  ): Promise<DynamicRevisionRecord[]> {
+    return this.db
+      .select()
+      .from(dynamicRevision)
+      .where(this.dynamicRevisionKey(artifactId, n, name))
+      .orderBy(desc(dynamicRevision.revision))
+      .limit(limit)
+  }
+
+  async deleteDynamicSlot(
+    artifactId: string,
+    n: number,
+    name: string,
+    opts?: DynamicWriteOptions,
+  ): Promise<boolean> {
+    return this.atHead(artifactId, n, opts?.head_only, false, async (db) => {
+      const gone = await db
+        .delete(sharedState)
+        .where(
+          and(
+            eq(sharedState.artifact_id, artifactId),
+            eq(sharedState.key, dynamicStateKey(n, name)),
+          ),
+        )
+        .returning({ id: sharedState.id })
+      if (!gone[0]) return false
+      await db.delete(dynamicRevision).where(this.dynamicRevisionKey(artifactId, n, name))
+      return true
+    })
   }
 
   async addVersion(artifactId: string, v: NewVersion): Promise<VersionRecord> {
@@ -6971,6 +7157,7 @@ export class PgMetaStore implements MetaStore {
       await tx.delete(webhook).where(eq(webhook.artifact_id, id))
       await tx.delete(sharedStateActivity).where(eq(sharedStateActivity.artifact_id, id))
       await tx.delete(sharedState).where(eq(sharedState.artifact_id, id))
+      await tx.delete(dynamicRevision).where(eq(dynamicRevision.artifact_id, id))
       await tx
         .delete(skillRelation)
         .where(

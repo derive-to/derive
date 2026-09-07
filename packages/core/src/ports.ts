@@ -2,6 +2,8 @@
  * Core owns the ports; packages/db and packages/storage provide the adapters.
  * Everything here must run on Node AND Cloudflare Workers — no Node APIs.
  */
+
+import type { DynamicKind } from "./dynamic-data"
 import type { LinkRole, Listed, Role, WorkspaceAccess } from "./roles"
 import type { SharedStateAction } from "./shared-state"
 import type { SortMode } from "./sort"
@@ -2770,6 +2772,129 @@ export interface NewSharedStateActivity {
   created_at: string
 }
 
+/** The dynamic view of a shared-state row for one document version (see dynamic-data.ts).
+ * Publishing v(n+1) seeds a new key from v(n)'s latest value, so every version keeps its
+ * final data. `revision` maps to the shared-state compare-and-swap version. */
+export interface DynamicSlotRecord {
+  id: string
+  artifact_id: string
+  n: number
+  name: string
+  kind: DynamicKind
+  json: string
+  size_bytes: number
+  revision: number
+  updated_by_id: string
+  updated_by_name: string
+  updated_at: string
+}
+
+/** One retained revision of a slot: the value as it was after that write, with the
+ * actor the API stamped from the principal (never accepted from the caller) and an
+ * optional note. Revision 0 is the seed and is always retained. */
+export interface DynamicRevisionRecord {
+  id: string
+  artifact_id: string
+  n: number
+  name: string
+  revision: number
+  json: string
+  size_bytes: number
+  actor_id: string
+  actor_name: string
+  note: string | null
+  created_at: string
+}
+
+export interface NewDynamicSlot {
+  id: string
+  artifact_id: string
+  n: number
+  name: string
+  json: string
+  revision: number
+  updated_by_id: string
+  updated_by_name: string
+  updated_at: string
+}
+
+export interface DynamicSlotWrite {
+  artifact_id: string
+  n: number
+  name: string
+  json: string
+  expected_revision: number
+  updated_by_id: string
+  updated_by_name: string
+  updated_at: string
+  /** See DynamicWriteOptions. */
+  head_only?: boolean
+}
+
+/** Options every dynamic write takes. `head_only` applies the write only while its version
+ * is still the artifact's current one, and the check and the write are ONE atomic unit in
+ * the store (a subselect on the artifact row in the same statement on SQLite and D1, a
+ * FOR SHARE read in the same transaction on Postgres), so a publish landing between the
+ * caller's read of the head and the write cannot change a version that has just been
+ * frozen. On D1, whose addVersion is three statements rather than one transaction, a write
+ * can still land on n just before the bump; the seed pass then copies it forward, so no
+ * data is lost, only the 409 the caller would otherwise have seen. */
+export interface DynamicWriteOptions {
+  head_only?: boolean
+}
+
+export interface NewDynamicRevision {
+  id: string
+  artifact_id: string
+  n: number
+  name: string
+  revision: number
+  json: string
+  size_bytes: number
+  actor_id: string
+  actor_name: string
+  note: string | null
+  created_at: string
+}
+
+export interface DynamicDataStore {
+  /** Every slot of one version, by name. One indexed read per page view of a bound
+   * version, so the row carries the value rather than forcing a second read. */
+  listDynamicSlots(artifactId: string, n: number): Promise<DynamicSlotRecord[]>
+  getDynamicSlot(artifactId: string, n: number, name: string): Promise<DynamicSlotRecord | null>
+  countDynamicSlots(artifactId: string, n: number): Promise<number>
+  /** Insert-if-absent on the (artifact, version, name) key. Null means the row already
+   * exists, which is what makes a replayed version bump and a create race harmless:
+   * neither can overwrite data a writer has since landed. With `head_only`, null also
+   * means the version is no longer current; the caller re-reads the head to tell which. */
+  insertDynamicSlot(
+    row: NewDynamicSlot,
+    opts?: DynamicWriteOptions,
+  ): Promise<DynamicSlotRecord | null>
+  /** Update only the matching revision, advancing it by one. Null means another writer
+   * won the race and the caller retries from a fresh read (the shared-state contract), or,
+   * with `head_only`, that the version is no longer current. */
+  updateDynamicSlot(write: DynamicSlotWrite): Promise<DynamicSlotRecord | null>
+  /** Append one attributed revision and prune to the bounded recent window, keeping
+   * revision 0 (the seed) whatever happens after it. */
+  appendDynamicRevision(revision: NewDynamicRevision): Promise<void>
+  listDynamicRevisions(
+    artifactId: string,
+    n: number,
+    name: string,
+    limit: number,
+  ): Promise<DynamicRevisionRecord[]>
+  /** Remove a slot and its revisions from one version. Older versions are untouched. */
+  /** True when the slot existed and is gone with its revisions; false when there was no
+   * such slot or, with `head_only`, the version is no longer current. */
+  deleteDynamicSlot(
+    artifactId: string,
+    n: number,
+    name: string,
+    opts?: DynamicWriteOptions,
+  ): Promise<boolean>
+}
+
 export interface SharedStateStore {
   getSharedState(artifactId: string, key: string): Promise<SharedStateRecord | null>
   countSharedStateKeys(artifactId: string): Promise<number>
@@ -2803,7 +2928,8 @@ export interface MetaStore
     SkillStore,
     ModerationStore,
     AssetStore,
-    SharedStateStore {}
+    SharedStateStore,
+    DynamicDataStore {}
 
 /** What a user follows: another Derive person (`target` = their user id). */
 export type FollowKind = "user"

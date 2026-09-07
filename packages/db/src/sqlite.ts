@@ -1,4 +1,5 @@
 import type {
+  DynamicWriteOptions,
   GithubUserMapping,
   MetaStore,
   NewVersion,
@@ -10,6 +11,7 @@ import type {
 import Database from "better-sqlite3"
 import { and, eq, inArray } from "drizzle-orm"
 import { drizzle } from "drizzle-orm/better-sqlite3"
+import { dynamicStateKey } from "./dynamic-storage"
 import {
   composeArtifactDetail,
   composeAutomationsWithExecutors,
@@ -39,6 +41,7 @@ import {
   context,
   contextSession,
   domain,
+  dynamicRevision,
   MIGRATION_STATEMENTS,
   notification,
   report,
@@ -241,6 +244,47 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
       return (await repos.getVersion(artifactId, n)) as VersionRecord
     },
 
+    // A head-guarded delete as one synchronous transaction: the head read, the slot row
+    // (the statement that decides) and its revisions, all-or-nothing, the way the shared
+    // repo cannot pair them on D1.
+    deleteDynamicSlot: async (
+      artifactId: string,
+      n: number,
+      name: string,
+      opts?: DynamicWriteOptions,
+    ): Promise<boolean> =>
+      db.transaction((tx) => {
+        if (opts?.head_only) {
+          const head = tx
+            .select({ cv: artifact.current_version })
+            .from(artifact)
+            .where(eq(artifact.id, artifactId))
+            .get()
+          if (head?.cv !== n) return false
+        }
+        const gone = tx
+          .delete(sharedState)
+          .where(
+            and(
+              eq(sharedState.artifact_id, artifactId),
+              eq(sharedState.key, dynamicStateKey(n, name)),
+            ),
+          )
+          .returning({ id: sharedState.id })
+          .get()
+        if (!gone) return false
+        tx.delete(dynamicRevision)
+          .where(
+            and(
+              eq(dynamicRevision.artifact_id, artifactId),
+              eq(dynamicRevision.n, n),
+              eq(dynamicRevision.name, name),
+            ),
+          )
+          .run()
+        return true
+      }),
+
     setArtifactTags: async (artifactId: string, tags: string[]): Promise<void> => {
       raw.transaction(() => {
         db.delete(artifactTag).where(eq(artifactTag.artifact_id, artifactId)).run()
@@ -310,6 +354,7 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
         db.delete(webhook).where(eq(webhook.artifact_id, id)).run()
         db.delete(sharedStateActivity).where(eq(sharedStateActivity.artifact_id, id)).run()
         db.delete(sharedState).where(eq(sharedState.artifact_id, id)).run()
+        db.delete(dynamicRevision).where(eq(dynamicRevision.artifact_id, id)).run()
         db.delete(versionData).where(eq(versionData.artifact_id, id)).run()
         db.delete(version).where(eq(version.artifact_id, id)).run()
         db.delete(comment).where(eq(comment.artifact_id, id)).run()

@@ -118,6 +118,67 @@ describe("/v1/artifacts/:shortId/search and /v1/artifacts/search — REST search
     expect(asOwner).toContain("Private Doc")
   })
 
+  it("text-scope search sees a dynamic slot's values, and forgets them when the slot goes", async () => {
+    // The data lives in the slot, not the source: a number an agent landed with a PUT
+    // shows on the page and must be as findable as prose, in the one-artifact grep (as
+    // its own `dynamic/<name>` group) and in workspace nomination (the index is
+    // refreshed on every write). The source scope stays the exact bytes.
+    const { app: a } = makeAuthedApp("rest-search-dynamic", users, "editor")
+    const owner = as("search-owner@x.test")
+    const form = new FormData()
+    form.append(
+      "file",
+      new Blob([
+        new TextEncoder().encode(
+          "# Runs\n\n```derive-table results\n| Model | Acc |\n| --- | --- |\n| base | -- |\n```\n",
+        ),
+      ]),
+      "runs.md",
+    )
+    form.append("title", "Runs")
+    const { short_id } = await (
+      await a.request("/v1/artifacts", { method: "POST", body: form, headers: owner })
+    ).json()
+    const write = await a.request(`/v1/artifacts/${short_id}/dynamic/results`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json", ...owner },
+      body: JSON.stringify({
+        kind: "table",
+        append_rows: [{ model: "quokka-zebra-7", acc: 0.93 }],
+      }),
+    })
+    expect(write.status).toBe(200)
+
+    const one = await (
+      await a.request(`/v1/artifacts/${short_id}/search?query=quokka-zebra-7&in=text`, {
+        headers: owner,
+      })
+    ).text()
+    expect(one).toContain("dynamic/results")
+    expect(one).toContain("quokka-zebra-7")
+    const source = await (
+      await a.request(`/v1/artifacts/${short_id}/search?query=quokka-zebra-7`, {
+        headers: owner,
+      })
+    ).text()
+    expect(source).toMatch(/no matches/i)
+    const workspace = await (
+      await a.request("/v1/artifacts/search?query=quokka-zebra-7&in=text", { headers: owner })
+    ).text()
+    expect(workspace).toContain("Runs")
+    expect(workspace).toContain("quokka-zebra-7")
+
+    const gone = await a.request(`/v1/artifacts/${short_id}/dynamic/results`, {
+      method: "DELETE",
+      headers: owner,
+    })
+    expect(gone.status).toBe(200)
+    const after = await (
+      await a.request("/v1/artifacts/search?query=quokka-zebra-7&in=text", { headers: owner })
+    ).text()
+    expect(after).toMatch(/no matches/i)
+  })
+
   it("a request with no callable identity at all (no session, no token) is rejected, matching GET /v1/artifacts", async () => {
     const { app: a } = makeAuthedApp("rest-search-401", users, "editor")
     const res = await a.request("/v1/artifacts/search?query=x") // no headers at all

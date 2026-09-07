@@ -17,6 +17,7 @@ import {
   artifactAgentsQuery,
   artifactQuery,
   commentsQuery,
+  dynamicSlotsQuery,
   rawArtifactUrl,
   reviewQuery,
   workspaceSettingsQuery,
@@ -46,6 +47,7 @@ import { BundleBar } from "./bundle-bar"
 import { ActionsCtx } from "./comment-actions"
 import { DeckOrganizer, DeckOrganizerDiscardDialog, useDeckOrganizer } from "./deck-organizer"
 import { DerivedFromBanner } from "./derived-from-banner"
+import { DynamicDataPanel } from "./dynamic-data-panel"
 import { EditBar, type EditViewport } from "./edit-bar"
 import { FloatingControl } from "./floating-control"
 import { InlineMentionMenu } from "./inline-mention-menu"
@@ -475,10 +477,87 @@ export function Artifact({ template = false }: { template?: boolean }) {
       sharedPostRef.current({ type: "shared-updated", ...update }),
     [],
   )
+  // The version on screen, as the live handlers below see it (they are stable
+  // callbacks, so they read a ref rather than closing over a render's value).
+  const shownRef = useRef(0)
+  // Reload the frame's SAME source: a dynamic slot was deleted (the server renders the
+  // authored placeholder again, which the frame has no copy of), or a reconnect found a
+  // slot the frame knew is gone. Never while inline editing: a remount fires onFrameLoad,
+  // which ends the edit session and would lose typed-but-unsaved text; the reload waits
+  // for the session to end instead.
+  const [frameReload, setFrameReload] = useState(0)
+  const reloadPendingRef = useRef(false)
+  const reloadFrame = useCallback(() => {
+    if (inlineEditRef.current.active) {
+      reloadPendingRef.current = true
+      return
+    }
+    setFrameReload((n) => n + 1)
+  }, [])
+  // Bring the frame's bound elements back in line with the server after a gap (a
+  // reconnect, a return from a hidden tab): one read of the shown version's slots with
+  // their fragments, pushed into the frame. A slot the rail knew that is gone now means
+  // the frame shows data that no longer exists, which only a reload can undo.
+  const reconcileDynamic = useCallback(async () => {
+    const n = shownRef.current
+    if (n < 1) return
+    const known = qc.getQueryData(dynamicSlotsQuery(shortId, n).queryKey)
+    try {
+      const fresh = await api.dynamicSlots(shortId, n, { format: "html" })
+      qc.setQueryData(dynamicSlotsQuery(shortId, n).queryKey, {
+        version: fresh.version,
+        slots: fresh.slots.map(({ html: _html, ...slot }) => slot),
+      })
+      const names = new Set(fresh.slots.map((s) => s.name))
+      if (known?.slots.some((s) => !names.has(s.name))) {
+        reloadFrame()
+        return
+      }
+      for (const slot of fresh.slots)
+        if (slot.html !== undefined)
+          sharedPostRef.current({
+            type: "dynamic-updated",
+            name: slot.name,
+            kind: slot.kind,
+            html: slot.html,
+          })
+    } catch {
+      // Best-effort: the next live event or the next load reconciles.
+    }
+  }, [qc, shortId, reloadFrame])
   const onLiveResync = useCallback(() => {
     load()
     sharedPostRef.current({ type: "shared-resync" })
-  }, [load])
+    void reconcileDynamic()
+  }, [load, reconcileDynamic])
+  // A dynamic table or figure changed without a version: refetch the Data rail, and when
+  // it is the version on screen, hand the frame the server-rendered fragment so the
+  // bound element swaps in place. The host fetches (not the frame) because the opaque
+  // origin cannot read a gated artifact's own data. A deletion (no revision) has no
+  // fragment to hand over: the frame reloads and the server renders the placeholder.
+  const onDynamicLive = useCallback(
+    (u: { name: string; kind: string; n: number; revision: number | null }) => {
+      qc.invalidateQueries({ queryKey: ["artifact", shortId, "dynamic"] })
+      if (u.n !== shownRef.current) return
+      if (u.revision === null) {
+        reloadFrame()
+        return
+      }
+      api
+        .dynamicSlot(shortId, u.name, { v: u.n, format: "html" })
+        .then((slot) => {
+          if (slot.html !== undefined)
+            sharedPostRef.current({
+              type: "dynamic-updated",
+              name: slot.name,
+              kind: slot.kind,
+              html: slot.html,
+            })
+        })
+        .catch(() => {})
+    },
+    [qc, shortId, reloadFrame],
+  )
 
   // Presence, live multiplayer cursors, the SSE stream, and view recording — see
   // use-artifact-live. The page feeds pointer moves in (from the iframe bridge
@@ -493,6 +572,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
     onVersion: onVersionLive,
     onReview,
     onSharedState: onSharedStateLive,
+    onDynamic: onDynamicLive,
     onResync: onLiveResync,
   })
 
@@ -771,6 +851,13 @@ export function Artifact({ template = false }: { template?: boolean }) {
   useEffect(() => {
     if (inlineEdit.active) setVisualPin(false)
   }, [inlineEdit.active])
+  // A frame reload deferred by an edit session runs once the session ends.
+  useEffect(() => {
+    if (!inlineEdit.active && reloadPendingRef.current) {
+      reloadPendingRef.current = false
+      setFrameReload((n) => n + 1)
+    }
+  }, [inlineEdit.active])
 
   const deckOrganizer = useDeckOrganizer({
     shortId,
@@ -884,6 +971,18 @@ export function Artifact({ template = false }: { template?: boolean }) {
     },
   })
 
+  // The version on screen, computed before the early returns below so the hooks that
+  // depend on it keep a stable order (the same expression `shown` uses once `art` is
+  // known to exist). Zero until the artifact loads, which disables the slots read.
+  const shownVersion = version ?? inlineEdit.frozenVersion ?? art?.current_version ?? 0
+  useEffect(() => {
+    shownRef.current = shownVersion
+  }, [shownVersion])
+  const dynamicQ = useQuery({
+    ...dynamicSlotsQuery(shortId, shownVersion),
+    enabled: shownVersion > 0,
+  })
+
   if (locked) return <PasswordGate shortId={shortId} onUnlocked={() => refetch()} />
   // `failed && !art`: only show the full error page when there's NO artifact to show. A
   // background-refetch failure sets isError while react-query keeps `art` (e.g. a blip right
@@ -926,6 +1025,8 @@ export function Artifact({ template = false }: { template?: boolean }) {
   // While inline editing, the shown version stays frozen at the mode-entry head so
   // a concurrent publish can't reload the frame and wipe typed-but-unsaved text.
   const shown = version ?? inlineEdit.frozenVersion ?? art.current_version
+  const dynamicSlots = dynamicQ.data?.slots ?? []
+  const dataEnabled = dynamicSlots.length > 0
   const pinnedForShown =
     pinnedRawToken.current?.shortId === shortId && pinnedRawToken.current.version === shown
   // A background failure may leave old metadata available, but an expired capability
@@ -1108,6 +1209,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
   const documentEl = (
     <ArtifactDocument
       shown={shown}
+      reloadKey={frameReload}
       // While inline editing, the frozen view IS the working version: a concurrent
       // publish must not surface the past-version strip mid-session (its Restore
       // would publish over the head while edits are pending; the warning toast
@@ -1590,9 +1692,26 @@ export function Artifact({ template = false }: { template?: boolean }) {
 
           {!focus && commentsAvailable && (
             <ArtifactComments
-              rail={mapEnabled || rail !== "map" ? rail : "comments"}
+              rail={
+                (mapEnabled || rail !== "map") && (dataEnabled || rail !== "data")
+                  ? rail
+                  : "comments"
+              }
               onRail={setRail}
               mapEnabled={mapEnabled}
+              dataEnabled={dataEnabled}
+              dataPanel={
+                dataEnabled ? (
+                  <DynamicDataPanel
+                    shortId={shortId}
+                    version={shown}
+                    slots={dynamicSlots}
+                    error={dynamicQ.isError}
+                    // Data is edited on the current version only, like the document.
+                    canPublish={effectiveCanPublish && shown === art.current_version}
+                  />
+                ) : undefined
+              }
               mapPanel={
                 art.linked_bundle ? (
                   <LinkedBundlePanel

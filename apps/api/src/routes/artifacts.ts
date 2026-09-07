@@ -183,6 +183,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     publishLimiter,
     unlockLimiter,
     sourceText,
+    dynamicSlots,
   } = ctx
   const app = new OpenAPIHono<BlankEnv>()
 
@@ -1466,7 +1467,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     const candidateCap = isJson ? Math.min(Math.max((limit ?? 6) * 4, 60), 200) : undefined
 
     const { results, note } = await searchWorkspace(
-      { blobs, sourceText, meta, search },
+      { blobs, sourceText, dynamicSlots, meta, search },
       {
         orgId: listOrg,
         viewerId: isOperator ? undefined : (memberKey ?? undefined),
@@ -1511,7 +1512,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     if (!version) return fail(c, 404, `no version ${v}`)
 
     const { groups, total, note } = await searchArtifactVersion(
-      { blobs, sourceText },
+      { blobs, sourceText, dynamicSlots },
       version,
       re,
       where,
@@ -2475,6 +2476,9 @@ export const artifactRoutes = (ctx: AppContext) => {
           isNew: false,
           onBehalf: null,
           actorId: (await actingUser(c))?.id ?? null,
+          // The restored version's dynamic data comes back with it: v7 restored from v3
+          // starts from the numbers v3 ended with, not from whatever v6 had.
+          dynamicSeedFrom: src.n,
         },
       )
       const fresh = (await meta.getByShortId(artifact.short_id)) as ArtifactRecord

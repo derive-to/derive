@@ -22,7 +22,9 @@ embed a static token in browser code or commit one to source control.
 
 Artifact content is available below `/raw/:ref` when the caller's access permits it. Pin a
 version with `/raw/:ref/v/:number`. Bundles preserve their internal paths beneath the version,
-and extracted fact slots are available as JSON or JSONL.
+extracted fact slots are available as JSON or JSONL, and a version's dynamic table or figure
+slots are available as JSON at `/raw/:ref/dynamic/:name.json` (or pinned beneath the
+version). Dynamic slots change without a new version, so they are never cached as immutable.
 
 Access checks are identical to the rendered artifact. A raw URL is not a bypass around a
 private artifact, password, workspace boundary, or link role.

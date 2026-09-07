@@ -148,11 +148,15 @@ export function RenderStage({
   overlays,
   overlay = false,
   presenting = false,
+  reloadKey = 0,
   className,
 }: {
   /** null = the source isn't known yet (the record is still a list-row seed) — the
    *  boot state shows without an iframe, and the frame mounts when the src lands. */
   rawSrc: string | null
+  /** Bumped by the page to reload the SAME source (a dynamic slot was deleted, or a
+   *  reconnect found the frame behind): the iframe remounts and boots again. */
+  reloadKey?: number
   title: string
   /** WHOSE render this is (the artifact's short id). The Updated cue is keyed on it —
    *  the stage stays mounted across sibling navigation, and a version number alone
@@ -188,10 +192,10 @@ export function RenderStage({
   // Boot/failure state is per-source: a new rawSrc (version swap, retry) resets it.
   const [phase, setPhase] = useState<"booting" | "ready" | "failed">("booting")
   const [attempt, setAttempt] = useState(0)
-  // biome-ignore lint/correctness/useExhaustiveDependencies: rawSrc identifies a new iframe document and intentionally resets its startup state.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: rawSrc (or a reload) identifies a new iframe document and intentionally resets its startup state.
   useEffect(() => {
     setPhase("booting")
-  }, [rawSrc])
+  }, [rawSrc, reloadKey])
 
   useEffect(() => {
     if (runtimeReady) setPhase("ready")
@@ -288,7 +292,7 @@ export function RenderStage({
       >
         {rawSrc != null && (
           <iframe
-            key={attempt}
+            key={`${attempt}:${reloadKey}`}
             ref={frameRef}
             onLoad={handleLoad}
             title={title}

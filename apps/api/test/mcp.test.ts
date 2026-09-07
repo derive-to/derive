@@ -17,7 +17,15 @@ import { createApp } from "../src/app"
 import { sha256 } from "../src/lib/crypto"
 import { searchMatcher, searchWorkspace } from "../src/lib/search"
 import { PNG_BYTES } from "./fixtures"
-import { appWithGrant, call, type McpApp, type RpcOut, rpc, toolText } from "./mcp-helpers"
+import {
+  appWithGrant,
+  call,
+  type McpApp,
+  type RpcOut,
+  rpc,
+  toolIsError,
+  toolText,
+} from "./mcp-helpers"
 
 // The remote MCP endpoint (/mcp) authenticated by an OAuth bearer. We seed a grant
 // straight into the oauth-provider tables (what the consent dance produces), publish
@@ -290,6 +298,26 @@ describe("remote MCP endpoint (/mcp)", () => {
     // The staged leg is the MCP flow's upload — it carries the 'mcp' surface stamp
     // (the onboarding "published via agent" signal).
     expect((await meta.getVersion(rec.id, 1))?.source).toBe("mcp")
+  })
+
+  it("refuses a dynamic placeholder that breaks the slot contract, naming the table", async () => {
+    const { app, token } = appWithGrant(dir, "wide-table", "openid derive:read derive:publish", {
+      encryptionKey: "wide-table-signing-secret",
+    })
+    const wide = Array.from({ length: 65 }, (_, i) => `c${i}`)
+    const content = [
+      "# Results",
+      "",
+      "```derive-table results",
+      `| ${wide.join(" | ")} |`,
+      `| ${wide.map(() => "---").join(" | ")} |`,
+      "```",
+    ].join("\n")
+    const refused = toolText(
+      await call(app, token, "publish", { title: "Wide", content, filename: "results.md" }),
+    )
+    expect(refused).toMatch(/^Publish failed: Dynamic table "results" cannot be published/)
+    expect(refused).toContain("64 columns")
   })
 
   it("the agentWrites switch refuses a live publish — the brake reaches every grant", async () => {
@@ -570,6 +598,46 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(
       toolText(await call(app, token, "find", { links_to: "zzzz9999", version: 2 })),
     ).toContain("no version dimension")
+  })
+
+  it("inventories dynamic slots beside facts and reads one by name, stored rows only", async () => {
+    const { app, token } = appWithGrant(dir, "dynread", "openid derive:read derive:publish")
+    const md = [
+      "# Results",
+      "",
+      "```derive-table results",
+      "| Model | Acc |",
+      "| --- | --- |",
+      "| base | -- |",
+      "```",
+      "",
+    ].join("\n")
+    const pub = JSON.parse(
+      toolText(
+        await call(app, token, "publish", {
+          title: "Results",
+          content: md,
+          filename: "results.md",
+        }),
+      ),
+    )
+    const inv = JSON.parse(
+      toolText(await call(app, token, "read", { short_id: pub.short_id, data: "*" })),
+    )
+    expect(inv.dynamic).toMatchObject([{ name: "results", kind: "table", revision: 0 }])
+    const one = JSON.parse(
+      toolText(await call(app, token, "read", { short_id: pub.short_id, data: "results" })),
+    )
+    expect(one).toMatchObject({
+      dynamic: "results",
+      kind: "table",
+      revision: 0,
+      data: { kind: "table", table: { rows: [{ model: "base", acc: null }] } },
+    })
+    // A name that is neither a fact nor a slot still explains its absence.
+    expect(
+      toolIsError(await call(app, token, "read", { short_id: pub.short_id, data: "nope" })),
+    ).toBe(true)
   })
 
   it("NEVER surfaces an invite-only artifact's slot data to a co-member (regression)", async () => {

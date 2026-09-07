@@ -1,5 +1,7 @@
 import { unzipSync } from "fflate"
+import { isHtmlLike, isMarkdownLike } from "./content-types"
 import { isDeckDocument } from "./decks"
+import { dynamicSeedErrors } from "./dynamic-data"
 import { newId, newShortId, refFor, slugify } from "./ids"
 import { LINKED_BUNDLE_CONTENT_TYPE, linkedBundleOf } from "./linked-bundle"
 import { mimeFor } from "./mime"
@@ -307,6 +309,14 @@ async function storeContent(
     // markdown path — versus serving raw text as HTML. Real HTML still wins above
     // (full doc by content, or an explicit .html name).
     contentType = "text/markdown"
+  }
+  // A dynamic table or figure whose placeholder breaks the slot contract (over the caps,
+  // an undeclared column) would seed a slot every read refuses; refuse the publish instead,
+  // before a byte is stored, and name the table and the limit. Same parser as the seed
+  // pass, so the two can never disagree. LaTeX carries no inline seeds.
+  if (isMarkdownLike(contentType) || isHtmlLike(contentType)) {
+    const refused = dynamicSeedErrors(text, contentType)
+    if (refused.length) throw new PublishError(413, refused.join(" "))
   }
   return { blobKey: await put(bytes), contentType, kind: "file", blobWriteMs }
 }

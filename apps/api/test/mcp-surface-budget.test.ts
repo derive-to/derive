@@ -183,10 +183,16 @@ import { CORE_SKILLS } from "../src/skills-reference.gen"
 // Raised for `derive_code`, the 16th hosted tool. Its short description and two parameters are
 // the minimum discoverable contract for batching find/read work. Measured after the addition:
 // descriptions 3,708; params 9,960; total 13,668; instructions 2,579.
+// INSTRUCTIONS RAISED 2650 → 2850 (2026-09-06) for the `dynamic-data` skill: a new core skill,
+// and the first about data that changes WITHOUT a version (a results table an agent refreshes
+// as runs land). Its index line is the only always-loaded cost: the body, the REST shapes and
+// the row-addressing rule live in derive://skills/dynamic-data, and no tool description or
+// param changed. Trimmed the summary first (88 → 70 chars); measured instructions 2,769 with
+// derive_code's line, so the cap keeps the ~2% headroom the previous raises settled on.
 const TOOL_DESCRIPTIONS_BUDGET = 3_800
 const PARAM_DESCRIPTIONS_BUDGET = 10_050
 const SURFACE_BUDGET = 13_850
-const INSTRUCTIONS_BUDGET = 2_650
+const INSTRUCTIONS_BUDGET = 2_850
 
 /** No single tool may sprawl: one sentence of routing, the one thing that silently breaks,
  *  and a pointer to its skill. */

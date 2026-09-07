@@ -89,6 +89,31 @@ describe("rate limits: per-actor write throttles (C4b)", () => {
     expect(blocked.headers.get("Retry-After")).toBeTruthy()
   })
 
+  it("uses the dynamic lane for table and figure slot writes", async () => {
+    const { app } = quotaApp("rl-dynamic", { rateLimit: true, dynamicRate: 2 })
+    const a = await (await pub(app, "<h1>results</h1>")).json()
+    const write = (method: "PUT" | "PATCH", body: unknown) =>
+      app.request(`/v1/artifacts/${a.short_id}/dynamic/results`, {
+        method,
+        headers: { "content-type": "application/json", ...bearer("tok") },
+        body: JSON.stringify(body),
+      })
+    const created = await write("PUT", {
+      kind: "table",
+      table: { columns: [{ key: "acc" }], rows: [{ acc: null }] },
+    })
+    expect(created.status).toBe(200)
+    expect(
+      (await write("PATCH", { kind: "table", cells: [{ row: 0, col: "acc", value: 1 }] })).status,
+    ).toBe(200)
+    const blocked = await write("PATCH", {
+      kind: "table",
+      cells: [{ row: 0, col: "acc", value: 2 }],
+    })
+    expect(blocked.status).toBe(429)
+    expect(blocked.headers.get("Retry-After")).toBeTruthy()
+  })
+
   it("throttles password-unlock attempts with a tight dedicated cap (5 per 5 min)", async () => {
     const { app } = quotaApp("rl-unlock", { rateLimit: true })
     const form = new FormData()
