@@ -209,8 +209,8 @@ export function Templates() {
                   A paper from arXiv
                 </h2>
                 <p className="text-sm text-muted-foreground">
-                  Paste an arXiv link. Derive fetches the LaTeX source and BibTeX and wraps the
-                  paper in a read-only Context your agents can read and cite.
+                  Paste an arXiv link. Agents can read and cite the paper, and read its code if you
+                  add the repository.
                 </p>
               </CardContent>
               <CardFooter className="mt-auto flex gap-2 p-2">
@@ -221,7 +221,7 @@ export function Templates() {
                   data-testid="template-academic-arxiv-import"
                 >
                   <Link to="/contexts/new" search={{ door: "arxiv" }}>
-                    <Icon name="plus" /> Import a paper
+                    <Icon name="plus" /> Import a paper as a Context
                   </Link>
                 </Button>
               </CardFooter>
