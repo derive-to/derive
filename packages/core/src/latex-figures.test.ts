@@ -112,6 +112,10 @@ describe("fitBundleBytes", () => {
     expect(r.pass).toBeNull()
     const edge = await fitBundleBytes(files, { cap: 2000 * KB, shrink: null })
     expect(edge).toMatchObject({ fits: false, shrunk: 0, notes: [], after: 3410 * KB })
-    expect(edge.files).toEqual(files)
+    // Identity, not deep equality: without a codec every file comes back as the very
+    // buffer that went in, which is the stronger claim and does not compare megabytes
+    // element by element.
+    expect(Object.keys(edge.files)).toEqual(Object.keys(files))
+    for (const [path, data] of Object.entries(files)) expect(edge.files[path]).toBe(data)
   })
 })

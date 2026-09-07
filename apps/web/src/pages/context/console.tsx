@@ -30,6 +30,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { useAuth } from "@/ctx"
@@ -43,6 +44,7 @@ import {
   sessionQuery,
   workspaceQuery,
 } from "@/lib/queries"
+import { previewRepoRef } from "@/lib/repo-ref"
 import { applyDelta, type DeltaState, EMPTY_DELTA } from "@/lib/session-delta"
 import { ago } from "@/lib/time"
 import { useApiMutation } from "@/lib/use-api-mutation"
@@ -392,6 +394,152 @@ const IMPORT_POLL_MS = 3_000
 const importInFlight = (status: string | undefined): boolean =>
   status === "pending" || status === "fetching"
 
+/**
+ * The paper's implementation. The repository's files live INSIDE the paper's artifact,
+ * where an agent reading the paper reads them; this card is the only place a person meets
+ * them, and what it offers is a link to the repository on its own host. There is
+ * deliberately no file listing: the code is not a second document to browse here.
+ */
+function ImplementationCard({
+  id,
+  code,
+  canManage,
+}: {
+  id: string
+  code: NonNullable<NonNullable<ContextDetail["import"]>["code"]> | null
+  canManage: boolean
+}) {
+  const [editing, setEditing] = useState(false)
+  const [url, setUrl] = useState("")
+  const ref = previewRepoRef(url)
+  const save = useApiMutation({
+    mutationFn: (next: string | null) => api.setContextCode(id, next),
+    success: "Fetching the implementation",
+    invalidate: [contextQuery(id).queryKey, contextsQuery().queryKey],
+    onSuccess: () => {
+      setEditing(false)
+      setUrl("")
+    },
+  })
+  const remove = useApiMutation({
+    mutationFn: () => api.setContextCode(id, null),
+    success: "Implementation removed",
+    invalidate: [contextQuery(id).queryKey, contextsQuery().queryKey],
+  })
+  if (!code && !canManage) return null
+  const busy = save.isPending || remove.isPending
+  return (
+    <div className="rounded-xl border bg-card p-4" data-testid="console-code-panel">
+      <SectionTitle as="h2">Implementation</SectionTitle>
+      {code ? (
+        <div className="mt-2 flex flex-col gap-2">
+          <p className="text-sm text-muted-foreground">
+            {code.status === "ready" ? (
+              <>
+                Stored inside this paper, where your agents read it beside the method. It is not
+                browsable here; open the repository to read it yourself.
+              </>
+            ) : code.status === "failed" ? (
+              <>Couldn't fetch this repository. {code.error ?? ""}</>
+            ) : (
+              <>Fetching this repository. The page updates itself.</>
+            )}
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button asChild size="sm" variant="outline" data-testid="console-code-open">
+              <a href={code.url} target="_blank" rel="noreferrer">
+                Open the repository ↗
+              </a>
+            </Button>
+            {canManage && !editing && (
+              <>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  data-testid="console-code-replace"
+                  disabled={busy}
+                  onClick={() => setEditing(true)}
+                >
+                  Replace
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  data-testid="console-code-remove"
+                  disabled={busy}
+                  onClick={() => remove.mutate()}
+                >
+                  Remove
+                </Button>
+              </>
+            )}
+          </div>
+        </div>
+      ) : !editing ? (
+        <div className="mt-2 flex flex-col gap-2">
+          <p className="text-sm text-muted-foreground">
+            Attach the public repository that implements this paper, and your agents can read the
+            code beside the method.
+          </p>
+          <div>
+            <Button
+              size="sm"
+              variant="outline"
+              data-testid="console-code-attach"
+              onClick={() => setEditing(true)}
+            >
+              Attach an implementation
+            </Button>
+          </div>
+        </div>
+      ) : null}
+      {editing && (
+        <div className="mt-2 flex flex-col gap-2">
+          <Input
+            data-testid="console-code-url"
+            aria-label="Repository link"
+            placeholder="https://github.com/owner/project"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && ref) save.mutate(ref.webUrl)
+            }}
+            className="font-mono"
+          />
+          <p
+            role="status"
+            data-testid="console-code-preview"
+            className="font-mono text-2xs text-muted-foreground"
+          >
+            {url.trim() ? (ref ? ref.canonical : "Not a GitHub or GitLab repository") : " "}
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              size="sm"
+              data-testid="console-code-save"
+              disabled={!ref || busy}
+              onClick={() => ref && save.mutate(ref.webUrl)}
+            >
+              Fetch it
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              data-testid="console-code-cancel"
+              onClick={() => {
+                setEditing(false)
+                setUrl("")
+              }}
+            >
+              Cancel
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // The console of a Context imported from arXiv. No chat, no runner, no output shelf:
 // the paper is the whole point, so the page is its arrival (or its failure) and, once
 // it is here, the paper card with the BibTeX to cite it, above the generated manifest.
@@ -585,6 +733,9 @@ function ImportedConsole({
               about the paper, open it and use the chat on its page.
             </p>
             {canManage && <div className="mt-3">{actions}</div>}
+          </div>
+          <div className="lg:col-span-2">
+            <ImplementationCard id={id} code={imp.code ?? null} canManage={canManage} />
           </div>
         </section>
       )}

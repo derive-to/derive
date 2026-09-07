@@ -689,6 +689,20 @@ export const contextRoutes = (ctx: AppContext) => {
         .describe("The last failure: a code the client maps to copy, plus a short detail."),
       url: z.string().describe("The paper's abstract page on arXiv."),
       imported_by: z.string(),
+      code: z
+        .object({
+          url: z.string().describe("The repository's page on its own host."),
+          status: z
+            .enum(["pending", "ready", "failed"])
+            .describe(
+              "pending: on its way with the paper; ready: stored inside the paper's artifact, where an agent reads it; failed: see `error`. Independent of the paper's own status.",
+            ),
+          error: z.string().nullable().describe("Why the repository could not be fetched."),
+        })
+        .nullable()
+        .describe(
+          "The public repository implementing this paper, when one is attached. Its files live inside the paper's artifact for agents to read; people open the repository on its own host.",
+        ),
     })
     .openapi("ContextImportInfo")
 
@@ -971,6 +985,14 @@ export const contextRoutes = (ctx: AppContext) => {
               : null,
           url: arxivAbsUrl(x.import_ref),
           imported_by: job?.requested_by ?? x.created_by,
+          code: x.code_url
+            ? {
+                url: x.code_url,
+                // No job row (or none yet) means the fetch has not run: it is on its way.
+                status: job?.code_status ?? ("pending" as const),
+                error: job?.code_status === "failed" ? job.code_error : null,
+              }
+            : null,
         }
       : null
 
@@ -1537,6 +1559,75 @@ export const contextRoutes = (ctx: AppContext) => {
       }
       const manifest = await meta.getArtifactById(x.manifest_artifact_id)
       return c.json(contextJson(x, manifest?.short_id ?? null, await meta.getImportJob(job.id)))
+    },
+  )
+
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/v1/contexts/{id}/import/code",
+      tags: ["Contexts"],
+      summary:
+        "Attach, replace or remove the repository implementing an imported paper (the context's creator or a workspace manager).",
+      description:
+        "The repository is fetched into the paper's own artifact, where an agent reading the paper reads the code beside it; people get a link to it on its own host and never a file listing. Pass `url: null` to remove it, which republishes the paper without the code.",
+      request: {
+        params: z.object({ id: z.string() }),
+        body: {
+          content: {
+            "application/json": {
+              schema: z.object({
+                url: z
+                  .string()
+                  .trim()
+                  .max(2000)
+                  .nullable()
+                  .describe("A public GitHub or GitLab repository; null removes the attachment."),
+              }),
+            },
+          },
+        },
+      },
+      responses: {
+        200: {
+          description: "The Context, its implementation queued (or removed).",
+          content: { "application/json": { schema: ContextInfo } },
+        },
+      },
+    }),
+    async (c) => {
+      const x = await manageableContext(c)
+      if (x instanceof Response) return bail(x)
+      const job = await meta.getImportJobForContext(x.id)
+      if (!x.import_source || !job) return bail(fail(c, 404, "not an imported context"))
+      const b = await readJson(c, z.object({ url: z.string().trim().max(2000).nullable() }))
+      if (b instanceof Response) return bail(b)
+      const codeRef = b.url ? parseRepoRef(b.url) : null
+      if (b.url && !codeRef)
+        return bail(
+          fail(c, 400, "not a public GitHub or GitLab repository", { code: "not_a_repo" }),
+        )
+
+      await meta.setContextCodeUrl(x.id, codeRef ? repoWebUrl(codeRef) : null)
+      // The worker does both jobs: fetching a new repository, and republishing the paper
+      // without the previous one. Either way the job runs again, and the paper it already
+      // published is resumed from rather than re-fetched.
+      const now = new Date().toISOString()
+      await meta.updateImportJob(job.id, {
+        status: "pending",
+        next_attempt_at: now,
+        lease_until: null,
+        attempts: 0,
+        code_status: codeRef ? "pending" : null,
+        code_error: null,
+        updated_at: now,
+      })
+      deps.pokeImports?.()
+      const updated = await meta.getContext(x.id)
+      const manifest = await meta.getArtifactById(x.manifest_artifact_id)
+      return c.json(
+        contextJson(updated ?? x, manifest?.short_id ?? null, await meta.getImportJob(job.id)),
+      )
     },
   )
 

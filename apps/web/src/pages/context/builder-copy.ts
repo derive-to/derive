@@ -23,6 +23,11 @@ export const BUILDER_COPY = {
   arxivFetch: "Fetch",
   arxivInvalid: "Not an arXiv link",
   arxivQueued: "Fetching from arXiv",
+  codeLabel: "Implementation (optional)",
+  codeBody:
+    "A public GitHub or GitLab repository. Derive stores it inside the paper so your agents can read the code beside the method; you get a link to the repository itself.",
+  codePlaceholder: "https://github.com/owner/project",
+  codeInvalid: "Not a GitHub or GitLab repository",
   wsErrorTitle: "Couldn't load your workspace",
   wsErrorBody: "Derive needs to know which workspace this Context belongs to.",
   retryButton: "Try again",

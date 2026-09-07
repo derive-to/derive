@@ -4,6 +4,8 @@
 export const IMPORT_ERROR_COPY: Record<string, string> = {
   not_arxiv:
     "That doesn't look like an arXiv link. Paste the abstract page (arxiv.org/abs/…) or an id like 2401.12345.",
+  not_a_repo:
+    "That doesn't look like a public GitHub or GitLab repository. Paste the repository's page, like github.com/owner/project.",
   not_found: "arXiv has no paper with this id.",
   withdrawn: "This paper was withdrawn from arXiv.",
   no_source: "arXiv has only a PDF for this paper, no LaTeX source, so Derive can't read it.",

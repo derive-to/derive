@@ -2840,6 +2840,36 @@
           },
           "imported_by": {
             "type": "string"
+          },
+          "code": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "url": {
+                "type": "string",
+                "description": "The repository's page on its own host."
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "pending",
+                  "ready",
+                  "failed"
+                ],
+                "description": "pending: on its way with the paper; ready: stored inside the paper's artifact, where an agent reads it; failed: see `error`. Independent of the paper's own status."
+              },
+              "error": {
+                "type": "string",
+                "nullable": true,
+                "description": "Why the repository could not be fetched."
+              }
+            },
+            "required": [
+              "url",
+              "status",
+              "error"
+            ],
+            "description": "The public repository implementing this paper, when one is attached. Its files live inside the paper's artifact for agents to read; people open the repository on its own host."
           }
         },
         "required": [
@@ -2849,7 +2879,8 @@
           "status",
           "error",
           "url",
-          "imported_by"
+          "imported_by",
+          "code"
         ],
         "description": "Set when this Context was imported (a paper from arXiv): read-only, no runner, no sessions. Null for a Context someone defined."
       },
@@ -9546,6 +9577,57 @@
         "responses": {
           "200": {
             "description": "The Context, its import queued again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContextInfo"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/contexts/{id}/import/code": {
+      "post": {
+        "tags": [
+          "Contexts"
+        ],
+        "summary": "Attach, replace or remove the repository implementing an imported paper (the context's creator or a workspace manager).",
+        "description": "The repository is fetched into the paper's own artifact, where an agent reading the paper reads the code beside it; people get a link to it on its own host and never a file listing. Pass `url: null` to remove it, which republishes the paper without the code.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "url": {
+                    "type": "string",
+                    "nullable": true,
+                    "maxLength": 2000,
+                    "description": "A public GitHub or GitLab repository; null removes the attachment."
+                  }
+                },
+                "required": [
+                  "url"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The Context, its implementation queued (or removed).",
             "content": {
               "application/json": {
                 "schema": {

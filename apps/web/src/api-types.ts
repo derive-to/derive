@@ -5201,6 +5201,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/contexts/{id}/import/code": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Attach, replace or remove the repository implementing an imported paper (the context's creator or a workspace manager).
+         * @description The repository is fetched into the paper's own artifact, where an agent reading the paper reads the code beside it; people get a link to it on its own host and never a file listing. Pass `url: null` to remove it, which republishes the paper without the code.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": {
+                        /** @description A public GitHub or GitLab repository; null removes the attachment. */
+                        url: string | null;
+                    };
+                };
+            };
+            responses: {
+                /** @description The Context, its implementation queued (or removed). */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ContextInfo"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/contexts/{id}": {
         parameters: {
             query?: never;
@@ -7928,6 +7976,18 @@ export interface components {
             /** @description The paper's abstract page on arXiv. */
             url: string;
             imported_by: string;
+            /** @description The public repository implementing this paper, when one is attached. Its files live inside the paper's artifact for agents to read; people open the repository on its own host. */
+            code: {
+                /** @description The repository's page on its own host. */
+                url: string;
+                /**
+                 * @description pending: on its way with the paper; ready: stored inside the paper's artifact, where an agent reads it; failed: see `error`. Independent of the paper's own status.
+                 * @enum {string}
+                 */
+                status: "pending" | "ready" | "failed";
+                /** @description Why the repository could not be fetched. */
+                error: string | null;
+            } | null;
         } | null;
         ContextInfo: {
             id: string;

@@ -3,6 +3,7 @@ import { gzipSync, zipSync } from "fflate"
 import { beforeAll, describe, expect, it } from "vitest"
 import { createInProcessBackplane, type DeriveEvent } from "../src/bus"
 import { runImportTick } from "../src/imports"
+import { ARXIV_REQUEST_INTERVAL_MS } from "../src/lib/arxiv-import"
 import { sharpShrinker } from "../src/lib/image-shrink-node"
 import { as, bearer, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
@@ -1839,6 +1840,87 @@ describe("contexts: import from arXiv", () => {
     expect(v?.message).toContain("left out 1 large file")
     expect(v?.message).toContain("assets/demo.gif")
     expect((await meta.getImportJobForContext(created.id))?.code_status).toBe("ready")
+  })
+
+  it("attaches an implementation to a paper already imported, then takes it away", async () => {
+    const stub = arxivStub(
+      {},
+      { "o/r": repoTar({ "r-abc/train.py": "def train():\n    return 7\n" }) },
+    )
+    const { app, meta, ctx, clock: c, tickDeps } = setup("contexts-import-code-later", stub.fetch)
+    await app.request("/v1/me", { headers: as(owner.email) })
+    const created = await (await importPaper(app, "2406.00005")).json()
+    // arXiv's gate holds every worker for the interval after a request, so each tick
+    // below waits it out the way a real deployment's next tick would.
+    const tick = async () => {
+      c.advance(ARXIV_REQUEST_INTERVAL_MS + 1)
+      return await runImportTick(tickDeps())
+    }
+    expect(await tick()).toBe(1)
+
+    const filesOf = async () => {
+      const detail = await (
+        await app.request(`/v1/contexts/${created.id}`, { headers: as(owner.email) })
+      ).json()
+      const paper = await meta.getByShortId(detail.documents[0].short_id)
+      const v = paper ? await meta.getVersion(paper.id, paper.current_version) : null
+      const manifest = JSON.parse(
+        new TextDecoder().decode((await ctx.blobs.get(v?.blob_key ?? "")) ?? undefined),
+      )
+      return { detail, version: v, paths: Object.keys(manifest.files).sort() }
+    }
+    const imported = await filesOf()
+    expect(imported.paths.some((p: string) => p.startsWith("/code/"))).toBe(false)
+    expect(imported.detail.import.code).toBeNull()
+
+    // Attach it afterwards: the paper is not fetched again, only its metadata is.
+    const before = stub.calls.length
+    const attached = await (
+      await app.request(
+        `/v1/contexts/${created.id}/import/code`,
+        jsonAs(as(owner.email), { url: "https://github.com/o/r" }),
+      )
+    ).json()
+    expect(attached.import.code).toEqual({
+      url: "https://github.com/o/r",
+      status: "pending",
+      error: null,
+    })
+    expect(await tick()).toBe(1)
+    expect(stub.calls.slice(before).filter((u) => u.includes("/src/"))).toEqual([])
+
+    const withCode = await filesOf()
+    expect(withCode.paths).toContain("/code/train.py")
+    expect(withCode.detail.import.code).toMatchObject({ status: "ready", error: null })
+    expect(withCode.version?.message).toContain("Attached github.com/o/r")
+
+    // Attaching the SAME repository again is not a change: the job runs, sees the link it
+    // already fetched, and leaves the paper on the version it is on.
+    const version = withCode.version?.n
+    await app.request(
+      `/v1/contexts/${created.id}/import/code`,
+      jsonAs(as(owner.email), { url: "https://github.com/o/r/" }),
+    )
+    expect(await tick()).toBe(1)
+    expect((await filesOf()).version?.n).toBe(version)
+
+    // Removing it republishes the paper without the code, so it stops being readable.
+    const removed = await (
+      await app.request(
+        `/v1/contexts/${created.id}/import/code`,
+        jsonAs(as(owner.email), { url: null }),
+      )
+    ).json()
+    expect(removed.import.code).toBeNull()
+    expect(await tick()).toBe(1)
+    const gone = await filesOf()
+    expect(gone.paths.some((p: string) => p.startsWith("/code/"))).toBe(false)
+    expect(gone.paths).toContain("/paper.tex")
+    expect(gone.version?.message).toBe("Removed the implementation")
+    expect(await meta.getImportJobForContext(created.id)).toMatchObject({
+      code_status: null,
+      code_ref: null,
+    })
   })
 
   it("a repository that cannot be fetched leaves the paper imported and says why", async () => {

@@ -15,6 +15,7 @@ import {
   type ArtifactRecord,
   arxivUrls,
   type BlobStore,
+  type BundleManifest,
   type ContextRecord,
   type FigureShrinker,
   fitBundleBytes,
@@ -464,13 +465,8 @@ const attachImplementation = async (
   const live = await meta.getImportJob(job.id)
   if (!live) throw new ImportCancelled()
 
-  // No link, or the link was removed: leave nothing behind claiming otherwise.
-  if (!ctx.code_url) {
-    if (live.code_status) await stamp({ code_status: null, code_error: null, code_ref: null })
-    return
-  }
-  const repoRef = parseRepoRef(ctx.code_url)
-  if (!repoRef) {
+  const repoRef = ctx.code_url ? parseRepoRef(ctx.code_url) : null
+  if (ctx.code_url && !repoRef) {
     await stamp({
       code_status: "failed",
       code_error: "that is not a public GitHub or GitLab repository",
@@ -478,8 +474,45 @@ const attachImplementation = async (
     })
     return
   }
-  // Already attached, and the link has not changed since.
-  if (live.code_status === "ready" && live.code_ref === repoRef.canonical) return
+  // Already attached, and the link has not changed since. code_ref is the marker of what
+  // was actually fetched, the same way paper_artifact_id marks the paper: a requeue for
+  // any other reason must not re-fetch a repository that is already in the artifact, or
+  // publish a version that changes nothing.
+  if (repoRef && live.code_ref === repoRef.canonical) {
+    if (live.code_status !== "ready") await stamp({ code_status: "ready", code_error: null })
+    return
+  }
+
+  const version = await meta.getVersion(paper.id, paper.current_version)
+  const manifest = version ? await manifestOf(blobs, version) : null
+  if (!manifest) {
+    if (repoRef)
+      await stamp({
+        code_status: "failed",
+        code_error: "the paper could not be read back",
+        code_ref: null,
+      })
+    return
+  }
+  const hadCode = Object.keys(manifest.files).some(isCodePath)
+  // Whatever the paper already holds, minus any code from an earlier attachment: a
+  // replaced link must not leave the previous repository's files behind, and a removed
+  // one must leave none at all.
+  const paperFiles = Object.fromEntries(
+    Object.entries(fresh ?? (await materializeBundle(blobs, manifest))).filter(
+      ([path]) => !isCodePath(path),
+    ),
+  )
+
+  // The link was removed. Publish the paper on its own again, so the code stops being
+  // readable the moment the person says it should.
+  if (!repoRef) {
+    if (hadCode)
+      await republishPaper(deps, paper, manifest, paperFiles, actor, "Removed the implementation")
+    if (live.code_status || hadCode)
+      await stamp({ code_status: null, code_error: null, code_ref: null })
+    return
+  }
   if (!deps.repoCaps) {
     await stamp({
       code_status: "failed",
@@ -488,24 +521,6 @@ const attachImplementation = async (
     })
     return
   }
-
-  const version = await meta.getVersion(paper.id, paper.current_version)
-  const manifest = version ? await manifestOf(blobs, version) : null
-  if (!manifest) {
-    await stamp({
-      code_status: "failed",
-      code_error: "the paper could not be read back",
-      code_ref: null,
-    })
-    return
-  }
-  // Whatever the paper already holds, minus any code from an earlier attachment: a
-  // replaced link must not leave the previous repository's files behind.
-  const paperFiles = Object.fromEntries(
-    Object.entries(fresh ?? (await materializeBundle(blobs, manifest))).filter(
-      ([path]) => !isCodePath(path),
-    ),
-  )
 
   let fetched: Awaited<ReturnType<typeof fetchRepository>>
   try {
@@ -552,16 +567,44 @@ const attachImplementation = async (
     ].join(" · "),
     500,
   )
-  const current = await meta.getArtifactById(paper.id)
+  const published = await republishPaper(
+    deps,
+    paper,
+    manifest,
+    { ...paperFiles, ...fitted.files },
+    actor,
+    message,
+    withCode,
+  )
+  await stamp({
+    code_status: "ready",
+    code_error: null,
+    code_ref: repoRef.canonical,
+    manifest_version: published.version.n,
+  })
+}
+
+/** Publish the paper's artifact again with exactly these files. Used by both sides of an
+ *  attachment: adding a repository, and taking one away. */
+const republishPaper = async (
+  deps: ImportDeps,
+  paper: ArtifactRecord,
+  manifest: BundleManifest,
+  files: Record<string, Uint8Array>,
+  actor: { agentId: string | null; agentName: string | null },
+  message: string,
+  caps?: { files: number; bytes: number },
+) => {
+  const current = await deps.meta.getArtifactById(paper.id)
   if (!current) throw new ImportCancelled()
   const published = await publish(
-    meta,
-    blobs,
+    deps.meta,
+    deps.blobs,
     {
       bytes: new Uint8Array(),
       filename: "paper.zip",
       isBundle: true,
-      files: { ...paperFiles, ...fitted.files },
+      files,
       // The paper stays the document: without this the entry is re-picked over the merged
       // paths and a README or an HTML page inside the repository could take it.
       entry: manifest.entry,
@@ -571,8 +614,7 @@ const attachImplementation = async (
       source: "api",
       message,
       existingArtifact: current,
-      maxFiles: withCode.files,
-      maxBundleBytes: withCode.bytes,
+      ...(caps ? { maxFiles: caps.files, maxBundleBytes: caps.bytes } : {}),
     },
     current.short_id,
   )
@@ -582,12 +624,7 @@ const attachImplementation = async (
     actorId: actor.agentId,
     actorName: actor.agentName,
   })
-  await stamp({
-    code_status: "ready",
-    code_error: null,
-    code_ref: repoRef.canonical,
-    manifest_version: published.version.n,
-  })
+  return published
 }
 
 /**
