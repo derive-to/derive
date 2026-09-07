@@ -939,6 +939,63 @@ describe("derive scan", () => {
     }
   })
 
+  it("reads a new client log after the initial baseline", async () => {
+    const root = mkdtempSync(join(tmpdir(), "derive-artifact-scan-new-client-"))
+    dirs.push(root)
+    const home = join(root, "home")
+    const config = join(root, "config")
+    const priorConfig = process.env.DERIVE_CONFIG_DIR
+    process.env.DERIVE_CONFIG_DIR = config
+    try {
+      const codexLog = join(home, ".codex", "sessions", "existing.jsonl")
+      mkdirSync(join(home, ".codex", "sessions"), { recursive: true })
+      writeFileSync(codexLog, `${JSON.stringify({ type: "session_meta" })}\n`)
+      await scanArtifactLogs({ home })
+
+      const claudeLog = join(home, ".claude", "projects", "new", "session.jsonl")
+      mkdirSync(join(home, ".claude", "projects", "new"), { recursive: true })
+      writeFileSync(
+        claudeLog,
+        `${[
+          {
+            type: "assistant",
+            timestamp: "2026-09-07T12:02:00.000Z",
+            sessionId: "new-claude-session",
+            message: {
+              content: [{ type: "tool_use", id: "new-read", name: "mcp__derive__read", input: {} }],
+            },
+          },
+          {
+            type: "user",
+            timestamp: "2026-09-07T12:02:01.000Z",
+            sessionId: "new-claude-session",
+            message: {
+              content: [
+                {
+                  type: "tool_result",
+                  tool_use_id: "new-read",
+                  content: JSON.stringify({ short_id: "new12345", version: 2 }),
+                },
+              ],
+            },
+          },
+        ]
+          .map(JSON.stringify)
+          .join("\n")}\n`,
+      )
+      expect((await scanArtifactLogs({ home })).events).toEqual([
+        expect.objectContaining({
+          artifact_short_id: "new12345",
+          artifact_version: 2,
+          client: "claude",
+        }),
+      ])
+    } finally {
+      if (priorConfig === undefined) delete process.env.DERIVE_CONFIG_DIR
+      else process.env.DERIVE_CONFIG_DIR = priorConfig
+    }
+  })
+
   it("replaces the narrow Skill hook with one generic session-end scan", () => {
     const home = mkdtempSync(join(tmpdir(), "derive-scan-setup-"))
     dirs.push(home)

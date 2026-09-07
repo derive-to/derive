@@ -283,7 +283,8 @@ export async function scanArtifactLogs(options = {}) {
     let start = 0
     if (sinceMs === null) {
       if (saved?.identity === identity && saved.offset <= stats.size) start = saved.offset
-      else if (options.baseline || options.initialBaseline !== false) start = stats.size
+      else if (options.baseline || (options.initialBaseline !== false && !state.last_scan_at))
+        start = stats.size
     }
     coverage[source.client].source_files++
     const context =
