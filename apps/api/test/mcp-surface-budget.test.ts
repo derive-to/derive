@@ -189,10 +189,18 @@ import { CORE_SKILLS } from "../src/skills-reference.gen"
 // the row-addressing rule live in derive://skills/dynamic-data, and no tool description or
 // param changed. Trimmed the summary first (88 → 70 chars); measured instructions 2,769 with
 // derive_code's line, so the cap keeps the ~2% headroom the previous raises settled on.
+// INSTRUCTIONS RAISED 2850 → 2950 (2026-09-06) for the `latex` skill: the second new core
+// skill and the first about a third source language (a paper stored as LaTeX, rendered as a
+// page). Its index line is again the only always-loaded cost; publishing, bundle layout, class
+// awareness and the fail-soft rules live in derive://skills/latex. The `publish` description
+// grew by 13 chars to name the kind ("or LaTeX paper"), so a keyword-based tool choice
+// surfaces it for "write up the paper" the way it does for a deck; no param changed. Trimmed
+// the summary first (78 → 61 chars); measured instructions 2,874, so the raise keeps the ~2%
+// headroom rather than landing on the ceiling.
 const TOOL_DESCRIPTIONS_BUDGET = 3_800
 const PARAM_DESCRIPTIONS_BUDGET = 10_050
 const SURFACE_BUDGET = 13_850
-const INSTRUCTIONS_BUDGET = 2_850
+const INSTRUCTIONS_BUDGET = 2_950
 
 /** No single tool may sprawl: one sentence of routing, the one thing that silently breaks,
  *  and a pointer to its skill. */

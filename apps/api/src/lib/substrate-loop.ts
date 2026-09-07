@@ -1,4 +1,4 @@
-import { isHtmlLike, MAX_ARTIFACT_CHARS, toMicroUsd } from "@derive/core"
+import { isHtmlLike, isLatexLike, MAX_ARTIFACT_CHARS, toMicroUsd } from "@derive/core"
 import { log } from "../log"
 import type { AgentLoopInput, LoopTool } from "./agent-loop"
 import type { Substrate } from "./dispatch"
@@ -388,9 +388,20 @@ const landOverHttp =
     // reads their source. Decks and linked bundles are still HTML bodies, and the body/fact
     // protocol preserves their richer subtype after the filename keeps them in the HTML lane.
     const contentType =
-      targetContentType ?? (revision.filename.endsWith(".md") ? "text/markdown" : "text/html")
+      targetContentType ??
+      (revision.filename.endsWith(".md")
+        ? "text/markdown"
+        : revision.filename.endsWith(".tex")
+          ? "text/x-latex"
+          : "text/html")
     const wantExt =
-      contentType === "text/markdown" ? ".md" : isHtmlLike(contentType) ? ".html" : null
+      contentType === "text/markdown"
+        ? ".md"
+        : isLatexLike(contentType)
+          ? ".tex"
+          : isHtmlLike(contentType)
+            ? ".html"
+            : null
     const filename =
       wantExt && !new RegExp(`\\${wantExt}$`, "i").test(revision.filename)
         ? `${revision.filename.replace(/\.[^./]*$/, "")}${wantExt}`

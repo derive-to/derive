@@ -12,6 +12,7 @@ import {
   type BlobStore,
   type BundleManifest,
   DECK_CONTENT_TYPE,
+  type DynamicBinding,
   type DynamicValue,
   deriveFacts,
   dynamicIndexText,
@@ -22,6 +23,9 @@ import {
   isAuthoredFactType,
   isBundleContentType,
   isHtmlLike,
+  isLatexLike,
+  LATEX_BUNDLE_CONTENT_TYPE,
+  latexBindings,
   type MetaStore,
   type NewVersionData,
   newId,
@@ -42,6 +46,7 @@ import { publishSweepEvents } from "./anchor-sweep"
 import { fanOutNewContentMentions } from "./content-mentions"
 import { documentStructure } from "./doc-structure-cache"
 import { EMAIL_LAYOUT_FACT } from "./email-layout"
+import { bundleTextFiles, bundleTextResolver } from "./latex-bundle"
 import { indexArtifactVersion, isTextType } from "./search"
 import { recordThreadResolution } from "./thread-actions"
 import { indexWorkflowSkillLinks } from "./workflow-skill-links"
@@ -356,8 +361,10 @@ const extractVersionData = async (
   // is exactly what a map is for. Found on the preview: a freshly published deck carried no
   // $map at all. Same second-order blast radius the sniff fix documented — typing decks
   // correctly moves them off every path that asks `content_type === "text/html"`.
+  // A LaTeX paper embeds no fact block either, but its outline, links and stats derive
+  // like a deck's.
   const authored = isAuthoredFactType(ct)
-  if (!authored && !isHtmlLike(ct)) return []
+  if (!authored && !isHtmlLike(ct) && !isLatexLike(ct)) return []
   let source = preparedSource
   if (source === undefined) {
     const bytes = await blobs.get(version.blob_key)
@@ -442,15 +449,37 @@ const seedDynamicSlots = async (
 ): Promise<{ name: string; json: string }[]> => {
   const seeded: { name: string; json: string }[] = []
   const ct = version.content_type
-  // Bundles carry no bindings (their blob is a manifest), so skip the blob read entirely.
-  if (isBundleContentType(ct)) return seeded
-  let source = preparedSource
-  if (source === undefined) {
-    const bytes = await blobs.get(version.blob_key)
-    if (!bytes) return seeded
-    source = new TextDecoder().decode(bytes)
+  let bindings: DynamicBinding[]
+  if (ct === LATEX_BUNDLE_CONTENT_TYPE) {
+    // A paper's bindings are what the RENDERER finds walking the entry and every file it
+    // inputs (the same resolver and limits the served page uses), so a table declared in
+    // sec/results.tex is seeded and carried forward exactly like one in main.tex.
+    const manifestBytes = await blobs.get(version.blob_key)
+    if (!manifestBytes) return seeded
+    const manifest = JSON.parse(new TextDecoder().decode(manifestBytes)) as BundleManifest
+    const files = await bundleTextFiles(blobs, manifest)
+    const entry = files.get(manifest.entry)
+    if (entry === undefined) return seeded
+    bindings = latexBindings(entry, { resolve: bundleTextResolver(files) }).map((b) => ({
+      name: b.name,
+      kind: b.kind,
+      seed: null,
+    }))
+  } else if (isBundleContentType(ct)) {
+    // Other bundles carry no bindings (their blob is a manifest), so skip the blob read.
+    return seeded
+  } else {
+    let source = preparedSource
+    if (source === undefined) {
+      const bytes = await blobs.get(version.blob_key)
+      if (!bytes) return seeded
+      source = new TextDecoder().decode(bytes)
+    }
+    // A single .tex file: the renderer's inventory too (no inline seeds in LaTeX).
+    bindings = isLatexLike(ct)
+      ? latexBindings(source).map((b) => ({ name: b.name, kind: b.kind, seed: null }))
+      : parseDynamicBindings(source, ct).bindings
   }
-  const { bindings } = parseDynamicBindings(source, ct)
   if (bindings.length === 0) return seeded
   const from = seedFrom ?? version.n - 1
   const at = new Date().toISOString()

@@ -18,10 +18,11 @@
 
 import { isDerivedFactName, MAX_FACT_BYTES } from "@derive/facts"
 import { pageText } from "./anchor"
-import { isHtmlLike } from "./content-types"
+import { isHtmlLike, isLatexLike } from "./content-types"
 import { type DocMap, docMap, mapJson } from "./doc-map"
 import { type SectionMarker, sectionMarkers } from "./doc-text"
 import { parseRef } from "./ids"
+import { latexTextProjection } from "./latex-render"
 import { isVideoDocument, sliceScenes } from "./videos"
 
 /** Sentinel for a `$name` no deriver owns — a typo, or a deriver since removed. It matches
@@ -78,6 +79,8 @@ const deriveOutline = (markers: SectionMarker[]): unknown => {
 // an absent one silently understates the graph. Same shape doc-text.ts's attrOf uses.
 const HTML_HREF = /\bhref\s*=\s*("([^"]*)"|'([^']*)'|([^\s>]+))/gi
 const MD_LINK = /\]\(([^)\s]+)\)/g
+/** `\href{target}{text}` and `\url{target}` in LaTeX prose. */
+const TEX_LINK = /\\(?:href|url)\{([^}]*)\}/g
 
 /** The name of the outbound-reference fact, so the backlink inversion and the deriver that
  *  builds the rows it scans cannot drift to different strings. */
@@ -129,6 +132,7 @@ const deriveLinks = (source: string): unknown => {
   const targets: string[] = []
   for (const m of source.matchAll(HTML_HREF)) targets.push(m[2] ?? m[3] ?? m[4] ?? "")
   for (const m of source.matchAll(MD_LINK)) targets.push(m[1] ?? "")
+  for (const m of source.matchAll(TEX_LINK)) targets.push(m[1] ?? "")
   const refs: string[] = []
   for (const t of targets) {
     const shortId = artifactRefIn(t)
@@ -139,18 +143,23 @@ const deriveLinks = (source: string): unknown => {
 
 /** Counting, never judging — and nothing with an embedded assumption (no reading-time:
  *  a words-per-minute constant is a judgment wearing a number). `words` counts the
- *  VISIBLE text for HTML, so markup weight doesn't masquerade as prose. */
+ *  VISIBLE text for HTML and LaTeX, so markup weight doesn't masquerade as prose. */
 const deriveStats = (source: string, contentType: string, markers: SectionMarker[]): unknown => {
   const isHtml = isHtmlLike(contentType)
-  const visible = isHtml ? pageText(source) : source
+  const isLatex = isLatexLike(contentType)
+  const visible = isHtml ? pageText(source) : isLatex ? latexTextProjection(source).text : source
   const words = visible.split(/\s+/).filter(Boolean).length
   const sections = markers.length
   const codeBlocks = isHtml
     ? (source.match(/<pre\b/gi) ?? []).length
-    : (source.match(/^[ \t]*```/gm) ?? []).length >> 1
+    : isLatex
+      ? (source.match(/\\begin\{(verbatim|lstlisting|minted|Verbatim|alltt)\}/g) ?? []).length
+      : (source.match(/^[ \t]*```/gm) ?? []).length >> 1
   const tables = isHtml
     ? (source.match(/<table\b/gi) ?? []).length
-    : (source.match(/^\s*\|[\s:|-]+\|\s*$/gm) ?? []).length
+    : isLatex
+      ? (source.match(/\\begin\{(tabular\*?|tabularx|longtable)\}|\\derivetable\b/g) ?? []).length
+      : (source.match(/^\s*\|[\s:|-]+\|\s*$/gm) ?? []).length
   return { chars: source.length, words, sections, code_blocks: codeBlocks, tables }
 }
 

@@ -37,3 +37,13 @@ describe("fallbackFilename — inline publish with no filename never re-types ma
     )
   })
 })
+
+describe("fallbackFilename — a LaTeX document lands as .tex", () => {
+  it("recognises \\documentclass and \\begin{document} at a line start only", () => {
+    expect(fallbackFilename("\\documentclass[sigconf]{acmart}\n\\begin{document}\n")).toBe(
+      "index.tex",
+    )
+    expect(fallbackFilename("  \\begin{document}\nHi\n\\end{document}")).toBe("index.tex")
+    expect(fallbackFilename("Write `\\documentclass{article}` to start a paper.")).toBe("index.md")
+  })
+})

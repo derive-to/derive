@@ -412,6 +412,20 @@ export const dynamicSlotsQuery = (shortId: string, version: number) =>
     staleTime: 30_000,
   })
 
+/** A paper bundle's bibliography (routes/paper-files.ts), keyed under the artifact so a
+ *  publish invalidates it with the rest. A 404 (no .bib) is the panel's "absent". */
+export const bibQuery = (shortId: string, version: number) =>
+  queryOptions({
+    queryKey: ["artifact", shortId, "bib", version] as const,
+    queryFn: () => api.bib(shortId, version),
+    staleTime: 30_000,
+    retry: false,
+    // A publish moves the shown version, and with it this key. Keep the previous
+    // bibliography on screen while the new one loads, so the References rail (and a
+    // draft being typed in it) stays mounted across the change instead of blinking away.
+    placeholderData: keepPreviousData,
+  })
+
 export const dynamicHistoryQuery = (shortId: string, name: string, version: number) =>
   queryOptions({
     queryKey: ["artifact", shortId, "dynamic", version, "history", name] as const,

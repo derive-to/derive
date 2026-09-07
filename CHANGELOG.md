@@ -15,6 +15,46 @@ for the recommended install and verification flow.
 ## [Unreleased]
 
 ### Added
+- **LaTeX papers.** A `.tex` upload was typed as Markdown and rendered as escaped source.
+  A paper now publishes as its LaTeX source, single file (`text/x-latex`, "LaTeX") or a
+  bundle whose root holds `main.tex` beside its `.bib`, sections and figures
+  (`derive/latex`, "Paper"), and is read as a web page rendered from the source at serve
+  time: sections, prose, lists, tables, floats with numbered captions, footnotes, math
+  typeset in the browser by KaTeX served from the instance's own copy, and citations
+  resolved from BibTeX (or a compiled `.bbl`), printed as `[1]`, `[2]` with matching
+  markers in the References section and entries in the class's style. acmart (ACM SIGGRAPH
+  and journals) and the CVPR author kit are read with their title blocks, anonymous and
+  review modes and citation styles; other classes render generically. Comments anchor to
+  the rendered prose and inline edits map back to the source; unknown macros and
+  environments degrade to their text, with the publish receipt listing what the renderer
+  could not honour and, for acmart, packages outside ACM TAPS's accepted list.
+  `\derivetable{name}` and `\derivefigure{name}` bind dynamic slots in LaTeX, in the
+  entry or in any file it inputs, seeded and carried forward alike. A reference being
+  edited survives a publish that lands meanwhile: the draft stays, a notice names the new
+  version, and Save applies it there.
+- **Editing a paper on the page, and its bibliography.** A paper's prose, list items,
+  captions, headings, title and abstract are edited inline like any document, on a
+  single `.tex` file and on a paper bundle (the edit lands in `main.tex` and the bundle
+  republishes with its other files carried over); math, tables, images, footnotes,
+  theorem text, the author block, generated numbers and the reference list are marked
+  read-only by the renderer and refused by the page, and typeset math no longer counts
+  as text on either side, so a comment beside a formula keeps its anchor. The source
+  editor opens any text file of a paper bundle from its file chips, and a References
+  tab lists the `.bib` entries with a cited mark and adds, edits or removes them as
+  BibTeX, each save a new version (`GET`/`PUT /v1/artifacts/:id/bib`,
+  `GET`/`PUT /v1/artifacts/:id/files/*`). Agents see the bibliography and the cited
+  keys in `read` and are told to cite from it.
+- **Editing a paper bundle file by file.** The file chips above a paper list `main.tex`
+  first and fold its images into one figures menu; a chip opens the file in the source
+  editor, whose preview now renders the whole paper with the edited file substituted
+  (`POST /v1/preview` takes `short_id` and `path`), and the chips stay in view while
+  editing so files can be switched, with a prompt before unsaved changes are dropped.
+- **A paper's files as a tree, and Save.** The file bar above a paper lists its root files
+  as chips and each folder as a chip with a folder glyph that opens a small tree on hover
+  (twelve rows visible per list, the rest scroll; nested folders expand inside it; root
+  images open in a tab). A root `README.md` is no longer shown on papers, and the source
+  editor's button reads Save for LaTeX artifacts, and the header's Edit opens that editor
+  for them (inline prose editing stays on `e` and on a selection).
 - **Dynamic tables and figures.** An agent that refreshed a results table or a figure as
   runs landed had one write path: publish a version, so a day of refreshes was a day of
   versions with no prose change, and no way to update one cell in place. A document can

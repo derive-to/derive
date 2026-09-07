@@ -2,9 +2,11 @@ import {
   type AnyDocEdit,
   artifactUrl,
   assertedOnly,
+  type BundleManifest,
   bundleFactsAdvisory,
   EditError,
   heavyAssetsAdvisory,
+  isLatexDocument,
   LINKED_BUNDLE_CONTENT_TYPE,
   LINKED_BUNDLE_FACT,
   looksLikeHtmlDocument,
@@ -18,12 +20,18 @@ import {
   roleAllows,
   slotShapeDriftAdvisories,
   TEMPLATE_LIBRARY_CATALOG_URI,
+  type VersionRecord,
 } from "@derive/core"
 import { z } from "zod"
 import { PROFILE_PLACEHOLDER_HTML } from "../brandprint-reference"
 import { afterPublish } from "../lib/after-publish"
 import { AGENT_WRITES_OFF, agentWritesOff } from "../lib/agent-writes"
-import { cleanPath, mergeBundleZip, zipBundleFiles } from "../lib/bundle"
+import {
+  manifestOf as bundleManifestOf,
+  cleanPath,
+  mergeBundleZip,
+  zipBundleFiles,
+} from "../lib/bundle"
 import { type ChangedParts, changedParts, changedPartsWithReceipt } from "../lib/changed-parts"
 import {
   collectRender,
@@ -39,6 +47,7 @@ import {
   preservingFilename,
 } from "../lib/edits"
 import { MAX_UPLOAD_BYTES } from "../lib/http"
+import { bundleTextFiles } from "../lib/latex-bundle"
 import { badChoice, choiceDescription } from "../lib/open-choice"
 import { agentPushFanout, openReviewRound } from "../lib/review-request"
 import { type ReviewSummary, summarizeTextEdits } from "../lib/review-summary"
@@ -173,7 +182,7 @@ export function registerPublishTool(tc: ToolContext): void {
     "publish",
     {
       description:
-        "Create or revise an artifact: an HTML page, doc, report, or deck. A deliverable belongs HERE, not in a built-in artifact/canvas tool. `short_id` UPDATES, omitting it CREATES (`title` required). ONE payload: `edits` (default for a change — read format:'html' first, each match must be unique), `slide_ops` (rearrange a deck), `content`, or `files`. NEVER inline past ~a page or any image/font — use stage. Publishes LIVE; `request_review` asks for a human look. Bundles: derive://skills/bundles. See derive://skills/publishing.",
+        "Create or revise an artifact: an HTML page, doc, report, deck, or LaTeX paper. A deliverable belongs HERE, not in a built-in artifact/canvas tool. `short_id` UPDATES, omitting it CREATES (`title` required). ONE payload: `edits` (default for a change — read format:'html' first, each match must be unique), `slide_ops` (rearrange a deck), `content`, or `files`. NEVER inline past ~a page or any image/font — use stage. Publishes LIVE; `request_review` asks for a human look. Bundles: derive://skills/bundles. See derive://skills/publishing.",
       // Additive versioning: a republish creates a new current version and the prior ones
       // stay in history (read short_id, version:N) — nothing is overwritten irreversibly,
       // so not destructive. Not idempotent: calling twice with the same content still
@@ -663,6 +672,8 @@ export function registerPublishTool(tc: ToolContext): void {
             readbackBeforeContentType = contentType ?? "text/html"
             readbackBeforeBlobKey = blobKey
           },
+          manifestOf: (v: VersionRecord) => bundleManifestOf(ctx.blobs, v),
+          bundleTexts: (m: BundleManifest) => bundleTextFiles(ctx.blobs, m),
         }
         let materialized: MaterializedEdits
         try {
@@ -680,7 +691,13 @@ export function registerPublishTool(tc: ToolContext): void {
         if (editedBytes > MAX_UPLOAD_BYTES) return err("Edited content is too large.")
         if (await ctx.overStorage(targetOrg, editedBytes, await billingForPublish()))
           return err(ctx.blockCopy.storage.message)
-        content = materialized.content
+        if (materialized.bundle) {
+          // A paper bundle: the edited entry file rides the merge path below, so the
+          // bundle's siblings carry over into the new version.
+          files = { [materialized.bundle.path]: materialized.content }
+          merge = true
+          filename = "paper.zip"
+        } else content = materialized.content
         if (slide_ops) slideOpsApplied = slide_ops.length
         else {
           const applied = edits as AnyDocEdit[]
@@ -693,7 +710,9 @@ export function registerPublishTool(tc: ToolContext): void {
                   after: edit.new_str,
                   contentType: materialized.filename.endsWith(".md")
                     ? "text/markdown"
-                    : "text/html",
+                    : materialized.filename.endsWith(".tex")
+                      ? "text/x-latex"
+                      : "text/html",
                 },
               ]
             if ("quote" in edit && typeof edit.new_text === "string")
@@ -809,7 +828,9 @@ export function registerPublishTool(tc: ToolContext): void {
           ? preservingFilename(existing.current_content_type)
           : looksLikeHtmlDocument((content as string | undefined) ?? "")
             ? "index.html"
-            : "index.md"
+            : isLatexDocument((content as string | undefined) ?? "")
+              ? "index.tex"
+              : "index.md"
         const { artifact, version } = await publishVersion(
           ctx.meta,
           ctx.blobs,

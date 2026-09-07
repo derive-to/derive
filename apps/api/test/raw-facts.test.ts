@@ -1,7 +1,8 @@
 import { mkdtempSync, rmSync } from "node:fs"
+import { createRequire } from "node:module"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { newId, publish } from "@derive/core"
+import { KATEX_VERSION, newId, publish } from "@derive/core"
 import { SqliteMetaStore } from "@derive/db/sqlite"
 import { FsBlobStore } from "@derive/storage/fs"
 import { afterAll, describe, expect, it } from "vitest"
@@ -13,7 +14,21 @@ import { createApp } from "../src/app"
 const dir = mkdtempSync(join(tmpdir(), "derive-rawslot-"))
 const meta = new SqliteMetaStore(join(dir, "r.db"))
 const blobs = new FsBlobStore(join(dir, "blobs"))
-const app = createApp({ meta, blobs, baseUrl: "http://derive.test", token: "tok" })
+// A stand-in for the KaTeX loader: two files exist, everything else is a miss.
+const vendorFiles: Record<string, string> = {
+  "katex.min.js": "window.katex={}",
+  "fonts/KaTeX_Main-Regular.woff2": "wOF2",
+}
+const app = createApp({
+  meta,
+  blobs,
+  baseUrl: "http://derive.test",
+  token: "tok",
+  vendorAsset: async (file) => {
+    const body = vendorFiles[file]
+    return body === undefined ? null : new TextEncoder().encode(body)
+  },
+})
 const enc = (s: string) => new TextEncoder().encode(s)
 
 afterAll(() => {
@@ -243,7 +258,21 @@ describe("raw render never white-screens + self-heals a mislabeled blob", () => 
   const dir = mkdtempSync(join(tmpdir(), "derive-rawheal-"))
   const meta = new SqliteMetaStore(join(dir, "r.db"))
   const blobs = new FsBlobStore(join(dir, "blobs"))
-  const app = createApp({ meta, blobs, baseUrl: "http://derive.test", token: "tok" })
+  // A stand-in for the KaTeX loader: two files exist, everything else is a miss.
+  const vendorFiles: Record<string, string> = {
+    "katex.min.js": "window.katex={}",
+    "fonts/KaTeX_Main-Regular.woff2": "wOF2",
+  }
+  const app = createApp({
+    meta,
+    blobs,
+    baseUrl: "http://derive.test",
+    token: "tok",
+    vendorAsset: async (file) => {
+      const body = vendorFiles[file]
+      return body === undefined ? null : new TextEncoder().encode(body)
+    },
+  })
   const enc = (s: string) => new TextEncoder().encode(s)
   // A full HTML document with a <style> head — the markdown renderer would strip the
   // head/style and emit a blank body (the white screen). The bytes lie under a
@@ -553,5 +582,121 @@ describe("dynamic slots follow the version boundary", () => {
     expect(
       (await app.request(`/v1/artifacts/${a.short_id}/dynamic?v=1`, { headers: TOKEN })).status,
     ).toBe(200)
+  })
+})
+
+describe("the KaTeX vendor route", () => {
+  const base = `/raw/vendor/katex/${KATEX_VERSION}`
+
+  it("serves an allowlisted file with CORS, nosniff and the immutable cache", async () => {
+    const js = await app.request(`${base}/katex.min.js`)
+    expect(js.status).toBe(200)
+    expect(js.headers.get("content-type")).toBe("text/javascript; charset=utf-8")
+    expect(js.headers.get("access-control-allow-origin")).toBe("*")
+    expect(js.headers.get("x-content-type-options")).toBe("nosniff")
+    expect(js.headers.get("cache-control")).toBe("public, max-age=31536000, immutable")
+    expect(await js.text()).toBe("window.katex={}")
+    const font = await app.request(`${base}/fonts/KaTeX_Main-Regular.woff2`)
+    expect(font.status).toBe(200)
+    expect(font.headers.get("content-type")).toBe("font/woff2")
+  })
+
+  it("404s another version, a file outside the allowlist, and a loader miss", async () => {
+    expect((await app.request("/raw/vendor/katex/0.0.1/katex.min.js")).status).toBe(404)
+    expect((await app.request(`${base}/katex.js`)).status).toBe(404)
+    expect((await app.request(`${base}/fonts/other.woff2`)).status).toBe(404)
+    // Allowed by the pattern, absent from the loader: still a plain 404.
+    expect((await app.request(`${base}/fonts/KaTeX_Main-Regular.ttf`)).status).toBe(404)
+    // Dotted segments never reach the route: the URL parser folds `..` (and `%2e%2e`)
+    // before routing, so this is the same request as the direct file, and each loader
+    // refuses `..` on its own for callers that are not URLs.
+    expect((await app.request(`${base}/fonts/../katex.min.js`)).status).toBe(200)
+  })
+
+  it("pins the version pages request to the package the API installs", () => {
+    const pkg = createRequire(import.meta.url)("katex/package.json") as { version: string }
+    expect(KATEX_VERSION).toBe(pkg.version)
+  })
+})
+
+describe("dynamic slots seed from LaTeX papers", () => {
+  const TOKEN = { authorization: "Bearer tok" }
+  const TEX =
+    "\\documentclass{article}\\begin{document}\\begin{table}\\caption{R}\\derivetable{results}\\end{table}\\begin{figure}\\derivefigure{teaser}\\end{figure}\\end{document}"
+  const publishFile = (name: string, bytes: Uint8Array) => {
+    const form = new FormData()
+    form.append("file", new Blob([bytes as BlobPart]), name)
+    return app.request("/v1/artifacts", { method: "POST", body: form, headers: TOKEN })
+  }
+  const slots = async (shortId: string) =>
+    (
+      (await (
+        await app.request(`/v1/artifacts/${shortId}/dynamic`, { headers: TOKEN })
+      ).json()) as {
+        slots: { name: string; kind: string; revision: number }[]
+      }
+    ).slots.map((s) => [s.name, s.kind, s.revision])
+
+  it("seeds a single .tex file's bindings as empty slots", async () => {
+    const a = await (await publishFile("paper.tex", enc(TEX))).json()
+    expect(a.current_content_type).toBe("text/x-latex")
+    expect((await slots(a.short_id)).sort()).toEqual([
+      ["results", "table", 0],
+      ["teaser", "figure", 0],
+    ])
+    const page = await (
+      await app.request(`/raw/${a.short_id}/v/1/index.html`, { headers: TOKEN })
+    ).text()
+    expect(page).toContain('data-derive-table="results"')
+    expect(page).toContain("/raw/derive-dynamic.js")
+  })
+
+  it("seeds a binding declared in a file the paper inputs, and carries it forward", async () => {
+    const { zipSync } = await import("fflate")
+    const zip = zipSync({
+      "main.tex": enc(
+        "\\documentclass{article}\\begin{document}\\input{sec/results}\\end{document}",
+      ),
+      "sec/results.tex": enc("\\begin{table}\\derivetable{results}\\end{table}"),
+    })
+    const a = await (await publishFile("paper.zip", zip)).json()
+    expect(await slots(a.short_id)).toEqual([["results", "table", 0]])
+    const put = await app.request(`/v1/artifacts/${a.short_id}/dynamic/results`, {
+      method: "PUT",
+      headers: { ...TOKEN, "content-type": "application/json" },
+      body: JSON.stringify({
+        kind: "table",
+        table: { columns: [{ key: "acc" }], rows: [{ acc: 0.9 }] },
+      }),
+    })
+    expect(put.status).toBe(200)
+    // A republish seeds v2 from v1's latest value, exactly as for a binding in the entry.
+    const form = new FormData()
+    form.append("file", new Blob([zip as BlobPart]), "paper.zip")
+    const v2 = await app.request(`/v1/artifacts/${a.short_id}/versions`, {
+      method: "POST",
+      body: form,
+      headers: TOKEN,
+    })
+    expect(v2.status).toBe(201)
+    const carried = await app.request(`/v1/artifacts/${a.short_id}/dynamic/results?v=2`, {
+      headers: TOKEN,
+    })
+    await expect(carried.json()).resolves.toMatchObject({
+      version: 2,
+      revision: 0,
+      value: { table: { rows: [{ acc: 0.9 }] } },
+    })
+  })
+
+  it("seeds a paper bundle's bindings from its entry", async () => {
+    const { zipSync } = await import("fflate")
+    const zip = zipSync({ "main.tex": enc(TEX), "refs.bib": enc("@misc{k, title={T}}") })
+    const a = await (await publishFile("paper.zip", zip)).json()
+    expect(a.current_content_type).toBe("derive/latex")
+    expect((await slots(a.short_id)).sort()).toEqual([
+      ["results", "table", 0],
+      ["teaser", "figure", 0],
+    ])
   })
 })

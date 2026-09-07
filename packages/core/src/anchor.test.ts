@@ -216,3 +216,22 @@ describe("planAnchorSweep — the open <-> outdated state machine", () => {
     ])
   })
 })
+
+describe("anchorContentFor — LaTeX projects to the rendered prose", () => {
+  const tex =
+    "\\documentclass{article}\\begin{document}\\section{Results}\nWe observe a \\emph{clear} gain here.\n\\end{document}"
+
+  it("matches a quote taken from the rendered page, macros and all", () => {
+    const content = anchorContentFor(tex, "text/x-latex")
+    expect(typeof content).not.toBe("string")
+    if (typeof content === "string") return
+    expect(content.raw).toBe(tex)
+    expect(content.text).toContain("1 Results")
+    expect(content.text).toContain("We observe a clear gain here.")
+    expect(content.text).not.toContain("\\emph")
+    const sel: QuoteSelector = { type: "TextQuoteSelector", exact: "a clear gain" }
+    expect(isAnchored(json(sel), content)).toBe(true)
+    // The same quote never matches the raw source, where the macro splits the words.
+    expect(isAnchored(json(sel), tex)).toBe(false)
+  })
+})

@@ -10,9 +10,10 @@
 // testable — the same trade `pageText`/`reflow.ts` already make.
 
 import { decodeEntities, pageText } from "./anchor"
-import { isHtmlLike } from "./content-types"
+import { isHtmlLike, isLatexLike } from "./content-types"
+import { latexHeadings } from "./latex-render"
 
-export { DECK_CONTENT_TYPE, isAuthoredFactType, isHtmlLike } from "./content-types"
+export { DECK_CONTENT_TYPE, isAuthoredFactType, isHtmlLike, isLatexLike } from "./content-types"
 
 const safeLinkHref = (raw: string | null): string | null => {
   if (!raw) return null
@@ -80,8 +81,9 @@ export const headingSlug = (text: string): string =>
     .replace(/-+/g, "-")
     .replace(/^-+|-+$/g, "")
 
-/** Per-document slug dedup: second "goals" becomes "goals-1", then "goals-2" … */
-const slugger = () => {
+/** Per-document slug dedup: second "goals" becomes "goals-1", then "goals-2" … Exported
+ *  for the LaTeX renderer, whose section ids must match the outline built here. */
+export const headingSlugger = () => {
   const seen = new Map<string, number>()
   return (text: string): string => {
     const base = headingSlug(text) || "section"
@@ -538,7 +540,7 @@ const HEADING = /<h([1-6])\b[^>]*>([\s\S]*?)<\/h\1>/gi
 const DROP_SUBTREE = new RegExp(`<(${[...DROP].join("|")})\\b[^>]*>[\\s\\S]*?<\\/\\1>`, "gi")
 
 const headingSpans = (html: string): HeadingSpan[] => {
-  const slug = slugger()
+  const slug = headingSlugger()
   const spans: HeadingSpan[] = []
   // Ranges to exclude: a heading whose match starts inside one of these never became
   // part of the rendered document, so it must not become an outline entry (whose
@@ -694,6 +696,8 @@ export const sectionMarkers = (source: string, contentType: string): SectionMark
   if (isHtmlLike(contentType)) {
     for (const s of headingSpans(source)) raw.push({ text: s.text, offset: s.start })
     for (const s of labelledLandmarks(source)) raw.push({ text: s.label, offset: s.start })
+  } else if (isLatexLike(contentType)) {
+    for (const h of texHeadings(source)) raw.push({ text: h.text, offset: h.start })
   } else {
     for (const h of mdHeadings(source)) raw.push({ text: h.text, offset: h.start })
   }
@@ -782,6 +786,16 @@ export const sectionSpans = (source: string, contentType: string): SectionSpan[]
       end: sectionEnd(source, hs, i),
     }))
   }
+  if (isLatexLike(contentType)) {
+    const hs = texHeadings(source)
+    return hs.map((h, i) => ({
+      level: h.level,
+      text: h.text,
+      slug: h.slug,
+      start: h.start,
+      end: texSectionEnd(source, hs, i),
+    }))
+  }
   const hs = mdHeadings(source)
   return hs.map((h, i) => ({
     level: h.level,
@@ -811,7 +825,7 @@ interface MdHeading {
 }
 
 const mdHeadings = (src: string): MdHeading[] => {
-  const slug = slugger()
+  const slug = headingSlugger()
   const out: MdHeading[] = []
   let fence: string | null = null
   let offset = 0
@@ -843,6 +857,30 @@ const mdHeadings = (src: string): MdHeading[] => {
   return out
 }
 
+/** LaTeX sections in the markdown heading shape: `\section` and its relatives, with the
+ *  ids the rendered page gives them, starting at the macro. The renderer numbers the
+ *  heading text ("2.1 Predictor"); the spine keeps the number so a search label reads
+ *  like the paper. */
+const texHeadings = (src: string): MdHeading[] =>
+  latexHeadings(src, headingSlugger()).map((h) => ({
+    level: h.level,
+    text: h.text,
+    slug: h.slug,
+    start: h.start,
+  }))
+
+/** A LaTeX section ends where the next heading of the same or a higher level starts, or
+ *  at `\end{document}`, so the back matter never counts as the last section's prose. */
+const texSectionEnd = (src: string, hs: MdHeading[], i: number): number => {
+  const level = (hs[i] as MdHeading).level
+  for (let j = i + 1; j < hs.length; j++) {
+    const next = hs[j] as MdHeading
+    if (next.level <= level) return next.start
+  }
+  const end = src.lastIndexOf("\\end{document}")
+  return end > (hs[i] as MdHeading).start ? end : src.length
+}
+
 const mdSectionEnd = (src: string, hs: MdHeading[], i: number): number => {
   const level = (hs[i] as MdHeading).level
   for (let j = i + 1; j < hs.length; j++) {
@@ -861,7 +899,7 @@ const mdSectionEnd = (src: string, hs: MdHeading[], i: number): number => {
  *  needs pageText-style stripping) stay in sync with what actually gets converted —
  *  a local `=== "text/html"` check would silently drift on decks. */
 /** The agent-readable form of stored source: HTML converts to Markdown, everything
- *  else (markdown, plain text) already IS the readable form and passes through. */
+ *  else (markdown, LaTeX, plain text) already IS the readable form and passes through. */
 export const toMarkdown = (source: string, contentType: string): string =>
   isHtmlLike(contentType) ? htmlToMarkdown(source) : source
 
@@ -919,7 +957,8 @@ export const elideDataUrisToLimit = (s: string, maxChars: number): string => {
   return out
 }
 
-/** Outline for any text source (h1–h6 for HTML, ATX `#`–`######` for markdown). */
+/** Outline for any text source (h1–h6 for HTML, ATX `#`–`######` for markdown,
+ *  `\section` and its relatives for LaTeX). */
 export const outlineOf = (source: string, contentType: string): OutlineSection[] => {
   if (isHtmlLike(contentType)) return docOutline(source)
   return sectionSpans(source, contentType).map((h) => ({

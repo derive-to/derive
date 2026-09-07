@@ -10,11 +10,13 @@ import {
   injectSharedStateScript,
   inspectStructuralDocument,
   isBundleContentType,
+  isLatexLike,
   looksLikeHtmlDocument,
   MARKS_SCRIPT,
   mimeFor,
   parseFrontmatter,
   reflowHtml,
+  renderLatex,
   renderMarkdown,
   SELECTION_SCRIPT,
   SHARED_STATE_SCRIPT,
@@ -22,6 +24,23 @@ import {
 } from "@derive/core"
 import type { Context } from "hono"
 import { IMMUTABLE_CACHE, RAW_HEADERS, rewriteAbsoluteUrls, toBody } from "./http"
+import { bundleTextFiles, bundleTextResolver } from "./latex-bundle"
+
+/** The slot values a version's dynamic rows carry, by name, in the shape the renderers
+ *  substitute (see @derive/core dynamic-data.ts). Shared by every render of stored
+ *  content: the served page here and the editor's live preview of a bundle. */
+export const slotValuesOf = (rows: DynamicSlotRecord[]): Map<string, DynamicValue> => {
+  const slots = new Map<string, DynamicValue>()
+  for (const row of rows) {
+    // A row the contract no longer accepts renders its placeholder rather than failing
+    // the page; the write path validated it, so this is a defensive parse, not a gate.
+    try {
+      const value = validateDynamicValue(JSON.parse(row.json))
+      if (typeof value !== "string") slots.set(row.name, value)
+    } catch {}
+  }
+  return slots
+}
 
 /**
  * Serve a stored artifact version's content under `prefix`, resolving
@@ -80,15 +99,7 @@ export const serveContent = async (
    *  (callers that serve a snapshot, never a live page). */
   boundCacheControl?: string,
 ) => {
-  const slots = new Map<string, DynamicValue>()
-  for (const row of dynamic) {
-    // A row the contract no longer accepts renders its placeholder rather than failing
-    // the page; the write path validated it, so this is a defensive parse, not a gate.
-    try {
-      const value = validateDynamicValue(JSON.parse(row.json))
-      if (typeof value !== "string") slots.set(row.name, value)
-    } catch {}
-  }
+  const slots = slotValuesOf(dynamic)
   // Bound by declaration: the rendered document carries a binding attribute on a real
   // table or figure tag (every carrier emits one for a declared name, rows or not), or a
   // slot row was substituted. Tag-anchored, so prose about the feature cannot match.
@@ -198,6 +209,25 @@ export const serveContent = async (
       const html = withSharedState(await renderMarkdown(body, title), slots.size > 0) + append
       return c.body(html, 200, { ...headers, "Content-Type": "text/html; charset=utf-8" })
     }
+    // A paper's .tex pages render through the LaTeX path with the bundle's own files in
+    // reach: `\input{sec/intro}` and `\bibliography{refs}` resolve to sibling text files,
+    // `\includegraphics{fig/a.png}` to the image served under this prefix. `?raw=1`
+    // fetches the source, as for markdown. The style files a paper carries (.bib, .cls,
+    // .sty, .bst) are text/plain in the manifest and fall through to the raw serve.
+    if (isLatexLike(entry.type) && !["1", "true"].includes(c.req.query("raw") ?? "")) {
+      const files = await bundleTextFiles(blobs, manifest)
+      const rendered = renderLatex(new TextDecoder().decode(data), title, {
+        dynamic: slots,
+        resolve: bundleTextResolver(files),
+        imageUrl: (file) => {
+          const clean = file.replace(/^\.?\//, "")
+          const f = manifest.files[`/${clean}`]
+          return f?.type.startsWith("image/") ? `${prefix}${clean}` : null
+        },
+      })
+      const html = withSharedState(rendered.html) + append
+      return c.body(html, 200, { ...headers, "Content-Type": "text/html; charset=utf-8" })
+    }
     return c.body(toBody(data), 200, { ...headers, "Content-Type": entry.type })
   }
 
@@ -230,6 +260,22 @@ export const serveContent = async (
     const isBound = bound(rendered)
     const html = withSharedState(rendered, isBound) + append
     return c.body(html, 200, { ...hdrs(isBound), "Content-Type": "text/html; charset=utf-8" })
+  }
+
+  if (isLatexLike(content.content_type)) {
+    if (path === "raw.tex")
+      return c.body(toBody(data), 200, {
+        ...headers,
+        "Content-Type": "text/x-latex; charset=utf-8",
+      })
+    // A single .tex file has no siblings: `\input` and `\bibliography` cannot resolve
+    // and say so on the page; figures reach it as asset URLs. The rendered shell carries
+    // SELECTION_SCRIPT already (renderDocShell), so only the shared-state runtime is added,
+    // as for markdown.
+    const text = new TextDecoder().decode(data)
+    const rendered = renderLatex(text, title, { dynamic: slots })
+    const html = withSharedState(rendered.html) + append
+    return c.body(html, 200, { ...headers, "Content-Type": "text/html; charset=utf-8" })
   }
 
   // html file artifact — any path serves the document (+ selection capture)
