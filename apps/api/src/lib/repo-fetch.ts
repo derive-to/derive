@@ -176,8 +176,11 @@ const getArchive = async (deps: RepoFetchDeps, url: string): Promise<Response> =
     }
     if (res.status === 404)
       throw new RepoFetchError("no such repository, or it is not public (the host answered 404)")
-    if (res.status === 403 || res.status === 429)
-      throw new RepoFetchError(`the repository host answered ${res.status}`)
+    // 403/406/429: refused, bot-walled or throttled. A host that answers this to one
+    // anonymous client answers it to Derive too, so the message says what happened rather
+    // than promising that trying again would help.
+    if (res.status === 403 || res.status === 406 || res.status === 429)
+      throw new RepoFetchError(`the repository host refused an anonymous download (${res.status})`)
     if (res.status !== 200) throw new RepoFetchError(`the repository host answered ${res.status}`)
     return res
   }
@@ -308,8 +311,18 @@ export const fetchRepository = async (
       // The branch comes from a third party's file, so it goes through the same grammar
       // as a pasted link before it becomes part of a URL.
       const subRef = repoRefAt(declaredRef, sub.branch) ?? declaredRef
-
-      await walk(subRef, `${prefix}${sub.path}/`, depth + 1)
+      // A submodule that will not come is a gap in the tree, not the end of the fetch.
+      // Plenty of research submodules sit on an institutional host behind a sign-in or an
+      // anti-bot wall, and losing a whole implementation over one of them would be the
+      // wrong trade: take what there is, and say what is missing.
+      try {
+        await walk(subRef, `${prefix}${sub.path}/`, depth + 1)
+      } catch (error) {
+        if (!(error instanceof RepoFetchError)) throw error
+        notes.push(
+          `could not fetch the submodule at ${sub.path} (${subRef.canonical}): ${error.message}`,
+        )
+      }
     }
   }
 

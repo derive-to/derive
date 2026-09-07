@@ -1650,7 +1650,7 @@ describe("contexts: import from arXiv", () => {
     "gaussian-splatting-abc123/train.py": "def train():\n    return 42\n",
     "gaussian-splatting-abc123/utils/loss.py": "def l1(a, b):\n    return abs(a - b)\n",
     "gaussian-splatting-abc123/.gitmodules":
-      '[submodule "submodules/rasterizer"]\n\tpath = submodules/rasterizer\n\turl = https://github.com/graphdeco-inria/diff-gaussian-rasterization\n\tbranch = dr_aa\n[submodule "submodules/knn"]\n\tpath = submodules/knn\n\turl = https://bitbucket.org/bkerbl/simple-knn.git\n',
+      '[submodule "submodules/rasterizer"]\n\tpath = submodules/rasterizer\n\turl = https://github.com/graphdeco-inria/diff-gaussian-rasterization\n\tbranch = dr_aa\n[submodule "submodules/knn"]\n\tpath = submodules/knn\n\turl = https://bitbucket.org/bkerbl/simple-knn.git\n[submodule "submodules/walled"]\n\tpath = submodules/walled\n\turl = https://gitlab.example.org/lab/walled.git\n',
   }
   const SUB_FILES = {
     "diff-gaussian-rasterization-def456/setup.py": "from setuptools import setup\nsetup()\n",
@@ -1664,6 +1664,9 @@ describe("contexts: import from arXiv", () => {
       {
         "graphdeco-inria/gaussian-splatting": repoTar(REPO_FILES),
         "graphdeco-inria/diff-gaussian-rasterization": repoTar(SUB_FILES),
+        // A lab's own GitLab behind an anti-bot wall: real, and common for the
+        // institutional submodules a paper's repository declares.
+        "lab/walled": () => new Response("<html>not a bot?</html>", { status: 406 }),
       },
     )
     const { app, meta, ctx, tickDeps } = setup("contexts-import-code", stub.fetch)
@@ -1732,6 +1735,10 @@ describe("contexts: import from arXiv", () => {
     expect(v?.message).toContain("Attached github.com/graphdeco-inria/gaussian-splatting")
     expect(v?.message).toContain("skipped the submodule at submodules/knn")
     expect(v?.message).toContain("at their declared branch")
+    // A submodule that will not come is a gap in the tree, not the end of the fetch: the
+    // rest of the implementation is stored and the missing one is named.
+    expect(v?.message).toContain("could not fetch the submodule at submodules/walled")
+    expect(v?.message).toContain("refused an anonymous download (406)")
 
     // The code is stored as itself, byte for byte, so an agent asking for that path gets
     // the source rather than a rendering of it.
