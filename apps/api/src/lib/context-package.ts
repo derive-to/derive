@@ -9,9 +9,9 @@
 // would spend the caller's orientation budget on orientation, which is exactly the
 // failure this avoids — and the reason `checkpoint` states the same rule for itself
 // ("an index a cold session follows, not a container").
-import type { ArtifactRecord, ContextRecord, MetaStore } from "@derive/core"
+import { type ArtifactRecord, arxivAbsUrl, type ContextRecord, type MetaStore } from "@derive/core"
 import { parseConnectionIds } from "./broker"
-import { parseManifestSkillPins, stalePins } from "./manifest-pins"
+import { parseManifestDocuments, parseManifestSkillPins, stalePins } from "./manifest-pins"
 
 /** How much manifest text loads inline. A manifest is meant to be the small layer; one
  *  that runs past this is over budget by its own design, so the read clips and says so
@@ -26,6 +26,23 @@ export interface PackagedSkill {
   current_version: number | null
   /** The pin trails the artifact — a run executes the pinned version, not the latest. */
   stale: boolean
+}
+
+/** A document the manifest binds (an imported paper): a pointer, read by short id. */
+export interface PackagedDocument {
+  short_id: string
+  title: string | null
+  kind: ArtifactRecord["kind"] | null
+  role: string | null
+}
+
+/** Where an imported Context came from and how far its fetch got. */
+export interface PackagedImport {
+  source: "arxiv"
+  ref: string
+  url: string
+  status: "pending" | "fetching" | "ready" | "failed" | "dead"
+  error: { code: string; detail: string | null } | null
 }
 
 export interface ContextPackage {
@@ -45,6 +62,35 @@ export interface ContextPackage {
   } | null
   skills: PackagedSkill[]
   sources: string[]
+  /** Documents the manifest binds; an imported paper's bundle is one. */
+  documents: PackagedDocument[]
+  /** Set when the Context was imported (a paper from arXiv): read-only, no runs. */
+  import: PackagedImport | null
+}
+
+/** The one answer every run-shaped surface gives an imported Context. */
+export const IMPORTED_NO_RUNS = (id: string): string =>
+  `This Context is an imported paper. Read it with read("${id}"); it takes no runs.`
+
+/** The import block for a context row, from its job; null for a defined Context. */
+export const importStateOf = async (
+  meta: MetaStore,
+  x: ContextRecord,
+): Promise<PackagedImport | null> => {
+  if (x.import_source !== "arxiv" || !x.import_ref) return null
+  const job = await meta.getImportJobForContext(x.id).catch(() => null)
+  return {
+    source: "arxiv",
+    ref: x.import_ref,
+    url: arxivAbsUrl(x.import_ref),
+    // A context whose job is gone (an older row, a sweep) reads as ready: the manifest
+    // says what it holds either way.
+    status: job?.status ?? "ready",
+    error:
+      job?.error_code && job.status !== "ready"
+        ? { code: job.error_code, detail: job.error_detail }
+        : null,
+  }
 }
 
 /** Assemble the package a caller loads. `sourceText` is the store's version-body reader,
@@ -63,6 +109,8 @@ export const assembleContextPackage = async (
     manifest: null,
     skills: [],
     sources: parseConnectionIds(x.connection_ids),
+    documents: [],
+    import: await importStateOf(meta, x),
   }
   if (!manifestArtifact) return base
 
@@ -83,6 +131,15 @@ export const assembleContextPackage = async (
     content: clipped ? raw.slice(0, MANIFEST_INLINE_MAX) : raw,
     ...(clipped ? { clipped: true as const } : {}),
   }
+
+  // Bound documents are pointers too: the paper an imported Context wraps is read by its
+  // short id, never inlined into the package.
+  base.documents = await Promise.all(
+    parseManifestDocuments(raw).map(async (d) => {
+      const a = await meta.getByShortId(d.id).catch(() => null)
+      return { short_id: d.id, title: a?.title ?? null, kind: a?.kind ?? null, role: d.role }
+    }),
+  )
 
   // The SAME pin parsing the runner uses (manifest-pins), so the skills a reader is told
   // about are the skills a run would materialize — including the staleness, which is the

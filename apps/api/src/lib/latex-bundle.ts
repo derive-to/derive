@@ -39,6 +39,30 @@ export const bundleTextResolver =
   (file: string): string | null =>
     files.get(`/${file.replace(/^\.?\//, "")}`) ?? null
 
+/** The bundle path an imported paper keeps its own BibTeX entry at (the arXiv @misc
+ *  record), beside the paper's bibliography rather than in it. */
+export const CITATION_PATH = "/CITATION.bib"
+
+export interface PaperCitation {
+  key: string
+  bibtex: string
+}
+
+/** The paper's own citation entry, when the bundle carries `CITATION.bib` with one
+ *  parseable entry. Null otherwise: a paper someone wrote here has no such file. */
+export const paperCitation = async (
+  blobs: BlobStore,
+  manifest: BundleManifest,
+): Promise<PaperCitation | null> => {
+  const file = manifest.files[CITATION_PATH]
+  if (!file) return null
+  const data = await blobs.get(file.key)
+  if (!data) return null
+  const bibtex = new TextDecoder().decode(data).trim()
+  const key = parseBibtex(bibtex).entries[0]?.key
+  return key ? { key, bibtex } : null
+}
+
 export interface PaperBibliography {
   /** Clean bundle path of the `.bib` file (`refs.bib`). */
   path: string

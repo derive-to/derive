@@ -5164,6 +5164,10 @@ export interface paths {
                             max_run_ms?: number | null;
                             /** @description How many sessions the runner may work at once. Human branch only. */
                             max_concurrency?: number;
+                            /** @description Documents the manifest binds (an imported paper's bundle). Human branch only. */
+                            documents?: components["schemas"]["ManifestDocumentInfo"][];
+                            /** @description An imported paper's own BibTeX entry (its bundle's CITATION.bib). Human branch only. */
+                            bibtex?: string | null;
                         };
                     };
                 };
@@ -7818,6 +7822,28 @@ export interface components {
             id: string;
             name: string;
         };
+        /** @description Set when this Context was imported (a paper from arXiv): read-only, no runner, no sessions. Null for a Context someone defined. */
+        ContextImportInfo: {
+            /** @enum {string} */
+            source: "arxiv";
+            /** @description The bare paper id (`2401.12345`). */
+            ref: string;
+            /** @description The paper version arXiv resolved the import to; null until fetched. */
+            version: number | null;
+            /**
+             * @description pending/fetching: the source is on its way; ready: the paper is published and readable; failed: a transient error, retry scheduled; dead: gave up (retry by hand, or discard).
+             * @enum {string}
+             */
+            status: "pending" | "fetching" | "ready" | "failed" | "dead";
+            /** @description The last failure: a code the client maps to copy, plus a short detail. */
+            error: {
+                code: string;
+                detail: string | null;
+            } | null;
+            /** @description The paper's abstract page on arXiv. */
+            url: string;
+            imported_by: string;
+        } | null;
         ContextInfo: {
             id: string;
             name: string;
@@ -7842,6 +7868,7 @@ export interface components {
             skills_count?: number;
             /** @description The manifest artifact's current version; null if it can't be resolved. */
             manifest_version?: number | null;
+            import: components["schemas"]["ContextImportInfo"];
         };
         BrandprintConfig: {
             /** @description The workspace brand-profile artifact (an HTML page carrying theme tokens), when set; null otherwise. Not in `members` — it is the headline read, not a note. */
@@ -7869,6 +7896,14 @@ export interface components {
         ManifestRepoInfo: {
             url: string;
             ref: string | null;
+        };
+        ManifestDocumentInfo: {
+            short_id: string;
+            title: string | null;
+            /** @enum {string|null} */
+            kind: "doc" | "bundle" | null;
+            /** @description What the document is to the Context (`paper`). */
+            role: string | null;
         };
         Session: {
             id: string;

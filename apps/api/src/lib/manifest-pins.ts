@@ -26,6 +26,13 @@ export interface ManifestRepo {
   ref: string | null
 }
 
+/** A document the manifest binds: an artifact the Context IS about (an imported paper),
+ *  as opposed to a skill it pins. `role` is free text (`paper`). */
+export interface ManifestDocument {
+  id: string
+  role: string | null
+}
+
 /** Parse the `skills:` list out of a manifest's YAML-ish frontmatter. Deliberately
  *  narrow, mirroring the runner's parseManifest: a `- id:` item optionally followed
  *  by indented `version:`; a top-level key closes the list; no frontmatter or no
@@ -112,6 +119,40 @@ export const parseManifestRepos = (md: string): ManifestRepo[] => {
   return repos
     .filter((r) => typeof r.url === "string" && /^(https:\/\/|ssh:\/\/|git@|file:\/\/)/.test(r.url))
     .map((r) => ({ url: r.url as string, ref: r.ref ?? null }))
+}
+
+/** Parse the `documents:` list out of a manifest's frontmatter: `- id: <short id>` items
+ *  with an optional `role:`. Server-side only (the runner ignores the list; the manifest
+ *  body links the document for it). Ids are validated to the short-id shape before any
+ *  lookup, since the manifest is an artifact anyone with publish access can write. */
+export const parseManifestDocuments = (md: string): ManifestDocument[] => {
+  const m = md.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/)
+  if (!m) return []
+  const unquote = (v: string): string => {
+    const t = v.trim()
+    const q = t[0]
+    return t.length >= 2 && (q === '"' || q === "'") && t.at(-1) === q ? t.slice(1, -1) : t
+  }
+  const docs: Record<string, string>[] = []
+  let inDocs = false
+  let cur: Record<string, string> | null = null
+  for (const line of (m[1] ?? "").split(/\r?\n/)) {
+    if (/^documents:\s*$/.test(line)) {
+      inDocs = true
+      continue
+    }
+    if (inDocs && /^\S/.test(line)) inDocs = false
+    if (!inDocs) continue
+    const item = line.match(/^\s*-\s+(\w+):\s*(.+)$/)
+    const kv = line.match(/^\s+(\w+):\s*(.+)$/)
+    if (item) {
+      cur = { [item[1] as string]: unquote(item[2] as string) }
+      docs.push(cur)
+    } else if (kv && cur) cur[kv[1] as string] = unquote(kv[2] as string)
+  }
+  return docs
+    .filter((d) => typeof d.id === "string" && /^[a-z0-9]{8}$/.test(d.id))
+    .map((d) => ({ id: d.id as string, role: d.role?.slice(0, 40) ?? null }))
 }
 
 /** The manifest's own first paragraph, for a one-line "what is this" — frontmatter

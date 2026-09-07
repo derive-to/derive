@@ -49,7 +49,7 @@ import {
   focusCandidates,
 } from "../lib/focus-index"
 import { sniffImageType } from "../lib/image"
-import { paperBibliography } from "../lib/latex-bundle"
+import { paperBibliography, paperCitation } from "../lib/latex-bundle"
 import { latexTemplateBundle } from "../lib/latex-templates"
 import { baseType, isTextType, present, type ReadFormat, searchMatcher } from "../lib/search"
 import { WeightedLruCache } from "../lib/source-text-cache"
@@ -622,7 +622,9 @@ export function registerReadTool(tc: ToolContext): void {
         )
         return json({
           ...pkg,
-          how: "The Context package, opened progressively: its instructions are loaded; skills and sources are pointers — read one by its short_id when a task needs it. To use the Context for work, call use({context, instruction}).",
+          how: pkg.import
+            ? "An imported paper: the manifest carries the title, authors, abstract and BibTeX; `documents` points at the paper bundle — read it by short_id for the full text and its `citation`. This Context takes no runs; do not call use."
+            : "The Context package, opened progressively: its instructions are loaded; skills and sources are pointers — read one by its short_id when a task needs it. To use the Context for work, call use({context, instruction}).",
         })
       }
       if (short_id.startsWith("ctx_")) {
@@ -1492,6 +1494,9 @@ export function registerReadTool(tc: ToolContext): void {
                 cited: paper.cited,
               }
             : {}
+        // An imported paper carries its own entry (CITATION.bib), so an agent writing
+        // about it cites the paper itself with a real key, not one it made up.
+        const citation = isLatexBundle(manifest) ? await paperCitation(ctx.blobs, manifest) : null
         return json({
           short_id,
           title: a.title,
@@ -1500,6 +1505,7 @@ export function registerReadTool(tc: ToolContext): void {
           entry,
           url,
           ...bibliography,
+          ...(citation ? { citation } : {}),
           pages: pages.map((p) => {
             const type = manifest.files[p]?.type ?? manifest.files[`/${p}`]?.type
             const d = detail.get(p)
@@ -1518,9 +1524,11 @@ export function registerReadTool(tc: ToolContext): void {
                 : {}),
             }
           }),
-          next: paper
-            ? "Cite with \\cite{key} using a key from `bibliography`; add an entry with PUT /v1/artifacts/<short_id>/bib (see derive://skills/latex). Call read again with a `section` (a page path above) for content."
-            : "Call read again with a `section` (a page path above, optionally page.html#slug for one heading's part) for content.",
+          next: citation
+            ? `Cite this paper itself with \\cite{${citation.key}} after adding \`citation.bibtex\` to your .bib. Call read again with a \`section\` (a page path above) for content.`
+            : paper
+              ? "Cite with \\cite{key} using a key from `bibliography`; add an entry with PUT /v1/artifacts/<short_id>/bib (see derive://skills/latex). Call read again with a `section` (a page path above) for content."
+              : "Call read again with a `section` (a page path above, optionally page.html#slug for one heading's part) for content.",
         })
       }
 

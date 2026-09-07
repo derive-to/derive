@@ -1,10 +1,12 @@
 import { refRouter } from "@derive/broker"
 import {
+  arxivAbsUrl,
   type ContextAskerRecord,
   type ContextRecord,
   decodeCursor,
   effectiveRole,
   encodeCursor,
+  type ImportJobRecord,
   maxRole,
   newId,
   normalizeSelector,
@@ -33,16 +35,20 @@ import {
   toolsForRun,
 } from "../lib/broker"
 import { overBudget } from "../lib/budget"
+import { manifestOf } from "../lib/bundle"
 import { chatArrival } from "../lib/chat-gate"
 import { buildChatTools, type ChatPrincipal, RAIL_CHAT_TOOLS } from "../lib/chat-tools"
 import { runChatTurn } from "../lib/chat-turn"
 import { previewOf } from "../lib/comments"
 import { BuilderCardSchema, metaForWire } from "../lib/context-builder-card"
 import { buildContextBuilderTools, latestBuilderCard } from "../lib/context-builder-tools"
+import { IMPORTED_NO_RUNS } from "../lib/context-package"
 import { ContextConflictError, createContextCore } from "../lib/create-context"
 import { bail, fail, readJson } from "../lib/http"
+import { paperCitation } from "../lib/latex-bundle"
 import {
   manifestDescription,
+  parseManifestDocuments,
   parseManifestRepos,
   parseManifestSkillPins,
   stalePins,
@@ -655,6 +661,28 @@ export const contextRoutes = (ctx: AppContext) => {
     }
   }
 
+  const ContextImportInfo = z
+    .object({
+      source: z.literal("arxiv"),
+      ref: z.string().describe("The bare paper id (`2401.12345`)."),
+      version: z
+        .number()
+        .nullable()
+        .describe("The paper version arXiv resolved the import to; null until fetched."),
+      status: z
+        .enum(["pending", "fetching", "ready", "failed", "dead"])
+        .describe(
+          "pending/fetching: the source is on its way; ready: the paper is published and readable; failed: a transient error, retry scheduled; dead: gave up (retry by hand, or discard).",
+        ),
+      error: z
+        .object({ code: z.string(), detail: z.string().nullable() })
+        .nullable()
+        .describe("The last failure: a code the client maps to copy, plus a short detail."),
+      url: z.string().describe("The paper's abstract page on arXiv."),
+      imported_by: z.string(),
+    })
+    .openapi("ContextImportInfo")
+
   const ContextInfo = z
     .object({
       id: z.string(),
@@ -696,8 +724,20 @@ export const contextRoutes = (ctx: AppContext) => {
         .nullable()
         .optional()
         .describe("The manifest artifact's current version; null if it can't be resolved."),
+      import: ContextImportInfo.nullable().describe(
+        "Set when this Context was imported (a paper from arXiv): read-only, no runner, no sessions. Null for a Context someone defined.",
+      ),
     })
     .openapi("ContextInfo")
+
+  const ManifestDocumentInfo = z
+    .object({
+      short_id: z.string(),
+      title: z.string().nullable(),
+      kind: z.enum(["doc", "bundle"]).nullable(),
+      role: z.string().nullable().describe("What the document is to the Context (`paper`)."),
+    })
+    .openapi("ManifestDocumentInfo")
 
   // A skill the manifest pins, with pin health: the pinned version next to the skill
   // artifact's actual current one. `parseManifestSkillPins` already does this for the
@@ -907,7 +947,29 @@ export const contextRoutes = (ctx: AppContext) => {
     }
   }
 
-  const contextJson = (x: ContextRecord, manifestShortId: string | null) => ({
+  /** The import block of an imported context, from its job row. A context whose job is
+   *  gone (an older row, a sweep) reads as ready: what the manifest holds is what it is. */
+  const importJson = (x: ContextRecord, job: ImportJobRecord | null) =>
+    x.import_source === "arxiv" && x.import_ref
+      ? {
+          source: "arxiv" as const,
+          ref: x.import_ref,
+          version: job?.resolved_version ?? null,
+          status: job?.status ?? ("ready" as const),
+          error:
+            job?.error_code && job.status !== "ready"
+              ? { code: job.error_code, detail: job.error_detail }
+              : null,
+          url: arxivAbsUrl(x.import_ref),
+          imported_by: job?.requested_by ?? x.created_by,
+        }
+      : null
+
+  const contextJson = (
+    x: ContextRecord,
+    manifestShortId: string | null,
+    job: ImportJobRecord | null = null,
+  ) => ({
     id: x.id,
     name: x.name,
     agent_id: x.agent_id,
@@ -917,7 +979,35 @@ export const contextRoutes = (ctx: AppContext) => {
     runner_seen_at: x.runner_seen_at,
     ask_policy: x.ask_policy,
     connection_ids: parseConnectionIds(x.connection_ids),
+    import: importJson(x, job),
   })
+
+  /** The documents a manifest binds, resolved to their artifacts (unknown ids stay as
+   *  pointers with a null title, like an unresolved skill pin). */
+  const manifestDocuments = async (md: string) =>
+    Promise.all(
+      parseManifestDocuments(md).map(async (d) => {
+        const a = await meta.getByShortId(d.id).catch(() => null)
+        return {
+          short_id: d.id,
+          title: a?.title ?? null,
+          kind: a?.kind ?? null,
+          role: d.role,
+        }
+      }),
+    )
+
+  /** The bound paper's own BibTeX entry (its bundle's CITATION.bib), for Copy BibTeX. */
+  const documentsBibtex = async (
+    docs: Awaited<ReturnType<typeof manifestDocuments>>,
+  ): Promise<string | null> => {
+    const paper = docs.find((d) => d.role === "paper" && d.kind === "bundle") ?? null
+    if (!paper) return null
+    const a = await meta.getByShortId(paper.short_id).catch(() => null)
+    const v = a ? await meta.getVersion(a.id, a.current_version).catch(() => null) : null
+    const manifest = v ? await manifestOf(ctx.blobs, v) : null
+    return manifest ? ((await paperCitation(ctx.blobs, manifest))?.bibtex ?? null) : null
+  }
 
   const messageJson = (m: SessionMessageRecord) => {
     const meta = metaForWire(m.meta) as z.infer<typeof SessionMeta> | null
@@ -1216,6 +1306,13 @@ export const contextRoutes = (ctx: AppContext) => {
       // first returned, so it could not be batched by key; the store answers it with a
       // LEFT JOIN instead (see contextsWithManifests).
       const rows = await meta.contextsWithManifests(org)
+      // Imported contexts show their fetch state in the list, so the badge can say
+      // "fetching" the moment a paper is queued: one batched read of their jobs.
+      const jobs = new Map(
+        (
+          await meta.getImportJobsForContexts(rows.filter((x) => x.import_source).map((x) => x.id))
+        ).map((j) => [j.context_id, j]),
+      )
       // The directory row wants a one-line description and a skill count, which live in
       // the manifest's BODY, not on the context row — so each context needs its own
       // manifest fetch. Bounded by how many contexts a workspace has (this list has no
@@ -1229,7 +1326,7 @@ export const contextRoutes = (ctx: AppContext) => {
             : null
           const md = manifest ? await manifestBody(manifest) : null
           return {
-            ...contextJson(x, x.manifest_short_id),
+            ...contextJson(x, x.manifest_short_id, jobs.get(x.id) ?? null),
             ...manifestSummary(md, manifest?.current_version ?? null),
           }
         }),
@@ -1284,6 +1381,19 @@ export const contextRoutes = (ctx: AppContext) => {
                   .number()
                   .optional()
                   .describe("How many sessions the runner may work at once. Human branch only."),
+                documents: z
+                  .array(ManifestDocumentInfo)
+                  .optional()
+                  .describe(
+                    "Documents the manifest binds (an imported paper's bundle). Human branch only.",
+                  ),
+                bibtex: z
+                  .string()
+                  .nullable()
+                  .optional()
+                  .describe(
+                    "An imported paper's own BibTeX entry (its bundle's CITATION.bib). Human branch only.",
+                  ),
               }),
             },
           },
@@ -1302,14 +1412,15 @@ export const contextRoutes = (ctx: AppContext) => {
       const manifest = await meta.getArtifactById(x.manifest_artifact_id)
       const allowed = agent ? agent.id === x.agent_id : await canAskContext(c, x)
       if (!allowed) return bail(fail(c, 404, "not found"))
-      if (!manifest) return c.json(contextJson(x, null))
+      const job = x.import_source ? await meta.getImportJobForContext(x.id) : null
+      if (!manifest) return c.json(contextJson(x, null, job))
       // One fetch of the manifest's current source, shared by both branches below —
       // the runner's system prompt and the console's package are the same document,
       // read once.
       const v = await meta.getVersion(manifest.id, manifest.current_version)
       const md = v ? await sourceText(v) : null
       const base = {
-        ...contextJson(x, manifest.short_id),
+        ...contextJson(x, manifest.short_id, job),
         ...manifestSummary(md, manifest.current_version),
       }
       // The runner's own config fetch: its system prompt is the manifest's current
@@ -1342,6 +1453,7 @@ export const contextRoutes = (ctx: AppContext) => {
           }
         }),
       )
+      const documents = md ? await manifestDocuments(md) : []
       return c.json({
         ...base,
         manifest: md
@@ -1357,6 +1469,8 @@ export const contextRoutes = (ctx: AppContext) => {
         repos: md ? parseManifestRepos(md) : [],
         max_run_ms: x.max_run_ms,
         max_concurrency: x.max_concurrency,
+        documents,
+        bibtex: x.import_source ? await documentsBibtex(documents) : null,
       })
     },
   )
@@ -1617,6 +1731,8 @@ export const contextRoutes = (ctx: AppContext) => {
       // Asking is a workspace-scoped grant on the CONTEXT, not manifest read —
       // so a manifest world link can never open a session (query the data).
       if (!x || !(await canAskContext(c, x))) return bail(fail(c, 404, "not found"))
+      // An imported paper is a document, not a runner: nothing would answer the session.
+      if (x.import_source) return bail(fail(c, 409, IMPORTED_NO_RUNS(x.id)))
       const manifest = await meta.getArtifactById(x.manifest_artifact_id)
       if (!manifest) return bail(fail(c, 404, "not found"))
       const b = await readJson(

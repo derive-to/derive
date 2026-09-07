@@ -2451,7 +2451,11 @@ export const artifactRoutes = (ctx: AppContext) => {
       const artifact = await requireArtifact(c, "publish", { split: true })
       if (artifact instanceof Response) return bail(artifact)
       // A restore is a publish (it writes a new version), so it's gated the same way:
-      // a billing-blocked workspace can't add a version by restoring one either.
+      // a billing-blocked workspace can't add a version by restoring one either, and a
+      // locked artifact can't be rolled back to an earlier version any more than it can
+      // take a new one.
+      if (artifact.locked)
+        return bail(fail(c, 409, "artifact is locked — unlock it to publish, or leave a comment"))
       const blocked = await billingGate(c, artifact.org_id)
       if (blocked) return bail(blocked)
       const body = await readJson(c, z.object({ version: z.number().int("version required") }))
