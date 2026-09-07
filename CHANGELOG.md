@@ -46,8 +46,9 @@ for the recommended install and verification flow.
   token, no API budget, `HEAD` for the default branch — follows the submodules
   `.gitmodules` declares (recursively, each at the branch it names, since an archive
   carries no pinned commits), skips Git LFS pointers, and stores the files under
-  `/code/` inside the paper's OWN artifact. A submodule on any other host is skipped and
-  named with its URL. The implementation is invisible to people (no file listing in the
+  `/code/` inside the paper's OWN artifact. A submodule on any other host, or on one that
+  refuses an anonymous download, is skipped and named with its URL, and the rest of the
+  tree still arrives. The implementation is invisible to people (no file listing in the
   artifact detail or the content outline, nothing served from `/code/`, excluded from
   `source.zip`) and fully readable by agents, which see it summarised beside the paper's
   pages — a file count and the shallowest hundred paths — and read any file by its exact

@@ -67,8 +67,10 @@ GitHub or GitLab repository beside the arXiv link, and an imported paper's conso
 attach, replace or remove one at any time afterwards. Derive fetches the repository as
 one anonymous archive of its whole tree, follows the submodules it declares (each at the
 branch it names, since an archive carries no pinned commits), skips Git LFS pointers,
-and stores the files inside the paper's own artifact. A submodule on any other host is
-skipped and named in the version's notes.
+and stores the files inside the paper's own artifact. A submodule on any other host, or on
+one that refuses an anonymous download (a lab's own GitLab often sits behind a sign-in or a
+bot challenge), is skipped and named in the version's notes; the rest of the tree still
+arrives.
 
 **Your agents read the code; you get a link to it.** The implementation is not browsable
 on Derive: the paper's page lists no repository files, the content API's outline and the
