@@ -1280,10 +1280,15 @@ describe("imported papers over MCP — read-only, cited, never run", () => {
     expect(paper.entry).toBe("main.tex")
     expect(paper.citation).toEqual({ key: "lovelace2024reading", bibtex })
     expect(paper.next).toContain("\\cite{lovelace2024reading}")
+    // The whole point of the source being kept: an agent asked about the method reads the
+    // paper's own LaTeX, macros and all, not the prose projection a person sees.
     const body = await callRaw(app, ownerBot.token, "read", {
       short_id: pkg.documents[0].short_id,
       section: "main.tex",
     })
+    expect(body.text).toContain("format: latex (source)")
+    expect(body.text).toContain("\\documentclass{article}")
+    expect(body.text).toContain("\\begin{abstract}")
     expect(body.text).toContain("Hello.")
 
     const refused = await callRaw(app, ownerBot.token, "use", {
