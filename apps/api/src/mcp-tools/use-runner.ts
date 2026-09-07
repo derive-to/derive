@@ -79,21 +79,27 @@ export async function runnerDispatch(
   // not yours to run.
   const runnableContext = async (ref: string): Promise<ContextRecord | null> => {
     const trimmed = ref.trim()
+    // An imported paper has no runner and no sessions; serving one would only stamp
+    // liveness on a Context that never answers.
+    const runnable = (x: ContextRecord | null | undefined): ContextRecord | null =>
+      x && !x.import_source ? x : null
     if (registered) {
       const byId = await ctx.meta.getContext(trimmed)
-      if (byId && byId.agent_id === agent.id) return byId
+      if (byId && byId.agent_id === agent.id) return runnable(byId)
       const lc = trimmed.toLowerCase()
       const rows = await ctx.meta.listContexts(agent.org_id)
-      return rows.find((x) => x.agent_id === agent.id && x.name.toLowerCase() === lc) ?? null
+      return runnable(
+        rows.find((x) => x.agent_id === agent.id && x.name.toLowerCase() === lc) ?? null,
+      )
     }
     if (!actingFor) return null
     const t = await resolveWs(args.workspace)
     if ("error" in t || !roleAllows(t.role, "manage")) return null
     const byId = await ctx.meta.getContext(trimmed)
-    if (byId && byId.org_id === t.org) return byId
+    if (byId && byId.org_id === t.org) return runnable(byId)
     const lc = trimmed.toLowerCase()
     const rows = await ctx.meta.listContexts(t.org)
-    return rows.find((x) => x.name.toLowerCase() === lc) ?? null
+    return runnable(rows.find((x) => x.name.toLowerCase() === lc) ?? null)
   }
   // SERVE: claim (open -> working) up to 10 runnable sessions and return each with its
   // transcript. Claiming leases each so overlapping runs never double-answer one; the

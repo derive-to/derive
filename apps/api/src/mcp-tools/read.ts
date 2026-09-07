@@ -619,11 +619,12 @@ export function registerReadTool(tc: ToolContext): void {
           hit.manifest,
           (v) => ctx.sourceText(v),
           runnerOnline(hit.x),
+          ctx.blobs,
         )
         return json({
           ...pkg,
           how: pkg.import
-            ? "An imported paper: the manifest carries the title, authors, abstract and BibTeX; `documents` points at the paper bundle — read it by short_id for the full text and its `citation`. This Context takes no runs; do not call use."
+            ? "An imported paper. This Context IS the paper: `manifest` is a summary of it (authors, abstract, BibTeX) and `documents` names the one artifact it lives in — read that short_id for the full LaTeX source, section by section, and for its `citation`. People see the rendered paper, never the source. It takes no runs; do not call use."
             : "The Context package, opened progressively: its instructions are loaded; skills and sources are pointers — read one by its short_id when a task needs it. To use the Context for work, call use({context, instruction}).",
         })
       }

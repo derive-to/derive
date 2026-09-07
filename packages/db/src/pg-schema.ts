@@ -104,6 +104,8 @@ export const artifact = pgTable("artifact", {
   // Remix lineage: the artifact id this was derived from. Not an FK (the source may be
   // deleted; the copy survives). Nullable, no default — ADD COLUMN IF NOT EXISTS clean.
   derived_from: text("derived_from"),
+  // Import provenance for machine-fetched content; see schema.ts for the contract.
+  import_source: text("import_source"),
 })
 
 export const sharedState = pgTable(

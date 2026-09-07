@@ -36,7 +36,7 @@ import {
 import { Gunzip } from "fflate"
 import type { Backplane } from "../bus"
 import { type AfterPublishDeps, afterPublish } from "./after-publish"
-import { type ArxivPaperMeta, failedManifest, plainText, readyManifest } from "./arxiv-manifest"
+import { type ArxivPaperMeta, failedPaper, plainText } from "./arxiv-paper"
 import { readCappedBytes } from "./http"
 import { CITATION_PATH } from "./latex-bundle"
 import { isPublicHttpUrl } from "./net"
@@ -523,8 +523,10 @@ export const importArxivPaper = async (
   if (!ref) throw new ImportFailure("not_found", "the reference is not an arXiv id", true)
   const urls = arxivUrls(ref)
   let ctx = await liveContext(meta, job)
-  const manifest = await meta.getArtifactById(ctx.manifest_artifact_id)
-  if (!manifest) throw new ImportCancelled()
+  // The Context's artifact IS the paper: the queue published a placeholder document into
+  // it, and this run republishes it as the paper arXiv holds.
+  const target = await meta.getArtifactById(ctx.manifest_artifact_id)
+  if (!target) throw new ImportCancelled()
   const agent = await meta.getAgent(ctx.agent_id)
   const access = await paperAccess(meta, ctx.org_id)
   const actor = { agentId: agent?.id ?? null, agentName: agent?.name ?? null }
@@ -540,7 +542,7 @@ export const importArxivPaper = async (
   if (/withdrawn/i.test(paperMeta.comment ?? "") || /withdrawn/i.test(paperMeta.title))
     throw new ImportFailure("withdrawn", "this paper was withdrawn", true)
 
-  // 2. The source. A reclaimed job that already published its paper skips this.
+  // 2. The source. A reclaimed job that already published the paper skips this.
   let paper = job.paper_artifact_id ? await meta.getArtifactById(job.paper_artifact_id) : null
   const notes: string[] = []
   let fetchedBibtex: string | null = null
@@ -585,92 +587,54 @@ export const importArxivPaper = async (
     notes.push(...fitted.notes)
 
     ctx = await liveContext(meta, job)
+    const current = await meta.getArtifactById(target.id)
+    if (!current) throw new ImportCancelled()
     const title = plainText(paperMeta.title, 200) || `arXiv:${ref.id}`
-    const published = await publish(meta, blobs, {
-      bytes: new Uint8Array(),
-      filename: `${ref.id.replace(/\//g, "_")}.zip`,
-      isBundle: true,
-      files: { ...fitted.files, [CITATION_PATH]: new TextEncoder().encode(citation.bibtex) },
-      entry: normalized.entry,
-      title,
-      orgId: ctx.org_id,
-      author: truncate(paperMeta.authors.map((a) => plainText(a, 80)).join(", ") || "arXiv", 200),
-      authorId: null,
-      ...actor,
-      source: "api",
-      message: `Imported from arXiv:${ref.canonical}`,
-      ...access,
-    })
+    // What the import decided rides on the version, where a reader meets it as history
+    // rather than as a second document to read.
+    const message = truncate([`Imported from arXiv:${ref.canonical}`, ...notes].join(" · "), 500)
+    const published = await publish(
+      meta,
+      blobs,
+      {
+        bytes: new Uint8Array(),
+        filename: `${ref.id.replace(/\//g, "_")}.zip`,
+        isBundle: true,
+        files: { ...fitted.files, [CITATION_PATH]: new TextEncoder().encode(citation.bibtex) },
+        entry: normalized.entry,
+        title,
+        author: truncate(
+          paperMeta.authors.map((name: string) => plainText(name, 80)).join(", ") || "arXiv",
+          200,
+        ),
+        authorId: null,
+        ...actor,
+        source: "api",
+        message,
+        existingArtifact: current,
+      },
+      current.short_id,
+    )
     paper = published.artifact
-    // The importer keeps standing on the paper (unlock, delete) whatever the default
-    // access grants members; the same owner seat a hand publish gives its publisher.
-    await meta.setArtifactMember({
-      id: newId("am"),
-      artifact_id: paper.id,
-      user_id: job.requested_by,
-      role: "owner",
-    })
     await afterPublish(publishDeps(deps), paper, published.version, {
-      isNew: true,
+      isNew: false,
       onBehalf: null,
       actorId: actor.agentId,
       actorName: actor.agentName,
     })
     await meta.setArtifactTags(paper.id, normalizeTags(["arxiv", `arxiv:${ref.id}`]))
-    await meta.setLocked(paper.id, 1)
     await meta.updateImportJob(job.id, {
       paper_artifact_id: paper.id,
+      manifest_version: published.version.n,
       resolved_version: paperMeta.version,
       updated_at: iso(deps.now()),
     })
   } else {
-    notes.push("resumed after an interrupted import; the paper was already published")
     await deps.releaseGate?.()
   }
 
-  // 5. The manifest, now the real one, and the Context's name.
+  // 5. The Context takes the paper's name.
   ctx = await liveContext(meta, job)
-  const bibtex = await citationBytes(blobs, meta, paper)
-  const title = plainText(paperMeta.title, 200) || `arXiv:${ref.id}`
-  const md = readyManifest({
-    ref: ref.id,
-    meta: paperMeta,
-    paperShortId: paper.short_id,
-    bibtex,
-    notes,
-  })
-  const current = await meta.getArtifactById(manifest.id)
-  if (!current) throw new ImportCancelled()
-  const republished = await publish(
-    meta,
-    blobs,
-    {
-      bytes: new TextEncoder().encode(md),
-      filename: "manifest.md",
-      isBundle: false,
-      title: `${truncate(title, 120)} — context instructions`,
-      author: "arXiv",
-      authorId: null,
-      ...actor,
-      source: "api",
-      message: `Imported from arXiv:${ref.canonical}`,
-      existingArtifact: current,
-    },
-    current.short_id,
-  )
-  await afterPublish(publishDeps(deps), republished.artifact, republished.version, {
-    isNew: false,
-    onBehalf: null,
-    actorId: actor.agentId,
-    actorName: actor.agentName,
-    preparedSource: md,
-  })
-  await meta.setLocked(manifest.id, 1)
-  await meta.updateImportJob(job.id, {
-    manifest_version: republished.version.n,
-    updated_at: iso(deps.now()),
-  })
-
   const name = contextNameFor(paperMeta.title, ref.id)
   if (name !== ctx.name) {
     await meta
@@ -688,49 +652,32 @@ export const importArxivPaper = async (
   })
 }
 
-/** The paper bundle's CITATION.bib, read back so a resumed job carries the same entry. */
-const citationBytes = async (
-  blobs: BlobStore,
-  meta: MetaStore,
-  paper: ArtifactRecord,
-): Promise<string | null> => {
-  const v = await meta.getVersion(paper.id, paper.current_version).catch(() => null)
-  const bytes = v ? await blobs.get(v.blob_key) : null
-  if (!bytes) return null
-  try {
-    const manifest = JSON.parse(new TextDecoder().decode(bytes)) as {
-      files?: Record<string, { key: string }>
-    }
-    const key = manifest.files?.[CITATION_PATH]?.key
-    const data = key ? await blobs.get(key) : null
-    return data ? new TextDecoder().decode(data).trim() : null
-  } catch {
-    return null
-  }
-}
-
-/** Record a dead import on the manifest, so a read never says "fetching" forever. */
-export const writeFailedManifest = async (
+/** Leave a page that says the import gave up, so it never reads "fetching" forever. The
+ *  paper that was already published (a retry that failed later) is left alone. */
+export const writeFailedPaper = async (
   deps: ImportDeps,
   job: ImportJobRecord,
   reason: string,
 ): Promise<void> => {
   const ctx = await deps.meta.getContext(job.context_id)
   if (!ctx?.import_ref) return
+  if (job.paper_artifact_id) return
   const current = await deps.meta.getArtifactById(ctx.manifest_artifact_id)
-  if (!current || current.locked) return
-  const md = failedManifest(ctx.import_ref, reason)
+  if (!current) return
   const republished = await publish(
     deps.meta,
     deps.blobs,
     {
-      bytes: new TextEncoder().encode(md),
-      filename: "manifest.md",
-      isBundle: false,
+      bytes: new Uint8Array(),
+      filename: "paper.zip",
+      isBundle: true,
+      files: {
+        "/main.tex": new TextEncoder().encode(failedPaper(ctx.import_ref, reason)),
+      },
       author: "arXiv",
       authorId: null,
       source: "api",
-      message: "Import failed",
+      message: `Import failed: ${truncate(reason, 200)}`,
       existingArtifact: current,
     },
     current.short_id,
@@ -739,6 +686,5 @@ export const writeFailedManifest = async (
     await afterPublish(publishDeps(deps), republished.artifact, republished.version, {
       isNew: false,
       onBehalf: null,
-      preparedSource: md,
     }).catch(() => undefined)
 }

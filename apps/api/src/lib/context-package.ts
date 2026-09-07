@@ -9,9 +9,18 @@
 // would spend the caller's orientation budget on orientation, which is exactly the
 // failure this avoids — and the reason `checkpoint` states the same rule for itself
 // ("an index a cold session follows, not a container").
-import { type ArtifactRecord, arxivAbsUrl, type ContextRecord, type MetaStore } from "@derive/core"
+import {
+  type ArtifactRecord,
+  arxivAbsUrl,
+  type BlobStore,
+  type ContextRecord,
+  type MetaStore,
+} from "@derive/core"
+import { abstractOf, paperSummary } from "./arxiv-paper"
 import { parseConnectionIds } from "./broker"
-import { parseManifestDocuments, parseManifestSkillPins, stalePins } from "./manifest-pins"
+import { manifestOf } from "./bundle"
+import { paperCitation } from "./latex-bundle"
+import { parseManifestSkillPins, stalePins } from "./manifest-pins"
 
 /** How much manifest text loads inline. A manifest is meant to be the small layer; one
  *  that runs past this is over budget by its own design, so the read clips and says so
@@ -41,6 +50,8 @@ export interface PackagedImport {
   source: "arxiv"
   ref: string
   url: string
+  /** The paper version arXiv resolved the reference to; null until it is fetched. */
+  version: number | null
   status: "pending" | "fetching" | "ready" | "failed" | "dead"
   error: { code: string; detail: string | null } | null
 }
@@ -68,6 +79,15 @@ export interface ContextPackage {
   import: PackagedImport | null
 }
 
+/** The paper's own BibTeX entry, from the bundle version in hand. */
+const paperCitationOf = async (
+  blobs: BlobStore,
+  v: NonNullable<Awaited<ReturnType<MetaStore["getVersion"]>>>,
+) => {
+  const manifest = await manifestOf(blobs, v)
+  return manifest ? paperCitation(blobs, manifest) : null
+}
+
 /** The one answer every run-shaped surface gives an imported Context. */
 export const IMPORTED_NO_RUNS = (id: string): string =>
   `This Context is an imported paper. Read it with read("${id}"); it takes no runs.`
@@ -83,6 +103,7 @@ export const importStateOf = async (
     source: "arxiv",
     ref: x.import_ref,
     url: arxivAbsUrl(x.import_ref),
+    version: job?.resolved_version ?? null,
     // A context whose job is gone (an older row, a sweep) reads as ready: the manifest
     // says what it holds either way.
     status: job?.status ?? "ready",
@@ -103,6 +124,8 @@ export const assembleContextPackage = async (
     v: NonNullable<Awaited<ReturnType<MetaStore["getVersion"]>>>,
   ) => Promise<string | null>,
   online: boolean,
+  /** Needed only to read an imported paper's citation file; omit elsewhere. */
+  blobs?: BlobStore,
 ): Promise<ContextPackage> => {
   const base: ContextPackage = {
     context: { id: x.id, name: x.name, ask_policy: x.ask_policy, online },
@@ -123,6 +146,36 @@ export const assembleContextPackage = async (
   const raw = v ? ((await sourceText(v).catch(() => null)) ?? "") : ""
   if (!raw) return base
 
+  // An imported Context IS its paper: one artifact, no manifest written beside it. What a
+  // read inlines is a summary computed from the paper right here (who wrote it, what it
+  // is about, how to cite it) rather than its LaTeX, which a caller reads by short id,
+  // section by section, when it actually needs the text.
+  if (base.import) {
+    const citation = blobs && v ? await paperCitationOf(blobs, v).catch(() => null) : null
+    base.documents = [
+      {
+        short_id: manifestArtifact.short_id,
+        title: manifestArtifact.title,
+        kind: manifestArtifact.kind,
+        role: "paper",
+      },
+    ]
+    base.manifest = {
+      short_id: manifestArtifact.short_id,
+      title: manifestArtifact.title,
+      version: manifestArtifact.current_version,
+      content: paperSummary({
+        ref: base.import.ref,
+        title: manifestArtifact.title ?? base.import.ref,
+        authors: v?.author ?? null,
+        version: base.import.version,
+        abstract: abstractOf(raw),
+        bibtex: citation?.bibtex ?? null,
+      }),
+    }
+    return base
+  }
+
   const clipped = raw.length > MANIFEST_INLINE_MAX
   base.manifest = {
     short_id: manifestArtifact.short_id,
@@ -131,15 +184,6 @@ export const assembleContextPackage = async (
     content: clipped ? raw.slice(0, MANIFEST_INLINE_MAX) : raw,
     ...(clipped ? { clipped: true as const } : {}),
   }
-
-  // Bound documents are pointers too: the paper an imported Context wraps is read by its
-  // short id, never inlined into the package.
-  base.documents = await Promise.all(
-    parseManifestDocuments(raw).map(async (d) => {
-      const a = await meta.getByShortId(d.id).catch(() => null)
-      return { short_id: d.id, title: a?.title ?? null, kind: a?.kind ?? null, role: d.role }
-    }),
-  )
 
   // The SAME pin parsing the runner uses (manifest-pins), so the skills a reader is told
   // about are the skills a run would materialize — including the staleness, which is the

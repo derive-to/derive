@@ -1165,7 +1165,7 @@ describe("contexts: import from arXiv", () => {
     gzipSync(
       tarSync({
         "paper-src/paper.tex":
-          "\\documentclass{article}\n\\begin{document}\n\\input{main}\n\\section{Intro}\nSee \\cite{ref1}.\n\\bibliography{refs}\n\\end{document}\n",
+          "\\documentclass{article}\n\\begin{document}\n\\begin{abstract}\nWe propose a new simple network architecture.\n\\end{abstract}\n\\input{main}\n\\section{Intro}\nSee \\cite{ref1}.\n\\bibliography{refs}\n\\end{document}\n",
         "paper-src/main.tex": "A chapter, not the paper.",
         "paper-src/refs.bib": "@article{ref1, title={Ref}, author={A}, year={2020}}",
         "paper-src/paper.bbl":
@@ -1258,11 +1258,21 @@ describe("contexts: import from arXiv", () => {
     const listed = await (await app.request("/v1/contexts", { headers: as(member.email) })).json()
     expect(listed.contexts.map((x: { id: string }) => x.id)).toContain(created.id)
     expect(listed.contexts[0].import.status).toBe("pending")
-    // A member can already open it (workspace policy), and its manifest says "fetching".
+    // One artifact from the first second: the Context points at the paper, whose first
+    // version is a placeholder document saying the fetch is on its way. A member can open
+    // it (workspace policy) and reads it as a page, never as source.
     const before = await (
       await app.request(`/v1/contexts/${created.id}`, { headers: as(member.email) })
     ).json()
-    expect(before.manifest.md).toContain("Fetching this paper from arXiv")
+    expect(before.manifest).toBeNull()
+    expect(before.documents).toEqual([
+      { short_id: before.manifest_short_id, title: `arXiv:${ID}`, kind: "bundle", role: "paper" },
+    ])
+    const fetching = await app.request(
+      `/v1/artifacts/${before.manifest_short_id}/content?format=text`,
+      { headers: as(member.email) },
+    )
+    expect(await fetching.text()).toContain("Fetching this paper from arXiv")
     // Nothing has been fetched yet: the queue, not the request, talks to arXiv.
     expect(stub.calls).toHaveLength(0)
 
@@ -1281,19 +1291,17 @@ describe("contexts: import from arXiv", () => {
     ).json()
     expect(after.name).toBe("Attention Is All You Need")
     expect(after.import).toMatchObject({ status: "ready", version: 2, error: null })
-    expect(after.documents).toHaveLength(1)
-    expect(after.documents[0]).toMatchObject({ role: "paper", kind: "bundle" })
+    // Still one artifact, now the paper: the same short id the queue created.
+    expect(after.documents).toEqual([
+      {
+        short_id: before.manifest_short_id,
+        title: "Attention Is All You Need",
+        kind: "bundle",
+        role: "paper",
+      },
+    ])
+    expect(after.manifest).toBeNull()
     expect(after.bibtex).toContain("@misc{vaswani2024attention")
-    const md: string = after.manifest.md
-    expect(md).toContain(`documents:\n  - id: ${after.documents[0].short_id}\n    role: paper`)
-    expect(md).toContain(
-      "# Attention Is All You Need\n\nAshish Vaswani, Noam Shazeer · 2024 · arXiv:2401.12345 (cs.CL)",
-    )
-    expect(md).toContain(
-      "## Abstract\n\nWe propose a new simple network architecture, the Transformer & friends.",
-    )
-    expect(md).toContain("```bibtex\n@misc{vaswani2024attention")
-    expect(md).toContain("unwrapped the top-level directory paper-src/")
     expect(after.description).toContain("Ashish Vaswani")
 
     // The paper: a LaTeX bundle entering at the real paper, with its citation file, the
@@ -1305,10 +1313,19 @@ describe("contexts: import from arXiv", () => {
     ).json()
     expect(paper.title).toBe("Attention Is All You Need")
     expect(paper.locked).toBe(true)
-    expect(paper.versions[0].author).toBe("Ashish Vaswani, Noam Shazeer")
+    // v1 was the placeholder the queue published; v2 is the paper, by its own authors.
+    expect(paper.versions.map((v: { author: string }) => v.author)).toEqual([
+      "arXiv",
+      "Ashish Vaswani, Noam Shazeer",
+    ])
+    expect(paper.current_version).toBe(2)
+    expect(paper.import_source).toBe("arxiv")
     const row = await meta.getByShortId(paper.short_id)
-    const v = row ? await meta.getVersion(row.id, 1) : null
+    const v = row ? await meta.getVersion(row.id, paper.current_version) : null
     expect(v?.content_type).toBe("derive/latex")
+    // What the import decided rides on the version, not in a second document.
+    expect(v?.message).toContain(`Imported from arXiv:${ID}v2`)
+    expect(v?.message).toContain("unwrapped the top-level directory paper-src/")
     const manifest = JSON.parse(
       new TextDecoder().decode((await ctx.blobs.get(v?.blob_key ?? "")) ?? undefined),
     )
@@ -1327,14 +1344,31 @@ describe("contexts: import from arXiv", () => {
       "arxiv",
       `arxiv:${ID}`,
     ])
-    // Rendered through the LaTeX engine like any paper.
+    // A person reads the paper, never its LaTeX: `content` answers in prose whatever it
+    // is asked for, and the source-shaped routes are not there for them.
     const page = await app.request(`/v1/artifacts/${paper.short_id}/content`, {
       headers: as(member.email),
     })
     expect(page.status).toBe(200)
-    expect(await page.text()).toContain("Intro")
+    const prose = await page.text()
+    expect(prose).toContain("Intro")
+    expect(prose).not.toContain("\\documentclass")
+    expect(prose).not.toContain("\\bibliography")
+    for (const path of [
+      `/v1/artifacts/${paper.short_id}/source.zip`,
+      `/v1/artifacts/${paper.short_id}/files/paper.tex`,
+      `/v1/artifacts/${paper.short_id}/bib`,
+      `/v1/artifacts/${paper.short_id}/diff?from=1&to=2`,
+    ])
+      expect((await app.request(path, { headers: as(member.email) })).status).toBe(404)
+    // The rendered page is what the viewer shows, and `?raw=1` cannot peel it back.
+    const rawTry = await app.request(
+      `/raw/${paper.short_id}/v/${paper.current_version}/paper.tex?raw=1`,
+      { headers: as(member.email) },
+    )
+    expect(await rawTry.text()).not.toContain("\\documentclass")
 
-    // Read-only for people: no new version, no restore, on the paper or the manifest.
+    // Read-only for people: no new version, no restore.
     expect(
       (await publishAs(app, "\\documentclass{article}", {}, as(owner.email), paper.short_id))
         .status,
@@ -1414,13 +1448,12 @@ describe("contexts: import from arXiv", () => {
     expect(stub.calls.slice(before).map((u) => new URL(u).pathname)).toEqual(["/api/query"])
     const resumed = await meta.getImportJobForContext(a.id)
     expect(resumed).toMatchObject({ status: "ready", paper_artifact_id: done.paper_artifact_id })
-    const detail = await (
-      await app.request(`/v1/contexts/${a.id}`, { headers: as(owner.email) })
-    ).json()
-    expect(detail.manifest.md).toContain("resumed after an interrupted import")
+    // Resuming republishes nothing: the paper it already published stands.
+    const paper = await meta.getArtifactById(done.paper_artifact_id ?? "")
+    expect(paper?.current_version).toBe(2)
   })
 
-  it("gives up on arXiv's verdicts without retrying, and writes the failure into the manifest", async () => {
+  it("gives up on arXiv's verdicts without retrying, and says so on the paper's page", async () => {
     const cases: [string, Stub | undefined, Stub | undefined, string][] = [
       ["2403.00001", () => new Response(ERROR_ATOM), undefined, "not_found"],
       [
@@ -1469,10 +1502,14 @@ describe("contexts: import from arXiv", () => {
       } else {
         expect(job).toMatchObject({ status: "dead", attempts: 1 })
         expect(detail.import).toMatchObject({ status: "dead", error: { code } })
-        expect(detail.manifest.md).toContain("Import failed:")
-        expect(detail.manifest.md).not.toContain("Fetching this paper")
-        // Nothing was published for it.
-        expect(detail.documents).toEqual([])
+        // The one artifact says so on its page: it never keeps saying "fetching".
+        const page = await app.request(
+          `/v1/artifacts/${detail.manifest_short_id}/content?format=text`,
+          { headers: as(owner.email) },
+        )
+        const text = await page.text()
+        expect(text).toContain("Import failed:")
+        expect(text).not.toContain("Fetching this paper")
       }
       // Its owner can queue it again; the count starts over.
       const retry = await app.request(`/v1/contexts/${x.id}/import/retry`, {
@@ -1526,11 +1563,11 @@ describe("contexts: import from arXiv", () => {
       await app.request(`/v1/contexts/${x.id}`, { headers: as(owner.email) })
     ).json()
     expect(detail.import.status).toBe("ready")
-    expect(detail.manifest.md).toMatch(
+    const paper = await meta.getByShortId(detail.documents[0].short_id)
+    const v = paper ? await meta.getVersion(paper.id, paper.current_version) : null
+    expect(v?.message).toMatch(
       /shrank 1 figure to at most 1600 px on the long side \(\d+\.\d MB → \d+\.\d MB\)/,
     )
-    const paper = await meta.getByShortId(detail.documents[0].short_id)
-    const v = paper ? await meta.getVersion(paper.id, 1) : null
     const manifest = JSON.parse(
       new TextDecoder().decode((await ctx.blobs.get(v?.blob_key ?? "")) ?? undefined),
     )
@@ -1578,8 +1615,11 @@ describe("contexts: import from arXiv", () => {
     const failed = await (
       await app.request(`/v1/contexts/${y.id}`, { headers: as(owner.email) })
     ).json()
-    expect(failed.documents).toEqual([])
-    expect(failed.manifest.md).toContain("Import failed:")
+    const failedPage = await app.request(
+      `/v1/artifacts/${failed.manifest_short_id}/content?format=text`,
+      { headers: as(owner.email) },
+    )
+    expect(await failedPage.text()).toContain("Import failed:")
   }, 30_000)
 
   it("hands the arXiv gate back before shrinking, so the next import fetches meanwhile", async () => {

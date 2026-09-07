@@ -97,14 +97,15 @@ lapses. The next pull serves it again.
 ## Imported papers
 
 A workspace can import a paper from arXiv as a Context (the "Import a paper from arXiv" door
-on the new-context page). The result is read-only: `find` lists it with an `import` block
-instead of an online flag, `read({ short_id: "ctx_..." })` loads a manifest carrying the
-title, authors, abstract and the paper's BibTeX, and `documents` points at the paper bundle
-(the LaTeX source with its figures and bibliography, published locked). Read the bundle by
-its short id for the full text; its outline carries `citation` (the key and BibTeX to cite
-the paper itself). While `import.status` is `pending` or `fetching` the source is still on
-its way; `failed` and `dead` carry an error code. An imported Context takes no runs: `use`
-refuses it, and nothing polls its queue.
+on the new-context page). The Context IS the paper: one artifact, no manifest beside it.
+`find` lists it with an `import` block instead of an online flag, and
+`read({ short_id: "ctx_..." })` returns a summary computed from the paper (title, authors,
+abstract, its BibTeX) with `documents` naming the one artifact it lives in. Read that short
+id for the full LaTeX source, section by section; its outline carries `citation` (the key
+and BibTeX to cite the paper itself). People see the rendered paper and never its source,
+which is yours to read: that is how you understand it. While `import.status` is `pending` or
+`fetching` the source is still on its way; `failed` and `dead` carry an error code. An
+imported Context takes no runs: `use` refuses it, and nothing polls its queue.
 
 ## Creating a Context (owners)
 

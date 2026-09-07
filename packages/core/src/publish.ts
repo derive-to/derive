@@ -101,6 +101,9 @@ export interface PublishInput {
   /** Provenance for a NEW artifact created from another artifact or a pinned
    * template entry. The API validates read access before passing the internal id. */
   derivedFrom?: string | null
+  /** Where a NEW artifact's content came from when a machine fetched it (`arxiv`).
+   *  Set-on-create, like the access triple; a republish never re-stamps it. */
+  importSource?: string | null
   /** Trusted artifact record already authorized by the caller for a republish. The core
    *  still validates its short id and kind. Omit when the caller does not already hold the
    *  row; storage remains the exact fallback. This removes a serial read before addVersion
@@ -527,6 +530,7 @@ export async function publish(
     spa: input.spa ? 1 : 0,
     expires_at: input.expiresAt ?? null,
     derived_from: input.derivedFrom ?? null,
+    import_source: input.importSource ?? null,
   })
   const version = await meta.addVersion(artifact.id, {
     id: newId("v"),
@@ -568,6 +572,9 @@ export const toJson = (baseUrl: string, a: ArtifactRecord, versions: VersionReco
   password_protected: !!a.password_hash,
   spa: !!a.spa,
   locked: !!a.locked,
+  /** `arxiv` when a machine fetched this content; null when someone authored it here.
+   *  The viewer shows an imported paper as the paper, never as source to edit. */
+  import_source: a.import_source ?? null,
   current_version: a.current_version,
   created_at: a.created_at,
   /** Bumped on each new version; drives "most recently updated" sort + the label. */

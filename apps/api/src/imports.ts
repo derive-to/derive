@@ -22,7 +22,7 @@ import {
   type ImportDeps,
   ImportFailure,
   importArxivPaper,
-  writeFailedManifest,
+  writeFailedPaper,
 } from "./lib/arxiv-import"
 import { log } from "./log"
 
@@ -140,7 +140,7 @@ export const runImportTick = async (deps: ImportTickDeps): Promise<number> => {
       updated_at: iso(now()),
     })
     if (terminal)
-      await writeFailedManifest(
+      await writeFailedPaper(
         { ...deps, now, sleep },
         job,
         `${importFailureCopy(failure.code)}${failure.terminal ? "" : " Derive tried three times."}`,

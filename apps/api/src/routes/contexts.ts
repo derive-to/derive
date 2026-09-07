@@ -1,5 +1,6 @@
 import { refRouter } from "@derive/broker"
 import {
+  type ArtifactRecord,
   arxivAbsUrl,
   type ContextAskerRecord,
   type ContextRecord,
@@ -27,7 +28,7 @@ import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
 import { isAbandoned } from "../lib/abandoned-turn"
 import { agentWritesOff } from "../lib/agent-writes"
-import { stubManifest } from "../lib/arxiv-manifest"
+import { bylineOf, fetchingPaper } from "../lib/arxiv-paper"
 import { resolveActorBrandprint } from "../lib/brandprint"
 import {
   brokerFor,
@@ -51,7 +52,6 @@ import { bail, fail, readJson } from "../lib/http"
 import { paperCitation } from "../lib/latex-bundle"
 import {
   manifestDescription,
-  parseManifestDocuments,
   parseManifestRepos,
   parseManifestSkillPins,
   stalePins,
@@ -989,29 +989,15 @@ export const contextRoutes = (ctx: AppContext) => {
     import: importJson(x, job),
   })
 
-  /** The documents a manifest binds, resolved to their artifacts (unknown ids stay as
-   *  pointers with a null title, like an unresolved skill pin). */
-  const manifestDocuments = async (md: string) =>
-    Promise.all(
-      parseManifestDocuments(md).map(async (d) => {
-        const a = await meta.getByShortId(d.id).catch(() => null)
-        return {
-          short_id: d.id,
-          title: a?.title ?? null,
-          kind: a?.kind ?? null,
-          role: d.role,
-        }
-      }),
-    )
+  /** An imported Context is one artifact: the paper. It names itself as its document, so
+   *  a reader has one short id to open and an agent has one to read. */
+  const paperDocuments = (paper: ArtifactRecord) => [
+    { short_id: paper.short_id, title: paper.title, kind: paper.kind, role: "paper" as const },
+  ]
 
-  /** The bound paper's own BibTeX entry (its bundle's CITATION.bib), for Copy BibTeX. */
-  const documentsBibtex = async (
-    docs: Awaited<ReturnType<typeof manifestDocuments>>,
-  ): Promise<string | null> => {
-    const paper = docs.find((d) => d.role === "paper" && d.kind === "bundle") ?? null
-    if (!paper) return null
-    const a = await meta.getByShortId(paper.short_id).catch(() => null)
-    const v = a ? await meta.getVersion(a.id, a.current_version).catch(() => null) : null
+  /** The paper's own BibTeX entry (its bundle's CITATION.bib), for Copy BibTeX. */
+  const paperBibtex = async (paper: ArtifactRecord): Promise<string | null> => {
+    const v = await meta.getVersion(paper.id, paper.current_version).catch(() => null)
     const manifest = v ? await manifestOf(ctx.blobs, v) : null
     return manifest ? ((await paperCitation(ctx.blobs, manifest))?.bibtex ?? null) : null
   }
@@ -1139,6 +1125,15 @@ export const contextRoutes = (ctx: AppContext) => {
     description: md ? manifestDescription(md) : null,
     skills_count: md ? parseManifestSkillPins(md).length : 0,
     manifest_version: manifestVersion,
+  })
+
+  /** The same slice for an imported Context, whose artifact is the paper: its first
+   *  paragraph is LaTeX, so the row says who wrote it instead. `author` is the paper's
+   *  author line, recorded on the version the import published. */
+  const paperSummaryRow = (x: ContextRecord, author: string | null, version: number | null) => ({
+    description: x.import_ref ? bylineOf(x.import_ref, author ? [author] : [], null) : null,
+    skills_count: 0,
+    manifest_version: version,
   })
 
   /** A session's context + manifest, or null when either half is gone. */
@@ -1331,6 +1326,17 @@ export const contextRoutes = (ctx: AppContext) => {
           const manifest = x.manifest_short_id
             ? await meta.getArtifactById(x.manifest_artifact_id).catch(() => null)
             : null
+          // An imported Context's artifact is the paper itself, whose first paragraph is
+          // LaTeX: its row says who wrote it, from the version the import published.
+          if (x.import_source) {
+            const v = manifest
+              ? await meta.getVersion(manifest.id, manifest.current_version).catch(() => null)
+              : null
+            return {
+              ...contextJson(x, x.manifest_short_id, jobs.get(x.id) ?? null),
+              ...paperSummaryRow(x, v?.author ?? null, manifest?.current_version ?? null),
+            }
+          }
           const md = manifest ? await manifestBody(manifest) : null
           return {
             ...contextJson(x, x.manifest_short_id, jobs.get(x.id) ?? null),
@@ -1413,22 +1419,30 @@ export const contextRoutes = (ctx: AppContext) => {
       if ((await meta.countActiveImportJobs(org)) >= MAX_ACTIVE_IMPORTS_PER_WORKSPACE)
         return bail(fail(c, 429, "too many imports in progress; wait for one to finish"))
 
-      // The stub manifest first, so a Context never exists without its definition; the
-      // job last, so a Context never exists without something that will fill it in.
+      // The paper's own artifact first, so a Context never exists without one, and the job
+      // last, so a Context never exists without something that will fill it in. The paper
+      // IS the Context's artifact: this version is a placeholder document that says the
+      // fetch is on its way, and the worker republishes it as the paper itself.
       const settings = await meta.getOrgSettings(org).catch(() => null)
       const stub = await publish(meta, ctx.blobs, {
-        bytes: new TextEncoder().encode(stubManifest(ref.id)),
-        filename: "manifest.md",
-        isBundle: false,
+        bytes: new Uint8Array(),
+        filename: `${ref.id.replace(/\//g, "_")}.zip`,
+        isBundle: true,
+        files: { "/main.tex": new TextEncoder().encode(fetchingPaper(ref.id)) },
         orgId: org,
-        title: `arXiv:${ref.id} — context instructions`,
+        title: `arXiv:${ref.id}`,
         author: "arXiv",
         authorId: null,
         source: "api",
+        message: `Importing arXiv:${ref.canonical}`,
+        importSource: "arxiv",
         workspaceAccess: settings?.defaultWorkspaceAccess ?? "member",
         linkRole: "none",
         listed: "none",
       })
+      // Locked from the first version: nobody edits a paper arXiv published. The worker
+      // republishes it through the core, which the lock never gates (only routes do).
+      await meta.setLocked(stub.artifact.id, 1)
       await meta.setArtifactMember({
         id: newId("am"),
         artifact_id: stub.artifact.id,
@@ -1592,10 +1606,15 @@ export const contextRoutes = (ctx: AppContext) => {
       // the runner's system prompt and the console's package are the same document,
       // read once.
       const v = await meta.getVersion(manifest.id, manifest.current_version)
-      const md = v ? await sourceText(v) : null
+      // An imported Context's artifact is the paper: never read as a manifest, and never
+      // handed to a runner as a system prompt.
+      const imported = !!x.import_source
+      const md = imported ? null : v ? await sourceText(v) : null
       const base = {
         ...contextJson(x, manifest.short_id, job),
-        ...manifestSummary(md, manifest.current_version),
+        ...(imported
+          ? paperSummaryRow(x, v?.author ?? null, manifest.current_version)
+          : manifestSummary(md, manifest.current_version)),
       }
       // The runner's own config fetch: its system prompt is the manifest's current
       // source, so a manifest edit reconfigures the runner with no deploy. The resolved
@@ -1604,6 +1623,8 @@ export const contextRoutes = (ctx: AppContext) => {
       // pin-health/repos package below — that's presentation for a reader, and the
       // runner already has the same source to parse for itself.
       if (agent) {
+        // md is null for an imported Context, so a runner pointed at one refuses to serve
+        // rather than booting with a paper as its instructions.
         return c.json({ ...base, manifest_md: md, brandprint: await resolveContextBrandprint(x) })
       }
       // A human with ask-access: the manifest framed as a package rather than a raw
@@ -1627,24 +1648,26 @@ export const contextRoutes = (ctx: AppContext) => {
           }
         }),
       )
-      const documents = md ? await manifestDocuments(md) : []
       return c.json({
         ...base,
-        manifest: md
-          ? {
-              short_id: manifest.short_id,
-              title: manifest.title,
-              version: manifest.current_version,
-              md,
-              pushed_at: v?.created_at ?? manifest.created_at,
-            }
-          : null,
+        // The paper is not a manifest: a reader gets the rendered artifact, never its
+        // source, so an imported Context carries no `manifest` block at all.
+        manifest:
+          md && !imported
+            ? {
+                short_id: manifest.short_id,
+                title: manifest.title,
+                version: manifest.current_version,
+                md,
+                pushed_at: v?.created_at ?? manifest.created_at,
+              }
+            : null,
         skills,
         repos: md ? parseManifestRepos(md) : [],
         max_run_ms: x.max_run_ms,
         max_concurrency: x.max_concurrency,
-        documents,
-        bibtex: x.import_source ? await documentsBibtex(documents) : null,
+        documents: imported ? paperDocuments(manifest) : [],
+        bibtex: imported ? await paperBibtex(manifest) : null,
       })
     },
   )
@@ -1672,10 +1695,8 @@ export const contextRoutes = (ctx: AppContext) => {
       if (!x || x.org_id !== (await activeWorkspace(c))) return bail(fail(c, 404, "not found"))
       if (x.created_by !== owner && !(await workspaceCan(c, "manage")))
         return bail(fail(c, 403, "forbidden"))
-      // An imported Context's manifest was generated for it and means nothing without it,
-      // so discarding the Context removes the manifest too (its cascade takes the context,
-      // the job and the roster). A paper the import already published stays in the library:
-      // it is a real, locked artifact people may have linked to.
+      // An imported Context IS its paper: one artifact, so discarding the Context takes it
+      // (the artifact cascade removes the context, its job and its roster with it).
       if (x.import_source)
         await deleteArtifactAndUnindex(meta, ctx.search, x.manifest_artifact_id, x.org_id)
       else await meta.deleteContext(x.id, x.org_id)

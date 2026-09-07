@@ -24,7 +24,10 @@ for the recommended install and verification flow.
   every worker. The paper publishes as a locked LaTeX bundle (the archive's `00README`
   entry, figures intact, `CITATION.bib` beside the bibliography, tagged `arxiv`, no world
   link) and the Context's generated manifest carries the byline, abstract and BibTeX.
-  Agents `find` and `read` it (`documents` points at the paper, whose outline gains
+  The Context IS the paper: one artifact, whose page renders it and whose LaTeX a person
+  never sees (no file list, source download, bibliography editor, diff or raw serve), while
+  agents keep full source access. `find` and `read` describe it (`read` returns a summary
+  computed from the paper and `documents` names the one artifact, whose outline gains
   `citation`); `use` and sessions refuse it. A source over the 50 MB bundle limit has its
   raster figures re-encoded in place, largest first, to a bounded long side (1600, then
   1200, then 900 px) until it fits, noted in the manifest; PDF and EPS figures are never

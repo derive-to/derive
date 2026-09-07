@@ -132,6 +132,11 @@ export const artifact = sqliteTable("artifact", {
   // template"). Deliberately not an FK — the source may be deleted later and the
   // copy must survive it. Nullable, no default, so it ALTER ADDs cleanly.
   derived_from: text("derived_from"),
+  // Where this artifact's CONTENT came from, when a machine fetched it rather than a
+  // person writing it (`arxiv`). Null for everything anyone authored here. It decides
+  // how the artifact is presented, not who may read it: an imported paper is shown as
+  // the paper, never as the source somebody would edit.
+  import_source: text("import_source"),
 })
 
 // Small mutable JSON collections for interactive artifacts. One row per

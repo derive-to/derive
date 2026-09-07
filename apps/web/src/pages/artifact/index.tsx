@@ -1036,7 +1036,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
   // the tab out rather than showing an empty panel.
   const bibQ = useQuery({
     ...bibQuery(shortId, shownVersion),
-    enabled: shownVersion > 0 && isPaperBundle(art),
+    enabled: shownVersion > 0 && isPaperBundle(art) && !art?.import_source,
   })
 
   if (locked) return <PasswordGate shortId={shortId} onUnlocked={() => refetch()} />
@@ -1083,7 +1083,10 @@ export function Artifact({ template = false }: { template?: boolean }) {
   const shown = version ?? inlineEdit.frozenVersion ?? art.current_version
   const dynamicSlots = dynamicQ.data?.slots ?? []
   const dataEnabled = dynamicSlots.length > 0
-  const referencesEnabled = isPaperBundle(art) && !!bibQ.data
+  // A paper Derive fetched from arXiv is read, not worked on: no file list, no source
+  // download, no bibliography editor, no diff of its LaTeX. Its page is the paper.
+  const importedPaper = !!art.import_source
+  const referencesEnabled = isPaperBundle(art) && !!bibQ.data && !importedPaper
   const pinnedForShown =
     pinnedRawToken.current?.shortId === shortId && pinnedRawToken.current.version === shown
   // A background failure may leave old metadata available, but an expired capability
@@ -1349,7 +1352,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
       onDeckArrange={
         isDeckLike && deck && deck.slides.length >= 2 && canEditDoc ? toggleDeckArrange : undefined
       }
-      readOnlyView={isAnon || isGuest}
+      readOnlyView={isAnon || isGuest || !!art.import_source}
     />
   )
 
@@ -1647,7 +1650,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
               }}
               isDeck={isDeckLike}
               videoMoment={video ? { scene: video.id, timeMs: video.elapsedMs } : undefined}
-              sourceZipHref={isPaper ? api.sourceZipUrl(shortId, shown) : null}
+              sourceZipHref={isPaper && !importedPaper ? api.sourceZipUrl(shortId, shown) : null}
               canLock={canLock}
               canMove={canMove}
               automateBeta={automateBeta}
@@ -1715,7 +1718,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
               <DerivedFromBanner art={art} />
             )}
             {/* A paper keeps its bar above the open editor: the chips switch files. */}
-            {art.bundle && (!editing || isPaperBundle(art)) && (
+            {art.bundle && !importedPaper && (!editing || isPaperBundle(art)) && (
               <BundleBar
                 bundle={art.bundle}
                 shortId={shortId}

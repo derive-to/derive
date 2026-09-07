@@ -7053,6 +7053,8 @@ export interface components {
             current_content_type?: string | null;
             /** @description When true, direct publishes are blocked — changes go through review. */
             locked?: boolean;
+            /** @description `arxiv` when Derive fetched this content rather than someone authoring it here. Such a paper is read as it renders: its source is for agents, so the viewer offers no file list, source download, bibliography editor or diff. */
+            import_source?: string | null;
             /**
              * @description v2 access: member = workspace seats reach it at their role; none = they don't.
              * @enum {string}

@@ -55,7 +55,17 @@ const EXT_OF_TYPE: Record<string, string> = {
  * through the one publish path, so every guard and receipt stays where it is.
  */
 export const latexRoutes = (ctx: AppContext) => {
-  const { meta, blobs, deps, requireArtifact, actorFor, actingUser, agentFor, isToken } = ctx
+  const {
+    meta,
+    blobs,
+    deps,
+    requireArtifact,
+    actorFor,
+    actingUser,
+    agentFor,
+    isToken,
+    sourceHiddenFrom,
+  } = ctx
   const app = new Hono()
 
   // Signed-in people and agents. Anonymous callers get nothing: the CVPR starter costs an
@@ -85,6 +95,10 @@ export const latexRoutes = (ctx: AppContext) => {
     const artifact = await requireArtifact(c, "read")
     if (artifact instanceof Response) return artifact
     if (artifact.current_version === 0) return fail(c, 404, "not found")
+    // A paper Derive fetched is read on its page, not downloaded as source (agents keep
+    // the source; see sourceHiddenFrom).
+    if (await sourceHiddenFrom(c, artifact))
+      return fail(c, 404, "this paper is read on its page; its source is not downloadable")
     if (artifact.removed_at) return fail(c, 410, TOMBSTONE)
     const vq = c.req.query("v")
     const n = vq ? Number.parseInt(vq, 10) : artifact.current_version

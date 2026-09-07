@@ -190,6 +190,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     unlockLimiter,
     sourceText,
     dynamicSlots,
+    sourceHiddenFrom,
   } = ctx
   const app = new OpenAPIHono<BlankEnv>()
 
@@ -2689,11 +2690,19 @@ export const artifactRoutes = (ctx: AppContext) => {
     if (!version) return fail(c, 404, `no version ${v}`)
 
     const formatQ = c.req.query("format")
-    const format = formatQ === "markdown" || formatQ === "text" ? formatQ : null
+    // A fetched paper answers a person in prose, never as LaTeX: `format` is forced to
+    // text for them, and the section escape (which reaches any bundle file) is refused.
+    // Agents keep every form; reading the source is how a model understands the paper.
+    const hideSource = await sourceHiddenFrom(c, artifact)
+    const format = hideSource
+      ? "text"
+      : formatQ === "markdown" || formatQ === "text"
+        ? formatQ
+        : null
     // "*" forces full content — the escape hatch a caller uses after already
     // seeing (or skipping) the outline, same sentinel the MCP `read` tool takes.
     const sectionQ = c.req.query("section")
-    const section = sectionQ && sectionQ !== "*" ? sectionQ : null
+    const section = hideSource ? null : sectionQ && sectionQ !== "*" ? sectionQ : null
     const outline = c.req.query("outline") === "1"
     const present = (source: string, contentType: string): string => {
       if (!format) return source
@@ -2895,6 +2904,8 @@ export const artifactRoutes = (ctx: AppContext) => {
   app.get("/v1/artifacts/:shortId/diff", async (c) => {
     const artifact = await requireArtifact(c, "read")
     if (artifact instanceof Response) return artifact
+    // A diff of a fetched paper is a diff of its LaTeX; a person reads the paper instead.
+    if (await sourceHiddenFrom(c, artifact)) return fail(c, 404, "not found")
     if (artifact.current_version === 0) return fail(c, 404, "not found")
     const cur = artifact.current_version
     const from = c.req.query("from") ? Number(c.req.query("from")) : Math.max(1, cur - 1)

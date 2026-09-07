@@ -1195,7 +1195,7 @@ describe("imported papers over MCP — read-only, cited, never run", () => {
   it("find shows the import, read loads the pointer and the citation, use refuses", async () => {
     const ID = "2405.00001"
     const tex =
-      "\\documentclass{article}\n\\begin{document}\n\\section{Intro}\nHello.\n\\end{document}\n"
+      "\\documentclass{article}\n\\begin{document}\n\\begin{abstract}\nAn abstract.\n\\end{abstract}\n\\section{Intro}\nHello.\n\\end{document}\n"
     const atom = `<feed xmlns="http://www.w3.org/2005/Atom" xmlns:arxiv="http://arxiv.org/schemas/atom"><entry><id>http://arxiv.org/abs/${ID}v1</id><published>2024-05-01T00:00:00Z</published><title>Reading Papers</title><summary>An abstract.</summary><author><name>Ada Lovelace</name></author><arxiv:primary_category term="cs.DL"/></entry></feed>`
     const bibtex = `@misc{lovelace2024reading,\n  title={Reading Papers},\n  author={Ada Lovelace},\n  year={2024},\n  eprint={${ID}},\n  archivePrefix={arXiv}\n}`
     const stub = (async (input: string | URL | Request) => {
@@ -1258,14 +1258,22 @@ describe("imported papers over MCP — read-only, cited, never run", () => {
     expect(rows[0].note).toContain("takes no runs")
 
     const pkg = await call(app, ownerBot.token, "read", { short_id: queued.id })
-    expect(pkg.import).toMatchObject({ source: "arxiv", ref: ID, status: "ready" })
-    expect(pkg.documents).toHaveLength(1)
-    expect(pkg.documents[0]).toMatchObject({
-      role: "paper",
-      kind: "bundle",
-      title: "Reading Papers",
-    })
+    expect(pkg.import).toMatchObject({ source: "arxiv", ref: ID, status: "ready", version: 1 })
+    // One artifact: the Context's own, named as its paper.
+    expect(pkg.documents).toEqual([
+      {
+        short_id: queued.manifest_short_id,
+        title: "Reading Papers",
+        kind: "bundle",
+        role: "paper",
+      },
+    ])
+    // The summary is computed from the paper, never stored beside it.
+    expect(pkg.manifest.content).toContain("# Reading Papers")
+    expect(pkg.manifest.content).toContain("Ada Lovelace · arXiv:2405.00001v1")
     expect(pkg.manifest.content).toContain("## Abstract\n\nAn abstract.")
+    expect(pkg.manifest.content).toContain("```bibtex\n@misc{lovelace2024reading")
+    expect(pkg.manifest.content).not.toContain("\\documentclass")
     expect(pkg.how).toContain("takes no runs")
 
     const paper = await call(app, ownerBot.token, "read", { short_id: pkg.documents[0].short_id })

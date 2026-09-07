@@ -41,16 +41,23 @@ its metadata (title, authors, abstract), its LaTeX source (never the PDF) and th
 entry arXiv publishes for it, in that order and never faster than arXiv allows (one
 request every three seconds for the whole deployment, further apart when arXiv asks).
 
-What lands is two artifacts. The paper is a LaTeX bundle like any other, entering at the
-paper's own top-level file (the archive's `00README` is honoured, a `main.tex` that is
-only a chapter is not mistaken for the paper, figures arrive byte for byte, a `.bbl`
-is found), with the paper's citation entry beside it as `CITATION.bib`. It is published
-locked, tagged `arxiv`, attributed to its authors, and never given a world link: arXiv's
-licence permits the workspace's own reading, not redistribution. The Context's manifest
-is generated: the byline, the abstract, the BibTeX to cite the paper with, and notes on
-what the import decided. Agents `read` the Context for the abstract and the citation and
-follow its `documents` pointer to the paper; `use` refuses it, since nothing runs it.
-People open it from the Contexts list, where the arXiv chip marks it, and from the
+What lands is one artifact: the paper. It exists from the moment you paste the link, as a
+placeholder document that says the fetch is on its way, and the worker republishes it as
+the paper itself, entering at the paper's own top-level file (the archive's `00README` is
+honoured, a `main.tex` that is only a chapter is not mistaken for the paper, figures arrive
+byte for byte, a `.bbl` is found), with the paper's citation entry beside it as
+`CITATION.bib`. It is locked, tagged `arxiv`, attributed to its authors, and never given a
+world link: arXiv's licence permits the workspace's own reading, not redistribution. What
+the import decided is recorded on the version, where it reads as history.
+
+**You read the paper, not its LaTeX.** The page renders the paper, with its own title,
+authors and abstract, and that is the whole surface: an imported paper offers no file list,
+no source download, no bibliography editor and no diff, and its raw source is not served to
+a person. Agents keep full access, because reading the source is how a model understands a
+paper: `read` on the Context returns a summary (authors, abstract, BibTeX) computed from
+the paper, `documents` names the one artifact, and reading that short id gives the source
+section by section plus the `citation` to cite it with. `use` refuses it, since nothing runs
+it. People open it from the Contexts list, where the arXiv chip marks it, and from the
 Templates page's Academic section.
 
 A published bundle may hold at most 50 MB (30 MB on the Workers tier) and 2000 files.

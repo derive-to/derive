@@ -31,7 +31,8 @@ CREATE TABLE IF NOT EXISTS artifact (
   author_avatar TEXT,
   author_gh_id TEXT,
   author_id TEXT,
-  derived_from TEXT
+  derived_from TEXT,
+  import_source TEXT
 );
 
 CREATE TABLE IF NOT EXISTS shared_state (

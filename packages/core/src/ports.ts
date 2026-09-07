@@ -191,6 +191,9 @@ export interface ArtifactRecord {
   author_id: string | null
   /** Remix lineage: the artifact id this one was derived from ("use as template").
    *  Null for ordinary artifacts. Not an FK — the copy outlives a deleted source. */
+  /** Where this artifact's content came from when a machine fetched it (`arxiv`); null
+   *  for anything a person or agent authored here. Decides presentation, not access. */
+  import_source: string | null
   derived_from: string | null
 }
 
@@ -573,6 +576,8 @@ export interface NewArtifact {
   /** Remix lineage: the artifact id this one was derived from ("use as template").
    *  Omit for ordinary artifacts; never an FK — the copy outlives its source. */
   derived_from?: string | null
+  /** Import provenance (`arxiv`); omitted → null. */
+  import_source?: string | null
 }
 
 /** Which surface created a version: the web app, the MCP publish tool, the HTTP API

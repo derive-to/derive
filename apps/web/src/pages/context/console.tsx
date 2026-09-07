@@ -425,7 +425,13 @@ function ImportedConsole({
       nav({ to: "/contexts" })
     },
   })
-  const paper = context.documents?.find((d) => d.role === "paper") ?? context.documents?.[0]
+  // One artifact: the paper itself, which the Context points at. `documents` names it too,
+  // so either resolves; the manifest short id is the fallback while it is still fetching.
+  const paper = context.documents?.find((d) => d.role === "paper") ??
+    context.documents?.[0] ?? {
+      short_id: context.manifest_short_id ?? "",
+      title: context.name,
+    }
   if (!imp) return null
   const inFlight = importInFlight(imp.status)
   const failed = imp.status === "failed" || imp.status === "dead"
@@ -531,7 +537,7 @@ function ImportedConsole({
         >
           <div className="rounded-xl border bg-card p-4">
             <SectionTitle as="h2">Paper</SectionTitle>
-            {paper ? (
+            {paper.short_id ? (
               <div className="mt-2 flex flex-col gap-2">
                 <div className="flex items-center gap-2">
                   <span className="min-w-0 truncate text-sm font-medium text-foreground">
@@ -589,11 +595,6 @@ function ImportedConsole({
           <ContextAccess id={id} name={context.name} policy={context.ask_policy} />
         </div>
       )}
-
-      <div className="flex flex-col gap-3">
-        <SectionTitle as="h2">Definition</SectionTitle>
-        <ManifestTab context={context} />
-      </div>
     </PageShell>
   )
 }
