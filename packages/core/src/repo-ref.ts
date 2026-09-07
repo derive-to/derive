@@ -153,6 +153,11 @@ export const repoArchiveUrl = (ref: RepoRef): string => {
   return `${ref.origin}/${ref.owner}/${ref.name}/-/archive/${at}/${ref.name}-${at}.tar.gz`
 }
 
+/** The same repository at another branch or tag — how a submodule's declared branch is
+ *  applied. Null when the name is not one a path may carry. */
+export const repoRefAt = (ref: RepoRef, at: string | null): RepoRef | null =>
+  at === null ? ref : build(ref.host, ref.origin, ref.owner, ref.name, at)
+
 /** Where a person opens the repository: its page on its own host. */
 export const repoWebUrl = (ref: RepoRef): string =>
   `${ref.origin}/${ref.owner}/${ref.name}${ref.ref ? `/tree/${ref.ref}` : ""}`

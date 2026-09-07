@@ -113,6 +113,24 @@ export const mergeBundleZip = async (
   return zipSync(entries)
 }
 
+/**
+ * Every file of a bundle by its manifest path (`/main.tex`). For a republish that rebuilds
+ * the bundle from its parts — publishing `files` stores each blob directly, so a large
+ * paper never makes a round trip through a zip only to be unzipped again. A file whose
+ * blob has gone missing is left out rather than failing the whole republish.
+ */
+export const materializeBundle = async (
+  blobs: BlobStore,
+  manifest: BundleManifest,
+): Promise<Record<string, Uint8Array>> => {
+  const out: Record<string, Uint8Array> = {}
+  for (const [path, entry] of Object.entries(manifest.files)) {
+    const bytes = await blobs.get(entry.key)
+    if (bytes) out[path] = bytes
+  }
+  return out
+}
+
 // A version's bundle manifest (null when it isn't a bundle / is unreadable).
 export async function manifestOf(
   blobs: BlobStore,

@@ -31,6 +31,7 @@ import { workspaceIdsFromEnv } from "./lib/env"
 import { sharpShrinker } from "./lib/image-shrink-node"
 import { catalogFromGateway, type GatewayConfig } from "./lib/model-catalog"
 import { getInstanceSlot, modelSource, readLibrary } from "./lib/model-library"
+import { NODE_REPO_CAPS } from "./lib/repo-fetch"
 import { mountWeb } from "./lib/serve-web"
 import { signupPolicy } from "./lib/signup-policy"
 import { originProxy } from "./lib/site"
@@ -464,6 +465,8 @@ const importWorker = cfg.backgroundWorkers
         void previewWorker?.poke()
       },
       caps: NODE_IMPORT_CAPS,
+      // A paper's implementation, when one is attached, is fetched with this box's room.
+      repoCaps: NODE_REPO_CAPS,
       // A source over the bundle cap has its figures shrunk to fit (sharp, Node only).
       shrink: sharpShrinker(),
     })

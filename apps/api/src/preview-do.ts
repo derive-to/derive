@@ -12,6 +12,7 @@ import { tickStore } from "./edge-pg"
 import { runExportTick } from "./exports"
 import { runImportTick } from "./imports"
 import { EDGE_IMPORT_CAPS } from "./lib/arxiv-import"
+import { EDGE_REPO_CAPS } from "./lib/repo-fetch"
 import { log } from "./log"
 import { cfBrowserRenderer } from "./preview-cf"
 import { enqueueRender, runRenderTick, sweepMissingRenders } from "./previews"
@@ -152,6 +153,7 @@ export class PreviewRenderer {
             await enqueueRender(opened.store, a.id, n).catch(() => undefined)
           },
           caps: EDGE_IMPORT_CAPS,
+          repoCaps: EDGE_REPO_CAPS,
         }).catch((error) => {
           log.error("import tick failed", {
             error: error instanceof Error ? error.message : String(error),

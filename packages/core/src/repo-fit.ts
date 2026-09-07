@@ -55,8 +55,14 @@ export const fitRepoBytes = (input: RepoFile[], opts: FitRepoOptions): FitRepoRe
   const textBytes = text.reduce((n, f) => n + f.bytes.byteLength, 0)
   const notes: string[] = []
 
-  // Nothing can be dropped below this floor, so say what it would have taken.
-  if (textBytes > opts.cap || text.length > opts.maxFiles)
+  // Nothing can be dropped below this floor, so say what it would have taken, and name
+  // the files that took it: a failure a person cannot act on is barely better than none.
+  if (textBytes > opts.cap || text.length > opts.maxFiles) {
+    const biggest = [...text]
+      .sort((a, b) => b.bytes.byteLength - a.bytes.byteLength)
+      .slice(0, 3)
+      .map((f) => `${f.path.replace(/^\/code\//, "")} (${mb(f.bytes.byteLength)})`)
+      .join(", ")
     return {
       files: {},
       fits: false,
@@ -64,9 +70,10 @@ export const fitRepoBytes = (input: RepoFile[], opts: FitRepoOptions): FitRepoRe
       after: textBytes,
       dropped: [],
       notes: [
-        `the repository's ${text.length} text files alone are ${mb(textBytes)}, over the ${mb(opts.cap)} an artifact with an implementation may hold`,
+        `the repository's ${text.length} text files alone are ${mb(textBytes)}, over the ${mb(opts.cap)} an artifact with an implementation may hold; largest: ${biggest}`,
       ],
     }
+  }
 
   const binaries = input
     .filter((f) => !f.text)

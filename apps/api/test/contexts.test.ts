@@ -1180,7 +1180,11 @@ describe("contexts: import from arXiv", () => {
       status: 200,
       headers: { "content-type": "application/gzip" },
     })
-  const arxivStub = (over: Partial<Record<"metadata" | "source" | "bibtex", Stub>> = {}) => {
+  const arxivStub = (
+    over: Partial<Record<"metadata" | "source" | "bibtex", Stub>> = {},
+    /** Repository archives by `owner/name`, for an import that attaches an implementation. */
+    repos: Record<string, () => Response | Promise<Response>> = {},
+  ) => {
     const calls: string[] = []
     const stub = async (input: string | URL | Request, init?: RequestInit) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url
@@ -1190,6 +1194,12 @@ describe("contexts: import from arXiv", () => {
         return over.metadata?.(url, init) ?? new Response(ATOM(u.searchParams.get("id_list") ?? ID))
       if (u.pathname.startsWith("/src/")) return over.source?.(url, init) ?? gzip(SOURCE())
       if (u.pathname.startsWith("/bibtex/")) return over.bibtex?.(url, init) ?? new Response(BIBTEX)
+      // codeload: /<owner>/<name>/tar.gz/<ref>. GitLab: /<ns>/<name>/-/archive/<ref>/….
+      const repo = /^\/([^/]+)\/([^/]+)\/(?:tar\.gz|-\/archive)\//.exec(u.pathname)
+      if (repo) {
+        const served = repos[`${repo[1]}/${repo[2]}`]
+        if (served) return served()
+      }
       return new Response("nope", { status: 404 })
     }
     return { fetch: stub as unknown as typeof fetch, calls }
@@ -1230,6 +1240,14 @@ describe("contexts: import from arXiv", () => {
         inflatedBytes: 4 * 1024 * 1024,
         bundleBytes: 4 * 1024 * 1024,
         files: 200,
+      },
+      repoCaps: {
+        compressedBytes: 1024 * 1024,
+        inflatedBytes: 4 * 1024 * 1024,
+        totalBytes: 4 * 1024 * 1024,
+        files: 200,
+        depth: 3,
+        repos: 5,
       },
       holder,
     })
@@ -1621,6 +1639,203 @@ describe("contexts: import from arXiv", () => {
     )
     expect(await failedPage.text()).toContain("Import failed:")
   }, 30_000)
+
+  // A paper's implementation. The agent reads it; the person gets a link to the
+  // repository on its own host and never a file listing.
+  const REPO_FILES = {
+    "gaussian-splatting-abc123/README.md": "# Gaussian Splatting\n\nRun `train.py`.\n",
+    "gaussian-splatting-abc123/train.py": "def train():\n    return 42\n",
+    "gaussian-splatting-abc123/utils/loss.py": "def l1(a, b):\n    return abs(a - b)\n",
+    "gaussian-splatting-abc123/.gitmodules":
+      '[submodule "submodules/rasterizer"]\n\tpath = submodules/rasterizer\n\turl = https://github.com/graphdeco-inria/diff-gaussian-rasterization\n\tbranch = dr_aa\n[submodule "submodules/knn"]\n\tpath = submodules/knn\n\turl = https://bitbucket.org/bkerbl/simple-knn.git\n',
+  }
+  const SUB_FILES = {
+    "diff-gaussian-rasterization-def456/setup.py": "from setuptools import setup\nsetup()\n",
+  }
+  const repoTar = (files: Record<string, string | Uint8Array>) => () =>
+    gzip(gzipSync(tarSync(files)))
+
+  it("fetches the repository that implements a paper into the paper's own artifact", async () => {
+    const stub = arxivStub(
+      {},
+      {
+        "graphdeco-inria/gaussian-splatting": repoTar(REPO_FILES),
+        "graphdeco-inria/diff-gaussian-rasterization": repoTar(SUB_FILES),
+      },
+    )
+    const { app, meta, ctx, tickDeps } = setup("contexts-import-code", stub.fetch)
+    await app.request("/v1/me", { headers: as(owner.email) })
+
+    const res = await app.request(
+      "/v1/contexts/import/arxiv",
+      jsonAs(as(owner.email), {
+        url: "2406.00001",
+        code_url: "https://github.com/graphdeco-inria/gaussian-splatting",
+      }),
+    )
+    expect(res.status).toBe(201)
+    const created = await res.json()
+    expect(await runImportTick(tickDeps())).toBe(1)
+
+    // The repository was fetched from the host's plain archive, with no API call and no
+    // token, and the submodule it declares came too.
+    const archives = stub.calls.filter((u) => u.includes("/tar.gz/"))
+    expect(archives).toEqual([
+      "https://codeload.github.com/graphdeco-inria/gaussian-splatting/tar.gz/HEAD",
+      "https://codeload.github.com/graphdeco-inria/diff-gaussian-rasterization/tar.gz/dr_aa",
+    ])
+
+    const detail = await (
+      await app.request(`/v1/contexts/${created.id}`, { headers: as(owner.email) })
+    ).json()
+    // The paper's own import is ready, and so is its implementation.
+    expect(detail.import.status).toBe("ready")
+    const job = await meta.getImportJobForContext(created.id)
+    expect(job).toMatchObject({
+      code_status: "ready",
+      code_error: null,
+      code_ref: "github.com/graphdeco-inria/gaussian-splatting",
+    })
+
+    // ONE artifact still: the paper, now carrying the code under /code/.
+    expect(detail.documents).toHaveLength(1)
+    const paper = await meta.getByShortId(detail.documents[0].short_id)
+    const v = paper ? await meta.getVersion(paper.id, paper.current_version) : null
+    const manifest = JSON.parse(
+      new TextDecoder().decode((await ctx.blobs.get(v?.blob_key ?? "")) ?? undefined),
+    )
+    expect(Object.keys(manifest.files).sort()).toEqual([
+      "/CITATION.bib",
+      "/code/.gitmodules",
+      "/code/README.md",
+      "/code/submodules/rasterizer/setup.py",
+      "/code/train.py",
+      "/code/utils/loss.py",
+      "/fig/a.png",
+      "/main.bbl",
+      "/main.tex",
+      "/paper.bbl",
+      "/paper.tex",
+      "/refs.bib",
+    ])
+    // The paper is still the document: a README inside the repository did not take the
+    // entry, and the artifact is still a LaTeX paper.
+    expect(manifest.entry).toBe("/paper.tex")
+    expect(v?.content_type).toContain("latex")
+    // The version says what was attached, including the branch caveat and the host it
+    // would not follow.
+    expect(v?.message).toContain("Attached github.com/graphdeco-inria/gaussian-splatting")
+    expect(v?.message).toContain("skipped the submodule at submodules/knn")
+    expect(v?.message).toContain("at their declared branch")
+
+    // The code is stored as itself, byte for byte, so an agent asking for that path gets
+    // the source rather than a rendering of it.
+    expect(
+      new TextDecoder().decode(
+        (await ctx.blobs.get(manifest.files["/code/train.py"].key)) ?? undefined,
+      ),
+    ).toBe("def train():\n    return 42\n")
+  })
+
+  it("keeps every source file and leaves the big media behind", async () => {
+    // A repository that is mostly demo media, which is what a paper's repository is.
+    // Real bytes, not printable ones: what makes a file media is its content.
+    const bigGif = new Uint8Array(3 * 1024 * 1024)
+    bigGif.set([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x00, 0x00])
+    for (let at = 8; at < bigGif.length; at += 65_536)
+      crypto.getRandomValues(bigGif.subarray(at, Math.min(at + 65_536, bigGif.length)))
+    const smallPng = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3, 4])
+    const stub = arxivStub(
+      {},
+      {
+        "o/r": repoTar({
+          "r-abc/train.py": "def train():\n    return 1\n",
+          "r-abc/assets/demo.gif": bigGif,
+          "r-abc/assets/icon.png": smallPng,
+        }),
+      },
+    )
+    const { app, meta, ctx, tickDeps } = setup("contexts-import-code-big", stub.fetch)
+    await app.request("/v1/me", { headers: as(owner.email) })
+    const created = await (
+      await app.request(
+        "/v1/contexts/import/arxiv",
+        jsonAs(as(owner.email), { url: "2406.00002", code_url: "https://github.com/o/r" }),
+      )
+    ).json()
+    // An artifact with an implementation gets twice this deployment's bundle cap, so a
+    // 1 MB cap here leaves 2 MB for a paper plus 3 MB of demo media.
+    const base = tickDeps()
+    expect(
+      await runImportTick({
+        ...base,
+        caps: { ...base.caps, bundleBytes: 1024 * 1024 },
+        repoCaps: { ...base.repoCaps, compressedBytes: 8 * 1024 * 1024 },
+      }),
+    ).toBe(1)
+
+    const detail = await (
+      await app.request(`/v1/contexts/${created.id}`, { headers: as(owner.email) })
+    ).json()
+    const paper = await meta.getByShortId(detail.documents[0].short_id)
+    const v = paper ? await meta.getVersion(paper.id, paper.current_version) : null
+    const manifest = JSON.parse(
+      new TextDecoder().decode((await ctx.blobs.get(v?.blob_key ?? "")) ?? undefined),
+    )
+    const code = Object.keys(manifest.files).filter((p: string) => p.startsWith("/code/"))
+    // Every line of source survives; the 3 MB GIF does not, and is named.
+    expect(code).toContain("/code/train.py")
+    expect(code).toContain("/code/assets/icon.png")
+    expect(code).not.toContain("/code/assets/demo.gif")
+    expect(v?.message).toContain("left out 1 large file")
+    expect(v?.message).toContain("assets/demo.gif")
+    expect((await meta.getImportJobForContext(created.id))?.code_status).toBe("ready")
+  })
+
+  it("a repository that cannot be fetched leaves the paper imported and says why", async () => {
+    const stub = arxivStub() // every repository archive 404s
+    const { app, meta, tickDeps } = setup("contexts-import-code-fail", stub.fetch)
+    await app.request("/v1/me", { headers: as(owner.email) })
+    const created = await (
+      await app.request(
+        "/v1/contexts/import/arxiv",
+        jsonAs(as(owner.email), { url: "2406.00003", code_url: "https://github.com/o/gone" }),
+      )
+    ).json()
+    expect(await runImportTick(tickDeps())).toBe(1)
+
+    // The paper is what the import is for: it arrived, and stays arrived.
+    const detail = await (
+      await app.request(`/v1/contexts/${created.id}`, { headers: as(owner.email) })
+    ).json()
+    expect(detail.import.status).toBe("ready")
+    expect(detail.name).toBe("Attention Is All You Need")
+    expect(await meta.getImportJobForContext(created.id)).toMatchObject({
+      status: "ready",
+      code_status: "failed",
+      code_error: "no such repository, or it is not public (the host answered 404)",
+    })
+  })
+
+  it("refuses a link that is not a public GitHub or GitLab repository", async () => {
+    const stub = arxivStub()
+    const { app, tickDeps } = setup("contexts-import-code-bad", stub.fetch)
+    await app.request("/v1/me", { headers: as(owner.email) })
+    for (const code_url of [
+      "https://bitbucket.org/o/r",
+      "file:///etc/passwd",
+      "https://github.com/only-an-owner",
+    ]) {
+      const res = await app.request(
+        "/v1/contexts/import/arxiv",
+        jsonAs(as(owner.email), { url: "2406.00004", code_url }),
+      )
+      expect(res.status).toBe(400)
+      expect((await res.json()).code).toBe("not_a_repo")
+    }
+    // Nothing was queued, so nothing was fetched.
+    expect(await runImportTick(tickDeps())).toBe(0)
+  })
 
   it("hands the arXiv gate back before shrinking, so the next import fetches meanwhile", async () => {
     // A figure above the shrink floor, so the codec is entered at all.

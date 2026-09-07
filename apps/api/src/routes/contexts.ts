@@ -12,9 +12,11 @@ import {
   newId,
   normalizeSelector,
   parseArxivRef,
+  parseRepoRef,
   parseSubject,
   publish,
   type Role,
+  repoWebUrl,
   roleAllows,
   type SessionMessageRecord,
   type SessionRecord,
@@ -1380,10 +1382,24 @@ export const contextRoutes = (ctx: AppContext) => {
       if (!owner) return bail(fail(c, 401, "unauthenticated"))
       const org = await requireWorkspace(c, "publish")
       if (org instanceof Response) return bail(org)
-      const b = await readJson(c, z.object({ url: z.string().trim().min(1).max(2000) }))
+      const b = await readJson(
+        c,
+        z.object({
+          url: z.string().trim().min(1).max(2000),
+          code_url: z.string().trim().max(2000).optional(),
+        }),
+      )
       if (b instanceof Response) return bail(b)
       const ref = parseArxivRef(b.url)
       if (!ref) return bail(fail(c, 400, "not an arXiv link", { code: "not_arxiv" }))
+      // The optional implementation. Validated here so a bad link is a 400 on the paste
+      // rather than a failure a minute later, and stored canonically so the worker and
+      // the console build every URL from a parsed reference.
+      const codeRef = b.code_url ? parseRepoRef(b.code_url) : null
+      if (b.code_url && !codeRef)
+        return bail(
+          fail(c, 400, "not a public GitHub or GitLab repository", { code: "not_a_repo" }),
+        )
       if (deps.imports === false)
         return bail(fail(c, 503, "paper imports are not configured on this deployment"))
       // An import is two publishes (the manifest and the paper) plus an upstream fetch,
@@ -1459,6 +1475,7 @@ export const contextRoutes = (ctx: AppContext) => {
           askPolicy: "workspace",
           importSource: "arxiv",
           importRef: ref.id,
+          codeUrl: codeRef ? repoWebUrl(codeRef) : null,
         })
       } catch (error) {
         await meta.deleteArtifact(stub.artifact.id, org).catch(() => undefined)

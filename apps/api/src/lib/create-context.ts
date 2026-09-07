@@ -17,6 +17,8 @@ export interface CreateContextCoreInput {
   /** Import provenance for a Context fetched from an upstream (arXiv). */
   importSource?: "arxiv"
   importRef?: string
+  /** The public repository implementing an imported paper. */
+  codeUrl?: string | null
 }
 
 export interface CreateContextCoreResult {
@@ -83,6 +85,7 @@ export async function createContextCore(
       ...(input.askPolicy ? { ask_policy: input.askPolicy } : {}),
       import_source: input.importSource ?? null,
       import_ref: input.importRef ?? null,
+      code_url: input.codeUrl ?? null,
     })
     return {
       context,
