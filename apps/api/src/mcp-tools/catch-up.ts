@@ -5,6 +5,7 @@ import {
   diffLines,
   factDeltas,
   formatDiff,
+  LINKED_BUNDLE_CONTENT_TYPE,
   type ReviewRoundRecord,
   toMarkdown,
   type VersionDataRecord,
@@ -12,6 +13,7 @@ import {
   type WorkflowRunRecord,
 } from "@derive/core"
 import { z } from "zod"
+import { localArtifactScanActivity } from "../lib/artifact-scan"
 import {
   type ChangedParts,
   changedPartsWithReceipt,
@@ -38,7 +40,7 @@ export function registerCatchUpTool(tc: ToolContext): void {
     "catch_up",
     {
       description:
-        "START HERE on an artifact: versions, feedback, review, and possible missing workflow artifact receipts. WITHOUT a short_id, your WORK QUEUE. `wait` long-polls instead of sleeping. See derive://skills/loop and derive://skills/workflows.",
+        "START HERE on an artifact: versions, feedback, review, local scan activity, and possible missing workflow artifact receipts. WITHOUT a short_id, your WORK QUEUE. `wait` long-polls instead of sleeping. See derive://skills/loop and derive://skills/workflows.",
       // Genuinely read-only now: the queue's write half moved to `clear_queue`. The hint
       // was true-with-an-asterisk while `ack` lived here, kept that way so planning-mode
       // clients don't gate the start-here call on approval. That goal is unchanged and
@@ -408,10 +410,21 @@ export function registerCatchUpTool(tc: ToolContext): void {
       const receiptBit = receiptGapCount
         ? ` ${receiptGapCount} possible workflow artifact receipt${receiptGapCount === 1 ? "" : "s"} need confirmation.`
         : ""
+      const localScan =
+        a.current_content_type === LINKED_BUNDLE_CONTENT_TYPE
+          ? await localArtifactScanActivity({
+              meta: ctx.meta,
+              artifact: a,
+              canRead: canReadWorkflowArtifact,
+            })
+          : { activity: [], related: [] }
+      const localScanBit = localScan.related.length
+        ? ` A local agent session published ${localScan.related.length} artifact${localScan.related.length === 1 ? "" : "s"} after reading this bundle.`
+        : ""
       const summary =
         since >= to
-          ? `You're up to date on "${a.title}" (v${head}); ${open.length} open comment${open.length === 1 ? "" : "s"}.${outdatedBit}${reviewBit}${receiptBit}`
-          : `"${a.title}": ${newVersions.length} new version${newVersions.length === 1 ? "" : "s"} since v${since} (now v${to}).${pageBits} ${open.length} open comment${open.length === 1 ? "" : "s"}.${outdatedBit}${reviewBit}${receiptBit}`
+          ? `You're up to date on "${a.title}" (v${head}); ${open.length} open comment${open.length === 1 ? "" : "s"}.${outdatedBit}${reviewBit}${receiptBit}${localScanBit}`
+          : `"${a.title}": ${newVersions.length} new version${newVersions.length === 1 ? "" : "s"} since v${since} (now v${to}).${pageBits} ${open.length} open comment${open.length === 1 ? "" : "s"}.${outdatedBit}${reviewBit}${receiptBit}${localScanBit}`
       // What the NUMBERS did between the versions being compared. The prose diff already
       // shows what the page says; without this a review round sees everything except the
       // figures the page is about.
@@ -447,6 +460,13 @@ export function registerCatchUpTool(tc: ToolContext): void {
               workflow_receipt_gaps: receiptGaps,
               workflow_receipt_note:
                 "These are permission-checked candidates, not completed steps. Confirm only exact versions that belong to the run.",
+            }
+          : {}),
+        ...(localScan.activity.length || localScan.related.length
+          ? {
+              local_agent_activity: localScan,
+              local_agent_activity_note:
+                "These are privacy-safe local log observations. Same-session order suggests where to look, but it does not create a run, attach an artifact, or mark a node complete.",
             }
           : {}),
       })

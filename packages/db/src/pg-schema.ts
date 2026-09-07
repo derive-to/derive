@@ -2,6 +2,9 @@ import type {
   AgentMentionKind,
   AgentMentionState,
   ArtifactKind,
+  ArtifactScanAction,
+  ArtifactScanClient,
+  ArtifactScanEvidence,
   ArtifactSkillRole,
   AuditAction,
   CommentState,
@@ -445,6 +448,56 @@ export const workflowArtifactActivity = pgTable(
       t.role,
     ),
     index("workflow_artifact_activity_run").on(t.workflow_run_id, t.created_at),
+  ],
+)
+
+export const artifactScanEvent = pgTable(
+  "artifact_scan_event",
+  {
+    id: text("id").primaryKey(),
+    event_id: text("event_id").notNull(),
+    org_id: text("org_id").notNull(),
+    artifact_id: text("artifact_id")
+      .notNull()
+      .references(() => artifact.id),
+    artifact_version: integer("artifact_version").notNull(),
+    scanned_by: text("scanned_by").notNull(),
+    client: text("client").$type<ArtifactScanClient>().notNull(),
+    action: text("action").$type<ArtifactScanAction>().notNull(),
+    evidence: text("evidence").$type<ArtifactScanEvidence>().notNull(),
+    opaque_session_id: text("opaque_session_id").notNull(),
+    occurred_at: text("occurred_at").notNull(),
+    created_at: text("created_at").notNull().$defaultFn(isoNow),
+  },
+  (t) => [
+    uniqueIndex("artifact_scan_event_exact").on(t.org_id, t.scanned_by, t.event_id),
+    index("artifact_scan_event_artifact").on(t.org_id, t.artifact_id, t.occurred_at),
+    index("artifact_scan_event_session").on(
+      t.org_id,
+      t.scanned_by,
+      t.opaque_session_id,
+      t.occurred_at,
+    ),
+  ],
+)
+
+export const artifactScanCoverage = pgTable(
+  "artifact_scan_coverage",
+  {
+    id: text("id").primaryKey(),
+    org_id: text("org_id").notNull(),
+    scanned_by: text("scanned_by").notNull(),
+    client: text("client").$type<ArtifactScanClient>().notNull(),
+    source_files: integer("source_files").notNull(),
+    sessions_scanned: integer("sessions_scanned").notNull(),
+    records_scanned: integer("records_scanned").notNull(),
+    parser_version: integer("parser_version").notNull(),
+    scanned_at: text("scanned_at").notNull(),
+    updated_at: text("updated_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("artifact_scan_coverage_actor").on(t.org_id, t.scanned_by, t.client),
+    index("artifact_scan_coverage_workspace").on(t.org_id, t.scanned_at),
   ],
 )
 
@@ -1339,6 +1392,8 @@ const TABLES = [
   workflowRun,
   workflowStepAttempt,
   workflowArtifactActivity,
+  artifactScanEvent,
+  artifactScanCoverage,
   skillRelation,
   skillInstallation,
   skillScanCoverage,

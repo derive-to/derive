@@ -440,8 +440,62 @@ describe("MCP publish reaches the human (event parity + auto-open)", () => {
         }),
       ]),
     })
+    const scannedArtifacts = await meta.getByShortIds([
+      workflow.short_id as string,
+      missed.short_id as string,
+    ])
+    const workflowArtifact = scannedArtifacts.find((item) => item.short_id === workflow.short_id)
+    const missedArtifact = scannedArtifacts.find((item) => item.short_id === missed.short_id)
+    if (!workflowArtifact || !missedArtifact) throw new Error("scanned artifact missing")
+    if (!run.initiated_by) throw new Error("workflow initiator missing")
+    const scannedBy = run.initiated_by
+    const scanTime = new Date().toISOString()
+    await meta.recordArtifactScanEvent({
+      id: "ase_workflow_read",
+      event_id: "workflow-read-event",
+      org_id: run.org_id,
+      artifact_id: workflowArtifact.id,
+      artifact_version: 2,
+      scanned_by: scannedBy,
+      client: "codex",
+      action: "read",
+      evidence: "structured_tool_result",
+      opaque_session_id: "workflow-local-session",
+      occurred_at: scanTime,
+      created_at: scanTime,
+    })
+    await meta.recordArtifactScanEvent({
+      id: "ase_workflow_publish",
+      event_id: "workflow-publish-event",
+      org_id: run.org_id,
+      artifact_id: missedArtifact.id,
+      artifact_version: 2,
+      scanned_by: scannedBy,
+      client: "codex",
+      action: "published",
+      evidence: "structured_tool_result",
+      opaque_session_id: "workflow-local-session",
+      occurred_at: scanTime,
+      created_at: scanTime,
+    })
     const caughtUp = await call(app, token, "catch_up", { short_id: workflow.short_id })
     expect(caughtUp.summary).toContain("3 possible workflow artifact receipts need confirmation")
+    expect(caughtUp.summary).toContain("local agent session published")
+    expect(caughtUp.local_agent_activity_note).toContain("does not create a run")
+    expect(caughtUp.local_agent_activity).toMatchObject({
+      activity: [
+        expect.objectContaining({
+          artifact: { short_id: workflow.short_id, version: 2 },
+          action: "read",
+        }),
+      ],
+      related: [
+        expect.objectContaining({
+          artifact: expect.objectContaining({ short_id: missed.short_id, version: 2 }),
+          action: "published",
+        }),
+      ],
+    })
     expect(caughtUp.workflow_receipt_gaps).toEqual([
       expect.objectContaining({
         run_id: started.runId,

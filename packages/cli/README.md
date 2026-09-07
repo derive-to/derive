@@ -197,6 +197,25 @@ derive skill scan status
 derive skill remove <short_id> --scope project
 ```
 
+The generic scanner records privacy-safe Derive activity from local Codex and Claude logs:
+
+```sh
+derive scan --dry-run --since 30d
+derive scan --since 30d
+derive scan setup
+derive scan setup --schedule
+derive scan status
+```
+
+`derive scan` records successful artifact reads and publishes with the exact artifact version. It
+also runs the installed Skill usage scan. It uploads artifact IDs, versions, operations, clients,
+evidence types, opaque session hashes, and event times. It does not upload prompts, responses,
+tool arguments, artifact content, file paths, repository paths, raw session IDs, or user names.
+
+The artifact page can show another artifact published later in the same opaque session. This is an
+observed sequence, not provenance. Derive does not create a run, attach the artifact to a node, or
+mark work complete from a scan.
+
 Project installs use `.claude/skills` and `.agents/skills`; personal installs use
 `~/.claude/skills` and `~/.codex/skills`. Installs are atomic and pinned in `derive.json`.
 `sync --all` updates every pinned Skill while preserving any Claude-only or Codex-only installs.
@@ -206,7 +225,8 @@ the caller supplies one. Reuse an event ID to add or change its usefulness ratin
 another use. Derive stores the signed-in user, workspace, pinned version, client, and time on the
 server. The Skill page shows aggregate counts. It does not store prompts or generated content.
 
-`skill scan` reads structured local Codex and Claude logs. It reads only records added after its
+`skill scan` remains a compatible, Skill-only command. It reads structured local Codex and Claude
+logs. It reads only records added after its
 saved cursor. Claude provides an explicit Skill attribution. For Codex, the scanner detects a
 structured tool call that reads a known installed `SKILL.md`. The scanner uploads the Skill ID,
 version, digest, client, evidence type, an opaque session hash, and the event time. It does not

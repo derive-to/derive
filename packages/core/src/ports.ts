@@ -2635,6 +2635,60 @@ export interface SkillStore {
   ): Promise<{ contexts: SkillUsageBucket[]; workflows: SkillUsageBucket[] }>
 }
 
+export type ArtifactScanClient = "claude" | "codex"
+export type ArtifactScanAction = "read" | "published"
+export type ArtifactScanEvidence = "structured_tool_result"
+
+/** One privacy-safe observation from a local agent log. It records only a Derive artifact
+ * identity, an exact version, the operation, and an opaque local session. */
+export interface ArtifactScanEventRecord {
+  id: string
+  event_id: string
+  org_id: string
+  artifact_id: string
+  artifact_version: number
+  scanned_by: string
+  client: ArtifactScanClient
+  action: ArtifactScanAction
+  evidence: ArtifactScanEvidence
+  opaque_session_id: string
+  occurred_at: string
+  created_at: string
+}
+
+export type NewArtifactScanEvent = ArtifactScanEventRecord
+
+export interface ArtifactScanCoverageRecord {
+  id: string
+  org_id: string
+  scanned_by: string
+  client: ArtifactScanClient
+  source_files: number
+  sessions_scanned: number
+  records_scanned: number
+  parser_version: number
+  scanned_at: string
+  updated_at: string
+}
+
+export type NewArtifactScanCoverage = ArtifactScanCoverageRecord
+
+export interface ArtifactScanStore {
+  recordArtifactScanEvent(event: NewArtifactScanEvent): Promise<ArtifactScanEventRecord>
+  listArtifactScanEvents(
+    artifactId: string,
+    orgId: string,
+    limit?: number,
+  ): Promise<ArtifactScanEventRecord[]>
+  listArtifactScanSessionEvents(
+    orgId: string,
+    sessions: Array<{ scannedBy: string; opaqueSessionId: string }>,
+    limit?: number,
+  ): Promise<ArtifactScanEventRecord[]>
+  upsertArtifactScanCoverage(coverage: NewArtifactScanCoverage): Promise<ArtifactScanCoverageRecord>
+  listArtifactScanCoverage(orgId: string): Promise<ArtifactScanCoverageRecord[]>
+}
+
 export interface ModerationStore {
   // ---- Moderation: abuse reports, takedown, audit log --------------------
   createReport(r: NewReport): Promise<ReportRecord>
@@ -2946,6 +3000,7 @@ export interface MetaStore
     AgentStore,
     WorkflowRunStore,
     SkillStore,
+    ArtifactScanStore,
     ModerationStore,
     AssetStore,
     SharedStateStore,

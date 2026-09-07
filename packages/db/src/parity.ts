@@ -18,6 +18,8 @@ import type {
   ArtifactInviteRecord,
   ArtifactMemberRecord,
   ArtifactRecord,
+  ArtifactScanCoverageRecord,
+  ArtifactScanEventRecord,
   ArtifactSkillLinkRecord,
   AssetRecord,
   AuditLogRecord,
@@ -93,6 +95,8 @@ export interface TypedTables {
   workflowRun: WorkflowRunRecord
   workflowStepAttempt: WorkflowStepAttemptRecord
   workflowArtifactActivity: WorkflowArtifactActivityRecord
+  artifactScanEvent: ArtifactScanEventRecord
+  artifactScanCoverage: ArtifactScanCoverageRecord
   skillRelation: SkillRelationRecord
   skillInstallation: SkillInstallationRecord
   skillUse: SkillUseRecord

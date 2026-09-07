@@ -3705,6 +3705,73 @@ export function runStoreContract(
       expect(await store.listSkillScanCoverage(`org_${uuid()}`)).toEqual([])
     })
 
+    it("deduplicates local artifact scans and queries opaque sessions", async () => {
+      const graph = await store.createArtifact(newArtifact())
+      const output = await store.createArtifact(newArtifact())
+      await store.addVersion(graph.id, newVersion())
+      await store.addVersion(output.id, newVersion())
+      const read = {
+        id: uuid(),
+        event_id: "artifact-scan-read",
+        org_id: ORG,
+        artifact_id: graph.id,
+        artifact_version: 1,
+        scanned_by: "u1",
+        client: "codex" as const,
+        action: "read" as const,
+        evidence: "structured_tool_result" as const,
+        opaque_session_id: "a".repeat(64),
+        occurred_at: "2026-09-07T20:00:00.000Z",
+        created_at: "2026-09-07T20:01:00.000Z",
+      }
+      const first = await store.recordArtifactScanEvent(read)
+      const duplicate = await store.recordArtifactScanEvent({ ...read, id: uuid() })
+      expect(duplicate.id).toBe(first.id)
+      await store.recordArtifactScanEvent({
+        ...read,
+        id: uuid(),
+        event_id: "artifact-scan-publish",
+        artifact_id: output.id,
+        action: "published",
+        occurred_at: "2026-09-07T20:00:10.000Z",
+      })
+      expect(await store.listArtifactScanEvents(graph.id, ORG)).toMatchObject([
+        { event_id: "artifact-scan-read", action: "read" },
+      ])
+      expect(
+        await store.listArtifactScanSessionEvents(ORG, [
+          { scannedBy: "u1", opaqueSessionId: "a".repeat(64) },
+        ]),
+      ).toHaveLength(2)
+      expect(
+        await store.listArtifactScanSessionEvents(ORG, [
+          { scannedBy: "u2", opaqueSessionId: "a".repeat(64) },
+        ]),
+      ).toEqual([])
+
+      const coverage = {
+        id: uuid(),
+        org_id: ORG,
+        scanned_by: "u1",
+        client: "codex" as const,
+        source_files: 2,
+        sessions_scanned: 3,
+        records_scanned: 100,
+        parser_version: 1,
+        scanned_at: "2026-09-07T20:02:00.000Z",
+        updated_at: "2026-09-07T20:02:00.000Z",
+      }
+      await store.upsertArtifactScanCoverage(coverage)
+      await store.upsertArtifactScanCoverage({
+        ...coverage,
+        id: uuid(),
+        records_scanned: 120,
+      })
+      expect(await store.listArtifactScanCoverage(ORG)).toMatchObject([
+        { client: "codex", records_scanned: 120 },
+      ])
+    })
+
     it("derives exact Context and Workflow usage and keeps Artifact provenance deterministic", async () => {
       const skill = await store.createArtifact(newArtifact({ kind: "bundle" }))
       await store.addVersion(skill.id, newVersion({ content_type: "derive/skill" }))

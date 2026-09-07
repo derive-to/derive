@@ -6,6 +6,8 @@ import type {
   ArtifactInviteRecord,
   ArtifactMemberRecord,
   ArtifactRecord,
+  ArtifactScanCoverageRecord,
+  ArtifactScanEventRecord,
   ArtifactSkillLinkRecord,
   AssetRecord,
   AuditLogRecord,
@@ -52,6 +54,8 @@ import type {
   NewArtifact,
   NewArtifactInvite,
   NewArtifactMember,
+  NewArtifactScanCoverage,
+  NewArtifactScanEvent,
   NewArtifactSkillLink,
   NewAsset,
   NewAuditLog,
@@ -215,6 +219,8 @@ import {
   artifactFavorite,
   artifactInvite,
   artifactMember,
+  artifactScanCoverage,
+  artifactScanEvent,
   artifactSkillLink,
   artifactTag,
   asset,
@@ -317,6 +323,8 @@ export const schema = {
   workflowRun,
   workflowStepAttempt,
   workflowArtifactActivity,
+  artifactScanEvent,
+  artifactScanCoverage,
   skillRelation,
   skillInstallation,
   skillScanCoverage,
@@ -377,6 +385,8 @@ const _schemaShapes: Shapes<typeof schema> = {
   workflowRun: true,
   workflowStepAttempt: true,
   workflowArtifactActivity: true,
+  artifactScanEvent: true,
+  artifactScanCoverage: true,
   skillRelation: true,
   skillInstallation: true,
   skillScanCoverage: true,
@@ -6219,6 +6229,98 @@ export class PgMetaStore implements MetaStore {
       )
       .orderBy(asc(workflowArtifactActivity.created_at), asc(workflowArtifactActivity.id))
   }
+  async recordArtifactScanEvent(event: NewArtifactScanEvent): Promise<ArtifactScanEventRecord> {
+    const rows = await this.db
+      .insert(artifactScanEvent)
+      .values(event)
+      .onConflictDoNothing()
+      .returning()
+    if (rows[0]) return rows[0]
+    const existing = await this.db
+      .select()
+      .from(artifactScanEvent)
+      .where(
+        and(
+          eq(artifactScanEvent.org_id, event.org_id),
+          eq(artifactScanEvent.scanned_by, event.scanned_by),
+          eq(artifactScanEvent.event_id, event.event_id),
+        ),
+      )
+      .limit(1)
+    if (!existing[0]) throw new Error("artifact scan event conflict could not be resolved")
+    return existing[0]
+  }
+  listArtifactScanEvents(
+    artifactId: string,
+    orgId: string,
+    limit = 100,
+  ): Promise<ArtifactScanEventRecord[]> {
+    return this.db
+      .select()
+      .from(artifactScanEvent)
+      .where(
+        and(eq(artifactScanEvent.artifact_id, artifactId), eq(artifactScanEvent.org_id, orgId)),
+      )
+      .orderBy(desc(artifactScanEvent.occurred_at), desc(artifactScanEvent.id))
+      .limit(Math.min(500, Math.max(1, limit)))
+  }
+  listArtifactScanSessionEvents(
+    orgId: string,
+    sessions: Array<{ scannedBy: string; opaqueSessionId: string }>,
+    limit = 500,
+  ): Promise<ArtifactScanEventRecord[]> {
+    if (sessions.length === 0) return Promise.resolve([])
+    return this.db
+      .select()
+      .from(artifactScanEvent)
+      .where(
+        and(
+          eq(artifactScanEvent.org_id, orgId),
+          or(
+            ...sessions.map((session) =>
+              and(
+                eq(artifactScanEvent.scanned_by, session.scannedBy),
+                eq(artifactScanEvent.opaque_session_id, session.opaqueSessionId),
+              ),
+            ),
+          ),
+        ),
+      )
+      .orderBy(desc(artifactScanEvent.occurred_at), desc(artifactScanEvent.id))
+      .limit(Math.min(1_000, Math.max(1, limit)))
+  }
+  async upsertArtifactScanCoverage(
+    coverage: NewArtifactScanCoverage,
+  ): Promise<ArtifactScanCoverageRecord> {
+    const rows = await this.db
+      .insert(artifactScanCoverage)
+      .values(coverage)
+      .onConflictDoUpdate({
+        target: [
+          artifactScanCoverage.org_id,
+          artifactScanCoverage.scanned_by,
+          artifactScanCoverage.client,
+        ],
+        set: {
+          source_files: coverage.source_files,
+          sessions_scanned: coverage.sessions_scanned,
+          records_scanned: coverage.records_scanned,
+          parser_version: coverage.parser_version,
+          scanned_at: coverage.scanned_at,
+          updated_at: coverage.updated_at,
+        },
+      })
+      .returning()
+    if (!rows[0]) throw new Error("artifact scan coverage upsert returned no row")
+    return rows[0]
+  }
+  listArtifactScanCoverage(orgId: string): Promise<ArtifactScanCoverageRecord[]> {
+    return this.db
+      .select()
+      .from(artifactScanCoverage)
+      .where(eq(artifactScanCoverage.org_id, orgId))
+      .orderBy(desc(artifactScanCoverage.scanned_at))
+  }
   async replaceSkillRelations(
     orgId: string,
     skillArtifactId: string,
@@ -7252,6 +7354,7 @@ export class PgMetaStore implements MetaStore {
       await tx.delete(sharedStateActivity).where(eq(sharedStateActivity.artifact_id, id))
       await tx.delete(sharedState).where(eq(sharedState.artifact_id, id))
       await tx.delete(dynamicRevision).where(eq(dynamicRevision.artifact_id, id))
+      await tx.delete(artifactScanEvent).where(eq(artifactScanEvent.artifact_id, id))
       await tx
         .delete(skillRelation)
         .where(

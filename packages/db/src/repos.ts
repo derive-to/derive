@@ -4,6 +4,8 @@ import type {
   ArtifactInviteRecord,
   ArtifactMemberRecord,
   ArtifactRecord,
+  ArtifactScanCoverageRecord,
+  ArtifactScanEventRecord,
   ArtifactSkillLinkRecord,
   AssetRecord,
   AuditLogRecord,
@@ -43,6 +45,8 @@ import type {
   NewArtifact,
   NewArtifactInvite,
   NewArtifactMember,
+  NewArtifactScanCoverage,
+  NewArtifactScanEvent,
   NewArtifactSkillLink,
   NewAsset,
   NewAuditLog,
@@ -203,6 +207,8 @@ import {
   artifactFavorite,
   artifactInvite,
   artifactMember,
+  artifactScanCoverage,
+  artifactScanEvent,
   artifactSkillLink,
   artifactTag,
   asset,
@@ -440,6 +446,8 @@ export const schema = {
   workflowRun,
   workflowStepAttempt,
   workflowArtifactActivity,
+  artifactScanEvent,
+  artifactScanCoverage,
   skillRelation,
   skillInstallation,
   skillScanCoverage,
@@ -500,6 +508,8 @@ const _schemaShapes: Shapes<typeof schema> = {
   workflowRun: true,
   workflowStepAttempt: true,
   workflowArtifactActivity: true,
+  artifactScanEvent: true,
+  artifactScanCoverage: true,
   skillRelation: true,
   skillInstallation: true,
   skillScanCoverage: true,
@@ -5024,6 +5034,100 @@ export function makeRepos(db: SqliteDb) {
       .orderBy(asc(workflowArtifactActivity.created_at), asc(workflowArtifactActivity.id))
       .all()
   }
+  const recordArtifactScanEvent = async (
+    event: NewArtifactScanEvent,
+  ): Promise<ArtifactScanEventRecord> => {
+    const created = await db
+      .insert(artifactScanEvent)
+      .values(event)
+      .onConflictDoNothing()
+      .returning()
+      .get()
+    if (created) return created
+    const existing = await db
+      .select()
+      .from(artifactScanEvent)
+      .where(
+        and(
+          eq(artifactScanEvent.org_id, event.org_id),
+          eq(artifactScanEvent.scanned_by, event.scanned_by),
+          eq(artifactScanEvent.event_id, event.event_id),
+        ),
+      )
+      .get()
+    if (!existing) throw new Error("artifact scan event conflict could not be resolved")
+    return existing
+  }
+  const listArtifactScanEvents = async (
+    artifactId: string,
+    orgId: string,
+    limit = 100,
+  ): Promise<ArtifactScanEventRecord[]> =>
+    db
+      .select()
+      .from(artifactScanEvent)
+      .where(
+        and(eq(artifactScanEvent.artifact_id, artifactId), eq(artifactScanEvent.org_id, orgId)),
+      )
+      .orderBy(desc(artifactScanEvent.occurred_at), desc(artifactScanEvent.id))
+      .limit(Math.min(500, Math.max(1, limit)))
+      .all()
+  const listArtifactScanSessionEvents = async (
+    orgId: string,
+    sessions: Array<{ scannedBy: string; opaqueSessionId: string }>,
+    limit = 500,
+  ): Promise<ArtifactScanEventRecord[]> => {
+    if (sessions.length === 0) return []
+    return db
+      .select()
+      .from(artifactScanEvent)
+      .where(
+        and(
+          eq(artifactScanEvent.org_id, orgId),
+          or(
+            ...sessions.map((session) =>
+              and(
+                eq(artifactScanEvent.scanned_by, session.scannedBy),
+                eq(artifactScanEvent.opaque_session_id, session.opaqueSessionId),
+              ),
+            ),
+          ),
+        ),
+      )
+      .orderBy(desc(artifactScanEvent.occurred_at), desc(artifactScanEvent.id))
+      .limit(Math.min(1_000, Math.max(1, limit)))
+      .all()
+  }
+  const upsertArtifactScanCoverage = async (
+    coverage: NewArtifactScanCoverage,
+  ): Promise<ArtifactScanCoverageRecord> =>
+    db
+      .insert(artifactScanCoverage)
+      .values(coverage)
+      .onConflictDoUpdate({
+        target: [
+          artifactScanCoverage.org_id,
+          artifactScanCoverage.scanned_by,
+          artifactScanCoverage.client,
+        ],
+        set: {
+          source_files: coverage.source_files,
+          sessions_scanned: coverage.sessions_scanned,
+          records_scanned: coverage.records_scanned,
+          parser_version: coverage.parser_version,
+          scanned_at: coverage.scanned_at,
+          updated_at: coverage.updated_at,
+        },
+      })
+      .returning()
+      .get()
+  const listArtifactScanCoverage = async (orgId: string): Promise<ArtifactScanCoverageRecord[]> =>
+    db
+      .select()
+      .from(artifactScanCoverage)
+      .where(eq(artifactScanCoverage.org_id, orgId))
+      .orderBy(desc(artifactScanCoverage.scanned_at))
+      .all()
   const replaceSkillRelations = async (
     orgId: string,
     skillArtifactId: string,
@@ -5976,6 +6080,7 @@ export function makeRepos(db: SqliteDb) {
     await db.delete(sharedStateActivity).where(eq(sharedStateActivity.artifact_id, id)).run()
     await db.delete(sharedState).where(eq(sharedState.artifact_id, id)).run()
     await db.delete(dynamicRevision).where(eq(dynamicRevision.artifact_id, id)).run()
+    await db.delete(artifactScanEvent).where(eq(artifactScanEvent.artifact_id, id)).run()
     await db
       .delete(skillRelation)
       .where(or(eq(skillRelation.source_artifact_id, id), eq(skillRelation.target_artifact_id, id)))
@@ -6390,6 +6495,11 @@ export function makeRepos(db: SqliteDb) {
     transitionWorkflowStepAttempt,
     recordWorkflowArtifactActivity,
     listWorkflowArtifactActivity,
+    recordArtifactScanEvent,
+    listArtifactScanEvents,
+    listArtifactScanSessionEvents,
+    upsertArtifactScanCoverage,
+    listArtifactScanCoverage,
     replaceSkillRelations,
     listSkillRelations,
     upsertSkillInstallation,
