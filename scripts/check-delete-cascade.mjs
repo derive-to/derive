@@ -24,6 +24,12 @@ const IMPLS = [
   { file: "packages/db/src/repos.ts", label: "shared/D1" },
 ]
 
+// Every implementation of deleteContext (the shared/D1 path also serves better-sqlite3).
+const CONTEXT_IMPLS = [
+  { file: "packages/db/src/pg.ts", label: "postgres" },
+  { file: "packages/db/src/repos.ts", label: "shared/sqlite/D1" },
+]
+
 const read = (rel) => readFileSync(join(process.cwd(), rel), "utf8")
 
 // Drizzle table defs whose columns include an artifact_id FK to artifact.id. Matches the
@@ -47,9 +53,29 @@ const artifactChildTables = (src) => {
   return out
 }
 
-/** The body of the deleteArtifact function in one implementation file. */
-const deleteBody = (src, file) => {
-  const at = src.search(/deleteArtifact[\s(:]/)
+// Tables with a context_id FK to context.id. A context is deleted on its own (deleteContext)
+// and with its manifest artifact (deleteArtifact), so BOTH cascades must clear these too.
+const contextChildTables = (src) => {
+  const out = []
+  const re = /export const (\w+) = sqliteTable\(\s*"([\w]+)"\s*,\s*\{/g
+  let m = re.exec(src)
+  while (m) {
+    const [, varName, tableName] = m
+    const start = m.index
+    const nextExport = src.indexOf("\nexport const ", start + 1)
+    const body = src.slice(start, nextExport === -1 ? src.length : nextExport)
+    const hasContextFk =
+      /context_id:\s*text\("context_id"\)/.test(body) &&
+      /references\(\(\)\s*=>\s*context\.id\)/.test(body)
+    if (hasContextFk && varName !== "context") out.push({ varName, tableName })
+    m = re.exec(src)
+  }
+  return out
+}
+
+/** The body of the named delete function in one implementation file. */
+const deleteBody = (src, file, name = "deleteArtifact") => {
+  const at = src.search(new RegExp(`${name}[\\s(:]`))
   if (at === -1) return null
   // To the next top-level member: `\n  async name(` or `\n  const name =` at 2-space indent.
   const rest = src.slice(at)
@@ -59,7 +85,11 @@ const deleteBody = (src, file) => {
 
 const schema = read(SCHEMA)
 const children = artifactChildTables(schema)
+const contextChildren = contextChildTables(schema)
 const violations = []
+
+if (contextChildren.length === 0)
+  violations.push(`could not parse any context-child tables out of ${SCHEMA} — the guard is blind`)
 
 if (children.length === 0)
   violations.push(`could not parse any artifact-child tables out of ${SCHEMA} — the guard is blind`)
@@ -87,6 +117,49 @@ for (const { file, label } of IMPLS) {
   }
 }
 
+const cleared = (body, varName) =>
+  new RegExp(`delete\\(\\s*(?:\\w+\\.)?${varName}\\s*\\)`).test(body)
+
+for (const { file, label } of IMPLS) {
+  let src
+  try {
+    src = read(file)
+  } catch {
+    continue
+  }
+  const body = deleteBody(src, file)
+  if (!body) continue
+  for (const { varName, tableName } of contextChildren) {
+    if (!cleared(body, varName))
+      violations.push(
+        `${file} [${label}]: deleteArtifact never clears "${tableName}" (${varName}), which has a context_id FK — deleting a manifest whose context carries one of these rows will fail on a FOREIGN KEY constraint`,
+      )
+  }
+}
+
+for (const { file, label } of CONTEXT_IMPLS) {
+  let src
+  try {
+    src = read(file)
+  } catch {
+    violations.push(`missing delete implementation file: ${file}`)
+    continue
+  }
+  const body = deleteBody(src, file, "deleteContext")
+  if (!body) {
+    violations.push(
+      `${file}: no deleteContext found — update CONTEXT_IMPLS in this script if it moved`,
+    )
+    continue
+  }
+  for (const { varName, tableName } of contextChildren) {
+    if (!cleared(body, varName))
+      violations.push(
+        `${file} [${label}]: deleteContext never clears "${tableName}" (${varName}), which has a context_id FK`,
+      )
+  }
+}
+
 if (violations.length) {
   console.error("check-delete-cascade: FAILED\n")
   for (const v of violations) console.error(`  ✖ ${v}`)
@@ -97,5 +170,5 @@ if (violations.length) {
 }
 
 console.log(
-  `check-delete-cascade: ok — ${children.length} artifact-child tables cleared by all ${IMPLS.length} delete paths`,
+  `check-delete-cascade: ok — ${children.length} artifact-child and ${contextChildren.length} context-child tables cleared by every delete path`,
 )

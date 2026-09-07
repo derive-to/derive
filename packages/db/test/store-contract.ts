@@ -3467,6 +3467,173 @@ export function runStoreContract(
       expect(await store.listSessionMessages(s.id)).toHaveLength(0)
     })
 
+    // Imported contexts (a paper fetched from arXiv). The queue and the request gate are
+    // the two primitives every driver must get right for one deployment's workers to
+    // fetch one job at a time and never faster than the upstream allows.
+    const newImport = async (ref: string, scope = "https://derive.test") => {
+      const manifest = await store.createArtifact(newArtifact({ kind: "doc" }))
+      const ctx = await store.createContext({
+        id: uuid(),
+        org_id: ORG,
+        name: `arXiv:${ref}-${uuid().slice(0, 6)}`,
+        agent_id: uuid(),
+        manifest_artifact_id: manifest.id,
+        created_by: "rob",
+        ask_policy: "workspace",
+        import_source: "arxiv",
+        import_ref: ref,
+      })
+      const job = await store.enqueueImportJob({
+        id: uuid(),
+        org_id: ORG,
+        context_id: ctx.id,
+        requested_by: "rob",
+        kind: "arxiv",
+        ref,
+        scope,
+      })
+      return { ctx, job }
+    }
+
+    it("import jobs: one claim per scope, retry when due, lapsed lease reclaimed, resume markers", async () => {
+      const ref = `2401.${uuid().slice(0, 5).replace(/\D/g, "1")}`
+      const { ctx, job } = await newImport(ref)
+      expect(job).toMatchObject({ status: "pending", attempts: 0, context_id: ctx.id })
+      expect(await store.getImportJobForContext(ctx.id)).toMatchObject({ id: job.id })
+      expect((await store.getImportJobsForContexts([ctx.id, uuid()])).map((j) => j.id)).toEqual([
+        job.id,
+      ])
+      expect(await store.findContextByImport(ORG, "arxiv", ref)).toMatchObject({ id: ctx.id })
+      expect(await store.findContextByImport(ORG, "arxiv", "0000.00000")).toBeNull()
+
+      const t0 = "2999-01-01T00:00:00.000Z"
+      const lease = "2999-01-01T00:04:00.000Z"
+      // Another deployment's worker never sees this job.
+      expect(await store.claimDueImportJob(t0, lease, "https://other.test")).toBeNull()
+      const claimed = await store.claimDueImportJob(t0, lease, "https://derive.test")
+      expect(claimed).toMatchObject({
+        id: job.id,
+        status: "fetching",
+        attempts: 1,
+        lease_until: lease,
+      })
+      // Held: a second worker on the same scope gets nothing until the lease lapses.
+      expect(await store.claimDueImportJob(t0, lease, "https://derive.test")).toBeNull()
+      await store.updateImportJob(job.id, { paper_artifact_id: "a_paper", resolved_version: 2 })
+      const reclaimed = await store.claimDueImportJob(
+        "2999-01-01T00:05:00.000Z",
+        "2999-01-01T00:09:00.000Z",
+        "https://derive.test",
+      )
+      expect(reclaimed).toMatchObject({ id: job.id, attempts: 2, paper_artifact_id: "a_paper" })
+
+      // A failed job is due only after its backoff.
+      await store.updateImportJob(job.id, {
+        status: "failed",
+        lease_until: null,
+        error_code: "unavailable",
+        error_detail: "503",
+        next_attempt_at: "2999-01-01T01:00:00.000Z",
+      })
+      expect(await store.countActiveImportJobs(ORG)).toBeGreaterThanOrEqual(1)
+      expect(
+        await store.claimDueImportJob("2999-01-01T00:30:00.000Z", lease, "https://derive.test"),
+      ).toBeNull()
+      expect(
+        await store.claimDueImportJob("2999-01-01T01:00:00.000Z", lease, "https://derive.test"),
+      ).toMatchObject({ id: job.id, attempts: 3 })
+      await store.updateImportJob(job.id, {
+        status: "ready",
+        lease_until: null,
+        manifest_version: 2,
+      })
+      expect(await store.getImportJob(job.id)).toMatchObject({
+        status: "ready",
+        manifest_version: 2,
+      })
+      expect(
+        await store.claimDueImportJob("2999-01-02T00:00:00.000Z", lease, "https://derive.test"),
+      ).toBeNull()
+    })
+
+    it("import lease: compare-and-set, the upstream's next allowed instant, release", async () => {
+      const scope = `https://lease-${uuid()}.test`
+      const t0 = "2999-01-01T00:00:00.000Z"
+      expect(
+        await store.acquireImportLease("arxiv", scope, "w1", t0, "2999-01-01T00:04:00.000Z"),
+      ).toBe(true)
+      expect(
+        await store.acquireImportLease("arxiv", scope, "w2", t0, "2999-01-01T00:04:00.000Z"),
+      ).toBe(false)
+      expect(await store.getImportLease("arxiv", scope)).toMatchObject({ holder: "w1" })
+      // Only the holder can restamp it.
+      await store.updateImportLease("arxiv", scope, "w2", {
+        next_allowed_at: "2999-01-01T00:00:03.000Z",
+      })
+      expect((await store.getImportLease("arxiv", scope))?.next_allowed_at).toBe(t0)
+      await store.updateImportLease("arxiv", scope, "w1", {
+        holder: null,
+        lease_until: null,
+        next_allowed_at: "2999-01-01T00:00:03.000Z",
+      })
+      // Released, but the upstream said not before :03.
+      expect(
+        await store.acquireImportLease(
+          "arxiv",
+          scope,
+          "w2",
+          "2999-01-01T00:00:02.000Z",
+          "2999-01-01T00:04:02.000Z",
+        ),
+      ).toBe(false)
+      expect(
+        await store.acquireImportLease(
+          "arxiv",
+          scope,
+          "w2",
+          "2999-01-01T00:00:03.000Z",
+          "2999-01-01T00:04:03.000Z",
+        ),
+      ).toBe(true)
+      // A lapsed lease is taken over.
+      expect(
+        await store.acquireImportLease(
+          "arxiv",
+          scope,
+          "w3",
+          "2999-01-01T00:05:00.000Z",
+          "2999-01-01T00:09:00.000Z",
+        ),
+      ).toBe(true)
+      expect(await store.getImportLease("arxiv", scope)).toMatchObject({ holder: "w3" })
+    })
+
+    it("renameContext keeps the per-workspace unique name", async () => {
+      const a = await newContext()
+      const b = await newContext()
+      await store.renameContext(a.id, "Attention Is All You Need")
+      expect((await store.getContext(a.id))?.name).toBe("Attention Is All You Need")
+      await expect(store.renameContext(b.id, "Attention Is All You Need")).rejects.toThrow()
+      expect((await store.getContext(b.id))?.name).toBe(b.name)
+    })
+
+    it("deleteContext and deleteArtifact on the manifest clear the import job", async () => {
+      const first = await newImport("2402.00001")
+      await store.deleteContext(first.ctx.id, ORG)
+      expect(await store.getImportJob(first.job.id)).toBeNull()
+      const second = await newImport("2402.00002")
+      await store.addContextAsker({
+        id: uuid(),
+        context_id: second.ctx.id,
+        user_id: "sam",
+        added_by: "rob",
+      })
+      // Without the cascade this FK-throws on pg/D1 (import_job.context_id, context_asker).
+      await store.deleteArtifact(second.ctx.manifest_artifact_id, ORG)
+      expect(await store.getContext(second.ctx.id)).toBeNull()
+      expect(await store.getImportJob(second.job.id)).toBeNull()
+    })
+
     it("claim/lease queue: lapsed-lease self-heal, concurrency cap, dedupe, result binding", async () => {
       const ctx = await newContext()
       const open = (asker: string, dedupe_key?: string) =>

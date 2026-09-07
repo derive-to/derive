@@ -156,6 +156,10 @@ export const PERF_INDEXES: string[] = [
   `CREATE INDEX IF NOT EXISTS render_job_due ON render_job (status, next_attempt_at)`,
   `CREATE INDEX IF NOT EXISTS export_job_due ON export_job (renderer_scope, status, next_attempt_at)`,
   `CREATE INDEX IF NOT EXISTS export_job_artifact ON export_job (artifact_id, created_at)`,
+  // The import worker's claim (one deployment's due jobs, oldest first) and the
+  // per-paper lookup that makes an import idempotent within a workspace.
+  `CREATE INDEX IF NOT EXISTS import_job_due ON import_job (scope, status, next_attempt_at)`,
+  `CREATE INDEX IF NOT EXISTS context_import ON context (org_id, import_source, import_ref)`,
   `CREATE INDEX IF NOT EXISTS notification_user_time ON notification (user_id, created_at)`,
   `CREATE INDEX IF NOT EXISTS agent_mention_inbox ON agent_mention (agent_id, state, created_at)`,
   `CREATE INDEX IF NOT EXISTS favorite_user ON artifact_favorite (user_id)`,

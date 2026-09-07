@@ -15,6 +15,8 @@ import type {
   ExportJobStatus,
   ExportKind,
   FollowKind,
+  ImportJobStatus,
+  ImportKind,
   LinkRole,
   Listed,
   NotificationKind,
@@ -1349,9 +1351,63 @@ export const context = sqliteTable(
     // Opaque JSON sidecar, parsed only at the route layer (like session_message.meta)
     // — never by the store. Nullable (clean ADD COLUMN; unset until the owner sets one).
     config: text("config"),
+    // Where an imported Context came from (`arxiv`) and the reference it was imported
+    // from (the bare paper id). Null for every Context a person or agent defined. An
+    // imported Context is a read-only document, not a runner: the routes refuse runs on
+    // it and the import_job row carries its fetch state. Nullable (clean ADD COLUMN).
+    import_source: text("import_source"),
+    import_ref: text("import_ref"),
   },
   (t) => [uniqueIndex("context_org_name").on(t.org_id, t.name)],
 )
+
+// One queued fetch per imported Context. The worker claims the oldest due row for its
+// deployment (`scope`, the same idea as export_job.renderer_scope), fetches the paper
+// from arXiv, publishes it, and marks the row ready or failed; a lapsed `lease_until`
+// makes a crashed claim reclaimable, and the progress markers (`paper_artifact_id`,
+// `manifest_version`) let a reclaimed job resume rather than fetch twice. Deleting the
+// Context deletes its job, which is how a running import learns it was cancelled.
+export const importJob = sqliteTable(
+  "import_job",
+  {
+    id: text("id").primaryKey(),
+    org_id: text("org_id").notNull(),
+    context_id: text("context_id")
+      .notNull()
+      .references(() => context.id),
+    requested_by: text("requested_by").notNull(),
+    kind: text("kind").$type<ImportKind>().notNull(),
+    ref: text("ref").notNull(),
+    scope: text("scope").notNull().default(""),
+    status: text("status").$type<ImportJobStatus>().notNull().default("pending"),
+    attempts: integer("attempts").notNull().default(0),
+    next_attempt_at: text("next_attempt_at").notNull().default(now),
+    lease_until: text("lease_until"),
+    error_code: text("error_code"),
+    error_detail: text("error_detail"),
+    paper_artifact_id: text("paper_artifact_id"),
+    manifest_version: integer("manifest_version"),
+    resolved_version: integer("resolved_version"),
+    created_at: text("created_at").notNull().default(now),
+    updated_at: text("updated_at").notNull().default(now),
+  },
+  (t) => [uniqueIndex("import_job_context").on(t.context_id)],
+)
+
+// The one-request-at-a-time gate in front of an upstream (arXiv asks for one request
+// every three seconds on one connection). A single row per (kind, scope): a worker
+// claims it with a compare-and-set before talking to the upstream, stamps
+// `next_allowed_at` after each request (further ahead when the upstream says
+// Retry-After), and releases it when the job is done. Every worker on the deployment,
+// on every tier, shares the row, so the pace holds across processes.
+export const importLease = sqliteTable("import_lease", {
+  id: text("id").primaryKey(),
+  kind: text("kind").$type<ImportKind>().notNull(),
+  scope: text("scope").notNull().default(""),
+  holder: text("holder"),
+  lease_until: text("lease_until"),
+  next_allowed_at: text("next_allowed_at").notNull().default(now),
+})
 
 // The per-context asker roster (only consulted when ask_policy = 'invited'). A
 // row grants ONE workspace member the right to ask; workspace membership is
@@ -1567,6 +1623,8 @@ const TABLES = [
   contextAsker,
   contextSession,
   sessionMessage,
+  importJob,
+  importLease,
   report,
   auditLog,
   asset,

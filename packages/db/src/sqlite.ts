@@ -39,9 +39,11 @@ import {
   collectionMember,
   comment,
   context,
+  contextAsker,
   contextSession,
   domain,
   dynamicRevision,
+  importJob,
   MIGRATION_STATEMENTS,
   notification,
   report,
@@ -346,6 +348,8 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
           )
           .run()
         db.delete(contextSession).where(inArray(contextSession.context_id, ctxIds)).run()
+        db.delete(contextAsker).where(inArray(contextAsker.context_id, ctxIds)).run()
+        db.delete(importJob).where(inArray(importJob.context_id, ctxIds)).run()
         db.delete(context).where(eq(context.manifest_artifact_id, id)).run()
         db.delete(reviewRound).where(eq(reviewRound.artifact_id, id)).run()
         // Artifact-SCOPED webhooks only (artifact_id = this id). A workspace-wide webhook
