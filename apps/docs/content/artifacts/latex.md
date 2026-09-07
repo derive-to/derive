@@ -60,7 +60,33 @@ section by section plus the `citation` to cite it with. `use` refuses it, since 
 it. People open it from the Contexts list, where the arXiv chip marks it, and from the
 Templates page's Academic section.
 
-A published bundle may hold at most 50 MB (30 MB on the Workers tier) and 2000 files.
+### The paper's implementation
+
+A paper can carry the code that implements it. The import form takes an optional public
+GitHub or GitLab repository beside the arXiv link, and an imported paper's console can
+attach, replace or remove one at any time afterwards. Derive fetches the repository as
+one anonymous archive of its whole tree, follows the submodules it declares (each at the
+branch it names, since an archive carries no pinned commits), skips Git LFS pointers,
+and stores the files inside the paper's own artifact. A submodule on any other host is
+skipped and named in the version's notes.
+
+**Your agents read the code; you get a link to it.** The implementation is not browsable
+on Derive: the paper's page lists no repository files, the content API's outline and the
+source download leave them out, and requesting one returns nothing. The console shows
+"Open the repository", which goes to the repository on its own host. An agent reading the
+paper sees the implementation summarised beside the paper's pages, with a file count and
+the shallowest hundred paths, and reads any file in it by its exact path.
+
+An artifact carrying an implementation may be twice the usual size, and what survives
+that is decided asymmetrically: every text and code file is kept whatever the total, and
+binaries are dropped largest first until the rest fits, each named in the notes. A
+research repository is usually a fifth of a megabyte of source beside tens of megabytes
+of demo media, so this keeps the part an agent came for. A repository that is gone,
+private, unreachable or too large to fit leaves the paper imported and says why on its
+console, so the link can be fixed without fetching the paper again.
+
+A published bundle may hold at most 50 MB (30 MB on the Workers tier) and 2000 files,
+or twice that when a paper carries an implementation.
 The worker pulls up to 150 MB from arXiv to get there: when the unpacked source is over
 the limit, the raster figures (PNG, JPEG, WebP) are re-encoded in place, largest first,
 to at most 1600 px on the long side, then 1200, then 900, until the bundle fits; a

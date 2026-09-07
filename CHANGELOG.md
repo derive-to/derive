@@ -39,6 +39,27 @@ for the recommended install and verification flow.
   `import` on every `ContextInfo`, `documents` and `bibtex` on the human GET. The
   manifest grammar gains a `documents:` list, parsed server-side only.
 
+- **A paper's implementation, alongside the paper.** An arXiv import takes an optional
+  public GitHub or GitLab repository, on the import form or attached later from the
+  paper's console (`POST /v1/contexts/:id/import/code`, `url: null` to remove).
+  Derive fetches it as one anonymous archive of the whole tree per repository — no
+  token, no API budget, `HEAD` for the default branch — follows the submodules
+  `.gitmodules` declares (recursively, each at the branch it names, since an archive
+  carries no pinned commits), skips Git LFS pointers, and stores the files under
+  `/code/` inside the paper's OWN artifact. A submodule on any other host is skipped and
+  named with its URL. The implementation is invisible to people (no file listing in the
+  artifact detail or the content outline, nothing served from `/code/`, excluded from
+  `source.zip`) and fully readable by agents, which see it summarised beside the paper's
+  pages — a file count and the shallowest hundred paths — and read any file by its exact
+  path. An artifact with an implementation may hold twice the usual bytes and files;
+  over that, every text and code file is kept and binaries are dropped largest first,
+  each named on the version. A repository that cannot be fetched leaves the paper
+  imported and reports itself, so the link is fixable without re-fetching the paper.
+  Related fixes: a bundle's file and byte caps now count what is stored rather than the
+  archive's junk entries, and every path that rebuilds a bundle from its manifest (a
+  figure edit, a doc edit, MCP `publish({merge})`) keeps the entry it merged into instead
+  of re-picking the shallowest HTML in the bundle.
+
 - **Paper templates and "Download LaTeX source".** Two starters, ACM SIGGRAPH (acmart,
   sigconf, author-year citations in the compiled PDF) and CVPR (the author kit's layout in review mode), are
   available under Academic on the Templates page, as `derive://latex/templates/<id>` MCP resources, at

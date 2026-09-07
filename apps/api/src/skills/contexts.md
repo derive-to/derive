@@ -107,6 +107,13 @@ which is yours to read: that is how you understand it. While `import.status` is 
 `fetching` the source is still on its way; `failed` and `dead` carry an error code. An
 imported Context takes no runs: `use` refuses it, and nothing polls its queue.
 
+A paper may carry the repository that implements it, stored inside the same artifact under
+`code/`. The paper's own pages stay the pages; the implementation comes back as `code`
+alongside them, with the file count and the shallowest hundred paths. Read any file in it
+with `read({ short_id, section: "code/<path>" })`, listed in that sample or not. That is how
+you answer what a method actually does rather than what the paper says it does. People never
+see these files; you do.
+
 ## Creating a Context (owners)
 
 `automate` with `action: "create_context"` wires a new Context in one call: `name` +
