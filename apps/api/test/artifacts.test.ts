@@ -2017,6 +2017,36 @@ describe("paper templates and the LaTeX source export", () => {
     expect((await authed.request("/v1/latex/templates/nope", { headers })).status).toBe(404)
   })
 
+  it("exports the rendered bindings while preserving an unused draft", async () => {
+    const enc = (s: string) => new TextEncoder().encode(s)
+    const zip = zipSync({
+      "draft.tex": enc("\\derivefigure{results}\\derivetable{unused}"),
+      "main.tex": enc("\\begin{document}\\input{sec/results}\\end{document}"),
+      "sec/results.tex": enc("\\derivetable{results}"),
+    })
+    const form = new FormData()
+    form.append("file", new Blob([zip as BlobPart]), "paper.zip")
+    const created = await (
+      await authed.request("/v1/artifacts", { method: "POST", body: form, headers })
+    ).json()
+    const updated = await authed.request(`/v1/artifacts/${created.short_id}/dynamic/results`, {
+      method: "PUT",
+      headers: { ...headers, "content-type": "application/json" },
+      body: JSON.stringify({
+        kind: "table",
+        table: { columns: [{ key: "score" }], rows: [{ score: 42 }] },
+      }),
+    })
+    expect(updated.status).toBe(200)
+    const res = await authed.request(`/v1/artifacts/${created.short_id}/source.zip`, { headers })
+    expect(res.status).toBe(200)
+    const { unzipSync, strFromU8 } = await import("fflate")
+    const files = unzipSync(new Uint8Array(await res.arrayBuffer()))
+    expect(strFromU8(files["draft.tex"] as Uint8Array)).toContain("unused")
+    expect(files["derive-dynamic/unused.tex"]).toBeUndefined()
+    expect(strFromU8(files["derive-dynamic/results.tex"] as Uint8Array)).toContain("42")
+  })
+
   it("exports only safe archive paths whatever a binding is named", async () => {
     // A binding name becomes a zip entry (`derive-dynamic/<name>.tex`): one the slot
     // grammar refuses is skipped, as the renderer skips it, so the archive never carries
