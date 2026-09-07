@@ -408,12 +408,10 @@ CREATE TABLE IF NOT EXISTS artifact_read_counter (
   org_id TEXT NOT NULL,
   artifact_id TEXT NOT NULL,
   artifact_version INTEGER NOT NULL,
-  reader_hash TEXT NOT NULL,
-  client TEXT NOT NULL,
   opens INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   last_opened_at TEXT NOT NULL,
-  UNIQUE (artifact_id, artifact_version, reader_hash)
+  UNIQUE (artifact_id, artifact_version)
 );
 
 CREATE TABLE IF NOT EXISTS artifact_skill_link (

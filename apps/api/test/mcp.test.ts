@@ -112,10 +112,19 @@ describe("remote MCP endpoint (/mcp)", () => {
       expect(toolText(await call(app, token, "read", { short_id: shortId }))).toContain(
         "Read counters",
       )
+    expect(
+      toolText(
+        await call(app, token, "read", {
+          short_id: shortId,
+          render: "top",
+          section: "invalid-combination",
+        }),
+      ),
+    ).toContain("pass it alone")
 
     expect(await meta.artifactReadStats(artifact.id, artifact.org_id)).toEqual({
       total: 3,
-      recent: [expect.objectContaining({ client: "Claude", version: 1, opens: 3 })],
+      recent: [expect.objectContaining({ version: 1, opens: 3 })],
     })
     expect((await meta.viewStats(artifact.id)).total).toBe(0)
   })

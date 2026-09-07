@@ -184,7 +184,7 @@ export interface ViewStatsJson {
   recent: { viewer: string; kind: "user" | "anon"; at: string }[]
   agentReads: {
     total: number
-    recent: { client: string; version: number; opens: number; at: string }[]
+    recent: { version: number; opens: number; at: string }[]
   }
 }
 
@@ -540,7 +540,7 @@ export function createClient(opts: ClientOptions): DeriveClient {
       if (opts?.format) q.set("format", opts.format)
       const qs = q.toString()
       const res = await f(`${base}/v1/artifacts/${shortId}/content${qs ? `?${qs}` : ""}`, {
-        headers: authHeaders,
+        headers: { ...authHeaders, "x-derive-ai-read": "1" },
       })
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string }
@@ -582,7 +582,9 @@ export function createClient(opts: ClientOptions): DeriveClient {
     async getOutline(shortId, version) {
       const q = new URLSearchParams({ outline: "1" })
       if (version) q.set("v", String(version))
-      const res = await f(`${base}/v1/artifacts/${shortId}/content?${q}`, { headers: authHeaders })
+      const res = await f(`${base}/v1/artifacts/${shortId}/content?${q}`, {
+        headers: { ...authHeaders, "x-derive-ai-read": "1" },
+      })
       if (!res.ok) return { sections: [], pages: null }
       const body = (await res.json()) as {
         sections?: OutlineSectionJson[]

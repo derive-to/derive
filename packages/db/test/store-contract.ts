@@ -1846,28 +1846,26 @@ export function runStoreContract(
   })
 
   describe(`${label}: views + analytics`, () => {
-    it("keeps AI opens in bounded per-reader counters", async () => {
+    it("keeps AI opens in bounded per-version counters", async () => {
       const a = await store.createArtifact(newArtifact())
       const openedAt = new Date().toISOString()
-      const open = (id: string, readerHash: string, client: string, version = 1) =>
+      const open = (id: string, version = 1) =>
         store.incrementArtifactRead({
           id,
           org_id: ORG,
           artifact_id: a.id,
           artifact_version: version,
-          reader_hash: readerHash,
-          client,
           opened_at: openedAt,
         })
-      await open(uuid(), "machine-a", "Codex")
-      await open(uuid(), "machine-a", "Codex")
-      await open(uuid(), "machine-b", "Codex")
-      await open(uuid(), "machine-c", "Claude", 2)
+      await open(uuid())
+      await open(uuid())
+      await open(uuid())
+      await open(uuid(), 2)
 
       const stats = await store.artifactReadStats(a.id, ORG)
       expect(stats.total).toBe(4)
-      expect(stats.recent).toContainEqual({ client: "Codex", version: 1, opens: 3, at: openedAt })
-      expect(stats.recent).toContainEqual({ client: "Claude", version: 2, opens: 1, at: openedAt })
+      expect(stats.recent).toContainEqual({ version: 1, opens: 3, at: openedAt })
+      expect(stats.recent).toContainEqual({ version: 2, opens: 1, at: openedAt })
       // AI activity never changes the browser audience or activation metrics.
       expect((await store.viewStats(a.id)).total).toBe(0)
       expect((await store.getByShortId(a.short_id))?.first_foreign_view_at).toBeNull()

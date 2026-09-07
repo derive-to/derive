@@ -8063,14 +8063,12 @@ export interface components {
                 avatar?: string | null;
             }[];
             agentReads: {
-                /** @description AI opens across bounded per-reader counters */
+                /** @description AI opens across bounded per-version counters */
                 total: number;
                 recent: {
-                    /** @description MCP client or registered agent name */
-                    client: string;
                     /** @description Artifact version returned */
                     version: number;
-                    /** @description Opens by this reader for this version */
+                    /** @description AI opens for this version */
                     opens: number;
                     /** @description Most recent open time (ISO timestamp) */
                     at: string;

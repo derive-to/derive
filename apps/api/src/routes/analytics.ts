@@ -54,12 +54,11 @@ export const analyticsRoutes = (ctx: AppContext) => {
         }),
       ),
       agentReads: z.object({
-        total: z.number().describe("AI opens across bounded per-reader counters"),
+        total: z.number().describe("AI opens across bounded per-version counters"),
         recent: z.array(
           z.object({
-            client: z.string().describe("MCP client or registered agent name"),
             version: z.number().describe("Artifact version returned"),
-            opens: z.number().describe("Opens by this reader for this version"),
+            opens: z.number().describe("AI opens for this version"),
             at: z.string().describe("Most recent open time (ISO timestamp)"),
           }),
         ),

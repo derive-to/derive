@@ -56,8 +56,6 @@ describe("view analytics", () => {
         org_id: artifact.org_id,
         artifact_id: artifact.id,
         artifact_version: 2,
-        reader_hash: "opaque-reader",
-        client: "Codex",
         opened_at: new Date().toISOString(),
       })
 
@@ -74,7 +72,7 @@ describe("view analytics", () => {
     expect(a.recent.every((r: { kind: string }) => r.kind === "anon")).toBe(true)
     expect(a.agentReads).toMatchObject({
       total: 2,
-      recent: [expect.objectContaining({ client: "Codex", version: 2, opens: 2 })],
+      recent: [expect.objectContaining({ version: 2, opens: 2 })],
     })
 
     // Batch counts surface on the library listing.

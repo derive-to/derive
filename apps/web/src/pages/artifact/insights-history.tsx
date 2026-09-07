@@ -226,14 +226,9 @@ export function Insights({
                       </div>
                     )}
                     {data.agentReads.recent.map((r) => (
-                      <div
-                        key={`${r.client}:${r.version}`}
-                        className="flex items-center gap-2 text-sm"
-                      >
+                      <div key={r.version} className="flex items-center gap-2 text-sm">
                         <Icon name="sparkles" className="size-4.5 text-muted-foreground" />
-                        <span className="flex-1 truncate font-medium">
-                          {r.client} · v{r.version}
-                        </span>
+                        <span className="flex-1 truncate font-medium">AI · v{r.version}</span>
                         <span
                           className="font-mono text-2xs text-muted-foreground"
                           title={`${r.opens} opens · ${new Date(r.at).toLocaleString()}`}

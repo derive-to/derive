@@ -4419,15 +4419,12 @@ export interface ViewStats {
   recent: { viewer: string; kind: "user" | "anon"; at: string; avatar?: string | null }[]
 }
 
-/** A bounded AI-read counter. One row survives per artifact version and opaque reader.
- * It keeps frequency and last-use evidence without retaining an event history. */
+/** A bounded AI-read counter. One row survives per artifact version. */
 export interface ArtifactReadCounterRecord {
   id: string
   org_id: string
   artifact_id: string
   artifact_version: number
-  reader_hash: string
-  client: string
   opens: number
   created_at: string
   last_opened_at: string
@@ -4438,14 +4435,12 @@ export interface NewArtifactReadCounter {
   org_id: string
   artifact_id: string
   artifact_version: number
-  reader_hash: string
-  client: string
   opened_at: string
 }
 
 export interface ArtifactReadStats {
   total: number
-  recent: { client: string; version: number; opens: number; at: string }[]
+  recent: { version: number; opens: number; at: string }[]
 }
 
 // open      — live feedback awaiting a reply/resolution

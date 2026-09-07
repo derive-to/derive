@@ -4858,19 +4858,12 @@ export function makeRepos(db: SqliteDb) {
         org_id: read.org_id,
         artifact_id: read.artifact_id,
         artifact_version: read.artifact_version,
-        reader_hash: read.reader_hash,
-        client: read.client,
         opens: 1,
         last_opened_at: read.opened_at,
       })
       .onConflictDoUpdate({
-        target: [
-          artifactReadCounter.artifact_id,
-          artifactReadCounter.artifact_version,
-          artifactReadCounter.reader_hash,
-        ],
+        target: [artifactReadCounter.artifact_id, artifactReadCounter.artifact_version],
         set: {
-          client: read.client,
           opens: sql`${artifactReadCounter.opens} + 1`,
           last_opened_at: read.opened_at,
         },
@@ -4883,21 +4876,19 @@ export function makeRepos(db: SqliteDb) {
   ): Promise<ArtifactReadStats> => {
     const rows = await db
       .select({
-        client: artifactReadCounter.client,
         version: artifactReadCounter.artifact_version,
-        opens: sql<number>`sum(${artifactReadCounter.opens})`,
-        at: max(artifactReadCounter.last_opened_at),
+        opens: artifactReadCounter.opens,
+        at: artifactReadCounter.last_opened_at,
       })
       .from(artifactReadCounter)
       .where(
         and(eq(artifactReadCounter.artifact_id, artifactId), eq(artifactReadCounter.org_id, orgId)),
       )
-      .groupBy(artifactReadCounter.client, artifactReadCounter.artifact_version)
-      .orderBy(desc(max(artifactReadCounter.last_opened_at)))
+      .orderBy(desc(artifactReadCounter.last_opened_at))
       .all()
     return {
       total: rows.reduce((sum, row) => sum + row.opens, 0),
-      recent: rows.filter((row): row is typeof row & { at: string } => row.at !== null).slice(0, 8),
+      recent: rows.slice(0, 8),
     }
   }
   const skillLocalUsage = async (

@@ -3577,24 +3577,20 @@
             "properties": {
               "total": {
                 "type": "number",
-                "description": "AI opens across bounded per-reader counters"
+                "description": "AI opens across bounded per-version counters"
               },
               "recent": {
                 "type": "array",
                 "items": {
                   "type": "object",
                   "properties": {
-                    "client": {
-                      "type": "string",
-                      "description": "MCP client or registered agent name"
-                    },
                     "version": {
                       "type": "number",
                       "description": "Artifact version returned"
                     },
                     "opens": {
                       "type": "number",
-                      "description": "Opens by this reader for this version"
+                      "description": "AI opens for this version"
                     },
                     "at": {
                       "type": "string",
@@ -3602,7 +3598,6 @@
                     }
                   },
                   "required": [
-                    "client",
                     "version",
                     "opens",
                     "at"

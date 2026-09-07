@@ -480,18 +480,12 @@ export const artifactReadCounter = pgTable(
     org_id: text("org_id").notNull(),
     artifact_id: text("artifact_id").notNull(),
     artifact_version: integer("artifact_version").notNull(),
-    reader_hash: text("reader_hash").notNull(),
-    client: text("client").notNull(),
     opens: integer("opens").notNull().default(1),
     created_at: text("created_at").notNull().$defaultFn(isoNow),
     last_opened_at: text("last_opened_at").notNull(),
   },
   (t) => [
-    uniqueIndex("artifact_read_counter_reader").on(
-      t.artifact_id,
-      t.artifact_version,
-      t.reader_hash,
-    ),
+    uniqueIndex("artifact_read_counter_version").on(t.artifact_id, t.artifact_version),
     index("artifact_read_counter_artifact").on(t.org_id, t.artifact_id, t.last_opened_at),
   ],
 )
