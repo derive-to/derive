@@ -8063,16 +8063,16 @@ export interface components {
                 avatar?: string | null;
             }[];
             agentReads: {
-                /** @description Artifact reads through the Derive MCP read tool */
+                /** @description AI opens across bounded per-reader counters */
                 total: number;
-                /** @description MCP reads in the trailing 24 hours */
-                last24h: number;
                 recent: {
-                    /** @description Agent or OAuth client name */
-                    agent: string;
-                    /** @description Artifact version returned to the agent */
+                    /** @description MCP client or registered agent name */
+                    client: string;
+                    /** @description Artifact version returned */
                     version: number;
-                    /** @description When that agent last read the artifact */
+                    /** @description Opens by this reader for this version */
+                    opens: number;
+                    /** @description Most recent open time (ISO timestamp) */
                     at: string;
                 }[];
             };

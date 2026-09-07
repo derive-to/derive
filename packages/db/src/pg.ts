@@ -5,6 +5,7 @@ import type {
   ArtifactDetailOpts,
   ArtifactInviteRecord,
   ArtifactMemberRecord,
+  ArtifactReadStats,
   ArtifactRecord,
   ArtifactSkillLinkRecord,
   AssetRecord,
@@ -52,6 +53,7 @@ import type {
   NewArtifact,
   NewArtifactInvite,
   NewArtifactMember,
+  NewArtifactReadCounter,
   NewArtifactSkillLink,
   NewAsset,
   NewAuditLog,
@@ -200,6 +202,7 @@ import {
   artifactFavorite,
   artifactInvite,
   artifactMember,
+  artifactReadCounter,
   artifactSkillLink,
   artifactTag,
   asset,
@@ -302,6 +305,7 @@ export const schema = {
   skillInstallation,
   skillScanCoverage,
   skillUse,
+  artifactReadCounter,
   artifactSkillLink,
   plan,
   connection,
@@ -360,6 +364,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   skillInstallation: true,
   skillScanCoverage: true,
   skillUse: true,
+  artifactReadCounter: true,
   artifactSkillLink: true,
   plan: true,
   connection: true,
@@ -1692,7 +1697,7 @@ export class PgMetaStore implements MetaStore {
       if (views)
         branches.push(
           `SELECT 'view', artifact_id, count(*)::text, NULL, NULL FROM view
-            WHERE viewer_kind!='agent' AND artifact_id = ANY(${page}) GROUP BY artifact_id`,
+            WHERE artifact_id = ANY(${page}) GROUP BY artifact_id`,
         )
       if (viewerId) {
         const viewer = bind(viewerId)
@@ -2319,12 +2324,12 @@ export class PgMetaStore implements MetaStore {
       `INSERT INTO view (id, artifact_id, version, viewer, viewer_kind) VALUES ($1,$2,$3,$4,$5)`,
       [v.id, v.artifact_id, v.version, v.viewer, v.viewer_kind],
     )
-    // Agent reads are activity, not audience activation.
-    if (v.viewer_kind !== "agent")
-      await this.pool.query(
-        `UPDATE artifact SET first_foreign_view_at = $1 WHERE id = $2 AND first_foreign_view_at IS NULL`,
-        [new Date().toISOString(), v.artifact_id],
-      )
+    // Activation stamp: first non-author view only (the route already excluded
+    // owner self-views). WHERE IS NULL keeps it a one-time write.
+    await this.pool.query(
+      `UPDATE artifact SET first_foreign_view_at = $1 WHERE id = $2 AND first_foreign_view_at IS NULL`,
+      [new Date().toISOString(), v.artifact_id],
+    )
   }
 
   async confirmRead(artifactId: string, viewer: string, viewedBeforeIso: string): Promise<void> {
@@ -2378,48 +2383,33 @@ export class PgMetaStore implements MetaStore {
   async viewStats(artifactId: string): Promise<ViewStats> {
     const cutoff = new Date(Date.now() - VIEW_WINDOW_MS).toISOString()
     const dayAgo = new Date(Date.now() - LAST_24H_MS).toISOString()
-    const [tot, day, uni, anon, reads, perV, daily, recent, agentCounts, agentRecent] =
-      await Promise.all([
-        this.pool.query(
-          `SELECT count(*)::int n FROM view WHERE artifact_id=$1 AND viewer_kind!='agent'`,
-          [artifactId],
-        ),
-        this.pool.query(
-          `SELECT count(*)::int n FROM view WHERE artifact_id=$1 AND viewer_kind!='agent' AND created_at>=$2`,
-          [artifactId, dayAgo],
-        ),
-        this.pool.query(
-          `SELECT count(DISTINCT viewer)::int n FROM view WHERE artifact_id=$1 AND viewer_kind!='agent'`,
-          [artifactId],
-        ),
-        this.pool.query(
-          `SELECT count(DISTINCT viewer)::int n FROM view WHERE artifact_id=$1 AND viewer_kind='anon'`,
-          [artifactId],
-        ),
-        this.pool.query(`SELECT count(*)::int n FROM view_read WHERE artifact_id=$1`, [artifactId]),
-        this.pool.query(
-          `SELECT version, count(*)::int c FROM view WHERE artifact_id=$1 AND viewer_kind!='agent' GROUP BY version ORDER BY version`,
-          [artifactId],
-        ),
-        this.pool.query(
-          `SELECT substr(created_at,1,10) AS "day", count(*)::int c FROM view WHERE artifact_id=$1 AND viewer_kind!='agent' AND created_at>=$2 GROUP BY 1 ORDER BY 1`,
-          [artifactId, cutoff],
-        ),
-        this.pool.query(
-          `SELECT viewer, viewer_kind, max(created_at) "at" FROM view WHERE artifact_id=$1 AND viewer_kind!='agent' GROUP BY viewer, viewer_kind ORDER BY 3 DESC LIMIT 8`,
-          [artifactId],
-        ),
-        this.pool.query(
-          `SELECT count(*)::int total,
-                count(*) FILTER (WHERE created_at >= $2)::int "last24h"
-           FROM view WHERE artifact_id=$1 AND viewer_kind='agent'`,
-          [artifactId, dayAgo],
-        ),
-        this.pool.query(
-          `SELECT viewer, version, created_at "at" FROM view WHERE artifact_id=$1 AND viewer_kind='agent' ORDER BY created_at DESC LIMIT 8`,
-          [artifactId],
-        ),
-      ])
+    const [tot, day, uni, anon, reads, perV, daily, recent] = await Promise.all([
+      this.pool.query(`SELECT count(*)::int n FROM view WHERE artifact_id=$1`, [artifactId]),
+      this.pool.query(`SELECT count(*)::int n FROM view WHERE artifact_id=$1 AND created_at>=$2`, [
+        artifactId,
+        dayAgo,
+      ]),
+      this.pool.query(`SELECT count(DISTINCT viewer)::int n FROM view WHERE artifact_id=$1`, [
+        artifactId,
+      ]),
+      this.pool.query(
+        `SELECT count(DISTINCT viewer)::int n FROM view WHERE artifact_id=$1 AND viewer_kind='anon'`,
+        [artifactId],
+      ),
+      this.pool.query(`SELECT count(*)::int n FROM view_read WHERE artifact_id=$1`, [artifactId]),
+      this.pool.query(
+        `SELECT version, count(*)::int c FROM view WHERE artifact_id=$1 GROUP BY version ORDER BY version`,
+        [artifactId],
+      ),
+      this.pool.query(
+        `SELECT substr(created_at,1,10) AS "day", count(*)::int c FROM view WHERE artifact_id=$1 AND created_at>=$2 GROUP BY 1 ORDER BY 1`,
+        [artifactId, cutoff],
+      ),
+      this.pool.query(
+        `SELECT viewer, viewer_kind, max(created_at) "at" FROM view WHERE artifact_id=$1 GROUP BY viewer, viewer_kind ORDER BY 3 DESC LIMIT 8`,
+        [artifactId],
+      ),
+    ])
     return {
       total: tot.rows[0].n,
       last24h: day.rows[0].n,
@@ -2429,15 +2419,6 @@ export class PgMetaStore implements MetaStore {
       perVersion: perV.rows.map((r) => ({ version: r.version, count: r.c })),
       daily: daily.rows.map((r) => ({ day: r.day, count: r.c })),
       recent: recent.rows.map((r) => ({ viewer: r.viewer, kind: r.viewer_kind, at: r.at })),
-      agentReads: {
-        total: agentCounts.rows[0].total,
-        last24h: agentCounts.rows[0].last24h,
-        recent: agentRecent.rows.map((r) => ({
-          agent: r.viewer,
-          version: r.version,
-          at: r.at,
-        })),
-      },
     }
   }
 
@@ -2445,7 +2426,7 @@ export class PgMetaStore implements MetaStore {
     if (artifactIds.length === 0) return {}
     const ph = artifactIds.map((_, i) => `$${i + 1}`).join(",")
     const { rows } = await this.pool.query(
-      `SELECT artifact_id, count(*)::int c FROM view WHERE viewer_kind!='agent' AND artifact_id IN (${ph}) GROUP BY artifact_id`,
+      `SELECT artifact_id, count(*)::int c FROM view WHERE artifact_id IN (${ph}) GROUP BY artifact_id`,
       artifactIds,
     )
     const out: Record<string, number> = {}
@@ -6055,6 +6036,53 @@ export class PgMetaStore implements MetaStore {
       .returning()
     return one(rows)
   }
+
+  async incrementArtifactRead(read: NewArtifactReadCounter): Promise<void> {
+    await this.db
+      .insert(artifactReadCounter)
+      .values({
+        id: read.id,
+        org_id: read.org_id,
+        artifact_id: read.artifact_id,
+        artifact_version: read.artifact_version,
+        reader_hash: read.reader_hash,
+        client: read.client,
+        opens: 1,
+        last_opened_at: read.opened_at,
+      })
+      .onConflictDoUpdate({
+        target: [
+          artifactReadCounter.artifact_id,
+          artifactReadCounter.artifact_version,
+          artifactReadCounter.reader_hash,
+        ],
+        set: {
+          client: read.client,
+          opens: sql`${artifactReadCounter.opens} + 1`,
+          last_opened_at: read.opened_at,
+        },
+      })
+  }
+
+  async artifactReadStats(artifactId: string, orgId: string): Promise<ArtifactReadStats> {
+    const rows = await this.db
+      .select({
+        client: artifactReadCounter.client,
+        version: artifactReadCounter.artifact_version,
+        opens: sql<number>`sum(${artifactReadCounter.opens})::int`,
+        at: max(artifactReadCounter.last_opened_at),
+      })
+      .from(artifactReadCounter)
+      .where(
+        and(eq(artifactReadCounter.artifact_id, artifactId), eq(artifactReadCounter.org_id, orgId)),
+      )
+      .groupBy(artifactReadCounter.client, artifactReadCounter.artifact_version)
+      .orderBy(desc(max(artifactReadCounter.last_opened_at)))
+    return {
+      total: rows.reduce((sum, row) => sum + row.opens, 0),
+      recent: rows.filter((row): row is typeof row & { at: string } => row.at !== null).slice(0, 8),
+    }
+  }
   skillLocalUsage(skillArtifactId: string, orgId: string): Promise<SkillLocalUsageBucket[]> {
     return this.db
       .select({
@@ -7001,6 +7029,7 @@ export class PgMetaStore implements MetaStore {
           or(eq(skillRelation.source_artifact_id, id), eq(skillRelation.target_artifact_id, id)),
         )
       await tx.delete(skillInstallation).where(eq(skillInstallation.skill_artifact_id, id))
+      await tx.delete(artifactReadCounter).where(eq(artifactReadCounter.artifact_id, id))
       await tx
         .delete(artifactSkillLink)
         .where(
@@ -7040,6 +7069,10 @@ export class PgMetaStore implements MetaStore {
   async moveArtifactOrg(artifactId: string, targetOrgId: string): Promise<void> {
     await this.db.transaction(async (tx) => {
       await tx.update(artifact).set({ org_id: targetOrgId }).where(eq(artifact.id, artifactId))
+      await tx
+        .update(artifactReadCounter)
+        .set({ org_id: targetOrgId })
+        .where(eq(artifactReadCounter.artifact_id, artifactId))
       await tx.delete(collectionItem).where(eq(collectionItem.artifact_id, artifactId))
       await tx.update(webhook).set({ artifact_id: null }).where(eq(webhook.artifact_id, artifactId))
     })

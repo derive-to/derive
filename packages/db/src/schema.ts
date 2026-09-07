@@ -538,6 +538,31 @@ export const skillUse = sqliteTable(
   ],
 )
 
+// AI artifact activity is a counter, not an event log. One row per exact version and
+// opaque reader bounds storage while preserving total opens and the last open time.
+export const artifactReadCounter = sqliteTable(
+  "artifact_read_counter",
+  {
+    id: text("id").primaryKey(),
+    org_id: text("org_id").notNull(),
+    artifact_id: text("artifact_id").notNull(),
+    artifact_version: integer("artifact_version").notNull(),
+    reader_hash: text("reader_hash").notNull(),
+    client: text("client").notNull(),
+    opens: integer("opens").notNull().default(1),
+    created_at: text("created_at").notNull().default(now),
+    last_opened_at: text("last_opened_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("artifact_read_counter_reader").on(
+      t.artifact_id,
+      t.artifact_version,
+      t.reader_hash,
+    ),
+    index("artifact_read_counter_artifact").on(t.org_id, t.artifact_id, t.last_opened_at),
+  ],
+)
+
 export const skillScanCoverage = sqliteTable(
   "skill_scan_coverage",
   {
@@ -1509,6 +1534,7 @@ const TABLES = [
   skillInstallation,
   skillScanCoverage,
   skillUse,
+  artifactReadCounter,
   artifactSkillLink,
   plan,
   connection,

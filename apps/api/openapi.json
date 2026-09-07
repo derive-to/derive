@@ -3577,33 +3577,34 @@
             "properties": {
               "total": {
                 "type": "number",
-                "description": "Artifact reads through the Derive MCP read tool"
-              },
-              "last24h": {
-                "type": "number",
-                "description": "MCP reads in the trailing 24 hours"
+                "description": "AI opens across bounded per-reader counters"
               },
               "recent": {
                 "type": "array",
                 "items": {
                   "type": "object",
                   "properties": {
-                    "agent": {
+                    "client": {
                       "type": "string",
-                      "description": "Agent or OAuth client name"
+                      "description": "MCP client or registered agent name"
                     },
                     "version": {
                       "type": "number",
-                      "description": "Artifact version returned to the agent"
+                      "description": "Artifact version returned"
+                    },
+                    "opens": {
+                      "type": "number",
+                      "description": "Opens by this reader for this version"
                     },
                     "at": {
                       "type": "string",
-                      "description": "When that agent last read the artifact"
+                      "description": "Most recent open time (ISO timestamp)"
                     }
                   },
                   "required": [
-                    "agent",
+                    "client",
                     "version",
+                    "opens",
                     "at"
                   ]
                 }
@@ -3611,7 +3612,6 @@
             },
             "required": [
               "total",
-              "last24h",
               "recent"
             ]
           }

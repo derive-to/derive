@@ -35,6 +35,7 @@ import { boundSources, sourceTools } from "../lib/chat-sources"
 import { clip, MAX_CHARS } from "../lib/clip"
 import { pickVariant, rendersOff } from "../lib/collect-render"
 import { assembleContextPackage } from "../lib/context-package"
+import { sha256 } from "../lib/crypto"
 import { documentStructure } from "../lib/doc-structure-cache"
 import {
   buildFocusIndex,
@@ -238,6 +239,7 @@ export function registerReadTool(tc: ToolContext): void {
     staleNote,
     actingFor,
     agent,
+    clientId,
     ownerId,
     inGrant,
     resolveWs,
@@ -251,17 +253,20 @@ export function registerReadTool(tc: ToolContext): void {
     return documentStructure(v.blob_key, source, contentType)
   }
 
-  // Reuse the browser view ledger with a distinct actor kind. This keeps one retention
-  // path and one analytics query surface. The background helper keeps the write outside
-  // the hosted response path; no model call or observer is involved.
-  const recordAgentRead = (artifact: ArtifactRecord, version: number): void => {
+  // One row per exact version and opaque reader. Repeated opens increment the row,
+  // so observability is a bounded counter rather than an event log. The hosted
+  // response does not wait for this write and no model call is involved.
+  const countAgentOpen = (artifact: ArtifactRecord, version: number): void => {
+    const openedAt = new Date().toISOString()
     ctx.background(
-      ctx.meta.recordView({
-        id: newId("v"),
+      ctx.meta.incrementArtifactRead({
+        id: newId("arc"),
+        org_id: artifact.org_id,
         artifact_id: artifact.id,
-        version,
-        viewer: agent.name,
-        viewer_kind: "agent",
+        artifact_version: version,
+        reader_hash: sha256(`${agent.id}\0${clientId}`),
+        client: agent.name,
+        opened_at: openedAt,
       }),
     )
   }
@@ -459,7 +464,7 @@ export function registerReadTool(tc: ToolContext): void {
         if (r && r.a.current_content_type === SKILL_CONTENT_TYPE) {
           const reading = await skillReading(ctx, r.a)
           if (reading) {
-            recordAgentRead(r.a, r.a.current_version)
+            countAgentOpen(r.a, r.a.current_version)
             return json({
               uri: short_id,
               mimeType: "text/markdown",
@@ -698,7 +703,7 @@ export function registerReadTool(tc: ToolContext): void {
       const v =
         envelope?.artifact.id === a.id ? envelope.version : await ctx.meta.getVersion(a.id, n)
       if (!v) return err(`Version ${n} of "${short_id}" is unavailable.`)
-      recordAgentRead(a, n)
+      countAgentOpen(a, n)
       const url = artifactUrl(ctx.deps.baseUrl, a)
 
       // The render rung: the version's screenshot, so an agent SEES what it shipped.

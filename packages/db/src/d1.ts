@@ -77,11 +77,11 @@ export function createD1Store(d1: D1Database): MetaStore {
       await db.run(
         sql`INSERT INTO view (id, artifact_id, version, viewer, viewer_kind) VALUES (${v.id}, ${v.artifact_id}, ${v.version}, ${v.viewer}, ${v.viewer_kind})`,
       )
-      // Agent reads are activity, not audience activation.
-      if (v.viewer_kind !== "agent")
-        await db.run(
-          sql`UPDATE artifact SET first_foreign_view_at = ${new Date().toISOString()} WHERE id = ${v.artifact_id} AND first_foreign_view_at IS NULL`,
-        )
+      // Activation stamp: first non-author view only (the route already excluded
+      // owner self-views). WHERE IS NULL keeps it a one-time write.
+      await db.run(
+        sql`UPDATE artifact SET first_foreign_view_at = ${new Date().toISOString()} WHERE id = ${v.artifact_id} AND first_foreign_view_at IS NULL`,
+      )
     },
     // See MetaStore.confirmRead. One idempotent statement, so the repeat heartbeats
     // that follow cost a single indexed probe.
@@ -134,13 +134,13 @@ export function createD1Store(d1: D1Database): MetaStore {
       const cutoff = new Date(Date.now() - VIEW_WINDOW_MS).toISOString()
       const dayAgo = new Date(Date.now() - LAST_24H_MS).toISOString()
       const tot = (await db.get(
-        sql`SELECT count(*) n FROM view WHERE artifact_id=${artifactId} AND viewer_kind!='agent'`,
+        sql`SELECT count(*) n FROM view WHERE artifact_id=${artifactId}`,
       )) as { n: number }
       const day = (await db.get(
-        sql`SELECT count(*) n FROM view WHERE artifact_id=${artifactId} AND viewer_kind!='agent' AND created_at>=${dayAgo}`,
+        sql`SELECT count(*) n FROM view WHERE artifact_id=${artifactId} AND created_at>=${dayAgo}`,
       )) as { n: number }
       const uni = (await db.get(
-        sql`SELECT count(DISTINCT viewer) n FROM view WHERE artifact_id=${artifactId} AND viewer_kind!='agent'`,
+        sql`SELECT count(DISTINCT viewer) n FROM view WHERE artifact_id=${artifactId}`,
       )) as { n: number }
       const anon = (await db.get(
         sql`SELECT count(DISTINCT viewer) n FROM view WHERE artifact_id=${artifactId} AND viewer_kind='anon'`,
@@ -149,13 +149,13 @@ export function createD1Store(d1: D1Database): MetaStore {
         sql`SELECT count(*) n FROM view_read WHERE artifact_id=${artifactId}`,
       )) as { n: number }
       const perVersion = (await db.all(
-        sql`SELECT version, count(*) count FROM view WHERE artifact_id=${artifactId} AND viewer_kind!='agent' GROUP BY version ORDER BY version`,
+        sql`SELECT version, count(*) count FROM view WHERE artifact_id=${artifactId} GROUP BY version ORDER BY version`,
       )) as { version: number; count: number }[]
       const daily = (await db.all(
-        sql`SELECT substr(created_at,1,10) day, count(*) count FROM view WHERE artifact_id=${artifactId} AND viewer_kind!='agent' AND created_at>=${cutoff} GROUP BY day ORDER BY day`,
+        sql`SELECT substr(created_at,1,10) day, count(*) count FROM view WHERE artifact_id=${artifactId} AND created_at>=${cutoff} GROUP BY day ORDER BY day`,
       )) as { day: string; count: number }[]
       const recent = (await db.all(
-        sql`SELECT viewer, viewer_kind kind, max(created_at) at FROM view WHERE artifact_id=${artifactId} AND viewer_kind!='agent' GROUP BY viewer, viewer_kind ORDER BY at DESC LIMIT 8`,
+        sql`SELECT viewer, viewer_kind kind, max(created_at) at FROM view WHERE artifact_id=${artifactId} GROUP BY viewer, viewer_kind ORDER BY at DESC LIMIT 8`,
       )) as { viewer: string; kind: "user" | "anon"; at: string }[]
       return {
         total: tot.n,
@@ -166,14 +166,6 @@ export function createD1Store(d1: D1Database): MetaStore {
         perVersion,
         daily,
         recent,
-        agentReads: {
-          ...((await db.get(
-            sql`SELECT count(*) total, count(CASE WHEN created_at>=${dayAgo} THEN 1 END) last24h FROM view WHERE artifact_id=${artifactId} AND viewer_kind='agent'`,
-          )) as { total: number; last24h: number }),
-          recent: (await db.all(
-            sql`SELECT viewer agent, version, created_at at FROM view WHERE artifact_id=${artifactId} AND viewer_kind='agent' ORDER BY created_at DESC LIMIT 8`,
-          )) as { agent: string; version: number; at: string }[],
-        },
       }
     },
     viewCounts: async (artifactIds: string[]): Promise<Record<string, number>> => {
@@ -183,7 +175,7 @@ export function createD1Store(d1: D1Database): MetaStore {
         sql`, `,
       )
       const rows = (await db.all(
-        sql`SELECT artifact_id, count(*) c FROM view WHERE viewer_kind!='agent' AND artifact_id IN (${ids}) GROUP BY artifact_id`,
+        sql`SELECT artifact_id, count(*) c FROM view WHERE artifact_id IN (${ids}) GROUP BY artifact_id`,
       )) as { artifact_id: string; c: number }[]
       const out: Record<string, number> = {}
       for (const r of rows) out[r.artifact_id] = r.c

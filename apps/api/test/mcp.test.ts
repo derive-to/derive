@@ -96,25 +96,28 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(r.wwwAuth).toContain("oauth-protected-resource")
   })
 
-  it("records artifact reads as agent activity without inflating browser views", async () => {
+  it("counts repeated AI artifact opens without keeping an event log", async () => {
     const { app, token, meta } = appWithGrant(
       dir,
-      "read-activity",
+      "read-counters",
       "openid derive:read derive:publish",
     )
-    const { short_id: shortId } = (await (await publish(app, token, "Read activity")).json()) as {
+    const { short_id: shortId } = (await (await publish(app, token, "Read counters")).json()) as {
       short_id: string
     }
     const artifact = await meta.getByShortId(shortId)
     if (!artifact) throw new Error("artifact was not published")
 
-    expect(toolText(await call(app, token, "read", { short_id: shortId }))).toContain(
-      "Read activity",
-    )
-    const stats = await meta.viewStats(artifact.id)
-    expect(stats.total).toBe(0)
-    expect(stats.agentReads).toMatchObject({ total: 1, last24h: 1 })
-    expect(stats.agentReads.recent[0]).toMatchObject({ agent: "Claude", version: 1 })
+    for (let index = 0; index < 3; index += 1)
+      expect(toolText(await call(app, token, "read", { short_id: shortId }))).toContain(
+        "Read counters",
+      )
+
+    expect(await meta.artifactReadStats(artifact.id, artifact.org_id)).toEqual({
+      total: 3,
+      recent: [expect.objectContaining({ client: "Claude", version: 1, opens: 3 })],
+    })
+    expect((await meta.viewStats(artifact.id)).total).toBe(0)
   })
 
   it("initializes (identity in instructions) and lists the consolidated tools", async () => {

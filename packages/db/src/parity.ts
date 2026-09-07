@@ -17,6 +17,7 @@ import type {
   AgentRecord,
   ArtifactInviteRecord,
   ArtifactMemberRecord,
+  ArtifactReadCounterRecord,
   ArtifactRecord,
   ArtifactSkillLinkRecord,
   AssetRecord,
@@ -92,6 +93,7 @@ export interface TypedTables {
   skillRelation: SkillRelationRecord
   skillInstallation: SkillInstallationRecord
   skillUse: SkillUseRecord
+  artifactReadCounter: ArtifactReadCounterRecord
   skillScanCoverage: SkillScanCoverageRecord
   artifactSkillLink: ArtifactSkillLinkRecord
   plan: PlanRecord

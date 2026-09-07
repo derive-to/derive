@@ -403,6 +403,19 @@ CREATE TABLE IF NOT EXISTS skill_use (
   UNIQUE (org_id, skill_artifact_id, used_by, event_id)
 );
 
+CREATE TABLE IF NOT EXISTS artifact_read_counter (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  artifact_id TEXT NOT NULL,
+  artifact_version INTEGER NOT NULL,
+  reader_hash TEXT NOT NULL,
+  client TEXT NOT NULL,
+  opens INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  last_opened_at TEXT NOT NULL,
+  UNIQUE (artifact_id, artifact_version, reader_hash)
+);
+
 CREATE TABLE IF NOT EXISTS artifact_skill_link (
   id TEXT PRIMARY KEY,
   org_id TEXT NOT NULL,
@@ -888,6 +901,8 @@ CREATE INDEX IF NOT EXISTS skill_installation_skill ON skill_installation (org_i
 CREATE INDEX IF NOT EXISTS skill_scan_coverage_workspace ON skill_scan_coverage (org_id, scanned_at);
 
 CREATE INDEX IF NOT EXISTS skill_use_skill ON skill_use (org_id, skill_artifact_id, occurred_at);
+
+CREATE INDEX IF NOT EXISTS artifact_read_counter_artifact ON artifact_read_counter (org_id, artifact_id, last_opened_at);
 
 CREATE INDEX IF NOT EXISTS artifact_skill_link_skill ON artifact_skill_link (org_id, skill_artifact_id, created_at);
 

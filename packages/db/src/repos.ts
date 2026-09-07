@@ -3,6 +3,7 @@ import type {
   AgentRecord,
   ArtifactInviteRecord,
   ArtifactMemberRecord,
+  ArtifactReadStats,
   ArtifactRecord,
   ArtifactSkillLinkRecord,
   AssetRecord,
@@ -43,6 +44,7 @@ import type {
   NewArtifact,
   NewArtifactInvite,
   NewArtifactMember,
+  NewArtifactReadCounter,
   NewArtifactSkillLink,
   NewAsset,
   NewAuditLog,
@@ -187,6 +189,7 @@ import {
   artifactFavorite,
   artifactInvite,
   artifactMember,
+  artifactReadCounter,
   artifactSkillLink,
   artifactTag,
   asset,
@@ -424,6 +427,7 @@ export const schema = {
   skillInstallation,
   skillScanCoverage,
   skillUse,
+  artifactReadCounter,
   artifactSkillLink,
   plan,
   connection,
@@ -482,6 +486,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   skillInstallation: true,
   skillScanCoverage: true,
   skillUse: true,
+  artifactReadCounter: true,
   artifactSkillLink: true,
   plan: true,
   connection: true,
@@ -4845,6 +4850,56 @@ export function makeRepos(db: SqliteDb) {
       })
       .returning()
       .get()) as SkillUseRecord
+  const incrementArtifactRead = async (read: NewArtifactReadCounter): Promise<void> => {
+    await db
+      .insert(artifactReadCounter)
+      .values({
+        id: read.id,
+        org_id: read.org_id,
+        artifact_id: read.artifact_id,
+        artifact_version: read.artifact_version,
+        reader_hash: read.reader_hash,
+        client: read.client,
+        opens: 1,
+        last_opened_at: read.opened_at,
+      })
+      .onConflictDoUpdate({
+        target: [
+          artifactReadCounter.artifact_id,
+          artifactReadCounter.artifact_version,
+          artifactReadCounter.reader_hash,
+        ],
+        set: {
+          client: read.client,
+          opens: sql`${artifactReadCounter.opens} + 1`,
+          last_opened_at: read.opened_at,
+        },
+      })
+      .run()
+  }
+  const artifactReadStats = async (
+    artifactId: string,
+    orgId: string,
+  ): Promise<ArtifactReadStats> => {
+    const rows = await db
+      .select({
+        client: artifactReadCounter.client,
+        version: artifactReadCounter.artifact_version,
+        opens: sql<number>`sum(${artifactReadCounter.opens})`,
+        at: max(artifactReadCounter.last_opened_at),
+      })
+      .from(artifactReadCounter)
+      .where(
+        and(eq(artifactReadCounter.artifact_id, artifactId), eq(artifactReadCounter.org_id, orgId)),
+      )
+      .groupBy(artifactReadCounter.client, artifactReadCounter.artifact_version)
+      .orderBy(desc(max(artifactReadCounter.last_opened_at)))
+      .all()
+    return {
+      total: rows.reduce((sum, row) => sum + row.opens, 0),
+      recent: rows.filter((row): row is typeof row & { at: string } => row.at !== null).slice(0, 8),
+    }
+  }
   const skillLocalUsage = async (
     skillArtifactId: string,
     orgId: string,
@@ -5708,6 +5763,7 @@ export function makeRepos(db: SqliteDb) {
       .run()
     await db.delete(skillInstallation).where(eq(skillInstallation.skill_artifact_id, id)).run()
     await db.delete(skillUse).where(eq(skillUse.skill_artifact_id, id)).run()
+    await db.delete(artifactReadCounter).where(eq(artifactReadCounter.artifact_id, id)).run()
     await db
       .delete(artifactSkillLink)
       .where(or(eq(artifactSkillLink.artifact_id, id), eq(artifactSkillLink.skill_artifact_id, id)))
@@ -5739,6 +5795,11 @@ export function makeRepos(db: SqliteDb) {
   // Sequential move (used by D1). better-sqlite3 + pg override with a transaction.
   const moveArtifactOrg = async (artifactId: string, targetOrgId: string): Promise<void> => {
     await db.update(artifact).set({ org_id: targetOrgId }).where(eq(artifact.id, artifactId)).run()
+    await db
+      .update(artifactReadCounter)
+      .set({ org_id: targetOrgId })
+      .where(eq(artifactReadCounter.artifact_id, artifactId))
+      .run()
     // Keep the search-index row's org in step so the moved artifact is findable in its
     // new workspace immediately (its text is unchanged by a move — only the scope is).
     // A stale org here could never LEAK it: listArtifacts re-checks org against the live
@@ -6110,6 +6171,8 @@ export function makeRepos(db: SqliteDb) {
     upsertSkillInstallation,
     listSkillInstallations,
     recordSkillUse,
+    incrementArtifactRead,
+    artifactReadStats,
     skillLocalUsage,
     upsertSkillScanCoverage,
     listSkillScanCoverage,

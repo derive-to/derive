@@ -140,7 +140,7 @@ export function Insights({
                 <StatTile value={data.last24h} label="last 24hrs" />
                 <StatTile
                   value={data.agentReads.total}
-                  label={data.agentReads.total === 1 ? "AI read" : "AI reads"}
+                  label={data.agentReads.total === 1 ? "AI open" : "AI opens"}
                 />
               </div>
               {data.total > 0 && (
@@ -227,15 +227,18 @@ export function Insights({
                     )}
                     {data.agentReads.recent.map((r) => (
                       <div
-                        key={`${r.agent}:${r.version}:${r.at}`}
+                        key={`${r.client}:${r.version}`}
                         className="flex items-center gap-2 text-sm"
                       >
                         <Icon name="sparkles" className="size-4.5 text-muted-foreground" />
                         <span className="flex-1 truncate font-medium">
-                          {r.agent} · v{r.version}
+                          {r.client} · v{r.version}
                         </span>
-                        <span className="font-mono text-2xs text-muted-foreground">
-                          {ago(r.at)}
+                        <span
+                          className="font-mono text-2xs text-muted-foreground"
+                          title={`${r.opens} opens · ${new Date(r.at).toLocaleString()}`}
+                        >
+                          {r.opens.toLocaleString()} · {ago(r.at)}
                         </span>
                       </div>
                     ))}

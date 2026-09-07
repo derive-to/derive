@@ -184,8 +184,7 @@ export interface ViewStatsJson {
   recent: { viewer: string; kind: "user" | "anon"; at: string }[]
   agentReads: {
     total: number
-    last24h: number
-    recent: { agent: string; version: number; at: string }[]
+    recent: { client: string; version: number; opens: number; at: string }[]
   }
 }
 

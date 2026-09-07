@@ -558,15 +558,15 @@ describe("MCP tool calls stay within their round-trip budget", () => {
       expect(catchUpCalls, `${gone} escaped the catch-up batch`).not.toContain(gone)
     expect(catchUpCalls.length).toBeLessThanOrEqual(3)
     // One shared MCP bootstrap read, one joined artifact + selected-version envelope,
-    // then one background activity receipt. The hosted response does not wait for the
-    // receipt, but the instrumented store still sees it. Authorization adds no read.
+    // then one background counter increment. The hosted response does not wait for the
+    // counter, and authorization adds no read.
     expect(readCalls).toContain("artifactWithVersion")
-    expect(readCalls).toContain("recordView")
+    expect(readCalls).toContain("incrementArtifactRead")
     expect(readCalls).not.toContain("getByShortId")
     expect(readCalls).not.toContain("getVersion")
     expect(readCalls.length).toBeLessThanOrEqual(3)
     expect(mapCalls).toContain("artifactWithVersionData")
-    expect(mapCalls).toContain("recordView")
+    expect(mapCalls).toContain("incrementArtifactRead")
     expect(mapCalls).not.toContain("getByShortId")
     expect(mapCalls).not.toContain("getVersion")
     expect(mapCalls).not.toContain("getVersionData")

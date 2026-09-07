@@ -54,13 +54,13 @@ export const analyticsRoutes = (ctx: AppContext) => {
         }),
       ),
       agentReads: z.object({
-        total: z.number().describe("Artifact reads through the Derive MCP read tool"),
-        last24h: z.number().describe("MCP reads in the trailing 24 hours"),
+        total: z.number().describe("AI opens across bounded per-reader counters"),
         recent: z.array(
           z.object({
-            agent: z.string().describe("Agent or OAuth client name"),
-            version: z.number().describe("Artifact version returned to the agent"),
-            at: z.string().describe("When that agent last read the artifact"),
+            client: z.string().describe("MCP client or registered agent name"),
+            version: z.number().describe("Artifact version returned"),
+            opens: z.number().describe("Opens by this reader for this version"),
+            at: z.string().describe("Most recent open time (ISO timestamp)"),
           }),
         ),
       }),
@@ -146,7 +146,10 @@ export const analyticsRoutes = (ctx: AppContext) => {
         actor.kind === "token" ||
         (actor.kind === "user" && (actor.orgRole != null || actor.artifactRole != null))
       if (!collaborator) return bail(fail(c, 404, "not found"))
-      const stats = await meta.viewStats(artifact.id)
+      const [stats, agentReads] = await Promise.all([
+        meta.viewStats(artifact.id),
+        meta.artifactReadStats(artifact.id, artifact.org_id),
+      ])
       // Recent user-viewers are stored by id (stable); resolve to a public handle
       // (or display name) + avatar — never the email (off the wire, like the rosters).
       const userIds = stats.recent.filter((r) => r.kind === "user").map((r) => r.viewer)
@@ -158,7 +161,7 @@ export const analyticsRoutes = (ctx: AppContext) => {
           return { ...r, viewer: u?.name ?? u?.username ?? "Someone", avatar: u?.image ?? null }
         })
       }
-      return c.json(stats)
+      return c.json({ ...stats, agentReads })
     },
   )
 
