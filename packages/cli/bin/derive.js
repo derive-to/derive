@@ -188,7 +188,10 @@ if (cmd === "init") {
   for (const f of skipped) console.log(`  · ${f} (exists, kept)`)
   // The starter the user should open next — not the config/convention files.
   const meta = [CONFIG_FILE, "derive.schema.json", "AGENTS.md", "CLAUDE.md", ".gitignore"]
-  const entry = created.find((f) => !meta.includes(f) && !f.startsWith(".")) ?? "the entry"
+  const entry =
+    created.find((f) => f.endsWith("/main.tex")) ??
+    created.find((f) => !meta.includes(f) && !f.startsWith(".")) ??
+    "the entry"
   const next =
     template === "context" || template === "agent"
       ? "derive context push"
