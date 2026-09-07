@@ -116,6 +116,12 @@ export interface PublishInput {
   /** The bundle's entry page when the publisher knows it (`/paper.tex`); the usual
    *  index/main/shallowest choice otherwise. Bundles only. */
   entry?: string | null
+  /** Raise the file and byte caps for a bundle that carries a paper's implementation.
+   *  Clamped to MAX_BUNDLE_FILES_WITH_CODE / MAX_BUNDLE_UNZIPPED_BYTES_WITH_CODE, and
+   *  never below the ordinary caps: a publisher may ask for more room, not for less.
+   *  Bundles only. */
+  maxFiles?: number
+  maxBundleBytes?: number
 }
 
 export interface PublishResult {
@@ -145,6 +151,18 @@ export const MAX_BUNDLE_FILES = 2000
 // Exported so an importer that shrinks figures to fit aims at the same number.
 export const MAX_BUNDLE_UNZIPPED_BYTES = 50 * 1024 * 1024 // 50 MB
 
+/** Where an imported paper's implementation lives inside the paper's own artifact.
+ *  A repository is not part of the document: it is not indexed with the paper, not
+ *  offered as the paper's source, not listed to a person, and never the entry page. */
+export const CODE_PREFIX = "/code/"
+export const isCodePath = (path: string): boolean => path.startsWith(CODE_PREFIX)
+
+// An artifact that carries an implementation is allowed twice the room, because it is
+// holding two things: the paper, and the repository that implements it. These are the
+// ceiling a publisher may raise to, never the default — see PublishInput.maxBundleBytes.
+export const MAX_BUNDLE_FILES_WITH_CODE = 6000
+export const MAX_BUNDLE_UNZIPPED_BYTES_WITH_CODE = 100 * 1024 * 1024 // 100 MB
+
 /**
  * Choose a bundle's entry page. An HTML site enters at its root `index.html`, else
  * its shallowest `.html`. A doc/skill bundle with no HTML (a Claude Code skill is a
@@ -154,7 +172,10 @@ export const MAX_BUNDLE_UNZIPPED_BYTES = 50 * 1024 * 1024 // 50 MB
  * markdown file — markdown entries render through the markdown path at serve time.
  * Null when the bundle has neither HTML nor markdown.
  */
-export const pickBundleEntry = (paths: string[], preferred?: string | null): string | null => {
+export const pickBundleEntry = (all: string[], preferred?: string | null): string | null => {
+  // An attached repository is never the document. Without this, one `/code/**/*.html`
+  // anywhere in an implementation would take the entry away from the paper it implements.
+  const paths = all.filter((p) => !isCodePath(p))
   const shallowest = (pred: (p: string) => boolean): string | undefined =>
     paths.filter(pred).sort((a, b) => a.split("/").length - b.split("/").length)[0]
   // A publisher that knows the entry (an arXiv import whose paper is `paper.tex` beside
@@ -223,6 +244,7 @@ async function storeContent(
   spa: boolean,
   unpacked?: Record<string, Uint8Array>,
   preferredEntry?: string | null,
+  limits?: { maxFiles?: number; maxBundleBytes?: number },
 ): Promise<StoredContent> {
   let blobWriteMs = 0
   const put = async (data: Uint8Array): Promise<string> => {
@@ -245,22 +267,38 @@ async function storeContent(
     }
     const paths = Object.keys(unzipped)
     if (paths.length === 0) throw new PublishError(400, "empty bundle")
-    if (paths.length > MAX_BUNDLE_FILES)
-      throw new PublishError(400, `bundle exceeds ${MAX_BUNDLE_FILES} files`)
-    // Reject zip bombs: bound the total inflated size, not just the upload size.
-    let unzippedBytes = 0
-    for (const p of paths) {
-      unzippedBytes += unzipped[p]?.byteLength ?? 0
-      if (unzippedBytes > MAX_BUNDLE_UNZIPPED_BYTES)
-        throw new PublishError(413, "bundle is too large once decompressed")
-    }
-
-    const files: BundleManifest["files"] = {}
+    // A publisher may raise the caps for a bundle that carries an implementation, up to
+    // the hard ceiling and never below the ordinary cap.
+    const clamp = (asked: number | undefined, floor: number, ceiling: number): number =>
+      Math.min(Math.max(asked ?? floor, floor), ceiling)
+    const maxFiles = clamp(limits?.maxFiles, MAX_BUNDLE_FILES, MAX_BUNDLE_FILES_WITH_CODE)
+    const maxBytes = clamp(
+      limits?.maxBundleBytes,
+      MAX_BUNDLE_UNZIPPED_BYTES,
+      MAX_BUNDLE_UNZIPPED_BYTES_WITH_CODE,
+    )
+    // Count and measure what will actually be STORED. The archive's own junk (`__MACOSX`,
+    // `.DS_Store`, directory entries) is dropped by cleanPath a moment later, so counting
+    // it here would spend a paper's budget on entries no one ever reads.
+    const kept: [string, Uint8Array][] = []
     for (const raw of paths) {
       const path = cleanPath(raw)
       if (!path) continue
       const data = unzipped[raw]
       if (data === undefined) continue
+      kept.push([path, data])
+    }
+    if (kept.length > maxFiles) throw new PublishError(400, `bundle exceeds ${maxFiles} files`)
+    // Reject zip bombs: bound the total inflated size, not just the upload size.
+    let unzippedBytes = 0
+    for (const [, data] of kept) {
+      unzippedBytes += data.byteLength
+      if (unzippedBytes > maxBytes)
+        throw new PublishError(413, "bundle is too large once decompressed")
+    }
+
+    const files: BundleManifest["files"] = {}
+    for (const [path, data] of kept) {
       files[path] = { key: await put(data), type: mimeFor(path) }
     }
     // Entry point: an HTML site enters at index/shallowest .html; a skill/doc
@@ -440,6 +478,9 @@ export async function publish(
       !!input.spa,
       input.isBundle ? input.files : undefined,
       input.isBundle ? input.entry : undefined,
+      input.isBundle
+        ? { maxFiles: input.maxFiles, maxBundleBytes: input.maxBundleBytes }
+        : undefined,
     )
   const timings = { blobWriteMs, storeContentMs: performance.now() - storeStartedAt }
   const sizeBytes =

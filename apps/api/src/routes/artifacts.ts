@@ -665,6 +665,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     let preparedSource: string | undefined
     // An edit inside a paper bundle republishes the bundle; its SPA flag is kept as is.
     let bundleSpa: boolean | undefined
+    let bundleEntry: string | undefined
     let editSummary: ReviewSummary | undefined
     let previousSearchSource:
       | { source: string; contentType: string | null; title: string | null }
@@ -722,6 +723,7 @@ export const artifactRoutes = (ctx: AppContext) => {
           [materialized.bundle.path]: materialized.content,
         })
         bundleSpa = materialized.bundle.manifest.spa
+        bundleEntry = materialized.bundle.manifest.entry
       } else {
         bytes = new TextEncoder().encode(materialized.content)
         preparedSource = materialized.content
@@ -955,6 +957,7 @@ export const artifactRoutes = (ctx: AppContext) => {
           title: str(body["title"]),
           slug: str(body["slug"]),
           spa: bundleSpa ?? (body["spa"] === "true" || body["spa"] === "1"),
+          entry: bundleEntry,
           message: str(body["message"]),
           // Author is the authenticated identity, never a client-supplied field — a
           // logged-in publish must be attributed to that person. The human behind the

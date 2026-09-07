@@ -197,6 +197,9 @@ export const paperFileRoutes = (ctx: AppContext) => {
         filename: "paper.zip",
         isBundle: true,
         spa: manifest.spa,
+        // A merge keeps the bundle's own entry. Without this the entry is re-picked from
+        // the merged paths, and an attached implementation's HTML would take it.
+        entry: manifest.entry,
         title: title ?? artifact.title ?? undefined,
         message,
         author: human?.name ?? actor?.name ?? undefined,
