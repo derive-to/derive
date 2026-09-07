@@ -22,12 +22,12 @@
     "@derive/facts": "workspace:*",
     "entities": "^6.0.1",
     "fflate": "^0.8.2",
-    "marked": "^18.0.5",
+    "marked": "^18.0.11",
     "nanoid": "^6.0.1",
     "xss": "^1.0.15"
   },
   "devDependencies": {
     "typescript": "^6.0.3",
-    "vitest": "^4.1.9"
+    "vitest": "^4.1.11"
   }
 }
