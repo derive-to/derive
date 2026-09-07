@@ -557,18 +557,20 @@ describe("MCP tool calls stay within their round-trip budget", () => {
     for (const gone of ["listVersions", "listComments", "listReviewRounds", "getVersionData"])
       expect(catchUpCalls, `${gone} escaped the catch-up batch`).not.toContain(gone)
     expect(catchUpCalls.length).toBeLessThanOrEqual(3)
-    // One shared MCP bootstrap read, then one joined artifact + selected-version envelope.
-    // The grant snapshot also supplies the live workspace role, so authorization adds no
-    // metadata read. The handler must not quietly restore either serial lookup.
+    // One shared MCP bootstrap read, one joined artifact + selected-version envelope,
+    // then one background counter increment. The hosted response does not wait for the
+    // counter, and authorization adds no read.
     expect(readCalls).toContain("artifactWithVersion")
+    expect(readCalls).toContain("incrementArtifactRead")
     expect(readCalls).not.toContain("getByShortId")
     expect(readCalls).not.toContain("getVersion")
-    expect(readCalls.length).toBeLessThanOrEqual(2)
+    expect(readCalls.length).toBeLessThanOrEqual(3)
     expect(mapCalls).toContain("artifactWithVersionData")
+    expect(mapCalls).toContain("incrementArtifactRead")
     expect(mapCalls).not.toContain("getByShortId")
     expect(mapCalls).not.toContain("getVersion")
     expect(mapCalls).not.toContain("getVersionData")
-    expect(mapCalls.length).toBeLessThanOrEqual(2)
+    expect(mapCalls.length).toBeLessThanOrEqual(3)
     expect(workspaceCalls).toEqual(["oauthGrantWithWorkspaces"])
     expect(reactCalls.length).toBeLessThanOrEqual(4)
     // set_state went 8 → 9 when resolving a thread started keeping its mirrored Slack cards in

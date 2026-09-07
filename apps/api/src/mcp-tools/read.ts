@@ -52,14 +52,14 @@ import type { ToolContext } from "../mcp-tool-context"
 import {
   clipDoc,
   DATA_SERIES_MAX,
-  doc,
   err,
   FULL_DOC_MAX,
   formatLabel,
   historyNotPublic,
   IMAGE_INLINE_MAX,
-  json,
   manifestOf,
+  doc as mcpDoc,
+  json as mcpJson,
   PAGE_MAP_MAX,
   parseLineRange,
   parseVersionRange,
@@ -251,16 +251,30 @@ export function registerReadTool(tc: ToolContext): void {
     return documentStructure(v.blob_key, source, contentType)
   }
 
+  // One row per exact version. Repeated opens increment the row, so observability
+  // stays a bounded counter rather than an event log. The hosted response does not
+  // wait for this write and no model call is involved.
+  const countAgentOpen = (artifact: ArtifactRecord, version: number): void => {
+    const openedAt = new Date().toISOString()
+    ctx.background(
+      ctx.meta.incrementArtifactRead({
+        id: newId("arc"),
+        org_id: artifact.org_id,
+        artifact_id: artifact.id,
+        artifact_version: version,
+        opened_at: openedAt,
+      }),
+    )
+  }
+
   // READ CONTENT --------------------------------------------------------------
   server.registerTool(
     "read",
     {
       description:
         "Read an artifact. Small docs return whole; large docs return an outline. `focus` returns matching parts in one call. `map` then `node` addresses one part. format:'html' gives exact source for publish edits. Also reads contexts and derive:// URIs. Chains: `derive_code`. See derive://skills/finding.",
-      // readOnlyHint stays true despite two incidental write paths below (the lazy
-      // derived-fact backfill and the render self-heal re-queue): both are deterministic
-      // recomputations/cache-fills of already-published bytes — the class of side effect
-      // an HTTP GET tolerates — never a mutation of anything a user authored.
+      // readOnlyHint stays true despite incidental writes below: the usage counter,
+      // lazy derived-fact backfill, and render self-heal never mutate authored content.
       annotations: {
         title: "Read an artifact",
         readOnlyHint: true,
@@ -336,6 +350,21 @@ export function registerReadTool(tc: ToolContext): void {
       },
     },
     async (input) => {
+      let openTarget: { artifact: ArtifactRecord; version: number } | null = null
+      let openCounted = false
+      const countOpen = (): void => {
+        if (!openTarget || openCounted) return
+        countAgentOpen(openTarget.artifact, openTarget.version)
+        openCounted = true
+      }
+      const json = (...args: Parameters<typeof mcpJson>): ReturnType<typeof mcpJson> => {
+        countOpen()
+        return mcpJson(...args)
+      }
+      const doc = (...args: Parameters<typeof mcpDoc>): ReturnType<typeof mcpDoc> => {
+        countOpen()
+        return mcpDoc(...args)
+      }
       const bulkEnvelope = (input as typeof input & { [CODE_READ_ENVELOPE]?: CodeReadEnvelope })[
         CODE_READ_ENVELOPE
       ]
@@ -443,7 +472,8 @@ export function registerReadTool(tc: ToolContext): void {
         if (r && "error" in r) return err(r.error)
         if (r && r.a.current_content_type === SKILL_CONTENT_TYPE) {
           const reading = await skillReading(ctx, r.a)
-          if (reading)
+          if (reading) {
+            openTarget = { artifact: r.a, version: r.a.current_version }
             return json({
               uri: short_id,
               mimeType: "text/markdown",
@@ -451,6 +481,7 @@ export function registerReadTool(tc: ToolContext): void {
               // 100MB zip upload, and this response has no outline rung to fall to.
               content: clip(reading.body + skillFilesFooter(r.a.short_id, reading.others)),
             })
+          }
         }
         return err(
           `No skill "${name}". Core: ${CORE_SKILLS.map((s) => s.name).join(", ")}; workspace skills: read derive://skills for the catalog.`,
@@ -681,6 +712,23 @@ export function registerReadTool(tc: ToolContext): void {
       const v =
         envelope?.artifact.id === a.id ? envelope.version : await ctx.meta.getVersion(a.id, n)
       if (!v) return err(`Version ${n} of "${short_id}" is unavailable.`)
+      // Reject impossible selector combinations before counting the version open.
+      if (render && (section || lines || wantMap || node || focus))
+        return err(
+          "`render` is a view of the whole version — pass it alone (with `version` for history).",
+        )
+      if (data !== undefined && (section || lines || render || focus))
+        return err(
+          "`data` reads a version's stored facts — pass it alone (with `version` for history), not with section/lines/render/focus.",
+        )
+      if (focus && (section || lines || wantMap || node))
+        return err(
+          "Pass `focus` alone (with `format` and `version`), not with another part selector.",
+        )
+      if (wantMap && node) return err("Pass `map` OR `node`, not both.")
+      if ((wantMap || node) && (section || lines || render))
+        return err("`map`/`node` address the document's parts — pass with `version` only.")
+      openTarget = { artifact: a, version: n }
       const url = artifactUrl(ctx.deps.baseUrl, a)
 
       // The render rung: the version's screenshot, so an agent SEES what it shipped.
@@ -692,10 +740,6 @@ export function registerReadTool(tc: ToolContext): void {
         // `map`/`node` belong here too: this branch runs BEFORE the map rung below, so its
         // own guard against `render` never fires. Found on the preview — read(map, render)
         // silently returned a screenshot to a caller who asked for the structure.
-        if (section || lines || wantMap || node || focus)
-          return err(
-            "`render` is a view of the whole version — pass it alone (with `version` for history).",
-          )
         const label =
           render === "top"
             ? "the top of the page, 1200x630"
@@ -784,6 +828,7 @@ export function registerReadTool(tc: ToolContext): void {
                 bytes: shot.length,
                 note: `Too large to inline over MCP — open ${url} to view the page.`,
               })
+            countOpen()
             return {
               content: [
                 {
@@ -826,10 +871,6 @@ export function registerReadTool(tc: ToolContext): void {
       // The data rung: a version's structured facts, queried instead of re-parsed. A
       // whole-version view like `render`, so it can't combine with a within-doc selector.
       if (data !== undefined) {
-        if (section || lines || render || focus)
-          return err(
-            "`data` reads a version's stored facts — pass it alone (with `version` for history), not with section/lines/render/focus.",
-          )
         // The TREND read: one slot across a range of versions, in one call and one query.
         // Versions are already the time axis, so this is the whole reason facts exist —
         // "how did this move over thirty days" without fetching thirty versions.
@@ -965,14 +1006,6 @@ export function registerReadTool(tc: ToolContext): void {
       // Reject incompatible part selectors before any source blob read. These checks also
       // keep the error text stable for focus, whose branch used to do the same validation
       // only after a potentially multi-megabyte source load.
-      if (focus && (section || lines || wantMap || node))
-        return err(
-          "Pass `focus` alone (with `format` and `version`), not with another part selector.",
-        )
-      if (wantMap && node) return err("Pass `map` OR `node`, not both.")
-      if ((wantMap || node) && (section || lines || render))
-        return err("`map`/`node` address the document's parts — pass with `version` only.")
-
       // Publish derivation already stores the bounded wire map. Serve it before loading and
       // parsing the source. Missing, stale, or corrupt cache rows fall
       // through to the source path below, so authored bytes remain the authority.
@@ -1475,6 +1508,7 @@ export function registerReadTool(tc: ToolContext): void {
             url: pageUrl,
             note: "Too large to inline over MCP — open the url to view it.",
           })
+        countOpen()
         return {
           content: [
             {

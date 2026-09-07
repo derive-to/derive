@@ -1,10 +1,45 @@
 import { zipSync } from "fflate"
-import { describe, expect, it } from "vitest"
-import { app, TEST_TOKEN, upload } from "./helpers"
+import { describe, expect, it, vi } from "vitest"
+import { anonApp, app, meta, TEST_TOKEN, upload } from "./helpers"
 
 const bearer = { authorization: `Bearer ${TEST_TOKEN}` }
 
 describe("/v1/artifacts/:shortId/content — format, section, outline params", () => {
+  it("counts one stdio open after an empty outline probe and skips failed reads", async () => {
+    const { short_id } = await (
+      await upload("plain.md", "plain text", { visibility: "public" })
+    ).json()
+    const artifact = await meta.getByShortId(short_id)
+    if (!artifact) throw new Error("artifact was not published")
+    const aiRead = { headers: { "x-derive-ai-read": "1" } }
+
+    expect(await (await app.request(`/v1/artifacts/${short_id}/content`)).text()).toBe("plain text")
+    expect(
+      await (
+        await anonApp.request(`/v1/artifacts/${short_id}/content`, {
+          headers: { "x-derive-ai-read": "1" },
+        })
+      ).text(),
+    ).toBe("plain text")
+    expect((await meta.artifactReadStats(artifact.id, artifact.org_id)).total).toBe(0)
+    expect(
+      (await app.request(`/v1/artifacts/${short_id}/content?section=missing`, aiRead)).status,
+    ).toBe(404)
+    expect(
+      await (await app.request(`/v1/artifacts/${short_id}/content?outline=1`, aiRead)).json(),
+    ).toEqual({ sections: [] })
+    expect(await (await app.request(`/v1/artifacts/${short_id}/content`, aiRead)).text()).toBe(
+      "plain text",
+    )
+
+    await vi.waitFor(async () => {
+      expect(await meta.artifactReadStats(artifact.id, artifact.org_id)).toEqual({
+        total: 1,
+        recent: [expect.objectContaining({ version: 1, opens: 1 })],
+      })
+    })
+  })
+
   it("defaults to raw source; format=markdown converts; format=text is flat text", async () => {
     const html =
       "<html><head><style>body{color:red}</style></head><body><h1>Doc</h1><p>hi</p></body></html>"

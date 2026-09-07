@@ -8062,6 +8062,18 @@ export interface components {
                 /** @description The user's avatar URL, or null/absent for anonymous viewers */
                 avatar?: string | null;
             }[];
+            agentReads: {
+                /** @description AI opens across bounded per-version counters */
+                total: number;
+                recent: {
+                    /** @description Artifact version returned */
+                    version: number;
+                    /** @description AI opens for this version */
+                    opens: number;
+                    /** @description Most recent open time (ISO timestamp) */
+                    at: string;
+                }[];
+            };
         };
         Webhook: {
             id: string;

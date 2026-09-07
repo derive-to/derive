@@ -2655,6 +2655,22 @@ export const artifactRoutes = (ctx: AppContext) => {
     const version = await meta.getVersion(artifact.id, v)
     if (!version) return fail(c, 404, `no version ${v}`)
 
+    const countAiOpen =
+      c.req.header("X-Derive-AI-Read") === "1" && (isToken(c) || (await agentFor(c)) !== null)
+    const opened = <T extends Response>(response: T): T => {
+      if (!countAiOpen) return response
+      background(
+        meta.incrementArtifactRead({
+          id: newId("arc"),
+          org_id: artifact.org_id,
+          artifact_id: artifact.id,
+          artifact_version: v,
+          opened_at: new Date().toISOString(),
+        }),
+      )
+      return response
+    }
+
     const formatQ = c.req.query("format")
     const format = formatQ === "markdown" || formatQ === "text" ? formatQ : null
     // "*" forces full content — the escape hatch a caller uses after already
@@ -2688,8 +2704,12 @@ export const artifactRoutes = (ctx: AppContext) => {
       const src = await sourceText(version)
       if (src === null) return fail(c, 500, "blob missing")
       if (outline) {
+        const sections = outlineOf(src, version.content_type)
         c.header("X-Derive-Format", "outline")
-        return c.json({ sections: outlineOf(src, version.content_type) })
+        const response = c.json({ sections })
+        // The stdio MCP falls through to a content request when the outline is empty.
+        // Count only the request that returns the useful reading, not both probes.
+        return sections.length ? opened(response) : response
       }
       if (section) {
         const slice = sectionOf(src, version.content_type, section)
@@ -2698,25 +2718,27 @@ export const artifactRoutes = (ctx: AppContext) => {
         c.header("X-Derive-Format", format ?? "raw")
         c.header("X-Derive-Section", section)
         c.header("Content-Type", "text/plain; charset=utf-8")
-        return c.body(body)
+        return opened(c.body(body))
       }
       const body = present(src, version.content_type)
       c.header("X-Derive-Format", format ?? "raw")
       c.header("X-Derive-Sections", String(outlineOf(src, version.content_type).length))
       c.header("Content-Type", "text/plain; charset=utf-8")
-      return c.body(body)
+      return opened(c.body(body))
     }
 
     // Bundle.
     if (outline) {
       c.header("X-Derive-Format", "outline")
-      return c.json({
-        entry: cleanPath(manifest.entry),
-        pages: Object.keys(manifest.files).map((p) => ({
-          path: cleanPath(p),
-          type: manifest.files[p]?.type,
-        })),
-      })
+      return opened(
+        c.json({
+          entry: cleanPath(manifest.entry),
+          pages: Object.keys(manifest.files).map((p) => ({
+            path: cleanPath(p),
+            type: manifest.files[p]?.type,
+          })),
+        }),
+      )
     }
     // Split on the LAST '#' — matches the MCP `read` tool's page#slug parsing, so a
     // page path/slug resolves to the same (pagePath, slug) pair on both surfaces.
@@ -2741,7 +2763,7 @@ export const artifactRoutes = (ctx: AppContext) => {
         SAFE_BINARY_CONTENT_TYPES.has(fileBaseType) ? file.type : "application/octet-stream",
       )
       c.header("X-Derive-Format", "raw")
-      return c.body(toBody(bytes))
+      return opened(c.body(toBody(bytes)))
     }
     const raw = new TextDecoder().decode(bytes)
     if (slug) {
@@ -2750,13 +2772,13 @@ export const artifactRoutes = (ctx: AppContext) => {
       c.header("X-Derive-Format", format ?? "raw")
       c.header("X-Derive-Section", `${pagePath}#${slug}`)
       c.header("Content-Type", "text/plain; charset=utf-8")
-      return c.body(present(slice, file.type))
+      return opened(c.body(present(slice, file.type)))
     }
     c.header("X-Derive-Format", format ?? "raw")
     c.header("X-Derive-Section", pagePath)
     c.header("X-Derive-Sections", String(outlineOf(raw, file.type).length))
     c.header("Content-Type", "text/plain; charset=utf-8")
-    return c.body(present(raw, file.type))
+    return opened(c.body(present(raw, file.type)))
   })
 
   // Live editor preview: render a markdown draft to the exact published HTML.

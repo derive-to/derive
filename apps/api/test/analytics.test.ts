@@ -48,6 +48,17 @@ describe("view analytics", () => {
       body: JSON.stringify({ version: 2 }),
     })
 
+    const artifact = await meta.getByShortId(short_id)
+    if (!artifact) throw new Error("artifact was not published")
+    for (let index = 0; index < 2; index += 1)
+      await meta.incrementArtifactRead({
+        id: `arc_analytics_${index}`,
+        org_id: artifact.org_id,
+        artifact_id: artifact.id,
+        artifact_version: 2,
+        opened_at: new Date().toISOString(),
+      })
+
     const a = await (await app.request(`/v1/artifacts/${short_id}/analytics`)).json()
     expect(a.total).toBe(3) // viewerA@v1 (de-duped from 3), viewerA@v2, viewerB@v2
     expect(a.last24h).toBe(3) // every view was just recorded, so all are inside the window
@@ -59,6 +70,10 @@ describe("view analytics", () => {
     expect(a.daily.reduce((s: number, d: { count: number }) => s + d.count, 0)).toBe(3)
     expect(a.recent.length).toBe(2) // per-viewer, newest-first
     expect(a.recent.every((r: { kind: string }) => r.kind === "anon")).toBe(true)
+    expect(a.agentReads).toMatchObject({
+      total: 2,
+      recent: [expect.objectContaining({ version: 2, opens: 2 })],
+    })
 
     // Batch counts surface on the library listing.
     const list = await (await app.request("/v1/artifacts")).json()

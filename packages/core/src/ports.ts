@@ -1047,6 +1047,10 @@ export interface ArtifactQueryStore {
   pruneViewsByViewers(viewers: string[]): Promise<number>
   /** Aggregated view analytics for one artifact. */
   viewStats(artifactId: string): Promise<ViewStats>
+  /** Increment one bounded AI-read counter. The store keeps no per-open event rows. */
+  incrementArtifactRead(read: NewArtifactReadCounter): Promise<void>
+  /** Aggregate AI reads and return the most recently active counters. */
+  artifactReadStats(artifactId: string, orgId: string): Promise<ArtifactReadStats>
   /** Total view counts for many artifacts at once (no N+1). */
   viewCounts(artifactIds: string[]): Promise<Record<string, number>>
   /** For each artifact id, true iff its CURRENT version has a ready preview render.
@@ -4413,6 +4417,30 @@ export interface ViewStats {
   daily: { day: string; count: number }[]
   /** Most-recent distinct viewers, newest first. `avatar` is set for users. */
   recent: { viewer: string; kind: "user" | "anon"; at: string; avatar?: string | null }[]
+}
+
+/** A bounded AI-read counter. One row survives per artifact version. */
+export interface ArtifactReadCounterRecord {
+  id: string
+  org_id: string
+  artifact_id: string
+  artifact_version: number
+  opens: number
+  created_at: string
+  last_opened_at: string
+}
+
+export interface NewArtifactReadCounter {
+  id: string
+  org_id: string
+  artifact_id: string
+  artifact_version: number
+  opened_at: string
+}
+
+export interface ArtifactReadStats {
+  total: number
+  recent: { version: number; opens: number; at: string }[]
 }
 
 // open      — live feedback awaiting a reply/resolution

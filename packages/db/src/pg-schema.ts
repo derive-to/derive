@@ -473,6 +473,23 @@ export const skillUse = pgTable(
   ],
 )
 
+export const artifactReadCounter = pgTable(
+  "artifact_read_counter",
+  {
+    id: text("id").primaryKey(),
+    org_id: text("org_id").notNull(),
+    artifact_id: text("artifact_id").notNull(),
+    artifact_version: integer("artifact_version").notNull(),
+    opens: integer("opens").notNull().default(1),
+    created_at: text("created_at").notNull().$defaultFn(isoNow),
+    last_opened_at: text("last_opened_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("artifact_read_counter_version").on(t.artifact_id, t.artifact_version),
+    index("artifact_read_counter_artifact").on(t.org_id, t.artifact_id, t.last_opened_at),
+  ],
+)
+
 export const skillScanCoverage = pgTable(
   "skill_scan_coverage",
   {
@@ -1287,6 +1304,7 @@ const TABLES = [
   skillInstallation,
   skillScanCoverage,
   skillUse,
+  artifactReadCounter,
   artifactSkillLink,
   plan,
   connection,

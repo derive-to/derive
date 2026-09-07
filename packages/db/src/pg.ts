@@ -5,6 +5,7 @@ import type {
   ArtifactDetailOpts,
   ArtifactInviteRecord,
   ArtifactMemberRecord,
+  ArtifactReadStats,
   ArtifactRecord,
   ArtifactSkillLinkRecord,
   AssetRecord,
@@ -52,6 +53,7 @@ import type {
   NewArtifact,
   NewArtifactInvite,
   NewArtifactMember,
+  NewArtifactReadCounter,
   NewArtifactSkillLink,
   NewAsset,
   NewAuditLog,
@@ -200,6 +202,7 @@ import {
   artifactFavorite,
   artifactInvite,
   artifactMember,
+  artifactReadCounter,
   artifactSkillLink,
   artifactTag,
   asset,
@@ -302,6 +305,7 @@ export const schema = {
   skillInstallation,
   skillScanCoverage,
   skillUse,
+  artifactReadCounter,
   artifactSkillLink,
   plan,
   connection,
@@ -360,6 +364,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   skillInstallation: true,
   skillScanCoverage: true,
   skillUse: true,
+  artifactReadCounter: true,
   artifactSkillLink: true,
   plan: true,
   connection: true,
@@ -6031,6 +6036,44 @@ export class PgMetaStore implements MetaStore {
       .returning()
     return one(rows)
   }
+
+  async incrementArtifactRead(read: NewArtifactReadCounter): Promise<void> {
+    await this.db
+      .insert(artifactReadCounter)
+      .values({
+        id: read.id,
+        org_id: read.org_id,
+        artifact_id: read.artifact_id,
+        artifact_version: read.artifact_version,
+        opens: 1,
+        last_opened_at: read.opened_at,
+      })
+      .onConflictDoUpdate({
+        target: [artifactReadCounter.artifact_id, artifactReadCounter.artifact_version],
+        set: {
+          opens: sql`${artifactReadCounter.opens} + 1`,
+          last_opened_at: read.opened_at,
+        },
+      })
+  }
+
+  async artifactReadStats(artifactId: string, orgId: string): Promise<ArtifactReadStats> {
+    const rows = await this.db
+      .select({
+        version: artifactReadCounter.artifact_version,
+        opens: artifactReadCounter.opens,
+        at: artifactReadCounter.last_opened_at,
+      })
+      .from(artifactReadCounter)
+      .where(
+        and(eq(artifactReadCounter.artifact_id, artifactId), eq(artifactReadCounter.org_id, orgId)),
+      )
+      .orderBy(desc(artifactReadCounter.last_opened_at))
+    return {
+      total: rows.reduce((sum, row) => sum + row.opens, 0),
+      recent: rows.slice(0, 8),
+    }
+  }
   skillLocalUsage(skillArtifactId: string, orgId: string): Promise<SkillLocalUsageBucket[]> {
     return this.db
       .select({
@@ -6977,6 +7020,7 @@ export class PgMetaStore implements MetaStore {
           or(eq(skillRelation.source_artifact_id, id), eq(skillRelation.target_artifact_id, id)),
         )
       await tx.delete(skillInstallation).where(eq(skillInstallation.skill_artifact_id, id))
+      await tx.delete(artifactReadCounter).where(eq(artifactReadCounter.artifact_id, id))
       await tx
         .delete(artifactSkillLink)
         .where(
@@ -7016,6 +7060,10 @@ export class PgMetaStore implements MetaStore {
   async moveArtifactOrg(artifactId: string, targetOrgId: string): Promise<void> {
     await this.db.transaction(async (tx) => {
       await tx.update(artifact).set({ org_id: targetOrgId }).where(eq(artifact.id, artifactId))
+      await tx
+        .update(artifactReadCounter)
+        .set({ org_id: targetOrgId })
+        .where(eq(artifactReadCounter.artifact_id, artifactId))
       await tx.delete(collectionItem).where(eq(collectionItem.artifact_id, artifactId))
       await tx.update(webhook).set({ artifact_id: null }).where(eq(webhook.artifact_id, artifactId))
     })

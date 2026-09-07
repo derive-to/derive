@@ -29,6 +29,7 @@ import {
   artifact,
   artifactFavorite,
   artifactMember,
+  artifactReadCounter,
   artifactTag,
   auditLog,
   CONTEXT_SESSION_RELAX_SQLITE,
@@ -310,6 +311,7 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
         db.delete(webhook).where(eq(webhook.artifact_id, id)).run()
         db.delete(sharedStateActivity).where(eq(sharedStateActivity.artifact_id, id)).run()
         db.delete(sharedState).where(eq(sharedState.artifact_id, id)).run()
+        db.delete(artifactReadCounter).where(eq(artifactReadCounter.artifact_id, id)).run()
         db.delete(versionData).where(eq(versionData.artifact_id, id)).run()
         db.delete(version).where(eq(version.artifact_id, id)).run()
         db.delete(comment).where(eq(comment.artifact_id, id)).run()
@@ -339,6 +341,10 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
     moveArtifactOrg: async (artifactId: string, targetOrgId: string): Promise<void> => {
       raw.transaction(() => {
         db.update(artifact).set({ org_id: targetOrgId }).where(eq(artifact.id, artifactId)).run()
+        db.update(artifactReadCounter)
+          .set({ org_id: targetOrgId })
+          .where(eq(artifactReadCounter.artifact_id, artifactId))
+          .run()
         db.delete(collectionItem).where(eq(collectionItem.artifact_id, artifactId)).run()
         db.update(webhook)
           .set({ artifact_id: null })

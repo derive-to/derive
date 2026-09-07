@@ -3571,6 +3571,44 @@
                 "at"
               ]
             }
+          },
+          "agentReads": {
+            "type": "object",
+            "properties": {
+              "total": {
+                "type": "number",
+                "description": "AI opens across bounded per-version counters"
+              },
+              "recent": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "version": {
+                      "type": "number",
+                      "description": "Artifact version returned"
+                    },
+                    "opens": {
+                      "type": "number",
+                      "description": "AI opens for this version"
+                    },
+                    "at": {
+                      "type": "string",
+                      "description": "Most recent open time (ISO timestamp)"
+                    }
+                  },
+                  "required": [
+                    "version",
+                    "opens",
+                    "at"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "total",
+              "recent"
+            ]
           }
         },
         "required": [
@@ -3581,7 +3619,8 @@
           "reads",
           "perVersion",
           "daily",
-          "recent"
+          "recent",
+          "agentReads"
         ]
       },
       "Webhook": {

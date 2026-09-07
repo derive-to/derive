@@ -1846,6 +1846,31 @@ export function runStoreContract(
   })
 
   describe(`${label}: views + analytics`, () => {
+    it("keeps AI opens in bounded per-version counters", async () => {
+      const a = await store.createArtifact(newArtifact())
+      const openedAt = new Date().toISOString()
+      const open = (id: string, version = 1) =>
+        store.incrementArtifactRead({
+          id,
+          org_id: ORG,
+          artifact_id: a.id,
+          artifact_version: version,
+          opened_at: openedAt,
+        })
+      await open(uuid())
+      await open(uuid())
+      await open(uuid())
+      await open(uuid(), 2)
+
+      const stats = await store.artifactReadStats(a.id, ORG)
+      expect(stats.total).toBe(4)
+      expect(stats.recent).toContainEqual({ version: 1, opens: 3, at: openedAt })
+      expect(stats.recent).toContainEqual({ version: 2, opens: 1, at: openedAt })
+      // AI activity never changes the browser audience or activation metrics.
+      expect((await store.viewStats(a.id)).total).toBe(0)
+      expect((await store.getByShortId(a.short_id))?.first_foreign_view_at).toBeNull()
+    })
+
     it("records views and aggregates stats, de-dups, prunes", async () => {
       const a = await store.createArtifact(newArtifact())
       await store.recordView({

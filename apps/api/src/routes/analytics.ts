@@ -53,6 +53,16 @@ export const analyticsRoutes = (ctx: AppContext) => {
             .describe("The user's avatar URL, or null/absent for anonymous viewers"),
         }),
       ),
+      agentReads: z.object({
+        total: z.number().describe("AI opens across bounded per-version counters"),
+        recent: z.array(
+          z.object({
+            version: z.number().describe("Artifact version returned"),
+            opens: z.number().describe("AI opens for this version"),
+            at: z.string().describe("Most recent open time (ISO timestamp)"),
+          }),
+        ),
+      }),
     })
     .openapi("Analytics")
 
@@ -135,7 +145,10 @@ export const analyticsRoutes = (ctx: AppContext) => {
         actor.kind === "token" ||
         (actor.kind === "user" && (actor.orgRole != null || actor.artifactRole != null))
       if (!collaborator) return bail(fail(c, 404, "not found"))
-      const stats = await meta.viewStats(artifact.id)
+      const [stats, agentReads] = await Promise.all([
+        meta.viewStats(artifact.id),
+        meta.artifactReadStats(artifact.id, artifact.org_id),
+      ])
       // Recent user-viewers are stored by id (stable); resolve to a public handle
       // (or display name) + avatar — never the email (off the wire, like the rosters).
       const userIds = stats.recent.filter((r) => r.kind === "user").map((r) => r.viewer)
@@ -147,7 +160,7 @@ export const analyticsRoutes = (ctx: AppContext) => {
           return { ...r, viewer: u?.name ?? u?.username ?? "Someone", avatar: u?.image ?? null }
         })
       }
-      return c.json(stats)
+      return c.json({ ...stats, agentReads })
     },
   )
 

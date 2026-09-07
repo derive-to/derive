@@ -96,6 +96,39 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(r.wwwAuth).toContain("oauth-protected-resource")
   })
 
+  it("counts repeated AI artifact opens without keeping an event log", async () => {
+    const { app, token, meta } = appWithGrant(
+      dir,
+      "read-counters",
+      "openid derive:read derive:publish",
+    )
+    const { short_id: shortId } = (await (await publish(app, token, "Read counters")).json()) as {
+      short_id: string
+    }
+    const artifact = await meta.getByShortId(shortId)
+    if (!artifact) throw new Error("artifact was not published")
+
+    for (let index = 0; index < 3; index += 1)
+      expect(toolText(await call(app, token, "read", { short_id: shortId }))).toContain(
+        "Read counters",
+      )
+    expect(
+      toolText(
+        await call(app, token, "read", {
+          short_id: shortId,
+          render: "top",
+          section: "invalid-combination",
+        }),
+      ),
+    ).toContain("pass it alone")
+
+    expect(await meta.artifactReadStats(artifact.id, artifact.org_id)).toEqual({
+      total: 3,
+      recent: [expect.objectContaining({ version: 1, opens: 3 })],
+    })
+    expect((await meta.viewStats(artifact.id)).total).toBe(0)
+  })
+
   it("initializes (identity in instructions) and lists the consolidated tools", async () => {
     const { app, token } = appWithGrant(dir, "init", "openid derive:read derive:publish")
     const init = await rpc(app, token, initBody)

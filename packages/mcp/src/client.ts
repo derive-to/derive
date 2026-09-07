@@ -182,6 +182,10 @@ export interface ViewStatsJson {
   perVersion: { version: number; count: number }[]
   daily: { day: string; count: number }[]
   recent: { viewer: string; kind: "user" | "anon"; at: string }[]
+  agentReads: {
+    total: number
+    recent: { version: number; opens: number; at: string }[]
+  }
 }
 
 /** A library is an access-scoped catalog of immutable template starters. */
@@ -536,7 +540,7 @@ export function createClient(opts: ClientOptions): DeriveClient {
       if (opts?.format) q.set("format", opts.format)
       const qs = q.toString()
       const res = await f(`${base}/v1/artifacts/${shortId}/content${qs ? `?${qs}` : ""}`, {
-        headers: authHeaders,
+        headers: { ...authHeaders, "x-derive-ai-read": "1" },
       })
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string }
@@ -578,7 +582,9 @@ export function createClient(opts: ClientOptions): DeriveClient {
     async getOutline(shortId, version) {
       const q = new URLSearchParams({ outline: "1" })
       if (version) q.set("v", String(version))
-      const res = await f(`${base}/v1/artifacts/${shortId}/content?${q}`, { headers: authHeaders })
+      const res = await f(`${base}/v1/artifacts/${shortId}/content?${q}`, {
+        headers: { ...authHeaders, "x-derive-ai-read": "1" },
+      })
       if (!res.ok) return { sections: [], pages: null }
       const body = (await res.json()) as {
         sections?: OutlineSectionJson[]
