@@ -12,19 +12,30 @@ import {
   type BlobStore,
   type BundleManifest,
   DECK_CONTENT_TYPE,
+  type DynamicBinding,
+  type DynamicValue,
   deriveFacts,
+  dynamicIndexText,
+  dynamicValueBytes,
+  emptyDynamicValue,
   FACT_GEN,
   inferredSkillRelationRefs,
   isAuthoredFactType,
+  isBundleContentType,
   isHtmlLike,
+  isLatexLike,
+  LATEX_BUNDLE_CONTENT_TYPE,
+  latexBindings,
   type MetaStore,
   type NewVersionData,
   newId,
+  parseDynamicBindings,
   parseFacts,
   type SearchIndex,
   SKILL_CONTENT_TYPE,
   SKILL_SIDECAR_PATH,
   type VersionRecord,
+  validateDynamicValue,
   validateSkillDefinition,
 } from "@derive/core"
 import type { Backplane } from "../bus"
@@ -35,6 +46,7 @@ import { publishSweepEvents } from "./anchor-sweep"
 import { fanOutNewContentMentions } from "./content-mentions"
 import { documentStructure } from "./doc-structure-cache"
 import { EMAIL_LAYOUT_FACT } from "./email-layout"
+import { bundleTextFiles, bundleTextResolver } from "./latex-bundle"
 import { indexArtifactVersion, isTextType } from "./search"
 import { recordThreadResolution } from "./thread-actions"
 import { indexWorkflowSkillLinks } from "./workflow-skill-links"
@@ -70,8 +82,22 @@ export const emitVersionBump = async (
   version: VersionRecord,
   preparedSource?: string,
   previousSearchSource?: { source: string; contentType: string | null; title: string | null },
+  dynamicSeedFrom?: number,
 ): Promise<NewVersionData[]> => {
   const { meta, blobs, bus, notifyRender } = deps
+  // Give this version its dynamic tables and figures their START POINT first: each binding
+  // the document declares gets a slot seeded from the previous version's latest value (or
+  // from the inline placeholder for a brand-new name). First, because everything below
+  // reads the version as it will be seen: the viewer reloads on the version event, the
+  // renderer screenshots it, and the search index projects its data. Best-effort: a hiccup
+  // here must never fail a publish that already went live, and a page whose slot is
+  // missing renders its placeholder rather than nothing.
+  let seeded: { name: string; json: string }[] = []
+  try {
+    seeded = await seedDynamicSlots(meta, blobs, version, dynamicSeedFrom, preparedSource)
+  } catch (err) {
+    log.error("dynamic slot seeding failed", { artifact: artifact.id, err: String(err) })
+  }
   bus.publish(artifact.id, { type: "version.published", n: version.n, message: version.message })
   await notifyRender?.(artifact, version.n)
   await publishSweepEvents(meta, blobs, bus, artifact.id, version, preparedSource)
@@ -80,6 +106,8 @@ export const emitVersionBump = async (
   // and move on — the artifact re-indexes on its next publish (and the backfill
   // sweep is the safety net for anything missed).
   try {
+    // The rows seeded above are this version's slots, so the index carries their values
+    // beside the source without a second read (an unbound document costs nothing).
     await indexArtifactVersion(
       meta,
       blobs,
@@ -88,6 +116,7 @@ export const emitVersionBump = async (
       deps.search,
       preparedSource,
       previousSearchSource,
+      dynamicIndexText(seeded),
     )
   } catch (err) {
     log.error("search index update failed", { artifact: artifact.id, err: String(err) })
@@ -332,8 +361,10 @@ const extractVersionData = async (
   // is exactly what a map is for. Found on the preview: a freshly published deck carried no
   // $map at all. Same second-order blast radius the sniff fix documented — typing decks
   // correctly moves them off every path that asks `content_type === "text/html"`.
+  // A LaTeX paper embeds no fact block either, but its outline, links and stats derive
+  // like a deck's.
   const authored = isAuthoredFactType(ct)
-  if (!authored && !isHtmlLike(ct)) return []
+  if (!authored && !isHtmlLike(ct) && !isLatexLike(ct)) return []
   let source = preparedSource
   if (source === undefined) {
     const bytes = await blobs.get(version.blob_key)
@@ -391,6 +422,111 @@ const extractVersionData = async (
   )
   await (background ? background(backfill) : backfill)
   return rows
+}
+
+const storedValue = (json: string): DynamicValue | null => {
+  try {
+    const value = validateDynamicValue(JSON.parse(json))
+    return typeof value === "string" ? null : value
+  } catch {
+    return null
+  }
+}
+
+/** Seed every dynamic slot a just-published version declares (see @derive/core
+ *  dynamic-data.ts) and return the rows this version now holds, for the search index.
+ *  `seedFrom` names the version whose LATEST data starts this one;
+ *  a publish copies forward from n-1, a restore from the version being restored, so a
+ *  restore of v3 as v7 starts v7 from v3's final numbers. Insert-if-absent throughout:
+ *  a replayed bump (the amend path re-runs this for the same n) and a write that raced
+ *  the seed both leave the row that exists alone. */
+const seedDynamicSlots = async (
+  meta: Pick<MetaStore, "getDynamicSlot" | "insertDynamicSlot" | "appendDynamicRevision">,
+  blobs: BlobStore,
+  version: VersionRecord,
+  seedFrom: number | undefined,
+  preparedSource?: string,
+): Promise<{ name: string; json: string }[]> => {
+  const seeded: { name: string; json: string }[] = []
+  const ct = version.content_type
+  let bindings: DynamicBinding[]
+  if (ct === LATEX_BUNDLE_CONTENT_TYPE) {
+    // A paper's bindings are what the RENDERER finds walking the entry and every file it
+    // inputs (the same resolver and limits the served page uses), so a table declared in
+    // sec/results.tex is seeded and carried forward exactly like one in main.tex.
+    const manifestBytes = await blobs.get(version.blob_key)
+    if (!manifestBytes) return seeded
+    const manifest = JSON.parse(new TextDecoder().decode(manifestBytes)) as BundleManifest
+    const files = await bundleTextFiles(blobs, manifest)
+    const entry = files.get(manifest.entry)
+    if (entry === undefined) return seeded
+    bindings = latexBindings(entry, { resolve: bundleTextResolver(files) }).map((b) => ({
+      name: b.name,
+      kind: b.kind,
+      seed: null,
+    }))
+  } else if (isBundleContentType(ct)) {
+    // Other bundles carry no bindings (their blob is a manifest), so skip the blob read.
+    return seeded
+  } else {
+    let source = preparedSource
+    if (source === undefined) {
+      const bytes = await blobs.get(version.blob_key)
+      if (!bytes) return seeded
+      source = new TextDecoder().decode(bytes)
+    }
+    // A single .tex file: the renderer's inventory too (no inline seeds in LaTeX).
+    bindings = isLatexLike(ct)
+      ? latexBindings(source).map((b) => ({ name: b.name, kind: b.kind, seed: null }))
+      : parseDynamicBindings(source, ct).bindings
+  }
+  if (bindings.length === 0) return seeded
+  const from = seedFrom ?? version.n - 1
+  const at = new Date().toISOString()
+  for (const binding of bindings) {
+    const prev =
+      from >= 1 ? await meta.getDynamicSlot(version.artifact_id, from, binding.name) : null
+    // Carry the previous value forward only when it still passes the contract: a row the
+    // write path accepted is valid, but rows from before a cap existed may not be, and a
+    // seed that every read refuses is worse than starting over from the placeholder.
+    const carried = prev && prev.kind === binding.kind ? storedValue(prev.json) : null
+    const value: DynamicValue = carried ?? binding.seed ?? emptyDynamicValue(binding.kind)
+    const json = JSON.stringify(value)
+    const size = dynamicValueBytes(value)
+    const row = {
+      id: newId("dyn"),
+      artifact_id: version.artifact_id,
+      n: version.n,
+      name: binding.name,
+      json,
+      revision: 0,
+      updated_by_id: "system",
+      updated_by_name: "Derive",
+      updated_at: at,
+    }
+    const inserted = await meta.insertDynamicSlot(row)
+    if (!inserted) {
+      // A replayed bump, or a write that raced the seed: the row that exists is the slot.
+      const existing = await meta.getDynamicSlot(version.artifact_id, version.n, binding.name)
+      if (existing) seeded.push({ name: existing.name, json: existing.json })
+      continue
+    }
+    seeded.push({ name: row.name, json })
+    await meta.appendDynamicRevision({
+      id: newId("dynrev"),
+      artifact_id: row.artifact_id,
+      n: row.n,
+      name: row.name,
+      revision: 0,
+      json,
+      size_bytes: size,
+      actor_id: "system",
+      actor_name: "Derive",
+      note: carried ? `seeded from v${from}` : "seeded from the document",
+      created_at: at,
+    })
+  }
+  return seeded
 }
 
 /** Versions walked back when a fact first appears. Bounded because each one costs a blob
@@ -517,6 +653,10 @@ export interface AfterPublishOpts {
   /** Previous exact source captured while materializing an edit. Search can skip all index
    *  work when its bounded projection and title are unchanged. */
   previousSearchSource?: { source: string; contentType: string | null; title: string | null }
+  /** The version whose latest dynamic data seeds this one. Omitted (every ordinary
+   *  publish): the previous version. A restore passes the restored version's number, so
+   *  the new version starts from the numbers that version ended with. */
+  dynamicSeedFrom?: number
 }
 
 /**
@@ -572,6 +712,7 @@ export const afterPublish = async (
     version,
     opts.preparedSource,
     opts.previousSearchSource,
+    opts.dynamicSeedFrom,
   )
   // Source mentions are derived from the just-published bytes, never trusted from a client
   // payload. Run after the canonical version bump and isolate every delivery branch inside the

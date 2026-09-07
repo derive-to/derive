@@ -66,3 +66,57 @@ describe("renderMarkdown — document shell", () => {
     expect(html).not.toContain("</title><script>alert(1)")
   })
 })
+
+describe("renderMarkdown — dynamic tables and figures", () => {
+  const fence = [
+    "```derive-table results",
+    "| Model | Acc |",
+    "| --- | --- |",
+    "| base | -- |",
+    "```",
+    "",
+    "```js",
+    "const x = 1",
+    "```",
+  ].join("\n")
+
+  it("renders the seed when no slot exists and keeps other fences as code", async () => {
+    const body = bodyOf(await renderMarkdown(fence, null))
+    expect(body).toContain('<table data-derive-table="results">')
+    expect(body).toContain("<td>base</td><td>--</td>")
+    expect(body).toMatch(/<pre><code class="language-js">const x = 1/)
+  })
+
+  it("renders the slot's current value when the version has one", async () => {
+    const body = bodyOf(
+      await renderMarkdown(fence, null, {
+        dynamic: new Map([
+          [
+            "results",
+            {
+              kind: "table",
+              table: {
+                columns: [{ key: "model" }, { key: "acc" }],
+                rows: [{ model: "ours", acc: 0.9 }],
+              },
+            },
+          ],
+        ]),
+      }),
+    )
+    expect(body).toContain("<td>ours</td><td>0.9</td>")
+    expect(body).not.toContain("base")
+  })
+
+  it("keeps the binding attributes on table and figure only", async () => {
+    const body = bodyOf(
+      await renderMarkdown(
+        '<table data-derive-table="a"><tr><td>1</td></tr></table><figure data-derive-figure="b"><img src="https://cdn.test/p.png"></figure><div data-derive-table="c">x</div>',
+        null,
+      ),
+    )
+    expect(body).toContain('<table data-derive-table="a">')
+    expect(body).toContain('<figure data-derive-figure="b">')
+    expect(body).toContain("<div>x</div>")
+  })
+})

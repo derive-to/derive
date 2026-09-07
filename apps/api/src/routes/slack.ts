@@ -116,7 +116,7 @@ import { buildSlackManifest, slackSetupHTML } from "../slack-app-setup"
 export const slackRoutes = (ctx: AppContext) => {
   const { meta, deps, bus, notify, background, requireUser, authorizeUserStanding } = ctx
   const { activeWorkspace, workspaceCan, requireWorkspace } = ctx
-  const { blobs, sourceText, search, notifyRender, billingBlocked } = ctx
+  const { blobs, sourceText, dynamicSlots, search, notifyRender, billingBlocked } = ctx
   const app = new OpenAPIHono<BlankEnv>()
   const slack = deps.slack
   const redirectUri = new URL("/v1/slack/oauth/callback", deps.baseUrl).toString()
@@ -1571,7 +1571,7 @@ export const slackRoutes = (ctx: AppContext) => {
 
     const runSearch = async (): Promise<unknown[]> => {
       const { results } = await searchWorkspace(
-        { blobs, sourceText, meta, search },
+        { blobs, sourceText, dynamicSlots, meta, search },
         {
           orgId: link.org_id,
           viewerId: link.user_id,

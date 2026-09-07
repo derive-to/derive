@@ -32,12 +32,16 @@ export function useArtifactLive(opts: {
   /** A persisted mini-app collection changed; forward its authoritative value
    * into the sandboxed artifact through the host bridge. */
   onSharedState?: (update: { key: string; value: unknown; version: number }) => void
+  /** A dynamic table or figure slot changed without a new version (or was deleted:
+   *  revision null). A wake signal only; the page refetches what it may see. */
+  onDynamic?: (update: { name: string; kind: string; n: number; revision: number | null }) => void
   /** The stream (re)connected after a coverage gap — a hidden tab returning (its
    *  stream was closed) or an EventSource auto-reconnect. Events during the gap
    *  were never replayed, so refetch silently instead of trusting the cache. */
   onResync?: () => void
 }) {
-  const { shortId, selfId, onComment, onVersion, onReview, onSharedState, onResync } = opts
+  const { shortId, selfId, onComment, onVersion, onReview, onSharedState, onDynamic, onResync } =
+    opts
   const [viewers, setViewers] = useState<Viewer[]>([])
   // The live-stream "reconnecting" cue: `connected` is false whenever the browser is offline OR
   // the stream isn't confirmed live — so a dropped connection reads as reconnecting instead of a
@@ -116,6 +120,27 @@ export function useArtifactLive(opts: {
         }
       })
     }
+    if (onDynamic) {
+      ev.addEventListener("artifact.dynamic.updated", (e) => {
+        try {
+          const u = JSON.parse((e as MessageEvent).data) as {
+            name?: unknown
+            kind?: unknown
+            n?: unknown
+            revision?: unknown
+          }
+          if (typeof u.name === "string" && typeof u.kind === "string" && typeof u.n === "number")
+            onDynamic({
+              name: u.name,
+              kind: u.kind,
+              n: u.n,
+              revision: typeof u.revision === "number" ? u.revision : null,
+            })
+        } catch {
+          /* ignore malformed frames */
+        }
+      })
+    }
     ev.addEventListener("presence", (e) => {
       try {
         setViewers((JSON.parse((e as MessageEvent).data).viewers as Viewer[]) ?? [])
@@ -137,6 +162,7 @@ export function useArtifactLive(opts: {
     onVersion,
     onReview,
     onSharedState,
+    onDynamic,
     onResync,
     paintFrame,
     visible,

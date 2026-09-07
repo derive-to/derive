@@ -173,6 +173,28 @@ export const sharedStateActivity = sqliteTable(
   (t) => [uniqueIndex("shared_state_activity_key_version").on(t.artifact_id, t.key, t.version)],
 )
 
+// Dynamic current values reuse shared_state. This table keeps attributed snapshots that
+// shared_state_activity cannot represent. Revision 0 is the seed and always survives pruning.
+export const dynamicRevision = sqliteTable(
+  "dynamic_revision",
+  {
+    id: text("id").primaryKey(),
+    artifact_id: text("artifact_id")
+      .notNull()
+      .references(() => artifact.id),
+    n: integer("n").notNull(),
+    name: text("name").notNull(),
+    revision: integer("revision").notNull(),
+    json: text("json").notNull(),
+    size_bytes: integer("size_bytes").notNull(),
+    actor_id: text("actor_id").notNull(),
+    actor_name: text("actor_name").notNull(),
+    note: text("note"),
+    created_at: text("created_at").notNull().default(now),
+  },
+  (t) => [uniqueIndex("dynamic_revision_key").on(t.artifact_id, t.n, t.name, t.revision)],
+)
+
 export const version = sqliteTable(
   "version",
   {
@@ -1522,6 +1544,7 @@ const TABLES = [
   artifact,
   sharedState,
   sharedStateActivity,
+  dynamicRevision,
   version,
   versionData,
   comment,

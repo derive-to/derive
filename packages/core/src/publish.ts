@@ -1,6 +1,9 @@
 import { unzipSync } from "fflate"
+import { isHtmlLike, isMarkdownLike } from "./content-types"
 import { isDeckDocument } from "./decks"
+import { dynamicSeedErrors } from "./dynamic-data"
 import { newId, newShortId, refFor, slugify } from "./ids"
+import { isLatexBundle, isLatexDocument, LATEX_CONTENT_TYPE } from "./latex"
 import { LINKED_BUNDLE_CONTENT_TYPE, linkedBundleOf } from "./linked-bundle"
 import { mimeFor } from "./mime"
 import type { LinkRole, Listed, WorkspaceAccess } from "./permissions"
@@ -10,6 +13,7 @@ import {
   type BlobStore,
   BUNDLE_CONTENT_TYPE,
   type BundleManifest,
+  LATEX_BUNDLE_CONTENT_TYPE,
   type MetaStore,
   SKILL_CONTENT_TYPE,
   type VersionRecord,
@@ -148,11 +152,21 @@ export const pickBundleEntry = (paths: string[]): string | null => {
   // carries) — otherwise that reference would steal the entry and the bundle would lose
   // its skill identity. An html site is still picked below when there's no root SKILL.md.
   if (paths.includes("/SKILL.md")) return "/SKILL.md"
+  // A paper zip (main.tex + figures + .bib) routinely carries a README beside the paper;
+  // the paper is the document, so a root main.tex wins over the markdown fallbacks below
+  // but not over an HTML site's entry page.
+  if (paths.includes("/main.tex")) return "/main.tex"
   const html = shallowest((p) => p.endsWith(".html"))
   if (html) return html
   if (paths.includes("/MANIFEST.md")) return "/MANIFEST.md"
   if (paths.includes("/README.md")) return "/README.md"
-  return shallowest((p) => /\.(md|markdown)$/i.test(p)) ?? null
+  return (
+    shallowest((p) => /\.(md|markdown)$/i.test(p)) ??
+    // Last resort so a paper named anything but main.tex (a figures-only folder with
+    // paper.tex) still publishes instead of failing as "no entry point".
+    shallowest((p) => /\.tex$/i.test(p)) ??
+    null
+  )
 }
 
 /** Normalizes a zip entry path; null means skip the entry. */
@@ -232,7 +246,7 @@ async function storeContent(
     // Entry point: an HTML site enters at index/shallowest .html; a skill/doc
     // bundle with no HTML enters at SKILL.md / README.md / shallowest markdown.
     const entry = pickBundleEntry(Object.keys(files))
-    if (!entry) throw new PublishError(400, "bundle has no html or markdown entry point")
+    if (!entry) throw new PublishError(400, "bundle has no html, markdown, or LaTeX entry point")
 
     const manifest: BundleManifest = { entry, spa, files }
     // A skill bundle (entry = SKILL.md) gets the distinct derive/skill content type — so
@@ -259,7 +273,11 @@ async function storeContent(
     }
     return {
       blobKey: await put(new TextEncoder().encode(JSON.stringify(manifest))),
-      contentType: isSkill ? SKILL_CONTENT_TYPE : BUNDLE_CONTENT_TYPE,
+      contentType: isSkill
+        ? SKILL_CONTENT_TYPE
+        : isLatexBundle(manifest)
+          ? LATEX_BUNDLE_CONTENT_TYPE
+          : BUNDLE_CONTENT_TYPE,
       kind: "bundle",
       blobWriteMs,
       suggestedTitle,
@@ -291,6 +309,12 @@ async function storeContent(
     // Markdown stays markdown even when it talks about decks at length — the decks
     // skill and this repo's own docs quote the protocol and slide markup verbatim.
     contentType = "text/markdown"
+  } else if (/\.(tex|latex)$/i.test(filename) || isLatexDocument(text)) {
+    // LaTeX: the name wins (a chapter file has no \documentclass of its own), and the
+    // line-anchored content sniff catches an unnamed payload (an MCP inline publish).
+    // After the .md arm for the same reason decks are: the latex skill quotes
+    // \documentclass inside fences, and a doc about LaTeX is still Markdown.
+    contentType = LATEX_CONTENT_TYPE
   } else if (isVideoDocument(text)) {
     contentType = VIDEO_CONTENT_TYPE
   } else if (isDeckDocument(text)) {
@@ -307,6 +331,14 @@ async function storeContent(
     // markdown path — versus serving raw text as HTML. Real HTML still wins above
     // (full doc by content, or an explicit .html name).
     contentType = "text/markdown"
+  }
+  // A dynamic table or figure whose placeholder breaks the slot contract (over the caps,
+  // an undeclared column) would seed a slot every read refuses; refuse the publish instead,
+  // before a byte is stored, and name the table and the limit. Same parser as the seed
+  // pass, so the two can never disagree. LaTeX carries no inline seeds.
+  if (isMarkdownLike(contentType) || isHtmlLike(contentType)) {
+    const refused = dynamicSeedErrors(text, contentType)
+    if (refused.length) throw new PublishError(413, refused.join(" "))
   }
   return { blobKey: await put(bytes), contentType, kind: "file", blobWriteMs }
 }
@@ -443,7 +475,9 @@ export async function publish(
   }
 
   const title =
-    input.title ?? suggestedTitle ?? input.filename.replace(/\.(html?|md|markdown|zip)$/i, "")
+    input.title ??
+    suggestedTitle ??
+    input.filename.replace(/\.(html?|md|markdown|tex|latex|zip)$/i, "")
   if (input.mintShortId && (await meta.getByShortId(input.mintShortId)))
     throw new PublishError(409, `short_id ${input.mintShortId} is already taken`)
   await validateSkillRelationsBeforePublish(meta, skillSidecar, input.orgId ?? "local")

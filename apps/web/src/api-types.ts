@@ -1889,7 +1889,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Render a markdown draft to the exact published HTML (stateless; signed-in only). */
+        /** Render a markdown or LaTeX draft to the exact published HTML (stateless; signed-in only). */
         post: {
             parameters: {
                 query?: never;

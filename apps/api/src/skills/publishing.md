@@ -49,11 +49,13 @@ sandboxed viewer, so publish real designed pages, not just prose.
   `from_node`. Inserts and deletes do not mark every shifted neighbour as moved.
   Omit it when the ordinary small receipt is enough. Bundles report changed paths through
   `catch_up` instead.
-- **Full single file.** Provide the complete `content` (HTML or Markdown) for a
-  single-file artifact.
+- **Full single file.** Provide the complete `content` (HTML, Markdown or LaTeX) for a
+  single-file artifact. A LaTeX paper is stored as its source and rendered as a page:
+  derive://skills/latex.
 - **Bundle.** Provide `files` (a map of page path → content) for a multi-page bundle such as a
-  whole site, images and any binary asset. The root `index.html` (else the shallowest
-  `.html`) becomes the entry page; pages reference assets by relative path. Served
+  whole site, images and any binary asset, or a paper (`main.tex` + `.bib` + figures).
+  The root `index.html` (else the shallowest `.html`, else `main.tex`) becomes the entry
+  page; pages reference assets by relative path. Served
   content-type comes from the file extension, so give binary entries a real extension
   (.png/.jpg/.webp/.woff2). Each published page is also readable directly at
   `/raw/<short_id>/v/<n>/<path>` once live.
@@ -204,6 +206,8 @@ Rules worth knowing before you author one:
   browser). Write it `<\/script>`.
 - Facts are per VERSION and immutable, like the version itself. Republishing without the
   block simply means that new version carries no slot; the old version keeps its own.
+  Numbers that must change BETWEEN publishes (a results table an agent refreshes as runs
+  land) are dynamic slots, not facts: see derive://skills/dynamic-data.
 - Single-file HTML and markdown artifacts only (not bundles).
 
 ## content_sha256 verification

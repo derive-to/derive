@@ -13,9 +13,11 @@
 
 import {
   type ArtifactRecord,
+  dynamicSeedErrors,
   MAX_ARTIFACT_CHARS,
   NUDGE_LIMIT,
   newId,
+  PublishError,
   type Revision,
   type Selector,
   type SessionMessageRecord,
@@ -128,6 +130,9 @@ const apologyFor = (failure: NonNullable<TurnOutcome["failure"]>): string => {
     // billing URL) rather than the generic "try again", which would be dishonest advice here
     // since retrying changes nothing until the plan is fixed.
     if (failure.billingBlocked) return failure.error
+    // Same for a refusal by the publish contract (a dynamic placeholder over its caps): the
+    // reason names the table and the limit, which is what the person needs to fix it.
+    if (failure.refused) return `${failure.error} Nothing has been written.`
     return "I could not save that change, so nothing has been written."
   }
   // The contract's own diagnostic when it had one — an edit that missed knows WHICH anchor
@@ -260,7 +265,11 @@ const landInProcess =
     // only for a document that somehow has no recorded type.
     const contentType =
       input.artifact.current_content_type ??
-      (revision.filename.endsWith(".md") ? "text/markdown" : "text/html")
+      (revision.filename.endsWith(".md")
+        ? "text/markdown"
+        : revision.filename.endsWith(".tex")
+          ? "text/x-latex"
+          : "text/html")
     const author = input.onBehalf?.name ?? "Derive"
 
     // A human published while the model was thinking. Surface rather than clobber: their write
@@ -287,6 +296,11 @@ const landInProcess =
     // (lib/substrate-loop.ts): the turn reports it as a failed write rather than a settled one.
     const blocked = await deps.billingBlocked(input.artifact.org_id)
     if (blocked) throw new BillingBlockedError(blocked.message)
+    // This path lands bytes without core publish(), so it applies publish's own refusal
+    // itself: a dynamic placeholder that breaks the slot contract is a failed write here,
+    // exactly as it is a 413 on the REST route.
+    const refused = dynamicSeedErrors(revision.content, contentType)
+    if (refused.length) throw new PublishError(413, refused.join(" "))
 
     const blobKey = await deps.blobs.put(bytes)
     const version = await deps.meta.addVersion(input.artifact.id, {

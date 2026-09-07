@@ -274,10 +274,11 @@ export interface AppDeps {
    * Per-actor (signed-in user or agent, falling back to IP) write rate limits,
    * in actions per minute. Applied only when rateLimit is on; identity-keyed so
    * one noisy account can't drown the workspace. Default: 30 publishes/min,
-   * 60 comments/min.
+   * 60 comments/min, 120 dynamic table/figure writes/min.
    */
   publishRate?: number
   commentRate?: number
+  dynamicRate?: number
   /**
    * The web SPA is served from this same process (single-container self-host).
    * When true, the bare `/` placeholder is dropped so the bundled SPA's index
@@ -298,6 +299,15 @@ export interface AppDeps {
    * Returns null if the shell can't be read (the route then serves it untouched).
    */
   shellFetch?: () => Promise<string | null>
+  /**
+   * Bytes of a vendored browser library file (`katex.min.js`, `fonts/KaTeX_Main-Regular.woff2`),
+   * served by `/raw/vendor/katex/<version>/<file>` to rendered LaTeX pages. The artifact
+   * iframe is a null origin behind the sandbox CSP, so the typesetter has to come from a
+   * `/raw/*` route with CORS rather than the SPA bundle or a CDN. Node reads the package from
+   * node_modules; the edge reads the copy prep-edge-assets.mjs places in static assets.
+   * Unset ⇒ 404, and the page shows the TeX source in place of typeset math.
+   */
+  vendorAsset?: (file: string) => Promise<Uint8Array | null>
   /**
    * gzip the responses. On for the Node/Fly entry (Fly's proxy gives HTTP/2 but
    * doesn't compress); left off for the Cloudflare Worker entry, where the edge
@@ -405,6 +415,7 @@ export function buildContext(deps: AppDeps) {
   const limiters = deps.rateLimiters ?? inMemoryRateLimiters(deps)
   const publishLimiter = deps.rateLimit ? limiters.publish : null
   const commentLimiter = deps.rateLimit ? limiters.comment : null
+  const dynamicLimiter = deps.rateLimit ? limiters.dynamic : null
   const unlockLimiter = deps.rateLimit ? limiters.unlock : null
   const inviteLimiter = deps.rateLimit ? limiters.invite : null
   const askLimiter = deps.rateLimit ? limiters.ask : null
@@ -1521,6 +1532,10 @@ export function buildContext(deps: AppDeps) {
   /**
    * Source text of a stored version (entry document for bundles); null if missing.
    */
+  // The search engine's view of a version's dynamic slots (lib/search.ts SearchDeps):
+  // fail-soft, so a store hiccup costs the data, never the search.
+  const dynamicSlots = (v: { artifact_id: string; n: number }) =>
+    meta.listDynamicSlots(v.artifact_id, v.n).catch(() => [])
   const sourceText = async (content: {
     blob_key: string
     content_type: string
@@ -1772,6 +1787,7 @@ export function buildContext(deps: AppDeps) {
     defaultRole,
     publishLimiter,
     commentLimiter,
+    dynamicLimiter,
     unlockLimiter,
     inviteLimiter,
     askLimiter,
@@ -1853,6 +1869,7 @@ export function buildContext(deps: AppDeps) {
     collectionRole,
     collectionStandingRole,
     sourceText,
+    dynamicSlots,
     resolveArtifact,
     requireArtifact,
     resolveArtifacts,

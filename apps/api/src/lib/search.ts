@@ -1,11 +1,15 @@
 import {
   type ArtifactRecord,
   type BlobStore,
+  dynamicIndexText,
+  dynamicSlotTexts,
   elideDataUris,
   elideDataUrisToLimit,
   enclosingMarker,
   isBundleContentType,
   isHtmlLike,
+  isLatexLike,
+  latexTextParts,
   type MetaStore,
   pageText,
   type SearchIndex,
@@ -28,6 +32,12 @@ import { visibleArtifacts } from "./visibility"
 export interface SearchDeps {
   blobs: BlobStore
   sourceText: (v: Pick<VersionRecord, "blob_key" | "content_type">) => Promise<string | null>
+  /** The version's dynamic table and figure slots (see @derive/core dynamic-data.ts), so a
+   *  text-scope search sees the data the page shows, not only the placeholder in the
+   *  source. Optional and best-effort: absent or failing, search reads the source alone. */
+  dynamicSlots?: (
+    v: Pick<VersionRecord, "artifact_id" | "n">,
+  ) => Promise<{ name: string; json: string }[]>
 }
 
 export interface WorkspaceSearchDeps extends SearchDeps {
@@ -72,12 +82,18 @@ export const baseType = (t: string): string => t.split(";")[0]?.trim() ?? t
  *  text/html check made `versionIndexText` contribute nothing and decks silently dropped
  *  out of workspace search. (Bundle call sites pass per-file types derived from the path
  *  extension, which are never the deck type, so they are unaffected either way.) */
-export const isTextType = (t: string): boolean => isHtmlLike(t) || baseType(t) === "text/markdown"
+export const isTextType = (t: string): boolean =>
+  isHtmlLike(t) || isLatexLike(t) || baseType(t) === "text/markdown"
 // Only the `markdown` format elides data: URIs (never `html`, which `edits` matches
 // byte-for-byte against, or `text`, the comment-anchor source) — see elideDataUris.
 export const present = (source: string, contentType: string, format: ReadFormat): string => {
   if (format === "html") return source
-  if (format === "text") return isHtmlLike(contentType) ? pageText(source) : source
+  if (format === "text")
+    return isHtmlLike(contentType)
+      ? pageText(source)
+      : isLatexLike(contentType)
+        ? latexTextParts(source).text
+        : source
   return elideDataUris(toMarkdown(source, contentType))
 }
 
@@ -224,15 +240,31 @@ export const searchArtifactVersionMany = async (
   // text-scope search (its text IS the source). An HTML text-scope search greps the
   // tag-stripped text, whose lines don't map to the source markers, so skip it.
   const markersFor = (raw: string, ct: string, where: "source" | "text"): SectionMarker[] =>
-    where === "source" || !isHtmlLike(ct) ? sectionMarkers(raw, ct) : []
+    where === "source" || (!isHtmlLike(ct) && !isLatexLike(ct)) ? sectionMarkers(raw, ct) : []
   const manifest = await manifestOf(deps.blobs, v)
 
   if (!manifest) {
     const src = (await deps.sourceText(v)) ?? ""
+    // The slots' values, as their own groups (`dynamic/<name>`): a text-scope search sees
+    // what the page shows, while the source scope stays the exact bytes. Grepped as
+    // separate text rather than substituted into the source, so the source's line
+    // numbers (which section markers and line-addressed reads depend on) never move.
+    const slots = requests.some((r) => r.where === "text")
+      ? dynamicSlotTexts((await deps.dynamicSlots?.(v).catch(() => [])) ?? [])
+      : []
     return requests.map(({ re, where, ctxLines, cap }) => {
       const { hunks, total } = scanLines(contentFor(src, v.content_type, where), re, ctxLines, cap)
       annotateSections(hunks, markersFor(src, v.content_type, where))
-      return { groups: [{ path: null, hunks }], total, note: null }
+      const groups: { path: string | null; hunks: SearchHunk[] }[] = [{ path: null, hunks }]
+      let sum = total
+      if (where === "text")
+        for (const slot of slots) {
+          const found = scanLines(slot.text, re, ctxLines, cap)
+          if (!found.total) continue
+          groups.push({ path: `dynamic/${slot.name}`, hunks: found.hunks })
+          sum += found.total
+        }
+      return { groups, total: sum, note: null }
     })
   }
 
@@ -352,15 +384,23 @@ export async function versionIndexText(
   blobs: BlobStore,
   v: VersionRecord,
   preparedSource?: string,
+  /** Text that belongs to the version but not to its bytes: its dynamic slots' values
+   *  (dynamicIndexText), so the index nominates an artifact for a number that appears
+   *  nowhere in its source. Appended after the source, inside the same bound. */
+  extraText = "",
 ): Promise<string> {
   const clipText = (s: string) => (s.length > MAX_INDEX_TEXT ? s.slice(0, MAX_INDEX_TEXT) : s)
+  const withExtra = (s: string) =>
+    extraText ? clipText(s ? `${s}\n\n${extraText}` : extraText) : s
   if (preparedSource !== undefined && !isBundleContentType(v.content_type))
-    return isTextType(v.content_type) ? elideDataUrisToLimit(preparedSource, MAX_INDEX_TEXT) : ""
+    return withExtra(
+      isTextType(v.content_type) ? elideDataUrisToLimit(preparedSource, MAX_INDEX_TEXT) : "",
+    )
   const manifest = await manifestOf(blobs, v)
   if (!manifest) {
-    if (!isTextType(v.content_type)) return ""
+    if (!isTextType(v.content_type)) return withExtra("")
     const bytes = await blobs.get(v.blob_key)
-    return bytes ? clipText(elideDataUris(new TextDecoder().decode(bytes))) : ""
+    return withExtra(bytes ? clipText(elideDataUris(new TextDecoder().decode(bytes))) : "")
   }
   const pages = Object.keys(manifest.files).filter((p) => isTextType(manifest.files[p]?.type ?? ""))
   const parts: string[] = []
@@ -388,8 +428,9 @@ export async function indexArtifactVersion(
   search?: Pick<SearchIndex, "indexArtifact">,
   preparedSource?: string,
   previous?: { source: string; contentType: string | null; title: string | null },
+  extraText?: string,
 ): Promise<void> {
-  const text = await versionIndexText(blobs, v, preparedSource)
+  const text = await versionIndexText(blobs, v, preparedSource, extraText)
   // Exact edits already hold both complete sources. If the bounded search projection and
   // title did not change, both current indexes are already correct. Skip the lexical write,
   // embedding call, and vector write instead of relying on an isolate-local cache.
@@ -437,7 +478,7 @@ export async function deleteArtifactAndUnindex(
 // every LIVE artifact and never indexes a taken-down one.
 export interface ReindexSearchDeps {
   blobs: BlobStore
-  meta: Pick<MetaStore, "indexArtifact" | "getVersion" | "listArtifacts">
+  meta: Pick<MetaStore, "indexArtifact" | "getVersion" | "listArtifacts" | "listDynamicSlots">
   /** The optional dense arm — backfill embeds into it too when a SearchIndex is bound. */
   search?: SearchIndex
 }
@@ -467,7 +508,8 @@ export const reindexSearchBatch = async (
     try {
       const v = await deps.meta.getVersion(a.id, a.current_version)
       if (!v) continue // no readable current version — skip rather than index empty
-      const text = await versionIndexText(deps.blobs, v)
+      const slots = await deps.meta.listDynamicSlots(a.id, v.n).catch(() => [])
+      const text = await versionIndexText(deps.blobs, v, undefined, dynamicIndexText(slots))
       await deps.meta.indexArtifact(a.id, a.org_id, a.title, text) // lexical arm (synchronous truth)
       denseItems.push({ id: a.id, orgId: a.org_id, title: a.title, text })
       indexed++

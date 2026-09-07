@@ -10,13 +10,21 @@ import { Button } from "@/components/ui/button"
 import { Kbd } from "@/components/ui/kbd"
 import { toast } from "@/components/ui/sonner"
 import { useAuth } from "@/ctx"
-import { artifactTypeLabel, canEditArtifactDoc, canPublishArtifact, formatOf } from "@/lib/artifact"
+import {
+  artifactTypeLabel,
+  canEditArtifactDoc,
+  canPublishArtifact,
+  formatOf,
+  isPaperBundle,
+} from "@/lib/artifact"
 import { guestPresenceId } from "@/lib/guest-id"
 import { bareHotkey } from "@/lib/hotkey"
 import {
   artifactAgentsQuery,
   artifactQuery,
+  bibQuery,
   commentsQuery,
+  dynamicSlotsQuery,
   rawArtifactUrl,
   reviewQuery,
   workspaceSettingsQuery,
@@ -46,6 +54,7 @@ import { BundleBar } from "./bundle-bar"
 import { ActionsCtx } from "./comment-actions"
 import { DeckOrganizer, DeckOrganizerDiscardDialog, useDeckOrganizer } from "./deck-organizer"
 import { DerivedFromBanner } from "./derived-from-banner"
+import { DynamicDataPanel } from "./dynamic-data-panel"
 import { EditBar, type EditViewport } from "./edit-bar"
 import { FloatingControl } from "./floating-control"
 import { InlineMentionMenu } from "./inline-mention-menu"
@@ -66,6 +75,7 @@ import { parseRef, refFor } from "./parse-ref"
 import { PasswordGate } from "./password-gate"
 import { PublicViewer } from "./public-viewer"
 import { Presence } from "./rail-deck"
+import { ReferencesPanel } from "./references-panel"
 import { runtimeDiagnosticFor } from "./render-stage"
 import type { ArtifactSearch } from "./route-config"
 import { SharedStateAuthDialog } from "./shared-state-auth-dialog"
@@ -79,6 +89,18 @@ import { unsavedEditsCopy, useInlineEdit } from "./use-inline-edit"
 import { useSeenCursor } from "./use-seen-cursor"
 import { useVersionDiff } from "./use-version-diff"
 import { WorkbenchSkeleton } from "./workbench-skeleton"
+
+// The source editor's discard wording: one spelling for the three doors out of a dirty
+// editor (a file switch, Cancel, and leaving the page), the way the inline mode has one.
+const sourceEditDiscardCopy = (path: string | null) => ({
+  title: path ? `Discard unsaved changes to ${path}?` : "Discard unsaved changes?",
+  description: "The file you are editing has changes that were not published.",
+  confirmLabel: "Discard",
+})
+// The paper files the preview can render IN the paper (the server substitutes the draft
+// for that file and renders the whole document). Mirrors the API's own list; a README.md
+// inside a paper bundle previews as plain markdown instead.
+const PAPER_PREVIEW_FILE = /\.(tex|latex|bib|bbl|sty|cls|bst|txt)$/i
 
 // Heavy on-demand surfaces — split out of the artifact route's initial chunk and
 // loaded only when the user opens them (insights / history).
@@ -272,6 +294,11 @@ export function Artifact({ template = false }: { template?: boolean }) {
   // password prompt rather than the not-found state or a bounce to login.
   const locked = failed && error instanceof ApiError && error.status === 401
   const [editing, setEditing] = useState(false)
+  // A dirty source editor asks before it drops typed text. The pending door: the file a
+  // bar chip named (a switch) or a plain close (Cancel). Null when no question is open.
+  const [pendingEdit, setPendingEdit] = useState<
+    { kind: "switch"; path: string } | { kind: "close" } | null
+  >(null)
   const [bundleView, setBundleView] = useState<"workspace" | "document">("workspace")
   const [bundleEditorOpen, setBundleEditorOpen] = useState(false)
   // Keep the reviewer's exact visual context above artifact refetches and authored
@@ -475,10 +502,87 @@ export function Artifact({ template = false }: { template?: boolean }) {
       sharedPostRef.current({ type: "shared-updated", ...update }),
     [],
   )
+  // The version on screen, as the live handlers below see it (they are stable
+  // callbacks, so they read a ref rather than closing over a render's value).
+  const shownRef = useRef(0)
+  // Reload the frame's SAME source: a dynamic slot was deleted (the server renders the
+  // authored placeholder again, which the frame has no copy of), or a reconnect found a
+  // slot the frame knew is gone. Never while inline editing: a remount fires onFrameLoad,
+  // which ends the edit session and would lose typed-but-unsaved text; the reload waits
+  // for the session to end instead.
+  const [frameReload, setFrameReload] = useState(0)
+  const reloadPendingRef = useRef(false)
+  const reloadFrame = useCallback(() => {
+    if (inlineEditRef.current.active) {
+      reloadPendingRef.current = true
+      return
+    }
+    setFrameReload((n) => n + 1)
+  }, [])
+  // Bring the frame's bound elements back in line with the server after a gap (a
+  // reconnect, a return from a hidden tab): one read of the shown version's slots with
+  // their fragments, pushed into the frame. A slot the rail knew that is gone now means
+  // the frame shows data that no longer exists, which only a reload can undo.
+  const reconcileDynamic = useCallback(async () => {
+    const n = shownRef.current
+    if (n < 1) return
+    const known = qc.getQueryData(dynamicSlotsQuery(shortId, n).queryKey)
+    try {
+      const fresh = await api.dynamicSlots(shortId, n, { format: "html" })
+      qc.setQueryData(dynamicSlotsQuery(shortId, n).queryKey, {
+        version: fresh.version,
+        slots: fresh.slots.map(({ html: _html, ...slot }) => slot),
+      })
+      const names = new Set(fresh.slots.map((s) => s.name))
+      if (known?.slots.some((s) => !names.has(s.name))) {
+        reloadFrame()
+        return
+      }
+      for (const slot of fresh.slots)
+        if (slot.html !== undefined)
+          sharedPostRef.current({
+            type: "dynamic-updated",
+            name: slot.name,
+            kind: slot.kind,
+            html: slot.html,
+          })
+    } catch {
+      // Best-effort: the next live event or the next load reconciles.
+    }
+  }, [qc, shortId, reloadFrame])
   const onLiveResync = useCallback(() => {
     load()
     sharedPostRef.current({ type: "shared-resync" })
-  }, [load])
+    void reconcileDynamic()
+  }, [load, reconcileDynamic])
+  // A dynamic table or figure changed without a version: refetch the Data rail, and when
+  // it is the version on screen, hand the frame the server-rendered fragment so the
+  // bound element swaps in place. The host fetches (not the frame) because the opaque
+  // origin cannot read a gated artifact's own data. A deletion (no revision) has no
+  // fragment to hand over: the frame reloads and the server renders the placeholder.
+  const onDynamicLive = useCallback(
+    (u: { name: string; kind: string; n: number; revision: number | null }) => {
+      qc.invalidateQueries({ queryKey: ["artifact", shortId, "dynamic"] })
+      if (u.n !== shownRef.current) return
+      if (u.revision === null) {
+        reloadFrame()
+        return
+      }
+      api
+        .dynamicSlot(shortId, u.name, { v: u.n, format: "html" })
+        .then((slot) => {
+          if (slot.html !== undefined)
+            sharedPostRef.current({
+              type: "dynamic-updated",
+              name: slot.name,
+              kind: slot.kind,
+              html: slot.html,
+            })
+        })
+        .catch(() => {})
+    },
+    [qc, shortId, reloadFrame],
+  )
 
   // Presence, live multiplayer cursors, the SSE stream, and view recording — see
   // use-artifact-live. The page feeds pointer moves in (from the iframe bridge
@@ -493,6 +597,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
     onVersion: onVersionLive,
     onReview,
     onSharedState: onSharedStateLive,
+    onDynamic: onDynamicLive,
     onResync: onLiveResync,
   })
 
@@ -691,6 +796,9 @@ export function Artifact({ template = false }: { template?: boolean }) {
   // from the loaded workbench, where it's present.
   const {
     startEdit,
+    resetEdit,
+    editPath,
+    editDirty,
     publishEdit,
     reply,
     submitNew,
@@ -720,6 +828,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
         // Same artifact — keep the search (the ?collection switcher context, deep links).
         search: (s) => s,
       }),
+    editing,
     setEditing,
     setSrc,
     setTitle: setEditTitle,
@@ -727,6 +836,24 @@ export function Artifact({ template = false }: { template?: boolean }) {
     setSel,
     setActiveThread,
   })
+  // A paper's bar chip while the editor is open: the same file is a no-op, a clean
+  // editor switches at once, a dirty one asks first (the confirm below runs the switch).
+  const requestEditFile = (path: string) => {
+    if (editing && path === editPath) return
+    if (editing && editDirty) {
+      setPendingEdit({ kind: "switch", path })
+      return
+    }
+    void startEdit(path)
+  }
+  // Cancel: the same question when there is typed text to lose, otherwise just close.
+  const cancelEdit = () => {
+    if (editDirty) {
+      setPendingEdit({ kind: "close" })
+      return
+    }
+    resetEdit()
+  }
 
   // Inline (click-to-type) editing: the frame owns the caret and the diffs, this
   // hook owns the mode + save. Entering clears any parked selection so the
@@ -750,7 +877,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
       art?.current_content_type === "text/x-derive-deck" ||
       art?.current_content_type === "text/x-derive-video" ||
       art?.current_content_type === "text/x-derive-linked-bundle",
-    onOpenSourceEditor: startEdit,
+    onOpenSourceEditor: () => startEdit(),
     onEnter: () => {
       setSel(null)
       setComposer(null)
@@ -770,6 +897,13 @@ export function Artifact({ template = false }: { template?: boolean }) {
   }
   useEffect(() => {
     if (inlineEdit.active) setVisualPin(false)
+  }, [inlineEdit.active])
+  // A frame reload deferred by an edit session runs once the session ends.
+  useEffect(() => {
+    if (!inlineEdit.active && reloadPendingRef.current) {
+      reloadPendingRef.current = false
+      setFrameReload((n) => n + 1)
+    }
   }, [inlineEdit.active])
 
   const deckOrganizer = useDeckOrganizer({
@@ -813,8 +947,11 @@ export function Artifact({ template = false }: { template?: boolean }) {
     // asked for — then re-pops it the moment they cancel, because the rewrite is
     // still pending. Same-artifact navigations carry no risk to unsaved edits: the
     // frame is not remounted.
-    shouldBlockFn: ({ next }) => inlineEdit.blocking && !next.pathname.includes(shortId),
-    enableBeforeUnload: () => inlineEdit.blocking,
+    // The source editor's typed text lives only in React state, which the same
+    // navigation drops, so a dirty editor blocks the same way.
+    shouldBlockFn: ({ next }) =>
+      (inlineEdit.blocking || editDirty) && !next.pathname.includes(shortId),
+    enableBeforeUnload: () => inlineEdit.blocking || editDirty,
     withResolver: true,
   })
 
@@ -884,6 +1021,24 @@ export function Artifact({ template = false }: { template?: boolean }) {
     },
   })
 
+  // The version on screen, computed before the early returns below so the hooks that
+  // depend on it keep a stable order (the same expression `shown` uses once `art` is
+  // known to exist). Zero until the artifact loads, which disables the slots read.
+  const shownVersion = version ?? inlineEdit.frozenVersion ?? art?.current_version ?? 0
+  useEffect(() => {
+    shownRef.current = shownVersion
+  }, [shownVersion])
+  const dynamicQ = useQuery({
+    ...dynamicSlotsQuery(shortId, shownVersion),
+    enabled: shownVersion > 0,
+  })
+  // A paper bundle's bibliography drives the References rail; a 404 (no .bib) leaves
+  // the tab out rather than showing an empty panel.
+  const bibQ = useQuery({
+    ...bibQuery(shortId, shownVersion),
+    enabled: shownVersion > 0 && isPaperBundle(art),
+  })
+
   if (locked) return <PasswordGate shortId={shortId} onUnlocked={() => refetch()} />
   // `failed && !art`: only show the full error page when there's NO artifact to show. A
   // background-refetch failure sets isError while react-query keeps `art` (e.g. a blip right
@@ -926,6 +1081,9 @@ export function Artifact({ template = false }: { template?: boolean }) {
   // While inline editing, the shown version stays frozen at the mode-entry head so
   // a concurrent publish can't reload the frame and wipe typed-but-unsaved text.
   const shown = version ?? inlineEdit.frozenVersion ?? art.current_version
+  const dynamicSlots = dynamicQ.data?.slots ?? []
+  const dataEnabled = dynamicSlots.length > 0
+  const referencesEnabled = isPaperBundle(art) && !!bibQ.data
   const pinnedForShown =
     pinnedRawToken.current?.shortId === shortId && pinnedRawToken.current.version === shown
   // A background failure may leave old metadata available, but an expired capability
@@ -982,6 +1140,24 @@ export function Artifact({ template = false }: { template?: boolean }) {
   // md vs html drives syntax highlighting + how the live preview renders.
   const isSkill = art.bundle?.isSkill === true
   const format = isSkill ? "md" : formatOf(art)
+  // A paper file highlights and previews by ITS extension: a README.md inside a paper
+  // bundle is markdown, not LaTeX. Anything else keeps the artifact's format.
+  const editFormat: typeof format =
+    editPath && /\.md$/i.test(editPath)
+      ? "md"
+      : editPath && /\.html?$/i.test(editPath)
+        ? "html"
+        : format
+  // Preview a paper file IN the paper (see renderPreview): only for the files the server
+  // can substitute, and only while that file is the one open.
+  const previewContext =
+    editing && isPaperBundle(art) && editPath && PAPER_PREVIEW_FILE.test(editPath)
+      ? { shortId, path: editPath }
+      : undefined
+  // The bar's chips open paper files in the source editor. Gated on the base eligibility
+  // WITHOUT the "no editor open" clause: the bar stays up while a paper is being edited,
+  // because its chips are how you move between the paper's files.
+  const canEditPaperFiles = canEditArtifactDoc(art, shown, false) && isPaperBundle(art)
   // Lock: any editor can toggle it (advanced menu). While locked, nothing
   // publishes — the edit affordances hide until someone unlocks.
   const canLock = canPublish
@@ -1108,6 +1284,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
   const documentEl = (
     <ArtifactDocument
       shown={shown}
+      reloadKey={frameReload}
       // While inline editing, the frozen view IS the working version: a concurrent
       // publish must not surface the past-version strip mid-session (its Restore
       // would publish over the head while edits are pending; the warning toast
@@ -1278,6 +1455,11 @@ export function Artifact({ template = false }: { template?: boolean }) {
     )
 
   const unsaved = unsavedEditsCopy(inlineEdit.dirty)
+  // Which mode holds the unsaved work decides the leave dialog's wording and what
+  // "discard" means: the two modes never hold text at the same time (the source editor
+  // unmounts the frame, and the inline mode can't be entered over it).
+  const sourceUnsaved = sourceEditDiscardCopy(editPath)
+  const leave = editDirty ? sourceUnsaved : unsaved
 
   return (
     <ActionsCtx.Provider value={actions}>
@@ -1301,15 +1483,35 @@ export function Artifact({ template = false }: { template?: boolean }) {
         onOpenChange={(o) => {
           if (!o && editBlocker.status === "blocked") editBlocker.reset()
         }}
-        title={unsaved.title}
-        description={unsaved.description}
-        confirmLabel={unsaved.confirmLabel}
+        title={leave.title}
+        description={leave.description}
+        confirmLabel={leave.confirmLabel}
         confirmTestId="inline-edit-leave-confirm"
         onConfirm={() => {
           if (editBlocker.status === "blocked") {
-            inlineEdit.confirmExit()
+            if (editDirty) resetEdit()
+            else inlineEdit.confirmExit()
             editBlocker.proceed()
           }
+        }}
+      />
+      {/* The source editor's own discard question: a bar chip named another file, or
+          Cancel was pressed, over typed text that was never published. */}
+      <ConfirmDialog
+        open={pendingEdit !== null}
+        onOpenChange={(o) => {
+          if (!o) setPendingEdit(null)
+        }}
+        title={sourceUnsaved.title}
+        description={sourceUnsaved.description}
+        confirmLabel={sourceUnsaved.confirmLabel}
+        tone="destructive"
+        confirmTestId="source-edit-discard"
+        contentTestId="source-edit-discard-confirm"
+        onConfirm={async () => {
+          if (!pendingEdit) return
+          if (pendingEdit.kind === "switch") await startEdit(pendingEdit.path)
+          else resetEdit()
         }}
       />
       <DeckOrganizerDiscardDialog organizer={deckOrganizer} />
@@ -1431,7 +1633,14 @@ export function Artifact({ template = false }: { template?: boolean }) {
               // frame: while a caret is in a block, the page's keyboard is off.
               showInlineEdit={canEditDoc && !inlineEdit.active && !bundleWorkspaceActive}
               inlineEditLabel="Edit"
-              onInlineEdit={() => inlineEdit.start()}
+              // A paper is written in its source, so on a LaTeX artifact the header's Edit
+              // opens the source editor. The inline path (a quick fix to a sentence) stays
+              // reachable from a selection and from `e`.
+              inlineEditShortcut={format !== "tex"}
+              onInlineEdit={() => {
+                if (format === "tex") void startEdit()
+                else inlineEdit.start()
+              }}
               isDeck={isDeckLike}
               videoMoment={video ? { scene: video.id, timeMs: video.elapsedMs } : undefined}
               canLock={canLock}
@@ -1459,7 +1668,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
               }
               onInsights={() => setSurface("insights")}
               onHistory={() => setSurface("history")}
-              onStartEdit={startEdit}
+              onStartEdit={() => startEdit()}
               onToggleComments={() => setPanel((pn) => (pn === "open" ? "hidden" : "open"))}
               onFocus={() => setFocus(true)}
               onCopy={() => copyMut.mutate()}
@@ -1500,12 +1709,16 @@ export function Artifact({ template = false }: { template?: boolean }) {
             {art.current_version === 1 && canEditDoc && !editing && !inlineEdit.active && (
               <DerivedFromBanner art={art} />
             )}
-            {art.bundle && !editing && (
+            {/* A paper keeps its bar above the open editor: the chips switch files. */}
+            {art.bundle && (!editing || isPaperBundle(art)) && (
               <BundleBar
                 bundle={art.bundle}
                 shortId={shortId}
                 version={shown}
-                onEdit={canEditSkill ? startEdit : undefined}
+                onEdit={canEditSkill ? () => startEdit() : undefined}
+                // A paper's sections, .bib and style files open in the source editor.
+                onEditFile={canEditPaperFiles ? requestEditFile : undefined}
+                activePath={editing ? editPath : null}
               />
             )}
             {/* Inline edit mode's one piece of chrome: a slim band above the document
@@ -1539,16 +1752,20 @@ export function Artifact({ template = false }: { template?: boolean }) {
               <SourceEditor
                 title={editTitle}
                 onTitle={setEditTitle}
-                format={format}
+                format={editFormat}
                 message={message}
                 src={src}
                 onMessage={setMessage}
                 onSrc={setSrc}
-                onCancel={() => setEditing(false)}
+                onCancel={cancelEdit}
                 onPublish={publishEdit}
                 publishing={publishing}
                 shortId={shortId}
                 stripFrontmatter={isSkill}
+                previewContext={previewContext}
+                // The artifact's format, not editFormat: a README inside a paper is
+                // still a save of the paper.
+                publishLabel={format === "tex" ? "Save" : "Publish"}
               />
             ) : (
               primaryEl
@@ -1590,9 +1807,40 @@ export function Artifact({ template = false }: { template?: boolean }) {
 
           {!focus && commentsAvailable && (
             <ArtifactComments
-              rail={mapEnabled || rail !== "map" ? rail : "comments"}
+              rail={
+                (mapEnabled || rail !== "map") &&
+                (dataEnabled || rail !== "data") &&
+                (referencesEnabled || rail !== "references")
+                  ? rail
+                  : "comments"
+              }
               onRail={setRail}
               mapEnabled={mapEnabled}
+              dataEnabled={dataEnabled}
+              dataPanel={
+                dataEnabled ? (
+                  <DynamicDataPanel
+                    shortId={shortId}
+                    version={shown}
+                    slots={dynamicSlots}
+                    error={dynamicQ.isError}
+                    // Data is edited on the current version only, like the document.
+                    canPublish={effectiveCanPublish && shown === art.current_version}
+                  />
+                ) : undefined
+              }
+              referencesEnabled={referencesEnabled}
+              referencesPanel={
+                referencesEnabled && bibQ.data ? (
+                  <ReferencesPanel
+                    shortId={shortId}
+                    bib={bibQ.data}
+                    baseVersion={art.current_version}
+                    // Edits are to the current version only, like the source editor.
+                    canPublish={effectiveCanPublish && shown === art.current_version}
+                  />
+                ) : undefined
+              }
               mapPanel={
                 art.linked_bundle ? (
                   <LinkedBundlePanel

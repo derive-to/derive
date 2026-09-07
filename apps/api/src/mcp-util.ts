@@ -11,6 +11,7 @@ import {
   bundleDoc,
   type ContextRecord,
   isHtmlLike,
+  isLatexLike,
   LINKED_BUNDLE_CONTENT_TYPE,
   type OutlineSection,
   parseFrontmatter,
@@ -106,7 +107,9 @@ export const formatLabel = (contentType: string, format: ReadFormat): string => 
   if (format === "markdown")
     return isHtmlLike(contentType)
       ? `markdown (converted from ${baseType(contentType)})`
-      : "markdown (source)"
+      : isLatexLike(contentType)
+        ? "latex (source)"
+        : "markdown (source)"
   return format === "html" ? "html (source)" : "text (visible text)"
 }
 

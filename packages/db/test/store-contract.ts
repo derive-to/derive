@@ -9,7 +9,12 @@ import type {
   SortMode,
   SubscriptionRecord,
 } from "@derive/core"
-import { DEFAULT_ORG_SETTINGS, maxRole, SHARED_STATE_ACTIVITY_LIMIT } from "@derive/core"
+import {
+  DEFAULT_ORG_SETTINGS,
+  DYNAMIC_REVISION_LIMIT,
+  maxRole,
+  SHARED_STATE_ACTIVITY_LIMIT,
+} from "@derive/core"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 
 /**
@@ -778,6 +783,140 @@ export function runStoreContract(
       expect(rows).toHaveLength(SHARED_STATE_ACTIVITY_LIMIT)
       expect(rows[0]?.version).toBe(SHARED_STATE_ACTIVITY_LIMIT + 2)
       expect(rows.at(-1)?.version).toBe(3)
+    })
+  })
+
+  describe(`${label}: artifact dynamic data`, () => {
+    const slotRow = (artifactId: string, n: number, name: string, json = "{}") => ({
+      id: uuid(),
+      artifact_id: artifactId,
+      n,
+      name,
+      json,
+      revision: 0,
+      updated_by_id: "system",
+      updated_by_name: "seed",
+      updated_at: "2026-01-01T00:00:00.000Z",
+    })
+    const revisionRow = (artifactId: string, n: number, name: string, revision: number) => ({
+      id: uuid(),
+      artifact_id: artifactId,
+      n,
+      name,
+      revision,
+      json: `{"revision":${revision}}`,
+      size_bytes: 16,
+      actor_id: "amy",
+      actor_name: "Amy",
+      note: null,
+      created_at: new Date(Date.UTC(2026, 0, 1, 0, 0, revision)).toISOString(),
+    })
+
+    it("keeps one slot per version and compare-and-swaps its revision", async () => {
+      const a = await store.createArtifact(newArtifact())
+      expect(await store.listDynamicSlots(a.id, 1)).toEqual([])
+      const seeded = await store.insertDynamicSlot(slotRow(a.id, 1, "results", `{"seed":true}`))
+      expect(seeded).toMatchObject({ n: 1, name: "results", revision: 0 })
+      // A replayed seed (the same version bump running twice) changes nothing.
+      expect(await store.insertDynamicSlot(slotRow(a.id, 1, "results", `{"seed":2}`))).toBeNull()
+      expect(await store.countDynamicSlots(a.id, 1)).toBe(1)
+      expect(await store.countDynamicSlots(a.id, 2)).toBe(0)
+      // Internal dynamic rows reuse shared_state without consuming the public key quota.
+      expect(await store.countSharedStateKeys(a.id)).toBe(0)
+
+      const write = {
+        artifact_id: a.id,
+        n: 1,
+        name: "results",
+        json: `{"acc":0.9}`,
+        updated_by_id: "bob",
+        updated_by_name: "Bob",
+        updated_at: "2026-01-01T00:00:01.000Z",
+      }
+      const first = await store.updateDynamicSlot({ ...write, expected_revision: 0 })
+      expect(first).toMatchObject({ revision: 1, json: `{"acc":0.9}`, updated_by_name: "Bob" })
+      // A stale writer cannot overwrite the row that won.
+      expect(await store.updateDynamicSlot({ ...write, expected_revision: 0 })).toBeNull()
+      expect((await store.getDynamicSlot(a.id, 1, "results"))?.revision).toBe(1)
+      // Another version's slot with the same name is a different row.
+      await store.insertDynamicSlot(slotRow(a.id, 2, "results", `{"acc":0.9}`))
+      expect((await store.listDynamicSlots(a.id, 2)).map((s) => s.revision)).toEqual([0])
+      expect((await store.getDynamicSlot(a.id, 1, "results"))?.json).toBe(`{"acc":0.9}`)
+
+      await store.deleteDynamicSlot(a.id, 2, "results")
+      expect(await store.getDynamicSlot(a.id, 2, "results")).toBeNull()
+      expect(await store.getDynamicSlot(a.id, 1, "results")).not.toBeNull()
+    })
+
+    it("applies a head-only write only while its version is still current", async () => {
+      const a = await store.createArtifact(newArtifact())
+      const head = (await store.addVersion(a.id, newVersion())).n
+      const write = {
+        artifact_id: a.id,
+        n: head,
+        name: "results",
+        json: `{"acc":0.9}`,
+        size_bytes: 11,
+        updated_by_id: "bob",
+        updated_by_name: "Bob",
+        updated_at: "2026-01-01T00:00:01.000Z",
+      }
+      // At the head, the guarded create, update and delete all apply.
+      expect(
+        await store.insertDynamicSlot(slotRow(a.id, head, "results"), { head_only: true }),
+      ).toMatchObject({ n: head, revision: 0 })
+      expect(
+        await store.updateDynamicSlot({ ...write, expected_revision: 0, head_only: true }),
+      ).toMatchObject({ revision: 1 })
+      await store.insertDynamicSlot(slotRow(a.id, head, "extra"))
+      expect(await store.deleteDynamicSlot(a.id, head, "extra", { head_only: true })).toBe(true)
+
+      // The next version freezes this one for guarded writes, and only for them: the seed
+      // pass still inserts rows for the version it was handed.
+      await store.addVersion(a.id, newVersion())
+      expect(
+        await store.updateDynamicSlot({ ...write, expected_revision: 1, head_only: true }),
+      ).toBeNull()
+      expect((await store.getDynamicSlot(a.id, head, "results"))?.revision).toBe(1)
+      expect(
+        await store.insertDynamicSlot(slotRow(a.id, head, "late"), { head_only: true }),
+      ).toBeNull()
+      expect(await store.getDynamicSlot(a.id, head, "late")).toBeNull()
+      expect(await store.deleteDynamicSlot(a.id, head, "results", { head_only: true })).toBe(false)
+      expect(await store.getDynamicSlot(a.id, head, "results")).not.toBeNull()
+      expect(await store.insertDynamicSlot(slotRow(a.id, head, "late"))).not.toBeNull()
+      expect(await store.deleteDynamicSlot(a.id, head, "late")).toBe(true)
+      expect(await store.deleteDynamicSlot(a.id, head, "late")).toBe(false)
+      // The new head takes guarded writes as before.
+      expect(
+        await store.insertDynamicSlot(slotRow(a.id, head + 1, "results"), { head_only: true }),
+      ).not.toBeNull()
+      expect(await store.deleteDynamicSlot(a.id, head + 1, "results", { head_only: true })).toBe(
+        true,
+      )
+    })
+
+    it("retains the seed plus the bounded recent revisions", async () => {
+      const a = await store.createArtifact(newArtifact())
+      for (let revision = 0; revision <= DYNAMIC_REVISION_LIMIT + 2; revision++)
+        await store.appendDynamicRevision(revisionRow(a.id, 1, "results", revision))
+      const rows = await store.listDynamicRevisions(a.id, 1, "results", DYNAMIC_REVISION_LIMIT + 10)
+      expect(rows).toHaveLength(DYNAMIC_REVISION_LIMIT + 1)
+      expect(rows[0]?.revision).toBe(DYNAMIC_REVISION_LIMIT + 2)
+      expect(rows.at(-2)?.revision).toBe(3)
+      expect(rows.at(-1)?.revision).toBe(0)
+      await expect(
+        store.appendDynamicRevision(revisionRow(a.id, 1, "results", 0)),
+      ).rejects.toThrow()
+    })
+
+    it("clears slots and revisions with the artifact", async () => {
+      const a = await store.createArtifact(newArtifact())
+      await store.insertDynamicSlot(slotRow(a.id, 1, "results"))
+      await store.appendDynamicRevision(revisionRow(a.id, 1, "results", 0))
+      await store.deleteArtifact(a.id)
+      expect(await store.listDynamicSlots(a.id, 1)).toEqual([])
+      expect(await store.listDynamicRevisions(a.id, 1, "results", 5)).toEqual([])
     })
   })
 

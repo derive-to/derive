@@ -49,8 +49,12 @@ export function MobileComments({
   onRail,
   chatPanel,
   mapPanel,
+  dataPanel,
+  referencesPanel,
   inspectPanel,
   mapEnabled,
+  dataEnabled,
+  referencesEnabled,
   chatEnabled,
   inspectEnabled,
   openCount,
@@ -83,8 +87,12 @@ export function MobileComments({
   onRail?: (r: RailTab) => void
   chatPanel?: ReactNode
   mapPanel?: ReactNode
+  dataPanel?: ReactNode
+  referencesPanel?: ReactNode
   inspectPanel?: ReactNode
   mapEnabled?: boolean
+  dataEnabled?: boolean
+  referencesEnabled?: boolean
   chatEnabled?: boolean
   inspectEnabled?: boolean
   openCount?: number
@@ -286,6 +294,8 @@ export function MobileComments({
                 tab={rail}
                 commentCount={openCount ?? openThreads.length}
                 mapEnabled={mapEnabled}
+                dataEnabled={dataEnabled}
+                referencesEnabled={referencesEnabled}
                 chatEnabled={chatEnabled}
                 inspectEnabled={inspectEnabled}
                 onTab={onRail}
@@ -346,6 +356,10 @@ export function MobileComments({
       </div>
       {rail === "map" && mapEnabled ? (
         mapPanel
+      ) : rail === "data" && dataEnabled ? (
+        dataPanel
+      ) : rail === "references" && referencesEnabled ? (
+        referencesPanel
       ) : rail === "chat" && chatEnabled ? (
         // CHAT owns the body, and brings its own composer — so the comments composer and
         // its keyboard handling stay untouched rather than being taught a second mode.

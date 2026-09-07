@@ -6,9 +6,11 @@
 // looking at the render afterward: correct-by-construction beats
 // correct-by-vigilance.
 
-import { isHtmlLike } from "./content-types"
+import { isHtmlLike, isLatexLike } from "./content-types"
 import { countSlideElements, isUnannouncedDeck } from "./decks"
+import { parseDynamicBindings } from "./dynamic-data"
 import { factDriftAdvisories, missingFactAdvisory, parseFacts, shapeOfJson } from "./facts"
+import { isLatexDocument, latexAdvisories } from "./latex"
 import { linkedBundleAdvisories } from "./linked-bundle"
 import type { BlobStore } from "./ports"
 import { needsReflow } from "./reflow"
@@ -51,6 +53,10 @@ export const publishAdvisories = (content: string, contentType: string): string[
   // duplicate, over the per-version cap). The SAME parser persists the good facts in the
   // version-bump chain, so what's advised here and what's stored can never disagree.
   out.push(...parseFacts(content, contentType).advisories)
+  // Dynamic tables and figures that could not be bound as written (a bad name, a
+  // placeholder that seeds empty). The SAME parser seeds the good ones in the version-bump
+  // chain; what it refuses outright never reaches here (the publish itself is refused).
+  out.push(...parseDynamicBindings(content, contentType).advisories)
   out.push(...linkedBundleAdvisories(content))
   out.push(...workflowDefinitionAdvisories(content))
 
@@ -77,6 +83,19 @@ export const publishAdvisories = (content: string, contentType: string): string[
       "Stored as markdown, but the content contains HTML page markup (<style>/<meta viewport>) — " +
         'if this is a styled page, republish with filename:"index.html" so it renders as HTML.',
     )
+
+  // A LaTeX paper stored as markdown renders as escaped source. The type sniffer catches
+  // a `\documentclass` opener; this catches the document that was named `.md` anyway.
+  if (contentType === "text/markdown" && isLatexDocument(content))
+    out.push(
+      "Stored as markdown, but the content is a LaTeX document — republish with " +
+        'filename:"paper.tex" so it renders as a paper.',
+    )
+
+  // What the LaTeX renderer could not honour (unknown macros, a missing figure or .bib,
+  // an unresolved \ref) and, for acmart, packages ACM TAPS refuses. The page still renders;
+  // the receipt is where the author learns what to fix before submission.
+  if (isLatexLike(contentType)) out.push(...latexAdvisories(content))
 
   // Browser storage is unavailable in the artifact sandbox's opaque origin. A direct
   // access throws a SecurityError, commonly during the first render, leaving an otherwise

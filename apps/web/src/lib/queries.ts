@@ -402,6 +402,37 @@ export const reviewQuery = (shortId: string) =>
     staleTime: 0,
   })
 
+/** A version's dynamic table and figure slots (see routes/dynamic-data.ts). Keyed under
+ *  the artifact so a live `artifact.dynamic.updated` event can invalidate every version's
+ *  read at once with the `["artifact", shortId, "dynamic"]` prefix. */
+export const dynamicSlotsQuery = (shortId: string, version: number) =>
+  queryOptions({
+    queryKey: ["artifact", shortId, "dynamic", version] as const,
+    queryFn: () => api.dynamicSlots(shortId, version),
+    staleTime: 30_000,
+  })
+
+/** A paper bundle's bibliography (routes/paper-files.ts), keyed under the artifact so a
+ *  publish invalidates it with the rest. A 404 (no .bib) is the panel's "absent". */
+export const bibQuery = (shortId: string, version: number) =>
+  queryOptions({
+    queryKey: ["artifact", shortId, "bib", version] as const,
+    queryFn: () => api.bib(shortId, version),
+    staleTime: 30_000,
+    retry: false,
+    // A publish moves the shown version, and with it this key. Keep the previous
+    // bibliography on screen while the new one loads, so the References rail (and a
+    // draft being typed in it) stays mounted across the change instead of blinking away.
+    placeholderData: keepPreviousData,
+  })
+
+export const dynamicHistoryQuery = (shortId: string, name: string, version: number) =>
+  queryOptions({
+    queryKey: ["artifact", shortId, "dynamic", version, "history", name] as const,
+    queryFn: () => api.dynamicHistory(shortId, name, version),
+    staleTime: 30_000,
+  })
+
 /** The URL the sandboxed viewer loads for an artifact's rendered bytes. ONE builder,
  *  shared by the viewer and by the test that pins its shape, because there used to be
  *  two that disagreed. The token is the frame's proof of access (an opaque origin cannot
