@@ -25,6 +25,24 @@ test("the arXiv door reveals the form and previews the reference", async ({ owne
   await link.fill("2401.12345v2")
   await expect(owner.getByTestId("context-arxiv-preview")).toHaveText("arXiv:2401.12345v2")
   await expect(owner.getByTestId("context-arxiv-submit")).toBeEnabled()
+
+  // The paper's implementation is optional, and previewed by the same grammar: a link
+  // that is not a repository blocks Fetch rather than failing a minute into the import.
+  const code = owner.getByTestId("context-arxiv-code")
+  await code.fill("https://bitbucket.org/o/r")
+  await expect(owner.getByTestId("context-arxiv-code-preview")).toHaveText(
+    "Not a GitHub or GitLab repository",
+  )
+  await expect(owner.getByTestId("context-arxiv-submit")).toBeDisabled()
+  await code.fill("https://github.com/graphdeco-inria/gaussian-splatting")
+  await expect(owner.getByTestId("context-arxiv-code-preview")).toHaveText(
+    "github.com/graphdeco-inria/gaussian-splatting",
+  )
+  await expect(owner.getByTestId("context-arxiv-submit")).toBeEnabled()
+  // Empty is fine: a paper needs no implementation.
+  await code.fill("")
+  await expect(owner.getByTestId("context-arxiv-submit")).toBeEnabled()
+
   // Opening the other door closes this one.
   await owner.getByTestId("builder-expert-door").click()
   await expect(owner.getByTestId("context-create-name")).toBeVisible()
