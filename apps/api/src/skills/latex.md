@@ -21,7 +21,7 @@ reading of the paper, and the LaTeX source stays what compiles.
   "figures/teaser.png": "asset:<sha256>" } })`. The root `main.tex` is the entry (else the
   shallowest `.tex`); `\input{sec/intro}`, `\bibliography{refs}` and
   `\includegraphics{figures/teaser}` resolve inside the bundle. Stored as `derive/latex`,
-  labelled "Paper". Upload figures with `stage({target:'asset'})` and reference them as
+  labelled "LaTeX" as well. Upload figures with `stage({target:'asset'})` and reference them as
   `asset:<sha>` in the map, the same as any bundle.
 - **Figures in a single file.** `\includegraphics{/blob/<sha256>.png}` with the URL an asset
   upload returns. PNG and JPEG only if the paper is meant to compile with pdfLaTeX later.
@@ -59,6 +59,27 @@ slot (derive://skills/dynamic-data): the page shows the slot's current value, an
 through `PATCH /v1/artifacts/<short_id>/dynamic/<name>` land without a new version. Put
 them inside a `table` or `figure` environment with a `\caption` the way you would a
 `tabular`.
+
+## Start from a template
+
+`read("derive://latex/templates/acm-siggraph")` or `read("derive://latex/templates/cvpr")`
+returns a files map (`main.tex`, the `.bib`, `derive.sty`; for CVPR the author kit's
+`cvpr.sty` and `ieeenat_fullname.bst`, fetched at read time). Publish it as is:
+`publish({ title, files })`. Both starters bind `results` (table) and `teaser` (figure),
+seeded empty at publish, so the data API works from the first version. The same maps are
+at `GET /v1/latex/templates/<id>`; `derive init --template siggraph|cvpr` scaffolds one.
+If the CVPR kit could not be fetched the map's `notes` say so and a comment at the top of
+`main.tex` repeats it.
+
+## Download the source
+
+`GET /v1/artifacts/<short_id>/source.zip` (add `?v=<n>` for an older version; use a
+`stage({target:'api'})` bearer with curl) is a zip that compiles in Overleaf or TeX Live:
+every bundle file, `derive.sty`, one `derive-dynamic/<name>.tex` per binding written from
+the slot's current value (and the image file for a figure), uploaded figures rewritten
+from `/blob/<sha>` URLs to `figures/<sha>.<ext>`, and a `README-derive.md` with the
+provenance and any caveat (a WebP figure pdfLaTeX cannot read, a slot with no data, a
+missing style file). The viewer's More menu has the same download.
 
 ## Reading and commenting
 
