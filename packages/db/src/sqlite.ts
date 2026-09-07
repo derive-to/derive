@@ -11,6 +11,7 @@ import type {
 import Database from "better-sqlite3"
 import { and, eq, inArray } from "drizzle-orm"
 import { drizzle } from "drizzle-orm/better-sqlite3"
+import { dynamicStateKey } from "./dynamic-storage"
 import {
   composeArtifactDetail,
   composeAutomationsWithExecutors,
@@ -41,7 +42,6 @@ import {
   contextSession,
   domain,
   dynamicRevision,
-  dynamicSlot,
   MIGRATION_STATEMENTS,
   notification,
   report,
@@ -263,15 +263,14 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
           if (head?.cv !== n) return false
         }
         const gone = tx
-          .delete(dynamicSlot)
+          .delete(sharedState)
           .where(
             and(
-              eq(dynamicSlot.artifact_id, artifactId),
-              eq(dynamicSlot.n, n),
-              eq(dynamicSlot.name, name),
+              eq(sharedState.artifact_id, artifactId),
+              eq(sharedState.key, dynamicStateKey(n, name)),
             ),
           )
-          .returning({ id: dynamicSlot.id })
+          .returning({ id: sharedState.id })
           .get()
         if (!gone) return false
         tx.delete(dynamicRevision)
@@ -356,7 +355,6 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
         db.delete(sharedStateActivity).where(eq(sharedStateActivity.artifact_id, id)).run()
         db.delete(sharedState).where(eq(sharedState.artifact_id, id)).run()
         db.delete(dynamicRevision).where(eq(dynamicRevision.artifact_id, id)).run()
-        db.delete(dynamicSlot).where(eq(dynamicSlot.artifact_id, id)).run()
         db.delete(versionData).where(eq(versionData.artifact_id, id)).run()
         db.delete(version).where(eq(version.artifact_id, id)).run()
         db.delete(comment).where(eq(comment.artifact_id, id)).run()

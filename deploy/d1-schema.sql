@@ -61,22 +61,6 @@ CREATE TABLE IF NOT EXISTS shared_state_activity (
   FOREIGN KEY (artifact_id) REFERENCES artifact(id)
 );
 
-CREATE TABLE IF NOT EXISTS dynamic_slot (
-  id TEXT PRIMARY KEY,
-  artifact_id TEXT NOT NULL,
-  n INTEGER NOT NULL,
-  name TEXT NOT NULL,
-  kind TEXT NOT NULL,
-  json TEXT NOT NULL,
-  size_bytes INTEGER NOT NULL,
-  revision INTEGER NOT NULL,
-  updated_by_id TEXT NOT NULL,
-  updated_by_name TEXT NOT NULL,
-  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-  UNIQUE (artifact_id, n, name),
-  FOREIGN KEY (artifact_id) REFERENCES artifact(id)
-);
-
 CREATE TABLE IF NOT EXISTS dynamic_revision (
   id TEXT PRIMARY KEY,
   artifact_id TEXT NOT NULL,

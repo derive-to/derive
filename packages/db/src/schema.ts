@@ -12,7 +12,6 @@ import type {
   DeliveryStatus,
   DomainKind,
   DomainStatus,
-  DynamicKind,
   ExportJobStatus,
   ExportKind,
   FollowKind,
@@ -172,33 +171,8 @@ export const sharedStateActivity = sqliteTable(
   (t) => [uniqueIndex("shared_state_activity_key_version").on(t.artifact_id, t.key, t.version)],
 )
 
-// A DYNAMIC TABLE OR FIGURE (see @derive/core dynamic-data.ts): data a document declares
-// but Derive owns, keyed by (artifact_id, n, name) because each VERSION keeps the data
-// it had. `revision` is the compare-and-swap guard; it is not the artifact version and
-// never bumps it. Unlike version_data, these rows change after the version goes live,
-// which is the whole point, and why the raw routes must not cache them as immutable.
-export const dynamicSlot = sqliteTable(
-  "dynamic_slot",
-  {
-    id: text("id").primaryKey(),
-    artifact_id: text("artifact_id")
-      .notNull()
-      .references(() => artifact.id),
-    n: integer("n").notNull(),
-    name: text("name").notNull(),
-    kind: text("kind").$type<DynamicKind>().notNull(),
-    json: text("json").notNull(),
-    size_bytes: integer("size_bytes").notNull(),
-    revision: integer("revision").notNull(),
-    updated_by_id: text("updated_by_id").notNull(),
-    updated_by_name: text("updated_by_name").notNull(),
-    updated_at: text("updated_at").notNull().default(now),
-  },
-  (t) => [uniqueIndex("dynamic_slot_name").on(t.artifact_id, t.n, t.name)],
-)
-
-// The retained revisions of a slot: the value after each write, attributed. Revision 0
-// is the seed a version started from and is kept whatever the retention window prunes.
+// Dynamic current values reuse shared_state. This table keeps attributed snapshots that
+// shared_state_activity cannot represent. Revision 0 is the seed and always survives pruning.
 export const dynamicRevision = sqliteTable(
   "dynamic_revision",
   {
@@ -1536,7 +1510,6 @@ const TABLES = [
   artifact,
   sharedState,
   sharedStateActivity,
-  dynamicSlot,
   dynamicRevision,
   version,
   versionData,

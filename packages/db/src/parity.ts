@@ -31,7 +31,6 @@ import type {
   DeliveryRecord,
   DomainRecord,
   DynamicRevisionRecord,
-  DynamicSlotRecord,
   ExportJobRecord,
   FolderRecord,
   FollowRecord,
@@ -72,7 +71,6 @@ export interface TypedTables {
   artifact: ArtifactRecord
   sharedState: SharedStateRecord
   sharedStateActivity: SharedStateActivityRecord
-  dynamicSlot: DynamicSlotRecord
   dynamicRevision: DynamicRevisionRecord
   version: VersionRecord
   versionData: VersionDataRecord

@@ -156,7 +156,7 @@ export function createApp(deps: AppDeps): Hono {
     const dynamicPath = /^\/v1\/artifacts\/[^/]+\/dynamic(?:\/[^/]+(?:\/history)?)?$/.test(
       c.req.path,
     )
-    if (dynamicPath && isMissingTable(err, ["dynamic_slot", "dynamic_revision"]))
+    if (dynamicPath && isMissingTable(err, ["dynamic_revision"]))
       return fail(c, 503, "dynamic tables and figures are waiting for the database update", {
         code: "dynamic_data_schema_unavailable",
       })

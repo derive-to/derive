@@ -792,9 +792,7 @@ export function runStoreContract(
       artifact_id: artifactId,
       n,
       name,
-      kind: "table" as const,
       json,
-      size_bytes: json.length,
       revision: 0,
       updated_by_id: "system",
       updated_by_name: "seed",
@@ -823,13 +821,14 @@ export function runStoreContract(
       expect(await store.insertDynamicSlot(slotRow(a.id, 1, "results", `{"seed":2}`))).toBeNull()
       expect(await store.countDynamicSlots(a.id, 1)).toBe(1)
       expect(await store.countDynamicSlots(a.id, 2)).toBe(0)
+      // Internal dynamic rows reuse shared_state without consuming the public key quota.
+      expect(await store.countSharedStateKeys(a.id)).toBe(0)
 
       const write = {
         artifact_id: a.id,
         n: 1,
         name: "results",
         json: `{"acc":0.9}`,
-        size_bytes: 11,
         updated_by_id: "bob",
         updated_by_name: "Bob",
         updated_at: "2026-01-01T00:00:01.000Z",

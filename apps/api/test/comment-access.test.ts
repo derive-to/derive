@@ -753,7 +753,7 @@ describe("dynamic data follows publish access", () => {
       get(target, prop, receiver) {
         if (prop === "listDynamicSlots")
           return async () => {
-            throw Object.assign(new Error('relation "dynamic_slot" does not exist'), {
+            throw Object.assign(new Error('relation "dynamic_revision" does not exist'), {
               code: "42P01",
             })
           }

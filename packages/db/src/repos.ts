@@ -186,6 +186,12 @@ import {
   sql,
 } from "drizzle-orm"
 import type { BaseSQLiteDatabase } from "drizzle-orm/sqlite-core"
+import {
+  DYNAMIC_STATE_PREFIX,
+  dynamicRecord,
+  dynamicStateKey,
+  dynamicStatePrefix,
+} from "./dynamic-storage"
 import type { Exhaustive, Shapes } from "./parity"
 import {
   activitySeen,
@@ -212,7 +218,6 @@ import {
   contextSession,
   domain,
   dynamicRevision,
-  dynamicSlot,
   exportJob,
   folder,
   follow,
@@ -409,7 +414,6 @@ export const schema = {
   artifact,
   sharedState,
   sharedStateActivity,
-  dynamicSlot,
   dynamicRevision,
   version,
   versionData,
@@ -471,7 +475,6 @@ const _schemaShapes: Shapes<typeof schema> = {
   artifact: true,
   sharedState: true,
   sharedStateActivity: true,
-  dynamicSlot: true,
   dynamicRevision: true,
   version: true,
   versionData: true,
@@ -656,7 +659,12 @@ export function makeRepos(db: SqliteDb) {
     const row = await db
       .select({ n: count() })
       .from(sharedState)
-      .where(eq(sharedState.artifact_id, artifactId))
+      .where(
+        and(
+          eq(sharedState.artifact_id, artifactId),
+          sql`${sharedState.key} NOT LIKE ${`${DYNAMIC_STATE_PREFIX}%`}`,
+        ),
+      )
       .get()
     return Number(row?.n ?? 0)
   }
@@ -721,36 +729,42 @@ export function makeRepos(db: SqliteDb) {
       .all()
 
   // ---- Dynamic tables and figures ------------------------------------------
-  const dynamicSlotKey = (artifactId: string, n: number, name: string) =>
-    and(eq(dynamicSlot.artifact_id, artifactId), eq(dynamicSlot.n, n), eq(dynamicSlot.name, name))
   const dynamicRevisionKey = (artifactId: string, n: number, name: string) =>
     and(
       eq(dynamicRevision.artifact_id, artifactId),
       eq(dynamicRevision.n, n),
       eq(dynamicRevision.name, name),
     )
-  const listDynamicSlots = async (artifactId: string, n: number): Promise<DynamicSlotRecord[]> =>
-    db
+  const listDynamicSlots = async (artifactId: string, n: number): Promise<DynamicSlotRecord[]> => {
+    const prefix = dynamicStatePrefix(n)
+    const rows = await db
       .select()
-      .from(dynamicSlot)
-      .where(and(eq(dynamicSlot.artifact_id, artifactId), eq(dynamicSlot.n, n)))
-      .orderBy(dynamicSlot.name)
+      .from(sharedState)
+      .where(and(eq(sharedState.artifact_id, artifactId), like(sharedState.key, `${prefix}%`)))
+      .orderBy(sharedState.key)
       .all()
+    return rows.map((row) => dynamicRecord(row, n, row.key.slice(prefix.length)))
+  }
   const getDynamicSlot = async (
     artifactId: string,
     n: number,
     name: string,
-  ): Promise<DynamicSlotRecord | null> =>
-    (await db
+  ): Promise<DynamicSlotRecord | null> => {
+    const row = await db
       .select()
-      .from(dynamicSlot)
-      .where(dynamicSlotKey(artifactId, n, name))
-      .get()) ?? null
+      .from(sharedState)
+      .where(
+        and(eq(sharedState.artifact_id, artifactId), eq(sharedState.key, dynamicStateKey(n, name))),
+      )
+      .get()
+    return row ? dynamicRecord(row as SharedStateRecord, n, name) : null
+  }
   const countDynamicSlots = async (artifactId: string, n: number): Promise<number> => {
+    const prefix = dynamicStatePrefix(n)
     const row = await db
       .select({ n: count() })
-      .from(dynamicSlot)
-      .where(and(eq(dynamicSlot.artifact_id, artifactId), eq(dynamicSlot.n, n)))
+      .from(sharedState)
+      .where(and(eq(sharedState.artifact_id, artifactId), like(sharedState.key, `${prefix}%`)))
       .get()
     return Number(row?.n ?? 0)
   }
@@ -768,20 +782,32 @@ export function makeRepos(db: SqliteDb) {
     row: NewDynamicSlot,
     opts?: DynamicWriteOptions,
   ): Promise<DynamicSlotRecord | null> => {
-    if (!opts?.head_only)
-      return (
-        (await db.insert(dynamicSlot).values(row).onConflictDoNothing().returning().get()) ?? null
-      )
+    if (!opts?.head_only) {
+      const inserted = await db
+        .insert(sharedState)
+        .values({
+          id: row.id,
+          artifact_id: row.artifact_id,
+          key: dynamicStateKey(row.n, row.name),
+          json: row.json,
+          version: row.revision,
+          updated_by_id: row.updated_by_id,
+          updated_by_name: row.updated_by_name,
+          updated_at: row.updated_at,
+        })
+        .onConflictDoNothing()
+        .returning()
+        .get()
+      return inserted ? dynamicRecord(inserted as SharedStateRecord, row.n, row.name) : null
+    }
     // INSERT ... SELECT with the artifact row at the expected head as its only source: no
     // row at that head, no insert. The read-back keys on this attempt's fresh id, so a
     // same-name row that already existed (the seed, or a create that won) reads as null.
     await db.run(sql`
-      INSERT INTO dynamic_slot
-        (id, artifact_id, n, name, kind, json, size_bytes, revision,
-         updated_by_id, updated_by_name, updated_at)
-      SELECT ${row.id}, ${row.artifact_id}, ${row.n}, ${row.name}, ${row.kind}, ${row.json},
-        ${row.size_bytes}, ${row.revision}, ${row.updated_by_id}, ${row.updated_by_name},
-        ${row.updated_at}
+      INSERT INTO shared_state
+        (id, artifact_id, key, json, version, updated_by_id, updated_by_name, updated_at)
+      SELECT ${row.id}, ${row.artifact_id}, ${dynamicStateKey(row.n, row.name)}, ${row.json},
+        ${row.revision}, ${row.updated_by_id}, ${row.updated_by_name}, ${row.updated_at}
       FROM artifact WHERE id = ${row.artifact_id} AND current_version = ${row.n}
       ON CONFLICT DO NOTHING`)
     const stored = await getDynamicSlot(row.artifact_id, row.n, row.name)
@@ -790,25 +816,25 @@ export function makeRepos(db: SqliteDb) {
   const updateDynamicSlot = async (write: DynamicSlotWrite): Promise<DynamicSlotRecord | null> => {
     const { expected_revision, head_only, ...values } = write
     const updated = await db
-      .update(dynamicSlot)
+      .update(sharedState)
       .set({
         json: values.json,
-        size_bytes: values.size_bytes,
-        revision: expected_revision + 1,
+        version: expected_revision + 1,
         updated_by_id: values.updated_by_id,
         updated_by_name: values.updated_by_name,
         updated_at: values.updated_at,
       })
       .where(
         and(
-          dynamicSlotKey(values.artifact_id, values.n, values.name),
-          eq(dynamicSlot.revision, expected_revision),
+          eq(sharedState.artifact_id, values.artifact_id),
+          eq(sharedState.key, dynamicStateKey(values.n, values.name)),
+          eq(sharedState.version, expected_revision),
           ...(head_only ? [atHead(values.artifact_id, values.n)] : []),
         ),
       )
       .returning()
       .get()
-    return (updated as DynamicSlotRecord | undefined) ?? null
+    return updated ? dynamicRecord(updated as SharedStateRecord, values.n, values.name) : null
   }
   const appendDynamicRevision = async (r: NewDynamicRevision): Promise<void> => {
     await db.insert(dynamicRevision).values(r).run()
@@ -848,14 +874,15 @@ export function makeRepos(db: SqliteDb) {
     opts?: DynamicWriteOptions,
   ): Promise<boolean> => {
     const gone = await db
-      .delete(dynamicSlot)
+      .delete(sharedState)
       .where(
         and(
-          dynamicSlotKey(artifactId, n, name),
+          eq(sharedState.artifact_id, artifactId),
+          eq(sharedState.key, dynamicStateKey(n, name)),
           ...(opts?.head_only ? [atHead(artifactId, n)] : []),
         ),
       )
-      .returning({ id: dynamicSlot.id })
+      .returning({ id: sharedState.id })
       .get()
     if (!gone) return false
     await db
@@ -5862,7 +5889,6 @@ export function makeRepos(db: SqliteDb) {
     await db.delete(sharedStateActivity).where(eq(sharedStateActivity.artifact_id, id)).run()
     await db.delete(sharedState).where(eq(sharedState.artifact_id, id)).run()
     await db.delete(dynamicRevision).where(eq(dynamicRevision.artifact_id, id)).run()
-    await db.delete(dynamicSlot).where(eq(dynamicSlot.artifact_id, id)).run()
     await db
       .delete(skillRelation)
       .where(or(eq(skillRelation.source_artifact_id, id), eq(skillRelation.target_artifact_id, id)))

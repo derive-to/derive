@@ -2772,10 +2772,9 @@ export interface NewSharedStateActivity {
   created_at: string
 }
 
-/** One dynamic table or figure slot of ONE VERSION (see dynamic-data.ts). Publishing
- * v(n+1) seeds a fresh row for that version from v(n)'s latest value, so every version
- * keeps the data it had; `revision` is the compare-and-swap guard for writes, and
- * revision 0 is the seed. */
+/** The dynamic view of a shared-state row for one document version (see dynamic-data.ts).
+ * Publishing v(n+1) seeds a new key from v(n)'s latest value, so every version keeps its
+ * final data. `revision` maps to the shared-state compare-and-swap version. */
 export interface DynamicSlotRecord {
   id: string
   artifact_id: string
@@ -2812,9 +2811,7 @@ export interface NewDynamicSlot {
   artifact_id: string
   n: number
   name: string
-  kind: DynamicKind
   json: string
-  size_bytes: number
   revision: number
   updated_by_id: string
   updated_by_name: string
@@ -2826,7 +2823,6 @@ export interface DynamicSlotWrite {
   n: number
   name: string
   json: string
-  size_bytes: number
   expected_revision: number
   updated_by_id: string
   updated_by_name: string

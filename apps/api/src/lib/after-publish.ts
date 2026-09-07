@@ -463,14 +463,13 @@ const seedDynamicSlots = async (
     const carried = prev && prev.kind === binding.kind ? storedValue(prev.json) : null
     const value: DynamicValue = carried ?? binding.seed ?? emptyDynamicValue(binding.kind)
     const json = JSON.stringify(value)
+    const size = dynamicValueBytes(value)
     const row = {
       id: newId("dyn"),
       artifact_id: version.artifact_id,
       n: version.n,
       name: binding.name,
-      kind: binding.kind,
       json,
-      size_bytes: dynamicValueBytes(value),
       revision: 0,
       updated_by_id: "system",
       updated_by_name: "Derive",
@@ -491,7 +490,7 @@ const seedDynamicSlots = async (
       name: row.name,
       revision: 0,
       json,
-      size_bytes: row.size_bytes,
+      size_bytes: size,
       actor_id: "system",
       actor_name: "Derive",
       note: carried ? `seeded from v${from}` : "seeded from the document",
