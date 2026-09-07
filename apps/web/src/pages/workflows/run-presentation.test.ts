@@ -107,6 +107,7 @@ describe("run presentation", () => {
           finishedAt: null,
         },
       ],
+      activity: [],
     }
     expect(workflowRunSummary(coordinated)).toBe("Waiting for a person at approve-release.")
   })

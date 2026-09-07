@@ -217,6 +217,17 @@ export const reworkRoutes = (ctx: AppContext) => {
     startedAt: z.string().nullable(),
     finishedAt: z.string().nullable(),
   })
+  const workflowArtifactActivitySummary = z.object({
+    id: z.string(),
+    nodeId: z.string(),
+    attempt: z.number().int(),
+    artifactShortId: z.string(),
+    artifactVersion: z.number().int(),
+    artifactTitle: z.string().nullable(),
+    role: z.enum(["output", "evidence", "input"]),
+    source: z.enum(["observed", "suggested"]),
+    createdAt: z.string(),
+  })
   const workflowRunSummary = z.object({
     id: z.string(),
     diagramId: z.string(),
@@ -239,6 +250,7 @@ export const reworkRoutes = (ctx: AppContext) => {
     startedAt: z.string().nullable(),
     finishedAt: z.string().nullable(),
     attempts: z.array(workflowAttemptSummary),
+    activity: z.array(workflowArtifactActivitySummary),
   })
 
   // Pick the addressee: the named agent, else the workspace's sole one.
@@ -421,9 +433,10 @@ export const reworkRoutes = (ctx: AppContext) => {
         diagramId: query.diagram,
         limit: query.limit ?? 10,
       })
-      const attempts = await Promise.all(
-        runs.map((run) => meta.listWorkflowStepAttempts(run.id, artifact.org_id)),
-      )
+      const [attempts, activity] = await Promise.all([
+        Promise.all(runs.map((run) => meta.listWorkflowStepAttempts(run.id, artifact.org_id))),
+        Promise.all(runs.map((run) => meta.listWorkflowArtifactActivity(run.id, artifact.org_id))),
+      ])
       return c.json({
         runs: runs.map((run, index) => ({
           id: run.id,
@@ -450,6 +463,17 @@ export const reworkRoutes = (ctx: AppContext) => {
             createdAt: attempt.created_at,
             startedAt: attempt.started_at,
             finishedAt: attempt.finished_at,
+          })),
+          activity: (activity[index] ?? []).map((item) => ({
+            id: item.id,
+            nodeId: item.node_id,
+            attempt: item.attempt,
+            artifactShortId: item.artifact_short_id,
+            artifactVersion: item.artifact_version,
+            artifactTitle: item.artifact_title,
+            role: item.role,
+            source: item.source,
+            createdAt: item.created_at,
           })),
         })),
       })

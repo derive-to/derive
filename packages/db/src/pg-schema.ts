@@ -43,6 +43,8 @@ import type {
   TemplateLibraryScope,
   VersionSource,
   WebhookKind,
+  WorkflowArtifactActivityRole,
+  WorkflowArtifactActivitySource,
   WorkflowRequestedExecution,
   WorkflowRunStatus,
   WorkflowStepAttemptStatus,
@@ -391,6 +393,36 @@ export const workflowStepAttempt = pgTable(
     uniqueIndex("workflow_step_attempt_number").on(t.workflow_run_id, t.node_id, t.attempt),
     uniqueIndex("workflow_step_attempt_session").on(t.session_id),
     index("workflow_step_attempt_run").on(t.workflow_run_id, t.created_at),
+  ],
+)
+
+export const workflowArtifactActivity = pgTable(
+  "workflow_artifact_activity",
+  {
+    id: text("id").primaryKey(),
+    org_id: text("org_id").notNull(),
+    workflow_run_id: text("workflow_run_id")
+      .notNull()
+      .references(() => workflowRun.id),
+    node_id: text("node_id").notNull(),
+    attempt: integer("attempt").notNull(),
+    artifact_short_id: text("artifact_short_id").notNull(),
+    artifact_version: integer("artifact_version").notNull(),
+    artifact_title: text("artifact_title"),
+    role: text("role").$type<WorkflowArtifactActivityRole>().notNull(),
+    source: text("source").$type<WorkflowArtifactActivitySource>().notNull(),
+    created_at: text("created_at").notNull().$defaultFn(isoNow),
+  },
+  (t) => [
+    uniqueIndex("workflow_artifact_activity_exact").on(
+      t.workflow_run_id,
+      t.node_id,
+      t.attempt,
+      t.artifact_short_id,
+      t.artifact_version,
+      t.role,
+    ),
+    index("workflow_artifact_activity_run").on(t.workflow_run_id, t.created_at),
   ],
 )
 
@@ -1283,6 +1315,7 @@ const TABLES = [
   run,
   workflowRun,
   workflowStepAttempt,
+  workflowArtifactActivity,
   skillRelation,
   skillInstallation,
   skillScanCoverage,

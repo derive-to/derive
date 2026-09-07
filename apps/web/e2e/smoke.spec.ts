@@ -136,6 +136,95 @@ test("starting a workflow creates a visible, version-pinned run", async ({ owner
   await expect(runs.getByText("Waiting for an Agent to claim this run.")).toBeVisible()
 })
 
+test("workflow activity links an exact artifact version without claiming completion", async ({
+  owner,
+}) => {
+  const manifest = {
+    schema: "derive.linked-bundle/v1",
+    purpose: "Publish one result.",
+    members: [],
+    diagrams: [
+      {
+        id: "publish-once",
+        title: "Publish once",
+        type: "graph",
+        nodes: [{ id: "publish", label: "Publish", state: "pending" }],
+        edges: [],
+      },
+    ],
+  }
+  const workflow = {
+    schema: "derive.workflow/v1",
+    purpose: manifest.purpose,
+    diagrams: [
+      {
+        id: "publish-once",
+        entry: "publish",
+        nodes: [{ id: "publish", kind: "terminal", result: "A result", terminal: true }],
+        routes: [],
+        scenarios: [
+          { id: "expected", kind: "expected", path: ["publish"], outcome: "Published" },
+          { id: "failure", kind: "failure", path: ["publish"], outcome: "Failed visibly" },
+        ],
+      },
+    ],
+  }
+  const html =
+    `<!doctype html><html><body><h1>Publish one result</h1>` +
+    `<script type="application/derive-facts" data-fact="bundle-manifest">${JSON.stringify(manifest)}</script>` +
+    `<script type="application/derive-facts" data-fact="workflow-definition">${JSON.stringify(workflow)}</script>` +
+    `</body></html>`
+  const shortId = await publishArtifact(owner, "activity-workflow.html", html, "text/html")
+  const startedResponse = await owner.request.post(`/v1/artifacts/${shortId}/workflow-run`, {
+    data: { diagramId: "publish-once", delivery: "copy" },
+  })
+  expect(startedResponse.ok()).toBeTruthy()
+  const started = (await startedResponse.json()) as { runId: string }
+  const resultShortId = await publishArtifact(owner, "workflow-result.md", "# Result")
+  const createdAt = new Date().toISOString()
+  await owner.route(`**/v1/artifacts/${shortId}/workflow-runs?*`, async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        runs: [
+          {
+            id: started.runId,
+            diagramId: "publish-once",
+            workflowVersion: 1,
+            status: "queued",
+            reason: "manual:copy",
+            requestedExecution: "local",
+            actualExecution: null,
+            externalExecution: null,
+            createdAt,
+            startedAt: null,
+            finishedAt: null,
+            attempts: [],
+            activity: [
+              {
+                id: "wfa_e2e_activity",
+                nodeId: "publish",
+                attempt: 1,
+                artifactShortId: resultShortId,
+                artifactVersion: 1,
+                artifactTitle: "Workflow result",
+                role: "output",
+                source: "observed",
+                createdAt,
+              },
+            ],
+          },
+        ],
+      }),
+    })
+  })
+  await owner.goto(`/artifacts/${shortId}`)
+  const activityLink = owner.getByTestId("workflow-activity-artifact-wfa_e2e_activity")
+  await expect(activityLink).toContainText("Workflow result · v1")
+  await expect(activityLink).toHaveAttribute("href", new RegExp(`${resultShortId}%40v1$`))
+  await expect(owner.getByText("Completion is unconfirmed", { exact: true })).toBeVisible()
+})
+
 test("a Ready graph exposes a bounded GitHub Actions harness on mobile", async ({ owner }) => {
   const manifest = {
     schema: "derive.linked-bundle/v1",

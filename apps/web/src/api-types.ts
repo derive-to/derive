@@ -4573,6 +4573,19 @@ export interface paths {
                                     startedAt: string | null;
                                     finishedAt: string | null;
                                 }[];
+                                activity: {
+                                    id: string;
+                                    nodeId: string;
+                                    attempt: number;
+                                    artifactShortId: string;
+                                    artifactVersion: number;
+                                    artifactTitle: string | null;
+                                    /** @enum {string} */
+                                    role: "output" | "evidence" | "input";
+                                    /** @enum {string} */
+                                    source: "observed" | "suggested";
+                                    createdAt: string;
+                                }[];
                             }[];
                         };
                     };

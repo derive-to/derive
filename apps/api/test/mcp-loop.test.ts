@@ -119,7 +119,174 @@ const claim = (meta: SqliteMetaStore): Promise<DeliveryRecord[]> =>
     new Date(Date.now() + 120_000).toISOString(),
   )
 
+const activityWorkflowHtml = `<!doctype html><html><body>
+<a href="#publish">Publish</a>
+<script type="application/derive-facts" data-fact="bundle-manifest">${JSON.stringify({
+  schema: "derive.linked-bundle/v1",
+  purpose: "Publish one result",
+  members: [],
+  diagrams: [
+    {
+      id: "publish-once",
+      title: "Publish once",
+      type: "graph",
+      nodes: [{ id: "publish", label: "Publish", note: "Publish the result" }],
+      edges: [],
+    },
+  ],
+})}</script>
+<script type="application/derive-facts" data-fact="workflow-definition">${JSON.stringify({
+  schema: "derive.workflow/v1",
+  purpose: "Publish one result",
+  diagrams: [
+    {
+      id: "publish-once",
+      entry: "publish",
+      nodes: [
+        {
+          id: "publish",
+          kind: "terminal",
+          result: "A published result",
+          terminal: true,
+        },
+      ],
+      routes: [],
+      scenarios: [
+        {
+          id: "expected",
+          kind: "expected",
+          path: ["publish"],
+          outcome: "The result is published",
+        },
+        {
+          id: "failure",
+          kind: "failure",
+          path: ["publish"],
+          outcome: "The failed publish remains visible",
+        },
+      ],
+    },
+  ],
+})}</script></body></html>`
+
 describe("MCP publish reaches the human (event parity + auto-open)", () => {
+  it("records exact workflow activity without claiming step completion", async () => {
+    const { app, meta, token } = loopApp("workflow-activity")
+    const workflow = await call(app, token, "publish", {
+      content: activityWorkflowHtml,
+      title: "Publish workflow",
+    })
+    const startedResponse = await app.request(`/v1/artifacts/${workflow.short_id}/workflow-run`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ diagramId: "publish-once", delivery: "copy" }),
+    })
+    expect(startedResponse.status).toBe(201)
+    const started = (await startedResponse.json()) as { runId: string }
+
+    const result = await call(app, token, "publish", {
+      content: "# Result",
+      title: "Workflow result",
+      workflow: {
+        run_id: started.runId,
+        node_id: "publish",
+        attempt: 1,
+        role: "output",
+      },
+    })
+    expect(result.workflow_activity).toMatchObject({
+      status: "recorded",
+      run_id: started.runId,
+      node_id: "publish",
+      attempt: 1,
+      role: "output",
+      artifact: result.short_id,
+      version: 1,
+      completion: "unconfirmed",
+    })
+
+    const run = await meta.getWorkflowRunById(started.runId)
+    if (!run) throw new Error("workflow run missing")
+    expect(await meta.listWorkflowStepAttempts(started.runId, run.org_id)).toEqual([])
+    expect(await meta.listWorkflowArtifactActivity(started.runId, run.org_id)).toMatchObject([
+      {
+        artifact_short_id: result.short_id,
+        artifact_version: 1,
+        node_id: "publish",
+        attempt: 1,
+        source: "observed",
+      },
+    ])
+
+    const historyResponse = await app.request(
+      `/v1/artifacts/${workflow.short_id}/workflow-runs?diagram=publish-once`,
+      { headers: { authorization: `Bearer ${token}` } },
+    )
+    expect(historyResponse.status).toBe(200)
+    expect(await historyResponse.json()).toMatchObject({
+      runs: [
+        {
+          id: started.runId,
+          attempts: [],
+          activity: [
+            {
+              artifactShortId: result.short_id,
+              artifactVersion: 1,
+              nodeId: "publish",
+              source: "observed",
+            },
+          ],
+        },
+      ],
+    })
+
+    const missed = await call(app, token, "publish", {
+      content: "# Published before it was attached",
+      title: "Recovered workflow result",
+    })
+    const recovered = await call(app, token, "use", {
+      workflow: {
+        run_id: started.runId,
+        node_id: "publish",
+        attempt: 1,
+        artifact: { short_id: missed.short_id, version: 1, role: "evidence" },
+      },
+    })
+    expect(recovered).toMatchObject({
+      workflow_run_id: started.runId,
+      node_id: "publish",
+      attempt: 1,
+      artifact: missed.short_id,
+      version: 1,
+      role: "evidence",
+      completion: "unconfirmed",
+    })
+    expect(await meta.listWorkflowStepAttempts(started.runId, run.org_id)).toEqual([])
+    expect(await meta.listWorkflowArtifactActivity(started.runId, run.org_id)).toHaveLength(2)
+
+    const invalid = await rpc(app, token, {
+      jsonrpc: "2.0",
+      id: 8,
+      method: "tools/call",
+      params: {
+        name: "publish",
+        arguments: {
+          content: "# Must not publish",
+          title: "Invalid workflow output",
+          workflow: { run_id: started.runId, node_id: "missing", attempt: 1 },
+        },
+      },
+    })
+    const invalidResult = invalid?.result as
+      | { content?: { text: string }[]; isError?: boolean }
+      | undefined
+    expect(invalidResult?.isError).toBe(true)
+    expect(invalidResult?.content?.[0]?.text).toContain("does not contain this diagram and node")
+  })
+
   it("emits version.published + artifact.pushed, writes a bell row, and reports opened_in_tab", async () => {
     const { app, meta, backplane, token } = loopApp("push")
     await connectSlack(meta)

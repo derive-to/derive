@@ -2413,6 +2413,13 @@ export interface WorkflowRunStore {
     expected: WorkflowStepTransitionGuard,
     transition: WorkflowStepAttemptTransition,
   ): Promise<WorkflowStepAttemptRecord | null>
+  recordWorkflowArtifactActivity(
+    activity: NewWorkflowArtifactActivity,
+  ): Promise<WorkflowArtifactActivityRecord>
+  listWorkflowArtifactActivity(
+    workflowRunId: string,
+    orgId: string,
+  ): Promise<WorkflowArtifactActivityRecord[]>
 }
 
 export type SkillRelationKind = "requires" | "extends" | "recommends" | "references"
@@ -3254,6 +3261,39 @@ export interface WorkflowStepAttemptTransition {
   resultArtifactId?: string | null
   output?: string | null
   error?: string | null
+}
+
+export type WorkflowArtifactActivityRole = "output" | "evidence" | "input"
+export type WorkflowArtifactActivitySource = "observed" | "suggested"
+
+/** One exact artifact version observed during a workflow run. This records provenance only.
+ * It never implies that the node succeeded or that the artifact passed evaluation. */
+export interface WorkflowArtifactActivityRecord {
+  id: string
+  org_id: string
+  workflow_run_id: string
+  node_id: string
+  attempt: number
+  artifact_short_id: string
+  artifact_version: number
+  artifact_title: string | null
+  role: WorkflowArtifactActivityRole
+  source: WorkflowArtifactActivitySource
+  created_at: string
+}
+
+export interface NewWorkflowArtifactActivity {
+  id: string
+  org_id: string
+  workflow_run_id: string
+  node_id: string
+  attempt: number
+  artifact_short_id: string
+  artifact_version: number
+  artifact_title?: string | null
+  role: WorkflowArtifactActivityRole
+  source: WorkflowArtifactActivitySource
+  created_at?: string
 }
 
 /** What a plan pays for: the model (thinking) or the tool broker (hands). */

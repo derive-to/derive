@@ -5120,6 +5120,55 @@ export function runStoreContract(
       expect(await store.listWorkflowRuns(artifactId, `org_${uuid()}`)).toEqual([])
     })
 
+    it("records exact workflow artifact activity once and keeps each version", async () => {
+      const workflow = await store.createWorkflowRun({
+        id: `wfr_${uuid()}`,
+        org_id: ORG,
+        workflow_artifact_id: `art_${uuid()}`,
+        workflow_version: 2,
+        workflow_blob_key: `blob_${uuid()}`,
+        workflow_content_type: "text/x-derive-linked-bundle",
+        diagram_id: "improvement-loop",
+        reason: "manual:u1",
+      })
+      const first = await store.recordWorkflowArtifactActivity({
+        id: `wfa_${uuid()}`,
+        org_id: ORG,
+        workflow_run_id: workflow.id,
+        node_id: "improve",
+        attempt: 1,
+        artifact_short_id: "result-abc12345",
+        artifact_version: 1,
+        artifact_title: "Reliability report",
+        role: "output",
+        source: "observed",
+        created_at: "2026-09-07T10:00:00.000Z",
+      })
+      const duplicate = await store.recordWorkflowArtifactActivity({
+        ...first,
+        id: `wfa_${uuid()}`,
+      })
+      expect(duplicate.id).toBe(first.id)
+
+      await store.recordWorkflowArtifactActivity({
+        ...first,
+        id: `wfa_${uuid()}`,
+        artifact_version: 2,
+        created_at: "2026-09-07T10:01:00.000Z",
+      })
+
+      expect(
+        (await store.listWorkflowArtifactActivity(workflow.id, ORG)).map((item) => ({
+          id: item.id,
+          version: item.artifact_version,
+        })),
+      ).toEqual([
+        { id: first.id, version: 1 },
+        { id: expect.stringMatching(/^wfa_/), version: 2 },
+      ])
+      expect(await store.listWorkflowArtifactActivity(workflow.id, `org_${uuid()}`)).toEqual([])
+    })
+
     it("workflow step attempts keep context pins, human decisions, and route receipts", async () => {
       const workflow = await store.createWorkflowRun({
         id: uuid(),

@@ -57,6 +57,7 @@ import type {
   VersionDataRecord,
   VersionRecord,
   WebhookRecord,
+  WorkflowArtifactActivityRecord,
   WorkflowRunRecord,
   WorkflowStepAttemptRecord,
   WorkspaceRecord,
@@ -89,6 +90,7 @@ export interface TypedTables {
   run: RunRecord
   workflowRun: WorkflowRunRecord
   workflowStepAttempt: WorkflowStepAttemptRecord
+  workflowArtifactActivity: WorkflowArtifactActivityRecord
   skillRelation: SkillRelationRecord
   skillInstallation: SkillInstallationRecord
   skillUse: SkillUseRecord

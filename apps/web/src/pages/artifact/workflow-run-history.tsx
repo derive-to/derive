@@ -9,6 +9,7 @@ import {
 } from "@/components/shared/run-receipt"
 import { Eyebrow } from "@/components/shared/section-eyebrow"
 import { StatusBadge } from "@/components/shared/status-badge"
+import { refFor } from "./parse-ref"
 import { workflowGithubReceipt } from "./workflow-github-presentation"
 import {
   compactWorkflowReceiptText,
@@ -20,6 +21,7 @@ import {
 const terminal = new Set<string>(["succeeded", "failed", "cancelled", "timed_out"])
 
 type WorkflowAttempt = WorkflowRunSummary["attempts"][number]
+type WorkflowActivity = WorkflowRunSummary["activity"][number]
 
 const attemptKindLabel = (kind: WorkflowAttempt["kind"]): string => {
   if (kind === "context") return "Context step"
@@ -81,6 +83,50 @@ const WorkflowAttemptTimeline = ({ attempts }: { attempts: WorkflowAttempt[] }) 
       )
     })}
   </ol>
+)
+
+const activityRoleLabel = (role: WorkflowActivity["role"]): string => {
+  if (role === "evidence") return "Evidence"
+  if (role === "input") return "Input"
+  return "Output"
+}
+
+const WorkflowActivityTimeline = ({ activity }: { activity: WorkflowActivity[] }) => (
+  <div className="mb-3 rounded-lg border border-border-soft bg-background p-3">
+    <div className="flex items-baseline justify-between gap-3">
+      <span className="font-medium text-foreground">Activity</span>
+      <span className="text-2xs text-muted-foreground">Completion is unconfirmed</span>
+    </div>
+    <ol className="mt-2 grid gap-2" aria-label="Artifacts observed during this run">
+      {activity.map((item) => {
+        const base = refFor({ short_id: item.artifactShortId, title: item.artifactTitle })
+        return (
+          <li
+            key={item.id}
+            className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-2 rounded-md border border-border-soft px-2.5 py-2"
+          >
+            <span className="mt-1 size-2 rounded-full bg-success" aria-hidden="true" />
+            <div className="min-w-0">
+              <div className="flex min-w-0 flex-wrap items-baseline gap-x-1.5 gap-y-0.5 text-xs">
+                <span className="font-medium text-foreground">{activityRoleLabel(item.role)}</span>
+                <Link
+                  to="/artifacts/$ref"
+                  params={{ ref: `${base}@v${item.artifactVersion}` }}
+                  className="min-w-0 truncate font-medium text-primary hover:underline"
+                  data-testid={`workflow-activity-artifact-${item.id}`}
+                >
+                  {item.artifactTitle ?? item.artifactShortId} · v{item.artifactVersion}
+                </Link>
+              </div>
+              <p className="mt-0.5 text-2xs text-muted-foreground">
+                Observed at {item.nodeId} · attempt {item.attempt}
+              </p>
+            </div>
+          </li>
+        )
+      })}
+    </ol>
+  </div>
 )
 
 const GithubExecutionReceipt = ({ run }: { run: WorkflowRunSummary }) => {
@@ -182,19 +228,25 @@ export function WorkflowRunHistory({
               run.attempts.length === 0
                 ? "No steps started"
                 : `${run.attempts.length} step${run.attempts.length === 1 ? "" : "s"} recorded`,
+              `${run.activity.length} artifact${run.activity.length === 1 ? "" : "s"} observed`,
             ]}
             createdAt={run.createdAt}
             defaultOpen={index === 0}
             testId={`workflow-run-${run.id}`}
           >
-            {workflowGithubReceipt(run) || run.attempts.length > 0 ? (
+            {workflowGithubReceipt(run) || run.attempts.length > 0 || run.activity.length > 0 ? (
               <>
                 <GithubExecutionReceipt run={run} />
+                {run.activity.length > 0 ? (
+                  <WorkflowActivityTimeline activity={run.activity} />
+                ) : null}
                 {run.attempts.length > 0 ? (
                   <WorkflowAttemptTimeline attempts={run.attempts} />
                 ) : (
                   <p className="text-xs text-muted-foreground">
-                    No Context step receipt has been recorded yet.
+                    {run.activity.length > 0
+                      ? "Activity was observed, but no step receipt has been recorded yet."
+                      : "No step receipt has been recorded yet."}
                   </p>
                 )}
               </>

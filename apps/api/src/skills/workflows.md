@@ -169,6 +169,39 @@ use({workflow:{
 }})
 ```
 
+When a node creates or revises an artifact, attach the exact version during publication:
+
+```text
+publish({
+  short_id: "<artifact>",
+  content: "...",
+  workflow: {
+    run_id: run.id,
+    node_id: node.id,
+    attempt,
+    role: "output"
+  }
+})
+```
+
+Use `role:"evidence"` for evaluation evidence. The publish receipt records the exact artifact
+version in the workflow Activity view. This is observed provenance. It does not mark the node
+complete, select a route, or prove that the artifact passed evaluation.
+
+If publication already happened without workflow metadata, attach the exact existing version:
+
+```text
+use({workflow:{
+  run_id: run.id,
+  node_id: node.id,
+  attempt,
+  artifact: {short_id: "<artifact>", version: 3, role: "output"}
+}})
+```
+
+This operation is idempotent. Use it to backfill activity. Do not republish an unchanged artifact
+only to create a workflow link.
+
 Human and terminal nodes use the same receipt shape without a Context session. A human receipt's
 `decision` must be one of that node's authored options. Pass `finish_run:"succeeded"` (or the
 matching failure/cancellation state) on the final receipt.
@@ -177,13 +210,13 @@ Project session truth into the authored graph:
 
 - `open` → `waiting` (queued; no inferred help)
 - `working` → `active`
-- `answered` → `done`; add `result_artifact_id` to bundle members and point `node.member` at its
-  local member id, then evaluate routes
+- `answered` → `done`; evaluate routes. Artifact versions already attached during publication
+  remain in Activity without a bundle-manifest edit.
 - `escalated` → `waiting` with explicit `help.question` and resume action
 - `failed` → declared retry or `blocked`
 - `closed` → stopped deliberately
 
-Publish each result artifact and graph-state transition back to the same Derive workflow as normal
+Publish each result artifact with workflow metadata and record each graph-state transition as normal
 run bookkeeping. Do this by default with version/idempotency protection; it does not need a fresh
 human decision.
 

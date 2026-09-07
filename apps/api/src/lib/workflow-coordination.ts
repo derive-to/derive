@@ -4,6 +4,8 @@ import {
   type MetaStore,
   newId,
   type SessionRecord,
+  type WorkflowArtifactActivityRecord,
+  type WorkflowArtifactActivityRole,
   type WorkflowExecutionLane,
   type WorkflowNodeDefinition,
   type WorkflowRouteDefinition,
@@ -29,6 +31,10 @@ export interface WorkflowReceipt extends WorkflowUseRef {
   output?: unknown
   error?: string
   finish_run?: Extract<WorkflowRunStatus, "succeeded" | "failed" | "cancelled">
+}
+
+export interface WorkflowArtifactRef extends WorkflowUseRef {
+  role: WorkflowArtifactActivityRole
 }
 
 interface PinnedNode {
@@ -63,6 +69,47 @@ const pinnedNode = async (
     entry: diagram.entry,
     attemptLimit: attemptLimits.length > 0 ? Math.min(...attemptLimits) : null,
   }
+}
+
+/** Validate a workflow activity target before its artifact version is published. */
+export const prepareWorkflowArtifactRef = async (args: {
+  meta: MetaStore
+  ref: WorkflowArtifactRef
+  orgId: string
+}): Promise<undefined | string> => {
+  if (!Number.isInteger(args.ref.attempt) || args.ref.attempt < 1)
+    return "A workflow artifact attempt must be a positive integer."
+  const pinned = await pinnedNode(args.meta, args.ref, args.orgId)
+  return typeof pinned === "string" ? pinned : undefined
+}
+
+/** Record an exact published version against a pinned workflow node. This is observed
+ * provenance. It intentionally does not create or settle a step attempt. */
+export const recordWorkflowArtifact = async (args: {
+  meta: MetaStore
+  ref: WorkflowArtifactRef
+  orgId: string
+  artifact: Pick<ArtifactRecord, "short_id" | "title">
+  version: number
+  at: string
+}): Promise<WorkflowArtifactActivityRecord | string> => {
+  if (!Number.isInteger(args.version) || args.version < 1)
+    return "A workflow artifact version must be a positive integer."
+  const pinned = await pinnedNode(args.meta, args.ref, args.orgId)
+  if (typeof pinned === "string") return pinned
+  return args.meta.recordWorkflowArtifactActivity({
+    id: newId("wfa"),
+    org_id: args.orgId,
+    workflow_run_id: pinned.run.id,
+    node_id: pinned.node.id,
+    attempt: args.ref.attempt,
+    artifact_short_id: args.artifact.short_id,
+    artifact_version: args.version,
+    artifact_title: args.artifact.title,
+    role: args.ref.role,
+    source: "observed",
+    created_at: args.at,
+  })
 }
 
 const selectedRouteTargets = (attempt: WorkflowStepAttemptRecord): string[] => {

@@ -81,6 +81,7 @@ import type {
   NewVersion,
   NewVersionData,
   NewWebhook,
+  NewWorkflowArtifactActivity,
   NewWorkflowRun,
   NewWorkflowStepAttempt,
   NotificationRecord,
@@ -127,6 +128,7 @@ import type {
   VersionDataRecord,
   VersionRecord,
   WebhookRecord,
+  WorkflowArtifactActivityRecord,
   WorkflowRunRecord,
   WorkflowRunTransition,
   WorkflowStepAttemptRecord,
@@ -239,6 +241,7 @@ import {
   versionData,
   webhook,
   webhookDelivery,
+  workflowArtifactActivity,
   workflowRun,
   workflowStepAttempt,
   workspace,
@@ -420,6 +423,7 @@ export const schema = {
   run,
   workflowRun,
   workflowStepAttempt,
+  workflowArtifactActivity,
   skillRelation,
   skillInstallation,
   skillScanCoverage,
@@ -478,6 +482,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   run: true,
   workflowRun: true,
   workflowStepAttempt: true,
+  workflowArtifactActivity: true,
   skillRelation: true,
   skillInstallation: true,
   skillScanCoverage: true,
@@ -4751,6 +4756,48 @@ export function makeRepos(db: SqliteDb) {
         .get()) as WorkflowStepAttemptRecord | undefined) ?? null
     )
   }
+  const recordWorkflowArtifactActivity = async (
+    a: NewWorkflowArtifactActivity,
+  ): Promise<WorkflowArtifactActivityRecord> => {
+    const created = await db
+      .insert(workflowArtifactActivity)
+      .values(a)
+      .onConflictDoNothing()
+      .returning()
+      .get()
+    if (created) return created
+    const existing = await db
+      .select()
+      .from(workflowArtifactActivity)
+      .where(
+        and(
+          eq(workflowArtifactActivity.workflow_run_id, a.workflow_run_id),
+          eq(workflowArtifactActivity.node_id, a.node_id),
+          eq(workflowArtifactActivity.attempt, a.attempt),
+          eq(workflowArtifactActivity.artifact_short_id, a.artifact_short_id),
+          eq(workflowArtifactActivity.artifact_version, a.artifact_version),
+          eq(workflowArtifactActivity.role, a.role),
+        ),
+      )
+      .get()
+    if (!existing) throw new Error("workflow artifact activity conflict could not be resolved")
+    return existing
+  }
+  const listWorkflowArtifactActivity = async (
+    workflowRunId: string,
+    orgId: string,
+  ): Promise<WorkflowArtifactActivityRecord[]> =>
+    db
+      .select()
+      .from(workflowArtifactActivity)
+      .where(
+        and(
+          eq(workflowArtifactActivity.workflow_run_id, workflowRunId),
+          eq(workflowArtifactActivity.org_id, orgId),
+        ),
+      )
+      .orderBy(asc(workflowArtifactActivity.created_at), asc(workflowArtifactActivity.id))
+      .all()
   const replaceSkillRelations = async (
     orgId: string,
     skillArtifactId: string,
@@ -6105,6 +6152,8 @@ export function makeRepos(db: SqliteDb) {
     getWorkflowStepAttemptBySession,
     listWorkflowStepAttempts,
     transitionWorkflowStepAttempt,
+    recordWorkflowArtifactActivity,
+    listWorkflowArtifactActivity,
     replaceSkillRelations,
     listSkillRelations,
     upsertSkillInstallation,

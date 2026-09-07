@@ -5,6 +5,7 @@ import { canPayForAgent, NO_PAYER_MESSAGE } from "../lib/payer"
 import {
   bindWorkflowContextSession,
   prepareWorkflowContextUse,
+  recordWorkflowArtifact,
   recordWorkflowReceipt,
   syncWorkflowContextSession,
 } from "../lib/workflow-coordination"
@@ -33,6 +34,13 @@ const workflowInput = z.object({
   output: z.unknown().optional(),
   error: z.string().trim().min(1).max(20_000).optional(),
   finish_run: z.enum(["succeeded", "failed", "cancelled"]).optional(),
+  artifact: z
+    .object({
+      short_id: z.string().trim().min(1),
+      version: z.coerce.number().int().min(1),
+      role: z.enum(["output", "evidence", "input"]).default("output"),
+    })
+    .optional(),
 })
 
 export function registerUseTool(tc: ToolContext): void {
@@ -55,7 +63,7 @@ export function registerUseTool(tc: ToolContext): void {
     "use",
     {
       description:
-        "Use a Context for work or check its session. `workflow` binds a run attempt or records its route. See derive://skills/contexts and derive://skills/workflows.",
+        "Use a Context for work or check its session. `workflow` binds a run attempt, records its route, or attaches an existing artifact version as activity. See derive://skills/contexts and derive://skills/workflows.",
       // Opens/advances a session (a write — messages accumulate, budget is spent) but
       // deletes nothing; a session can be followed up or checked, never destroyed from
       // here. Not idempotent by default (each open mints a new session — `dedupe_key` is
@@ -132,9 +140,7 @@ export function registerUseTool(tc: ToolContext): void {
           .describe("RUN mode: the requester-message id this addresses."),
         workflow: workflowInput
           .optional()
-          .describe(
-            "Bind a Context session to a run attempt, or pass status to record its receipt.",
-          ),
+          .describe("Bind a run attempt, record its receipt, or attach an artifact version."),
         workspace: wsArg,
       },
     },
@@ -222,6 +228,53 @@ export function registerUseTool(tc: ToolContext): void {
           workflow.finish_run !== undefined)
       )
         return err("Workflow receipt fields require `status`.")
+      if (workflow?.artifact) {
+        if (
+          workflow.status ||
+          context ||
+          session_id ||
+          instruction ||
+          answer ||
+          progress !== undefined ||
+          state ||
+          result_artifact_id ||
+          answers ||
+          dedupe_key ||
+          wait !== undefined
+        )
+          return err("Attach workflow activity without receipt, Context, or runner fields.")
+        const principal = await workflowPrincipal(workflow.run_id)
+        if (typeof principal === "string") return err(principal)
+        const artifact = await ctx.meta.getByShortId(workflow.artifact.short_id)
+        if (!artifact || artifact.org_id !== principal.orgId)
+          return err("No such artifact in this workflow's workspace.")
+        const version = await ctx.meta.getVersion(artifact.id, workflow.artifact.version)
+        if (!version) return err("No such artifact version.")
+        const recorded = await recordWorkflowArtifact({
+          meta: ctx.meta,
+          ref: {
+            run_id: workflow.run_id,
+            node_id: workflow.node_id,
+            attempt: workflow.attempt,
+            role: workflow.artifact.role,
+          },
+          orgId: principal.orgId,
+          artifact,
+          version: version.n,
+          at: new Date().toISOString(),
+        })
+        if (typeof recorded === "string") return err(recorded)
+        return json({
+          workflow_run_id: recorded.workflow_run_id,
+          node_id: recorded.node_id,
+          attempt: recorded.attempt,
+          activity_id: recorded.id,
+          artifact: recorded.artifact_short_id,
+          version: recorded.artifact_version,
+          role: recorded.role,
+          completion: "unconfirmed",
+        })
+      }
       if (workflow?.status) {
         if (
           context ||
@@ -257,7 +310,7 @@ export function registerUseTool(tc: ToolContext): void {
       }
       if (workflow && !context)
         return err(
-          "Bind workflow run/node/attempt while opening its context, or pass status to record a receipt.",
+          "Bind workflow run/node/attempt while opening its context, attach an artifact, or pass status to record a receipt.",
         )
       if (!actingFor && !workflow) return err(NO_HUMAN)
       // Session WRITES are capped per acting human — each one triggers a model
