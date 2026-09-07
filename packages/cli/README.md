@@ -211,6 +211,9 @@ derive scan status
 also runs the installed Skill usage scan. It uploads artifact IDs, versions, operations, clients,
 evidence types, opaque session hashes, and event times. It does not upload prompts, responses,
 tool arguments, artifact content, file paths, repository paths, raw session IDs, or user names.
+The first scan starts at the end of each existing log. Pass `--since 30d` only when you want an
+explicit backfill. The scanner writes each receipt to a retry-safe spool before it advances a log
+cursor.
 
 The artifact page can show another artifact published later in the same opaque session. This is an
 observed sequence, not provenance. Derive does not create a run, attach the artifact to a node, or

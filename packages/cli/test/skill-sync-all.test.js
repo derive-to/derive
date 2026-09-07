@@ -5,7 +5,7 @@ import http from "node:http"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
-import { scanArtifactLogs } from "../src/artifact-scan.js"
+import { commitArtifactScanState, scanArtifactLogs } from "../src/artifact-scan.js"
 import { setupDeriveScan } from "../src/derive-scan-setup.js"
 import { addToSkillScanSpool, recordSkillInstall, scanSkillLogs } from "../src/skill-scan.js"
 import { setupSkillScan } from "../src/skill-scan-setup.js"
@@ -790,7 +790,7 @@ describe("derive scan", () => {
           },
         })}\n`,
       )
-      expect((await scanArtifactLogs({ home })).events).toEqual([])
+      expect((await scanArtifactLogs({ home, initialBaseline: false })).events).toEqual([])
       writeFileSync(
         log,
         `${JSON.stringify({
@@ -810,6 +810,129 @@ describe("derive scan", () => {
           action: "published",
         }),
       ])
+    } finally {
+      if (priorConfig === undefined) delete process.env.DERIVE_CONFIG_DIR
+      else process.env.DERIVE_CONFIG_DIR = priorConfig
+    }
+  })
+
+  it("does not advance its cursor before the caller durably spools a receipt", async () => {
+    const root = mkdtempSync(join(tmpdir(), "derive-artifact-scan-checkpoint-"))
+    dirs.push(root)
+    const home = join(root, "home")
+    const config = join(root, "config")
+    const priorConfig = process.env.DERIVE_CONFIG_DIR
+    process.env.DERIVE_CONFIG_DIR = config
+    try {
+      const log = join(home, ".codex", "sessions", "session.jsonl")
+      mkdirSync(join(home, ".codex", "sessions"), { recursive: true })
+      writeFileSync(
+        log,
+        `${[
+          {
+            type: "session_meta",
+            timestamp: "2026-09-07T12:00:00.000Z",
+            payload: { id: "checkpoint-session" },
+          },
+          {
+            type: "response_item",
+            timestamp: "2026-09-07T12:00:01.000Z",
+            payload: {
+              type: "function_call",
+              name: "mcp__derive__read",
+              call_id: "checkpoint-read",
+              arguments: "{}",
+            },
+          },
+          {
+            type: "response_item",
+            timestamp: "2026-09-07T12:00:02.000Z",
+            payload: {
+              type: "function_call_output",
+              call_id: "checkpoint-read",
+              output: JSON.stringify({ short_id: "retry123", version: 2 }),
+            },
+          },
+        ]
+          .map(JSON.stringify)
+          .join("\n")}\n`,
+      )
+      const interrupted = await scanArtifactLogs({
+        home,
+        now: Date.parse("2026-09-08"),
+        deferCommit: true,
+        initialBaseline: false,
+      })
+      expect(interrupted.events).toHaveLength(1)
+      const replayed = await scanArtifactLogs({
+        home,
+        now: Date.parse("2026-09-08"),
+        deferCommit: true,
+        initialBaseline: false,
+      })
+      expect(replayed.events).toEqual(interrupted.events)
+      commitArtifactScanState(replayed.state)
+      expect((await scanArtifactLogs({ home })).events).toEqual([])
+    } finally {
+      if (priorConfig === undefined) delete process.env.DERIVE_CONFIG_DIR
+      else process.env.DERIVE_CONFIG_DIR = priorConfig
+    }
+  })
+
+  it("applies since to each event in a recently modified log", async () => {
+    const root = mkdtempSync(join(tmpdir(), "derive-artifact-scan-since-"))
+    dirs.push(root)
+    const home = join(root, "home")
+    const config = join(root, "config")
+    const priorConfig = process.env.DERIVE_CONFIG_DIR
+    process.env.DERIVE_CONFIG_DIR = config
+    try {
+      const log = join(home, ".codex", "sessions", "session.jsonl")
+      mkdirSync(join(home, ".codex", "sessions"), { recursive: true })
+      const records = (callId, timestamp, shortId) => [
+        {
+          type: "response_item",
+          timestamp,
+          payload: {
+            type: "function_call",
+            name: "mcp__derive__read",
+            call_id: callId,
+            arguments: "{}",
+          },
+        },
+        {
+          type: "response_item",
+          timestamp,
+          payload: {
+            type: "function_call_output",
+            call_id: callId,
+            output: JSON.stringify({ short_id: shortId, version: 1 }),
+          },
+        },
+      ]
+      writeFileSync(
+        log,
+        `${[
+          ...records("old", "2026-01-01T00:00:00.000Z", "old12345"),
+          ...records("new", "2026-09-07T00:00:00.000Z", "new12345"),
+        ]
+          .map(JSON.stringify)
+          .join("\n")}\n`,
+      )
+      expect(
+        (
+          await scanArtifactLogs({
+            home,
+            now: Date.parse("2026-09-08"),
+          })
+        ).events,
+      ).toEqual([])
+      const result = await scanArtifactLogs({
+        home,
+        since: "30d",
+        now: Date.parse("2026-09-08"),
+      })
+      expect(result.events.map((event) => event.artifact_short_id)).toEqual(["new12345"])
     } finally {
       if (priorConfig === undefined) delete process.env.DERIVE_CONFIG_DIR
       else process.env.DERIVE_CONFIG_DIR = priorConfig

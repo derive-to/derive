@@ -6,7 +6,9 @@ export const localArtifactScanActivity = async (args: {
   canRead: (artifact: ArtifactRecord) => Promise<boolean>
 }) => {
   const direct = await args.meta.listArtifactScanEvents(args.artifact.id, args.artifact.org_id, 100)
-  const readEvents = direct.filter((event) => event.action === "read")
+  const readEvents = direct.filter(
+    (event) => event.action === "read" && event.artifact_version === args.artifact.current_version,
+  )
   if (readEvents.length === 0)
     return {
       activity: direct.map((event) => ({
@@ -35,7 +37,7 @@ export const localArtifactScanActivity = async (args: {
   for (const event of readEvents) {
     const key = `${event.scanned_by}\0${event.opaque_session_id}`
     const at = Date.parse(event.occurred_at)
-    readAt.set(key, Math.min(readAt.get(key) ?? at, at))
+    readAt.set(key, Math.max(readAt.get(key) ?? at, at))
   }
   const candidates = sessionEvents.filter((event) => {
     if (event.action !== "published" || event.artifact_id === args.artifact.id) return false

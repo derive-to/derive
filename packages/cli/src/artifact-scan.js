@@ -165,6 +165,7 @@ const eventFor = ({ client, session, callId, result, occurredAt }) => ({
   evidence: "structured_tool_result",
   opaque_session_id: hash(["derive-artifact-session-v1", client, session].join("\0")),
   occurred_at: occurredAt ?? new Date().toISOString(),
+  _timestamp_known: occurredAt !== null && occurredAt !== undefined,
 })
 
 const defaultState = () => ({
@@ -282,7 +283,7 @@ export async function scanArtifactLogs(options = {}) {
     let start = 0
     if (sinceMs === null) {
       if (saved?.identity === identity && saved.offset <= stats.size) start = saved.offset
-      else if (options.baseline) start = stats.size
+      else if (options.baseline || options.initialBaseline !== false) start = stats.size
     }
     coverage[source.client].source_files++
     const context =
@@ -318,7 +319,11 @@ export async function scanArtifactLogs(options = {}) {
     for (const [session, seenAt] of Object.entries(state.sessions[client]))
       if (Date.parse(seenAt) < cutoff) delete state.sessions[client][session]
 
-  for (const event of events.values()) coverage[event.client].matched_events++
+  const matchedEvents = [...events.values()].filter(
+    (event) =>
+      sinceMs === null || (event._timestamp_known && Date.parse(event.occurred_at) >= sinceMs),
+  )
+  for (const event of matchedEvents) coverage[event.client].matched_events++
   const scannedAt = new Date(now).toISOString()
   const coverageRows = Object.values(coverage)
     .filter((row) => row.source_files > 0)
@@ -330,8 +335,17 @@ export async function scanArtifactLogs(options = {}) {
     }))
   state.parser_version = ARTIFACT_SCAN_PARSER_VERSION
   state.last_scan_at = scannedAt
-  if (!options.dryRun) writeJson(statePath(), state)
-  return { events: [...events.values()], coverage: coverageRows, state, sources }
+  if (!options.dryRun && !options.deferCommit) writeJson(statePath(), state)
+  return {
+    events: matchedEvents.map(({ _timestamp_known: _timestampKnown, ...event }) => event),
+    coverage: coverageRows,
+    state,
+    sources,
+  }
+}
+
+export function commitArtifactScanState(state) {
+  writeJson(statePath(), state)
 }
 
 export function readArtifactScanSpool() {

@@ -353,8 +353,12 @@ export async function scanSkillLogs(options = {}) {
   state.parser_version = SKILL_SCAN_PARSER_VERSION
   state.last_scan_at = scannedAt
 
-  if (!options.dryRun) writeJson(scanStatePath(), state)
+  if (!options.dryRun && !options.deferCommit) writeJson(scanStatePath(), state)
   return { events: [...events.values()], coverage: coverageRows, state, sources }
+}
+
+export function commitSkillScanState(state) {
+  writeJson(scanStatePath(), state)
 }
 
 export function addToSkillScanSpool(events, coverage) {

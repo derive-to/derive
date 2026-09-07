@@ -95,6 +95,9 @@ export const artifactScanRoutes = (ctx: AppContext) => {
   app.get("/v1/artifacts/:shortId/local-activity", async (c) => {
     const artifact = await requireArtifact(c, "read")
     if (artifact instanceof Response) return artifact
+    const actor = (await actingHuman(c)) ?? (await actingUser(c))
+    const membership = actor ? await meta.getMembership(artifact.org_id, actor.id) : null
+    if (!membership) return fail(c, 403, "workspace membership is required")
     const local = await localArtifactScanActivity({
       meta,
       artifact,

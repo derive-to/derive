@@ -45,6 +45,7 @@ import { fileURLToPath } from "node:url"
 import {
   addToArtifactScanSpool,
   artifactScanStatus,
+  commitArtifactScanState,
   removeFromArtifactScanSpool,
   scanArtifactLogs,
 } from "../src/artifact-scan.js"
@@ -85,6 +86,7 @@ import { readTarget, uploadArtifact } from "../src/publish.js"
 import { DeriveClient, parseManifest } from "../src/runner.js"
 import {
   addToSkillScanSpool,
+  commitSkillScanState,
   groupSkillScanSpool,
   listSkillInstalls,
   recordSkillInstall,
@@ -1406,14 +1408,21 @@ if (cmd === "scan") {
     process.exit(0)
   }
 
+  const skillHasScanned = Boolean(skillScanStatus().last_scan_at)
   const [artifactResult, skillResult] = await Promise.all([
     scanArtifactLogs({
       since: flags.since,
       dryRun: flags["dry-run"] === "true",
+      deferCommit: flags["dry-run"] !== "true",
       client: flags.client,
     }),
     flags["dry-run"] === "true"
-      ? scanSkillLogs({ since: flags.since, dryRun: true, client: flags.client })
+      ? scanSkillLogs({
+          since: flags.since,
+          baseline: !flags.since && !skillHasScanned,
+          dryRun: true,
+          client: flags.client,
+        })
       : Promise.resolve(null),
   ])
   if (flags["dry-run"] === "true") {
@@ -1443,6 +1452,7 @@ if (cmd === "scan") {
     account_id: resolved.accountId ?? null,
   }
   let spool = addToArtifactScanSpool(artifactResult.events, artifactResult.coverage, target)
+  commitArtifactScanState(artifactResult.state)
   const groups = new Map()
   for (const event of spool.pending) {
     const eventTarget = event.target ?? spool.target ?? target
@@ -1501,6 +1511,7 @@ if (cmd === "scan") {
   spool = removeFromArtifactScanSpool([...recorded, ...rejectedIds], !uploadError)
 
   const childArgs = [fileURLToPath(import.meta.url), "skill", "scan", "--quiet", "--json"]
+  if (!skillHasScanned && !flags.since) childArgs.push("--baseline")
   for (const key of ["since", "client", "server", "workspace", "account", "token"])
     if (flags[key]) childArgs.push(`--${key}`, flags[key])
   const skillScan = spawnSync(process.execPath, childArgs, { encoding: "utf8", env: process.env })
@@ -1647,7 +1658,9 @@ if (cmd === "skill") {
 
     const result = await scanSkillLogs({
       since: flags.since,
+      baseline: flags.baseline === "true",
       dryRun: flags["dry-run"] === "true",
+      deferCommit: flags["dry-run"] !== "true",
       client: flags.client,
     })
     if (flags["dry-run"] === "true") {
@@ -1670,6 +1683,7 @@ if (cmd === "skill") {
     }
 
     let spool = addToSkillScanSpool(result.events, result.coverage)
+    commitSkillScanState(result.state)
     const sentIds = []
     const sentCoverage = new Set()
     const failedCoverage = new Set()

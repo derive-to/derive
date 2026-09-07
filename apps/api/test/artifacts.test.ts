@@ -36,14 +36,18 @@ describe("local artifact scans", () => {
     email: "artifact-scan-teammate@test.dev",
     name: "Artifact Scan Teammate",
   }
-  const { app: scanApp } = makeAuthedApp("artifact-scans", [scanner, teammate])
+  const { app: scanApp, meta: scanMeta } = makeAuthedApp("artifact-scans", [scanner, teammate])
 
   it("stores exact reads and owned publishes, then shows same-session related work", async () => {
     const graph = await (
       await publishAs(
         scanApp,
         "<h1>Graph</h1>",
-        { title: "Scanned graph", workspace_access: "member" },
+        {
+          title: "Scanned graph",
+          workspace_access: "member",
+          link_role: "viewer",
+        },
         as(scanner.email),
       )
     ).json()
@@ -157,6 +161,56 @@ describe("local artifact scans", () => {
         action: "published",
       }),
     ])
+
+    const anonymousActivity = await scanApp.request(
+      `/v1/artifacts/${graph.short_id}/local-activity`,
+    )
+    expect(anonymousActivity.status).toBe(403)
+
+    await scanMeta.setWorkspace("artifact-scan-other", "Other workspace")
+    await scanMeta.setMembership({
+      id: "m_artifact_scan_other",
+      org_id: "artifact-scan-other",
+      user_id: teammate.id,
+      role: "owner",
+    })
+    await scanMeta.removeMembership("default", teammate.id)
+    const publicArtifact = await scanApp.request(`/v1/artifacts/${graph.short_id}`, {
+      headers: as(teammate.email),
+    })
+    expect(publicArtifact.status).toBe(200)
+    const otherWorkspaceActivity = await scanApp.request(
+      `/v1/artifacts/${graph.short_id}/local-activity`,
+      { headers: as(teammate.email) },
+    )
+    expect(otherWorkspaceActivity.status).toBe(403)
+
+    const laterRead = await scanApp.request("/v1/artifact-scan/batch", {
+      method: "POST",
+      headers: { ...as(scanner.email), "content-type": "application/json" },
+      body: JSON.stringify({
+        events: [
+          {
+            event_id: "e".repeat(64),
+            artifact_short_id: graph.short_id,
+            artifact_version: 1,
+            client: "codex",
+            action: "read",
+            evidence: "structured_tool_result",
+            opaque_session_id: "d".repeat(64),
+            occurred_at: "2026-09-07T12:00:04.000Z",
+          },
+        ],
+        coverage: [],
+      }),
+    })
+    expect(laterRead.status).toBe(200)
+    const afterLaterRead = await (
+      await scanApp.request(`/v1/artifacts/${graph.short_id}/local-activity`, {
+        headers: as(scanner.email),
+      })
+    ).json()
+    expect(afterLaterRead.related).toEqual([])
     expect(activity.coverage).toEqual([
       expect.objectContaining({ client: "codex", records_scanned: 30 }),
     ])
