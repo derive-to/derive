@@ -794,6 +794,7 @@ CREATE TABLE IF NOT EXISTS context (
   config TEXT,
   import_source TEXT,
   import_ref TEXT,
+  code_url TEXT,
   UNIQUE (org_id, name),
   FOREIGN KEY (manifest_artifact_id) REFERENCES artifact(id)
 );
@@ -853,6 +854,9 @@ CREATE TABLE IF NOT EXISTS import_job (
   paper_artifact_id TEXT,
   manifest_version INTEGER,
   resolved_version INTEGER,
+  code_status TEXT,
+  code_error TEXT,
+  code_ref TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   UNIQUE (context_id),

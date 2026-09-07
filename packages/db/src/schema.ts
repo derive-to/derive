@@ -15,6 +15,7 @@ import type {
   ExportJobStatus,
   ExportKind,
   FollowKind,
+  ImportCodeStatus,
   ImportJobStatus,
   ImportKind,
   LinkRole,
@@ -1362,6 +1363,12 @@ export const context = sqliteTable(
     // it and the import_job row carries its fetch state. Nullable (clean ADD COLUMN).
     import_source: text("import_source"),
     import_ref: text("import_ref"),
+    // The public repository that implements an imported paper, as the person gave it.
+    // The durable fact: the console links to it, the worker fetches it into the paper's
+    // own artifact, and the import_job row carries how that fetch went. Null for a paper
+    // with no implementation attached and for every Context nobody imported. Nullable
+    // (clean ADD COLUMN).
+    code_url: text("code_url"),
   },
   (t) => [uniqueIndex("context_org_name").on(t.org_id, t.name)],
 )
@@ -1393,6 +1400,14 @@ export const importJob = sqliteTable(
     paper_artifact_id: text("paper_artifact_id"),
     manifest_version: integer("manifest_version"),
     resolved_version: integer("resolved_version"),
+    // How the attached repository's fetch went, kept apart from `status` on purpose: the
+    // paper is what the import is for, so a repository that could not be fetched leaves
+    // the job ready and says so here rather than failing the paper. `code_ref` is what
+    // was actually fetched (the canonical reference), which is both the resume marker and
+    // what tells a re-run that the link changed. All null until a repository is attached.
+    code_status: text("code_status").$type<ImportCodeStatus>(),
+    code_error: text("code_error"),
+    code_ref: text("code_ref"),
     created_at: text("created_at").notNull().default(now),
     updated_at: text("updated_at").notNull().default(now),
   },

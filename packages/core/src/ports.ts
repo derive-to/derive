@@ -442,6 +442,10 @@ export type ImportErrorCode =
   | "too_large"
   | "rate_limited"
   | "unavailable"
+/** How the implementation attached to an imported paper is doing. Deliberately apart
+ *  from ImportJobStatus: the paper is what the import is for, so a repository that could
+ *  not be fetched leaves the import ready and reports itself here. */
+export type ImportCodeStatus = "pending" | "ready" | "failed"
 export interface ImportJobRecord {
   id: string
   org_id: string
@@ -464,6 +468,13 @@ export interface ImportJobRecord {
   manifest_version: number | null
   /** The paper version the upstream resolved the reference to. */
   resolved_version: number | null
+  /** The attached repository's own state. Null until one is attached. */
+  code_status: ImportCodeStatus | null
+  /** Why the repository could not be fetched, when it could not. */
+  code_error: string | null
+  /** The reference that was actually fetched (`github.com/owner/repo@branch`): both the
+   *  resume marker and how a re-run knows the link changed. */
+  code_ref: string | null
   created_at: string
   updated_at: string
 }
@@ -1732,6 +1743,8 @@ export interface ContextStore {
   /** Replace the context's bound connections (a JSON array of ids, or null for none).
    *  Whole-list semantics: the caller has already checked every id is attachable. */
   setContextConnections(id: string, connectionIds: string | null): Promise<void>
+  /** Attach, replace or remove the repository implementing an imported paper. */
+  setContextCodeUrl(id: string, codeUrl: string | null): Promise<void>
   /** Rename a context. The (org, name) unique index still applies: the store surfaces
    *  the conflict as a throw for the caller to catch and pick another name. */
   renameContext(id: string, name: string): Promise<void>
@@ -1761,6 +1774,9 @@ export interface ContextStore {
         | "paper_artifact_id"
         | "manifest_version"
         | "resolved_version"
+        | "code_status"
+        | "code_error"
+        | "code_ref"
         | "updated_at"
       >
     >,
@@ -3851,6 +3867,9 @@ export interface ContextRecord {
    *  read-only documents: no runner, no sessions. */
   import_source: string | null
   import_ref: string | null
+  /** The public repository implementing an imported paper, as the person gave it; null
+   *  when no implementation is attached. The paper's own artifact holds the code. */
+  code_url: string | null
 }
 export interface NewContext {
   id: string
@@ -3872,6 +3891,8 @@ export interface NewContext {
   /** Import provenance; omitted → null (a defined Context). */
   import_source?: string | null
   import_ref?: string | null
+  /** The repository implementing an imported paper; omitted → null. */
+  code_url?: string | null
 }
 export interface ContextAskerRecord {
   id: string

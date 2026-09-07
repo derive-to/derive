@@ -3608,6 +3608,35 @@ export function runStoreContract(
       expect(await store.getImportLease("arxiv", scope)).toMatchObject({ holder: "w3" })
     })
 
+    it("an imported paper carries the repository that implements it", async () => {
+      const { ctx, job } = await newImport("2403.00007")
+      expect(ctx.code_url).toBeNull()
+      expect(job).toMatchObject({ code_status: null, code_error: null, code_ref: null })
+
+      // Attached at import time or later: the same column either way.
+      await store.setContextCodeUrl(ctx.id, "https://github.com/o/r")
+      expect((await store.getContext(ctx.id))?.code_url).toBe("https://github.com/o/r")
+
+      // The repository's fetch state is the job's, and it is NOT the job's status: a
+      // repository that could not be fetched leaves the paper's import ready.
+      await store.updateImportJob(job.id, {
+        status: "ready",
+        code_status: "failed",
+        code_error: "the repository could not be reached",
+        code_ref: "github.com/o/r",
+      })
+      expect(await store.getImportJob(job.id)).toMatchObject({
+        status: "ready",
+        code_status: "failed",
+        code_error: "the repository could not be reached",
+        code_ref: "github.com/o/r",
+      })
+
+      // Removing the implementation clears the link.
+      await store.setContextCodeUrl(ctx.id, null)
+      expect((await store.getContext(ctx.id))?.code_url).toBeNull()
+    })
+
     it("renameContext keeps the per-workspace unique name", async () => {
       const a = await newContext()
       const b = await newContext()

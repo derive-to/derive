@@ -4755,6 +4755,9 @@ export class PgMetaStore implements MetaStore {
   async setContextConnections(id: string, connectionIds: string | null): Promise<void> {
     await this.db.update(context).set({ connection_ids: connectionIds }).where(eq(context.id, id))
   }
+  async setContextCodeUrl(id: string, codeUrl: string | null): Promise<void> {
+    await this.db.update(context).set({ code_url: codeUrl }).where(eq(context.id, id))
+  }
   async renameContext(id: string, name: string): Promise<void> {
     await this.db.update(context).set({ name }).where(eq(context.id, id))
   }

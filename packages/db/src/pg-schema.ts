@@ -15,6 +15,7 @@ import type {
   ExportJobStatus,
   ExportKind,
   FollowKind,
+  ImportCodeStatus,
   ImportJobStatus,
   ImportKind,
   LinkRole,
@@ -1156,6 +1157,8 @@ export const context = pgTable(
     // Import provenance (`arxiv` + the bare paper id); see schema.ts for the contract.
     import_source: text("import_source"),
     import_ref: text("import_ref"),
+    // The repository implementing an imported paper; see schema.ts for the contract.
+    code_url: text("code_url"),
   },
   (t) => [uniqueIndex("context_org_name").on(t.org_id, t.name)],
 )
@@ -1182,6 +1185,9 @@ export const importJob = pgTable(
     paper_artifact_id: text("paper_artifact_id"),
     manifest_version: integer("manifest_version"),
     resolved_version: integer("resolved_version"),
+    code_status: text("code_status").$type<ImportCodeStatus>(),
+    code_error: text("code_error"),
+    code_ref: text("code_ref"),
     created_at: text("created_at").notNull().$defaultFn(isoNow),
     updated_at: text("updated_at").notNull().$defaultFn(isoNow),
   },

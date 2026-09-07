@@ -3827,6 +3827,9 @@ export function makeRepos(db: SqliteDb) {
   const setContextConnections = async (id: string, connectionIds: string | null): Promise<void> => {
     await db.update(context).set({ connection_ids: connectionIds }).where(eq(context.id, id)).run()
   }
+  const setContextCodeUrl = async (id: string, codeUrl: string | null): Promise<void> => {
+    await db.update(context).set({ code_url: codeUrl }).where(eq(context.id, id)).run()
+  }
   const renameContext = async (id: string, name: string): Promise<void> => {
     await db.update(context).set({ name }).where(eq(context.id, id)).run()
   }
@@ -6392,6 +6395,7 @@ export function makeRepos(db: SqliteDb) {
     setContextAskPolicy,
     setContextManifest,
     setContextConnections,
+    setContextCodeUrl,
     renameContext,
     findContextByImport,
     enqueueImportJob,
