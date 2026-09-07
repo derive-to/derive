@@ -1,5 +1,5 @@
 import { zipSync } from "fflate"
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 import { anonApp, app, meta, TEST_TOKEN, upload } from "./helpers"
 
 const bearer = { authorization: `Bearer ${TEST_TOKEN}` }
@@ -32,9 +32,11 @@ describe("/v1/artifacts/:shortId/content — format, section, outline params", (
       "plain text",
     )
 
-    expect(await meta.artifactReadStats(artifact.id, artifact.org_id)).toEqual({
-      total: 1,
-      recent: [expect.objectContaining({ version: 1, opens: 1 })],
+    await vi.waitFor(async () => {
+      expect(await meta.artifactReadStats(artifact.id, artifact.org_id)).toEqual({
+        total: 1,
+        recent: [expect.objectContaining({ version: 1, opens: 1 })],
+      })
     })
   })
 
