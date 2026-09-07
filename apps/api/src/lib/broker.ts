@@ -4,6 +4,7 @@ import type { ConnectionKind, ConnectionRecord, MetaStore } from "@derive/core"
 import { decryptSecret } from "./crypto"
 import { GitHubError, type GitHubTokenProfile, installationToken } from "./github-app"
 import { githubSourcePolicy } from "./github-source-policy"
+import { ResponseTooLargeError, readCappedBytes } from "./http"
 import { liveBearer } from "./mcp-oauth"
 
 /** One tool a hosted run may call, paired with the connected-account ref it executes through.
@@ -330,34 +331,13 @@ const MAX_GITHUB_RESPONSE_BYTES = 4 * 1_024 * 1_024
 
 const responseText = async (res: Response, maxBytes?: number): Promise<string> => {
   if (!maxBytes) return res.text()
-  const declared = Number(res.headers.get("content-length"))
-  if (Number.isFinite(declared) && declared > maxBytes)
-    throw new Error("GitHub response is too large; request a smaller page")
-  if (!res.body) return ""
-  const reader = res.body.getReader()
-  const chunks: Uint8Array[] = []
-  let total = 0
   try {
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      total += value.byteLength
-      if (total > maxBytes) {
-        await reader.cancel()
-        throw new Error("GitHub response is too large; request a smaller page")
-      }
-      chunks.push(value)
-    }
-  } finally {
-    reader.releaseLock()
+    return new TextDecoder().decode(await readCappedBytes(res, maxBytes))
+  } catch (error) {
+    if (error instanceof ResponseTooLargeError)
+      throw new Error("GitHub response is too large; request a smaller page")
+    throw error
   }
-  const bytes = new Uint8Array(total)
-  let offset = 0
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset)
-    offset += chunk.byteLength
-  }
-  return new TextDecoder().decode(bytes)
 }
 
 /**

@@ -10,7 +10,9 @@ import {
   maxRole,
   newId,
   normalizeSelector,
+  parseArxivRef,
   parseSubject,
+  publish,
   type Role,
   roleAllows,
   type SessionMessageRecord,
@@ -25,6 +27,7 @@ import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
 import { isAbandoned } from "../lib/abandoned-turn"
 import { agentWritesOff } from "../lib/agent-writes"
+import { stubManifest } from "../lib/arxiv-manifest"
 import { resolveActorBrandprint } from "../lib/brandprint"
 import {
   brokerFor,
@@ -56,6 +59,7 @@ import {
 import { meterModel, timingMeta } from "../lib/model-timing"
 import { canPayForAgent, NO_PAYER_MESSAGE } from "../lib/payer"
 import { RUN_LEASE_MS } from "../lib/run-lifecycle"
+import { deleteArtifactAndUnindex } from "../lib/search"
 import { type DeltaStream, makeDeltaStream } from "../lib/session-stream"
 import { runSessionTurn } from "../lib/session-turn"
 import { log } from "../log"
@@ -97,11 +101,14 @@ export const contextRoutes = (ctx: AppContext) => {
     authorize,
     bus,
     askLimiter,
+    billingGate,
     canAskContext,
     currentUser,
     deps,
     limited,
     managementPrincipal,
+    overStorage,
+    publishLimiter,
     requireArtifact,
     requireUser,
     requireWorkspace,
@@ -1335,6 +1342,173 @@ export const contextRoutes = (ctx: AppContext) => {
     },
   )
 
+  // ---- import a paper from arXiv --------------------------------------------
+  // The Context exists from this request on, so the list shows it "fetching" at once;
+  // the worker (imports.ts) fetches the paper behind arXiv's request gate and fills it
+  // in. Idempotent per paper per workspace: the same paper pasted twice opens the one
+  // Context, requeuing its import if that had failed.
+  const MAX_ACTIVE_IMPORTS_PER_WORKSPACE = 3
+  const ARXIV_IMPORT_ESTIMATED_BYTES = 50 * 1024 * 1024
+
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/v1/contexts/import/arxiv",
+      tags: ["Contexts"],
+      summary:
+        "Import a paper from arXiv as a read-only Context: its LaTeX source and BibTeX, fetched in the background.",
+      responses: {
+        201: {
+          description:
+            "The new Context, already listed, with import.status 'fetching' (or 'pending') until the worker publishes the paper.",
+          content: { "application/json": { schema: ContextInfo } },
+        },
+        200: {
+          description: "This workspace already imported that paper: its existing Context.",
+          content: { "application/json": { schema: ContextInfo } },
+        },
+      },
+    }),
+    async (c) => {
+      const owner = await managementPrincipal(c)
+      if (!owner) return bail(fail(c, 401, "unauthenticated"))
+      const org = await requireWorkspace(c, "publish")
+      if (org instanceof Response) return bail(org)
+      const b = await readJson(c, z.object({ url: z.string().trim().min(1).max(2000) }))
+      if (b instanceof Response) return bail(b)
+      const ref = parseArxivRef(b.url)
+      if (!ref) return bail(fail(c, 400, "not an arXiv link", { code: "not_arxiv" }))
+      if (deps.imports === false)
+        return bail(fail(c, 503, "paper imports are not configured on this deployment"))
+      // An import is two publishes (the manifest and the paper) plus an upstream fetch,
+      // so it pays every gate a publish pays, against the largest source the worker
+      // would accept.
+      const capped = await limited(c, publishLimiter)
+      if (capped) return bail(capped)
+      const blocked = await billingGate(c, org)
+      if (blocked) return bail(blocked)
+      if (await overStorage(org, ARXIV_IMPORT_ESTIMATED_BYTES))
+        return bail(fail(c, 413, "this workspace is out of storage", { code: "storage" }))
+
+      const existing = await meta.findContextByImport(org, "arxiv", ref.id)
+      if (existing) {
+        const job = await meta.getImportJobForContext(existing.id)
+        if (job && (job.status === "failed" || job.status === "dead"))
+          await meta.updateImportJob(job.id, {
+            status: "pending",
+            next_attempt_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          })
+        const manifest = await meta.getArtifactById(existing.manifest_artifact_id)
+        deps.pokeImports?.()
+        return c.json(
+          contextJson(
+            existing,
+            manifest?.short_id ?? null,
+            job && (await meta.getImportJob(job.id)),
+          ),
+          200,
+        )
+      }
+      if ((await meta.countActiveImportJobs(org)) >= MAX_ACTIVE_IMPORTS_PER_WORKSPACE)
+        return bail(fail(c, 429, "too many imports in progress; wait for one to finish"))
+
+      // The stub manifest first, so a Context never exists without its definition; the
+      // job last, so a Context never exists without something that will fill it in.
+      const settings = await meta.getOrgSettings(org).catch(() => null)
+      const stub = await publish(meta, ctx.blobs, {
+        bytes: new TextEncoder().encode(stubManifest(ref.id)),
+        filename: "manifest.md",
+        isBundle: false,
+        orgId: org,
+        title: `arXiv:${ref.id} — context instructions`,
+        author: "arXiv",
+        authorId: null,
+        source: "api",
+        workspaceAccess: settings?.defaultWorkspaceAccess ?? "member",
+        linkRole: "none",
+        listed: "none",
+      })
+      await meta.setArtifactMember({
+        id: newId("am"),
+        artifact_id: stub.artifact.id,
+        user_id: owner,
+        role: "owner",
+      })
+      let made: Awaited<ReturnType<typeof createContextCore>>
+      try {
+        made = await createContextCore(meta, {
+          orgId: org,
+          userId: owner,
+          name: `arXiv:${ref.id}`,
+          manifestArtifactId: stub.artifact.id,
+          askPolicy: "workspace",
+          importSource: "arxiv",
+          importRef: ref.id,
+        })
+      } catch (error) {
+        await meta.deleteArtifact(stub.artifact.id, org).catch(() => undefined)
+        if (!(error instanceof ContextConflictError)) throw error
+        return bail(fail(c, 409, "a context with that name already exists"))
+      }
+      let job: ImportJobRecord
+      try {
+        job = await meta.enqueueImportJob({
+          id: newId("imp"),
+          org_id: org,
+          context_id: made.context.id,
+          requested_by: owner,
+          kind: "arxiv",
+          ref: ref.canonical,
+          scope: deps.baseUrl.replace(/\/$/, ""),
+        })
+      } catch (error) {
+        await meta.deleteContext(made.context.id, org).catch(() => undefined)
+        await meta.deleteArtifact(stub.artifact.id, org).catch(() => undefined)
+        throw error
+      }
+      deps.pokeImports?.()
+      return c.json(contextJson(made.context, stub.artifact.short_id, job), 201)
+    },
+  )
+
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/v1/contexts/{id}/import/retry",
+      tags: ["Contexts"],
+      summary: "Queue a failed paper import again (the context's creator or a workspace manager).",
+      request: { params: z.object({ id: z.string() }) },
+      responses: {
+        200: {
+          description: "The Context, its import queued again.",
+          content: { "application/json": { schema: ContextInfo } },
+        },
+      },
+    }),
+    async (c) => {
+      const x = await manageableContext(c)
+      if (x instanceof Response) return bail(x)
+      const job = await meta.getImportJobForContext(x.id)
+      if (!x.import_source || !job) return bail(fail(c, 404, "not an imported context"))
+      if (job.status === "failed" || job.status === "dead") {
+        const now = new Date().toISOString()
+        await meta.updateImportJob(job.id, {
+          status: "pending",
+          next_attempt_at: now,
+          lease_until: null,
+          updated_at: now,
+        })
+        // A retry after giving up starts the count over; the paper it may already have
+        // published is kept and resumed from.
+        if (job.status === "dead") await meta.updateImportJob(job.id, { attempts: 0 })
+        deps.pokeImports?.()
+      }
+      const manifest = await meta.getArtifactById(x.manifest_artifact_id)
+      return c.json(contextJson(x, manifest?.short_id ?? null, await meta.getImportJob(job.id)))
+    },
+  )
+
   app.openapi(
     createRoute({
       method: "get",
@@ -1498,7 +1672,13 @@ export const contextRoutes = (ctx: AppContext) => {
       if (!x || x.org_id !== (await activeWorkspace(c))) return bail(fail(c, 404, "not found"))
       if (x.created_by !== owner && !(await workspaceCan(c, "manage")))
         return bail(fail(c, 403, "forbidden"))
-      await meta.deleteContext(x.id, x.org_id)
+      // An imported Context's manifest was generated for it and means nothing without it,
+      // so discarding the Context removes the manifest too (its cascade takes the context,
+      // the job and the roster). A paper the import already published stays in the library:
+      // it is a real, locked artifact people may have linked to.
+      if (x.import_source)
+        await deleteArtifactAndUnindex(meta, ctx.search, x.manifest_artifact_id, x.org_id)
+      else await meta.deleteContext(x.id, x.org_id)
       return c.body(null, 204)
     },
   )

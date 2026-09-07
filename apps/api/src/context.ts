@@ -366,6 +366,12 @@ export interface AppDeps {
   qaEmailCapture?: boolean
   /** Wake the preview worker after enqueuing (Workers: poke the PreviewRenderer DO). */
   pokePreviews?: () => void
+  /** Whether something on this deployment drains the paper-import queue (the Node import
+   *  worker, or the preview Durable Object). Unset ⇒ true. False makes the import route
+   *  refuse up front instead of queueing a job nothing would ever run. */
+  imports?: boolean
+  /** Wake the import worker after enqueuing a paper import. */
+  pokeImports?: () => void
   /**
    * EXPERIMENTAL hosted runs: start a freshly-created run NOW instead of waiting for the next
    * tick, so "Run now" and a fire-URL feel immediate. Best-effort and fire-and-forget by

@@ -1,6 +1,8 @@
-import { zipSync } from "fflate"
+import { tarSync } from "@derive/core"
+import { gzipSync, zipSync } from "fflate"
 import { beforeAll, describe, expect, it } from "vitest"
 import { createInProcessBackplane, type DeriveEvent } from "../src/bus"
+import { runImportTick } from "../src/imports"
 import { as, bearer, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
 // Contexts + sessions: the ask → answer → follow-up loop, its permission edges,
@@ -1121,5 +1123,393 @@ describe("contexts: outputs — what a context produced", () => {
     }
     expect(seen).toEqual(all.sessions.map((s: { id: string }) => s.id))
     expect(new Set(seen).size).toBe(seen.length)
+  })
+})
+
+describe("contexts: import from arXiv", () => {
+  const owner: TestUser = { id: "u_ax_own", email: "axown@derive.test", name: "Owner" }
+  const member: TestUser = { id: "u_ax_mem", email: "axmem@derive.test", name: "Member" }
+  const ID = "2401.12345"
+  const PNG = new Uint8Array([
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0xff, 0x00, 0x1f, 0x8b,
+  ])
+  const ATOM = (
+    id: string,
+    title = "Attention Is All You Need",
+  ) => `<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:arxiv="http://arxiv.org/schemas/atom">
+  <entry>
+    <id>http://arxiv.org/abs/${id}v2</id>
+    <published>2024-01-30T18:00:00Z</published>
+    <title>${title}</title>
+    <summary>  We propose a new simple network architecture, the Transformer &amp; friends.
+  </summary>
+    <author><name>Ashish Vaswani</name></author>
+    <author><name>Noam Shazeer</name></author>
+    <arxiv:comment>15 pages, 5 figures</arxiv:comment>
+    <arxiv:primary_category term="cs.CL"/>
+    <category term="cs.CL"/><category term="cs.LG"/>
+  </entry>
+</feed>`
+  const ERROR_ATOM = `<feed xmlns="http://www.w3.org/2005/Atom"><entry><id>http://arxiv.org/api/errors#x</id><title>Error</title><summary>Bad id</summary></entry></feed>`
+  const BIBTEX = `@misc{vaswani2024attention,
+      title={Attention Is All You Need},
+      author={Ashish Vaswani and Noam Shazeer},
+      year={2024},
+      eprint={${ID}},
+      archivePrefix={arXiv},
+      primaryClass={cs.CL}
+}`
+  const SOURCE = () =>
+    gzipSync(
+      tarSync({
+        "paper-src/paper.tex":
+          "\\documentclass{article}\n\\begin{document}\n\\input{main}\n\\section{Intro}\nSee \\cite{ref1}.\n\\bibliography{refs}\n\\end{document}\n",
+        "paper-src/main.tex": "A chapter, not the paper.",
+        "paper-src/refs.bib": "@article{ref1, title={Ref}, author={A}, year={2020}}",
+        "paper-src/paper.bbl":
+          "\\begin{thebibliography}{1}\\bibitem{ref1} A. Ref. 2020.\\end{thebibliography}",
+        "paper-src/fig/a.png": PNG,
+      }),
+    )
+
+  type Stub = (url: string, init?: RequestInit) => Response | Promise<Response>
+  const gzip = (bytes: Uint8Array) =>
+    new Response(new Uint8Array(bytes), {
+      status: 200,
+      headers: { "content-type": "application/gzip" },
+    })
+  const arxivStub = (over: Partial<Record<"metadata" | "source" | "bibtex", Stub>> = {}) => {
+    const calls: string[] = []
+    const stub = async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url
+      calls.push(url)
+      const u = new URL(url)
+      if (u.hostname === "export.arxiv.org")
+        return over.metadata?.(url, init) ?? new Response(ATOM(u.searchParams.get("id_list") ?? ID))
+      if (u.pathname.startsWith("/src/")) return over.source?.(url, init) ?? gzip(SOURCE())
+      if (u.pathname.startsWith("/bibtex/")) return over.bibtex?.(url, init) ?? new Response(BIBTEX)
+      return new Response("nope", { status: 404 })
+    }
+    return { fetch: stub as unknown as typeof fetch, calls }
+  }
+
+  /** A clock that advances only through the worker's own sleeps. */
+  const clock = () => {
+    let t = Date.parse("2030-01-01T00:00:00.000Z")
+    const sleeps: number[] = []
+    return {
+      now: () => t,
+      sleep: async (ms: number) => {
+        sleeps.push(ms)
+        t += ms
+      },
+      sleeps,
+      advance: (ms: number) => {
+        t += ms
+      },
+    }
+  }
+
+  const setup = (name: string, fetchStub: typeof fetch) => {
+    const made = makeAuthedApp(name, [owner, member], "editor", { deps: { fetch: fetchStub } })
+    const c = clock()
+    const tickDeps = (holder = "w1") => ({
+      meta: made.meta,
+      blobs: made.ctx.blobs,
+      bus: made.ctx.bus,
+      notify: made.ctx.notify,
+      background: made.ctx.background,
+      baseUrl: "http://derive.test",
+      fetch: fetchStub,
+      now: c.now,
+      sleep: c.sleep,
+      caps: { compressedBytes: 1024 * 1024, inflatedBytes: 4 * 1024 * 1024, files: 200 },
+      holder,
+    })
+    return { ...made, clock: c, tickDeps }
+  }
+  const importPaper = (app: ReturnType<typeof makeAuthedApp>["app"], url: string, who = owner) =>
+    app.request("/v1/contexts/import/arxiv", jsonAs(as(who.email), { url }))
+
+  it("queues a paper the moment it is pasted, then the worker turns it into a locked, read-only Context", async () => {
+    const stub = arxivStub()
+    const { app, meta, ctx, clock: c, tickDeps } = setup("contexts-import", stub.fetch)
+    await app.request("/v1/me", { headers: as(owner.email) })
+    await app.request("/v1/me", { headers: as(member.email) })
+
+    // Any of the forms people paste resolves to the id; the PDF link is the common one.
+    const res = await importPaper(app, `https://arxiv.org/pdf/${ID}v2.pdf`)
+    expect(res.status).toBe(201)
+    const created = await res.json()
+    expect(created).toMatchObject({
+      name: `arXiv:${ID}`,
+      ask_policy: "workspace",
+      import: { source: "arxiv", ref: ID, status: "pending", error: null, imported_by: owner.id },
+    })
+    expect(created.import.url).toBe(`https://arxiv.org/abs/${ID}`)
+    // Listed at once, for every member, marked as on its way.
+    const listed = await (await app.request("/v1/contexts", { headers: as(member.email) })).json()
+    expect(listed.contexts.map((x: { id: string }) => x.id)).toContain(created.id)
+    expect(listed.contexts[0].import.status).toBe("pending")
+    // A member can already open it (workspace policy), and its manifest says "fetching".
+    const before = await (
+      await app.request(`/v1/contexts/${created.id}`, { headers: as(member.email) })
+    ).json()
+    expect(before.manifest.md).toContain("Fetching this paper from arXiv")
+    // Nothing has been fetched yet: the queue, not the request, talks to arXiv.
+    expect(stub.calls).toHaveLength(0)
+
+    expect(await runImportTick(tickDeps())).toBe(1)
+    // Three requests, in order, each at least the interval apart.
+    expect(stub.calls.map((u) => new URL(u).pathname)).toEqual([
+      "/api/query",
+      `/src/${ID}v2`,
+      `/bibtex/${ID}`,
+    ])
+    expect(c.sleeps.filter((ms) => ms >= 3000).length).toBeGreaterThanOrEqual(2)
+    for (const url of stub.calls) expect(new URL(url).hostname).toMatch(/arxiv\.org$/)
+
+    const after = await (
+      await app.request(`/v1/contexts/${created.id}`, { headers: as(member.email) })
+    ).json()
+    expect(after.name).toBe("Attention Is All You Need")
+    expect(after.import).toMatchObject({ status: "ready", version: 2, error: null })
+    expect(after.documents).toHaveLength(1)
+    expect(after.documents[0]).toMatchObject({ role: "paper", kind: "bundle" })
+    expect(after.bibtex).toContain("@misc{vaswani2024attention")
+    const md: string = after.manifest.md
+    expect(md).toContain(`documents:\n  - id: ${after.documents[0].short_id}\n    role: paper`)
+    expect(md).toContain(
+      "# Attention Is All You Need\n\nAshish Vaswani, Noam Shazeer · 2024 · arXiv:2401.12345 (cs.CL)",
+    )
+    expect(md).toContain(
+      "## Abstract\n\nWe propose a new simple network architecture, the Transformer & friends.",
+    )
+    expect(md).toContain("```bibtex\n@misc{vaswani2024attention")
+    expect(md).toContain("unwrapped the top-level directory paper-src/")
+    expect(after.description).toContain("Ashish Vaswani")
+
+    // The paper: a LaTeX bundle entering at the real paper, with its citation file, the
+    // figure byte for byte, tagged, attributed to arXiv and locked.
+    const paper = await (
+      await app.request(`/v1/artifacts/${after.documents[0].short_id}`, {
+        headers: as(member.email),
+      })
+    ).json()
+    expect(paper.title).toBe("Attention Is All You Need")
+    expect(paper.locked).toBe(true)
+    expect(paper.versions[0].author).toBe("Ashish Vaswani, Noam Shazeer")
+    const row = await meta.getByShortId(paper.short_id)
+    const v = row ? await meta.getVersion(row.id, 1) : null
+    expect(v?.content_type).toBe("derive/latex")
+    const manifest = JSON.parse(
+      new TextDecoder().decode((await ctx.blobs.get(v?.blob_key ?? "")) ?? undefined),
+    )
+    expect(manifest.entry).toBe("/paper.tex")
+    expect(Object.keys(manifest.files).sort()).toEqual([
+      "/CITATION.bib",
+      "/fig/a.png",
+      "/main.bbl",
+      "/main.tex",
+      "/paper.bbl",
+      "/paper.tex",
+      "/refs.bib",
+    ])
+    expect([...((await ctx.blobs.get(manifest.files["/fig/a.png"].key)) ?? [])]).toEqual([...PNG])
+    expect((await meta.tagsForArtifacts([row?.id ?? ""]))[row?.id ?? ""]).toEqual([
+      "arxiv",
+      `arxiv:${ID}`,
+    ])
+    // Rendered through the LaTeX engine like any paper.
+    const page = await app.request(`/v1/artifacts/${paper.short_id}/content`, {
+      headers: as(member.email),
+    })
+    expect(page.status).toBe(200)
+    expect(await page.text()).toContain("Intro")
+
+    // Read-only for people: no new version, no restore, on the paper or the manifest.
+    expect(
+      (await publishAs(app, "\\documentclass{article}", {}, as(owner.email), paper.short_id))
+        .status,
+    ).toBe(409)
+    expect(
+      (await publishAs(app, "# edited", {}, as(owner.email), after.manifest_short_id)).status,
+    ).toBe(409)
+    const restore = await app.request(`/v1/artifacts/${after.manifest_short_id}/restore`, {
+      ...jsonAs(as(owner.email), { version: 1 }),
+    })
+    expect(restore.status).toBe(409)
+    // And no runs: nothing would answer.
+    const session = await app.request(
+      `/v1/contexts/${created.id}/sessions`,
+      jsonAs(as(owner.email), { body_md: "summarize" }),
+    )
+    expect(session.status).toBe(409)
+    expect((await session.json()).error).toContain("imported paper")
+
+    // The same paper again opens the one Context; a non-arXiv link is refused up front.
+    const again = await importPaper(app, `https://huggingface.co/papers/${ID}`)
+    expect(again.status).toBe(200)
+    expect((await again.json()).id).toBe(created.id)
+    const bad = await importPaper(app, "https://example.com/paper.pdf")
+    expect(bad.status).toBe(400)
+    expect((await bad.json()).code).toBe("not_arxiv")
+  })
+
+  it("holds arXiv's gate across workers, honours Retry-After for everyone, and resumes a reclaimed job", async () => {
+    let rateLimit = true
+    const stub = arxivStub({
+      source: () =>
+        rateLimit
+          ? new Response("slow down", { status: 429, headers: { "retry-after": "120" } })
+          : gzip(SOURCE()),
+    })
+    const { app, meta, clock: c, tickDeps } = setup("contexts-import-gate", stub.fetch)
+    await app.request("/v1/me", { headers: as(owner.email) })
+    const a = await (await importPaper(app, "2402.00001")).json()
+    const b = await (await importPaper(app, "2402.00002")).json()
+    expect(
+      await meta.countActiveImportJobs(
+        a.import ? ((await meta.getContext(a.id))?.org_id ?? "") : "",
+      ),
+    ).toBe(2)
+
+    // Two workers on one store: one takes the gate, the other gets nothing.
+    const [x, y] = await Promise.all([runImportTick(tickDeps("w1")), runImportTick(tickDeps("w2"))])
+    expect(x + y).toBe(1)
+    const jobA = await meta.getImportJobForContext(a.id)
+    expect(jobA).toMatchObject({ status: "failed", error_code: "rate_limited", attempts: 1 })
+    // The 429 holds every worker back for the Retry-After, not only the one that saw it.
+    const lease = await meta.getImportLease("arxiv", "http://derive.test")
+    expect(Date.parse(lease?.next_allowed_at ?? "")).toBeGreaterThanOrEqual(c.now() + 120_000)
+    expect(await runImportTick(tickDeps("w2"))).toBe(0)
+    c.advance(121_000)
+    rateLimit = false
+    // The other paper goes first (its job is due; A waits out its backoff).
+    expect(await runImportTick(tickDeps("w2"))).toBe(1)
+    expect((await meta.getImportJobForContext(b.id))?.status).toBe("ready")
+    c.advance(10 * 60_000)
+    expect(await runImportTick(tickDeps("w1"))).toBe(1)
+    expect((await meta.getImportJobForContext(a.id))?.status).toBe("ready")
+
+    // A worker that died mid-import: its job lease lapses and the next tick resumes from
+    // the paper it had already published, fetching only the metadata again.
+    const done = await meta.getImportJobForContext(a.id)
+    if (!done) throw new Error("job missing")
+    await meta.updateImportJob(done.id, {
+      status: "fetching",
+      lease_until: "2000-01-01T00:00:00.000Z",
+      manifest_version: null,
+    })
+    const before = stub.calls.length
+    c.advance(5 * 60_000)
+    expect(await runImportTick(tickDeps("w3"))).toBe(1)
+    expect(stub.calls.slice(before).map((u) => new URL(u).pathname)).toEqual(["/api/query"])
+    const resumed = await meta.getImportJobForContext(a.id)
+    expect(resumed).toMatchObject({ status: "ready", paper_artifact_id: done.paper_artifact_id })
+    const detail = await (
+      await app.request(`/v1/contexts/${a.id}`, { headers: as(owner.email) })
+    ).json()
+    expect(detail.manifest.md).toContain("resumed after an interrupted import")
+  })
+
+  it("gives up on arXiv's verdicts without retrying, and writes the failure into the manifest", async () => {
+    const cases: [string, Stub | undefined, Stub | undefined, string][] = [
+      ["2403.00001", () => new Response(ERROR_ATOM), undefined, "not_found"],
+      [
+        "2403.00002",
+        undefined,
+        () => new Response(new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d]), { status: 200 }),
+        "no_source",
+      ],
+      [
+        "2403.00003",
+        undefined,
+        () => gzip(gzipSync(tarSync({ "README.md": "no tex here" }))),
+        "no_tex",
+      ],
+      ["2403.00004", undefined, () => gzip(gzipSync(new Uint8Array(6 * 1024 * 1024))), "too_large"],
+      [
+        "2403.00005",
+        undefined,
+        () => new Response("", { status: 301, headers: { location: "https://evil.example/src" } }),
+        "unavailable",
+      ],
+    ]
+    let current = cases[0]
+    const stub = arxivStub({
+      metadata: (url, init) => current?.[1]?.(url, init) ?? new Response(ATOM(current?.[0] ?? ID)),
+      source: (url, init) => current?.[2]?.(url, init) ?? gzip(SOURCE()),
+    })
+    const { app, meta, clock: c, tickDeps } = setup("contexts-import-failures", stub.fetch)
+    await app.request("/v1/me", { headers: as(owner.email) })
+    for (const kase of cases) {
+      current = kase
+      const [id, , , code] = kase
+      const x = await (await importPaper(app, id)).json()
+      c.advance(60_000)
+      expect(await runImportTick(tickDeps())).toBe(1)
+      const job = await meta.getImportJobForContext(x.id)
+      expect(job?.error_code).toBe(code)
+      const detail = await (
+        await app.request(`/v1/contexts/${x.id}`, { headers: as(owner.email) })
+      ).json()
+      if (code === "unavailable") {
+        // A redirect off arXiv is refused, and counts as arXiv being unreachable: retried.
+        expect(job?.status).toBe("failed")
+        expect(Date.parse(job?.next_attempt_at ?? "")).toBeGreaterThan(c.now())
+        expect(detail.import.status).toBe("failed")
+      } else {
+        expect(job).toMatchObject({ status: "dead", attempts: 1 })
+        expect(detail.import).toMatchObject({ status: "dead", error: { code } })
+        expect(detail.manifest.md).toContain("Import failed:")
+        expect(detail.manifest.md).not.toContain("Fetching this paper")
+        // Nothing was published for it.
+        expect(detail.documents).toEqual([])
+      }
+      // Its owner can queue it again; the count starts over.
+      const retry = await app.request(`/v1/contexts/${x.id}/import/retry`, {
+        method: "POST",
+        headers: as(owner.email),
+      })
+      expect(retry.status).toBe(200)
+      expect((await retry.json()).import.status).toBe("pending")
+      expect((await meta.getImportJobForContext(x.id))?.attempts).toBe(
+        code === "unavailable" ? 1 : 0,
+      )
+      // Clear it so the workspace cap does not trip the next case.
+      await app.request(`/v1/contexts/${x.id}`, { method: "DELETE", headers: as(owner.email) })
+      expect(await meta.getImportJob(job?.id ?? "")).toBeNull()
+    }
+  })
+
+  it("stops when the Context is discarded mid-fetch, and caps a workspace's imports in flight", async () => {
+    let discard: (() => Promise<void>) | null = null
+    const stub = arxivStub({
+      source: async () => {
+        await discard?.()
+        return gzip(SOURCE())
+      },
+    })
+    const { app, meta, tickDeps } = setup("contexts-import-cancel", stub.fetch)
+    await app.request("/v1/me", { headers: as(owner.email) })
+    const x = await (await importPaper(app, "2404.00001")).json()
+    const org = (await meta.getContext(x.id))?.org_id ?? ""
+    const artifactsBefore = (await meta.listArtifacts({ orgId: org, limit: 100 })).length
+    discard = async () => {
+      await app.request(`/v1/contexts/${x.id}`, { method: "DELETE", headers: as(owner.email) })
+    }
+    expect(await runImportTick(tickDeps())).toBe(1)
+    expect(await meta.getContext(x.id)).toBeNull()
+    expect(await meta.getImportJobForContext(x.id)).toBeNull()
+    // The manifest went with the context; no paper was published into the void.
+    expect((await meta.listArtifacts({ orgId: org, limit: 100 })).length).toBe(artifactsBefore - 1)
+
+    discard = null
+    for (const id of ["2404.00002", "2404.00003", "2404.00004"])
+      expect((await importPaper(app, id)).status).toBe(201)
+    const fourth = await importPaper(app, "2404.00005")
+    expect(fourth.status).toBe(429)
   })
 })

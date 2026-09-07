@@ -46,7 +46,7 @@ export const isTar = (bytes: Uint8Array): boolean =>
   bytes[261] === 0x72
 
 const latin1 = new TextDecoder("latin1")
-const utf8Strict = new TextDecoder("utf-8", { fatal: true })
+const utf8Strict = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false })
 const utf8 = new TextDecoder()
 
 const field = (h: Uint8Array, at: number, len: number): Uint8Array => {

@@ -1,6 +1,8 @@
-import { newId } from "@derive/core"
+import { newId, tarSync } from "@derive/core"
+import { gzipSync } from "fflate"
 import { describe, expect, it } from "vitest"
 import { createInProcessBackplane } from "../src/bus"
+import { runImportTick } from "../src/imports"
 import { sha256 } from "../src/lib/crypto"
 import { inMemoryRateLimiters } from "../src/lib/rate-limit"
 import { bindWorkflowContextSession } from "../src/lib/workflow-coordination"
@@ -1186,5 +1188,97 @@ describe("read — a context opens as a package", () => {
     expect(byShortId.isError).toBe(false)
     expect(byShortId.text).toContain("A real document")
     expect(byShortId.text).not.toContain('"context"')
+  })
+})
+
+describe("imported papers over MCP — read-only, cited, never run", () => {
+  it("find shows the import, read loads the pointer and the citation, use refuses", async () => {
+    const ID = "2405.00001"
+    const tex =
+      "\\documentclass{article}\n\\begin{document}\n\\section{Intro}\nHello.\n\\end{document}\n"
+    const atom = `<feed xmlns="http://www.w3.org/2005/Atom" xmlns:arxiv="http://arxiv.org/schemas/atom"><entry><id>http://arxiv.org/abs/${ID}v1</id><published>2024-05-01T00:00:00Z</published><title>Reading Papers</title><summary>An abstract.</summary><author><name>Ada Lovelace</name></author><arxiv:primary_category term="cs.DL"/></entry></feed>`
+    const bibtex = `@misc{lovelace2024reading,\n  title={Reading Papers},\n  author={Ada Lovelace},\n  year={2024},\n  eprint={${ID}},\n  archivePrefix={arXiv}\n}`
+    const stub = (async (input: string | URL | Request) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url
+      const u = new URL(url)
+      if (u.hostname === "export.arxiv.org") return new Response(atom)
+      if (u.pathname.startsWith("/src/"))
+        return new Response(gzipSync(tarSync({ "main.tex": tex })), { status: 200 })
+      if (u.pathname.startsWith("/bibtex/")) return new Response(bibtex)
+      return new Response("nope", { status: 404 })
+    }) as unknown as typeof fetch
+    const made = makeAuthedApp("mcx-import", [owner, dev], "editor", { deps: { fetch: stub } })
+    const { app, meta, ctx } = made
+    await app.request("/v1/me", { headers: as(owner.email) })
+    await app.request("/v1/me", { headers: as(dev.email) })
+    const ownerBot = await (
+      await app.request("/v1/agents", jsonAs(as(owner.email), { name: "OwnerBot" }))
+    ).json()
+    const queued = await (
+      await app.request(
+        "/v1/contexts/import/arxiv",
+        jsonAs(as(dev.email), { url: `https://arxiv.org/abs/${ID}` }),
+      )
+    ).json()
+    // While it is on its way, find already lists it as an import (no online flag: nothing
+    // will ever poll it), and read says so.
+    const pending = contextsOf(await call(app, ownerBot.token, "find", {}))
+    expect(pending).toMatchObject([
+      { id: queued.id, import: { source: "arxiv", ref: ID, status: "pending" } },
+    ])
+    expect(pending[0].online).toBeUndefined()
+
+    let t = Date.parse("2030-06-01T00:00:00.000Z")
+    expect(
+      await runImportTick({
+        meta,
+        blobs: ctx.blobs,
+        bus: ctx.bus,
+        notify: ctx.notify,
+        background: ctx.background,
+        baseUrl: "http://derive.test",
+        fetch: stub,
+        now: () => t,
+        sleep: async (ms) => {
+          t += ms
+        },
+        caps: { compressedBytes: 1024 * 1024, inflatedBytes: 4 * 1024 * 1024, files: 200 },
+      }),
+    ).toBe(1)
+
+    const rows = contextsOf(await call(app, ownerBot.token, "find", {}))
+    expect(rows).toMatchObject([
+      { id: queued.id, name: "Reading Papers", import: { status: "ready", error: null } },
+    ])
+    expect(rows[0].note).toContain("takes no runs")
+
+    const pkg = await call(app, ownerBot.token, "read", { short_id: queued.id })
+    expect(pkg.import).toMatchObject({ source: "arxiv", ref: ID, status: "ready" })
+    expect(pkg.documents).toHaveLength(1)
+    expect(pkg.documents[0]).toMatchObject({
+      role: "paper",
+      kind: "bundle",
+      title: "Reading Papers",
+    })
+    expect(pkg.manifest.content).toContain("## Abstract\n\nAn abstract.")
+    expect(pkg.how).toContain("takes no runs")
+
+    const paper = await call(app, ownerBot.token, "read", { short_id: pkg.documents[0].short_id })
+    expect(paper.entry).toBe("main.tex")
+    expect(paper.citation).toEqual({ key: "lovelace2024reading", bibtex })
+    expect(paper.next).toContain("\\cite{lovelace2024reading}")
+    const body = await callRaw(app, ownerBot.token, "read", {
+      short_id: pkg.documents[0].short_id,
+      section: "main.tex",
+    })
+    expect(body.text).toContain("Hello.")
+
+    const refused = await callRaw(app, ownerBot.token, "use", {
+      context: queued.id,
+      instruction: "summarize",
+    })
+    expect(refused.isError).toBe(true)
+    expect(refused.text).toContain("imported paper")
+    expect(refused.text).toContain("takes no runs")
   })
 })

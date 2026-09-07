@@ -11,6 +11,12 @@ export interface CreateContextCoreInput {
   maxRunMs?: number
   maxConcurrency?: number
   connectionIds?: string[]
+  /** Who may ask; omitted keeps the store default (`invited`). An imported paper is
+   *  created `workspace`: a read-only document every member should be able to open. */
+  askPolicy?: "workspace" | "invited"
+  /** Import provenance for a Context fetched from an upstream (arXiv). */
+  importSource?: "arxiv"
+  importRef?: string
 }
 
 export interface CreateContextCoreResult {
@@ -74,6 +80,9 @@ export async function createContextCore(
       max_run_ms: input.maxRunMs ?? null,
       ...(input.maxConcurrency !== undefined ? { max_concurrency: input.maxConcurrency } : {}),
       connection_ids: input.connectionIds?.length ? JSON.stringify(input.connectionIds) : null,
+      ...(input.askPolicy ? { ask_policy: input.askPolicy } : {}),
+      import_source: input.importSource ?? null,
+      import_ref: input.importRef ?? null,
     })
     return {
       context,

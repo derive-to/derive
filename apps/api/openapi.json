@@ -9492,6 +9492,66 @@
         }
       }
     },
+    "/v1/contexts/import/arxiv": {
+      "post": {
+        "tags": [
+          "Contexts"
+        ],
+        "summary": "Import a paper from arXiv as a read-only Context: its LaTeX source and BibTeX, fetched in the background.",
+        "responses": {
+          "200": {
+            "description": "This workspace already imported that paper: its existing Context.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContextInfo"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "The new Context, already listed, with import.status 'fetching' (or 'pending') until the worker publishes the paper.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContextInfo"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/contexts/{id}/import/retry": {
+      "post": {
+        "tags": [
+          "Contexts"
+        ],
+        "summary": "Queue a failed paper import again (the context's creator or a workspace manager).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The Context, its import queued again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContextInfo"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/contexts/{id}": {
       "get": {
         "tags": [

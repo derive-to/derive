@@ -1,16 +1,22 @@
 import type { BrowserWorker } from "@cloudflare/puppeteer"
 import type {
   D1Database,
+  DurableObjectNamespace,
   DurableObjectState,
   Hyperdrive,
   R2Bucket,
 } from "@cloudflare/workers-types"
 import { R2BlobStore } from "@derive/storage"
+import { createInProcessBackplane } from "./bus"
 import { tickStore } from "./edge-pg"
 import { runExportTick } from "./exports"
+import { runImportTick } from "./imports"
+import { EDGE_IMPORT_CAPS } from "./lib/arxiv-import"
 import { log } from "./log"
 import { cfBrowserRenderer } from "./preview-cf"
-import { runRenderTick, sweepMissingRenders } from "./previews"
+import { enqueueRender, runRenderTick, sweepMissingRenders } from "./previews"
+import { createDoBackplane } from "./realtime-do"
+import { enqueueForEvent } from "./webhooks"
 
 // While the render queue has work, re-tick on this cadence so a burst drains
 // promptly and near-term retries fire on time — mirroring the webhook outbox.
@@ -40,6 +46,9 @@ export interface PreviewRendererEnv {
   /** When true this deployment drains only renderer-scoped export jobs. It must
    *  never sweep or claim ordinary preview jobs from the shared database. */
   DERIVE_EXPORTS_ONLY?: string
+  /** The realtime rooms, so a paper import's publishes reach open tabs. Optional: without
+   *  it the import still lands, only the live event does not fan out. */
+  ROOMS?: DurableObjectNamespace
 }
 
 export const previewRendererWorkMode = (
@@ -122,13 +131,40 @@ export class PreviewRenderer {
         claimed = await runRenderTick(deps)
       }
       const exportsClaimed = await runExportTick(deps)
+      // Paper imports ride the same alarm on the full-work deployment: one job per tick
+      // behind arXiv's request gate, with the smaller edge caps (a 128 MB isolate inflates
+      // the archive). Never on an exports-only renderer, whose database is not its own.
+      let importsClaimed = 0
+      if (previewRendererWorkMode(this.env) === "full")
+        importsClaimed = await runImportTick({
+          meta: opened.store,
+          blobs,
+          bus: this.env.ROOMS ? createDoBackplane(this.env.ROOMS) : createInProcessBackplane(),
+          baseUrl,
+          fetch,
+          notify: async (a, event, data) => {
+            await enqueueForEvent(opened.store, baseUrl, a, event, data).catch(() => 0)
+          },
+          background: async (work) => {
+            await work.catch(() => undefined)
+          },
+          notifyRender: async (a, n) => {
+            await enqueueRender(opened.store, a.id, n).catch(() => undefined)
+          },
+          caps: EDGE_IMPORT_CAPS,
+        }).catch((error) => {
+          log.error("import tick failed", {
+            error: error instanceof Error ? error.message : String(error),
+          })
+          return 0
+        })
       if (previewRendererWorkMode(this.env) === "exports-only") {
         const idleProbe = (await this.state.storage.get<boolean>(EXPORT_IDLE_PROBE)) === true
         const next = exportOnlyAlarmDecision(exportsClaimed, idleProbe)
         if (next.idleProbeArmed) await this.state.storage.put(EXPORT_IDLE_PROBE, true)
         else await this.state.storage.delete(EXPORT_IDLE_PROBE)
         if (next.delayMs !== null) await this.state.storage.setAlarm(Date.now() + next.delayMs)
-      } else if (claimed + exportsClaimed > 0) {
+      } else if (claimed + exportsClaimed + importsClaimed > 0) {
         await this.state.storage.setAlarm(Date.now() + TICK_MS)
       }
     } catch {
