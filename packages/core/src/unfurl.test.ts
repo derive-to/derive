@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 import {
   embedIframe,
+  kindLabel,
   oembedResponse,
   ogCardSvg,
   ogProfileCardSvg,
@@ -58,6 +59,19 @@ describe("setRobotsMeta", () => {
     expect(html.match(/name="robots"/g)).toHaveLength(1)
     expect(html).toContain('content="index,follow"')
     expect(html).not.toContain("noindex")
+  })
+})
+
+describe("kindLabel", () => {
+  it("names content by what it is, and fetched content by where it came from", () => {
+    expect(kindLabel("derive/latex", true)).toBe("LaTeX")
+    expect(kindLabel("text/x-latex", false)).toBe("LaTeX")
+    expect(kindLabel("derive/skill", true)).toBe("Skill")
+    expect(kindLabel("text/markdown", false)).toBe("Markdown")
+    // A paper Derive fetched reads as arXiv, whatever it is written in.
+    expect(kindLabel("derive/latex", true, "arxiv")).toBe("arXiv")
+    expect(kindLabel("text/x-latex", false, "arxiv")).toBe("arXiv")
+    expect(kindLabel("derive/latex", true, null)).toBe("LaTeX")
   })
 })
 

@@ -204,9 +204,6 @@ export function Templates() {
                   <Badge variant="outline" shape="pill">
                     arXiv
                   </Badge>
-                  <Badge variant="outline" shape="pill">
-                    LaTeX
-                  </Badge>
                 </div>
                 <h2 className="font-serif text-lg font-medium tracking-tight text-foreground">
                   A paper from arXiv

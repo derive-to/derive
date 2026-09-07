@@ -367,6 +367,13 @@ export interface RenderContext {
   /** Depth of inline-only containers (headings, captions, cells) where paragraphs are
    *  not opened. */
   inlineDepth: number
+  /** True while walking a document's PREAMBLE — everything before `\begin{document}`,
+   *  which is setup, not content. Macros still run there (a definition, `\title`), but
+   *  stray text and groups emit nothing: the arguments of a preamble macro this renderer
+   *  does not model (`\crefname{section}{Sec.}{Secs.}`, `\setlist[itemize]{...}`) would
+   *  otherwise land at the top of the paper as gibberish. False for a fragment with no
+   *  `\begin{document}` (an `\input` chapter, a section read), which is all content. */
+  preamble: boolean
   /** Expansion guards for user macros. */
   expansionDepth: number
   expansionBytes: number

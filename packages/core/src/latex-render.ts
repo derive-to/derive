@@ -503,6 +503,8 @@ const makeContext = (
     theorems: shared.theorems,
     paragraph: "none",
     inlineDepth: 0,
+    // Only a source that HAS a document environment has a preamble to suppress.
+    preamble: shared.parsed.nodes.some((n) => n.type === "env" && n.name === "document"),
     expansionDepth: 0,
     expansionBytes: 0,
     cited: shared.cited,
@@ -551,6 +553,10 @@ const makeContext = (
 const walkNodes = (ctx: RenderContext, shared: Shared, nodes: LatexNode[]): void => {
   for (let i = 0; i < nodes.length; i++) {
     const n = nodes[i] as LatexNode
+    // Preamble: walk macros for their side effects (definitions, the title block), emit
+    // nothing else. A macro this renderer does not model leaves its braces as separate
+    // group nodes, which would otherwise print as text above the title.
+    if (ctx.preamble && n.type !== "macro" && n.type !== "env") continue
     switch (n.type) {
       case "text":
         renderText(ctx, n)
@@ -1218,6 +1224,7 @@ const renderEnv = (ctx: RenderContext, shared: Shared, n: EnvNode): void => {
   const { out } = ctx
   const name = n.name
   if (name === "document") {
+    ctx.preamble = false
     walkNodes(ctx, shared, n.body)
     ctx.closeParagraph(n.bodyEnd)
     return

@@ -62,6 +62,46 @@ describe("LaTeX type detection", () => {
   })
 })
 
+describe("renderLatex: the preamble", () => {
+  // A real paper's preamble is full of macros this renderer does not model. Their braces
+  // parse as ordinary groups, and printing those put "sectionSec.Secs. [itemize]noitemsep"
+  // at the top of every imported arXiv paper.
+  const PAPER = String.raw`\documentclass[sigconf]{acmart}
+\usepackage{graphicx}
+\def\onedot{\futurelet\@let@token\onedot}
+\crefname{section}{Sec.}{Secs.}
+\setlist[itemize]{noitemsep, topsep=2pt, parsep=0pt}
+\newcommand{\shout}[1]{\textbf{#1}}
+\title{A Paper}
+\begin{document}
+\maketitle
+\section{Intro}
+Body text and \shout{a defined macro}.
+\end{document}
+`
+
+  it("emits nothing from it, while its definitions still take effect", () => {
+    const r = renderLatex(PAPER, "A Paper")
+    const text = r.body
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+    for (const junk of ["Secs.", "noitemsep", "let@token", "topsep"])
+      expect(text).not.toContain(junk)
+    expect(text).toContain("Body text and a defined macro")
+    expect(text.indexOf("A Paper")).toBeLessThan(text.indexOf("Intro"))
+  })
+
+  it("renders a fragment with no document environment as content, not preamble", () => {
+    const r = renderLatex(`\\section{Intro}\nJust a chapter, \\emph{included} by a paper.`, null)
+    const text = r.body
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+    expect(text).toContain("Just a chapter, included by a paper.")
+  })
+})
+
 describe("renderLatex: the acmart sigconf sample", () => {
   const r = renderLatex(SIGCONF, null, { resolve, imageUrl })
   const body = r.body

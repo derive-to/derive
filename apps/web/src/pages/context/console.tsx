@@ -544,7 +544,7 @@ function ImportedConsole({
                     {paper.title ?? paper.short_id}
                   </span>
                   <Badge variant="outline" shape="pill">
-                    LaTeX
+                    arXiv
                   </Badge>
                 </div>
                 <p className="text-2xs text-muted-foreground">
