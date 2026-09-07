@@ -102,6 +102,52 @@ Body text and \shout{a defined macro}.
   })
 })
 
+describe("renderLatex: math a paper's own notation defines", () => {
+  // A paper defines its notation once for prose AND equations, which in LaTeX means
+  // \ensuremath + \xspace. KaTeX implements neither, so handing it those bodies made every
+  // equation using the macro fail to typeset. And a numbered multi-line equation is
+  // \begin{equation}\begin{split}…: this renderer draws the number and hands over the
+  // inside, which KaTeX refuses as a bare split.
+  const PAPER = String.raw`\documentclass{article}
+\newcommand{\mean}{\ensuremath{\mu}\xspace}
+\newcommand{\cov}{\ensuremath{\Sigma}\xspace}
+\newcommand{\yes}{\ensuremath{\frac{a}{b}}}
+\begin{document}
+The mean \mean{} of it.
+\begin{equation}
+\begin{split}
+x &= \mean + \cov \\
+  &= 0
+\end{split}
+\end{equation}
+\end{document}
+`
+
+  it("hands the typesetter macro bodies it can read", () => {
+    const r = renderLatex(PAPER, null)
+    const island = /id="derive-latex-macros">([\s\S]*?)<\/script>/.exec(r.html)?.[1] ?? "{}"
+    const macros = JSON.parse(island.replace(/<\\\//g, "</")) as Record<string, string>
+    expect(macros["\\mean"]).toBe("\\mu")
+    expect(macros["\\cov"]).toBe("\\Sigma")
+    // The wrapper goes, whatever it wraps.
+    expect(macros["\\yes"]).toBe("\\frac{a}{b}")
+    for (const body of Object.values(macros)) {
+      expect(body).not.toContain("\\ensuremath")
+      expect(body).not.toContain("\\xspace")
+    }
+  })
+
+  it("gives a numbered multi-line equation an environment the typesetter implements", () => {
+    const r = renderLatex(PAPER, null)
+    const tex = [...r.body.matchAll(/data-tex="([^"]*)"/g)]
+      .map((m) => m[1])
+      .find((t) => t?.includes("aligned"))
+    expect(tex).toBeDefined()
+    expect(tex).not.toContain("split")
+    expect(r.body).toContain('class="derive-eqnum"')
+  })
+})
+
 describe("renderLatex: the acmart sigconf sample", () => {
   const r = renderLatex(SIGCONF, null, { resolve, imageUrl })
   const body = r.body

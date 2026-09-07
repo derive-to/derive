@@ -1504,6 +1504,23 @@ const prepareMath = (ctx: RenderContext, n: MathNode): PreparedMath => {
   }
 }
 
+/**
+ * A math body, made safe for the typesetter.
+ *
+ * `\begin{equation}\begin{split}…\end{split}\end{equation}` is how a paper writes one
+ * numbered equation over several lines. This renderer draws the number itself and hands
+ * the typesetter what is inside, and KaTeX refuses a bare `split` ("can be used only in
+ * display mode") because it only implements it nested in an equation. `aligned` is the
+ * environment it does implement with the same alignment, so the equation typesets instead
+ * of falling back to its source.
+ */
+const katexMath = (tex: string): string =>
+  /^\s*\\begin\{split\}/.test(tex)
+    ? tex
+        .replace(/\\begin\{split\}/g, "\\begin{aligned}")
+        .replace(/\\end\{split\}/g, "\\end{aligned}")
+    : tex
+
 const emitMath = (
   ctx: RenderContext,
   shared: Shared,
@@ -1515,7 +1532,7 @@ const emitMath = (
 ): void => {
   const { out } = ctx
   shared.hasMath.value = true
-  const span = `<span class="derive-math" data-derive-math="${display ? "display" : "inline"}" data-tex="${attr(tex)}"${READONLY_ATTR}></span>`
+  const span = `<span class="derive-math" data-derive-math="${display ? "display" : "inline"}" data-tex="${attr(katexMath(tex))}"${READONLY_ATTR}></span>`
   if (!display) {
     out.markup(span, [start, end])
     return
@@ -1643,6 +1660,60 @@ const runPass = (
   return ctx
 }
 
+/**
+ * A user macro's body, made safe for the math typesetter.
+ *
+ * A paper defines its notation once and uses it in prose AND in equations, which in LaTeX
+ * means `\newcommand{\mean}{\ensuremath{\mu}\xspace}`: `\ensuremath` picks the mode and
+ * `\xspace` fixes the spacing after it. KaTeX implements neither, so handing it that body
+ * verbatim makes every equation using the macro fail to typeset — the definition is
+ * already inside math, where the wrapper has nothing left to decide. Unwrapping it (and
+ * dropping the spacing helpers, which mean nothing in math) is what the macro would have
+ * expanded to anyway. Only what KaTeX is told changes; the renderer's own expansion of the
+ * same definition, which runs in both modes, is untouched.
+ */
+export const katexMacroBody = (body: string): string => {
+  let out = ""
+  for (let i = 0; i < body.length; ) {
+    const rest = body.slice(i)
+    const ensure = /^\\ensuremath\s*\{/.exec(rest)
+    if (ensure) {
+      // Copy the balanced group's contents, dropping the wrapper braces.
+      let depth = 1
+      let j = i + ensure[0].length
+      const start = j
+      for (; j < body.length && depth > 0; j++) {
+        const ch = body[j]
+        if (ch === "\\") {
+          j++
+          continue
+        }
+        if (ch === "{") depth++
+        else if (ch === "}") depth--
+      }
+      out += katexMacroBody(body.slice(start, depth === 0 ? j - 1 : body.length))
+      i = j
+      continue
+    }
+    const noop = /^\\(xspace|protect|relax)(?![a-zA-Z])/.exec(rest)
+    if (noop) {
+      i += noop[0].length
+      continue
+    }
+    // Any other control sequence is copied whole, so a `\\xspacefoo` is never mistaken
+    // for one of the names above.
+    const macro = /^\\([a-zA-Z]+|.)/s.exec(rest)
+    if (macro) {
+      out += macro[0]
+      i += macro[0].length
+      continue
+    }
+    out += body[i]
+    i++
+  }
+  return out
+}
+
 /** Render a LaTeX document body to HTML with its text projection. Never throws. */
 export const renderLatexBody = (source: string, opts: RenderOptions): LatexRenderResult => {
   const parsed = parseLatex(source)
@@ -1655,7 +1726,7 @@ export const renderLatexBody = (source: string, opts: RenderOptions): LatexRende
   const bibliography = loadBibliography(first)
   const ctx = runPass(source, opts, shared, 2, bibliography)
   const macros: Record<string, string> = {}
-  for (const [name, def] of shared.defs) macros[`\\${name}`] = def.body
+  for (const [name, def] of shared.defs) macros[`\\${name}`] = katexMacroBody(def.body)
   const titleText = ctx.out.text
     .slice(ctx.counters.titleStart ?? 0, ctx.counters.titleEnd ?? 0)
     .replace(/\s+/g, " ")
