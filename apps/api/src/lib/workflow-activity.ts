@@ -27,7 +27,7 @@ const suggestionRole = (role: string | undefined): WorkflowArtifactActivityRole 
   return "output"
 }
 
-/** Find exact current member versions that appeared while a run was open. These are
+/** Find exact member versions that appeared while a run was open. These are
  * candidates only. A graph relationship and overlapping time do not prove causality. */
 export const workflowActivitySuggestions = async (args: {
   meta: MetaStore
@@ -81,19 +81,28 @@ export const workflowActivitySuggestions = async (args: {
   const readable = await Promise.all(
     memberArtifacts.map(async (member) => ({ member, allowed: await canRead(member) })),
   )
+  const readableMembers = readable.filter(({ member, allowed }) =>
+    Boolean(allowed && member.id !== workflowArtifact.id),
+  )
+  const versions = await meta.versionsForArtifacts(
+    readableMembers.map(({ member }) => member.id),
+    { createdFrom: run.created_at, createdTo: run.finished_at ?? undefined, limit: 100 },
+  )
+  const membersById = new Map(readableMembers.map(({ member }) => [member.id, member]))
   const recordedVersions = new Set(
     recorded.map((item) => `${item.artifact_short_id}@${item.artifact_version}`),
   )
   const started = Date.parse(run.created_at)
   const finished = run.finished_at ? Date.parse(run.finished_at) : Number.POSITIVE_INFINITY
-  return readable
-    .flatMap(({ member, allowed }) => {
-      if (!allowed || member.current_version < 1 || member.id === workflowArtifact.id) return []
+  return versions
+    .flatMap((version) => {
+      const member = membersById.get(version.artifact_id)
+      if (!member) return []
       const relationship = relationships.get(member.short_id)
-      const createdAt = member.updated_at ?? member.created_at
+      const createdAt = version.created_at
       const created = Date.parse(createdAt)
       if (!relationship || created < started || created > finished) return []
-      if (recordedVersions.has(`${member.short_id}@${member.current_version}`)) return []
+      if (recordedVersions.has(`${member.short_id}@${version.n}`)) return []
       const nodeIds = [...relationship.nodeIds]
       const nodeId = nodeIds.length === 1 ? (nodeIds[0] ?? null) : null
       const matchingAttempts = nodeId
@@ -109,11 +118,11 @@ export const workflowActivitySuggestions = async (args: {
       const attempt = matchingAttempts.length === 1 ? (matchingAttempts[0]?.attempt ?? null) : null
       return [
         {
-          id: `suggested_${run.id}_${member.short_id}_${member.current_version}`,
+          id: `suggested_${run.id}_${member.short_id}_${version.n}`,
           nodeId,
           attempt,
           artifactShortId: member.short_id,
-          artifactVersion: member.current_version,
+          artifactVersion: version.n,
           artifactTitle: member.title,
           role: relationship.role,
           source: "suggested" as const,

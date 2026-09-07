@@ -2778,6 +2778,26 @@ export function runStoreContract(
       expect(cur[b.id]?.artifact_id).toBe(b.id)
     })
 
+    it("versionsForArtifacts returns every exact version for the requested artifacts", async () => {
+      const a = await store.createArtifact(newArtifact())
+      const b = await store.createArtifact(newArtifact())
+      await store.addVersion(a.id, newVersion({ message: "a1" }))
+      await store.addVersion(a.id, newVersion({ message: "a2" }))
+      await store.addVersion(b.id, newVersion({ message: "b1" }))
+
+      expect(await store.versionsForArtifacts([])).toEqual([])
+      const all = await store.versionsForArtifacts([b.id, a.id, "art_missing"])
+      expect(all).toHaveLength(3)
+      expect(all.map((version) => [version.artifact_id, version.n, version.message])).toEqual(
+        expect.arrayContaining([
+          [a.id, 1, "a1"],
+          [a.id, 2, "a2"],
+          [b.id, 1, "b1"],
+        ]),
+      )
+      expect(await store.versionsForArtifacts([a.id], { limit: 1 })).toHaveLength(1)
+    })
+
     it("workspaceSummary matches the six calls it replaces, and keeps each one's scoping rules", async () => {
       const org = `org_${uuid()}`
       const otherOrg = `org_${uuid()}`

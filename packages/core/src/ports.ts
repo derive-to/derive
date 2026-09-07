@@ -562,6 +562,7 @@ export interface CatchUpRead {
   rounds: ReviewRoundRecord[]
   beforeData: VersionDataRecord[]
   afterData: VersionDataRecord[]
+  workflowRuns: WorkflowRunRecord[]
 }
 
 export interface NewVersionData {
@@ -669,6 +670,13 @@ export interface ArtifactStore {
    *  `Promise.all` around them cannot help (see edge-pg.ts). Artifacts with no current
    *  version are simply absent from the result. */
   currentVersions(artifactIds: string[]): Promise<Record<string, VersionRecord>>
+  /** Every immutable version for a bounded artifact set, ordered by artifact and version.
+   * Workflow recovery uses this to find exact versions created during a run without one
+   * edge round trip per member. */
+  versionsForArtifacts(
+    artifactIds: string[],
+    opts?: { createdFrom?: string; createdTo?: string; limit?: number },
+  ): Promise<VersionRecord[]>
   /** Replace a version's stored facts with `rows` (delete-then-insert, so a
    *  re-extraction is idempotent). Empty `rows` clears them. Keyed by the immutable
    *  (artifact, n); called best-effort from the version-bump chain. */

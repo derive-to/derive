@@ -1016,6 +1016,27 @@ export function makeRepos(db: SqliteDb) {
     return out
   }
 
+  const versionsForArtifacts = async (
+    artifactIds: string[],
+    opts: { createdFrom?: string; createdTo?: string; limit?: number } = {},
+  ): Promise<VersionRecord[]> => {
+    if (artifactIds.length === 0) return []
+    const limit = Math.max(1, Math.min(opts.limit ?? 100, 1_000))
+    return (await db
+      .select()
+      .from(version)
+      .where(
+        and(
+          inArray(version.artifact_id, artifactIds),
+          opts.createdFrom ? gte(version.created_at, opts.createdFrom) : undefined,
+          opts.createdTo ? lte(version.created_at, opts.createdTo) : undefined,
+        ),
+      )
+      .orderBy(desc(version.created_at), asc(version.artifact_id), desc(version.n))
+      .limit(limit)
+      .all()) as VersionRecord[]
+  }
+
   // Sequential add (used by D1, which has no interactive transactions; the
   // UNIQUE(artifact_id, n) constraint turns a race into a clean error). The
   // better-sqlite3 driver overrides this with a synchronous transaction.
@@ -6077,6 +6098,7 @@ export function makeRepos(db: SqliteDb) {
     listVersions,
     getVersion,
     currentVersions,
+    versionsForArtifacts,
     unfurlInfo,
     setVersionData,
     setDerivedVersionData,

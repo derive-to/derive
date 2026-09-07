@@ -304,6 +304,49 @@ describe("MCP publish reaches the human (event parity + auto-open)", () => {
         }),
       ]),
     )
+    const missedLatest = await call(app, token, "publish", {
+      short_id: linked.short_id,
+      content: "# A second evidence version during the run",
+    })
+    expect(missedLatest.version).toBe(3)
+    const multiVersionHistoryResponse = await app.request(
+      `/v1/artifacts/${workflow.short_id}/workflow-runs?diagram=publish-once`,
+      { headers: { authorization: `Bearer ${token}` } },
+    )
+    const multiVersionHistory = (await multiVersionHistoryResponse.json()) as {
+      runs: Array<{
+        suggestions: Array<{ artifactShortId: string; artifactVersion: number }>
+      }>
+    }
+    expect(
+      multiVersionHistory.runs[0]?.suggestions
+        .filter((item) => item.artifactShortId === linked.short_id)
+        .map((item) => item.artifactVersion)
+        .sort((left, right) => left - right),
+    ).toEqual([2, 3])
+    const caughtUp = await call(app, token, "catch_up", { short_id: workflow.short_id })
+    expect(caughtUp.summary).toContain("3 possible workflow artifact receipts need confirmation")
+    expect(caughtUp.workflow_receipt_gaps).toEqual([
+      expect.objectContaining({
+        run_id: started.runId,
+        diagram_id: "publish-once",
+        suggestions: expect.arrayContaining([
+          expect.objectContaining({
+            artifact: expect.objectContaining({
+              short_id: missed.short_id,
+              version: 2,
+            }),
+            node_id: "publish",
+            attempt: null,
+            role: "evidence",
+            confirm_with: expect.objectContaining({
+              tool: "use",
+              note: "Choose the correct node and attempt before confirmation.",
+            }),
+          }),
+        ]),
+      }),
+    ])
     const recovered = await call(app, token, "use", {
       workflow: {
         run_id: started.runId,
@@ -328,10 +371,18 @@ describe("MCP publish reaches the human (event parity + auto-open)", () => {
         run_id: started.runId,
         node_id: "publish",
         attempt: 1,
+        artifact: { short_id: missedLatest.short_id, version: 3, role: "evidence" },
+      },
+    })
+    await call(app, token, "use", {
+      workflow: {
+        run_id: started.runId,
+        node_id: "publish",
+        attempt: 1,
         artifact: { short_id: late.short_id, version: 1, role: "output" },
       },
     })
-    expect(await meta.listWorkflowArtifactActivity(started.runId, run.org_id)).toHaveLength(3)
+    expect(await meta.listWorkflowArtifactActivity(started.runId, run.org_id)).toHaveLength(4)
     const recoveredHistoryResponse = await app.request(
       `/v1/artifacts/${workflow.short_id}/workflow-runs?diagram=publish-once`,
       { headers: { authorization: `Bearer ${token}` } },
@@ -358,6 +409,69 @@ describe("MCP publish reaches the human (event parity + auto-open)", () => {
       | undefined
     expect(invalidResult?.isError).toBe(true)
     expect(invalidResult?.content?.[0]?.text).toContain("does not contain this diagram and node")
+  })
+
+  it("keeps private workflow receipt candidates out of another agent's catch-up", async () => {
+    const name = "workflow-activity-private"
+    const { app, meta, token } = loopApp(name)
+    const privateMember = await call(app, token, "publish", {
+      content: "# Private initial evidence",
+      title: "Private workflow evidence",
+      workspace_access: "none",
+    })
+    const workflow = await call(app, token, "publish", {
+      content: activityWorkflowHtml(privateMember.short_id as string),
+      title: "Shared workflow",
+    })
+    const startedResponse = await app.request(`/v1/artifacts/${workflow.short_id}/workflow-run`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ diagramId: "publish-once", delivery: "copy" }),
+    })
+    const started = (await startedResponse.json()) as { runId: string }
+    await call(app, token, "publish", {
+      short_id: privateMember.short_id,
+      content: "# Private evidence created during the run",
+    })
+    const ownerCatchUp = await call(app, token, "catch_up", { short_id: workflow.short_id })
+    expect(ownerCatchUp.workflow_receipt_gaps).toEqual([
+      expect.objectContaining({ run_id: started.runId }),
+    ])
+
+    const run = await meta.getWorkflowRunById(started.runId)
+    if (!run) throw new Error("workflow run missing")
+    await meta.setMembership({
+      id: "m_workflow_editor",
+      org_id: run.org_id,
+      user_id: "u_e",
+      role: "editor",
+    })
+    const editorToken = "tok_workflow_activity_editor"
+    const authDb = new Database(join(dir, `${name}.db`))
+    authDb
+      .prepare(`INSERT OR IGNORE INTO "user"(id,email,name) VALUES('u_e','editor@x.test','Editor')`)
+      .run()
+    authDb
+      .prepare(
+        `INSERT INTO "oauthAccessToken"(token,clientId,userId,scopes,expiresAt) VALUES(?,?,?,?,?)`,
+      )
+      .run(
+        sha256(editorToken),
+        "cli",
+        "u_e",
+        JSON.stringify(["openid", "derive:read", "derive:publish"]),
+        new Date(Date.now() + 3_600_000).toISOString(),
+      )
+    authDb.close()
+
+    const editorCatchUp = await call(app, editorToken, "catch_up", {
+      short_id: workflow.short_id,
+    })
+    expect(editorCatchUp.summary).not.toContain("possible workflow artifact receipt")
+    expect(editorCatchUp.workflow_receipt_gaps).toBeUndefined()
   })
 
   it("emits version.published + artifact.pushed, writes a bell row, and reports opened_in_tab", async () => {

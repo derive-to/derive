@@ -1274,6 +1274,24 @@ export class PgMetaStore implements MetaStore {
     return out
   }
 
+  async versionsForArtifacts(
+    artifactIds: string[],
+    opts: { createdFrom?: string; createdTo?: string; limit?: number } = {},
+  ): Promise<VersionRecord[]> {
+    if (artifactIds.length === 0) return []
+    const limit = Math.max(1, Math.min(opts.limit ?? 100, 1_000))
+    const { rows } = await this.pool.query<VersionRecord>(
+      `SELECT * FROM version
+        WHERE artifact_id = ANY($1)
+          AND ($2::text IS NULL OR created_at >= $2::text)
+          AND ($3::text IS NULL OR created_at <= $3::text)
+        ORDER BY created_at DESC, artifact_id ASC, n DESC
+        LIMIT $4`,
+      [artifactIds, opts.createdFrom ?? null, opts.createdTo ?? null, limit],
+    )
+    return rows
+  }
+
   async artifactDetail(opts: ArtifactDetailOpts): Promise<ArtifactDetail> {
     const { artifactId, orgId, viewerId } = opts
     // Six sequential ~80ms round trips (versions, tags, collection ids,
@@ -1428,8 +1446,9 @@ export class PgMetaStore implements MetaStore {
     rounds: ReviewRoundRecord[]
     beforeData: VersionDataRecord[]
     afterData: VersionDataRecord[]
+    workflowRuns: WorkflowRunRecord[]
   }> {
-    // Five independent reads ride one statement. node-postgres serializes queries on one
+    // Six independent reads ride one statement. node-postgres serializes queries on one
     // edge connection, so Promise.all cannot remove their network latency by itself.
     const { rows } = await this.pool.query<{ kind: string; doc: unknown }>(
       `SELECT 'version' kind, row_to_json(v) doc FROM version v
@@ -1445,7 +1464,14 @@ export class PgMetaStore implements MetaStore {
         WHERE d.artifact_id = $1 AND d.n = $2
        UNION ALL
        SELECT 'after-data', row_to_json(d) FROM version_data d
-        WHERE d.artifact_id = $1 AND d.n = $3`,
+        WHERE d.artifact_id = $1 AND d.n = $3
+       UNION ALL
+       SELECT 'workflow-run', row_to_json(w) FROM (
+         SELECT * FROM workflow_run
+          WHERE workflow_artifact_id = $1
+          ORDER BY created_at DESC, id DESC
+          LIMIT 10
+       ) w`,
       [artifactId, beforeN, afterN],
     )
     const versions: VersionRecord[] = []
@@ -1453,12 +1479,14 @@ export class PgMetaStore implements MetaStore {
     const rounds: ReviewRoundRecord[] = []
     const beforeData: VersionDataRecord[] = []
     const afterData: VersionDataRecord[] = []
+    const workflowRuns: WorkflowRunRecord[] = []
     for (const row of rows) {
       if (row.kind === "version") versions.push(row.doc as VersionRecord)
       else if (row.kind === "comment") comments.push(row.doc as CommentRecord)
       else if (row.kind === "round") rounds.push(row.doc as ReviewRoundRecord)
       else if (row.kind === "before-data") beforeData.push(row.doc as VersionDataRecord)
       else if (row.kind === "after-data") afterData.push(row.doc as VersionDataRecord)
+      else if (row.kind === "workflow-run") workflowRuns.push(row.doc as WorkflowRunRecord)
     }
     versions.sort((a, b) => a.n - b.n)
     comments.sort((a, b) =>
@@ -1467,7 +1495,10 @@ export class PgMetaStore implements MetaStore {
     rounds.sort((a, b) => (a.created_at > b.created_at ? -1 : a.created_at < b.created_at ? 1 : 0))
     beforeData.sort((a, b) => a.slot.localeCompare(b.slot))
     afterData.sort((a, b) => a.slot.localeCompare(b.slot))
-    return { versions, comments, rounds, beforeData, afterData }
+    workflowRuns.sort((a, b) =>
+      a.created_at > b.created_at ? -1 : a.created_at < b.created_at ? 1 : 0,
+    )
+    return { versions, comments, rounds, beforeData, afterData, workflowRuns }
   }
   async getVersionDataSeries(
     artifactId: string,
