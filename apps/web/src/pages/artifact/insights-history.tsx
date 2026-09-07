@@ -169,36 +169,38 @@ export function Insights({
               )}
             </div>
 
-            <div className="grid gap-6 sm:grid-cols-2">
-              <div>
-                <Eyebrow as="div" className="mb-2">
-                  Per version
-                </Eyebrow>
-                <div className="flex flex-col gap-1.5">
-                  {[...data.perVersion]
-                    .sort((a, b) => b.version - a.version)
-                    .map((v) => (
-                      <div key={v.version} className="flex items-center gap-2 text-sm">
-                        <span className="w-8 shrink-0 font-mono text-2xs text-muted-foreground tabular-nums">
-                          v{v.version}
-                        </span>
-                        <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-secondary">
-                          <div
-                            className="h-full rounded-full bg-chart-1"
-                            style={{ width: `${(v.count / vmax) * 100}%` }}
-                          />
+            <div className={cn("grid gap-6", data.perVersion.length > 0 && "sm:grid-cols-2")}>
+              {data.perVersion.length > 0 && (
+                <div>
+                  <Eyebrow as="div" className="mb-2">
+                    Views per version
+                  </Eyebrow>
+                  <div className="flex flex-col gap-1.5">
+                    {[...data.perVersion]
+                      .sort((a, b) => b.version - a.version)
+                      .map((v) => (
+                        <div key={v.version} className="flex items-center gap-2 text-sm">
+                          <span className="w-8 shrink-0 font-mono text-2xs text-muted-foreground tabular-nums">
+                            v{v.version}
+                          </span>
+                          <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-secondary">
+                            <div
+                              className="h-full rounded-full bg-chart-1"
+                              style={{ width: `${(v.count / vmax) * 100}%` }}
+                            />
+                          </div>
+                          <span className="w-10 shrink-0 text-right font-mono text-2xs text-muted-foreground tabular-nums">
+                            {v.count}
+                          </span>
                         </div>
-                        <span className="w-10 shrink-0 text-right font-mono text-2xs text-muted-foreground tabular-nums">
-                          {v.count}
-                        </span>
-                      </div>
-                    ))}
+                      ))}
+                  </div>
                 </div>
-              </div>
+              )}
 
               <div>
                 <Eyebrow as="div" className="mb-2">
-                  Viewed by
+                  Recent activity
                 </Eyebrow>
                 {namedRecent.length === 0 &&
                 data.anonViewers === 0 &&
