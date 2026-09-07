@@ -62,6 +62,10 @@ the exporter found: a WebP or GIF figure pdfLaTeX cannot read, a slot without da
 style file the bundle lacks. Upload the zip to Overleaf, set `main.tex` as the main
 document and pdfLaTeX as the compiler.
 
+The export finds dynamic bindings through the same entry traversal as the renderer.
+Unused `.tex` drafts remain in the archive, but do not create dynamic fragments or
+override bindings in the paper. First occurrence follows the paper's include order.
+
 ## What renders
 
 Sectioning (`\section` to `\subparagraph`, `\appendix`), prose and formatting, footnotes,

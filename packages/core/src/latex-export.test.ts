@@ -134,6 +134,28 @@ describe("planLatexExport", () => {
     )
   })
 
+  it("uses entry order for bindings and ignores unused drafts without dropping their source", () => {
+    const draft = "\\derivefigure{results}\\derivetable{unused}"
+    const plan = planLatexExport({
+      entry: "main.tex",
+      files: {
+        "draft.tex": draft,
+        "sec/later.tex": "\\derivefigure{results}",
+        "main.tex": "\\begin{document}\\input{./sec/first}\\input{sec/later}\\end{document}",
+        "sec/first.tex": "\\derivetable{results}",
+      },
+      slots: { results: { kind: "table", table: { columns: [{ key: "score" }], rows: [] } } },
+      blobs: {},
+      meta,
+    })
+    expect(plan.files["draft.tex"]).toBe(draft)
+    expect(plan.files["derive-dynamic/unused.tex"]).toBeUndefined()
+    expect(text(plan.files, "derive-dynamic/results.tex")).toBe(
+      dynamicTableTex({ columns: [{ key: "score" }], rows: [] }),
+    )
+    expect(plan.notes).toEqual([])
+  })
+
   it("never builds a fragment path from a name the slot grammar refuses", () => {
     // A binding name becomes a zip entry: `derive-dynamic/<name>.tex`. Anything outside the
     // grammar (a traversal, a space, an uppercase letter) is skipped with a note, exactly
@@ -151,7 +173,7 @@ describe("planLatexExport", () => {
     expect(Object.keys(plan.files).filter((p) => p.includes(".."))).toEqual([])
     expect(Object.keys(plan.files)).toContain("derive-dynamic/results.tex")
     expect(plan.notes).toContain(
-      'Dynamic binding "../../outside" was ignored: names are lowercase letters, digits and dashes.',
+      "\\derivetable{../../outside}: names are lowercase letters, digits and dashes (up to 64)",
     )
   })
 
