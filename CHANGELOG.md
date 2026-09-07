@@ -15,6 +15,23 @@ for the recommended install and verification flow.
 ## [Unreleased]
 
 ### Added
+- **Import a paper from arXiv as a read-only Context.** The new-context page's "Import a
+  paper from arXiv" door takes an abstract page, a PDF link, a DOI, an `arXiv:` reference
+  or a bare id (a strict grammar on an exact host allowlist; anything else is "not an
+  arXiv link"), creates the Context at once so the list shows it fetching, and a worker
+  fetches the paper's metadata, LaTeX source and BibTeX behind a deployment-wide request
+  gate that keeps to arXiv's one request every three seconds and honours Retry-After for
+  every worker. The paper publishes as a locked LaTeX bundle (the archive's `00README`
+  entry, figures intact, `CITATION.bib` beside the bibliography, tagged `arxiv`, no world
+  link) and the Context's generated manifest carries the byline, abstract and BibTeX.
+  Agents `find` and `read` it (`documents` points at the paper, whose outline gains
+  `citation`); `use` and sessions refuse it. Failures carry a code (not found, withdrawn,
+  PDF only, no `.tex`, too large, rate limited, unavailable), retry when it can help, and
+  are written into the manifest when the import gives up; Try again and Discard live on
+  the console. `POST /v1/contexts/import/arxiv`, `POST /v1/contexts/:id/import/retry`,
+  `import` on every `ContextInfo`, `documents` and `bibtex` on the human GET. The
+  manifest grammar gains a `documents:` list, parsed server-side only.
+
 - **Paper templates and "Download LaTeX source".** Two starters, ACM SIGGRAPH (acmart,
   sigconf, author-year citations in the compiled PDF) and CVPR (the author kit's layout in review mode), are
   available under Academic on the Templates page, as `derive://latex/templates/<id>` MCP resources, at
@@ -125,6 +142,9 @@ for the recommended install and verification flow.
   the human verb. Skill fetching reads current versions.
 
 ### Fixed
+- **Restoring a locked artifact.** The restore route was the one content write that
+  ignored the lock; it now answers 409 like a publish. Deleting a manifest also clears the
+  context's asker roster, which the artifact cascade had missed.
 - **A filtered listing skipped the listing gate.** In the shared list query, the rule that
   keeps an unlisted (`listed: none`), members-only artifact out of a viewer's listing was
   an `else` hanging off whichever filter sat above it, so a typed listing (`find

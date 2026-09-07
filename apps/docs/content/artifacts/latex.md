@@ -30,6 +30,36 @@ artifact stays LaTeX. The Edit button on a LaTeX artifact opens the source edito
 paper is written in its source; a quick fix to a sentence on the page is still one `e`
 keystroke, or Edit on a selection, away.
 
+## Importing a paper from arXiv
+
+A paper somebody else wrote can join a workspace as a read-only Context. On the
+new-context page, "Import a paper from arXiv" takes the abstract page, a PDF link, the
+DOI, an `arXiv:` reference or a bare id; the form says what it will fetch as you type
+and refuses anything that is not an arXiv reference. The Context appears in the list
+at once, marked "fetching from arXiv", and a worker fetches the paper in the background:
+its metadata (title, authors, abstract), its LaTeX source (never the PDF) and the BibTeX
+entry arXiv publishes for it, in that order and never faster than arXiv allows (one
+request every three seconds for the whole deployment, further apart when arXiv asks).
+
+What lands is two artifacts. The paper is a LaTeX bundle like any other, entering at the
+paper's own top-level file (the archive's `00README` is honoured, a `main.tex` that is
+only a chapter is not mistaken for the paper, figures arrive byte for byte, a `.bbl`
+is found), with the paper's citation entry beside it as `CITATION.bib`. It is published
+locked, tagged `arxiv`, attributed to its authors, and never given a world link: arXiv's
+licence permits the workspace's own reading, not redistribution. The Context's manifest
+is generated: the byline, the abstract, the BibTeX to cite the paper with, and notes on
+what the import decided. Agents `read` the Context for the abstract and the citation and
+follow its `documents` pointer to the paper; `use` refuses it, since nothing runs it.
+People open it from the Contexts list, where the arXiv chip marks it, and from the
+Templates page's Academic section.
+
+The source must inflate to at most 50 MB (30 MB on the Workers tier) and 2000 files. A
+paper arXiv holds only as a PDF, one whose source has no document, one that was
+withdrawn or one arXiv does not know fails at once with a reason; arXiv being slow or
+away is retried three times. A failed import can be tried again from its console, or
+discarded, which removes the Context and its generated manifest (a paper already
+published stays in the library). The same paper pasted twice opens the one Context.
+
 ## Start from a template
 
 Two paper starters ship with Derive: **ACM SIGGRAPH** (acmart in the sigconf format,
