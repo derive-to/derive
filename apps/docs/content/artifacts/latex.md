@@ -18,7 +18,7 @@ what compiles, and it stays the source of truth.
 - **A paper bundle** is a zip (or an MCP `files` map) with `main.tex` at its root, plus the
   `.bib`, the sections it `\input`s, its figures and any class or style files. The entry
   is `main.tex` (else the shallowest `.tex`); relative paths resolve inside the bundle. The
-  artifact's type is `derive/latex`, shown as "Paper", and the viewer lists the files
+  artifact's type is `derive/latex`, shown as "LaTeX" as well, and the viewer lists the files
   beside the page.
 - **Figures** in a bundle are referenced by relative path (`\includegraphics{figures/teaser}`
   tries `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.svg`). In a single file, upload the image
@@ -29,6 +29,42 @@ Revisions keep the type: an inline edit, an `edits` batch or a full republish of
 artifact stays LaTeX. The Edit button on a LaTeX artifact opens the source editor, since a
 paper is written in its source; a quick fix to a sentence on the page is still one `e`
 keystroke, or Edit on a selection, away.
+
+## Start from a template
+
+Two paper starters ship with Derive: **ACM SIGGRAPH** (acmart in the sigconf format,
+author-year citations in the compiled PDF; switch to `acmtog` for the journal track) and
+**CVPR** (the author kit's layout in review mode, numeric citations). The page cites by
+number for both, as every paper does. On the Templates page, choose one under
+Academic: the New page opens with `main.tex` in the editor, and publishing creates a paper
+bundle with the `.bib` and `derive.sty`. Both starters bind a `results` table
+and a `teaser` figure, seeded empty at publish, so the [dynamic data](dynamic-data.md)
+API works from the first version.
+
+Over MCP, `read("derive://latex/templates/<id>")` returns the same files map for
+`publish({ files })`; over REST it is `GET /v1/latex/templates/<id>`; the CLI has
+`derive init --template siggraph|cvpr`.
+
+The CVPR author kit publishes `cvpr.sty` and `ieeenat_fullname.bst` without a license, so
+Derive does not ship them. Creating a CVPR paper fetches both from a pinned commit of the
+kit into the bundle, verified against pinned hashes. If the fetch fails the paper is still
+created and a comment at the top of `main.tex` says what to add.
+
+## Download the source
+
+"Download LaTeX source" in the viewer's More menu (or
+`GET /v1/artifacts/:id/source.zip`, with `?v=n` for an older version) is a zip that
+compiles as is: every bundle file, `derive.sty`, one `derive-dynamic/<name>.tex` fragment
+per dynamic binding written from the slot's current value (plus the image file for a
+figure), uploaded figures rewritten from their `/blob/<sha>` URLs to `figures/<sha>.<ext>`
+files, and a `README-derive.md` with the provenance, the Overleaf steps and every caveat
+the exporter found: a WebP or GIF figure pdfLaTeX cannot read, a slot without data, a
+style file the bundle lacks. Upload the zip to Overleaf, set `main.tex` as the main
+document and pdfLaTeX as the compiler.
+
+The export finds dynamic bindings through the same entry traversal as the renderer.
+Unused `.tex` drafts remain in the archive, but do not create dynamic fragments or
+override bindings in the paper. First occurrence follows the paper's include order.
 
 ## What renders
 
