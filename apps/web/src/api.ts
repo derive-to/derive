@@ -1418,6 +1418,14 @@ export const api = {
     agent_id?: string
     manifest_short_id: string
   }): Promise<ContextInfo & { agent_token?: string }> => f("/v1/contexts", opts(input)).then(j),
+  // A paper from arXiv as a read-only Context: created at once, fetched in the background.
+  // 201 with a new Context, or 200 with the one this workspace already imported.
+  importArxivContext: (url: string): Promise<ContextInfo> =>
+    f("/v1/contexts/import/arxiv", opts({ url })).then(j),
+  retryContextImport: (id: string): Promise<ContextInfo> =>
+    f(`/v1/contexts/${id}/import/retry`, { ...opts(), method: "POST" }).then(j),
+  deleteContext: (id: string): Promise<void> =>
+    f(`/v1/contexts/${id}`, { ...opts(), method: "DELETE" }).then(() => undefined),
   createChatSession: (input: {
     workspace: string
     body_md: string

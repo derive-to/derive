@@ -194,8 +194,41 @@ export function Templates() {
 
       {!librariesOpen && signedIn && papers.data?.templates.length ? (
         <section className="flex flex-col gap-3" data-testid="templates-academic">
-          <SectionHeading count={papers.data.templates.length}>Academic</SectionHeading>
+          <SectionHeading count={papers.data.templates.length + 1}>Academic</SectionHeading>
           <CardGrid>
+            {/* Not a starter: a paper someone else wrote, read as a Context. Lives with the
+                starters because that is where a person looking for papers looks. */}
+            <Card data-testid="template-academic-arxiv" className="h-full gap-0 py-0">
+              <CardContent className="flex min-w-0 flex-col gap-2 p-4">
+                <div className="flex items-center gap-2">
+                  <Badge variant="outline" shape="pill">
+                    arXiv
+                  </Badge>
+                  <Badge variant="outline" shape="pill">
+                    LaTeX
+                  </Badge>
+                </div>
+                <h2 className="font-serif text-lg font-medium tracking-tight text-foreground">
+                  A paper from arXiv
+                </h2>
+                <p className="text-sm text-muted-foreground">
+                  Paste an arXiv link. Derive fetches the LaTeX source and BibTeX and wraps the
+                  paper in a read-only Context your agents can read and cite.
+                </p>
+              </CardContent>
+              <CardFooter className="mt-auto flex gap-2 p-2">
+                <Button
+                  asChild
+                  className="flex-1"
+                  size="sm"
+                  data-testid="template-academic-arxiv-import"
+                >
+                  <Link to="/contexts/new" search={{ door: "arxiv" }}>
+                    <Icon name="plus" /> Import a paper
+                  </Link>
+                </Button>
+              </CardFooter>
+            </Card>
             {papers.data.templates.map((t) => (
               <Card
                 key={t.id}
