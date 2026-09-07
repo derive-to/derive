@@ -782,6 +782,51 @@ describe("publish: bundles (zip)", () => {
     expect(lone.version.content_type).toBe("derive/latex")
   })
 
+  it("enters at the publisher's named entry and stores an unpacked files map as given", async () => {
+    const blobs = makeBlobs()
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0xff, 0x00, 0x1a])
+    // An arXiv import: `paper.tex` is the paper, `main.tex` only a chapter, and the
+    // figure must not go through a text round trip.
+    const { artifact, version } = await publish(makeMeta(), blobs, {
+      bytes: new Uint8Array(),
+      filename: "paper.zip",
+      isBundle: true,
+      files: {
+        "/paper.tex": new TextEncoder().encode(
+          "\\documentclass{article}\\begin{document}x\\end{document}",
+        ),
+        "main.tex": new TextEncoder().encode("\\section{Chapter}"),
+        "fig/a.png": png,
+      },
+      entry: "/paper.tex",
+    })
+    expect(artifact.kind).toBe("bundle")
+    expect(version.content_type).toBe("derive/latex")
+    expect(version.size_bytes).toBe(
+      "\\documentclass{article}\\begin{document}x\\end{document}".length +
+        "\\section{Chapter}".length +
+        png.byteLength,
+    )
+    const manifest = JSON.parse(
+      new TextDecoder().decode((await blobs.get(version.blob_key)) ?? undefined),
+    )
+    expect(manifest.entry).toBe("/paper.tex")
+    expect(Object.keys(manifest.files).sort()).toEqual(["/fig/a.png", "/main.tex", "/paper.tex"])
+    const stored = await blobs.get(manifest.files["/fig/a.png"].key)
+    expect([...(stored ?? [])]).toEqual([...png])
+    // A named entry that is not in the bundle falls back to the usual choice.
+    const blobs2 = makeBlobs()
+    const fallback = await publish(
+      makeMeta(),
+      blobs2,
+      bundle({ "main.tex": "x", "other.tex": "y" }, { entry: "/missing.tex" }),
+    )
+    const m2 = JSON.parse(
+      new TextDecoder().decode((await blobs2.get(fallback.version.blob_key)) ?? undefined),
+    )
+    expect(m2.entry).toBe("/main.tex")
+  })
+
   it("strips path-traversal, __MACOSX, and .DS_Store entries", async () => {
     const blobs = makeBlobs()
     const { version } = await publish(

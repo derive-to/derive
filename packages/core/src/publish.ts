@@ -106,6 +106,13 @@ export interface PublishInput {
    *  row; storage remains the exact fallback. This removes a serial read before addVersion
    *  on hot edit paths without changing the public publish contract. */
   existingArtifact?: ArtifactRecord
+  /** A bundle already unpacked (an arXiv tarball): the files by path, stored as given
+   *  without a zip round trip. `bytes` is then ignored and the version's size is the sum
+   *  of the files. Bundles only. */
+  files?: Record<string, Uint8Array>
+  /** The bundle's entry page when the publisher knows it (`/paper.tex`); the usual
+   *  index/main/shallowest choice otherwise. Bundles only. */
+  entry?: string | null
 }
 
 export interface PublishResult {
@@ -143,9 +150,12 @@ const MAX_BUNDLE_UNZIPPED_BYTES = 50 * 1024 * 1024 // 50 MB
  * markdown file — markdown entries render through the markdown path at serve time.
  * Null when the bundle has neither HTML nor markdown.
  */
-export const pickBundleEntry = (paths: string[]): string | null => {
+export const pickBundleEntry = (paths: string[], preferred?: string | null): string | null => {
   const shallowest = (pred: (p: string) => boolean): string | undefined =>
     paths.filter(pred).sort((a, b) => a.split("/").length - b.split("/").length)[0]
+  // A publisher that knows the entry (an arXiv import whose paper is `paper.tex` beside
+  // a `main.tex` chapter) names it, so nothing has to be renamed to be found.
+  if (preferred && paths.includes(preferred)) return preferred
   if (paths.includes("/index.html")) return "/index.html"
   // A root SKILL.md wins over any NON-root HTML: a skill folder is a skill even when it
   // ships an HTML reference (references/example.html is exactly what a chart-style skill
@@ -169,8 +179,9 @@ export const pickBundleEntry = (paths: string[]): string | null => {
   )
 }
 
-/** Normalizes a zip entry path; null means skip the entry. */
-const cleanPath = (raw: string): string | null => {
+/** Normalizes a bundle entry path (a zip or tar member) to its slashed manifest key;
+ *  null means skip the entry. */
+export const cleanPath = (raw: string): string | null => {
   const p = raw
     .replace(/\\/g, "/")
     .replace(/^(\.\/)+/, "")
@@ -206,6 +217,8 @@ async function storeContent(
   filename: string,
   isBundle: boolean,
   spa: boolean,
+  unpacked?: Record<string, Uint8Array>,
+  preferredEntry?: string | null,
 ): Promise<StoredContent> {
   let blobWriteMs = 0
   const put = async (data: Uint8Array): Promise<string> => {
@@ -218,10 +231,13 @@ async function storeContent(
   }
   if (isBundle) {
     let unzipped: Record<string, Uint8Array>
-    try {
-      unzipped = unzipSync(bytes)
-    } catch {
-      throw new PublishError(400, "not a valid zip")
+    if (unpacked) unzipped = unpacked
+    else {
+      try {
+        unzipped = unzipSync(bytes)
+      } catch {
+        throw new PublishError(400, "not a valid zip")
+      }
     }
     const paths = Object.keys(unzipped)
     if (paths.length === 0) throw new PublishError(400, "empty bundle")
@@ -245,7 +261,7 @@ async function storeContent(
     }
     // Entry point: an HTML site enters at index/shallowest .html; a skill/doc
     // bundle with no HTML enters at SKILL.md / README.md / shallowest markdown.
-    const entry = pickBundleEntry(Object.keys(files))
+    const entry = pickBundleEntry(Object.keys(files), preferredEntry)
     if (!entry) throw new PublishError(400, "bundle has no html, markdown, or LaTeX entry point")
 
     const manifest: BundleManifest = { entry, spa, files }
@@ -412,8 +428,20 @@ export async function publish(
 ): Promise<PublishResult> {
   const storeStartedAt = performance.now()
   const { blobKey, contentType, kind, suggestedTitle, skillSidecar, blobWriteMs } =
-    await storeContent(blobs, input.bytes, input.filename, input.isBundle, !!input.spa)
+    await storeContent(
+      blobs,
+      input.bytes,
+      input.filename,
+      input.isBundle,
+      !!input.spa,
+      input.isBundle ? input.files : undefined,
+      input.isBundle ? input.entry : undefined,
+    )
   const timings = { blobWriteMs, storeContentMs: performance.now() - storeStartedAt }
+  const sizeBytes =
+    input.isBundle && input.files
+      ? Object.values(input.files).reduce((n, f) => n + f.byteLength, 0)
+      : input.bytes.length
 
   const author = input.author ?? "anonymous"
 
@@ -436,7 +464,7 @@ export async function publish(
       id: newId("v"),
       blob_key: blobKey,
       content_type: contentType,
-      size_bytes: input.bytes.length,
+      size_bytes: sizeBytes,
       author,
       author_login: null,
       author_avatar: null,
@@ -503,7 +531,7 @@ export async function publish(
     id: newId("v"),
     blob_key: blobKey,
     content_type: contentType,
-    size_bytes: input.bytes.length,
+    size_bytes: sizeBytes,
     author,
     author_login: null,
     author_avatar: null,
