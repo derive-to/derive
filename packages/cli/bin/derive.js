@@ -46,6 +46,7 @@ import {
   addToArtifactScanSpool,
   artifactScanStatus,
   commitArtifactScanState,
+  markArtifactScanUnavailable,
   removeFromArtifactScanSpool,
   scanArtifactLogs,
 } from "../src/artifact-scan.js"
@@ -130,6 +131,7 @@ for (let i = 0; i < args.length; i++) {
   else if (a === "--schedule") flags.schedule = "true"
   else if (a === "--quiet") flags.quiet = "true"
   else if (a === "--baseline") flags.baseline = "true"
+  else if (a === "--initial-baseline") flags["initial-baseline"] = "true"
   // Boolean, so it must be listed here: the catch-all below would otherwise eat the next
   // argument as its value, and `derive delete abc --yes` would silently not be confirmed.
   else if (a === "--yes") flags.yes = "true"
@@ -280,7 +282,7 @@ async function fetchWorkspaces(server, token) {
   const account = j.account ?? { id: "default", handle: null }
   const workspaces = {}
   for (const w of j.workspaces ?? []) workspaces[w.id] = { name: w.name, role: w.role }
-  return { account, workspaces }
+  return { account, active: j.active ?? null, workspaces }
 }
 
 function printAccountBlock(server, accountId, indent = "  ", showHandle = true) {
@@ -1409,7 +1411,6 @@ if (cmd === "scan") {
     process.exit(0)
   }
 
-  const skillHasScanned = Boolean(skillScanStatus().last_scan_at)
   const [artifactResult, skillResult] = await Promise.all([
     scanArtifactLogs({
       since: flags.since,
@@ -1420,7 +1421,7 @@ if (cmd === "scan") {
     flags["dry-run"] === "true"
       ? scanSkillLogs({
           since: flags.since,
-          baseline: !flags.since && !skillHasScanned,
+          initialBaseline: true,
           dryRun: true,
           client: flags.client,
         })
@@ -1466,12 +1467,13 @@ if (cmd === "scan") {
     group.events.push(event)
     groups.set(key, group)
   }
-  if (groups.size === 0) groups.set("current", { target, events: [] })
   const currentTargetKey = [target.server, target.workspace_id ?? "", target.account_id ?? ""].join(
     "\0",
   )
+  if (!groups.has(currentTargetKey)) groups.set(currentTargetKey, { target, events: [] })
   const recorded = []
   const rejected = []
+  const unavailable = []
   let uploadError = null
   for (const [groupKey, group] of groups) {
     const token =
@@ -1483,36 +1485,71 @@ if (cmd === "scan") {
       continue
     }
     const client = new DeriveClient(group.target.server, token)
-    const batches = group.events.length
-      ? Array.from({ length: Math.ceil(group.events.length / 100) }, (_, index) =>
-          group.events.slice(index * 100, (index + 1) * 100),
-        )
-      : [[]]
+    let workspaceIds = group.target.workspace_id ? [group.target.workspace_id] : []
     try {
-      for (const [index, batch] of batches.entries()) {
-        const response = await client.call("/v1/artifact-scan/batch", {
-          method: "POST",
-          headers: group.target.workspace_id
-            ? { "x-derive-workspace": group.target.workspace_id }
-            : {},
-          body: JSON.stringify({
-            events: batch.map(({ target: _target, ...event }) => event),
-            coverage:
-              index === batches.length - 1 && groupKey === currentTargetKey ? spool.coverage : [],
-          }),
-        })
-        recorded.push(...(response.recorded ?? []))
-        rejected.push(...(response.rejected ?? []))
+      const discovered = await fetchWorkspaces(group.target.server, token).catch(() => null)
+      const coverageWorkspace = group.target.workspace_id ?? discovered?.active ?? null
+      workspaceIds = [
+        ...new Set([
+          ...(coverageWorkspace ? [coverageWorkspace] : []),
+          ...workspaceIds,
+          ...Object.keys(discovered?.workspaces ?? {}),
+        ]),
+      ]
+      if (workspaceIds.length === 0) workspaceIds.push(null)
+      let remaining = group.events
+      for (const workspaceId of workspaceIds) {
+        const batches = remaining.length
+          ? Array.from({ length: Math.ceil(remaining.length / 100) }, (_, index) =>
+              remaining.slice(index * 100, (index + 1) * 100),
+            )
+          : [[]]
+        const nextRemaining = []
+        for (const [index, batch] of batches.entries()) {
+          const response = await client.call("/v1/artifact-scan/batch", {
+            method: "POST",
+            headers: workspaceId ? { "x-derive-workspace": workspaceId } : {},
+            body: JSON.stringify({
+              events: batch.map(
+                ({ target: _target, retry_unavailable: _retryUnavailable, ...event }) => event,
+              ),
+              coverage:
+                index === batches.length - 1 &&
+                groupKey === currentTargetKey &&
+                workspaceId === coverageWorkspace
+                  ? spool.coverage
+                  : [],
+            }),
+          })
+          const recordedHere = new Set(response.recorded ?? [])
+          recorded.push(...recordedHere)
+          const rejectedHere = new Map(
+            (response.rejected ?? []).map((item) => [
+              typeof item === "string" ? item : item?.event_id,
+              typeof item === "string" ? "rejected" : item?.reason,
+            ]),
+          )
+          for (const event of batch) {
+            if (recordedHere.has(event.event_id)) continue
+            const reason = rejectedHere.get(event.event_id)
+            if (reason === "artifact_unavailable") nextRemaining.push(event)
+            else if (reason) rejected.push({ event_id: event.event_id, reason })
+            else nextRemaining.push(event)
+          }
+        }
+        remaining = nextRemaining
       }
+      unavailable.push(...remaining.map((event) => event.event_id))
     } catch (error) {
       uploadError = error.message
     }
   }
   const rejectedIds = rejected.map((item) => (typeof item === "string" ? item : item?.event_id))
   spool = removeFromArtifactScanSpool([...recorded, ...rejectedIds], !uploadError)
+  spool = markArtifactScanUnavailable(unavailable)
 
   const childArgs = [fileURLToPath(import.meta.url), "skill", "scan", "--quiet", "--json"]
-  if (!skillHasScanned && !flags.since) childArgs.push("--baseline")
+  childArgs.push("--initial-baseline")
   for (const key of ["since", "client", "server", "workspace", "account", "token"])
     if (flags[key]) childArgs.push(`--${key}`, flags[key])
   const skillScan = spawnSync(process.execPath, childArgs, { encoding: "utf8", env: process.env })
@@ -1660,6 +1697,7 @@ if (cmd === "skill") {
     const result = await scanSkillLogs({
       since: flags.since,
       baseline: flags.baseline === "true",
+      initialBaseline: flags["initial-baseline"] === "true",
       dryRun: flags["dry-run"] === "true",
       deferCommit: flags["dry-run"] !== "true",
       client: flags.client,

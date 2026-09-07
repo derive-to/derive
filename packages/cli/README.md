@@ -213,7 +213,13 @@ evidence types, opaque session hashes, and event times. It does not upload promp
 tool arguments, artifact content, file paths, repository paths, raw session IDs, or user names.
 The first scan starts at the end of each existing log. Pass `--since 30d` only when you want an
 explicit backfill. The scanner writes each receipt to a retry-safe spool before it advances a log
-cursor.
+cursor. It checks a small cursor fingerprint before each append scan. If a log was replaced or
+truncated and regrown, it safely replays the file through the idempotent receipt API. Pending tool
+calls stay separate by client, session, and source.
+
+The scanner checks every workspace available to the selected account before it rejects an artifact
+as unavailable. It keeps unresolved receipts in the local spool. A later scan can resolve them after
+an account or server switch. The scanner sends no artifact content while it resolves the target.
 
 The artifact page can show another artifact published later in the same opaque session. This is an
 observed sequence, not provenance. Derive does not create a run, attach the artifact to a node, or
