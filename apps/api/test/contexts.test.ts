@@ -3,6 +3,7 @@ import { gzipSync, zipSync } from "fflate"
 import { beforeAll, describe, expect, it } from "vitest"
 import { createInProcessBackplane, type DeriveEvent } from "../src/bus"
 import { runImportTick } from "../src/imports"
+import { sharpShrinker } from "../src/lib/image-shrink-node"
 import { as, bearer, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
 // Contexts + sessions: the ask → answer → follow-up loop, its permission edges,
@@ -1224,7 +1225,12 @@ describe("contexts: import from arXiv", () => {
       fetch: fetchStub,
       now: c.now,
       sleep: c.sleep,
-      caps: { compressedBytes: 1024 * 1024, inflatedBytes: 4 * 1024 * 1024, files: 200 },
+      caps: {
+        compressedBytes: 1024 * 1024,
+        inflatedBytes: 4 * 1024 * 1024,
+        bundleBytes: 4 * 1024 * 1024,
+        files: 200,
+      },
       holder,
     })
     return { ...made, clock: c, tickDeps }
@@ -1482,6 +1488,149 @@ describe("contexts: import from arXiv", () => {
       await app.request(`/v1/contexts/${x.id}`, { method: "DELETE", headers: as(owner.email) })
       expect(await meta.getImportJob(job?.id ?? "")).toBeNull()
     }
+  })
+
+  it("shrinks oversized raster figures in place until the bundle fits, and names what it cannot shrink", async () => {
+    // A 2200 px square of noise: PNG cannot compress it, so it weighs about as much as
+    // its pixels, and the only way under a small cap is fewer pixels.
+    const sharp = (await import("sharp")).default
+    const noise = new Uint8Array(2200 * 2200)
+    for (let at = 0; at < noise.length; at += 65_536)
+      crypto.getRandomValues(noise.subarray(at, Math.min(at + 65_536, noise.length)))
+    const bigPng = new Uint8Array(
+      await sharp(noise, { raw: { width: 2200, height: 2200, channels: 1 } })
+        .png()
+        .toBuffer(),
+    )
+    const smallJpg = new Uint8Array(
+      await sharp({ create: { width: 200, height: 120, channels: 3, background: "#3366aa" } })
+        .jpeg()
+        .toBuffer(),
+    )
+    expect(bigPng.byteLength).toBeGreaterThan(4 * 1024 * 1024)
+    const tex = `\\documentclass{article}\\begin{document}\\includegraphics{figs/noise.png}\\includegraphics{figs/tiny.jpg}\\end{document}`
+    let source: () => Uint8Array = () =>
+      gzipSync(tarSync({ "main.tex": tex, "figs/noise.png": bigPng, "figs/tiny.jpg": smallJpg }))
+    const stub = arxivStub({ source: () => gzip(source()) })
+    const { app, meta, ctx, clock: c, tickDeps } = setup("contexts-import-shrink", stub.fetch)
+    await app.request("/v1/me", { headers: as(owner.email) })
+    const caps = {
+      compressedBytes: 64 * 1024 * 1024,
+      inflatedBytes: 64 * 1024 * 1024,
+      bundleBytes: 4 * 1024 * 1024,
+      files: 200,
+    }
+    const x = await (await importPaper(app, "2405.00001")).json()
+    expect(await runImportTick({ ...tickDeps(), caps, shrink: sharpShrinker() })).toBe(1)
+    const detail = await (
+      await app.request(`/v1/contexts/${x.id}`, { headers: as(owner.email) })
+    ).json()
+    expect(detail.import.status).toBe("ready")
+    expect(detail.manifest.md).toMatch(
+      /shrank 1 figure to at most 1600 px on the long side \(\d+\.\d MB → \d+\.\d MB\)/,
+    )
+    const paper = await meta.getByShortId(detail.documents[0].short_id)
+    const v = paper ? await meta.getVersion(paper.id, 1) : null
+    const manifest = JSON.parse(
+      new TextDecoder().decode((await ctx.blobs.get(v?.blob_key ?? "")) ?? undefined),
+    )
+    // Same paths and formats; the PNG lost pixels, the small JPEG kept its bytes.
+    expect(Object.keys(manifest.files).sort()).toEqual([
+      "/CITATION.bib",
+      "/figs/noise.png",
+      "/figs/tiny.jpg",
+      "/main.tex",
+    ])
+    const shrunk = (await ctx.blobs.get(manifest.files["/figs/noise.png"].key)) ?? new Uint8Array()
+    expect(shrunk.byteLength).toBeLessThan(bigPng.byteLength)
+    expect([...shrunk.subarray(0, 4)]).toEqual([0x89, 0x50, 0x4e, 0x47])
+    const width = new DataView(shrunk.buffer, shrunk.byteOffset).getUint32(16)
+    const height = new DataView(shrunk.buffer, shrunk.byteOffset).getUint32(20)
+    expect(Math.max(width, height)).toBe(1600)
+    expect([...((await ctx.blobs.get(manifest.files["/figs/tiny.jpg"].key)) ?? [])]).toEqual([
+      ...smallJpg,
+    ])
+    expect(v?.size_bytes).toBeLessThan(caps.bundleBytes)
+    const page = await app.request(`/v1/artifacts/${paper?.short_id}/content`, {
+      headers: as(owner.email),
+    })
+    expect(await page.text()).toContain("figs/noise.png")
+
+    // A PDF figure is never touched: when it alone keeps the bundle over the cap, the
+    // import gives up and says which file it was.
+    source = () =>
+      gzipSync(
+        tarSync({
+          "main.tex":
+            "\\documentclass{article}\\begin{document}\\includegraphics{figs/plot.pdf}\\end{document}",
+          "figs/plot.pdf": new Uint8Array(6 * 1024 * 1024).fill(0x25),
+          "figs/noise.png": bigPng,
+        }),
+      )
+    const y = await (await importPaper(app, "2405.00002")).json()
+    c.advance(60_000)
+    expect(await runImportTick({ ...tickDeps(), caps, shrink: sharpShrinker() })).toBe(1)
+    const job = await meta.getImportJobForContext(y.id)
+    expect(job).toMatchObject({ status: "dead", error_code: "too_large" })
+    expect(job?.error_detail).toMatch(
+      /after shrinking 1 figures; largest: figs\/plot\.pdf \(6\.0 MB\)/,
+    )
+    const failed = await (
+      await app.request(`/v1/contexts/${y.id}`, { headers: as(owner.email) })
+    ).json()
+    expect(failed.documents).toEqual([])
+    expect(failed.manifest.md).toContain("Import failed:")
+  }, 30_000)
+
+  it("hands the arXiv gate back before shrinking, so the next import fetches meanwhile", async () => {
+    // A figure above the shrink floor, so the codec is entered at all.
+    const stub = arxivStub({
+      source: () =>
+        gzip(
+          gzipSync(
+            tarSync({
+              "main.tex": "\\documentclass{article}\\begin{document}x\\end{document}",
+              "fig/big.png": new Uint8Array(100 * 1024),
+            }),
+          ),
+        ),
+    })
+    const { app, meta, clock: c, tickDeps } = setup("contexts-import-gate-free", stub.fetch)
+    await app.request("/v1/me", { headers: as(owner.email) })
+    const x = await (await importPaper(app, "2406.00001")).json()
+    let resume: () => void = () => {}
+    const shrinking = new Promise<void>((r) => {
+      resume = r
+    })
+    let entered: () => void = () => {}
+    const enteredShrink = new Promise<void>((r) => {
+      entered = r
+    })
+    const slow = async () => {
+      entered()
+      await shrinking
+      return null
+    }
+    const caps = { compressedBytes: 64 << 20, inflatedBytes: 64 << 20, bundleBytes: 1, files: 200 }
+    const tick = runImportTick({ ...tickDeps("w1"), caps, shrink: slow })
+    await enteredShrink
+    // The three requests are out; three seconds later another worker may take the gate
+    // although w1 is still busy with the figures.
+    c.advance(3_500)
+    expect(
+      await meta.acquireImportLease(
+        "arxiv",
+        "http://derive.test",
+        "w2",
+        new Date(c.now()).toISOString(),
+        new Date(c.now() + 240_000).toISOString(),
+      ),
+    ).toBe(true)
+    resume()
+    expect(await tick).toBe(1)
+    // The job then failed honestly (a 1-byte cap fits nothing), without touching the gate.
+    expect((await meta.getImportJobForContext(x.id))?.error_code).toBe("too_large")
+    expect((await meta.getImportLease("arxiv", "http://derive.test"))?.holder).toBe("w2")
   })
 
   it("stops when the Context is discarded mid-fetch, and caps a workspace's imports in flight", async () => {

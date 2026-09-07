@@ -1242,7 +1242,12 @@ describe("imported papers over MCP — read-only, cited, never run", () => {
         sleep: async (ms) => {
           t += ms
         },
-        caps: { compressedBytes: 1024 * 1024, inflatedBytes: 4 * 1024 * 1024, files: 200 },
+        caps: {
+          compressedBytes: 1024 * 1024,
+          inflatedBytes: 4 * 1024 * 1024,
+          bundleBytes: 4 * 1024 * 1024,
+          files: 200,
+        },
       }),
     ).toBe(1)
 

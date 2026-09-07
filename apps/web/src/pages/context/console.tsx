@@ -517,6 +517,8 @@ function ImportedConsole({
                 {imp.status === "dead" && code && RETRYABLE_IMPORT_CODES.has(code)
                   ? " Derive tried three times."
                   : null}
+                {/* What stayed big is the one thing a reader can act on (a PDF figure). */}
+                {code === "too_large" && imp.error?.detail ? ` ${imp.error.detail}.` : null}
               </>
             }
             action={actions}

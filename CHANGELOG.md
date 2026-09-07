@@ -25,10 +25,14 @@ for the recommended install and verification flow.
   entry, figures intact, `CITATION.bib` beside the bibliography, tagged `arxiv`, no world
   link) and the Context's generated manifest carries the byline, abstract and BibTeX.
   Agents `find` and `read` it (`documents` points at the paper, whose outline gains
-  `citation`); `use` and sessions refuse it. Failures carry a code (not found, withdrawn,
-  PDF only, no `.tex`, too large, rate limited, unavailable), retry when it can help, and
-  are written into the manifest when the import gives up; Try again and Discard live on
-  the console. `POST /v1/contexts/import/arxiv`, `POST /v1/contexts/:id/import/retry`,
+  `citation`); `use` and sessions refuse it. A source over the 50 MB bundle limit has its
+  raster figures re-encoded in place, largest first, to a bounded long side (1600, then
+  1200, then 900 px) until it fits, noted in the manifest; PDF and EPS figures are never
+  touched, and a source that still does not fit fails naming its largest files (Node
+  only; the worker pulls up to 150 MB and inflates as it downloads). Failures carry a code
+  (not found, withdrawn, PDF only, no `.tex`, too large, rate limited, unavailable), retry
+  when it can help, and are written into the manifest when the import gives up; Try again
+  and Discard live on the console. `POST /v1/contexts/import/arxiv`, `POST /v1/contexts/:id/import/retry`,
   `import` on every `ContextInfo`, `documents` and `bibtex` on the human GET. The
   manifest grammar gains a `documents:` list, parsed server-side only.
 

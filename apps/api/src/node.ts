@@ -28,6 +28,7 @@ import { dispatchPass, dispatchRunNow } from "./lib/dispatch"
 import { sweepExpiredDrafts } from "./lib/drafts"
 import { buildAuthEmail, emailDeliverySender, logEmailSender, resendEmailSender } from "./lib/email"
 import { workspaceIdsFromEnv } from "./lib/env"
+import { sharpShrinker } from "./lib/image-shrink-node"
 import { catalogFromGateway, type GatewayConfig } from "./lib/model-catalog"
 import { getInstanceSlot, modelSource, readLibrary } from "./lib/model-library"
 import { mountWeb } from "./lib/serve-web"
@@ -463,6 +464,8 @@ const importWorker = cfg.backgroundWorkers
         void previewWorker?.poke()
       },
       caps: NODE_IMPORT_CAPS,
+      // A source over the bundle cap has its figures shrunk to fit (sharp, Node only).
+      shrink: sharpShrinker(),
     })
   : undefined
 

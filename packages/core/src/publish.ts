@@ -135,11 +135,12 @@ export class PublishError extends Error {
   }
 }
 
-const MAX_BUNDLE_FILES = 2000
+export const MAX_BUNDLE_FILES = 2000
 // Cap the TOTAL decompressed size of a bundle, not just the (compressed) upload.
 // `unzipSync` inflates everything into memory at once, so a zip bomb — a small
 // upload that expands to gigabytes — would OOM/CPU-kill the worker without this.
-const MAX_BUNDLE_UNZIPPED_BYTES = 50 * 1024 * 1024 // 50 MB
+// Exported so an importer that shrinks figures to fit aims at the same number.
+export const MAX_BUNDLE_UNZIPPED_BYTES = 50 * 1024 * 1024 // 50 MB
 
 /**
  * Choose a bundle's entry page. An HTML site enters at its root `index.html`, else

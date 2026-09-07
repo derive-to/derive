@@ -16,10 +16,13 @@ import {
   arxivUrls,
   type BlobStore,
   type ContextRecord,
+  type FigureShrinker,
+  fitBundleBytes,
   type ImportErrorCode,
   type ImportJobRecord,
   isLatexDocument,
   isTar,
+  MAX_BUNDLE_UNZIPPED_BYTES,
   type MetaStore,
   newId,
   normalizeLatexSource,
@@ -34,7 +37,7 @@ import { Gunzip } from "fflate"
 import type { Backplane } from "../bus"
 import { type AfterPublishDeps, afterPublish } from "./after-publish"
 import { type ArxivPaperMeta, failedManifest, plainText, readyManifest } from "./arxiv-manifest"
-import { ResponseTooLargeError, readCappedBytes } from "./http"
+import { readCappedBytes } from "./http"
 import { CITATION_PATH } from "./latex-bundle"
 import { isPublicHttpUrl } from "./net"
 import { normalizeTags } from "./tags"
@@ -48,24 +51,32 @@ const METADATA_TIMEOUT_MS = 10_000
 const SOURCE_TIMEOUT_MS = 60_000
 
 export interface ImportCaps {
-  /** The most bytes read off the wire for one source archive. */
+  /** The working budget: the most bytes read off the wire for one source archive. */
   compressedBytes: number
-  /** The most bytes the archive may inflate to. */
+  /** The working budget: the most bytes the archive may inflate to while it is unpacked. */
   inflatedBytes: number
+  /** What the PUBLISHED bundle may hold. A source over this is fitted by shrinking its
+   *  raster figures (fitBundleBytes); one that still does not fit is refused. */
+  bundleBytes: number
   files: number
 }
 
-/** The Node tier has memory to spare; the edge worker inflates inside a 128 MB isolate. */
+/** The Node tier has memory to spare and can shrink figures, so it may pull far more than
+ *  it publishes; the edge worker inflates inside a 128 MB isolate with no image codec. */
 export const NODE_IMPORT_CAPS: ImportCaps = {
-  compressedBytes: 20 * 1024 * 1024,
-  inflatedBytes: 50 * 1024 * 1024,
+  compressedBytes: 150 * 1024 * 1024,
+  inflatedBytes: 200 * 1024 * 1024,
+  bundleBytes: MAX_BUNDLE_UNZIPPED_BYTES,
   files: 2000,
 }
 export const EDGE_IMPORT_CAPS: ImportCaps = {
   compressedBytes: 8 * 1024 * 1024,
   inflatedBytes: 30 * 1024 * 1024,
+  bundleBytes: 30 * 1024 * 1024,
   files: 2000,
 }
+
+const mb = (n: number): string => `${(n / 1048576).toFixed(1)} MB`
 
 /** Why an import stopped. `terminal` failures never retry (they are arXiv's verdict on
  *  the paper); the others back off and try again. */
@@ -104,6 +115,12 @@ export interface ImportDeps {
   now: () => number
   sleep: (ms: number) => Promise<void>
   caps: ImportCaps
+  /** The figure codec (sharp on Node); absent on the edge, where an oversized source is
+   *  refused instead of shrunk. */
+  shrink?: FigureShrinker | null
+  /** Hand the upstream request gate back as soon as the last arXiv request is done, so
+   *  shrinking and publishing (which need no request) never keep other imports waiting. */
+  releaseGate?: () => Promise<void>
 }
 
 // ---- The paced client -------------------------------------------------------
@@ -283,6 +300,91 @@ const inflateCapped = (bytes: Uint8Array, cap: number): Uint8Array => {
   return out
 }
 
+const concatChunks = (chunks: Uint8Array[], total: number): Uint8Array => {
+  const out = new Uint8Array(total)
+  let at = 0
+  for (const c of chunks) {
+    out.set(c, at)
+    at += c.byteLength
+  }
+  return out
+}
+
+/**
+ * Read the source body off the wire. A gzip body streams through the inflater as it
+ * arrives, so the peak held in memory is the inflated archive, never compressed plus
+ * inflated; anything else is buffered as is. Both the compressed working budget and the
+ * inflate budget are enforced while reading.
+ */
+export const readArchive = async (res: Response, caps: ImportCaps): Promise<Uint8Array> => {
+  if (!res.body) return new Uint8Array()
+  const reader = res.body.getReader()
+  const out: Uint8Array[] = []
+  let inflated = 0
+  const keep = (chunk: Uint8Array): void => {
+    inflated += chunk.byteLength
+    if (inflated > caps.inflatedBytes)
+      throw new ImportFailure(
+        "too_large",
+        `the source inflates past ${mb(caps.inflatedBytes)}`,
+        true,
+      )
+    out.push(chunk)
+  }
+  let compressed = 0
+  let head: Uint8Array | null = null
+  let gz: Gunzip | null = null
+  let pending: Uint8Array | null = null
+  const push = (chunk: Uint8Array, final: boolean): void => {
+    if (gz) gz.push(chunk, final)
+    else keep(chunk)
+  }
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      compressed += value.byteLength
+      if (compressed > caps.compressedBytes) {
+        await reader.cancel().catch(() => undefined)
+        throw new ImportFailure(
+          "too_large",
+          `the source archive is larger than ${mb(caps.compressedBytes)}`,
+          true,
+        )
+      }
+      // The first two bytes say whether this is gzip; wait for them before deciding.
+      if (head === null) {
+        const first: Uint8Array = pending
+          ? concatChunks([pending, value], pending.byteLength + value.byteLength)
+          : value
+        if (first.byteLength < 2) {
+          pending = first
+          continue
+        }
+        head = first
+        if (isGzip(first)) gz = new Gunzip((chunk) => keep(chunk))
+        pending = first
+        continue
+      }
+      if (pending) push(pending, false)
+      pending = value
+    }
+    if (pending) push(pending, true)
+    else if (head === null && !gz) return new Uint8Array()
+  } catch (error) {
+    if (error instanceof ImportFailure) throw error
+    if (
+      error instanceof Error &&
+      /invalid|corrupt|unexpected|gzip|zlib|inflate/i.test(error.message)
+    )
+      throw new ImportFailure("no_tex", "the source archive could not be decompressed", true)
+    throw new ImportFailure("unavailable", "the source download broke off", false)
+  } finally {
+    reader.releaseLock()
+  }
+  return concatChunks(out, inflated)
+}
+
 /** What arXiv sent, decided from the bytes: a tarball, one gzipped file, a PDF (no
  *  source), or something else. Returns the unpacked files by path. */
 export const unpackArxivSource = (
@@ -448,14 +550,7 @@ export const importArxivPaper = async (
       throw new ImportFailure("no_source", "arXiv has no source for this paper", true)
     if (srcRes.status !== 200)
       throw new ImportFailure("unavailable", `arXiv answered ${srcRes.status}`, false)
-    let raw: Uint8Array
-    try {
-      raw = await readCappedBytes(srcRes, deps.caps.compressedBytes)
-    } catch (error) {
-      if (error instanceof ResponseTooLargeError)
-        throw new ImportFailure("too_large", "the source archive is larger than the cap", true)
-      throw new ImportFailure("unavailable", "the source download broke off", false)
-    }
+    const raw = await readArchive(srcRes, deps.caps)
     const unpacked = unpackArxivSource(raw, deps.caps)
     const normalized = normalizeLatexSource(unpacked)
     if (!normalized.ok) throw new ImportFailure(normalized.code, normalized.detail, true)
@@ -471,6 +566,23 @@ export const importArxivPaper = async (
     }
     const citation = citationFor(ref.id, paperMeta, fetchedBibtex)
     if (citation.note) notes.push(citation.note)
+    // That was the last request: the gate goes back while the CPU work below runs.
+    await deps.releaseGate?.()
+
+    // 4. Fit the bundle under what Derive publishes, shrinking raster figures if needed.
+    const fitted = await fitBundleBytes(normalized.files, {
+      cap: deps.caps.bundleBytes,
+      shrink: deps.shrink ?? null,
+    })
+    if (!fitted.fits) {
+      const biggest = fitted.largest.map((f) => `${f.path.slice(1)} (${mb(f.bytes)})`).join(", ")
+      throw new ImportFailure(
+        "too_large",
+        `${mb(fitted.after)}${fitted.shrunk ? ` after shrinking ${fitted.shrunk} figures` : ""}; largest: ${biggest}`,
+        true,
+      )
+    }
+    notes.push(...fitted.notes)
 
     ctx = await liveContext(meta, job)
     const title = plainText(paperMeta.title, 200) || `arXiv:${ref.id}`
@@ -478,7 +590,7 @@ export const importArxivPaper = async (
       bytes: new Uint8Array(),
       filename: `${ref.id.replace(/\//g, "_")}.zip`,
       isBundle: true,
-      files: { ...normalized.files, [CITATION_PATH]: new TextEncoder().encode(citation.bibtex) },
+      files: { ...fitted.files, [CITATION_PATH]: new TextEncoder().encode(citation.bibtex) },
       entry: normalized.entry,
       title,
       orgId: ctx.org_id,
@@ -513,9 +625,10 @@ export const importArxivPaper = async (
     })
   } else {
     notes.push("resumed after an interrupted import; the paper was already published")
+    await deps.releaseGate?.()
   }
 
-  // 4. The manifest, now the real one, and the Context's name.
+  // 5. The manifest, now the real one, and the Context's name.
   ctx = await liveContext(meta, job)
   const bibtex = await citationBytes(blobs, meta, paper)
   const title = plainText(paperMeta.title, 200) || `arXiv:${ref.id}`

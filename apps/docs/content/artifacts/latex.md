@@ -53,10 +53,16 @@ follow its `documents` pointer to the paper; `use` refuses it, since nothing run
 People open it from the Contexts list, where the arXiv chip marks it, and from the
 Templates page's Academic section.
 
-The source must inflate to at most 50 MB (30 MB on the Workers tier) and 2000 files. A
-paper arXiv holds only as a PDF, one whose source has no document, one that was
-withdrawn or one arXiv does not know fails at once with a reason; arXiv being slow or
-away is retried three times. A failed import can be tried again from its console, or
+A published bundle may hold at most 50 MB (30 MB on the Workers tier) and 2000 files.
+The worker pulls up to 150 MB from arXiv to get there: when the unpacked source is over
+the limit, the raster figures (PNG, JPEG, WebP) are re-encoded in place, largest first,
+to at most 1600 px on the long side, then 1200, then 900, until the bundle fits; a
+figure keeps its path and format, so every reference still resolves, and the manifest's
+Import notes say what was shrunk and by how much. PDF and EPS figures are never touched;
+a source that still does not fit fails naming its largest files. Workers deployments do
+not shrink and refuse an oversized source as before. A paper arXiv holds only as a PDF,
+one whose source has no document, one that was withdrawn or one arXiv does not know fails
+at once with a reason; arXiv being slow or away is retried three times. A failed import can be tried again from its console, or
 discarded, which removes the Context and its generated manifest (a paper already
 published stays in the library). The same paper pasted twice opens the one Context.
 

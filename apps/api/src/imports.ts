@@ -52,7 +52,7 @@ export const importFailureCopy = (code: string): string =>
     withdrawn: "This paper was withdrawn from arXiv.",
     no_source: "arXiv has only a PDF for this paper, no LaTeX source, so Derive can't read it.",
     no_tex: "The source has no main .tex file Derive can read.",
-    too_large: "The source is larger than Derive imports.",
+    too_large: "The source is larger than Derive imports, even after shrinking its figures.",
     rate_limited: "arXiv asked Derive to slow down.",
     unavailable: "arXiv didn't answer.",
   })[code] ?? "The import failed."
@@ -107,11 +107,21 @@ export const runImportTick = async (deps: ImportTickDeps): Promise<number> => {
         .updateImportLease("arxiv", scope, holder, { next_allowed_at: iso(nextAllowedAt) })
         .catch(() => undefined),
   )
+  // The gate goes back once, the moment the job's last arXiv request is done (the job
+  // itself asks, so shrinking and publishing never hold it) or, failing that, at the end.
+  let released = false
+  const releaseGate = async (): Promise<void> => {
+    if (released) return
+    released = true
+    await release(
+      Math.max(client.nextAllowedAt, client.penaltyUntil, now() + ARXIV_REQUEST_INTERVAL_MS),
+    )
+  }
   let job: ImportJobRecord | null = null
   try {
     job = await deps.meta.claimDueImportJob(iso(now()), iso(now() + IMPORT_LEASE_MS), scope)
     if (!job) return 0
-    await importArxivPaper({ ...deps, now, sleep }, job, client)
+    await importArxivPaper({ ...deps, now, sleep, releaseGate }, job, client)
     log.info("import ready", { jobId: job.id, ref: job.ref, attempts: job.attempts })
   } catch (error) {
     if (!job || error instanceof ImportCancelled) return job ? 1 : 0
@@ -144,9 +154,7 @@ export const runImportTick = async (deps: ImportTickDeps): Promise<number> => {
       terminal,
     })
   } finally {
-    await release(
-      Math.max(client.nextAllowedAt, client.penaltyUntil, now() + ARXIV_REQUEST_INTERVAL_MS),
-    )
+    await releaseGate()
   }
   return 1
 }

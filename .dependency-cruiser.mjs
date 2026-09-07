@@ -49,6 +49,14 @@ export default {
       from: { path: "^apps/api/src", pathNot: "^apps/api/src/node\\.ts$" },
       to: { path: "^apps/api/src/embedder-local\\.ts$" },
     },
+    {
+      name: "image-shrink-node-only",
+      severity: "error",
+      comment:
+        "image-shrink-node pulls sharp (libvips, a native module) — ONLY node.ts may import it, so it never reaches the Worker bundle. The importer receives it as an injected FigureShrinker.",
+      from: { path: "^apps/api/src", pathNot: "^apps/api/src/node\\.ts$" },
+      to: { path: "^apps/api/src/lib/image-shrink-node\\.ts$" },
+    },
   ],
   options: {
     // A resolution-only tsconfig with @derive/* path aliases (see the file) so a forbidden
