@@ -2,10 +2,12 @@ import {
   type ArtifactRecord,
   artifactUrl,
   authorYearLabel,
+  CODE_PREFIX,
   DECK_TEMPLATE,
   type DocMap,
   derivedGen,
   deriveFacts,
+  isCodePath,
   isDerivedFactName,
   isHtmlLike,
   isLatexBundle,
@@ -1418,8 +1420,13 @@ export function registerReadTool(tc: ToolContext): void {
         return doc({ ...meta, chars: body.length }, clipDoc(body, outline))
       }
 
-      // Bundle.
-      const pages = Object.keys(manifest.files).map(cleanPath)
+      // Bundle. An imported paper may carry the repository that implements it under
+      // /code/. That is for reading by path, not for listing: a repository has thousands
+      // of files and would bury the paper's own handful in every outline. So the pages
+      // are the document's, and the implementation is summarised beside them.
+      const allPages = Object.keys(manifest.files).map(cleanPath)
+      const codePages = allPages.filter((p) => isCodePath(`/${p}`))
+      const pages = allPages.filter((p) => !isCodePath(`/${p}`))
       if (focus)
         return err(
           "`focus` currently reads single-file artifacts. For a bundle, use find(short_id, query), then read its matching page path.",
@@ -1498,6 +1505,25 @@ export function registerReadTool(tc: ToolContext): void {
         // An imported paper carries its own entry (CITATION.bib), so an agent writing
         // about it cites the paper itself with a real key, not one it made up.
         const citation = isLatexBundle(manifest) ? await paperCitation(ctx.blobs, manifest) : null
+        // The implementation, as a map rather than a listing: the shallowest paths, which
+        // is what a repository's own top level tells you, and a count for the rest.
+        const CODE_PATHS_SHOWN = 100
+        const codeShown = [...codePages]
+          .sort((x, y) => x.split("/").length - y.split("/").length || x.localeCompare(y))
+          .slice(0, CODE_PATHS_SHOWN)
+        const code =
+          codePages.length > 0
+            ? {
+                code: {
+                  root: CODE_PREFIX.slice(1),
+                  files: codePages.length,
+                  paths: codeShown,
+                  ...(codePages.length > codeShown.length
+                    ? { more: codePages.length - codeShown.length }
+                    : {}),
+                },
+              }
+            : {}
         return json({
           short_id,
           title: a.title,
@@ -1507,6 +1533,7 @@ export function registerReadTool(tc: ToolContext): void {
           url,
           ...bibliography,
           ...(citation ? { citation } : {}),
+          ...code,
           pages: pages.map((p) => {
             const type = manifest.files[p]?.type ?? manifest.files[`/${p}`]?.type
             const d = detail.get(p)
@@ -1525,11 +1552,14 @@ export function registerReadTool(tc: ToolContext): void {
                 : {}),
             }
           }),
-          next: citation
-            ? `Cite this paper itself with \\cite{${citation.key}} after adding \`citation.bibtex\` to your .bib. Call read again with a \`section\` (a page path above) for content.`
-            : paper
-              ? "Cite with \\cite{key} using a key from `bibliography`; add an entry with PUT /v1/artifacts/<short_id>/bib (see derive://skills/latex). Call read again with a `section` (a page path above) for content."
-              : "Call read again with a `section` (a page path above, optionally page.html#slug for one heading's part) for content.",
+          next:
+            codePages.length > 0
+              ? `This paper carries its implementation under \`${CODE_PREFIX.slice(1)}\`: call read again with a \`section\` (any path in the repository, listed or not) to read one file.${citation ? ` Cite the paper itself with \\cite{${citation.key}} after adding \`citation.bibtex\` to your .bib.` : ""}`
+              : citation
+                ? `Cite this paper itself with \\cite{${citation.key}} after adding \`citation.bibtex\` to your .bib. Call read again with a \`section\` (a page path above) for content.`
+                : paper
+                  ? "Cite with \\cite{key} using a key from `bibliography`; add an entry with PUT /v1/artifacts/<short_id>/bib (see derive://skills/latex). Call read again with a `section` (a page path above) for content."
+                  : "Call read again with a `section` (a page path above, optionally page.html#slug for one heading's part) for content.",
         })
       }
 
@@ -1541,7 +1571,17 @@ export function registerReadTool(tc: ToolContext): void {
       const slug = rawSlug === "*" ? null : rawSlug
       const forceFull = rawSlug === "*"
       const file = manifest.files[pagePath] ?? manifest.files[`/${cleanPath(pagePath)}`]
-      if (!file) return err(`No page "${pagePath}" in "${short_id}". Pages: ${pages.join(", ")}.`)
+      if (!file) {
+        // The paper's own pages, never the thousands a repository could add.
+        const PAGES_NAMED = 40
+        const named = pages.slice(0, PAGES_NAMED).join(", ")
+        const rest = pages.length > PAGES_NAMED ? `, and ${pages.length - PAGES_NAMED} more` : ""
+        const withCode =
+          codePages.length > 0
+            ? ` This paper also carries ${codePages.length} files under \`${CODE_PREFIX.slice(1)}\`, readable by their exact path.`
+            : ""
+        return err(`No page "${pagePath}" in "${short_id}". Pages: ${named}${rest}.${withCode}`)
+      }
       const bytes = await ctx.blobs.get(file.key)
 
       // An image page is an IMAGE, not text: inline it as a real image block (small

@@ -10,6 +10,7 @@ import {
   injectSharedStateScript,
   inspectStructuralDocument,
   isBundleContentType,
+  isCodePath,
   isLatexLike,
   looksLikeHtmlDocument,
   MARKS_SCRIPT,
@@ -181,10 +182,22 @@ export const serveContent = async (
     let lookup = `/${path}`
     if (lookup.endsWith("/")) lookup += "index.html"
     let entry = manifest.files[lookup]
+    let resolved = lookup
     // Pretty URLs (Astro-style dir output), then SPA fallback.
-    if (!entry && !/\.[a-z0-9]+$/i.test(lookup)) entry = manifest.files[`${lookup}/index.html`]
-    if (!entry && manifest.spa) entry = manifest.files[manifest.entry]
+    if (!entry && !/\.[a-z0-9]+$/i.test(lookup)) {
+      entry = manifest.files[`${lookup}/index.html`]
+      if (entry) resolved = `${lookup}/index.html`
+    }
+    if (!entry && manifest.spa) {
+      entry = manifest.files[manifest.entry]
+      if (entry) resolved = manifest.entry
+    }
     if (!entry) return c.text("not found", 404, headers)
+    // A paper's attached implementation is for the agent that reads the paper, not for
+    // this surface. The check sits ABOVE the html/css/markdown branches on purpose: those
+    // render before the source guard below, so a README or a docs page inside a
+    // repository would otherwise be served to anyone who could open the paper.
+    if (sourceHidden && isCodePath(resolved)) return c.text("not found", 404, headers)
 
     const data = await blobs.get(entry.key)
     if (!data) return c.text("blob missing", 500)

@@ -1299,4 +1299,108 @@ describe("imported papers over MCP — read-only, cited, never run", () => {
     expect(refused.text).toContain("imported paper")
     expect(refused.text).toContain("takes no runs")
   })
+
+  it("reads the implementation beside the paper, summarised rather than listed", async () => {
+    const ID = "2405.00002"
+    const tex =
+      "\\documentclass{article}\n\\begin{document}\n\\section{Method}\nSee the code.\n\\end{document}\n"
+    const atom = `<feed xmlns="http://www.w3.org/2005/Atom" xmlns:arxiv="http://arxiv.org/schemas/atom"><entry><id>http://arxiv.org/abs/${ID}v1</id><published>2024-05-01T00:00:00Z</published><title>Splatting</title><summary>An abstract.</summary><author><name>Ada Lovelace</name></author><arxiv:primary_category term="cs.CV"/></entry></feed>`
+    // A repository with more files than any outline should ever print.
+    const repo: Record<string, string> = {
+      "r-abc/train.py": "def train():\n    return 42\n",
+      "r-abc/README.md": "# Splatting\n",
+    }
+    for (let i = 0; i < 140; i++) repo[`r-abc/scene/part${i}/mod.py`] = `# module ${i}\n`
+    const stub = (async (input: string | URL | Request) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url
+      const u = new URL(url)
+      if (u.hostname === "export.arxiv.org") return new Response(atom)
+      if (u.pathname.startsWith("/src/"))
+        return new Response(gzipSync(tarSync({ "main.tex": tex })), { status: 200 })
+      if (u.pathname.startsWith("/bibtex/")) return new Response("not bibtex", { status: 404 })
+      if (u.pathname.startsWith("/o/r/tar.gz/"))
+        return new Response(gzipSync(tarSync(repo)), { status: 200 })
+      return new Response("nope", { status: 404 })
+    }) as unknown as typeof fetch
+    const made = makeAuthedApp("mcx-import-code", [owner, dev], "editor", { deps: { fetch: stub } })
+    const { app, meta, ctx } = made
+    await app.request("/v1/me", { headers: as(owner.email) })
+    await app.request("/v1/me", { headers: as(dev.email) })
+    const ownerBot = await (
+      await app.request("/v1/agents", jsonAs(as(owner.email), { name: "OwnerBot" }))
+    ).json()
+    const queued = await (
+      await app.request(
+        "/v1/contexts/import/arxiv",
+        jsonAs(as(dev.email), {
+          url: `https://arxiv.org/abs/${ID}`,
+          code_url: "https://github.com/o/r",
+        }),
+      )
+    ).json()
+    let t = Date.parse("2030-06-01T00:00:00.000Z")
+    const caps = {
+      compressedBytes: 1024 * 1024,
+      inflatedBytes: 4 * 1024 * 1024,
+      bundleBytes: 4 * 1024 * 1024,
+      files: 400,
+    }
+    expect(
+      await runImportTick({
+        meta,
+        blobs: ctx.blobs,
+        bus: ctx.bus,
+        notify: ctx.notify,
+        background: ctx.background,
+        baseUrl: "http://derive.test",
+        fetch: stub,
+        now: () => t,
+        sleep: async (ms) => {
+          t += ms
+        },
+        caps,
+        repoCaps: {
+          compressedBytes: 1024 * 1024,
+          inflatedBytes: 4 * 1024 * 1024,
+          totalBytes: 4 * 1024 * 1024,
+          files: 400,
+          depth: 3,
+          repos: 5,
+        },
+      }),
+    ).toBe(1)
+
+    const pkg = await call(app, ownerBot.token, "read", { short_id: queued.id })
+    const paper = await call(app, ownerBot.token, "read", { short_id: pkg.documents[0].short_id })
+    // The paper's own pages stay the pages: 142 repository files do not bury them.
+    expect(paper.entry).toBe("main.tex")
+    expect(paper.pages.map((p: { path: string }) => p.path)).toEqual(["main.tex", "CITATION.bib"])
+    // The implementation is a map with a count, not a listing.
+    expect(paper.code).toMatchObject({ root: "code/", files: 142, more: 42 })
+    expect(paper.code.paths).toHaveLength(100)
+    expect(paper.code.paths).toContain("code/train.py")
+    expect(paper.next).toContain("code/")
+
+    // Any path in the repository reads, listed in that sample or not.
+    const listed = await callRaw(app, ownerBot.token, "read", {
+      short_id: pkg.documents[0].short_id,
+      section: "code/train.py",
+    })
+    expect(listed.text).toContain("def train():")
+    const unlisted = await callRaw(app, ownerBot.token, "read", {
+      short_id: pkg.documents[0].short_id,
+      section: "code/scene/part139/mod.py",
+    })
+    expect(unlisted.text).toContain("# module 139")
+
+    // A path that is in neither: the error names the paper's pages and says the code is
+    // there, without printing 142 paths back.
+    const missing = await callRaw(app, ownerBot.token, "read", {
+      short_id: pkg.documents[0].short_id,
+      section: "code/nope.py",
+    })
+    expect(missing.isError).toBe(true)
+    expect(missing.text).toContain("142 files under `code/`")
+    expect(missing.text.length).toBeLessThan(500)
+  })
 })

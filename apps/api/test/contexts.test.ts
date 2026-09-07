@@ -1644,6 +1644,8 @@ describe("contexts: import from arXiv", () => {
   // repository on its own host and never a file listing.
   const REPO_FILES = {
     "gaussian-splatting-abc123/README.md": "# Gaussian Splatting\n\nRun `train.py`.\n",
+    "gaussian-splatting-abc123/docs/index.html": "<h1>Project page</h1>",
+    "gaussian-splatting-abc123/docs/site.css": "body { color: red }",
     "gaussian-splatting-abc123/train.py": "def train():\n    return 42\n",
     "gaussian-splatting-abc123/utils/loss.py": "def l1(a, b):\n    return abs(a - b)\n",
     "gaussian-splatting-abc123/.gitmodules":
@@ -1708,6 +1710,8 @@ describe("contexts: import from arXiv", () => {
       "/CITATION.bib",
       "/code/.gitmodules",
       "/code/README.md",
+      "/code/docs/index.html",
+      "/code/docs/site.css",
       "/code/submodules/rasterizer/setup.py",
       "/code/train.py",
       "/code/utils/loss.py",
@@ -1735,6 +1739,51 @@ describe("contexts: import from arXiv", () => {
         (await ctx.blobs.get(manifest.files["/code/train.py"].key)) ?? undefined,
       ),
     ).toBe("def train():\n    return 42\n")
+
+    // ---- and none of it is visible to a person -----------------------------------
+    const short = paper?.short_id
+    // The file list the artifact page renders: the paper's files, never the repository's.
+    const detailJson = await (
+      await app.request(`/v1/artifacts/${short}`, { headers: as(owner.email) })
+    ).json()
+    expect(detailJson.bundle.files.map((f: { path: string }) => f.path)).toEqual([
+      "CITATION.bib",
+      "fig/a.png",
+      "main.bbl",
+      "main.tex",
+      "paper.bbl",
+      "paper.tex",
+      "refs.bib",
+    ])
+    // The machine content API's page list, the other place a path listing escapes.
+    const outline = await (
+      await app.request(`/v1/artifacts/${short}/content?outline=1`, { headers: as(owner.email) })
+    ).json()
+    expect(JSON.stringify(outline)).not.toContain("/code/")
+    // Serving a file: a repository's HTML, CSS and markdown render BEFORE the paper's
+    // source guard, so each has to be refused by name.
+    const n = paper?.current_version
+    for (const path of [
+      "code/train.py",
+      "code/README.md",
+      "code/docs/index.html",
+      "code/docs/site.css",
+      "code/docs",
+    ]) {
+      const raw = await app.request(`/raw/${short}/v/${n}/${path}`, { headers: as(owner.email) })
+      expect([raw.status, path]).toEqual([404, path])
+    }
+    // The paper's own page still renders, with its figure.
+    const page = await app.request(`/raw/${short}/v/${n}/`, { headers: as(owner.email) })
+    expect(page.status).toBe(200)
+    expect(
+      (await app.request(`/raw/${short}/v/${n}/fig/a.png`, { headers: as(owner.email) })).status,
+    ).toBe(200)
+    // And the source export is the paper's source: an implementation is not something
+    // the authors wrote.
+    expect(
+      (await app.request(`/v1/artifacts/${short}/source.zip`, { headers: as(owner.email) })).status,
+    ).toBe(404)
   })
 
   it("keeps every source file and leaves the big media behind", async () => {

@@ -3,6 +3,7 @@ import {
   type BibEntry,
   type BlobStore,
   type BundleManifest,
+  isCodePath,
   parseBibtex,
   renderLatex,
 } from "@derive/core"
@@ -22,7 +23,10 @@ export const bundleTextFiles = async (
   const out = new Map<string, string>()
   let bytes = 0
   for (const [path, file] of Object.entries(manifest.files)) {
-    if (!TEXT_FILE.test(path)) continue
+    // An attached implementation is not the paper's source. Without this a repository's
+    // .txt files would be decoded ahead of the paper's own and, past the cap, its
+    // \input and \bibliography would silently resolve to nothing.
+    if (isCodePath(path) || !TEXT_FILE.test(path)) continue
     const data = await blobs.get(file.key)
     if (!data) continue
     bytes += data.byteLength

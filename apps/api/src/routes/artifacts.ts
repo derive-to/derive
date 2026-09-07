@@ -18,6 +18,7 @@ import {
   groupSessions,
   hasArtifactStanding,
   heavyAssetsAdvisory,
+  isCodePath,
   isHtmlLike,
   isLatexBundle,
   isLatexLike,
@@ -193,6 +194,26 @@ export const artifactRoutes = (ctx: AppContext) => {
     sourceHiddenFrom,
   } = ctx
   const app = new OpenAPIHono<BlankEnv>()
+
+  /**
+   * The manifest as a PERSON may see it. An imported paper can carry the repository that
+   * implements it under /code/, which an agent reads and the UI never shows: this surface
+   * lists paths, so it is one of the two places that would have shown a person the whole
+   * repository. Unchanged for every artifact that is not a hidden-source import.
+   */
+  const withoutCode = async (
+    c: Context,
+    artifact: Pick<ArtifactRecord, "import_source">,
+    manifest: BundleManifest,
+  ): Promise<BundleManifest> => {
+    if (!(await sourceHiddenFrom(c, artifact))) return manifest
+    const files = Object.fromEntries(
+      Object.entries(manifest.files).filter(([path]) => !isCodePath(path)),
+    )
+    return Object.keys(files).length === Object.keys(manifest.files).length
+      ? manifest
+      : { ...manifest, files }
+  }
 
   // Keyset-paginated (?sort=&cursor=&limit=N; the cursor is keyed on the active sort —
   // see sortKeyOf), with optional server-side ?query= (artifact title, tag, or
@@ -1797,7 +1818,9 @@ export const artifactRoutes = (ctx: AppContext) => {
           // A paper (entry main.tex) gets the same block: the viewer lists its sources,
           // figures and .bib beside the rendered page.
           if (isMarkdownBundle(manifest) || isLatexBundle(manifest))
-            bundle = bundleDoc(manifest, await sourceText(cur))
+            // A paper's implementation is not part of the paper's file tree: this block
+            // is what the viewer lists, and the repository is only ever a link out.
+            bundle = bundleDoc(await withoutCode(c, artifact, manifest), await sourceText(cur))
         }
       }
       // Linked bundles stay ordinary HTML artifacts. Their one authored fact is the
@@ -2760,11 +2783,12 @@ export const artifactRoutes = (ctx: AppContext) => {
     // Bundle.
     if (outline) {
       c.header("X-Derive-Format", "outline")
+      const listed = await withoutCode(c, artifact, manifest)
       return c.json({
-        entry: cleanPath(manifest.entry),
-        pages: Object.keys(manifest.files).map((p) => ({
+        entry: cleanPath(listed.entry),
+        pages: Object.keys(listed.files).map((p) => ({
           path: cleanPath(p),
-          type: manifest.files[p]?.type,
+          type: listed.files[p]?.type,
         })),
       })
     }

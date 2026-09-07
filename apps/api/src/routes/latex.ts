@@ -7,6 +7,7 @@ import {
   type DynamicValue,
   hasArtifactStanding,
   isBundleContentType,
+  isCodePath,
   isLatexLike,
   isLatexTemplateId,
   LATEX_BUNDLE_CONTENT_TYPE,
@@ -124,6 +125,9 @@ export const latexRoutes = (ctx: AppContext) => {
       const manifest = JSON.parse(new TextDecoder().decode(manifestBytes)) as BundleManifest
       entry = manifest.entry.replace(/^\//, "")
       for (const [path, file] of Object.entries(manifest.files)) {
+        // This is the paper's source, not the paper's implementation: an attached
+        // repository is read in place, never shipped as if the authors had written it.
+        if (isCodePath(path)) continue
         const bytes = await blobs.get(file.key)
         if (!bytes) continue
         if (!take(bytes)) return fail(c, 413, "the source export exceeds 50 MB")
