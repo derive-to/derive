@@ -972,15 +972,25 @@ export const contextRoutes = (ctx: AppContext) => {
 
   /** The import block of an imported context, from its job row. A context whose job is
    *  gone (an older row, a sweep) reads as ready: what the manifest holds is what it is. */
-  const importJson = (x: ContextRecord, job: ImportJobRecord | null) =>
-    x.import_source === "arxiv" && x.import_ref
+  const importJson = (x: ContextRecord, job: ImportJobRecord | null) => {
+    // The job runs for two things, and after the paper is published it usually runs for
+    // the second: attaching an implementation requeues it. `status` is the PAPER's, so a
+    // job working on code reports the paper as what it is, which is here and readable.
+    // The code's own state is `code.status`; conflating them told a person their paper
+    // was being fetched from arXiv again when nothing of the sort was happening.
+    const paperPublished = !!job?.paper_artifact_id
+    const status =
+      job && paperPublished && (job.status === "pending" || job.status === "fetching")
+        ? ("ready" as const)
+        : (job?.status ?? ("ready" as const))
+    return x.import_source === "arxiv" && x.import_ref
       ? {
           source: "arxiv" as const,
           ref: x.import_ref,
           version: job?.resolved_version ?? null,
-          status: job?.status ?? ("ready" as const),
+          status,
           error:
-            job?.error_code && job.status !== "ready"
+            job?.error_code && status !== "ready"
               ? { code: job.error_code, detail: job.error_detail }
               : null,
           url: arxivAbsUrl(x.import_ref),
@@ -995,6 +1005,7 @@ export const contextRoutes = (ctx: AppContext) => {
             : null,
         }
       : null
+  }
 
   const contextJson = (
     x: ContextRecord,

@@ -26,7 +26,7 @@ export function Contexts() {
   } = useQuery({
     ...contextsQuery(),
     refetchInterval: (q) =>
-      q.state.status === "error" || !q.state.data?.some((x) => importInFlight(x))
+      q.state.status === "error" || !q.state.data?.some((x) => importSettling(x))
         ? false
         : IMPORT_POLL_MS,
     refetchIntervalInBackground: false,
@@ -92,8 +92,12 @@ export function Contexts() {
 }
 
 const IMPORT_POLL_MS = 3_000
+/** The PAPER is on its way: what the row's badge says. */
 const importInFlight = (x: ContextInfo): boolean =>
   x.import?.status === "pending" || x.import?.status === "fetching"
+/** Something is still arriving, paper or code, so keep asking. */
+const importSettling = (x: ContextInfo): boolean =>
+  importInFlight(x) || x.import?.code?.status === "pending"
 
 /** The one badge an imported row shows in place of the runner stripe: where the paper
  *  is on its way from, or that it arrived. */

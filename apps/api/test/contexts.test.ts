@@ -1893,6 +1893,10 @@ describe("contexts: import from arXiv", () => {
       status: "pending",
       error: null,
     })
+    // The requeued job is working on the CODE. The paper is already here, so it does not
+    // report itself as being fetched from arXiv again: only `code.status` is pending.
+    expect(attached.import.status).toBe("ready")
+    expect(attached.import.error).toBeNull()
     expect(await tick()).toBe(1)
     expect(stub.calls.slice(before).filter((u) => u.includes("/src/"))).toEqual([])
 

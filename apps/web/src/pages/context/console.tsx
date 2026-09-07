@@ -143,7 +143,7 @@ function Console({ id }: { id: string }) {
     refetchInterval: (q) =>
       q.state.status === "error"
         ? false
-        : importInFlight(q.state.data?.import?.status)
+        : importSettling(q.state.data?.import)
           ? IMPORT_POLL_MS
           : 60_000,
     refetchIntervalInBackground: false,
@@ -391,8 +391,13 @@ function Console({ id }: { id: string }) {
 }
 
 const IMPORT_POLL_MS = 3_000
+/** The PAPER is on its way. Drives the whole-page "fetching from arXiv" panel, so it must
+ *  never be true for a paper that is already here with its implementation still coming. */
 const importInFlight = (status: string | undefined): boolean =>
   status === "pending" || status === "fetching"
+/** Something is still arriving, paper or code, so keep asking. */
+const importSettling = (imp: ContextDetail["import"] | undefined): boolean =>
+  importInFlight(imp?.status) || imp?.code?.status === "pending"
 
 /**
  * The paper's implementation. The repository's files live INSIDE the paper's artifact,
