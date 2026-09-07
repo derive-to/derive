@@ -119,18 +119,33 @@ const claim = (meta: SqliteMetaStore): Promise<DeliveryRecord[]> =>
     new Date(Date.now() + 120_000).toISOString(),
   )
 
-const activityWorkflowHtml = `<!doctype html><html><body>
+const activityWorkflowHtml = (
+  memberRef: string,
+  lateMemberRef?: string,
+) => `<!doctype html><html><body>
 <a href="#publish">Publish</a>
 <script type="application/derive-facts" data-fact="bundle-manifest">${JSON.stringify({
   schema: "derive.linked-bundle/v1",
   purpose: "Publish one result",
-  members: [],
+  members: [
+    { id: "result", ref: memberRef, label: "Workflow result", role: "evidence" },
+    ...(lateMemberRef
+      ? [{ id: "late-result", ref: lateMemberRef, label: "Late result", role: "output" }]
+      : []),
+  ],
   diagrams: [
     {
       id: "publish-once",
       title: "Publish once",
       type: "graph",
-      nodes: [{ id: "publish", label: "Publish", note: "Publish the result" }],
+      nodes: [
+        {
+          id: "publish",
+          label: "Publish",
+          note: "Publish the result",
+          member: lateMemberRef ? "late-result" : "result",
+        },
+      ],
       edges: [],
     },
   ],
@@ -172,8 +187,12 @@ const activityWorkflowHtml = `<!doctype html><html><body>
 describe("MCP publish reaches the human (event parity + auto-open)", () => {
   it("records exact workflow activity without claiming step completion", async () => {
     const { app, meta, token } = loopApp("workflow-activity")
+    const linked = await call(app, token, "publish", {
+      content: "# Initial evidence",
+      title: "Linked workflow evidence",
+    })
     const workflow = await call(app, token, "publish", {
-      content: activityWorkflowHtml,
+      content: activityWorkflowHtml(linked.short_id as string),
       title: "Publish workflow",
     })
     const startedResponse = await app.request(`/v1/artifacts/${workflow.short_id}/workflow-run`, {
@@ -244,15 +263,53 @@ describe("MCP publish reaches the human (event parity + auto-open)", () => {
     })
 
     const missed = await call(app, token, "publish", {
-      content: "# Published before it was attached",
-      title: "Recovered workflow result",
+      short_id: linked.short_id,
+      content: "# Evidence published during the run",
     })
+    expect(missed.version).toBe(2)
+    const late = await call(app, token, "publish", {
+      content: "# Added to the graph after the run started",
+      title: "Late workflow result",
+    })
+    await call(app, token, "publish", {
+      short_id: workflow.short_id,
+      content: activityWorkflowHtml(linked.short_id as string, late.short_id as string),
+    })
+    const suggestedHistoryResponse = await app.request(
+      `/v1/artifacts/${workflow.short_id}/workflow-runs?diagram=publish-once`,
+      { headers: { authorization: `Bearer ${token}` } },
+    )
+    const suggestedHistory = (await suggestedHistoryResponse.json()) as {
+      runs: Array<{ suggestions: unknown[] }>
+    }
+    expect(suggestedHistory.runs[0]?.suggestions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          nodeId: "publish",
+          attempt: null,
+          artifactShortId: missed.short_id,
+          artifactVersion: 2,
+          role: "evidence",
+          source: "suggested",
+        }),
+        expect.objectContaining({
+          nodeId: "publish",
+          attempt: null,
+          artifactShortId: late.short_id,
+          artifactVersion: 1,
+          role: "output",
+          source: "suggested",
+          reason:
+            "The current graph links this version, and it was published while the run was open.",
+        }),
+      ]),
+    )
     const recovered = await call(app, token, "use", {
       workflow: {
         run_id: started.runId,
         node_id: "publish",
         attempt: 1,
-        artifact: { short_id: missed.short_id, version: 1, role: "evidence" },
+        artifact: { short_id: missed.short_id, version: 2, role: "evidence" },
       },
     })
     expect(recovered).toMatchObject({
@@ -260,12 +317,28 @@ describe("MCP publish reaches the human (event parity + auto-open)", () => {
       node_id: "publish",
       attempt: 1,
       artifact: missed.short_id,
-      version: 1,
+      version: 2,
       role: "evidence",
       completion: "unconfirmed",
     })
     expect(await meta.listWorkflowStepAttempts(started.runId, run.org_id)).toEqual([])
     expect(await meta.listWorkflowArtifactActivity(started.runId, run.org_id)).toHaveLength(2)
+    await call(app, token, "use", {
+      workflow: {
+        run_id: started.runId,
+        node_id: "publish",
+        attempt: 1,
+        artifact: { short_id: late.short_id, version: 1, role: "output" },
+      },
+    })
+    expect(await meta.listWorkflowArtifactActivity(started.runId, run.org_id)).toHaveLength(3)
+    const recoveredHistoryResponse = await app.request(
+      `/v1/artifacts/${workflow.short_id}/workflow-runs?diagram=publish-once`,
+      { headers: { authorization: `Bearer ${token}` } },
+    )
+    expect(await recoveredHistoryResponse.json()).toMatchObject({
+      runs: [{ suggestions: [] }],
+    })
 
     const invalid = await rpc(app, token, {
       jsonrpc: "2.0",

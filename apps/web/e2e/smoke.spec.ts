@@ -181,6 +181,7 @@ test("workflow activity links an exact artifact version without claiming complet
   expect(startedResponse.ok()).toBeTruthy()
   const started = (await startedResponse.json()) as { runId: string }
   const resultShortId = await publishArtifact(owner, "workflow-result.md", "# Result")
+  const possibleShortId = await publishArtifact(owner, "possible-result.md", "# Possible result")
   const createdAt = new Date().toISOString()
   await owner.route(`**/v1/artifacts/${shortId}/workflow-runs?*`, async (route) => {
     await route.fulfill({
@@ -213,6 +214,20 @@ test("workflow activity links an exact artifact version without claiming complet
                 createdAt,
               },
             ],
+            suggestions: [
+              {
+                id: "suggested_e2e_activity",
+                nodeId: "publish",
+                attempt: null,
+                artifactShortId: possibleShortId,
+                artifactVersion: 1,
+                artifactTitle: "Possible result",
+                role: "evidence",
+                source: "suggested",
+                reason: "A pinned graph member gained this version while the run was open.",
+                createdAt,
+              },
+            ],
           },
         ],
       }),
@@ -223,6 +238,10 @@ test("workflow activity links an exact artifact version without claiming complet
   await expect(activityLink).toContainText("Workflow result · v1")
   await expect(activityLink).toHaveAttribute("href", new RegExp(`${resultShortId}%40v1$`))
   await expect(owner.getByText("Completion is unconfirmed", { exact: true })).toBeVisible()
+  const suggestionLink = owner.getByTestId("workflow-suggestion-artifact-suggested_e2e_activity")
+  await expect(suggestionLink).toContainText("Possible result · v1")
+  await expect(suggestionLink).toHaveAttribute("href", new RegExp(`${possibleShortId}%40v1$`))
+  await expect(owner.getByText("Needs confirmation", { exact: true })).toBeVisible()
 })
 
 test("a Ready graph exposes a bounded GitHub Actions harness on mobile", async ({ owner }) => {

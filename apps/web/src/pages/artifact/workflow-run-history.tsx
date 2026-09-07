@@ -22,6 +22,7 @@ const terminal = new Set<string>(["succeeded", "failed", "cancelled", "timed_out
 
 type WorkflowAttempt = WorkflowRunSummary["attempts"][number]
 type WorkflowActivity = WorkflowRunSummary["activity"][number]
+type WorkflowSuggestion = WorkflowRunSummary["suggestions"][number]
 
 const attemptKindLabel = (kind: WorkflowAttempt["kind"]): string => {
   if (kind === "context") return "Context step"
@@ -121,6 +122,46 @@ const WorkflowActivityTimeline = ({ activity }: { activity: WorkflowActivity[] }
               <p className="mt-0.5 text-2xs text-muted-foreground">
                 Observed at {item.nodeId} · attempt {item.attempt}
               </p>
+            </div>
+          </li>
+        )
+      })}
+    </ol>
+  </div>
+)
+
+const WorkflowSuggestionTimeline = ({ suggestions }: { suggestions: WorkflowSuggestion[] }) => (
+  <div className="mb-3 rounded-lg border border-warning/25 bg-warning/5 p-3">
+    <div className="flex items-baseline justify-between gap-3">
+      <span className="font-medium text-foreground">Suggested activity</span>
+      <span className="text-2xs text-warning">Needs confirmation</span>
+    </div>
+    <ol className="mt-2 grid gap-2" aria-label="Possible artifacts from this run">
+      {suggestions.map((item) => {
+        const base = refFor({ short_id: item.artifactShortId, title: item.artifactTitle })
+        const location = item.nodeId
+          ? `Possible match for ${item.nodeId}${item.attempt ? ` · attempt ${item.attempt}` : ""}`
+          : "Run-level match · node unknown"
+        return (
+          <li
+            key={item.id}
+            className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-2 rounded-md border border-warning/20 bg-background px-2.5 py-2"
+          >
+            <span className="mt-1 size-2 rounded-full bg-warning" aria-hidden="true" />
+            <div className="min-w-0">
+              <div className="flex min-w-0 flex-wrap items-baseline gap-x-1.5 gap-y-0.5 text-xs">
+                <span className="font-medium text-foreground">{activityRoleLabel(item.role)}</span>
+                <Link
+                  to="/artifacts/$ref"
+                  params={{ ref: `${base}@v${item.artifactVersion}` }}
+                  className="min-w-0 truncate font-medium text-primary hover:underline"
+                  data-testid={`workflow-suggestion-artifact-${item.id}`}
+                >
+                  {item.artifactTitle ?? item.artifactShortId} · v{item.artifactVersion}
+                </Link>
+              </div>
+              <p className="mt-0.5 text-2xs text-muted-foreground">{location}</p>
+              <p className="mt-0.5 text-2xs text-muted-foreground">{item.reason}</p>
             </div>
           </li>
         )
@@ -229,16 +270,27 @@ export function WorkflowRunHistory({
                 ? "No steps started"
                 : `${run.attempts.length} step${run.attempts.length === 1 ? "" : "s"} recorded`,
               `${run.activity.length} artifact${run.activity.length === 1 ? "" : "s"} observed`,
+              ...(run.suggestions.length > 0
+                ? [
+                    `${run.suggestions.length} possible artifact${run.suggestions.length === 1 ? "" : "s"}`,
+                  ]
+                : []),
             ]}
             createdAt={run.createdAt}
             defaultOpen={index === 0}
             testId={`workflow-run-${run.id}`}
           >
-            {workflowGithubReceipt(run) || run.attempts.length > 0 || run.activity.length > 0 ? (
+            {workflowGithubReceipt(run) ||
+            run.attempts.length > 0 ||
+            run.activity.length > 0 ||
+            run.suggestions.length > 0 ? (
               <>
                 <GithubExecutionReceipt run={run} />
                 {run.activity.length > 0 ? (
                   <WorkflowActivityTimeline activity={run.activity} />
+                ) : null}
+                {run.suggestions.length > 0 ? (
+                  <WorkflowSuggestionTimeline suggestions={run.suggestions} />
                 ) : null}
                 {run.attempts.length > 0 ? (
                   <WorkflowAttemptTimeline attempts={run.attempts} />
@@ -246,7 +298,9 @@ export function WorkflowRunHistory({
                   <p className="text-xs text-muted-foreground">
                     {run.activity.length > 0
                       ? "Activity was observed, but no step receipt has been recorded yet."
-                      : "No step receipt has been recorded yet."}
+                      : run.suggestions.length > 0
+                        ? "Possible activity was found, but no step receipt has been recorded yet."
+                        : "No step receipt has been recorded yet."}
                   </p>
                 )}
               </>

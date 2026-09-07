@@ -108,6 +108,7 @@ describe("run presentation", () => {
         },
       ],
       activity: [],
+      suggestions: [],
     }
     expect(workflowRunSummary(coordinated)).toBe("Waiting for a person at approve-release.")
   })

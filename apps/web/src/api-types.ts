@@ -4586,6 +4586,20 @@ export interface paths {
                                     source: "observed" | "suggested";
                                     createdAt: string;
                                 }[];
+                                suggestions: {
+                                    id: string;
+                                    nodeId: string | null;
+                                    attempt: number | null;
+                                    artifactShortId: string;
+                                    artifactVersion: number;
+                                    artifactTitle: string | null;
+                                    /** @enum {string} */
+                                    role: "output" | "evidence" | "input";
+                                    /** @enum {string} */
+                                    source: "suggested";
+                                    reason: string;
+                                    createdAt: string;
+                                }[];
                             }[];
                         };
                     };

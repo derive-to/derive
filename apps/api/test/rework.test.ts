@@ -778,6 +778,53 @@ describe("workflow run: explicit local-agent handoff", () => {
     })
   })
 
+  it("does not expose private workflow activity to a graph reader", async () => {
+    const { app, meta } = makeAuthedApp("workflow-activity-privacy", [owner, editor], "editor")
+    const workflow = await (
+      await publishAs(app, workflowHtml(), { title: "Workflow" }, as(owner.email))
+    ).json()
+    const startResponse = await app.request(
+      `/v1/artifacts/${workflow.short_id}/workflow-run`,
+      jsonAs(as(owner.email), { diagramId: "brief", delivery: "copy" }),
+    )
+    const { runId } = (await startResponse.json()) as { runId: string }
+    const secret = await (
+      await publishAs(
+        app,
+        "# Private result",
+        { title: "Private result", workspace_access: "none", link_role: "none" },
+        as(owner.email),
+      )
+    ).json()
+    const workflowArtifact = await meta.getByShortId(workflow.short_id)
+    if (!workflowArtifact) throw new Error("workflow artifact missing")
+    await meta.recordWorkflowArtifactActivity({
+      id: "wfa_private_result",
+      org_id: workflowArtifact.org_id,
+      workflow_run_id: runId,
+      node_id: "draft",
+      attempt: 1,
+      artifact_short_id: secret.short_id,
+      artifact_version: 1,
+      artifact_title: "Private result",
+      role: "output",
+      source: "observed",
+    })
+
+    const ownerHistory = await app.request(
+      `/v1/artifacts/${workflow.short_id}/workflow-runs?diagram=brief`,
+      { headers: as(owner.email) },
+    )
+    expect(await ownerHistory.json()).toMatchObject({
+      runs: [{ activity: [{ artifactShortId: secret.short_id }] }],
+    })
+    const editorHistory = await app.request(
+      `/v1/artifacts/${workflow.short_id}/workflow-runs?diagram=brief`,
+      { headers: as(editor.email) },
+    )
+    expect(await editorHistory.json()).toMatchObject({ runs: [{ activity: [] }] })
+  })
+
   it("copy starts a distinct pinned run without requiring a registered agent", async () => {
     const { app, meta } = makeAuthedApp("workflow-copy-run", [owner, editor], "editor")
     const published = await (

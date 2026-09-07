@@ -27,6 +27,7 @@ import {
 import { bail, fail, readJson } from "../lib/http"
 import { notifyMentions } from "../lib/mentions"
 import { notifyCommentBells } from "../lib/notify-comment"
+import { readableWorkflowActivity, workflowActivitySuggestions } from "../lib/workflow-activity"
 import { parseLinkedWorkflowFacts } from "../lib/workflow-facts"
 
 const parseWorkflowSelectedRoutes = (value: string | null): string[] | null => {
@@ -61,6 +62,7 @@ export const reworkRoutes = (ctx: AppContext) => {
     commentLimiter,
     deps,
     authorizeStanding,
+    authorize,
     actingHuman,
   } = ctx
   const app = new OpenAPIHono<BlankEnv>()
@@ -228,6 +230,18 @@ export const reworkRoutes = (ctx: AppContext) => {
     source: z.enum(["observed", "suggested"]),
     createdAt: z.string(),
   })
+  const workflowArtifactSuggestionSummary = z.object({
+    id: z.string(),
+    nodeId: z.string().nullable(),
+    attempt: z.number().int().nullable(),
+    artifactShortId: z.string(),
+    artifactVersion: z.number().int(),
+    artifactTitle: z.string().nullable(),
+    role: z.enum(["output", "evidence", "input"]),
+    source: z.literal("suggested"),
+    reason: z.string(),
+    createdAt: z.string(),
+  })
   const workflowRunSummary = z.object({
     id: z.string(),
     diagramId: z.string(),
@@ -251,6 +265,7 @@ export const reworkRoutes = (ctx: AppContext) => {
     finishedAt: z.string().nullable(),
     attempts: z.array(workflowAttemptSummary),
     activity: z.array(workflowArtifactActivitySummary),
+    suggestions: z.array(workflowArtifactSuggestionSummary),
   })
 
   // Pick the addressee: the named agent, else the workspace's sole one.
@@ -437,6 +452,29 @@ export const reworkRoutes = (ctx: AppContext) => {
         Promise.all(runs.map((run) => meta.listWorkflowStepAttempts(run.id, artifact.org_id))),
         Promise.all(runs.map((run) => meta.listWorkflowArtifactActivity(run.id, artifact.org_id))),
       ])
+      const [readableActivity, suggestions] = await Promise.all([
+        Promise.all(
+          activity.map((items) =>
+            readableWorkflowActivity({
+              meta,
+              rows: items,
+              canRead: (candidate) => authorize(c, "read", candidate),
+            }),
+          ),
+        ),
+        Promise.all(
+          runs.map((run, index) =>
+            workflowActivitySuggestions({
+              meta,
+              workflowArtifact: artifact,
+              run,
+              attempts: attempts[index] ?? [],
+              recorded: activity[index] ?? [],
+              canRead: (candidate) => authorize(c, "read", candidate),
+            }),
+          ),
+        ),
+      ])
       return c.json({
         runs: runs.map((run, index) => ({
           id: run.id,
@@ -464,7 +502,7 @@ export const reworkRoutes = (ctx: AppContext) => {
             startedAt: attempt.started_at,
             finishedAt: attempt.finished_at,
           })),
-          activity: (activity[index] ?? []).map((item) => ({
+          activity: (readableActivity[index] ?? []).map((item) => ({
             id: item.id,
             nodeId: item.node_id,
             attempt: item.attempt,
@@ -475,6 +513,7 @@ export const reworkRoutes = (ctx: AppContext) => {
             source: item.source,
             createdAt: item.created_at,
           })),
+          suggestions: suggestions[index] ?? [],
         })),
       })
     },

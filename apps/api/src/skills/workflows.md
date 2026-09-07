@@ -202,6 +202,11 @@ use({workflow:{
 This operation is idempotent. Use it to backfill activity. Do not republish an unchanged artifact
 only to create a workflow link.
 
+Run history also suggests a readable linked member when its current version was published while
+the run was open. The suggestion can come from the pinned graph or a later graph version. Treat it
+as a candidate. Confirm the exact version with the `use` operation above. A suggestion never marks
+a node complete, and Derive does not expose a member that the graph reader cannot open.
+
 Human and terminal nodes use the same receipt shape without a Context session. A human receipt's
 `decision` must be one of that node's authored options. Pass `finish_run:"succeeded"` (or the
 matching failure/cancellation state) on the final receipt.
