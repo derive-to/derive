@@ -147,12 +147,15 @@ import type {
   WebhookRecord,
   WorkflowArtifactActivityRecord,
   WorkflowAttemptStateGuard,
+  WorkflowPublishKey,
+  WorkflowPublishReceiptRecord,
   WorkflowRunRecord,
   WorkflowRunTransition,
   WorkflowStepAttemptRecord,
   WorkflowStepAttemptTransition,
   WorkflowStepTransitionGuard,
   WorkflowTransitionGuard,
+  WorkflowVersionPublish,
   WorkspaceAccess,
   WorkspaceRecord,
   WorkspaceSummary,
@@ -278,6 +281,7 @@ import {
   webhook,
   webhookDelivery,
   workflowArtifactActivity,
+  workflowPublishReceipt,
   workflowRun,
   workflowStepAttempt,
   workspace,
@@ -289,6 +293,7 @@ import {
   parseOAuthScopes,
   parseOrgSettings,
 } from "./repos"
+import { checkedWorkflowPublishReceipt, workflowPublishStatements } from "./workflow-publish"
 
 const one = <T>(rows: T[]): T => {
   const r = rows[0]
@@ -325,6 +330,7 @@ export const schema = {
   workflowRun,
   workflowStepAttempt,
   workflowArtifactActivity,
+  workflowPublishReceipt,
   artifactScanEvent,
   artifactScanCoverage,
   skillRelation,
@@ -387,6 +393,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   workflowRun: true,
   workflowStepAttempt: true,
   workflowArtifactActivity: true,
+  workflowPublishReceipt: true,
   artifactScanEvent: true,
   artifactScanCoverage: true,
   skillRelation: true,
@@ -1191,6 +1198,21 @@ export class PgMetaStore implements MetaStore {
             eq(version.artifact_id, artifactId),
             eq(version.n, expected.n),
             eq(version.blob_key, expected.blobKey),
+            notExists(
+              tx
+                .select({ id: workflowArtifactActivity.id })
+                .from(workflowArtifactActivity)
+                .where(
+                  and(
+                    eq(
+                      workflowArtifactActivity.artifact_short_id,
+                      sql`(select short_id from artifact where id = ${artifactId})`,
+                    ),
+                    eq(workflowArtifactActivity.artifact_version, expected.n),
+                    eq(workflowArtifactActivity.source, "observed"),
+                  ),
+                ),
+            ),
           ),
         )
         .returning()
@@ -6301,31 +6323,113 @@ export class PgMetaStore implements MetaStore {
       return rows[0] ?? null
     })
   }
-  async recordWorkflowArtifactActivity(
-    a: NewWorkflowArtifactActivity,
-  ): Promise<WorkflowArtifactActivityRecord> {
+  async publishWorkflowVersion(
+    input: WorkflowVersionPublish,
+  ): Promise<WorkflowPublishReceiptRecord> {
+    const statements = workflowPublishStatements(input)
+    const client = await this.pool.connect()
+    try {
+      await client.query("BEGIN")
+      // Always lock run before artifact. The insert then sees the latest head.
+      await client.query("SELECT id FROM workflow_run WHERE id = $1 AND org_id = $2 FOR UPDATE", [
+        input.receipt.workflow_run_id,
+        input.receipt.org_id,
+      ])
+      if ("artifact_id" in input.target)
+        await client.query("SELECT id FROM artifact WHERE id = $1 AND org_id = $2 FOR UPDATE", [
+          input.target.artifact_id,
+          input.receipt.org_id,
+        ])
+      for (const statement of statements) {
+        let parameter = 0
+        await client.query(
+          statement.text.replace(/\?/g, () => `$${++parameter}`),
+          statement.values,
+        )
+      }
+      await client.query("COMMIT")
+    } catch (error) {
+      await client.query("ROLLBACK")
+      throw error
+    } finally {
+      client.release()
+    }
+    return checkedWorkflowPublishReceipt(input, await this.getWorkflowPublishReceipt(input.receipt))
+  }
+
+  async workflowVersionIsPinned(artifactId: string, n: number): Promise<boolean> {
     const rows = await this.db
-      .insert(workflowArtifactActivity)
-      .values(a)
-      .onConflictDoNothing()
-      .returning()
-    if (rows[0]) return rows[0]
-    const existing = await this.db
-      .select()
+      .select({ id: workflowArtifactActivity.id })
       .from(workflowArtifactActivity)
+      .innerJoin(artifact, eq(artifact.short_id, workflowArtifactActivity.artifact_short_id))
       .where(
         and(
-          eq(workflowArtifactActivity.workflow_run_id, a.workflow_run_id),
-          eq(workflowArtifactActivity.node_id, a.node_id),
-          eq(workflowArtifactActivity.attempt, a.attempt),
-          eq(workflowArtifactActivity.artifact_short_id, a.artifact_short_id),
-          eq(workflowArtifactActivity.artifact_version, a.artifact_version),
-          eq(workflowArtifactActivity.role, a.role),
+          eq(artifact.id, artifactId),
+          eq(workflowArtifactActivity.artifact_version, n),
+          eq(workflowArtifactActivity.source, "observed"),
         ),
       )
       .limit(1)
-    if (!existing[0]) throw new Error("workflow artifact activity conflict could not be resolved")
-    return existing[0]
+    return rows.length > 0
+  }
+
+  async getWorkflowPublishReceipt(
+    key: WorkflowPublishKey,
+  ): Promise<WorkflowPublishReceiptRecord | null> {
+    const rows = await this.db
+      .select()
+      .from(workflowPublishReceipt)
+      .where(
+        and(
+          eq(workflowPublishReceipt.org_id, key.org_id),
+          eq(workflowPublishReceipt.workflow_run_id, key.workflow_run_id),
+          eq(workflowPublishReceipt.node_id, key.node_id),
+          eq(workflowPublishReceipt.attempt, key.attempt),
+          eq(workflowPublishReceipt.dedupe_key, key.dedupe_key),
+        ),
+      )
+    return rows[0] ?? null
+  }
+
+  async recordWorkflowArtifactActivity(
+    a: NewWorkflowArtifactActivity,
+  ): Promise<WorkflowArtifactActivityRecord> {
+    return this.db.transaction(async (tx) => {
+      // Match bound publish's run→artifact lock order. A later in-place edit
+      // must see this activity before deciding whether the version is mutable.
+      await tx
+        .select({ id: workflowRun.id })
+        .from(workflowRun)
+        .where(and(eq(workflowRun.id, a.workflow_run_id), eq(workflowRun.org_id, a.org_id)))
+        .for("update")
+      await tx
+        .select({ id: artifact.id })
+        .from(artifact)
+        .where(and(eq(artifact.short_id, a.artifact_short_id), eq(artifact.org_id, a.org_id)))
+        .for("update")
+      const rows = await tx
+        .insert(workflowArtifactActivity)
+        .values(a)
+        .onConflictDoNothing()
+        .returning()
+      if (rows[0]) return rows[0]
+      const existing = await tx
+        .select()
+        .from(workflowArtifactActivity)
+        .where(
+          and(
+            eq(workflowArtifactActivity.workflow_run_id, a.workflow_run_id),
+            eq(workflowArtifactActivity.node_id, a.node_id),
+            eq(workflowArtifactActivity.attempt, a.attempt),
+            eq(workflowArtifactActivity.artifact_short_id, a.artifact_short_id),
+            eq(workflowArtifactActivity.artifact_version, a.artifact_version),
+            eq(workflowArtifactActivity.role, a.role),
+          ),
+        )
+        .limit(1)
+      if (!existing[0]) throw new Error("workflow artifact activity conflict could not be resolved")
+      return existing[0]
+    })
   }
   listWorkflowArtifactActivity(
     workflowRunId: string | string[],

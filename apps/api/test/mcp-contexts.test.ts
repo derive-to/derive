@@ -1,4 +1,4 @@
-import { newId, WorkflowAttemptStateConflictError } from "@derive/core"
+import { newId, publish as publishVersion, WorkflowAttemptStateConflictError } from "@derive/core"
 import { describe, expect, it, vi } from "vitest"
 import { createInProcessBackplane } from "../src/bus"
 import { sha256 } from "../src/lib/crypto"
@@ -116,6 +116,7 @@ const setup = async (
     meta,
     cx,
     manifestShortId: manifest.short_id as string,
+    ctx: made.ctx,
     answeringToken: answering.token as string,
     ownerAgentId: ownerBot.id as string,
     ownerToken: ownerBot.token as string,
@@ -953,6 +954,119 @@ describe("use — open, check, and the grant edges", () => {
     } finally {
       spy.mockRestore()
     }
+  })
+
+  it("recovers a lost publish response without creating another artifact or version", async () => {
+    const { app, meta, cx, ownerToken, ctx } = await setup(
+      "mcx-publish-recovery",
+      undefined,
+      "editor",
+    )
+    const workflow = await (
+      await publishAs(
+        app,
+        repeatedWorkflowHtml(cx.id),
+        { title: "Publication recovery", contentType: "text/html" },
+        as(owner.email),
+      )
+    ).json()
+    const started = await call(app, ownerToken, "use", {
+      workflow_run: {
+        action: "start",
+        short_id: workflow.short_id,
+        diagram_id: "ten-rounds",
+        dedupe_key: "publish-recovery",
+      },
+    })
+    const runId = started.workflow_run.id
+    const ref = { run_id: runId, node_id: "research", attempt: 1, role: "output" }
+    const request = {
+      title: "Recovered output",
+      content: "# First output",
+      workspace_access: "none",
+      link_role: "none",
+      listed: "none",
+      workflow: { ...ref, dedupe_key: "first-output" },
+    }
+    const originalPublish = meta.publishWorkflowVersion.bind(meta)
+    const spy = vi.spyOn(meta, "publishWorkflowVersion").mockImplementationOnce(async (input) => {
+      await originalPublish(input)
+      throw new Error("Simulated response loss after metadata commit")
+    })
+    const lost = await callRaw(app, ownerToken, "publish", request)
+    spy.mockRestore()
+    expect(lost.isError).toBe(true)
+    const recovered = await call(app, ownerToken, "publish", request)
+    expect(recovered).toMatchObject({
+      version: 1,
+      workflow_publish: { replayed: true, dedupe_key: "first-output" },
+      workflow_activity: { status: "recorded", completion: "unconfirmed" },
+    })
+    expect(recovered.version_url).toMatch(/@v1$/)
+    const artifact = await meta.getByShortId(recovered.short_id)
+    if (!artifact) throw new Error("Missing recovered artifact")
+    expect(await meta.listArtifactMembers(artifact.id)).toMatchObject([{ role: "owner" }])
+    expect(await meta.listVersions(artifact.id)).toHaveLength(1)
+    const conflict = await callRaw(app, ownerToken, "publish", {
+      ...request,
+      content: "# Different request",
+    })
+    expect(conflict.isError).toBe(true)
+    expect(conflict.text).toContain("different request")
+    const roleConflict = await callRaw(app, ownerToken, "publish", {
+      ...request,
+      workflow: { ...request.workflow, role: "evidence" },
+    })
+    expect(roleConflict.isError).toBe(true)
+
+    // Without an explicit key, identical requests still deduplicate opportunistically.
+    const revision = { short_id: artifact.short_id, content: "# Second output", workflow: ref }
+    const revisions = await Promise.all([
+      call(app, ownerToken, "publish", revision),
+      call(app, ownerToken, "publish", revision),
+    ])
+    expect(revisions.map((item) => item.version)).toEqual([2, 2])
+    expect(revisions.some((item) => item.workflow_publish.replayed)).toBe(true)
+    expect((await call(app, ownerToken, "publish", request)).version).toBe(1)
+    expect(await meta.listVersions(artifact.id)).toHaveLength(2)
+
+    const edit = {
+      short_id: artifact.short_id,
+      base_version: 2,
+      edits: [{ old_str: "# Second output", new_str: "# Final output" }],
+      workflow: { ...ref, dedupe_key: "final-edit" },
+    }
+    expect((await call(app, ownerToken, "publish", edit)).version).toBe(3)
+    // The original text and base version are stale now. Replay must happen before
+    // materialization, not apply the edit again or turn success into a conflict.
+    expect(await call(app, ownerToken, "publish", edit)).toMatchObject({
+      version: 3,
+      workflow_publish: { replayed: true },
+    })
+    expect(await meta.listVersions(artifact.id)).toHaveLength(3)
+    const activity = await meta.listWorkflowArtifactActivity(runId, artifact.org_id)
+    expect(activity.map((item) => item.artifact_version).sort()).toEqual([1, 2, 3])
+    expect(new Set(activity.map((item) => item.artifact_short_id))).toEqual(
+      new Set([artifact.short_id]),
+    )
+    expect(await meta.listWorkflowStepAttempts(runId, artifact.org_id)).toHaveLength(0)
+    const linkedHead = await meta.getVersion(artifact.id, 3)
+    if (!linkedHead) throw new Error("Missing linked version")
+    const edited = await publishVersion(
+      meta,
+      ctx.blobs,
+      {
+        bytes: new TextEncoder().encode("# Later edit"),
+        filename: "index.md",
+        isBundle: false,
+        orgId: artifact.org_id,
+        replaceCurrent: { n: 3, blobKey: linkedHead.blob_key },
+      },
+      artifact.short_id,
+    )
+    expect(edited.version.n).toBe(4)
+    expect((await meta.getVersion(artifact.id, 3))?.blob_key).toBe(linkedHead.blob_key)
+    expect((await call(app, ownerToken, "publish", edit)).version).toBe(3)
   })
 
   it("recovers ten loop rounds without reusing an earlier route or losing exact outputs", async () => {

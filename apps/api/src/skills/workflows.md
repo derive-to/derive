@@ -202,6 +202,17 @@ Use `role:"evidence"` for evaluation evidence. The publish receipt records the e
 version in the workflow Activity view. This is observed provenance. It does not mark the node
 complete, select a route, or prove that the artifact passed evaluation.
 
+A bound publish commits the artifact version, ownership on create, and activity together.
+It returns `workflow_publish.dedupe_key` and a pinned `version_url`. If the response is lost,
+retry the same request. `workflow_publish.replayed:true` means Derive returns the original version.
+It does not create another artifact or version, or apply an edit twice.
+A recorded version keeps its bytes. Later editor changes create a new version.
+
+You can supply `workflow.dedupe_key` before the first call. Reuse that key only for the same
+request. A changed request with the same key fails. Without a key, Derive deduplicates identical
+requests within that attempt. To publish identical content again on purpose, supply a new key.
+This applies to bound publishes only. A normal unbound publish still creates a new version.
+
 If publication already happened without workflow metadata, attach the exact existing version:
 
 ```text

@@ -15,9 +15,13 @@ import {
   type BundleManifest,
   LATEX_BUNDLE_CONTENT_TYPE,
   type MetaStore,
+  type NewArtifact,
+  type NewVersion,
   SKILL_CONTENT_TYPE,
   type VersionRecord,
   type VersionSource,
+  type WorkflowPublishReceiptRecord,
+  type WorkflowVersionPublish,
 } from "./ports"
 import {
   isSkillBundle,
@@ -106,9 +110,22 @@ export interface PublishInput {
    *  row; storage remains the exact fallback. This removes a serial read before addVersion
    *  on hot edit paths without changing the public publish contract. */
   existingArtifact?: ArtifactRecord
+  /** Trusted server binding. requestHash covers the original request before edit
+   * materialization, so a lost-response retry cannot apply an edit twice. */
+  workflow?: {
+    runId: string
+    nodeId: string
+    attempt: number
+    role: "output" | "evidence" | "input"
+    dedupeKey: string
+    requestHash: string
+    ownerId: string
+  }
 }
 
 export interface PublishResult {
+  workflowReceipt?: WorkflowPublishReceiptRecord
+  replayed?: boolean
   artifact: ArtifactRecord
   version: VersionRecord
   timings: {
@@ -400,6 +417,47 @@ const validateSkillRelationsBeforePublish = async (
   }
 }
 
+const workflowPublicationResult = async (
+  meta: MetaStore,
+  receipt: WorkflowPublishReceiptRecord,
+  timings: PublishResult["timings"],
+  replayed: boolean,
+): Promise<PublishResult> => {
+  const [artifact, version] = await Promise.all([
+    meta.getArtifactById(receipt.artifact_id),
+    meta.getVersion(receipt.artifact_id, receipt.artifact_version),
+  ])
+  if (!artifact || !version || version.id !== receipt.version_id)
+    throw new PublishError(410, "The recorded workflow publication is no longer available")
+  return { artifact, version, workflowReceipt: receipt, replayed, timings }
+}
+
+const commitWorkflowPublication = async (
+  meta: MetaStore,
+  binding: NonNullable<PublishInput["workflow"]>,
+  orgId: string,
+  target: WorkflowVersionPublish["target"],
+  version: NewVersion,
+  timings: PublishResult["timings"],
+): Promise<PublishResult> => {
+  const receipt = await meta.publishWorkflowVersion({
+    receipt: {
+      org_id: orgId,
+      workflow_run_id: binding.runId,
+      node_id: binding.nodeId,
+      attempt: binding.attempt,
+      dedupe_key: binding.dedupeKey,
+      request_hash: binding.requestHash,
+      role: binding.role,
+      activity_id: newId("wfa"),
+      created_at: new Date().toISOString(),
+    },
+    target,
+    version,
+  })
+  return workflowPublicationResult(meta, receipt, timings, receipt.version_id !== version.id)
+}
+
 /**
  * Stores content and creates a new artifact (shortId undefined)
  * or the next version of an existing one.
@@ -410,6 +468,25 @@ export async function publish(
   input: PublishInput,
   shortId?: string,
 ): Promise<PublishResult> {
+  if (input.workflow) {
+    if (input.replaceCurrent)
+      throw new PublishError(400, "Workflow publishes append immutable versions")
+    const receipt = await meta.getWorkflowPublishReceipt({
+      org_id: input.orgId ?? "local",
+      workflow_run_id: input.workflow.runId,
+      node_id: input.workflow.nodeId,
+      attempt: input.workflow.attempt,
+      dedupe_key: input.workflow.dedupeKey,
+    })
+    if (receipt) {
+      if (receipt.request_hash !== input.workflow.requestHash)
+        throw new PublishError(
+          409,
+          "This workflow publish retry key already belongs to a different request",
+        )
+      return workflowPublicationResult(meta, receipt, { blobWriteMs: 0, storeContentMs: 0 }, true)
+    }
+  }
   const storeStartedAt = performance.now()
   const { blobKey, contentType, kind, suggestedTitle, skillSidecar, blobWriteMs } =
     await storeContent(blobs, input.bytes, input.filename, input.isBundle, !!input.spa)
@@ -425,12 +502,19 @@ export async function publish(
     if (!artifact) throw new PublishError(404, `no artifact with short_id ${shortId}`)
     if (artifact.kind !== kind)
       throw new PublishError(409, `artifact is a ${artifact.kind}; republish the same kind`)
+    // A workflow link pins the bytes at this version number. Coalesced editor
+    // writes must append a version rather than silently changing that evidence.
+    const replaceCurrent =
+      input.replaceCurrent &&
+      !(await meta.workflowVersionIsPinned(artifact.id, input.replaceCurrent.n))
+        ? input.replaceCurrent
+        : undefined
     await validateSkillRelationsBeforePublish(
       meta,
       skillSidecar,
       artifact.org_id,
       artifact.id,
-      input.replaceCurrent?.n ?? artifact.current_version + 1,
+      replaceCurrent?.n ?? artifact.current_version + 1,
     )
     const nextVersion = {
       id: newId("v"),
@@ -448,8 +532,23 @@ export async function publish(
       message: input.message ?? null,
       name: input.name ?? null,
     }
-    const version = input.replaceCurrent
-      ? await meta.replaceCurrentVersion(artifact.id, input.replaceCurrent, nextVersion)
+    if (input.workflow) {
+      const title = input.title?.trim()
+      return commitWorkflowPublication(
+        meta,
+        input.workflow,
+        artifact.org_id,
+        {
+          artifact_id: artifact.id,
+          short_id: artifact.short_id,
+          ...(title ? { title, slug: slugify(title) || null } : {}),
+        },
+        nextVersion,
+        timings,
+      )
+    }
+    const version = replaceCurrent
+      ? await meta.replaceCurrentVersion(artifact.id, replaceCurrent, nextVersion)
       : await meta.addVersion(artifact.id, nextVersion)
     if (!version)
       throw new PublishError(409, "artifact changed while editing — reload and try again")
@@ -481,7 +580,7 @@ export async function publish(
   if (input.mintShortId && (await meta.getByShortId(input.mintShortId)))
     throw new PublishError(409, `short_id ${input.mintShortId} is already taken`)
   await validateSkillRelationsBeforePublish(meta, skillSidecar, input.orgId ?? "local")
-  const artifact = await meta.createArtifact({
+  const newArtifact: NewArtifact = {
     id: newId("a"),
     short_id: input.mintShortId ?? newShortId(),
     org_id: input.orgId ?? "local",
@@ -498,8 +597,8 @@ export async function publish(
     spa: input.spa ? 1 : 0,
     expires_at: input.expiresAt ?? null,
     derived_from: input.derivedFrom ?? null,
-  })
-  const version = await meta.addVersion(artifact.id, {
+  }
+  const nextVersion: NewVersion = {
     id: newId("v"),
     blob_key: blobKey,
     content_type: contentType,
@@ -509,10 +608,23 @@ export async function publish(
     author_avatar: null,
     author_gh_id: null,
     author_id: input.authorId ?? null,
+    agent_id: input.agentId ?? null,
+    agent_name: input.agentId ? (input.agentName ?? null) : null,
     source: input.source ?? null,
     message: input.message ?? "first publish",
     name: input.name ?? null,
-  })
+  }
+  if (input.workflow)
+    return commitWorkflowPublication(
+      meta,
+      input.workflow,
+      newArtifact.org_id,
+      { create: newArtifact, owner_id: input.workflow.ownerId },
+      nextVersion,
+      timings,
+    )
+  const artifact = await meta.createArtifact(newArtifact)
+  const version = await meta.addVersion(artifact.id, nextVersion)
   return {
     artifact: (await meta.getByShortId(artifact.short_id)) as ArtifactRecord,
     version,

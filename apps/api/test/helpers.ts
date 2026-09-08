@@ -108,13 +108,27 @@ const makePgStore = (name: string, users: TestUser[], team: Seat[]): TestStore =
   })()
   // Every MetaStore method is async, so a Proxy that defers each call until
   // connect+migrate finishes lets the synchronous call sites stay unchanged.
+  const deferredMethod =
+    (prop: string) =>
+    (...args: unknown[]) =>
+      ready.then((store) =>
+        (store as unknown as Record<string, (...a: unknown[]) => unknown>)[prop]?.(...args),
+      )
   return new Proxy({} as TestStore, {
-    get:
-      (_t, prop: string) =>
-      (...args: unknown[]) =>
-        ready.then((s) =>
-          (s as unknown as Record<string, (...a: unknown[]) => unknown>)[prop]?.(...args),
-        ),
+    get: (target, prop: string) =>
+      Object.hasOwn(target, prop) ? Reflect.get(target, prop) : deferredMethod(prop),
+    // Fault-injection tests need to intercept the same method the app calls.
+    // Expose configurable descriptors while leaving every real call on Postgres.
+    getOwnPropertyDescriptor: (target, prop) =>
+      Reflect.getOwnPropertyDescriptor(target, prop) ??
+      (typeof prop === "string" && prop !== "then"
+        ? {
+            configurable: true,
+            enumerable: true,
+            writable: true,
+            value: deferredMethod(prop),
+          }
+        : undefined),
   })
 }
 

@@ -134,6 +134,8 @@ import type {
   WebhookRecord,
   WorkflowArtifactActivityRecord,
   WorkflowAttemptStateGuard,
+  WorkflowPublishKey,
+  WorkflowPublishReceiptRecord,
   WorkflowRunRecord,
   WorkflowRunTransition,
   WorkflowStepAttemptRecord,
@@ -265,6 +267,7 @@ import {
   webhook,
   webhookDelivery,
   workflowArtifactActivity,
+  workflowPublishReceipt,
   workflowRun,
   workflowStepAttempt,
   workspace,
@@ -448,6 +451,7 @@ export const schema = {
   workflowRun,
   workflowStepAttempt,
   workflowArtifactActivity,
+  workflowPublishReceipt,
   artifactScanEvent,
   artifactScanCoverage,
   skillRelation,
@@ -510,6 +514,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   workflowRun: true,
   workflowStepAttempt: true,
   workflowArtifactActivity: true,
+  workflowPublishReceipt: true,
   artifactScanEvent: true,
   artifactScanCoverage: true,
   skillRelation: true,
@@ -1129,6 +1134,21 @@ export function makeRepos(db: SqliteDb) {
           eq(version.artifact_id, artifactId),
           eq(version.n, expected.n),
           eq(version.blob_key, expected.blobKey),
+          notExists(
+            db
+              .select({ id: workflowArtifactActivity.id })
+              .from(workflowArtifactActivity)
+              .where(
+                and(
+                  eq(
+                    workflowArtifactActivity.artifact_short_id,
+                    sql`(select short_id from artifact where id = ${artifactId})`,
+                  ),
+                  eq(workflowArtifactActivity.artifact_version, expected.n),
+                  eq(workflowArtifactActivity.source, "observed"),
+                ),
+              ),
+          ),
         ),
       )
       .returning()
@@ -5068,6 +5088,40 @@ export function makeRepos(db: SqliteDb) {
         .get()) as WorkflowStepAttemptRecord | undefined) ?? null
     )
   }
+  const workflowVersionIsPinned = async (artifactId: string, n: number): Promise<boolean> => {
+    const rows = await db
+      .select({ id: workflowArtifactActivity.id })
+      .from(workflowArtifactActivity)
+      .innerJoin(artifact, eq(artifact.short_id, workflowArtifactActivity.artifact_short_id))
+      .where(
+        and(
+          eq(artifact.id, artifactId),
+          eq(workflowArtifactActivity.artifact_version, n),
+          eq(workflowArtifactActivity.source, "observed"),
+        ),
+      )
+      .limit(1)
+      .all()
+    return rows.length > 0
+  }
+
+  const getWorkflowPublishReceipt = async (
+    key: WorkflowPublishKey,
+  ): Promise<WorkflowPublishReceiptRecord | null> =>
+    ((await db
+      .select()
+      .from(workflowPublishReceipt)
+      .where(
+        and(
+          eq(workflowPublishReceipt.org_id, key.org_id),
+          eq(workflowPublishReceipt.workflow_run_id, key.workflow_run_id),
+          eq(workflowPublishReceipt.node_id, key.node_id),
+          eq(workflowPublishReceipt.attempt, key.attempt),
+          eq(workflowPublishReceipt.dedupe_key, key.dedupe_key),
+        ),
+      )
+      .get()) as WorkflowPublishReceiptRecord | undefined) ?? null
+
   const recordWorkflowArtifactActivity = async (
     a: NewWorkflowArtifactActivity,
   ): Promise<WorkflowArtifactActivityRecord> => {
@@ -6572,6 +6626,8 @@ export function makeRepos(db: SqliteDb) {
     getWorkflowStepAttemptBySession,
     listWorkflowStepAttempts,
     transitionWorkflowStepAttempt,
+    workflowVersionIsPinned,
+    getWorkflowPublishReceipt,
     recordWorkflowArtifactActivity,
     listWorkflowArtifactActivity,
     recordArtifactScanEvent,
