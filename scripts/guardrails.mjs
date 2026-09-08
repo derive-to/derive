@@ -30,6 +30,7 @@ const CHECKS = {
   api: script("check-api.mjs"),
   schema: script("check-schema.mjs"),
   hyperdrive: script("check-hyperdrive-no-pool.mjs"),
+  "worker-boots": script("check-worker-boots.mjs"),
   filesize: script("check-file-size.mjs"),
   favicons: script("check-favicons.mjs"),
   "anchor-client": script("check-anchor-client.mjs"),

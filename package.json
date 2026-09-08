@@ -83,6 +83,7 @@
     "precommit": "pnpm run ci",
     "prepare": "git config core.hooksPath .githooks || true",
     "lint:hyperdrive": "node scripts/check-hyperdrive-no-pool.mjs",
+    "lint:worker-boots": "node scripts/check-worker-boots.mjs",
     "lint:boundaries": "depcruise --config .dependency-cruiser.mjs packages apps",
     "lint:env": "node scripts/check-env.mjs",
     "lint:api-types": "node scripts/check-api-types.mjs",
