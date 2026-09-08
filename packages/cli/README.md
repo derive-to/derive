@@ -205,6 +205,7 @@ derive scan --since 30d
 derive scan setup
 derive scan setup --schedule
 derive scan status
+derive scan status --all --json
 ```
 
 `derive scan` records successful artifact reads and publishes with the exact artifact version. It
@@ -228,6 +229,11 @@ the lock becomes recoverable after two minutes without a heartbeat. Setup uses t
 so it cannot reset a cursor while a scan uploads receipts.
 Status and dry-run commands remain available during an active scan. They do not change local
 queues, cursors, or the install registry. Skill dry runs also resolve legacy project pins in memory.
+
+Status shows pending artifact IDs, versions, actions, clients, event times, and retry reasons.
+`artifact_unavailable` means the selected account could not resolve the artifact in its available
+workspaces. `awaiting_upload` means the receipt has no recorded unavailable result yet. Status shows
+20 receipts by default; `--all` includes the whole pending queue. It omits account and session IDs.
 
 The scanner checks every workspace available to the selected account before it rejects an artifact
 as unavailable. It keeps unresolved receipts in the local spool. A later scan can resolve them after

@@ -625,6 +625,65 @@ describe("derive skill scan", () => {
 })
 
 describe("derive scan", () => {
+  it("shows bounded pending receipt details without exposing local identity", async () => {
+    const project = mkdtempSync(join(tmpdir(), "derive-scan-status-details-"))
+    dirs.push(project)
+    const config = join(project, ".derive-test-config")
+    mkdirSync(config, { recursive: true })
+    const contents = JSON.stringify({
+      version: 1,
+      coverage: [],
+      pending: Array.from({ length: 23 }, (_, index) => ({
+        event_id: index.toString(16).padStart(64, "0"),
+        artifact_short_id: `pending${index}`,
+        artifact_version: 2,
+        action: "read",
+        client: "codex",
+        occurred_at: "2026-09-08T01:00:00.000Z",
+        retry_unavailable: index < 3,
+        opaque_session_id: "private-session-marker",
+        target: { server: "https://derive.test", account_id: "private-account-marker" },
+      })),
+    })
+    const spool = join(config, "artifact-scan-spool.json")
+    writeFileSync(spool, contents)
+    const result = await run(project, "http://127.0.0.1:1", ["scan", "status", "--json"], {
+      HOME: join(project, "home"),
+    })
+    expect(result.status).toBe(0)
+    const status = JSON.parse(result.stdout).artifacts
+    expect(status.pending).toBe(23)
+    expect(status.pending_by_reason).toEqual({ artifact_unavailable: 3, awaiting_upload: 20 })
+    expect(status.pending_receipts).toHaveLength(20)
+    expect(status.pending_receipts_remaining).toBe(3)
+    expect(status.pending_receipts[0]).toEqual({
+      artifact_short_id: "pending0",
+      artifact_version: 2,
+      action: "read",
+      client: "codex",
+      occurred_at: "2026-09-08T01:00:00.000Z",
+      reason: "artifact_unavailable",
+    })
+    expect(status.pending_receipts[3].reason).toBe("awaiting_upload")
+    expect(result.stdout).not.toContain("private-")
+    const plain = await run(project, "http://127.0.0.1:1", ["scan", "status"], {
+      HOME: join(project, "home"),
+    })
+    expect(plain.status).toBe(0)
+    expect(plain.stdout).toContain("pending0 v2")
+    expect(plain.stdout).toContain("3 more pending artifact receipts")
+    expect(plain.stdout).toContain("Retry with an account that can access them")
+    expect(plain.stdout).not.toContain("private-")
+    const all = await run(project, "http://127.0.0.1:1", ["scan", "status", "--all", "--json"], {
+      HOME: join(project, "home"),
+    })
+    expect(all.status).toBe(0)
+    expect(JSON.parse(all.stdout).artifacts.pending_receipts).toHaveLength(23)
+    expect(JSON.parse(all.stdout).artifacts.pending_receipts_remaining).toBe(0)
+    expect(readFileSync(spool, "utf8")).toBe(contents)
+    expect(existsSync(join(config, "artifact-scan.json"))).toBe(false)
+  })
+
   it.each([
     ["skill", "status"],
     ["skill", "--dry-run"],

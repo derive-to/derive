@@ -1432,7 +1432,7 @@ if (cmd === "scan") {
   requireNoTargetError(resolved)
 
   if (action === "status") {
-    const artifacts = artifactScanStatus()
+    const artifacts = artifactScanStatus(undefined, { all: flags.all === "true" })
     const skills = skillScanStatus()
     const output = { artifacts, skills }
     if (flags.json) console.log(JSON.stringify(output))
@@ -1441,6 +1441,18 @@ if (cmd === "scan") {
       console.log(`last artifact scan: ${artifacts.last_scan_at ?? "never"}`)
       console.log(`pending artifact receipts: ${artifacts.pending}`)
       console.log(`pending Skill receipts: ${skills.pending}`)
+      for (const receipt of artifacts.pending_receipts)
+        console.log(
+          `  ${receipt.artifact_short_id} v${receipt.artifact_version} · ${receipt.action} · ${receipt.client} · ${receipt.reason}`,
+        )
+      if (artifacts.pending_receipts_remaining)
+        console.log(
+          `  ${artifacts.pending_receipts_remaining} more pending artifact receipts; use --all to show them`,
+        )
+      if (artifacts.pending_by_reason.artifact_unavailable)
+        console.log(
+          "Unavailable artifacts remain queued. Retry with an account that can access them.",
+        )
       for (const source of artifacts.sources)
         console.log(
           `  ${source.client}: ${source.files} log files · ${source.tracked} tracked · ${source.sessions_90d} sessions in coverage`,

@@ -480,7 +480,7 @@ export function removeFromArtifactScanSpool(eventIds, clearCoverage = false) {
   return next
 }
 
-export function artifactScanStatus(home = homedir()) {
+export function artifactScanStatus(home = homedir(), { all = false } = {}) {
   const state = readJson(statePath(), defaultState())
   const spool = readArtifactScanSpool()
   const sources = discoverSkillLogSources(home)
@@ -488,6 +488,19 @@ export function artifactScanStatus(home = homedir()) {
     parser_version: ARTIFACT_SCAN_PARSER_VERSION,
     last_scan_at: state.last_scan_at ?? null,
     pending: spool.pending.length,
+    pending_by_reason: {
+      artifact_unavailable: spool.pending.filter((event) => event.retry_unavailable).length,
+      awaiting_upload: spool.pending.filter((event) => !event.retry_unavailable).length,
+    },
+    pending_receipts: spool.pending.slice(0, all ? undefined : 20).map((event) => ({
+      artifact_short_id: event.artifact_short_id,
+      artifact_version: event.artifact_version,
+      action: event.action,
+      client: event.client,
+      occurred_at: event.occurred_at,
+      reason: event.retry_unavailable ? "artifact_unavailable" : "awaiting_upload",
+    })),
+    pending_receipts_remaining: all ? 0 : Math.max(0, spool.pending.length - 20),
     sources: ["claude", "codex"].map((client) => ({
       client,
       files: sources.filter((item) => item.client === client).length,
