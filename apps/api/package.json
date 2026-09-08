@@ -57,7 +57,7 @@
     "croner": "^10.0.1",
     "drizzle-orm": "^0.45.2",
     "fflate": "^0.8.2",
-    "hono": "^4.12.34",
+    "hono": "^4.13.5",
     "hono-rate-limiter": "^0.5.3",
     "jose": "^6.1.0",
     "katex": "0.18.5",
