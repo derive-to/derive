@@ -1,18 +1,15 @@
 import { createHash, randomBytes } from "node:crypto"
 import {
-  closeSync,
   createReadStream,
   mkdirSync,
-  openSync,
   readFileSync,
-  readSync,
   renameSync,
   statSync,
   writeFileSync,
 } from "node:fs"
 import { homedir } from "node:os"
 import { basename, dirname, join } from "node:path"
-import { discoverSkillLogSources, parseSince } from "./skill-scan.js"
+import { discoverSkillLogSources, parseSince, sourceCheckpoint } from "./skill-scan.js"
 
 export const ARTIFACT_SCAN_PARSER_VERSION = 1
 
@@ -37,19 +34,6 @@ const writeJson = (path, value) => {
 }
 
 const sourceIdentity = (stats) => `${stats.dev}:${stats.ino}`
-
-const sourceCheckpoint = (path, offset) => {
-  const length = Math.min(4096, offset)
-  if (length === 0) return hash("")
-  const buffer = Buffer.alloc(length)
-  const descriptor = openSync(path, "r")
-  try {
-    const read = readSync(descriptor, buffer, 0, length, offset - length)
-    return hash(buffer.subarray(0, read))
-  } finally {
-    closeSync(descriptor)
-  }
-}
 
 const completeLines = async (path, start, onLine) => {
   let carry = Buffer.alloc(0)

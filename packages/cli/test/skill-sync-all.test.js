@@ -2025,6 +2025,10 @@ describe("scan source recovery", () => {
       const repaired = await scan(options)
       expect(repaired.source_errors).toEqual([])
       expect(repaired.state.sources[broken].session).toBe("repaired-session")
+      // Rewrite the same inode and grow beyond its old cursor.
+      writeFileSync(broken, header("replacement-session-with-a-longer-name"))
+      const rewritten = await scan(options)
+      expect(rewritten.state.sources[broken].session).toBe("replacement-session-with-a-longer-name")
       const before = readFileSync(join(root, "config", `${_name}-scan.json`), "utf8")
       const missing = { client: "codex", path: join(root, "missing.jsonl") }
       const dry = await scan({ ...options, sources: [missing], dryRun: true })

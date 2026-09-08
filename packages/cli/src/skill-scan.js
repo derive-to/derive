@@ -1,10 +1,13 @@
 import { createHash, randomBytes } from "node:crypto"
 import {
+  closeSync,
   createReadStream,
   existsSync,
   mkdirSync,
+  openSync,
   readdirSync,
   readFileSync,
+  readSync,
   renameSync,
   statSync,
   writeFileSync,
@@ -150,6 +153,19 @@ const timestampOf = (record) => {
   return Number.isFinite(parsed) ? new Date(parsed).toISOString() : null
 }
 
+export const sourceCheckpoint = (path, offset) => {
+  const length = Math.min(4096, offset)
+  if (length === 0) return hash("")
+  const buffer = Buffer.alloc(length)
+  const descriptor = openSync(path, "r")
+  try {
+    const read = readSync(descriptor, buffer, 0, length, offset - length)
+    return hash(buffer.subarray(0, read))
+  } finally {
+    closeSync(descriptor)
+  }
+}
+
 const sourceIdentity = (stats) => `${stats.dev}:${stats.ino}`
 
 const completeLines = async (path, start, onLine) => {
@@ -288,7 +304,12 @@ export async function scanSkillLogs(options = {}) {
       const saved = state.sources[source.path]
       let start = 0
       if (sinceMs === null) {
-        if (saved?.identity === identity && saved.offset <= stats.size) start = saved.offset
+        if (
+          saved?.identity === identity &&
+          saved.offset <= stats.size &&
+          saved.checkpoint_hash === sourceCheckpoint(source.path, saved.offset)
+        )
+          start = saved.offset
         else if (
           options.baseline ||
           (options.initialBaseline && !state.initialized_clients[source.client])
@@ -299,6 +320,7 @@ export async function scanSkillLogs(options = {}) {
       if (start === stats.size) {
         state.sources[source.path] = {
           ...saved,
+          checkpoint_hash: sourceCheckpoint(source.path, stats.size),
           identity,
           offset: stats.size,
           client: source.client,
@@ -338,6 +360,7 @@ export async function scanSkillLogs(options = {}) {
             : parseCodexLine(record, context, clientInstalls, sinceMs)
         for (const event of found) events.set(event.event_id, event)
       })
+      const checkpointHash = sourceCheckpoint(source.path, end)
       const sessionHash = hash(
         ["derive-skill-session-v1", source.client, context.session].join("\0"),
       )
@@ -345,6 +368,7 @@ export async function scanSkillLogs(options = {}) {
       state.sources[source.path] = {
         identity,
         offset: end,
+        checkpoint_hash: checkpointHash,
         client: source.client,
         session: context.session,
         turn: context.turn,
