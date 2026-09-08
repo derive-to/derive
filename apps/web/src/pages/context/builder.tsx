@@ -1,4 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { useSearch } from "@tanstack/react-router"
 import { useCallback, useState } from "react"
 import { ApiError, api } from "@/api"
 import { ChatComposer } from "@/components/chat/chat-composer"
@@ -12,6 +13,7 @@ import { Button } from "@/components/ui/button"
 import { copyText } from "@/lib/clipboard"
 import { agentsQuery, chatModelsQuery, contextsQuery, workspaceQuery } from "@/lib/queries"
 import { useDocumentTitle } from "@/lib/use-document-title"
+import { ArxivImportForm } from "./arxiv-import-form"
 import { BUILDER_COPY } from "./builder-copy"
 import { NewContextForm } from "./new-context-form"
 
@@ -51,7 +53,11 @@ function AgentDoor() {
 export function ContextBuilderPage() {
   useDocumentTitle(BUILDER_COPY.pageTitle)
   const qc = useQueryClient()
-  const [showExpert, setShowExpert] = useState(false)
+  const search = useSearch({ from: "/contexts/new" })
+  // Which of the two other doors is open; a `?door=arxiv` arrival opens the paper one.
+  const [door, setDoor] = useState<"arxiv" | "manifest" | null>(
+    search.door === "arxiv" ? "arxiv" : null,
+  )
   const [openRefused, setOpenRefused] = useState(false)
   const {
     data: workspace,
@@ -80,7 +86,7 @@ export function ContextBuilderPage() {
   const chat = useChatSession({ open, resetKey: org })
   const { data: agents } = useQuery({
     ...agentsQuery(),
-    enabled: showExpert,
+    enabled: door === "manifest",
     retry: false,
   })
 
@@ -150,15 +156,30 @@ export function ContextBuilderPage() {
       )}
 
       <div className="flex flex-col gap-3">
-        <button
-          type="button"
-          data-testid="builder-expert-door"
-          onClick={() => setShowExpert((shown) => !shown)}
-          className="self-start text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
-        >
-          {BUILDER_COPY.expertDoor}
-        </button>
-        {showExpert && (
+        {/* Two other doors on one row, one open at a time: a paper from arXiv (read-only,
+            fetched in the background) and the manifest someone already published. */}
+        <div className="flex flex-wrap items-center gap-4">
+          <button
+            type="button"
+            data-testid="builder-arxiv-door"
+            aria-expanded={door === "arxiv"}
+            onClick={() => setDoor((open) => (open === "arxiv" ? null : "arxiv"))}
+            className="text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+          >
+            {BUILDER_COPY.arxivDoor}
+          </button>
+          <button
+            type="button"
+            data-testid="builder-expert-door"
+            aria-expanded={door === "manifest"}
+            onClick={() => setDoor((open) => (open === "manifest" ? null : "manifest"))}
+            className="text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+          >
+            {BUILDER_COPY.expertDoor}
+          </button>
+        </div>
+        {door === "arxiv" && <ArxivImportForm initialUrl={search.arxiv ?? ""} />}
+        {door === "manifest" && (
           <NewContextForm
             agents={(agents ?? [])
               .filter((agent) => !agent.managed)

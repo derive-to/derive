@@ -191,6 +191,11 @@
             "type": "boolean",
             "description": "When true, direct publishes are blocked — changes go through review."
           },
+          "import_source": {
+            "type": "string",
+            "nullable": true,
+            "description": "`arxiv` when Derive fetched this content rather than someone authoring it here. Such a paper is read as it renders: its source is for agents, so the viewer offers no file list, source download, bibliography editor or diff."
+          },
           "workspace_access": {
             "type": "string",
             "enum": [
@@ -2781,6 +2786,104 @@
           "name"
         ]
       },
+      "ContextImportInfo": {
+        "type": "object",
+        "nullable": true,
+        "properties": {
+          "source": {
+            "type": "string",
+            "enum": [
+              "arxiv"
+            ]
+          },
+          "ref": {
+            "type": "string",
+            "description": "The bare paper id (`2401.12345`)."
+          },
+          "version": {
+            "type": "number",
+            "nullable": true,
+            "description": "The paper version arXiv resolved the import to; null until fetched."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "fetching",
+              "ready",
+              "failed",
+              "dead"
+            ],
+            "description": "pending/fetching: the source is on its way; ready: the paper is published and readable; failed: a transient error, retry scheduled; dead: gave up (retry by hand, or discard)."
+          },
+          "error": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "detail": {
+                "type": "string",
+                "nullable": true
+              }
+            },
+            "required": [
+              "code",
+              "detail"
+            ],
+            "description": "The last failure: a code the client maps to copy, plus a short detail."
+          },
+          "url": {
+            "type": "string",
+            "description": "The paper's abstract page on arXiv."
+          },
+          "imported_by": {
+            "type": "string"
+          },
+          "code": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "url": {
+                "type": "string",
+                "description": "The repository's page on its own host."
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "pending",
+                  "ready",
+                  "failed"
+                ],
+                "description": "pending: on its way with the paper; ready: stored inside the paper's artifact, where an agent reads it; failed: see `error`. Independent of the paper's own status."
+              },
+              "error": {
+                "type": "string",
+                "nullable": true,
+                "description": "Why the repository could not be fetched."
+              }
+            },
+            "required": [
+              "url",
+              "status",
+              "error"
+            ],
+            "description": "The public repository implementing this paper, when one is attached. Its files live inside the paper's artifact for agents to read; people open the repository on its own host."
+          }
+        },
+        "required": [
+          "source",
+          "ref",
+          "version",
+          "status",
+          "error",
+          "url",
+          "imported_by",
+          "code"
+        ],
+        "description": "Set when this Context was imported (a paper from arXiv): read-only, no runner, no sessions. Null for a Context someone defined."
+      },
       "ContextInfo": {
         "type": "object",
         "properties": {
@@ -2838,6 +2941,9 @@
             "type": "number",
             "nullable": true,
             "description": "The manifest artifact's current version; null if it can't be resolved."
+          },
+          "import": {
+            "$ref": "#/components/schemas/ContextImportInfo"
           }
         },
         "required": [
@@ -2849,7 +2955,8 @@
           "created_at",
           "runner_seen_at",
           "ask_policy",
-          "connection_ids"
+          "connection_ids",
+          "import"
         ]
       },
       "BrandprintConfig": {
@@ -2943,6 +3050,38 @@
         "required": [
           "url",
           "ref"
+        ]
+      },
+      "ManifestDocumentInfo": {
+        "type": "object",
+        "properties": {
+          "short_id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string",
+            "nullable": true
+          },
+          "kind": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "doc",
+              "bundle",
+              null
+            ]
+          },
+          "role": {
+            "type": "string",
+            "nullable": true,
+            "description": "What the document is to the Context (`paper`)."
+          }
+        },
+        "required": [
+          "short_id",
+          "title",
+          "kind",
+          "role"
         ]
       },
       "Session": {
@@ -9516,6 +9655,117 @@
         }
       }
     },
+    "/v1/contexts/import/arxiv": {
+      "post": {
+        "tags": [
+          "Contexts"
+        ],
+        "summary": "Import a paper from arXiv as a read-only Context: its LaTeX source and BibTeX, fetched in the background.",
+        "responses": {
+          "200": {
+            "description": "This workspace already imported that paper: its existing Context.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContextInfo"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "The new Context, already listed, with import.status 'fetching' (or 'pending') until the worker publishes the paper.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContextInfo"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/contexts/{id}/import/retry": {
+      "post": {
+        "tags": [
+          "Contexts"
+        ],
+        "summary": "Queue a failed paper import again (the context's creator or a workspace manager).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The Context, its import queued again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContextInfo"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/contexts/{id}/import/code": {
+      "post": {
+        "tags": [
+          "Contexts"
+        ],
+        "summary": "Attach, replace or remove the repository implementing an imported paper (the context's creator or a workspace manager).",
+        "description": "The repository is fetched into the paper's own artifact, where an agent reading the paper reads the code beside it; people get a link to it on its own host and never a file listing. Pass `url: null` to remove it, which republishes the paper without the code.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "url": {
+                    "type": "string",
+                    "nullable": true,
+                    "maxLength": 2000,
+                    "description": "A public GitHub or GitLab repository; null removes the attachment."
+                  }
+                },
+                "required": [
+                  "url"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The Context, its implementation queued (or removed).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContextInfo"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/contexts/{id}": {
       "get": {
         "tags": [
@@ -9606,6 +9856,18 @@
                         "max_concurrency": {
                           "type": "number",
                           "description": "How many sessions the runner may work at once. Human branch only."
+                        },
+                        "documents": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/ManifestDocumentInfo"
+                          },
+                          "description": "Documents the manifest binds (an imported paper's bundle). Human branch only."
+                        },
+                        "bibtex": {
+                          "type": "string",
+                          "nullable": true,
+                          "description": "An imported paper's own BibTeX entry (its bundle's CITATION.bib). Human branch only."
                         }
                       }
                     }

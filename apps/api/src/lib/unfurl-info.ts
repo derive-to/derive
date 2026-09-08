@@ -36,7 +36,7 @@ export const unfurlInfoFor = async (
   const ref = artifactUrl(baseUrl, artifact).slice(`${baseUrl}/artifacts/`.length)
   return {
     title: artifact.title ?? "Untitled",
-    kindLabel: kindLabel(version?.content_type, artifact.kind === "bundle"),
+    kindLabel: kindLabel(version?.content_type, artifact.kind === "bundle", artifact.import_source),
     versionCount,
     commentCount,
     // The reward for publishing a fact: the shared link carries its own numbers.

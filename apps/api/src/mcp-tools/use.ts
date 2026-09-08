@@ -7,6 +7,7 @@ import {
 } from "@derive/core"
 import { z } from "zod"
 import { metaForWire } from "../lib/context-builder-card"
+import { IMPORTED_NO_RUNS } from "../lib/context-package"
 import { canPayForAgent, NO_PAYER_MESSAGE } from "../lib/payer"
 import { loadWorkflowRunArtifactState } from "../lib/workflow-activity"
 import {
@@ -913,6 +914,7 @@ export function registerUseTool(tc: ToolContext): void {
             ? `No Context "${context}" you can use here. You can use: ${rows.map((r) => r.x.name).join(", ")}.`
             : "No Contexts you can use in this workspace.",
         )
+      if (hit.x.import_source) return err(IMPORTED_NO_RUNS(hit.x.id))
       if (!hit.manifest)
         return err(`Context "${hit.x.name}" has lost its instruction artifact and can't be used.`)
       const manifest = hit.manifest

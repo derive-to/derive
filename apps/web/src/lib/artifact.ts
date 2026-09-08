@@ -54,6 +54,9 @@ export const formatOf = (a: Artifact): "md" | "html" | "tex" => {
 // The short type badge for an artifact (Skill / Site / Deck / MD / HTML / Doc),
 // derived from its kind + denormalized content type without opening the bundle.
 export function artifactTypeLabel(a: Artifact): string {
+  // Content a machine fetched is named by where it came from: a paper imported from arXiv
+  // reads as "arXiv", not as the LaTeX it is written in (mirrors @derive/core kindLabel).
+  if (a.import_source === "arxiv") return "arXiv"
   // A skill rides the denormalized content type (derive/skill), so the grid badges it
   // without opening the bundle — string mirrored from @derive/core SKILL_CONTENT_TYPE.
   if (a.current_content_type === "derive/skill") return "Skill"

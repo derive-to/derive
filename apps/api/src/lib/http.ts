@@ -49,6 +49,50 @@ export const readJson = async <T>(c: Context, schema: z.ZodType<T>): Promise<T |
  */
 export const bail = (r: Response): never => r as never
 
+/** Thrown by readCappedBytes when a body would cross the cap (declared or streamed). */
+export class ResponseTooLargeError extends Error {
+  constructor(public maxBytes: number) {
+    super(`response exceeds ${maxBytes} bytes`)
+    this.name = "ResponseTooLargeError"
+  }
+}
+
+/**
+ * Read a response body up to `maxBytes`, refusing past that point instead of buffering
+ * whatever the upstream sends. Checks the declared length first, then counts the stream,
+ * so a body that lies about its size is still bounded. Shared by every upstream read the
+ * API makes on a caller's behalf (a tool's API page, a paper's source archive).
+ */
+export const readCappedBytes = async (res: Response, maxBytes: number): Promise<Uint8Array> => {
+  const declared = Number(res.headers.get("content-length"))
+  if (Number.isFinite(declared) && declared > maxBytes) throw new ResponseTooLargeError(maxBytes)
+  if (!res.body) return new Uint8Array()
+  const reader = res.body.getReader()
+  const chunks: Uint8Array[] = []
+  let total = 0
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      total += value.byteLength
+      if (total > maxBytes) {
+        await reader.cancel()
+        throw new ResponseTooLargeError(maxBytes)
+      }
+      chunks.push(value)
+    }
+  } finally {
+    reader.releaseLock()
+  }
+  const bytes = new Uint8Array(total)
+  let offset = 0
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return bytes
+}
+
 export const DEFAULT_WORKSPACE_NAME = "My Workspace"
 /** Cookie holding the active workspace id (multi-workspace mode). */
 export const WS_COOKIE = "derive_ws"

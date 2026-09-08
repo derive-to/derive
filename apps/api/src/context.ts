@@ -366,6 +366,12 @@ export interface AppDeps {
   qaEmailCapture?: boolean
   /** Wake the preview worker after enqueuing (Workers: poke the PreviewRenderer DO). */
   pokePreviews?: () => void
+  /** Whether something on this deployment drains the paper-import queue (the Node import
+   *  worker, or the preview Durable Object). Unset ⇒ true. False makes the import route
+   *  refuse up front instead of queueing a job nothing would ever run. */
+  imports?: boolean
+  /** Wake the import worker after enqueuing a paper import. */
+  pokeImports?: () => void
   /**
    * EXPERIMENTAL hosted runs: start a freshly-created run NOW instead of waiting for the next
    * tick, so "Run now" and a fire-URL feel immediate. Best-effort and fire-and-forget by
@@ -1735,6 +1741,19 @@ export function buildContext(deps: AppDeps) {
   }
   // The static CI/agent token (DERIVE_TOKEN) presented as this request's bearer.
   const isToken = (c: Context): boolean => !!deps.token && safeEqual(bearer(c), deps.token)
+
+  /**
+   * Is this artifact's SOURCE off limits to this caller? True only for content a machine
+   * fetched (an arXiv paper) read by a person: they get the paper as it renders, which is
+   * what a paper is for, and never the LaTeX behind it. Agents and the static token keep
+   * full source access — reading the source is how a model understands the paper.
+   *
+   * A presentation rule, not a secret: the same source sits on arXiv for anyone to fetch.
+   */
+  const sourceHiddenFrom = async (
+    c: Context,
+    a: Pick<ArtifactRecord, "import_source">,
+  ): Promise<boolean> => !!a.import_source && !isToken(c) && !(await agentFor(c))
   // Is the caller a member of this workspace? The static token counts as a member of
   // every workspace. Callers still decide whether a non-member gets 403 or empty results.
   const isMember = async (c: Context, orgId: string): Promise<boolean> => {
@@ -1883,6 +1902,7 @@ export function buildContext(deps: AppDeps) {
     requireUser,
     requireDirectHuman,
     isToken,
+    sourceHiddenFrom,
     isMember,
     canAskContext,
     canUserAskContext,

@@ -37,6 +37,8 @@ import type {
   FolderRecord,
   FollowRecord,
   GitHubAppRecord,
+  ImportJobRecord,
+  ImportLeaseRecord,
   InvitationRecord,
   MembershipRecord,
   NotificationRecord,
@@ -83,6 +85,8 @@ export interface TypedTables {
   webhookDelivery: DeliveryRecord
   renderJob: RenderJobRecord
   exportJob: ExportJobRecord
+  importJob: ImportJobRecord
+  importLease: ImportLeaseRecord
   membership: MembershipRecord
   workspace: WorkspaceRecord
   artifactMember: ArtifactMemberRecord

@@ -307,6 +307,13 @@ export const Artifact = z
       .boolean()
       .optional()
       .describe("When true, direct publishes are blocked — changes go through review."),
+    import_source: z
+      .string()
+      .nullable()
+      .optional()
+      .describe(
+        "`arxiv` when Derive fetched this content rather than someone authoring it here. Such a paper is read as it renders: its source is for agents, so the viewer offers no file list, source download, bibliography editor or diff.",
+      ),
     workspace_access: z
       .enum(["none", "member"])
       .optional()

@@ -10,6 +10,7 @@ import {
   templateLibraryUri,
 } from "@derive/core"
 import { z } from "zod"
+import { importStateOf } from "../lib/context-package"
 import {
   searchArtifactVersion,
   searchMatcher,
@@ -133,14 +134,17 @@ const contextFindRowsFor = async (
           state: session.state,
           updated_at: session.updated_at ?? session.created_at,
         }))
+      const imported = await importStateOf(ctx.meta, x)
       return {
         type: "context" as const,
         id: x.id,
         name: x.name,
-        online: runnerOnline(x),
+        ...(imported ? { import: imported } : { online: runnerOnline(x) }),
         manifest: manifest ? { short_id: manifest.short_id, title: manifest.title } : null,
         your_open_sessions: open,
-        note: "read({short_id: id}) loads its package (manifest + skill pointers); use({context, instruction}) starts a run with it.",
+        note: imported
+          ? "An imported paper, read-only: read({short_id: id}) loads its abstract and BibTeX and points at the paper bundle. It takes no runs."
+          : "read({short_id: id}) loads its package (manifest + skill pointers); use({context, instruction}) starts a run with it.",
       }
     }),
   )

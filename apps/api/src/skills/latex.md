@@ -105,3 +105,8 @@ version, and comments, `@string` macros and untouched entries survive byte for b
 `GET` the same path to list entries with their `raw` text. `publish({ short_id, merge:
 true, files: { "refs.bib": <whole file> } })` rewrites the file instead. A single-file
 paper has no `.bib` to cite from; publish it as a bundle.
+
+To cite a paper the workspace imported from arXiv (see `derive://skills/contexts`), `read`
+its bundle: the outline's `citation` carries the key and the BibTeX entry arXiv publishes
+for it. Add that entry to your own paper's `.bib` (the `PUT .../bib` call above) and cite
+with `\cite{<key>}`; the imported bundle itself is locked, so it is never the file you edit.

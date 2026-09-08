@@ -17,7 +17,9 @@ import { loadConfig, resolveAuthSecret, resolveDefaultOrg } from "./config"
 import { configWarnings } from "./config-manifest"
 import { restEmbedder } from "./embedder"
 import { loadLocalEmbedder } from "./embedder-local"
+import { startImportWorker } from "./imports"
 import { purgeUserDataAndSyncSeats, workspacesBlockingDeletion } from "./lib/account"
+import { NODE_IMPORT_CAPS } from "./lib/arxiv-import"
 import { makeBillingDriver } from "./lib/billing"
 import { customDomainsFromEnv } from "./lib/cloudflare-saas"
 import { nodeSandbox } from "./lib/code-sandbox-node"
@@ -26,8 +28,10 @@ import { dispatchPass, dispatchRunNow } from "./lib/dispatch"
 import { sweepExpiredDrafts } from "./lib/drafts"
 import { buildAuthEmail, emailDeliverySender, logEmailSender, resendEmailSender } from "./lib/email"
 import { workspaceIdsFromEnv } from "./lib/env"
+import { sharpShrinker } from "./lib/image-shrink-node"
 import { catalogFromGateway, type GatewayConfig } from "./lib/model-catalog"
 import { getInstanceSlot, modelSource, readLibrary } from "./lib/model-library"
+import { NODE_REPO_CAPS } from "./lib/repo-fetch"
 import { mountWeb } from "./lib/serve-web"
 import { signupPolicy } from "./lib/signup-policy"
 import { originProxy } from "./lib/site"
@@ -39,9 +43,14 @@ import { providerSubstrate } from "./lib/substrate-provider"
 import { makeShutdown } from "./lifecycle"
 import { log } from "./log"
 import { playwrightRenderer } from "./preview-node"
-import { startPreviewWorker } from "./previews"
+import { enqueueRender, startPreviewWorker } from "./previews"
 import { PgvectorSearchIndex } from "./search-pgvector"
-import { type ChannelSenders, enqueueChannelDelivery, startWebhookWorker } from "./webhooks"
+import {
+  type ChannelSenders,
+  enqueueChannelDelivery,
+  enqueueForEvent,
+  startWebhookWorker,
+} from "./webhooks"
 import { nodeDnsGuard } from "./webhooks-node"
 
 // Best-effort load a local .env (repo root, then cwd) before reading config, so
@@ -429,6 +438,41 @@ const previewWorker = cfg.previews
     })
   : undefined
 
+// Paper imports (a Context fetched from arXiv): one job at a time behind arXiv's request
+// gate, on its own interval so a slow download never stalls the preview tick. Off with
+// the other background workers, for the same reason: a local process sharing a remote
+// database must not fetch that deployment's papers under it.
+const importWorker = cfg.backgroundWorkers
+  ? startImportWorker({
+      meta,
+      blobs,
+      bus: backplane,
+      baseUrl: cfg.baseUrl,
+      fetch,
+      search,
+      // The webhook half of the app's notify: user-configured hooks on the imported
+      // artifacts fire; the Slack card lane is a request-time affordance and is skipped.
+      notify: async (a, event, data) => {
+        const queued = await enqueueForEvent(meta, cfg.baseUrl, a, event, data).catch(() => 0)
+        if (queued > 0) webhookWorker?.poke()
+      },
+      background: async (work) => {
+        await work.catch(() => undefined)
+      },
+      notifyRender: async (a, n) => {
+        if (!cfg.previews) return
+        await enqueueRender(meta, a.id, n).catch(() => undefined)
+        void previewWorker?.poke()
+      },
+      caps: NODE_IMPORT_CAPS,
+      // A paper's implementation, when one is attached, is fetched with this box's room.
+      repoCaps: NODE_REPO_CAPS,
+      addressGuard: nodeDnsGuard,
+      // A source over the bundle cap has its figures shrunk to fit (sharp, Node only).
+      shrink: sharpShrinker(),
+    })
+  : undefined
+
 // EXPERIMENTAL hosted runs (DERIVE_HOSTED_RUNS, default off): this API process becomes the
 // executor host — it materializes due schedules, reclaims runs whose executor died, and starts
 // each due run as a `derive runner run` child process on this box, so an automation updates its
@@ -562,6 +606,9 @@ const app = createApp({
   // Enqueue a render job on publish and drain on demand when previews are enabled.
   renderPreviews: cfg.previews,
   pokePreviews: previewWorker?.poke,
+  // Paper imports need a worker; without one the route refuses instead of queueing.
+  imports: !!importWorker,
+  pokeImports: importWorker ? () => void importWorker.poke() : undefined,
   // Start a just-created run immediately instead of at the next tick, so "Run now" and a fire
   // URL feel instant. Unset when hosted runs are off — the run then waits for a polling runner.
   pokeRun: hostedDispatch
@@ -698,6 +745,7 @@ const shutdown = makeShutdown({
   stopWorker: () => {
     webhookWorker?.stop()
     previewWorker?.stop()
+    importWorker?.stop()
   },
   clearTimers: () => {
     if (pruneTimer) clearInterval(pruneTimer)

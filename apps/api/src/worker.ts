@@ -424,6 +424,9 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
         renderExports: !!env.BROWSER && !!env.PREVIEW_RENDERER,
         qaEmailCapture: env.DERIVE_QA_EMAIL_CAPTURE === "true",
         pokePreviews: () => void edgeWaitUntil(pokePreviewRenderer(env)),
+        // Paper imports drain from the same DO's alarm; without it nothing would fetch.
+        imports: !!env.PREVIEW_RENDERER,
+        pokeImports: () => void edgeWaitUntil(pokePreviewRenderer(env)),
         // Hosted runs: nudge the dispatch queue so an interactive run starts in seconds
         // instead of on the next minute's cron. Best-effort by construction — the sweep is
         // the guarantee — and a no-op when the queue isn't bound (hosted execution off).

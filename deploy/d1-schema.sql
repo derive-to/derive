@@ -31,7 +31,8 @@ CREATE TABLE IF NOT EXISTS artifact (
   author_avatar TEXT,
   author_gh_id TEXT,
   author_id TEXT,
-  derived_from TEXT
+  derived_from TEXT,
+  import_source TEXT
 );
 
 CREATE TABLE IF NOT EXISTS shared_state (
@@ -858,6 +859,9 @@ CREATE TABLE IF NOT EXISTS context (
   max_concurrency INTEGER NOT NULL DEFAULT 1,
   connection_ids TEXT,
   config TEXT,
+  import_source TEXT,
+  import_ref TEXT,
+  code_url TEXT,
   UNIQUE (org_id, name),
   FOREIGN KEY (manifest_artifact_id) REFERENCES artifact(id)
 );
@@ -898,6 +902,41 @@ CREATE TABLE IF NOT EXISTS session_message (
   meta TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   FOREIGN KEY (session_id) REFERENCES context_session(id)
+);
+
+CREATE TABLE IF NOT EXISTS import_job (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  context_id TEXT NOT NULL,
+  requested_by TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  ref TEXT NOT NULL,
+  scope TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'pending',
+  attempts INTEGER NOT NULL DEFAULT 0,
+  next_attempt_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  lease_until TEXT,
+  error_code TEXT,
+  error_detail TEXT,
+  paper_artifact_id TEXT,
+  manifest_version INTEGER,
+  resolved_version INTEGER,
+  code_status TEXT,
+  code_error TEXT,
+  code_ref TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  UNIQUE (context_id),
+  FOREIGN KEY (context_id) REFERENCES context(id)
+);
+
+CREATE TABLE IF NOT EXISTS import_lease (
+  id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL,
+  scope TEXT NOT NULL DEFAULT '',
+  holder TEXT,
+  lease_until TEXT,
+  next_allowed_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 
 CREATE TABLE IF NOT EXISTS report (
@@ -1019,6 +1058,10 @@ CREATE INDEX IF NOT EXISTS render_job_due ON render_job (status, next_attempt_at
 CREATE INDEX IF NOT EXISTS export_job_due ON export_job (renderer_scope, status, next_attempt_at);
 
 CREATE INDEX IF NOT EXISTS export_job_artifact ON export_job (artifact_id, created_at);
+
+CREATE INDEX IF NOT EXISTS import_job_due ON import_job (scope, status, next_attempt_at);
+
+CREATE INDEX IF NOT EXISTS context_import ON context (org_id, import_source, import_ref);
 
 CREATE INDEX IF NOT EXISTS notification_user_time ON notification (user_id, created_at);
 

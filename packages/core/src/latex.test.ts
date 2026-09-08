@@ -62,6 +62,92 @@ describe("LaTeX type detection", () => {
   })
 })
 
+describe("renderLatex: the preamble", () => {
+  // A real paper's preamble is full of macros this renderer does not model. Their braces
+  // parse as ordinary groups, and printing those put "sectionSec.Secs. [itemize]noitemsep"
+  // at the top of every imported arXiv paper.
+  const PAPER = String.raw`\documentclass[sigconf]{acmart}
+\usepackage{graphicx}
+\def\onedot{\futurelet\@let@token\onedot}
+\crefname{section}{Sec.}{Secs.}
+\setlist[itemize]{noitemsep, topsep=2pt, parsep=0pt}
+\newcommand{\shout}[1]{\textbf{#1}}
+\title{A Paper}
+\begin{document}
+\maketitle
+\section{Intro}
+Body text and \shout{a defined macro}.
+\end{document}
+`
+
+  it("emits nothing from it, while its definitions still take effect", () => {
+    const r = renderLatex(PAPER, "A Paper")
+    const text = r.body
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+    for (const junk of ["Secs.", "noitemsep", "let@token", "topsep"])
+      expect(text).not.toContain(junk)
+    expect(text).toContain("Body text and a defined macro")
+    expect(text.indexOf("A Paper")).toBeLessThan(text.indexOf("Intro"))
+  })
+
+  it("renders a fragment with no document environment as content, not preamble", () => {
+    const r = renderLatex(`\\section{Intro}\nJust a chapter, \\emph{included} by a paper.`, null)
+    const text = r.body
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+    expect(text).toContain("Just a chapter, included by a paper.")
+  })
+})
+
+describe("renderLatex: math a paper's own notation defines", () => {
+  // A paper defines its notation once for prose AND equations, which in LaTeX means
+  // \ensuremath + \xspace. KaTeX implements neither, so handing it those bodies made every
+  // equation using the macro fail to typeset. And a numbered multi-line equation is
+  // \begin{equation}\begin{split}…: this renderer draws the number and hands over the
+  // inside, which KaTeX refuses as a bare split.
+  const PAPER = String.raw`\documentclass{article}
+\newcommand{\mean}{\ensuremath{\mu}\xspace}
+\newcommand{\cov}{\ensuremath{\Sigma}\xspace}
+\newcommand{\yes}{\ensuremath{\frac{a}{b}}}
+\begin{document}
+The mean \mean{} of it.
+\begin{equation}
+\begin{split}
+x &= \mean + \cov \\
+  &= 0
+\end{split}
+\end{equation}
+\end{document}
+`
+
+  it("hands the typesetter macro bodies it can read", () => {
+    const r = renderLatex(PAPER, null)
+    const island = /id="derive-latex-macros">([\s\S]*?)<\/script>/.exec(r.html)?.[1] ?? "{}"
+    const macros = JSON.parse(island.replace(/<\\\//g, "</")) as Record<string, string>
+    expect(macros["\\mean"]).toBe("\\mu")
+    expect(macros["\\cov"]).toBe("\\Sigma")
+    // The wrapper goes, whatever it wraps.
+    expect(macros["\\yes"]).toBe("\\frac{a}{b}")
+    for (const body of Object.values(macros)) {
+      expect(body).not.toContain("\\ensuremath")
+      expect(body).not.toContain("\\xspace")
+    }
+  })
+
+  it("gives a numbered multi-line equation an environment the typesetter implements", () => {
+    const r = renderLatex(PAPER, null)
+    const tex = [...r.body.matchAll(/data-tex="([^"]*)"/g)]
+      .map((m) => m[1])
+      .find((t) => t?.includes("aligned"))
+    expect(tex).toBeDefined()
+    expect(tex).not.toContain("split")
+    expect(r.body).toContain('class="derive-eqnum"')
+  })
+})
+
 describe("renderLatex: the acmart sigconf sample", () => {
   const r = renderLatex(SIGCONF, null, { resolve, imageUrl })
   const body = r.body

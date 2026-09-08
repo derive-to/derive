@@ -44,7 +44,7 @@ const vendorMime = (file: string): string => {
 /** The sandbox: raw artifact bytes under /raw/*. Served with an
  *  opaque-origin CSP. */
 export const rawRoutes = (ctx: AppContext) => {
-  const { meta, blobs, deps, authorize, actorFor, background } = ctx
+  const { meta, blobs, deps, authorize, actorFor, background, sourceHiddenFrom } = ctx
   const app = new Hono()
 
   // Private history requires artifact standing. The preview route is exempt because
@@ -322,6 +322,7 @@ export const rawRoutes = (ctx: AppContext) => {
       // yet: serveContent decides from the document, so a version read in the seed
       // window (or after its last slot was deleted) is never cached as immutable bytes.
       mutableCache(artifact),
+      await sourceHiddenFrom(c, artifact),
     )
   }
 

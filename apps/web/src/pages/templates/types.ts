@@ -25,3 +25,9 @@ export type ContextsSearch = {
   name?: string
   origin?: string
 }
+
+/** /contexts/new: which door opens on arrival, and a paper link to prefill it with. */
+export type NewContextSearch = {
+  door?: "arxiv"
+  arxiv?: string
+}

@@ -1,5 +1,5 @@
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query"
-import { Link, useParams } from "@tanstack/react-router"
+import { Link, useNavigate, useParams } from "@tanstack/react-router"
 import { Copy as CopyIcon, TriangleAlert } from "lucide-react"
 import { useEffect, useState } from "react"
 import {
@@ -30,6 +30,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { useAuth } from "@/ctx"
@@ -39,8 +40,11 @@ import {
   contextOutputsQuery,
   contextQuery,
   contextSessionsQuery,
+  contextsQuery,
   sessionQuery,
+  workspaceQuery,
 } from "@/lib/queries"
+import { previewRepoRef } from "@/lib/repo-ref"
 import { applyDelta, type DeltaState, EMPTY_DELTA } from "@/lib/session-delta"
 import { ago } from "@/lib/time"
 import { useApiMutation } from "@/lib/use-api-mutation"
@@ -50,6 +54,7 @@ import { useUserEvent } from "@/lib/use-user-events"
 import { cn } from "@/lib/utils"
 import { mdToHtml } from "../artifact/lib/markdown"
 import { ConsolePending, ContextRowsSkeleton } from "./context-skeleton"
+import { importErrorCopy, RETRYABLE_IMPORT_CODES } from "./import-copy"
 import { ANSWER_PROSE, answerMdToHtml } from "./lib/answer-md"
 import { runnerStatus } from "./runner-status"
 
@@ -127,13 +132,21 @@ function Console({ id }: { id: string }) {
   // Polled (unlike the one-shot route loader fetch): runner_seen_at only moves
   // when the server re-reads the row, and liveness going STALE is exactly the
   // signal this page exists to show.
+  // An imported paper on its way polls fast, so the page turns from "fetching" into the
+  // paper by itself; otherwise the minutely liveness poll.
   const {
     data: context,
     error,
     isLoading,
   } = useQuery({
     ...contextQuery(id),
-    refetchInterval: 60_000,
+    refetchInterval: (q) =>
+      q.state.status === "error"
+        ? false
+        : importSettling(q.state.data?.import)
+          ? IMPORT_POLL_MS
+          : 60_000,
+    refetchIntervalInBackground: false,
   })
   const {
     data: sessionPages,
@@ -194,6 +207,8 @@ function Console({ id }: { id: string }) {
     )
   }
   if (!context || isLoading) return <ConsolePending />
+  // A paper imported from arXiv is a document, not a runner: its own console.
+  if (context.import) return <ImportedConsole id={id} context={context} isOwner={isOwner} />
 
   const skillsCount = context.skills?.length ?? context.skills_count ?? 0
   const sourcesCount = context.connection_ids.length
@@ -371,6 +386,371 @@ function Console({ id }: { id: string }) {
           </TabsContent>
         )}
       </Tabs>
+    </PageShell>
+  )
+}
+
+const IMPORT_POLL_MS = 3_000
+/** The PAPER is on its way. Drives the whole-page "fetching from arXiv" panel, so it must
+ *  never be true for a paper that is already here with its implementation still coming. */
+const importInFlight = (status: string | undefined): boolean =>
+  status === "pending" || status === "fetching"
+/** Something is still arriving, paper or code, so keep asking. */
+const importSettling = (imp: ContextDetail["import"] | undefined): boolean =>
+  importInFlight(imp?.status) || imp?.code?.status === "pending"
+
+/**
+ * The paper's implementation. The repository's files live INSIDE the paper's artifact,
+ * where an agent reading the paper reads them; this card is the only place a person meets
+ * them, and what it offers is a link to the repository on its own host. There is
+ * deliberately no file listing: the code is not a second document to browse here.
+ */
+function ImplementationCard({
+  id,
+  code,
+  canManage,
+}: {
+  id: string
+  code: NonNullable<NonNullable<ContextDetail["import"]>["code"]> | null
+  canManage: boolean
+}) {
+  const [editing, setEditing] = useState(false)
+  const [url, setUrl] = useState("")
+  const ref = previewRepoRef(url)
+  const save = useApiMutation({
+    mutationFn: (next: string | null) => api.setContextCode(id, next),
+    success: "Fetching the implementation",
+    invalidate: [contextQuery(id).queryKey, contextsQuery().queryKey],
+    onSuccess: () => {
+      setEditing(false)
+      setUrl("")
+    },
+  })
+  const remove = useApiMutation({
+    mutationFn: () => api.setContextCode(id, null),
+    success: "Implementation removed",
+    invalidate: [contextQuery(id).queryKey, contextsQuery().queryKey],
+  })
+  if (!code && !canManage) return null
+  const busy = save.isPending || remove.isPending
+  return (
+    <div className="rounded-xl border bg-card p-4" data-testid="console-code-panel">
+      <SectionTitle as="h2">Implementation</SectionTitle>
+      {code ? (
+        <div className="mt-2 flex flex-col gap-2">
+          <p className="text-sm text-muted-foreground">
+            {code.status === "ready" ? (
+              <>
+                Stored inside this paper, where your agents read it beside the method. It is not
+                browsable here; open the repository to read it yourself.
+              </>
+            ) : code.status === "failed" ? (
+              <>Couldn't fetch this repository. {code.error ?? ""}</>
+            ) : (
+              <>Fetching this repository. The page updates itself.</>
+            )}
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button asChild size="sm" variant="outline" data-testid="console-code-open">
+              <a href={code.url} target="_blank" rel="noreferrer">
+                Open the repository ↗
+              </a>
+            </Button>
+            {canManage && !editing && (
+              <>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  data-testid="console-code-replace"
+                  disabled={busy}
+                  onClick={() => setEditing(true)}
+                >
+                  Replace
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  data-testid="console-code-remove"
+                  disabled={busy}
+                  onClick={() => remove.mutate()}
+                >
+                  Remove
+                </Button>
+              </>
+            )}
+          </div>
+        </div>
+      ) : !editing ? (
+        <div className="mt-2 flex flex-col gap-2">
+          <p className="text-sm text-muted-foreground">
+            Attach the public repository that implements this paper, and your agents can read the
+            code beside the method.
+          </p>
+          <div>
+            <Button
+              size="sm"
+              variant="outline"
+              data-testid="console-code-attach"
+              onClick={() => setEditing(true)}
+            >
+              Attach an implementation
+            </Button>
+          </div>
+        </div>
+      ) : null}
+      {editing && (
+        <div className="mt-2 flex flex-col gap-2">
+          <Input
+            data-testid="console-code-url"
+            aria-label="Repository link"
+            placeholder="https://github.com/owner/project"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && ref) save.mutate(ref.webUrl)
+            }}
+            className="font-mono"
+          />
+          <p
+            role="status"
+            data-testid="console-code-preview"
+            className="font-mono text-2xs text-muted-foreground"
+          >
+            {url.trim() ? (ref ? ref.canonical : "Not a GitHub or GitLab repository") : " "}
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              size="sm"
+              data-testid="console-code-save"
+              disabled={!ref || busy}
+              onClick={() => ref && save.mutate(ref.webUrl)}
+            >
+              Fetch it
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              data-testid="console-code-cancel"
+              onClick={() => {
+                setEditing(false)
+                setUrl("")
+              }}
+            >
+              Cancel
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// The console of a Context imported from arXiv. No chat, no runner, no output shelf:
+// the paper is the whole point, so the page is its arrival (or its failure) and, once
+// it is here, the paper card with the BibTeX to cite it, above the generated manifest.
+function ImportedConsole({
+  id,
+  context,
+  isOwner,
+}: {
+  id: string
+  context: ContextDetail
+  isOwner: boolean
+}) {
+  const imp = context.import
+  const qc = useQueryClient()
+  const nav = useNavigate()
+  const { me } = useAuth()
+  // Discard follows the delete route's gate: the creator, or a workspace owner.
+  const { data: ws } = useQuery({ ...workspaceQuery(), staleTime: 60_000 })
+  const canManage = isOwner || ws?.role === "owner"
+  const retry = useApiMutation({
+    mutationFn: () => api.retryContextImport(id),
+    success: "Fetching from arXiv again",
+    invalidate: [contextQuery(id).queryKey, contextsQuery().queryKey],
+  })
+  const discard = useApiMutation({
+    mutationFn: () => api.deleteContext(id),
+    success: "Context removed",
+    invalidate: [contextsQuery().queryKey],
+    onSuccess: () => {
+      qc.removeQueries({ queryKey: contextQuery(id).queryKey })
+      nav({ to: "/contexts" })
+    },
+  })
+  // One artifact: the paper itself, which the Context points at. `documents` names it too,
+  // so either resolves; the manifest short id is the fallback while it is still fetching.
+  const paper = context.documents?.find((d) => d.role === "paper") ??
+    context.documents?.[0] ?? {
+      short_id: context.manifest_short_id ?? "",
+      title: context.name,
+    }
+  if (!imp) return null
+  const inFlight = importInFlight(imp.status)
+  const failed = imp.status === "failed" || imp.status === "dead"
+  const code = imp.error?.code ?? null
+  const retryable = imp.status === "dead" || (code !== null && RETRYABLE_IMPORT_CODES.has(code))
+  const actions = (
+    <span className="flex flex-wrap items-center gap-2">
+      {retryable && (
+        <Button
+          size="sm"
+          variant="outline"
+          data-testid="context-import-retry"
+          disabled={retry.isPending}
+          onClick={() => retry.mutate()}
+        >
+          Try again
+        </Button>
+      )}
+      {canManage && (
+        <Button
+          size="sm"
+          variant="ghost"
+          data-testid="context-import-remove"
+          disabled={discard.isPending}
+          onClick={() => discard.mutate()}
+        >
+          Discard
+        </Button>
+      )}
+    </span>
+  )
+  return (
+    <PageShell width="wide" className="flex flex-col gap-5">
+      <div className="flex flex-col gap-1.5">
+        <div className="flex flex-wrap items-center gap-3">
+          <Icon name="lock" className="text-muted-foreground" />
+          <h1 className="font-serif text-2xl font-medium tracking-tight text-foreground">
+            {context.name}
+          </h1>
+        </div>
+        <Eyebrow>
+          Paper
+          {imp.version != null && <> · v{imp.version}</>}
+          {" · "}
+          <a
+            href={imp.url}
+            target="_blank"
+            rel="noreferrer"
+            data-testid="console-arxiv-link"
+            className="underline-offset-4 hover:underline"
+          >
+            arXiv:{imp.ref} ↗
+          </a>
+        </Eyebrow>
+        {context.description && (
+          <p className="max-w-2xl text-pretty text-sm text-muted-foreground">
+            {context.description}
+          </p>
+        )}
+      </div>
+
+      {inFlight ? (
+        <div data-testid="console-import-panel">
+          <StatusPanel
+            tone="warning"
+            layout="inline"
+            icon={<Spinner size="sm" tone="current" />}
+            title="Fetching this paper from arXiv"
+            description={
+              <>
+                Derive is downloading the LaTeX source and BibTeX. This usually takes under a
+                minute; the page updates itself.
+                {imp.imported_by === me?.id ? null : <> Imported by a teammate.</>}
+              </>
+            }
+            action={canManage ? actions : undefined}
+          />
+        </div>
+      ) : failed ? (
+        <div data-testid="console-import-panel">
+          <StatusPanel
+            tone="danger"
+            layout="inline"
+            icon={<TriangleAlert />}
+            title="Couldn't import this paper"
+            description={
+              <>
+                {importErrorCopy(code, "The import failed.")}
+                {imp.status === "dead" && code && RETRYABLE_IMPORT_CODES.has(code)
+                  ? " Derive tried three times."
+                  : null}
+                {/* What stayed big is the one thing a reader can act on (a PDF figure). */}
+                {code === "too_large" && imp.error?.detail ? ` ${imp.error.detail}.` : null}
+              </>
+            }
+            action={actions}
+          />
+        </div>
+      ) : (
+        <section
+          className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]"
+          data-testid="console-import-panel"
+        >
+          <div className="rounded-xl border bg-card p-4">
+            <SectionTitle as="h2">Paper</SectionTitle>
+            {paper.short_id ? (
+              <div className="mt-2 flex flex-col gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="min-w-0 truncate text-sm font-medium text-foreground">
+                    {paper.title ?? paper.short_id}
+                  </span>
+                  <Badge variant="outline" shape="pill">
+                    arXiv
+                  </Badge>
+                </div>
+                <p className="text-2xs text-muted-foreground">
+                  Imported from arXiv and locked so it stays the published version. Comments are the
+                  place for suggestions; the owner can unlock it from the paper's More menu.
+                </p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button asChild size="sm" data-testid="console-paper-open">
+                    <Link to="/artifacts/$ref" params={{ ref: paper.short_id }}>
+                      Open the paper
+                    </Link>
+                  </Button>
+                  {context.bibtex && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      data-testid="console-paper-copy-bibtex"
+                      onClick={() =>
+                        void copyText(context.bibtex ?? "", { success: "BibTeX copied" })
+                      }
+                    >
+                      <CopyIcon /> Copy BibTeX
+                    </Button>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <p className="mt-2 text-sm text-muted-foreground">
+                The paper bundle can't be resolved. Discard this Context and import it again.
+              </p>
+            )}
+          </div>
+          <div className="rounded-xl border bg-card p-4">
+            <SectionTitle as="h2">Reading</SectionTitle>
+            <p className="mt-2 text-sm text-muted-foreground">
+              This Context is a paper. Agents read it with{" "}
+              <code className="font-mono text-2xs">read("{id}")</code>; it takes no runs. To talk
+              about the paper, open it and use the chat on its page.
+            </p>
+            {canManage && <div className="mt-3">{actions}</div>}
+          </div>
+          <div className="lg:col-span-2">
+            <ImplementationCard id={id} code={imp.code ?? null} canManage={canManage} />
+          </div>
+        </section>
+      )}
+
+      {isOwner && (
+        <div className="rounded-xl border bg-card p-3.5">
+          <SectionTitle className="mb-2.5">Access</SectionTitle>
+          <ContextAccess id={id} name={context.name} policy={context.ask_policy} />
+        </div>
+      )}
     </PageShell>
   )
 }

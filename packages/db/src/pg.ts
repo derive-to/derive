@@ -39,6 +39,9 @@ import type {
   FollowRecord,
   GitHubAppRecord,
   GithubUserMapping,
+  ImportJobRecord,
+  ImportKind,
+  ImportLeaseRecord,
   InvitationRecord,
   LinkRole,
   ListArtifactsOpts,
@@ -72,6 +75,7 @@ import type {
   NewExportJob,
   NewFolder,
   NewFollow,
+  NewImportJob,
   NewInvitation,
   NewMembership,
   NewNotification,
@@ -247,6 +251,8 @@ import {
   folder,
   follow,
   githubApp,
+  importJob,
+  importLease,
   instanceOperator,
   invitation,
   membership,
@@ -314,6 +320,8 @@ export const schema = {
   webhook,
   webhookDelivery,
   exportJob,
+  importJob,
+  importLease,
   renderJob,
   membership,
   workspace,
@@ -380,6 +388,8 @@ const _schemaShapes: Shapes<typeof schema> = {
   webhookDelivery: true,
   renderJob: true,
   exportJob: true,
+  importJob: true,
+  importLease: true,
   membership: true,
   workspace: true,
   artifactMember: true,
@@ -4792,8 +4802,10 @@ export class PgMetaStore implements MetaStore {
         ),
       )
     await this.db.delete(contextSession).where(eq(contextSession.context_id, id))
-    // The asker roster FKs the context — clear it before the parent row.
+    // The asker roster and the import job FK the context — clear them before the
+    // parent row. Deleting the job is how a running import learns it was cancelled.
     await this.db.delete(contextAsker).where(eq(contextAsker.context_id, id))
+    await this.db.delete(importJob).where(eq(importJob.context_id, id))
     await this.db.delete(context).where(eq(context.id, id))
   }
   // A no-op on an unknown id, deliberately: the caller already 404'd before
@@ -4812,6 +4824,159 @@ export class PgMetaStore implements MetaStore {
   }
   async setContextConnections(id: string, connectionIds: string | null): Promise<void> {
     await this.db.update(context).set({ connection_ids: connectionIds }).where(eq(context.id, id))
+  }
+  async setContextCodeUrl(id: string, codeUrl: string | null): Promise<void> {
+    await this.db.update(context).set({ code_url: codeUrl }).where(eq(context.id, id))
+  }
+  async renameContext(id: string, name: string): Promise<void> {
+    await this.db.update(context).set({ name }).where(eq(context.id, id))
+  }
+  async findContextByImport(
+    orgId: string,
+    source: string,
+    ref: string,
+  ): Promise<ContextRecord | null> {
+    const rows = await this.db
+      .select()
+      .from(context)
+      .where(
+        and(
+          eq(context.org_id, orgId),
+          eq(context.import_source, source),
+          eq(context.import_ref, ref),
+        ),
+      )
+      .limit(1)
+    return (rows[0] as ContextRecord | undefined) ?? null
+  }
+
+  // ---- Import queue --------------------------------------------------------
+  async enqueueImportJob(j: NewImportJob): Promise<ImportJobRecord> {
+    const rows = await this.db.insert(importJob).values(j).returning()
+    return rows[0] as ImportJobRecord
+  }
+  async getImportJob(id: string): Promise<ImportJobRecord | null> {
+    const rows = await this.db.select().from(importJob).where(eq(importJob.id, id)).limit(1)
+    return (rows[0] as ImportJobRecord | undefined) ?? null
+  }
+  async getImportJobForContext(contextId: string): Promise<ImportJobRecord | null> {
+    const rows = await this.db
+      .select()
+      .from(importJob)
+      .where(eq(importJob.context_id, contextId))
+      .limit(1)
+    return (rows[0] as ImportJobRecord | undefined) ?? null
+  }
+  async getImportJobsForContexts(contextIds: string[]): Promise<ImportJobRecord[]> {
+    if (contextIds.length === 0) return []
+    return (await this.db
+      .select()
+      .from(importJob)
+      .where(inArray(importJob.context_id, contextIds))) as ImportJobRecord[]
+  }
+  private importJobDue(now: string, scope: string) {
+    return and(
+      eq(importJob.scope, scope),
+      or(
+        eq(importJob.status, "pending"),
+        and(eq(importJob.status, "failed"), lte(importJob.next_attempt_at, now)),
+        and(eq(importJob.status, "fetching"), lt(importJob.lease_until, now)),
+      ),
+    )
+  }
+  async claimDueImportJob(
+    now: string,
+    leaseUntil: string,
+    scope: string,
+  ): Promise<ImportJobRecord | null> {
+    // Lock the selected row and update that exact id in one transaction. A self-referencing
+    // UPDATE subquery can lock one due row but update another when concurrent workers run it.
+    return this.db.transaction(async (tx) => {
+      const due = await tx
+        .select({ id: importJob.id })
+        .from(importJob)
+        .where(this.importJobDue(now, scope))
+        .orderBy(asc(importJob.next_attempt_at), asc(importJob.created_at))
+        .limit(1)
+        .for("update", { skipLocked: true })
+      const id = due[0]?.id
+      if (!id) return null
+      const rows = (await tx
+        .update(importJob)
+        .set({
+          status: "fetching",
+          attempts: sql`${importJob.attempts} + 1`,
+          lease_until: leaseUntil,
+          updated_at: now,
+        })
+        .where(and(eq(importJob.id, id), this.importJobDue(now, scope)))
+        .returning()) as ImportJobRecord[]
+      return rows[0] ?? null
+    })
+  }
+  async updateImportJob(
+    id: string,
+    fields: Parameters<MetaStore["updateImportJob"]>[1],
+  ): Promise<void> {
+    await this.db.update(importJob).set(fields).where(eq(importJob.id, id))
+  }
+  async countActiveImportJobs(orgId: string): Promise<number> {
+    const rows = await this.db
+      .select({ n: count() })
+      .from(importJob)
+      .where(
+        and(
+          eq(importJob.org_id, orgId),
+          inArray(importJob.status, ["pending", "fetching", "failed"]),
+        ),
+      )
+    return rows[0]?.n ?? 0
+  }
+
+  // ---- Upstream request gate ----------------------------------------------
+  async acquireImportLease(
+    kind: ImportKind,
+    scope: string,
+    holder: string,
+    now: string,
+    leaseUntil: string,
+  ): Promise<boolean> {
+    const id = `${kind}:${scope}`
+    await this.db
+      .insert(importLease)
+      .values({ id, kind, scope, next_allowed_at: now })
+      .onConflictDoNothing({ target: importLease.id })
+    const rows = await this.db
+      .update(importLease)
+      .set({ holder, lease_until: leaseUntil })
+      .where(
+        and(
+          eq(importLease.id, id),
+          or(isNull(importLease.lease_until), lt(importLease.lease_until, now)),
+          lte(importLease.next_allowed_at, now),
+        ),
+      )
+      .returning({ id: importLease.id })
+    return rows.length > 0
+  }
+  async updateImportLease(
+    kind: ImportKind,
+    scope: string,
+    holder: string,
+    fields: Parameters<MetaStore["updateImportLease"]>[3],
+  ): Promise<void> {
+    await this.db
+      .update(importLease)
+      .set(fields)
+      .where(and(eq(importLease.id, `${kind}:${scope}`), eq(importLease.holder, holder)))
+  }
+  async getImportLease(kind: ImportKind, scope: string): Promise<ImportLeaseRecord | null> {
+    const rows = await this.db
+      .select()
+      .from(importLease)
+      .where(eq(importLease.id, `${kind}:${scope}`))
+      .limit(1)
+    return (rows[0] as ImportLeaseRecord | undefined) ?? null
   }
   async listContextAskers(contextId: string): Promise<ContextAskerRecord[]> {
     return this.db
@@ -7565,6 +7730,8 @@ export class PgMetaStore implements MetaStore {
           ),
         )
       await tx.delete(contextSession).where(inArray(contextSession.context_id, ctxIds))
+      await tx.delete(contextAsker).where(inArray(contextAsker.context_id, ctxIds))
+      await tx.delete(importJob).where(inArray(importJob.context_id, ctxIds))
       await tx.delete(context).where(eq(context.manifest_artifact_id, id))
       await tx.delete(reviewRound).where(eq(reviewRound.artifact_id, id))
       // Artifact-SCOPED webhooks only; a workspace-wide one has a null artifact_id and

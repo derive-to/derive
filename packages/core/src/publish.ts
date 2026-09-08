@@ -105,11 +105,27 @@ export interface PublishInput {
   /** Provenance for a NEW artifact created from another artifact or a pinned
    * template entry. The API validates read access before passing the internal id. */
   derivedFrom?: string | null
+  /** Where a NEW artifact's content came from when a machine fetched it (`arxiv`).
+   *  Set-on-create, like the access triple; a republish never re-stamps it. */
+  importSource?: string | null
   /** Trusted artifact record already authorized by the caller for a republish. The core
    *  still validates its short id and kind. Omit when the caller does not already hold the
    *  row; storage remains the exact fallback. This removes a serial read before addVersion
    *  on hot edit paths without changing the public publish contract. */
   existingArtifact?: ArtifactRecord
+  /** A bundle already unpacked (an arXiv tarball): the files by path, stored as given
+   *  without a zip round trip. `bytes` is then ignored and the version's size is the sum
+   *  of the files. Bundles only. */
+  files?: Record<string, Uint8Array>
+  /** The bundle's entry page when the publisher knows it (`/paper.tex`); the usual
+   *  index/main/shallowest choice otherwise. Bundles only. */
+  entry?: string | null
+  /** Raise the file and byte caps for a bundle that carries a paper's implementation.
+   *  Clamped to MAX_BUNDLE_FILES_WITH_CODE / MAX_BUNDLE_UNZIPPED_BYTES_WITH_CODE, and
+   *  never below the ordinary caps: a publisher may ask for more room, not for less.
+   *  Bundles only. */
+  maxFiles?: number
+  maxBundleBytes?: number
   /** Trusted server binding. requestHash covers the original request before edit
    * materialization, so a lost-response retry cannot apply an edit twice. */
   workflow?: {
@@ -145,11 +161,24 @@ export class PublishError extends Error {
   }
 }
 
-const MAX_BUNDLE_FILES = 2000
+export const MAX_BUNDLE_FILES = 2000
 // Cap the TOTAL decompressed size of a bundle, not just the (compressed) upload.
 // `unzipSync` inflates everything into memory at once, so a zip bomb — a small
 // upload that expands to gigabytes — would OOM/CPU-kill the worker without this.
-const MAX_BUNDLE_UNZIPPED_BYTES = 50 * 1024 * 1024 // 50 MB
+// Exported so an importer that shrinks figures to fit aims at the same number.
+export const MAX_BUNDLE_UNZIPPED_BYTES = 50 * 1024 * 1024 // 50 MB
+
+/** Where an imported paper's implementation lives inside the paper's own artifact.
+ *  A repository is not part of the document: it is not indexed with the paper, not
+ *  offered as the paper's source, not listed to a person, and never the entry page. */
+export const CODE_PREFIX = "/code/"
+export const isCodePath = (path: string): boolean => path.startsWith(CODE_PREFIX)
+
+// An artifact that carries an implementation is allowed twice the room, because it is
+// holding two things: the paper, and the repository that implements it. These are the
+// ceiling a publisher may raise to, never the default — see PublishInput.maxBundleBytes.
+export const MAX_BUNDLE_FILES_WITH_CODE = 6000
+export const MAX_BUNDLE_UNZIPPED_BYTES_WITH_CODE = 100 * 1024 * 1024 // 100 MB
 
 /**
  * Choose a bundle's entry page. An HTML site enters at its root `index.html`, else
@@ -160,9 +189,15 @@ const MAX_BUNDLE_UNZIPPED_BYTES = 50 * 1024 * 1024 // 50 MB
  * markdown file — markdown entries render through the markdown path at serve time.
  * Null when the bundle has neither HTML nor markdown.
  */
-export const pickBundleEntry = (paths: string[]): string | null => {
+export const pickBundleEntry = (all: string[], preferred?: string | null): string | null => {
+  // An attached repository is never the document. Without this, one `/code/**/*.html`
+  // anywhere in an implementation would take the entry away from the paper it implements.
+  const paths = all.filter((p) => !isCodePath(p))
   const shallowest = (pred: (p: string) => boolean): string | undefined =>
     paths.filter(pred).sort((a, b) => a.split("/").length - b.split("/").length)[0]
+  // A publisher that knows the entry (an arXiv import whose paper is `paper.tex` beside
+  // a `main.tex` chapter) names it, so nothing has to be renamed to be found.
+  if (preferred && paths.includes(preferred)) return preferred
   if (paths.includes("/index.html")) return "/index.html"
   // A root SKILL.md wins over any NON-root HTML: a skill folder is a skill even when it
   // ships an HTML reference (references/example.html is exactly what a chart-style skill
@@ -186,8 +221,9 @@ export const pickBundleEntry = (paths: string[]): string | null => {
   )
 }
 
-/** Normalizes a zip entry path; null means skip the entry. */
-const cleanPath = (raw: string): string | null => {
+/** Normalizes a bundle entry path (a zip or tar member) to its slashed manifest key;
+ *  null means skip the entry. */
+export const cleanPath = (raw: string): string | null => {
   const p = raw
     .replace(/\\/g, "/")
     .replace(/^(\.\/)+/, "")
@@ -223,6 +259,9 @@ async function storeContent(
   filename: string,
   isBundle: boolean,
   spa: boolean,
+  unpacked?: Record<string, Uint8Array>,
+  preferredEntry?: string | null,
+  limits?: { maxFiles?: number; maxBundleBytes?: number },
 ): Promise<StoredContent> {
   let blobWriteMs = 0
   const put = async (data: Uint8Array): Promise<string> => {
@@ -235,34 +274,53 @@ async function storeContent(
   }
   if (isBundle) {
     let unzipped: Record<string, Uint8Array>
-    try {
-      unzipped = unzipSync(bytes)
-    } catch {
-      throw new PublishError(400, "not a valid zip")
+    if (unpacked) unzipped = unpacked
+    else {
+      try {
+        unzipped = unzipSync(bytes)
+      } catch {
+        throw new PublishError(400, "not a valid zip")
+      }
     }
     const paths = Object.keys(unzipped)
     if (paths.length === 0) throw new PublishError(400, "empty bundle")
-    if (paths.length > MAX_BUNDLE_FILES)
-      throw new PublishError(400, `bundle exceeds ${MAX_BUNDLE_FILES} files`)
-    // Reject zip bombs: bound the total inflated size, not just the upload size.
-    let unzippedBytes = 0
-    for (const p of paths) {
-      unzippedBytes += unzipped[p]?.byteLength ?? 0
-      if (unzippedBytes > MAX_BUNDLE_UNZIPPED_BYTES)
-        throw new PublishError(413, "bundle is too large once decompressed")
-    }
-
-    const files: BundleManifest["files"] = {}
+    // A publisher may raise the caps for a bundle that carries an implementation, up to
+    // the hard ceiling and never below the ordinary cap.
+    const clamp = (asked: number | undefined, floor: number, ceiling: number): number =>
+      Math.min(Math.max(asked ?? floor, floor), ceiling)
+    const maxFiles = clamp(limits?.maxFiles, MAX_BUNDLE_FILES, MAX_BUNDLE_FILES_WITH_CODE)
+    const maxBytes = clamp(
+      limits?.maxBundleBytes,
+      MAX_BUNDLE_UNZIPPED_BYTES,
+      MAX_BUNDLE_UNZIPPED_BYTES_WITH_CODE,
+    )
+    // Count and measure what will actually be STORED. The archive's own junk (`__MACOSX`,
+    // `.DS_Store`, directory entries) is dropped by cleanPath a moment later, so counting
+    // it here would spend a paper's budget on entries no one ever reads.
+    const kept: [string, Uint8Array][] = []
     for (const raw of paths) {
       const path = cleanPath(raw)
       if (!path) continue
       const data = unzipped[raw]
       if (data === undefined) continue
+      kept.push([path, data])
+    }
+    if (kept.length > maxFiles) throw new PublishError(400, `bundle exceeds ${maxFiles} files`)
+    // Reject zip bombs: bound the total inflated size, not just the upload size.
+    let unzippedBytes = 0
+    for (const [, data] of kept) {
+      unzippedBytes += data.byteLength
+      if (unzippedBytes > maxBytes)
+        throw new PublishError(413, "bundle is too large once decompressed")
+    }
+
+    const files: BundleManifest["files"] = {}
+    for (const [path, data] of kept) {
       files[path] = { key: await put(data), type: mimeFor(path) }
     }
     // Entry point: an HTML site enters at index/shallowest .html; a skill/doc
     // bundle with no HTML enters at SKILL.md / README.md / shallowest markdown.
-    const entry = pickBundleEntry(Object.keys(files))
+    const entry = pickBundleEntry(Object.keys(files), preferredEntry)
     if (!entry) throw new PublishError(400, "bundle has no html, markdown, or LaTeX entry point")
 
     const manifest: BundleManifest = { entry, spa, files }
@@ -489,8 +547,23 @@ export async function publish(
   }
   const storeStartedAt = performance.now()
   const { blobKey, contentType, kind, suggestedTitle, skillSidecar, blobWriteMs } =
-    await storeContent(blobs, input.bytes, input.filename, input.isBundle, !!input.spa)
+    await storeContent(
+      blobs,
+      input.bytes,
+      input.filename,
+      input.isBundle,
+      !!input.spa,
+      input.isBundle ? input.files : undefined,
+      input.isBundle ? input.entry : undefined,
+      input.isBundle
+        ? { maxFiles: input.maxFiles, maxBundleBytes: input.maxBundleBytes }
+        : undefined,
+    )
   const timings = { blobWriteMs, storeContentMs: performance.now() - storeStartedAt }
+  const sizeBytes =
+    input.isBundle && input.files
+      ? Object.values(input.files).reduce((n, f) => n + f.byteLength, 0)
+      : input.bytes.length
 
   const author = input.author ?? "anonymous"
 
@@ -520,7 +593,7 @@ export async function publish(
       id: newId("v"),
       blob_key: blobKey,
       content_type: contentType,
-      size_bytes: input.bytes.length,
+      size_bytes: sizeBytes,
       author,
       author_login: null,
       author_avatar: null,
@@ -597,12 +670,13 @@ export async function publish(
     spa: input.spa ? 1 : 0,
     expires_at: input.expiresAt ?? null,
     derived_from: input.derivedFrom ?? null,
+    import_source: input.importSource ?? null,
   }
   const nextVersion: NewVersion = {
     id: newId("v"),
     blob_key: blobKey,
     content_type: contentType,
-    size_bytes: input.bytes.length,
+    size_bytes: sizeBytes,
     author,
     author_login: null,
     author_avatar: null,
@@ -651,6 +725,9 @@ export const toJson = (baseUrl: string, a: ArtifactRecord, versions: VersionReco
   password_protected: !!a.password_hash,
   spa: !!a.spa,
   locked: !!a.locked,
+  /** `arxiv` when a machine fetched this content; null when someone authored it here.
+   *  The viewer shows an imported paper as the paper, never as source to edit. */
+  import_source: a.import_source ?? null,
   current_version: a.current_version,
   created_at: a.created_at,
   /** Bumped on each new version; drives "most recently updated" sort + the label. */

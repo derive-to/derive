@@ -1440,6 +1440,19 @@ export const api = {
     agent_id?: string
     manifest_short_id: string
   }): Promise<ContextInfo & { agent_token?: string }> => f("/v1/contexts", opts(input)).then(j),
+  // A paper from arXiv as a read-only Context: created at once, fetched in the background.
+  // 201 with a new Context, or 200 with the one this workspace already imported.
+  // `code_url` optionally attaches the repository implementing the paper; its files land
+  // inside the paper's artifact for agents, never in the UI.
+  importArxivContext: (url: string, code_url?: string): Promise<ContextInfo> =>
+    f("/v1/contexts/import/arxiv", opts(code_url ? { url, code_url } : { url })).then(j),
+  // Attach, replace (a url) or remove (null) an imported paper's implementation.
+  setContextCode: (id: string, url: string | null): Promise<ContextInfo> =>
+    f(`/v1/contexts/${id}/import/code`, opts({ url })).then(j),
+  retryContextImport: (id: string): Promise<ContextInfo> =>
+    f(`/v1/contexts/${id}/import/retry`, { ...opts(), method: "POST" }).then(j),
+  deleteContext: (id: string): Promise<void> =>
+    f(`/v1/contexts/${id}`, { ...opts(), method: "DELETE" }).then(() => undefined),
   createChatSession: (input: {
     workspace: string
     body_md: string

@@ -15,6 +15,52 @@ for the recommended install and verification flow.
 ## [Unreleased]
 
 ### Added
+- **Import a paper from arXiv as a read-only Context.** The new-context page's "Import a
+  paper from arXiv" door takes an abstract page, a PDF link, a DOI, an `arXiv:` reference
+  or a bare id (a strict grammar on an exact host allowlist; anything else is "not an
+  arXiv link"), creates the Context at once so the list shows it fetching, and a worker
+  fetches the paper's metadata, LaTeX source and BibTeX behind a deployment-wide request
+  gate that keeps to arXiv's one request every three seconds and honours Retry-After for
+  every worker. The paper publishes as a locked LaTeX bundle (the archive's `00README`
+  entry, figures intact, `CITATION.bib` beside the bibliography, tagged `arxiv`, no world
+  link) and the Context's generated manifest carries the byline, abstract and BibTeX.
+  The Context IS the paper: one artifact, whose page renders it and whose LaTeX a person
+  never sees (no file list, source download, bibliography editor, diff or raw serve), while
+  agents keep full source access. `find` and `read` describe it (`read` returns a summary
+  computed from the paper and `documents` names the one artifact, whose outline gains
+  `citation`); `use` and sessions refuse it. A source over the 50 MB bundle limit has its
+  raster figures re-encoded in place, largest first, to a bounded long side (1600, then
+  1200, then 900 px) until it fits, noted in the manifest; PDF and EPS figures are never
+  touched, and a source that still does not fit fails naming its largest files (Node
+  only; the worker pulls up to 150 MB and inflates as it downloads). Failures carry a code
+  (not found, withdrawn, PDF only, no `.tex`, too large, rate limited, unavailable), retry
+  when it can help, and are written into the manifest when the import gives up; Try again
+  and Discard live on the console. `POST /v1/contexts/import/arxiv`, `POST /v1/contexts/:id/import/retry`,
+  `import` on every `ContextInfo`, `documents` and `bibtex` on the human GET. The
+  manifest grammar gains a `documents:` list, parsed server-side only.
+
+- **A paper's implementation, alongside the paper.** An arXiv import takes an optional
+  public GitHub or GitLab repository, on the import form or attached later from the
+  paper's console (`POST /v1/contexts/:id/import/code`, `url: null` to remove).
+  Derive fetches it as one anonymous archive of the whole tree per repository — no
+  token, no API budget, `HEAD` for the default branch — follows the submodules
+  `.gitmodules` declares (recursively, each at the branch it names, since an archive
+  carries no pinned commits), skips Git LFS pointers, and stores the files under
+  `/code/` inside the paper's OWN artifact. A submodule on any other host, or on one that
+  refuses an anonymous download, is skipped and named with its URL, and the rest of the
+  tree still arrives. The implementation is invisible to people (no file listing in the
+  artifact detail or the content outline, nothing served from `/code/`, excluded from
+  `source.zip`) and fully readable by agents, which see it summarised beside the paper's
+  pages — a file count and the shallowest hundred paths — and read any file by its exact
+  path. An artifact with an implementation may hold twice the usual bytes and files;
+  over that, every text and code file is kept and binaries are dropped largest first,
+  each named on the version. A repository that cannot be fetched leaves the paper
+  imported and reports itself, so the link is fixable without re-fetching the paper.
+  Related fixes: a bundle's file and byte caps now count what is stored rather than the
+  archive's junk entries, and every path that rebuilds a bundle from its manifest (a
+  figure edit, a doc edit, MCP `publish({merge})`) keeps the entry it merged into instead
+  of re-picking the shallowest HTML in the bundle.
+
 - **Paper templates and "Download LaTeX source".** Two starters, ACM SIGGRAPH (acmart,
   sigconf, author-year citations in the compiled PDF) and CVPR (the author kit's layout in review mode), are
   available under Academic on the Templates page, as `derive://latex/templates/<id>` MCP resources, at
@@ -125,6 +171,9 @@ for the recommended install and verification flow.
   the human verb. Skill fetching reads current versions.
 
 ### Fixed
+- **Restoring a locked artifact.** The restore route was the one content write that
+  ignored the lock; it now answers 409 like a publish. Deleting a manifest also clears the
+  context's asker roster, which the artifact cascade had missed.
 - **A filtered listing skipped the listing gate.** In the shared list query, the rule that
   keeps an unlisted (`listed: none`), members-only artifact out of a viewer's listing was
   an `else` hanging off whichever filter sat above it, so a typed listing (`find

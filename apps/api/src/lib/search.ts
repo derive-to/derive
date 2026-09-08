@@ -7,6 +7,7 @@ import {
   elideDataUrisToLimit,
   enclosingMarker,
   isBundleContentType,
+  isCodePath,
   isHtmlLike,
   isLatexLike,
   latexTextParts,
@@ -402,7 +403,12 @@ export async function versionIndexText(
     const bytes = await blobs.get(v.blob_key)
     return withExtra(bytes ? clipText(elideDataUris(new TextDecoder().decode(bytes))) : "")
   }
-  const pages = Object.keys(manifest.files).filter((p) => isTextType(manifest.files[p]?.type ?? ""))
+  // A paper's attached implementation is not what the paper is about, and it is far
+  // bigger than the index budget: left in, a repository's markdown would take the budget
+  // in manifest order and push the paper itself out of workspace search.
+  const pages = Object.keys(manifest.files).filter(
+    (p) => !isCodePath(p) && isTextType(manifest.files[p]?.type ?? ""),
+  )
   const parts: string[] = []
   let used = 0
   for (const p of pages) {

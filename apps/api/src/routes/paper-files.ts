@@ -82,6 +82,7 @@ export const paperFileRoutes = (ctx: AppContext) => {
     summarize,
     deps,
     requireArtifact,
+    sourceHiddenFrom,
     actingUser,
     actingHuman,
     actorFor,
@@ -196,6 +197,9 @@ export const paperFileRoutes = (ctx: AppContext) => {
         filename: "paper.zip",
         isBundle: true,
         spa: manifest.spa,
+        // A merge keeps the bundle's own entry. Without this the entry is re-picked from
+        // the merged paths, and an attached implementation's HTML would take it.
+        entry: manifest.entry,
         title: title ?? artifact.title ?? undefined,
         message,
         author: human?.name ?? actor?.name ?? undefined,
@@ -234,6 +238,8 @@ export const paperFileRoutes = (ctx: AppContext) => {
   app.get("/v1/artifacts/:shortId/files/*", async (c) => {
     const artifact = await requireArtifact(c, "read")
     if (artifact instanceof Response) return artifact
+    // A fetched paper's files are the model's to read, not a reading surface for a person.
+    if (await sourceHiddenFrom(c, artifact)) return fail(c, 404, "not found")
     const path = filePath(c)
     if (path instanceof Response) return path
     const n = await versionFor(c, artifact)
@@ -281,6 +287,7 @@ export const paperFileRoutes = (ctx: AppContext) => {
   app.get("/v1/artifacts/:shortId/bib", async (c) => {
     const artifact = await requireArtifact(c, "read")
     if (artifact instanceof Response) return artifact
+    if (await sourceHiddenFrom(c, artifact)) return fail(c, 404, "not found")
     const n = await versionFor(c, artifact)
     if (n instanceof Response) return n
     const paper = await paperOf(c, artifact, n)

@@ -2,8 +2,16 @@ import { LATEX_CONTENT_TYPE } from "./latex"
 import { escapeHtml } from "./md"
 import { LATEX_BUNDLE_CONTENT_TYPE, SKILL_CONTENT_TYPE } from "./ports"
 
-/** A short, kind-aware label for an artifact, used on cards and in descriptions. */
-export const kindLabel = (contentType: string | null | undefined, isBundle: boolean): string => {
+/** A short, kind-aware label for an artifact, used on cards and in descriptions.
+ *  Content a machine fetched is named by WHERE it came from: a paper imported from arXiv
+ *  reads as "arXiv", not as the LaTeX it happens to be written in, because that is what it
+ *  is to everyone who meets it. */
+export const kindLabel = (
+  contentType: string | null | undefined,
+  isBundle: boolean,
+  importSource?: string | null,
+): string => {
+  if (importSource === "arxiv") return "arXiv"
   if (contentType === SKILL_CONTENT_TYPE) return "Skill"
   if (contentType === LATEX_BUNDLE_CONTENT_TYPE) return "LaTeX"
   if (isBundle) return "Site"

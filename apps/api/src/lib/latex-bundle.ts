@@ -3,6 +3,7 @@ import {
   type BibEntry,
   type BlobStore,
   type BundleManifest,
+  isCodePath,
   parseBibtex,
   renderLatex,
 } from "@derive/core"
@@ -22,7 +23,10 @@ export const bundleTextFiles = async (
   const out = new Map<string, string>()
   let bytes = 0
   for (const [path, file] of Object.entries(manifest.files)) {
-    if (!TEXT_FILE.test(path)) continue
+    // An attached implementation is not the paper's source. Without this a repository's
+    // .txt files would be decoded ahead of the paper's own and, past the cap, its
+    // \input and \bibliography would silently resolve to nothing.
+    if (isCodePath(path) || !TEXT_FILE.test(path)) continue
     const data = await blobs.get(file.key)
     if (!data) continue
     bytes += data.byteLength
@@ -38,6 +42,30 @@ export const bundleTextResolver =
   (files: Map<string, string>) =>
   (file: string): string | null =>
     files.get(`/${file.replace(/^\.?\//, "")}`) ?? null
+
+/** The bundle path an imported paper keeps its own BibTeX entry at (the arXiv @misc
+ *  record), beside the paper's bibliography rather than in it. */
+export const CITATION_PATH = "/CITATION.bib"
+
+export interface PaperCitation {
+  key: string
+  bibtex: string
+}
+
+/** The paper's own citation entry, when the bundle carries `CITATION.bib` with one
+ *  parseable entry. Null otherwise: a paper someone wrote here has no such file. */
+export const paperCitation = async (
+  blobs: BlobStore,
+  manifest: BundleManifest,
+): Promise<PaperCitation | null> => {
+  const file = manifest.files[CITATION_PATH]
+  if (!file) return null
+  const data = await blobs.get(file.key)
+  if (!data) return null
+  const bibtex = new TextDecoder().decode(data).trim()
+  const key = parseBibtex(bibtex).entries[0]?.key
+  return key ? { key, bibtex } : null
+}
 
 export interface PaperBibliography {
   /** Clean bundle path of the `.bib` file (`refs.bib`). */

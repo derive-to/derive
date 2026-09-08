@@ -18,6 +18,9 @@ import type {
   ExportJobStatus,
   ExportKind,
   FollowKind,
+  ImportCodeStatus,
+  ImportJobStatus,
+  ImportKind,
   LinkRole,
   Listed,
   NotificationKind,
@@ -107,6 +110,8 @@ export const artifact = pgTable("artifact", {
   // Remix lineage: the artifact id this was derived from. Not an FK (the source may be
   // deleted; the copy survives). Nullable, no default — ADD COLUMN IF NOT EXISTS clean.
   derived_from: text("derived_from"),
+  // Import provenance for machine-fetched content; see schema.ts for the contract.
+  import_source: text("import_source"),
 })
 
 export const sharedState = pgTable(
@@ -1273,9 +1278,55 @@ export const context = pgTable(
     max_concurrency: integer("max_concurrency").notNull().default(1),
     connection_ids: text("connection_ids"),
     config: text("config"),
+    // Import provenance (`arxiv` + the bare paper id); see schema.ts for the contract.
+    import_source: text("import_source"),
+    import_ref: text("import_ref"),
+    // The repository implementing an imported paper; see schema.ts for the contract.
+    code_url: text("code_url"),
   },
   (t) => [uniqueIndex("context_org_name").on(t.org_id, t.name)],
 )
+
+// One queued fetch per imported Context; mirror of the sqlite def (see schema.ts).
+export const importJob = pgTable(
+  "import_job",
+  {
+    id: text("id").primaryKey(),
+    org_id: text("org_id").notNull(),
+    context_id: text("context_id")
+      .notNull()
+      .references(() => context.id),
+    requested_by: text("requested_by").notNull(),
+    kind: text("kind").$type<ImportKind>().notNull(),
+    ref: text("ref").notNull(),
+    scope: text("scope").notNull().default(""),
+    status: text("status").$type<ImportJobStatus>().notNull().default("pending"),
+    attempts: integer("attempts").notNull().default(0),
+    next_attempt_at: text("next_attempt_at").notNull().$defaultFn(isoNow),
+    lease_until: text("lease_until"),
+    error_code: text("error_code"),
+    error_detail: text("error_detail"),
+    paper_artifact_id: text("paper_artifact_id"),
+    manifest_version: integer("manifest_version"),
+    resolved_version: integer("resolved_version"),
+    code_status: text("code_status").$type<ImportCodeStatus>(),
+    code_error: text("code_error"),
+    code_ref: text("code_ref"),
+    created_at: text("created_at").notNull().$defaultFn(isoNow),
+    updated_at: text("updated_at").notNull().$defaultFn(isoNow),
+  },
+  (t) => [uniqueIndex("import_job_context").on(t.context_id)],
+)
+
+// The per-upstream request gate; mirror of the sqlite def (see schema.ts).
+export const importLease = pgTable("import_lease", {
+  id: text("id").primaryKey(),
+  kind: text("kind").$type<ImportKind>().notNull(),
+  scope: text("scope").notNull().default(""),
+  holder: text("holder"),
+  lease_until: text("lease_until"),
+  next_allowed_at: text("next_allowed_at").notNull().$defaultFn(isoNow),
+})
 
 // Per-context asker roster (ask_policy = 'invited'); mirror of the sqlite def.
 export const contextAsker = pgTable(
@@ -1472,6 +1523,8 @@ const TABLES = [
   contextAsker,
   contextSession,
   sessionMessage,
+  importJob,
+  importLease,
   report,
   auditLog,
   asset,

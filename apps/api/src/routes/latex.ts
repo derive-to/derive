@@ -7,6 +7,7 @@ import {
   type DynamicValue,
   hasArtifactStanding,
   isBundleContentType,
+  isCodePath,
   isLatexLike,
   isLatexTemplateId,
   LATEX_BUNDLE_CONTENT_TYPE,
@@ -55,7 +56,17 @@ const EXT_OF_TYPE: Record<string, string> = {
  * through the one publish path, so every guard and receipt stays where it is.
  */
 export const latexRoutes = (ctx: AppContext) => {
-  const { meta, blobs, deps, requireArtifact, actorFor, actingUser, agentFor, isToken } = ctx
+  const {
+    meta,
+    blobs,
+    deps,
+    requireArtifact,
+    actorFor,
+    actingUser,
+    agentFor,
+    isToken,
+    sourceHiddenFrom,
+  } = ctx
   const app = new Hono()
 
   // Signed-in people and agents. Anonymous callers get nothing: the CVPR starter costs an
@@ -85,6 +96,10 @@ export const latexRoutes = (ctx: AppContext) => {
     const artifact = await requireArtifact(c, "read")
     if (artifact instanceof Response) return artifact
     if (artifact.current_version === 0) return fail(c, 404, "not found")
+    // A paper Derive fetched is read on its page, not downloaded as source (agents keep
+    // the source; see sourceHiddenFrom).
+    if (await sourceHiddenFrom(c, artifact))
+      return fail(c, 404, "this paper is read on its page; its source is not downloadable")
     if (artifact.removed_at) return fail(c, 410, TOMBSTONE)
     const vq = c.req.query("v")
     const n = vq ? Number.parseInt(vq, 10) : artifact.current_version
@@ -110,6 +125,9 @@ export const latexRoutes = (ctx: AppContext) => {
       const manifest = JSON.parse(new TextDecoder().decode(manifestBytes)) as BundleManifest
       entry = manifest.entry.replace(/^\//, "")
       for (const [path, file] of Object.entries(manifest.files)) {
+        // This is the paper's source, not the paper's implementation: an attached
+        // repository is read in place, never shipped as if the authors had written it.
+        if (isCodePath(path)) continue
         const bytes = await blobs.get(file.key)
         if (!bytes) continue
         if (!take(bytes)) return fail(c, 413, "the source export exceeds 50 MB")

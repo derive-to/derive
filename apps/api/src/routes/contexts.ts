@@ -1,15 +1,22 @@
 import { refRouter } from "@derive/broker"
 import {
+  type ArtifactRecord,
+  arxivAbsUrl,
   type ContextAskerRecord,
   type ContextRecord,
   decodeCursor,
   effectiveRole,
   encodeCursor,
+  type ImportJobRecord,
   maxRole,
   newId,
   normalizeSelector,
+  parseArxivRef,
+  parseRepoRef,
   parseSubject,
+  publish,
   type Role,
+  repoWebUrl,
   roleAllows,
   type SessionMessageRecord,
   type SessionRecord,
@@ -23,6 +30,7 @@ import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
 import { isAbandoned } from "../lib/abandoned-turn"
 import { agentWritesOff } from "../lib/agent-writes"
+import { bylineOf, fetchingPaper } from "../lib/arxiv-paper"
 import { resolveActorBrandprint } from "../lib/brandprint"
 import {
   brokerFor,
@@ -33,14 +41,17 @@ import {
   toolsForRun,
 } from "../lib/broker"
 import { overBudget } from "../lib/budget"
+import { manifestOf } from "../lib/bundle"
 import { chatArrival } from "../lib/chat-gate"
 import { buildChatTools, type ChatPrincipal, RAIL_CHAT_TOOLS } from "../lib/chat-tools"
 import { runChatTurn } from "../lib/chat-turn"
 import { previewOf } from "../lib/comments"
 import { BuilderCardSchema, metaForWire } from "../lib/context-builder-card"
 import { buildContextBuilderTools, latestBuilderCard } from "../lib/context-builder-tools"
+import { IMPORTED_NO_RUNS } from "../lib/context-package"
 import { ContextConflictError, createContextCore } from "../lib/create-context"
 import { bail, fail, readJson } from "../lib/http"
+import { paperCitation } from "../lib/latex-bundle"
 import {
   manifestDescription,
   parseManifestRepos,
@@ -50,6 +61,7 @@ import {
 import { meterModel, timingMeta } from "../lib/model-timing"
 import { canPayForAgent, NO_PAYER_MESSAGE } from "../lib/payer"
 import { RUN_LEASE_MS } from "../lib/run-lifecycle"
+import { deleteArtifactAndUnindex } from "../lib/search"
 import { type DeltaStream, makeDeltaStream } from "../lib/session-stream"
 import { runSessionTurn } from "../lib/session-turn"
 import { log } from "../log"
@@ -91,11 +103,14 @@ export const contextRoutes = (ctx: AppContext) => {
     authorize,
     bus,
     askLimiter,
+    billingGate,
     canAskContext,
     currentUser,
     deps,
     limited,
     managementPrincipal,
+    overStorage,
+    publishLimiter,
     requireArtifact,
     requireUser,
     requireWorkspace,
@@ -655,6 +670,42 @@ export const contextRoutes = (ctx: AppContext) => {
     }
   }
 
+  const ContextImportInfo = z
+    .object({
+      source: z.literal("arxiv"),
+      ref: z.string().describe("The bare paper id (`2401.12345`)."),
+      version: z
+        .number()
+        .nullable()
+        .describe("The paper version arXiv resolved the import to; null until fetched."),
+      status: z
+        .enum(["pending", "fetching", "ready", "failed", "dead"])
+        .describe(
+          "pending/fetching: the source is on its way; ready: the paper is published and readable; failed: a transient error, retry scheduled; dead: gave up (retry by hand, or discard).",
+        ),
+      error: z
+        .object({ code: z.string(), detail: z.string().nullable() })
+        .nullable()
+        .describe("The last failure: a code the client maps to copy, plus a short detail."),
+      url: z.string().describe("The paper's abstract page on arXiv."),
+      imported_by: z.string(),
+      code: z
+        .object({
+          url: z.string().describe("The repository's page on its own host."),
+          status: z
+            .enum(["pending", "ready", "failed"])
+            .describe(
+              "pending: on its way with the paper; ready: stored inside the paper's artifact, where an agent reads it; failed: see `error`. Independent of the paper's own status.",
+            ),
+          error: z.string().nullable().describe("Why the repository could not be fetched."),
+        })
+        .nullable()
+        .describe(
+          "The public repository implementing this paper, when one is attached. Its files live inside the paper's artifact for agents to read; people open the repository on its own host.",
+        ),
+    })
+    .openapi("ContextImportInfo")
+
   const ContextInfo = z
     .object({
       id: z.string(),
@@ -696,8 +747,20 @@ export const contextRoutes = (ctx: AppContext) => {
         .nullable()
         .optional()
         .describe("The manifest artifact's current version; null if it can't be resolved."),
+      import: ContextImportInfo.nullable().describe(
+        "Set when this Context was imported (a paper from arXiv): read-only, no runner, no sessions. Null for a Context someone defined.",
+      ),
     })
     .openapi("ContextInfo")
+
+  const ManifestDocumentInfo = z
+    .object({
+      short_id: z.string(),
+      title: z.string().nullable(),
+      kind: z.enum(["doc", "bundle"]).nullable(),
+      role: z.string().nullable().describe("What the document is to the Context (`paper`)."),
+    })
+    .openapi("ManifestDocumentInfo")
 
   // A skill the manifest pins, with pin health: the pinned version next to the skill
   // artifact's actual current one. `parseManifestSkillPins` already does this for the
@@ -907,7 +970,48 @@ export const contextRoutes = (ctx: AppContext) => {
     }
   }
 
-  const contextJson = (x: ContextRecord, manifestShortId: string | null) => ({
+  /** The import block of an imported context, from its job row. A context whose job is
+   *  gone (an older row, a sweep) reads as ready: what the manifest holds is what it is. */
+  const importJson = (x: ContextRecord, job: ImportJobRecord | null) => {
+    // The job runs for two things, and after the paper is published it usually runs for
+    // the second: attaching an implementation requeues it. `status` is the PAPER's, so a
+    // job working on code reports the paper as what it is, which is here and readable.
+    // The code's own state is `code.status`; conflating them told a person their paper
+    // was being fetched from arXiv again when nothing of the sort was happening.
+    const paperPublished = !!job?.paper_artifact_id
+    const status =
+      job && paperPublished && (job.status === "pending" || job.status === "fetching")
+        ? ("ready" as const)
+        : (job?.status ?? ("ready" as const))
+    return x.import_source === "arxiv" && x.import_ref
+      ? {
+          source: "arxiv" as const,
+          ref: x.import_ref,
+          version: job?.resolved_version ?? null,
+          status,
+          error:
+            job?.error_code && status !== "ready"
+              ? { code: job.error_code, detail: job.error_detail }
+              : null,
+          url: arxivAbsUrl(x.import_ref),
+          imported_by: job?.requested_by ?? x.created_by,
+          code: x.code_url
+            ? {
+                url: x.code_url,
+                // No job row (or none yet) means the fetch has not run: it is on its way.
+                status: job?.code_status ?? ("pending" as const),
+                error: job?.code_status === "failed" ? job.code_error : null,
+              }
+            : null,
+        }
+      : null
+  }
+
+  const contextJson = (
+    x: ContextRecord,
+    manifestShortId: string | null,
+    job: ImportJobRecord | null = null,
+  ) => ({
     id: x.id,
     name: x.name,
     agent_id: x.agent_id,
@@ -917,7 +1021,21 @@ export const contextRoutes = (ctx: AppContext) => {
     runner_seen_at: x.runner_seen_at,
     ask_policy: x.ask_policy,
     connection_ids: parseConnectionIds(x.connection_ids),
+    import: importJson(x, job),
   })
+
+  /** An imported Context is one artifact: the paper. It names itself as its document, so
+   *  a reader has one short id to open and an agent has one to read. */
+  const paperDocuments = (paper: ArtifactRecord) => [
+    { short_id: paper.short_id, title: paper.title, kind: paper.kind, role: "paper" as const },
+  ]
+
+  /** The paper's own BibTeX entry (its bundle's CITATION.bib), for Copy BibTeX. */
+  const paperBibtex = async (paper: ArtifactRecord): Promise<string | null> => {
+    const v = await meta.getVersion(paper.id, paper.current_version).catch(() => null)
+    const manifest = v ? await manifestOf(ctx.blobs, v) : null
+    return manifest ? ((await paperCitation(ctx.blobs, manifest))?.bibtex ?? null) : null
+  }
 
   const messageJson = (m: SessionMessageRecord) => {
     const meta = metaForWire(m.meta) as z.infer<typeof SessionMeta> | null
@@ -1042,6 +1160,15 @@ export const contextRoutes = (ctx: AppContext) => {
     description: md ? manifestDescription(md) : null,
     skills_count: md ? parseManifestSkillPins(md).length : 0,
     manifest_version: manifestVersion,
+  })
+
+  /** The same slice for an imported Context, whose artifact is the paper: its first
+   *  paragraph is LaTeX, so the row says who wrote it instead. `author` is the paper's
+   *  author line, recorded on the version the import published. */
+  const paperSummaryRow = (x: ContextRecord, author: string | null, version: number | null) => ({
+    description: x.import_ref ? bylineOf(x.import_ref, author ? [author] : [], null) : null,
+    skills_count: 0,
+    manifest_version: version,
   })
 
   /** A session's context + manifest, or null when either half is gone. */
@@ -1216,6 +1343,13 @@ export const contextRoutes = (ctx: AppContext) => {
       // first returned, so it could not be batched by key; the store answers it with a
       // LEFT JOIN instead (see contextsWithManifests).
       const rows = await meta.contextsWithManifests(org)
+      // Imported contexts show their fetch state in the list, so the badge can say
+      // "fetching" the moment a paper is queued: one batched read of their jobs.
+      const jobs = new Map(
+        (
+          await meta.getImportJobsForContexts(rows.filter((x) => x.import_source).map((x) => x.id))
+        ).map((j) => [j.context_id, j]),
+      )
       // The directory row wants a one-line description and a skill count, which live in
       // the manifest's BODY, not on the context row — so each context needs its own
       // manifest fetch. Bounded by how many contexts a workspace has (this list has no
@@ -1227,14 +1361,284 @@ export const contextRoutes = (ctx: AppContext) => {
           const manifest = x.manifest_short_id
             ? await meta.getArtifactById(x.manifest_artifact_id).catch(() => null)
             : null
+          // An imported Context's artifact is the paper itself, whose first paragraph is
+          // LaTeX: its row says who wrote it, from the version the import published.
+          if (x.import_source) {
+            const v = manifest
+              ? await meta.getVersion(manifest.id, manifest.current_version).catch(() => null)
+              : null
+            return {
+              ...contextJson(x, x.manifest_short_id, jobs.get(x.id) ?? null),
+              ...paperSummaryRow(x, v?.author ?? null, manifest?.current_version ?? null),
+            }
+          }
           const md = manifest ? await manifestBody(manifest) : null
           return {
-            ...contextJson(x, x.manifest_short_id),
+            ...contextJson(x, x.manifest_short_id, jobs.get(x.id) ?? null),
             ...manifestSummary(md, manifest?.current_version ?? null),
           }
         }),
       )
       return c.json({ contexts })
+    },
+  )
+
+  // ---- import a paper from arXiv --------------------------------------------
+  // The Context exists from this request on, so the list shows it "fetching" at once;
+  // the worker (imports.ts) fetches the paper behind arXiv's request gate and fills it
+  // in. Idempotent per paper per workspace: the same paper pasted twice opens the one
+  // Context, requeuing its import if that had failed.
+  const MAX_ACTIVE_IMPORTS_PER_WORKSPACE = 3
+  const ARXIV_IMPORT_ESTIMATED_BYTES = 50 * 1024 * 1024
+
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/v1/contexts/import/arxiv",
+      tags: ["Contexts"],
+      summary:
+        "Import a paper from arXiv as a read-only Context: its LaTeX source and BibTeX, fetched in the background.",
+      responses: {
+        201: {
+          description:
+            "The new Context, already listed, with import.status 'fetching' (or 'pending') until the worker publishes the paper.",
+          content: { "application/json": { schema: ContextInfo } },
+        },
+        200: {
+          description: "This workspace already imported that paper: its existing Context.",
+          content: { "application/json": { schema: ContextInfo } },
+        },
+      },
+    }),
+    async (c) => {
+      const owner = await managementPrincipal(c)
+      if (!owner) return bail(fail(c, 401, "unauthenticated"))
+      const org = await requireWorkspace(c, "publish")
+      if (org instanceof Response) return bail(org)
+      const b = await readJson(
+        c,
+        z.object({
+          url: z.string().trim().min(1).max(2000),
+          code_url: z.string().trim().max(2000).optional(),
+        }),
+      )
+      if (b instanceof Response) return bail(b)
+      const ref = parseArxivRef(b.url)
+      if (!ref) return bail(fail(c, 400, "not an arXiv link", { code: "not_arxiv" }))
+      // The optional implementation. Validated here so a bad link is a 400 on the paste
+      // rather than a failure a minute later, and stored canonically so the worker and
+      // the console build every URL from a parsed reference.
+      const codeRef = b.code_url ? parseRepoRef(b.code_url) : null
+      if (b.code_url && !codeRef)
+        return bail(
+          fail(c, 400, "not a public GitHub or GitLab repository", { code: "not_a_repo" }),
+        )
+      if (deps.imports === false)
+        return bail(fail(c, 503, "paper imports are not configured on this deployment"))
+      // An import is two publishes (the manifest and the paper) plus an upstream fetch,
+      // so it pays every gate a publish pays, against the largest source the worker
+      // would accept.
+      const capped = await limited(c, publishLimiter)
+      if (capped) return bail(capped)
+      const blocked = await billingGate(c, org)
+      if (blocked) return bail(blocked)
+      if (await overStorage(org, ARXIV_IMPORT_ESTIMATED_BYTES))
+        return bail(fail(c, 413, "this workspace is out of storage", { code: "storage" }))
+
+      const existing = await meta.findContextByImport(org, "arxiv", ref.id)
+      if (existing) {
+        const job = await meta.getImportJobForContext(existing.id)
+        if (job && (job.status === "failed" || job.status === "dead"))
+          await meta.updateImportJob(job.id, {
+            status: "pending",
+            next_attempt_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          })
+        const manifest = await meta.getArtifactById(existing.manifest_artifact_id)
+        deps.pokeImports?.()
+        return c.json(
+          contextJson(
+            existing,
+            manifest?.short_id ?? null,
+            job && (await meta.getImportJob(job.id)),
+          ),
+          200,
+        )
+      }
+      if ((await meta.countActiveImportJobs(org)) >= MAX_ACTIVE_IMPORTS_PER_WORKSPACE)
+        return bail(fail(c, 429, "too many imports in progress; wait for one to finish"))
+
+      // The paper's own artifact first, so a Context never exists without one, and the job
+      // last, so a Context never exists without something that will fill it in. The paper
+      // IS the Context's artifact: this version is a placeholder document that says the
+      // fetch is on its way, and the worker republishes it as the paper itself.
+      const settings = await meta.getOrgSettings(org).catch(() => null)
+      const stub = await publish(meta, ctx.blobs, {
+        bytes: new Uint8Array(),
+        filename: `${ref.id.replace(/\//g, "_")}.zip`,
+        isBundle: true,
+        files: { "/main.tex": new TextEncoder().encode(fetchingPaper(ref.id)) },
+        orgId: org,
+        title: `arXiv:${ref.id}`,
+        author: "arXiv",
+        authorId: null,
+        source: "api",
+        message: `Importing arXiv:${ref.canonical}`,
+        importSource: "arxiv",
+        workspaceAccess: settings?.defaultWorkspaceAccess ?? "member",
+        linkRole: "none",
+        listed: "none",
+      })
+      // Locked from the first version: nobody edits a paper arXiv published. The worker
+      // republishes it through the core, which the lock never gates (only routes do).
+      await meta.setLocked(stub.artifact.id, 1)
+      await meta.setArtifactMember({
+        id: newId("am"),
+        artifact_id: stub.artifact.id,
+        user_id: owner,
+        role: "owner",
+      })
+      let made: Awaited<ReturnType<typeof createContextCore>>
+      try {
+        made = await createContextCore(meta, {
+          orgId: org,
+          userId: owner,
+          name: `arXiv:${ref.id}`,
+          manifestArtifactId: stub.artifact.id,
+          askPolicy: "workspace",
+          importSource: "arxiv",
+          importRef: ref.id,
+          codeUrl: codeRef ? repoWebUrl(codeRef) : null,
+        })
+      } catch (error) {
+        await meta.deleteArtifact(stub.artifact.id, org).catch(() => undefined)
+        if (!(error instanceof ContextConflictError)) throw error
+        return bail(fail(c, 409, "a context with that name already exists"))
+      }
+      let job: ImportJobRecord
+      try {
+        job = await meta.enqueueImportJob({
+          id: newId("imp"),
+          org_id: org,
+          context_id: made.context.id,
+          requested_by: owner,
+          kind: "arxiv",
+          ref: ref.canonical,
+          scope: deps.baseUrl.replace(/\/$/, ""),
+        })
+      } catch (error) {
+        await meta.deleteContext(made.context.id, org).catch(() => undefined)
+        await meta.deleteArtifact(stub.artifact.id, org).catch(() => undefined)
+        throw error
+      }
+      deps.pokeImports?.()
+      return c.json(contextJson(made.context, stub.artifact.short_id, job), 201)
+    },
+  )
+
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/v1/contexts/{id}/import/retry",
+      tags: ["Contexts"],
+      summary: "Queue a failed paper import again (the context's creator or a workspace manager).",
+      request: { params: z.object({ id: z.string() }) },
+      responses: {
+        200: {
+          description: "The Context, its import queued again.",
+          content: { "application/json": { schema: ContextInfo } },
+        },
+      },
+    }),
+    async (c) => {
+      const x = await manageableContext(c)
+      if (x instanceof Response) return bail(x)
+      const job = await meta.getImportJobForContext(x.id)
+      if (!x.import_source || !job) return bail(fail(c, 404, "not an imported context"))
+      if (job.status === "failed" || job.status === "dead") {
+        const now = new Date().toISOString()
+        await meta.updateImportJob(job.id, {
+          status: "pending",
+          next_attempt_at: now,
+          lease_until: null,
+          updated_at: now,
+        })
+        // A retry after giving up starts the count over; the paper it may already have
+        // published is kept and resumed from.
+        if (job.status === "dead") await meta.updateImportJob(job.id, { attempts: 0 })
+        deps.pokeImports?.()
+      }
+      const manifest = await meta.getArtifactById(x.manifest_artifact_id)
+      return c.json(contextJson(x, manifest?.short_id ?? null, await meta.getImportJob(job.id)))
+    },
+  )
+
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/v1/contexts/{id}/import/code",
+      tags: ["Contexts"],
+      summary:
+        "Attach, replace or remove the repository implementing an imported paper (the context's creator or a workspace manager).",
+      description:
+        "The repository is fetched into the paper's own artifact, where an agent reading the paper reads the code beside it; people get a link to it on its own host and never a file listing. Pass `url: null` to remove it, which republishes the paper without the code.",
+      request: {
+        params: z.object({ id: z.string() }),
+        body: {
+          content: {
+            "application/json": {
+              schema: z.object({
+                url: z
+                  .string()
+                  .trim()
+                  .max(2000)
+                  .nullable()
+                  .describe("A public GitHub or GitLab repository; null removes the attachment."),
+              }),
+            },
+          },
+        },
+      },
+      responses: {
+        200: {
+          description: "The Context, its implementation queued (or removed).",
+          content: { "application/json": { schema: ContextInfo } },
+        },
+      },
+    }),
+    async (c) => {
+      const x = await manageableContext(c)
+      if (x instanceof Response) return bail(x)
+      const job = await meta.getImportJobForContext(x.id)
+      if (!x.import_source || !job) return bail(fail(c, 404, "not an imported context"))
+      const b = await readJson(c, z.object({ url: z.string().trim().max(2000).nullable() }))
+      if (b instanceof Response) return bail(b)
+      const codeRef = b.url ? parseRepoRef(b.url) : null
+      if (b.url && !codeRef)
+        return bail(
+          fail(c, 400, "not a public GitHub or GitLab repository", { code: "not_a_repo" }),
+        )
+
+      await meta.setContextCodeUrl(x.id, codeRef ? repoWebUrl(codeRef) : null)
+      // The worker does both jobs: fetching a new repository, and republishing the paper
+      // without the previous one. Either way the job runs again, and the paper it already
+      // published is resumed from rather than re-fetched.
+      const now = new Date().toISOString()
+      await meta.updateImportJob(job.id, {
+        status: "pending",
+        next_attempt_at: now,
+        lease_until: null,
+        attempts: 0,
+        code_status: codeRef ? "pending" : null,
+        code_error: null,
+        updated_at: now,
+      })
+      deps.pokeImports?.()
+      const updated = await meta.getContext(x.id)
+      const manifest = await meta.getArtifactById(x.manifest_artifact_id)
+      return c.json(
+        contextJson(updated ?? x, manifest?.short_id ?? null, await meta.getImportJob(job.id)),
+      )
     },
   )
 
@@ -1284,6 +1688,19 @@ export const contextRoutes = (ctx: AppContext) => {
                   .number()
                   .optional()
                   .describe("How many sessions the runner may work at once. Human branch only."),
+                documents: z
+                  .array(ManifestDocumentInfo)
+                  .optional()
+                  .describe(
+                    "Documents the manifest binds (an imported paper's bundle). Human branch only.",
+                  ),
+                bibtex: z
+                  .string()
+                  .nullable()
+                  .optional()
+                  .describe(
+                    "An imported paper's own BibTeX entry (its bundle's CITATION.bib). Human branch only.",
+                  ),
               }),
             },
           },
@@ -1302,15 +1719,21 @@ export const contextRoutes = (ctx: AppContext) => {
       const manifest = await meta.getArtifactById(x.manifest_artifact_id)
       const allowed = agent ? agent.id === x.agent_id : await canAskContext(c, x)
       if (!allowed) return bail(fail(c, 404, "not found"))
-      if (!manifest) return c.json(contextJson(x, null))
+      const job = x.import_source ? await meta.getImportJobForContext(x.id) : null
+      if (!manifest) return c.json(contextJson(x, null, job))
       // One fetch of the manifest's current source, shared by both branches below —
       // the runner's system prompt and the console's package are the same document,
       // read once.
       const v = await meta.getVersion(manifest.id, manifest.current_version)
-      const md = v ? await sourceText(v) : null
+      // An imported Context's artifact is the paper: never read as a manifest, and never
+      // handed to a runner as a system prompt.
+      const imported = !!x.import_source
+      const md = imported ? null : v ? await sourceText(v) : null
       const base = {
-        ...contextJson(x, manifest.short_id),
-        ...manifestSummary(md, manifest.current_version),
+        ...contextJson(x, manifest.short_id, job),
+        ...(imported
+          ? paperSummaryRow(x, v?.author ?? null, manifest.current_version)
+          : manifestSummary(md, manifest.current_version)),
       }
       // The runner's own config fetch: its system prompt is the manifest's current
       // source, so a manifest edit reconfigures the runner with no deploy. The resolved
@@ -1319,6 +1742,8 @@ export const contextRoutes = (ctx: AppContext) => {
       // pin-health/repos package below — that's presentation for a reader, and the
       // runner already has the same source to parse for itself.
       if (agent) {
+        // md is null for an imported Context, so a runner pointed at one refuses to serve
+        // rather than booting with a paper as its instructions.
         return c.json({ ...base, manifest_md: md, brandprint: await resolveContextBrandprint(x) })
       }
       // A human with ask-access: the manifest framed as a package rather than a raw
@@ -1344,19 +1769,24 @@ export const contextRoutes = (ctx: AppContext) => {
       )
       return c.json({
         ...base,
-        manifest: md
-          ? {
-              short_id: manifest.short_id,
-              title: manifest.title,
-              version: manifest.current_version,
-              md,
-              pushed_at: v?.created_at ?? manifest.created_at,
-            }
-          : null,
+        // The paper is not a manifest: a reader gets the rendered artifact, never its
+        // source, so an imported Context carries no `manifest` block at all.
+        manifest:
+          md && !imported
+            ? {
+                short_id: manifest.short_id,
+                title: manifest.title,
+                version: manifest.current_version,
+                md,
+                pushed_at: v?.created_at ?? manifest.created_at,
+              }
+            : null,
         skills,
         repos: md ? parseManifestRepos(md) : [],
         max_run_ms: x.max_run_ms,
         max_concurrency: x.max_concurrency,
+        documents: imported ? paperDocuments(manifest) : [],
+        bibtex: imported ? await paperBibtex(manifest) : null,
       })
     },
   )
@@ -1384,7 +1814,11 @@ export const contextRoutes = (ctx: AppContext) => {
       if (!x || x.org_id !== (await activeWorkspace(c))) return bail(fail(c, 404, "not found"))
       if (x.created_by !== owner && !(await workspaceCan(c, "manage")))
         return bail(fail(c, 403, "forbidden"))
-      await meta.deleteContext(x.id, x.org_id)
+      // An imported Context IS its paper: one artifact, so discarding the Context takes it
+      // (the artifact cascade removes the context, its job and its roster with it).
+      if (x.import_source)
+        await deleteArtifactAndUnindex(meta, ctx.search, x.manifest_artifact_id, x.org_id)
+      else await meta.deleteContext(x.id, x.org_id)
       return c.body(null, 204)
     },
   )
@@ -1617,6 +2051,8 @@ export const contextRoutes = (ctx: AppContext) => {
       // Asking is a workspace-scoped grant on the CONTEXT, not manifest read —
       // so a manifest world link can never open a session (query the data).
       if (!x || !(await canAskContext(c, x))) return bail(fail(c, 404, "not found"))
+      // An imported paper is a document, not a runner: nothing would answer the session.
+      if (x.import_source) return bail(fail(c, 409, IMPORTED_NO_RUNS(x.id)))
       const manifest = await meta.getArtifactById(x.manifest_artifact_id)
       if (!manifest) return bail(fail(c, 404, "not found"))
       const b = await readJson(

@@ -605,6 +605,21 @@ describe("version restore", () => {
     const { short_id } = await (await upload("r4.md", "x")).json()
     expect((await postJson(`/v1/artifacts/${short_id}/restore`, { version: 99 })).status).toBe(404)
   })
+
+  it("refuses to restore a locked artifact, the same as any other publish", async () => {
+    const { short_id } = await (await upload("rl.md", "one")).json()
+    await upload("rl.md", "two", {}, short_id)
+    const lock = await app.request(`/v1/artifacts/${short_id}/locked`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ locked: true }),
+    })
+    expect(lock.status).toBe(200)
+    const res = await postJson(`/v1/artifacts/${short_id}/restore`, { version: 1 })
+    expect(res.status).toBe(409)
+    expect((await res.json()).error).toMatch(/locked/)
+    expect(await (await app.request(`/v1/artifacts/${short_id}/content`)).text()).toBe("two")
+  })
 })
 
 describe("publish html file", () => {

@@ -915,6 +915,7 @@ export function registerPublishTool(tc: ToolContext): void {
         let bytes: Uint8Array
         // A merge keeps the bundle's existing SPA routing (the caller isn't redeclaring it).
         let bundleSpa = isBundle ? !!spa : undefined
+        let bundleEntry: string | undefined
         if (!isBundle) {
           bytes = new TextEncoder().encode(content as string)
         } else if (merge && existing) {
@@ -924,6 +925,7 @@ export function registerPublishTool(tc: ToolContext): void {
             return err(`Couldn't read the current bundle for "${short_id}" to merge into.`)
           bytes = await mergeBundleZip(ctx.blobs, manifest, files as Record<string, string>)
           bundleSpa = manifest.spa
+          bundleEntry = manifest.entry
         } else {
           bytes = await zipBundleFiles(files as Record<string, string>, ctx.blobs)
         }
@@ -967,6 +969,7 @@ export function registerPublishTool(tc: ToolContext): void {
               : (filename ?? singleFileFallback),
             isBundle,
             spa: bundleSpa,
+            entry: bundleEntry,
             title: title?.trim(),
             message,
             author: agent.name,

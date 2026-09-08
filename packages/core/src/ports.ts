@@ -192,6 +192,9 @@ export interface ArtifactRecord {
   author_id: string | null
   /** Remix lineage: the artifact id this one was derived from ("use as template").
    *  Null for ordinary artifacts. Not an FK — the copy outlives a deleted source. */
+  /** Where this artifact's content came from when a machine fetched it (`arxiv`); null
+   *  for anything a person or agent authored here. Decides presentation, not access. */
+  import_source: string | null
   derived_from: string | null
 }
 
@@ -424,6 +427,78 @@ export interface NewExportJob {
   expires_at?: string | null
 }
 
+// ---- Imports: a Context fetched from an upstream (arXiv) -------------------
+export type ImportKind = "arxiv"
+/** pending → fetching (leased by a worker) → ready, or failed (retry due at
+ *  next_attempt_at) until dead. Cancelling is deleting the Context, which deletes the
+ *  job; a worker that re-reads a missing job stops. */
+export type ImportJobStatus = "pending" | "fetching" | "ready" | "failed" | "dead"
+/** Why an import stopped. The first five are the upstream's verdict on the paper and
+ *  never retry; the last two are the upstream's mood and do. */
+export type ImportErrorCode =
+  | "not_found"
+  | "withdrawn"
+  | "no_source"
+  | "no_tex"
+  | "too_large"
+  | "rate_limited"
+  | "unavailable"
+/** How the implementation attached to an imported paper is doing. Deliberately apart
+ *  from ImportJobStatus: the paper is what the import is for, so a repository that could
+ *  not be fetched leaves the import ready and reports itself here. */
+export type ImportCodeStatus = "pending" | "ready" | "failed"
+export interface ImportJobRecord {
+  id: string
+  org_id: string
+  context_id: string
+  requested_by: string
+  kind: ImportKind
+  /** The reference as requested (`2401.12345v2` when a version was pinned). */
+  ref: string
+  /** Exact deployment origin allowed to claim this job (see export_job.renderer_scope). */
+  scope: string
+  status: ImportJobStatus
+  attempts: number
+  next_attempt_at: string
+  /** While fetching: when the claim lapses and another worker may take the job. */
+  lease_until: string | null
+  error_code: string | null
+  error_detail: string | null
+  /** Progress markers a reclaimed job resumes from instead of fetching again. */
+  paper_artifact_id: string | null
+  manifest_version: number | null
+  /** The paper version the upstream resolved the reference to. */
+  resolved_version: number | null
+  /** The attached repository's own state. Null until one is attached. */
+  code_status: ImportCodeStatus | null
+  /** Why the repository could not be fetched, when it could not. */
+  code_error: string | null
+  /** The reference that was actually fetched (`github.com/owner/repo@branch`): both the
+   *  resume marker and how a re-run knows the link changed. */
+  code_ref: string | null
+  created_at: string
+  updated_at: string
+}
+export interface NewImportJob {
+  id: string
+  org_id: string
+  context_id: string
+  requested_by: string
+  kind: ImportKind
+  ref: string
+  scope: string
+}
+/** The one-request-at-a-time gate per (kind, scope): who holds it, until when, and
+ *  when the next upstream request may go out. */
+export interface ImportLeaseRecord {
+  id: string
+  kind: ImportKind
+  scope: string
+  holder: string | null
+  lease_until: string | null
+  next_allowed_at: string
+}
+
 export interface VersionRecord {
   id: string
   artifact_id: string
@@ -513,6 +588,8 @@ export interface NewArtifact {
   /** Remix lineage: the artifact id this one was derived from ("use as template").
    *  Omit for ordinary artifacts; never an FK — the copy outlives its source. */
   derived_from?: string | null
+  /** Import provenance (`arxiv`); omitted → null. */
+  import_source?: string | null
 }
 
 /** Which surface created a version: the web app, the MCP publish tool, the HTTP API
@@ -1680,6 +1757,67 @@ export interface ContextStore {
   /** Replace the context's bound connections (a JSON array of ids, or null for none).
    *  Whole-list semantics: the caller has already checked every id is attachable. */
   setContextConnections(id: string, connectionIds: string | null): Promise<void>
+  /** Attach, replace or remove the repository implementing an imported paper. */
+  setContextCodeUrl(id: string, codeUrl: string | null): Promise<void>
+  /** Rename a context. The (org, name) unique index still applies: the store surfaces
+   *  the conflict as a throw for the caller to catch and pick another name. */
+  renameContext(id: string, name: string): Promise<void>
+  /** The context a workspace already imported from this reference, if any. */
+  findContextByImport(orgId: string, source: string, ref: string): Promise<ContextRecord | null>
+  // ---- Import queue (one job per imported context) -------------------------
+  enqueueImportJob(j: NewImportJob): Promise<ImportJobRecord>
+  getImportJob(id: string): Promise<ImportJobRecord | null>
+  getImportJobForContext(contextId: string): Promise<ImportJobRecord | null>
+  /** The jobs for these contexts, for a list that shows each row's fetch state. */
+  getImportJobsForContexts(contextIds: string[]): Promise<ImportJobRecord[]>
+  /** Claim ONE due job for this deployment: pending, failed with its retry due, or
+   *  fetching with a lapsed lease. Sets fetching, bumps attempts, stamps the lease.
+   *  Null when nothing is due. */
+  claimDueImportJob(now: string, leaseUntil: string, scope: string): Promise<ImportJobRecord | null>
+  updateImportJob(
+    id: string,
+    fields: Partial<
+      Pick<
+        ImportJobRecord,
+        | "status"
+        | "attempts"
+        | "next_attempt_at"
+        | "lease_until"
+        | "error_code"
+        | "error_detail"
+        | "paper_artifact_id"
+        | "manifest_version"
+        | "resolved_version"
+        | "code_status"
+        | "code_error"
+        | "code_ref"
+        | "updated_at"
+      >
+    >,
+  ): Promise<void>
+  /** Jobs still in flight for a workspace (pending, fetching or awaiting a retry). */
+  countActiveImportJobs(orgId: string): Promise<number>
+  // ---- Upstream request gate ------------------------------------------------
+  /** Take the (kind, scope) lease when nobody holds it (or the holder's lease lapsed)
+   *  AND the upstream's next allowed instant has passed. One compare-and-set; true
+   *  when this holder now owns it. */
+  acquireImportLease(
+    kind: ImportKind,
+    scope: string,
+    holder: string,
+    now: string,
+    leaseUntil: string,
+  ): Promise<boolean>
+  /** Restamp the lease while holding it: extend it, move the upstream's next allowed
+   *  instant (after a request, or further after a Retry-After), or release it
+   *  (`holder: null, lease_until: null`). A no-op when this holder no longer owns it. */
+  updateImportLease(
+    kind: ImportKind,
+    scope: string,
+    holder: string,
+    fields: Partial<Pick<ImportLeaseRecord, "holder" | "lease_until" | "next_allowed_at">>,
+  ): Promise<void>
+  getImportLease(kind: ImportKind, scope: string): Promise<ImportLeaseRecord | null>
   /** The invited-asker roster for a context (only consulted when ask_policy = invited). */
   listContextAskers(contextId: string): Promise<ContextAskerRecord[]>
   /** Is this user on the context's asker roster? (Membership is checked separately.) */
@@ -3884,6 +4022,14 @@ export interface ContextRecord {
   /** Connections this context may use, as a JSON array of ids (same shape as
    *  automation.connection_ids). Null = no tools. */
   connection_ids: string | null
+  /** Where an imported Context came from (`arxiv`) and the bare reference it was
+   *  imported from; null for a Context somebody defined. Imported Contexts are
+   *  read-only documents: no runner, no sessions. */
+  import_source: string | null
+  import_ref: string | null
+  /** The public repository implementing an imported paper, as the person gave it; null
+   *  when no implementation is attached. The paper's own artifact holds the code. */
+  code_url: string | null
 }
 export interface NewContext {
   id: string
@@ -3902,6 +4048,11 @@ export interface NewContext {
   config?: string | null
   /** JSON array of connection ids the context may use; omitted → null. */
   connection_ids?: string | null
+  /** Import provenance; omitted → null (a defined Context). */
+  import_source?: string | null
+  import_ref?: string | null
+  /** The repository implementing an imported paper; omitted → null. */
+  code_url?: string | null
 }
 export interface ContextAskerRecord {
   id: string

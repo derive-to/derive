@@ -10,6 +10,7 @@ import {
   injectSharedStateScript,
   inspectStructuralDocument,
   isBundleContentType,
+  isCodePath,
   isLatexLike,
   looksLikeHtmlDocument,
   MARKS_SCRIPT,
@@ -98,6 +99,10 @@ export const serveContent = async (
    *  a cache past the next request; omitted, the plain policy applies to bound pages too
    *  (callers that serve a snapshot, never a live page). */
   boundCacheControl?: string,
+  /** This artifact's source is not for this caller (an imported paper read by a person):
+   *  render it, never hand back its `.tex`/`.bib`/`.sty` bytes. Images still serve, and
+   *  the renderer resolves the paper's own files server-side, so the page is unchanged. */
+  sourceHidden = false,
 ) => {
   const slots = slotValuesOf(dynamic)
   // Bound by declaration: the rendered document carries a binding attribute on a real
@@ -177,10 +182,22 @@ export const serveContent = async (
     let lookup = `/${path}`
     if (lookup.endsWith("/")) lookup += "index.html"
     let entry = manifest.files[lookup]
+    let resolved = lookup
     // Pretty URLs (Astro-style dir output), then SPA fallback.
-    if (!entry && !/\.[a-z0-9]+$/i.test(lookup)) entry = manifest.files[`${lookup}/index.html`]
-    if (!entry && manifest.spa) entry = manifest.files[manifest.entry]
+    if (!entry && !/\.[a-z0-9]+$/i.test(lookup)) {
+      entry = manifest.files[`${lookup}/index.html`]
+      if (entry) resolved = `${lookup}/index.html`
+    }
+    if (!entry && manifest.spa) {
+      entry = manifest.files[manifest.entry]
+      if (entry) resolved = manifest.entry
+    }
     if (!entry) return c.text("not found", 404, headers)
+    // A paper's attached implementation is for the agent that reads the paper, not for
+    // this surface. The check sits ABOVE the html/css/markdown branches on purpose: those
+    // render before the source guard below, so a README or a docs page inside a
+    // repository would otherwise be served to anyone who could open the paper.
+    if (sourceHidden && isCodePath(resolved)) return c.text("not found", 404, headers)
 
     const data = await blobs.get(entry.key)
     if (!data) return c.text("blob missing", 500)
@@ -214,7 +231,10 @@ export const serveContent = async (
     // `\includegraphics{fig/a.png}` to the image served under this prefix. `?raw=1`
     // fetches the source, as for markdown. The style files a paper carries (.bib, .cls,
     // .sty, .bst) are text/plain in the manifest and fall through to the raw serve.
-    if (isLatexLike(entry.type) && !["1", "true"].includes(c.req.query("raw") ?? "")) {
+    if (
+      isLatexLike(entry.type) &&
+      (sourceHidden || !["1", "true"].includes(c.req.query("raw") ?? ""))
+    ) {
       const files = await bundleTextFiles(blobs, manifest)
       const rendered = renderLatex(new TextDecoder().decode(data), title, {
         dynamic: slots,
@@ -228,6 +248,11 @@ export const serveContent = async (
       const html = withSharedState(rendered.html) + append
       return c.body(html, 200, { ...headers, "Content-Type": "text/html; charset=utf-8" })
     }
+    // The fall-through serves a bundle's other files verbatim (a figure, a stylesheet).
+    // For a hidden-source paper that would be its `.bib`/`.sty`/`.tex` in the clear, so
+    // only what the page actually renders with — images and fonts — passes.
+    if (sourceHidden && !entry.type.startsWith("image/") && !entry.type.startsWith("font/"))
+      return c.text("not found", 404)
     return c.body(toBody(data), 200, { ...headers, "Content-Type": entry.type })
   }
 
@@ -263,7 +288,7 @@ export const serveContent = async (
   }
 
   if (isLatexLike(content.content_type)) {
-    if (path === "raw.tex")
+    if (path === "raw.tex" && !sourceHidden)
       return c.body(toBody(data), 200, {
         ...headers,
         "Content-Type": "text/x-latex; charset=utf-8",

@@ -18,6 +18,7 @@ import {
   groupSessions,
   hasArtifactStanding,
   heavyAssetsAdvisory,
+  isCodePath,
   isHtmlLike,
   isLatexBundle,
   isLatexLike,
@@ -190,8 +191,29 @@ export const artifactRoutes = (ctx: AppContext) => {
     unlockLimiter,
     sourceText,
     dynamicSlots,
+    sourceHiddenFrom,
   } = ctx
   const app = new OpenAPIHono<BlankEnv>()
+
+  /**
+   * The manifest as a PERSON may see it. An imported paper can carry the repository that
+   * implements it under /code/, which an agent reads and the UI never shows: this surface
+   * lists paths, so it is one of the two places that would have shown a person the whole
+   * repository. Unchanged for every artifact that is not a hidden-source import.
+   */
+  const withoutCode = async (
+    c: Context,
+    artifact: Pick<ArtifactRecord, "import_source">,
+    manifest: BundleManifest,
+  ): Promise<BundleManifest> => {
+    if (!(await sourceHiddenFrom(c, artifact))) return manifest
+    const files = Object.fromEntries(
+      Object.entries(manifest.files).filter(([path]) => !isCodePath(path)),
+    )
+    return Object.keys(files).length === Object.keys(manifest.files).length
+      ? manifest
+      : { ...manifest, files }
+  }
 
   // Keyset-paginated (?sort=&cursor=&limit=N; the cursor is keyed on the active sort —
   // see sortKeyOf), with optional server-side ?query= (artifact title, tag, or
@@ -664,6 +686,7 @@ export const artifactRoutes = (ctx: AppContext) => {
     let preparedSource: string | undefined
     // An edit inside a paper bundle republishes the bundle; its SPA flag is kept as is.
     let bundleSpa: boolean | undefined
+    let bundleEntry: string | undefined
     let editSummary: ReviewSummary | undefined
     let previousSearchSource:
       | { source: string; contentType: string | null; title: string | null }
@@ -721,6 +744,7 @@ export const artifactRoutes = (ctx: AppContext) => {
           [materialized.bundle.path]: materialized.content,
         })
         bundleSpa = materialized.bundle.manifest.spa
+        bundleEntry = materialized.bundle.manifest.entry
       } else {
         bytes = new TextEncoder().encode(materialized.content)
         preparedSource = materialized.content
@@ -954,6 +978,7 @@ export const artifactRoutes = (ctx: AppContext) => {
           title: str(body["title"]),
           slug: str(body["slug"]),
           spa: bundleSpa ?? (body["spa"] === "true" || body["spa"] === "1"),
+          entry: bundleEntry,
           message: str(body["message"]),
           // Author is the authenticated identity, never a client-supplied field — a
           // logged-in publish must be attributed to that person. The human behind the
@@ -1793,7 +1818,9 @@ export const artifactRoutes = (ctx: AppContext) => {
           // A paper (entry main.tex) gets the same block: the viewer lists its sources,
           // figures and .bib beside the rendered page.
           if (isMarkdownBundle(manifest) || isLatexBundle(manifest))
-            bundle = bundleDoc(manifest, await sourceText(cur))
+            // A paper's implementation is not part of the paper's file tree: this block
+            // is what the viewer lists, and the repository is only ever a link out.
+            bundle = bundleDoc(await withoutCode(c, artifact, manifest), await sourceText(cur))
         }
       }
       // Linked bundles stay ordinary HTML artifacts. Their one authored fact is the
@@ -2451,7 +2478,11 @@ export const artifactRoutes = (ctx: AppContext) => {
       const artifact = await requireArtifact(c, "publish", { split: true })
       if (artifact instanceof Response) return bail(artifact)
       // A restore is a publish (it writes a new version), so it's gated the same way:
-      // a billing-blocked workspace can't add a version by restoring one either.
+      // a billing-blocked workspace can't add a version by restoring one either, and a
+      // locked artifact can't be rolled back to an earlier version any more than it can
+      // take a new one.
+      if (artifact.locked)
+        return bail(fail(c, 409, "artifact is locked — unlock it to publish, or leave a comment"))
       const blocked = await billingGate(c, artifact.org_id)
       if (blocked) return bail(blocked)
       const body = await readJson(c, z.object({ version: z.number().int("version required") }))
@@ -2685,11 +2716,19 @@ export const artifactRoutes = (ctx: AppContext) => {
     if (!version) return fail(c, 404, `no version ${v}`)
 
     const formatQ = c.req.query("format")
-    const format = formatQ === "markdown" || formatQ === "text" ? formatQ : null
+    // A fetched paper answers a person in prose, never as LaTeX: `format` is forced to
+    // text for them, and the section escape (which reaches any bundle file) is refused.
+    // Agents keep every form; reading the source is how a model understands the paper.
+    const hideSource = await sourceHiddenFrom(c, artifact)
+    const format = hideSource
+      ? "text"
+      : formatQ === "markdown" || formatQ === "text"
+        ? formatQ
+        : null
     // "*" forces full content — the escape hatch a caller uses after already
     // seeing (or skipping) the outline, same sentinel the MCP `read` tool takes.
     const sectionQ = c.req.query("section")
-    const section = sectionQ && sectionQ !== "*" ? sectionQ : null
+    const section = hideSource ? null : sectionQ && sectionQ !== "*" ? sectionQ : null
     const outline = c.req.query("outline") === "1"
     const present = (source: string, contentType: string): string => {
       if (!format) return source
@@ -2744,11 +2783,12 @@ export const artifactRoutes = (ctx: AppContext) => {
     // Bundle.
     if (outline) {
       c.header("X-Derive-Format", "outline")
+      const listed = await withoutCode(c, artifact, manifest)
       return c.json({
-        entry: cleanPath(manifest.entry),
-        pages: Object.keys(manifest.files).map((p) => ({
+        entry: cleanPath(listed.entry),
+        pages: Object.keys(listed.files).map((p) => ({
           path: cleanPath(p),
-          type: manifest.files[p]?.type,
+          type: listed.files[p]?.type,
         })),
       })
     }
@@ -2891,6 +2931,8 @@ export const artifactRoutes = (ctx: AppContext) => {
   app.get("/v1/artifacts/:shortId/diff", async (c) => {
     const artifact = await requireArtifact(c, "read")
     if (artifact instanceof Response) return artifact
+    // A diff of a fetched paper is a diff of its LaTeX; a person reads the paper instead.
+    if (await sourceHiddenFrom(c, artifact)) return fail(c, 404, "not found")
     if (artifact.current_version === 0) return fail(c, 404, "not found")
     const cur = artifact.current_version
     const from = c.req.query("from") ? Number(c.req.query("from")) : Math.max(1, cur - 1)

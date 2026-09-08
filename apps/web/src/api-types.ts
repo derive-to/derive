@@ -5146,6 +5146,137 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/contexts/import/arxiv": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Import a paper from arXiv as a read-only Context: its LaTeX source and BibTeX, fetched in the background. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description This workspace already imported that paper: its existing Context. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ContextInfo"];
+                    };
+                };
+                /** @description The new Context, already listed, with import.status 'fetching' (or 'pending') until the worker publishes the paper. */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ContextInfo"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/contexts/{id}/import/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Queue a failed paper import again (the context's creator or a workspace manager). */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The Context, its import queued again. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ContextInfo"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/contexts/{id}/import/code": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Attach, replace or remove the repository implementing an imported paper (the context's creator or a workspace manager).
+         * @description The repository is fetched into the paper's own artifact, where an agent reading the paper reads the code beside it; people get a link to it on its own host and never a file listing. Pass `url: null` to remove it, which republishes the paper without the code.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": {
+                        /** @description A public GitHub or GitLab repository; null removes the attachment. */
+                        url: string | null;
+                    };
+                };
+            };
+            responses: {
+                /** @description The Context, its implementation queued (or removed). */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ContextInfo"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/contexts/{id}": {
         parameters: {
             query?: never;
@@ -5192,6 +5323,10 @@ export interface paths {
                             max_run_ms?: number | null;
                             /** @description How many sessions the runner may work at once. Human branch only. */
                             max_concurrency?: number;
+                            /** @description Documents the manifest binds (an imported paper's bundle). Human branch only. */
+                            documents?: components["schemas"]["ManifestDocumentInfo"][];
+                            /** @description An imported paper's own BibTeX entry (its bundle's CITATION.bib). Human branch only. */
+                            bibtex?: string | null;
                         };
                     };
                 };
@@ -6994,6 +7129,8 @@ export interface components {
             current_content_type?: string | null;
             /** @description When true, direct publishes are blocked — changes go through review. */
             locked?: boolean;
+            /** @description `arxiv` when Derive fetched this content rather than someone authoring it here. Such a paper is read as it renders: its source is for agents, so the viewer offers no file list, source download, bibliography editor or diff. */
+            import_source?: string | null;
             /**
              * @description v2 access: member = workspace seats reach it at their role; none = they don't.
              * @enum {string}
@@ -7846,6 +7983,40 @@ export interface components {
             id: string;
             name: string;
         };
+        /** @description Set when this Context was imported (a paper from arXiv): read-only, no runner, no sessions. Null for a Context someone defined. */
+        ContextImportInfo: {
+            /** @enum {string} */
+            source: "arxiv";
+            /** @description The bare paper id (`2401.12345`). */
+            ref: string;
+            /** @description The paper version arXiv resolved the import to; null until fetched. */
+            version: number | null;
+            /**
+             * @description pending/fetching: the source is on its way; ready: the paper is published and readable; failed: a transient error, retry scheduled; dead: gave up (retry by hand, or discard).
+             * @enum {string}
+             */
+            status: "pending" | "fetching" | "ready" | "failed" | "dead";
+            /** @description The last failure: a code the client maps to copy, plus a short detail. */
+            error: {
+                code: string;
+                detail: string | null;
+            } | null;
+            /** @description The paper's abstract page on arXiv. */
+            url: string;
+            imported_by: string;
+            /** @description The public repository implementing this paper, when one is attached. Its files live inside the paper's artifact for agents to read; people open the repository on its own host. */
+            code: {
+                /** @description The repository's page on its own host. */
+                url: string;
+                /**
+                 * @description pending: on its way with the paper; ready: stored inside the paper's artifact, where an agent reads it; failed: see `error`. Independent of the paper's own status.
+                 * @enum {string}
+                 */
+                status: "pending" | "ready" | "failed";
+                /** @description Why the repository could not be fetched. */
+                error: string | null;
+            } | null;
+        } | null;
         ContextInfo: {
             id: string;
             name: string;
@@ -7870,6 +8041,7 @@ export interface components {
             skills_count?: number;
             /** @description The manifest artifact's current version; null if it can't be resolved. */
             manifest_version?: number | null;
+            import: components["schemas"]["ContextImportInfo"];
         };
         BrandprintConfig: {
             /** @description The workspace brand-profile artifact (an HTML page carrying theme tokens), when set; null otherwise. Not in `members` — it is the headline read, not a note. */
@@ -7897,6 +8069,14 @@ export interface components {
         ManifestRepoInfo: {
             url: string;
             ref: string | null;
+        };
+        ManifestDocumentInfo: {
+            short_id: string;
+            title: string | null;
+            /** @enum {string|null} */
+            kind: "doc" | "bundle" | null;
+            /** @description What the document is to the Context (`paper`). */
+            role: string | null;
         };
         Session: {
             id: string;

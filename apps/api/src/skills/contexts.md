@@ -94,6 +94,26 @@ Pulling is capped by the Context's concurrency (default 1: you claim exactly wha
 now, so a crash strands one session, not a batch). A crashed claim self-heals once its lease
 lapses. The next pull serves it again.
 
+## Imported papers
+
+A workspace can import a paper from arXiv as a Context (the "Import a paper from arXiv" door
+on the new-context page). The Context IS the paper: one artifact, no manifest beside it.
+`find` lists it with an `import` block instead of an online flag, and
+`read({ short_id: "ctx_..." })` returns a summary computed from the paper (title, authors,
+abstract, its BibTeX) with `documents` naming the one artifact it lives in. Read that short
+id for the full LaTeX source, section by section; its outline carries `citation` (the key
+and BibTeX to cite the paper itself). People see the rendered paper and never its source,
+which is yours to read: that is how you understand it. While `import.status` is `pending` or
+`fetching` the source is still on its way; `failed` and `dead` carry an error code. An
+imported Context takes no runs: `use` refuses it, and nothing polls its queue.
+
+A paper may carry the repository that implements it, stored inside the same artifact under
+`code/`. The paper's own pages stay the pages; the implementation comes back as `code`
+alongside them, with the file count and the shallowest hundred paths. Read any file in it
+with `read({ short_id, section: "code/<path>" })`, listed in that sample or not. That is how
+you answer what a method actually does rather than what the paper says it does. People never
+see these files; you do.
+
 ## Creating a Context (owners)
 
 `automate` with `action: "create_context"` wires a new Context in one call: `name` +

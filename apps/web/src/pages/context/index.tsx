@@ -5,6 +5,7 @@ import { Icon } from "@/components/icons"
 import { EmptyState } from "@/components/shared/empty-state"
 import { LoadError } from "@/components/shared/load-error"
 import { PageShell } from "@/components/shared/page-shell"
+import { Spinner } from "@/components/shared/spinner"
 import { Button } from "@/components/ui/button"
 import { contextsQuery } from "@/lib/queries"
 import { useDocumentTitle } from "@/lib/use-document-title"
@@ -15,7 +16,21 @@ import { runnerStatus } from "./runner-status"
 export function Contexts() {
   useDocumentTitle("Contexts")
   const nav = useNavigate()
-  const { data: contexts, isPending, isError, refetch } = useQuery(contextsQuery())
+  // Polled only while a paper import is on its way, so its row turns from "fetching" to
+  // the paper's title without a reload; quiet otherwise (and on error, behind Try again).
+  const {
+    data: contexts,
+    isPending,
+    isError,
+    refetch,
+  } = useQuery({
+    ...contextsQuery(),
+    refetchInterval: (q) =>
+      q.state.status === "error" || !q.state.data?.some((x) => importSettling(x))
+        ? false
+        : IMPORT_POLL_MS,
+    refetchIntervalInBackground: false,
+  })
 
   return (
     <PageShell className="flex flex-col gap-6">
@@ -76,9 +91,63 @@ export function Contexts() {
   )
 }
 
+const IMPORT_POLL_MS = 3_000
+/** The PAPER is on its way: what the row's badge says. */
+const importInFlight = (x: ContextInfo): boolean =>
+  x.import?.status === "pending" || x.import?.status === "fetching"
+/** Something is still arriving, paper or code, so keep asking. */
+const importSettling = (x: ContextInfo): boolean =>
+  importInFlight(x) || x.import?.code?.status === "pending"
+
+/** The one badge an imported row shows in place of the runner stripe: where the paper
+ *  is on its way from, or that it arrived. */
+function ImportBadge({ context: x }: { context: ContextInfo }) {
+  const imp = x.import
+  if (!imp) return null
+  if (importInFlight(x))
+    return (
+      <span
+        role="status"
+        data-testid="context-import-badge"
+        className="ml-auto flex items-center gap-1.5 rounded-md border border-warning/20 bg-warning/10 px-1.5 py-0.5 font-mono text-2xs text-warning"
+      >
+        <Spinner size="sm" tone="current" />
+        fetching from arXiv
+      </span>
+    )
+  if (imp.status === "failed")
+    return (
+      <span
+        data-testid="context-import-badge"
+        className="ml-auto rounded-md border border-warning/20 bg-warning/10 px-1.5 py-0.5 font-mono text-2xs text-warning"
+      >
+        retrying soon
+      </span>
+    )
+  if (imp.status === "dead")
+    return (
+      <span
+        data-testid="context-import-badge"
+        className="ml-auto rounded-md border border-destructive/20 bg-destructive/10 px-1.5 py-0.5 font-mono text-2xs font-semibold text-destructive"
+      >
+        import failed
+      </span>
+    )
+  return (
+    <span
+      data-testid="context-arxiv-badge"
+      title={`Imported from arXiv:${imp.ref}`}
+      className="ml-auto rounded-md border border-border bg-muted/45 px-1.5 py-0.5 font-mono text-2xs text-muted-foreground"
+    >
+      arXiv
+    </span>
+  )
+}
+
 function ContextRow({ context: x }: { context: ContextInfo }) {
   const status = runnerStatus(x.runner_seen_at)
   const runnerLabel = status.online ? "ready" : status.away ? "away" : "offline"
+  const imported = !!x.import
   return (
     <Link
       to="/contexts/$id"
@@ -86,35 +155,46 @@ function ContextRow({ context: x }: { context: ContextInfo }) {
       data-testid="context-card"
       className="relative flex flex-col gap-2 overflow-hidden rounded-xl border bg-card px-4 py-3 pl-5 transition-colors hover:bg-accent"
     >
-      <span
-        aria-hidden="true"
-        className={cn(
-          "absolute inset-y-0 left-0 w-1",
-          status.online ? "bg-success" : status.away ? "bg-warning" : "bg-muted-foreground/35",
-        )}
-      />
-      <div className="flex items-center gap-2">
-        <Icon name="context" className="text-muted-foreground" />
-        <span className="text-sm font-medium text-foreground">{x.name}</span>
+      {/* An imported paper has no runner: no liveness stripe, no runner chip. */}
+      {!imported && (
         <span
+          aria-hidden="true"
           className={cn(
-            "ml-auto flex items-center gap-1.5 rounded-md border px-1.5 py-0.5 font-mono text-2xs",
-            status.online
-              ? "border-success/20 bg-success/10 text-success"
-              : status.away
-                ? "border-warning/20 bg-warning/10 text-warning"
-                : "border-border bg-muted/45 text-muted-foreground",
+            "absolute inset-y-0 left-0 w-1",
+            status.online ? "bg-success" : status.away ? "bg-warning" : "bg-muted-foreground/35",
           )}
-          title={status.title}
-        >
+        />
+      )}
+      <div className="flex items-center gap-2">
+        <Icon name={imported ? "lock" : "context"} className="text-muted-foreground" />
+        <span className="text-sm font-medium text-foreground">{x.name}</span>
+        {imported ? (
+          <ImportBadge context={x} />
+        ) : (
           <span
             className={cn(
-              "size-1.5 rounded-full",
-              status.online ? "bg-success" : status.away ? "bg-warning" : "bg-muted-foreground/50",
+              "ml-auto flex items-center gap-1.5 rounded-md border px-1.5 py-0.5 font-mono text-2xs",
+              status.online
+                ? "border-success/20 bg-success/10 text-success"
+                : status.away
+                  ? "border-warning/20 bg-warning/10 text-warning"
+                  : "border-border bg-muted/45 text-muted-foreground",
             )}
-          />
-          {runnerLabel}
-        </span>
+            title={status.title}
+          >
+            <span
+              className={cn(
+                "size-1.5 rounded-full",
+                status.online
+                  ? "bg-success"
+                  : status.away
+                    ? "bg-warning"
+                    : "bg-muted-foreground/50",
+              )}
+            />
+            {runnerLabel}
+          </span>
+        )}
       </div>
       {x.description && (
         <p className="line-clamp-1 pl-6 text-sm text-muted-foreground">{x.description}</p>

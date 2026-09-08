@@ -30,6 +30,77 @@ artifact stays LaTeX. The Edit button on a LaTeX artifact opens the source edito
 paper is written in its source; a quick fix to a sentence on the page is still one `e`
 keystroke, or Edit on a selection, away.
 
+## Importing a paper from arXiv
+
+A paper somebody else wrote can join a workspace as a read-only Context. On the
+new-context page, "Import a paper from arXiv" takes the abstract page, a PDF link, the
+DOI, an `arXiv:` reference or a bare id; the form says what it will fetch as you type
+and refuses anything that is not an arXiv reference. The Context appears in the list
+at once, marked "fetching from arXiv", and a worker fetches the paper in the background:
+its metadata (title, authors, abstract), its LaTeX source (never the PDF) and the BibTeX
+entry arXiv publishes for it, in that order and never faster than arXiv allows (one
+request every three seconds for the whole deployment, further apart when arXiv asks).
+
+What lands is one artifact: the paper. It exists from the moment you paste the link, as a
+placeholder document that says the fetch is on its way, and the worker republishes it as
+the paper itself, entering at the paper's own top-level file (the archive's `00README` is
+honoured, a `main.tex` that is only a chapter is not mistaken for the paper, figures arrive
+byte for byte, a `.bbl` is found), with the paper's citation entry beside it as
+`CITATION.bib`. It is locked, tagged `arxiv`, attributed to its authors, and never given a
+world link: arXiv's licence permits the workspace's own reading, not redistribution. What
+the import decided is recorded on the version, where it reads as history.
+
+**You read the paper, not its LaTeX.** The page renders the paper, with its own title,
+authors and abstract, and that is the whole surface: an imported paper offers no file list,
+no source download, no bibliography editor and no diff, and its raw source is not served to
+a person. Agents keep full access, because reading the source is how a model understands a
+paper: `read` on the Context returns a summary (authors, abstract, BibTeX) computed from
+the paper, `documents` names the one artifact, and reading that short id gives the source
+section by section plus the `citation` to cite it with. `use` refuses it, since nothing runs
+it. People open it from the Contexts list, where the arXiv chip marks it, and from the
+Templates page's Academic section.
+
+### The paper's implementation
+
+A paper can carry the code that implements it. The import form takes an optional public
+GitHub or GitLab repository beside the arXiv link, and an imported paper's console can
+attach, replace or remove one at any time afterwards. Derive fetches the repository as
+one anonymous archive of its whole tree, follows the submodules it declares (each at the
+branch it names, since an archive carries no pinned commits), skips Git LFS pointers,
+and stores the files inside the paper's own artifact. A submodule on any other host, or on
+one that refuses an anonymous download (a lab's own GitLab often sits behind a sign-in or a
+bot challenge), is skipped and named in the version's notes; the rest of the tree still
+arrives.
+
+**Your agents read the code; you get a link to it.** The implementation is not browsable
+on Derive: the paper's page lists no repository files, the content API's outline and the
+source download leave them out, and requesting one returns nothing. The console shows
+"Open the repository", which goes to the repository on its own host. An agent reading the
+paper sees the implementation summarised beside the paper's pages, with a file count and
+the shallowest hundred paths, and reads any file in it by its exact path.
+
+An artifact carrying an implementation may be twice the usual size, and what survives
+that is decided asymmetrically: every text and code file is kept whatever the total, and
+binaries are dropped largest first until the rest fits, each named in the notes. A
+research repository is usually a fifth of a megabyte of source beside tens of megabytes
+of demo media, so this keeps the part an agent came for. A repository that is gone,
+private, unreachable or too large to fit leaves the paper imported and says why on its
+console, so the link can be fixed without fetching the paper again.
+
+A published bundle may hold at most 50 MB (30 MB on the Workers tier) and 2000 files,
+or twice that when a paper carries an implementation.
+The worker pulls up to 150 MB from arXiv to get there: when the unpacked source is over
+the limit, the raster figures (PNG, JPEG, WebP) are re-encoded in place, largest first,
+to at most 1600 px on the long side, then 1200, then 900, until the bundle fits; a
+figure keeps its path and format, so every reference still resolves, and the manifest's
+Import notes say what was shrunk and by how much. PDF and EPS figures are never touched;
+a source that still does not fit fails naming its largest files. Workers deployments do
+not shrink and refuse an oversized source as before. A paper arXiv holds only as a PDF,
+one whose source has no document, one that was withdrawn or one arXiv does not know fails
+at once with a reason; arXiv being slow or away is retried three times. A failed import can be tried again from its console, or
+discarded, which removes the Context and its generated manifest (a paper already
+published stays in the library). The same paper pasted twice opens the one Context.
+
 ## Start from a template
 
 Two paper starters ship with Derive: **ACM SIGGRAPH** (acmart in the sigconf format,
