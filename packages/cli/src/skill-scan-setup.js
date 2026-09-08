@@ -21,20 +21,22 @@ const writeJson = (path, value) => {
   renameSync(temporary, path)
 }
 
-const hasDeriveHook = (groups) =>
-  groups.some((group) =>
-    (group?.hooks ?? []).some(
-      (hook) => typeof hook?.command === "string" && hook.command.includes(DERIVE_HOOK_MARKER),
-    ),
-  )
-
 const addSessionEndHook = (path, command) => {
   const config = readJson(path)
   config.hooks ??= {}
   config.hooks.SessionEnd ??= []
-  if (hasDeriveHook(config.hooks.SessionEnd)) return false
+  for (const group of config.hooks.SessionEnd)
+    for (const hook of group?.hooks ?? [])
+      if (typeof hook?.command === "string" && hook.command.includes(DERIVE_HOOK_MARKER)) {
+        if (hook.command === command && hook.async === true && hook.timeout === 300) return false
+        hook.command = command
+        hook.async = true
+        hook.timeout = 300
+        writeJson(path, config)
+        return true
+      }
   config.hooks.SessionEnd.push({
-    hooks: [{ type: "command", command, async: true, timeout: 3 }],
+    hooks: [{ type: "command", command, async: true, timeout: 300 }],
   })
   writeJson(path, config)
   return true

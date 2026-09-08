@@ -346,6 +346,7 @@ CREATE TABLE IF NOT EXISTS workflow_step_attempt (
   session_id TEXT,
   decision TEXT,
   selected_routes TEXT,
+  route_sources TEXT,
   route_basis TEXT,
   result_artifact_id TEXT,
   output TEXT,
@@ -372,6 +373,25 @@ CREATE TABLE IF NOT EXISTS workflow_artifact_activity (
   source TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   UNIQUE (workflow_run_id, node_id, attempt, artifact_short_id, artifact_version, role),
+  FOREIGN KEY (workflow_run_id) REFERENCES workflow_run(id)
+);
+
+CREATE TABLE IF NOT EXISTS workflow_publish_receipt (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  workflow_run_id TEXT NOT NULL,
+  node_id TEXT NOT NULL,
+  attempt INTEGER NOT NULL,
+  dedupe_key TEXT NOT NULL,
+  request_hash TEXT NOT NULL,
+  artifact_id TEXT NOT NULL,
+  artifact_short_id TEXT NOT NULL,
+  artifact_version INTEGER NOT NULL,
+  version_id TEXT NOT NULL,
+  activity_id TEXT NOT NULL,
+  role TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE (workflow_run_id, node_id, attempt, dedupe_key),
   FOREIGN KEY (workflow_run_id) REFERENCES workflow_run(id)
 );
 
@@ -984,6 +1004,8 @@ CREATE INDEX IF NOT EXISTS workflow_run_external ON workflow_run (external_run_i
 CREATE INDEX IF NOT EXISTS workflow_step_attempt_run ON workflow_step_attempt (workflow_run_id, created_at);
 
 CREATE INDEX IF NOT EXISTS workflow_artifact_activity_run ON workflow_artifact_activity (workflow_run_id, created_at);
+
+CREATE INDEX IF NOT EXISTS workflow_artifact_activity_version ON workflow_artifact_activity (artifact_short_id, artifact_version, source);
 
 CREATE INDEX IF NOT EXISTS artifact_scan_event_artifact ON artifact_scan_event (org_id, artifact_id, occurred_at);
 

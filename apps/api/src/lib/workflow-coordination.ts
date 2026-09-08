@@ -2,10 +2,12 @@ import {
   type ArtifactRecord,
   type ContextRecord,
   type MetaStore,
+  type NewWorkflowStepAttempt,
   newId,
   type SessionRecord,
   type WorkflowArtifactActivityRecord,
   type WorkflowArtifactActivityRole,
+  WorkflowAttemptStateConflictError,
   type WorkflowExecutionLane,
   type WorkflowNodeDefinition,
   type WorkflowRouteDefinition,
@@ -125,6 +127,7 @@ interface PinnedNode {
   routes: WorkflowRouteDefinition[]
   entry: string
   attemptLimit: number | null
+  nodeAttemptLimits: ReadonlyMap<string, number>
 }
 
 const pinnedNode = async (
@@ -141,6 +144,13 @@ const pinnedNode = async (
   const node = diagram?.nodes.find((candidate) => candidate.id === ref.node_id)
   if (!diagram || !node)
     return "The pinned workflow definition does not contain this diagram and node."
+  const nodeAttemptLimits = new Map<string, number>()
+  for (const loop of diagram.loops ?? [])
+    for (const nodeId of loop.nodes)
+      nodeAttemptLimits.set(
+        nodeId,
+        Math.min(nodeAttemptLimits.get(nodeId) ?? Infinity, loop.stop.max_attempts),
+      )
   const attemptLimits = (diagram.loops ?? [])
     .filter((loop) => loop.nodes.includes(node.id))
     .map((loop) => loop.stop.max_attempts)
@@ -150,6 +160,7 @@ const pinnedNode = async (
     routes: diagram.routes.filter((route) => route.from === node.id),
     entry: diagram.entry,
     attemptLimit: attemptLimits.length > 0 ? Math.min(...attemptLimits) : null,
+    nodeAttemptLimits,
   }
 }
 
@@ -162,7 +173,10 @@ export const prepareWorkflowArtifactRef = async (args: {
   if (!Number.isInteger(args.ref.attempt) || args.ref.attempt < 1)
     return "A workflow artifact attempt must be a positive integer."
   const pinned = await pinnedNode(args.meta, args.ref, args.orgId)
-  return typeof pinned === "string" ? pinned : undefined
+  if (typeof pinned === "string") return pinned
+  if (pinned.attemptLimit && args.ref.attempt > pinned.attemptLimit)
+    return `Workflow node "${pinned.node.id}" is limited to ${pinned.attemptLimit} attempts.`
+  return undefined
 }
 
 /** Record an exact published version against a pinned workflow node. This is observed
@@ -179,6 +193,8 @@ export const recordWorkflowArtifact = async (args: {
     return "A workflow artifact version must be a positive integer."
   const pinned = await pinnedNode(args.meta, args.ref, args.orgId)
   if (typeof pinned === "string") return pinned
+  if (pinned.attemptLimit && args.ref.attempt > pinned.attemptLimit)
+    return `Workflow node "${pinned.node.id}" is limited to ${pinned.attemptLimit} attempts.`
   return args.meta.recordWorkflowArtifactActivity({
     id: newId("wfa"),
     org_id: args.orgId,
@@ -256,6 +272,43 @@ const validateHumanEffectGate = (
   return null
 }
 
+// A route receipt can open its target only once. Capture all currently available
+// sources so fan-in does not leave already-observed routes reusable in a later round.
+const routeSourceIds = (attempt: WorkflowStepAttemptRecord): string[] => {
+  if (attempt.route_sources === null) return []
+  const parsed: unknown = JSON.parse(attempt.route_sources)
+  if (!Array.isArray(parsed) || !parsed.every((id) => typeof id === "string"))
+    throw new Error("Workflow attempt has malformed route provenance")
+  return parsed
+}
+
+const availableRouteSources = (
+  attempts: readonly WorkflowStepAttemptRecord[],
+  nodeId: string,
+): string[] => {
+  const used = new Set(
+    attempts.filter((attempt) => attempt.node_id === nodeId).flatMap(routeSourceIds),
+  )
+  return attempts
+    .filter((attempt) => selectedRouteIncludes(attempt, nodeId) && !used.has(attempt.id))
+    .map((attempt) => attempt.id)
+    .sort()
+}
+
+const newAttemptRouteSources = (
+  attempts: readonly WorkflowStepAttemptRecord[],
+  ref: WorkflowUseRef,
+): string => {
+  const prior = attempts.find(
+    (attempt) => attempt.node_id === ref.node_id && attempt.attempt === ref.attempt - 1,
+  )
+  return JSON.stringify(
+    prior && (prior.status === "failed" || prior.status === "cancelled")
+      ? routeSourceIds(prior)
+      : availableRouteSources(attempts, ref.node_id),
+  )
+}
+
 const validateNewAttempt = (
   pinned: PinnedNode,
   ref: WorkflowUseRef,
@@ -279,9 +332,47 @@ const validateNewAttempt = (
     return pinned.node.id === pinned.entry
       ? validateHumanEffectGate(pinned, ref, attempts)
       : `Workflow diagram must begin at entry node "${pinned.entry}".`
-  if (!attempts.some((attempt) => selectedRouteIncludes(attempt, pinned.node.id)))
-    return `Workflow node "${pinned.node.id}" has not been selected by a completed route.`
+  if (prior?.route_sources === null)
+    return `Workflow node "${pinned.node.id}" has no recorded route provenance. Start a new run to repeat this node.`
+  if (availableRouteSources(attempts, pinned.node.id).length === 0)
+    return `Workflow node "${pinned.node.id}" has not been selected by a new completed route.`
   return validateHumanEffectGate(pinned, ref, attempts)
+}
+
+// Routes and the attempt insert share one guarded state. A newly settled route
+// must either enter this attempt's provenance or force validation against fresh state.
+const createGuardedWorkflowAttempt = async (
+  meta: MetaStore,
+  pinned: PinnedNode,
+  ref: WorkflowUseRef,
+  input: NewWorkflowStepAttempt,
+): Promise<WorkflowStepAttemptRecord | string> => {
+  for (let retry = 0; retry < 3; retry += 1) {
+    const attempts = await meta.listWorkflowStepAttempts(pinned.run.id, pinned.run.org_id)
+    const existing = attemptFor(attempts, ref)
+    if (existing) return existing
+    const invalid = validateNewAttempt(pinned, ref, attempts)
+    if (invalid) return invalid
+    try {
+      return await meta.createWorkflowStepAttempt(
+        pinned.run.org_id,
+        {
+          ...input,
+          route_sources: newAttemptRouteSources(attempts, ref),
+        },
+        attemptState(attempts),
+      )
+    } catch (error) {
+      if (error instanceof WorkflowAttemptStateConflictError) continue
+      const winner = attemptFor(
+        await meta.listWorkflowStepAttempts(pinned.run.id, pinned.run.org_id),
+        ref,
+      )
+      if (winner) return winner
+      throw error
+    }
+  }
+  return "Workflow attempts kept changing. Inspect the run and retry this operation."
 }
 
 const validateContextTarget = (
@@ -379,8 +470,8 @@ export const bindWorkflowContextSession = async (args: {
     return `Context "${args.context.name}" did not pin a manifest version.`
   const manifestVersion = await args.meta.getVersion(args.manifest.id, args.session.context_version)
   if (!manifestVersion) return `Context "${args.context.name}" has no readable manifest version.`
-  let attempts = await args.meta.listWorkflowStepAttempts(pinned.run.id, args.orgId)
-  let existing = attemptFor(attempts, args.ref)
+  const attempts = await args.meta.listWorkflowStepAttempts(pinned.run.id, args.orgId)
+  const existing = attemptFor(attempts, args.ref)
   if (existing)
     return existing.session_id === args.session.id
       ? existing
@@ -395,38 +486,23 @@ export const bindWorkflowContextSession = async (args: {
     args.executionLane,
   )
   if (typeof claimed === "string") return claimed
-  attempts = await args.meta.listWorkflowStepAttempts(claimed.id, args.orgId)
-  existing = attemptFor(attempts, args.ref)
-  if (existing)
-    return existing.session_id === args.session.id
-      ? existing
-      : "This workflow node attempt is already bound to another context session."
-  const racedAttempt = validateNewAttempt(pinned, args.ref, attempts)
-  if (racedAttempt) return racedAttempt
-  let created: WorkflowStepAttemptRecord
-  try {
-    created = await args.meta.createWorkflowStepAttempt(args.orgId, {
-      id: newId("wsa"),
-      workflow_run_id: claimed.id,
-      node_id: pinned.node.id,
-      attempt: args.ref.attempt,
-      kind: "context",
-      context_id: args.context.id,
-      context_manifest_artifact_id: args.manifest.id,
-      context_version: manifestVersion.n,
-      context_blob_key: manifestVersion.blob_key,
-      context_content_type: manifestVersion.content_type,
-      session_id: args.session.id,
-      created_at: args.at,
-    })
-  } catch (error) {
-    const winner = (await args.meta.listWorkflowStepAttempts(claimed.id, args.orgId)).find(
-      (attempt) => attempt.node_id === pinned.node.id && attempt.attempt === args.ref.attempt,
-    )
-    if (winner?.session_id === args.session.id) return winner
-    if (winner) return "This workflow node attempt is already bound to another context session."
-    throw error
-  }
+  const created = await createGuardedWorkflowAttempt(args.meta, pinned, args.ref, {
+    id: newId("wsa"),
+    workflow_run_id: claimed.id,
+    node_id: pinned.node.id,
+    attempt: args.ref.attempt,
+    kind: "context",
+    context_id: args.context.id,
+    context_manifest_artifact_id: args.manifest.id,
+    context_version: manifestVersion.n,
+    context_blob_key: manifestVersion.blob_key,
+    context_content_type: manifestVersion.content_type,
+    session_id: args.session.id,
+    created_at: args.at,
+  })
+  if (typeof created === "string") return created
+  if (created.session_id !== args.session.id)
+    return "This workflow node attempt is already bound to another context session."
   const staged = await args.meta.transitionWorkflowStepAttempt(
     created.id,
     created.workflow_run_id,
@@ -490,7 +566,7 @@ const receiptFields = (
   error?: string
 } => ({
   decision: encoded(receipt.decision),
-  selectedRoutes: encoded(receipt.selected_routes),
+  selectedRoutes: encoded(receipt.selected_routes ?? []),
   routeBasis: receipt.route_basis,
   ...(resultArtifactId ? { resultArtifactId } : {}),
   output: encoded(receipt.output),
@@ -506,13 +582,38 @@ const terminalReceiptMatches = (
   const fields = receiptFields(receipt, resultArtifactId)
   return (
     (fields.decision === undefined || fields.decision === attempt.decision) &&
-    (fields.selectedRoutes === undefined || fields.selectedRoutes === attempt.selected_routes) &&
+    (fields.selectedRoutes === attempt.selected_routes ||
+      (receipt.selected_routes === undefined && attempt.selected_routes === null)) &&
     (fields.routeBasis === undefined || fields.routeBasis === attempt.route_basis) &&
     (fields.resultArtifactId === undefined ||
       fields.resultArtifactId === attempt.result_artifact_id) &&
     (fields.output === undefined || fields.output === attempt.output) &&
     (fields.error === undefined || fields.error === attempt.error)
   )
+}
+
+const attemptState = (attempts: readonly WorkflowStepAttemptRecord[]) => ({
+  count: attempts.length,
+  revisionSum: attempts.reduce((sum, attempt) => sum + attempt.state_revision, 0),
+})
+
+const selectedRouteLimitError = (
+  pinned: PinnedNode,
+  receipt: WorkflowReceipt,
+  attempts: readonly WorkflowStepAttemptRecord[],
+): string | null => {
+  for (const target of receipt.selected_routes ?? []) {
+    const limit = pinned.nodeAttemptLimits.get(target)
+    const previous = Math.max(
+      target === pinned.node.id ? receipt.attempt : 0,
+      ...attempts
+        .filter((candidate) => candidate.node_id === target)
+        .map((candidate) => candidate.attempt),
+    )
+    if (limit !== undefined && previous >= limit)
+      return `Selected workflow node "${target}" has reached its ${limit}-attempt limit. Select an exit route or record a failed receipt.`
+  }
+  return null
 }
 
 const successfulRunBlocker = (attempts: readonly WorkflowStepAttemptRecord[]): string | null => {
@@ -527,6 +628,8 @@ const successfulRunBlocker = (attempts: readonly WorkflowStepAttemptRecord[]): s
     if (!latest) return `Selected workflow node "${target}" has not started.`
     if (latest.status !== "succeeded")
       return `Selected workflow node "${target}" has not succeeded.`
+    if (latest.route_sources !== null && availableRouteSources(attempts, target).length > 0)
+      return `Selected workflow node "${target}" has a new route that has not started.`
   }
   return null
 }
@@ -606,6 +709,10 @@ export const recordWorkflowReceipt = async (args: {
 
   let attempts = await args.meta.listWorkflowStepAttempts(pinned.run.id, args.orgId)
   let attempt = attemptFor(attempts, args.receipt)
+  if (!attempt || !workflowStatusIsTerminal(attempt.status)) {
+    const exhausted = selectedRouteLimitError(pinned, args.receipt, attempts)
+    if (exhausted) return exhausted
+  }
   if (!attempt) {
     if (pinned.node.kind === "context")
       return "Open the context session with this workflow run before recording its receipt."
@@ -643,21 +750,16 @@ export const recordWorkflowReceipt = async (args: {
   )
   if (typeof claimed === "string") return claimed
   if (!attempt) {
-    const attemptKind = pinned.node.kind === "human" ? "human" : "terminal"
-    try {
-      attempt = await args.meta.createWorkflowStepAttempt(args.orgId, {
-        id: newId("wsa"),
-        workflow_run_id: claimed.id,
-        node_id: pinned.node.id,
-        attempt: args.receipt.attempt,
-        kind: attemptKind,
-        created_at: args.at,
-      })
-    } catch (error) {
-      attempts = await args.meta.listWorkflowStepAttempts(claimed.id, args.orgId)
-      attempt = attemptFor(attempts, args.receipt)
-      if (!attempt) throw error
-    }
+    const created = await createGuardedWorkflowAttempt(args.meta, pinned, args.receipt, {
+      id: newId("wsa"),
+      workflow_run_id: claimed.id,
+      node_id: pinned.node.id,
+      attempt: args.receipt.attempt,
+      kind: pinned.node.kind === "human" ? "human" : "terminal",
+      created_at: args.at,
+    })
+    if (typeof created === "string") return created
+    attempt = created
   }
   if (attempt.kind !== pinned.node.kind)
     return "The workflow attempt kind does not match the pinned node."
@@ -677,15 +779,60 @@ export const recordWorkflowReceipt = async (args: {
       attempt = current
     }
   }
+  // Recheck after materialization, then seal against this exact attempt state.
+  // The store rejects a concurrent target start/receipt before this write.
+  attempts = await args.meta.listWorkflowStepAttempts(claimed.id, args.orgId)
+  if (!workflowStatusIsTerminal(attempt.status)) {
+    const exhausted = selectedRouteLimitError(pinned, args.receipt, attempts)
+    if (exhausted) return exhausted
+  }
+  const receiptAttemptState = attemptState(attempts)
   let settled: WorkflowStepAttemptRecord | null
   if (workflowStatusIsTerminal(attempt.status)) {
-    settled = terminalReceiptMatches(attempt, args.receipt, resultArtifactId) ? attempt : null
+    if (
+      attempt.kind === "context" &&
+      attempt.selected_routes === null &&
+      attempt.status === args.receipt.status &&
+      (attempt.status === "failed" || attempt.status === "cancelled")
+    ) {
+      settled = await args.meta.transitionWorkflowStepAttempt(
+        attempt.id,
+        attempt.workflow_run_id,
+        args.orgId,
+        {
+          status: attempt.status,
+          stateRevision: attempt.state_revision,
+          attemptState: receiptAttemptState,
+        },
+        {
+          status: attempt.status,
+          at: args.at,
+          recordReceipt: true,
+          ...receiptFields(args.receipt, resultArtifactId),
+        },
+      )
+      if (!settled) {
+        const current = attemptFor(
+          await args.meta.listWorkflowStepAttempts(claimed.id, args.orgId),
+          args.receipt,
+        )
+        settled =
+          current && terminalReceiptMatches(current, args.receipt, resultArtifactId)
+            ? current
+            : null
+      }
+    } else
+      settled = terminalReceiptMatches(attempt, args.receipt, resultArtifactId) ? attempt : null
   } else {
     settled = await args.meta.transitionWorkflowStepAttempt(
       attempt.id,
       attempt.workflow_run_id,
       args.orgId,
-      { status: attempt.status, stateRevision: attempt.state_revision },
+      {
+        status: attempt.status,
+        stateRevision: attempt.state_revision,
+        attemptState: receiptAttemptState,
+      },
       {
         status: args.receipt.status,
         at: args.at,
@@ -699,7 +846,8 @@ export const recordWorkflowReceipt = async (args: {
         current && terminalReceiptMatches(current, args.receipt, resultArtifactId) ? current : null
     }
   }
-  if (!settled) return "This workflow attempt is already settled with a different receipt."
+  if (!settled)
+    return "The workflow attempt or its routes changed while recording the receipt. Inspect the run and retry; a different settled receipt cannot be replaced."
 
   let run = claimed
   if (args.receipt.finish_run) {
@@ -721,7 +869,11 @@ export const recordWorkflowReceipt = async (args: {
     const finished = await args.meta.transitionWorkflowRun(
       run.id,
       run.org_id,
-      { status: run.status, stateRevision: run.state_revision },
+      {
+        status: run.status,
+        stateRevision: run.state_revision,
+        attemptState: attemptState(attempts),
+      },
       {
         status: args.receipt.finish_run,
         at: args.at,

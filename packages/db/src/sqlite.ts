@@ -59,6 +59,7 @@ import {
   versionData,
   webhook,
 } from "./schema"
+import { checkedWorkflowPublishReceipt, workflowPublishStatements } from "./workflow-publish"
 
 const VIEW_WINDOW_MS = 30 * 86400_000
 const LAST_24H_MS = 86400_000
@@ -212,6 +213,17 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
         raw.prepare("DELETE FROM template_library_entry WHERE library_id = ?").run(libraryId)
         raw.prepare("DELETE FROM template_library WHERE id = ?").run(libraryId)
       })(id)
+    },
+
+    publishWorkflowVersion: async (input) => {
+      const statements = workflowPublishStatements(input)
+      raw.transaction(() => {
+        for (const statement of statements) raw.prepare(statement.text).run(...statement.values)
+      })()
+      return checkedWorkflowPublishReceipt(
+        input,
+        await repos.getWorkflowPublishReceipt(input.receipt),
+      )
     },
 
     // Synchronous transaction: a concurrent increment can't interleave between

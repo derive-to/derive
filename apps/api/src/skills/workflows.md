@@ -202,6 +202,17 @@ Use `role:"evidence"` for evaluation evidence. The publish receipt records the e
 version in the workflow Activity view. This is observed provenance. It does not mark the node
 complete, select a route, or prove that the artifact passed evaluation.
 
+A bound publish commits the artifact version, ownership on create, and activity together.
+It returns `workflow_publish.dedupe_key` and a pinned `version_url`. If the response is lost,
+retry the same request. `workflow_publish.replayed:true` means Derive returns the original version.
+It does not create another artifact or version, or apply an edit twice.
+A recorded version keeps its bytes. Later editor changes create a new version.
+
+You can supply `workflow.dedupe_key` before the first call. Reuse that key only for the same
+request. A changed request with the same key fails. Without a key, Derive deduplicates identical
+requests within that attempt. To publish identical content again on purpose, supply a new key.
+This applies to bound publishes only. A normal unbound publish still creates a new version.
+
 If publication already happened without workflow metadata, attach the exact existing version:
 
 ```text
@@ -244,6 +255,19 @@ stops showing the candidate. A dismissal does not create provenance or workflow 
 If the person stops a run before an attempt exists, call
 `use({workflow_run:{action:"cancel",run_id:run.id}})`. Cancellation is idempotent. Inspect the run
 after a concurrent change, then retry if Derive reports a conflict.
+
+Each new attempt records the route receipts that opened it. A route cannot open the same node
+again after that node succeeds. Failed and cancelled retries reuse their recorded route sources.
+A run created before route provenance was stored cannot repeat a successful node; start a new run.
+Derive enforces the attempt cap before a receipt selects another round. At the cap, choose an authored
+exit route or report failure. A run cannot succeed while a fresh selected route remains unstarted.
+
+Time, cost, and stagnation bounds remain evaluator duties. Derive does not yet store the measurements
+needed to enforce them. Report a failed or cancelled receipt when an authored stop rule applies.
+
+A failed or cancelled Context can report its first final receipt after session failure is observed.
+That receipt stores its error, output, and route explanation. Replaying it returns the same result;
+a different receipt cannot replace it.
 
 Human and terminal nodes use the same receipt shape without a Context session. A human receipt's
 `decision` must be one of that node's authored options. Pass `finish_run:"succeeded"` (or the

@@ -8791,6 +8791,13 @@
                                     "type": "string"
                                   }
                                 },
+                                "routeSources": {
+                                  "type": "array",
+                                  "nullable": true,
+                                  "items": {
+                                    "type": "string"
+                                  }
+                                },
                                 "routeBasis": {
                                   "type": "string",
                                   "nullable": true
@@ -8822,6 +8829,7 @@
                                 "kind",
                                 "status",
                                 "selectedRoutes",
+                                "routeSources",
                                 "routeBasis",
                                 "resultArtifactId",
                                 "error",

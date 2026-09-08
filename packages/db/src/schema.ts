@@ -474,6 +474,7 @@ export const workflowStepAttempt = sqliteTable(
     session_id: text("session_id"),
     decision: text("decision"),
     selected_routes: text("selected_routes"),
+    route_sources: text("route_sources"),
     route_basis: text("route_basis"),
     result_artifact_id: text("result_artifact_id"),
     output: text("output"),
@@ -487,6 +488,39 @@ export const workflowStepAttempt = sqliteTable(
     uniqueIndex("workflow_step_attempt_number").on(t.workflow_run_id, t.node_id, t.attempt),
     uniqueIndex("workflow_step_attempt_session").on(t.session_id),
     index("workflow_step_attempt_run").on(t.workflow_run_id, t.created_at),
+  ],
+)
+
+// A claim is completed within the same transaction/batch as its version and activity.
+// artifact_version starts at zero only inside that transaction. The final update must
+// resolve a real version; its NOT NULL constraint aborts an incomplete D1 batch.
+export const workflowPublishReceipt = sqliteTable(
+  "workflow_publish_receipt",
+  {
+    id: text("id").primaryKey(),
+    org_id: text("org_id").notNull(),
+    workflow_run_id: text("workflow_run_id")
+      .notNull()
+      .references(() => workflowRun.id, { onDelete: "cascade" }),
+    node_id: text("node_id").notNull(),
+    attempt: integer("attempt").notNull(),
+    dedupe_key: text("dedupe_key").notNull(),
+    request_hash: text("request_hash").notNull(),
+    artifact_id: text("artifact_id").notNull(),
+    artifact_short_id: text("artifact_short_id").notNull(),
+    artifact_version: integer("artifact_version").notNull(),
+    version_id: text("version_id").notNull(),
+    activity_id: text("activity_id").notNull(),
+    role: text("role").$type<WorkflowArtifactActivityRole>().notNull(),
+    created_at: text("created_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("workflow_publish_receipt_key").on(
+      t.workflow_run_id,
+      t.node_id,
+      t.attempt,
+      t.dedupe_key,
+    ),
   ],
 )
 
@@ -519,6 +553,11 @@ export const workflowArtifactActivity = sqliteTable(
       t.role,
     ),
     index("workflow_artifact_activity_run").on(t.workflow_run_id, t.created_at),
+    index("workflow_artifact_activity_version").on(
+      t.artifact_short_id,
+      t.artifact_version,
+      t.source,
+    ),
   ],
 )
 
@@ -1694,6 +1733,7 @@ const TABLES = [
   workflowRun,
   workflowStepAttempt,
   workflowArtifactActivity,
+  workflowPublishReceipt,
   artifactScanEvent,
   artifactScanCoverage,
   skillRelation,

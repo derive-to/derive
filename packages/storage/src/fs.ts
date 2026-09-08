@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto"
 import { existsSync } from "node:fs"
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises"
 import { join } from "node:path"
@@ -16,7 +17,7 @@ export class FsBlobStore implements BlobStore {
     const path = this.pathFor(key)
     if (existsSync(path)) return key
     await mkdir(join(this.root, key.slice(0, 2)), { recursive: true })
-    const tmp = `${path}.tmp-${process.pid}-${Date.now()}`
+    const tmp = `${path}.tmp-${process.pid}-${randomUUID()}`
     await writeFile(tmp, data)
     await rename(tmp, path)
     return key
