@@ -25,6 +25,198 @@ describe("version sessions", () => {
   })
 })
 
+describe("local artifact scans", () => {
+  const scanner: TestUser = {
+    id: "artifact-scanner",
+    email: "artifact-scanner@test.dev",
+    name: "Artifact Scanner",
+  }
+  const teammate: TestUser = {
+    id: "artifact-scan-teammate",
+    email: "artifact-scan-teammate@test.dev",
+    name: "Artifact Scan Teammate",
+  }
+  const { app: scanApp, meta: scanMeta } = makeAuthedApp("artifact-scans", [scanner, teammate])
+
+  it("stores exact reads and owned publishes, then shows same-session related work", async () => {
+    const graph = await (
+      await publishAs(
+        scanApp,
+        "<h1>Graph</h1>",
+        {
+          title: "Scanned graph",
+          workspace_access: "member",
+          link_role: "viewer",
+        },
+        as(scanner.email),
+      )
+    ).json()
+    const output = await (
+      await publishAs(
+        scanApp,
+        "# Output",
+        { title: "Scanned output", workspace_access: "member" },
+        as(scanner.email),
+      )
+    ).json()
+    const teammateOutput = await (
+      await publishAs(
+        scanApp,
+        "# Teammate output",
+        { title: "Teammate output", workspace_access: "member" },
+        as(teammate.email),
+      )
+    ).json()
+    const scannedAt = "2026-09-07T12:00:00.000Z"
+    const batch = await scanApp.request("/v1/artifact-scan/batch", {
+      method: "POST",
+      headers: { ...as(scanner.email), "content-type": "application/json" },
+      body: JSON.stringify({
+        events: [
+          {
+            event_id: "a".repeat(64),
+            artifact_short_id: graph.short_id,
+            artifact_version: 1,
+            client: "codex",
+            action: "read",
+            evidence: "structured_tool_result",
+            opaque_session_id: "d".repeat(64),
+            occurred_at: "2026-09-07T12:00:01.000Z",
+          },
+          {
+            event_id: "b".repeat(64),
+            artifact_short_id: output.short_id,
+            artifact_version: 1,
+            client: "codex",
+            action: "published",
+            evidence: "structured_tool_result",
+            opaque_session_id: "d".repeat(64),
+            occurred_at: "2026-09-07T12:00:02.000Z",
+          },
+          {
+            event_id: "c".repeat(64),
+            artifact_short_id: teammateOutput.short_id,
+            artifact_version: 1,
+            client: "codex",
+            action: "published",
+            evidence: "structured_tool_result",
+            opaque_session_id: "d".repeat(64),
+            occurred_at: "2026-09-07T12:00:03.000Z",
+          },
+        ],
+        coverage: [
+          {
+            client: "codex",
+            source_files: 1,
+            sessions_scanned: 1,
+            records_scanned: 30,
+            parser_version: 1,
+            scanned_at: scannedAt,
+          },
+        ],
+      }),
+    })
+    expect(batch.status).toBe(200)
+    expect(await batch.json()).toMatchObject({
+      recorded: ["a".repeat(64), "b".repeat(64)],
+      rejected: [{ event_id: "c".repeat(64), reason: "publish_not_owned" }],
+      coverage: 1,
+    })
+
+    const retry = await scanApp.request("/v1/artifact-scan/batch", {
+      method: "POST",
+      headers: { ...as(scanner.email), "content-type": "application/json" },
+      body: JSON.stringify({
+        events: [
+          {
+            event_id: "a".repeat(64),
+            artifact_short_id: graph.short_id,
+            artifact_version: 1,
+            client: "codex",
+            action: "read",
+            evidence: "structured_tool_result",
+            opaque_session_id: "d".repeat(64),
+            occurred_at: "2026-09-07T12:00:01.000Z",
+          },
+        ],
+        coverage: [],
+      }),
+    })
+    expect(retry.status).toBe(200)
+
+    const activity = await (
+      await scanApp.request(`/v1/artifacts/${graph.short_id}/local-activity`, {
+        headers: as(scanner.email),
+      })
+    ).json()
+    expect(activity.activity).toEqual([
+      expect.objectContaining({
+        artifact: { short_id: graph.short_id, version: 1 },
+        action: "read",
+      }),
+    ])
+    expect(activity.related).toEqual([
+      expect.objectContaining({
+        artifact: { short_id: output.short_id, title: "Scanned output", version: 1 },
+        action: "published",
+      }),
+    ])
+
+    const anonymousActivity = await scanApp.request(
+      `/v1/artifacts/${graph.short_id}/local-activity`,
+    )
+    expect(anonymousActivity.status).toBe(403)
+
+    await scanMeta.setWorkspace("artifact-scan-other", "Other workspace")
+    await scanMeta.setMembership({
+      id: "m_artifact_scan_other",
+      org_id: "artifact-scan-other",
+      user_id: teammate.id,
+      role: "owner",
+    })
+    await scanMeta.removeMembership("default", teammate.id)
+    const publicArtifact = await scanApp.request(`/v1/artifacts/${graph.short_id}`, {
+      headers: as(teammate.email),
+    })
+    expect(publicArtifact.status).toBe(200)
+    const otherWorkspaceActivity = await scanApp.request(
+      `/v1/artifacts/${graph.short_id}/local-activity`,
+      { headers: as(teammate.email) },
+    )
+    expect(otherWorkspaceActivity.status).toBe(403)
+
+    const laterRead = await scanApp.request("/v1/artifact-scan/batch", {
+      method: "POST",
+      headers: { ...as(scanner.email), "content-type": "application/json" },
+      body: JSON.stringify({
+        events: [
+          {
+            event_id: "e".repeat(64),
+            artifact_short_id: graph.short_id,
+            artifact_version: 1,
+            client: "codex",
+            action: "read",
+            evidence: "structured_tool_result",
+            opaque_session_id: "d".repeat(64),
+            occurred_at: "2026-09-07T12:00:04.000Z",
+          },
+        ],
+        coverage: [],
+      }),
+    })
+    expect(laterRead.status).toBe(200)
+    const afterLaterRead = await (
+      await scanApp.request(`/v1/artifacts/${graph.short_id}/local-activity`, {
+        headers: as(scanner.email),
+      })
+    ).json()
+    expect(afterLaterRead.related).toEqual([])
+    expect(activity.coverage).toEqual([
+      expect.objectContaining({ client: "codex", records_scanned: 30 }),
+    ])
+  })
+})
+
 describe("version-pinned export requests", () => {
   const owner: TestUser = { id: "export-owner", email: "export-owner@test.dev", name: "Owner" }
   const outsider: TestUser = {

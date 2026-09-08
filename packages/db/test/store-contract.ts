@@ -2778,6 +2778,26 @@ export function runStoreContract(
       expect(cur[b.id]?.artifact_id).toBe(b.id)
     })
 
+    it("versionsForArtifacts returns every exact version for the requested artifacts", async () => {
+      const a = await store.createArtifact(newArtifact())
+      const b = await store.createArtifact(newArtifact())
+      await store.addVersion(a.id, newVersion({ message: "a1" }))
+      await store.addVersion(a.id, newVersion({ message: "a2" }))
+      await store.addVersion(b.id, newVersion({ message: "b1" }))
+
+      expect(await store.versionsForArtifacts([])).toEqual([])
+      const all = await store.versionsForArtifacts([b.id, a.id, "art_missing"])
+      expect(all).toHaveLength(3)
+      expect(all.map((version) => [version.artifact_id, version.n, version.message])).toEqual(
+        expect.arrayContaining([
+          [a.id, 1, "a1"],
+          [a.id, 2, "a2"],
+          [b.id, 1, "b1"],
+        ]),
+      )
+      expect(await store.versionsForArtifacts([a.id], { limit: 1 })).toHaveLength(1)
+    })
+
     it("workspaceSummary matches the six calls it replaces, and keeps each one's scoping rules", async () => {
       const org = `org_${uuid()}`
       const otherOrg = `org_${uuid()}`
@@ -3683,6 +3703,73 @@ export function runStoreContract(
         { client: "claude", sessions_scanned: 5 },
       ])
       expect(await store.listSkillScanCoverage(`org_${uuid()}`)).toEqual([])
+    })
+
+    it("deduplicates local artifact scans and queries opaque sessions", async () => {
+      const graph = await store.createArtifact(newArtifact())
+      const output = await store.createArtifact(newArtifact())
+      await store.addVersion(graph.id, newVersion())
+      await store.addVersion(output.id, newVersion())
+      const read = {
+        id: uuid(),
+        event_id: "artifact-scan-read",
+        org_id: ORG,
+        artifact_id: graph.id,
+        artifact_version: 1,
+        scanned_by: "u1",
+        client: "codex" as const,
+        action: "read" as const,
+        evidence: "structured_tool_result" as const,
+        opaque_session_id: "a".repeat(64),
+        occurred_at: "2026-09-07T20:00:00.000Z",
+        created_at: "2026-09-07T20:01:00.000Z",
+      }
+      const first = await store.recordArtifactScanEvent(read)
+      const duplicate = await store.recordArtifactScanEvent({ ...read, id: uuid() })
+      expect(duplicate.id).toBe(first.id)
+      await store.recordArtifactScanEvent({
+        ...read,
+        id: uuid(),
+        event_id: "artifact-scan-publish",
+        artifact_id: output.id,
+        action: "published",
+        occurred_at: "2026-09-07T20:00:10.000Z",
+      })
+      expect(await store.listArtifactScanEvents(graph.id, ORG)).toMatchObject([
+        { event_id: "artifact-scan-read", action: "read" },
+      ])
+      expect(
+        await store.listArtifactScanSessionEvents(ORG, [
+          { scannedBy: "u1", opaqueSessionId: "a".repeat(64) },
+        ]),
+      ).toHaveLength(2)
+      expect(
+        await store.listArtifactScanSessionEvents(ORG, [
+          { scannedBy: "u2", opaqueSessionId: "a".repeat(64) },
+        ]),
+      ).toEqual([])
+
+      const coverage = {
+        id: uuid(),
+        org_id: ORG,
+        scanned_by: "u1",
+        client: "codex" as const,
+        source_files: 2,
+        sessions_scanned: 3,
+        records_scanned: 100,
+        parser_version: 1,
+        scanned_at: "2026-09-07T20:02:00.000Z",
+        updated_at: "2026-09-07T20:02:00.000Z",
+      }
+      await store.upsertArtifactScanCoverage(coverage)
+      await store.upsertArtifactScanCoverage({
+        ...coverage,
+        id: uuid(),
+        records_scanned: 120,
+      })
+      expect(await store.listArtifactScanCoverage(ORG)).toMatchObject([
+        { client: "codex", records_scanned: 120 },
+      ])
     })
 
     it("derives exact Context and Workflow usage and keeps Artifact provenance deterministic", async () => {
@@ -5119,6 +5206,50 @@ export function runStoreContract(
           kind: "terminal",
         }),
       ).rejects.toThrow("already terminal")
+      const timedOutRun = await store.createWorkflowRun({
+        id: uuid(),
+        org_id: ORG,
+        workflow_artifact_id: workflow.workflow_artifact_id,
+        workflow_version: workflow.workflow_version,
+        workflow_blob_key: workflow.workflow_blob_key,
+        workflow_content_type: workflow.workflow_content_type,
+        diagram_id: workflow.diagram_id,
+        reason: "timeout-test",
+      })
+      const timedOutRunning = await store.transitionWorkflowRun(
+        timedOutRun.id,
+        ORG,
+        { status: "queued", stateRevision: 0 },
+        {
+          status: "running",
+          at: started,
+          actualExecution: "local",
+          executorId: "timeout-runner",
+        },
+      )
+      expect(timedOutRunning).not.toBeNull()
+      expect(
+        await store.transitionWorkflowRun(
+          timedOutRun.id,
+          ORG,
+          { status: "running", stateRevision: timedOutRunning?.state_revision ?? -1 },
+          {
+            status: "timed_out",
+            at: finished,
+            actualExecution: "local",
+            executorId: "timeout-runner",
+          },
+        ),
+      ).not.toBeNull()
+      await expect(
+        store.createWorkflowStepAttempt(ORG, {
+          id: uuid(),
+          workflow_run_id: timedOutRun.id,
+          node_id: "late-timeout-node",
+          attempt: 1,
+          kind: "terminal",
+        }),
+      ).rejects.toThrow("already terminal")
       expect(
         await store.transitionWorkflowRun(
           workflow.id,
@@ -5257,6 +5388,55 @@ export function runStoreContract(
         ),
       ).toEqual([newer.id])
       expect(await store.listWorkflowRuns(artifactId, `org_${uuid()}`)).toEqual([])
+    })
+
+    it("records exact workflow artifact activity once and keeps each version", async () => {
+      const workflow = await store.createWorkflowRun({
+        id: `wfr_${uuid()}`,
+        org_id: ORG,
+        workflow_artifact_id: `art_${uuid()}`,
+        workflow_version: 2,
+        workflow_blob_key: `blob_${uuid()}`,
+        workflow_content_type: "text/x-derive-linked-bundle",
+        diagram_id: "improvement-loop",
+        reason: "manual:u1",
+      })
+      const first = await store.recordWorkflowArtifactActivity({
+        id: `wfa_${uuid()}`,
+        org_id: ORG,
+        workflow_run_id: workflow.id,
+        node_id: "improve",
+        attempt: 1,
+        artifact_short_id: "result-abc12345",
+        artifact_version: 1,
+        artifact_title: "Reliability report",
+        role: "output",
+        source: "observed",
+        created_at: "2026-09-07T10:00:00.000Z",
+      })
+      const duplicate = await store.recordWorkflowArtifactActivity({
+        ...first,
+        id: `wfa_${uuid()}`,
+      })
+      expect(duplicate.id).toBe(first.id)
+
+      await store.recordWorkflowArtifactActivity({
+        ...first,
+        id: `wfa_${uuid()}`,
+        artifact_version: 2,
+        created_at: "2026-09-07T10:01:00.000Z",
+      })
+
+      expect(
+        (await store.listWorkflowArtifactActivity(workflow.id, ORG)).map((item) => ({
+          id: item.id,
+          version: item.artifact_version,
+        })),
+      ).toEqual([
+        { id: first.id, version: 1 },
+        { id: expect.stringMatching(/^wfa_/), version: 2 },
+      ])
+      expect(await store.listWorkflowArtifactActivity(workflow.id, `org_${uuid()}`)).toEqual([])
     })
 
     it("workflow step attempts keep context pins, human decisions, and route receipts", async () => {

@@ -244,6 +244,7 @@ const defaultState = () => ({
   parser_version: SKILL_SCAN_PARSER_VERSION,
   sources: {},
   sessions: { claude: {}, codex: {} },
+  initialized_clients: { claude: false, codex: false },
   last_scan_at: null,
 })
 
@@ -262,6 +263,10 @@ export async function scanSkillLogs(options = {}) {
   state.sessions ??= { claude: {}, codex: {} }
   state.sessions.claude ??= {}
   state.sessions.codex ??= {}
+  state.initialized_clients ??= {
+    claude: Boolean(state.last_scan_at),
+    codex: Boolean(state.last_scan_at),
+  }
   const sources = (options.sources ?? discoverSkillLogSources(home)).filter(
     (item) => !options.client || item.client === options.client,
   )
@@ -284,7 +289,11 @@ export async function scanSkillLogs(options = {}) {
     let start = 0
     if (sinceMs === null) {
       if (saved?.identity === identity && saved.offset <= stats.size) start = saved.offset
-      else if (options.baseline) start = stats.size
+      else if (
+        options.baseline ||
+        (options.initialBaseline && !state.initialized_clients[source.client])
+      )
+        start = stats.size
     }
     coverage[source.client].source_files++
     if (start === stats.size) {
@@ -351,10 +360,16 @@ export async function scanSkillLogs(options = {}) {
       scanned_at: scannedAt,
     }))
   state.parser_version = SKILL_SCAN_PARSER_VERSION
+  for (const client of options.client ? [options.client] : ["claude", "codex"])
+    state.initialized_clients[client] = true
   state.last_scan_at = scannedAt
 
-  if (!options.dryRun) writeJson(scanStatePath(), state)
+  if (!options.dryRun && !options.deferCommit) writeJson(scanStatePath(), state)
   return { events: [...events.values()], coverage: coverageRows, state, sources }
+}
+
+export function commitSkillScanState(state) {
+  writeJson(scanStatePath(), state)
 }
 
 export function addToSkillScanSpool(events, coverage) {
@@ -410,6 +425,7 @@ export function skillScanStatus(home = homedir()) {
   return {
     parser_version: SKILL_SCAN_PARSER_VERSION,
     last_scan_at: state.last_scan_at ?? null,
+    initialized_clients: state.initialized_clients ?? { claude: false, codex: false },
     installs: listSkillInstalls().length,
     pending: spool.pending?.length ?? 0,
     sources: ["claude", "codex"].map((client) => ({

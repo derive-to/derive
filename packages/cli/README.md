@@ -197,6 +197,34 @@ derive skill scan status
 derive skill remove <short_id> --scope project
 ```
 
+The generic scanner records privacy-safe Derive activity from local Codex and Claude logs:
+
+```sh
+derive scan --dry-run --since 30d
+derive scan --since 30d
+derive scan setup
+derive scan setup --schedule
+derive scan status
+```
+
+`derive scan` records successful artifact reads and publishes with the exact artifact version. It
+also runs the installed Skill usage scan. It uploads artifact IDs, versions, operations, clients,
+evidence types, opaque session hashes, and event times. It does not upload prompts, responses,
+tool arguments, artifact content, file paths, repository paths, raw session IDs, or user names.
+The first scan starts at the end of each existing log. Pass `--since 30d` only when you want an
+explicit backfill. The scanner writes each receipt to a retry-safe spool before it advances a log
+cursor. It checks a small cursor fingerprint before each append scan. If a log was replaced or
+truncated and regrown, it safely replays the file through the idempotent receipt API. Pending tool
+calls stay separate by client, session, and source.
+
+The scanner checks every workspace available to the selected account before it rejects an artifact
+as unavailable. It keeps unresolved receipts in the local spool. A later scan can resolve them after
+an account or server switch. The scanner sends no artifact content while it resolves the target.
+
+The artifact page can show another artifact published later in the same opaque session. This is an
+observed sequence, not provenance. Derive does not create a run, attach the artifact to a node, or
+mark work complete from a scan.
+
 Project installs use `.claude/skills` and `.agents/skills`; personal installs use
 `~/.claude/skills` and `~/.codex/skills`. Installs are atomic and pinned in `derive.json`.
 `sync --all` updates every pinned Skill while preserving any Claude-only or Codex-only installs.
@@ -206,7 +234,8 @@ the caller supplies one. Reuse an event ID to add or change its usefulness ratin
 another use. Derive stores the signed-in user, workspace, pinned version, client, and time on the
 server. The Skill page shows aggregate counts. It does not store prompts or generated content.
 
-`skill scan` reads structured local Codex and Claude logs. It reads only records added after its
+`skill scan` remains a compatible, Skill-only command. It reads structured local Codex and Claude
+logs. It reads only records added after its
 saved cursor. Claude provides an explicit Skill attribution. For Codex, the scanner detects a
 structured tool call that reads a known installed `SKILL.md`. The scanner uploads the Skill ID,
 version, digest, client, evidence type, an opaque session hash, and the event time. It does not

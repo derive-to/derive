@@ -19,6 +19,7 @@ import { activityRoutes } from "./routes/activity"
 import { agentDiscoveryRoutes } from "./routes/agent-discovery"
 import { agentRoutes } from "./routes/agents"
 import { analyticsRoutes } from "./routes/analytics"
+import { artifactScanRoutes } from "./routes/artifact-scan"
 import { artifactRoutes } from "./routes/artifacts"
 import { assetRoutes } from "./routes/assets"
 import { attributionRoutes } from "./routes/attribution"
@@ -484,6 +485,7 @@ export function createApp(deps: AppDeps): Hono {
     modelCredentialRoutes,
     conciergeRoutes,
     skillRoutes,
+    artifactScanRoutes,
     workflowRoutes,
     reworkRoutes,
     commentRoutes,

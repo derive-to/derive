@@ -562,6 +562,7 @@ export interface CatchUpRead {
   rounds: ReviewRoundRecord[]
   beforeData: VersionDataRecord[]
   afterData: VersionDataRecord[]
+  workflowRuns: WorkflowRunRecord[]
 }
 
 export interface NewVersionData {
@@ -669,6 +670,13 @@ export interface ArtifactStore {
    *  `Promise.all` around them cannot help (see edge-pg.ts). Artifacts with no current
    *  version are simply absent from the result. */
   currentVersions(artifactIds: string[]): Promise<Record<string, VersionRecord>>
+  /** Every immutable version for a bounded artifact set, ordered by artifact and version.
+   * Workflow recovery uses this to find exact versions created during a run without one
+   * edge round trip per member. */
+  versionsForArtifacts(
+    artifactIds: string[],
+    opts?: { createdFrom?: string; createdTo?: string; limit?: number },
+  ): Promise<VersionRecord[]>
   /** Replace a version's stored facts with `rows` (delete-then-insert, so a
    *  re-extraction is idempotent). Empty `rows` clears them. Keyed by the immutable
    *  (artifact, n); called best-effort from the version-bump chain. */
@@ -2370,7 +2378,12 @@ export interface WorkflowRunStore {
   listWorkflowRuns(
     workflowArtifactId: string,
     orgId: string,
-    opts?: { diagramId?: string; limit?: number },
+    opts?: {
+      diagramId?: string
+      initiatedBy?: string
+      assignedAgentId?: string
+      limit?: number
+    },
   ): Promise<WorkflowRunRecord[]>
   transitionWorkflowRun(
     id: string,
@@ -2405,7 +2418,7 @@ export interface WorkflowRunStore {
     orgId: string,
   ): Promise<WorkflowStepAttemptRecord | null>
   listWorkflowStepAttempts(
-    workflowRunId: string,
+    workflowRunId: string | string[],
     orgId: string,
   ): Promise<WorkflowStepAttemptRecord[]>
   transitionWorkflowStepAttempt(
@@ -2415,6 +2428,13 @@ export interface WorkflowRunStore {
     expected: WorkflowStepTransitionGuard,
     transition: WorkflowStepAttemptTransition,
   ): Promise<WorkflowStepAttemptRecord | null>
+  recordWorkflowArtifactActivity(
+    activity: NewWorkflowArtifactActivity,
+  ): Promise<WorkflowArtifactActivityRecord>
+  listWorkflowArtifactActivity(
+    workflowRunId: string | string[],
+    orgId: string,
+  ): Promise<WorkflowArtifactActivityRecord[]>
 }
 
 export type SkillRelationKind = "requires" | "extends" | "recommends" | "references"
@@ -2613,6 +2633,60 @@ export interface SkillStore {
     skillArtifactId: string,
     orgId: string,
   ): Promise<{ contexts: SkillUsageBucket[]; workflows: SkillUsageBucket[] }>
+}
+
+export type ArtifactScanClient = "claude" | "codex"
+export type ArtifactScanAction = "read" | "published"
+export type ArtifactScanEvidence = "structured_tool_result"
+
+/** One privacy-safe observation from a local agent log. It records only a Derive artifact
+ * identity, an exact version, the operation, and an opaque local session. */
+export interface ArtifactScanEventRecord {
+  id: string
+  event_id: string
+  org_id: string
+  artifact_id: string
+  artifact_version: number
+  scanned_by: string
+  client: ArtifactScanClient
+  action: ArtifactScanAction
+  evidence: ArtifactScanEvidence
+  opaque_session_id: string
+  occurred_at: string
+  created_at: string
+}
+
+export type NewArtifactScanEvent = ArtifactScanEventRecord
+
+export interface ArtifactScanCoverageRecord {
+  id: string
+  org_id: string
+  scanned_by: string
+  client: ArtifactScanClient
+  source_files: number
+  sessions_scanned: number
+  records_scanned: number
+  parser_version: number
+  scanned_at: string
+  updated_at: string
+}
+
+export type NewArtifactScanCoverage = ArtifactScanCoverageRecord
+
+export interface ArtifactScanStore {
+  recordArtifactScanEvent(event: NewArtifactScanEvent): Promise<ArtifactScanEventRecord>
+  listArtifactScanEvents(
+    artifactId: string,
+    orgId: string,
+    limit?: number,
+  ): Promise<ArtifactScanEventRecord[]>
+  listArtifactScanSessionEvents(
+    orgId: string,
+    sessions: Array<{ scannedBy: string; opaqueSessionId: string }>,
+    limit?: number,
+  ): Promise<ArtifactScanEventRecord[]>
+  upsertArtifactScanCoverage(coverage: NewArtifactScanCoverage): Promise<ArtifactScanCoverageRecord>
+  listArtifactScanCoverage(orgId: string): Promise<ArtifactScanCoverageRecord[]>
 }
 
 export interface ModerationStore {
@@ -2926,6 +3000,7 @@ export interface MetaStore
     AgentStore,
     WorkflowRunStore,
     SkillStore,
+    ArtifactScanStore,
     ModerationStore,
     AssetStore,
     SharedStateStore,
@@ -3380,6 +3455,39 @@ export interface WorkflowStepAttemptTransition {
   resultArtifactId?: string | null
   output?: string | null
   error?: string | null
+}
+
+export type WorkflowArtifactActivityRole = "output" | "evidence" | "input"
+export type WorkflowArtifactActivitySource = "observed" | "suggested" | "dismissed"
+
+/** One exact artifact version observed during a workflow run, or a durable suggestion dismissal.
+ * Observed rows record provenance only. They never imply success or evaluation quality. */
+export interface WorkflowArtifactActivityRecord {
+  id: string
+  org_id: string
+  workflow_run_id: string
+  node_id: string
+  attempt: number
+  artifact_short_id: string
+  artifact_version: number
+  artifact_title: string | null
+  role: WorkflowArtifactActivityRole
+  source: WorkflowArtifactActivitySource
+  created_at: string
+}
+
+export interface NewWorkflowArtifactActivity {
+  id: string
+  org_id: string
+  workflow_run_id: string
+  node_id: string
+  attempt: number
+  artifact_short_id: string
+  artifact_version: number
+  artifact_title?: string | null
+  role: WorkflowArtifactActivityRole
+  source: WorkflowArtifactActivitySource
+  created_at?: string
 }
 
 /** What a plan pays for: the model (thinking) or the tool broker (hands). */

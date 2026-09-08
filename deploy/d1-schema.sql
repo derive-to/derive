@@ -358,6 +358,53 @@ CREATE TABLE IF NOT EXISTS workflow_step_attempt (
   FOREIGN KEY (workflow_run_id) REFERENCES workflow_run(id)
 );
 
+CREATE TABLE IF NOT EXISTS workflow_artifact_activity (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  workflow_run_id TEXT NOT NULL,
+  node_id TEXT NOT NULL,
+  attempt INTEGER NOT NULL,
+  artifact_short_id TEXT NOT NULL,
+  artifact_version INTEGER NOT NULL,
+  artifact_title TEXT,
+  role TEXT NOT NULL,
+  source TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  UNIQUE (workflow_run_id, node_id, attempt, artifact_short_id, artifact_version, role),
+  FOREIGN KEY (workflow_run_id) REFERENCES workflow_run(id)
+);
+
+CREATE TABLE IF NOT EXISTS artifact_scan_event (
+  id TEXT PRIMARY KEY,
+  event_id TEXT NOT NULL,
+  org_id TEXT NOT NULL,
+  artifact_id TEXT NOT NULL,
+  artifact_version INTEGER NOT NULL,
+  scanned_by TEXT NOT NULL,
+  client TEXT NOT NULL,
+  action TEXT NOT NULL,
+  evidence TEXT NOT NULL,
+  opaque_session_id TEXT NOT NULL,
+  occurred_at TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  UNIQUE (org_id, scanned_by, event_id),
+  FOREIGN KEY (artifact_id) REFERENCES artifact(id)
+);
+
+CREATE TABLE IF NOT EXISTS artifact_scan_coverage (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  scanned_by TEXT NOT NULL,
+  client TEXT NOT NULL,
+  source_files INTEGER NOT NULL,
+  sessions_scanned INTEGER NOT NULL,
+  records_scanned INTEGER NOT NULL,
+  parser_version INTEGER NOT NULL,
+  scanned_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE (org_id, scanned_by, client)
+);
+
 CREATE TABLE IF NOT EXISTS skill_relation (
   id TEXT PRIMARY KEY,
   org_id TEXT NOT NULL,
@@ -896,6 +943,14 @@ CREATE INDEX IF NOT EXISTS workflow_run_definition ON workflow_run (workflow_art
 CREATE INDEX IF NOT EXISTS workflow_run_external ON workflow_run (external_run_id);
 
 CREATE INDEX IF NOT EXISTS workflow_step_attempt_run ON workflow_step_attempt (workflow_run_id, created_at);
+
+CREATE INDEX IF NOT EXISTS workflow_artifact_activity_run ON workflow_artifact_activity (workflow_run_id, created_at);
+
+CREATE INDEX IF NOT EXISTS artifact_scan_event_artifact ON artifact_scan_event (org_id, artifact_id, occurred_at);
+
+CREATE INDEX IF NOT EXISTS artifact_scan_event_session ON artifact_scan_event (org_id, scanned_by, opaque_session_id, occurred_at);
+
+CREATE INDEX IF NOT EXISTS artifact_scan_coverage_workspace ON artifact_scan_coverage (org_id, scanned_at);
 
 CREATE INDEX IF NOT EXISTS skill_relation_incoming ON skill_relation (org_id, target_artifact_id, target_version);
 

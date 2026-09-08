@@ -31,6 +31,7 @@ import {
   artifact,
   artifactFavorite,
   artifactMember,
+  artifactScanEvent,
   artifactTag,
   auditLog,
   CONTEXT_SESSION_RELAX_SQLITE,
@@ -355,6 +356,7 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
         db.delete(sharedStateActivity).where(eq(sharedStateActivity.artifact_id, id)).run()
         db.delete(sharedState).where(eq(sharedState.artifact_id, id)).run()
         db.delete(dynamicRevision).where(eq(dynamicRevision.artifact_id, id)).run()
+        db.delete(artifactScanEvent).where(eq(artifactScanEvent.artifact_id, id)).run()
         db.delete(versionData).where(eq(versionData.artifact_id, id)).run()
         db.delete(version).where(eq(version.artifact_id, id)).run()
         db.delete(comment).where(eq(comment.artifact_id, id)).run()

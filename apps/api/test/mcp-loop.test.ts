@@ -119,7 +119,718 @@ const claim = (meta: SqliteMetaStore): Promise<DeliveryRecord[]> =>
     new Date(Date.now() + 120_000).toISOString(),
   )
 
+const activityWorkflowHtml = (
+  memberRef: string,
+  lateMemberRef?: string,
+) => `<!doctype html><html><body>
+<a href="#publish">Publish</a>
+<script type="application/derive-facts" data-fact="bundle-manifest">${JSON.stringify({
+  schema: "derive.linked-bundle/v1",
+  purpose: "Publish one result",
+  members: [
+    { id: "result", ref: memberRef, label: "Workflow result", role: "evidence" },
+    ...(lateMemberRef
+      ? [{ id: "late-result", ref: lateMemberRef, label: "Late result", role: "output" }]
+      : []),
+  ],
+  diagrams: [
+    {
+      id: "publish-once",
+      title: "Publish once",
+      type: "graph",
+      nodes: [
+        {
+          id: "publish",
+          label: "Publish",
+          note: "Publish the result",
+          member: lateMemberRef ? "late-result" : "result",
+        },
+      ],
+      edges: [],
+    },
+  ],
+})}</script>
+<script type="application/derive-facts" data-fact="workflow-definition">${JSON.stringify({
+  schema: "derive.workflow/v1",
+  purpose: "Publish one result",
+  diagrams: [
+    {
+      id: "publish-once",
+      entry: "publish",
+      nodes: [
+        {
+          id: "publish",
+          kind: "terminal",
+          result: "A published result",
+          terminal: true,
+        },
+      ],
+      routes: [],
+      scenarios: [
+        {
+          id: "expected",
+          kind: "expected",
+          path: ["publish"],
+          outcome: "The result is published",
+        },
+        {
+          id: "failure",
+          kind: "failure",
+          path: ["publish"],
+          outcome: "The failed publish remains visible",
+        },
+      ],
+    },
+  ],
+})}</script></body></html>`
+
+const sharedMemberWorkflowHtml = (memberRef: string) => `<!doctype html><html><body>
+<script type="application/derive-facts" data-fact="bundle-manifest">${JSON.stringify({
+  schema: "derive.linked-bundle/v1",
+  purpose: "Use one artifact in two nodes",
+  members: [{ id: "shared", ref: memberRef, label: "Shared evidence", role: "evidence" }],
+  diagrams: [
+    {
+      id: "shared-member",
+      title: "Shared member",
+      type: "graph",
+      nodes: [
+        { id: "draft", label: "Draft", note: "Create a draft", member: "shared" },
+        { id: "review", label: "Review", note: "Review the draft", member: "shared" },
+      ],
+      edges: [{ from: "draft", to: "review" }],
+    },
+  ],
+})}</script>
+<script type="application/derive-facts" data-fact="workflow-definition">${JSON.stringify({
+  schema: "derive.workflow/v1",
+  purpose: "Use one artifact in two nodes",
+  diagrams: [
+    {
+      id: "shared-member",
+      entry: "draft",
+      nodes: [
+        {
+          id: "draft",
+          kind: "context",
+          context_ref: "draft-context",
+          instruction: "Create a draft.",
+          result: "A draft",
+        },
+        { id: "review", kind: "terminal", result: "A reviewed draft", terminal: true },
+      ],
+      routes: [{ from: "draft", to: "review", when: "always" }],
+      scenarios: [
+        {
+          id: "expected",
+          kind: "expected",
+          path: ["draft", "review"],
+          outcome: "The draft is reviewed",
+        },
+        {
+          id: "failure",
+          kind: "failure",
+          path: ["draft"],
+          outcome: "The failed draft remains visible",
+        },
+      ],
+    },
+  ],
+})}</script></body></html>`
+
 describe("MCP publish reaches the human (event parity + auto-open)", () => {
+  it("records exact workflow activity without claiming step completion", async () => {
+    const { app, meta, token } = loopApp("workflow-activity")
+    const linked = await call(app, token, "publish", {
+      content: "# Initial evidence",
+      title: "Linked workflow evidence",
+    })
+    const workflow = await call(app, token, "publish", {
+      content: activityWorkflowHtml(linked.short_id as string),
+      title: "Publish workflow",
+    })
+    const startedResult = await call(app, token, "use", {
+      workflow_run: {
+        action: "start",
+        short_id: workflow.short_id,
+        diagram_id: "publish-once",
+        dedupe_key: "publish-once-dogfood",
+      },
+    })
+    expect(startedResult).toMatchObject({
+      workflow_run: {
+        artifact: { short_id: workflow.short_id, version: 1 },
+        diagram_id: "publish-once",
+        status: "queued",
+      },
+      prompt: expect.stringContaining("This is explicit run intent."),
+      next: expect.stringContaining('action:"inspect"'),
+    })
+    const started = { runId: (startedResult.workflow_run as { id: string }).id }
+    const replayedStart = await call(app, token, "use", {
+      workflow_run: {
+        action: "start",
+        short_id: workflow.short_id,
+        diagram_id: "publish-once",
+        dedupe_key: "publish-once-dogfood",
+      },
+    })
+    expect((replayedStart.workflow_run as { id: string }).id).toBe(started.runId)
+    const listed = await call(app, token, "use", {
+      workflow_run: {
+        action: "list",
+        short_id: workflow.short_id,
+        diagram_id: "publish-once",
+      },
+    })
+    expect(listed.workflow_runs).toEqual([
+      expect.objectContaining({ id: started.runId, status: "queued" }),
+    ])
+    const result = await call(app, token, "publish", {
+      content: "# Result",
+      title: "Workflow result",
+      workflow: {
+        run_id: started.runId,
+        node_id: "publish",
+        attempt: 1,
+        role: "output",
+      },
+    })
+    expect(result.workflow_activity).toMatchObject({
+      status: "recorded",
+      run_id: started.runId,
+      node_id: "publish",
+      attempt: 1,
+      role: "output",
+      artifact: result.short_id,
+      version: 1,
+      completion: "unconfirmed",
+    })
+
+    const run = await meta.getWorkflowRunById(started.runId)
+    if (!run) throw new Error("workflow run missing")
+    expect(await meta.listWorkflowStepAttempts(started.runId, run.org_id)).toEqual([])
+    expect(await meta.listWorkflowArtifactActivity(started.runId, run.org_id)).toMatchObject([
+      {
+        artifact_short_id: result.short_id,
+        artifact_version: 1,
+        node_id: "publish",
+        attempt: 1,
+        source: "observed",
+      },
+    ])
+
+    const historyResponse = await app.request(
+      `/v1/artifacts/${workflow.short_id}/workflow-runs?diagram=publish-once`,
+      { headers: { authorization: `Bearer ${token}` } },
+    )
+    expect(historyResponse.status).toBe(200)
+    expect(await historyResponse.json()).toMatchObject({
+      runs: [
+        {
+          id: started.runId,
+          attempts: [],
+          activity: [
+            {
+              artifactShortId: result.short_id,
+              artifactVersion: 1,
+              nodeId: "publish",
+              source: "observed",
+            },
+          ],
+        },
+      ],
+    })
+
+    const missed = await call(app, token, "publish", {
+      short_id: linked.short_id,
+      content: "# Evidence published during the run",
+    })
+    expect(missed.version).toBe(2)
+    const late = await call(app, token, "publish", {
+      content: "# Added to the graph after the run started",
+      title: "Late workflow result",
+    })
+    await call(app, token, "publish", {
+      short_id: workflow.short_id,
+      content: activityWorkflowHtml(linked.short_id as string, late.short_id as string),
+    })
+    const suggestedHistoryResponse = await app.request(
+      `/v1/artifacts/${workflow.short_id}/workflow-runs?diagram=publish-once`,
+      { headers: { authorization: `Bearer ${token}` } },
+    )
+    const suggestedHistory = (await suggestedHistoryResponse.json()) as {
+      runs: Array<{ suggestions: unknown[] }>
+    }
+    expect(suggestedHistory.runs[0]?.suggestions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          nodeId: "publish",
+          attempt: null,
+          artifactShortId: missed.short_id,
+          artifactVersion: 2,
+          role: "evidence",
+          source: "suggested",
+        }),
+        expect.objectContaining({
+          nodeId: "publish",
+          attempt: null,
+          artifactShortId: late.short_id,
+          artifactVersion: 1,
+          role: "output",
+          source: "suggested",
+          reason:
+            "The current graph links this version, and it was published while the run was open.",
+        }),
+      ]),
+    )
+    const missedLatest = await call(app, token, "publish", {
+      short_id: linked.short_id,
+      content: "# A second evidence version during the run",
+    })
+    expect(missedLatest.version).toBe(3)
+    const multiVersionHistoryResponse = await app.request(
+      `/v1/artifacts/${workflow.short_id}/workflow-runs?diagram=publish-once`,
+      { headers: { authorization: `Bearer ${token}` } },
+    )
+    const multiVersionHistory = (await multiVersionHistoryResponse.json()) as {
+      runs: Array<{
+        suggestions: Array<{ artifactShortId: string; artifactVersion: number }>
+      }>
+    }
+    expect(
+      multiVersionHistory.runs[0]?.suggestions
+        .filter((item) => item.artifactShortId === linked.short_id)
+        .map((item) => item.artifactVersion)
+        .sort((left, right) => left - right),
+    ).toEqual([2, 3])
+    const inspected = await call(app, token, "use", {
+      workflow_run: { action: "inspect", run_id: started.runId },
+    })
+    expect(inspected).toMatchObject({
+      workflow_run: {
+        id: started.runId,
+        artifact: { short_id: workflow.short_id, version: 1 },
+        diagram_id: "publish-once",
+        status: "queued",
+      },
+      attempts: [],
+      activity: expect.arrayContaining([
+        expect.objectContaining({
+          node_id: "publish",
+          attempt: 1,
+          artifact: expect.objectContaining({ short_id: result.short_id, version: 1 }),
+          role: "output",
+        }),
+      ]),
+      suggestions: expect.arrayContaining([
+        expect.objectContaining({
+          artifact: expect.objectContaining({
+            short_id: missed.short_id,
+            version: 2,
+            title: "Linked workflow evidence",
+          }),
+          node_id: "publish",
+          attempt: null,
+          confirm_template: expect.objectContaining({
+            tool: "use",
+            missing: ["attempt"],
+            note: "Resolve the missing fields before you call use.",
+          }),
+        }),
+      ]),
+    })
+    const scannedArtifacts = await meta.getByShortIds([
+      workflow.short_id as string,
+      missed.short_id as string,
+    ])
+    const workflowArtifact = scannedArtifacts.find((item) => item.short_id === workflow.short_id)
+    const missedArtifact = scannedArtifacts.find((item) => item.short_id === missed.short_id)
+    if (!workflowArtifact || !missedArtifact) throw new Error("scanned artifact missing")
+    if (!run.initiated_by) throw new Error("workflow initiator missing")
+    const scannedBy = run.initiated_by
+    const scanTime = new Date().toISOString()
+    await meta.recordArtifactScanEvent({
+      id: "ase_workflow_read",
+      event_id: "workflow-read-event",
+      org_id: run.org_id,
+      artifact_id: workflowArtifact.id,
+      artifact_version: 2,
+      scanned_by: scannedBy,
+      client: "codex",
+      action: "read",
+      evidence: "structured_tool_result",
+      opaque_session_id: "workflow-local-session",
+      occurred_at: scanTime,
+      created_at: scanTime,
+    })
+    await meta.recordArtifactScanEvent({
+      id: "ase_workflow_publish",
+      event_id: "workflow-publish-event",
+      org_id: run.org_id,
+      artifact_id: missedArtifact.id,
+      artifact_version: 2,
+      scanned_by: scannedBy,
+      client: "codex",
+      action: "published",
+      evidence: "structured_tool_result",
+      opaque_session_id: "workflow-local-session",
+      occurred_at: scanTime,
+      created_at: scanTime,
+    })
+    const caughtUp = await call(app, token, "catch_up", { short_id: workflow.short_id })
+    expect(caughtUp.summary).toContain("3 possible workflow artifact receipts need confirmation")
+    expect(caughtUp.summary).toContain("local agent session published")
+    expect(caughtUp.local_agent_activity_note).toContain("does not create a run")
+    expect(caughtUp.local_agent_activity).toMatchObject({
+      activity: [
+        expect.objectContaining({
+          artifact: { short_id: workflow.short_id, version: 2 },
+          action: "read",
+        }),
+      ],
+      related: [
+        expect.objectContaining({
+          artifact: expect.objectContaining({ short_id: missed.short_id, version: 2 }),
+          action: "published",
+        }),
+      ],
+    })
+    expect(caughtUp.workflow_receipt_gaps).toEqual([
+      expect.objectContaining({
+        run_id: started.runId,
+        diagram_id: "publish-once",
+        suggestions: expect.arrayContaining([
+          expect.objectContaining({
+            artifact: expect.objectContaining({
+              short_id: missed.short_id,
+              version: 2,
+            }),
+            node_id: "publish",
+            attempt: null,
+            role: "evidence",
+            confirm_template: expect.objectContaining({
+              tool: "use",
+              missing: ["attempt"],
+              note: "Resolve the missing fields before you call use.",
+            }),
+          }),
+        ]),
+      }),
+    ])
+    const recovered = await call(app, token, "use", {
+      workflow: {
+        run_id: started.runId,
+        node_id: "publish",
+        attempt: 1,
+        artifact: { short_id: missed.short_id, version: 2, role: "evidence" },
+      },
+    })
+    expect(recovered).toMatchObject({
+      workflow_run_id: started.runId,
+      node_id: "publish",
+      attempt: 1,
+      artifact: missed.short_id,
+      version: 2,
+      role: "evidence",
+      completion: "unconfirmed",
+    })
+    expect(await meta.listWorkflowStepAttempts(started.runId, run.org_id)).toEqual([])
+    expect(await meta.listWorkflowArtifactActivity(started.runId, run.org_id)).toHaveLength(2)
+    await call(app, token, "use", {
+      workflow: {
+        run_id: started.runId,
+        node_id: "publish",
+        attempt: 1,
+        artifact: { short_id: missedLatest.short_id, version: 3, role: "evidence" },
+      },
+    })
+    await call(app, token, "use", {
+      workflow: {
+        run_id: started.runId,
+        node_id: "publish",
+        attempt: 1,
+        artifact: { short_id: late.short_id, version: 1, role: "output" },
+      },
+    })
+    expect(await meta.listWorkflowArtifactActivity(started.runId, run.org_id)).toHaveLength(4)
+    const inspectedAfterRecovery = await call(app, token, "use", {
+      workflow_run: { action: "inspect", run_id: started.runId },
+    })
+    expect(inspectedAfterRecovery).toMatchObject({
+      attempts: [],
+      activity: expect.arrayContaining([
+        expect.objectContaining({
+          artifact: expect.objectContaining({ short_id: missed.short_id, version: 2 }),
+        }),
+        expect.objectContaining({
+          artifact: expect.objectContaining({ short_id: missedLatest.short_id, version: 3 }),
+        }),
+        expect.objectContaining({
+          artifact: expect.objectContaining({ short_id: late.short_id, version: 1 }),
+        }),
+      ]),
+      suggestions: [],
+    })
+    const finished = await call(app, token, "use", {
+      workflow: {
+        run_id: started.runId,
+        node_id: "publish",
+        attempt: 1,
+        status: "succeeded",
+        output: { result: result.short_id },
+        finish_run: "succeeded",
+      },
+    })
+    expect(finished).toEqual({
+      workflow_run_id: started.runId,
+      run_status: "succeeded",
+      node_id: "publish",
+      attempt: 1,
+      attempt_status: "succeeded",
+    })
+    const inspectedAfterFinish = await call(app, token, "use", {
+      workflow_run: { action: "inspect", run_id: started.runId },
+    })
+    expect(inspectedAfterFinish).toMatchObject({
+      workflow_run: { id: started.runId, status: "succeeded" },
+      attempts: [
+        expect.objectContaining({
+          node_id: "publish",
+          attempt: 1,
+          status: "succeeded",
+        }),
+      ],
+      suggestions: [],
+    })
+    const recoveredHistoryResponse = await app.request(
+      `/v1/artifacts/${workflow.short_id}/workflow-runs?diagram=publish-once`,
+      { headers: { authorization: `Bearer ${token}` } },
+    )
+    expect(await recoveredHistoryResponse.json()).toMatchObject({
+      runs: [{ suggestions: [] }],
+    })
+
+    const cancellable = await call(app, token, "use", {
+      workflow_run: {
+        action: "start",
+        short_id: workflow.short_id,
+        diagram_id: "publish-once",
+        dedupe_key: "cancel-before-first-attempt",
+      },
+    })
+    const cancellableRunId = (cancellable.workflow_run as { id: string }).id
+    expect(
+      await call(app, token, "use", {
+        workflow_run: { action: "cancel", run_id: cancellableRunId },
+      }),
+    ).toEqual({ workflow_run_id: cancellableRunId, status: "cancelled" })
+    expect(
+      await call(app, token, "use", {
+        workflow_run: { action: "cancel", run_id: cancellableRunId },
+      }),
+    ).toEqual({ workflow_run_id: cancellableRunId, status: "cancelled" })
+    const attemptsBatch = vi.spyOn(meta, "listWorkflowStepAttempts")
+    const activityBatch = vi.spyOn(meta, "listWorkflowArtifactActivity")
+    const versionsBatch = vi.spyOn(meta, "versionsForArtifacts")
+    const batchedHistory = await app.request(
+      `/v1/artifacts/${workflow.short_id}/workflow-runs?diagram=publish-once`,
+      { headers: { authorization: `Bearer ${token}` } },
+    )
+    expect(batchedHistory.status).toBe(200)
+    expect(attemptsBatch).toHaveBeenCalledTimes(1)
+    expect(activityBatch).toHaveBeenCalledTimes(1)
+    expect(versionsBatch).toHaveBeenCalledTimes(1)
+    attemptsBatch.mockRestore()
+    activityBatch.mockRestore()
+    versionsBatch.mockRestore()
+
+    const invalid = await rpc(app, token, {
+      jsonrpc: "2.0",
+      id: 8,
+      method: "tools/call",
+      params: {
+        name: "publish",
+        arguments: {
+          content: "# Must not publish",
+          title: "Invalid workflow output",
+          workflow: { run_id: started.runId, node_id: "missing", attempt: 1 },
+        },
+      },
+    })
+    const invalidResult = invalid?.result as
+      | { content?: { text: string }[]; isError?: boolean }
+      | undefined
+    expect(invalidResult?.isError).toBe(true)
+    expect(invalidResult?.content?.[0]?.text).toContain("does not contain this diagram and node")
+  })
+
+  it("keeps private workflow receipt candidates out of another agent's catch-up", async () => {
+    const name = "workflow-activity-private"
+    const { app, meta, token } = loopApp(name)
+    const privateMember = await call(app, token, "publish", {
+      content: "# Private initial evidence",
+      title: "Private workflow evidence",
+      workspace_access: "none",
+    })
+    const workflow = await call(app, token, "publish", {
+      content: activityWorkflowHtml(privateMember.short_id as string),
+      title: "Shared workflow",
+    })
+    const startedResponse = await app.request(`/v1/artifacts/${workflow.short_id}/workflow-run`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ diagramId: "publish-once", delivery: "copy" }),
+    })
+    const started = (await startedResponse.json()) as { runId: string }
+    await call(app, token, "publish", {
+      short_id: privateMember.short_id,
+      content: "# Private evidence created during the run",
+    })
+    const ownerCatchUp = await call(app, token, "catch_up", { short_id: workflow.short_id })
+    expect(ownerCatchUp.workflow_receipt_gaps).toEqual([
+      expect.objectContaining({ run_id: started.runId }),
+    ])
+
+    const run = await meta.getWorkflowRunById(started.runId)
+    if (!run) throw new Error("workflow run missing")
+    await meta.setMembership({
+      id: "m_workflow_editor",
+      org_id: run.org_id,
+      user_id: "u_e",
+      role: "editor",
+    })
+    const editorToken = "tok_workflow_activity_editor"
+    const authDb = new Database(join(dir, `${name}.db`))
+    authDb
+      .prepare(`INSERT OR IGNORE INTO "user"(id,email,name) VALUES('u_e','editor@x.test','Editor')`)
+      .run()
+    authDb
+      .prepare(
+        `INSERT INTO "oauthAccessToken"(token,clientId,userId,scopes,expiresAt) VALUES(?,?,?,?,?)`,
+      )
+      .run(
+        sha256(editorToken),
+        "cli",
+        "u_e",
+        JSON.stringify(["openid", "derive:read", "derive:publish"]),
+        new Date(Date.now() + 3_600_000).toISOString(),
+      )
+    authDb.close()
+
+    const editorCatchUp = await call(app, editorToken, "catch_up", {
+      short_id: workflow.short_id,
+    })
+    expect(editorCatchUp.summary).not.toContain("possible workflow artifact receipt")
+    expect(editorCatchUp.workflow_receipt_gaps).toBeUndefined()
+
+    const editorStart = await call(app, editorToken, "use", {
+      workflow_run: {
+        action: "start",
+        short_id: workflow.short_id,
+        diagram_id: "publish-once",
+        dedupe_key: "private-artifact-probe",
+      },
+    })
+    const editorRunId = (editorStart.workflow_run as { id: string }).id
+    const privateAttach = await rpc(app, editorToken, {
+      jsonrpc: "2.0",
+      id: 9,
+      method: "tools/call",
+      params: {
+        name: "use",
+        arguments: {
+          workflow: {
+            run_id: editorRunId,
+            node_id: "publish",
+            attempt: 1,
+            artifact: {
+              short_id: privateMember.short_id,
+              version: 2,
+              role: "evidence",
+            },
+          },
+        },
+      },
+    })
+    const privateAttachResult = privateAttach?.result as
+      | { content?: { text: string }[]; isError?: boolean }
+      | undefined
+    expect(privateAttachResult?.isError).toBe(true)
+    expect(privateAttachResult?.content?.[0]?.text).toBe(
+      "No such readable artifact in this workflow's workspace.",
+    )
+    expect(await meta.listWorkflowArtifactActivity(editorRunId, run.org_id)).toEqual([])
+  })
+
+  it("keeps a missing receipt for each node that uses the same version", async () => {
+    const { app, token } = loopApp("workflow-activity-shared-member")
+    const member = await call(app, token, "publish", {
+      content: "# Shared v1",
+      title: "Shared member",
+    })
+    const workflow = await call(app, token, "publish", {
+      content: sharedMemberWorkflowHtml(member.short_id as string),
+      title: "Shared member workflow",
+    })
+    const started = await call(app, token, "use", {
+      workflow_run: {
+        action: "start",
+        short_id: workflow.short_id,
+        diagram_id: "shared-member",
+        dedupe_key: "shared-member-run",
+      },
+    })
+    const runId = (started.workflow_run as { id: string }).id
+    await call(app, token, "publish", {
+      short_id: member.short_id,
+      content: "# Shared v2",
+    })
+    const before = await call(app, token, "use", {
+      workflow_run: { action: "inspect", run_id: runId },
+    })
+    expect(
+      (before.suggestions as Array<{ node_id: string }>).map((item) => item.node_id).sort(),
+    ).toEqual(["draft", "review"])
+
+    await call(app, token, "use", {
+      workflow: {
+        run_id: runId,
+        node_id: "draft",
+        attempt: 1,
+        artifact: { short_id: member.short_id, version: 2, role: "evidence" },
+      },
+    })
+    const after = await call(app, token, "use", {
+      workflow_run: { action: "inspect", run_id: runId },
+    })
+    expect((after.suggestions as Array<{ node_id: string }>).map((item) => item.node_id)).toEqual([
+      "review",
+    ])
+    const reviewSuggestion = (after.suggestions as Array<Record<string, unknown>>)[0]
+    const dismissArgs = reviewSuggestion?.dismiss_with as {
+      workflow_run: Record<string, unknown>
+    }
+    const dismissed = await call(app, token, "use", dismissArgs)
+    expect(dismissed).toMatchObject({ workflow_run_id: runId, dismissed: true })
+    expect(await call(app, token, "use", dismissArgs)).toEqual(dismissed)
+    const cleared = await call(app, token, "use", {
+      workflow_run: { action: "inspect", run_id: runId },
+    })
+    expect(cleared).toMatchObject({
+      activity: [
+        expect.objectContaining({
+          node_id: "draft",
+          artifact: expect.objectContaining({ short_id: member.short_id, version: 2 }),
+        }),
+      ],
+      suggestions: [],
+    })
+  })
+
   it("emits version.published + artifact.pushed, writes a bell row, and reports opened_in_tab", async () => {
     const { app, meta, backplane, token } = loopApp("push")
     await connectSlack(meta)

@@ -141,7 +141,21 @@ The companion fact has this shape:
 
 ## Run through Contexts
 
-When the person explicitly says to run, use the fresh run id from the handoff. Begin at the
+When the person explicitly says to run, start the pinned run through `use`:
+
+```text
+use({workflow_run:{
+  action: "start",
+  short_id: workflow.short_id,
+  diagram_id: diagram.id,
+  dedupe_key: "<stable id for this run intent>"
+}})
+```
+
+Reuse the same `dedupe_key` after a timeout. Derive returns the same run. If the start response is
+lost, recover recent runs with
+`use({workflow_run:{action:"list",short_id:workflow.short_id,diagram_id:diagram.id}})`.
+The start response contains the run id and the version-pinned execution prompt. Begin at the
 diagram's declared `entry`, then start one Context session per ready node attempt:
 
 ```text
@@ -169,6 +183,68 @@ use({workflow:{
 }})
 ```
 
+When a node creates or revises an artifact, attach the exact version during publication:
+
+```text
+publish({
+  short_id: "<artifact>",
+  content: "...",
+  workflow: {
+    run_id: run.id,
+    node_id: node.id,
+    attempt,
+    role: "output"
+  }
+})
+```
+
+Use `role:"evidence"` for evaluation evidence. The publish receipt records the exact artifact
+version in the workflow Activity view. This is observed provenance. It does not mark the node
+complete, select a route, or prove that the artifact passed evaluation.
+
+If publication already happened without workflow metadata, attach the exact existing version:
+
+```text
+use({workflow:{
+  run_id: run.id,
+  node_id: node.id,
+  attempt,
+  artifact: {short_id: "<artifact>", version: 3, role: "output"}
+}})
+```
+
+This operation is idempotent. Use it to backfill activity. Do not republish an unchanged artifact
+only to create a workflow link.
+
+Run history suggests each readable linked member version published while the run was open. The
+suggestion can come from the pinned graph or a later graph version. It preserves an older version
+even when the member has changed again. Treat each suggestion as a candidate. Confirm the exact
+version with the `use` operation above. A suggestion never marks a node complete, and Derive does
+not expose a member that the graph reader cannot open.
+
+Call `catch_up` on the workflow artifact during normal agent work. Its
+`workflow_receipt_gaps` field returns the same permission-checked candidates with a prepared
+`use` payload. Fill any unknown node or attempt from the work you performed, then confirm the
+exact version. If the candidate belongs to another run, leave it unconfirmed.
+
+Inspect the run ledger before each route transition and before the final receipt:
+
+```text
+use({workflow_run:{action:"inspect", run_id:run.id}})
+```
+
+The response contains the pinned run, attempts, observed exact artifact versions, and suggested
+missing receipts. A complete suggestion includes `confirm_with`. An ambiguous suggestion includes
+`confirm_template` and names the fields you must resolve. Never call an incomplete template. This
+makes recovery part of normal execution instead of a separate cleanup task.
+
+If a suggestion is unrelated, call its `dismiss_with` operation. Derive stores the dismissal and
+stops showing the candidate. A dismissal does not create provenance or workflow activity.
+
+If the person stops a run before an attempt exists, call
+`use({workflow_run:{action:"cancel",run_id:run.id}})`. Cancellation is idempotent. Inspect the run
+after a concurrent change, then retry if Derive reports a conflict.
+
 Human and terminal nodes use the same receipt shape without a Context session. A human receipt's
 `decision` must be one of that node's authored options. Pass `finish_run:"succeeded"` (or the
 matching failure/cancellation state) on the final receipt.
@@ -177,13 +253,13 @@ Project session truth into the authored graph:
 
 - `open` → `waiting` (queued; no inferred help)
 - `working` → `active`
-- `answered` → `done`; add `result_artifact_id` to bundle members and point `node.member` at its
-  local member id, then evaluate routes
+- `answered` → `done`; evaluate routes. Artifact versions already attached during publication
+  remain in Activity without a bundle-manifest edit.
 - `escalated` → `waiting` with explicit `help.question` and resume action
 - `failed` → declared retry or `blocked`
 - `closed` → stopped deliberately
 
-Publish each result artifact and graph-state transition back to the same Derive workflow as normal
+Publish each result artifact with workflow metadata and record each graph-state transition as normal
 run bookkeeping. Do this by default with version/idempotency protection; it does not need a fresh
 human decision.
 

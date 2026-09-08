@@ -53,6 +53,7 @@ import { agentPushFanout, openReviewRound } from "../lib/review-request"
 import { type ReviewSummary, summarizeTextEdits } from "../lib/review-summary"
 import { normalizeTags } from "../lib/tags"
 import { canReadTemplateLibrary } from "../lib/template-library-access"
+import { prepareWorkflowArtifactRef, recordWorkflowArtifact } from "../lib/workflow-coordination"
 import type { ToolContext } from "../mcp-tool-context"
 import {
   err,
@@ -421,6 +422,15 @@ export function registerPublishTool(tc: ToolContext): void {
           .number()
           .optional()
           .describe("Version read; fails if the artifact has moved."),
+        workflow: z
+          .object({
+            run_id: z.string().min(1),
+            node_id: z.string().min(1),
+            attempt: z.coerce.number().int().min(1),
+            role: z.enum(["output", "evidence", "input"]).default("output"),
+          })
+          .optional()
+          .describe("Attach this exact version to a workflow run as unconfirmed activity."),
       },
     },
     async ({
@@ -446,6 +456,7 @@ export function registerPublishTool(tc: ToolContext): void {
       edits,
       slide_ops,
       base_version,
+      workflow,
     }) => {
       // BEFORE anything is written. Validating this after the publish committed meant a
       // near-miss variant ("screenshot", "png") returned isError on an artifact that was
@@ -568,6 +579,14 @@ export function registerPublishTool(tc: ToolContext): void {
         if ("error" in t) return text(t.error)
         targetOrg = t.org
         actRole = t.role
+      }
+      if (workflow) {
+        const workflowError = await prepareWorkflowArtifactRef({
+          meta: ctx.meta,
+          ref: workflow,
+          orgId: targetOrg,
+        })
+        if (workflowError) return err(workflowError)
       }
       // Billing eligibility and the storage cap come from the same subscription + seat
       // snapshot. An edit checks both, so keep one request-local result instead of paying
@@ -863,6 +882,16 @@ export function registerPublishTool(tc: ToolContext): void {
           },
           short_id,
         )
+        const workflowActivity = workflow
+          ? await recordWorkflowArtifact({
+              meta: ctx.meta,
+              ref: workflow,
+              orgId: targetOrg,
+              artifact,
+              version: version.n,
+              at: version.created_at,
+            })
+          : null
         // Ownership, same as the HTTP route: one row, the human the agent acts
         // for (the agent borrows that standing — no agent rows in the roster).
         if (!short_id)
@@ -1104,6 +1133,28 @@ export function registerPublishTool(tc: ToolContext): void {
           ...(slideOpsApplied ? { slide_ops_applied: slideOpsApplied } : {}),
           ...(changedReadback ? { readback: changedReadback } : {}),
           ...(resolved.length ? { resolved } : {}),
+          ...(workflowActivity
+            ? typeof workflowActivity === "string"
+              ? {
+                  workflow_activity: {
+                    status: "not_recorded" as const,
+                    error: workflowActivity,
+                  },
+                }
+              : {
+                  workflow_activity: {
+                    status: "recorded" as const,
+                    id: workflowActivity.id,
+                    run_id: workflowActivity.workflow_run_id,
+                    node_id: workflowActivity.node_id,
+                    attempt: workflowActivity.attempt,
+                    role: workflowActivity.role,
+                    artifact: workflowActivity.artifact_short_id,
+                    version: workflowActivity.artifact_version,
+                    completion: "unconfirmed" as const,
+                  },
+                }
+            : {}),
           ...(actingFor ? { opened_in_tab: openedInTab } : {}),
           note:
             (merge

@@ -8,6 +8,7 @@ import {
   profileState,
   reworkInstruction,
   saveAsSkillInstruction,
+  type VersionDataRecord,
   workflowRunInstruction,
 } from "@derive/core"
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
@@ -27,6 +28,10 @@ import {
 import { bail, fail, readJson } from "../lib/http"
 import { notifyMentions } from "../lib/mentions"
 import { notifyCommentBells } from "../lib/notify-comment"
+import {
+  readableWorkflowActivity,
+  workflowActivitySuggestionsForRuns,
+} from "../lib/workflow-activity"
 import { parseLinkedWorkflowFacts } from "../lib/workflow-facts"
 
 const parseWorkflowSelectedRoutes = (value: string | null): string[] | null => {
@@ -61,6 +66,7 @@ export const reworkRoutes = (ctx: AppContext) => {
     commentLimiter,
     deps,
     authorizeStanding,
+    authorize,
     actingHuman,
   } = ctx
   const app = new OpenAPIHono<BlankEnv>()
@@ -217,6 +223,29 @@ export const reworkRoutes = (ctx: AppContext) => {
     startedAt: z.string().nullable(),
     finishedAt: z.string().nullable(),
   })
+  const workflowArtifactActivitySummary = z.object({
+    id: z.string(),
+    nodeId: z.string(),
+    attempt: z.number().int(),
+    artifactShortId: z.string(),
+    artifactVersion: z.number().int(),
+    artifactTitle: z.string().nullable(),
+    role: z.enum(["output", "evidence", "input"]),
+    source: z.enum(["observed", "suggested"]),
+    createdAt: z.string(),
+  })
+  const workflowArtifactSuggestionSummary = z.object({
+    id: z.string(),
+    nodeId: z.string().nullable(),
+    attempt: z.number().int().nullable(),
+    artifactShortId: z.string(),
+    artifactVersion: z.number().int(),
+    artifactTitle: z.string().nullable(),
+    role: z.enum(["output", "evidence", "input"]),
+    source: z.literal("suggested"),
+    reason: z.string(),
+    createdAt: z.string(),
+  })
   const workflowRunSummary = z.object({
     id: z.string(),
     diagramId: z.string(),
@@ -239,6 +268,8 @@ export const reworkRoutes = (ctx: AppContext) => {
     startedAt: z.string().nullable(),
     finishedAt: z.string().nullable(),
     attempts: z.array(workflowAttemptSummary),
+    activity: z.array(workflowArtifactActivitySummary),
+    suggestions: z.array(workflowArtifactSuggestionSummary),
   })
 
   // Pick the addressee: the named agent, else the workspace's sole one.
@@ -421,9 +452,55 @@ export const reworkRoutes = (ctx: AppContext) => {
         diagramId: query.diagram,
         limit: query.limit ?? 10,
       })
-      const attempts = await Promise.all(
-        runs.map((run) => meta.listWorkflowStepAttempts(run.id, artifact.org_id)),
+      const runIds = runs.map((run) => run.id)
+      const [allAttempts, allActivity] = await Promise.all([
+        meta.listWorkflowStepAttempts(runIds, artifact.org_id),
+        meta.listWorkflowArtifactActivity(runIds, artifact.org_id),
+      ])
+      const attempts = runs.map((run) =>
+        allAttempts.filter((attempt) => attempt.workflow_run_id === run.id),
       )
+      const activity = runs.map((run) =>
+        allActivity.filter((item) => item.workflow_run_id === run.id),
+      )
+      const workflowReadability = new Map<string, Promise<boolean>>()
+      const workflowFacts = new Map<number, Promise<VersionDataRecord[]>>()
+      const loadWorkflowFacts = (version: number): Promise<VersionDataRecord[]> => {
+        const existing = workflowFacts.get(version)
+        if (existing) return existing
+        const result = meta.getVersionData(artifact.id, version)
+        workflowFacts.set(version, result)
+        return result
+      }
+      const canReadWorkflowArtifact = (candidate: ArtifactRecord): Promise<boolean> => {
+        const existing = workflowReadability.get(candidate.id)
+        if (existing) return existing
+        const result = authorize(c, "read", candidate)
+        workflowReadability.set(candidate.id, result)
+        return result
+      }
+      const [readableActivity, suggestions] = await Promise.all([
+        Promise.all(
+          activity.map((items) =>
+            readableWorkflowActivity({
+              meta,
+              rows: items,
+              canRead: canReadWorkflowArtifact,
+            }),
+          ),
+        ),
+        workflowActivitySuggestionsForRuns({
+          meta,
+          workflowArtifact: artifact,
+          states: runs.map((run, index) => ({
+            run,
+            attempts: attempts[index] ?? [],
+            recorded: activity[index] ?? [],
+          })),
+          canRead: canReadWorkflowArtifact,
+          loadVersionData: loadWorkflowFacts,
+        }),
+      ])
       return c.json({
         runs: runs.map((run, index) => ({
           id: run.id,
@@ -451,6 +528,18 @@ export const reworkRoutes = (ctx: AppContext) => {
             startedAt: attempt.started_at,
             finishedAt: attempt.finished_at,
           })),
+          activity: (readableActivity[index] ?? []).map((item) => ({
+            id: item.id,
+            nodeId: item.node_id,
+            attempt: item.attempt,
+            artifactShortId: item.artifact_short_id,
+            artifactVersion: item.artifact_version,
+            artifactTitle: item.artifact_title,
+            role: item.role,
+            source: item.source,
+            createdAt: item.created_at,
+          })),
+          suggestions: suggestions.get(run.id) ?? [],
         })),
       })
     },

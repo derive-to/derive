@@ -5,6 +5,8 @@ import http from "node:http"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
+import { commitArtifactScanState, scanArtifactLogs } from "../src/artifact-scan.js"
+import { setupDeriveScan } from "../src/derive-scan-setup.js"
 import { addToSkillScanSpool, recordSkillInstall, scanSkillLogs } from "../src/skill-scan.js"
 import { setupSkillScan } from "../src/skill-scan-setup.js"
 
@@ -609,5 +611,955 @@ describe("derive skill scan", () => {
       if (priorConfig === undefined) delete process.env.DERIVE_CONFIG_DIR
       else process.env.DERIVE_CONFIG_DIR = priorConfig
     }
+  })
+})
+
+describe("derive scan", () => {
+  it("records exact Codex and Claude artifact results without content or local identity", async () => {
+    const root = mkdtempSync(join(tmpdir(), "derive-artifact-scan-"))
+    dirs.push(root)
+    const home = join(root, "home")
+    const config = join(root, "config")
+    const priorConfig = process.env.DERIVE_CONFIG_DIR
+    process.env.DERIVE_CONFIG_DIR = config
+    try {
+      const codexLog = join(home, ".codex", "sessions", "session-a.jsonl")
+      mkdirSync(join(home, ".codex", "sessions"), { recursive: true })
+      writeFileSync(
+        codexLog,
+        `${[
+          {
+            type: "session_meta",
+            timestamp: "2026-09-05T12:00:00.000Z",
+            payload: { id: "private-codex-session" },
+          },
+          {
+            type: "response_item",
+            timestamp: "2026-09-05T12:01:00.000Z",
+            payload: {
+              type: "custom_tool_call",
+              name: "exec",
+              call_id: "read-call",
+              input: 'const r = await tools.mcp__derive__read({short_id:"graph123"})',
+            },
+          },
+          {
+            type: "response_item",
+            timestamp: "2026-09-05T12:01:01.000Z",
+            payload: {
+              type: "custom_tool_call_output",
+              call_id: "read-call",
+              output: [
+                {
+                  type: "input_text",
+                  text: JSON.stringify({
+                    type: "text",
+                    text: JSON.stringify({
+                      short_id: "graph123",
+                      version: 4,
+                      title: "Private source text must not upload",
+                    }),
+                  }),
+                },
+              ],
+            },
+          },
+          {
+            type: "response_item",
+            timestamp: "2026-09-05T12:01:02.000Z",
+            payload: {
+              type: "function_call",
+              name: "mcp__derive__catch_up",
+              call_id: "catch-up-call",
+              arguments: JSON.stringify({ short_id: "graph123" }),
+            },
+          },
+          {
+            type: "response_item",
+            timestamp: "2026-09-05T12:01:03.000Z",
+            payload: {
+              type: "function_call_output",
+              call_id: "catch-up-call",
+              output: JSON.stringify({ short_id: "graph123", from: 4, to: 5 }),
+            },
+          },
+        ]
+          .map((row) => JSON.stringify(row))
+          .join("\n")}\n`,
+      )
+      const claudeLog = join(home, ".claude", "projects", "project-a", "session-b.jsonl")
+      mkdirSync(join(home, ".claude", "projects", "project-a"), { recursive: true })
+      writeFileSync(
+        claudeLog,
+        `${[
+          {
+            type: "assistant",
+            timestamp: "2026-09-05T12:02:00.000Z",
+            sessionId: "private-claude-session",
+            message: {
+              content: [
+                {
+                  type: "tool_use",
+                  id: "publish-call",
+                  name: "mcp__derive__publish",
+                  input: { title: "Must stay local", content: "secret body" },
+                },
+              ],
+            },
+          },
+          {
+            type: "user",
+            timestamp: "2026-09-05T12:02:01.000Z",
+            sessionId: "private-claude-session",
+            message: {
+              content: [
+                {
+                  type: "tool_result",
+                  tool_use_id: "publish-call",
+                  content: JSON.stringify({ published: true, short_id: "output456", version: 2 }),
+                },
+              ],
+            },
+          },
+        ]
+          .map((row) => JSON.stringify(row))
+          .join("\n")}\n`,
+      )
+
+      const result = await scanArtifactLogs({
+        home,
+        since: "30d",
+        now: Date.parse("2026-09-06"),
+      })
+      expect(result.events).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            artifact_short_id: "graph123",
+            artifact_version: 4,
+            action: "read",
+            client: "codex",
+          }),
+          expect.objectContaining({
+            artifact_short_id: "output456",
+            artifact_version: 2,
+            action: "published",
+            client: "claude",
+          }),
+          expect.objectContaining({
+            artifact_short_id: "graph123",
+            artifact_version: 5,
+            action: "read",
+            client: "codex",
+          }),
+        ]),
+      )
+      const serialized = JSON.stringify(result.events)
+      expect(serialized).not.toContain("private-codex-session")
+      expect(serialized).not.toContain("private-claude-session")
+      expect(serialized).not.toContain("secret body")
+      expect(serialized).not.toContain("Private source text")
+      expect((await scanArtifactLogs({ home })).events).toEqual([])
+    } finally {
+      if (priorConfig === undefined) delete process.env.DERIVE_CONFIG_DIR
+      else process.env.DERIVE_CONFIG_DIR = priorConfig
+    }
+  })
+
+  it("keeps an unmatched tool call until its result is appended", async () => {
+    const root = mkdtempSync(join(tmpdir(), "derive-artifact-scan-pending-"))
+    dirs.push(root)
+    const home = join(root, "home")
+    const config = join(root, "config")
+    const priorConfig = process.env.DERIVE_CONFIG_DIR
+    process.env.DERIVE_CONFIG_DIR = config
+    try {
+      const log = join(home, ".codex", "sessions", "session.jsonl")
+      mkdirSync(join(home, ".codex", "sessions"), { recursive: true })
+      writeFileSync(
+        log,
+        `${JSON.stringify({
+          type: "session_meta",
+          payload: { id: "session-pending" },
+        })}\n${JSON.stringify({
+          type: "response_item",
+          payload: {
+            type: "function_call",
+            name: "mcp__derive__publish",
+            call_id: "publish-pending",
+            arguments: JSON.stringify({ content: "never uploaded" }),
+          },
+        })}\n`,
+      )
+      expect((await scanArtifactLogs({ home, initialBaseline: false })).events).toEqual([])
+      writeFileSync(
+        log,
+        `${JSON.stringify({
+          type: "response_item",
+          payload: {
+            type: "function_call_output",
+            call_id: "publish-pending",
+            output: JSON.stringify({ published: true, short_id: "later789", version: 3 }),
+          },
+        })}\n`,
+        { flag: "a" },
+      )
+      expect((await scanArtifactLogs({ home })).events).toEqual([
+        expect.objectContaining({
+          artifact_short_id: "later789",
+          artifact_version: 3,
+          action: "published",
+        }),
+      ])
+    } finally {
+      if (priorConfig === undefined) delete process.env.DERIVE_CONFIG_DIR
+      else process.env.DERIVE_CONFIG_DIR = priorConfig
+    }
+  })
+
+  it("does not advance its cursor before the caller durably spools a receipt", async () => {
+    const root = mkdtempSync(join(tmpdir(), "derive-artifact-scan-checkpoint-"))
+    dirs.push(root)
+    const home = join(root, "home")
+    const config = join(root, "config")
+    const priorConfig = process.env.DERIVE_CONFIG_DIR
+    process.env.DERIVE_CONFIG_DIR = config
+    try {
+      const log = join(home, ".codex", "sessions", "session.jsonl")
+      mkdirSync(join(home, ".codex", "sessions"), { recursive: true })
+      writeFileSync(
+        log,
+        `${[
+          {
+            type: "session_meta",
+            timestamp: "2026-09-07T12:00:00.000Z",
+            payload: { id: "checkpoint-session" },
+          },
+          {
+            type: "response_item",
+            timestamp: "2026-09-07T12:00:01.000Z",
+            payload: {
+              type: "function_call",
+              name: "mcp__derive__read",
+              call_id: "checkpoint-read",
+              arguments: "{}",
+            },
+          },
+          {
+            type: "response_item",
+            timestamp: "2026-09-07T12:00:02.000Z",
+            payload: {
+              type: "function_call_output",
+              call_id: "checkpoint-read",
+              output: JSON.stringify({ short_id: "retry123", version: 2 }),
+            },
+          },
+        ]
+          .map(JSON.stringify)
+          .join("\n")}\n`,
+      )
+      const interrupted = await scanArtifactLogs({
+        home,
+        now: Date.parse("2026-09-08"),
+        deferCommit: true,
+        initialBaseline: false,
+      })
+      expect(interrupted.events).toHaveLength(1)
+      const replayed = await scanArtifactLogs({
+        home,
+        now: Date.parse("2026-09-08"),
+        deferCommit: true,
+        initialBaseline: false,
+      })
+      expect(replayed.events).toEqual(interrupted.events)
+      commitArtifactScanState(replayed.state)
+      expect((await scanArtifactLogs({ home })).events).toEqual([])
+    } finally {
+      if (priorConfig === undefined) delete process.env.DERIVE_CONFIG_DIR
+      else process.env.DERIVE_CONFIG_DIR = priorConfig
+    }
+  })
+
+  it("keeps reused call ids separate across session files", async () => {
+    const root = mkdtempSync(join(tmpdir(), "derive-artifact-scan-call-id-"))
+    dirs.push(root)
+    const home = join(root, "home")
+    const config = join(root, "config")
+    const priorConfig = process.env.DERIVE_CONFIG_DIR
+    process.env.DERIVE_CONFIG_DIR = config
+    try {
+      const first = join(home, "first.jsonl")
+      const second = join(home, "second.jsonl")
+      mkdirSync(home, { recursive: true })
+      const call = (session) => [
+        { type: "session_meta", payload: { id: session } },
+        {
+          type: "response_item",
+          payload: {
+            type: "function_call",
+            name: "mcp__derive__read",
+            call_id: "shared-call-id",
+            arguments: "{}",
+          },
+        },
+      ]
+      writeFileSync(first, `${call("first-session").map(JSON.stringify).join("\n")}\n`)
+      writeFileSync(
+        second,
+        `${[
+          ...call("second-session"),
+          {
+            type: "response_item",
+            payload: {
+              type: "function_call_output",
+              call_id: "shared-call-id",
+              output: JSON.stringify({ short_id: "second123", version: 1 }),
+            },
+          },
+        ]
+          .map(JSON.stringify)
+          .join("\n")}\n`,
+      )
+      const initial = await scanArtifactLogs({
+        home,
+        sources: [
+          { client: "codex", path: first },
+          { client: "codex", path: second },
+        ],
+        initialBaseline: false,
+      })
+      expect(initial.events).toEqual([expect.objectContaining({ artifact_short_id: "second123" })])
+      writeFileSync(
+        first,
+        `${JSON.stringify({
+          type: "response_item",
+          payload: {
+            type: "function_call_output",
+            call_id: "shared-call-id",
+            output: JSON.stringify({ short_id: "first123", version: 1 }),
+          },
+        })}\n`,
+        { flag: "a" },
+      )
+      expect(
+        (
+          await scanArtifactLogs({
+            home,
+            sources: [
+              { client: "codex", path: first },
+              { client: "codex", path: second },
+            ],
+          })
+        ).events,
+      ).toEqual([expect.objectContaining({ artifact_short_id: "first123" })])
+    } finally {
+      if (priorConfig === undefined) delete process.env.DERIVE_CONFIG_DIR
+      else process.env.DERIVE_CONFIG_DIR = priorConfig
+    }
+  })
+
+  it("replays a copytruncated source that regrows past its cursor", async () => {
+    const root = mkdtempSync(join(tmpdir(), "derive-artifact-scan-copytruncate-"))
+    dirs.push(root)
+    const home = join(root, "home")
+    const config = join(root, "config")
+    const priorConfig = process.env.DERIVE_CONFIG_DIR
+    process.env.DERIVE_CONFIG_DIR = config
+    try {
+      const log = join(home, "session.jsonl")
+      mkdirSync(home, { recursive: true })
+      writeFileSync(log, `${JSON.stringify({ type: "session_meta", payload: { id: "old" } })}\n`)
+      await scanArtifactLogs({
+        home,
+        sources: [{ client: "codex", path: log }],
+        initialBaseline: false,
+      })
+      const replacement = [
+        { type: "session_meta", payload: { id: "replacement-session-with-a-long-name" } },
+        {
+          type: "response_item",
+          payload: {
+            type: "function_call",
+            name: "mcp__derive__read",
+            call_id: "replacement-read",
+            arguments: "{}",
+          },
+        },
+        {
+          type: "response_item",
+          payload: {
+            type: "function_call_output",
+            call_id: "replacement-read",
+            output: JSON.stringify({ short_id: "replace1", version: 3 }),
+          },
+        },
+      ]
+      writeFileSync(log, `${replacement.map(JSON.stringify).join("\n")}\n`)
+      expect(
+        (await scanArtifactLogs({ home, sources: [{ client: "codex", path: log }] })).events,
+      ).toEqual([expect.objectContaining({ artifact_short_id: "replace1", artifact_version: 3 })])
+    } finally {
+      if (priorConfig === undefined) delete process.env.DERIVE_CONFIG_DIR
+      else process.env.DERIVE_CONFIG_DIR = priorConfig
+    }
+  })
+
+  it("applies since to each event in a recently modified log", async () => {
+    const root = mkdtempSync(join(tmpdir(), "derive-artifact-scan-since-"))
+    dirs.push(root)
+    const home = join(root, "home")
+    const config = join(root, "config")
+    const priorConfig = process.env.DERIVE_CONFIG_DIR
+    process.env.DERIVE_CONFIG_DIR = config
+    try {
+      const log = join(home, ".codex", "sessions", "session.jsonl")
+      mkdirSync(join(home, ".codex", "sessions"), { recursive: true })
+      const records = (callId, timestamp, shortId) => [
+        {
+          type: "response_item",
+          timestamp,
+          payload: {
+            type: "function_call",
+            name: "mcp__derive__read",
+            call_id: callId,
+            arguments: "{}",
+          },
+        },
+        {
+          type: "response_item",
+          timestamp,
+          payload: {
+            type: "function_call_output",
+            call_id: callId,
+            output: JSON.stringify({ short_id: shortId, version: 1 }),
+          },
+        },
+      ]
+      writeFileSync(
+        log,
+        `${[
+          ...records("old", "2026-01-01T00:00:00.000Z", "old12345"),
+          ...records("new", "2026-09-07T00:00:00.000Z", "new12345"),
+        ]
+          .map(JSON.stringify)
+          .join("\n")}\n`,
+      )
+      expect(
+        (
+          await scanArtifactLogs({
+            home,
+            now: Date.parse("2026-09-08"),
+          })
+        ).events,
+      ).toEqual([])
+      const result = await scanArtifactLogs({
+        home,
+        since: "30d",
+        now: Date.parse("2026-09-08"),
+      })
+      expect(result.events.map((event) => event.artifact_short_id)).toEqual(["new12345"])
+    } finally {
+      if (priorConfig === undefined) delete process.env.DERIVE_CONFIG_DIR
+      else process.env.DERIVE_CONFIG_DIR = priorConfig
+    }
+  })
+
+  it("reads a new client log after the initial baseline", async () => {
+    const root = mkdtempSync(join(tmpdir(), "derive-artifact-scan-new-client-"))
+    dirs.push(root)
+    const home = join(root, "home")
+    const config = join(root, "config")
+    const priorConfig = process.env.DERIVE_CONFIG_DIR
+    process.env.DERIVE_CONFIG_DIR = config
+    try {
+      const codexLog = join(home, ".codex", "sessions", "existing.jsonl")
+      mkdirSync(join(home, ".codex", "sessions"), { recursive: true })
+      writeFileSync(codexLog, `${JSON.stringify({ type: "session_meta" })}\n`)
+      await scanArtifactLogs({ home })
+
+      const claudeLog = join(home, ".claude", "projects", "new", "session.jsonl")
+      mkdirSync(join(home, ".claude", "projects", "new"), { recursive: true })
+      writeFileSync(
+        claudeLog,
+        `${[
+          {
+            type: "assistant",
+            timestamp: "2026-09-07T12:02:00.000Z",
+            sessionId: "new-claude-session",
+            message: {
+              content: [{ type: "tool_use", id: "new-read", name: "mcp__derive__read", input: {} }],
+            },
+          },
+          {
+            type: "user",
+            timestamp: "2026-09-07T12:02:01.000Z",
+            sessionId: "new-claude-session",
+            message: {
+              content: [
+                {
+                  type: "tool_result",
+                  tool_use_id: "new-read",
+                  content: JSON.stringify({ short_id: "new12345", version: 2 }),
+                },
+              ],
+            },
+          },
+        ]
+          .map(JSON.stringify)
+          .join("\n")}\n`,
+      )
+      expect((await scanArtifactLogs({ home })).events).toEqual([
+        expect.objectContaining({
+          artifact_short_id: "new12345",
+          artifact_version: 2,
+          client: "claude",
+        }),
+      ])
+    } finally {
+      if (priorConfig === undefined) delete process.env.DERIVE_CONFIG_DIR
+      else process.env.DERIVE_CONFIG_DIR = priorConfig
+    }
+  })
+
+  it("baselines each client when a filtered scan reaches it first", async () => {
+    const root = mkdtempSync(join(tmpdir(), "derive-artifact-scan-client-baseline-"))
+    dirs.push(root)
+    const home = join(root, "home")
+    const config = join(root, "config")
+    const priorConfig = process.env.DERIVE_CONFIG_DIR
+    process.env.DERIVE_CONFIG_DIR = config
+    try {
+      const codexLog = join(home, ".codex", "sessions", "codex.jsonl")
+      const claudeLog = join(home, ".claude", "projects", "old", "claude.jsonl")
+      mkdirSync(join(home, ".codex", "sessions"), { recursive: true })
+      mkdirSync(join(home, ".claude", "projects", "old"), { recursive: true })
+      writeFileSync(codexLog, `${JSON.stringify({ type: "session_meta" })}\n`)
+      writeFileSync(
+        claudeLog,
+        `${[
+          {
+            type: "assistant",
+            timestamp: "2026-09-07T12:00:00.000Z",
+            sessionId: "old-claude-session",
+            message: {
+              content: [{ type: "tool_use", id: "old-read", name: "mcp__derive__read" }],
+            },
+          },
+          {
+            type: "user",
+            timestamp: "2026-09-07T12:00:01.000Z",
+            sessionId: "old-claude-session",
+            message: {
+              content: [
+                {
+                  type: "tool_result",
+                  tool_use_id: "old-read",
+                  content: JSON.stringify({ short_id: "old12345", version: 1 }),
+                },
+              ],
+            },
+          },
+        ]
+          .map(JSON.stringify)
+          .join("\n")}\n`,
+      )
+
+      expect((await scanArtifactLogs({ home, client: "codex" })).events).toEqual([])
+      expect((await scanArtifactLogs({ home })).events).toEqual([])
+      writeFileSync(
+        claudeLog,
+        `${[
+          {
+            type: "assistant",
+            timestamp: "2026-09-07T12:01:00.000Z",
+            sessionId: "old-claude-session",
+            message: {
+              content: [{ type: "tool_use", id: "new-read", name: "mcp__derive__read" }],
+            },
+          },
+          {
+            type: "user",
+            timestamp: "2026-09-07T12:01:01.000Z",
+            sessionId: "old-claude-session",
+            message: {
+              content: [
+                {
+                  type: "tool_result",
+                  tool_use_id: "new-read",
+                  content: JSON.stringify({ short_id: "new12345", version: 2 }),
+                },
+              ],
+            },
+          },
+        ]
+          .map(JSON.stringify)
+          .join("\n")}\n`,
+        { flag: "a" },
+      )
+      expect((await scanArtifactLogs({ home })).events).toEqual([
+        expect.objectContaining({ artifact_short_id: "new12345", client: "claude" }),
+      ])
+    } finally {
+      if (priorConfig === undefined) delete process.env.DERIVE_CONFIG_DIR
+      else process.env.DERIVE_CONFIG_DIR = priorConfig
+    }
+  })
+
+  it("replaces the narrow Skill hook with one generic session-end scan", () => {
+    const home = mkdtempSync(join(tmpdir(), "derive-scan-setup-"))
+    dirs.push(home)
+    const hooks = join(home, ".codex", "hooks.json")
+    mkdirSync(join(home, ".codex"), { recursive: true })
+    writeFileSync(
+      hooks,
+      JSON.stringify({
+        hooks: {
+          SessionEnd: [
+            {
+              hooks: [
+                {
+                  type: "command",
+                  command: '"/usr/bin/node" "/derive.js" skill scan --quiet',
+                  async: true,
+                },
+              ],
+            },
+          ],
+        },
+      }),
+    )
+    const result = setupDeriveScan({
+      home,
+      node: "/usr/bin/node",
+      cli: "/derive.js",
+      client: "codex",
+      activate: false,
+    })
+    expect(result.hooks[0].changed).toBe(true)
+    const config = JSON.parse(readFileSync(hooks, "utf8"))
+    expect(config.hooks.SessionEnd).toHaveLength(1)
+    expect(config.hooks.SessionEnd[0].hooks[0].command).toBe(
+      '"/usr/bin/node" "/derive.js" scan --quiet --client codex',
+    )
+  })
+
+  it("baselines both scanners on the first generic command", async () => {
+    const project = mkdtempSync(join(tmpdir(), "derive-generic-scan-baseline-"))
+    dirs.push(project)
+    const home = join(project, "home")
+    const received = []
+    const server = http.createServer((request, response) => {
+      if (request.url === "/v1/workspaces") {
+        response.writeHead(200, { "content-type": "application/json" })
+        response.end(JSON.stringify({ workspaces: [] }))
+        return
+      }
+      let body = ""
+      request.on("data", (chunk) => (body += chunk))
+      request.on("end", () => {
+        received.push({ path: request.url, body: JSON.parse(body || "{}") })
+        response.writeHead(200, { "content-type": "application/json" })
+        response.end(JSON.stringify({ recorded: [], rejected: [], coverage: 1 }))
+      })
+    })
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve))
+    servers.push(server)
+    const base = `http://127.0.0.1:${server.address().port}`
+    const log = join(home, ".codex", "sessions", "session.jsonl")
+    mkdirSync(join(home, ".codex", "sessions"), { recursive: true })
+    writeFileSync(
+      log,
+      `${JSON.stringify({
+        type: "response_item",
+        timestamp: new Date().toISOString(),
+        payload: {
+          type: "function_call_output",
+          call_id: "old-read",
+          output: JSON.stringify({ short_id: "artifact123", version: 1 }),
+        },
+      })}\n`,
+    )
+
+    const result = await run(project, base, ["scan", "--json"], { HOME: home })
+    expect(result.status).toBe(0)
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      artifacts: { found: 0, uploaded: 0, rejected: 0, pending: 0 },
+      skills: { found: 0, uploaded: 0, pending: 0 },
+    })
+    expect(received).toEqual([
+      expect.objectContaining({
+        path: "/v1/artifact-scan/batch",
+        body: { events: [], coverage: [expect.objectContaining({ client: "codex" })] },
+      }),
+    ])
+  })
+
+  it("uploads generic artifact receipts and removes accepted events from the spool", async () => {
+    const project = mkdtempSync(join(tmpdir(), "derive-generic-scan-upload-"))
+    dirs.push(project)
+    const home = join(project, "home")
+    const received = []
+    const server = http.createServer((request, response) => {
+      if (request.url === "/v1/workspaces") {
+        response.writeHead(200, { "content-type": "application/json" })
+        response.end(JSON.stringify({ workspaces: [] }))
+        return
+      }
+      let body = ""
+      request.on("data", (chunk) => (body += chunk))
+      request.on("end", () => {
+        const parsed = JSON.parse(body || "{}")
+        received.push({ path: request.url, body: parsed })
+        response.writeHead(200, { "content-type": "application/json" })
+        response.end(
+          JSON.stringify({
+            recorded: (parsed.events ?? []).map((event) => event.event_id),
+            rejected: [],
+            coverage: parsed.coverage?.length ?? 0,
+          }),
+        )
+      })
+    })
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve))
+    servers.push(server)
+    const base = `http://127.0.0.1:${server.address().port}`
+    const log = join(home, ".codex", "sessions", "session.jsonl")
+    mkdirSync(join(home, ".codex", "sessions"), { recursive: true })
+    writeFileSync(
+      log,
+      `${JSON.stringify({
+        type: "session_meta",
+        timestamp: new Date().toISOString(),
+        payload: { id: "upload-session" },
+      })}\n${JSON.stringify({
+        type: "response_item",
+        timestamp: new Date().toISOString(),
+        payload: {
+          type: "function_call",
+          name: "mcp__derive__read",
+          call_id: "upload-read",
+          arguments: "{}",
+        },
+      })}\n${JSON.stringify({
+        type: "response_item",
+        timestamp: new Date().toISOString(),
+        payload: {
+          type: "function_call_output",
+          call_id: "upload-read",
+          output: JSON.stringify({ short_id: "artifact123", version: 7 }),
+        },
+      })}\n`,
+    )
+
+    const result = await run(project, base, ["scan", "--since", "30d", "--json"], {
+      HOME: home,
+    })
+    expect(result.status).toBe(0)
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      artifacts: { found: 1, uploaded: 1, pending: 0 },
+    })
+    expect(received).toHaveLength(1)
+    expect(received[0]).toMatchObject({
+      path: "/v1/artifact-scan/batch",
+      body: {
+        events: [
+          expect.objectContaining({
+            artifact_short_id: "artifact123",
+            artifact_version: 7,
+            action: "read",
+          }),
+        ],
+      },
+    })
+    expect(JSON.stringify(received[0])).not.toContain("upload-session")
+  })
+
+  it("probes eligible workspaces before settling an artifact receipt", async () => {
+    const project = mkdtempSync(join(tmpdir(), "derive-generic-scan-workspaces-"))
+    dirs.push(project)
+    const home = join(project, "home")
+    const attempts = []
+    const server = http.createServer((request, response) => {
+      if (request.url === "/v1/workspaces") {
+        response.writeHead(200, { "content-type": "application/json" })
+        response.end(
+          JSON.stringify({
+            active: "workspace-a",
+            workspaces: [
+              { id: "workspace-a", name: "A", role: "owner" },
+              { id: "workspace-b", name: "B", role: "owner" },
+            ],
+          }),
+        )
+        return
+      }
+      let body = ""
+      request.on("data", (chunk) => (body += chunk))
+      request.on("end", () => {
+        const parsed = JSON.parse(body || "{}")
+        const workspace = request.headers["x-derive-workspace"]
+        attempts.push({
+          workspace,
+          events: parsed.events.length,
+          coverage: parsed.coverage.length,
+        })
+        const ids = parsed.events.map((event) => event.event_id)
+        response.writeHead(200, { "content-type": "application/json" })
+        response.end(
+          JSON.stringify(
+            workspace === "workspace-b"
+              ? { recorded: ids, rejected: [], coverage: parsed.coverage.length }
+              : {
+                  recorded: [],
+                  rejected: ids.map((event_id) => ({
+                    event_id,
+                    reason: "artifact_unavailable",
+                  })),
+                  coverage: parsed.coverage.length,
+                },
+          ),
+        )
+      })
+    })
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve))
+    servers.push(server)
+    const base = `http://127.0.0.1:${server.address().port}`
+    const log = join(home, ".codex", "sessions", "session.jsonl")
+    mkdirSync(join(home, ".codex", "sessions"), { recursive: true })
+    writeFileSync(
+      log,
+      `${[
+        {
+          type: "session_meta",
+          timestamp: new Date().toISOString(),
+          payload: { id: "workspace-session" },
+        },
+        {
+          type: "response_item",
+          timestamp: new Date().toISOString(),
+          payload: {
+            type: "function_call",
+            name: "mcp__derive__read",
+            call_id: "workspace-read",
+            arguments: "{}",
+          },
+        },
+        {
+          type: "response_item",
+          timestamp: new Date().toISOString(),
+          payload: {
+            type: "function_call_output",
+            call_id: "workspace-read",
+            output: JSON.stringify({ short_id: "workspace123", version: 1 }),
+          },
+        },
+      ]
+        .map(JSON.stringify)
+        .join("\n")}\n`,
+    )
+
+    const result = await run(project, base, ["scan", "--since", "30d", "--json"], {
+      HOME: home,
+    })
+    expect(result.status).toBe(0)
+    expect(JSON.parse(result.stdout).artifacts).toEqual({
+      found: 1,
+      uploaded: 1,
+      rejected: 0,
+      pending: 0,
+    })
+    expect(attempts).toEqual([
+      { workspace: "workspace-a", events: 1, coverage: 1 },
+      { workspace: "workspace-b", events: 1, coverage: 0 },
+    ])
+  })
+
+  it("keeps an unavailable receipt until another server accepts it", async () => {
+    const project = mkdtempSync(join(tmpdir(), "derive-generic-scan-server-retry-"))
+    dirs.push(project)
+    const home = join(project, "home")
+    const makeServer = (workspace, accepts) =>
+      http.createServer((request, response) => {
+        if (request.url === "/v1/workspaces") {
+          response.writeHead(200, { "content-type": "application/json" })
+          response.end(
+            JSON.stringify({
+              active: workspace,
+              workspaces: [{ id: workspace, name: workspace, role: "owner" }],
+            }),
+          )
+          return
+        }
+        let body = ""
+        request.on("data", (chunk) => (body += chunk))
+        request.on("end", () => {
+          const parsed = JSON.parse(body || "{}")
+          const ids = parsed.events.map((event) => event.event_id)
+          response.writeHead(200, { "content-type": "application/json" })
+          response.end(
+            JSON.stringify(
+              accepts
+                ? { recorded: ids, rejected: [], coverage: parsed.coverage.length }
+                : {
+                    recorded: [],
+                    rejected: ids.map((event_id) => ({
+                      event_id,
+                      reason: "artifact_unavailable",
+                    })),
+                    coverage: parsed.coverage.length,
+                  },
+            ),
+          )
+        })
+      })
+    const firstServer = makeServer("workspace-a", false)
+    const secondServer = makeServer("workspace-b", true)
+    await new Promise((resolve) => firstServer.listen(0, "127.0.0.1", resolve))
+    await new Promise((resolve) => secondServer.listen(0, "127.0.0.1", resolve))
+    servers.push(firstServer, secondServer)
+    const firstBase = `http://127.0.0.1:${firstServer.address().port}`
+    const secondBase = `http://127.0.0.1:${secondServer.address().port}`
+    const log = join(home, ".codex", "sessions", "session.jsonl")
+    mkdirSync(join(home, ".codex", "sessions"), { recursive: true })
+    const timestamp = new Date().toISOString()
+    writeFileSync(
+      log,
+      `${[
+        { type: "session_meta", timestamp, payload: { id: "cross-server-session" } },
+        {
+          type: "response_item",
+          timestamp,
+          payload: {
+            type: "function_call",
+            name: "mcp__derive__read",
+            call_id: "cross-server-read",
+            arguments: "{}",
+          },
+        },
+        {
+          type: "response_item",
+          timestamp,
+          payload: {
+            type: "function_call_output",
+            call_id: "cross-server-read",
+            output: JSON.stringify({ short_id: "server123", version: 1 }),
+          },
+        },
+      ]
+        .map(JSON.stringify)
+        .join("\n")}\n`,
+    )
+
+    const first = await run(project, firstBase, ["scan", "--since", "30d", "--json"], {
+      HOME: home,
+    })
+    expect(first.status).toBe(0)
+    expect(JSON.parse(first.stdout).artifacts).toMatchObject({ uploaded: 0, pending: 1 })
+    const second = await run(project, secondBase, ["scan", "--json"], { HOME: home })
+    expect(second.status).toBe(0)
+    expect(JSON.parse(second.stdout).artifacts).toMatchObject({
+      found: 0,
+      uploaded: 1,
+      pending: 0,
+    })
   })
 })

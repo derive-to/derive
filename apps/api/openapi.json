@@ -8691,6 +8691,123 @@
                                 "finishedAt"
                               ]
                             }
+                          },
+                          "activity": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "id": {
+                                  "type": "string"
+                                },
+                                "nodeId": {
+                                  "type": "string"
+                                },
+                                "attempt": {
+                                  "type": "integer"
+                                },
+                                "artifactShortId": {
+                                  "type": "string"
+                                },
+                                "artifactVersion": {
+                                  "type": "integer"
+                                },
+                                "artifactTitle": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "role": {
+                                  "type": "string",
+                                  "enum": [
+                                    "output",
+                                    "evidence",
+                                    "input"
+                                  ]
+                                },
+                                "source": {
+                                  "type": "string",
+                                  "enum": [
+                                    "observed",
+                                    "suggested"
+                                  ]
+                                },
+                                "createdAt": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "nodeId",
+                                "attempt",
+                                "artifactShortId",
+                                "artifactVersion",
+                                "artifactTitle",
+                                "role",
+                                "source",
+                                "createdAt"
+                              ]
+                            }
+                          },
+                          "suggestions": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "id": {
+                                  "type": "string"
+                                },
+                                "nodeId": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "attempt": {
+                                  "type": "integer",
+                                  "nullable": true
+                                },
+                                "artifactShortId": {
+                                  "type": "string"
+                                },
+                                "artifactVersion": {
+                                  "type": "integer"
+                                },
+                                "artifactTitle": {
+                                  "type": "string",
+                                  "nullable": true
+                                },
+                                "role": {
+                                  "type": "string",
+                                  "enum": [
+                                    "output",
+                                    "evidence",
+                                    "input"
+                                  ]
+                                },
+                                "source": {
+                                  "type": "string",
+                                  "enum": [
+                                    "suggested"
+                                  ]
+                                },
+                                "reason": {
+                                  "type": "string"
+                                },
+                                "createdAt": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "nodeId",
+                                "attempt",
+                                "artifactShortId",
+                                "artifactVersion",
+                                "artifactTitle",
+                                "role",
+                                "source",
+                                "reason",
+                                "createdAt"
+                              ]
+                            }
                           }
                         },
                         "required": [
@@ -8704,7 +8821,9 @@
                           "createdAt",
                           "startedAt",
                           "finishedAt",
-                          "attempts"
+                          "attempts",
+                          "activity",
+                          "suggestions"
                         ]
                       }
                     }
