@@ -466,6 +466,7 @@ export const workflowStepAttempt = sqliteTable(
     session_id: text("session_id"),
     decision: text("decision"),
     selected_routes: text("selected_routes"),
+    route_sources: text("route_sources"),
     route_basis: text("route_basis"),
     result_artifact_id: text("result_artifact_id"),
     output: text("output"),

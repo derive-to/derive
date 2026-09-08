@@ -345,6 +345,7 @@ CREATE TABLE IF NOT EXISTS workflow_step_attempt (
   session_id TEXT,
   decision TEXT,
   selected_routes TEXT,
+  route_sources TEXT,
   route_basis TEXT,
   result_artifact_id TEXT,
   output TEXT,

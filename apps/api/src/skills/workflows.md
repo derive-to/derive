@@ -245,6 +245,19 @@ If the person stops a run before an attempt exists, call
 `use({workflow_run:{action:"cancel",run_id:run.id}})`. Cancellation is idempotent. Inspect the run
 after a concurrent change, then retry if Derive reports a conflict.
 
+Each new attempt records the route receipts that opened it. A route cannot open the same node
+again after that node succeeds. Failed and cancelled retries reuse their recorded route sources.
+A run created before route provenance was stored cannot repeat a successful node; start a new run.
+Derive enforces the attempt cap before a receipt selects another round. At the cap, choose an authored
+exit route or report failure. A run cannot succeed while a fresh selected route remains unstarted.
+
+Time, cost, and stagnation bounds remain evaluator duties. Derive does not yet store the measurements
+needed to enforce them. Report a failed or cancelled receipt when an authored stop rule applies.
+
+A failed or cancelled Context can report its first final receipt after session failure is observed.
+That receipt stores its error, output, and route explanation. Replaying it returns the same result;
+a different receipt cannot replace it.
+
 Human and terminal nodes use the same receipt shape without a Context session. A human receipt's
 `decision` must be one of that node's authored options. Pass `finish_run:"succeeded"` (or the
 matching failure/cancellation state) on the final receipt.

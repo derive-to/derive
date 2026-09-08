@@ -8,6 +8,7 @@ import type { LinkRole, Listed, Role, WorkspaceAccess } from "./roles"
 import type { SharedStateAction } from "./shared-state"
 import type { SortMode } from "./sort"
 import type {
+  WorkflowAttemptStateGuard,
   WorkflowExecutionLane,
   WorkflowRequestedExecution,
   WorkflowRunStatus,
@@ -2412,6 +2413,7 @@ export interface WorkflowRunStore {
   createWorkflowStepAttempt(
     orgId: string,
     attempt: NewWorkflowStepAttempt,
+    expectedState?: WorkflowAttemptStateGuard,
   ): Promise<WorkflowStepAttemptRecord>
   getWorkflowStepAttemptBySession(
     sessionId: string,
@@ -3402,6 +3404,8 @@ export interface WorkflowStepAttemptRecord {
   decision: string | null
   /** JSON-encoded destination node ids selected by the router. */
   selected_routes: string | null
+  /** JSON attempt ids whose selected routes opened this attempt; null means legacy. */
+  route_sources: string | null
   /** Explanation captured when the route was selected. */
   route_basis: string | null
   /** Primary result artifact short id, when the node produced one. */
@@ -3420,6 +3424,7 @@ interface NewWorkflowStepAttemptBase {
   workflow_run_id: string
   node_id: string
   attempt: number
+  route_sources?: string
   created_at?: string
 }
 
@@ -3446,6 +3451,8 @@ export type NewWorkflowStepAttempt = NewWorkflowStepAttemptBase &
   )
 
 export interface WorkflowStepAttemptTransition {
+  /** Seal the first receipt after a Context session observed failure or cancellation. */
+  recordReceipt?: boolean
   status: WorkflowStepAttemptStatus
   at: string
   sessionId?: string | null

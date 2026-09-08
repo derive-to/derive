@@ -5639,6 +5639,157 @@ export function runStoreContract(
       expect(await store.getWorkflowStepAttemptBySession(sessionId, `org_${uuid()}`)).toBeNull()
     })
 
+    it("seals observed Context failure receipts once and preserves route sources", async () => {
+      const run = await store.createWorkflowRun({
+        id: uuid(),
+        org_id: ORG,
+        workflow_artifact_id: `art_${uuid()}`,
+        workflow_version: 1,
+        workflow_blob_key: `blob_${uuid()}`,
+        workflow_content_type: "text/html",
+        diagram_id: "failure",
+        reason: "test",
+      })
+      const step = await store.createWorkflowStepAttempt(ORG, {
+        id: uuid(),
+        workflow_run_id: run.id,
+        node_id: "research",
+        attempt: 1,
+        kind: "context",
+        context_id: `ctx_${uuid()}`,
+        context_manifest_artifact_id: `art_${uuid()}`,
+        context_version: 1,
+        context_blob_key: `blob_${uuid()}`,
+        context_content_type: "text/markdown",
+        route_sources: "[]",
+      })
+      expect(step.route_sources).toBe("[]")
+      const failed = await store.transitionWorkflowStepAttempt(
+        step.id,
+        run.id,
+        ORG,
+        { status: "queued", stateRevision: 0 },
+        { status: "failed", at: "2026-09-08T01:00:00.000Z" },
+      )
+      expect(failed?.status).toBe("failed")
+      const expected = { status: "failed" as const, stateRevision: 1 }
+      const receipt = {
+        status: "failed" as const,
+        at: "2026-09-08T01:01:00.000Z",
+        recordReceipt: true,
+        selectedRoutes: "[]",
+        error: "Provider failed",
+      }
+      expect(
+        await store.transitionWorkflowStepAttempt(
+          step.id,
+          run.id,
+          `org_${uuid()}`,
+          expected,
+          receipt,
+        ),
+      ).toBeNull()
+      expect(
+        await store.transitionWorkflowStepAttempt(step.id, run.id, ORG, expected, {
+          ...receipt,
+          recordReceipt: false,
+        }),
+      ).toBeNull()
+      const guardedInput = {
+        id: uuid(),
+        workflow_run_id: run.id,
+        node_id: "concurrent",
+        attempt: 1,
+        kind: "terminal" as const,
+        route_sources: "[]",
+      }
+      await expect(
+        store.createWorkflowStepAttempt(ORG, guardedInput, { count: 0, revisionSum: 1 }),
+      ).rejects.toThrow("Workflow attempts changed")
+      await expect(
+        store.createWorkflowStepAttempt(ORG, guardedInput, { count: 1, revisionSum: 0 }),
+      ).rejects.toThrow("Workflow attempts changed")
+      expect(await store.listWorkflowStepAttempts(run.id, ORG)).toHaveLength(1)
+      const concurrent = await store.createWorkflowStepAttempt(ORG, guardedInput, {
+        count: 1,
+        revisionSum: 1,
+      })
+      expect(
+        await store.transitionWorkflowStepAttempt(
+          step.id,
+          run.id,
+          ORG,
+          { ...expected, attemptState: { count: 1, revisionSum: 1 } },
+          receipt,
+        ),
+      ).toBeNull()
+      await store.transitionWorkflowStepAttempt(
+        concurrent.id,
+        run.id,
+        ORG,
+        { status: "queued", stateRevision: 0 },
+        { status: "failed", at: receipt.at },
+      )
+      expect(
+        await store.transitionWorkflowStepAttempt(
+          step.id,
+          run.id,
+          ORG,
+          { ...expected, attemptState: { count: 2, revisionSum: 1 } },
+          receipt,
+        ),
+      ).toBeNull()
+      expect(
+        await store.transitionWorkflowStepAttempt(
+          step.id,
+          run.id,
+          ORG,
+          { ...expected, attemptState: { count: 2, revisionSum: 2 } },
+          receipt,
+        ),
+      ).toMatchObject({
+        status: "failed",
+        state_revision: 2,
+        error: "Provider failed",
+        selected_routes: "[]",
+        finished_at: failed?.finished_at,
+        route_sources: "[]",
+      })
+      expect(
+        await store.transitionWorkflowStepAttempt(
+          step.id,
+          run.id,
+          ORG,
+          { ...expected, stateRevision: 2 },
+          { ...receipt, error: "Rewrite history" },
+        ),
+      ).toBeNull()
+      expect(
+        await store.transitionWorkflowRun(
+          run.id,
+          ORG,
+          { status: "queued", stateRevision: 0, attemptState: { count: 1, revisionSum: 2 } },
+          { status: "failed", at: receipt.at },
+        ),
+      ).toBeNull()
+      expect(
+        await store.transitionWorkflowRun(
+          run.id,
+          ORG,
+          { status: "queued", stateRevision: 0, attemptState: { count: 2, revisionSum: 2 } },
+          { status: "failed", at: receipt.at },
+        ),
+      ).toBeNull()
+      expect(
+        await store.transitionWorkflowRun(
+          run.id,
+          ORG,
+          { status: "queued", stateRevision: 0, attemptState: { count: 2, revisionSum: 3 } },
+          { status: "failed", at: receipt.at },
+        ),
+      ).toMatchObject({ status: "failed" })
+    })
+
     it("finishRun is a strict running → terminal transition (guards the ledger)", async () => {
       const agentId = uuid()
       // A queued (never-claimed) run can't be finished — no clobbering the queue.
