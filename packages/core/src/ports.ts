@@ -8,6 +8,7 @@ import type { LinkRole, Listed, Role, WorkspaceAccess } from "./roles"
 import type { SharedStateAction } from "./shared-state"
 import type { SortMode } from "./sort"
 import type {
+  WorkflowAttemptStateGuard,
   WorkflowExecutionLane,
   WorkflowRequestedExecution,
   WorkflowRunStatus,
@@ -633,6 +634,11 @@ export interface ArtifactStore {
   /** Batch-load artifacts by internal id in ONE query (id ∈ ids). Order is unspecified;
    *  callers key by `id`. Empty ids ⇒ []. Use this over a per-row getArtifactById loop. */
   getArtifactsByIds(ids: string[]): Promise<ArtifactRecord[]>
+  workflowVersionIsPinned(artifactId: string, n: number): Promise<boolean>
+  getWorkflowPublishReceipt(key: WorkflowPublishKey): Promise<WorkflowPublishReceiptRecord | null>
+  /** Append a version, record exact activity, and seal a retry receipt in one transaction.
+   * A matching retry returns the original receipt. A changed request hash fails. */
+  publishWorkflowVersion(input: WorkflowVersionPublish): Promise<WorkflowPublishReceiptRecord>
   /** Appends the next version and bumps current_version. */
   addVersion(artifactId: string, v: NewVersion): Promise<VersionRecord>
   /**
@@ -2412,6 +2418,7 @@ export interface WorkflowRunStore {
   createWorkflowStepAttempt(
     orgId: string,
     attempt: NewWorkflowStepAttempt,
+    expectedState?: WorkflowAttemptStateGuard,
   ): Promise<WorkflowStepAttemptRecord>
   getWorkflowStepAttemptBySession(
     sessionId: string,
@@ -3402,6 +3409,8 @@ export interface WorkflowStepAttemptRecord {
   decision: string | null
   /** JSON-encoded destination node ids selected by the router. */
   selected_routes: string | null
+  /** JSON attempt ids whose selected routes opened this attempt; null means legacy. */
+  route_sources: string | null
   /** Explanation captured when the route was selected. */
   route_basis: string | null
   /** Primary result artifact short id, when the node produced one. */
@@ -3420,6 +3429,7 @@ interface NewWorkflowStepAttemptBase {
   workflow_run_id: string
   node_id: string
   attempt: number
+  route_sources?: string
   created_at?: string
 }
 
@@ -3446,6 +3456,8 @@ export type NewWorkflowStepAttempt = NewWorkflowStepAttemptBase &
   )
 
 export interface WorkflowStepAttemptTransition {
+  /** Seal the first receipt after a Context session observed failure or cancellation. */
+  recordReceipt?: boolean
   status: WorkflowStepAttemptStatus
   at: string
   sessionId?: string | null
@@ -3488,6 +3500,46 @@ export interface NewWorkflowArtifactActivity {
   role: WorkflowArtifactActivityRole
   source: WorkflowArtifactActivitySource
   created_at?: string
+}
+
+/** An immutable retry key scoped to one workflow attempt. */
+export interface WorkflowPublishKey {
+  org_id: string
+  workflow_run_id: string
+  node_id: string
+  attempt: number
+  dedupe_key: string
+}
+
+export interface WorkflowPublishReceiptRecord extends WorkflowPublishKey {
+  id: string
+  request_hash: string
+  artifact_id: string
+  artifact_short_id: string
+  artifact_version: number
+  version_id: string
+  activity_id: string
+  role: WorkflowArtifactActivityRole
+  created_at: string
+}
+
+/** All metadata for one bound publish commits together. Blob storage precedes this write. */
+export interface WorkflowVersionPublish {
+  receipt: WorkflowPublishKey & {
+    request_hash: string
+    role: WorkflowArtifactActivityRole
+    activity_id: string
+    created_at: string
+  }
+  target:
+    | { create: NewArtifact; owner_id: string }
+    | {
+        artifact_id: string
+        short_id: string
+        title?: string
+        slug?: string | null
+      }
+  version: NewVersion
 }
 
 /** What a plan pays for: the model (thinking) or the tool broker (hands). */

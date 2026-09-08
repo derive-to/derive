@@ -133,6 +133,9 @@ import type {
   VersionRecord,
   WebhookRecord,
   WorkflowArtifactActivityRecord,
+  WorkflowAttemptStateGuard,
+  WorkflowPublishKey,
+  WorkflowPublishReceiptRecord,
   WorkflowRunRecord,
   WorkflowRunTransition,
   WorkflowStepAttemptRecord,
@@ -162,6 +165,7 @@ import {
   SHARED_STATE_ACTIVITY_LIMIT,
   sortFields,
   WORKSPACE_FACT_ROW_CAP,
+  WorkflowAttemptStateConflictError,
   workflowRunCanTransition,
   workflowStatusIsTerminal,
   workflowStepCanTransition,
@@ -263,6 +267,7 @@ import {
   webhook,
   webhookDelivery,
   workflowArtifactActivity,
+  workflowPublishReceipt,
   workflowRun,
   workflowStepAttempt,
   workspace,
@@ -446,6 +451,7 @@ export const schema = {
   workflowRun,
   workflowStepAttempt,
   workflowArtifactActivity,
+  workflowPublishReceipt,
   artifactScanEvent,
   artifactScanCoverage,
   skillRelation,
@@ -508,6 +514,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   workflowRun: true,
   workflowStepAttempt: true,
   workflowArtifactActivity: true,
+  workflowPublishReceipt: true,
   artifactScanEvent: true,
   artifactScanCoverage: true,
   skillRelation: true,
@@ -1127,6 +1134,21 @@ export function makeRepos(db: SqliteDb) {
           eq(version.artifact_id, artifactId),
           eq(version.n, expected.n),
           eq(version.blob_key, expected.blobKey),
+          notExists(
+            db
+              .select({ id: workflowArtifactActivity.id })
+              .from(workflowArtifactActivity)
+              .where(
+                and(
+                  eq(
+                    workflowArtifactActivity.artifact_short_id,
+                    sql`(select short_id from artifact where id = ${artifactId})`,
+                  ),
+                  eq(workflowArtifactActivity.artifact_version, expected.n),
+                  eq(workflowArtifactActivity.source, "observed"),
+                ),
+              ),
+          ),
         ),
       )
       .returning()
@@ -4706,6 +4728,14 @@ export function makeRepos(db: SqliteDb) {
   ): Promise<WorkflowRunRecord | null> => {
     if (!workflowRunCanTransition(expected.status, transition.status)) return null
     if (!Number.isInteger(expected.stateRevision) || expected.stateRevision < 0) return null
+    if (
+      expected.attemptState &&
+      (!Number.isSafeInteger(expected.attemptState.count) ||
+        expected.attemptState.count < 0 ||
+        !Number.isSafeInteger(expected.attemptState.revisionSum) ||
+        expected.attemptState.revisionSum < 0)
+    )
+      return null
     const firstStart =
       (expected.status === "queued" || expected.status === "dispatched") &&
       transition.status === "running"
@@ -4743,6 +4773,18 @@ export function makeRepos(db: SqliteDb) {
             eq(workflowRun.org_id, orgId),
             eq(workflowRun.status, expected.status),
             eq(workflowRun.state_revision, expected.stateRevision),
+            expected.attemptState
+              ? and(
+                  eq(
+                    sql`(select count(*) from ${workflowStepAttempt} where ${workflowStepAttempt.workflow_run_id} = ${id})`,
+                    expected.attemptState.count,
+                  ),
+                  eq(
+                    sql`(select coalesce(sum(${workflowStepAttempt.state_revision}), 0) from ${workflowStepAttempt} where ${workflowStepAttempt.workflow_run_id} = ${id})`,
+                    expected.attemptState.revisionSum,
+                  ),
+                )
+              : undefined,
             dispatching ? eq(workflowRun.requested_execution, "github_actions") : undefined,
             workflowStatusIsTerminal(transition.status)
               ? notExists(
@@ -4827,12 +4869,21 @@ export function makeRepos(db: SqliteDb) {
   const createWorkflowStepAttempt = async (
     orgId: string,
     a: NewWorkflowStepAttempt,
+    expectedState?: WorkflowAttemptStateGuard,
   ): Promise<WorkflowStepAttemptRecord> => {
     if (!Number.isInteger(a.attempt) || a.attempt < 1)
       throw new Error("workflow step attempt must be a positive integer")
     if (!a.node_id.trim()) throw new Error("workflow step attempt requires a node id")
     if (!isValidWorkflowStepContextPin(a))
       throw new Error("workflow context attempts require a complete version pin")
+    if (
+      expectedState &&
+      (!Number.isSafeInteger(expectedState.count) ||
+        expectedState.count < 0 ||
+        !Number.isSafeInteger(expectedState.revisionSum) ||
+        expectedState.revisionSum < 0)
+    )
+      throw new Error("workflow attempt state guard must contain nonnegative integers")
     const createdAt = a.created_at ?? new Date().toISOString()
     const context = a.kind === "context" ? a : null
     const created = (await db
@@ -4863,6 +4914,7 @@ export function makeRepos(db: SqliteDb) {
             session_id: sql<string | null>`${context?.session_id ?? null}`.as("session_id"),
             decision: sql<null>`null`.as("decision"),
             selected_routes: sql<null>`null`.as("selected_routes"),
+            route_sources: sql<string | null>`${a.route_sources ?? null}`.as("route_sources"),
             route_basis: sql<null>`null`.as("route_basis"),
             result_artifact_id: sql<null>`null`.as("result_artifact_id"),
             output: sql<null>`null`.as("output"),
@@ -4877,6 +4929,18 @@ export function makeRepos(db: SqliteDb) {
             and(
               eq(workflowRun.id, a.workflow_run_id),
               eq(workflowRun.org_id, orgId),
+              expectedState
+                ? and(
+                    eq(
+                      sql`(select count(*) from ${workflowStepAttempt} where ${workflowStepAttempt.workflow_run_id} = ${a.workflow_run_id})`,
+                      expectedState.count,
+                    ),
+                    eq(
+                      sql`(select coalesce(sum(${workflowStepAttempt.state_revision}), 0) from ${workflowStepAttempt} where ${workflowStepAttempt.workflow_run_id} = ${a.workflow_run_id})`,
+                      expectedState.revisionSum,
+                    ),
+                  )
+                : undefined,
               notInArray(workflowRun.status, ["succeeded", "failed", "cancelled", "timed_out"]),
             ),
           ),
@@ -4886,6 +4950,7 @@ export function makeRepos(db: SqliteDb) {
     if (created) return created
     const parent = await getWorkflowRun(a.workflow_run_id, orgId)
     if (!parent) throw new Error("workflow run not found")
+    if (!workflowStatusIsTerminal(parent.status)) throw new WorkflowAttemptStateConflictError()
     throw new Error("workflow run is already terminal")
   }
   const getWorkflowStepAttemptBySession = async (
@@ -4944,8 +5009,22 @@ export function makeRepos(db: SqliteDb) {
     expected: WorkflowStepTransitionGuard,
     transition: WorkflowStepAttemptTransition,
   ): Promise<WorkflowStepAttemptRecord | null> => {
-    if (!workflowStepCanTransition(expected.status, transition.status)) return null
+    const recordReceipt =
+      transition.recordReceipt === true &&
+      expected.status === transition.status &&
+      (expected.status === "failed" || expected.status === "cancelled") &&
+      transition.selectedRoutes === "[]"
+    if (!recordReceipt && !workflowStepCanTransition(expected.status, transition.status))
+      return null
     if (!Number.isInteger(expected.stateRevision) || expected.stateRevision < 0) return null
+    if (
+      expected.attemptState &&
+      (!Number.isSafeInteger(expected.attemptState.count) ||
+        expected.attemptState.count < 0 ||
+        !Number.isSafeInteger(expected.attemptState.revisionSum) ||
+        expected.attemptState.revisionSum < 0)
+    )
+      return null
     const starts = transition.status === "running" || transition.status === "waiting"
     return (
       ((await db
@@ -4957,7 +5036,9 @@ export function makeRepos(db: SqliteDb) {
           ...(starts
             ? { started_at: sql`coalesce(${workflowStepAttempt.started_at}, ${transition.at})` }
             : {}),
-          ...(workflowStatusIsTerminal(transition.status) ? { finished_at: transition.at } : {}),
+          ...(workflowStatusIsTerminal(transition.status) && !recordReceipt
+            ? { finished_at: transition.at }
+            : {}),
           ...(transition.sessionId !== undefined ? { session_id: transition.sessionId } : {}),
           ...(transition.decision !== undefined ? { decision: transition.decision } : {}),
           ...(transition.selectedRoutes !== undefined
@@ -4976,6 +5057,24 @@ export function makeRepos(db: SqliteDb) {
             eq(workflowStepAttempt.workflow_run_id, workflowRunId),
             eq(workflowStepAttempt.status, expected.status),
             eq(workflowStepAttempt.state_revision, expected.stateRevision),
+            expected.attemptState
+              ? and(
+                  eq(
+                    sql`(select count(*) from ${workflowStepAttempt} where ${workflowStepAttempt.workflow_run_id} = ${workflowRunId})`,
+                    expected.attemptState.count,
+                  ),
+                  eq(
+                    sql`(select coalesce(sum(${workflowStepAttempt.state_revision}), 0) from ${workflowStepAttempt} where ${workflowStepAttempt.workflow_run_id} = ${workflowRunId})`,
+                    expected.attemptState.revisionSum,
+                  ),
+                )
+              : undefined,
+            ...(recordReceipt
+              ? [
+                  eq(workflowStepAttempt.kind, "context"),
+                  isNull(workflowStepAttempt.selected_routes),
+                ]
+              : []),
             inArray(
               workflowStepAttempt.workflow_run_id,
               db
@@ -4989,6 +5088,40 @@ export function makeRepos(db: SqliteDb) {
         .get()) as WorkflowStepAttemptRecord | undefined) ?? null
     )
   }
+  const workflowVersionIsPinned = async (artifactId: string, n: number): Promise<boolean> => {
+    const rows = await db
+      .select({ id: workflowArtifactActivity.id })
+      .from(workflowArtifactActivity)
+      .innerJoin(artifact, eq(artifact.short_id, workflowArtifactActivity.artifact_short_id))
+      .where(
+        and(
+          eq(artifact.id, artifactId),
+          eq(workflowArtifactActivity.artifact_version, n),
+          eq(workflowArtifactActivity.source, "observed"),
+        ),
+      )
+      .limit(1)
+      .all()
+    return rows.length > 0
+  }
+
+  const getWorkflowPublishReceipt = async (
+    key: WorkflowPublishKey,
+  ): Promise<WorkflowPublishReceiptRecord | null> =>
+    ((await db
+      .select()
+      .from(workflowPublishReceipt)
+      .where(
+        and(
+          eq(workflowPublishReceipt.org_id, key.org_id),
+          eq(workflowPublishReceipt.workflow_run_id, key.workflow_run_id),
+          eq(workflowPublishReceipt.node_id, key.node_id),
+          eq(workflowPublishReceipt.attempt, key.attempt),
+          eq(workflowPublishReceipt.dedupe_key, key.dedupe_key),
+        ),
+      )
+      .get()) as WorkflowPublishReceiptRecord | undefined) ?? null
+
   const recordWorkflowArtifactActivity = async (
     a: NewWorkflowArtifactActivity,
   ): Promise<WorkflowArtifactActivityRecord> => {
@@ -6493,6 +6626,8 @@ export function makeRepos(db: SqliteDb) {
     getWorkflowStepAttemptBySession,
     listWorkflowStepAttempts,
     transitionWorkflowStepAttempt,
+    workflowVersionIsPinned,
+    getWorkflowPublishReceipt,
     recordWorkflowArtifactActivity,
     listWorkflowArtifactActivity,
     recordArtifactScanEvent,

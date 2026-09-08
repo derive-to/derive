@@ -205,6 +205,7 @@ derive scan --since 30d
 derive scan setup
 derive scan setup --schedule
 derive scan status
+derive scan status --all --json
 ```
 
 `derive scan` records successful artifact reads and publishes with the exact artifact version. It
@@ -217,9 +218,35 @@ cursor. It checks a small cursor fingerprint before each append scan. If a log w
 truncated and regrown, it safely replays the file through the idempotent receipt API. Pending tool
 calls stay separate by client, session, and source.
 
+If a log file cannot be read, scan continues with healthy files and preserves the failed cursor.
+The command exits with an error. `derive scan status` shows the affected paths and error codes.
+JSON output includes `source_errors`. These local diagnostics are not uploaded. Retry after the
+file becomes readable. Dry runs report the same errors without changing saved state.
+
+Unreadable scan state or an artifact spool stops the scan before it advances a cursor. The scanner preserves
+the spool for recovery. It rejects explicit failed tool results, unrelated integration tools,
+and invalid version values instead of recording them as successful artifact activity.
+Named orchestration results and Derive code-mode reads are supported. Mixed code-mode results
+that include search or other tools are skipped because they do not prove an artifact was read.
+
+Scans hold a process lock while they update their queue and upload receipts. If another scan owns
+the same queue, the command exits with code 75. JSON output includes `code: "scan_in_progress"`.
+Retry after the active scan finishes. Normal exits release the lock. After a forced termination,
+the lock becomes recoverable after two minutes without a heartbeat. Setup uses the same locks,
+so it cannot reset a cursor while a scan uploads receipts. Repeated setup preserves existing
+cursors. Setup repairs old three-second session hooks to allow five minutes for a scan.
+`setup --dry-run` fails before it changes hooks or state; use `scan --dry-run` to preview receipts.
+Status and dry-run commands remain available during an active scan. They do not change local
+queues, cursors, or the install registry. Skill dry runs also resolve legacy project pins in memory.
+
+Status shows pending artifact IDs, versions, actions, clients, event times, and retry reasons.
+`artifact_unavailable` means the selected account could not resolve the artifact in its available
+workspaces. `awaiting_upload` means the receipt has no recorded unavailable result yet. Status shows
+20 receipts by default; `--all` includes the whole pending queue. It omits account and session IDs.
+
 The scanner checks every workspace available to the selected account before it rejects an artifact
 as unavailable. It keeps unresolved receipts in the local spool. A later scan can resolve them after
-an account or server switch. The scanner sends no artifact content while it resolves the target.
+an account switch on the original server. Changing servers never retargets pending receipts. The scanner sends no artifact content while it resolves the target.
 
 The artifact page can show another artifact published later in the same opaque session. This is an
 observed sequence, not provenance. Derive does not create a run, attach the artifact to a node, or

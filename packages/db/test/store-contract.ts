@@ -8,6 +8,7 @@ import type {
   NewWorkflowStepAttempt,
   SortMode,
   SubscriptionRecord,
+  WorkflowVersionPublish,
 } from "@derive/core"
 import {
   DEFAULT_ORG_SETTINGS,
@@ -5637,6 +5638,296 @@ export function runStoreContract(
         id: contextAttempt.id,
       })
       expect(await store.getWorkflowStepAttemptBySession(sessionId, `org_${uuid()}`)).toBeNull()
+    })
+
+    it("commits workflow publishes with exact retry receipts and rolls back partial writes", async () => {
+      const run = await store.createWorkflowRun({
+        id: uuid(),
+        org_id: ORG,
+        workflow_artifact_id: `art_${uuid()}`,
+        workflow_version: 1,
+        workflow_blob_key: `blob_${uuid()}`,
+        workflow_content_type: "text/html",
+        diagram_id: "publish",
+        reason: "test",
+      })
+      const target = newArtifact({ workspace_access: "none", link_role: "none", listed: "none" })
+      const input: WorkflowVersionPublish = {
+        receipt: {
+          org_id: ORG,
+          workflow_run_id: run.id,
+          node_id: "research",
+          attempt: 1,
+          dedupe_key: "first",
+          request_hash: "a".repeat(64),
+          role: "output",
+          activity_id: uuid(),
+          created_at: "2026-09-08T01:00:00.000Z",
+        },
+        target: { create: target, owner_id: "publisher" },
+        version: newVersion({ agent_id: "agent", agent_name: "Agent" }),
+      }
+      const first = await store.publishWorkflowVersion(input)
+      expect(first).toMatchObject({
+        artifact_id: target.id,
+        artifact_short_id: target.short_id,
+        artifact_version: 1,
+        version_id: input.version.id,
+      })
+      expect(await store.getByShortId(target.short_id)).toMatchObject({
+        current_version: 1,
+        workspace_access: "none",
+        link_role: "none",
+      })
+      expect(await store.listArtifactMembers(target.id)).toMatchObject([
+        { user_id: "publisher", role: "owner" },
+      ])
+      expect(await store.getVersion(target.id, 1)).toMatchObject({
+        agent_id: "agent",
+        agent_name: "Agent",
+      })
+      expect(await store.workflowVersionIsPinned(target.id, 1)).toBe(true)
+      expect(
+        await store.replaceCurrentVersion(
+          target.id,
+          { n: 1, blobKey: input.version.blob_key },
+          newVersion(),
+        ),
+      ).toBeNull()
+      expect((await store.getVersion(target.id, 1))?.blob_key).toBe(input.version.blob_key)
+      expect(await store.publishWorkflowVersion(input)).toEqual(first)
+      expect(await store.listVersions(target.id)).toHaveLength(1)
+      const revised: WorkflowVersionPublish = {
+        ...input,
+        receipt: {
+          ...input.receipt,
+          dedupe_key: "second",
+          request_hash: "b".repeat(64),
+          activity_id: uuid(),
+        },
+        target: {
+          artifact_id: target.id,
+          short_id: target.short_id,
+          title: "Updated",
+          slug: "updated",
+        },
+        version: newVersion(),
+      }
+      const competing = await Promise.all([
+        store.publishWorkflowVersion(revised),
+        store.publishWorkflowVersion(revised),
+      ])
+      expect(competing[0]).toEqual(competing[1])
+      expect(competing[0]?.artifact_version).toBe(2)
+      expect(await store.getByShortId(target.short_id)).toMatchObject({
+        current_version: 2,
+        title: "Updated",
+        slug: "updated",
+      })
+      expect(await store.publishWorkflowVersion(input)).toEqual(first)
+      expect(
+        (await store.listWorkflowArtifactActivity(run.id, ORG))
+          .map((item) => item.artifact_version)
+          .sort(),
+      ).toEqual([1, 2])
+      await expect(
+        store.publishWorkflowVersion({
+          ...revised,
+          receipt: { ...revised.receipt, request_hash: "c".repeat(64) },
+        }),
+      ).rejects.toThrow("different request")
+      expect(await store.listVersions(target.id)).toHaveLength(2)
+      expect(
+        await store.getWorkflowPublishReceipt({ ...input.receipt, org_id: `other_${ORG}` }),
+      ).toBeNull()
+
+      // Fail the activity insert after the version and ownership writes. All of
+      // them, including the retry claim, must disappear on every database engine.
+      const abandoned = newArtifact()
+      const broken: WorkflowVersionPublish = {
+        ...input,
+        receipt: { ...input.receipt, dedupe_key: "recover", request_hash: "d".repeat(64) },
+        target: { create: abandoned, owner_id: "publisher" },
+        version: newVersion(),
+      }
+      await expect(store.publishWorkflowVersion(broken)).rejects.toThrow()
+      expect(await store.getWorkflowPublishReceipt(broken.receipt)).toBeNull()
+      expect(await store.getByShortId(abandoned.short_id)).toBeNull()
+      expect(await store.listVersions(abandoned.id)).toHaveLength(0)
+      expect(await store.listArtifactMembers(abandoned.id)).toHaveLength(0)
+      const recovered = await store.publishWorkflowVersion({
+        ...broken,
+        receipt: { ...broken.receipt, activity_id: uuid() },
+      })
+      expect(recovered.artifact_version).toBe(1)
+
+      const missing = newArtifact()
+      const missingInput: WorkflowVersionPublish = {
+        ...revised,
+        receipt: {
+          ...revised.receipt,
+          dedupe_key: "missing",
+          request_hash: "e".repeat(64),
+          activity_id: uuid(),
+        },
+        target: { artifact_id: missing.id, short_id: missing.short_id },
+        version: newVersion(),
+      }
+      await expect(store.publishWorkflowVersion(missingInput)).rejects.toThrow()
+      expect(await store.getWorkflowPublishReceipt(missingInput.receipt)).toBeNull()
+      await store.createArtifact(missing)
+      expect((await store.publishWorkflowVersion(missingInput)).artifact_version).toBe(1)
+    })
+
+    it("seals observed Context failure receipts once and preserves route sources", async () => {
+      const run = await store.createWorkflowRun({
+        id: uuid(),
+        org_id: ORG,
+        workflow_artifact_id: `art_${uuid()}`,
+        workflow_version: 1,
+        workflow_blob_key: `blob_${uuid()}`,
+        workflow_content_type: "text/html",
+        diagram_id: "failure",
+        reason: "test",
+      })
+      const step = await store.createWorkflowStepAttempt(ORG, {
+        id: uuid(),
+        workflow_run_id: run.id,
+        node_id: "research",
+        attempt: 1,
+        kind: "context",
+        context_id: `ctx_${uuid()}`,
+        context_manifest_artifact_id: `art_${uuid()}`,
+        context_version: 1,
+        context_blob_key: `blob_${uuid()}`,
+        context_content_type: "text/markdown",
+        route_sources: "[]",
+      })
+      expect(step.route_sources).toBe("[]")
+      const failed = await store.transitionWorkflowStepAttempt(
+        step.id,
+        run.id,
+        ORG,
+        { status: "queued", stateRevision: 0 },
+        { status: "failed", at: "2026-09-08T01:00:00.000Z" },
+      )
+      expect(failed?.status).toBe("failed")
+      const expected = { status: "failed" as const, stateRevision: 1 }
+      const receipt = {
+        status: "failed" as const,
+        at: "2026-09-08T01:01:00.000Z",
+        recordReceipt: true,
+        selectedRoutes: "[]",
+        error: "Provider failed",
+      }
+      expect(
+        await store.transitionWorkflowStepAttempt(
+          step.id,
+          run.id,
+          `org_${uuid()}`,
+          expected,
+          receipt,
+        ),
+      ).toBeNull()
+      expect(
+        await store.transitionWorkflowStepAttempt(step.id, run.id, ORG, expected, {
+          ...receipt,
+          recordReceipt: false,
+        }),
+      ).toBeNull()
+      const guardedInput = {
+        id: uuid(),
+        workflow_run_id: run.id,
+        node_id: "concurrent",
+        attempt: 1,
+        kind: "terminal" as const,
+        route_sources: "[]",
+      }
+      await expect(
+        store.createWorkflowStepAttempt(ORG, guardedInput, { count: 0, revisionSum: 1 }),
+      ).rejects.toThrow("Workflow attempts changed")
+      await expect(
+        store.createWorkflowStepAttempt(ORG, guardedInput, { count: 1, revisionSum: 0 }),
+      ).rejects.toThrow("Workflow attempts changed")
+      expect(await store.listWorkflowStepAttempts(run.id, ORG)).toHaveLength(1)
+      const concurrent = await store.createWorkflowStepAttempt(ORG, guardedInput, {
+        count: 1,
+        revisionSum: 1,
+      })
+      expect(
+        await store.transitionWorkflowStepAttempt(
+          step.id,
+          run.id,
+          ORG,
+          { ...expected, attemptState: { count: 1, revisionSum: 1 } },
+          receipt,
+        ),
+      ).toBeNull()
+      await store.transitionWorkflowStepAttempt(
+        concurrent.id,
+        run.id,
+        ORG,
+        { status: "queued", stateRevision: 0 },
+        { status: "failed", at: receipt.at },
+      )
+      expect(
+        await store.transitionWorkflowStepAttempt(
+          step.id,
+          run.id,
+          ORG,
+          { ...expected, attemptState: { count: 2, revisionSum: 1 } },
+          receipt,
+        ),
+      ).toBeNull()
+      expect(
+        await store.transitionWorkflowStepAttempt(
+          step.id,
+          run.id,
+          ORG,
+          { ...expected, attemptState: { count: 2, revisionSum: 2 } },
+          receipt,
+        ),
+      ).toMatchObject({
+        status: "failed",
+        state_revision: 2,
+        error: "Provider failed",
+        selected_routes: "[]",
+        finished_at: failed?.finished_at,
+        route_sources: "[]",
+      })
+      expect(
+        await store.transitionWorkflowStepAttempt(
+          step.id,
+          run.id,
+          ORG,
+          { ...expected, stateRevision: 2 },
+          { ...receipt, error: "Rewrite history" },
+        ),
+      ).toBeNull()
+      expect(
+        await store.transitionWorkflowRun(
+          run.id,
+          ORG,
+          { status: "queued", stateRevision: 0, attemptState: { count: 1, revisionSum: 2 } },
+          { status: "failed", at: receipt.at },
+        ),
+      ).toBeNull()
+      expect(
+        await store.transitionWorkflowRun(
+          run.id,
+          ORG,
+          { status: "queued", stateRevision: 0, attemptState: { count: 2, revisionSum: 2 } },
+          { status: "failed", at: receipt.at },
+        ),
+      ).toBeNull()
+      expect(
+        await store.transitionWorkflowRun(
+          run.id,
+          ORG,
+          { status: "queued", stateRevision: 0, attemptState: { count: 2, revisionSum: 3 } },
+          { status: "failed", at: receipt.at },
+        ),
+      ).toMatchObject({ status: "failed" })
     })
 
     it("finishRun is a strict running → terminal transition (guards the ledger)", async () => {

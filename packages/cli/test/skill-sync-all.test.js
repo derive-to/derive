@@ -1,12 +1,26 @@
 import { spawn } from "node:child_process"
 import { createHash } from "node:crypto"
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs"
 import http from "node:http"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { pathToFileURL } from "node:url"
 import { afterEach, describe, expect, it } from "vitest"
-import { commitArtifactScanState, scanArtifactLogs } from "../src/artifact-scan.js"
+import {
+  addToArtifactScanSpool,
+  commitArtifactScanState,
+  scanArtifactLogs,
+} from "../src/artifact-scan.js"
 import { setupDeriveScan } from "../src/derive-scan-setup.js"
+import { lockScan } from "../src/scan-lock.js"
 import { addToSkillScanSpool, recordSkillInstall, scanSkillLogs } from "../src/skill-scan.js"
 import { setupSkillScan } from "../src/skill-scan-setup.js"
 
@@ -427,6 +441,21 @@ describe("derive skill scan", () => {
     expect(second.hooks.every((hook) => !hook.changed)).toBe(true)
     expect(JSON.parse(readFileSync(codexHooks, "utf8"))).toMatchObject({ description: "keep me" })
     expect(readFileSync(first.schedule, "utf8")).toContain("to.derive.skill-scan")
+    const config = JSON.parse(readFileSync(codexHooks, "utf8"))
+    config.hooks.SessionEnd[0].hooks[0].timeout = 3
+    writeFileSync(codexHooks, JSON.stringify(config))
+    expect(
+      setupSkillScan({
+        home: root,
+        node: "/usr/bin/node",
+        cli: "/usr/local/bin/derive",
+        client: "codex",
+        activate: false,
+      }).hooks[0].changed,
+    ).toBe(true)
+    expect(JSON.parse(readFileSync(codexHooks, "utf8")).hooks.SessionEnd[0].hooks[0].timeout).toBe(
+      300,
+    )
   })
 
   it("limits setup hooks and schedules to the selected client", () => {
@@ -615,6 +644,763 @@ describe("derive skill scan", () => {
 })
 
 describe("derive scan", () => {
+  it("retains a failed upload batch and retries it without rescanning receipts", async () => {
+    const project = mkdtempSync(join(tmpdir(), "derive-scan-batch-retry-"))
+    dirs.push(project)
+    const home = join(project, "home")
+    let fail = true
+    const batches = []
+    const server = http.createServer((request, response) => {
+      if (request.url === "/v1/workspaces") {
+        response.writeHead(200, { "content-type": "application/json" })
+        response.end(JSON.stringify({ workspaces: [] }))
+        return
+      }
+      let body = ""
+      request.on("data", (chunk) => (body += chunk))
+      request.on("end", () => {
+        const parsed = JSON.parse(body)
+        batches.push(parsed.events.length)
+        if (fail && batches.length === 2) {
+          response.writeHead(503)
+          response.end("temporary outage")
+        } else {
+          response.writeHead(200, { "content-type": "application/json" })
+          response.end(
+            JSON.stringify({
+              recorded: parsed.events.map((event) => event.event_id),
+              rejected: [],
+            }),
+          )
+        }
+      })
+    })
+    servers.push(server)
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve))
+    const base = `http://127.0.0.1:${server.address().port}`
+    const logs = join(home, ".codex", "sessions")
+    mkdirSync(logs, { recursive: true })
+    const timestamp = new Date().toISOString()
+    const rows = Array.from({ length: 101 }, (_, index) => [
+      {
+        type: "response_item",
+        timestamp,
+        payload: {
+          type: "function_call",
+          name: "mcp__derive__read",
+          call_id: `read-${index}`,
+          arguments: "{}",
+        },
+      },
+      {
+        type: "response_item",
+        timestamp,
+        payload: {
+          type: "function_call_output",
+          call_id: `read-${index}`,
+          output: JSON.stringify({ short_id: "read1234", version: 1 }),
+        },
+      },
+    ]).flat()
+    writeFileSync(
+      join(logs, "batch.jsonl"),
+      `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`,
+    )
+    const first = await run(project, base, ["scan", "--since", "30d", "--quiet", "--json"], {
+      HOME: home,
+    })
+    expect(first.status).toBe(1)
+    expect(JSON.parse(first.stdout).artifacts).toMatchObject({
+      found: 101,
+      uploaded: 100,
+      pending: 1,
+    })
+    fail = false
+    const retry = await run(project, base, ["scan", "--json"], { HOME: home })
+    expect(retry.status).toBe(0)
+    expect(JSON.parse(retry.stdout).artifacts).toMatchObject({ found: 0, uploaded: 1, pending: 0 })
+    expect(batches).toEqual([100, 1, 1])
+    expect(existsSync(join(project, ".derive-test-config", "artifact-scan.lock"))).toBe(false)
+    expect(existsSync(join(project, ".derive-test-config", "skill-scan.lock"))).toBe(false)
+  })
+
+  it.each([
+    ["scan"],
+    ["skill", "scan"],
+  ])("refuses dry-run setup for %j before creating state", async (...args) => {
+    const command = args.filter((item) => typeof item === "string")
+    const project = mkdtempSync(join(tmpdir(), "derive-setup-dry-"))
+    dirs.push(project)
+    const home = join(project, "home")
+    const result = await run(
+      project,
+      "http://127.0.0.1:1",
+      [...command, "setup", "--dry-run", "--json"],
+      { HOME: home },
+    )
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain("--dry-run is for scanning")
+    expect(existsSync(join(home, ".codex"))).toBe(false)
+    expect(existsSync(join(home, ".claude"))).toBe(false)
+    expect(existsSync(join(project, ".derive-test-config"))).toBe(false)
+  })
+
+  const scanFixture = async (work) => {
+    const root = mkdtempSync(join(tmpdir(), "derive-scan-regression-"))
+    dirs.push(root)
+    const previous = process.env.DERIVE_CONFIG_DIR
+    process.env.DERIVE_CONFIG_DIR = root
+    const log = join(root, "session.jsonl")
+    const sources = [{ client: "codex", path: log }]
+    const now = Date.parse("2026-09-08")
+    const records = (name = "mcp__derive__read", output = { short_id: "scan1234", version: 2 }) => [
+      { type: "session_meta", payload: { id: "scan-session" } },
+      {
+        type: "response_item",
+        timestamp: "2026-09-07T12:00:00.000Z",
+        payload: { type: "function_call", name, call_id: "scan-call", arguments: "{}" },
+      },
+      {
+        type: "response_item",
+        timestamp: "2026-09-07T12:00:01.000Z",
+        payload: {
+          type: "function_call_output",
+          call_id: "scan-call",
+          output: JSON.stringify(output),
+        },
+      },
+    ]
+    const write = (rows, append = false) =>
+      writeFileSync(log, `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`, {
+        flag: append ? "a" : "w",
+      })
+    try {
+      await work({ root, log, sources, now, records, write })
+    } finally {
+      if (previous === undefined) delete process.env.DERIVE_CONFIG_DIR
+      else process.env.DERIVE_CONFIG_DIR = previous
+    }
+  }
+
+  it("preserves unreadable scan state", async () => {
+    await scanFixture(async ({ root, sources, records, write, now }) => {
+      write(records())
+      for (const [name, scan] of [
+        ["artifact", scanArtifactLogs],
+        ["skill", scanSkillLogs],
+      ]) {
+        const path = join(root, `${name}-scan.json`)
+        for (const contents of ["{broken", "null", "[]"]) {
+          writeFileSync(path, contents)
+          await expect(scan({ sources, now })).rejects.toThrow("cannot read")
+          expect(readFileSync(path, "utf8")).toBe(contents)
+        }
+      }
+    })
+  })
+
+  for (const [label, scan] of [
+    ["artifact", scanArtifactLogs],
+    ["Skill", scanSkillLogs],
+  ]) {
+    it(`keeps an existing ${label} cursor and pending events when setup runs again`, async () => {
+      await scanFixture(async ({ root, sources, records, write, now }) => {
+        write(records())
+        await scan({ sources, now, baseline: true })
+        const stateFile = join(
+          root,
+          label === "artifact" ? "artifact-scan.json" : "skill-scan.json",
+        )
+        const initialSources = JSON.parse(readFileSync(stateFile, "utf8")).sources
+        write(records(), true)
+        await scan({ sources, now, baseline: true })
+        expect(JSON.parse(readFileSync(stateFile, "utf8")).sources).toEqual(initialSources)
+      })
+    })
+  }
+
+  it("extracts receipts inside named orchestration results", async () => {
+    await scanFixture(async ({ sources, write, records, now }) => {
+      const rows = records("exec", {
+        result: {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({ short_id: "scan1234", version: "2 (current)" }),
+            },
+          ],
+        },
+      })
+      rows[1].payload.arguments =
+        'text({ result: await tools.mcp__derive__read({ short_id: "scan1234" }) })'
+      write(rows)
+      expect((await scanArtifactLogs({ sources, now, since: "30d" })).events).toEqual([
+        expect.objectContaining({
+          artifact_short_id: "scan1234",
+          artifact_version: 2,
+          action: "read",
+        }),
+      ])
+    })
+  })
+
+  it("recognizes bulk reads through Derive code mode", async () => {
+    await scanFixture(async ({ sources, write, records, now }) => {
+      for (const output of [
+        { result: { short_id: "scan1234", version: 2 } },
+        { result: "---\nshort_id: scan1234\nversion: 2\n---" },
+        { result: { short_id: "scan1234", version: 2 }, tool_calls: ["read", "find"] },
+      ]) {
+        write(records("mcp__derive__derive_code", output))
+        expect(
+          (await scanArtifactLogs({ sources, now, since: "30d", dryRun: true })).events,
+        ).toEqual([])
+      }
+
+      write(
+        records("mcp__derive__derive_code", {
+          result: { results: [{ index: 0, value: { short_id: "scan1234", version: 2 } }] },
+          tool_calls: ["read"],
+        }),
+      )
+      expect((await scanArtifactLogs({ sources, now, since: "30d" })).events).toEqual([
+        expect.objectContaining({ artifact_short_id: "scan1234", artifact_version: 2 }),
+      ])
+      write(
+        records("mcp__derive__derive_code", {
+          result: "---\nshort_id: scan1234\nversion: 2 (current)\n---\n# A read",
+          tool_calls: ["read"],
+        }),
+      )
+      expect((await scanArtifactLogs({ sources, now, since: "30d" })).events).toHaveLength(1)
+      write(
+        records("mcp__derive__derive_code", {
+          result: [{ type: "artifact", short_id: "scan1234", version: 2 }],
+          tool_calls: ["find"],
+        }),
+      )
+      expect((await scanArtifactLogs({ sources, now, since: "30d" })).events).toEqual([])
+    })
+  })
+
+  it("keeps pending receipts bound to their original server during a backfill", async () => {
+    await scanFixture(() => {
+      const original = { server: "https://first.derive.test", account_id: "first" }
+      const other = { server: "https://other.derive.test", account_id: "other" }
+      const event = { event_id: "a".repeat(64), artifact_short_id: "scan1234" }
+      addToArtifactScanSpool([event], [], original)
+      const replay = addToArtifactScanSpool([event], [], other)
+      expect(replay.pending).toEqual([{ ...event, target: original }])
+    })
+  })
+
+  it("keeps Claude session attribution across appended records", async () => {
+    await scanFixture(async ({ root, log, now, write }) => {
+      const options = {
+        sources: [{ client: "claude", path: log }],
+        now,
+        installs: [
+          {
+            id: "review123",
+            version: 1,
+            name: "review",
+            client: "claude",
+            path: join(root, "review"),
+            server: "https://derive.test",
+          },
+        ],
+      }
+      write([
+        { type: "system", sessionId: "actual-claude-session" },
+        { type: "user", promptId: "turn-one" },
+      ])
+      await scanSkillLogs(options)
+      write(
+        [{ type: "assistant", attributionSkill: "review", timestamp: "2026-09-07T12:00:00Z" }],
+        true,
+      )
+      const result = await scanSkillLogs(options)
+      expect(result.events).toHaveLength(1)
+      expect(result.state.sources[log].session).toBe("actual-claude-session")
+      expect(result.state.sources[log].turn).toBe("turn-one")
+    })
+  })
+
+  it("replays replaced Skill logs and keeps turn changes across JSON formatting", async () => {
+    await scanFixture(async ({ root, log, sources, now, write }) => {
+      const skill = {
+        id: "skill123",
+        version: 1,
+        name: "review",
+        client: "codex",
+        path: join(root, "review"),
+        server: "https://derive.test",
+      }
+      const options = { sources, now, installs: [skill] }
+      write([{ type: "session_meta", payload: { id: "old" } }])
+      await scanSkillLogs(options)
+      const rows = [
+        { type: "session_meta", payload: { id: "replacement-with-a-longer-name" } },
+        { type: "event_msg", payload: { turn_id: "new-turn" } },
+        {
+          type: "response_item",
+          timestamp: "2026-09-07T12:00:00.000Z",
+          payload: {
+            type: "function_call",
+            call_id: "file-read",
+            arguments: JSON.stringify({ cmd: `cat ${skill.path}/SKILL.md` }),
+          },
+        },
+      ]
+      writeFileSync(
+        log,
+        `${rows.map((row) => JSON.stringify(row).replaceAll('":', '": ')).join("\n")}\n`,
+      )
+      const result = await scanSkillLogs(options)
+      expect(result.events).toHaveLength(1)
+      expect(result.state.sources[log].turn).toBe("new-turn")
+      expect(result.state.sources[log].session).toBe("replacement-with-a-longer-name")
+    })
+  })
+
+  it("does not treat undated Skill activity as recent during a backfill", async () => {
+    await scanFixture(async ({ root, sources, now, write }) => {
+      const skill = {
+        id: "skill123",
+        version: 1,
+        client: "codex",
+        path: join(root, "review"),
+        server: "https://derive.test",
+      }
+      write([
+        {
+          type: "response_item",
+          payload: {
+            type: "function_call",
+            call_id: "undated",
+            arguments: JSON.stringify({ cmd: `cat ${skill.path}/SKILL.md` }),
+          },
+        },
+      ])
+      expect(
+        (await scanSkillLogs({ sources, now, installs: [skill], since: "30d" })).events,
+      ).toEqual([])
+    })
+  })
+
+  it("shows bounded pending receipt details without exposing local identity", async () => {
+    const project = mkdtempSync(join(tmpdir(), "derive-scan-status-details-"))
+    dirs.push(project)
+    const config = join(project, ".derive-test-config")
+    mkdirSync(config, { recursive: true })
+    const contents = JSON.stringify({
+      version: 1,
+      coverage: [],
+      pending: Array.from({ length: 23 }, (_, index) => ({
+        event_id: index.toString(16).padStart(64, "0"),
+        artifact_short_id: `pending${index}`,
+        artifact_version: 2,
+        action: "read",
+        client: "codex",
+        occurred_at: "2026-09-08T01:00:00.000Z",
+        retry_unavailable: index < 3,
+        opaque_session_id: "private-session-marker",
+        target: { server: "https://derive.test", account_id: "private-account-marker" },
+      })),
+    })
+    const spool = join(config, "artifact-scan-spool.json")
+    writeFileSync(spool, contents)
+    const result = await run(project, "http://127.0.0.1:1", ["scan", "status", "--json"], {
+      HOME: join(project, "home"),
+    })
+    expect(result.status).toBe(0)
+    const status = JSON.parse(result.stdout).artifacts
+    expect(status.pending).toBe(23)
+    expect(status.pending_by_reason).toEqual({ artifact_unavailable: 3, awaiting_upload: 20 })
+    expect(status.pending_receipts).toHaveLength(20)
+    expect(status.pending_receipts_remaining).toBe(3)
+    expect(status.pending_receipts[0]).toEqual({
+      artifact_short_id: "pending0",
+      artifact_version: 2,
+      action: "read",
+      client: "codex",
+      occurred_at: "2026-09-08T01:00:00.000Z",
+      reason: "artifact_unavailable",
+    })
+    expect(status.pending_receipts[3].reason).toBe("awaiting_upload")
+    expect(result.stdout).not.toContain("private-")
+    const plain = await run(project, "http://127.0.0.1:1", ["scan", "status"], {
+      HOME: join(project, "home"),
+    })
+    expect(plain.status).toBe(0)
+    expect(plain.stdout).toContain("pending0 v2")
+    expect(plain.stdout).toContain("3 more pending artifact receipts")
+    expect(plain.stdout).toContain("Retry with an account that can access them")
+    expect(plain.stdout).not.toContain("private-")
+    const all = await run(project, "http://127.0.0.1:1", ["scan", "status", "--all", "--json"], {
+      HOME: join(project, "home"),
+    })
+    expect(all.status).toBe(0)
+    expect(JSON.parse(all.stdout).artifacts.pending_receipts).toHaveLength(23)
+    expect(JSON.parse(all.stdout).artifacts.pending_receipts_remaining).toBe(0)
+    expect(readFileSync(spool, "utf8")).toBe(contents)
+    expect(existsSync(join(config, "artifact-scan.json"))).toBe(false)
+  })
+
+  it.each([
+    ["skill", "status"],
+    ["skill", "--dry-run"],
+    ["generic", "status"],
+    ["generic", "--dry-run"],
+  ])("keeps %s scan %s read-only with legacy project pins", async (scope, mode) => {
+    const project = mkdtempSync(join(tmpdir(), "derive-scan-readonly-"))
+    dirs.push(project)
+    const home = join(project, "home")
+    const skill = join(project, ".agents", "skills", "review-skill")
+    mkdirSync(skill, { recursive: true })
+    writeFileSync(join(skill, "SKILL.md"), "Review the change.")
+    writeFileSync(
+      join(project, "derive.json"),
+      JSON.stringify({
+        skills: [
+          {
+            id: "review123",
+            version: 4,
+            name: "review-skill",
+            installs: { codex: { version: 4, name: "review-skill" } },
+          },
+        ],
+      }),
+    )
+    const logs = join(home, ".codex", "sessions")
+    mkdirSync(logs, { recursive: true })
+    writeFileSync(
+      join(logs, "session.jsonl"),
+      `${JSON.stringify({
+        type: "response_item",
+        timestamp: new Date().toISOString(),
+        payload: {
+          type: "function_call",
+          call_id: "read-skill",
+          arguments: JSON.stringify({ cmd: `cat ${join(skill, "SKILL.md")}` }),
+        },
+      })}\n`,
+    )
+    const result = await run(
+      project,
+      "http://127.0.0.1:1",
+      [...(scope === "skill" ? ["skill"] : []), "scan", mode, "--json", "--since", "30d"],
+      {
+        HOME: home,
+      },
+    )
+    expect(result.status).toBe(0)
+    expect(existsSync(join(project, ".derive-test-config"))).toBe(false)
+    if (mode === "--dry-run") {
+      const events = JSON.parse(result.stdout)[scope === "skill" ? "events" : "skills"]
+      expect(events).toHaveLength(1)
+      expect(events[0]).toMatchObject({ skill_short_id: "review123" })
+      expect(events[0]).not.toHaveProperty("target")
+    }
+  })
+
+  it.each([
+    ["artifact", ["scan", "setup", "--client", "codex", "--json"]],
+    ["skill", ["scan", "setup", "--client", "codex", "--json"]],
+    ["skill", ["skill", "scan", "--json"]],
+    ["skill", ["skill", "add", "review123", "--json"]],
+    ["skill", ["skill", "sync", "review123", "--json"]],
+    ["skill", ["skill", "remove", "review123", "--json"]],
+    ["skill", ["skill", "scan", "setup", "--client", "codex", "--json"]],
+  ])("protects the %s queue from overlapping commands: %j", async (kind, args) => {
+    const project = mkdtempSync(join(tmpdir(), "derive-scan-overlap-"))
+    dirs.push(project)
+    const config = join(project, ".derive-test-config")
+    const priorConfig = process.env.DERIVE_CONFIG_DIR
+    process.env.DERIVE_CONFIG_DIR = config
+    let release
+    try {
+      release = await lockScan(kind)
+      const result = await run(project, "http://127.0.0.1:1", args, { HOME: join(project, "home") })
+      expect(result.status).toBe(75)
+      expect(JSON.parse(result.stdout).code).toBe("scan_in_progress")
+      expect(existsSync(join(config, "artifact-scan.json"))).toBe(false)
+      expect(existsSync(join(config, "skill-scan.json"))).toBe(false)
+      if (kind === "skill") expect(existsSync(join(config, "artifact-scan.lock"))).toBe(false)
+    } finally {
+      await release?.()
+      if (priorConfig === undefined) delete process.env.DERIVE_CONFIG_DIR
+      else process.env.DERIVE_CONFIG_DIR = priorConfig
+    }
+  })
+
+  it("recovers an expired lock after the owning process is killed", async () => {
+    const project = mkdtempSync(join(tmpdir(), "derive-scan-crash-"))
+    dirs.push(project)
+    const config = join(project, ".derive-test-config")
+    const moduleUrl = pathToFileURL(join(import.meta.dirname, "..", "src", "scan-lock.js")).href
+    const child = spawn(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        `import { lockScan } from ${JSON.stringify(moduleUrl)}; await lockScan("artifact"); process.stdout.write("ready"); setInterval(() => {}, 1000);`,
+      ],
+      { env: { ...process.env, DERIVE_CONFIG_DIR: config } },
+    )
+    try {
+      await new Promise((resolve, reject) => {
+        child.stdout.once("data", resolve)
+        child.once("error", reject)
+        child.once("exit", () => reject(new Error("lock owner exited before ready")))
+      })
+      const closed = new Promise((resolve) => child.once("close", resolve))
+      child.kill("SIGKILL")
+      await closed
+      const lock = join(config, "artifact-scan.lock")
+      expect(existsSync(lock)).toBe(true)
+      // Advance the abandoned lock's age without waiting two minutes in the suite.
+      const expired = new Date(Date.now() - 180_000)
+      utimesSync(lock, expired, expired)
+      const result = await run(
+        project,
+        "http://127.0.0.1:1",
+        ["scan", "setup", "--client", "codex", "--json"],
+        { HOME: join(project, "home") },
+      )
+      expect(result.status).toBe(0)
+      expect(existsSync(lock)).toBe(false)
+      expect(existsSync(join(config, "artifact-scan.json"))).toBe(true)
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL")
+    }
+  })
+
+  it("keeps concurrent scans out of the queue and captures later appends on retry", async () => {
+    const project = mkdtempSync(join(tmpdir(), "derive-scan-concurrent-"))
+    dirs.push(project)
+    const home = join(project, "home")
+    const logDir = join(home, ".codex", "sessions")
+    mkdirSync(logDir, { recursive: true })
+    const log = join(logDir, "session.jsonl")
+    const receipt = (callId) =>
+      [
+        {
+          type: "response_item",
+          timestamp: new Date().toISOString(),
+          payload: {
+            type: "function_call",
+            name: "mcp__derive__read",
+            call_id: callId,
+            arguments: "{}",
+          },
+        },
+        {
+          type: "response_item",
+          timestamp: new Date().toISOString(),
+          payload: {
+            type: "function_call_output",
+            call_id: callId,
+            output: JSON.stringify({ short_id: "concurrent123", version: 2 }),
+          },
+        },
+      ]
+        .map(JSON.stringify)
+        .join("\n")
+    writeFileSync(log, `${receipt("first")}\n`)
+    let release
+    const arrived = new Promise((resolve) => {
+      release = resolve
+    })
+    let heldResponse
+    const uploaded = []
+    const server = http.createServer((request, response) => {
+      response.setHeader("content-type", "application/json")
+      if (request.url === "/v1/workspaces") {
+        response.end(JSON.stringify({ workspaces: [] }))
+        return
+      }
+      let body = ""
+      request.on("data", (chunk) => {
+        body += chunk
+      })
+      request.on("end", () => {
+        const parsed = JSON.parse(body)
+        uploaded.push(...parsed.events)
+        const answer = JSON.stringify({
+          recorded: parsed.events.map((event) => event.event_id),
+          rejected: [],
+        })
+        if (!heldResponse) {
+          heldResponse = () => response.end(answer)
+          release()
+        } else response.end(answer)
+      })
+    })
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve))
+    servers.push(server)
+    const base = `http://127.0.0.1:${server.address().port}`
+    const first = run(project, base, ["scan", "--since", "30d", "--json"], { HOME: home })
+    await arrived
+    try {
+      const config = join(project, ".derive-test-config")
+      const spoolBefore = readFileSync(join(config, "artifact-scan-spool.json"), "utf8")
+      const cursorBefore = readFileSync(join(config, "artifact-scan.json"), "utf8")
+      writeFileSync(log, `${receipt("second")}\n`, { flag: "a" })
+      const overlap = await run(project, base, ["scan", "--json"], { HOME: home })
+      expect(overlap.status).toBe(75)
+      expect(JSON.parse(overlap.stdout).code).toBe("scan_in_progress")
+      expect(readFileSync(join(config, "artifact-scan-spool.json"), "utf8")).toBe(spoolBefore)
+      expect(readFileSync(join(config, "artifact-scan.json"), "utf8")).toBe(cursorBefore)
+    } finally {
+      heldResponse()
+      await first
+    }
+    const retry = await run(project, base, ["scan", "--json"], { HOME: home })
+    expect(retry.status).toBe(0)
+    expect(JSON.parse(retry.stdout).artifacts).toMatchObject({ found: 1, uploaded: 1, pending: 0 })
+    expect(new Set(uploaded.map((event) => event.event_id)).size).toBe(2)
+  })
+
+  it.each([
+    ["mcp__other__read", { short_id: "real123", version: 2 }, false],
+    ["read", { short_id: "real123", version: 2 }, false],
+    ["mcp__derive__read", { short_id: "real123", version: "2garbage" }, false],
+    ["mcp__derive__read", { short_id: "real123", version: 2.5 }, false],
+    ["mcp__derive__read", { short_id: "real123", version: 2, error: "denied" }, false],
+    ["mcp__derive__publish", { short_id: "real123", version: 2, published: false }, false],
+    [
+      "mcp__derive__read",
+      {
+        isError: true,
+        content: [{ type: "text", text: "short_id: real123\nversion: 2" }],
+      },
+      false,
+    ],
+    ["mcp__derive__read", { short_id: "real123", version: "2 (current)" }, true],
+  ])("requires a successful Derive receipt from %s: %j", async (name, output, accepted) => {
+    const root = mkdtempSync(join(tmpdir(), "derive-result-integrity-"))
+    dirs.push(root)
+    const priorConfig = process.env.DERIVE_CONFIG_DIR
+    process.env.DERIVE_CONFIG_DIR = join(root, "config")
+    try {
+      const path = join(root, "session.jsonl")
+      writeFileSync(
+        path,
+        `${[
+          {
+            type: "response_item",
+            payload: {
+              type: "function_call",
+              name,
+              call_id: "receipt",
+              arguments: "{}",
+            },
+          },
+          {
+            type: "response_item",
+            payload: {
+              type: "function_call_output",
+              call_id: "receipt",
+              output: JSON.stringify(output),
+            },
+          },
+        ]
+          .map(JSON.stringify)
+          .join("\n")}\n`,
+      )
+      const result = await scanArtifactLogs({
+        home: root,
+        sources: [{ client: "codex", path }],
+        initialBaseline: false,
+      })
+      expect(result.events).toHaveLength(accepted ? 1 : 0)
+    } finally {
+      if (priorConfig === undefined) delete process.env.DERIVE_CONFIG_DIR
+      else process.env.DERIVE_CONFIG_DIR = priorConfig
+    }
+  })
+
+  it("does not record a failed Claude tool result and consumes its pending call", async () => {
+    const root = mkdtempSync(join(tmpdir(), "derive-claude-error-"))
+    dirs.push(root)
+    const priorConfig = process.env.DERIVE_CONFIG_DIR
+    process.env.DERIVE_CONFIG_DIR = join(root, "config")
+    try {
+      const path = join(root, "session.jsonl")
+      writeFileSync(
+        path,
+        `${[
+          {
+            type: "assistant",
+            message: {
+              content: [
+                {
+                  type: "tool_use",
+                  id: "failed-read",
+                  name: "mcp__derive__read",
+                  input: {},
+                },
+              ],
+            },
+          },
+          {
+            type: "user",
+            message: {
+              content: [
+                {
+                  type: "tool_result",
+                  tool_use_id: "failed-read",
+                  is_error: true,
+                  content: JSON.stringify({ short_id: "real123", version: 2 }),
+                },
+              ],
+            },
+          },
+        ]
+          .map(JSON.stringify)
+          .join("\n")}\n`,
+      )
+      const result = await scanArtifactLogs({
+        home: root,
+        sources: [{ client: "claude", path }],
+        initialBaseline: false,
+      })
+      expect(result.events).toEqual([])
+      expect(result.state.pending.claude).toEqual({})
+    } finally {
+      if (priorConfig === undefined) delete process.env.DERIVE_CONFIG_DIR
+      else process.env.DERIVE_CONFIG_DIR = priorConfig
+    }
+  })
+
+  it.each([
+    "{broken",
+    "null",
+    JSON.stringify({ version: 2, pending: [], coverage: [] }),
+    JSON.stringify({ version: 1, pending: {}, coverage: [] }),
+  ])("preserves an unreadable spool and its uncommitted cursor: %s", async (contents) => {
+    const project = mkdtempSync(join(tmpdir(), "derive-artifact-corrupt-spool-"))
+    dirs.push(project)
+    const home = join(project, "home")
+    const config = join(project, ".derive-test-config")
+    mkdirSync(config, { recursive: true })
+    mkdirSync(join(home, ".codex", "sessions"), { recursive: true })
+    writeFileSync(
+      join(home, ".codex", "sessions", "session.jsonl"),
+      `${JSON.stringify({ type: "session_meta", payload: { id: "recovery-session" } })}\n`,
+    )
+    const spool = join(config, "artifact-scan-spool.json")
+    writeFileSync(spool, contents)
+    const result = await run(project, "http://127.0.0.1:1", ["scan", "--json"], {
+      HOME: home,
+    })
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain("cannot read artifact scan spool")
+    expect(readFileSync(spool, "utf8")).toBe(contents)
+    expect(existsSync(join(config, "artifact-scan.json"))).toBe(false)
+  })
+
   it("records exact Codex and Claude artifact results without content or local identity", async () => {
     const root = mkdtempSync(join(tmpdir(), "derive-artifact-scan-"))
     dirs.push(root)
@@ -1237,6 +2023,20 @@ describe("derive scan", () => {
     expect(result.hooks[0].changed).toBe(true)
     const config = JSON.parse(readFileSync(hooks, "utf8"))
     expect(config.hooks.SessionEnd).toHaveLength(1)
+    expect(config.hooks.SessionEnd[0].hooks[0].timeout).toBe(300)
+    config.hooks.SessionEnd[0].hooks[0].timeout = 3
+    writeFileSync(hooks, JSON.stringify(config))
+    expect(
+      setupDeriveScan({
+        home,
+        node: "/usr/bin/node",
+        cli: "/derive.js",
+        client: "codex",
+        activate: false,
+      }).hooks[0].changed,
+    ).toBe(true)
+    expect(JSON.parse(readFileSync(hooks, "utf8")).hooks.SessionEnd[0].hooks[0].timeout).toBe(300)
+
     expect(config.hooks.SessionEnd[0].hooks[0].command).toBe(
       '"/usr/bin/node" "/derive.js" scan --quiet --client codex',
     )
@@ -1473,10 +2273,12 @@ describe("derive scan", () => {
     ])
   })
 
-  it("keeps an unavailable receipt until another server accepts it", async () => {
+  it("does not send an unavailable receipt to another server", async () => {
     const project = mkdtempSync(join(tmpdir(), "derive-generic-scan-server-retry-"))
     dirs.push(project)
     const home = join(project, "home")
+    const received = []
+    let firstAvailable = false
     const makeServer = (workspace, accepts) =>
       http.createServer((request, response) => {
         if (request.url === "/v1/workspaces") {
@@ -1493,11 +2295,12 @@ describe("derive scan", () => {
         request.on("data", (chunk) => (body += chunk))
         request.on("end", () => {
           const parsed = JSON.parse(body || "{}")
+          received.push({ workspace, count: parsed.events.length })
           const ids = parsed.events.map((event) => event.event_id)
           response.writeHead(200, { "content-type": "application/json" })
           response.end(
             JSON.stringify(
-              accepts
+              accepts || (workspace === "workspace-a" && firstAvailable)
                 ? { recorded: ids, rejected: [], coverage: parsed.coverage.length }
                 : {
                     recorded: [],
@@ -1558,8 +2361,132 @@ describe("derive scan", () => {
     expect(second.status).toBe(0)
     expect(JSON.parse(second.stdout).artifacts).toMatchObject({
       found: 0,
-      uploaded: 1,
-      pending: 0,
+      uploaded: 0,
+      pending: 1,
     })
+    expect(
+      received.filter((item) => item.workspace === "workspace-b").every((item) => item.count === 0),
+    ).toBe(true)
+    firstAvailable = true
+    const third = await run(project, firstBase, ["scan", "--json"], { HOME: home })
+    expect(JSON.parse(third.stdout).artifacts).toMatchObject({ found: 0, uploaded: 1, pending: 0 })
+  })
+})
+
+describe("scan source recovery", () => {
+  it.each([
+    ["artifact", scanArtifactLogs],
+    ["skill", scanSkillLogs],
+  ])("keeps %s cursors retryable and session context across idle scans", async (_name, scan) => {
+    const root = mkdtempSync(join(tmpdir(), "derive-source-recovery-"))
+    dirs.push(root)
+    const priorConfig = process.env.DERIVE_CONFIG_DIR
+    process.env.DERIVE_CONFIG_DIR = join(root, "config")
+    try {
+      const healthy = join(root, "healthy.jsonl")
+      const broken = join(root, "broken.jsonl")
+      const header = (id) => `${JSON.stringify({ type: "session_meta", payload: { id } })}\n`
+      writeFileSync(healthy, header("original-session"))
+      writeFileSync(broken, header("repair-session"))
+      const sources = [healthy, broken].map((path) => ({ client: "codex", path }))
+      const options = { sources, home: root, initialBaseline: false }
+      const initial = await scan(options)
+      const saved = initial.state.sources[broken]
+      const idle = await scan(options)
+      expect(idle.state.sources[healthy].session).toBe("original-session")
+      rmSync(broken)
+      mkdirSync(broken)
+      writeFileSync(
+        healthy,
+        `${header("original-session")}${JSON.stringify({ type: "turn_context", payload: { turn_id: "next-turn" } })}\n`,
+      )
+      const partial = await scan(options)
+      expect(partial.source_errors).toEqual([{ client: "codex", path: broken, code: "EISDIR" }])
+      expect(partial.state.sources[broken]).toEqual(saved)
+      expect(partial.state.sources[healthy].offset).toBeGreaterThan(
+        initial.state.sources[healthy].offset,
+      )
+      expect(partial.state.sources[healthy].session).toBe("original-session")
+      rmSync(broken, { recursive: true })
+      writeFileSync(broken, header("repaired-session"))
+      const repaired = await scan(options)
+      expect(repaired.source_errors).toEqual([])
+      expect(repaired.state.sources[broken].session).toBe("repaired-session")
+      // Rewrite the same inode and grow beyond its old cursor.
+      writeFileSync(broken, header("replacement-session-with-a-longer-name"))
+      const rewritten = await scan(options)
+      expect(rewritten.state.sources[broken].session).toBe("replacement-session-with-a-longer-name")
+      const before = readFileSync(join(root, "config", `${_name}-scan.json`), "utf8")
+      const missing = { client: "codex", path: join(root, "missing.jsonl") }
+      const dry = await scan({ ...options, sources: [missing], dryRun: true })
+      expect(dry.source_errors).toEqual([{ ...missing, code: "ENOENT" }])
+      expect(readFileSync(join(root, "config", `${_name}-scan.json`), "utf8")).toBe(before)
+    } finally {
+      if (priorConfig === undefined) delete process.env.DERIVE_CONFIG_DIR
+      else process.env.DERIVE_CONFIG_DIR = priorConfig
+    }
+  })
+})
+
+describe("piped scan output", () => {
+  it.each([
+    "generic",
+    "skill",
+  ])("returns complete %s dry-run JSON beyond the pipe buffer", async (scope) => {
+    const root = mkdtempSync(join(tmpdir(), "derive-scan-large-output-"))
+    dirs.push(root)
+    const logs = join(root, "home", ".codex", "sessions")
+    mkdirSync(logs, { recursive: true })
+    const skill = join(root, ".agents", "skills", "review-skill")
+    mkdirSync(skill, { recursive: true })
+    writeFileSync(join(skill, "SKILL.md"), "Review the change.")
+    writeFileSync(
+      join(root, "derive.json"),
+      JSON.stringify({
+        skills: [
+          {
+            id: "review123",
+            version: 4,
+            name: "review-skill",
+            installs: { codex: { version: 4, name: "review-skill" } },
+          },
+        ],
+      }),
+    )
+    const timestamp = new Date().toISOString()
+    const rows = [{ type: "session_meta", payload: { id: "large-output-session" } }]
+    for (let i = 0; i < 500; i++) {
+      rows.push({
+        type: "response_item",
+        timestamp,
+        payload: {
+          type: "function_call",
+          name: "mcp__derive__read",
+          call_id: `read-${i}`,
+          arguments: JSON.stringify({ cmd: `cat ${join(skill, "SKILL.md")}` }),
+        },
+      })
+      rows.push({
+        type: "response_item",
+        timestamp,
+        payload: {
+          type: "function_call_output",
+          call_id: `read-${i}`,
+          output: JSON.stringify({ short_id: `artifact${i}`, version: 1 }),
+        },
+      })
+    }
+    writeFileSync(join(logs, "session.jsonl"), `${rows.map(JSON.stringify).join("\n")}\n`)
+    const result = await run(
+      root,
+      "http://127.0.0.1:1",
+      [...(scope === "skill" ? ["skill"] : []), "scan", "--dry-run", "--since", "1d", "--json"],
+      { HOME: join(root, "home") },
+    )
+    expect(result.status).toBe(0)
+    expect(Buffer.byteLength(result.stdout)).toBeGreaterThan(65536)
+    const data = JSON.parse(result.stdout)
+    expect(scope === "skill" ? data.events : data.artifacts).toHaveLength(500)
+    expect(existsSync(join(root, ".derive-test-config"))).toBe(false)
   })
 })

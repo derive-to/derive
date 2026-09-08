@@ -4566,6 +4566,7 @@ export interface paths {
                                     /** @enum {string} */
                                     status: "queued" | "running" | "waiting" | "succeeded" | "failed" | "cancelled";
                                     selectedRoutes: string[] | null;
+                                    routeSources: string[] | null;
                                     routeBasis: string | null;
                                     resultArtifactId: string | null;
                                     error: string | null;

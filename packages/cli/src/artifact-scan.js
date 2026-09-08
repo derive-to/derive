@@ -1,20 +1,17 @@
 import { createHash, randomBytes } from "node:crypto"
 import {
-  closeSync,
   createReadStream,
   mkdirSync,
-  openSync,
   readFileSync,
-  readSync,
   renameSync,
   statSync,
   writeFileSync,
 } from "node:fs"
 import { homedir } from "node:os"
 import { basename, dirname, join } from "node:path"
-import { discoverSkillLogSources, parseSince } from "./skill-scan.js"
+import { discoverSkillLogSources, parseSince, sourceCheckpoint } from "./skill-scan.js"
 
-export const ARTIFACT_SCAN_PARSER_VERSION = 1
+export const ARTIFACT_SCAN_PARSER_VERSION = 2
 
 const configRoot = () => process.env.DERIVE_CONFIG_DIR ?? join(homedir(), ".config", "derive")
 const statePath = () => join(configRoot(), "artifact-scan.json")
@@ -23,9 +20,13 @@ const hash = (value) => createHash("sha256").update(value).digest("hex")
 
 const readJson = (path, fallback) => {
   try {
-    return JSON.parse(readFileSync(path, "utf8"))
-  } catch {
-    return fallback
+    const value = JSON.parse(readFileSync(path, "utf8"))
+    if (!value || typeof value !== "object" || Array.isArray(value))
+      throw new Error("expected a JSON object")
+    return value
+  } catch (error) {
+    if (error.code === "ENOENT") return fallback
+    throw new Error(`cannot read ${path}: ${error.message}`)
   }
 }
 
@@ -37,19 +38,6 @@ const writeJson = (path, value) => {
 }
 
 const sourceIdentity = (stats) => `${stats.dev}:${stats.ino}`
-
-const sourceCheckpoint = (path, offset) => {
-  const length = Math.min(4096, offset)
-  if (length === 0) return hash("")
-  const buffer = Buffer.alloc(length)
-  const descriptor = openSync(path, "r")
-  try {
-    const read = readSync(descriptor, buffer, 0, length, offset - length)
-    return hash(buffer.subarray(0, read))
-  } finally {
-    closeSync(descriptor)
-  }
-}
 
 const completeLines = async (path, start, onLine) => {
   let carry = Buffer.alloc(0)
@@ -77,17 +65,19 @@ const timestampOf = (record) => {
 }
 
 const operationForName = (name) => {
-  const match = /(?:^|__)(read|catch_up|publish)$/.exec(String(name ?? ""))
+  const match = /^(?:mcp__derive__|derive[.])(read|catch_up|publish)$/.exec(String(name ?? ""))
   return match?.[1] ?? null
 }
 
 const operationsFromCall = (name, raw) => {
+  if (["mcp__derive__derive_code", "derive.derive_code"].includes(name)) return ["code_read"]
   const direct = operationForName(name)
   if (direct) return [direct]
-  if (typeof raw !== "string") return []
+  if (!["exec", "functions.exec"].includes(name) || typeof raw !== "string") return []
   const found = []
-  const pattern = /tools\.mcp__derive__(read|catch_up|publish)\s*\(/g
-  for (const match of raw.matchAll(pattern)) found.push(match[1])
+  const pattern = /tools\.mcp__derive__(read|catch_up|publish|derive_code)\s*\(/g
+  for (const match of raw.matchAll(pattern))
+    found.push(match[1] === "derive_code" ? "code_read" : match[1])
   return [...new Set(found)]
 }
 
@@ -100,23 +90,52 @@ const outputStrings = (value) => {
 }
 
 const positiveVersion = (value) => {
-  if (Number.isInteger(value) && value > 0) return value
-  const match = /^(\d+)/.exec(String(value ?? ""))
+  if (Number.isSafeInteger(value) && value > 0) return value
+  const match = /^(\d+)(?: \(current\))?$/.exec(String(value ?? ""))
   const parsed = match ? Number(match[1]) : 0
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : null
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null
 }
 
-const addArtifactResult = (found, value, expected) => {
-  if (!value || typeof value !== "object") return
+const addArtifactResult = (found, value, expected, depth = 0) => {
+  if (!value || typeof value !== "object" || depth > 16) return
   if (Array.isArray(value)) {
-    for (const item of value) addArtifactResult(found, item, expected)
+    for (const item of value) addArtifactResult(found, item, expected, depth + 1)
     return
   }
-  if (typeof value.text === "string") extractArtifactResults(value.text, expected, found)
-  if (Array.isArray(value.content)) addArtifactResult(found, value.content, expected)
+  if (
+    value.isError === true ||
+    value.is_error === true ||
+    value.ok === false ||
+    value.published === false ||
+    value.error
+  )
+    return
+  if (Array.isArray(value.tool_calls)) {
+    // Search listings also contain IDs and versions. A code-mode result is
+    // read evidence only when its receipt confirms reads, without mixed tools.
+    if (
+      !value.tool_calls.length ||
+      !value.tool_calls.every((name) => ["read", "catch_up"].includes(name))
+    )
+      return
+    if (typeof value.result === "string")
+      extractArtifactResults(value.result, ["read"], found, depth + 1)
+    else addArtifactResult(found, value.result, ["read"], depth + 1)
+    return
+  }
+  if (["artifact", "match", "context"].includes(value.type)) return
   const shortId = typeof value.short_id === "string" ? value.short_id : null
   const version = positiveVersion(value.version ?? value.to_version ?? value.to ?? value.head)
-  if (!shortId || !version) return
+  if (!shortId || !version) {
+    if (typeof value.text === "string")
+      extractArtifactResults(value.text, expected, found, depth + 1)
+    // Orchestrators emit named result objects. Walk objects, never arbitrary
+    // string fields such as prompts or the body of a recognized artifact.
+    for (const [key, nested] of Object.entries(value))
+      if (key !== "text" && key !== "logs") addArtifactResult(found, nested, expected, depth + 1)
+    return
+  }
+  if (expected.includes("code_read")) return
   const action =
     value.published === true || (expected.length === 1 && expected[0] === "publish")
       ? "published"
@@ -128,22 +147,24 @@ const addArtifactResult = (found, value, expected) => {
   })
 }
 
-function extractArtifactResults(text, expected, found = new Map()) {
+function extractArtifactResults(text, expected, found = new Map(), depth = 0) {
+  if (depth > 16) return found
   const trimmed = String(text ?? "").trim()
   if (!trimmed) return found
   try {
-    addArtifactResult(found, JSON.parse(trimmed), expected)
+    addArtifactResult(found, JSON.parse(trimmed), expected, depth + 1)
+    return found
   } catch {
     // Tool wrappers can prefix a JSON content block with timing output. Parse each JSON line.
     for (const line of trimmed.split("\n")) {
       try {
-        addArtifactResult(found, JSON.parse(line), expected)
+        addArtifactResult(found, JSON.parse(line), expected, depth + 1)
       } catch {
         /* use the bounded text receipts below */
       }
     }
   }
-  if (!expected.includes("publish")) {
+  if (!expected.includes("publish") && !expected.includes("code_read")) {
     const yaml = /(?:^|\n)short_id:\s*([a-z0-9_-]+)[\s\S]{0,300}?(?:^|\n)version:\s*(\d+)/m.exec(
       trimmed,
     )
@@ -208,12 +229,22 @@ const rememberCall = (state, client, callId, operations, context, occurredAt, ob
   }
 }
 
-const completeCall = (state, events, client, context, callId, output, occurredAt) => {
+const completeCall = (
+  state,
+  events,
+  client,
+  context,
+  callId,
+  output,
+  occurredAt,
+  failed = false,
+) => {
   const key = pendingKey(context, callId)
   const legacyKey = Object.hasOwn(state.pending[client], key) ? key : callId
   const pending = state.pending[client][legacyKey]
   if (!pending) return
   delete state.pending[client][legacyKey]
+  if (failed) return
   const found = new Map()
   for (const text of outputStrings(output)) extractArtifactResults(text, pending.operations, found)
   for (const result of found.values()) {
@@ -279,7 +310,16 @@ const parseClaudeRecord = (record, state, context, events, observedAt) => {
       )
     } else if (block?.type === "tool_result") {
       const output = typeof block.content === "string" ? block.content : (block.content ?? [])
-      completeCall(state, events, "claude", context, block.tool_use_id, output, timestampOf(record))
+      completeCall(
+        state,
+        events,
+        "claude",
+        context,
+        block.tool_use_id,
+        output,
+        timestampOf(record),
+        block.is_error === true,
+      )
     }
   }
 }
@@ -291,6 +331,8 @@ export async function scanArtifactLogs(options = {}) {
   const state = readJson(statePath(), defaultState())
   state.sources ??= {}
   state.sessions ??= { claude: {}, codex: {} }
+  state.sessions.claude ??= {}
+  state.sessions.codex ??= {}
   state.pending ??= { claude: {}, codex: {} }
   state.pending.claude ??= {}
   state.pending.codex ??= {}
@@ -308,61 +350,66 @@ export async function scanArtifactLogs(options = {}) {
     codex: { client: "codex", source_files: 0, records_scanned: 0, matched_events: 0 },
   }
 
+  const sourceErrors = []
   for (const source of sources) {
-    let stats
     try {
-      stats = statSync(source.path)
-    } catch {
-      continue
-    }
-    if (sinceMs !== null && stats.mtimeMs < sinceMs) continue
-    const identity = sourceIdentity(stats)
-    const saved = state.sources[source.path]
-    let start = 0
-    if (sinceMs === null) {
-      if (
-        saved?.identity === identity &&
-        saved.offset <= stats.size &&
-        saved.checkpoint_hash === sourceCheckpoint(source.path, saved.offset)
-      )
-        start = saved.offset
-      else if (
-        options.baseline ||
-        (options.initialBaseline !== false && !state.initialized_clients[source.client])
-      )
-        start = stats.size
-    }
-    coverage[source.client].source_files++
-    const context =
-      start > 0 && saved?.identity === identity
-        ? {
-            source: source.path,
-            session: saved.session ?? basename(source.path, ".jsonl"),
-            turn: saved.turn ?? null,
-          }
-        : { source: source.path, session: basename(source.path, ".jsonl"), turn: null }
-    const end = await completeLines(source.path, start, async (lineBytes) => {
-      coverage[source.client].records_scanned++
-      let record
-      try {
-        record = JSON.parse(lineBytes.toString("utf8").replace(/\r$/, ""))
-      } catch {
-        return
+      const stats = statSync(source.path)
+      if (!stats.isFile())
+        throw Object.assign(new Error("not a regular log file"), { code: "EISDIR" })
+      if (sinceMs !== null && stats.mtimeMs < sinceMs) continue
+      const identity = sourceIdentity(stats)
+      const saved = state.sources[source.path]
+      if (options.baseline && saved) continue
+      let start = 0
+      if (sinceMs === null) {
+        if (
+          saved?.identity === identity &&
+          saved.offset <= stats.size &&
+          saved.checkpoint_hash === sourceCheckpoint(source.path, saved.offset)
+        )
+          start = saved.offset
+        else if (
+          options.baseline ||
+          (options.initialBaseline !== false && !state.initialized_clients[source.client])
+        )
+          start = stats.size
       }
-      if (source.client === "codex") parseCodexRecord(record, state, context, events, scannedAt)
-      else parseClaudeRecord(record, state, context, events, scannedAt)
-    })
-    const sessionHash = hash(
-      ["derive-artifact-session-v1", source.client, context.session].join("\0"),
-    )
-    state.sessions[source.client][sessionHash] = new Date(stats.mtimeMs).toISOString()
-    state.sources[source.path] = {
-      identity,
-      offset: end,
-      client: source.client,
-      session: context.session,
-      turn: context.turn,
-      checkpoint_hash: sourceCheckpoint(source.path, end),
+      coverage[source.client].source_files++
+      const context =
+        start > 0 && saved?.identity === identity
+          ? {
+              source: source.path,
+              session: saved.session ?? basename(source.path, ".jsonl"),
+              turn: saved.turn ?? null,
+            }
+          : { source: source.path, session: basename(source.path, ".jsonl"), turn: null }
+      const end = await completeLines(source.path, start, async (lineBytes) => {
+        coverage[source.client].records_scanned++
+        let record
+        try {
+          record = JSON.parse(lineBytes.toString("utf8").replace(/\r$/, ""))
+        } catch {
+          return
+        }
+        if (source.client === "codex") parseCodexRecord(record, state, context, events, scannedAt)
+        else parseClaudeRecord(record, state, context, events, scannedAt)
+      })
+      const checkpointHash = sourceCheckpoint(source.path, end)
+      const sessionHash = hash(
+        ["derive-artifact-session-v1", source.client, context.session].join("\0"),
+      )
+      state.sessions[source.client][sessionHash] = new Date(stats.mtimeMs).toISOString()
+      state.sources[source.path] = {
+        identity,
+        offset: end,
+        client: source.client,
+        session: context.session,
+        turn: context.turn,
+        checkpoint_hash: checkpointHash,
+      }
+    } catch (error) {
+      if (!error.code) throw error
+      sourceErrors.push({ client: source.client, path: source.path, code: error.code })
     }
   }
 
@@ -391,12 +438,15 @@ export async function scanArtifactLogs(options = {}) {
     }))
   state.parser_version = ARTIFACT_SCAN_PARSER_VERSION
   for (const client of options.client ? [options.client] : ["claude", "codex"])
-    state.initialized_clients[client] = true
+    if (!sourceErrors.some((error) => error.client === client))
+      state.initialized_clients[client] = true
   state.last_scan_at = scannedAt
+  state.source_errors = sourceErrors
   if (!options.dryRun && !options.deferCommit) writeJson(statePath(), state)
   return {
     events: matchedEvents.map(({ _timestamp_known: _timestampKnown, ...event }) => event),
     coverage: coverageRows,
+    source_errors: sourceErrors,
     state,
     sources,
   }
@@ -407,10 +457,16 @@ export function commitArtifactScanState(state) {
 }
 
 export function readArtifactScanSpool() {
-  const spool = readJson(spoolPath(), { version: 1, pending: [], coverage: [] })
-  if (!Array.isArray(spool.pending) || !Array.isArray(spool.coverage))
-    throw new Error(`cannot read artifact scan spool at ${spoolPath()}`)
-  return spool
+  const path = spoolPath()
+  try {
+    const spool = JSON.parse(readFileSync(path, "utf8"))
+    if (spool?.version !== 1 || !Array.isArray(spool.pending) || !Array.isArray(spool.coverage))
+      throw new Error("unsupported or malformed spool")
+    return spool
+  } catch (error) {
+    if (error.code === "ENOENT") return { version: 1, pending: [], coverage: [] }
+    throw new Error(`cannot read artifact scan spool at ${path}: ${error.message}`)
+  }
 }
 
 export function addToArtifactScanSpool(events, coverage, target) {
@@ -418,10 +474,13 @@ export function addToArtifactScanSpool(events, coverage, target) {
   const pending = new Map(
     (spool.pending ?? []).map((event) => [
       event.event_id,
-      event.retry_unavailable ? { ...event, target, retry_unavailable: false } : event,
+      event.retry_unavailable && event.target?.server === target.server
+        ? { ...event, target, retry_unavailable: false }
+        : event,
     ]),
   )
-  for (const event of events) pending.set(event.event_id, { ...event, target })
+  for (const event of events)
+    if (!pending.has(event.event_id)) pending.set(event.event_id, { ...event, target })
   const next = { version: 1, pending: [...pending.values()], coverage, target }
   writeJson(spoolPath(), next)
   return next
@@ -452,14 +511,28 @@ export function removeFromArtifactScanSpool(eventIds, clearCoverage = false) {
   return next
 }
 
-export function artifactScanStatus(home = homedir()) {
+export function artifactScanStatus(home = homedir(), { all = false } = {}) {
   const state = readJson(statePath(), defaultState())
   const spool = readArtifactScanSpool()
   const sources = discoverSkillLogSources(home)
   return {
     parser_version: ARTIFACT_SCAN_PARSER_VERSION,
     last_scan_at: state.last_scan_at ?? null,
+    source_errors: state.source_errors ?? [],
     pending: spool.pending.length,
+    pending_by_reason: {
+      artifact_unavailable: spool.pending.filter((event) => event.retry_unavailable).length,
+      awaiting_upload: spool.pending.filter((event) => !event.retry_unavailable).length,
+    },
+    pending_receipts: spool.pending.slice(0, all ? undefined : 20).map((event) => ({
+      artifact_short_id: event.artifact_short_id,
+      artifact_version: event.artifact_version,
+      action: event.action,
+      client: event.client,
+      occurred_at: event.occurred_at,
+      reason: event.retry_unavailable ? "artifact_unavailable" : "awaiting_upload",
+    })),
+    pending_receipts_remaining: all ? 0 : Math.max(0, spool.pending.length - 20),
     sources: ["claude", "codex"].map((client) => ({
       client,
       files: sources.filter((item) => item.client === client).length,
