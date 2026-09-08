@@ -4,6 +4,8 @@ import type {
   ArtifactInviteRecord,
   ArtifactMemberRecord,
   ArtifactRecord,
+  ArtifactScanCoverageRecord,
+  ArtifactScanEventRecord,
   ArtifactSkillLinkRecord,
   AssetRecord,
   AuditLogRecord,
@@ -46,6 +48,8 @@ import type {
   NewArtifact,
   NewArtifactInvite,
   NewArtifactMember,
+  NewArtifactScanCoverage,
+  NewArtifactScanEvent,
   NewArtifactSkillLink,
   NewAsset,
   NewAuditLog,
@@ -85,6 +89,7 @@ import type {
   NewVersion,
   NewVersionData,
   NewWebhook,
+  NewWorkflowArtifactActivity,
   NewWorkflowRun,
   NewWorkflowStepAttempt,
   NotificationRecord,
@@ -131,6 +136,7 @@ import type {
   VersionDataRecord,
   VersionRecord,
   WebhookRecord,
+  WorkflowArtifactActivityRecord,
   WorkflowRunRecord,
   WorkflowRunTransition,
   WorkflowStepAttemptRecord,
@@ -205,6 +211,8 @@ import {
   artifactFavorite,
   artifactInvite,
   artifactMember,
+  artifactScanCoverage,
+  artifactScanEvent,
   artifactSkillLink,
   artifactTag,
   asset,
@@ -260,6 +268,7 @@ import {
   versionData,
   webhook,
   webhookDelivery,
+  workflowArtifactActivity,
   workflowRun,
   workflowStepAttempt,
   workspace,
@@ -444,6 +453,9 @@ export const schema = {
   run,
   workflowRun,
   workflowStepAttempt,
+  workflowArtifactActivity,
+  artifactScanEvent,
+  artifactScanCoverage,
   skillRelation,
   skillInstallation,
   skillScanCoverage,
@@ -505,6 +517,9 @@ const _schemaShapes: Shapes<typeof schema> = {
   run: true,
   workflowRun: true,
   workflowStepAttempt: true,
+  workflowArtifactActivity: true,
+  artifactScanEvent: true,
+  artifactScanCoverage: true,
   skillRelation: true,
   skillInstallation: true,
   skillScanCoverage: true,
@@ -1019,6 +1034,27 @@ export function makeRepos(db: SqliteDb) {
     const out: Record<string, VersionRecord> = {}
     for (const r of rows) out[(r.v as VersionRecord).artifact_id] = r.v as VersionRecord
     return out
+  }
+
+  const versionsForArtifacts = async (
+    artifactIds: string[],
+    opts: { createdFrom?: string; createdTo?: string; limit?: number } = {},
+  ): Promise<VersionRecord[]> => {
+    if (artifactIds.length === 0) return []
+    const limit = Math.max(1, Math.min(opts.limit ?? 100, 1_000))
+    return (await db
+      .select()
+      .from(version)
+      .where(
+        and(
+          inArray(version.artifact_id, artifactIds),
+          opts.createdFrom ? gte(version.created_at, opts.createdFrom) : undefined,
+          opts.createdTo ? lte(version.created_at, opts.createdTo) : undefined,
+        ),
+      )
+      .orderBy(desc(version.created_at), asc(version.artifact_id), desc(version.n))
+      .limit(limit)
+      .all()) as VersionRecord[]
   }
 
   // Sequential add (used by D1, which has no interactive transactions; the
@@ -4792,7 +4828,12 @@ export function makeRepos(db: SqliteDb) {
   const listWorkflowRuns = async (
     workflowArtifactId: string,
     orgId: string,
-    opts: { diagramId?: string; limit?: number } = {},
+    opts: {
+      diagramId?: string
+      initiatedBy?: string
+      assignedAgentId?: string
+      limit?: number
+    } = {},
   ): Promise<WorkflowRunRecord[]> => {
     const limit = Math.max(1, Math.min(opts.limit ?? 20, 100))
     return (await db
@@ -4803,6 +4844,14 @@ export function makeRepos(db: SqliteDb) {
           eq(workflowRun.workflow_artifact_id, workflowArtifactId),
           eq(workflowRun.org_id, orgId),
           opts.diagramId ? eq(workflowRun.diagram_id, opts.diagramId) : undefined,
+          opts.initiatedBy || opts.assignedAgentId
+            ? or(
+                opts.initiatedBy ? eq(workflowRun.initiated_by, opts.initiatedBy) : undefined,
+                opts.assignedAgentId
+                  ? eq(workflowRun.assigned_agent_id, opts.assignedAgentId)
+                  : undefined,
+              )
+            : undefined,
         ),
       )
       .orderBy(desc(workflowRun.created_at), desc(workflowRun.id))
@@ -4988,7 +5037,7 @@ export function makeRepos(db: SqliteDb) {
             and(
               eq(workflowRun.id, a.workflow_run_id),
               eq(workflowRun.org_id, orgId),
-              notInArray(workflowRun.status, ["succeeded", "failed", "cancelled"]),
+              notInArray(workflowRun.status, ["succeeded", "failed", "cancelled", "timed_out"]),
             ),
           ),
       )
@@ -5020,15 +5069,17 @@ export function makeRepos(db: SqliteDb) {
       )
       .get()) as WorkflowStepAttemptRecord | undefined) ?? null
   const listWorkflowStepAttempts = async (
-    workflowRunId: string,
+    workflowRunId: string | string[],
     orgId: string,
-  ): Promise<WorkflowStepAttemptRecord[]> =>
-    (await db
+  ): Promise<WorkflowStepAttemptRecord[]> => {
+    const runIds = Array.isArray(workflowRunId) ? workflowRunId : [workflowRunId]
+    if (runIds.length === 0) return []
+    return (await db
       .select()
       .from(workflowStepAttempt)
       .where(
         and(
-          eq(workflowStepAttempt.workflow_run_id, workflowRunId),
+          inArray(workflowStepAttempt.workflow_run_id, runIds),
           inArray(
             workflowStepAttempt.workflow_run_id,
             db
@@ -5045,6 +5096,7 @@ export function makeRepos(db: SqliteDb) {
         asc(workflowStepAttempt.id),
       )
       .all()) as WorkflowStepAttemptRecord[]
+  }
   const transitionWorkflowStepAttempt = async (
     id: string,
     workflowRunId: string,
@@ -5097,6 +5149,145 @@ export function makeRepos(db: SqliteDb) {
         .get()) as WorkflowStepAttemptRecord | undefined) ?? null
     )
   }
+  const recordWorkflowArtifactActivity = async (
+    a: NewWorkflowArtifactActivity,
+  ): Promise<WorkflowArtifactActivityRecord> => {
+    const created = await db
+      .insert(workflowArtifactActivity)
+      .values(a)
+      .onConflictDoNothing()
+      .returning()
+      .get()
+    if (created) return created
+    const existing = await db
+      .select()
+      .from(workflowArtifactActivity)
+      .where(
+        and(
+          eq(workflowArtifactActivity.workflow_run_id, a.workflow_run_id),
+          eq(workflowArtifactActivity.node_id, a.node_id),
+          eq(workflowArtifactActivity.attempt, a.attempt),
+          eq(workflowArtifactActivity.artifact_short_id, a.artifact_short_id),
+          eq(workflowArtifactActivity.artifact_version, a.artifact_version),
+          eq(workflowArtifactActivity.role, a.role),
+        ),
+      )
+      .get()
+    if (!existing) throw new Error("workflow artifact activity conflict could not be resolved")
+    return existing
+  }
+  const listWorkflowArtifactActivity = async (
+    workflowRunId: string | string[],
+    orgId: string,
+  ): Promise<WorkflowArtifactActivityRecord[]> => {
+    const runIds = Array.isArray(workflowRunId) ? workflowRunId : [workflowRunId]
+    if (runIds.length === 0) return []
+    return db
+      .select()
+      .from(workflowArtifactActivity)
+      .where(
+        and(
+          inArray(workflowArtifactActivity.workflow_run_id, runIds),
+          eq(workflowArtifactActivity.org_id, orgId),
+        ),
+      )
+      .orderBy(asc(workflowArtifactActivity.created_at), asc(workflowArtifactActivity.id))
+      .all()
+  }
+  const recordArtifactScanEvent = async (
+    event: NewArtifactScanEvent,
+  ): Promise<ArtifactScanEventRecord> => {
+    const created = await db
+      .insert(artifactScanEvent)
+      .values(event)
+      .onConflictDoNothing()
+      .returning()
+      .get()
+    if (created) return created
+    const existing = await db
+      .select()
+      .from(artifactScanEvent)
+      .where(
+        and(
+          eq(artifactScanEvent.org_id, event.org_id),
+          eq(artifactScanEvent.scanned_by, event.scanned_by),
+          eq(artifactScanEvent.event_id, event.event_id),
+        ),
+      )
+      .get()
+    if (!existing) throw new Error("artifact scan event conflict could not be resolved")
+    return existing
+  }
+  const listArtifactScanEvents = async (
+    artifactId: string,
+    orgId: string,
+    limit = 100,
+  ): Promise<ArtifactScanEventRecord[]> =>
+    db
+      .select()
+      .from(artifactScanEvent)
+      .where(
+        and(eq(artifactScanEvent.artifact_id, artifactId), eq(artifactScanEvent.org_id, orgId)),
+      )
+      .orderBy(desc(artifactScanEvent.occurred_at), desc(artifactScanEvent.id))
+      .limit(Math.min(500, Math.max(1, limit)))
+      .all()
+  const listArtifactScanSessionEvents = async (
+    orgId: string,
+    sessions: Array<{ scannedBy: string; opaqueSessionId: string }>,
+    limit = 500,
+  ): Promise<ArtifactScanEventRecord[]> => {
+    if (sessions.length === 0) return []
+    return db
+      .select()
+      .from(artifactScanEvent)
+      .where(
+        and(
+          eq(artifactScanEvent.org_id, orgId),
+          or(
+            ...sessions.map((session) =>
+              and(
+                eq(artifactScanEvent.scanned_by, session.scannedBy),
+                eq(artifactScanEvent.opaque_session_id, session.opaqueSessionId),
+              ),
+            ),
+          ),
+        ),
+      )
+      .orderBy(desc(artifactScanEvent.occurred_at), desc(artifactScanEvent.id))
+      .limit(Math.min(1_000, Math.max(1, limit)))
+      .all()
+  }
+  const upsertArtifactScanCoverage = async (
+    coverage: NewArtifactScanCoverage,
+  ): Promise<ArtifactScanCoverageRecord> =>
+    db
+      .insert(artifactScanCoverage)
+      .values(coverage)
+      .onConflictDoUpdate({
+        target: [
+          artifactScanCoverage.org_id,
+          artifactScanCoverage.scanned_by,
+          artifactScanCoverage.client,
+        ],
+        set: {
+          source_files: coverage.source_files,
+          sessions_scanned: coverage.sessions_scanned,
+          records_scanned: coverage.records_scanned,
+          parser_version: coverage.parser_version,
+          scanned_at: coverage.scanned_at,
+          updated_at: coverage.updated_at,
+        },
+      })
+      .returning()
+      .get()
+  const listArtifactScanCoverage = async (orgId: string): Promise<ArtifactScanCoverageRecord[]> =>
+    db
+      .select()
+      .from(artifactScanCoverage)
+      .where(eq(artifactScanCoverage.org_id, orgId))
+      .orderBy(desc(artifactScanCoverage.scanned_at))
+      .all()
   const replaceSkillRelations = async (
     orgId: string,
     skillArtifactId: string,
@@ -6051,6 +6242,7 @@ export function makeRepos(db: SqliteDb) {
     await db.delete(sharedStateActivity).where(eq(sharedStateActivity.artifact_id, id)).run()
     await db.delete(sharedState).where(eq(sharedState.artifact_id, id)).run()
     await db.delete(dynamicRevision).where(eq(dynamicRevision.artifact_id, id)).run()
+    await db.delete(artifactScanEvent).where(eq(artifactScanEvent.artifact_id, id)).run()
     await db
       .delete(skillRelation)
       .where(or(eq(skillRelation.source_artifact_id, id), eq(skillRelation.target_artifact_id, id)))
@@ -6192,6 +6384,7 @@ export function makeRepos(db: SqliteDb) {
     listVersions,
     getVersion,
     currentVersions,
+    versionsForArtifacts,
     unfurlInfo,
     setVersionData,
     setDerivedVersionData,
@@ -6475,6 +6668,13 @@ export function makeRepos(db: SqliteDb) {
     getWorkflowStepAttemptBySession,
     listWorkflowStepAttempts,
     transitionWorkflowStepAttempt,
+    recordWorkflowArtifactActivity,
+    listWorkflowArtifactActivity,
+    recordArtifactScanEvent,
+    listArtifactScanEvents,
+    listArtifactScanSessionEvents,
+    upsertArtifactScanCoverage,
+    listArtifactScanCoverage,
     replaceSkillRelations,
     listSkillRelations,
     upsertSkillInstallation,

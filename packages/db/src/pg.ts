@@ -6,6 +6,8 @@ import type {
   ArtifactInviteRecord,
   ArtifactMemberRecord,
   ArtifactRecord,
+  ArtifactScanCoverageRecord,
+  ArtifactScanEventRecord,
   ArtifactSkillLinkRecord,
   AssetRecord,
   AuditLogRecord,
@@ -55,6 +57,8 @@ import type {
   NewArtifact,
   NewArtifactInvite,
   NewArtifactMember,
+  NewArtifactScanCoverage,
+  NewArtifactScanEvent,
   NewArtifactSkillLink,
   NewAsset,
   NewAuditLog,
@@ -95,6 +99,7 @@ import type {
   NewVersionData,
   NewView,
   NewWebhook,
+  NewWorkflowArtifactActivity,
   NewWorkflowRun,
   NewWorkflowStepAttempt,
   NotificationRecord,
@@ -144,6 +149,7 @@ import type {
   VersionRecord,
   ViewStats,
   WebhookRecord,
+  WorkflowArtifactActivityRecord,
   WorkflowRunRecord,
   WorkflowRunTransition,
   WorkflowStepAttemptRecord,
@@ -217,6 +223,8 @@ import {
   artifactFavorite,
   artifactInvite,
   artifactMember,
+  artifactScanCoverage,
+  artifactScanEvent,
   artifactSkillLink,
   artifactTag,
   asset,
@@ -273,6 +281,7 @@ import {
   versionData,
   webhook,
   webhookDelivery,
+  workflowArtifactActivity,
   workflowRun,
   workflowStepAttempt,
   workspace,
@@ -321,6 +330,9 @@ export const schema = {
   run,
   workflowRun,
   workflowStepAttempt,
+  workflowArtifactActivity,
+  artifactScanEvent,
+  artifactScanCoverage,
   skillRelation,
   skillInstallation,
   skillScanCoverage,
@@ -382,6 +394,9 @@ const _schemaShapes: Shapes<typeof schema> = {
   run: true,
   workflowRun: true,
   workflowStepAttempt: true,
+  workflowArtifactActivity: true,
+  artifactScanEvent: true,
+  artifactScanCoverage: true,
   skillRelation: true,
   skillInstallation: true,
   skillScanCoverage: true,
@@ -1279,6 +1294,24 @@ export class PgMetaStore implements MetaStore {
     return out
   }
 
+  async versionsForArtifacts(
+    artifactIds: string[],
+    opts: { createdFrom?: string; createdTo?: string; limit?: number } = {},
+  ): Promise<VersionRecord[]> {
+    if (artifactIds.length === 0) return []
+    const limit = Math.max(1, Math.min(opts.limit ?? 100, 1_000))
+    const { rows } = await this.pool.query<VersionRecord>(
+      `SELECT * FROM version
+        WHERE artifact_id = ANY($1)
+          AND ($2::text IS NULL OR created_at >= $2::text)
+          AND ($3::text IS NULL OR created_at <= $3::text)
+        ORDER BY created_at DESC, artifact_id ASC, n DESC
+        LIMIT $4`,
+      [artifactIds, opts.createdFrom ?? null, opts.createdTo ?? null, limit],
+    )
+    return rows
+  }
+
   async artifactDetail(opts: ArtifactDetailOpts): Promise<ArtifactDetail> {
     const { artifactId, orgId, viewerId } = opts
     // Six sequential ~80ms round trips (versions, tags, collection ids,
@@ -1433,8 +1466,9 @@ export class PgMetaStore implements MetaStore {
     rounds: ReviewRoundRecord[]
     beforeData: VersionDataRecord[]
     afterData: VersionDataRecord[]
+    workflowRuns: WorkflowRunRecord[]
   }> {
-    // Five independent reads ride one statement. node-postgres serializes queries on one
+    // Six independent reads ride one statement. node-postgres serializes queries on one
     // edge connection, so Promise.all cannot remove their network latency by itself.
     const { rows } = await this.pool.query<{ kind: string; doc: unknown }>(
       `SELECT 'version' kind, row_to_json(v) doc FROM version v
@@ -1450,7 +1484,14 @@ export class PgMetaStore implements MetaStore {
         WHERE d.artifact_id = $1 AND d.n = $2
        UNION ALL
        SELECT 'after-data', row_to_json(d) FROM version_data d
-        WHERE d.artifact_id = $1 AND d.n = $3`,
+        WHERE d.artifact_id = $1 AND d.n = $3
+       UNION ALL
+       SELECT 'workflow-run', row_to_json(w) FROM (
+         SELECT * FROM workflow_run
+          WHERE workflow_artifact_id = $1
+          ORDER BY created_at DESC, id DESC
+          LIMIT 10
+       ) w`,
       [artifactId, beforeN, afterN],
     )
     const versions: VersionRecord[] = []
@@ -1458,12 +1499,14 @@ export class PgMetaStore implements MetaStore {
     const rounds: ReviewRoundRecord[] = []
     const beforeData: VersionDataRecord[] = []
     const afterData: VersionDataRecord[] = []
+    const workflowRuns: WorkflowRunRecord[] = []
     for (const row of rows) {
       if (row.kind === "version") versions.push(row.doc as VersionRecord)
       else if (row.kind === "comment") comments.push(row.doc as CommentRecord)
       else if (row.kind === "round") rounds.push(row.doc as ReviewRoundRecord)
       else if (row.kind === "before-data") beforeData.push(row.doc as VersionDataRecord)
       else if (row.kind === "after-data") afterData.push(row.doc as VersionDataRecord)
+      else if (row.kind === "workflow-run") workflowRuns.push(row.doc as WorkflowRunRecord)
     }
     versions.sort((a, b) => a.n - b.n)
     comments.sort((a, b) =>
@@ -1472,7 +1515,10 @@ export class PgMetaStore implements MetaStore {
     rounds.sort((a, b) => (a.created_at > b.created_at ? -1 : a.created_at < b.created_at ? 1 : 0))
     beforeData.sort((a, b) => a.slot.localeCompare(b.slot))
     afterData.sort((a, b) => a.slot.localeCompare(b.slot))
-    return { versions, comments, rounds, beforeData, afterData }
+    workflowRuns.sort((a, b) =>
+      a.created_at > b.created_at ? -1 : a.created_at < b.created_at ? 1 : 0,
+    )
+    return { versions, comments, rounds, beforeData, afterData, workflowRuns }
   }
   async getVersionDataSeries(
     artifactId: string,
@@ -5989,7 +6035,12 @@ export class PgMetaStore implements MetaStore {
   async listWorkflowRuns(
     workflowArtifactId: string,
     orgId: string,
-    opts: { diagramId?: string; limit?: number } = {},
+    opts: {
+      diagramId?: string
+      initiatedBy?: string
+      assignedAgentId?: string
+      limit?: number
+    } = {},
   ): Promise<WorkflowRunRecord[]> {
     const limit = Math.max(1, Math.min(opts.limit ?? 20, 100))
     return this.db
@@ -6000,6 +6051,14 @@ export class PgMetaStore implements MetaStore {
           eq(workflowRun.workflow_artifact_id, workflowArtifactId),
           eq(workflowRun.org_id, orgId),
           opts.diagramId ? eq(workflowRun.diagram_id, opts.diagramId) : undefined,
+          opts.initiatedBy || opts.assignedAgentId
+            ? or(
+                opts.initiatedBy ? eq(workflowRun.initiated_by, opts.initiatedBy) : undefined,
+                opts.assignedAgentId
+                  ? eq(workflowRun.assigned_agent_id, opts.assignedAgentId)
+                  : undefined,
+              )
+            : undefined,
         ),
       )
       .orderBy(desc(workflowRun.created_at), desc(workflowRun.id))
@@ -6177,7 +6236,7 @@ export class PgMetaStore implements MetaStore {
             and(
               eq(workflowRun.id, a.workflow_run_id),
               eq(workflowRun.org_id, orgId),
-              notInArray(workflowRun.status, ["succeeded", "failed", "cancelled"]),
+              notInArray(workflowRun.status, ["succeeded", "failed", "cancelled", "timed_out"]),
             ),
           )
           .for("update"),
@@ -6211,15 +6270,17 @@ export class PgMetaStore implements MetaStore {
     return rows[0] ?? null
   }
   listWorkflowStepAttempts(
-    workflowRunId: string,
+    workflowRunId: string | string[],
     orgId: string,
   ): Promise<WorkflowStepAttemptRecord[]> {
+    const runIds = Array.isArray(workflowRunId) ? workflowRunId : [workflowRunId]
+    if (runIds.length === 0) return Promise.resolve([])
     return this.db
       .select()
       .from(workflowStepAttempt)
       .where(
         and(
-          eq(workflowStepAttempt.workflow_run_id, workflowRunId),
+          inArray(workflowStepAttempt.workflow_run_id, runIds),
           inArray(
             workflowStepAttempt.workflow_run_id,
             this.db
@@ -6285,6 +6346,141 @@ export class PgMetaStore implements MetaStore {
       )
       .returning()
     return rows[0] ?? null
+  }
+  async recordWorkflowArtifactActivity(
+    a: NewWorkflowArtifactActivity,
+  ): Promise<WorkflowArtifactActivityRecord> {
+    const rows = await this.db
+      .insert(workflowArtifactActivity)
+      .values(a)
+      .onConflictDoNothing()
+      .returning()
+    if (rows[0]) return rows[0]
+    const existing = await this.db
+      .select()
+      .from(workflowArtifactActivity)
+      .where(
+        and(
+          eq(workflowArtifactActivity.workflow_run_id, a.workflow_run_id),
+          eq(workflowArtifactActivity.node_id, a.node_id),
+          eq(workflowArtifactActivity.attempt, a.attempt),
+          eq(workflowArtifactActivity.artifact_short_id, a.artifact_short_id),
+          eq(workflowArtifactActivity.artifact_version, a.artifact_version),
+          eq(workflowArtifactActivity.role, a.role),
+        ),
+      )
+      .limit(1)
+    if (!existing[0]) throw new Error("workflow artifact activity conflict could not be resolved")
+    return existing[0]
+  }
+  listWorkflowArtifactActivity(
+    workflowRunId: string | string[],
+    orgId: string,
+  ): Promise<WorkflowArtifactActivityRecord[]> {
+    const runIds = Array.isArray(workflowRunId) ? workflowRunId : [workflowRunId]
+    if (runIds.length === 0) return Promise.resolve([])
+    return this.db
+      .select()
+      .from(workflowArtifactActivity)
+      .where(
+        and(
+          inArray(workflowArtifactActivity.workflow_run_id, runIds),
+          eq(workflowArtifactActivity.org_id, orgId),
+        ),
+      )
+      .orderBy(asc(workflowArtifactActivity.created_at), asc(workflowArtifactActivity.id))
+  }
+  async recordArtifactScanEvent(event: NewArtifactScanEvent): Promise<ArtifactScanEventRecord> {
+    const rows = await this.db
+      .insert(artifactScanEvent)
+      .values(event)
+      .onConflictDoNothing()
+      .returning()
+    if (rows[0]) return rows[0]
+    const existing = await this.db
+      .select()
+      .from(artifactScanEvent)
+      .where(
+        and(
+          eq(artifactScanEvent.org_id, event.org_id),
+          eq(artifactScanEvent.scanned_by, event.scanned_by),
+          eq(artifactScanEvent.event_id, event.event_id),
+        ),
+      )
+      .limit(1)
+    if (!existing[0]) throw new Error("artifact scan event conflict could not be resolved")
+    return existing[0]
+  }
+  listArtifactScanEvents(
+    artifactId: string,
+    orgId: string,
+    limit = 100,
+  ): Promise<ArtifactScanEventRecord[]> {
+    return this.db
+      .select()
+      .from(artifactScanEvent)
+      .where(
+        and(eq(artifactScanEvent.artifact_id, artifactId), eq(artifactScanEvent.org_id, orgId)),
+      )
+      .orderBy(desc(artifactScanEvent.occurred_at), desc(artifactScanEvent.id))
+      .limit(Math.min(500, Math.max(1, limit)))
+  }
+  listArtifactScanSessionEvents(
+    orgId: string,
+    sessions: Array<{ scannedBy: string; opaqueSessionId: string }>,
+    limit = 500,
+  ): Promise<ArtifactScanEventRecord[]> {
+    if (sessions.length === 0) return Promise.resolve([])
+    return this.db
+      .select()
+      .from(artifactScanEvent)
+      .where(
+        and(
+          eq(artifactScanEvent.org_id, orgId),
+          or(
+            ...sessions.map((session) =>
+              and(
+                eq(artifactScanEvent.scanned_by, session.scannedBy),
+                eq(artifactScanEvent.opaque_session_id, session.opaqueSessionId),
+              ),
+            ),
+          ),
+        ),
+      )
+      .orderBy(desc(artifactScanEvent.occurred_at), desc(artifactScanEvent.id))
+      .limit(Math.min(1_000, Math.max(1, limit)))
+  }
+  async upsertArtifactScanCoverage(
+    coverage: NewArtifactScanCoverage,
+  ): Promise<ArtifactScanCoverageRecord> {
+    const rows = await this.db
+      .insert(artifactScanCoverage)
+      .values(coverage)
+      .onConflictDoUpdate({
+        target: [
+          artifactScanCoverage.org_id,
+          artifactScanCoverage.scanned_by,
+          artifactScanCoverage.client,
+        ],
+        set: {
+          source_files: coverage.source_files,
+          sessions_scanned: coverage.sessions_scanned,
+          records_scanned: coverage.records_scanned,
+          parser_version: coverage.parser_version,
+          scanned_at: coverage.scanned_at,
+          updated_at: coverage.updated_at,
+        },
+      })
+      .returning()
+    if (!rows[0]) throw new Error("artifact scan coverage upsert returned no row")
+    return rows[0]
+  }
+  listArtifactScanCoverage(orgId: string): Promise<ArtifactScanCoverageRecord[]> {
+    return this.db
+      .select()
+      .from(artifactScanCoverage)
+      .where(eq(artifactScanCoverage.org_id, orgId))
+      .orderBy(desc(artifactScanCoverage.scanned_at))
   }
   async replaceSkillRelations(
     orgId: string,
@@ -7321,6 +7517,7 @@ export class PgMetaStore implements MetaStore {
       await tx.delete(sharedStateActivity).where(eq(sharedStateActivity.artifact_id, id))
       await tx.delete(sharedState).where(eq(sharedState.artifact_id, id))
       await tx.delete(dynamicRevision).where(eq(dynamicRevision.artifact_id, id))
+      await tx.delete(artifactScanEvent).where(eq(artifactScanEvent.artifact_id, id))
       await tx
         .delete(skillRelation)
         .where(

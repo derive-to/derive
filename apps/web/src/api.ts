@@ -168,6 +168,28 @@ export interface Bibliography {
 export type BibOp = { op: "set"; key?: string; raw: string } | { op: "delete"; key: string }
 export type WorkflowRunSummary =
   paths["/v1/artifacts/{shortId}/workflow-runs"]["get"]["responses"][200]["content"]["application/json"]["runs"][number]
+export interface LocalArtifactActivity {
+  activity: Array<{
+    id: string
+    artifact: { short_id: string; version: number }
+    client: "claude" | "codex"
+    action: "read" | "published"
+    occurred_at: string
+  }>
+  related: Array<{
+    id: string
+    artifact: { short_id: string; title: string; version: number }
+    client: "claude" | "codex"
+    action: "published"
+    occurred_at: string
+    reason: string
+  }>
+  coverage: Array<{
+    client: "claude" | "codex"
+    last_scanned_at?: string
+    scanned_at: string
+  }>
+}
 /** An abuse report against an artifact. Generated from the OpenAPI spec. */
 export type Report = components["schemas"]["Report"]
 /** A collection: a shareable group of artifacts, tagged with its item count and origin
@@ -1926,6 +1948,8 @@ export const api = {
       `/v1/artifacts/${shortId}/workflow-runs?diagram=${encodeURIComponent(diagramId)}&limit=${limit}`,
       opts(),
     ).then(j),
+  localArtifactActivity: (shortId: string): Promise<LocalArtifactActivity> =>
+    f(`/v1/artifacts/${shortId}/local-activity`, opts()).then(j),
   // Ask a registered agent to build the workspace's brand profile (shortId must be the
   // profile artifact). Same queue mechanics as reworkArtifact, different canned brief.
   generateProfile: (shortId: string, agentId?: string): Promise<{ requestId: string }> =>

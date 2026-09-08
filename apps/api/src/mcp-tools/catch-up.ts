@@ -1,21 +1,26 @@
 import {
+  type ArtifactRecord,
   assertedOnly,
   type CommentRecord,
   diffLines,
   factDeltas,
   formatDiff,
+  LINKED_BUNDLE_CONTENT_TYPE,
   type ReviewRoundRecord,
   toMarkdown,
   type VersionDataRecord,
   type VersionRecord,
+  type WorkflowRunRecord,
 } from "@derive/core"
 import { z } from "zod"
+import { localArtifactScanActivity } from "../lib/artifact-scan"
 import {
   type ChangedParts,
   changedPartsWithReceipt,
   getChangedPartsReceipt,
 } from "../lib/changed-parts"
 import { clip } from "../lib/clip"
+import { workflowActivitySuggestionsForRuns } from "../lib/workflow-activity"
 import type { ToolContext } from "../mcp-tool-context"
 import {
   bundleFileChanges,
@@ -35,7 +40,7 @@ export function registerCatchUpTool(tc: ToolContext): void {
     "catch_up",
     {
       description:
-        "START HERE on an artifact: its state in one call (versions since `since_version`, open comment threads, the review round). WITHOUT a short_id, your WORK QUEUE. `wait` long-polls instead of sleeping. See derive://skills/loop.",
+        "START HERE on an artifact: versions, feedback, review, local scan activity, and possible missing workflow artifact receipts. WITHOUT a short_id, your WORK QUEUE. `wait` long-polls instead of sleeping. See derive://skills/loop and derive://skills/workflows.",
       // Genuinely read-only now: the queue's write half moved to `clear_queue`. The hint
       // was true-with-an-asterisk while `ack` lived here, kept that way so planning-mode
       // clients don't gate the start-here call on approval. That goal is unchanged and
@@ -142,17 +147,19 @@ export function registerCatchUpTool(tc: ToolContext): void {
       // one latency wave instead of paying four serial edge round trips before the response
       // can be assembled. Stores keep the same methods and response contract.
       const snapshot = ctx.meta.catchUpRead ? await ctx.meta.catchUpRead(a.id, since, to) : null
-      const [history, allComments, rounds, dataRows]: [
+      const [history, allComments, rounds, dataRows, workflowRuns]: [
         VersionRecord[],
         CommentRecord[],
         ReviewRoundRecord[],
         [VersionDataRecord[], VersionDataRecord[]],
+        WorkflowRunRecord[],
       ] = snapshot
         ? [
             snapshot.versions,
             snapshot.comments,
             snapshot.rounds,
             [snapshot.beforeData, snapshot.afterData],
+            snapshot.workflowRuns ?? [],
           ]
         : await Promise.all([
             ctx.meta.listVersions(a.id),
@@ -164,6 +171,7 @@ export function registerCatchUpTool(tc: ToolContext): void {
                   ctx.meta.getVersionData(a.id, to).catch(() => []),
                 ])
               : Promise.resolve<[VersionDataRecord[], VersionDataRecord[]]>([[], []]),
+            ctx.meta.listWorkflowRuns(a.id, a.org_id, { limit: 10 }),
           ])
       const newVersions = history.filter((v) => v.n > since && v.n <= to)
       // listVersions already returned every immutable version row. Re-fetching the two
@@ -284,10 +292,139 @@ export function registerCatchUpTool(tc: ToolContext): void {
           ? ` Review requested on v${review.version} — waiting for the human.`
           : ` The human sent back their review of v${review.version} — read the open threads and their note, then revise and re-request, or stop if the note says it's good.${noteBit}`
         : ""
+      const workflowReadability = new Map<string, Promise<boolean>>()
+      const workflowFacts = new Map<number, Promise<VersionDataRecord[]>>()
+      const loadWorkflowFacts = (version: number): Promise<VersionDataRecord[]> => {
+        const existing = workflowFacts.get(version)
+        if (existing) return existing
+        const result = ctx.meta.getVersionData(a.id, version)
+        workflowFacts.set(version, result)
+        return result
+      }
+      const canReadWorkflowArtifact = (candidate: ArtifactRecord): Promise<boolean> => {
+        const existing = workflowReadability.get(candidate.id)
+        if (existing) return existing
+        const result = reach(candidate.short_id, workspace, { artifact: candidate }).then(
+          (reached) => Boolean(reached && !("error" in reached)),
+        )
+        workflowReadability.set(candidate.id, result)
+        return result
+      }
+      const workflowRunIds = workflowRuns.map((run) => run.id)
+      const [workflowAttempts, workflowActivity] =
+        workflowRunIds.length > 0
+          ? await Promise.all([
+              ctx.meta.listWorkflowStepAttempts(workflowRunIds, a.org_id),
+              ctx.meta.listWorkflowArtifactActivity(workflowRunIds, a.org_id),
+            ])
+          : [[], []]
+      const workflowSuggestions = await workflowActivitySuggestionsForRuns({
+        meta: ctx.meta,
+        workflowArtifact: a,
+        states: workflowRuns.map((run) => ({
+          run,
+          attempts: workflowAttempts.filter((item) => item.workflow_run_id === run.id),
+          recorded: workflowActivity.filter((item) => item.workflow_run_id === run.id),
+        })),
+        canRead: canReadWorkflowArtifact,
+        loadVersionData: loadWorkflowFacts,
+      })
+      const receiptGaps = workflowRuns
+        .map((run) => {
+          const suggestions = workflowSuggestions.get(run.id) ?? []
+          if (suggestions.length === 0) return null
+          return {
+            run_id: run.id,
+            diagram_id: run.diagram_id,
+            run_status: run.status,
+            suggestions: suggestions.map((suggestion) => ({
+              artifact: {
+                short_id: suggestion.artifactShortId,
+                version: suggestion.artifactVersion,
+                title: suggestion.artifactTitle,
+              },
+              node_id: suggestion.nodeId,
+              attempt: suggestion.attempt,
+              role: suggestion.role,
+              reason: suggestion.reason,
+              ...(suggestion.nodeId
+                ? {
+                    dismiss_with: {
+                      tool: "use",
+                      workflow_run: {
+                        action: "dismiss",
+                        run_id: run.id,
+                        node_id: suggestion.nodeId,
+                        artifact: {
+                          short_id: suggestion.artifactShortId,
+                          version: suggestion.artifactVersion,
+                          role: suggestion.role,
+                        },
+                      },
+                    },
+                  }
+                : {}),
+              ...(suggestion.nodeId && suggestion.attempt
+                ? {
+                    confirm_with: {
+                      tool: "use",
+                      workflow: {
+                        run_id: run.id,
+                        node_id: suggestion.nodeId,
+                        attempt: suggestion.attempt,
+                        artifact: {
+                          short_id: suggestion.artifactShortId,
+                          version: suggestion.artifactVersion,
+                          role: suggestion.role,
+                        },
+                      },
+                    },
+                  }
+                : {
+                    confirm_template: {
+                      tool: "use",
+                      known: {
+                        run_id: run.id,
+                        node_id: suggestion.nodeId,
+                        artifact: {
+                          short_id: suggestion.artifactShortId,
+                          version: suggestion.artifactVersion,
+                          role: suggestion.role,
+                        },
+                      },
+                      missing: [
+                        ...(suggestion.nodeId ? [] : ["node_id"]),
+                        ...(suggestion.attempt ? [] : ["attempt"]),
+                      ],
+                      note: "Resolve the missing fields before you call use.",
+                    },
+                  }),
+            })),
+          }
+        })
+        .filter((item) => item !== null)
+      const receiptGapCount = receiptGaps.reduce(
+        (total, item) => total + item.suggestions.length,
+        0,
+      )
+      const receiptBit = receiptGapCount
+        ? ` ${receiptGapCount} possible workflow artifact receipt${receiptGapCount === 1 ? "" : "s"} need confirmation.`
+        : ""
+      const localScan =
+        a.current_content_type === LINKED_BUNDLE_CONTENT_TYPE
+          ? await localArtifactScanActivity({
+              meta: ctx.meta,
+              artifact: a,
+              canRead: canReadWorkflowArtifact,
+            })
+          : { activity: [], related: [] }
+      const localScanBit = localScan.related.length
+        ? ` A local agent session published ${localScan.related.length} artifact${localScan.related.length === 1 ? "" : "s"} after reading this bundle.`
+        : ""
       const summary =
         since >= to
-          ? `You're up to date on "${a.title}" (v${head}); ${open.length} open comment${open.length === 1 ? "" : "s"}.${outdatedBit}${reviewBit}`
-          : `"${a.title}": ${newVersions.length} new version${newVersions.length === 1 ? "" : "s"} since v${since} (now v${to}).${pageBits} ${open.length} open comment${open.length === 1 ? "" : "s"}.${outdatedBit}${reviewBit}`
+          ? `You're up to date on "${a.title}" (v${head}); ${open.length} open comment${open.length === 1 ? "" : "s"}.${outdatedBit}${reviewBit}${receiptBit}${localScanBit}`
+          : `"${a.title}": ${newVersions.length} new version${newVersions.length === 1 ? "" : "s"} since v${since} (now v${to}).${pageBits} ${open.length} open comment${open.length === 1 ? "" : "s"}.${outdatedBit}${reviewBit}${receiptBit}${localScanBit}`
       // What the NUMBERS did between the versions being compared. The prose diff already
       // shows what the page says; without this a review round sees everything except the
       // figures the page is about.
@@ -318,6 +455,20 @@ export function registerCatchUpTool(tc: ToolContext): void {
         ...(partChanges ? { changed_parts: partChanges } : {}),
         open_comments: open.map(summarizeComment),
         ...(outdated.length ? { outdated_comments: outdated.map(summarizeComment) } : {}),
+        ...(receiptGaps.length
+          ? {
+              workflow_receipt_gaps: receiptGaps,
+              workflow_receipt_note:
+                "These are permission-checked candidates, not completed steps. Confirm only exact versions that belong to the run.",
+            }
+          : {}),
+        ...(localScan.activity.length || localScan.related.length
+          ? {
+              local_agent_activity: localScan,
+              local_agent_activity_note:
+                "These are privacy-safe local log observations. Same-session order suggests where to look, but it does not create a run, attach an artifact, or mark a node complete.",
+            }
+          : {}),
       })
     },
   )

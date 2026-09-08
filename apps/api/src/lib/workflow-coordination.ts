@@ -4,6 +4,8 @@ import {
   type MetaStore,
   newId,
   type SessionRecord,
+  type WorkflowArtifactActivityRecord,
+  type WorkflowArtifactActivityRole,
   type WorkflowExecutionLane,
   type WorkflowNodeDefinition,
   type WorkflowRouteDefinition,
@@ -11,8 +13,10 @@ import {
   type WorkflowRunStatus,
   type WorkflowStepAttemptRecord,
   type WorkflowStepAttemptStatus,
+  workflowRunInstruction,
   workflowStatusIsTerminal,
 } from "@derive/core"
+import { sha256 } from "./crypto"
 import { parseLinkedWorkflowFacts } from "./workflow-facts"
 
 export interface WorkflowUseRef {
@@ -29,6 +33,90 @@ export interface WorkflowReceipt extends WorkflowUseRef {
   output?: unknown
   error?: string
   finish_run?: Extract<WorkflowRunStatus, "succeeded" | "failed" | "cancelled">
+}
+
+export interface WorkflowArtifactRef extends WorkflowUseRef {
+  role: WorkflowArtifactActivityRole
+}
+
+export const startLocalWorkflowRun = async (args: {
+  meta: MetaStore
+  workflowArtifact: ArtifactRecord
+  diagramId: string
+  initiatorId: string
+  assignedAgentId?: string
+  idempotencyKey: string
+  baseUrl: string
+  at: string
+}): Promise<{ run: WorkflowRunRecord; prompt: string } | string> => {
+  const { meta, workflowArtifact } = args
+  const runId = `wfr_${sha256(
+    [
+      workflowArtifact.org_id,
+      workflowArtifact.id,
+      args.initiatorId,
+      args.assignedAgentId ?? "",
+      args.diagramId,
+      args.idempotencyKey,
+    ].join("\0"),
+  ).slice(0, 24)}`
+  const replay = await meta.getWorkflowRun(runId, workflowArtifact.org_id)
+  if (replay)
+    return {
+      run: replay,
+      prompt: workflowRunInstruction({
+        shortId: workflowArtifact.short_id,
+        version: replay.workflow_version,
+        diagramId: replay.diagram_id,
+        runId: replay.id,
+        baseUrl: args.baseUrl,
+      }),
+    }
+  if (workflowArtifact.current_version < 1) return "The workflow has no published version."
+  const facts = parseLinkedWorkflowFacts(
+    await meta.getVersionData(workflowArtifact.id, workflowArtifact.current_version),
+  )
+  if (!facts.bundleFound || !facts.workflowFound)
+    return "This artifact does not contain a runnable workflow."
+  if (!facts.manifest)
+    return `The visible workflow graph needs changes: ${facts.bundleErrors.join("; ")}`
+  if (facts.preview?.status !== "ready")
+    return `The workflow Preview needs changes: ${(facts.preview?.errors ?? []).join("; ")}`
+  const diagram = facts.preview.diagrams.find((candidate) => candidate.id === args.diagramId)
+  if (!diagram) return "No such workflow diagram."
+  const version = await meta.getVersion(workflowArtifact.id, workflowArtifact.current_version)
+  if (!version) return "The workflow version is unavailable."
+  let run: WorkflowRunRecord
+  try {
+    run = await meta.createWorkflowRun({
+      id: runId,
+      org_id: workflowArtifact.org_id,
+      workflow_artifact_id: workflowArtifact.id,
+      workflow_version: version.n,
+      workflow_blob_key: version.blob_key,
+      workflow_content_type: version.content_type,
+      diagram_id: diagram.id,
+      reason: "mcp:local",
+      initiated_by: args.initiatorId,
+      assigned_agent_id: args.assignedAgentId,
+      requested_execution: "local",
+      created_at: args.at,
+    })
+  } catch (error) {
+    const existing = await meta.getWorkflowRun(runId, workflowArtifact.org_id)
+    if (!existing) throw error
+    run = existing
+  }
+  return {
+    run,
+    prompt: workflowRunInstruction({
+      shortId: workflowArtifact.short_id,
+      version: run.workflow_version,
+      diagramId: diagram.id,
+      runId,
+      baseUrl: args.baseUrl,
+    }),
+  }
 }
 
 interface PinnedNode {
@@ -63,6 +151,47 @@ const pinnedNode = async (
     entry: diagram.entry,
     attemptLimit: attemptLimits.length > 0 ? Math.min(...attemptLimits) : null,
   }
+}
+
+/** Validate a workflow activity target before its artifact version is published. */
+export const prepareWorkflowArtifactRef = async (args: {
+  meta: MetaStore
+  ref: WorkflowArtifactRef
+  orgId: string
+}): Promise<undefined | string> => {
+  if (!Number.isInteger(args.ref.attempt) || args.ref.attempt < 1)
+    return "A workflow artifact attempt must be a positive integer."
+  const pinned = await pinnedNode(args.meta, args.ref, args.orgId)
+  return typeof pinned === "string" ? pinned : undefined
+}
+
+/** Record an exact published version against a pinned workflow node. This is observed
+ * provenance. It intentionally does not create or settle a step attempt. */
+export const recordWorkflowArtifact = async (args: {
+  meta: MetaStore
+  ref: WorkflowArtifactRef
+  orgId: string
+  artifact: Pick<ArtifactRecord, "short_id" | "title">
+  version: number
+  at: string
+}): Promise<WorkflowArtifactActivityRecord | string> => {
+  if (!Number.isInteger(args.version) || args.version < 1)
+    return "A workflow artifact version must be a positive integer."
+  const pinned = await pinnedNode(args.meta, args.ref, args.orgId)
+  if (typeof pinned === "string") return pinned
+  return args.meta.recordWorkflowArtifactActivity({
+    id: newId("wfa"),
+    org_id: args.orgId,
+    workflow_run_id: pinned.run.id,
+    node_id: pinned.node.id,
+    attempt: args.ref.attempt,
+    artifact_short_id: args.artifact.short_id,
+    artifact_version: args.version,
+    artifact_title: args.artifact.title,
+    role: args.ref.role,
+    source: "observed",
+    created_at: args.at,
+  })
 }
 
 const selectedRouteTargets = (attempt: WorkflowStepAttemptRecord): string[] => {
