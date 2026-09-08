@@ -36,14 +36,20 @@ export const IMPORT_MAX_ATTEMPTS = 3
 export interface ImportTickDeps extends Omit<ImportDeps, "now" | "sleep"> {
   now?: () => number
   sleep?: (ms: number) => Promise<void>
-  /** Names this worker in the lease row; defaults to a per-process id. */
+  /** Names this worker in the lease row; defaults to a fresh id per tick. */
   holder?: string
 }
 
 const backoff = (attempts: number): number =>
   Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** Math.max(0, attempts - 1))
 const iso = (ms: number): string => new Date(ms).toISOString()
-const defaultHolder = `import_${crypto.randomUUID().slice(0, 12)}`
+// Minted per tick, never at module load: workerd forbids generating random values in
+// global scope, and a deploy whose module body does it is rejected outright.
+// Per TICK, not memoised per process, and that part is not incidental: the release and
+// restamp paths match on `holder` alone, so two ticks sharing one id lets a tick whose
+// lease already lapsed null out the row a live tick is holding, and a third worker then
+// takes a gate someone is still talking to arXiv through.
+const defaultHolder = (): string => `import_${crypto.randomUUID().slice(0, 12)}`
 
 /** The copy an error code carries into the job row and the failed manifest. */
 export const importFailureCopy = (code: string): string =>
@@ -74,7 +80,7 @@ const classify = (error: unknown): ImportFailure =>
 export const runImportTick = async (deps: ImportTickDeps): Promise<number> => {
   const now = deps.now ?? (() => Date.now())
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)))
-  const holder = deps.holder ?? defaultHolder
+  const holder = deps.holder ?? defaultHolder()
   const scope = deps.baseUrl.replace(/\/$/, "")
   const startedAt = now()
   if (
