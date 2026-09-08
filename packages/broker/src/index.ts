@@ -5,6 +5,9 @@ import { RefusingBroker } from "./refusing"
 import type { ToolBroker } from "./types"
 
 export { ComposioBroker } from "./composio"
+// Not broker-specific: any module handed the runtime's `fetch` on an options object has
+// the same workerd hazard, and one implementation with one explanation beats a second copy.
+export { unbound } from "./http"
 export { LocalBroker } from "./local"
 export type { McpAuthResolver } from "./mcp"
 export {

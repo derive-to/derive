@@ -38,6 +38,7 @@ const CHECKS = {
   boundaries: [bin("depcruise"), "--config", ".dependency-cruiser.mjs", "packages", "apps"],
   env: script("check-env.mjs"),
   "api-types": script("check-api-types.mjs"),
+  "fetch-invocation": script("check-fetch-invocation.mjs"),
   "agent-skill": script("sync-derive-agent-skill.mjs", "--check"),
   "agent-package-files": script("check-agent-package-files.mjs"),
   skills: script("gen-skills.mjs", "--check"),

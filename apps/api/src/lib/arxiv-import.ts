@@ -11,6 +11,8 @@
 // worker with a memory budget, so it is read under a compressed cap, inflated under an
 // inflate cap, and walked under a file cap, and what it turns out to be is decided from
 // its bytes rather than from a header arXiv may or may not have set.
+
+import { unbound } from "@derive/broker"
 import {
   type ArtifactRecord,
   arxivUrls,
@@ -199,6 +201,12 @@ export class ArxivClient {
   nextAllowedAt: number
   /** The longest hold an upstream reply asked for during this client's life. */
   penaltyUntil = 0
+  /** The runtime's fetch as a PLAIN function. `this.deps.fetch(url)` calls the global with
+   *  this client as its `this`, which Node tolerates and workerd rejects outright with
+   *  "Illegal invocation" — so every request throws in a deployed Worker while every Node
+   *  test passes, and the symptom is an honest-looking "arXiv didn't answer" about an arXiv
+   *  that is answering fine. Bound once here so no call site can get it wrong again. */
+  private readonly send: typeof fetch
 
   constructor(
     private deps: Pick<ImportDeps, "fetch" | "now" | "sleep" | "baseUrl">,
@@ -206,6 +214,7 @@ export class ArxivClient {
     private onRequest?: (nextAllowedAt: number) => Promise<void>,
   ) {
     this.nextAllowedAt = nextAllowedAt
+    this.send = unbound(deps.fetch)
   }
 
   private get userAgent(): string {
@@ -232,7 +241,7 @@ export class ArxivClient {
       await this.pace()
       let res: Response
       try {
-        res = await this.deps.fetch(target, {
+        res = await this.send(target, {
           redirect: "manual",
           headers: { "user-agent": this.userAgent, accept: "*/*" },
           signal: AbortSignal.timeout(timeoutMs),
