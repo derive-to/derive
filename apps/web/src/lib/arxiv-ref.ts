@@ -40,7 +40,9 @@ const parseId = (raw: string): ArxivRefPreview | null => {
 export const previewArxivRef = (input: string): ArxivRefPreview | null => {
   let s = input.trim()
   if (s.startsWith("<") && s.endsWith(">")) s = s.slice(1, -1).trim()
-  s = s.replace(/[.,;:)\]]+$/, "")
+  let end = s.length
+  while (end > 0 && ".,;:)]".includes(s[end - 1] ?? "")) end--
+  s = s.slice(0, end)
   if (!s || /[^\x20-\x7e]/.test(s)) return null
   const prefixed = /^arxiv:\s*(.+)$/i.exec(s)
   if (prefixed) return parseId(prefixed[1] ?? "")

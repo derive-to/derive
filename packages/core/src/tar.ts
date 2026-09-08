@@ -152,7 +152,9 @@ export const untar = (bytes: Uint8Array, caps: TarCaps): TarEntry[] => {
     if (type === 0x4c) {
       // GNU 'L': the next entry's name.
       try {
-        longName = utf8Strict.decode(data).replace(/\0+$/, "")
+        let end = data.byteLength
+        while (end > 0 && data[end - 1] === 0) end--
+        longName = utf8Strict.decode(data.subarray(0, end))
       } catch {
         longName = null
       }

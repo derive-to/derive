@@ -29,7 +29,6 @@ import {
   MAX_BUNDLE_UNZIPPED_BYTES,
   MAX_BUNDLE_UNZIPPED_BYTES_WITH_CODE,
   type MetaStore,
-  newId,
   normalizeLatexSource,
   parseArxivRef,
   parseBibtex,
@@ -47,7 +46,7 @@ import { manifestOf, materializeBundle } from "./bundle"
 import { readCappedBytes } from "./http"
 import { CITATION_PATH } from "./latex-bundle"
 import { isPublicHttpUrl } from "./net"
-import { fetchRepository, type RepoCaps, RepoFetchError } from "./repo-fetch"
+import { fetchRepository, type RepoCaps, type RepoFetchDeps, RepoFetchError } from "./repo-fetch"
 import { normalizeTags } from "./tags"
 import { truncate } from "./text"
 
@@ -126,6 +125,8 @@ export interface ImportDeps {
   /** What an attached repository may cost. Absent means this tier does not fetch one:
    *  the paper still imports, and the attachment reports itself as unavailable here. */
   repoCaps?: RepoCaps | null
+  /** Delivery-time address check for repository archives. */
+  addressGuard?: RepoFetchDeps["addressGuard"]
   /** The figure codec (sharp on Node); absent on the edge, where an oversized source is
    *  refused instead of shrunk. */
   shrink?: FigureShrinker | null
@@ -415,18 +416,6 @@ const liveContext = async (meta: MetaStore, job: ImportJobRecord): Promise<Conte
   return ctx
 }
 
-/** The access a paper lands with: the workspace's default, never a world link (arXiv's
- *  licence permits the workspace's own reading, not redistribution). */
-const paperAccess = async (meta: MetaStore, orgId: string) => {
-  const settings = await meta.getOrgSettings(orgId).catch(() => null)
-  const workspaceAccess = settings?.defaultWorkspaceAccess ?? "member"
-  const listed =
-    settings?.defaultListed === "workspace" && workspaceAccess === "member"
-      ? ("workspace" as const)
-      : ("none" as const)
-  return { workspaceAccess, linkRole: "none" as const, listed }
-}
-
 const publishDeps = (deps: ImportDeps): AfterPublishDeps => ({
   meta: deps.meta,
   blobs: deps.blobs,
@@ -597,6 +586,7 @@ const republishPaper = async (
 ) => {
   const current = await deps.meta.getArtifactById(paper.id)
   if (!current) throw new ImportCancelled()
+  const currentVersion = await deps.meta.getVersion(current.id, current.current_version)
   const published = await publish(
     deps.meta,
     deps.blobs,
@@ -608,8 +598,10 @@ const republishPaper = async (
       // The paper stays the document: without this the entry is re-picked over the merged
       // paths and a README or an HTML page inside the repository could take it.
       entry: manifest.entry,
-      author: "arXiv",
-      authorId: null,
+      // An implementation changes the bundle, not the paper's authorship. Keep the
+      // imported byline when code is attached, replaced, or removed.
+      author: currentVersion?.author ?? "arXiv",
+      authorId: currentVersion?.author_id ?? null,
       ...actor,
       source: "api",
       message,
@@ -647,7 +639,6 @@ export const importArxivPaper = async (
   const target = await meta.getArtifactById(ctx.manifest_artifact_id)
   if (!target) throw new ImportCancelled()
   const agent = await meta.getAgent(ctx.agent_id)
-  const access = await paperAccess(meta, ctx.org_id)
   const actor = { agentId: agent?.id ?? null, agentName: agent?.name ?? null }
 
   // 1. Metadata. An unknown id is arXiv's verdict, not a mood.

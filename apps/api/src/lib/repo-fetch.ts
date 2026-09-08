@@ -27,6 +27,7 @@ import {
   TarError,
   untar,
 } from "@derive/core"
+import type { AddressGuard } from "../webhooks"
 import { ArchiveError, inflateCapped, isGzip, readArchive } from "./archive"
 import { isPublicHttpUrl } from "./net"
 
@@ -81,6 +82,8 @@ export interface RepoFetchDeps {
   sleep: (ms: number) => Promise<void>
   /** This deployment's origin, for the contact address in the User-Agent. */
   baseUrl: string
+  /** Recheck DNS at request time on runtimes that can reach private networks. */
+  addressGuard?: AddressGuard
 }
 
 export interface RepoFetchResult {
@@ -138,6 +141,8 @@ const redirectAllowed = (from: string, to: string): boolean =>
 const getArchive = async (deps: RepoFetchDeps, url: string): Promise<Response> => {
   let target = url
   for (let hop = 0; hop < 2; hop++) {
+    if (!isPublicHttpUrl(target) || (await deps.addressGuard?.precheck(target)))
+      throw new RepoFetchError("the repository host is not a public address")
     let res: Response
     try {
       res = await deps.fetch(target, {
@@ -167,8 +172,7 @@ const getArchive = async (deps: RepoFetchDeps, url: string): Promise<Response> =
         hop === 1 ||
         !next ||
         next.protocol !== "https:" ||
-        !redirectAllowed(new URL(target).hostname.toLowerCase(), next.hostname.toLowerCase()) ||
-        !isPublicHttpUrl(next.href)
+        !redirectAllowed(new URL(target).hostname.toLowerCase(), next.hostname.toLowerCase())
       )
         throw new RepoFetchError("the repository host redirected somewhere unexpected")
       target = next.href

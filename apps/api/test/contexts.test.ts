@@ -1584,6 +1584,7 @@ describe("contexts: import from arXiv", () => {
     expect(detail.import.status).toBe("ready")
     const paper = await meta.getByShortId(detail.documents[0].short_id)
     const v = paper ? await meta.getVersion(paper.id, paper.current_version) : null
+    expect(v?.author).toBe("Ashish Vaswani, Noam Shazeer")
     expect(v?.message).toMatch(
       /shrank 1 figure to at most 1600 px on the long side \(\d+\.\d MB → \d+\.\d MB\)/,
     )
@@ -1903,7 +1904,9 @@ describe("contexts: import from arXiv", () => {
     const withCode = await filesOf()
     expect(withCode.paths).toContain("/code/train.py")
     expect(withCode.detail.import.code).toMatchObject({ status: "ready", error: null })
+    expect(withCode.detail.description).toContain("Ashish Vaswani, Noam Shazeer")
     expect(withCode.version?.message).toContain("Attached github.com/o/r")
+    expect(withCode.version?.author).toBe("Ashish Vaswani, Noam Shazeer")
 
     // Attaching the SAME repository again is not a change: the job runs, sees the link it
     // already fetched, and leaves the paper on the version it is on.
@@ -1928,6 +1931,7 @@ describe("contexts: import from arXiv", () => {
     expect(gone.paths.some((p: string) => p.startsWith("/code/"))).toBe(false)
     expect(gone.paths).toContain("/paper.tex")
     expect(gone.version?.message).toBe("Removed the implementation")
+    expect(gone.version?.author).toBe("Ashish Vaswani, Noam Shazeer")
     expect(await meta.getImportJobForContext(created.id)).toMatchObject({
       code_status: null,
       code_ref: null,
@@ -1977,6 +1981,62 @@ describe("contexts: import from arXiv", () => {
     }
     // Nothing was queued, so nothing was fetched.
     expect(await runImportTick(tickDeps())).toBe(0)
+  })
+
+  it("never fetches a repository archive from a private address", async () => {
+    const stub = arxivStub()
+    const { app, meta, tickDeps } = setup("contexts-import-code-private", stub.fetch)
+    await app.request("/v1/me", { headers: as(owner.email) })
+    const created = await (
+      await app.request(
+        "/v1/contexts/import/arxiv",
+        jsonAs(as(owner.email), {
+          url: "2406.00005",
+          code_url: "https://gitlab.localhost/o/r",
+        }),
+      )
+    ).json()
+
+    expect(await runImportTick(tickDeps())).toBe(1)
+    expect(await meta.getImportJobForContext(created.id)).toMatchObject({
+      status: "ready",
+      code_status: "failed",
+      code_error: "the repository host is not a public address",
+    })
+    expect(stub.calls.some((url) => new URL(url).hostname === "gitlab.localhost")).toBe(false)
+  })
+
+  it("rechecks repository DNS before fetching an archive", async () => {
+    const stub = arxivStub()
+    const { app, meta, tickDeps } = setup("contexts-import-code-private-dns", stub.fetch)
+    await app.request("/v1/me", { headers: as(owner.email) })
+    const hostname = "gitlab.internal.example"
+    const created = await (
+      await app.request(
+        "/v1/contexts/import/arxiv",
+        jsonAs(as(owner.email), {
+          url: "2406.00006",
+          code_url: `https://${hostname}/o/r`,
+        }),
+      )
+    ).json()
+
+    expect(
+      await runImportTick({
+        ...tickDeps(),
+        addressGuard: {
+          async precheck(url) {
+            return new URL(url).hostname === hostname ? "blocked: private DNS answer" : null
+          },
+        },
+      }),
+    ).toBe(1)
+    expect(await meta.getImportJobForContext(created.id)).toMatchObject({
+      status: "ready",
+      code_status: "failed",
+      code_error: "the repository host is not a public address",
+    })
+    expect(stub.calls.some((url) => new URL(url).hostname === hostname)).toBe(false)
   })
 
   it("hands the arXiv gate back before shrinking, so the next import fetches meanwhile", async () => {

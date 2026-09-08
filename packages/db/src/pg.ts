@@ -4865,26 +4865,30 @@ export class PgMetaStore implements MetaStore {
     leaseUntil: string,
     scope: string,
   ): Promise<ImportJobRecord | null> {
-    // Same shape as claimDueExportJobs: the due subquery is row-locked with SKIP LOCKED
-    // so two workers never take the same job, and the UPDATE re-checks the predicate.
-    const due = this.db
-      .select({ id: importJob.id })
-      .from(importJob)
-      .where(this.importJobDue(now, scope))
-      .orderBy(asc(importJob.next_attempt_at), asc(importJob.created_at))
-      .limit(1)
-      .for("update", { skipLocked: true })
-    const rows = (await this.db
-      .update(importJob)
-      .set({
-        status: "fetching",
-        attempts: sql`${importJob.attempts} + 1`,
-        lease_until: leaseUntil,
-        updated_at: now,
-      })
-      .where(and(inArray(importJob.id, due), this.importJobDue(now, scope)))
-      .returning()) as ImportJobRecord[]
-    return rows[0] ?? null
+    // Lock the selected row and update that exact id in one transaction. A self-referencing
+    // UPDATE subquery can lock one due row but update another when concurrent workers run it.
+    return this.db.transaction(async (tx) => {
+      const due = await tx
+        .select({ id: importJob.id })
+        .from(importJob)
+        .where(this.importJobDue(now, scope))
+        .orderBy(asc(importJob.next_attempt_at), asc(importJob.created_at))
+        .limit(1)
+        .for("update", { skipLocked: true })
+      const id = due[0]?.id
+      if (!id) return null
+      const rows = (await tx
+        .update(importJob)
+        .set({
+          status: "fetching",
+          attempts: sql`${importJob.attempts} + 1`,
+          lease_until: leaseUntil,
+          updated_at: now,
+        })
+        .where(and(eq(importJob.id, id), this.importJobDue(now, scope)))
+        .returning()) as ImportJobRecord[]
+      return rows[0] ?? null
+    })
   }
   async updateImportJob(
     id: string,

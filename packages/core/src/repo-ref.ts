@@ -17,6 +17,8 @@
  * text can never steer a fetch to another host or path.
  */
 
+import { cleanPastedReference } from "./pasted-reference"
+
 export type RepoHost = "github" | "gitlab"
 
 export interface RepoRef {
@@ -105,9 +107,7 @@ const splitPath = (
  * for GitHub.
  */
 export const parseRepoRef = (input: string): RepoRef | null => {
-  let s = input.trim()
-  if (s.startsWith("<") && s.endsWith(">")) s = s.slice(1, -1).trim()
-  s = s.replace(/[.,;:)\]]+$/, "")
+  let s = cleanPastedReference(input)
   if (!s || /[^\x20-\x7e]/.test(s) || /\s/.test(s)) return null
 
   // scp-style `git@github.com:owner/repo.git`, the usual .gitmodules form.
@@ -203,7 +203,12 @@ export const parseGitmodules = (text: string, parent?: RepoRef): Submodule[] => 
     const entry = current
     current = null
     if (!entry?.path || !entry.url) return
-    const path = entry.path.replace(/^\.?\//, "").replace(/\/+$/, "")
+    let path = entry.path
+    if (path.startsWith("./")) path = path.slice(2)
+    else if (path.startsWith("/")) path = path.slice(1)
+    let end = path.length
+    while (end > 0 && path[end - 1] === "/") end--
+    path = path.slice(0, end)
     if (!path || path.split("/").some((p) => p === "." || p === "..")) return
     out.push({ path, url: entry.url, branch: entry.branch ?? null })
   }
@@ -215,10 +220,13 @@ export const parseGitmodules = (text: string, parent?: RepoRef): Submodule[] => 
       current = {}
       continue
     }
-    const kv = /^(path|url|branch)\s*=\s*(.+)$/i.exec(line)
-    if (!kv || !current) continue
-    const key = (kv[1] as string).toLowerCase() as "path" | "url" | "branch"
-    const value = (kv[2] as string).trim().replace(/^["']|["']$/g, "")
+    const equals = line.indexOf("=")
+    if (equals === -1 || !current) continue
+    const key = line.slice(0, equals).trim().toLowerCase()
+    if (key !== "path" && key !== "url" && key !== "branch") continue
+    let value = line.slice(equals + 1).trim()
+    const quote = value.at(0)
+    if ((quote === '"' || quote === "'") && value.endsWith(quote)) value = value.slice(1, -1)
     if (value) current[key] = value
   }
   flush()

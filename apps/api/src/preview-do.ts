@@ -17,7 +17,7 @@ import { log } from "./log"
 import { cfBrowserRenderer } from "./preview-cf"
 import { enqueueRender, runRenderTick, sweepMissingRenders } from "./previews"
 import { createDoBackplane } from "./realtime-do"
-import { enqueueForEvent } from "./webhooks"
+import { edgeGuard, enqueueForEvent } from "./webhooks"
 
 // While the render queue has work, re-tick on this cadence so a burst drains
 // promptly and near-term retries fire on time — mirroring the webhook outbox.
@@ -154,6 +154,7 @@ export class PreviewRenderer {
           },
           caps: EDGE_IMPORT_CAPS,
           repoCaps: EDGE_REPO_CAPS,
+          addressGuard: edgeGuard,
         }).catch((error) => {
           log.error("import tick failed", {
             error: error instanceof Error ? error.message : String(error),

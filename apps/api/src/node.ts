@@ -467,6 +467,7 @@ const importWorker = cfg.backgroundWorkers
       caps: NODE_IMPORT_CAPS,
       // A paper's implementation, when one is attached, is fetched with this box's room.
       repoCaps: NODE_REPO_CAPS,
+      addressGuard: nodeDnsGuard,
       // A source over the bundle cap has its figures shrunk to fit (sharp, Node only).
       shrink: sharpShrinker(),
     })

@@ -19,7 +19,9 @@ const isGitLabHost = (hostname: string): boolean =>
 export const previewRepoRef = (input: string): RepoRefPreview | null => {
   let s = input.trim()
   if (s.startsWith("<") && s.endsWith(">")) s = s.slice(1, -1).trim()
-  s = s.replace(/[.,;:)\]]+$/, "")
+  let end = s.length
+  while (end > 0 && ".,;:)]".includes(s[end - 1] ?? "")) end--
+  s = s.slice(0, end)
   if (!s || /[^\x20-\x7e]/.test(s) || /\s/.test(s)) return null
 
   const scp = /^(?:[a-z0-9_.-]+@)?([a-z0-9.-]+):(?!\/)(.+)$/i.exec(s)

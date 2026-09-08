@@ -13,6 +13,8 @@
  * never be steered to another host by the pasted text.
  */
 
+import { cleanPastedReference } from "./pasted-reference"
+
 export interface ArxivRef {
   /** The bare id (`2401.12345`, `hep-th/9901001`), version stripped. */
   id: string
@@ -63,9 +65,7 @@ const parseId = (raw: string): ArxivRef | null => {
  * from a bibliography or an email.
  */
 export const parseArxivRef = (input: string): ArxivRef | null => {
-  let s = input.trim()
-  if (s.startsWith("<") && s.endsWith(">")) s = s.slice(1, -1).trim()
-  s = s.replace(/[.,;:)\]]+$/, "")
+  const s = cleanPastedReference(input)
   if (!s || /[^\x20-\x7e]/.test(s)) return null
 
   const prefixed = /^arxiv:\s*(.+)$/i.exec(s)
