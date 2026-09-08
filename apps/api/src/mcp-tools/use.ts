@@ -507,6 +507,7 @@ export function registerUseTool(tc: ToolContext): void {
             kind: attempt.kind,
             status: attempt.status,
             selected_routes: parseSelectedRoutes(attempt.selected_routes),
+            route_sources: parseSelectedRoutes(attempt.route_sources),
             route_basis: attempt.route_basis,
             result_artifact_id: attempt.result_artifact_id,
             error: attempt.error,

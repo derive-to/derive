@@ -1,5 +1,5 @@
-import { newId } from "@derive/core"
-import { describe, expect, it } from "vitest"
+import { newId, publish as publishVersion, WorkflowAttemptStateConflictError } from "@derive/core"
+import { describe, expect, it, vi } from "vitest"
 import { createInProcessBackplane } from "../src/bus"
 import { sha256 } from "../src/lib/crypto"
 import { inMemoryRateLimiters } from "../src/lib/rate-limit"
@@ -66,7 +66,11 @@ const call = async (
   name: string,
   args: Record<string, unknown> = {},
   // biome-ignore lint/suspicious/noExplicitAny: test convenience over a JSON payload
-): Promise<any> => JSON.parse((await callRaw(app, token, name, args)).text)
+): Promise<any> => {
+  const result = await callRaw(app, token, name, args)
+  if (result.isError) throw new Error(result.text)
+  return JSON.parse(result.text)
+}
 
 // find's browse/search rows are typed; the askable contexts come back as
 // {type:"context"} rows — the former list_contexts payload, one per context, each
@@ -76,7 +80,11 @@ const contextsOf = (
   // biome-ignore lint/suspicious/noExplicitAny: test convenience over a JSON payload
 ): any[] => (r.results ?? []).filter((x) => x.type === "context")
 
-const setup = async (name: string, deps?: Record<string, unknown>) => {
+const setup = async (
+  name: string,
+  deps?: Record<string, unknown>,
+  ownerRole: "commenter" | "editor" = "commenter",
+) => {
   const made = makeAuthedApp(name, [owner, dev], "editor", deps ? { deps } : undefined)
   const { app, meta } = made
   await app.request("/v1/me", { headers: as(owner.email) })
@@ -87,7 +95,7 @@ const setup = async (name: string, deps?: Record<string, unknown>) => {
     await app.request("/v1/agents", jsonAs(as(owner.email), { name: "Analyst" }))
   ).json()
   const ownerBot = await (
-    await app.request("/v1/agents", jsonAs(as(owner.email), { name: "OwnerBot" }))
+    await app.request("/v1/agents", jsonAs(as(owner.email), { name: "OwnerBot", role: ownerRole }))
   ).json()
   // dev (editor) authors the manifest and creates the context — dev is creator.
   const manifest = await (
@@ -108,6 +116,7 @@ const setup = async (name: string, deps?: Record<string, unknown>) => {
     meta,
     cx,
     manifestShortId: manifest.short_id as string,
+    ctx: made.ctx,
     answeringToken: answering.token as string,
     ownerAgentId: ownerBot.id as string,
     ownerToken: ownerBot.token as string,
@@ -229,6 +238,172 @@ const fanOutWorkflowHtml = (contextRef: string) => `<!doctype html><html><body>
     },
   ],
 })}</script></body></html>`
+
+const fanInWorkflowHtml = (contextRef: string) => {
+  const routes = [
+    { from: "research", to: "left", when: "always" },
+    { from: "research", to: "right", when: "always" },
+    { from: "left", to: "join", when: "join" },
+    { from: "right", to: "join", when: "join" },
+    { from: "left", to: "stop", when: "stop" },
+    { from: "right", to: "stop", when: "stop" },
+  ]
+  const manifest = {
+    schema: "derive.linked-bundle/v1",
+    purpose: "Join two reviews",
+    members: [],
+    diagrams: [
+      {
+        id: "fan-in",
+        title: "Join reviews",
+        type: "graph",
+        nodes: ["research", "left", "right", "join", "stop"].map((id) => ({
+          id,
+          label: id,
+          note: id,
+        })),
+        edges: routes.map(({ from, to, when }) => ({ from, to, label: when })),
+      },
+    ],
+  }
+  const definition = {
+    schema: "derive.workflow/v1",
+    purpose: "Join two reviews",
+    diagrams: [
+      {
+        id: "fan-in",
+        entry: "research",
+        routes,
+        nodes: [
+          {
+            id: "research",
+            kind: "context",
+            context_ref: contextRef,
+            instruction: "Produce research",
+            result: "Evidence",
+            routing: "all",
+          },
+          ...["left", "right"].map((id) => ({
+            id,
+            kind: "human",
+            decision: "Join the reviews",
+            options: ["join", "stop"],
+            resume: "Record this review",
+          })),
+          { id: "join", kind: "terminal", result: "Both reviews", terminal: true },
+          { id: "stop", kind: "terminal", result: "Stopped", terminal: true },
+        ],
+        scenarios: [
+          {
+            id: "left-human",
+            kind: "human",
+            path: ["research", "left", "join"],
+            outcome: "Left review joins",
+          },
+          {
+            id: "expected",
+            kind: "expected",
+            path: ["research", "left", "join"],
+            outcome: "Reviews join",
+          },
+          {
+            id: "human",
+            kind: "human",
+            path: ["research", "right", "join"],
+            outcome: "A person reviews",
+          },
+          { id: "failure", kind: "failure", path: ["research"], outcome: "Failure is visible" },
+        ],
+      },
+    ],
+  }
+  return `<!doctype html><html><body><script type="application/derive-facts" data-fact="bundle-manifest">${JSON.stringify(manifest)}</script><script type="application/derive-facts" data-fact="workflow-definition">${JSON.stringify(definition)}</script></body></html>`
+}
+
+const repeatedWorkflowHtml = (contextRef: string) => {
+  const routes = [
+    { from: "research", to: "review", when: "always" },
+    { from: "review", to: "research", when: "again" },
+    { from: "review", to: "done", when: "done" },
+  ]
+  const manifest = {
+    schema: "derive.linked-bundle/v1",
+    purpose: "Verify ten rounds",
+    members: [],
+    diagrams: [
+      {
+        id: "ten-rounds",
+        title: "Ten rounds",
+        type: "graph",
+        nodes: ["research", "review", "done"].map((id) => ({ id, label: id, note: id })),
+        edges: routes.map(({ from, to, when }) => ({ from, to, label: when })),
+      },
+    ],
+  }
+  const definition = {
+    schema: "derive.workflow/v1",
+    purpose: "Verify ten rounds",
+    diagrams: [
+      {
+        id: "ten-rounds",
+        entry: "research",
+        nodes: [
+          {
+            id: "research",
+            kind: "context",
+            context_ref: contextRef,
+            instruction: "Produce round evidence",
+            result: "Evidence",
+          },
+          {
+            id: "review",
+            kind: "human",
+            decision: "Continue or finish",
+            options: ["again", "done"],
+            resume: "Record the review decision",
+          },
+          { id: "done", kind: "terminal", result: "Ten verified rounds", terminal: true },
+        ],
+        routes,
+        loops: [
+          {
+            id: "rounds",
+            nodes: ["research", "review"],
+            goal: "Complete ten rounds",
+            evaluate: "Inspect each result",
+            stop: {
+              max_attempts: 10,
+              stagnation_limit: 10,
+              max_minutes: 60,
+              human_stop: "Stop on request",
+            },
+          },
+        ],
+        scenarios: [
+          {
+            id: "human",
+            kind: "human",
+            path: ["research", "review", "research", "review", "done"],
+            outcome: "Review requests another round",
+          },
+          {
+            id: "expected",
+            kind: "expected",
+            path: ["research", "review", "done"],
+            outcome: "Complete",
+          },
+          {
+            id: "failure",
+            kind: "failure",
+            path: ["research"],
+            outcome: "Failure remains visible",
+          },
+        ],
+      },
+    ],
+  }
+  return `<!doctype html><html><body><script type="application/derive-facts" data-fact="bundle-manifest">${JSON.stringify(manifest)}</script><script type="application/derive-facts" data-fact="workflow-definition">${JSON.stringify(definition)}</script></body></html>`
+}
 
 const gatedEffectWorkflowHtml = (
   contextRef: string,
@@ -683,6 +858,486 @@ describe("use — open, check, and the grant edges", () => {
         },
       }),
     ).toMatchObject({ attempt_status: "succeeded", run_status: "succeeded" })
+  })
+
+  it("includes a route that settles during guarded fan-in creation", async () => {
+    const { app, meta, cx, ownerToken, answeringToken } = await setup("mcx-fan-in-race")
+    await app.request(
+      `/v1/contexts/${cx.id}/access`,
+      jsonAs(as(dev.email), { ask_policy: "workspace" }),
+    )
+    const workflow = await (
+      await publishAs(
+        app,
+        fanInWorkflowHtml(cx.id),
+        { title: "Fan-in", contentType: "text/html" },
+        as(owner.email),
+      )
+    ).json()
+    const started = await call(app, ownerToken, "use", {
+      workflow_run: {
+        action: "start",
+        short_id: workflow.short_id,
+        diagram_id: "fan-in",
+        dedupe_key: "fan-in-race",
+      },
+    })
+    const runId = started.workflow_run.id
+    const research = { run_id: runId, node_id: "research", attempt: 1 }
+    const opened = await call(app, ownerToken, "use", {
+      context: cx.id,
+      instruction: "Research",
+      workflow: research,
+      wait: 0,
+    })
+    expect(
+      (
+        await answerAs(app, answeringToken, opened.session_id, {
+          body_md: "Done",
+          state: "answered",
+        })
+      ).status,
+    ).toBe(201)
+    await call(app, ownerToken, "use", {
+      workflow: { ...research, status: "succeeded", selected_routes: ["left", "right"] },
+    })
+    const review = (node_id: string) => ({
+      run_id: runId,
+      node_id,
+      attempt: 1,
+      status: "succeeded",
+      decision: "join",
+      selected_routes: ["join"],
+    })
+    await call(app, ownerToken, "use", { workflow: review("left") })
+    const run = await meta.getWorkflowRunById(runId)
+    if (!run) throw new Error("Missing run")
+    const before = await meta.listWorkflowStepAttempts(runId, run.org_id)
+    const left = before.find((item) => item.node_id === "left")
+    if (!left) throw new Error("Missing left review")
+    const originalCreate = meta.createWorkflowStepAttempt.bind(meta)
+    const captured: string[][] = []
+    const spy = vi
+      .spyOn(meta, "createWorkflowStepAttempt")
+      .mockImplementation(async (orgId, input, state) => {
+        if (input.node_id === "join") {
+          captured.push(JSON.parse(input.route_sources ?? "null"))
+          if (captured.length === 1) {
+            expect(captured[0]).toEqual([left.id])
+            // A real receipt changes the store after the target snapshots its routes.
+            // The original guarded insert must reject it; no synthetic conflict is thrown.
+            await call(app, ownerToken, "use", { workflow: review("right") })
+          }
+        }
+        return originalCreate(orgId, input, state)
+      })
+    try {
+      const result = await call(app, ownerToken, "use", {
+        workflow: {
+          run_id: runId,
+          node_id: "join",
+          attempt: 1,
+          status: "succeeded",
+          finish_run: "succeeded",
+        },
+      })
+      expect(result.run_status).toBe("succeeded")
+      const attempts = await meta.listWorkflowStepAttempts(runId, run.org_id)
+      const right = attempts.find((item) => item.node_id === "right")
+      if (!right) throw new Error("Missing right review")
+      const sources = [left.id, right.id].sort()
+      expect(captured).toEqual([[left.id], sources])
+      expect(attempts).toHaveLength(4)
+      expect(
+        JSON.parse(attempts.find((item) => item.node_id === "join")?.route_sources ?? "null"),
+      ).toEqual(sources)
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it("recovers a lost publish response without creating another artifact or version", async () => {
+    const { app, meta, cx, ownerToken, ctx } = await setup(
+      "mcx-publish-recovery",
+      undefined,
+      "editor",
+    )
+    const workflow = await (
+      await publishAs(
+        app,
+        repeatedWorkflowHtml(cx.id),
+        { title: "Publication recovery", contentType: "text/html" },
+        as(owner.email),
+      )
+    ).json()
+    const started = await call(app, ownerToken, "use", {
+      workflow_run: {
+        action: "start",
+        short_id: workflow.short_id,
+        diagram_id: "ten-rounds",
+        dedupe_key: "publish-recovery",
+      },
+    })
+    const runId = started.workflow_run.id
+    const ref = { run_id: runId, node_id: "research", attempt: 1, role: "output" }
+    const request = {
+      title: "Recovered output",
+      content: "# First output",
+      workspace_access: "none",
+      link_role: "none",
+      listed: "none",
+      workflow: { ...ref, dedupe_key: "first-output" },
+    }
+    const originalPublish = meta.publishWorkflowVersion.bind(meta)
+    const spy = vi.spyOn(meta, "publishWorkflowVersion").mockImplementationOnce(async (input) => {
+      await originalPublish(input)
+      throw new Error("Simulated response loss after metadata commit")
+    })
+    const lost = await callRaw(app, ownerToken, "publish", request)
+    spy.mockRestore()
+    expect(lost.isError).toBe(true)
+    const recovered = await call(app, ownerToken, "publish", request)
+    expect(recovered).toMatchObject({
+      version: 1,
+      workflow_publish: { replayed: true, dedupe_key: "first-output" },
+      workflow_activity: { status: "recorded", completion: "unconfirmed" },
+    })
+    expect(recovered.version_url).toMatch(/@v1$/)
+    const artifact = await meta.getByShortId(recovered.short_id)
+    if (!artifact) throw new Error("Missing recovered artifact")
+    expect(await meta.listArtifactMembers(artifact.id)).toMatchObject([{ role: "owner" }])
+    expect(await meta.listVersions(artifact.id)).toHaveLength(1)
+    const conflict = await callRaw(app, ownerToken, "publish", {
+      ...request,
+      content: "# Different request",
+    })
+    expect(conflict.isError).toBe(true)
+    expect(conflict.text).toContain("different request")
+    const roleConflict = await callRaw(app, ownerToken, "publish", {
+      ...request,
+      workflow: { ...request.workflow, role: "evidence" },
+    })
+    expect(roleConflict.isError).toBe(true)
+
+    // Without an explicit key, identical requests still deduplicate opportunistically.
+    const revision = { short_id: artifact.short_id, content: "# Second output", workflow: ref }
+    const revisions = await Promise.all([
+      call(app, ownerToken, "publish", revision),
+      call(app, ownerToken, "publish", revision),
+    ])
+    expect(revisions.map((item) => item.version)).toEqual([2, 2])
+    expect(revisions.some((item) => item.workflow_publish.replayed)).toBe(true)
+    expect((await call(app, ownerToken, "publish", request)).version).toBe(1)
+    expect(await meta.listVersions(artifact.id)).toHaveLength(2)
+
+    const edit = {
+      short_id: artifact.short_id,
+      base_version: 2,
+      edits: [{ old_str: "# Second output", new_str: "# Final output" }],
+      workflow: { ...ref, dedupe_key: "final-edit" },
+    }
+    expect((await call(app, ownerToken, "publish", edit)).version).toBe(3)
+    // The original text and base version are stale now. Replay must happen before
+    // materialization, not apply the edit again or turn success into a conflict.
+    expect(await call(app, ownerToken, "publish", edit)).toMatchObject({
+      version: 3,
+      workflow_publish: { replayed: true },
+    })
+    expect(await meta.listVersions(artifact.id)).toHaveLength(3)
+    const activity = await meta.listWorkflowArtifactActivity(runId, artifact.org_id)
+    expect(activity.map((item) => item.artifact_version).sort()).toEqual([1, 2, 3])
+    expect(new Set(activity.map((item) => item.artifact_short_id))).toEqual(
+      new Set([artifact.short_id]),
+    )
+    expect(await meta.listWorkflowStepAttempts(runId, artifact.org_id)).toHaveLength(0)
+    const linkedHead = await meta.getVersion(artifact.id, 3)
+    if (!linkedHead) throw new Error("Missing linked version")
+    const edited = await publishVersion(
+      meta,
+      ctx.blobs,
+      {
+        bytes: new TextEncoder().encode("# Later edit"),
+        filename: "index.md",
+        isBundle: false,
+        orgId: artifact.org_id,
+        replaceCurrent: { n: 3, blobKey: linkedHead.blob_key },
+      },
+      artifact.short_id,
+    )
+    expect(edited.version.n).toBe(4)
+    expect((await meta.getVersion(artifact.id, 3))?.blob_key).toBe(linkedHead.blob_key)
+    expect((await call(app, ownerToken, "publish", edit)).version).toBe(3)
+  })
+
+  it("recovers ten loop rounds without reusing an earlier route or losing exact outputs", async () => {
+    const { app, meta, cx, ownerToken, answeringToken } = await setup(
+      "mcx-ten-rounds",
+      undefined,
+      "editor",
+    )
+    await app.request(
+      `/v1/contexts/${cx.id}/access`,
+      jsonAs(as(dev.email), { ask_policy: "workspace" }),
+    )
+    const workflow = await (
+      await publishAs(
+        app,
+        repeatedWorkflowHtml(cx.id),
+        { title: "Ten rounds", contentType: "text/html" },
+        as(owner.email),
+      )
+    ).json()
+    const start = {
+      action: "start",
+      short_id: workflow.short_id,
+      diagram_id: "ten-rounds",
+      dedupe_key: "ten-rounds-recovery",
+    }
+    const first = await call(app, ownerToken, "use", { workflow_run: start })
+    const runId = first.workflow_run.id
+    expect((await call(app, ownerToken, "use", { workflow_run: start })).workflow_run.id).toBe(
+      runId,
+    )
+    // Force a database conflict at each kind of attempt creation. Both calls must
+    // reload and retry without duplicating a Context session or losing the receipt.
+    const originalCreate = meta.createWorkflowStepAttempt.bind(meta)
+    const conflicted = new Set<string>()
+    const createSpy = vi
+      .spyOn(meta, "createWorkflowStepAttempt")
+      .mockImplementation(async (orgId, input, state) => {
+        if (input.attempt === 2 && !conflicted.has(input.kind)) {
+          conflicted.add(input.kind)
+          throw new WorkflowAttemptStateConflictError()
+        }
+        return originalCreate(orgId, input, state)
+      })
+    let evidenceId: string | undefined
+    for (let round = 1; round <= 10; round++) {
+      const ref = { run_id: runId, node_id: "research", attempt: round }
+      const request = { context: cx.id, instruction: `Round ${round}`, workflow: ref, wait: 0 }
+      const opens = await Promise.all(
+        Array.from({ length: round === 5 ? 2 : 1 }, () => call(app, ownerToken, "use", request)),
+      )
+      const opened = opens[0]
+      expect(opened.session_id).toBeTruthy()
+      expect(new Set(opens.map((result) => result.session_id)).size).toBe(1)
+      // A lost response is recovered by replaying the same workflow reference.
+      if (round === 1 || round === 5)
+        expect((await call(app, ownerToken, "use", request)).session_id).toBe(opened.session_id)
+      const published = await call(app, ownerToken, "publish", {
+        ...(evidenceId ? { short_id: evidenceId } : { title: "Round evidence" }),
+        content: `# Round ${round}`,
+        workflow: { ...ref, role: "output" },
+      })
+      evidenceId = published.short_id
+      expect(published.version).toBe(round)
+      expect(published.workflow_activity.completion).toBe("unconfirmed")
+      expect(
+        (
+          await answerAs(app, answeringToken, opened.session_id, {
+            body_md: `Round ${round} complete`,
+            state: "answered",
+            result_artifact_id: evidenceId,
+          })
+        ).status,
+      ).toBe(201)
+      const receipt = {
+        ...ref,
+        status: "succeeded",
+        selected_routes: ["review"],
+        output: { round },
+      }
+      expect((await call(app, ownerToken, "use", { workflow: receipt })).attempt_status).toBe(
+        "succeeded",
+      )
+      expect((await call(app, ownerToken, "use", { workflow: receipt })).attempt_status).toBe(
+        "succeeded",
+      )
+      const conflict = await callRaw(app, ownerToken, "use", {
+        workflow: { ...receipt, output: { round: 999 } },
+      })
+      expect(conflict.isError).toBe(true)
+      if (round === 2) {
+        const premature = await callRaw(app, ownerToken, "use", {
+          ...request,
+          workflow: { ...ref, attempt: 3 },
+        })
+        expect(premature.isError).toBe(true)
+      }
+      if (round === 5) {
+        const updated = await publishAs(
+          app,
+          workflowHtml(cx.id),
+          { contentType: "text/html" },
+          as(owner.email),
+          workflow.short_id,
+        )
+        expect(updated.status).toBe(201)
+        expect((await call(app, ownerToken, "use", { workflow_run: start })).workflow_run.id).toBe(
+          runId,
+        )
+      }
+      if (round === 10) {
+        const exhausted = await callRaw(app, ownerToken, "use", {
+          workflow: {
+            run_id: runId,
+            node_id: "review",
+            attempt: round,
+            status: "succeeded",
+            decision: "again",
+            selected_routes: ["research"],
+          },
+        })
+        expect(exhausted.isError).toBe(true)
+        expect(exhausted.text).toContain("10-attempt limit")
+      }
+      expect(
+        (
+          await call(app, ownerToken, "use", {
+            workflow: {
+              run_id: runId,
+              node_id: "review",
+              attempt: round,
+              status: "succeeded",
+              decision: round === 10 ? "done" : "again",
+              selected_routes: [round === 10 ? "done" : "research"],
+            },
+          })
+        ).attempt_status,
+      ).toBe("succeeded")
+    }
+    const impossible = await callRaw(app, ownerToken, "publish", {
+      short_id: evidenceId,
+      content: "# Impossible round",
+      workflow: { run_id: runId, node_id: "research", attempt: 11, role: "output" },
+    })
+    expect(impossible.isError).toBe(true)
+    expect(impossible.text).toContain("limited to 10 attempts")
+    expect((await meta.getByShortId(evidenceId ?? ""))?.current_version).toBe(10)
+    const final = {
+      run_id: runId,
+      node_id: "done",
+      attempt: 1,
+      status: "succeeded",
+      finish_run: "succeeded",
+    }
+    expect((await call(app, ownerToken, "use", { workflow: final })).run_status).toBe("succeeded")
+    expect((await call(app, ownerToken, "use", { workflow: final })).run_status).toBe("succeeded")
+    const run = await meta.getWorkflowRunById(runId)
+    if (!run) throw new Error("Missing run")
+    expect(run.workflow_version).toBe(1)
+    const attempts = await meta.listWorkflowStepAttempts(runId, run.org_id)
+    expect(attempts).toHaveLength(21)
+    expect(await meta.listSessions(cx.id)).toHaveLength(10)
+    for (let round = 2; round <= 10; round++) {
+      const current = attempts.find((item) => item.node_id === "research" && item.attempt === round)
+      const priorReview = attempts.find(
+        (item) => item.node_id === "review" && item.attempt === round - 1,
+      )
+      expect(JSON.parse(current?.route_sources ?? "null")).toEqual([priorReview?.id])
+    }
+    const inspected = await call(app, ownerToken, "use", {
+      workflow_run: { action: "inspect", run_id: runId },
+    })
+    expect(inspected.attempts).toHaveLength(21)
+    const secondResearch = inspected.attempts.find(
+      (item: { node_id: string; attempt: number }) =>
+        item.node_id === "research" && item.attempt === 2,
+    )
+    expect(secondResearch.route_sources).toEqual([
+      attempts.find((item) => item.node_id === "review" && item.attempt === 1)?.id,
+    ])
+    expect([...conflicted].sort()).toEqual(["context", "human"])
+    expect(createSpy.mock.calls.every(([, , state]) => state !== undefined)).toBe(true)
+    createSpy.mockRestore()
+    const activity = await meta.listWorkflowArtifactActivity(runId, run.org_id)
+    expect(activity).toHaveLength(10)
+    expect(
+      activity
+        .map((item) => [item.attempt, item.artifact_version] as const)
+        .sort((a, b) => a[0] - b[0]),
+    ).toEqual(Array.from({ length: 10 }, (_, i) => [i + 1, i + 1]))
+  })
+
+  it.each([
+    "failed",
+    "cancelled",
+  ] as const)("seals a %s Context receipt with its details exactly once", async (status) => {
+    const { app, meta, cx, ownerToken, answeringToken } = await setup(`mcx-receipt-${status}`)
+    await app.request(
+      `/v1/contexts/${cx.id}/access`,
+      jsonAs(as(dev.email), { ask_policy: "workspace" }),
+    )
+    const workflow = await (
+      await publishAs(
+        app,
+        workflowHtml(cx.id),
+        { title: "Failure receipt", contentType: "text/html" },
+        as(owner.email),
+      )
+    ).json()
+    const start = await call(app, ownerToken, "use", {
+      workflow_run: {
+        action: "start",
+        short_id: workflow.short_id,
+        diagram_id: "research-once",
+        dedupe_key: "failure",
+      },
+    })
+    const ref = { run_id: start.workflow_run.id, node_id: "research", attempt: 1 }
+    const opened = await call(app, ownerToken, "use", {
+      context: cx.id,
+      instruction: "Attempt research",
+      workflow: ref,
+      wait: 0,
+    })
+    if (status === "failed")
+      expect(
+        (
+          await answerAs(app, answeringToken, opened.session_id, {
+            body_md: "Provider failed",
+            state: "failed",
+          })
+        ).status,
+      ).toBe(201)
+    else
+      expect(
+        (
+          await app.request(
+            `/v1/sessions/${opened.session_id}`,
+            jsonAs(as(owner.email), { state: "closed" }, "PATCH"),
+          )
+        ).status,
+      ).toBe(200)
+    await call(app, ownerToken, "use", { session_id: opened.session_id, wait: 0 })
+    const orgId = (await meta.getWorkflowRunById(ref.run_id))?.org_id ?? ""
+    const observed = await meta.getWorkflowStepAttemptBySession(opened.session_id, orgId)
+    expect(observed?.status).toBe(status)
+    const receipt = {
+      ...ref,
+      status,
+      selected_routes: [],
+      error: "Provider did not return a result",
+      output: { round: 1 },
+      route_basis: "Stop after failure",
+      finish_run: status,
+    }
+    expect((await call(app, ownerToken, "use", { workflow: receipt })).run_status).toBe(status)
+    expect((await call(app, ownerToken, "use", { workflow: receipt })).run_status).toBe(status)
+    const final = await meta.getWorkflowStepAttemptBySession(opened.session_id, orgId)
+    expect(final).toMatchObject({
+      error: receipt.error,
+      output: JSON.stringify(receipt.output),
+      route_basis: receipt.route_basis,
+      finished_at: observed?.finished_at,
+    })
+    const conflict = await callRaw(app, ownerToken, "use", {
+      workflow: { ...receipt, error: "Changed history" },
+    })
+    expect(conflict.isError).toBe(true)
+    expect((await meta.getWorkflowStepAttemptBySession(opened.session_id, orgId))?.error).toBe(
+      receipt.error,
+    )
   })
 
   it("requires idempotency before reusing approval for an effect retry", async () => {

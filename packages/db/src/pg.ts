@@ -146,12 +146,16 @@ import type {
   ViewStats,
   WebhookRecord,
   WorkflowArtifactActivityRecord,
+  WorkflowAttemptStateGuard,
+  WorkflowPublishKey,
+  WorkflowPublishReceiptRecord,
   WorkflowRunRecord,
   WorkflowRunTransition,
   WorkflowStepAttemptRecord,
   WorkflowStepAttemptTransition,
   WorkflowStepTransitionGuard,
   WorkflowTransitionGuard,
+  WorkflowVersionPublish,
   WorkspaceAccess,
   WorkspaceRecord,
   WorkspaceSummary,
@@ -175,6 +179,7 @@ import {
   runCounter,
   SHARED_STATE_ACTIVITY_LIMIT,
   WORKSPACE_FACT_ROW_CAP,
+  WorkflowAttemptStateConflictError,
   workflowRunCanTransition,
   workflowStatusIsTerminal,
   workflowStepCanTransition,
@@ -276,6 +281,7 @@ import {
   webhook,
   webhookDelivery,
   workflowArtifactActivity,
+  workflowPublishReceipt,
   workflowRun,
   workflowStepAttempt,
   workspace,
@@ -287,6 +293,7 @@ import {
   parseOAuthScopes,
   parseOrgSettings,
 } from "./repos"
+import { checkedWorkflowPublishReceipt, workflowPublishStatements } from "./workflow-publish"
 
 const one = <T>(rows: T[]): T => {
   const r = rows[0]
@@ -323,6 +330,7 @@ export const schema = {
   workflowRun,
   workflowStepAttempt,
   workflowArtifactActivity,
+  workflowPublishReceipt,
   artifactScanEvent,
   artifactScanCoverage,
   skillRelation,
@@ -385,6 +393,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   workflowRun: true,
   workflowStepAttempt: true,
   workflowArtifactActivity: true,
+  workflowPublishReceipt: true,
   artifactScanEvent: true,
   artifactScanCoverage: true,
   skillRelation: true,
@@ -1189,6 +1198,21 @@ export class PgMetaStore implements MetaStore {
             eq(version.artifact_id, artifactId),
             eq(version.n, expected.n),
             eq(version.blob_key, expected.blobKey),
+            notExists(
+              tx
+                .select({ id: workflowArtifactActivity.id })
+                .from(workflowArtifactActivity)
+                .where(
+                  and(
+                    eq(
+                      workflowArtifactActivity.artifact_short_id,
+                      sql`(select short_id from artifact where id = ${artifactId})`,
+                    ),
+                    eq(workflowArtifactActivity.artifact_version, expected.n),
+                    eq(workflowArtifactActivity.source, "observed"),
+                  ),
+                ),
+            ),
           ),
         )
         .returning()
@@ -5911,6 +5935,14 @@ export class PgMetaStore implements MetaStore {
   ): Promise<WorkflowRunRecord | null> {
     if (!workflowRunCanTransition(expected.status, transition.status)) return null
     if (!Number.isInteger(expected.stateRevision) || expected.stateRevision < 0) return null
+    if (
+      expected.attemptState &&
+      (!Number.isSafeInteger(expected.attemptState.count) ||
+        expected.attemptState.count < 0 ||
+        !Number.isSafeInteger(expected.attemptState.revisionSum) ||
+        expected.attemptState.revisionSum < 0)
+    )
+      return null
     const firstStart =
       (expected.status === "queued" || expected.status === "dispatched") &&
       transition.status === "running"
@@ -5923,56 +5955,84 @@ export class PgMetaStore implements MetaStore {
     const alreadyClaimed = expected.status === "running" || expected.status === "waiting"
     if (!firstStart && !alreadyClaimed && (lane || executorId)) return null
     if (alreadyClaimed && (!lane || !executorId)) return null
-    const rows = await this.db
-      .update(workflowRun)
-      .set({
-        status: transition.status,
-        state_revision: sql`${workflowRun.state_revision} + 1`,
-        updated_at: transition.at,
-        ...(transition.status === "running"
-          ? { started_at: sql`coalesce(${workflowRun.started_at}, ${transition.at})` }
-          : {}),
-        ...(workflowStatusIsTerminal(transition.status) ? { finished_at: transition.at } : {}),
-        ...(firstStart ? { actual_execution: lane, executor_id: executorId } : {}),
-        ...(transition.externalExecution !== undefined
-          ? { external_execution: transition.externalExecution }
-          : {}),
-        ...(transition.externalRunId !== undefined
-          ? { external_run_id: transition.externalRunId }
-          : {}),
-      })
-      .where(
-        and(
-          eq(workflowRun.id, id),
-          eq(workflowRun.org_id, orgId),
-          eq(workflowRun.status, expected.status),
-          eq(workflowRun.state_revision, expected.stateRevision),
-          dispatching ? eq(workflowRun.requested_execution, "github_actions") : undefined,
-          workflowStatusIsTerminal(transition.status)
-            ? notExists(
-                this.db
-                  .select({ id: workflowStepAttempt.id })
-                  .from(workflowStepAttempt)
-                  .where(
-                    and(
-                      eq(workflowStepAttempt.workflow_run_id, workflowRun.id),
-                      notInArray(workflowStepAttempt.status, ["succeeded", "failed", "cancelled"]),
-                    ),
+    return this.db.transaction(async (tx) => {
+      // Serialize all attempt writes and finalization on their parent run.
+      const parent = await tx
+        .select({ id: workflowRun.id })
+        .from(workflowRun)
+        .where(and(eq(workflowRun.id, id), eq(workflowRun.org_id, orgId)))
+        .for("update")
+      if (parent.length === 0) return null
+      const rows = await tx
+        .update(workflowRun)
+        .set({
+          status: transition.status,
+          state_revision: sql`${workflowRun.state_revision} + 1`,
+          updated_at: transition.at,
+          ...(transition.status === "running"
+            ? { started_at: sql`coalesce(${workflowRun.started_at}, ${transition.at})` }
+            : {}),
+          ...(workflowStatusIsTerminal(transition.status) ? { finished_at: transition.at } : {}),
+          ...(firstStart ? { actual_execution: lane, executor_id: executorId } : {}),
+          ...(transition.externalExecution !== undefined
+            ? { external_execution: transition.externalExecution }
+            : {}),
+          ...(transition.externalRunId !== undefined
+            ? { external_run_id: transition.externalRunId }
+            : {}),
+        })
+        .where(
+          and(
+            eq(workflowRun.id, id),
+            eq(workflowRun.org_id, orgId),
+            eq(workflowRun.status, expected.status),
+            eq(workflowRun.state_revision, expected.stateRevision),
+            expected.attemptState
+              ? and(
+                  eq(
+                    sql`(select count(*) from ${workflowStepAttempt} where ${workflowStepAttempt.workflow_run_id} = ${id})`,
+                    expected.attemptState.count,
                   ),
-              )
-            : undefined,
-          firstStart && lane && executorId
-            ? or(
-                eq(workflowRun.requested_execution, "any"),
-                eq(workflowRun.requested_execution, lane),
-              )
-            : lane && executorId
-              ? and(eq(workflowRun.actual_execution, lane), eq(workflowRun.executor_id, executorId))
+                  eq(
+                    sql`(select coalesce(sum(${workflowStepAttempt.state_revision}), 0) from ${workflowStepAttempt} where ${workflowStepAttempt.workflow_run_id} = ${id})`,
+                    expected.attemptState.revisionSum,
+                  ),
+                )
               : undefined,
-        ),
-      )
-      .returning()
-    return rows[0] ?? null
+            dispatching ? eq(workflowRun.requested_execution, "github_actions") : undefined,
+            workflowStatusIsTerminal(transition.status)
+              ? notExists(
+                  tx
+                    .select({ id: workflowStepAttempt.id })
+                    .from(workflowStepAttempt)
+                    .where(
+                      and(
+                        eq(workflowStepAttempt.workflow_run_id, workflowRun.id),
+                        notInArray(workflowStepAttempt.status, [
+                          "succeeded",
+                          "failed",
+                          "cancelled",
+                        ]),
+                      ),
+                    ),
+                )
+              : undefined,
+            firstStart && lane && executorId
+              ? or(
+                  eq(workflowRun.requested_execution, "any"),
+                  eq(workflowRun.requested_execution, lane),
+                )
+              : lane && executorId
+                ? and(
+                    eq(workflowRun.actual_execution, lane),
+                    eq(workflowRun.executor_id, executorId),
+                  )
+                : undefined,
+          ),
+        )
+        .returning()
+      return rows[0] ?? null
+    })
   }
   async setWorkflowRunExternalReceipt(
     id: string,
@@ -6025,65 +6085,99 @@ export class PgMetaStore implements MetaStore {
   async createWorkflowStepAttempt(
     orgId: string,
     a: NewWorkflowStepAttempt,
+    expectedState?: WorkflowAttemptStateGuard,
   ): Promise<WorkflowStepAttemptRecord> {
     if (!Number.isInteger(a.attempt) || a.attempt < 1)
       throw new Error("workflow step attempt must be a positive integer")
     if (!a.node_id.trim()) throw new Error("workflow step attempt requires a node id")
     if (!isValidWorkflowStepContextPin(a))
       throw new Error("workflow context attempts require a complete version pin")
+    if (
+      expectedState &&
+      (!Number.isSafeInteger(expectedState.count) ||
+        expectedState.count < 0 ||
+        !Number.isSafeInteger(expectedState.revisionSum) ||
+        expectedState.revisionSum < 0)
+    )
+      throw new Error("workflow attempt state guard must contain nonnegative integers")
     const createdAt = a.created_at ?? new Date().toISOString()
     const context = a.kind === "context" ? a : null
-    const rows = await this.db
-      .insert(workflowStepAttempt)
-      .select(
-        this.db
-          .select({
-            id: sql<string>`${a.id}`.as("id"),
-            workflow_run_id: workflowRun.id,
-            node_id: sql<string>`${a.node_id}`.as("node_id"),
-            attempt: sql<number>`${a.attempt}`.as("attempt"),
-            kind: sql<typeof a.kind>`${a.kind}`.as("kind"),
-            status: sql<"queued">`'queued'`.as("status"),
-            state_revision: sql<number>`0`.as("state_revision"),
-            context_id: sql<string | null>`${context?.context_id ?? null}`.as("context_id"),
-            context_manifest_artifact_id: sql<
-              string | null
-            >`${context?.context_manifest_artifact_id ?? null}`.as("context_manifest_artifact_id"),
-            context_version: sql<number | null>`${context?.context_version ?? null}`.as(
-              "context_version",
+    const rows = await this.db.transaction(async (tx) => {
+      // Acquire the parent lock before the guarded insert gets its snapshot.
+      const parent = await tx
+        .select({ id: workflowRun.id })
+        .from(workflowRun)
+        .where(and(eq(workflowRun.id, a.workflow_run_id), eq(workflowRun.org_id, orgId)))
+        .for("update")
+      if (parent.length === 0) return []
+      const rows = await tx
+        .insert(workflowStepAttempt)
+        .select(
+          tx
+            .select({
+              id: sql<string>`${a.id}`.as("id"),
+              workflow_run_id: workflowRun.id,
+              node_id: sql<string>`${a.node_id}`.as("node_id"),
+              attempt: sql<number>`${a.attempt}`.as("attempt"),
+              kind: sql<typeof a.kind>`${a.kind}`.as("kind"),
+              status: sql<"queued">`'queued'`.as("status"),
+              state_revision: sql<number>`0`.as("state_revision"),
+              context_id: sql<string | null>`${context?.context_id ?? null}`.as("context_id"),
+              context_manifest_artifact_id: sql<
+                string | null
+              >`${context?.context_manifest_artifact_id ?? null}`.as(
+                "context_manifest_artifact_id",
+              ),
+              context_version: sql<number | null>`${context?.context_version ?? null}`.as(
+                "context_version",
+              ),
+              context_blob_key: sql<string | null>`${context?.context_blob_key ?? null}`.as(
+                "context_blob_key",
+              ),
+              context_content_type: sql<string | null>`${context?.context_content_type ?? null}`.as(
+                "context_content_type",
+              ),
+              session_id: sql<string | null>`${context?.session_id ?? null}`.as("session_id"),
+              decision: sql<null>`null`.as("decision"),
+              selected_routes: sql<null>`null`.as("selected_routes"),
+              route_sources: sql<string | null>`${a.route_sources ?? null}`.as("route_sources"),
+              route_basis: sql<null>`null`.as("route_basis"),
+              result_artifact_id: sql<null>`null`.as("result_artifact_id"),
+              output: sql<null>`null`.as("output"),
+              error: sql<null>`null`.as("error"),
+              created_at: sql<string>`${createdAt}`.as("created_at"),
+              updated_at: sql<string>`${createdAt}`.as("updated_at"),
+              started_at: sql<null>`null`.as("started_at"),
+              finished_at: sql<null>`null`.as("finished_at"),
+            })
+            .from(workflowRun)
+            .where(
+              and(
+                eq(workflowRun.id, a.workflow_run_id),
+                eq(workflowRun.org_id, orgId),
+                expectedState
+                  ? and(
+                      eq(
+                        sql`(select count(*) from ${workflowStepAttempt} where ${workflowStepAttempt.workflow_run_id} = ${a.workflow_run_id})`,
+                        expectedState.count,
+                      ),
+                      eq(
+                        sql`(select coalesce(sum(${workflowStepAttempt.state_revision}), 0) from ${workflowStepAttempt} where ${workflowStepAttempt.workflow_run_id} = ${a.workflow_run_id})`,
+                        expectedState.revisionSum,
+                      ),
+                    )
+                  : undefined,
+                notInArray(workflowRun.status, ["succeeded", "failed", "cancelled", "timed_out"]),
+              ),
             ),
-            context_blob_key: sql<string | null>`${context?.context_blob_key ?? null}`.as(
-              "context_blob_key",
-            ),
-            context_content_type: sql<string | null>`${context?.context_content_type ?? null}`.as(
-              "context_content_type",
-            ),
-            session_id: sql<string | null>`${context?.session_id ?? null}`.as("session_id"),
-            decision: sql<null>`null`.as("decision"),
-            selected_routes: sql<null>`null`.as("selected_routes"),
-            route_basis: sql<null>`null`.as("route_basis"),
-            result_artifact_id: sql<null>`null`.as("result_artifact_id"),
-            output: sql<null>`null`.as("output"),
-            error: sql<null>`null`.as("error"),
-            created_at: sql<string>`${createdAt}`.as("created_at"),
-            updated_at: sql<string>`${createdAt}`.as("updated_at"),
-            started_at: sql<null>`null`.as("started_at"),
-            finished_at: sql<null>`null`.as("finished_at"),
-          })
-          .from(workflowRun)
-          .where(
-            and(
-              eq(workflowRun.id, a.workflow_run_id),
-              eq(workflowRun.org_id, orgId),
-              notInArray(workflowRun.status, ["succeeded", "failed", "cancelled", "timed_out"]),
-            ),
-          )
-          .for("update"),
-      )
-      .returning()
+        )
+        .returning()
+      return rows
+    })
     if (rows[0]) return rows[0]
     const parent = await this.getWorkflowRun(a.workflow_run_id, orgId)
     if (!parent) throw new Error("workflow run not found")
+    if (!workflowStatusIsTerminal(parent.status)) throw new WorkflowAttemptStateConflictError()
     throw new Error("workflow run is already terminal")
   }
   async getWorkflowStepAttemptBySession(
@@ -6143,74 +6237,199 @@ export class PgMetaStore implements MetaStore {
     expected: WorkflowStepTransitionGuard,
     transition: WorkflowStepAttemptTransition,
   ): Promise<WorkflowStepAttemptRecord | null> {
-    if (!workflowStepCanTransition(expected.status, transition.status)) return null
+    const recordReceipt =
+      transition.recordReceipt === true &&
+      expected.status === transition.status &&
+      (expected.status === "failed" || expected.status === "cancelled") &&
+      transition.selectedRoutes === "[]"
+    if (!recordReceipt && !workflowStepCanTransition(expected.status, transition.status))
+      return null
     if (!Number.isInteger(expected.stateRevision) || expected.stateRevision < 0) return null
+    if (
+      expected.attemptState &&
+      (!Number.isSafeInteger(expected.attemptState.count) ||
+        expected.attemptState.count < 0 ||
+        !Number.isSafeInteger(expected.attemptState.revisionSum) ||
+        expected.attemptState.revisionSum < 0)
+    )
+      return null
     const starts = transition.status === "running" || transition.status === "waiting"
-    const rows = await this.db
-      .update(workflowStepAttempt)
-      .set({
-        status: transition.status,
-        state_revision: sql`${workflowStepAttempt.state_revision} + 1`,
-        updated_at: transition.at,
-        ...(starts
-          ? { started_at: sql`coalesce(${workflowStepAttempt.started_at}, ${transition.at})` }
-          : {}),
-        ...(workflowStatusIsTerminal(transition.status) ? { finished_at: transition.at } : {}),
-        ...(transition.sessionId !== undefined ? { session_id: transition.sessionId } : {}),
-        ...(transition.decision !== undefined ? { decision: transition.decision } : {}),
-        ...(transition.selectedRoutes !== undefined
-          ? { selected_routes: transition.selectedRoutes }
-          : {}),
-        ...(transition.routeBasis !== undefined ? { route_basis: transition.routeBasis } : {}),
-        ...(transition.resultArtifactId !== undefined
-          ? { result_artifact_id: transition.resultArtifactId }
-          : {}),
-        ...(transition.output !== undefined ? { output: transition.output } : {}),
-        ...(transition.error !== undefined ? { error: transition.error } : {}),
-      })
-      .where(
-        and(
-          eq(workflowStepAttempt.id, id),
-          eq(workflowStepAttempt.workflow_run_id, workflowRunId),
-          eq(workflowStepAttempt.status, expected.status),
-          eq(workflowStepAttempt.state_revision, expected.stateRevision),
-          inArray(
-            workflowStepAttempt.workflow_run_id,
-            this.db
-              .select({ id: workflowRun.id })
-              .from(workflowRun)
-              .where(eq(workflowRun.org_id, orgId)),
+    return this.db.transaction(async (tx) => {
+      // Serialize all attempt writes and finalization on their parent run.
+      const parent = await tx
+        .select({ id: workflowRun.id })
+        .from(workflowRun)
+        .where(and(eq(workflowRun.id, workflowRunId), eq(workflowRun.org_id, orgId)))
+        .for("update")
+      if (parent.length === 0) return null
+      const rows = await tx
+        .update(workflowStepAttempt)
+        .set({
+          status: transition.status,
+          state_revision: sql`${workflowStepAttempt.state_revision} + 1`,
+          updated_at: transition.at,
+          ...(starts
+            ? { started_at: sql`coalesce(${workflowStepAttempt.started_at}, ${transition.at})` }
+            : {}),
+          ...(workflowStatusIsTerminal(transition.status) && !recordReceipt
+            ? { finished_at: transition.at }
+            : {}),
+          ...(transition.sessionId !== undefined ? { session_id: transition.sessionId } : {}),
+          ...(transition.decision !== undefined ? { decision: transition.decision } : {}),
+          ...(transition.selectedRoutes !== undefined
+            ? { selected_routes: transition.selectedRoutes }
+            : {}),
+          ...(transition.routeBasis !== undefined ? { route_basis: transition.routeBasis } : {}),
+          ...(transition.resultArtifactId !== undefined
+            ? { result_artifact_id: transition.resultArtifactId }
+            : {}),
+          ...(transition.output !== undefined ? { output: transition.output } : {}),
+          ...(transition.error !== undefined ? { error: transition.error } : {}),
+        })
+        .where(
+          and(
+            eq(workflowStepAttempt.id, id),
+            eq(workflowStepAttempt.workflow_run_id, workflowRunId),
+            eq(workflowStepAttempt.status, expected.status),
+            eq(workflowStepAttempt.state_revision, expected.stateRevision),
+            expected.attemptState
+              ? and(
+                  eq(
+                    sql`(select count(*) from ${workflowStepAttempt} where ${workflowStepAttempt.workflow_run_id} = ${workflowRunId})`,
+                    expected.attemptState.count,
+                  ),
+                  eq(
+                    sql`(select coalesce(sum(${workflowStepAttempt.state_revision}), 0) from ${workflowStepAttempt} where ${workflowStepAttempt.workflow_run_id} = ${workflowRunId})`,
+                    expected.attemptState.revisionSum,
+                  ),
+                )
+              : undefined,
+            ...(recordReceipt
+              ? [
+                  eq(workflowStepAttempt.kind, "context"),
+                  isNull(workflowStepAttempt.selected_routes),
+                ]
+              : []),
+            inArray(
+              workflowStepAttempt.workflow_run_id,
+              tx
+                .select({ id: workflowRun.id })
+                .from(workflowRun)
+                .where(eq(workflowRun.org_id, orgId)),
+            ),
           ),
-        ),
-      )
-      .returning()
-    return rows[0] ?? null
+        )
+        .returning()
+      return rows[0] ?? null
+    })
   }
-  async recordWorkflowArtifactActivity(
-    a: NewWorkflowArtifactActivity,
-  ): Promise<WorkflowArtifactActivityRecord> {
+  async publishWorkflowVersion(
+    input: WorkflowVersionPublish,
+  ): Promise<WorkflowPublishReceiptRecord> {
+    const statements = workflowPublishStatements(input)
+    const client = await this.pool.connect()
+    try {
+      await client.query("BEGIN")
+      // Always lock run before artifact. The insert then sees the latest head.
+      await client.query("SELECT id FROM workflow_run WHERE id = $1 AND org_id = $2 FOR UPDATE", [
+        input.receipt.workflow_run_id,
+        input.receipt.org_id,
+      ])
+      if ("artifact_id" in input.target)
+        await client.query("SELECT id FROM artifact WHERE id = $1 AND org_id = $2 FOR UPDATE", [
+          input.target.artifact_id,
+          input.receipt.org_id,
+        ])
+      for (const statement of statements) {
+        let parameter = 0
+        await client.query(
+          statement.text.replace(/\?/g, () => `$${++parameter}`),
+          statement.values,
+        )
+      }
+      await client.query("COMMIT")
+    } catch (error) {
+      await client.query("ROLLBACK")
+      throw error
+    } finally {
+      client.release()
+    }
+    return checkedWorkflowPublishReceipt(input, await this.getWorkflowPublishReceipt(input.receipt))
+  }
+
+  async workflowVersionIsPinned(artifactId: string, n: number): Promise<boolean> {
     const rows = await this.db
-      .insert(workflowArtifactActivity)
-      .values(a)
-      .onConflictDoNothing()
-      .returning()
-    if (rows[0]) return rows[0]
-    const existing = await this.db
-      .select()
+      .select({ id: workflowArtifactActivity.id })
       .from(workflowArtifactActivity)
+      .innerJoin(artifact, eq(artifact.short_id, workflowArtifactActivity.artifact_short_id))
       .where(
         and(
-          eq(workflowArtifactActivity.workflow_run_id, a.workflow_run_id),
-          eq(workflowArtifactActivity.node_id, a.node_id),
-          eq(workflowArtifactActivity.attempt, a.attempt),
-          eq(workflowArtifactActivity.artifact_short_id, a.artifact_short_id),
-          eq(workflowArtifactActivity.artifact_version, a.artifact_version),
-          eq(workflowArtifactActivity.role, a.role),
+          eq(artifact.id, artifactId),
+          eq(workflowArtifactActivity.artifact_version, n),
+          eq(workflowArtifactActivity.source, "observed"),
         ),
       )
       .limit(1)
-    if (!existing[0]) throw new Error("workflow artifact activity conflict could not be resolved")
-    return existing[0]
+    return rows.length > 0
+  }
+
+  async getWorkflowPublishReceipt(
+    key: WorkflowPublishKey,
+  ): Promise<WorkflowPublishReceiptRecord | null> {
+    const rows = await this.db
+      .select()
+      .from(workflowPublishReceipt)
+      .where(
+        and(
+          eq(workflowPublishReceipt.org_id, key.org_id),
+          eq(workflowPublishReceipt.workflow_run_id, key.workflow_run_id),
+          eq(workflowPublishReceipt.node_id, key.node_id),
+          eq(workflowPublishReceipt.attempt, key.attempt),
+          eq(workflowPublishReceipt.dedupe_key, key.dedupe_key),
+        ),
+      )
+    return rows[0] ?? null
+  }
+
+  async recordWorkflowArtifactActivity(
+    a: NewWorkflowArtifactActivity,
+  ): Promise<WorkflowArtifactActivityRecord> {
+    return this.db.transaction(async (tx) => {
+      // Match bound publish's run→artifact lock order. A later in-place edit
+      // must see this activity before deciding whether the version is mutable.
+      await tx
+        .select({ id: workflowRun.id })
+        .from(workflowRun)
+        .where(and(eq(workflowRun.id, a.workflow_run_id), eq(workflowRun.org_id, a.org_id)))
+        .for("update")
+      await tx
+        .select({ id: artifact.id })
+        .from(artifact)
+        .where(and(eq(artifact.short_id, a.artifact_short_id), eq(artifact.org_id, a.org_id)))
+        .for("update")
+      const rows = await tx
+        .insert(workflowArtifactActivity)
+        .values(a)
+        .onConflictDoNothing()
+        .returning()
+      if (rows[0]) return rows[0]
+      const existing = await tx
+        .select()
+        .from(workflowArtifactActivity)
+        .where(
+          and(
+            eq(workflowArtifactActivity.workflow_run_id, a.workflow_run_id),
+            eq(workflowArtifactActivity.node_id, a.node_id),
+            eq(workflowArtifactActivity.attempt, a.attempt),
+            eq(workflowArtifactActivity.artifact_short_id, a.artifact_short_id),
+            eq(workflowArtifactActivity.artifact_version, a.artifact_version),
+            eq(workflowArtifactActivity.role, a.role),
+          ),
+        )
+        .limit(1)
+      if (!existing[0]) throw new Error("workflow artifact activity conflict could not be resolved")
+      return existing[0]
+    })
   }
   listWorkflowArtifactActivity(
     workflowRunId: string | string[],

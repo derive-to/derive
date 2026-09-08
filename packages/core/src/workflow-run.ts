@@ -27,12 +27,26 @@ export type WorkflowStepKind = "context" | "human" | "terminal"
 export type WorkflowRequestedExecution = "any" | "local" | "hosted" | "github_actions"
 export type WorkflowExecutionLane = Exclude<WorkflowRequestedExecution, "any">
 
+export interface WorkflowAttemptStateGuard {
+  count: number
+  revisionSum: number
+}
+
+export class WorkflowAttemptStateConflictError extends Error {
+  constructor() {
+    super("Workflow attempts changed. Reload the run and retry the operation.")
+    this.name = "WorkflowAttemptStateConflictError"
+  }
+}
+
 export interface WorkflowTransitionGuard {
+  attemptState?: WorkflowAttemptStateGuard
   status: WorkflowRunStatus
   stateRevision: number
 }
 
 export interface WorkflowStepTransitionGuard {
+  attemptState?: WorkflowAttemptStateGuard
   status: WorkflowStepAttemptStatus
   stateRevision: number
 }

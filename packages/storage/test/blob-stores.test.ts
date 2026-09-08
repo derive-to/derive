@@ -24,6 +24,19 @@ describe("FsBlobStore (local disk, the default store)", () => {
     expect(str(await store.get(key))).toBe("hello world")
   })
 
+  it("accepts simultaneous identical writes in the same clock tick", async () => {
+    const clock = vi.spyOn(Date, "now").mockReturnValue(1)
+    try {
+      const keys = await Promise.all(
+        Array.from({ length: 16 }, () => store.put(bytes("simultaneous bytes"))),
+      )
+      expect(new Set(keys).size).toBe(1)
+      expect(str(await store.get(keys[0] ?? ""))).toBe("simultaneous bytes")
+    } finally {
+      clock.mockRestore()
+    }
+  })
+
   it("rejects a malformed key and returns null for a missing one", async () => {
     expect(await store.get("not-a-key")).toBeNull()
     expect(await store.get("a".repeat(64))).toBeNull() // valid shape, absent

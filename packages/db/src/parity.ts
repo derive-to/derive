@@ -61,6 +61,7 @@ import type {
   VersionRecord,
   WebhookRecord,
   WorkflowArtifactActivityRecord,
+  WorkflowPublishReceiptRecord,
   WorkflowRunRecord,
   WorkflowStepAttemptRecord,
   WorkspaceRecord,
@@ -95,6 +96,7 @@ export interface TypedTables {
   workflowRun: WorkflowRunRecord
   workflowStepAttempt: WorkflowStepAttemptRecord
   workflowArtifactActivity: WorkflowArtifactActivityRecord
+  workflowPublishReceipt: WorkflowPublishReceiptRecord
   artifactScanEvent: ArtifactScanEventRecord
   artifactScanCoverage: ArtifactScanCoverageRecord
   skillRelation: SkillRelationRecord

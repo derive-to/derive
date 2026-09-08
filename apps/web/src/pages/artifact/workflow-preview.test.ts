@@ -20,6 +20,7 @@ describe("workflow Preview", () => {
       kind: "human",
       status: "succeeded",
       selectedRoutes: ["publish"],
+      routeSources: null,
       routeBasis: "The reviewer approved the draft.",
       resultArtifactId: null,
       error: null,

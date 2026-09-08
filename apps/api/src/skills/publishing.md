@@ -22,6 +22,18 @@ sandboxed viewer, so publish real designed pages, not just prose.
 - Republishing a bundle REPLACES it: include every page and asset, or use merge to add only the new files.
 - Verify content_sha256 in the response whenever the content passed through your context.
 
+## Workflow publish recovery
+
+When a publish belongs to a workflow, pass `workflow:{run_id,node_id,attempt,role}`.
+Derive commits the version and its workflow activity together. Completion remains unconfirmed.
+The response includes `workflow_publish.dedupe_key`, `workflow_publish.replayed`, and `version_url`.
+
+If the response is lost, retry the same request. Identical requests within one attempt recover
+the original version. You can set `workflow.dedupe_key` explicitly before the first call.
+A changed request with the same key fails. Use a new key to intentionally repeat identical content.
+Retries do not rerun publish notifications or review requests. Use `read` or `catch_up` to inspect
+the saved version and any remaining review work. Unbound publishes still create new versions.
+
 ## publish: edits vs content vs files
 
 `publish` saves a revision of an artifact.

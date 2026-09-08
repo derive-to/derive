@@ -99,6 +99,7 @@ describe("run presentation", () => {
           kind: "human",
           status: "waiting",
           selectedRoutes: null,
+          routeSources: null,
           routeBasis: null,
           resultArtifactId: null,
           error: null,
