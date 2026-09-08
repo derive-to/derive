@@ -1441,6 +1441,10 @@ if (cmd === "scan") {
       console.log(`last artifact scan: ${artifacts.last_scan_at ?? "never"}`)
       console.log(`pending artifact receipts: ${artifacts.pending}`)
       console.log(`pending Skill receipts: ${skills.pending}`)
+      for (const issue of [...artifacts.source_errors, ...(skills.source_errors ?? [])])
+        console.log(
+          `  unreadable ${issue.client} log: ${JSON.stringify(issue.path)} (${issue.code})`,
+        )
       for (const receipt of artifacts.pending_receipts)
         console.log(
           `  ${receipt.artifact_short_id} v${receipt.artifact_version} · ${receipt.action} · ${receipt.client} · ${receipt.reason}`,
@@ -1464,7 +1468,7 @@ if (cmd === "scan") {
   if (action === "setup") {
     await requireScanLock("artifact")
     await requireScanLock("skill")
-    await Promise.all([
+    const baselines = await Promise.all([
       scanArtifactLogs({ baseline: true, client: flags.client }),
       scanSkillLogs({ baseline: true, client: flags.client }),
     ])
@@ -1472,6 +1476,7 @@ if (cmd === "scan") {
       schedule: flags.schedule === "true",
       client: flags.client,
     })
+    setup.source_errors = baselines.flatMap((result) => result.source_errors)
     if (flags.json) console.log(JSON.stringify(setup))
     else {
       for (const hook of setup.hooks)
@@ -1481,7 +1486,9 @@ if (cmd === "scan") {
       if (setup.schedule) console.log(`✓ 30-minute system schedule installed at ${setup.schedule}`)
       console.log("Existing logs were left untouched. Run `derive scan --since 30d` to backfill.")
     }
-    process.exit(0)
+    if (setup.source_errors.length)
+      console.error("Some logs could not be baselined. Run `derive scan status` for details.")
+    process.exit(setup.source_errors.length ? 1 : 0)
   }
 
   if (flags["dry-run"] !== "true") await requireScanLock("artifact")
@@ -1508,6 +1515,7 @@ if (cmd === "scan") {
       artifacts: artifactResult.events,
       skills: skillResult?.events ?? [],
       coverage: artifactResult.coverage,
+      source_errors: [...artifactResult.source_errors, ...(skillResult?.source_errors ?? [])],
     }
     if (flags.json) console.log(JSON.stringify(output))
     else {
@@ -1519,7 +1527,9 @@ if (cmd === "scan") {
           `  ${row.client}: ${row.source_files} files · ${row.records_scanned} records · ${row.matched_events} artifact matches`,
         )
     }
-    process.exit(0)
+    if (output.source_errors.length)
+      console.error("Some log files could not be read; inspect source_errors in --json output.")
+    process.exit(output.source_errors.length ? 1 : 0)
   }
 
   requireSignedIn(resolved)
@@ -1657,7 +1667,10 @@ if (cmd === "scan") {
     },
     skills: skillOutput,
     coverage: artifactResult.coverage,
-    ...(uploadError ? { error: uploadError } : {}),
+    source_errors: artifactResult.source_errors,
+    ...(uploadError || artifactResult.source_errors.length
+      ? { error: uploadError ?? "some artifact log files could not be read" }
+      : {}),
   }
   if (flags.json) console.log(JSON.stringify(output))
   else if (!flags.quiet) {
@@ -1668,9 +1681,10 @@ if (cmd === "scan") {
       console.log(
         `✓ Skills: ${skillOutput.found} found · ${skillOutput.uploaded} uploaded · ${skillOutput.pending} pending`,
       )
-    if (uploadError) console.error(`error: ${uploadError}; receipts remain in the local spool`)
+    if (output.error)
+      console.error(`error: ${output.error}; retry the scan to finish remaining work`)
   }
-  process.exit(uploadError ? 1 : 0)
+  process.exit(output.error ? 1 : 0)
 }
 
 // ---- derive skill (add/sync/remove/used/scan) -------------------------------
@@ -1721,6 +1735,10 @@ if (cmd === "skill") {
         console.log(`last scan: ${status.last_scan_at ?? "never"}`)
         console.log(`installed Skills tracked: ${status.installs}`)
         console.log(`pending receipts: ${status.pending}`)
+        for (const issue of status.source_errors ?? [])
+          console.log(
+            `  unreadable ${issue.client} log: ${JSON.stringify(issue.path)} (${issue.code})`,
+          )
         for (const source of status.sources)
           console.log(
             `  ${source.client}: ${source.files} log files · ${source.tracked} tracked · ${source.sessions_90d} sessions in coverage`,
@@ -1734,8 +1752,9 @@ if (cmd === "skill") {
     const scanInstalls = scanInstallsForConfig(cfg, r, dryRun)
 
     if (action === "setup") {
-      await scanSkillLogs({ baseline: true, client: flags.client })
+      const baseline = await scanSkillLogs({ baseline: true, client: flags.client })
       const setup = setupSkillScan({ schedule: flags.schedule === "true", client: flags.client })
+      setup.source_errors = baseline.source_errors
       if (flags.json) console.log(JSON.stringify(setup))
       else {
         for (const hook of setup.hooks)
@@ -1748,7 +1767,11 @@ if (cmd === "skill") {
           "Existing logs were left untouched. Run `derive skill scan --since 30d` to backfill.",
         )
       }
-      process.exit(0)
+      if (setup.source_errors.length)
+        console.error(
+          "Some logs could not be baselined. Run `derive skill scan status` for details.",
+        )
+      process.exit(setup.source_errors.length ? 1 : 0)
     }
 
     const result = await scanSkillLogs({
@@ -1765,6 +1788,7 @@ if (cmd === "skill") {
         dry_run: true,
         events: result.events.map(({ target: _target, ...event }) => event),
         coverage: result.coverage,
+        source_errors: result.source_errors,
       }
       if (flags.json) console.log(JSON.stringify(output))
       else {
@@ -1776,7 +1800,9 @@ if (cmd === "skill") {
             `  ${row.client}: ${row.source_files} files · ${row.records_scanned} records · ${row.matched_events} matches`,
           )
       }
-      process.exit(0)
+      if (output.source_errors.length)
+        console.error("Some log files could not be read; inspect source_errors in --json output.")
+      process.exit(output.source_errors.length ? 1 : 0)
     }
 
     let spool = addToSkillScanSpool(result.events, result.coverage)
@@ -1835,19 +1861,23 @@ if (cmd === "skill") {
       uploaded: sentIds.length,
       pending: spool.pending.length,
       coverage: result.coverage,
-      ...(failed ? { error: failed } : {}),
+      source_errors: result.source_errors,
+      ...(failed || result.source_errors.length
+        ? { error: failed ?? "some Skill log files could not be read" }
+        : {}),
     }
     if (flags.json) console.log(JSON.stringify(output))
     else if (!flags.quiet) {
       console.log(
         `✓ found ${output.found} · uploaded ${output.uploaded} · ${output.pending} pending receipt${output.pending === 1 ? "" : "s"}`,
       )
-      if (failed) console.error(`error: ${failed}; receipts remain in the local spool`)
+      if (output.error)
+        console.error(`error: ${output.error}; retry the scan to finish remaining work`)
     }
     // Quiet suppresses routine scheduler output. It must not hide a failed
     // upload from the scheduler, which otherwise cannot report that the spool
     // needs another run.
-    process.exit(failed ? 1 : 0)
+    process.exit(output.error ? 1 : 0)
   }
   if (sub === "used") {
     const client = flags.client ?? "other"

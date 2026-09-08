@@ -330,61 +330,65 @@ export async function scanArtifactLogs(options = {}) {
     codex: { client: "codex", source_files: 0, records_scanned: 0, matched_events: 0 },
   }
 
+  const sourceErrors = []
   for (const source of sources) {
-    let stats
     try {
-      stats = statSync(source.path)
-    } catch {
-      continue
-    }
-    if (sinceMs !== null && stats.mtimeMs < sinceMs) continue
-    const identity = sourceIdentity(stats)
-    const saved = state.sources[source.path]
-    let start = 0
-    if (sinceMs === null) {
-      if (
-        saved?.identity === identity &&
-        saved.offset <= stats.size &&
-        saved.checkpoint_hash === sourceCheckpoint(source.path, saved.offset)
-      )
-        start = saved.offset
-      else if (
-        options.baseline ||
-        (options.initialBaseline !== false && !state.initialized_clients[source.client])
-      )
-        start = stats.size
-    }
-    coverage[source.client].source_files++
-    const context =
-      start > 0 && saved?.identity === identity
-        ? {
-            source: source.path,
-            session: saved.session ?? basename(source.path, ".jsonl"),
-            turn: saved.turn ?? null,
-          }
-        : { source: source.path, session: basename(source.path, ".jsonl"), turn: null }
-    const end = await completeLines(source.path, start, async (lineBytes) => {
-      coverage[source.client].records_scanned++
-      let record
-      try {
-        record = JSON.parse(lineBytes.toString("utf8").replace(/\r$/, ""))
-      } catch {
-        return
+      const stats = statSync(source.path)
+      if (!stats.isFile())
+        throw Object.assign(new Error("not a regular log file"), { code: "EISDIR" })
+      if (sinceMs !== null && stats.mtimeMs < sinceMs) continue
+      const identity = sourceIdentity(stats)
+      const saved = state.sources[source.path]
+      let start = 0
+      if (sinceMs === null) {
+        if (
+          saved?.identity === identity &&
+          saved.offset <= stats.size &&
+          saved.checkpoint_hash === sourceCheckpoint(source.path, saved.offset)
+        )
+          start = saved.offset
+        else if (
+          options.baseline ||
+          (options.initialBaseline !== false && !state.initialized_clients[source.client])
+        )
+          start = stats.size
       }
-      if (source.client === "codex") parseCodexRecord(record, state, context, events, scannedAt)
-      else parseClaudeRecord(record, state, context, events, scannedAt)
-    })
-    const sessionHash = hash(
-      ["derive-artifact-session-v1", source.client, context.session].join("\0"),
-    )
-    state.sessions[source.client][sessionHash] = new Date(stats.mtimeMs).toISOString()
-    state.sources[source.path] = {
-      identity,
-      offset: end,
-      client: source.client,
-      session: context.session,
-      turn: context.turn,
-      checkpoint_hash: sourceCheckpoint(source.path, end),
+      coverage[source.client].source_files++
+      const context =
+        start > 0 && saved?.identity === identity
+          ? {
+              source: source.path,
+              session: saved.session ?? basename(source.path, ".jsonl"),
+              turn: saved.turn ?? null,
+            }
+          : { source: source.path, session: basename(source.path, ".jsonl"), turn: null }
+      const end = await completeLines(source.path, start, async (lineBytes) => {
+        coverage[source.client].records_scanned++
+        let record
+        try {
+          record = JSON.parse(lineBytes.toString("utf8").replace(/\r$/, ""))
+        } catch {
+          return
+        }
+        if (source.client === "codex") parseCodexRecord(record, state, context, events, scannedAt)
+        else parseClaudeRecord(record, state, context, events, scannedAt)
+      })
+      const checkpointHash = sourceCheckpoint(source.path, end)
+      const sessionHash = hash(
+        ["derive-artifact-session-v1", source.client, context.session].join("\0"),
+      )
+      state.sessions[source.client][sessionHash] = new Date(stats.mtimeMs).toISOString()
+      state.sources[source.path] = {
+        identity,
+        offset: end,
+        client: source.client,
+        session: context.session,
+        turn: context.turn,
+        checkpoint_hash: checkpointHash,
+      }
+    } catch (error) {
+      if (!error.code) throw error
+      sourceErrors.push({ client: source.client, path: source.path, code: error.code })
     }
   }
 
@@ -413,12 +417,15 @@ export async function scanArtifactLogs(options = {}) {
     }))
   state.parser_version = ARTIFACT_SCAN_PARSER_VERSION
   for (const client of options.client ? [options.client] : ["claude", "codex"])
-    state.initialized_clients[client] = true
+    if (!sourceErrors.some((error) => error.client === client))
+      state.initialized_clients[client] = true
   state.last_scan_at = scannedAt
+  state.source_errors = sourceErrors
   if (!options.dryRun && !options.deferCommit) writeJson(statePath(), state)
   return {
     events: matchedEvents.map(({ _timestamp_known: _timestampKnown, ...event }) => event),
     coverage: coverageRows,
+    source_errors: sourceErrors,
     state,
     sources,
   }
@@ -487,6 +494,7 @@ export function artifactScanStatus(home = homedir(), { all = false } = {}) {
   return {
     parser_version: ARTIFACT_SCAN_PARSER_VERSION,
     last_scan_at: state.last_scan_at ?? null,
+    source_errors: state.source_errors ?? [],
     pending: spool.pending.length,
     pending_by_reason: {
       artifact_unavailable: spool.pending.filter((event) => event.retry_unavailable).length,

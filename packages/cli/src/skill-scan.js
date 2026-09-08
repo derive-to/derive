@@ -277,71 +277,81 @@ export async function scanSkillLogs(options = {}) {
     codex: { client: "codex", source_files: 0, records_scanned: 0, matched_events: 0 },
   }
 
+  const sourceErrors = []
   for (const source of sources) {
-    let stats
     try {
-      stats = statSync(source.path)
-    } catch {
-      continue
-    }
-    if (sinceMs !== null && stats.mtimeMs < sinceMs) continue
-    const identity = sourceIdentity(stats)
-    const saved = state.sources[source.path]
-    let start = 0
-    if (sinceMs === null) {
-      if (saved?.identity === identity && saved.offset <= stats.size) start = saved.offset
-      else if (
-        options.baseline ||
-        (options.initialBaseline && !state.initialized_clients[source.client])
-      )
-        start = stats.size
-    }
-    coverage[source.client].source_files++
-    if (start === stats.size) {
-      state.sources[source.path] = { identity, offset: stats.size, client: source.client }
-      continue
-    }
-    // A session header is normally written once, before later turns. Keep the
-    // parser context beside the byte offset so an incremental scan can attribute
-    // a newly appended tool call to that same session and turn.
-    const context =
-      start > 0 && saved?.identity === identity
-        ? {
-            session: saved.session ?? basename(source.path, ".jsonl"),
-            turn: saved.turn ?? null,
-          }
-        : { session: basename(source.path, ".jsonl"), turn: null }
-    const clientInstalls = installs.filter((install) => install.client === source.client)
-    const end = await completeLines(source.path, start, async (lineBytes) => {
-      coverage[source.client].records_scanned++
-      const relevant =
-        source.client === "claude"
-          ? lineBytes.includes('"attributionSkill"') || lineBytes.includes('"type":"user"')
-          : lineBytes.includes('"type":"session_meta"') ||
-            lineBytes.includes('"type":"turn_context"') ||
-            lineBytes.includes("SKILL.md") ||
-            lineBytes.includes("skill.md")
-      if (!relevant) return
-      let record
-      try {
-        record = JSON.parse(lineBytes.toString("utf8").replace(/\r$/, ""))
-      } catch {
-        return
+      const stats = statSync(source.path)
+      if (!stats.isFile())
+        throw Object.assign(new Error("not a regular log file"), { code: "EISDIR" })
+      if (sinceMs !== null && stats.mtimeMs < sinceMs) continue
+      const identity = sourceIdentity(stats)
+      const saved = state.sources[source.path]
+      let start = 0
+      if (sinceMs === null) {
+        if (saved?.identity === identity && saved.offset <= stats.size) start = saved.offset
+        else if (
+          options.baseline ||
+          (options.initialBaseline && !state.initialized_clients[source.client])
+        )
+          start = stats.size
       }
-      const found =
-        source.client === "claude"
-          ? parseClaudeLine(record, context, clientInstalls, sinceMs)
-          : parseCodexLine(record, context, clientInstalls, sinceMs)
-      for (const event of found) events.set(event.event_id, event)
-    })
-    const sessionHash = hash(["derive-skill-session-v1", source.client, context.session].join("\0"))
-    state.sessions[source.client][sessionHash] = new Date(stats.mtimeMs).toISOString()
-    state.sources[source.path] = {
-      identity,
-      offset: end,
-      client: source.client,
-      session: context.session,
-      turn: context.turn,
+      coverage[source.client].source_files++
+      if (start === stats.size) {
+        state.sources[source.path] = {
+          ...saved,
+          identity,
+          offset: stats.size,
+          client: source.client,
+        }
+        continue
+      }
+      // A session header is normally written once, before later turns. Keep the
+      // parser context beside the byte offset so an incremental scan can attribute
+      // a newly appended tool call to that same session and turn.
+      const context =
+        start > 0 && saved?.identity === identity
+          ? {
+              session: saved.session ?? basename(source.path, ".jsonl"),
+              turn: saved.turn ?? null,
+            }
+          : { session: basename(source.path, ".jsonl"), turn: null }
+      const clientInstalls = installs.filter((install) => install.client === source.client)
+      const end = await completeLines(source.path, start, async (lineBytes) => {
+        coverage[source.client].records_scanned++
+        const relevant =
+          source.client === "claude"
+            ? lineBytes.includes('"attributionSkill"') || lineBytes.includes('"type":"user"')
+            : lineBytes.includes('"type":"session_meta"') ||
+              lineBytes.includes('"type":"turn_context"') ||
+              lineBytes.includes("SKILL.md") ||
+              lineBytes.includes("skill.md")
+        if (!relevant) return
+        let record
+        try {
+          record = JSON.parse(lineBytes.toString("utf8").replace(/\r$/, ""))
+        } catch {
+          return
+        }
+        const found =
+          source.client === "claude"
+            ? parseClaudeLine(record, context, clientInstalls, sinceMs)
+            : parseCodexLine(record, context, clientInstalls, sinceMs)
+        for (const event of found) events.set(event.event_id, event)
+      })
+      const sessionHash = hash(
+        ["derive-skill-session-v1", source.client, context.session].join("\0"),
+      )
+      state.sessions[source.client][sessionHash] = new Date(stats.mtimeMs).toISOString()
+      state.sources[source.path] = {
+        identity,
+        offset: end,
+        client: source.client,
+        session: context.session,
+        turn: context.turn,
+      }
+    } catch (error) {
+      if (!error.code) throw error
+      sourceErrors.push({ client: source.client, path: source.path, code: error.code })
     }
   }
 
@@ -362,11 +372,19 @@ export async function scanSkillLogs(options = {}) {
     }))
   state.parser_version = SKILL_SCAN_PARSER_VERSION
   for (const client of options.client ? [options.client] : ["claude", "codex"])
-    state.initialized_clients[client] = true
+    if (!sourceErrors.some((error) => error.client === client))
+      state.initialized_clients[client] = true
   state.last_scan_at = scannedAt
+  state.source_errors = sourceErrors
 
   if (!options.dryRun && !options.deferCommit) writeJson(scanStatePath(), state)
-  return { events: [...events.values()], coverage: coverageRows, state, sources }
+  return {
+    events: [...events.values()],
+    coverage: coverageRows,
+    source_errors: sourceErrors,
+    state,
+    sources,
+  }
 }
 
 export function commitSkillScanState(state) {
@@ -426,6 +444,7 @@ export function skillScanStatus(home = homedir()) {
   return {
     parser_version: SKILL_SCAN_PARSER_VERSION,
     last_scan_at: state.last_scan_at ?? null,
+    source_errors: state.source_errors ?? [],
     initialized_clients: state.initialized_clients ?? { claude: false, codex: false },
     installs: listSkillInstalls().length,
     pending: spool.pending?.length ?? 0,

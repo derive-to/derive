@@ -218,6 +218,11 @@ cursor. It checks a small cursor fingerprint before each append scan. If a log w
 truncated and regrown, it safely replays the file through the idempotent receipt API. Pending tool
 calls stay separate by client, session, and source.
 
+If a log file cannot be read, scan continues with healthy files and preserves the failed cursor.
+The command exits with an error. `derive scan status` shows the affected paths and error codes.
+JSON output includes `source_errors`. These local diagnostics are not uploaded. Retry after the
+file becomes readable. Dry runs report the same errors without changing saved state.
+
 An unreadable artifact spool stops the scan before it advances a cursor. The scanner preserves
 the spool for recovery. It rejects explicit failed tool results, unrelated integration tools,
 and invalid version values instead of recording them as successful artifact activity.

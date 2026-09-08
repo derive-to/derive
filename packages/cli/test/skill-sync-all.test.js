@@ -1985,3 +1985,54 @@ describe("derive scan", () => {
     })
   })
 })
+
+describe("scan source recovery", () => {
+  it.each([
+    ["artifact", scanArtifactLogs],
+    ["skill", scanSkillLogs],
+  ])("keeps %s cursors retryable and session context across idle scans", async (_name, scan) => {
+    const root = mkdtempSync(join(tmpdir(), "derive-source-recovery-"))
+    dirs.push(root)
+    const priorConfig = process.env.DERIVE_CONFIG_DIR
+    process.env.DERIVE_CONFIG_DIR = join(root, "config")
+    try {
+      const healthy = join(root, "healthy.jsonl")
+      const broken = join(root, "broken.jsonl")
+      const header = (id) => `${JSON.stringify({ type: "session_meta", payload: { id } })}\n`
+      writeFileSync(healthy, header("original-session"))
+      writeFileSync(broken, header("repair-session"))
+      const sources = [healthy, broken].map((path) => ({ client: "codex", path }))
+      const options = { sources, home: root, initialBaseline: false }
+      const initial = await scan(options)
+      const saved = initial.state.sources[broken]
+      const idle = await scan(options)
+      expect(idle.state.sources[healthy].session).toBe("original-session")
+      rmSync(broken)
+      mkdirSync(broken)
+      writeFileSync(
+        healthy,
+        `${header("original-session")}${JSON.stringify({ type: "turn_context", payload: { turn_id: "next-turn" } })}\n`,
+      )
+      const partial = await scan(options)
+      expect(partial.source_errors).toEqual([{ client: "codex", path: broken, code: "EISDIR" }])
+      expect(partial.state.sources[broken]).toEqual(saved)
+      expect(partial.state.sources[healthy].offset).toBeGreaterThan(
+        initial.state.sources[healthy].offset,
+      )
+      expect(partial.state.sources[healthy].session).toBe("original-session")
+      rmSync(broken, { recursive: true })
+      writeFileSync(broken, header("repaired-session"))
+      const repaired = await scan(options)
+      expect(repaired.source_errors).toEqual([])
+      expect(repaired.state.sources[broken].session).toBe("repaired-session")
+      const before = readFileSync(join(root, "config", `${_name}-scan.json`), "utf8")
+      const missing = { client: "codex", path: join(root, "missing.jsonl") }
+      const dry = await scan({ ...options, sources: [missing], dryRun: true })
+      expect(dry.source_errors).toEqual([{ ...missing, code: "ENOENT" }])
+      expect(readFileSync(join(root, "config", `${_name}-scan.json`), "utf8")).toBe(before)
+    } finally {
+      if (priorConfig === undefined) delete process.env.DERIVE_CONFIG_DIR
+      else process.env.DERIVE_CONFIG_DIR = priorConfig
+    }
+  })
+})
