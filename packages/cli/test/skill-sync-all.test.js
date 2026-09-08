@@ -2040,3 +2040,66 @@ describe("scan source recovery", () => {
     }
   })
 })
+
+describe("piped scan output", () => {
+  it.each([
+    "generic",
+    "skill",
+  ])("returns complete %s dry-run JSON beyond the pipe buffer", async (scope) => {
+    const root = mkdtempSync(join(tmpdir(), "derive-scan-large-output-"))
+    dirs.push(root)
+    const logs = join(root, "home", ".codex", "sessions")
+    mkdirSync(logs, { recursive: true })
+    const skill = join(root, ".agents", "skills", "review-skill")
+    mkdirSync(skill, { recursive: true })
+    writeFileSync(join(skill, "SKILL.md"), "Review the change.")
+    writeFileSync(
+      join(root, "derive.json"),
+      JSON.stringify({
+        skills: [
+          {
+            id: "review123",
+            version: 4,
+            name: "review-skill",
+            installs: { codex: { version: 4, name: "review-skill" } },
+          },
+        ],
+      }),
+    )
+    const timestamp = new Date().toISOString()
+    const rows = [{ type: "session_meta", payload: { id: "large-output-session" } }]
+    for (let i = 0; i < 500; i++) {
+      rows.push({
+        type: "response_item",
+        timestamp,
+        payload: {
+          type: "function_call",
+          name: "mcp__derive__read",
+          call_id: `read-${i}`,
+          arguments: JSON.stringify({ cmd: `cat ${join(skill, "SKILL.md")}` }),
+        },
+      })
+      rows.push({
+        type: "response_item",
+        timestamp,
+        payload: {
+          type: "function_call_output",
+          call_id: `read-${i}`,
+          output: JSON.stringify({ short_id: `artifact${i}`, version: 1 }),
+        },
+      })
+    }
+    writeFileSync(join(logs, "session.jsonl"), `${rows.map(JSON.stringify).join("\n")}\n`)
+    const result = await run(
+      root,
+      "http://127.0.0.1:1",
+      [...(scope === "skill" ? ["skill"] : []), "scan", "--dry-run", "--since", "1d", "--json"],
+      { HOME: join(root, "home") },
+    )
+    expect(result.status).toBe(0)
+    expect(Buffer.byteLength(result.stdout)).toBeGreaterThan(65536)
+    const data = JSON.parse(result.stdout)
+    expect(scope === "skill" ? data.events : data.artifacts).toHaveLength(500)
+    expect(existsSync(join(root, ".derive-test-config"))).toBe(false)
+  })
+})

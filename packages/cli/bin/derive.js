@@ -153,6 +153,17 @@ function scanInstallsForConfig(cfg, r, dryRun) {
   return [...scanInstalls.values()]
 }
 
+// stdout is asynchronous when an agent pipes the CLI. Drain queued output
+// before exiting so a large JSON result is not cut off at the pipe buffer.
+async function exitScan(code) {
+  await Promise.all(
+    [process.stdout, process.stderr].map(
+      (stream) => new Promise((resolve) => stream.write("", resolve)),
+    ),
+  )
+  process.exit(code)
+}
+
 async function requireScanLock(kind) {
   try {
     await lockScan(kind)
@@ -1416,11 +1427,11 @@ if (cmd === "scan") {
   const action = positional[0] ?? "run"
   if (!["run", "setup", "status"].includes(action)) {
     console.error("usage: derive scan [setup|status] [--since 30d] [--dry-run] [--schedule]")
-    process.exit(1)
+    await exitScan(1)
   }
   if (flags.client && !["claude", "codex"].includes(flags.client)) {
     console.error("error: --client must be claude or codex")
-    process.exit(1)
+    await exitScan(1)
   }
   let cfg = null
   try {
@@ -1462,7 +1473,7 @@ if (cmd === "scan") {
           `  ${source.client}: ${source.files} log files · ${source.tracked} tracked · ${source.sessions_90d} sessions in coverage`,
         )
     }
-    process.exit(0)
+    await exitScan(0)
   }
 
   if (action === "setup") {
@@ -1488,7 +1499,7 @@ if (cmd === "scan") {
     }
     if (setup.source_errors.length)
       console.error("Some logs could not be baselined. Run `derive scan status` for details.")
-    process.exit(setup.source_errors.length ? 1 : 0)
+    await exitScan(setup.source_errors.length ? 1 : 0)
   }
 
   if (flags["dry-run"] !== "true") await requireScanLock("artifact")
@@ -1529,7 +1540,7 @@ if (cmd === "scan") {
     }
     if (output.source_errors.length)
       console.error("Some log files could not be read; inspect source_errors in --json output.")
-    process.exit(output.source_errors.length ? 1 : 0)
+    await exitScan(output.source_errors.length ? 1 : 0)
   }
 
   requireSignedIn(resolved)
@@ -1684,7 +1695,7 @@ if (cmd === "scan") {
     if (output.error)
       console.error(`error: ${output.error}; retry the scan to finish remaining work`)
   }
-  process.exit(output.error ? 1 : 0)
+  await exitScan(output.error ? 1 : 0)
 }
 
 // ---- derive skill (add/sync/remove/used/scan) -------------------------------
@@ -1719,11 +1730,11 @@ if (cmd === "skill") {
       console.error(
         "usage: derive skill scan [setup|status] [--since 30d] [--dry-run] [--schedule]",
       )
-      process.exit(1)
+      await exitScan(1)
     }
     if (flags.client && !["claude", "codex"].includes(flags.client)) {
       console.error("error: --client must be claude or codex")
-      process.exit(1)
+      await exitScan(1)
     }
 
     const r = resolvePublish(flags, cfg)
@@ -1744,7 +1755,7 @@ if (cmd === "skill") {
             `  ${source.client}: ${source.files} log files · ${source.tracked} tracked · ${source.sessions_90d} sessions in coverage`,
           )
       }
-      process.exit(0)
+      await exitScan(0)
     }
 
     const dryRun = flags["dry-run"] === "true"
@@ -1771,7 +1782,7 @@ if (cmd === "skill") {
         console.error(
           "Some logs could not be baselined. Run `derive skill scan status` for details.",
         )
-      process.exit(setup.source_errors.length ? 1 : 0)
+      await exitScan(setup.source_errors.length ? 1 : 0)
     }
 
     const result = await scanSkillLogs({
@@ -1802,7 +1813,7 @@ if (cmd === "skill") {
       }
       if (output.source_errors.length)
         console.error("Some log files could not be read; inspect source_errors in --json output.")
-      process.exit(output.source_errors.length ? 1 : 0)
+      await exitScan(output.source_errors.length ? 1 : 0)
     }
 
     let spool = addToSkillScanSpool(result.events, result.coverage)
@@ -1877,7 +1888,7 @@ if (cmd === "skill") {
     // Quiet suppresses routine scheduler output. It must not hide a failed
     // upload from the scheduler, which otherwise cannot report that the spool
     // needs another run.
-    process.exit(output.error ? 1 : 0)
+    await exitScan(output.error ? 1 : 0)
   }
   if (sub === "used") {
     const client = flags.client ?? "other"
