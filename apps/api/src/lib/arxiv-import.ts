@@ -86,6 +86,19 @@ export const EDGE_IMPORT_CAPS: ImportCaps = {
 
 const mb = (n: number): string => `${(n / 1048576).toFixed(1)} MB`
 
+/** The host a request was actually going to, for a message that says which one failed. */
+const hostOf = (url: string): string => {
+  try {
+    return new URL(url).hostname
+  } catch {
+    return "arXiv"
+  }
+}
+
+/** What the runtime said, short enough to survive the 200-character detail. */
+const causeOf = (error: unknown): string =>
+  truncate(error instanceof Error ? `${error.name}: ${error.message}` : String(error), 100)
+
 /** Why an import stopped. `terminal` failures never retry (they are arXiv's verdict on
  *  the paper); the others back off and try again. */
 export class ImportFailure extends Error {
@@ -226,11 +239,17 @@ export class ArxivClient {
         })
       } catch (error) {
         await this.stamp()
+        // Name the host and quote the runtime, because "could not be reached" covers a
+        // DNS failure, a refused connection, a reset and a TLS error, and those want
+        // different fixes. The runtime's own message is the only thing that separates
+        // them, and it used to be discarded here. The two arXiv hostnames can also fail
+        // independently, so which one went quiet is part of the answer.
+        const host = hostOf(target)
         throw new ImportFailure(
           "unavailable",
           error instanceof Error && error.name === "TimeoutError"
-            ? "arXiv did not answer in time"
-            : "arXiv could not be reached",
+            ? `${host} did not answer within ${Math.round(timeoutMs / 1000)}s`
+            : `${host} could not be reached (${causeOf(error)})`,
           false,
         )
       }

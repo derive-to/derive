@@ -1494,6 +1494,45 @@ describe("contexts: import from arXiv", () => {
     })
   })
 
+  it("says which host went quiet and what the runtime said", async () => {
+    // A connection that never happened has no status to report, so the runtime's own
+    // message is the only evidence of what went wrong. Discarding it left "arXiv could
+    // not be reached", which covers DNS, a refused connection, a reset and TLS alike.
+    const stub = arxivStub({
+      metadata: () => {
+        throw new TypeError("Network connection lost.")
+      },
+    })
+    const { app, meta, tickDeps } = setup("contexts-import-cause", stub.fetch)
+    await app.request("/v1/me", { headers: as(owner.email) })
+    const x = await (await importPaper(app, "2407.00004")).json()
+    expect(await runImportTick(tickDeps())).toBe(1)
+
+    const job = await meta.getImportJobForContext(x.id)
+    expect(job?.error_code).toBe("unavailable")
+    // The phase, the host that failed, and the runtime's verdict.
+    expect(job?.error_detail).toBe(
+      "metadata: export.arxiv.org could not be reached (TypeError: Network connection lost.)",
+    )
+  })
+
+  it("distinguishes a timeout from a connection that never happened", async () => {
+    const stub = arxivStub({
+      metadata: () => {
+        const e = new Error("The operation was aborted due to timeout")
+        e.name = "TimeoutError"
+        throw e
+      },
+    })
+    const { app, meta, tickDeps } = setup("contexts-import-timeout", stub.fetch)
+    await app.request("/v1/me", { headers: as(owner.email) })
+    const x = await (await importPaper(app, "2407.00005")).json()
+    expect(await runImportTick(tickDeps())).toBe(1)
+    expect((await meta.getImportJobForContext(x.id))?.error_detail).toBe(
+      "metadata: export.arxiv.org did not answer within 10s",
+    )
+  })
+
   it("never blames arXiv for a fault of its own", async () => {
     // arXiv answers perfectly; the store is what breaks. Reporting that as an upstream
     // that went quiet sends whoever is debugging it to the wrong system entirely.
