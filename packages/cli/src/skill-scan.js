@@ -36,7 +36,7 @@ const writeJson = (path, value) => {
 
 const hash = (value) => createHash("sha256").update(value).digest("hex")
 
-const installKey = (install) =>
+export const skillInstallKey = (install) =>
   [install.server, install.workspace_id ?? "", install.client, resolve(install.path)].join("\0")
 
 export function listSkillInstalls() {
@@ -44,7 +44,7 @@ export function listSkillInstalls() {
   return Array.isArray(data.installs) ? data.installs.filter((item) => !item.removed_at) : []
 }
 
-export function recordSkillInstall(install) {
+export function recordSkillInstall(install, { dryRun = false } = {}) {
   const data = readJson(installsPath(), { version: 1, installs: [] })
   const installs = Array.isArray(data.installs) ? data.installs : []
   const normalized = {
@@ -60,8 +60,9 @@ export function recordSkillInstall(install) {
     account_id: install.accountId ?? null,
     updated_at: new Date().toISOString(),
   }
-  const key = installKey(normalized)
-  const next = installs.filter((item) => installKey(item) !== key)
+  if (dryRun) return normalized
+  const key = skillInstallKey(normalized)
+  const next = installs.filter((item) => skillInstallKey(item) !== key)
   next.push(normalized)
   writeJson(installsPath(), { version: 1, installs: next })
   return normalized

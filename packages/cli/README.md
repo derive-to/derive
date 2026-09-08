@@ -221,6 +221,14 @@ An unreadable artifact spool stops the scan before it advances a cursor. The sca
 the spool for recovery. It rejects explicit failed tool results, unrelated integration tools,
 and invalid version values instead of recording them as successful artifact activity.
 
+Scans hold a process lock while they update their queue and upload receipts. If another scan owns
+the same queue, the command exits with code 75. JSON output includes `code: "scan_in_progress"`.
+Retry after the active scan finishes. Normal exits release the lock. After a forced termination,
+the lock becomes recoverable after two minutes without a heartbeat. Setup uses the same locks,
+so it cannot reset a cursor while a scan uploads receipts.
+Status and dry-run commands remain available during an active scan. They do not change local
+queues, cursors, or the install registry. Skill dry runs also resolve legacy project pins in memory.
+
 The scanner checks every workspace available to the selected account before it rejects an artifact
 as unavailable. It keeps unresolved receipts in the local spool. A later scan can resolve them after
 an account or server switch. The scanner sends no artifact content while it resolves the target.

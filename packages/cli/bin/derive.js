@@ -35,7 +35,7 @@
 //   derive workflow run [run_id]          one authorized GitHub Actions graph harness
 //   derive skill scan [setup|status]      scan local agent logs for installed Skill use
 //   derive scan [setup|status]            scan local logs for artifact and Skill activity
-import { spawn, spawnSync } from "node:child_process"
+import { spawn } from "node:child_process"
 import { createHash, randomBytes } from "node:crypto"
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { homedir, tmpdir } from "node:os"
@@ -85,6 +85,7 @@ import { createAgent, createContext, saveAgentToken } from "../src/context.js"
 import { setupDeriveScan } from "../src/derive-scan-setup.js"
 import { readTarget, uploadArtifact } from "../src/publish.js"
 import { DeriveClient, parseManifest } from "../src/runner.js"
+import { lockScan } from "../src/scan-lock.js"
 import {
   addToSkillScanSpool,
   commitSkillScanState,
@@ -94,6 +95,7 @@ import {
   removeFromSkillScanSpool,
   removeSkillInstall,
   scanSkillLogs,
+  skillInstallKey,
   skillScanStatus,
 } from "../src/skill-scan.js"
 import { setupSkillScan } from "../src/skill-scan-setup.js"
@@ -106,6 +108,63 @@ import {
 import { runGithubWorkflowHarness } from "../src/workflow-run.js"
 
 const SKILL_USAGE_BATCH_SIZE = 20
+
+function scanInstallsForConfig(cfg, r, dryRun) {
+  const scanInstalls = new Map(listSkillInstalls().map((item) => [skillInstallKey(item), item]))
+  // Backfill the local install registry for pins created before Skill scan existed.
+  for (const pin of cfg?.skills ?? []) {
+    for (const client of ["claude", "codex"]) {
+      const installed = pin.installs?.[client]
+      if (!installed) continue
+      const dir = skillSlug(installed.name ?? pin.name)
+      if (!dir) continue
+      const candidates = [
+        {
+          scope: "project",
+          path: join(".", client === "codex" ? ".agents" : ".claude", "skills", dir),
+        },
+        {
+          scope: "personal",
+          path: join(homedir(), client === "codex" ? ".codex" : ".claude", "skills", dir),
+        },
+      ]
+      for (const candidate of candidates) {
+        if (!existsSync(candidate.path)) continue
+        const recorded = recordSkillInstall(
+          {
+            id: pin.id,
+            version: installed.version ?? pin.version,
+            name: installed.name ?? pin.name,
+            client,
+            path: candidate.path,
+            digest: installed.digest ?? null,
+            scope: candidate.scope,
+            server: r.server,
+            workspaceId: r.workspaceId,
+            accountId: r.accountId,
+          },
+          { dryRun },
+        )
+        scanInstalls.set(skillInstallKey(recorded), recorded)
+      }
+    }
+  }
+
+  return [...scanInstalls.values()]
+}
+
+async function requireScanLock(kind) {
+  try {
+    await lockScan(kind)
+    // proper-lockfile releases on exit, including the CLI's early error paths.
+  } catch (error) {
+    if (error.code !== "ELOCKED") throw error
+    const message = `another ${kind} scan is active; retry after it finishes`
+    if (flags.json) console.log(JSON.stringify({ error: message, code: "scan_in_progress" }))
+    else console.error(`error: ${message}`)
+    process.exit(75)
+  }
+}
 
 const args = process.argv.slice(2)
 const cmd = args.shift()
@@ -1391,6 +1450,8 @@ if (cmd === "scan") {
   }
 
   if (action === "setup") {
+    await requireScanLock("artifact")
+    await requireScanLock("skill")
     await Promise.all([
       scanArtifactLogs({ baseline: true, client: flags.client }),
       scanSkillLogs({ baseline: true, client: flags.client }),
@@ -1411,6 +1472,7 @@ if (cmd === "scan") {
     process.exit(0)
   }
 
+  if (flags["dry-run"] !== "true") await requireScanLock("artifact")
   const [artifactResult, skillResult] = await Promise.all([
     scanArtifactLogs({
       since: flags.since,
@@ -1420,6 +1482,7 @@ if (cmd === "scan") {
     }),
     flags["dry-run"] === "true"
       ? scanSkillLogs({
+          installs: scanInstallsForConfig(cfg, resolved, true),
           since: flags.since,
           initialBaseline: true,
           dryRun: true,
@@ -1552,7 +1615,19 @@ if (cmd === "scan") {
   childArgs.push("--initial-baseline")
   for (const key of ["since", "client", "server", "workspace", "account", "token"])
     if (flags[key]) childArgs.push(`--${key}`, flags[key])
-  const skillScan = spawnSync(process.execPath, childArgs, { encoding: "utf8", env: process.env })
+  const skillScan = await new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, childArgs, { env: process.env })
+    let stdout = ""
+    let stderr = ""
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk
+    })
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk
+    })
+    child.on("error", reject)
+    child.on("close", (status) => resolve({ status, stdout, stderr }))
+  })
   let skillOutput = null
   try {
     skillOutput = JSON.parse(skillScan.stdout || "null")
@@ -1605,6 +1680,7 @@ if (cmd === "skill") {
     )
     process.exit(cmd ? 1 : 0)
   }
+  if (["add", "sync", "remove"].includes(sub)) await requireScanLock("skill")
   let cfg = null
   try {
     cfg = loadConfig(".")
@@ -1625,41 +1701,6 @@ if (cmd === "skill") {
     }
 
     const r = resolvePublish(flags, cfg)
-    // Backfill the local install registry for pins created before Skill scan existed.
-    for (const pin of cfg?.skills ?? []) {
-      for (const client of ["claude", "codex"]) {
-        const installed = pin.installs?.[client]
-        if (!installed) continue
-        const dir = skillSlug(installed.name ?? pin.name)
-        if (!dir) continue
-        const candidates = [
-          {
-            scope: "project",
-            path: join(".", client === "codex" ? ".agents" : ".claude", "skills", dir),
-          },
-          {
-            scope: "personal",
-            path: join(homedir(), client === "codex" ? ".codex" : ".claude", "skills", dir),
-          },
-        ]
-        for (const candidate of candidates) {
-          if (!existsSync(candidate.path)) continue
-          recordSkillInstall({
-            id: pin.id,
-            version: installed.version ?? pin.version,
-            name: installed.name ?? pin.name,
-            client,
-            path: candidate.path,
-            digest: installed.digest ?? null,
-            scope: candidate.scope,
-            server: r.server,
-            workspaceId: r.workspaceId,
-            accountId: r.accountId,
-          })
-        }
-      }
-    }
-
     if (action === "status") {
       const status = skillScanStatus()
       if (flags.json) console.log(JSON.stringify(status))
@@ -1675,6 +1716,10 @@ if (cmd === "skill") {
       }
       process.exit(0)
     }
+
+    const dryRun = flags["dry-run"] === "true"
+    if (!dryRun || action === "setup") await requireScanLock("skill")
+    const scanInstalls = scanInstallsForConfig(cfg, r, dryRun)
 
     if (action === "setup") {
       await scanSkillLogs({ baseline: true, client: flags.client })
@@ -1695,6 +1740,7 @@ if (cmd === "skill") {
     }
 
     const result = await scanSkillLogs({
+      installs: scanInstalls,
       since: flags.since,
       baseline: flags.baseline === "true",
       initialBaseline: flags["initial-baseline"] === "true",
