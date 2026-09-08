@@ -83,3 +83,7 @@ apps/docs/.astro/
 apps/docs/src/content/docs/
 apps/docs/src/generated/
 apps/docs/public/
+
+# Local knowledge-graph output from the understand-anything tooling. Untracked, but
+# biome scans the working tree and fails `pnpm run ci` on its generated JSON.
+.ua/

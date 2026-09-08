@@ -149,6 +149,13 @@ for the recommended install and verification flow.
   (`derived_from LIKE 'derive://templates/%'`; none on derive.to) can clear them with
   `deploy/drop-built-in-template-lineage.sql`; until then those rows read as
   underived.
+- `@derive-to/mcp` 0.7.0 — the stdio server drops the two retired template resources
+  and its `@derive-to/templates` dependency, so nothing it ships resolves outside the
+  published set. Inline content that opens with `\documentclass` or `\begin{document}`
+  now falls back to `index.tex` rather than `index.md`, so a paper is never stored as
+  Markdown. The bundled SKILL.md gains the inline shared-state contract (the artifact
+  sandbox has no browser storage; use `derive.shared`) and the code-mode retrieval
+  guidance. Its `@derive-to/cli` dependency resolves to 0.6.0.
 - **Proposals and the approval step.** The two review ceremonies are gone: ask-first
   candidate versions awaiting an editor's decision, and the `approved` round state with
   its served-version pointer. Review is one loop: every write publishes live as a kept,
@@ -238,12 +245,18 @@ for the recommended install and verification flow.
   always opens a review round — its reveal is never silent.
 
 ### Added
-- `@derive-to/cli` 0.6.0 adds `derive workflow run`, a one-shot Codex harness for
-  Derive graph runs dispatched through reviewed `derive-*.yml` GitHub Actions.
-  The job authenticates passwordlessly with GitHub OIDC, receives only the exact
-  version-pinned graph plus a short-lived run capability, and reports Context and
-  terminal receipts back to Derive; no standing Derive token or prompt is stored
-  in GitHub.
+- `@derive-to/cli` 0.6.0 adds two commands. `derive workflow run` is a one-shot Codex
+  harness for Derive graph runs dispatched through reviewed `derive-*.yml` GitHub
+  Actions: the job authenticates passwordlessly with GitHub OIDC, receives only the
+  exact version-pinned graph plus a short-lived run capability, and reports Context and
+  terminal receipts back to Derive, so no standing Derive token or prompt is stored in
+  GitHub. `derive scan` reads local Claude Code and Codex history and sends Derive the
+  receipts for artifacts and Skills used on this machine. `derive scan setup` wires it
+  into the local agent's hooks, and with `--schedule` also installs a recurring OS job
+  (launchd, systemd, or Task Scheduler); `derive scan status` reports the parser version
+  and what is still pending; `--since` and `--dry-run` bound a manual pass.
+  Receipts upload in batches under a lock, so an interrupted or overlapping scan
+  neither double-counts nor exceeds its timeout.
 - **Reversible artifact archiving.** Artifacts can leave the active library without being
   deleted, appear in a dedicated archive, and be restored later.
 - **A standalone public documentation site.** `docs.derive.to` now publishes the product,
