@@ -15,7 +15,7 @@ import {
 import { homedir } from "node:os"
 import { basename, dirname, join, resolve } from "node:path"
 
-export const SKILL_SCAN_PARSER_VERSION = 1
+export const SKILL_SCAN_PARSER_VERSION = 2
 
 const configRoot = () => process.env.DERIVE_CONFIG_DIR ?? join(homedir(), ".config", "derive")
 const installsPath = () => join(configRoot(), "skill-installs.json")
@@ -24,9 +24,13 @@ const spoolPath = () => join(configRoot(), "skill-scan-spool.json")
 
 const readJson = (path, fallback) => {
   try {
-    return JSON.parse(readFileSync(path, "utf8"))
-  } catch {
-    return fallback
+    const value = JSON.parse(readFileSync(path, "utf8"))
+    if (!value || typeof value !== "object" || Array.isArray(value))
+      throw new Error("expected a JSON object")
+    return value
+  } catch (error) {
+    if (error.code === "ENOENT") return fallback
+    throw new Error(`cannot read ${path}: ${error.message}`)
   }
 }
 
@@ -205,6 +209,7 @@ const eventFor = ({ install, client, session, turn, occurredAt, evidence }) => (
 })
 
 const parseClaudeLine = (record, context, installs, sinceMs) => {
+  if (record?.sessionId) context.session = record.sessionId
   if (record?.type === "user") context.turn = record.promptId ?? record.uuid ?? context.turn
   const attribution =
     typeof record?.attributionSkill === "string"
@@ -212,7 +217,7 @@ const parseClaudeLine = (record, context, installs, sinceMs) => {
       : null
   if (!attribution) return []
   const occurredAt = timestampOf(record)
-  if (sinceMs !== null && occurredAt && Date.parse(occurredAt) < sinceMs) return []
+  if (sinceMs !== null && (!occurredAt || Date.parse(occurredAt) < sinceMs)) return []
   return installs
     .filter((install) => installAliases(install).has(attribution))
     .map((install) =>
@@ -241,7 +246,7 @@ const parseCodexLine = (record, context, installs, sinceMs) => {
   const text = record?.type === "response_item" ? codexToolText(payload) : ""
   if (!text) return []
   const occurredAt = timestampOf(record)
-  if (sinceMs !== null && occurredAt && Date.parse(occurredAt) < sinceMs) return []
+  if (sinceMs !== null && (!occurredAt || Date.parse(occurredAt) < sinceMs)) return []
   return installs
     .filter((install) => codexPatterns(install).some((pattern) => text.includes(pattern)))
     .map((install) =>
@@ -302,12 +307,14 @@ export async function scanSkillLogs(options = {}) {
       if (sinceMs !== null && stats.mtimeMs < sinceMs) continue
       const identity = sourceIdentity(stats)
       const saved = state.sources[source.path]
+      if (options.baseline && saved) continue
       let start = 0
       if (sinceMs === null) {
         if (
           saved?.identity === identity &&
           saved.offset <= stats.size &&
-          saved.checkpoint_hash === sourceCheckpoint(source.path, saved.offset)
+          (saved.checkpoint_hash === undefined ||
+            saved.checkpoint_hash === sourceCheckpoint(source.path, saved.offset))
         )
           start = saved.offset
         else if (
@@ -340,14 +347,6 @@ export async function scanSkillLogs(options = {}) {
       const clientInstalls = installs.filter((install) => install.client === source.client)
       const end = await completeLines(source.path, start, async (lineBytes) => {
         coverage[source.client].records_scanned++
-        const relevant =
-          source.client === "claude"
-            ? lineBytes.includes('"attributionSkill"') || lineBytes.includes('"type":"user"')
-            : lineBytes.includes('"type":"session_meta"') ||
-              lineBytes.includes('"type":"turn_context"') ||
-              lineBytes.includes("SKILL.md") ||
-              lineBytes.includes("skill.md")
-        if (!relevant) return
         let record
         try {
           record = JSON.parse(lineBytes.toString("utf8").replace(/\r$/, ""))

@@ -1476,6 +1476,11 @@ if (cmd === "scan") {
     await exitScan(0)
   }
 
+  if (flags["dry-run"] === "true" && action === "setup") {
+    console.error("error: --dry-run is for scanning; setup changes hooks and cursors")
+    await exitScan(1)
+  }
+
   if (action === "setup") {
     await requireScanLock("artifact")
     await requireScanLock("skill")
@@ -1524,7 +1529,7 @@ if (cmd === "scan") {
     const output = {
       dry_run: true,
       artifacts: artifactResult.events,
-      skills: skillResult?.events ?? [],
+      skills: (skillResult?.events ?? []).map(({ target: _target, ...event }) => event),
       coverage: artifactResult.coverage,
       source_errors: [...artifactResult.source_errors, ...(skillResult?.source_errors ?? [])],
     }
@@ -1758,6 +1763,10 @@ if (cmd === "skill") {
       await exitScan(0)
     }
 
+    if (flags["dry-run"] === "true" && action === "setup") {
+      console.error("error: --dry-run is for scanning; setup changes hooks and cursors")
+      await exitScan(1)
+    }
     const dryRun = flags["dry-run"] === "true"
     if (!dryRun || action === "setup") await requireScanLock("skill")
     const scanInstalls = scanInstallsForConfig(cfg, r, dryRun)

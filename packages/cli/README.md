@@ -223,15 +223,19 @@ The command exits with an error. `derive scan status` shows the affected paths a
 JSON output includes `source_errors`. These local diagnostics are not uploaded. Retry after the
 file becomes readable. Dry runs report the same errors without changing saved state.
 
-An unreadable artifact spool stops the scan before it advances a cursor. The scanner preserves
+Unreadable scan state or an artifact spool stops the scan before it advances a cursor. The scanner preserves
 the spool for recovery. It rejects explicit failed tool results, unrelated integration tools,
 and invalid version values instead of recording them as successful artifact activity.
+Named orchestration results and Derive code-mode reads are supported. Mixed code-mode results
+that include search or other tools are skipped because they do not prove an artifact was read.
 
 Scans hold a process lock while they update their queue and upload receipts. If another scan owns
 the same queue, the command exits with code 75. JSON output includes `code: "scan_in_progress"`.
 Retry after the active scan finishes. Normal exits release the lock. After a forced termination,
 the lock becomes recoverable after two minutes without a heartbeat. Setup uses the same locks,
-so it cannot reset a cursor while a scan uploads receipts.
+so it cannot reset a cursor while a scan uploads receipts. Repeated setup preserves existing
+cursors. Setup repairs old three-second session hooks to allow five minutes for a scan.
+`setup --dry-run` fails before it changes hooks or state; use `scan --dry-run` to preview receipts.
 Status and dry-run commands remain available during an active scan. They do not change local
 queues, cursors, or the install registry. Skill dry runs also resolve legacy project pins in memory.
 
@@ -242,7 +246,7 @@ workspaces. `awaiting_upload` means the receipt has no recorded unavailable resu
 
 The scanner checks every workspace available to the selected account before it rejects an artifact
 as unavailable. It keeps unresolved receipts in the local spool. A later scan can resolve them after
-an account or server switch. The scanner sends no artifact content while it resolves the target.
+an account switch on the original server. Changing servers never retargets pending receipts. The scanner sends no artifact content while it resolves the target.
 
 The artifact page can show another artifact published later in the same opaque session. This is an
 observed sequence, not provenance. Derive does not create a run, attach the artifact to a node, or
