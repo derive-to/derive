@@ -54,7 +54,7 @@ import { useUserEvent } from "@/lib/use-user-events"
 import { cn } from "@/lib/utils"
 import { mdToHtml } from "../artifact/lib/markdown"
 import { ConsolePending, ContextRowsSkeleton } from "./context-skeleton"
-import { importErrorCopy, RETRYABLE_IMPORT_CODES } from "./import-copy"
+import { importErrorCopy, importRetryCopy, RETRYABLE_IMPORT_CODES } from "./import-copy"
 import { ANSWER_PROSE, answerMdToHtml } from "./lib/answer-md"
 import { runnerStatus } from "./runner-status"
 
@@ -590,6 +590,7 @@ function ImportedConsole({
   const failed = imp.status === "failed" || imp.status === "dead"
   const code = imp.error?.code ?? null
   const retryable = imp.status === "dead" || (code !== null && RETRYABLE_IMPORT_CODES.has(code))
+  const retryLine = importRetryCopy(imp.status, code)
   const actions = (
     <span className="flex flex-wrap items-center gap-2">
       {retryable && (
@@ -673,11 +674,19 @@ function ImportedConsole({
             description={
               <>
                 {importErrorCopy(code, "The import failed.")}
-                {imp.status === "dead" && code && RETRYABLE_IMPORT_CODES.has(code)
-                  ? " Derive tried three times."
-                  : null}
-                {/* What stayed big is the one thing a reader can act on (a PDF figure). */}
-                {code === "too_large" && imp.error?.detail ? ` ${imp.error.detail}.` : null}
+                {retryLine ? ` ${retryLine}` : null}
+                {/* The detail is ours, not the upstream's: which phase failed and what it
+                    said. Shown for every failure, because without it "arXiv didn't
+                    answer" is the only thing anyone debugging this ever sees, and it is
+                    not always true. */}
+                {imp.error?.detail ? (
+                  <span
+                    data-testid="console-import-detail"
+                    className="mt-1 block font-mono text-2xs"
+                  >
+                    {imp.error.detail}
+                  </span>
+                ) : null}
               </>
             }
             action={actions}

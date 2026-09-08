@@ -1472,6 +1472,83 @@ describe("contexts: import from arXiv", () => {
     expect(paper?.current_version).toBe(2)
   })
 
+  it("names the phase and the reason a failure gave", async () => {
+    // Every failure records WHERE it happened and WHAT was said. Without this the only
+    // thing an operator ever sees is "arXiv didn't answer", which is not always true.
+    const stub = arxivStub({ metadata: () => new Response("nope", { status: 403 }) })
+    const { app, meta, tickDeps } = setup("contexts-import-detail", stub.fetch)
+    await app.request("/v1/me", { headers: as(owner.email) })
+
+    const x = await (await importPaper(app, "2407.00001")).json()
+    expect(await runImportTick(tickDeps())).toBe(1)
+    const job = await meta.getImportJobForContext(x.id)
+    expect(job).toMatchObject({ error_code: "unavailable" })
+    expect(job?.error_detail).toBe("metadata: arXiv answered 403")
+    // And it reaches the person, not just the log.
+    const detail = await (
+      await app.request(`/v1/contexts/${x.id}`, { headers: as(owner.email) })
+    ).json()
+    expect(detail.import.error).toEqual({
+      code: "unavailable",
+      detail: "metadata: arXiv answered 403",
+    })
+  })
+
+  it("never blames arXiv for a fault of its own", async () => {
+    // arXiv answers perfectly; the store is what breaks. Reporting that as an upstream
+    // that went quiet sends whoever is debugging it to the wrong system entirely.
+    const stub = arxivStub()
+    const { app, meta, tickDeps } = setup("contexts-import-internal", stub.fetch)
+    await app.request("/v1/me", { headers: as(owner.email) })
+    const x = await (await importPaper(app, "2407.00002")).json()
+
+    const base = tickDeps()
+    const broken = {
+      ...base,
+      meta: new Proxy(base.meta, {
+        get: (target, prop, receiver) =>
+          prop === "setArtifactTags"
+            ? async () => {
+                throw new Error('relation "artifact_tag" does not exist')
+              }
+            : Reflect.get(target, prop, receiver),
+      }),
+    }
+    expect(await runImportTick(broken)).toBe(1)
+
+    const job = await meta.getImportJobForContext(x.id)
+    expect(job?.error_code).toBe("internal")
+    expect(job?.error_code).not.toBe("unavailable")
+    // It says which phase, and what actually happened.
+    expect(job?.error_detail).toContain("publish:")
+    expect(job?.error_detail).toContain("artifact_tag")
+    const detail = await (
+      await app.request(`/v1/contexts/${x.id}`, { headers: as(owner.email) })
+    ).json()
+    expect(detail.import.error.code).toBe("internal")
+  })
+
+  it("gives a re-pasted paper its attempts back", async () => {
+    // Pasting again is a person asking for another go. A paper that had already died used
+    // to come back with its budget spent and give up on the first failure.
+    const stub = arxivStub({ metadata: () => new Response("nope", { status: 403 }) })
+    const { app, meta, clock: c, tickDeps } = setup("contexts-import-repaste", stub.fetch)
+    await app.request("/v1/me", { headers: as(owner.email) })
+    const x = await (await importPaper(app, "2407.00003")).json()
+    for (let i = 0; i < 3; i++) {
+      c.advance(10 * 60_000)
+      expect(await runImportTick(tickDeps())).toBe(1)
+    }
+    expect(await meta.getImportJobForContext(x.id)).toMatchObject({ status: "dead", attempts: 3 })
+
+    const again = await (await importPaper(app, "2407.00003")).json()
+    expect(again.id).toBe(x.id)
+    expect(await meta.getImportJobForContext(x.id)).toMatchObject({
+      status: "pending",
+      attempts: 0,
+    })
+  })
+
   it("gives up on arXiv's verdicts without retrying, and says so on the paper's page", async () => {
     const cases: [string, Stub | undefined, Stub | undefined, string][] = [
       ["2403.00001", () => new Response(ERROR_ATOM), undefined, "not_found"],

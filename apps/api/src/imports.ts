@@ -61,13 +61,19 @@ export const importFailureCopy = (code: string): string =>
     too_large: "The source is larger than Derive imports, even after shrinking its figures.",
     rate_limited: "arXiv asked Derive to slow down.",
     unavailable: "arXiv didn't answer.",
+    internal: "Something went wrong inside Derive, not at arXiv.",
   })[code] ?? "The import failed."
 
+// Anything that escapes a phase is already an ImportFailure carrying its step (see
+// `inStep`). This is the backstop for what fails outside every phase: claiming the job,
+// reading the Context, renaming it. `internal` rather than `unavailable`, because
+// reporting our own fault as "arXiv didn't answer" sends whoever is debugging to the
+// wrong system, and the thrown message is the only record of what actually happened.
 const classify = (error: unknown): ImportFailure =>
   error instanceof ImportFailure
     ? error
     : new ImportFailure(
-        "unavailable",
+        "internal",
         (error instanceof Error ? error.message : String(error)).slice(0, 200),
         false,
       )
@@ -139,7 +145,10 @@ export const runImportTick = async (deps: ImportTickDeps): Promise<number> => {
       status: terminal ? "dead" : "failed",
       lease_until: null,
       error_code: failure.code,
-      error_detail: failure.detail.slice(0, 200),
+      // `describe()` prefixes the phase: "metadata: arXiv answered 403" rather than
+      // "arXiv answered 403". It is the difference between a clue and a diagnosis, and
+      // it is the only place the reason survives.
+      error_detail: failure.describe().slice(0, 200),
       next_attempt_at: iso(
         now() + (terminal ? 0 : Math.max(backoff(job.attempts), failure.retryAfterMs ?? 0)),
       ),
@@ -155,7 +164,7 @@ export const runImportTick = async (deps: ImportTickDeps): Promise<number> => {
       jobId: job.id,
       ref: job.ref,
       code: failure.code,
-      detail: failure.detail,
+      detail: failure.describe(),
       attempts: job.attempts,
       terminal,
     })

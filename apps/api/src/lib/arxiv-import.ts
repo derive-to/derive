@@ -22,6 +22,7 @@ import {
   fitRepoBytes,
   type ImportErrorCode,
   type ImportJobRecord,
+  type ImportStep,
   isCodePath,
   isLatexDocument,
   isTar,
@@ -88,6 +89,10 @@ const mb = (n: number): string => `${(n / 1048576).toFixed(1)} MB`
 /** Why an import stopped. `terminal` failures never retry (they are arXiv's verdict on
  *  the paper); the others back off and try again. */
 export class ImportFailure extends Error {
+  /** Which phase raised it. Stamped by `inStep` at the phase boundary rather than at
+   *  every throw site, so the throw sites stay about what went wrong. */
+  public step: ImportStep | null = null
+
   constructor(
     public code: ImportErrorCode,
     public detail: string,
@@ -97,6 +102,40 @@ export class ImportFailure extends Error {
   ) {
     super(`${code}: ${detail}`)
     this.name = "ImportFailure"
+  }
+
+  /** What gets recorded and logged: the phase, then the reason. */
+  describe(): string {
+    return this.step ? `${this.step}: ${this.detail}` : this.detail
+  }
+}
+
+/**
+ * Run one phase of an import, naming it on whatever comes out.
+ *
+ * Two jobs. A failure we raised is tagged with the phase, so `arXiv answered 403` becomes
+ * `metadata: arXiv answered 403`. Anything else is not ours and is not arXiv's either: a
+ * store error, a blob write, a runtime feature missing on this tier. Those become
+ * `internal`, because reporting them as "arXiv didn't answer" points whoever is
+ * debugging at the wrong system, and the thrown message is the only record of what
+ * actually happened.
+ */
+export const inStep = async <T>(step: ImportStep, work: () => Promise<T>): Promise<T> => {
+  try {
+    return await work()
+  } catch (error) {
+    if (error instanceof ImportCancelled) throw error
+    if (error instanceof ImportFailure) {
+      error.step ??= step
+      throw error
+    }
+    const failure = new ImportFailure(
+      "internal",
+      error instanceof Error ? error.message : String(error),
+      false,
+    )
+    failure.step = step
+    throw failure
   }
 }
 
@@ -642,15 +681,18 @@ export const importArxivPaper = async (
   const actor = { agentId: agent?.id ?? null, agentName: agent?.name ?? null }
 
   // 1. Metadata. An unknown id is arXiv's verdict, not a mood.
-  const metaRes = await client.get(urls.metadata, METADATA_TIMEOUT_MS)
-  if (metaRes.status !== 200)
-    throw new ImportFailure("unavailable", `arXiv answered ${metaRes.status}`, false)
-  const paperMeta = parseArxivAtom(
-    new TextDecoder().decode(await readCappedBytes(metaRes, 1024 * 1024)),
-  )
-  if (!paperMeta) throw new ImportFailure("not_found", "arXiv has no paper with this id", true)
-  if (/withdrawn/i.test(paperMeta.comment ?? "") || /withdrawn/i.test(paperMeta.title))
-    throw new ImportFailure("withdrawn", "this paper was withdrawn", true)
+  const paperMeta = await inStep("metadata", async () => {
+    const metaRes = await client.get(urls.metadata, METADATA_TIMEOUT_MS)
+    if (metaRes.status !== 200)
+      throw new ImportFailure("unavailable", `arXiv answered ${metaRes.status}`, false)
+    const parsed = parseArxivAtom(
+      new TextDecoder().decode(await readCappedBytes(metaRes, 1024 * 1024)),
+    )
+    if (!parsed) throw new ImportFailure("not_found", "arXiv has no paper with this id", true)
+    if (/withdrawn/i.test(parsed.comment ?? "") || /withdrawn/i.test(parsed.title))
+      throw new ImportFailure("withdrawn", "this paper was withdrawn", true)
+    return parsed
+  })
 
   // 2. The source. A reclaimed job that already published the paper skips this.
   let paper = job.paper_artifact_id ? await meta.getArtifactById(job.paper_artifact_id) : null
@@ -660,91 +702,107 @@ export const importArxivPaper = async (
   const notes: string[] = []
   let fetchedBibtex: string | null = null
   if (!paper) {
-    const srcRes = await client.get(urls.source, SOURCE_TIMEOUT_MS)
-    if (srcRes.status === 404)
-      throw new ImportFailure("no_source", "arXiv has no source for this paper", true)
-    if (srcRes.status !== 200)
-      throw new ImportFailure("unavailable", `arXiv answered ${srcRes.status}`, false)
-    const raw = await readArxivArchive(srcRes, deps.caps)
-    const unpacked = unpackArxivSource(raw, deps.caps)
-    const normalized = normalizeLatexSource(unpacked)
-    if (!normalized.ok) throw new ImportFailure(normalized.code, normalized.detail, true)
+    const normalized = await inStep("source", async () => {
+      const srcRes = await client.get(urls.source, SOURCE_TIMEOUT_MS)
+      if (srcRes.status === 404)
+        throw new ImportFailure("no_source", "arXiv has no source for this paper", true)
+      if (srcRes.status !== 200)
+        throw new ImportFailure("unavailable", `arXiv answered ${srcRes.status}`, false)
+      const raw = await readArxivArchive(srcRes, deps.caps)
+      const unpacked = unpackArxivSource(raw, deps.caps)
+      const out = normalizeLatexSource(unpacked)
+      if (!out.ok) throw new ImportFailure(out.code, out.detail, true)
+      return out
+    })
     notes.push(...normalized.notes)
 
-    // 3. BibTeX, best effort: the paper still publishes with a built entry.
+    // 3. BibTeX, best effort: the paper still publishes with a built entry. Only a
+    // rate limit is worth failing for, because holding arXiv's gate past a 429 is how a
+    // deployment gets itself blocked. Everything else here is survivable, INCLUDING an
+    // oversized body: an entry we could not read is not a reason to discard a paper we
+    // already have.
     try {
       const bibRes = await client.get(urls.bibtex, METADATA_TIMEOUT_MS)
       if (bibRes.status === 200)
         fetchedBibtex = new TextDecoder().decode(await readCappedBytes(bibRes, 64 * 1024))
     } catch (error) {
-      if (!(error instanceof ImportFailure) || error.code === "rate_limited") throw error
+      if (error instanceof ImportCancelled) throw error
+      if (error instanceof ImportFailure && error.code === "rate_limited") throw error
+      notes.push("arXiv's BibTeX entry could not be read")
     }
     const citation = citationFor(ref.id, paperMeta, fetchedBibtex)
     if (citation.note) notes.push(citation.note)
     // That was the last request: the gate goes back while the CPU work below runs.
     await deps.releaseGate?.()
 
-    // 4. Fit the bundle under what Derive publishes, shrinking raster figures if needed.
-    const fitted = await fitBundleBytes(normalized.files, {
-      cap: deps.caps.bundleBytes,
-      shrink: deps.shrink ?? null,
-    })
-    if (!fitted.fits) {
-      const biggest = fitted.largest.map((f) => `${f.path.slice(1)} (${mb(f.bytes)})`).join(", ")
-      throw new ImportFailure(
-        "too_large",
-        `${mb(fitted.after)}${fitted.shrunk ? ` after shrinking ${fitted.shrunk} figures` : ""}; largest: ${biggest}`,
-        true,
-      )
-    }
-    notes.push(...fitted.notes)
+    // 4. Publish. From here nothing else talks to arXiv, so anything that fails is
+    // ours: the store, the blob writes, the figure codec. `inStep` says so.
+    // Assigned from the result, not across the closure boundary, so `paper` is known
+    // non-null to everything below.
+    paper = await inStep("publish", async () => {
+      // 4. Fit the bundle under what Derive publishes, shrinking raster figures if needed.
+      const fitted = await fitBundleBytes(normalized.files, {
+        cap: deps.caps.bundleBytes,
+        shrink: deps.shrink ?? null,
+      })
+      if (!fitted.fits) {
+        const biggest = fitted.largest.map((f) => `${f.path.slice(1)} (${mb(f.bytes)})`).join(", ")
+        throw new ImportFailure(
+          "too_large",
+          `${mb(fitted.after)}${fitted.shrunk ? ` after shrinking ${fitted.shrunk} figures` : ""}; largest: ${biggest}`,
+          true,
+        )
+      }
+      notes.push(...fitted.notes)
 
-    ctx = await liveContext(meta, job)
-    const current = await meta.getArtifactById(target.id)
-    if (!current) throw new ImportCancelled()
-    const title = plainText(paperMeta.title, 200) || `arXiv:${ref.id}`
-    // What the import decided rides on the version, where a reader meets it as history
-    // rather than as a second document to read.
-    const message = truncate([`Imported from arXiv:${ref.canonical}`, ...notes].join(" · "), 500)
-    paperFiles = {
-      ...fitted.files,
-      [CITATION_PATH]: new TextEncoder().encode(citation.bibtex),
-    }
-    const published = await publish(
-      meta,
-      blobs,
-      {
-        bytes: new Uint8Array(),
-        filename: `${ref.id.replace(/\//g, "_")}.zip`,
-        isBundle: true,
-        files: paperFiles,
-        entry: normalized.entry,
-        title,
-        author: truncate(
-          paperMeta.authors.map((name: string) => plainText(name, 80)).join(", ") || "arXiv",
-          200,
-        ),
-        authorId: null,
-        ...actor,
-        source: "api",
-        message,
-        existingArtifact: current,
-      },
-      current.short_id,
-    )
-    paper = published.artifact
-    await afterPublish(publishDeps(deps), paper, published.version, {
-      isNew: false,
-      onBehalf: null,
-      actorId: actor.agentId,
-      actorName: actor.agentName,
-    })
-    await meta.setArtifactTags(paper.id, normalizeTags(["arxiv", `arxiv:${ref.id}`]))
-    await meta.updateImportJob(job.id, {
-      paper_artifact_id: paper.id,
-      manifest_version: published.version.n,
-      resolved_version: paperMeta.version,
-      updated_at: iso(deps.now()),
+      ctx = await liveContext(meta, job)
+      const current = await meta.getArtifactById(target.id)
+      if (!current) throw new ImportCancelled()
+      const title = plainText(paperMeta.title, 200) || `arXiv:${ref.id}`
+      // What the import decided rides on the version, where a reader meets it as history
+      // rather than as a second document to read.
+      const message = truncate([`Imported from arXiv:${ref.canonical}`, ...notes].join(" · "), 500)
+      paperFiles = {
+        ...fitted.files,
+        [CITATION_PATH]: new TextEncoder().encode(citation.bibtex),
+      }
+      const published = await publish(
+        meta,
+        blobs,
+        {
+          bytes: new Uint8Array(),
+          filename: `${ref.id.replace(/\//g, "_")}.zip`,
+          isBundle: true,
+          files: paperFiles,
+          entry: normalized.entry,
+          title,
+          author: truncate(
+            paperMeta.authors.map((name: string) => plainText(name, 80)).join(", ") || "arXiv",
+            200,
+          ),
+          authorId: null,
+          ...actor,
+          source: "api",
+          message,
+          existingArtifact: current,
+        },
+        current.short_id,
+      )
+      paper = published.artifact
+      await afterPublish(publishDeps(deps), paper, published.version, {
+        isNew: false,
+        onBehalf: null,
+        actorId: actor.agentId,
+        actorName: actor.agentName,
+      })
+      await meta.setArtifactTags(paper.id, normalizeTags(["arxiv", `arxiv:${ref.id}`]))
+      await meta.updateImportJob(job.id, {
+        paper_artifact_id: paper.id,
+        manifest_version: published.version.n,
+        resolved_version: paperMeta.version,
+        updated_at: iso(deps.now()),
+      })
+      return published.artifact
     })
   } else {
     await deps.releaseGate?.()
