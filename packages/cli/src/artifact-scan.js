@@ -1,55 +1,22 @@
-import { createHash, randomBytes } from "node:crypto"
-import {
-  closeSync,
-  createReadStream,
-  mkdirSync,
-  openSync,
-  readFileSync,
-  readSync,
-  renameSync,
-  statSync,
-  writeFileSync,
-} from "node:fs"
+import { createHash } from "node:crypto"
+import { createReadStream, statSync } from "node:fs"
 import { homedir } from "node:os"
-import { basename, dirname, join } from "node:path"
+import { basename, join } from "node:path"
+import {
+  scanConfigRoot as configRoot,
+  readScanJson as readJson,
+  sourceCheckpoint,
+  writeScanJson as writeJson,
+} from "./scan-state.js"
 import { discoverSkillLogSources, parseSince } from "./skill-scan.js"
 
-export const ARTIFACT_SCAN_PARSER_VERSION = 1
+export const ARTIFACT_SCAN_PARSER_VERSION = 2
 
-const configRoot = () => process.env.DERIVE_CONFIG_DIR ?? join(homedir(), ".config", "derive")
 const statePath = () => join(configRoot(), "artifact-scan.json")
 const spoolPath = () => join(configRoot(), "artifact-scan-spool.json")
 const hash = (value) => createHash("sha256").update(value).digest("hex")
 
-const readJson = (path, fallback) => {
-  try {
-    return JSON.parse(readFileSync(path, "utf8"))
-  } catch {
-    return fallback
-  }
-}
-
-const writeJson = (path, value) => {
-  mkdirSync(dirname(path), { recursive: true })
-  const temporary = `${path}.${process.pid}.${randomBytes(5).toString("hex")}.tmp`
-  writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 })
-  renameSync(temporary, path)
-}
-
 const sourceIdentity = (stats) => `${stats.dev}:${stats.ino}`
-
-const sourceCheckpoint = (path, offset) => {
-  const length = Math.min(4096, offset)
-  if (length === 0) return hash("")
-  const buffer = Buffer.alloc(length)
-  const descriptor = openSync(path, "r")
-  try {
-    const read = readSync(descriptor, buffer, 0, length, offset - length)
-    return hash(buffer.subarray(0, read))
-  } finally {
-    closeSync(descriptor)
-  }
-}
 
 const completeLines = async (path, start, onLine) => {
   let carry = Buffer.alloc(0)
@@ -77,17 +44,21 @@ const timestampOf = (record) => {
 }
 
 const operationForName = (name) => {
-  const match = /(?:^|__)(read|catch_up|publish)$/.exec(String(name ?? ""))
+  const match = /^(?:mcp__derive__|derive[.])(read|catch_up|publish)$/.exec(String(name ?? ""))
   return match?.[1] ?? null
 }
 
 const operationsFromCall = (name, raw) => {
+  // The server's code tool exposes only reads. Its returned tool_calls list
+  // and wrapped result are handled just like a direct read receipt.
+  if (name === "mcp__derive__derive_code" || name === "derive.derive_code") return ["read"]
   const direct = operationForName(name)
   if (direct) return [direct]
   if (typeof raw !== "string") return []
   const found = []
-  const pattern = /tools\.mcp__derive__(read|catch_up|publish)\s*\(/g
-  for (const match of raw.matchAll(pattern)) found.push(match[1])
+  const pattern = /tools\.mcp__derive__(read|catch_up|publish|derive_code)\s*\(/g
+  for (const match of raw.matchAll(pattern))
+    found.push(match[1] === "derive_code" ? "read" : match[1])
   return [...new Set(found)]
 }
 
@@ -101,22 +72,48 @@ const outputStrings = (value) => {
 
 const positiveVersion = (value) => {
   if (Number.isInteger(value) && value > 0) return value
-  const match = /^(\d+)/.exec(String(value ?? ""))
+  const match = /^(\d+)(?: \(current\))?$/.exec(String(value ?? ""))
   const parsed = match ? Number(match[1]) : 0
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null
 }
 
-const addArtifactResult = (found, value, expected) => {
-  if (!value || typeof value !== "object") return
+const addArtifactResult = (found, value, expected, depth = 0) => {
+  if (!value || typeof value !== "object" || depth > 16) return
   if (Array.isArray(value)) {
-    for (const item of value) addArtifactResult(found, item, expected)
+    for (const item of value) addArtifactResult(found, item, expected, depth + 1)
     return
   }
-  if (typeof value.text === "string") extractArtifactResults(value.text, expected, found)
-  if (Array.isArray(value.content)) addArtifactResult(found, value.content, expected)
+  if (
+    value.isError === true ||
+    value.is_error === true ||
+    value.ok === false ||
+    value.published === false ||
+    value.error
+  )
+    return
+  if (Array.isArray(value.tool_calls)) {
+    // Search listings also contain IDs and versions. A code-mode result is
+    // read evidence only when its receipt confirms reads, without mixed tools.
+    if (
+      !value.tool_calls.length ||
+      !value.tool_calls.every((name) => ["read", "catch_up"].includes(name))
+    )
+      return
+    if (typeof value.result === "string")
+      extractArtifactResults(value.result, ["read"], found, depth + 1)
+  }
+  if (["artifact", "match", "context"].includes(value.type)) return
   const shortId = typeof value.short_id === "string" ? value.short_id : null
   const version = positiveVersion(value.version ?? value.to_version ?? value.to ?? value.head)
-  if (!shortId || !version) return
+  if (!shortId || !version) {
+    if (typeof value.text === "string")
+      extractArtifactResults(value.text, expected, found, depth + 1)
+    // Orchestrators emit named result objects. Walk objects, never arbitrary
+    // string fields such as prompts or the body of a recognized artifact.
+    for (const [key, nested] of Object.entries(value))
+      if (key !== "text" && key !== "logs") addArtifactResult(found, nested, expected, depth + 1)
+    return
+  }
   const action =
     value.published === true || (expected.length === 1 && expected[0] === "publish")
       ? "published"
@@ -128,16 +125,18 @@ const addArtifactResult = (found, value, expected) => {
   })
 }
 
-function extractArtifactResults(text, expected, found = new Map()) {
+function extractArtifactResults(text, expected, found = new Map(), depth = 0) {
+  if (depth > 16) return found
   const trimmed = String(text ?? "").trim()
   if (!trimmed) return found
   try {
-    addArtifactResult(found, JSON.parse(trimmed), expected)
+    addArtifactResult(found, JSON.parse(trimmed), expected, depth + 1)
+    return found
   } catch {
     // Tool wrappers can prefix a JSON content block with timing output. Parse each JSON line.
     for (const line of trimmed.split("\n")) {
       try {
-        addArtifactResult(found, JSON.parse(line), expected)
+        addArtifactResult(found, JSON.parse(line), expected, depth + 1)
       } catch {
         /* use the bounded text receipts below */
       }
@@ -279,7 +278,15 @@ const parseClaudeRecord = (record, state, context, events, observedAt) => {
       )
     } else if (block?.type === "tool_result") {
       const output = typeof block.content === "string" ? block.content : (block.content ?? [])
-      completeCall(state, events, "claude", context, block.tool_use_id, output, timestampOf(record))
+      completeCall(
+        state,
+        events,
+        "claude",
+        context,
+        block.tool_use_id,
+        block.is_error ? [] : output,
+        timestampOf(record),
+      )
     }
   }
 }
@@ -291,6 +298,8 @@ export async function scanArtifactLogs(options = {}) {
   const state = readJson(statePath(), defaultState())
   state.sources ??= {}
   state.sessions ??= { claude: {}, codex: {} }
+  state.sessions.claude ??= {}
+  state.sessions.codex ??= {}
   state.pending ??= { claude: {}, codex: {} }
   state.pending.claude ??= {}
   state.pending.codex ??= {}
@@ -318,6 +327,9 @@ export async function scanArtifactLogs(options = {}) {
     if (sinceMs !== null && stats.mtimeMs < sinceMs) continue
     const identity = sourceIdentity(stats)
     const saved = state.sources[source.path]
+    // Setup may initialize a new source, but cannot consume an existing source
+    // without first spooling its receipts.
+    if (options.baseline && saved) continue
     let start = 0
     if (sinceMs === null) {
       if (
@@ -407,10 +419,14 @@ export function commitArtifactScanState(state) {
 }
 
 export function readArtifactScanSpool() {
-  const spool = readJson(spoolPath(), { version: 1, pending: [], coverage: [] })
-  if (!Array.isArray(spool.pending) || !Array.isArray(spool.coverage))
-    throw new Error(`cannot read artifact scan spool at ${spoolPath()}`)
-  return spool
+  try {
+    const spool = readJson(spoolPath(), { version: 1, pending: [], coverage: [] })
+    if (!Array.isArray(spool.pending) || !Array.isArray(spool.coverage))
+      throw new Error("expected pending and coverage arrays")
+    return spool
+  } catch (error) {
+    throw new Error(`cannot read artifact scan spool at ${spoolPath()}: ${error.message}`)
+  }
 }
 
 export function addToArtifactScanSpool(events, coverage, target) {
@@ -418,10 +434,13 @@ export function addToArtifactScanSpool(events, coverage, target) {
   const pending = new Map(
     (spool.pending ?? []).map((event) => [
       event.event_id,
-      event.retry_unavailable ? { ...event, target, retry_unavailable: false } : event,
+      event.retry_unavailable && event.target?.server === target.server
+        ? { ...event, target, retry_unavailable: false }
+        : event,
     ]),
   )
-  for (const event of events) pending.set(event.event_id, { ...event, target })
+  for (const event of events)
+    if (!pending.has(event.event_id)) pending.set(event.event_id, { ...event, target })
   const next = { version: 1, pending: [...pending.values()], coverage, target }
   writeJson(spoolPath(), next)
   return next

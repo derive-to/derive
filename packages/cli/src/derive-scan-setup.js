@@ -31,13 +31,15 @@ const setSessionEndHook = (path, command) => {
   for (const group of config.hooks.SessionEnd)
     for (const hook of group?.hooks ?? [])
       if (isDeriveScanHook(hook)) {
-        if (hook.command === command) return false
+        if (hook.command === command && hook.async === true && hook.timeout === 300) return false
         hook.command = command
+        hook.async = true
+        hook.timeout = 300
         writeJson(path, config)
         return true
       }
   config.hooks.SessionEnd.push({
-    hooks: [{ type: "command", command, async: true, timeout: 3 }],
+    hooks: [{ type: "command", command, async: true, timeout: 300 }],
   })
   writeJson(path, config)
   return true

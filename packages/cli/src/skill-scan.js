@@ -1,38 +1,19 @@
-import { createHash, randomBytes } from "node:crypto"
-import {
-  createReadStream,
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  renameSync,
-  statSync,
-  writeFileSync,
-} from "node:fs"
+import { createHash } from "node:crypto"
+import { createReadStream, existsSync, readdirSync, readFileSync, statSync } from "node:fs"
 import { homedir } from "node:os"
-import { basename, dirname, join, resolve } from "node:path"
+import { basename, join, resolve } from "node:path"
+import {
+  scanConfigRoot as configRoot,
+  readScanJson as readJson,
+  sourceCheckpoint,
+  writeScanJson as writeJson,
+} from "./scan-state.js"
 
-export const SKILL_SCAN_PARSER_VERSION = 1
+export const SKILL_SCAN_PARSER_VERSION = 2
 
-const configRoot = () => process.env.DERIVE_CONFIG_DIR ?? join(homedir(), ".config", "derive")
 const installsPath = () => join(configRoot(), "skill-installs.json")
 const scanStatePath = () => join(configRoot(), "skill-scan.json")
 const spoolPath = () => join(configRoot(), "skill-scan-spool.json")
-
-const readJson = (path, fallback) => {
-  try {
-    return JSON.parse(readFileSync(path, "utf8"))
-  } catch {
-    return fallback
-  }
-}
-
-const writeJson = (path, value) => {
-  mkdirSync(dirname(path), { recursive: true })
-  const temporary = `${path}.${process.pid}.${randomBytes(5).toString("hex")}.tmp`
-  writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 })
-  renameSync(temporary, path)
-}
 
 const hash = (value) => createHash("sha256").update(value).digest("hex")
 
@@ -44,9 +25,7 @@ export function listSkillInstalls() {
   return Array.isArray(data.installs) ? data.installs.filter((item) => !item.removed_at) : []
 }
 
-export function recordSkillInstall(install) {
-  const data = readJson(installsPath(), { version: 1, installs: [] })
-  const installs = Array.isArray(data.installs) ? data.installs : []
+export function recordSkillInstall(install, { persist = true } = {}) {
   const normalized = {
     id: install.id,
     version: install.version,
@@ -60,6 +39,9 @@ export function recordSkillInstall(install) {
     account_id: install.accountId ?? null,
     updated_at: new Date().toISOString(),
   }
+  if (!persist) return normalized
+  const data = readJson(installsPath(), { version: 1, installs: [] })
+  const installs = Array.isArray(data.installs) ? data.installs : []
   const key = installKey(normalized)
   const next = installs.filter((item) => installKey(item) !== key)
   next.push(normalized)
@@ -188,6 +170,7 @@ const eventFor = ({ install, client, session, turn, occurredAt, evidence }) => (
 })
 
 const parseClaudeLine = (record, context, installs, sinceMs) => {
+  if (record?.sessionId) context.session = record.sessionId
   if (record?.type === "user") context.turn = record.promptId ?? record.uuid ?? context.turn
   const attribution =
     typeof record?.attributionSkill === "string"
@@ -195,7 +178,7 @@ const parseClaudeLine = (record, context, installs, sinceMs) => {
       : null
   if (!attribution) return []
   const occurredAt = timestampOf(record)
-  if (sinceMs !== null && occurredAt && Date.parse(occurredAt) < sinceMs) return []
+  if (sinceMs !== null && (!occurredAt || Date.parse(occurredAt) < sinceMs)) return []
   return installs
     .filter((install) => installAliases(install).has(attribution))
     .map((install) =>
@@ -224,7 +207,7 @@ const parseCodexLine = (record, context, installs, sinceMs) => {
   const text = record?.type === "response_item" ? codexToolText(payload) : ""
   if (!text) return []
   const occurredAt = timestampOf(record)
-  if (sinceMs !== null && occurredAt && Date.parse(occurredAt) < sinceMs) return []
+  if (sinceMs !== null && (!occurredAt || Date.parse(occurredAt) < sinceMs)) return []
   return installs
     .filter((install) => codexPatterns(install).some((pattern) => text.includes(pattern)))
     .map((install) =>
@@ -286,9 +269,18 @@ export async function scanSkillLogs(options = {}) {
     if (sinceMs !== null && stats.mtimeMs < sinceMs) continue
     const identity = sourceIdentity(stats)
     const saved = state.sources[source.path]
+    if (options.baseline && saved) continue
     let start = 0
     if (sinceMs === null) {
-      if (saved?.identity === identity && saved.offset <= stats.size) start = saved.offset
+      if (
+        saved?.identity === identity &&
+        saved.offset <= stats.size &&
+        // Older cursors had no fingerprint. Preserve their offset on upgrade
+        // instead of silently turning the next scan into a historical backfill.
+        (saved.checkpoint_hash === undefined ||
+          saved.checkpoint_hash === sourceCheckpoint(source.path, saved.offset))
+      )
+        start = saved.offset
       else if (
         options.baseline ||
         (options.initialBaseline && !state.initialized_clients[source.client])
@@ -296,10 +288,6 @@ export async function scanSkillLogs(options = {}) {
         start = stats.size
     }
     coverage[source.client].source_files++
-    if (start === stats.size) {
-      state.sources[source.path] = { identity, offset: stats.size, client: source.client }
-      continue
-    }
     // A session header is normally written once, before later turns. Keep the
     // parser context beside the byte offset so an incremental scan can attribute
     // a newly appended tool call to that same session and turn.
@@ -313,14 +301,8 @@ export async function scanSkillLogs(options = {}) {
     const clientInstalls = installs.filter((install) => install.client === source.client)
     const end = await completeLines(source.path, start, async (lineBytes) => {
       coverage[source.client].records_scanned++
-      const relevant =
-        source.client === "claude"
-          ? lineBytes.includes('"attributionSkill"') || lineBytes.includes('"type":"user"')
-          : lineBytes.includes('"type":"session_meta"') ||
-            lineBytes.includes('"type":"turn_context"') ||
-            lineBytes.includes("SKILL.md") ||
-            lineBytes.includes("skill.md")
-      if (!relevant) return
+      // JSON whitespace is not fixed, and event_msg records can carry the next
+      // turn id. Filtering on serialized substrings loses that context.
       let record
       try {
         record = JSON.parse(lineBytes.toString("utf8").replace(/\r$/, ""))
@@ -341,6 +323,7 @@ export async function scanSkillLogs(options = {}) {
       client: source.client,
       session: context.session,
       turn: context.turn,
+      checkpoint_hash: sourceCheckpoint(source.path, end),
     }
   }
 

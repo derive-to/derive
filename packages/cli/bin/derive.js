@@ -85,6 +85,7 @@ import { createAgent, createContext, saveAgentToken } from "../src/context.js"
 import { setupDeriveScan } from "../src/derive-scan-setup.js"
 import { readTarget, uploadArtifact } from "../src/publish.js"
 import { DeriveClient, parseManifest } from "../src/runner.js"
+import { acquireScanLock } from "../src/scan-state.js"
 import {
   addToSkillScanSpool,
   commitSkillScanState,
@@ -106,6 +107,51 @@ import {
 import { runGithubWorkflowHarness } from "../src/workflow-run.js"
 
 const SKILL_USAGE_BATCH_SIZE = 20
+const ARTIFACT_SCAN_BATCH_SIZE = 20
+
+// Pins written before scan existed are usable in a preview too. Materialize
+// them in memory for dry runs; only an actual scan repairs the registry.
+const projectScanInstalls = (cfg, target, persist) => {
+  const installs = listSkillInstalls()
+  for (const pin of cfg?.skills ?? [])
+    for (const client of ["claude", "codex"]) {
+      const installed = pin.installs?.[client]
+      if (!installed) continue
+      const dir = skillSlug(installed.name ?? pin.name)
+      if (!dir) continue
+      const candidates = [
+        {
+          scope: "project",
+          path: join(".", client === "codex" ? ".agents" : ".claude", "skills", dir),
+        },
+        {
+          scope: "personal",
+          path: join(homedir(), client === "codex" ? ".codex" : ".claude", "skills", dir),
+        },
+      ]
+      for (const candidate of candidates) {
+        if (!existsSync(candidate.path)) continue
+        installs.push(
+          recordSkillInstall(
+            {
+              id: pin.id,
+              version: installed.version ?? pin.version,
+              name: installed.name ?? pin.name,
+              client,
+              path: candidate.path,
+              digest: installed.digest ?? null,
+              scope: candidate.scope,
+              server: target.server,
+              workspaceId: target.workspaceId,
+              accountId: target.accountId,
+            },
+            { persist },
+          ),
+        )
+      }
+    }
+  return installs
+}
 
 const args = process.argv.slice(2)
 const cmd = args.shift()
@@ -1390,7 +1436,14 @@ if (cmd === "scan") {
     process.exit(0)
   }
 
+  if (flags["dry-run"] === "true" && action === "setup") {
+    console.error("error: --dry-run is for scanning; setup changes hooks and cursors")
+    process.exit(1)
+  }
+  const releaseArtifactLock = flags["dry-run"] === "true" ? () => {} : acquireScanLock("artifact")
+
   if (action === "setup") {
+    const releaseSkillLock = acquireScanLock("skill")
     await Promise.all([
       scanArtifactLogs({ baseline: true, client: flags.client }),
       scanSkillLogs({ baseline: true, client: flags.client }),
@@ -1399,6 +1452,7 @@ if (cmd === "scan") {
       schedule: flags.schedule === "true",
       client: flags.client,
     })
+    releaseSkillLock()
     if (flags.json) console.log(JSON.stringify(setup))
     else {
       for (const hook of setup.hooks)
@@ -1420,6 +1474,7 @@ if (cmd === "scan") {
     }),
     flags["dry-run"] === "true"
       ? scanSkillLogs({
+          installs: projectScanInstalls(cfg, resolved, false),
           since: flags.since,
           initialBaseline: true,
           dryRun: true,
@@ -1431,7 +1486,7 @@ if (cmd === "scan") {
     const output = {
       dry_run: true,
       artifacts: artifactResult.events,
-      skills: skillResult?.events ?? [],
+      skills: (skillResult?.events ?? []).map(({ target: _target, ...event }) => event),
       coverage: artifactResult.coverage,
     }
     if (flags.json) console.log(JSON.stringify(output))
@@ -1500,8 +1555,13 @@ if (cmd === "scan") {
       let remaining = group.events
       for (const workspaceId of workspaceIds) {
         const batches = remaining.length
-          ? Array.from({ length: Math.ceil(remaining.length / 100) }, (_, index) =>
-              remaining.slice(index * 100, (index + 1) * 100),
+          ? Array.from(
+              { length: Math.ceil(remaining.length / ARTIFACT_SCAN_BATCH_SIZE) },
+              (_, index) =>
+                remaining.slice(
+                  index * ARTIFACT_SCAN_BATCH_SIZE,
+                  (index + 1) * ARTIFACT_SCAN_BATCH_SIZE,
+                ),
             )
           : [[]]
         const nextRemaining = []
@@ -1547,6 +1607,7 @@ if (cmd === "scan") {
   const rejectedIds = rejected.map((item) => (typeof item === "string" ? item : item?.event_id))
   spool = removeFromArtifactScanSpool([...recorded, ...rejectedIds], !uploadError)
   spool = markArtifactScanUnavailable(unavailable)
+  releaseArtifactLock()
 
   const childArgs = [fileURLToPath(import.meta.url), "skill", "scan", "--quiet", "--json"]
   childArgs.push("--initial-baseline")
@@ -1625,40 +1686,11 @@ if (cmd === "skill") {
     }
 
     const r = resolvePublish(flags, cfg)
-    // Backfill the local install registry for pins created before Skill scan existed.
-    for (const pin of cfg?.skills ?? []) {
-      for (const client of ["claude", "codex"]) {
-        const installed = pin.installs?.[client]
-        if (!installed) continue
-        const dir = skillSlug(installed.name ?? pin.name)
-        if (!dir) continue
-        const candidates = [
-          {
-            scope: "project",
-            path: join(".", client === "codex" ? ".agents" : ".claude", "skills", dir),
-          },
-          {
-            scope: "personal",
-            path: join(homedir(), client === "codex" ? ".codex" : ".claude", "skills", dir),
-          },
-        ]
-        for (const candidate of candidates) {
-          if (!existsSync(candidate.path)) continue
-          recordSkillInstall({
-            id: pin.id,
-            version: installed.version ?? pin.version,
-            name: installed.name ?? pin.name,
-            client,
-            path: candidate.path,
-            digest: installed.digest ?? null,
-            scope: candidate.scope,
-            server: r.server,
-            workspaceId: r.workspaceId,
-            accountId: r.accountId,
-          })
-        }
-      }
+    if (flags["dry-run"] === "true" && action === "setup") {
+      console.error("error: --dry-run is for scanning; setup changes hooks and cursors")
+      process.exit(1)
     }
+    if (action !== "status" && flags["dry-run"] !== "true") acquireScanLock("skill")
 
     if (action === "status") {
       const status = skillScanStatus()
@@ -1695,6 +1727,7 @@ if (cmd === "skill") {
     }
 
     const result = await scanSkillLogs({
+      installs: projectScanInstalls(cfg, r, flags["dry-run"] !== "true"),
       since: flags.since,
       baseline: flags.baseline === "true",
       initialBaseline: flags["initial-baseline"] === "true",

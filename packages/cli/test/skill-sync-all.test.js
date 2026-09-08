@@ -5,8 +5,13 @@ import http from "node:http"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
-import { commitArtifactScanState, scanArtifactLogs } from "../src/artifact-scan.js"
+import {
+  addToArtifactScanSpool,
+  commitArtifactScanState,
+  scanArtifactLogs,
+} from "../src/artifact-scan.js"
 import { setupDeriveScan } from "../src/derive-scan-setup.js"
+import { acquireScanLock } from "../src/scan-state.js"
 import { addToSkillScanSpool, recordSkillInstall, scanSkillLogs } from "../src/skill-scan.js"
 import { setupSkillScan } from "../src/skill-scan-setup.js"
 
@@ -373,6 +378,8 @@ describe("derive skill scan", () => {
         })}\n`,
       )
       expect((await scanSkillLogs({ home })).events).toEqual([])
+      // A scheduled no-op between the header and append must preserve context too.
+      expect((await scanSkillLogs({ home })).events).toEqual([])
       writeFileSync(
         log,
         `${JSON.stringify({
@@ -615,6 +622,237 @@ describe("derive skill scan", () => {
 })
 
 describe("derive scan", () => {
+  const scanFixture = async (work) => {
+    const root = mkdtempSync(join(tmpdir(), "derive-scan-regression-"))
+    dirs.push(root)
+    const previous = process.env.DERIVE_CONFIG_DIR
+    process.env.DERIVE_CONFIG_DIR = root
+    const log = join(root, "session.jsonl")
+    const sources = [{ client: "codex", path: log }]
+    const now = Date.parse("2026-09-08")
+    const records = (name = "mcp__derive__read", output = { short_id: "scan1234", version: 2 }) => [
+      { type: "session_meta", payload: { id: "scan-session" } },
+      {
+        type: "response_item",
+        timestamp: "2026-09-07T12:00:00.000Z",
+        payload: { type: "function_call", name, call_id: "scan-call", arguments: "{}" },
+      },
+      {
+        type: "response_item",
+        timestamp: "2026-09-07T12:00:01.000Z",
+        payload: {
+          type: "function_call_output",
+          call_id: "scan-call",
+          output: JSON.stringify(output),
+        },
+      },
+    ]
+    const write = (rows, append = false) =>
+      writeFileSync(log, `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`, {
+        flag: append ? "a" : "w",
+      })
+    try {
+      await work({ root, log, sources, now, records, write })
+    } finally {
+      if (previous === undefined) delete process.env.DERIVE_CONFIG_DIR
+      else process.env.DERIVE_CONFIG_DIR = previous
+    }
+  }
+
+  it("preserves malformed artifact spools instead of replacing pending receipts", async () => {
+    await scanFixture(({ root }) => {
+      const path = join(root, "artifact-scan-spool.json")
+      for (const contents of ["{broken", "null", "[]", '{"pending":[]}']) {
+        writeFileSync(path, contents)
+        expect(() => addToArtifactScanSpool([], [], {})).toThrow("cannot read artifact scan spool")
+        expect(readFileSync(path, "utf8")).toBe(contents)
+      }
+    })
+  })
+
+  for (const [label, scan] of [
+    ["artifact", scanArtifactLogs],
+    ["Skill", scanSkillLogs],
+  ]) {
+    it(`keeps an existing ${label} cursor and pending events when setup runs again`, async () => {
+      await scanFixture(async ({ root, sources, records, write, now }) => {
+        write(records())
+        await scan({ sources, now, baseline: true })
+        const stateFile = join(
+          root,
+          label === "artifact" ? "artifact-scan.json" : "skill-scan.json",
+        )
+        const initialSources = JSON.parse(readFileSync(stateFile, "utf8")).sources
+        write(records(), true)
+        await scan({ sources, now, baseline: true })
+        expect(JSON.parse(readFileSync(stateFile, "utf8")).sources).toEqual(initialSources)
+      })
+    })
+  }
+
+  it("ignores other services' read tools and failed Derive results", async () => {
+    await scanFixture(async ({ sources, write, records, now }) => {
+      for (const [name, output] of [
+        ["mcp__other__read", { short_id: "scan1234", version: 2 }],
+        ["mcp__derive__publish", { published: false, short_id: "scan1234", version: 2 }],
+        [
+          "mcp__derive__read",
+          {
+            isError: true,
+            content: [{ type: "text", text: JSON.stringify({ short_id: "scan1234", version: 2 }) }],
+          },
+        ],
+        ["mcp__derive__read", { short_id: "scan1234", version: "2oops" }],
+      ]) {
+        write(records(name, output))
+        expect(
+          (await scanArtifactLogs({ sources, now, since: "30d", dryRun: true })).events,
+        ).toEqual([])
+      }
+    })
+  })
+
+  it("extracts receipts inside named orchestration results", async () => {
+    await scanFixture(async ({ sources, write, records, now }) => {
+      const rows = records("exec", {
+        result: {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({ short_id: "scan1234", version: "2 (current)" }),
+            },
+          ],
+        },
+      })
+      rows[1].payload.arguments =
+        'text({ result: await tools.mcp__derive__read({ short_id: "scan1234" }) })'
+      write(rows)
+      expect((await scanArtifactLogs({ sources, now, since: "30d" })).events).toEqual([
+        expect.objectContaining({
+          artifact_short_id: "scan1234",
+          artifact_version: 2,
+          action: "read",
+        }),
+      ])
+    })
+  })
+
+  it("recognizes bulk reads through Derive code mode", async () => {
+    await scanFixture(async ({ sources, write, records, now }) => {
+      write(
+        records("mcp__derive__derive_code", {
+          result: { results: [{ index: 0, value: { short_id: "scan1234", version: 2 } }] },
+          tool_calls: ["read"],
+        }),
+      )
+      expect((await scanArtifactLogs({ sources, now, since: "30d" })).events).toEqual([
+        expect.objectContaining({ artifact_short_id: "scan1234", artifact_version: 2 }),
+      ])
+      write(
+        records("mcp__derive__derive_code", {
+          result: "---\nshort_id: scan1234\nversion: 2 (current)\n---\n# A read",
+          tool_calls: ["read"],
+        }),
+      )
+      expect((await scanArtifactLogs({ sources, now, since: "30d" })).events).toHaveLength(1)
+      write(
+        records("mcp__derive__derive_code", {
+          result: [{ type: "artifact", short_id: "scan1234", version: 2 }],
+          tool_calls: ["find"],
+        }),
+      )
+      expect((await scanArtifactLogs({ sources, now, since: "30d" })).events).toEqual([])
+    })
+  })
+
+  it("excludes a second writer until the first scan releases its lock", async () => {
+    await scanFixture(() => {
+      const release = acquireScanLock("artifact")
+      try {
+        expect(() => acquireScanLock("artifact")).toThrow("scan is locked")
+        const releaseSkill = acquireScanLock("skill")
+        releaseSkill()
+      } finally {
+        release()
+      }
+      const retry = acquireScanLock("artifact")
+      retry()
+    })
+  })
+
+  it("keeps pending receipts bound to their original server during a backfill", async () => {
+    await scanFixture(() => {
+      const original = { server: "https://first.derive.test", account_id: "first" }
+      const other = { server: "https://other.derive.test", account_id: "other" }
+      const event = { event_id: "a".repeat(64), artifact_short_id: "scan1234" }
+      addToArtifactScanSpool([event], [], original)
+      const replay = addToArtifactScanSpool([event], [], other)
+      expect(replay.pending).toEqual([{ ...event, target: original }])
+    })
+  })
+
+  it("replays replaced Skill logs and keeps turn changes across JSON formatting", async () => {
+    await scanFixture(async ({ root, log, sources, now, write }) => {
+      const skill = {
+        id: "skill123",
+        version: 1,
+        name: "review",
+        client: "codex",
+        path: join(root, "review"),
+        server: "https://derive.test",
+      }
+      const options = { sources, now, installs: [skill] }
+      write([{ type: "session_meta", payload: { id: "old" } }])
+      await scanSkillLogs(options)
+      const rows = [
+        { type: "session_meta", payload: { id: "replacement-with-a-longer-name" } },
+        { type: "event_msg", payload: { turn_id: "new-turn" } },
+        {
+          type: "response_item",
+          timestamp: "2026-09-07T12:00:00.000Z",
+          payload: {
+            type: "function_call",
+            call_id: "file-read",
+            arguments: JSON.stringify({ cmd: `cat ${skill.path}/SKILL.md` }),
+          },
+        },
+      ]
+      writeFileSync(
+        log,
+        `${rows.map((row) => JSON.stringify(row).replaceAll('":', '": ')).join("\n")}\n`,
+      )
+      const result = await scanSkillLogs(options)
+      expect(result.events).toHaveLength(1)
+      expect(result.state.sources[log].turn).toBe("new-turn")
+      expect(result.state.sources[log].session).toBe("replacement-with-a-longer-name")
+    })
+  })
+
+  it("does not treat undated Skill activity as recent during a backfill", async () => {
+    await scanFixture(async ({ root, sources, now, write }) => {
+      const skill = {
+        id: "skill123",
+        version: 1,
+        client: "codex",
+        path: join(root, "review"),
+        server: "https://derive.test",
+      }
+      write([
+        {
+          type: "response_item",
+          payload: {
+            type: "function_call",
+            call_id: "undated",
+            arguments: JSON.stringify({ cmd: `cat ${skill.path}/SKILL.md` }),
+          },
+        },
+      ])
+      expect(
+        (await scanSkillLogs({ sources, now, installs: [skill], since: "30d" })).events,
+      ).toEqual([])
+    })
+  })
+
   it("records exact Codex and Claude artifact results without content or local identity", async () => {
     const root = mkdtempSync(join(tmpdir(), "derive-artifact-scan-"))
     dirs.push(root)
@@ -1240,6 +1478,141 @@ describe("derive scan", () => {
     expect(config.hooks.SessionEnd[0].hooks[0].command).toBe(
       '"/usr/bin/node" "/derive.js" scan --quiet --client codex',
     )
+    expect(config.hooks.SessionEnd[0].hooks[0].timeout).toBe(300)
+    expect(
+      setupDeriveScan({
+        home,
+        node: "/usr/bin/node",
+        cli: "/derive.js",
+        client: "codex",
+        activate: false,
+      }).hooks[0].changed,
+    ).toBe(false)
+  })
+
+  it("previews legacy project pins without creating or changing local scan state", async () => {
+    const project = mkdtempSync(join(tmpdir(), "derive-scan-preview-"))
+    dirs.push(project)
+    const home = join(project, "home")
+    const skillPath = join(project, ".agents", "skills", "Review")
+    mkdirSync(skillPath, { recursive: true })
+    writeFileSync(
+      join(project, "derive.json"),
+      JSON.stringify({
+        entry: "index.md",
+        skills: [
+          { id: "review123", version: 2, name: "Review", installs: { codex: { version: 2 } } },
+        ],
+      }),
+    )
+    const logs = join(home, ".codex", "sessions")
+    mkdirSync(logs, { recursive: true })
+    writeFileSync(
+      join(logs, "preview.jsonl"),
+      `${JSON.stringify({ type: "response_item", timestamp: new Date().toISOString(), payload: { type: "function_call", call_id: "preview", arguments: JSON.stringify({ cmd: `cat ${skillPath}/SKILL.md` }) } })}\n`,
+    )
+    for (const command of [["skill", "scan"], ["scan"]]) {
+      const result = await run(
+        project,
+        "https://derive.test",
+        [...command, "--dry-run", "--since", "30d", "--json"],
+        { HOME: home },
+      )
+      expect(result.status).toBe(0)
+      const parsed = JSON.parse(result.stdout)
+      expect(parsed.events ?? parsed.skills).toEqual([
+        expect.objectContaining({ skill_short_id: "review123", skill_version: 2 }),
+      ])
+      expect(existsSync(join(project, ".derive-test-config"))).toBe(false)
+    }
+    const status = await run(
+      project,
+      "https://derive.test",
+      ["skill", "scan", "status", "--json"],
+      { HOME: home },
+    )
+    expect(status.status).toBe(0)
+    expect(existsSync(join(project, ".derive-test-config"))).toBe(false)
+  })
+
+  it("retains a failed upload batch and retries it without rescanning receipts", async () => {
+    const project = mkdtempSync(join(tmpdir(), "derive-scan-batch-retry-"))
+    dirs.push(project)
+    const home = join(project, "home")
+    let fail = true
+    const batches = []
+    const server = http.createServer((request, response) => {
+      if (request.url === "/v1/workspaces") {
+        response.writeHead(200, { "content-type": "application/json" })
+        response.end(JSON.stringify({ workspaces: [] }))
+        return
+      }
+      let body = ""
+      request.on("data", (chunk) => (body += chunk))
+      request.on("end", () => {
+        const parsed = JSON.parse(body)
+        batches.push(parsed.events.length)
+        if (fail && batches.length === 2) {
+          response.writeHead(503)
+          response.end("temporary outage")
+        } else {
+          response.writeHead(200, { "content-type": "application/json" })
+          response.end(
+            JSON.stringify({
+              recorded: parsed.events.map((event) => event.event_id),
+              rejected: [],
+            }),
+          )
+        }
+      })
+    })
+    servers.push(server)
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve))
+    const base = `http://127.0.0.1:${server.address().port}`
+    const logs = join(home, ".codex", "sessions")
+    mkdirSync(logs, { recursive: true })
+    const timestamp = new Date().toISOString()
+    const rows = Array.from({ length: 21 }, (_, index) => [
+      {
+        type: "response_item",
+        timestamp,
+        payload: {
+          type: "function_call",
+          name: "mcp__derive__read",
+          call_id: `read-${index}`,
+          arguments: "{}",
+        },
+      },
+      {
+        type: "response_item",
+        timestamp,
+        payload: {
+          type: "function_call_output",
+          call_id: `read-${index}`,
+          output: JSON.stringify({ short_id: "read1234", version: 1 }),
+        },
+      },
+    ]).flat()
+    writeFileSync(
+      join(logs, "batch.jsonl"),
+      `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`,
+    )
+    const first = await run(project, base, ["scan", "--since", "30d", "--quiet", "--json"], {
+      HOME: home,
+    })
+    expect(first.status).toBe(1)
+    expect(JSON.parse(first.stdout).artifacts).toMatchObject({
+      found: 21,
+      uploaded: 20,
+      pending: 1,
+    })
+    fail = false
+    const retry = await run(project, base, ["scan", "--json"], { HOME: home })
+    expect(retry.status).toBe(0)
+    expect(JSON.parse(retry.stdout).artifacts).toMatchObject({ found: 0, uploaded: 1, pending: 0 })
+    expect(batches).toEqual([20, 1, 1])
+    expect(existsSync(join(project, ".derive-test-config", "artifact-scan.lock"))).toBe(false)
+    expect(existsSync(join(project, ".derive-test-config", "skill-scan.lock"))).toBe(false)
   })
 
   it("baselines both scanners on the first generic command", async () => {
@@ -1473,10 +1846,12 @@ describe("derive scan", () => {
     ])
   })
 
-  it("keeps an unavailable receipt until another server accepts it", async () => {
+  it("does not send an unavailable receipt to another server", async () => {
     const project = mkdtempSync(join(tmpdir(), "derive-generic-scan-server-retry-"))
     dirs.push(project)
     const home = join(project, "home")
+    const received = []
+    let firstAvailable = false
     const makeServer = (workspace, accepts) =>
       http.createServer((request, response) => {
         if (request.url === "/v1/workspaces") {
@@ -1493,11 +1868,12 @@ describe("derive scan", () => {
         request.on("data", (chunk) => (body += chunk))
         request.on("end", () => {
           const parsed = JSON.parse(body || "{}")
+          received.push({ workspace, count: parsed.events.length })
           const ids = parsed.events.map((event) => event.event_id)
           response.writeHead(200, { "content-type": "application/json" })
           response.end(
             JSON.stringify(
-              accepts
+              accepts || (workspace === "workspace-a" && firstAvailable)
                 ? { recorded: ids, rejected: [], coverage: parsed.coverage.length }
                 : {
                     recorded: [],
@@ -1558,8 +1934,14 @@ describe("derive scan", () => {
     expect(second.status).toBe(0)
     expect(JSON.parse(second.stdout).artifacts).toMatchObject({
       found: 0,
-      uploaded: 1,
-      pending: 0,
+      uploaded: 0,
+      pending: 1,
     })
+    expect(
+      received.filter((item) => item.workspace === "workspace-b").every((item) => item.count === 0),
+    ).toBe(true)
+    firstAvailable = true
+    const third = await run(project, firstBase, ["scan", "--json"], { HOME: home })
+    expect(JSON.parse(third.stdout).artifacts).toMatchObject({ found: 0, uploaded: 1, pending: 0 })
   })
 })

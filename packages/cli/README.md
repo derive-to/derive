@@ -219,7 +219,27 @@ calls stay separate by client, session, and source.
 
 The scanner checks every workspace available to the selected account before it rejects an artifact
 as unavailable. It keeps unresolved receipts in the local spool. A later scan can resolve them after
-an account or server switch. The scanner sends no artifact content while it resolves the target.
+an account switch on the same server. Pending receipts stay bound to their original server, including
+when a backfill sees them again; switching servers does not forward those receipts to the new server.
+The scanner sends no artifact content while it resolves the target.
+
+Both scanners preserve session and turn context across idle scans and detect replaced or
+copytruncated logs with a cursor fingerprint. Upgrading a pre-fingerprint Skill cursor preserves its
+offset; use an explicit `--since` backfill to revisit earlier activity. Undated events are excluded
+from dated backfills. Artifact receipts recognize direct Derive tools, named orchestration results,
+and Derive code-mode reads, and ignore failed results and other services' tools.
+
+`--dry-run` and `status` leave local scan files and installation records unchanged. Dry runs can
+preview older project Skill pins without first migrating their installation records. Rerunning
+`setup` initializes only previously unseen logs and preserves existing cursors and pending calls.
+Setup installs asynchronous hooks with a five-minute timeout and repairs older three-second hooks.
+
+Each scanner holds an exclusive local lock while it changes cursors, spools, or upload acknowledgements.
+Overlapping runs exit with a retryable error; accepted batches are removed and failed batches stay
+pending. Artifact and Skill uploads use batches of at most 20 events. Locks are released on normal
+exit, errors, SIGINT, and SIGTERM. After an uncatchable kill or power loss, the error names the lock
+file: inspect its recorded PID and remove only that lock once the process is confirmed stopped.
+Do not remove the cursor or spool files to resolve a lock.
 
 The artifact page can show another artifact published later in the same opaque session. This is an
 observed sequence, not provenance. Derive does not create a run, attach the artifact to a node, or
