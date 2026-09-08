@@ -217,6 +217,10 @@ cursor. It checks a small cursor fingerprint before each append scan. If a log w
 truncated and regrown, it safely replays the file through the idempotent receipt API. Pending tool
 calls stay separate by client, session, and source.
 
+An unreadable artifact spool stops the scan before it advances a cursor. The scanner preserves
+the spool for recovery. It rejects explicit failed tool results, unrelated integration tools,
+and invalid version values instead of recording them as successful artifact activity.
+
 The scanner checks every workspace available to the selected account before it rejects an artifact
 as unavailable. It keeps unresolved receipts in the local spool. A later scan can resolve them after
 an account or server switch. The scanner sends no artifact content while it resolves the target.

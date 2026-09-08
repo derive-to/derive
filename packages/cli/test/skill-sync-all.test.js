@@ -615,6 +615,145 @@ describe("derive skill scan", () => {
 })
 
 describe("derive scan", () => {
+  it.each([
+    ["mcp__other__read", { short_id: "real123", version: 2 }, false],
+    ["read", { short_id: "real123", version: 2 }, false],
+    ["mcp__derive__read", { short_id: "real123", version: "2garbage" }, false],
+    ["mcp__derive__read", { short_id: "real123", version: 2.5 }, false],
+    ["mcp__derive__read", { short_id: "real123", version: 2, error: "denied" }, false],
+    ["mcp__derive__publish", { short_id: "real123", version: 2, published: false }, false],
+    [
+      "mcp__derive__read",
+      {
+        isError: true,
+        content: [{ type: "text", text: "short_id: real123\nversion: 2" }],
+      },
+      false,
+    ],
+    ["mcp__derive__read", { short_id: "real123", version: "2 (current)" }, true],
+  ])("requires a successful Derive receipt from %s: %j", async (name, output, accepted) => {
+    const root = mkdtempSync(join(tmpdir(), "derive-result-integrity-"))
+    dirs.push(root)
+    const priorConfig = process.env.DERIVE_CONFIG_DIR
+    process.env.DERIVE_CONFIG_DIR = join(root, "config")
+    try {
+      const path = join(root, "session.jsonl")
+      writeFileSync(
+        path,
+        `${[
+          {
+            type: "response_item",
+            payload: {
+              type: "function_call",
+              name,
+              call_id: "receipt",
+              arguments: "{}",
+            },
+          },
+          {
+            type: "response_item",
+            payload: {
+              type: "function_call_output",
+              call_id: "receipt",
+              output: JSON.stringify(output),
+            },
+          },
+        ]
+          .map(JSON.stringify)
+          .join("\n")}\n`,
+      )
+      const result = await scanArtifactLogs({
+        home: root,
+        sources: [{ client: "codex", path }],
+        initialBaseline: false,
+      })
+      expect(result.events).toHaveLength(accepted ? 1 : 0)
+    } finally {
+      if (priorConfig === undefined) delete process.env.DERIVE_CONFIG_DIR
+      else process.env.DERIVE_CONFIG_DIR = priorConfig
+    }
+  })
+
+  it("does not record a failed Claude tool result and consumes its pending call", async () => {
+    const root = mkdtempSync(join(tmpdir(), "derive-claude-error-"))
+    dirs.push(root)
+    const priorConfig = process.env.DERIVE_CONFIG_DIR
+    process.env.DERIVE_CONFIG_DIR = join(root, "config")
+    try {
+      const path = join(root, "session.jsonl")
+      writeFileSync(
+        path,
+        `${[
+          {
+            type: "assistant",
+            message: {
+              content: [
+                {
+                  type: "tool_use",
+                  id: "failed-read",
+                  name: "mcp__derive__read",
+                  input: {},
+                },
+              ],
+            },
+          },
+          {
+            type: "user",
+            message: {
+              content: [
+                {
+                  type: "tool_result",
+                  tool_use_id: "failed-read",
+                  is_error: true,
+                  content: JSON.stringify({ short_id: "real123", version: 2 }),
+                },
+              ],
+            },
+          },
+        ]
+          .map(JSON.stringify)
+          .join("\n")}\n`,
+      )
+      const result = await scanArtifactLogs({
+        home: root,
+        sources: [{ client: "claude", path }],
+        initialBaseline: false,
+      })
+      expect(result.events).toEqual([])
+      expect(result.state.pending.claude).toEqual({})
+    } finally {
+      if (priorConfig === undefined) delete process.env.DERIVE_CONFIG_DIR
+      else process.env.DERIVE_CONFIG_DIR = priorConfig
+    }
+  })
+
+  it.each([
+    "{broken",
+    "null",
+    JSON.stringify({ version: 2, pending: [], coverage: [] }),
+    JSON.stringify({ version: 1, pending: {}, coverage: [] }),
+  ])("preserves an unreadable spool and its uncommitted cursor: %s", async (contents) => {
+    const project = mkdtempSync(join(tmpdir(), "derive-artifact-corrupt-spool-"))
+    dirs.push(project)
+    const home = join(project, "home")
+    const config = join(project, ".derive-test-config")
+    mkdirSync(config, { recursive: true })
+    mkdirSync(join(home, ".codex", "sessions"), { recursive: true })
+    writeFileSync(
+      join(home, ".codex", "sessions", "session.jsonl"),
+      `${JSON.stringify({ type: "session_meta", payload: { id: "recovery-session" } })}\n`,
+    )
+    const spool = join(config, "artifact-scan-spool.json")
+    writeFileSync(spool, contents)
+    const result = await run(project, "http://127.0.0.1:1", ["scan", "--json"], {
+      HOME: home,
+    })
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain("cannot read artifact scan spool")
+    expect(readFileSync(spool, "utf8")).toBe(contents)
+    expect(existsSync(join(config, "artifact-scan.json"))).toBe(false)
+  })
+
   it("records exact Codex and Claude artifact results without content or local identity", async () => {
     const root = mkdtempSync(join(tmpdir(), "derive-artifact-scan-"))
     dirs.push(root)

@@ -77,14 +77,14 @@ const timestampOf = (record) => {
 }
 
 const operationForName = (name) => {
-  const match = /(?:^|__)(read|catch_up|publish)$/.exec(String(name ?? ""))
+  const match = /^mcp__derive__(read|catch_up|publish)$/.exec(String(name ?? ""))
   return match?.[1] ?? null
 }
 
 const operationsFromCall = (name, raw) => {
   const direct = operationForName(name)
   if (direct) return [direct]
-  if (typeof raw !== "string") return []
+  if (!["exec", "functions.exec"].includes(name) || typeof raw !== "string") return []
   const found = []
   const pattern = /tools\.mcp__derive__(read|catch_up|publish)\s*\(/g
   for (const match of raw.matchAll(pattern)) found.push(match[1])
@@ -100,14 +100,16 @@ const outputStrings = (value) => {
 }
 
 const positiveVersion = (value) => {
-  if (Number.isInteger(value) && value > 0) return value
-  const match = /^(\d+)/.exec(String(value ?? ""))
+  if (Number.isSafeInteger(value) && value > 0) return value
+  const match = /^(\d+)(?: \(current\))?$/.exec(String(value ?? ""))
   const parsed = match ? Number(match[1]) : 0
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : null
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null
 }
 
 const addArtifactResult = (found, value, expected) => {
   if (!value || typeof value !== "object") return
+  if (value.isError === true || value.is_error === true || value.error || value.published === false)
+    return
   if (Array.isArray(value)) {
     for (const item of value) addArtifactResult(found, item, expected)
     return
@@ -133,6 +135,7 @@ function extractArtifactResults(text, expected, found = new Map()) {
   if (!trimmed) return found
   try {
     addArtifactResult(found, JSON.parse(trimmed), expected)
+    return found
   } catch {
     // Tool wrappers can prefix a JSON content block with timing output. Parse each JSON line.
     for (const line of trimmed.split("\n")) {
@@ -208,12 +211,22 @@ const rememberCall = (state, client, callId, operations, context, occurredAt, ob
   }
 }
 
-const completeCall = (state, events, client, context, callId, output, occurredAt) => {
+const completeCall = (
+  state,
+  events,
+  client,
+  context,
+  callId,
+  output,
+  occurredAt,
+  failed = false,
+) => {
   const key = pendingKey(context, callId)
   const legacyKey = Object.hasOwn(state.pending[client], key) ? key : callId
   const pending = state.pending[client][legacyKey]
   if (!pending) return
   delete state.pending[client][legacyKey]
+  if (failed) return
   const found = new Map()
   for (const text of outputStrings(output)) extractArtifactResults(text, pending.operations, found)
   for (const result of found.values()) {
@@ -279,7 +292,16 @@ const parseClaudeRecord = (record, state, context, events, observedAt) => {
       )
     } else if (block?.type === "tool_result") {
       const output = typeof block.content === "string" ? block.content : (block.content ?? [])
-      completeCall(state, events, "claude", context, block.tool_use_id, output, timestampOf(record))
+      completeCall(
+        state,
+        events,
+        "claude",
+        context,
+        block.tool_use_id,
+        output,
+        timestampOf(record),
+        block.is_error === true,
+      )
     }
   }
 }
@@ -407,10 +429,16 @@ export function commitArtifactScanState(state) {
 }
 
 export function readArtifactScanSpool() {
-  const spool = readJson(spoolPath(), { version: 1, pending: [], coverage: [] })
-  if (!Array.isArray(spool.pending) || !Array.isArray(spool.coverage))
-    throw new Error(`cannot read artifact scan spool at ${spoolPath()}`)
-  return spool
+  const path = spoolPath()
+  try {
+    const spool = JSON.parse(readFileSync(path, "utf8"))
+    if (spool?.version !== 1 || !Array.isArray(spool.pending) || !Array.isArray(spool.coverage))
+      throw new Error("unsupported or malformed spool")
+    return spool
+  } catch (error) {
+    if (error.code === "ENOENT") return { version: 1, pending: [], coverage: [] }
+    throw new Error(`cannot read artifact scan spool at ${path}: ${error.message}`)
+  }
 }
 
 export function addToArtifactScanSpool(events, coverage, target) {
