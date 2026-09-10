@@ -443,6 +443,14 @@ export type ImportErrorCode =
   | "too_large"
   | "rate_limited"
   | "unavailable"
+  /** The import broke inside Derive rather than at the upstream. Kept distinct from
+   *  `unavailable` because reporting our own bug as "arXiv didn't answer" sends whoever
+   *  is looking at it to the wrong place, and there is nowhere else the reason survives. */
+  | "internal"
+/** Which phase of an import failed. Carried on the failure so the recorded detail says
+ *  where, not only what: "arXiv answered 403" is a clue, "metadata: arXiv answered 403"
+ *  is a diagnosis. */
+export type ImportStep = "metadata" | "source" | "bibtex" | "publish" | "code"
 /** How the implementation attached to an imported paper is doing. Deliberately apart
  *  from ImportJobStatus: the paper is what the import is for, so a repository that could
  *  not be fetched leaves the import ready and reports itself here. */

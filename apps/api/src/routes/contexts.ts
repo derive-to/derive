@@ -1451,6 +1451,11 @@ export const contextRoutes = (ctx: AppContext) => {
         if (job && (job.status === "failed" || job.status === "dead"))
           await meta.updateImportJob(job.id, {
             status: "pending",
+            // Pasting the paper again is a person asking for another go, so it gets the
+            // full budget. Without this a paper that had already died came back with its
+            // attempts spent and gave up on the first failure, which reads as "it did not
+            // even try" to whoever pasted it.
+            attempts: 0,
             next_attempt_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
           })

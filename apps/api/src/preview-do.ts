@@ -152,6 +152,12 @@ export class PreviewRenderer {
           notifyRender: async (a, n) => {
             await enqueueRender(opened.store, a.id, n).catch(() => undefined)
           },
+          // No `search` and no `shrink` here, unlike the Node tick. Both are real gaps on
+          // this tier: an imported paper never enters workspace search, and an oversized
+          // source is refused rather than fitted. Wiring search needs a pgvector store on
+          // the alarm's own connection rather than the request-scoped pool, which is the
+          // plumbing a past outage came from, so it is deliberately not bundled into a
+          // diagnostic change.
           caps: EDGE_IMPORT_CAPS,
           repoCaps: EDGE_REPO_CAPS,
           addressGuard: edgeGuard,

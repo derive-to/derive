@@ -11,12 +11,24 @@ export const IMPORT_ERROR_COPY: Record<string, string> = {
   no_source: "arXiv has only a PDF for this paper, no LaTeX source, so Derive can't read it.",
   no_tex: "The source has no main .tex file Derive can read.",
   too_large: "The source is larger than Derive imports, even after shrinking its figures.",
-  rate_limited: "arXiv asked Derive to slow down. It will try again in a few minutes.",
-  unavailable: "arXiv didn't answer. Derive will try again shortly.",
+  rate_limited: "arXiv asked Derive to slow down.",
+  unavailable: "arXiv didn't answer.",
+  internal: "Something went wrong inside Derive, not at arXiv.",
 }
 
 /** Codes a person can do something about by trying again. */
-export const RETRYABLE_IMPORT_CODES = new Set(["rate_limited", "unavailable"])
+export const RETRYABLE_IMPORT_CODES = new Set(["rate_limited", "unavailable", "internal"])
+
+/** What happens next, from the job's own state. Kept out of the table above because a
+ *  string that always promised another try read "Derive will try again shortly. Derive
+ *  tried three times." once the job was dead, which is a contradiction the reader has to
+ *  resolve for us. */
+export const importRetryCopy = (status: string, code: string | null): string | null =>
+  !code || !RETRYABLE_IMPORT_CODES.has(code)
+    ? null
+    : status === "dead"
+      ? "Derive tried three times."
+      : "Derive will try again shortly."
 
 export const importErrorCopy = (code: string | null, fallback: string): string =>
   (code && IMPORT_ERROR_COPY[code]) || fallback

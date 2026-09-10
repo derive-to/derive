@@ -14,6 +14,8 @@
 // A tarball carries `.gitmodules` but not the commits its submodules are pinned to. So a
 // submodule is fetched at the branch it declares, or at its default, and the notes say so
 // rather than implying the import reproduced a pinned tree.
+
+import { unbound } from "@derive/broker"
 import {
   CODE_PREFIX,
   cleanPath,
@@ -139,13 +141,16 @@ const redirectAllowed = (from: string, to: string): boolean =>
 
 /** GET one archive. At most one redirect, and only within the host that was asked. */
 const getArchive = async (deps: RepoFetchDeps, url: string): Promise<Response> => {
+  // A plain function, never a method: see `unbound`. The same defect here would report a
+  // reachable repository as unreachable.
+  const send = unbound(deps.fetch)
   let target = url
   for (let hop = 0; hop < 2; hop++) {
     if (!isPublicHttpUrl(target) || (await deps.addressGuard?.precheck(target)))
       throw new RepoFetchError("the repository host is not a public address")
     let res: Response
     try {
-      res = await deps.fetch(target, {
+      res = await send(target, {
         redirect: "manual",
         headers: {
           "user-agent": `Derive/1.0 (+${deps.baseUrl}; paper import)`,

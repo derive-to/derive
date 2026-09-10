@@ -68,6 +68,7 @@
     "lint:surfaces": "node scripts/check-surfaces.mjs",
     "lint:testids": "node scripts/check-testids.mjs",
     "lint:api": "node scripts/check-api.mjs",
+    "lint:fetch-invocation": "node scripts/check-fetch-invocation.mjs",
     "lint:schema": "node scripts/check-schema.mjs",
     "lint:filesize": "node scripts/check-file-size.mjs",
     "lint:favicons": "node scripts/check-favicons.mjs",
