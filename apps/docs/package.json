@@ -16,15 +16,15 @@
     "deploy:check": "pnpm build && wrangler deploy --dry-run"
   },
   "dependencies": {
-    "@astrojs/mdx": "7.0.5",
-    "@astrojs/sitemap": "3.7.3",
-    "astro": "7.2.8"
+    "@astrojs/mdx": "7.0.8",
+    "@astrojs/sitemap": "3.7.4",
+    "astro": "7.3.0"
   },
   "devDependencies": {
     "@astrojs/check": "0.9.10",
-    "@astrojs/markdown-remark": "7.2.4",
+    "@astrojs/markdown-remark": "7.3.0",
     "pagefind": "1.5.2",
     "typescript": "6.0.3",
-    "wrangler": "4.122.0"
+    "wrangler": "4.128.0"
   }
 }
