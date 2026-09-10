@@ -4,3 +4,8 @@
 id = "GHSA-p2fr-6hmx-4528"
 ignoreUntil = 2026-11-01
 reason = "Derive's accepted audience strings are URL variants of one Derive MCP resource server, and every variant is checked against the same authorization boundary. There is no second allow-listed resource server to escalate into. Re-audit when Better Auth ships the fixed 1.7 stable line; its current fix is a schema-breaking prerelease."
+
+[[IgnoredVulns]]
+id = "GHSA-vwc7-r8mq-g2x9"
+ignoreUntil = 2026-10-10
+reason = "adm-zip 0.6.0 is used only by onnxruntime-node 1.24.3's postinstall script, not its inference runtime. Derive disables all dependency lifecycle scripts with pnpm.onlyBuiltDependencies = [], so its vulnerable ZIP extraction never runs in our installs or images. lint:dependency-exceptions pins this disabled-script policy and the sole locked consumer; re-audit before enabling that installer or changing its version. No upstream fix is published as of 2026-09-10."

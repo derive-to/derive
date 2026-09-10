@@ -75,6 +75,10 @@ updates:
       - dependency-name: "typescript"
         update-types: ["version-update:semver-major"]
     groups:
+      # OSV scans the whole lockfile, so separate security PRs block each other.
+      npm-security:
+        applies-to: security-updates
+        patterns: ["*"]
       npm-routine:
         patterns: ["*"]
         update-types: ["minor", "patch"]
