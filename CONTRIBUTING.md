@@ -183,6 +183,10 @@ shipping. If something below surprises you, that's the guardrail doing its job:
   files + dependencies only (not every unused export, to leave the design-system surface
   alone).
 
+- **Dependency exception boundaries.** `pnpm lint:dependency-exceptions` pins the
+  disabled dependency install scripts and sole audited consumer behind the temporary
+  `adm-zip` OSV exception. A change to either requires re-auditing the exception.
+
 The custom checks and Biome all run inside `pnpm run ci`
 ([scripts/guardrails.mjs](scripts/guardrails.mjs) is the list, and runs them concurrently),
 so the one gate command covers them; `pnpm typecheck` and `pnpm test` (which includes the

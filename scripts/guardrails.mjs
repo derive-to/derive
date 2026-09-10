@@ -55,6 +55,7 @@ const CHECKS = {
   "deploy-verified": script("check-deploy-verified.mjs"),
   "public-claims": script("check-public-claims.mjs"),
   "workflow-pins": script("check-workflow-pins.mjs"),
+  "dependency-exceptions": script("check-dependency-exceptions.mjs"),
   "worker-types": script("gen-worker-types.mjs", "--check"),
 }
 
