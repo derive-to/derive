@@ -77,6 +77,8 @@ export const workspaceRoutes = (ctx: AppContext) => {
     workspaceRole,
     seatGrantGate,
     workspacesOf,
+    billingState,
+    blockCopy,
   } = ctx
   const { privateOwnerId, oauthGrant, inviteLimiter, limited } = ctx
   const billing = deps.billing
@@ -760,6 +762,14 @@ export const workspaceRoutes = (ctx: AppContext) => {
         return bail(fail(c, 400, "a workspace-listed default needs default workspace access"))
       if (next.defaultListed === "public" && next.defaultLinkRole === "none")
         return bail(fail(c, 400, "a publicly-listed default needs a default link role"))
+      // Turning white-label on needs the Team entitlement. Render already ignores the
+      // flag for an unentitled workspace (effectiveWhiteLabel), so this is not a security
+      // gate; it exists so the settings page can offer an upgrade instead of a switch
+      // that does nothing. Off is always allowed.
+      if (flat.whiteLabel && !(await billingState(org)).whiteLabelEntitled)
+        return bail(
+          fail(c, 402, blockCopy.white_label.message, { code: blockCopy.white_label.code }),
+        )
       await meta.setOrgSettings(org, next)
       return c.json(next)
     },

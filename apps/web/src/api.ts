@@ -388,6 +388,8 @@ export type BillingInfo = {
   enforce_at: string | null
   beta: boolean
   subscribed: boolean
+  /** May hide the Made-with-Derive mark (subscribed, or beta grace). */
+  white_label: boolean
   blocked: { code: "billing_required" | "billing_lapsed"; message: string } | null
 }
 /** Slack connection status for a workspace. Generated from the OpenAPI spec. */

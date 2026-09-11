@@ -195,6 +195,13 @@ for the recommended install and verification flow.
   dependencies reach outside the published set.
 
 ### Changed
+- **The white-label switch is gated on the plan, not just the render.** A Free
+  workspace used to be able to flip "White-label shared pages" on with no effect, since
+  the Made-with-Derive mark is entitlement-checked at render. Now the settings API
+  refuses to turn it on for an unentitled workspace (402 `billing_required`), the
+  settings page shows an "Upgrade to Team" link in place of the switch, and
+  `GET /v1/billing` reports the entitlement as `white_label`. Turning it off is always
+  allowed. Beta-grace instances and subscribed workspaces are unchanged.
 - **The activity "New" marker is the account's position, not the browser's.** The
   workspace Activity page and every artifact's activity rail measure "new" against a
   per-user, per-stream position kept on the server (`GET`/`PUT /v1/seen`), so every device

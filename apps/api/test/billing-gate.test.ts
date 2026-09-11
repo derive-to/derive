@@ -123,6 +123,31 @@ describe("billing gate", () => {
     expect(paidDetail.badge).toBe(false)
   })
 
+  it("white-label toggle: enforced-free PATCH 402s, off always allowed, beta and subscribed pass", async () => {
+    const patch = (app: ReturnType<typeof makeAuthedApp>["app"], on: boolean) =>
+      app.request("/v1/workspace/settings", jsonAs(as("u1@x.test"), { whiteLabel: on }, "PATCH"))
+    // Enforced, no subscription: turning white-label ON is refused with the upgrade code
+    // and nothing is persisted; turning it OFF is always fine.
+    const made = makeAuthedApp("wl_patch_enforced", THREE, "editor", {
+      deps: { billing: new FakeBilling(), billingEnforceAt: PAST },
+    })
+    const refused = await patch(made.app, true)
+    expect(refused.status).toBe(402)
+    expect((await refused.json()).code).toBe("billing_required")
+    expect((await made.meta.getOrgSettings("default")).whiteLabel).toBe(false)
+    expect((await patch(made.app, false)).status).toBe(200)
+    // Same workspace once subscribed: entitled, the toggle takes.
+    await seedSub(made.meta, "active")
+    const paid = await patch(made.app, true)
+    expect(paid.status).toBe(200)
+    expect((await paid.json()).whiteLabel).toBe(true)
+    // Beta grace: the toggle works without a subscription.
+    const beta = makeAuthedApp("wl_patch_beta", THREE, "editor", {
+      deps: { billing: new FakeBilling() },
+    })
+    expect((await patch(beta.app, true)).status).toBe(200)
+  })
+
   it("blocked destination workspace: anonymous draft claim refuses with 402", async () => {
     const { app: drafts, meta } = makeAuthedApp("bg_claim", THREE, "editor", {
       deps: {

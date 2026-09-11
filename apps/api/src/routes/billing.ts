@@ -62,6 +62,9 @@ export const billingRoutes = (ctx: AppContext) => {
       enforce_at: deps.billingEnforceAt ?? null,
       beta,
       subscribed: state.subscriptionActive,
+      // May this workspace hide the Made-with-Derive mark? The settings page swaps the
+      // white-label switch for an upgrade link when this is false.
+      white_label: state.whiteLabelEntitled,
       blocked: state.blockedReason ? blockCopy[state.blockedReason] : null,
     })
   })

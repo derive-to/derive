@@ -1,4 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { Link } from "@tanstack/react-router"
 import { useEffect, useState } from "react"
 import { api, type OrgSettings } from "@/api"
 import { useShell } from "@/components/chrome/shell-context"
@@ -26,7 +27,12 @@ import {
 } from "@/components/ui/select-menu"
 import { Switch } from "@/components/ui/switch"
 import { reloadAfterWorkspaceChange } from "@/lib/persist"
-import { workspaceQuery, workspaceSettingsQuery, workspacesQuery } from "@/lib/queries"
+import {
+  billingQuery,
+  workspaceQuery,
+  workspaceSettingsQuery,
+  workspacesQuery,
+} from "@/lib/queries"
 import { snapshot, useApiMutation } from "@/lib/use-api-mutation"
 import { useOneShotParams } from "@/lib/use-one-shot-params"
 import { SettingsSection } from "./settings-section"
@@ -246,6 +252,11 @@ export function GeneralSection() {
 function SharingDefaults() {
   const qc = useQueryClient()
   const { data: settings, isError, refetch } = useQuery(workspaceSettingsQuery())
+  // White-label is a Team feature: the server 402s an unentitled workspace that tries
+  // to turn it on, so a Free workspace gets an upgrade link where the switch would be.
+  // Until billing answers, the switch renders disabled rather than briefly usable.
+  const { data: billing } = useQuery(billingQuery())
+  const whiteLabelLocked = billing ? !billing.white_label : false
 
   const update = useApiMutation({
     mutationFn: (patch: Partial<OrgSettings>) => api.updateWorkspaceSettings(patch),
@@ -334,16 +345,28 @@ function SharingDefaults() {
         </SelectMenu>
       </SettingRow>
       <SettingRow
-        htmlFor="toggle-white-label"
+        htmlFor={whiteLabelLocked ? undefined : "toggle-white-label"}
         label="White-label shared pages"
         description="Hide the Made-with-Derive mark on public artifacts and embeds, and allow the bare embed (?chrome=none). A Team-plan feature."
       >
-        <Switch
-          id="toggle-white-label"
-          data-testid="toggle-white-label"
-          checked={settings.whiteLabel}
-          onCheckedChange={(next) => set("whiteLabel", next)}
-        />
+        {whiteLabelLocked ? (
+          <Link
+            to="/settings/$section"
+            params={{ section: "billing" }}
+            data-testid="white-label-upgrade"
+            className="text-sm font-medium underline underline-offset-2 hover:text-foreground"
+          >
+            Upgrade to Team
+          </Link>
+        ) : (
+          <Switch
+            id="toggle-white-label"
+            data-testid="toggle-white-label"
+            checked={settings.whiteLabel}
+            disabled={!billing}
+            onCheckedChange={(next) => set("whiteLabel", next)}
+          />
+        )}
       </SettingRow>
     </SettingsGroup>
   )
