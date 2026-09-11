@@ -29,7 +29,7 @@ import { sweepExpiredDrafts } from "./lib/drafts"
 import { buildAuthEmail, emailDeliverySender, logEmailSender, resendEmailSender } from "./lib/email"
 import { workspaceIdsFromEnv } from "./lib/env"
 import { sharpShrinker } from "./lib/image-shrink-node"
-import { catalogFromGateway, type GatewayConfig } from "./lib/model-catalog"
+import { catalogFromGateway, type GatewayConfig, preferredChatGateway } from "./lib/model-catalog"
 import { getInstanceSlot, modelSource, readLibrary } from "./lib/model-library"
 import { NODE_REPO_CAPS } from "./lib/repo-fetch"
 import { mountWeb } from "./lib/serve-web"
@@ -377,11 +377,12 @@ const modelGateway = (): GatewayConfig | null => {
 
 // The model catalog, built before the channel senders because the Slack ingest sender needs
 // it (an @Derive mention typed in a thread runs the same turn the web app's mention does).
-const gatewayModels = catalogFromGateway(modelGateway())
+const selectedModelGateway = preferredChatGateway(modelGateway(), process.env.WANDB_API_KEY)
+const gatewayModels = catalogFromGateway(selectedModelGateway)
 // …and the LIVE view of it: the configured catalog widened, per turn, by the operator's model
 // library. This sender is built once at boot and outlives every settings change, so it takes
 // the source rather than the catalog — see lib/model-library.ts.
-const gatewayModelSource = modelSource(gatewayModels, modelGateway(), () => readLibrary(meta))
+const gatewayModelSource = modelSource(gatewayModels, selectedModelGateway, () => readLibrary(meta))
 
 const channelSenders: ChannelSenders = {
   email: emailDeliverySender(

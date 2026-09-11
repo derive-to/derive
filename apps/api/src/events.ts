@@ -46,6 +46,9 @@ const DOMAIN_EVENTS = [
   // returns the tick instead of blocking to timeout. A wake only (the waiter
   // re-reads the transcript); the session stays `working`; not webhook-eligible.
   "session.progress",
+  // Ephemeral progress for an attended agent turn. The UI keeps this separate from answer
+  // text, so a tool call never looks like prose from the agent. Arguments are never included.
+  "session.activity",
   // A slice of the answer being written, for a reply the model is streaming. Emitted
   // on the ASKER's `u:<id>` channel with `session_id`, a monotonic `seq`, `text`, and the
   // `attempt` it belongs to — a reply the loop re-generates starts a new attempt, and a reader

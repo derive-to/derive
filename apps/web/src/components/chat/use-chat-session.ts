@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react"
-import { applyDelta, type DeltaState, EMPTY_DELTA, supersededBy } from "@/lib/session-delta"
+import {
+  applyActivity,
+  applyDelta,
+  type DeltaState,
+  EMPTY_DELTA,
+  type SessionActivity,
+  supersededBy,
+} from "@/lib/session-delta"
 import { usePageVisible } from "@/lib/use-page-visible"
 import { useUserEvent } from "@/lib/use-user-events"
 import type { ChatMessage } from "./chat-thread"
@@ -77,6 +84,7 @@ export function useChatSession(opts: ChatSessionOptions) {
   // The accumulation rules live in lib/session-delta.ts, shared with the context console so the
   // two surfaces cannot drift — they did, and one of them was wrong.
   const [delta, setDelta] = useState<DeltaState>(EMPTY_DELTA)
+  const [activity, setActivity] = useState<SessionActivity[]>([])
   // Agent rows seen so far, so a NEW one can be told from one that was already there.
   const agentCount = useRef(0)
   // The lane's callbacks, held in a ref so a caller may define them inline without every
@@ -119,6 +127,7 @@ export function useChatSession(opts: ChatSessionOptions) {
     setMessages([])
     setError(null)
     setDelta(EMPTY_DELTA)
+    setActivity([])
     agentCount.current = 0
   }, [opts.resetKey])
 
@@ -129,6 +138,7 @@ export function useChatSession(opts: ChatSessionOptions) {
       setSessionId(id)
       setMessages([])
       setDelta(EMPTY_DELTA)
+      setActivity([])
       agentCount.current = 0
       setError(null)
       await refresh(id)
@@ -141,6 +151,7 @@ export function useChatSession(opts: ChatSessionOptions) {
     setSessionId(null)
     setMessages([])
     setDelta(EMPTY_DELTA)
+    setActivity([])
     agentCount.current = 0
     setError(null)
     setState("answered")
@@ -159,6 +170,8 @@ export function useChatSession(opts: ChatSessionOptions) {
       }
       setMessages((m) => [...m, optimistic])
       setState("working")
+      setDelta(EMPTY_DELTA)
+      setActivity([])
       try {
         if (!sessionId) {
           // The first message OPENS the session, so merely looking at a chat surface creates
@@ -203,6 +216,19 @@ export function useChatSession(opts: ChatSessionOptions) {
 
   useUserEvent("session.delta", (e) => setDelta((s) => applyDelta(s, e.data, sessionId)), live)
 
+  useUserEvent(
+    "session.activity",
+    (e) => {
+      setActivity((s) => applyActivity(s, e.data, sessionId))
+      try {
+        if ((JSON.parse(e.data) as { state?: string }).state === "running") clearStream()
+      } catch {
+        /* malformed activity is ignored by applyActivity too */
+      }
+    },
+    live,
+  )
+
   // The turn ended. Read the transcript NOW rather than waiting out the poll — this is the
   // event the whole streaming path builds to, and it is what swaps the provisional text for
   // the persisted reply.
@@ -226,6 +252,7 @@ export function useChatSession(opts: ChatSessionOptions) {
     /** The reply being written, or "" when there is nothing in flight. Render it as a
      *  provisional agent bubble; it is replaced by the real message when the turn settles. */
     streaming: delta.text,
+    activity,
     error,
     send,
     poll,

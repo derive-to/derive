@@ -361,6 +361,14 @@ export const contextRoutes = (ctx: AppContext) => {
           workspaceName: ws?.name ?? "this workspace",
           asker: { name: me.name ?? me.username ?? null, role: seat.role },
           skills: tools.skills,
+          onActivity: (activity) => {
+            const event = {
+              type: "session.activity" as const,
+              session_id: s.id,
+              ...activity,
+            }
+            void bus.publish(`u:${s.asker_id}`, event)
+          },
           ...(builderTools ? { purpose: "context_builder" as const } : {}),
         },
       ),

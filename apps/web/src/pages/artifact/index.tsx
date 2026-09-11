@@ -1882,6 +1882,7 @@ export function Artifact({ template = false }: { template?: boolean }) {
                   messages={chat.messages}
                   working={chat.working}
                   streaming={chat.streaming}
+                  activity={chat.activity}
                   notice={chat.error ?? undefined}
                   onSend={(b) => chat.send(b)}
                   onPoll={chat.poll}

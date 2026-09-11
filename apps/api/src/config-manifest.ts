@@ -382,6 +382,12 @@ const CONFIG_VARS: ConfigVar[] = [
     example: "https://api.fireworks.ai/inference/v1",
   },
   {
+    name: "WANDB_API_KEY",
+    group: "advanced",
+    doc: "W&B Inference bearer token for attended chat. When set, Derive uses DeepSeek V4 Flash\nthrough W&B as the default agent model. It disables provider reasoning for fast first output.\nIf unset, Derive uses the configured DERIVE_MODEL_* gateway.",
+    example: "wandb_v1_...",
+  },
+  {
     name: "DERIVE_MODEL_API_KEY",
     group: "advanced",
     doc: "Bearer token for DERIVE_MODEL_BASE_URL. Read by the API process only and never forwarded\ninto a CLI runner's environment, so it cannot redirect a coding agent's credentials.",

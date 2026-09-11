@@ -82,6 +82,8 @@ export interface ChatTurnInput {
   /** Which system prompt this turn speaks with. Absent = the workspace chat
    *  voice. "context_builder" = the guided create-a-context interview. */
   purpose?: "context_builder"
+  /** Ephemeral tool progress for a person watching this turn. Names only. */
+  onActivity?: (activity: { id: string; name: string; state: "running" | "complete" }) => void
 }
 
 /** The transcript as plain chat turns, oldest first. */
@@ -136,6 +138,8 @@ You are talking with ${input.asker.name ?? "someone"} in the workspace "${input.
 
 TOOLS: ${names.length ? names.join(", ") : "none on this turn"}. Use them rather than guessing — you are answering about THIS workspace, and you cannot know its contents from memory.
 
+The interface shows tool activity separately. When a tool is needed, call it immediately. Do not narrate what you are about to do, and do not write answer prose until the needed tools finish.
+
 Four things hold on every answer:
 - SEARCH BEFORE YOU ANSWER anything about what the workspace contains, and answer from what came back rather than from what sounds right.
 - LINK WHAT YOU USED: every document you name is a markdown link, [Q3 Roadmap](/artifacts/ab12cd34), using the short_id the tool returned. Never a bare short_id, never an invented one. Write the link PLAIN, never wrapped in bold or italics: emphasising the name produces a link whose bold closes inside it, which renders as literal asterisks around broken text. That is what a list of documents turns into when every name is emphasised.
@@ -160,6 +164,7 @@ export const runChatTurn = async (
 ): Promise<ChatTurnResult> => {
   const model = { id: deps.model.id, label: deps.model.label }
   const used: string[] = []
+  let activityIndex = 0
   const out = await runTurn({
     system: systemPrompt(input),
     messages: asTurns(input.transcript, (m) => ({
@@ -168,10 +173,20 @@ export const runChatTurn = async (
     })),
     contract: proseContract,
     callModel: deps.model.callModel as AgentLoopInput["callModel"],
+    // Attended chat must converge quickly. Four tool rounds plus one forced-answer turn is
+    // enough for workspace questions and avoids a long tool loop that feels stuck.
+    maxTurns: 5,
     tools: input.tools.tools,
     executeTool: async (name, args) => {
       if (!used.includes(name)) used.push(name)
-      return input.tools.execute(name, args)
+      activityIndex += 1
+      const id = `${activityIndex}-${name}`
+      input.onActivity?.({ id, name, state: "running" })
+      try {
+        return await input.tools.execute(name, args)
+      } finally {
+        input.onActivity?.({ id, name, state: "complete" })
+      }
     },
     // `land` is unreachable: proseContract never yields a revision, so there is nothing to
     // land — this lane's writes ride its TOOLS (chat-tools' publish), which carry their own

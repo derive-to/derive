@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { useCopy } from "@/lib/clipboard"
 import { isInAppPath } from "@/lib/in-app-path"
 import { REVEAL } from "@/lib/interaction"
+import type { SessionActivity } from "@/lib/session-delta"
 import { cn } from "@/lib/utils"
 import { mdToHtml } from "@/pages/artifact/lib/markdown"
 import { ANSWER_PROSE, answerMdToHtml } from "@/pages/context/lib/answer-md"
@@ -45,6 +46,7 @@ export function ChatThread(props: {
   /** The reply being written, when the gateway streams one. "" means nothing in flight, which
    *  is also what a non-streaming turn looks like — the surface falls back to the spinner. */
   streaming?: string
+  activity?: SessionActivity[]
   /** What to show before the first message. */
   empty: ReactNode
   onPoll: () => void
@@ -53,7 +55,7 @@ export function ChatThread(props: {
    *  stays full-bleed. Omitted, rows render as-is (the rail, which is already narrow). */
   row?: (children: ReactNode) => ReactNode
 }) {
-  const { messages, working, streaming, empty, onPoll, className, row } = props
+  const { messages, working, streaming, activity = [], empty, onPoll, className, row } = props
   const endRef = useRef<HTMLDivElement | null>(null)
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const navigate = useNavigate()
@@ -151,7 +153,8 @@ export function ChatThread(props: {
               second, stalled turn. Falls back to the spinner while the model has not emitted
               yet, and whenever nothing is streaming at all, so a turn with no deltas looks
               exactly as it always did. */}
-          {streaming ? wrap(<Streaming text={streaming} />) : working ? wrap(<Thinking />) : null}
+          {working && wrap(<Activity activity={activity} answering={!!streaming} />)}
+          {streaming ? wrap(<Streaming text={streaming} />) : null}
           <div ref={endRef} />
         </div>
       )}
@@ -256,12 +259,33 @@ function Bubble({ msg }: { msg: ChatMessage }) {
   )
 }
 
-function Thinking() {
+const ACTIVITY_WORDS: Record<string, string> = {
+  find: "Searching the workspace",
+  read: "Reading documents",
+  publish: "Writing a document",
+  use: "Using a Context",
+}
+
+function Activity({ activity, answering }: { activity: SessionActivity[]; answering: boolean }) {
+  const running = [...activity].reverse().find((item) => item.state === "running")
+  const label = running
+    ? (ACTIVITY_WORDS[running.name] ?? "Working with the workspace")
+    : activity.length
+      ? `${activity.length} ${activity.length === 1 ? "step" : "steps"}`
+      : "Thinking"
   return (
-    <div className="flex justify-start" data-testid="chat-thinking">
-      <div className="flex items-center gap-2 rounded-lg bg-muted px-3 py-2 text-sm text-muted-foreground">
-        <Icon name="sparkles" className="size-3.5 animate-pulse" />
-        Working…
+    <div
+      className="flex justify-start"
+      data-testid="chat-activity"
+      role="status"
+      aria-live="polite"
+    >
+      <div className="flex items-center gap-2 px-1 py-0.5 text-sm text-muted-foreground">
+        <Icon
+          name={running || !answering ? "sparkles" : "check"}
+          className={cn("size-3.5", (running || !activity.length) && "animate-pulse")}
+        />
+        {label}
       </div>
     </div>
   )

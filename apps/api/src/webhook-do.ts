@@ -10,7 +10,7 @@ import { tickStore } from "./edge-pg"
 import { cloudflareEmailSender, type SendEmailBinding } from "./email-cf"
 import { answerDeriveMention } from "./lib/comment-turn"
 import { emailDeliverySender } from "./lib/email"
-import { catalogFromGateway } from "./lib/model-catalog"
+import { catalogFromGateway, preferredChatGateway } from "./lib/model-catalog"
 import { modelSource, readLibrary } from "./lib/model-library"
 import { makeSlackIngestSender, makeSlackSender } from "./lib/slack-comments"
 import { makeSlackDmSender } from "./lib/slack-dm"
@@ -47,6 +47,7 @@ export interface WebhookOutboxEnv {
   DERIVE_MODEL_NAMES?: string
   DERIVE_MODEL_PROVIDERS?: string
   DERIVE_MODEL_AUTO_PROVIDERS?: string
+  WANDB_API_KEY?: string
   DERIVE_CHAT_ALLOWLIST?: string
 }
 
@@ -69,7 +70,8 @@ const mentionAnswerer = (env: WebhookOutboxEnv, store: MetaStore) => {
           autoProviders: env.DERIVE_MODEL_AUTO_PROVIDERS,
         }
       : undefined
-  const models = catalogFromGateway(gw)
+  const selectedGateway = preferredChatGateway(gw, env.WANDB_API_KEY)
+  const models = catalogFromGateway(selectedGateway)
   if (!models || !env.BUCKET || !env.BASE_URL) return undefined
   return answerDeriveMention({
     meta: store,
@@ -77,7 +79,7 @@ const mentionAnswerer = (env: WebhookOutboxEnv, store: MetaStore) => {
     bus: { publish: () => {}, subscribe: () => () => {} } as never,
     baseUrl: env.BASE_URL,
     // Per turn, not held: the same operator library the API tier reads (lib/model-library.ts).
-    models: modelSource(models, gw, () => readLibrary(store)),
+    models: modelSource(models, selectedGateway, () => readLibrary(store)),
     notify: async () => {},
     chatAllowlist: (env.DERIVE_CHAT_ALLOWLIST ?? "")
       .split(",")

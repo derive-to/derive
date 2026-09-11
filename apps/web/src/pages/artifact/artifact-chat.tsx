@@ -2,6 +2,7 @@ import { ChatComposer } from "@/components/chat/chat-composer"
 import { type ChatMessage, ChatThread } from "@/components/chat/chat-thread"
 import { Icon } from "@/components/icons"
 import { EmptyState } from "@/components/shared/empty-state"
+import type { SessionActivity } from "@/lib/session-delta"
 import { cn } from "@/lib/utils"
 
 // CHAT WITH THIS DOCUMENT — the right-rail sibling of the comments panel.
@@ -27,19 +28,21 @@ export function ArtifactChat(props: {
   /** The reply being written, when the gateway streams one. "" means nothing in flight, which
    *  is also what a non-streaming turn looks like — the panel falls back to the spinner. */
   streaming?: string
+  activity?: SessionActivity[]
   disabled?: boolean
   /** Why chat cannot be used, when it cannot (no model configured, no permission). */
   notice?: string
   onSend: (body: string) => Promise<void>
   onPoll: () => void
 }) {
-  const { messages, working, streaming, disabled, notice, onSend, onPoll } = props
+  const { messages, working, streaming, activity, disabled, notice, onSend, onPoll } = props
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-testid="artifact-chat">
       <ChatThread
         messages={messages}
         working={working}
         streaming={streaming}
+        activity={activity}
         onPoll={onPoll}
         className="px-3 py-3"
         empty={
