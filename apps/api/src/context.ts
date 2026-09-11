@@ -92,6 +92,10 @@ const billingBlockCopy = (baseUrl: string) => {
       code: "billing_required",
       message: `Free covers 3 editor seats, so this workspace needs the Team plan to add more editors. An owner can upgrade at ${billingUrl}.`,
     },
+    white_label: {
+      code: "billing_required",
+      message: `White-label shared pages is a Team-plan feature, so the Made-with-Derive mark stays on until this workspace upgrades. An owner can upgrade at ${billingUrl}.`,
+    },
     storage: {
       code: "storage_exceeded",
       message: `This workspace is out of storage, so this save was refused. Upgrade for more at ${billingUrl}.`,
