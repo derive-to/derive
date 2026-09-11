@@ -24,7 +24,7 @@ follow-up; the join link is the small PR that makes the motion work now.
 - Invite routes in `apps/api/src/routes/workspace.ts`: create, list, resend (rotates),
   revoke, unauthenticated preview, authenticated accept. Owner-only via
   `requireWorkspace(c, "manage")`.
-- Seat gate `seatGrantGate` (`apps/api/src/context.ts`): 402 `billing_required` (the seat gate) when a billable
+- Seat gate `seatGrantGate` (`apps/api/src/context.ts`): 402 `billing_required` when a billable
   role would exceed `FREE_SEAT_LIMIT` (3) with no active subscription.
 - Signup admission (`apps/api/src/lib/signup-policy.ts`): a valid invite preview arms a
   15-minute `d_admission` cookie so the invitee can sign up when `DERIVE_SIGNUP_MODE=invite`.

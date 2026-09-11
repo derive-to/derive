@@ -14,7 +14,9 @@ import {
  * independent — a fresh `owner`/`secondUser` via the fixtures, per the
  * project's isolation model — so the file still runs fully parallel. This is
  * the post-merge gate; anything deeper belongs in its own focused test file,
- * not back in a tiered smoke/deep split.
+ * not back in a tiered smoke/deep split. The workspace join link case at the
+ * end lives here rather than in its own file per the repo test policy (one
+ * file per feature area); it opens a second browser context for the joiner.
  */
 
 test("sign up creates an account and sign out returns to login", async ({ page }) => {
