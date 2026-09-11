@@ -9,7 +9,7 @@ describe("workspace join link", () => {
   const teammate: TestUser = { id: "u_jl_mate", email: "jlmate@derive.test", name: "Mo" }
   const outsider: TestUser = { id: "u_jl_out", email: "jlout@derive.test", name: "Sam" }
   const second: TestUser = { id: "u_jl_two", email: "jltwo@derive.test", name: "Tia" }
-  const { app } = makeAuthedApp("join_link", [admin, teammate, outsider, second], "editor", {
+  const { app, meta } = makeAuthedApp("join_link", [admin, teammate, outsider, second], "editor", {
     isolated: true,
   })
 
@@ -123,6 +123,30 @@ describe("workspace join link", () => {
     expect((await join(tokenOf(link), as(second.email))).status).toBe(404)
   })
 
+  it("answers 410 join_link_expired on preview and join once the link has expired", async () => {
+    await create(as(admin.email))
+    // The isolated per-user workspace requireWorkspace resolves for admin: this describe
+    // block seeds no shared "default" team (isolated: true), so read it back rather than
+    // assuming an id.
+    const orgId = (await (await app.request("/v1/workspaces", { headers: as(admin.email) })).json())
+      .active
+    // Same workspace, same role, but already expired: replaceJoinLink rotates the row.
+    const expired = await meta.replaceJoinLink({
+      id: "wjl_expired_test",
+      org_id: orgId,
+      role: "editor",
+      token: "dkj_expired_test_token",
+      created_by: admin.id,
+      expires_at: new Date(Date.now() - 60_000).toISOString(),
+    })
+    const preview = await app.request(`/v1/join/${expired.token}`)
+    expect(preview.status).toBe(410)
+    expect((await preview.json()).code).toBe("join_link_expired")
+    const joined = await join(expired.token, as(second.email))
+    expect(joined.status).toBe(410)
+    expect((await joined.json()).code).toBe("join_link_expired")
+  })
+
   it("requires sign-in to join (anon is refused by the write lockdown)", async () => {
     const link = await (await create(as(admin.email))).json()
     const res = await app.request(`/v1/join/${tokenOf(link)}`, {
@@ -135,10 +159,14 @@ describe("workspace join link", () => {
 
   it("never leaks a link through the workspace roster or the pending-invite list", async () => {
     await create(as(admin.email))
-    const list = await (
-      await app.request("/v1/workspace/invites", { headers: as(admin.email) })
-    ).json()
+    const invitesRes = await app.request("/v1/workspace/invites", { headers: as(admin.email) })
+    expect(invitesRes.status).toBe(200)
+    const list = await invitesRes.json()
     expect(JSON.stringify(list)).not.toContain("dkj_")
+    const rosterRes = await app.request("/v1/workspace", { headers: as(admin.email) })
+    expect(rosterRes.status).toBe(200)
+    const roster = await rosterRes.json()
+    expect(JSON.stringify(roster)).not.toContain("dkj_")
   })
 })
 
