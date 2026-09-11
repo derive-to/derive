@@ -18,7 +18,7 @@ const artifactRoute = getRouteApi("/invite/a/$token")
 const collectionRoute = getRouteApi("/invite/c/$token")
 
 // The calm chrome-less shell shared with /login and /reset-password.
-function Shell({ children }: { children: React.ReactNode }) {
+export function Shell({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex min-h-dvh flex-col bg-card dark:bg-background">
       <main className="flex flex-1 items-center justify-center px-6 py-12">
@@ -236,7 +236,7 @@ function AcceptSharedSubjectInvite({
 // only in the headline body, the CTA verbs, and where accepting lands; the
 // mismatch warning, error panel, and button skeleton are the shared contract
 // (and share the testids the e2e specs assert on).
-function InvitationPanel({
+export function InvitationPanel({
   heading,
   body,
   invitedEmail,
@@ -249,7 +249,8 @@ function InvitationPanel({
 }: {
   heading: string
   body: React.ReactNode
-  invitedEmail: string
+  /** The address the invite named; null when the surface binds no email (a join link). */
+  invitedEmail: string | null
   cta: { idle: string; busy: string; signIn: string }
   signedIn: boolean
   accepting: boolean

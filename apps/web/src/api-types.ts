@@ -1067,6 +1067,140 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/workspace/join-link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The workspace's join link (Admin only); 404 when none exists. */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The current link. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["WorkspaceJoinLink"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** Create the workspace's join link, or rotate it (Admin only). */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The fresh link. Any previous link stops working. */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["WorkspaceJoinLink"];
+                    };
+                };
+            };
+        };
+        /** Revoke the workspace's join link (Admin only). */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Revoked (or there was none). */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/join/{token}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Preview a join link (the join page reads this). */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    token: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The workspace and role the link grants. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["JoinLinkPreview"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** Join the workspace through its link (signed-in holder). */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    token: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The workspace joined and the caller's role in it. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["JoinResult"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/agents": {
         parameters: {
             query?: never;
@@ -7543,6 +7677,39 @@ export interface components {
             role: "viewer" | "commenter" | "editor" | "owner";
             /** @description True for the auto-provisioned personal workspace (id ws_p_<userId>). */
             personal: boolean;
+        };
+        WorkspaceJoinLink: {
+            id: string;
+            /**
+             * @description The role a joiner receives: commenter (Viewer) or editor (Creator).
+             * @enum {string}
+             */
+            role: "viewer" | "commenter" | "editor" | "owner";
+            /** @description The shareable URL. The token rides only here. */
+            url: string;
+            created_at: string;
+            /** @description Fixed 30 days from creation; rotate to extend. */
+            expires_at: string;
+            /** @description How many people have joined through this link. */
+            join_count: number;
+        };
+        JoinLinkPreview: {
+            workspace: string;
+            /** @enum {string} */
+            role: "viewer" | "commenter" | "editor" | "owner";
+            /** @description Display name of the Admin who made the link. */
+            inviter: string | null;
+            expires_at: string;
+        };
+        JoinResult: {
+            org_id: string;
+            /**
+             * @description The caller's role in the workspace after the call.
+             * @enum {string}
+             */
+            role: "viewer" | "commenter" | "editor" | "owner";
+            /** @description True when the caller was already a member; their role is never changed. */
+            already_member: boolean;
         };
         Agent: {
             id: string;

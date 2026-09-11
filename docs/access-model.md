@@ -100,6 +100,14 @@ directory-listed. Their Share dialog reuses the same Invited / Workspace / Anyon
 controls, link-role selector, password controls, people roles, pending email
 invitations, and copy-link action as an artifact.
 
+A workspace may also carry **one join link** (`workspace_join_link`): anyone who opens
+`/join/<token>` and signs in joins at the link's role, `editor` or `commenter`, never
+`owner`. Workspace admins create, rotate, and revoke it; it expires 30 days after
+creation, and an `editor` link runs the same seat gate as an email invite at join
+time. Its token is stored in plaintext by design (a revocable, expiring, shareable
+secret an admin must be able to copy again). In blast radius it sits between a
+per-email invitation and a world link on an artifact.
+
 ## Listing preconditions (the only invariants)
 
 Discovery may not surface an artifact to an audience that cannot open it:

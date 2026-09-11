@@ -28,10 +28,12 @@ export const retryQuery = (failureCount: number, err: unknown): boolean =>
 
 // Mutation meta the app understands. `errorToast: false` opts a single mutation OUT
 // of the global error toast — for the few sites that render the failure inline (e.g. the
-// login form) from `mutation.error` instead of a toast.
+// login form) from `mutation.error` instead of a toast. `paywall: false` opts it out of the
+// global upgrade dialog, for a write whose 402 is somebody else's bill (joining a workspace
+// you don't own): the caller renders the refusal inline instead.
 // Augmenting react-query's Register makes `meta` typed everywhere a mutation is
 // declared, so a typo like `errorTost` is a compile error, not a silent no-op.
-export type AppMutationMeta = { errorToast?: boolean }
+export type AppMutationMeta = { errorToast?: boolean; paywall?: boolean }
 
 // Query meta the app understands. `persist: false` opts a query OUT of the IndexedDB cache
 // (lib/persist.ts) — for the session (auth must re-resolve fresh) and for anything keyed by a
@@ -51,6 +53,13 @@ declare module "@tanstack/react-query" {
  *  it opted out to handle the failure inline. Pure + exported so it's unit-tested. */
 export const shouldToastError = (meta: AppMutationMeta | undefined): boolean =>
   meta?.errorToast !== false
+
+/** Whether a billing refusal should raise the upgrade dialog: yes UNLESS the mutation opted
+ *  out. A mutation whose failure is not the caller's own billing problem (joining someone
+ *  else's workspace) sets `paywall: false` and handles the 402 inline. Pure + exported so
+ *  it's unit-tested. */
+export const shouldOpenPaywall = (meta: AppMutationMeta | undefined): boolean =>
+  meta?.paywall !== false
 
 /** Whether a query's data may be persisted to IndexedDB: yes UNLESS it opted out via
  *  `meta.persist: false`. Pure + exported so it's unit-tested. */
@@ -110,7 +119,7 @@ export const queryClient = new QueryClient({
   mutationCache: new MutationCache({
     onError: (err, _vars, _ctx, mutation) => {
       const reason = paywallReasonFor(err)
-      if (reason) return openPaywall(reason)
+      if (reason && shouldOpenPaywall(mutation.meta)) return openPaywall(reason)
       if (shouldToastError(mutation.meta)) toast.error(toastMessageFor(err))
     },
   }),

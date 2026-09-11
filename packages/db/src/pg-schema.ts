@@ -831,6 +831,25 @@ export const collectionInvite = pgTable(
   ],
 )
 
+// One join link per workspace (see schema.ts for the full note).
+export const workspaceJoinLink = pgTable(
+  "workspace_join_link",
+  {
+    id: text("id").primaryKey(),
+    org_id: text("org_id").notNull(),
+    role: text("role").$type<Role>().notNull().default("editor"),
+    token: text("token").notNull(),
+    created_by: text("created_by"),
+    created_at: text("created_at").notNull().$defaultFn(isoNow),
+    expires_at: text("expires_at").notNull(),
+    join_count: integer("join_count").notNull().default(0),
+  },
+  (t) => [
+    uniqueIndex("workspace_join_link_org").on(t.org_id),
+    uniqueIndex("workspace_join_link_token").on(t.token),
+  ],
+)
+
 // Where a signup came from (see schema.ts for the full note).
 export const signupAttribution = pgTable(
   "signup_attribution",
@@ -1495,6 +1514,7 @@ const TABLES = [
   invitation,
   artifactInvite,
   collectionInvite,
+  workspaceJoinLink,
   signupAttribution,
   instanceOperator,
   oauthClientWorkspace,

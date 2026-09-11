@@ -43,6 +43,7 @@ import type {
   ImportKind,
   ImportLeaseRecord,
   InvitationRecord,
+  JoinLinkRecord,
   LinkRole,
   ListArtifactsOpts,
   ListEnrichment,
@@ -77,6 +78,7 @@ import type {
   NewFollow,
   NewImportJob,
   NewInvitation,
+  NewJoinLink,
   NewMembership,
   NewNotification,
   NewPlan,
@@ -291,6 +293,7 @@ import {
   workflowRun,
   workflowStepAttempt,
   workspace,
+  workspaceJoinLink,
 } from "./pg-schema"
 import {
   artifactListConditions,
@@ -350,6 +353,7 @@ export const schema = {
   connection,
   artifactInvite,
   invitation,
+  workspaceJoinLink,
   signupAttribution,
   instanceOperator,
   subscription,
@@ -414,6 +418,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   plan: true,
   connection: true,
   invitation: true,
+  workspaceJoinLink: true,
   artifactInvite: true,
   signupAttribution: true,
   subscription: true,
@@ -7431,6 +7436,40 @@ export class PgMetaStore implements MetaStore {
       )
       .returning({ id: invitation.id })
     return rows.length > 0
+  }
+
+  // ---- Workspace join link -------------------------------------------------
+  async getJoinLink(orgId: string): Promise<JoinLinkRecord | null> {
+    const rows = await this.db
+      .select()
+      .from(workspaceJoinLink)
+      .where(eq(workspaceJoinLink.org_id, orgId))
+    return (rows[0] as JoinLinkRecord | undefined) ?? null
+  }
+  async getJoinLinkById(id: string): Promise<JoinLinkRecord | null> {
+    const rows = await this.db.select().from(workspaceJoinLink).where(eq(workspaceJoinLink.id, id))
+    return (rows[0] as JoinLinkRecord | undefined) ?? null
+  }
+  async getJoinLinkByToken(token: string): Promise<JoinLinkRecord | null> {
+    const rows = await this.db
+      .select()
+      .from(workspaceJoinLink)
+      .where(eq(workspaceJoinLink.token, token))
+    return (rows[0] as JoinLinkRecord | undefined) ?? null
+  }
+  async replaceJoinLink(l: NewJoinLink): Promise<JoinLinkRecord> {
+    await this.db.delete(workspaceJoinLink).where(eq(workspaceJoinLink.org_id, l.org_id))
+    const rows = await this.db.insert(workspaceJoinLink).values(l).returning()
+    return one(rows) as JoinLinkRecord
+  }
+  async deleteJoinLink(orgId: string): Promise<void> {
+    await this.db.delete(workspaceJoinLink).where(eq(workspaceJoinLink.org_id, orgId))
+  }
+  async bumpJoinCount(id: string): Promise<void> {
+    await this.db
+      .update(workspaceJoinLink)
+      .set({ join_count: sql`${workspaceJoinLink.join_count} + 1` })
+      .where(eq(workspaceJoinLink.id, id))
   }
 
   // ---- Signup attribution ----------------------------------------------------

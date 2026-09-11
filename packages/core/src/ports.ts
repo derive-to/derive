@@ -2480,6 +2480,21 @@ export interface AgentStore {
   /** Atomically spend a still-live invite. Exactly one concurrent caller wins. */
   consumeInvitation(id: string, now: string): Promise<boolean>
 
+  // ---- Workspace join link (one shareable link per workspace) --------------
+  /** The workspace's current join link, or null when none exists. */
+  getJoinLink(orgId: string): Promise<JoinLinkRecord | null>
+  /** Resolve by id (the signup-admission capability carries the id, not the token). */
+  getJoinLinkById(id: string): Promise<JoinLinkRecord | null>
+  /** Resolve by its plaintext token (the join page reads this); null if unknown or revoked. */
+  getJoinLinkByToken(token: string): Promise<JoinLinkRecord | null>
+  /** Create the workspace's join link, replacing any existing one. Create and rotate are the
+   *  same operation: the old token stops working the moment the new row exists. */
+  replaceJoinLink(l: NewJoinLink): Promise<JoinLinkRecord>
+  /** Revoke the workspace's join link. A no-op when none exists. */
+  deleteJoinLink(orgId: string): Promise<void>
+  /** One more person joined through the link: `join_count + 1`. */
+  bumpJoinCount(id: string): Promise<void>
+
   // ---- Artifact invitations (share-by-email → accept) ---------------------
   /** Create a pending per-artifact invite. Any prior pending invite for the same
    *  (artifact, email) should be replaced by the caller first. */
@@ -3856,6 +3871,38 @@ export interface NewInvitation {
   role: Role
   token: string
   invited_by?: string | null
+  expires_at: string
+}
+
+/**
+ * A workspace join link: ONE shareable, revocable URL per workspace that lets anyone who
+ * opens `/join/<token>` join at a chosen role. Unlike `invitation` it is bound to no email,
+ * is multi-use, and is never consumed. The token is stored in PLAINTEXT on purpose: it is a
+ * revocable, 30-day, seat-gated secret meant to be pasted into a team channel and copied
+ * again from Settings later, and anyone with database read access can already read
+ * `membership`. Owner is never grantable through it.
+ */
+export interface JoinLinkRecord {
+  id: string
+  org_id: string
+  /** The role a joiner receives: commenter (Viewer) or editor (Creator). Never owner. */
+  role: Role
+  /** The raw join token (plaintext by design, see above); the URL is `/join/<token>`. */
+  token: string
+  /** The Admin who created it; null if their account was later removed. */
+  created_by: string | null
+  created_at: string
+  /** Fixed 30 days from creation; rotating the link is the only way to extend it. */
+  expires_at: string
+  /** How many people have joined through this link. */
+  join_count: number
+}
+export interface NewJoinLink {
+  id: string
+  org_id: string
+  role: Role
+  token: string
+  created_by?: string | null
   expires_at: string
 }
 

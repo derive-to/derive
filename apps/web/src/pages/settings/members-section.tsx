@@ -25,6 +25,7 @@ import { billingQuery, workspaceInvitesQuery, workspaceQuery } from "@/lib/queri
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { AddForm } from "./add-form"
 import { FREE_SEAT_LIMIT, needsSeatConfirm, PLANS, unitPrice } from "./billing-plans"
+import { JoinLinkCard } from "./join-link-card"
 import { roleLabel, roleValue, WS_ROLES } from "./roles"
 import { SettingsListSkeleton } from "./settings-list-skeleton"
 import { SettingsSection } from "./settings-section"
@@ -298,6 +299,7 @@ export function MembersSection({ meId }: { meId: string }) {
         </SettingsGroup>
       ) : null}
 
+      {isAdmin && <JoinLinkCard />}
       {isAdmin && <PendingInvites />}
 
       {removing && (

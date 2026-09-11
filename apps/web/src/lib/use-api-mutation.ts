@@ -1,7 +1,7 @@
 import { type QueryClient, type QueryKey, useMutation, useQueryClient } from "@tanstack/react-query"
 import { useCallback, useState } from "react"
 import { toast } from "@/components/ui/sonner"
-import { paywallReasonFor } from "./query-client"
+import { type AppMutationMeta, paywallReasonFor, shouldOpenPaywall } from "./query-client"
 
 /**
  * The one governed mutation primitive — every write in the app goes through here so
@@ -15,7 +15,8 @@ import { paywallReasonFor } from "./query-client"
  *  3. Pending state is always available for a spinner / disabled button.
  *  4. A billing-blocked failure surfaces as the paywall dialog (the global
  *     MutationCache, see query-client.ts) instead of a toast — the caller's `onError`
- *     is skipped so it can't double-surface; rollback still runs.
+ *     is skipped so it can't double-surface; rollback still runs. `paywall:false` turns
+ *     that off for a write whose 402 is somebody else's bill.
  *
  * Built on react-query's useMutation, so `isPending` and cache integration are free.
  * For a list where each row toggles independently, pass `pendingKey` and read
@@ -34,6 +35,11 @@ export function useApiMutation<TData = unknown, TVars = void>(config: {
   success?: string | ((data: TData, vars: TVars) => string | undefined)
   /** Opt OUT of the global error toast to render the failure inline from `error`. */
   errorToast?: boolean
+  /** Opt OUT of the global upgrade dialog for a billing refusal (402), so this mutation's
+   *  own `onError` runs and renders the refusal inline. For a write whose 402 is somebody
+   *  else's bill (joining a workspace you don't own), where the dialog would offer to
+   *  upgrade the WRONG workspace. */
+  paywall?: boolean
   /** A per-call key so `isPendingFor(key)` scopes the spinner to one list row. */
   pendingKey?: (vars: TVars) => string
   /** Extra success side-effect (navigate, close a dialog) once the write lands. */
@@ -42,7 +48,7 @@ export function useApiMutation<TData = unknown, TVars = void>(config: {
    *  runs AFTER the optimistic rollback. The symmetric counterpart to onSuccess; the error
    *  toast stays the MutationCache's job (honoring meta.errorToast), so don't toast here.
    *  Skipped entirely on a billing-blocked failure (guarantee 4 above) — that one's the
-   *  paywall dialog's alone. */
+   *  paywall dialog's alone, unless `paywall: false` handed the 402 back to this callback. */
   onError?: (err: Error, vars: TVars) => void
 }) {
   const qc = useQueryClient()
@@ -58,9 +64,10 @@ export function useApiMutation<TData = unknown, TVars = void>(config: {
     })
   }, [])
 
+  const meta: AppMutationMeta = { errorToast: config.errorToast, paywall: config.paywall }
   const m = useMutation<TData, Error, TVars, { rollback?: () => void; pendingKey?: string }>({
     mutationFn: config.mutationFn,
-    meta: { errorToast: config.errorToast },
+    meta,
     onMutate: (vars) => {
       const pendingKey = config.pendingKey?.(vars)
       if (pendingKey) mark(pendingKey, true)
@@ -71,9 +78,10 @@ export function useApiMutation<TData = unknown, TVars = void>(config: {
       // Undo the optimistic edit first. The MutationCache (query-client.ts) owns
       // surfacing the failure — a toast, or the paywall dialog for a billing-blocked
       // write — so a billing failure skips the caller's onError entirely: running it
-      // too would risk a second, redundant error UI on top of the dialog.
+      // too would risk a second, redundant error UI on top of the dialog. With
+      // `paywall: false` there IS no dialog, so the 402 belongs to the caller.
       ctx?.rollback?.()
-      if (paywallReasonFor(err)) return
+      if (shouldOpenPaywall(meta) && paywallReasonFor(err)) return
       config.onError?.(err, vars)
     },
     onSuccess: (data, vars) => {

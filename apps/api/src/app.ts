@@ -67,6 +67,7 @@ import { webhookRoutes } from "./routes/webhooks"
 import { workflowRoutes } from "./routes/workflows"
 import { workspaceRoutes } from "./routes/workspace"
 import { workspaceDomainRoutes } from "./routes/workspace-domains"
+import { workspaceJoinRoutes } from "./routes/workspace-join"
 
 // Re-exported from its lib home so existing importers (and tests) keep working.
 export { isPublicHttpUrl } from "./lib/net"
@@ -454,6 +455,7 @@ export function createApp(deps: AppDeps): Hono {
   for (const routes of [
     sessionRoutes,
     workspaceRoutes,
+    workspaceJoinRoutes,
     agentRoutes,
     artifactRoutes,
     sharedStateRoutes,

@@ -6351,6 +6351,53 @@ export function runStoreContract(
     })
   })
 
+  describe(`${label}: workspace join link`, () => {
+    it("keeps one link per workspace, rotates by replacing, counts joins, and revokes", async () => {
+      const orgId = `join_org_${uuid()}`
+      await store.setWorkspace(orgId, "Join Link Contract")
+      const future = new Date(Date.now() + 60_000).toISOString()
+      await expect(store.getJoinLink(orgId)).resolves.toBeNull()
+
+      const first = await store.replaceJoinLink({
+        id: `wjl_${uuid()}`,
+        org_id: orgId,
+        role: "editor",
+        token: `dkj_${uuid()}`,
+        created_by: null,
+        expires_at: future,
+      })
+      expect(first.join_count).toBe(0)
+      await expect(store.getJoinLinkById(first.id)).resolves.toMatchObject({ org_id: orgId })
+      await expect(store.getJoinLinkByToken(first.token)).resolves.toMatchObject({
+        id: first.id,
+        role: "editor",
+      })
+
+      await store.bumpJoinCount(first.id)
+      await store.bumpJoinCount(first.id)
+      expect((await store.getJoinLink(orgId))?.join_count).toBe(2)
+
+      // Rotating replaces the row: the old token stops resolving the moment the new one exists.
+      const second = await store.replaceJoinLink({
+        id: `wjl_${uuid()}`,
+        org_id: orgId,
+        role: "commenter",
+        token: `dkj_${uuid()}`,
+        created_by: null,
+        expires_at: future,
+      })
+      expect(second.id).not.toBe(first.id)
+      await expect(store.getJoinLinkByToken(first.token)).resolves.toBeNull()
+      expect((await store.getJoinLink(orgId))?.role).toBe("commenter")
+
+      await store.deleteJoinLink(orgId)
+      await expect(store.getJoinLink(orgId)).resolves.toBeNull()
+      await expect(store.getJoinLinkByToken(second.token)).resolves.toBeNull()
+      // Revoking a workspace without a link is a no-op, not an error.
+      await expect(store.deleteJoinLink(orgId)).resolves.toBeUndefined()
+    })
+  })
+
   describe(`${label}: instance operators`, () => {
     it("binds authority idempotently to an immutable user id", async () => {
       const userId = `operator_${uuid()}`

@@ -39,6 +39,7 @@ import { Route as UsersHandleRouteImport } from './routes/users.$handle'
 import { Route as TemplatesRefRouteImport } from './routes/templates.$ref'
 import { Route as TemplateLibrariesIdRouteImport } from './routes/template-libraries.$id'
 import { Route as SettingsSectionRouteImport } from './routes/settings.$section'
+import { Route as JoinTokenRouteImport } from './routes/join.$token'
 import { Route as InviteTokenRouteImport } from './routes/invite.$token'
 import { Route as ContextsNewRouteImport } from './routes/contexts.new'
 import { Route as ContextsIdRouteImport } from './routes/contexts.$id'
@@ -200,6 +201,11 @@ const SettingsSectionRoute = SettingsSectionRouteImport.update({
   path: '/$section',
   getParentRoute: () => SettingsRoute,
 } as any)
+const JoinTokenRoute = JoinTokenRouteImport.update({
+  id: '/join/$token',
+  path: '/join/$token',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const InviteTokenRoute = InviteTokenRouteImport.update({
   id: '/invite/$token',
   path: '/invite/$token',
@@ -281,6 +287,7 @@ export interface FileRoutesByFullPath {
   '/contexts/$id': typeof ContextsIdRoute
   '/contexts/new': typeof ContextsNewRoute
   '/invite/$token': typeof InviteTokenRoute
+  '/join/$token': typeof JoinTokenRoute
   '/settings/$section': typeof SettingsSectionRoute
   '/template-libraries/$id': typeof TemplateLibrariesIdRoute
   '/templates/$ref': typeof TemplatesRefRoute
@@ -322,6 +329,7 @@ export interface FileRoutesByTo {
   '/contexts/$id': typeof ContextsIdRoute
   '/contexts/new': typeof ContextsNewRoute
   '/invite/$token': typeof InviteTokenRoute
+  '/join/$token': typeof JoinTokenRoute
   '/settings/$section': typeof SettingsSectionRoute
   '/template-libraries/$id': typeof TemplateLibrariesIdRoute
   '/templates/$ref': typeof TemplatesRefRoute
@@ -365,6 +373,7 @@ export interface FileRoutesById {
   '/contexts/$id': typeof ContextsIdRoute
   '/contexts/new': typeof ContextsNewRoute
   '/invite/$token': typeof InviteTokenRoute
+  '/join/$token': typeof JoinTokenRoute
   '/settings/$section': typeof SettingsSectionRoute
   '/template-libraries/$id': typeof TemplateLibrariesIdRoute
   '/templates/$ref': typeof TemplatesRefRoute
@@ -409,6 +418,7 @@ export interface FileRouteTypes {
     | '/contexts/$id'
     | '/contexts/new'
     | '/invite/$token'
+    | '/join/$token'
     | '/settings/$section'
     | '/template-libraries/$id'
     | '/templates/$ref'
@@ -450,6 +460,7 @@ export interface FileRouteTypes {
     | '/contexts/$id'
     | '/contexts/new'
     | '/invite/$token'
+    | '/join/$token'
     | '/settings/$section'
     | '/template-libraries/$id'
     | '/templates/$ref'
@@ -492,6 +503,7 @@ export interface FileRouteTypes {
     | '/contexts/$id'
     | '/contexts/new'
     | '/invite/$token'
+    | '/join/$token'
     | '/settings/$section'
     | '/template-libraries/$id'
     | '/templates/$ref'
@@ -535,6 +547,7 @@ export interface RootRouteChildren {
   ContextsIdRoute: typeof ContextsIdRoute
   ContextsNewRoute: typeof ContextsNewRoute
   InviteTokenRoute: typeof InviteTokenRoute
+  JoinTokenRoute: typeof JoinTokenRoute
   TemplateLibrariesIdRoute: typeof TemplateLibrariesIdRoute
   TemplatesRefRoute: typeof TemplatesRefRoute
   UsersHandleRoute: typeof UsersHandleRoute
@@ -758,6 +771,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsSectionRouteImport
       parentRoute: typeof SettingsRoute
     }
+    '/join/$token': {
+      id: '/join/$token'
+      path: '/join/$token'
+      fullPath: '/join/$token'
+      preLoaderRoute: typeof JoinTokenRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/invite/$token': {
       id: '/invite/$token'
       path: '/invite/$token'
@@ -875,6 +895,7 @@ const rootRouteChildren: RootRouteChildren = {
   ContextsIdRoute: ContextsIdRoute,
   ContextsNewRoute: ContextsNewRoute,
   InviteTokenRoute: InviteTokenRoute,
+  JoinTokenRoute: JoinTokenRoute,
   TemplateLibrariesIdRoute: TemplateLibrariesIdRoute,
   TemplatesRefRoute: TemplatesRefRoute,
   UsersHandleRoute: UsersHandleRoute,

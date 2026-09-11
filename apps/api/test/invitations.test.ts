@@ -141,3 +141,196 @@ describe("workspace invitations", () => {
     expect(res.status).toBe(403)
   })
 })
+
+// The workspace join link: one shareable URL per workspace. Anyone who opens it joins at the
+// link's role. Admin-only to create, revocable, 30-day expiry, never grants owner.
+describe("workspace join link", () => {
+  const admin: TestUser = { id: "u_jl_admin", email: "jladmin@derive.test", name: "Ada" }
+  const teammate: TestUser = { id: "u_jl_mate", email: "jlmate@derive.test", name: "Mo" }
+  const outsider: TestUser = { id: "u_jl_out", email: "jlout@derive.test", name: "Sam" }
+  const second: TestUser = { id: "u_jl_two", email: "jltwo@derive.test", name: "Tia" }
+  const { app, meta } = makeAuthedApp("join_link", [admin, teammate, outsider, second], "editor", {
+    isolated: true,
+  })
+
+  const create = (headers: Record<string, string>, body: unknown = {}) =>
+    app.request("/v1/workspace/join-link", { ...jsonAs(headers, body), method: "POST" })
+  const tokenOf = (link: { url: string }) => link.url.split("/join/")[1] ?? ""
+  const join = (token: string, headers?: Record<string, string>) =>
+    app.request(`/v1/join/${token}`, { method: "POST", headers })
+  // `isolated: true` gives each user a personal workspace with a generated id; read it back.
+  const activeOrg = async (headers: Record<string, string>): Promise<string> =>
+    (await (await app.request("/v1/workspaces", { headers })).json()).active
+
+  it("creates a Creator link by default; GET is 404 until one exists", async () => {
+    expect(
+      (await app.request("/v1/workspace/join-link", { headers: as(admin.email) })).status,
+    ).toBe(404)
+    const res = await create(as(admin.email))
+    expect(res.status).toBe(201)
+    const link = await res.json()
+    expect(link.role).toBe("editor")
+    expect(link.url).toContain("/join/dkj_")
+    expect(link.join_count).toBe(0)
+    const got = await (
+      await app.request("/v1/workspace/join-link", { headers: as(admin.email) })
+    ).json()
+    expect(got.id).toBe(link.id)
+    expect(got.url).toBe(link.url)
+  })
+
+  it("never grants owner, and accepts commenter explicitly", async () => {
+    expect((await create(as(admin.email), { role: "owner" })).status).toBe(400)
+    const res = await create(as(admin.email), { role: "commenter" })
+    expect(res.status).toBe(201)
+    expect((await res.json()).role).toBe("commenter")
+  })
+
+  it("rejects a non-admin creating, reading, or revoking the link", async () => {
+    // Make teammate a Creator (member, not Admin) first.
+    const add = await app.request("/v1/workspace/members", {
+      ...jsonAs(as(admin.email), { email: teammate.email, role: "editor" }),
+      method: "PUT",
+    })
+    expect(add.status).toBe(201)
+    expect((await create(as(teammate.email))).status).toBe(403)
+    expect(
+      (await app.request("/v1/workspace/join-link", { headers: as(teammate.email) })).status,
+    ).toBe(403)
+    expect(
+      (
+        await app.request("/v1/workspace/join-link", {
+          method: "DELETE",
+          headers: as(teammate.email),
+        })
+      ).status,
+    ).toBe(403)
+  })
+
+  it("previews without auth, joins the signed-in holder at the link's role, and counts the join", async () => {
+    const link = await (await create(as(admin.email), { role: "editor" })).json()
+    const token = tokenOf(link)
+    const preview = await app.request(`/v1/join/${token}`)
+    expect(preview.status).toBe(200)
+    const p = await preview.json()
+    expect(p.role).toBe("editor")
+    expect(p.workspace).toBeTruthy()
+    expect(p.inviter).toBe("Ada")
+
+    const res = await join(token, as(outsider.email))
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.role).toBe("editor")
+    expect(body.already_member).toBe(false)
+    const w = await (await app.request("/v1/workspace", { headers: as(admin.email) })).json()
+    expect(w.members.some((m: { user_id: string }) => m.user_id === outsider.id)).toBe(true)
+    const got = await (
+      await app.request("/v1/workspace/join-link", { headers: as(admin.email) })
+    ).json()
+    expect(got.join_count).toBe(1)
+
+    // Joining again is idempotent: 200, already_member, no role change, no second count.
+    const again = await (await join(token, as(outsider.email))).json()
+    expect(again.already_member).toBe(true)
+    expect(again.role).toBe("editor")
+    const gotAgain = await (
+      await app.request("/v1/workspace/join-link", { headers: as(admin.email) })
+    ).json()
+    expect(gotAgain.join_count).toBe(1)
+  })
+
+  it("never downgrades an existing member", async () => {
+    // admin is the owner; a Viewer link must not touch their role.
+    const link = await (await create(as(admin.email), { role: "commenter" })).json()
+    const res = await (await join(tokenOf(link), as(admin.email))).json()
+    expect(res.already_member).toBe(true)
+    expect(res.role).toBe("owner")
+  })
+
+  it("rotates on re-create: the old token stops working", async () => {
+    const first = await (await create(as(admin.email))).json()
+    const rotated = await (await create(as(admin.email))).json()
+    expect(rotated.url).not.toBe(first.url)
+    expect((await app.request(`/v1/join/${tokenOf(first)}`)).status).toBe(404)
+    expect((await app.request(`/v1/join/${tokenOf(rotated)}`)).status).toBe(200)
+  })
+
+  it("revokes: preview and join both 404 afterwards", async () => {
+    const link = await (await create(as(admin.email))).json()
+    const del = await app.request("/v1/workspace/join-link", {
+      method: "DELETE",
+      headers: as(admin.email),
+    })
+    expect(del.status).toBe(204)
+    expect((await app.request(`/v1/join/${tokenOf(link)}`)).status).toBe(404)
+    expect((await join(tokenOf(link), as(second.email))).status).toBe(404)
+  })
+
+  it("answers 410 join_link_expired on preview and join once the link has expired", async () => {
+    const orgId = await activeOrg(as(admin.email))
+    // Planted straight in the store: the routes can never mint an already-expired link.
+    const expired = await meta.replaceJoinLink({
+      id: "wjl_expired_test",
+      org_id: orgId,
+      role: "editor",
+      token: "dkj_expired_test_token",
+      created_by: admin.id,
+      expires_at: new Date(Date.now() - 60_000).toISOString(),
+    })
+    const preview = await app.request(`/v1/join/${expired.token}`)
+    expect(preview.status).toBe(410)
+    expect((await preview.json()).code).toBe("join_link_expired")
+    const joined = await join(expired.token, as(second.email))
+    expect(joined.status).toBe(410)
+    expect((await joined.json()).code).toBe("join_link_expired")
+  })
+
+  it("requires sign-in to join (anon is refused by the write lockdown)", async () => {
+    const link = await (await create(as(admin.email))).json()
+    const res = await app.request(`/v1/join/${tokenOf(link)}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    })
+    expect(res.status).toBe(403)
+  })
+
+  it("never leaks a link through the workspace roster or the pending-invite list", async () => {
+    await create(as(admin.email))
+    const invitesRes = await app.request("/v1/workspace/invites", { headers: as(admin.email) })
+    expect(invitesRes.status).toBe(200)
+    const list = await invitesRes.json()
+    expect(JSON.stringify(list)).not.toContain("dkj_")
+    const rosterRes = await app.request("/v1/workspace", { headers: as(admin.email) })
+    expect(rosterRes.status).toBe(200)
+    const roster = await rosterRes.json()
+    expect(JSON.stringify(roster)).not.toContain("dkj_")
+  })
+
+  it("clears a stale pending email invite for the address that joins", async () => {
+    const orgId = await activeOrg(as(admin.email))
+    // Invited by email months ago, never redeemed; they arrive through the link instead. The
+    // Admin's pending list must not keep showing them once they are on the roster.
+    await meta.createInvitation({
+      id: "inv_jl_stale",
+      org_id: orgId,
+      email: second.email,
+      role: "commenter",
+      token: "hash_jl_stale_invite",
+      invited_by: admin.id,
+      expires_at: new Date(Date.now() + 86_400_000).toISOString(),
+    })
+    const pending = async (): Promise<string[]> => {
+      const list = await (
+        await app.request("/v1/workspace/invites", { headers: as(admin.email) })
+      ).json()
+      return list.invites.map((i: { email: string }) => i.email)
+    }
+    expect(await pending()).toContain(second.email)
+
+    // A Viewer link, so the seat gate never stands between the join and the assertion.
+    const link = await (await create(as(admin.email), { role: "commenter" })).json()
+    expect((await join(tokenOf(link), as(second.email))).status).toBe(200)
+    expect(await pending()).not.toContain(second.email)
+  })
+})

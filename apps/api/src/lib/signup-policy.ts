@@ -4,7 +4,7 @@ import { setCookie } from "hono/cookie"
 import { signCapabilityToken, verifyCapabilityToken } from "./capability-token"
 
 export type SignupMode = "open" | "invite" | "closed"
-export type InviteKind = "workspace" | "artifact" | "collection"
+export type InviteKind = "workspace" | "artifact" | "collection" | "join"
 
 export interface SignupAttempt {
   email: string
@@ -35,19 +35,20 @@ const cookieFromHeader = (header: string | null, name: string): string | null =>
   return null
 }
 
-/** Arm the auth endpoint with a short-lived, signed capability after a valid
- * invite preview. The raw invite token never enters a cookie or the auth hook. */
+/** Arm the auth endpoint with a short-lived, signed capability after a valid invite or
+ * join link preview. `ref` is the invite's token hash, or the join link's id: the raw
+ * token never enters a cookie or the auth hook. */
 export async function armInviteAdmission(
   c: Context,
   kind: InviteKind,
-  tokenHash: string,
+  ref: string,
   inviteExpiresAt: string,
   secret: string | undefined,
   cookie: { baseUrl: string; crossSite?: boolean },
 ): Promise<void> {
   if (!secret) return
   const now = Date.now()
-  const minted = await mintInviteAdmission(kind, tokenHash, inviteExpiresAt, secret, now)
+  const minted = await mintInviteAdmission(kind, ref, inviteExpiresAt, secret, now)
   if (!minted) return
   setCookie(c, ADMISSION_COOKIE, minted.token, {
     path: "/api/auth",
@@ -64,7 +65,7 @@ export async function armInviteAdmission(
 /** Pure token mint used by the route wrapper above and focused policy tests. */
 export async function mintInviteAdmission(
   kind: InviteKind,
-  tokenHash: string,
+  ref: string,
   inviteExpiresAt: string,
   secret: string,
   now = Date.now(),
@@ -72,7 +73,7 @@ export async function mintInviteAdmission(
   const expiresAt = Math.min(Date.parse(inviteExpiresAt), now + ADMISSION_TTL_MS)
   if (!Number.isFinite(expiresAt) || expiresAt <= now) return null
   return {
-    token: await signCapabilityToken(ADMISSION_DOMAIN, secret, [kind, tokenHash], expiresAt),
+    token: await signCapabilityToken(ADMISSION_DOMAIN, secret, [kind, ref], expiresAt),
     expiresAt,
   }
 }
@@ -84,7 +85,7 @@ export function signupPolicy(
   mode: SignupMode,
   secret: string,
   meta: Pick<MetaStore, "getInvitationByToken" | "getArtifactInviteByToken"> &
-    Partial<Pick<MetaStore, "getCollectionInviteByToken">>,
+    Partial<Pick<MetaStore, "getCollectionInviteByToken" | "getJoinLinkById">>,
 ): (attempt: SignupAttempt) => Promise<boolean> {
   return async ({ cookieHeader }) => {
     if (mode === "open") return true
@@ -93,15 +94,23 @@ export function signupPolicy(
     if (!encoded) return false
     const verified = await verifyCapabilityToken(ADMISSION_DOMAIN, secret, encoded, Date.now())
     if (!verified) return false
-    const [kind, tokenHash, extra] = verified.rest.split(".")
-    if (extra !== undefined || !/^[0-9a-f]{64}$/.test(tokenHash ?? "")) return false
+    const [kind, ref, extra] = verified.rest.split(".")
+    if (extra !== undefined) return false
+    // A join link's capability carries the link's ID, not a token hash: the link is multi-use
+    // and its token is plaintext, so "still live" means the row still exists and hasn't expired.
+    if (kind === "join") {
+      if (!/^wjl_[a-z0-9]{1,64}$/.test(ref ?? "")) return false
+      const link = await meta.getJoinLinkById?.(ref ?? "")
+      return !!link && Date.parse(link.expires_at) > Date.now()
+    }
+    if (!/^[0-9a-f]{64}$/.test(ref ?? "")) return false
     const invite =
       kind === "workspace"
-        ? await meta.getInvitationByToken(tokenHash ?? "")
+        ? await meta.getInvitationByToken(ref ?? "")
         : kind === "artifact"
-          ? await meta.getArtifactInviteByToken(tokenHash ?? "")
+          ? await meta.getArtifactInviteByToken(ref ?? "")
           : kind === "collection"
-            ? await meta.getCollectionInviteByToken?.(tokenHash ?? "")
+            ? await meta.getCollectionInviteByToken?.(ref ?? "")
             : null
     return !!invite && invite.accepted_at === null && Date.parse(invite.expires_at) > Date.now()
   }

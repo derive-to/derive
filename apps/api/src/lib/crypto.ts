@@ -15,8 +15,9 @@ import { RAW_TOKEN_WINDOW_MS } from "./http"
 
 export const sha256 = (s: string): string => createHash("sha256").update(s).digest("hex")
 
-/** A bearer token: `<prefix>_` + 256 bits from two UUIDs. Stored only as its
- *  sha256; the raw value rides the one link or response that delivers it. */
+/** A bearer token: `<prefix>_` + 256 bits from two UUIDs. Stored as its sha256 (the
+ *  workspace join link is the one plaintext exception, see JoinLinkRecord in @derive/core);
+ *  the raw value rides the one link or response that delivers it. */
 export const mintToken = (prefix: string): string =>
   `${prefix}_${randomUUID().replace(/-/g, "")}${randomUUID().replace(/-/g, "")}`
 
