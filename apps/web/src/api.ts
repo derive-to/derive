@@ -277,6 +277,12 @@ export type Invite = components["schemas"]["Invite"]
 export type InviteResult = components["schemas"]["InviteResult"]
 /** What the accept page shows before you join. */
 export type InvitePreview = components["schemas"]["InvitePreview"]
+/** The workspace's shareable join link: one per workspace, Admin-managed. */
+export type WorkspaceJoinLink = components["schemas"]["WorkspaceJoinLink"]
+/** What the join page shows before you join via a workspace join link. */
+export type JoinLinkPreview = components["schemas"]["JoinLinkPreview"]
+/** The result of joining a workspace via a join link. */
+export type JoinResult = components["schemas"]["JoinResult"]
 export type ArtifactInvite = components["schemas"]["ArtifactInvite"]
 export type ArtifactInvitePreview = components["schemas"]["ArtifactInvitePreview"]
 /** What the claim page shows before an anonymous draft is claimed. Hand-declared:
@@ -1658,6 +1664,22 @@ export const api = {
     f(`/v1/workspace/invites/${id}`, { method: "DELETE", credentials: "include" }).then(
       () => undefined,
     ),
+  // The workspace join link: one shareable URL per workspace, Admin-managed (see
+  // routes/workspace-join.ts). getJoinLink resolves null when none exists (a 404 there is
+  // a state, not a failure).
+  getJoinLink: (): Promise<WorkspaceJoinLink | null> =>
+    f("/v1/workspace/join-link", opts()).then((r) => (r.status === 404 ? null : j(r))),
+  createJoinLink: (role: "commenter" | "editor"): Promise<WorkspaceJoinLink> =>
+    f("/v1/workspace/join-link", opts({ role })).then(j),
+  revokeJoinLink: (): Promise<void> =>
+    f("/v1/workspace/join-link", { method: "DELETE", credentials: "include" }).then(
+      () => undefined,
+    ),
+  // The join page: preview by token, then join (the signed-in holder becomes a member).
+  previewJoinLink: (token: string): Promise<JoinLinkPreview> =>
+    f(`/v1/join/${encodeURIComponent(token)}`, opts()).then(j),
+  joinWorkspace: (token: string): Promise<JoinResult> =>
+    f(`/v1/join/${encodeURIComponent(token)}`, opts({})).then(j),
   // The accept page: preview an invite by token, then join.
   previewInvite: (token: string): Promise<InvitePreview> =>
     f(`/v1/invites/${encodeURIComponent(token)}`, opts()).then(j),

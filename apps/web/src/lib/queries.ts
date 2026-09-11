@@ -465,6 +465,13 @@ export const workspaceInvitesQuery = () =>
     queryFn: () => api.listWorkspaceInvites().then((r) => r.invites),
   })
 
+/** The workspace's join link, Admin-only; null when none exists. */
+export const workspaceJoinLinkQuery = () =>
+  queryOptions({
+    queryKey: ["workspace", "join-link"] as const,
+    queryFn: () => api.getJoinLink(),
+  })
+
 /** The deploy-wide model plus the catalog to choose from — operator-only, so its failure is
  *  also the signal that the person is not one. */
 export const instanceChatModelQuery = () =>
