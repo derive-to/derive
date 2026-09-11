@@ -37,6 +37,7 @@ import type {
   ImportKind,
   ImportLeaseRecord,
   InvitationRecord,
+  JoinLinkRecord,
   LinkRole,
   ListArtifactsOpts,
   Listed,
@@ -68,6 +69,7 @@ import type {
   NewFollow,
   NewImportJob,
   NewInvitation,
+  NewJoinLink,
   NewMembership,
   NewNotification,
   NewPlan,
@@ -6064,6 +6066,30 @@ export function makeRepos(db: SqliteDb) {
     return row !== undefined
   }
 
+  // ---- Workspace join link -------------------------------------------------
+  const getJoinLink = async (orgId: string): Promise<JoinLinkRecord | null> =>
+    (await db.select().from(workspaceJoinLink).where(eq(workspaceJoinLink.org_id, orgId)).get()) ??
+    null
+  const getJoinLinkById = async (id: string): Promise<JoinLinkRecord | null> =>
+    (await db.select().from(workspaceJoinLink).where(eq(workspaceJoinLink.id, id)).get()) ?? null
+  const getJoinLinkByToken = async (token: string): Promise<JoinLinkRecord | null> =>
+    (await db.select().from(workspaceJoinLink).where(eq(workspaceJoinLink.token, token)).get()) ??
+    null
+  const replaceJoinLink = async (l: NewJoinLink): Promise<JoinLinkRecord> => {
+    await db.delete(workspaceJoinLink).where(eq(workspaceJoinLink.org_id, l.org_id)).run()
+    return (await db.insert(workspaceJoinLink).values(l).returning().get()) as JoinLinkRecord
+  }
+  const deleteJoinLink = async (orgId: string): Promise<void> => {
+    await db.delete(workspaceJoinLink).where(eq(workspaceJoinLink.org_id, orgId)).run()
+  }
+  const recordJoin = async (id: string): Promise<void> => {
+    await db
+      .update(workspaceJoinLink)
+      .set({ join_count: sql`${workspaceJoinLink.join_count} + 1` })
+      .where(eq(workspaceJoinLink.id, id))
+      .run()
+  }
+
   // ---- Signup attribution ---------------------------------------------------
   const recordSignupAttribution = async (a: NewSignupAttribution): Promise<void> => {
     // The unique user_id index makes a duplicate hook fire a no-op — first write
@@ -6861,6 +6887,12 @@ export function makeRepos(db: SqliteDb) {
     deletePendingInvitationsFor,
     deleteInvitation,
     consumeInvitation,
+    getJoinLink,
+    getJoinLinkById,
+    getJoinLinkByToken,
+    replaceJoinLink,
+    deleteJoinLink,
+    recordJoin,
     recordSignupAttribution,
     getSignupAttribution,
     createArtifactInvite,

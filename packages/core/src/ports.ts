@@ -2480,6 +2480,21 @@ export interface AgentStore {
   /** Atomically spend a still-live invite. Exactly one concurrent caller wins. */
   consumeInvitation(id: string, now: string): Promise<boolean>
 
+  // ---- Workspace join link (one shareable link per workspace) --------------
+  /** The workspace's current join link, or null when none exists. */
+  getJoinLink(orgId: string): Promise<JoinLinkRecord | null>
+  /** Resolve by id (the signup-admission capability carries the id, not the token). */
+  getJoinLinkById(id: string): Promise<JoinLinkRecord | null>
+  /** Resolve by its plaintext token (the join page reads this); null if unknown or revoked. */
+  getJoinLinkByToken(token: string): Promise<JoinLinkRecord | null>
+  /** Create the workspace's join link, replacing any existing one. Create and rotate are the
+   *  same operation: the old token stops working the moment the new row exists. */
+  replaceJoinLink(l: NewJoinLink): Promise<JoinLinkRecord>
+  /** Revoke the workspace's join link. A no-op when none exists. */
+  deleteJoinLink(orgId: string): Promise<void>
+  /** Count one successful join through the link. */
+  recordJoin(id: string): Promise<void>
+
   // ---- Artifact invitations (share-by-email → accept) ---------------------
   /** Create a pending per-artifact invite. Any prior pending invite for the same
    *  (artifact, email) should be replaced by the caller first. */
