@@ -3,6 +3,7 @@ import { useState } from "react"
 import { api } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { ListRow } from "@/components/shared/list-row"
+import { LoadError } from "@/components/shared/load-error"
 import { SettingsGroup } from "@/components/shared/settings-group"
 import { Button } from "@/components/ui/button"
 import {
@@ -38,14 +39,12 @@ const daysLeft = (expiresAt: string): number =>
 // the link exists; the seat line under the select says what a Creator costs at all times.
 export function JoinLinkCard() {
   const qc = useQueryClient()
-  // surface-ignore: the caller only mounts this card once workspaceQuery has already
-  // resolved successfully (isAdmin depends on it, and its own error state lives in
-  // MembersSection). A failed join-link read degrades to the create-link empty state
-  // rather than a second error banner; billing and workspace name are copy inputs that
-  // already have documented undefined fallbacks (joinLinkSeatLine, joinLinkActiveLine,
-  // and the ws?.name default below).
-  const { data: link, isPending } = useQuery(workspaceJoinLinkQuery())
-  const { data: billing } = useQuery(billingQuery())
+  const { data: link, isPending, isError, refetch } = useQuery(workspaceJoinLinkQuery())
+  // Unknown billing (query failed) is treated as billable, never as free: a Creator link
+  // must never skip the seat-confirm dialog just because the price couldn't be read.
+  const { data: billing, isError: billingErrored } = useQuery(billingQuery())
+  // surface-ignore: read only for the workspace name in the confirm dialog's copy, which
+  // already has a fallback ("this workspace") for exactly this case.
   const { data: ws } = useQuery(workspaceQuery())
   const [role, setRole] = useState<LinkRole>("editor")
   const [confirmCreate, setConfirmCreate] = useState(false)
@@ -67,7 +66,8 @@ export function JoinLinkCard() {
 
   const requestCreate = (r: LinkRole) => {
     // A subscribed workspace bills every Creator: confirm before a Creator link exists.
-    if (r === "editor" && billing?.subscribed) {
+    // A failed billing read counts as billable too: unknown is never treated as free.
+    if (r === "editor" && (billing?.subscribed || billingErrored)) {
       setConfirmCreate(true)
       return
     }
@@ -88,7 +88,13 @@ export function JoinLinkCard() {
           : "One link for the whole team. Anyone who opens it joins at this role."
       }
     >
-      {link ? (
+      {isError ? (
+        <LoadError
+          title="Couldn’t load the join link"
+          testId="join-link-retry"
+          onRetry={() => refetch()}
+        />
+      ) : link ? (
         <ListRow
           data-testid="join-link-row"
           mono
@@ -194,9 +200,8 @@ export function JoinLinkCard() {
           tone="default"
           contentTestId="join-link-confirm-dialog"
           confirmTestId="join-link-confirm-create"
-          onConfirm={() => {
-            setConfirmCreate(false)
-            create.mutate("editor")
+          onConfirm={async () => {
+            await create.mutateAsync("editor")
           }}
         />
       )}
@@ -208,9 +213,8 @@ export function JoinLinkCard() {
           description="The link stops working immediately. People who already joined keep their seats."
           confirmLabel="Revoke"
           confirmTestId="join-link-revoke-confirm"
-          onConfirm={() => {
-            setConfirmRevoke(false)
-            revoke.mutate()
+          onConfirm={async () => {
+            await revoke.mutateAsync()
           }}
         />
       )}
