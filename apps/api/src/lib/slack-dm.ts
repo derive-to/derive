@@ -1,11 +1,10 @@
 // Per-user Slack DMs: the same "email is for interrupts" policy as notify-email.ts
 // (agent completions, mentions, review requests, shares — see that file's header), mirrored onto Slack.
-// The Slack user is resolved from the account link when the recipient has one, and only
-// falls back to guessing by their Derive account email via users.lookupByEmail (see
-// lib/slack.ts resolveSlackUserIdByEmail) when they haven't linked. That fallback is
-// best-effort: an unmatched email is reported as delivered-but-skipped rather than a
-// failure, so a Derive address that differs from the Slack one drops the DM silently —
-// linking is what makes delivery reliable. Rides the same durable
+// The Slack user is resolved from the account link when the recipient has one. Without a
+// link, Derive uses the recipient's lookup email for this workspace, then their Derive account
+// email via users.lookupByEmail (see lib/slack.ts resolveSlackUserIdByEmail). That fallback is
+// best-effort: an unmatched email is reported as delivered-but-skipped rather than a failure.
+// Rides the same durable
 // outbox as the comment mirror (a `slack_dm` delivery kind). Self-host clean: no new env,
 // no scheduler — a DM is enqueued inline with the triggering action and delivered by the
 // outbox.
@@ -80,6 +79,17 @@ export const wantsReviewEmail = (prefsJson: string | undefined): boolean => {
     return (JSON.parse(prefsJson) as { reviewEmail?: boolean }).reviewEmail === true
   } catch {
     return false
+  }
+}
+
+/** The explicit Slack lookup email for one user in one Derive workspace. */
+export const slackEmailFor = (prefsJson: string | undefined): string | null => {
+  if (!prefsJson) return null
+  try {
+    const value = (JSON.parse(prefsJson) as { slackEmail?: unknown }).slackEmail
+    return typeof value === "string" && value.trim() ? value.trim().toLowerCase() : null
+  } catch {
+    return null
   }
 }
 
@@ -365,8 +375,8 @@ export const enqueueSlackDm = async (
   } satisfies SlackDmPayload)
 }
 
-/** Build the slack_dm delivery sender: resolve the recipient's Slack account by email
- *  (users.lookupByEmail against the workspace's bot token), open a DM, post. No-ops
+/** Build the slack_dm delivery sender: resolve the recipient's linked identity or workspace
+ *  lookup email (users.lookupByEmail against the workspace's bot token), open a DM, post. No-ops
  *  (delivered) when the user has no email on file, no matching Slack account, or Slack
  *  isn't connected, so a row never dead-letters on an unmatched recipient. */
 export const makeSlackDmSender =
@@ -377,19 +387,22 @@ export const makeSlackDmSender =
     if (!bot) return { ok: true, status: "skipped: slack not connected" }
 
     // Prefer the reliable account link (the user linked their Slack identity); fall back to
-    // guessing by account email only for users who haven't linked — so a Derive email that
-    // differs from the Slack email no longer silently drops the DM. (A linked user whose Slack
-    // account was later deactivated retries then dead-letters rather than falling back to email
+    // using the workspace lookup email or account email for users who haven't linked. A linked
+    // user whose Slack account was later deactivated retries then dead-letters instead of using email
     // — rare, and re-linking or unlinking fixes it.)
     let slackUserId: string | null = null
     const link = await meta.getSlackUserLinkByUser(bot.install.team_id, p.userId)
     if (link) {
       slackUserId = link.slack_user_id
     } else {
-      const [user] = await meta.getUsers([p.userId])
-      if (!user?.email) return { ok: true, status: "skipped: not linked, no email on file" }
+      const [user, pref] = await Promise.all([
+        meta.getUsers([p.userId]).then(([value]) => value),
+        meta.getUserNotificationPref(p.orgId, p.userId),
+      ])
+      const email = slackEmailFor(pref?.prefs) ?? user?.email
+      if (!email) return { ok: true, status: "skipped: not linked, no email on file" }
       try {
-        slackUserId = await resolveSlackUserIdByEmail(bot.token, user.email)
+        slackUserId = await resolveSlackUserIdByEmail(bot.token, email)
       } catch (err) {
         return slackFailure(meta, p.orgId, err)
       }

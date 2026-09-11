@@ -14,10 +14,11 @@ import { snapshot, useApiMutation } from "@/lib/use-api-mutation"
 import { useOneShotParams } from "@/lib/use-one-shot-params"
 import { SettingsListSkeleton } from "./settings-list-skeleton"
 import { SettingsSection } from "./settings-section"
+import { SlackDeliverySettings } from "./slack-delivery-settings"
 
 // How Derive gets YOUR attention — and nothing else. Everything on this page is
-// scoped to the caller: the Slack DM preference is per-user-per-workspace
-// (user_notification_pref), the account link is per-user, and auto-open is per
+// scoped to the caller: the Slack DM preference and lookup email are per-user-per-workspace
+// (user_notification_pref), the account link is per-user-and-Slack-team, and auto-open is per
 // device. The workspace-wide switches (for example, whether this workspace emails anyone)
 // stay under Integrations — a workspace decision must
 // not dress up as a personal one.
@@ -56,10 +57,6 @@ export function NotificationsSection() {
       client.setQueryData(qk, (prev) => (prev ? { ...prev, review_email: next } : prev))
       return rollback
     },
-  })
-  const testDm = useApiMutation({
-    mutationFn: () => api.sendSlackTestDm(),
-    success: "Test DM sent",
   })
   const unlink = useApiMutation({
     mutationFn: () => api.unlinkSlack(),
@@ -132,17 +129,6 @@ export function NotificationsSection() {
               }
             >
               <div className="flex items-center gap-2">
-                {connected && (
-                  <Button
-                    data-testid="slack-test-dm"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => testDm.mutate()}
-                    loading={testDm.isPending}
-                  >
-                    Send test DM
-                  </Button>
-                )}
                 <Switch
                   id="toggle-slack-dm"
                   data-testid="toggle-slack-dm"
@@ -152,30 +138,33 @@ export function NotificationsSection() {
               </div>
             </SettingRow>
             {connected ? (
-              <SettingRow
-                label="Your Slack account"
-                description={
-                  slack.linked
-                    ? "Linked. DMs and thread attribution resolve to your Slack identity directly."
-                    : "Link your Slack account so DMs reach you even if your Slack email differs, and Slack replies are attributed to you."
-                }
-              >
-                {slack.linked ? (
-                  <Button
-                    data-testid="slack-unlink"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => unlink.mutate()}
-                    loading={unlink.isPending}
-                  >
-                    Unlink
-                  </Button>
-                ) : (
-                  <Button data-testid="slack-link" variant="default" size="sm" asChild>
-                    <a href="/v1/slack/link">Link account</a>
-                  </Button>
-                )}
-              </SettingRow>
+              <>
+                <SlackDeliverySettings key={slack.slack_email ?? "default"} slack={slack} />
+                <SettingRow
+                  label="Your Slack account"
+                  description={
+                    slack.linked
+                      ? "Linked. DMs and thread attribution resolve to your Slack identity directly."
+                      : "Link your Slack account so DMs reach you without an email lookup, and Slack replies are attributed to you."
+                  }
+                >
+                  {slack.linked ? (
+                    <Button
+                      data-testid="slack-unlink"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => unlink.mutate()}
+                      loading={unlink.isPending}
+                    >
+                      Unlink
+                    </Button>
+                  ) : (
+                    <Button data-testid="slack-link" variant="default" size="sm" asChild>
+                      <a href="/v1/slack/link">Link account</a>
+                    </Button>
+                  )}
+                </SettingRow>
+              </>
             ) : (
               <SettingRow
                 label="Your Slack account"
