@@ -208,6 +208,9 @@ export const workspaceJoinRoutes = (ctx: AppContext) => {
         user_id: me.id,
         role: link.role,
       })
+      // They're in now, so any pending email invite for the same address is stale. Clearing
+      // it keeps the Admin's pending list honest, exactly as PUT /v1/workspace/members does.
+      if (me.email) await meta.deletePendingInvitationsFor(link.org_id, me.email.toLowerCase())
       await syncSeats({ meta, billing }, link.org_id)
       await meta.recordJoin(link.id)
       return c.json({ org_id: link.org_id, role: link.role, already_member: false })
