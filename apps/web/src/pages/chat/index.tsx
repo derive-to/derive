@@ -231,6 +231,7 @@ export function ChatPage() {
         messages={chat.messages}
         working={chat.working}
         streaming={chat.streaming}
+        activity={chat.activity}
         onPoll={chat.poll}
         className="py-6"
         row={measure}

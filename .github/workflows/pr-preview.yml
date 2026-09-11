@@ -144,6 +144,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           AUTH_SECRET: ${{ secrets.DERIVE_AUTH_SECRET }}
           MODEL_KEY: ${{ secrets.DERIVE_MODEL_API_KEY }}
+          WANDB_KEY: ${{ secrets.WANDB_API_KEY }}
           OPENROUTER_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           MODEL_GATEWAYS: ${{ secrets.DERIVE_MODEL_GATEWAYS }}
           MODEL_DEFAULT: ${{ vars.DERIVE_MODEL_DEFAULT }}
@@ -163,6 +164,7 @@ jobs:
           # non-zero exit and kills the step — which is exactly how the first run of this
           # workflow failed, on an unset optional variable rather than on anything real.
           if [ -n "$MODEL_KEY" ]; then put DERIVE_MODEL_API_KEY "$MODEL_KEY"; fi
+          if [ -n "$WANDB_KEY" ]; then put WANDB_API_KEY "$WANDB_KEY"; fi
           # A SECOND provider, when one is configured. All optional: absent means the preview
           # runs on the single gateway exactly as it did before any of this existed.
           if [ -n "$OPENROUTER_KEY" ]; then put OPENROUTER_API_KEY "$OPENROUTER_KEY"; fi
@@ -175,10 +177,10 @@ jobs:
           if [ -n "$MODEL_NAMES" ]; then put DERIVE_MODEL_NAMES "$MODEL_NAMES"; fi
           # A preview with no model answers "no model is configured" in chat, which looks like a
           # regression rather than missing config. Say so once, here.
-          if [ -z "$MODEL_BASE_URL" ] || [ -z "$MODEL_NAME" ] || [ -z "$MODEL_KEY" ]; then
+          if { [ -z "$MODEL_BASE_URL" ] || [ -z "$MODEL_NAME" ] || [ -z "$MODEL_KEY" ]; } && [ -z "$WANDB_KEY" ]; then
             echo "::warning::Preview has no model gateway. Set repo variables DERIVE_MODEL_BASE_URL"\
-                 "and DERIVE_MODEL_NAME plus the DERIVE_MODEL_API_KEY secret, or chat and"\
-                 "automations will report that no model is connected."
+                 "and DERIVE_MODEL_NAME plus DERIVE_MODEL_API_KEY, or set WANDB_API_KEY. Chat"\
+                 "and automations otherwise report that no model is connected."
           fi
 
       # A preview that boots but 500s on the first authenticated request is worse than none,

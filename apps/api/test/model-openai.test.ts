@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest"
-import { callModelFromGateway } from "../src/lib/model-catalog"
+import {
+  callModelFromGateway,
+  preferredChatGateway,
+  WANDB_BASE_URL,
+  WANDB_DEEPSEEK_MODEL,
+} from "../src/lib/model-catalog"
 import { openAiCompatModel } from "../src/lib/model-openai"
 
 // The OPENAI-COMPATIBLE adapter. Everything here is the mapping between the two wire formats,
@@ -209,6 +214,26 @@ describe("gateway provider routing", () => {
     })
     expect(body?.tools).toBeUndefined()
     expect(body?.max_tool_calls).toBeUndefined()
+  })
+
+  it("uses the W&B chat template switch to disable thinking", async () => {
+    const body = await routedBody({
+      baseUrl: WANDB_BASE_URL,
+      apiKey: "k",
+      model: WANDB_DEEPSEEK_MODEL,
+    })
+    expect(body?.chat_template_kwargs).toEqual({ enable_thinking: false })
+    expect(body?.reasoning).toBeUndefined()
+  })
+
+  it("prefers W&B DeepSeek when its key is configured", () => {
+    const legacy = { baseUrl: "https://openrouter.ai/api/v1", apiKey: "old", model: "old" }
+    expect(preferredChatGateway(legacy, "wandb-key")).toEqual({
+      baseUrl: WANDB_BASE_URL,
+      apiKey: "wandb-key",
+      model: WANDB_DEEPSEEK_MODEL,
+    })
+    expect(preferredChatGateway(legacy, undefined)).toBe(legacy)
   })
 })
 

@@ -132,6 +132,7 @@ export function ContextBuilderPage() {
               messages={chat.messages}
               working={chat.working}
               streaming={chat.streaming}
+              activity={chat.activity}
               onPoll={chat.poll}
               className="px-3 py-3"
               empty={
