@@ -6,6 +6,7 @@ import {
   publishArtifact,
   signUp,
   test,
+  uniqueEmail,
 } from "./fixtures"
 
 /**
@@ -893,7 +894,7 @@ test("a join link brings a new person into the workspace as a Creator", async ({
     // Create an account right there; return_to carries /join/<token>?go=1 through the hand-off.
     await joiner.getByTestId("login-toggle").click()
     await joiner.getByTestId("login-name").fill("Joiner")
-    await joiner.getByTestId("login-email").fill(`e2e+join-${crypto.randomUUID()}@derive.test`)
+    await joiner.getByTestId("login-email").fill(uniqueEmail())
     await joiner.getByTestId("login-password").fill("e2e-pass-1234")
     await joiner.getByTestId("login-submit").click()
 

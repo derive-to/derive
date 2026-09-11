@@ -249,7 +249,8 @@ export function InvitationPanel({
 }: {
   heading: string
   body: React.ReactNode
-  invitedEmail: string
+  /** The address the invite named; null when the surface binds no email (a join link). */
+  invitedEmail: string | null
   cta: { idle: string; busy: string; signIn: string }
   signedIn: boolean
   accepting: boolean

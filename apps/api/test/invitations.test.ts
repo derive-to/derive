@@ -143,7 +143,7 @@ describe("workspace invitations", () => {
 })
 
 // The workspace join link: one shareable URL per workspace. Anyone who opens it joins at the
-// link's role. Owner-only to create, revocable, 30-day expiry, never grants owner.
+// link's role. Admin-only to create, revocable, 30-day expiry, never grants owner.
 describe("workspace join link", () => {
   const admin: TestUser = { id: "u_jl_admin", email: "jladmin@derive.test", name: "Ada" }
   const teammate: TestUser = { id: "u_jl_mate", email: "jlmate@derive.test", name: "Mo" }
@@ -186,7 +186,7 @@ describe("workspace join link", () => {
     expect((await res.json()).role).toBe("commenter")
   })
 
-  it("rejects a non-owner creating, reading, or revoking the link", async () => {
+  it("rejects a non-admin creating, reading, or revoking the link", async () => {
     // Make teammate a Creator (member, not Admin) first.
     const add = await app.request("/v1/workspace/members", {
       ...jsonAs(as(admin.email), { email: teammate.email, role: "editor" }),
@@ -267,9 +267,8 @@ describe("workspace join link", () => {
   })
 
   it("answers 410 join_link_expired on preview and join once the link has expired", async () => {
-    await create(as(admin.email))
     const orgId = await activeOrg(as(admin.email))
-    // Same workspace, same role, but already expired: replaceJoinLink rotates the row.
+    // Planted straight in the store: the routes can never mint an already-expired link.
     const expired = await meta.replaceJoinLink({
       id: "wjl_expired_test",
       org_id: orgId,

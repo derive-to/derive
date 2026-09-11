@@ -1,7 +1,7 @@
 import { type QueryClient, type QueryKey, useMutation, useQueryClient } from "@tanstack/react-query"
 import { useCallback, useState } from "react"
 import { toast } from "@/components/ui/sonner"
-import { paywallReasonFor, shouldOpenPaywall } from "./query-client"
+import { type AppMutationMeta, paywallReasonFor, shouldOpenPaywall } from "./query-client"
 
 /**
  * The one governed mutation primitive — every write in the app goes through here so
@@ -64,9 +64,10 @@ export function useApiMutation<TData = unknown, TVars = void>(config: {
     })
   }, [])
 
+  const meta: AppMutationMeta = { errorToast: config.errorToast, paywall: config.paywall }
   const m = useMutation<TData, Error, TVars, { rollback?: () => void; pendingKey?: string }>({
     mutationFn: config.mutationFn,
-    meta: { errorToast: config.errorToast, paywall: config.paywall },
+    meta,
     onMutate: (vars) => {
       const pendingKey = config.pendingKey?.(vars)
       if (pendingKey) mark(pendingKey, true)
@@ -80,7 +81,7 @@ export function useApiMutation<TData = unknown, TVars = void>(config: {
       // too would risk a second, redundant error UI on top of the dialog. With
       // `paywall: false` there IS no dialog, so the 402 belongs to the caller.
       ctx?.rollback?.()
-      if (shouldOpenPaywall(config) && paywallReasonFor(err)) return
+      if (shouldOpenPaywall(meta) && paywallReasonFor(err)) return
       config.onError?.(err, vars)
     },
     onSuccess: (data, vars) => {

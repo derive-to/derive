@@ -6,6 +6,7 @@ import {
   publishArtifact,
   shareArtifact,
   signUp,
+  uniqueEmail,
 } from "./helpers"
 
 // Composable fixtures are the project's auth/seed layer. Tests declare what they
@@ -38,4 +39,13 @@ export const test = base.extend<Fixtures>({
   },
 })
 
-export { activateThread, addComment, expect, openArtifact, publishArtifact, shareArtifact, signUp }
+export {
+  activateThread,
+  addComment,
+  expect,
+  openArtifact,
+  publishArtifact,
+  shareArtifact,
+  signUp,
+  uniqueEmail,
+}

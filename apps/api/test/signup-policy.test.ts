@@ -60,7 +60,7 @@ describe("self-host signup admission", () => {
       getJoinLinkById: async (id) => (id === "wjl_abc123" ? link : null),
     })
     const minted = await mintInviteAdmission("join", "wjl_abc123", expiresAt, SECRET)
-    const cookieHeader = `${ADMISSION_COOKIE}=${encodeURIComponent(minted?.token ?? "")}`
+    const cookieHeader = `${ADMISSION_COOKIE}=${minted?.token}`
     await expect(allowed({ email: "new@example.com", cookieHeader })).resolves.toBe(true)
     link = null // revoked
     await expect(allowed({ email: "new@example.com", cookieHeader })).resolves.toBe(false)

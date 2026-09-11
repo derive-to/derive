@@ -345,7 +345,7 @@ describe("seat gate on granting a billable role", () => {
     const w = await (await app.request("/v1/workspace", { headers: as("u1@x.test") })).json()
     expect(w.members.some((m: { user_id: string }) => m.user_id === "u4")).toBe(false)
 
-    // A Viewer link is never a seat: the same person joins as a commenter.
+    // A Viewer link is never a seat: with the workspace still at the limit, u5 joins as a commenter.
     const viewer = await (
       await app.request("/v1/workspace/join-link", {
         ...jsonAs(as("u1@x.test"), { role: "commenter" }),

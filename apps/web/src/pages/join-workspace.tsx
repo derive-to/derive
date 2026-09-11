@@ -30,7 +30,6 @@ export function JoinWorkspace() {
   const {
     data: preview,
     isPending,
-    isError,
     error,
   } = useQuery({
     queryKey: ["join-link", token],
@@ -91,7 +90,7 @@ export function JoinWorkspace() {
       </Shell>
     )
 
-  if (isError || !preview) {
+  if (error || !preview) {
     const expired = error instanceof ApiError && error.status === 410
     return (
       <Shell>
@@ -133,7 +132,7 @@ export function JoinWorkspace() {
           )}
         </>
       }
-      invitedEmail=""
+      invitedEmail={null}
       cta={{ idle: `Join ${preview.workspace}`, busy: "Joining…", signIn: "Sign in to join" }}
       signedIn={!!me}
       accepting={joinMut.isPending}

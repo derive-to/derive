@@ -24,12 +24,9 @@ import { roleLabel, WS_ROLES } from "./roles"
 // The roles a link may grant: Creator and Viewer, never Admin. Creator first and default.
 const LINK_ROLES = WS_ROLES.filter((r) => r.value === "editor" || r.value === "commenter")
 
-const daysLeft = (expiresAt: string): number =>
-  Math.ceil((Date.parse(expiresAt) - Date.now()) / 86_400_000)
-
 // The link's remaining life, for the card's meta line.
 const expiryLabel = (expiresAt: string): string => {
-  const days = daysLeft(expiresAt)
+  const days = Math.ceil((Date.parse(expiresAt) - Date.now()) / 86_400_000)
   if (days <= 0) return "expired, regenerate to renew"
   return `expires in ${days} ${days === 1 ? "day" : "days"}`
 }
@@ -63,8 +60,8 @@ export function JoinLinkCard() {
 
   const requestCreate = (r: JoinLinkRole) => {
     // The same seat gate as the Members form: a subscribed workspace bills every Creator, so
-    // confirm before a Creator link exists. A failed billing read counts as billable too:
-    // unknown is never treated as free.
+    // confirm before a Creator link exists. A failed billing read confirms too: a Creator link
+    // must not slip past the dialog because the price could not be read.
     if (needsSeatConfirm(billing, r) || (r === "editor" && billingErrored)) {
       setConfirmCreate(true)
       return
