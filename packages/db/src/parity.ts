@@ -40,6 +40,7 @@ import type {
   ImportJobRecord,
   ImportLeaseRecord,
   InvitationRecord,
+  JoinLinkRecord,
   MembershipRecord,
   NotificationRecord,
   PlanRecord,
@@ -112,6 +113,7 @@ export interface TypedTables {
   connection: ConnectionRecord
   artifactInvite: ArtifactInviteRecord
   invitation: InvitationRecord
+  workspaceJoinLink: JoinLinkRecord
   signupAttribution: SignupAttributionRecord
   subscription: SubscriptionRecord
   context: ContextRecord

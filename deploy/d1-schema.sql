@@ -566,6 +566,19 @@ CREATE TABLE IF NOT EXISTS collection_invite (
   UNIQUE (token)
 );
 
+CREATE TABLE IF NOT EXISTS workspace_join_link (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'editor',
+  token TEXT NOT NULL,
+  created_by TEXT,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  expires_at TEXT NOT NULL,
+  join_count INTEGER NOT NULL DEFAULT 0,
+  UNIQUE (org_id),
+  UNIQUE (token)
+);
+
 CREATE TABLE IF NOT EXISTS signup_attribution (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL,

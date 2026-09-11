@@ -3860,6 +3860,38 @@ export interface NewInvitation {
 }
 
 /**
+ * A workspace join link: ONE shareable, revocable URL per workspace that lets anyone who
+ * opens `/join/<token>` join at a chosen role. Unlike `invitation` it is bound to no email,
+ * is multi-use, and is never consumed. The token is stored in PLAINTEXT on purpose: it is a
+ * revocable, 30-day, seat-gated secret meant to be pasted into a team channel and copied
+ * again from Settings later, and anyone with database read access can already read
+ * `membership`. Owner is never grantable through it.
+ */
+export interface JoinLinkRecord {
+  id: string
+  org_id: string
+  /** The role a joiner receives: commenter (Viewer) or editor (Creator). Never owner. */
+  role: Role
+  /** The raw join token (plaintext by design, see above); the URL is `/join/<token>`. */
+  token: string
+  /** The Admin who created it; null if their account was later removed. */
+  created_by: string | null
+  created_at: string
+  /** Fixed 30 days from creation; rotating the link is the only way to extend it. */
+  expires_at: string
+  /** How many people have joined through this link. */
+  join_count: number
+}
+export interface NewJoinLink {
+  id: string
+  org_id: string
+  role: Role
+  token: string
+  created_by?: string | null
+  expires_at: string
+}
+
+/**
  * Where a signup came from. One row per user, recorded by the
  * short, explicit signup URL handoff; first write wins. Organic signups have no row.
  */

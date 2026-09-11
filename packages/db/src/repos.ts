@@ -277,6 +277,7 @@ import {
   workflowRun,
   workflowStepAttempt,
   workspace,
+  workspaceJoinLink,
 } from "./schema"
 
 /**
@@ -471,6 +472,7 @@ export const schema = {
   connection,
   artifactInvite,
   invitation,
+  workspaceJoinLink,
   signupAttribution,
   instanceOperator,
   subscription,
@@ -535,6 +537,7 @@ const _schemaShapes: Shapes<typeof schema> = {
   plan: true,
   connection: true,
   invitation: true,
+  workspaceJoinLink: true,
   artifactInvite: true,
   signupAttribution: true,
   subscription: true,

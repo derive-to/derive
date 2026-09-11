@@ -925,6 +925,28 @@ export const collectionInvite = sqliteTable(
   ],
 )
 
+// One shareable, revocable join link per workspace: anyone who opens `/join/<token>` joins
+// at `role`. Not an `invitation`: no email, multi-use, never consumed. The token is stored
+// in plaintext on purpose (see JoinLinkRecord in @derive/core) so an Admin can copy the
+// link again from Settings without rotating it.
+export const workspaceJoinLink = sqliteTable(
+  "workspace_join_link",
+  {
+    id: text("id").primaryKey(),
+    org_id: text("org_id").notNull(),
+    role: text("role").$type<Role>().notNull().default("editor"),
+    token: text("token").notNull(),
+    created_by: text("created_by"),
+    created_at: text("created_at").notNull().default(now),
+    expires_at: text("expires_at").notNull(),
+    join_count: integer("join_count").notNull().default(0),
+  },
+  (t) => [
+    uniqueIndex("workspace_join_link_org").on(t.org_id),
+    uniqueIndex("workspace_join_link_token").on(t.token),
+  ],
+)
+
 // Where a signup came from. One row per user, written from the explicit source
 // carried by the signup URL during the short post-auth window; first write wins.
 // No FK to Better Auth's user table: auth owns its tables out-of-band.
@@ -1746,6 +1768,7 @@ const TABLES = [
   invitation,
   artifactInvite,
   collectionInvite,
+  workspaceJoinLink,
   signupAttribution,
   instanceOperator,
   oauthClientWorkspace,
