@@ -1468,6 +1468,105 @@
           "personal"
         ]
       },
+      "WorkspaceJoinLink": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "viewer",
+              "commenter",
+              "editor",
+              "owner"
+            ],
+            "description": "The role a joiner receives: commenter (Viewer) or editor (Creator)."
+          },
+          "url": {
+            "type": "string",
+            "description": "The shareable URL. The token rides only here."
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "expires_at": {
+            "type": "string",
+            "description": "Fixed 30 days from creation; rotate to extend."
+          },
+          "join_count": {
+            "type": "integer",
+            "description": "How many people have joined through this link."
+          }
+        },
+        "required": [
+          "id",
+          "role",
+          "url",
+          "created_at",
+          "expires_at",
+          "join_count"
+        ]
+      },
+      "JoinLinkPreview": {
+        "type": "object",
+        "properties": {
+          "workspace": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "viewer",
+              "commenter",
+              "editor",
+              "owner"
+            ]
+          },
+          "inviter": {
+            "type": "string",
+            "nullable": true,
+            "description": "Display name of the Admin who made the link."
+          },
+          "expires_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspace",
+          "role",
+          "inviter",
+          "expires_at"
+        ]
+      },
+      "JoinResult": {
+        "type": "object",
+        "properties": {
+          "org_id": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "viewer",
+              "commenter",
+              "editor",
+              "owner"
+            ],
+            "description": "The caller's role in the workspace after the call."
+          },
+          "already_member": {
+            "type": "boolean",
+            "description": "True when the caller was already a member; their role is never changed."
+          }
+        },
+        "required": [
+          "org_id",
+          "role",
+          "already_member"
+        ]
+      },
       "Agent": {
         "type": "object",
         "properties": {
@@ -4944,6 +5043,113 @@
                     "deleted",
                     "active"
                   ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/workspace/join-link": {
+      "get": {
+        "tags": [
+          "Workspace"
+        ],
+        "summary": "The workspace's join link (Admin only); 404 when none exists.",
+        "responses": {
+          "200": {
+            "description": "The current link.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceJoinLink"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Workspace"
+        ],
+        "summary": "Create the workspace's join link, or rotate it (Admin only).",
+        "responses": {
+          "201": {
+            "description": "The fresh link. Any previous link stops working.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceJoinLink"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Workspace"
+        ],
+        "summary": "Revoke the workspace's join link (Admin only).",
+        "responses": {
+          "204": {
+            "description": "Revoked (or there was none)."
+          }
+        }
+      }
+    },
+    "/v1/join/{token}": {
+      "get": {
+        "tags": [
+          "Workspace"
+        ],
+        "summary": "Preview a join link (the join page reads this).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "token",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The workspace and role the link grants.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JoinLinkPreview"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Workspace"
+        ],
+        "summary": "Join the workspace through its link (signed-in holder).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "token",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The workspace joined and the caller's role in it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JoinResult"
                 }
               }
             }

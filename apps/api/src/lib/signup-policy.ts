@@ -4,7 +4,7 @@ import { setCookie } from "hono/cookie"
 import { signCapabilityToken, verifyCapabilityToken } from "./capability-token"
 
 export type SignupMode = "open" | "invite" | "closed"
-export type InviteKind = "workspace" | "artifact" | "collection"
+export type InviteKind = "workspace" | "artifact" | "collection" | "join"
 
 export interface SignupAttempt {
   email: string
@@ -84,7 +84,7 @@ export function signupPolicy(
   mode: SignupMode,
   secret: string,
   meta: Pick<MetaStore, "getInvitationByToken" | "getArtifactInviteByToken"> &
-    Partial<Pick<MetaStore, "getCollectionInviteByToken">>,
+    Partial<Pick<MetaStore, "getCollectionInviteByToken" | "getJoinLinkById">>,
 ): (attempt: SignupAttempt) => Promise<boolean> {
   return async ({ cookieHeader }) => {
     if (mode === "open") return true
@@ -93,15 +93,23 @@ export function signupPolicy(
     if (!encoded) return false
     const verified = await verifyCapabilityToken(ADMISSION_DOMAIN, secret, encoded, Date.now())
     if (!verified) return false
-    const [kind, tokenHash, extra] = verified.rest.split(".")
-    if (extra !== undefined || !/^[0-9a-f]{64}$/.test(tokenHash ?? "")) return false
+    const [kind, ref, extra] = verified.rest.split(".")
+    if (extra !== undefined) return false
+    // A join link's capability carries the link's ID, not a token hash: the link is multi-use
+    // and its token is plaintext, so "still live" means the row still exists and hasn't expired.
+    if (kind === "join") {
+      if (!/^wjl_[a-z0-9]{1,64}$/.test(ref ?? "")) return false
+      const link = await meta.getJoinLinkById?.(ref ?? "")
+      return !!link && Date.parse(link.expires_at) > Date.now()
+    }
+    if (!/^[0-9a-f]{64}$/.test(ref ?? "")) return false
     const invite =
       kind === "workspace"
-        ? await meta.getInvitationByToken(tokenHash ?? "")
+        ? await meta.getInvitationByToken(ref ?? "")
         : kind === "artifact"
-          ? await meta.getArtifactInviteByToken(tokenHash ?? "")
+          ? await meta.getArtifactInviteByToken(ref ?? "")
           : kind === "collection"
-            ? await meta.getCollectionInviteByToken?.(tokenHash ?? "")
+            ? await meta.getCollectionInviteByToken?.(ref ?? "")
             : null
     return !!invite && invite.accepted_at === null && Date.parse(invite.expires_at) > Date.now()
   }

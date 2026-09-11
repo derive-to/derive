@@ -51,6 +51,21 @@ describe("self-host signup admission", () => {
     await expect(allowed({ email: "invited@example.com", cookieHeader: null })).resolves.toBe(false)
   })
 
+  it("admits a signup armed by a live join link, and refuses it once the link is revoked", async () => {
+    const expiresAt = new Date(Date.now() + 60_000).toISOString()
+    let link: { expires_at: string } | null = { expires_at: expiresAt }
+    const allowed = signupPolicy("invite", SECRET, {
+      getInvitationByToken: async () => null,
+      getArtifactInviteByToken: async () => null,
+      getJoinLinkById: async (id) => (id === "wjl_abc123" && link ? (link as never) : null),
+    })
+    const minted = await mintInviteAdmission("join", "wjl_abc123", expiresAt, SECRET)
+    const cookieHeader = `${ADMISSION_COOKIE}=${encodeURIComponent(minted?.token ?? "")}`
+    await expect(allowed({ email: "new@example.com", cookieHeader })).resolves.toBe(true)
+    link = null // revoked
+    await expect(allowed({ email: "new@example.com", cookieHeader })).resolves.toBe(false)
+  })
+
   it("accepts artifact capabilities and rejects a capability after the invite is spent", async () => {
     const expiresAt = new Date(Date.now() + 60_000).toISOString()
     const invite = { token: HASH, expires_at: expiresAt, accepted_at: null } as ArtifactInviteRecord
