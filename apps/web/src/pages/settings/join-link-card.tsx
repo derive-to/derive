@@ -43,8 +43,6 @@ export function JoinLinkCard() {
   // Unknown billing (query failed) is treated as billable, never as free: a Creator link
   // must never skip the seat-confirm dialog just because the price couldn't be read.
   const { data: billing, isError: billingErrored } = useQuery(billingQuery())
-  // surface-ignore: read only for the workspace name in the confirm dialog's copy, which
-  // already has a fallback ("this workspace") for exactly this case.
   const { data: ws } = useQuery(workspaceQuery())
   const [role, setRole] = useState<LinkRole>("editor")
   const [confirmCreate, setConfirmCreate] = useState(false)
