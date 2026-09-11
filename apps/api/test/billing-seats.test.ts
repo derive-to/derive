@@ -316,6 +316,74 @@ describe("seat gate on granting a billable role", () => {
     expect(body.error).toContain("/settings/billing")
   })
 
+  it("enforced: a Creator join link 402s on the 4th billable seat; a Viewer link never gates", async () => {
+    const { app, meta } = makeAuthedApp("sg_join_link", [u(1), u(2), u(3), u(4), u(5)], "editor", {
+      isolated: true,
+      deps: { billing: new FakeBilling(), billingEnforceAt: PAST },
+    })
+    await meta.setWorkspace("default", DEFAULT_WORKSPACE_NAME)
+    await meta.setMembership({ id: "m_u1", org_id: "default", user_id: "u1", role: "owner" })
+    await meta.setMembership({ id: "m_u2", org_id: "default", user_id: "u2", role: "editor" })
+    await meta.setMembership({ id: "m_u3", org_id: "default", user_id: "u3", role: "editor" })
+
+    const creator = await (
+      await app.request("/v1/workspace/join-link", {
+        ...jsonAs(as("u1@x.test"), { role: "editor" }),
+        method: "POST",
+      })
+    ).json()
+    const blocked = await app.request(`/v1/join/${creator.url.split("/join/")[1] ?? ""}`, {
+      method: "POST",
+      headers: as("u4@x.test"),
+    })
+    expect(blocked.status).toBe(402)
+    const body = await blocked.json()
+    expect(body.code).toBe("billing_required")
+    expect(body.error).toContain("/settings/billing")
+    // Nobody joined, nothing counted.
+    const w = await (await app.request("/v1/workspace", { headers: as("u1@x.test") })).json()
+    expect(w.members.some((m: { user_id: string }) => m.user_id === "u4")).toBe(false)
+
+    // A Viewer link is never a seat: the same person joins as a commenter.
+    const viewer = await (
+      await app.request("/v1/workspace/join-link", {
+        ...jsonAs(as("u1@x.test"), { role: "commenter" }),
+        method: "POST",
+      })
+    ).json()
+    const ok = await app.request(`/v1/join/${viewer.url.split("/join/")[1] ?? ""}`, {
+      method: "POST",
+      headers: as("u5@x.test"),
+    })
+    expect(ok.status).toBe(200)
+    expect((await ok.json()).role).toBe("commenter")
+  })
+
+  it("subscribed: a Creator join bumps the Stripe quantity like an invite does", async () => {
+    const fake = new FakeBilling()
+    const { app, meta } = makeAuthedApp("sg_join_link_sub", [u(1), u(2), u(3), u(4)], "editor", {
+      isolated: true,
+      deps: { billing: fake, billingEnforceAt: PAST },
+    })
+    await meta.setWorkspace("default", DEFAULT_WORKSPACE_NAME)
+    await meta.setMembership({ id: "m_u1", org_id: "default", user_id: "u1", role: "owner" })
+    await meta.setMembership({ id: "m_u2", org_id: "default", user_id: "u2", role: "editor" })
+    await meta.setMembership({ id: "m_u3", org_id: "default", user_id: "u3", role: "editor" })
+    await meta.upsertSubscription(subscriptionRow({ quantity: 3 }))
+    const link = await (
+      await app.request("/v1/workspace/join-link", {
+        ...jsonAs(as("u1@x.test"), { role: "editor" }),
+        method: "POST",
+      })
+    ).json()
+    const r = await app.request(`/v1/join/${link.url.split("/join/")[1] ?? ""}`, {
+      method: "POST",
+      headers: as("u4@x.test"),
+    })
+    expect(r.status).toBe(200)
+    expect(fake.quantityCalls.at(-1)).toEqual({ subscriptionId: "sub_1", quantity: 4 })
+  })
+
   // DECIDED: seatGrantGate only counts seats against FREE_SEAT_LIMIT — it never reads
   // blockedReason "lapsed" itself. So a canceled subscription behaves exactly like no
   // subscription here: a workspace still under its 3 free seats can keep filling them.
