@@ -1,5 +1,5 @@
 import type { BillingInfo, Role } from "@/api"
-import { PLANS, unitPrice } from "./billing-plans"
+import { unitPrice } from "./billing-plans"
 
 /** The slice of BillingInfo the copy depends on. `undefined` = not loaded yet. */
 export type JoinLinkBilling =
@@ -8,10 +8,8 @@ export type JoinLinkBilling =
 
 // The per-editor monthly price this workspace pays, or would pay: the live plan's unit when
 // subscribed, else Team monthly (the plan a 4th Creator moves a free workspace onto).
-const teamMonthly =
-  (PLANS.find((p) => p.tier === "team") as { unit?: { month: number } })?.unit?.month ?? 15
 const price = (b: JoinLinkBilling): string =>
-  `$${b?.subscribed && b.tier !== "free" ? unitPrice(b.tier, b.interval) : teamMonthly}/mo`
+  `$${b?.subscribed ? unitPrice(b.tier, b.interval) : unitPrice("team", "month")}/mo`
 
 /** The always-visible line under the role select (and beside a live Creator link) that states
  *  what a Creator costs. Null for a Viewer link: viewers never hold a seat. Billing is

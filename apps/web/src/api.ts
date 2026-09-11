@@ -1672,8 +1672,8 @@ export const api = {
   createJoinLink: (role: "commenter" | "editor"): Promise<WorkspaceJoinLink> =>
     f("/v1/workspace/join-link", opts({ role })).then(j),
   revokeJoinLink: (): Promise<void> =>
-    f("/v1/workspace/join-link", { method: "DELETE", credentials: "include" }).then(
-      () => undefined,
+    f("/v1/workspace/join-link", { method: "DELETE", credentials: "include" }).then((r) =>
+      r.ok ? undefined : j(r),
     ),
   // The join page: preview by token, then join (the signed-in holder becomes a member).
   previewJoinLink: (token: string): Promise<JoinLinkPreview> =>

@@ -33,6 +33,14 @@ const LINK_ROLES = WS_ROLES.filter((r) => r.value === "editor" || r.value === "c
 const daysLeft = (expiresAt: string): number =>
   Math.ceil((Date.parse(expiresAt) - Date.now()) / 86_400_000)
 
+// The link's remaining life, in the card's meta line. Singular on the last day: a 30-day
+// link spends its final 24 hours reading "expires in 1 day", not "1 days".
+const expiryLabel = (expiresAt: string): string => {
+  const days = daysLeft(expiresAt)
+  if (days <= 0) return "expired, regenerate to renew"
+  return `expires in ${days} ${days === 1 ? "day" : "days"}`
+}
+
 // One shareable link for the whole workspace. Admin-only (the caller renders it for Admins).
 // Create and Regenerate are the same server call; Revoke deletes. A Creator link on a
 // subscribed workspace pauses on the seat-confirm dialog so the charge is acknowledged before
@@ -108,11 +116,7 @@ export function JoinLinkCard() {
           }
           meta={
             <span data-testid="join-link-meta">
-              {roleLabel(link.role)} ·{" "}
-              {daysLeft(link.expires_at) > 0
-                ? `expires in ${daysLeft(link.expires_at)} days`
-                : "expired, regenerate to renew"}{" "}
-              · {link.join_count} joined
+              {roleLabel(link.role)} · {expiryLabel(link.expires_at)} · {link.join_count} joined
             </span>
           }
           below={

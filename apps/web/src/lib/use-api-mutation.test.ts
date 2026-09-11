@@ -1,6 +1,21 @@
 import { QueryClient } from "@tanstack/react-query"
 import { describe, expect, it } from "vitest"
+import { shouldOpenPaywall } from "./query-client"
 import { invalidateKeys, snapshot } from "./use-api-mutation"
+
+// The global MutationCache turns a 402 into the upgrade dialog. That is wrong for a write
+// whose refusal is somebody else's bill (joining a workspace you don't own), where the
+// dialog would sell the joiner a seat on their OWN workspace and swallow the inline panel.
+// `meta.paywall: false` is the opt-out; this pins the default-on rule.
+describe("shouldOpenPaywall", () => {
+  it("opens the dialog by default, and only `paywall:false` suppresses it", () => {
+    expect(shouldOpenPaywall(undefined)).toBe(true)
+    expect(shouldOpenPaywall({})).toBe(true)
+    expect(shouldOpenPaywall({ paywall: false })).toBe(false)
+    // Opting out of the toast is a separate axis: it must not suppress the dialog.
+    expect(shouldOpenPaywall({ errorToast: false })).toBe(true)
+  })
+})
 
 // Which queries reconcile on settle. The array form runs on both outcomes; the function
 // form runs only on success — keyed off the error, NOT `data`, so a void mutation (whose

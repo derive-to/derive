@@ -43,6 +43,9 @@ export function JoinWorkspace() {
   const joinMut = useApiMutation({
     mutationFn: () => api.joinWorkspace(token),
     errorToast: false,
+    // The 402 here is the WORKSPACE OWNER's seat problem, not the joiner's: the global
+    // upgrade dialog would offer to bill the joiner's own workspace. Handle it inline.
+    paywall: false,
     onSuccess: async (r) => {
       // Land IN the workspace just joined: switch the active-workspace cookie, then the same
       // reload the workspace switcher uses (it drops the persisted query cache at boot so no
@@ -53,7 +56,10 @@ export function JoinWorkspace() {
     onError: (err) => {
       if (!(err instanceof ApiError)) return
       // A session that lapsed between load and click: finish sign-in, come back with ?go=1.
-      if (err.status === 401) nav({ to: "/login", search: { return_to: `/join/${token}?go=1` } })
+      // 403 too: the app-wide write lockdown refuses an anonymous POST before requireUser
+      // runs, and this route emits no other 403.
+      if (err.status === 401 || err.status === 403)
+        nav({ to: "/login", search: { return_to: `/join/${token}?go=1` } })
       // The seat gate: a Creator link on a workspace out of Creator seats.
       if (err.status === 402) setSeatLimited(true)
     },
