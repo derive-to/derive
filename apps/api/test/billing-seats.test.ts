@@ -7,6 +7,7 @@ import { as, jsonAs, makeAuthedApp, type TestUser } from "./helpers"
 
 const u = (n: number): TestUser => ({ id: `u${n}`, email: `u${n}@x.test`, name: `U${n}` })
 const PAST = "2000-01-01T00:00:00Z"
+const tokenOf = (link: { url: string }) => link.url.split("/join/")[1] ?? ""
 
 describe("seat sync", () => {
   it("adding an editor bumps Stripe quantity; demoting to a non-billable role does not", async () => {
@@ -332,7 +333,7 @@ describe("seat gate on granting a billable role", () => {
         method: "POST",
       })
     ).json()
-    const blocked = await app.request(`/v1/join/${creator.url.split("/join/")[1] ?? ""}`, {
+    const blocked = await app.request(`/v1/join/${tokenOf(creator)}`, {
       method: "POST",
       headers: as("u4@x.test"),
     })
@@ -340,7 +341,7 @@ describe("seat gate on granting a billable role", () => {
     const body = await blocked.json()
     expect(body.code).toBe("billing_required")
     expect(body.error).toContain("/settings/billing")
-    // Nobody joined, nothing counted.
+    // Nobody joined.
     const w = await (await app.request("/v1/workspace", { headers: as("u1@x.test") })).json()
     expect(w.members.some((m: { user_id: string }) => m.user_id === "u4")).toBe(false)
 
@@ -351,7 +352,7 @@ describe("seat gate on granting a billable role", () => {
         method: "POST",
       })
     ).json()
-    const ok = await app.request(`/v1/join/${viewer.url.split("/join/")[1] ?? ""}`, {
+    const ok = await app.request(`/v1/join/${tokenOf(viewer)}`, {
       method: "POST",
       headers: as("u5@x.test"),
     })
@@ -376,7 +377,7 @@ describe("seat gate on granting a billable role", () => {
         method: "POST",
       })
     ).json()
-    const r = await app.request(`/v1/join/${link.url.split("/join/")[1] ?? ""}`, {
+    const r = await app.request(`/v1/join/${tokenOf(link)}`, {
       method: "POST",
       headers: as("u4@x.test"),
     })

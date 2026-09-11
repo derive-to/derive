@@ -1,4 +1,4 @@
-import type { ArtifactInviteRecord, InvitationRecord } from "@derive/core"
+import type { ArtifactInviteRecord, InvitationRecord, JoinLinkRecord } from "@derive/core"
 import Database from "better-sqlite3"
 import { Hono } from "hono"
 import { describe, expect, it } from "vitest"
@@ -53,11 +53,11 @@ describe("self-host signup admission", () => {
 
   it("admits a signup armed by a live join link, and refuses it once the link is revoked", async () => {
     const expiresAt = new Date(Date.now() + 60_000).toISOString()
-    let link: { expires_at: string } | null = { expires_at: expiresAt }
+    let link: JoinLinkRecord | null = { expires_at: expiresAt } as JoinLinkRecord
     const allowed = signupPolicy("invite", SECRET, {
       getInvitationByToken: async () => null,
       getArtifactInviteByToken: async () => null,
-      getJoinLinkById: async (id) => (id === "wjl_abc123" && link ? (link as never) : null),
+      getJoinLinkById: async (id) => (id === "wjl_abc123" ? link : null),
     })
     const minted = await mintInviteAdmission("join", "wjl_abc123", expiresAt, SECRET)
     const cookieHeader = `${ADMISSION_COOKIE}=${encodeURIComponent(minted?.token ?? "")}`

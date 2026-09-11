@@ -6082,7 +6082,7 @@ export function makeRepos(db: SqliteDb) {
   const deleteJoinLink = async (orgId: string): Promise<void> => {
     await db.delete(workspaceJoinLink).where(eq(workspaceJoinLink.org_id, orgId)).run()
   }
-  const recordJoin = async (id: string): Promise<void> => {
+  const bumpJoinCount = async (id: string): Promise<void> => {
     await db
       .update(workspaceJoinLink)
       .set({ join_count: sql`${workspaceJoinLink.join_count} + 1` })
@@ -6892,7 +6892,7 @@ export function makeRepos(db: SqliteDb) {
     getJoinLinkByToken,
     replaceJoinLink,
     deleteJoinLink,
-    recordJoin,
+    bumpJoinCount,
     recordSignupAttribution,
     getSignupAttribution,
     createArtifactInvite,

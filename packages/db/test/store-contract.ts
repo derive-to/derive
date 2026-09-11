@@ -6373,8 +6373,8 @@ export function runStoreContract(
         role: "editor",
       })
 
-      await store.recordJoin(first.id)
-      await store.recordJoin(first.id)
+      await store.bumpJoinCount(first.id)
+      await store.bumpJoinCount(first.id)
       expect((await store.getJoinLink(orgId))?.join_count).toBe(2)
 
       // Rotating replaces the row: the old token stops resolving the moment the new one exists.

@@ -61,7 +61,7 @@ Anir 2026-09-08, verify on the PR preview deploy).
 
 `getJoinLink(orgId)`, `getJoinLinkById(id)`, `getJoinLinkByToken(token)`,
 `replaceJoinLink(l)` (delete-then-insert: create and rotate are one call),
-`deleteJoinLink(orgId)`, `recordJoin(id)`.
+`deleteJoinLink(orgId)`, `bumpJoinCount(id)`.
 
 ### API (`apps/api/src/routes/workspace-join.ts`)
 
@@ -71,7 +71,7 @@ Anir 2026-09-08, verify on the PR preview deploy).
 | `POST /v1/workspace/join-link` | manage | Body `{role}`: commenter or editor, editor when omitted; owner is 400. Creates or rotates. Returns the fresh url. No seat gate here. |
 | `DELETE /v1/workspace/join-link` | manage | Revoke. 204. |
 | `GET /v1/join/{token}` | none | Preview: workspace, role, inviter, expires_at. Arms signup admission with kind `join`. 404 unknown or revoked, 410 `join_link_expired`. |
-| `POST /v1/join/{token}` | user | Already a member: 200 `{already_member: true}`, role untouched. Otherwise `seatGrantGate` for editor links (402), then `setMembership`, `syncSeats`, `recordJoin`. Does not switch the active workspace; the client does. |
+| `POST /v1/join/{token}` | user | Already a member: 200 `{already_member: true}`, role untouched. Otherwise `seatGrantGate` for editor links (402), then `setMembership`, clear any pending email invite for the joiner's address, `syncSeats`, `bumpJoinCount`. Does not switch the active workspace; the client does. |
 
 Token: `mintToken("dkj")`, URL `${baseUrl}/join/${token}`.
 
@@ -90,8 +90,8 @@ Token: `mintToken("dkj")`, URL `${baseUrl}/join/${token}`.
   link, Regenerate, Revoke behind a confirm.
 - Join page `routes/join.$token.tsx`: reuses the invitation panel. Signed out: "Sign in to
   join" with `return_to=/join/{token}?go=1`; the page auto-joins on `go=1` after login.
-  Expired: "This link has expired. Ask {inviter} for a new one." Seat limit: "{workspace}
-  has no Creator seats left. Ask {inviter} for a Viewer link or an upgrade."
+  Expired: "This link has expired. Ask the person who sent it for a new one." Seat limit:
+  "{workspace} has no Creator seats left. Ask {inviter} for a Viewer link or an upgrade."
 - Billing is licensed on grant: once on Team every Creator and Admin seat bills, not only
   the ones past three. The copy must never imply otherwise. Prices come from
   `unitPrice(tier, interval)`, so Business and annual read correctly.
@@ -109,7 +109,8 @@ Token: `mintToken("dkj")`, URL `${baseUrl}/join/${token}`.
 
 ### Decisions
 
-1. Token at rest: plaintext (Connor, 2026-09-10). Threat model in the schema comment.
+1. Token at rest: plaintext (Connor, 2026-09-10). Threat model in the `JoinLinkRecord`
+   comment (`packages/core/src/ports.ts`); the schema comments point there.
 2. Default role: Creator (Connor, 2026-09-10). An activated team means members published,
    and Viewers cannot publish. The price is stated before the link exists.
 3. Auto-resume after sign-in: `?go=1` on the join page only. Invites unchanged.

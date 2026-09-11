@@ -35,19 +35,20 @@ const cookieFromHeader = (header: string | null, name: string): string | null =>
   return null
 }
 
-/** Arm the auth endpoint with a short-lived, signed capability after a valid
- * invite preview. The raw invite token never enters a cookie or the auth hook. */
+/** Arm the auth endpoint with a short-lived, signed capability after a valid invite or
+ * join link preview. `ref` is the invite's token hash, or the join link's id: the raw
+ * token never enters a cookie or the auth hook. */
 export async function armInviteAdmission(
   c: Context,
   kind: InviteKind,
-  tokenHash: string,
+  ref: string,
   inviteExpiresAt: string,
   secret: string | undefined,
   cookie: { baseUrl: string; crossSite?: boolean },
 ): Promise<void> {
   if (!secret) return
   const now = Date.now()
-  const minted = await mintInviteAdmission(kind, tokenHash, inviteExpiresAt, secret, now)
+  const minted = await mintInviteAdmission(kind, ref, inviteExpiresAt, secret, now)
   if (!minted) return
   setCookie(c, ADMISSION_COOKIE, minted.token, {
     path: "/api/auth",
@@ -64,7 +65,7 @@ export async function armInviteAdmission(
 /** Pure token mint used by the route wrapper above and focused policy tests. */
 export async function mintInviteAdmission(
   kind: InviteKind,
-  tokenHash: string,
+  ref: string,
   inviteExpiresAt: string,
   secret: string,
   now = Date.now(),
@@ -72,7 +73,7 @@ export async function mintInviteAdmission(
   const expiresAt = Math.min(Date.parse(inviteExpiresAt), now + ADMISSION_TTL_MS)
   if (!Number.isFinite(expiresAt) || expiresAt <= now) return null
   return {
-    token: await signCapabilityToken(ADMISSION_DOMAIN, secret, [kind, tokenHash], expiresAt),
+    token: await signCapabilityToken(ADMISSION_DOMAIN, secret, [kind, ref], expiresAt),
     expiresAt,
   }
 }

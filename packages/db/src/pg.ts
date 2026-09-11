@@ -7465,7 +7465,7 @@ export class PgMetaStore implements MetaStore {
   async deleteJoinLink(orgId: string): Promise<void> {
     await this.db.delete(workspaceJoinLink).where(eq(workspaceJoinLink.org_id, orgId))
   }
-  async recordJoin(id: string): Promise<void> {
+  async bumpJoinCount(id: string): Promise<void> {
     await this.db
       .update(workspaceJoinLink)
       .set({ join_count: sql`${workspaceJoinLink.join_count} + 1` })

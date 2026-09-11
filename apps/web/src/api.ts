@@ -283,6 +283,9 @@ export type WorkspaceJoinLink = components["schemas"]["WorkspaceJoinLink"]
 export type JoinLinkPreview = components["schemas"]["JoinLinkPreview"]
 /** The result of joining a workspace via a join link. */
 export type JoinResult = components["schemas"]["JoinResult"]
+/** The roles a join link may grant: Creator or Viewer, never Admin. Hand-declared: the POST
+ *  body isn't in the OpenAPI schema. Mirrors `JoinLinkRole` in apps/api/src/lib/join-link.ts. */
+export type JoinLinkRole = Extract<Role, "commenter" | "editor">
 export type ArtifactInvite = components["schemas"]["ArtifactInvite"]
 export type ArtifactInvitePreview = components["schemas"]["ArtifactInvitePreview"]
 /** What the claim page shows before an anonymous draft is claimed. Hand-declared:
@@ -1669,7 +1672,7 @@ export const api = {
   // a state, not a failure).
   getJoinLink: (): Promise<WorkspaceJoinLink | null> =>
     f("/v1/workspace/join-link", opts()).then((r) => (r.status === 404 ? null : j(r))),
-  createJoinLink: (role: "commenter" | "editor"): Promise<WorkspaceJoinLink> =>
+  createJoinLink: (role: JoinLinkRole): Promise<WorkspaceJoinLink> =>
     f("/v1/workspace/join-link", opts({ role })).then(j),
   revokeJoinLink: (): Promise<void> =>
     f("/v1/workspace/join-link", { method: "DELETE", credentials: "include" }).then((r) =>

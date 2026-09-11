@@ -49,7 +49,7 @@ export function JoinWorkspace() {
     onSuccess: async (r) => {
       // Land IN the workspace just joined: switch the active-workspace cookie, then the same
       // reload the workspace switcher uses (it drops the persisted query cache at boot so no
-      // staleTime-Infinity query serves the previous workspace). The reload targets home.
+      // staleTime-Infinity query serves the previous workspace).
       await api.switchWorkspace(r.org_id)
       reloadAfterWorkspaceChange("/")
     },

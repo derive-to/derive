@@ -2492,8 +2492,8 @@ export interface AgentStore {
   replaceJoinLink(l: NewJoinLink): Promise<JoinLinkRecord>
   /** Revoke the workspace's join link. A no-op when none exists. */
   deleteJoinLink(orgId: string): Promise<void>
-  /** Count one successful join through the link. */
-  recordJoin(id: string): Promise<void>
+  /** One more person joined through the link: `join_count + 1`. */
+  bumpJoinCount(id: string): Promise<void>
 
   // ---- Artifact invitations (share-by-email → accept) ---------------------
   /** Create a pending per-artifact invite. Any prior pending invite for the same

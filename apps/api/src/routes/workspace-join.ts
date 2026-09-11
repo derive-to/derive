@@ -212,7 +212,7 @@ export const workspaceJoinRoutes = (ctx: AppContext) => {
       // it keeps the Admin's pending list honest, exactly as PUT /v1/workspace/members does.
       if (me.email) await meta.deletePendingInvitationsFor(link.org_id, me.email.toLowerCase())
       await syncSeats({ meta, billing }, link.org_id)
-      await meta.recordJoin(link.id)
+      await meta.bumpJoinCount(link.id)
       return c.json({ org_id: link.org_id, role: link.role, already_member: false })
     },
   )

@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { useState } from "react"
-import { api } from "@/api"
+import { api, type JoinLinkRole } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { ListRow } from "@/components/shared/list-row"
 import { LoadError } from "@/components/shared/load-error"
@@ -17,15 +17,9 @@ import { toast } from "@/components/ui/sonner"
 import { copyText } from "@/lib/clipboard"
 import { billingQuery, workspaceJoinLinkQuery, workspaceQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
-import {
-  joinLinkActiveLine,
-  joinLinkConfirmDescription,
-  joinLinkConfirmTitle,
-  joinLinkSeatLine,
-} from "./join-link-copy"
+import { needsSeatConfirm } from "./billing-plans"
+import { joinLinkActiveLine, joinLinkConfirmDescription, joinLinkSeatLine } from "./join-link-copy"
 import { roleLabel, WS_ROLES } from "./roles"
-
-type LinkRole = "commenter" | "editor"
 
 // The roles a link may grant: Creator and Viewer, never Admin. Creator first and default.
 const LINK_ROLES = WS_ROLES.filter((r) => r.value === "editor" || r.value === "commenter")
@@ -33,8 +27,7 @@ const LINK_ROLES = WS_ROLES.filter((r) => r.value === "editor" || r.value === "c
 const daysLeft = (expiresAt: string): number =>
   Math.ceil((Date.parse(expiresAt) - Date.now()) / 86_400_000)
 
-// The link's remaining life, in the card's meta line. Singular on the last day: a 30-day
-// link spends its final 24 hours reading "expires in 1 day", not "1 days".
+// The link's remaining life, for the card's meta line.
 const expiryLabel = (expiresAt: string): string => {
   const days = daysLeft(expiresAt)
   if (days <= 0) return "expired, regenerate to renew"
@@ -48,16 +41,14 @@ const expiryLabel = (expiresAt: string): string => {
 export function JoinLinkCard() {
   const qc = useQueryClient()
   const { data: link, isPending, isError, refetch } = useQuery(workspaceJoinLinkQuery())
-  // Unknown billing (query failed) is treated as billable, never as free: a Creator link
-  // must never skip the seat-confirm dialog just because the price couldn't be read.
   const { data: billing, isError: billingErrored } = useQuery(billingQuery())
   const { data: ws } = useQuery(workspaceQuery())
-  const [role, setRole] = useState<LinkRole>("editor")
+  const [role, setRole] = useState<JoinLinkRole>("editor")
   const [confirmCreate, setConfirmCreate] = useState(false)
   const [confirmRevoke, setConfirmRevoke] = useState(false)
 
   const create = useApiMutation({
-    mutationFn: (r: LinkRole) => api.createJoinLink(r),
+    mutationFn: (r: JoinLinkRole) => api.createJoinLink(r),
     onSuccess: async (created) => {
       qc.setQueryData(workspaceJoinLinkQuery().queryKey, created)
       const copied = await copyText(created.url, { error: null })
@@ -70,10 +61,11 @@ export function JoinLinkCard() {
     success: "Join link revoked",
   })
 
-  const requestCreate = (r: LinkRole) => {
-    // A subscribed workspace bills every Creator: confirm before a Creator link exists.
-    // A failed billing read counts as billable too: unknown is never treated as free.
-    if (r === "editor" && (billing?.subscribed || billingErrored)) {
+  const requestCreate = (r: JoinLinkRole) => {
+    // The same seat gate as the Members form: a subscribed workspace bills every Creator, so
+    // confirm before a Creator link exists. A failed billing read counts as billable too:
+    // unknown is never treated as free.
+    if (needsSeatConfirm(billing, r) || (r === "editor" && billingErrored)) {
       setConfirmCreate(true)
       return
     }
@@ -82,8 +74,12 @@ export function JoinLinkCard() {
 
   if (isPending) return null
 
-  const activeRole: LinkRole = link ? (link.role === "commenter" ? "commenter" : "editor") : role
-  const seatLine = joinLinkSeatLine(billing, link ? link.role : role)
+  const activeRole: JoinLinkRole = link
+    ? link.role === "commenter"
+      ? "commenter"
+      : "editor"
+    : role
+  const seatLine = joinLinkSeatLine(billing, role)
 
   return (
     <SettingsGroup
@@ -159,7 +155,7 @@ export function JoinLinkCard() {
       ) : (
         <div className="flex flex-col gap-2 py-3.5">
           <div className="flex items-center gap-2">
-            <Select value={role} onValueChange={(v) => setRole(v as LinkRole)}>
+            <Select value={role} onValueChange={(v) => setRole(v as JoinLinkRole)}>
               <SelectTrigger
                 data-testid="join-link-role"
                 aria-label="Role for people who join"
@@ -196,7 +192,7 @@ export function JoinLinkCard() {
         <ConfirmDialog
           open
           onOpenChange={(o) => !o && setConfirmCreate(false)}
-          title={joinLinkConfirmTitle}
+          title="Create a Creator link?"
           description={joinLinkConfirmDescription(billing, ws?.name ?? "this workspace")}
           confirmLabel="Create link"
           tone="default"

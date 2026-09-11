@@ -158,8 +158,11 @@ describe("workspace join link", () => {
   const tokenOf = (link: { url: string }) => link.url.split("/join/")[1] ?? ""
   const join = (token: string, headers?: Record<string, string>) =>
     app.request(`/v1/join/${token}`, { method: "POST", headers })
+  // `isolated: true` gives each user a personal workspace with a generated id; read it back.
+  const activeOrg = async (headers: Record<string, string>): Promise<string> =>
+    (await (await app.request("/v1/workspaces", { headers })).json()).active
 
-  it("creates a Creator link by default, and GET returns it without a 500 for 'none'", async () => {
+  it("creates a Creator link by default; GET is 404 until one exists", async () => {
     expect(
       (await app.request("/v1/workspace/join-link", { headers: as(admin.email) })).status,
     ).toBe(404)
@@ -246,10 +249,10 @@ describe("workspace join link", () => {
 
   it("rotates on re-create: the old token stops working", async () => {
     const first = await (await create(as(admin.email))).json()
-    const second_ = await (await create(as(admin.email))).json()
-    expect(second_.url).not.toBe(first.url)
+    const rotated = await (await create(as(admin.email))).json()
+    expect(rotated.url).not.toBe(first.url)
     expect((await app.request(`/v1/join/${tokenOf(first)}`)).status).toBe(404)
-    expect((await app.request(`/v1/join/${tokenOf(second_)}`)).status).toBe(200)
+    expect((await app.request(`/v1/join/${tokenOf(rotated)}`)).status).toBe(200)
   })
 
   it("revokes: preview and join both 404 afterwards", async () => {
@@ -265,11 +268,7 @@ describe("workspace join link", () => {
 
   it("answers 410 join_link_expired on preview and join once the link has expired", async () => {
     await create(as(admin.email))
-    // The isolated per-user workspace requireWorkspace resolves for admin: this describe
-    // block seeds no shared "default" team (isolated: true), so read it back rather than
-    // assuming an id.
-    const orgId = (await (await app.request("/v1/workspaces", { headers: as(admin.email) })).json())
-      .active
+    const orgId = await activeOrg(as(admin.email))
     // Same workspace, same role, but already expired: replaceJoinLink rotates the row.
     const expired = await meta.replaceJoinLink({
       id: "wjl_expired_test",
@@ -310,8 +309,7 @@ describe("workspace join link", () => {
   })
 
   it("clears a stale pending email invite for the address that joins", async () => {
-    const orgId = (await (await app.request("/v1/workspaces", { headers: as(admin.email) })).json())
-      .active
+    const orgId = await activeOrg(as(admin.email))
     // Invited by email months ago, never redeemed; they arrive through the link instead. The
     // Admin's pending list must not keep showing them once they are on the roster.
     await meta.createInvitation({
