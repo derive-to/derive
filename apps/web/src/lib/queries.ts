@@ -470,6 +470,12 @@ export const workspaceJoinLinkQuery = () =>
   queryOptions({
     queryKey: ["workspace", "join-link"] as const,
     queryFn: () => api.getJoinLink(),
+    // join_count moves when other people join, with no in-app mutation to invalidate this
+    // cache, so a persisted copy restored across a reload would show a stale count for the
+    // whole default stale window. Always confirm on mount, and keep the URL (it carries the
+    // raw join token) out of IndexedDB like the join page's preview.
+    staleTime: 0,
+    meta: { persist: false },
   })
 
 /** The deploy-wide model plus the catalog to choose from — operator-only, so its failure is
