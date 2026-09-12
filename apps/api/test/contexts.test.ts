@@ -1472,6 +1472,112 @@ describe("contexts: import from arXiv", () => {
     expect(paper?.current_version).toBe(2)
   })
 
+  it("gives up on a paper whose worker keeps being cut off, without running it again", async () => {
+    // A worker the platform stops (memory, CPU, wall clock) records nothing: its lease just
+    // lapses. Three of those in a row end the import instead of reclaiming it forever.
+    const stub = arxivStub()
+    const { app, meta, clock: c, tickDeps } = setup("contexts-import-cutoff", stub.fetch)
+    await app.request("/v1/me", { headers: as(owner.email) })
+    const x = await (await importPaper(app, "2407.00001")).json()
+    const job = await meta.getImportJobForContext(x.id)
+    if (!job) throw new Error("job missing")
+    await meta.updateImportJob(job.id, {
+      status: "fetching",
+      attempts: 3,
+      lease_until: "2000-01-01T00:00:00.000Z",
+    })
+    expect(await runImportTick(tickDeps())).toBe(1)
+    // Recorded from what the store knows, without another request to arXiv.
+    expect(stub.calls).toHaveLength(0)
+    const context = await (
+      await app.request(`/v1/contexts/${x.id}`, { headers: as(owner.email) })
+    ).json()
+    expect(context.import).toMatchObject({ status: "dead", error: { code: "internal" } })
+    expect(context.import.error.detail).toContain("cut off")
+    // The page says the import gave up, rather than reading "fetching" forever.
+    const page = await app.request(
+      `/v1/artifacts/${context.manifest_short_id}/content?format=text`,
+      { headers: as(owner.email) },
+    )
+    expect(await page.text()).toContain("Derive tried three times")
+    // And it is never due again.
+    c.advance(60 * 60_000)
+    expect(await runImportTick(tickDeps("w2"))).toBe(0)
+  })
+
+  it("stops a worker whose job was taken over, before it can write over the new owner", async () => {
+    let takeOver: (() => Promise<void>) | null = null
+    const stub = arxivStub({
+      source: async () => {
+        await takeOver?.()
+        return gzip(SOURCE())
+      },
+    })
+    const { app, meta, clock: c, tickDeps } = setup("contexts-import-takeover", stub.fetch)
+    await app.request("/v1/me", { headers: as(owner.email) })
+    const x = await (await importPaper(app, "2407.00002")).json()
+    const job = await meta.getImportJobForContext(x.id)
+    if (!job) throw new Error("job missing")
+    // The download outlasts the first worker's lease, and another worker claims the job.
+    let tookOver: unknown = null
+    takeOver = async () => {
+      c.advance(5 * 60_000)
+      tookOver = await meta.claimDueImportJob(
+        new Date(c.now()).toISOString(),
+        new Date(c.now() + 4 * 60_000).toISOString(),
+        "http://derive.test",
+        "w2:took-over",
+      )
+    }
+    expect(await runImportTick(tickDeps("w1"))).toBe(1)
+    expect(tookOver).toMatchObject({ id: job.id, attempts: 2 })
+    // The first worker stopped at its next write, so nothing it did afterwards landed: no
+    // paper, no failure, and the job still belongs to the worker that took it.
+    expect(await meta.getImportJob(job.id)).toMatchObject({
+      status: "fetching",
+      claim_token: "w2:took-over",
+      paper_artifact_id: null,
+      error_code: null,
+    })
+    const context = await meta.getContext(x.id)
+    const placeholder = await meta.getArtifactById(context?.manifest_artifact_id ?? "")
+    expect(placeholder?.current_version).toBe(1)
+  })
+
+  it("keeps its claim through a run that outlasts the lease", async () => {
+    let onSource: (() => void) | null = null
+    let onBibtex: (() => Promise<void>) | null = null
+    const stub = arxivStub({
+      source: async () => {
+        onSource?.()
+        return gzip(SOURCE())
+      },
+      bibtex: async () => {
+        await onBibtex?.()
+        return new Response(BIBTEX)
+      },
+    })
+    const { app, meta, clock: c, tickDeps } = setup("contexts-import-heartbeat", stub.fetch)
+    await app.request("/v1/me", { headers: as(owner.email) })
+    const x = await (await importPaper(app, "2407.00003")).json()
+    // Three minutes on the download and three more on the BibTeX: past the four-minute
+    // lease. A worker that never renewed its claim would look dead halfway through.
+    let stolen: unknown = "not attempted"
+    onSource = () => c.advance(3 * 60_000)
+    onBibtex = async () => {
+      c.advance(3 * 60_000)
+      stolen = await meta.claimDueImportJob(
+        new Date(c.now()).toISOString(),
+        new Date(c.now() + 4 * 60_000).toISOString(),
+        "http://derive.test",
+        "w2:too-early",
+      )
+    }
+    expect(await runImportTick(tickDeps("w1"))).toBe(1)
+    expect(stolen).toBeNull()
+    expect((await meta.getImportJobForContext(x.id))?.status).toBe("ready")
+  })
+
   it("names the phase and the reason a failure gave", async () => {
     // Every failure records WHERE it happened and WHAT was said. Without this the only
     // thing an operator ever sees is "arXiv didn't answer", which is not always true.

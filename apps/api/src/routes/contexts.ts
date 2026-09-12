@@ -1457,6 +1457,8 @@ export const contextRoutes = (ctx: AppContext) => {
             // even try" to whoever pasted it.
             attempts: 0,
             next_attempt_at: new Date().toISOString(),
+            // No claim survives a requeue: a worker still holding one stops at its next write.
+            claim_token: null,
             updated_at: new Date().toISOString(),
           })
         const manifest = await meta.getArtifactById(existing.manifest_artifact_id)
@@ -1566,6 +1568,7 @@ export const contextRoutes = (ctx: AppContext) => {
           status: "pending",
           next_attempt_at: now,
           lease_until: null,
+          claim_token: null,
           updated_at: now,
         })
         // A retry after giving up starts the count over; the paper it may already have
@@ -1634,6 +1637,7 @@ export const contextRoutes = (ctx: AppContext) => {
         next_attempt_at: now,
         lease_until: null,
         attempts: 0,
+        claim_token: null,
         code_status: codeRef ? "pending" : null,
         code_error: null,
         updated_at: now,

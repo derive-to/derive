@@ -48,6 +48,7 @@ import { containerSubstrateFromEnv } from "./lib/substrate-container"
 import { loopSubstrate } from "./lib/substrate-loop"
 import { providerSubstrate } from "./lib/substrate-provider"
 import { log } from "./log"
+import { IMPORTS_POKE_PATH } from "./preview-do"
 import { createDoBackplane, edgeCtx, edgeWaitUntil } from "./realtime-do"
 import { PgvectorSearchIndex } from "./search-pgvector"
 import { bindingSummarizer, type TextGenAiLike } from "./summarizer"
@@ -245,6 +246,18 @@ function pokePreviewRenderer(env: Env): Promise<unknown> {
   return stub.fetch("https://previews/poke", { method: "POST" }).catch(() => {})
 }
 
+// Paper imports run in the preview renderer's class under a name of their own (see
+// preview-do.ts): one instance renders and exports, the other fetches papers.
+const IMPORTS_NAME = "imports"
+
+/** Poke the paper importer so a fresh import starts now, or a stalled one resumes (cron).
+ *  No-op when PREVIEW_RENDERER is unbound. */
+function pokeImporter(env: Env): Promise<unknown> {
+  if (!env.PREVIEW_RENDERER) return Promise.resolve()
+  const stub = env.PREVIEW_RENDERER.get(env.PREVIEW_RENDERER.idFromName(IMPORTS_NAME))
+  return stub.fetch(`https://previews${IMPORTS_POKE_PATH}`, { method: "POST" }).catch(() => {})
+}
+
 let app: ReturnType<typeof createApp> | null = null
 // The SPA shell, fetched from ASSETS once per isolate and reused (it's immutable for
 // a deployment). Injected with per-artifact unfurl meta on each /artifacts/:ref request.
@@ -424,9 +437,10 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
         renderExports: !!env.BROWSER && !!env.PREVIEW_RENDERER,
         qaEmailCapture: env.DERIVE_QA_EMAIL_CAPTURE === "true",
         pokePreviews: () => void edgeWaitUntil(pokePreviewRenderer(env)),
-        // Paper imports drain from the same DO's alarm; without it nothing would fetch.
-        imports: !!env.PREVIEW_RENDERER,
-        pokeImports: () => void edgeWaitUntil(pokePreviewRenderer(env)),
+        // Paper imports drain from the renderer class's importer instance. Without the
+        // binding nothing would fetch, and an exports-only renderer never runs them.
+        imports: !!env.PREVIEW_RENDERER && env.DERIVE_EXPORTS_ONLY !== "true",
+        pokeImports: () => void edgeWaitUntil(pokeImporter(env)),
         // Hosted runs: nudge the dispatch queue so an interactive run starts in seconds
         // instead of on the next minute's cron. Best-effort by construction — the sweep is
         // the guarantee — and a no-op when the queue isn't bound (hosted execution off).
@@ -557,6 +571,7 @@ export default {
   scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): void {
     ctx.waitUntil(pokeOutbox(env))
     ctx.waitUntil(pokePreviewRenderer(env))
+    ctx.waitUntil(pokeImporter(env))
     // EXPERIMENTAL hosted runs: the same minute tick also drives automation execution when a
     // container binding is configured — materialize due schedules, reclaim dead runs, and boot
     // one scale-to-zero container per due run. Unbound (the default) = a no-op, so runs stay

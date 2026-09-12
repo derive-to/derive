@@ -174,6 +174,7 @@ import {
   type DynamicSlotWrite,
   type DynamicWriteOptions,
   GLOBAL_FOLLOW_ORG,
+  IMPORT_MAX_ATTEMPTS,
   isValidWorkflowRunDefinitionPin,
   isValidWorkflowStepContextPin,
   LINKS_FACT,
@@ -4882,6 +4883,10 @@ export class PgMetaStore implements MetaStore {
   private importJobDue(now: string, scope: string) {
     return and(
       eq(importJob.scope, scope),
+      // Past its attempts a job is never due, whatever its status says. A failure on the
+      // last attempt goes dead by itself; this stops the claim that never came back, so a
+      // paper that gets its worker killed is not reclaimed, and killed, forever.
+      lte(importJob.attempts, IMPORT_MAX_ATTEMPTS),
       or(
         eq(importJob.status, "pending"),
         and(eq(importJob.status, "failed"), lte(importJob.next_attempt_at, now)),
@@ -4893,6 +4898,7 @@ export class PgMetaStore implements MetaStore {
     now: string,
     leaseUntil: string,
     scope: string,
+    claimToken: string,
   ): Promise<ImportJobRecord | null> {
     // Lock the selected row and update that exact id in one transaction. A self-referencing
     // UPDATE subquery can lock one due row but update another when concurrent workers run it.
@@ -4912,6 +4918,7 @@ export class PgMetaStore implements MetaStore {
           status: "fetching",
           attempts: sql`${importJob.attempts} + 1`,
           lease_until: leaseUntil,
+          claim_token: claimToken,
           updated_at: now,
         })
         .where(and(eq(importJob.id, id), this.importJobDue(now, scope)))
@@ -4922,8 +4929,18 @@ export class PgMetaStore implements MetaStore {
   async updateImportJob(
     id: string,
     fields: Parameters<MetaStore["updateImportJob"]>[1],
-  ): Promise<void> {
-    await this.db.update(importJob).set(fields).where(eq(importJob.id, id))
+    claimToken?: string,
+  ): Promise<boolean> {
+    const rows = await this.db
+      .update(importJob)
+      .set(fields)
+      .where(
+        claimToken === undefined
+          ? eq(importJob.id, id)
+          : and(eq(importJob.id, id), eq(importJob.claim_token, claimToken)),
+      )
+      .returning({ id: importJob.id })
+    return rows.length > 0
   }
   async countActiveImportJobs(orgId: string): Promise<number> {
     const rows = await this.db

@@ -187,6 +187,12 @@ export interface ImportDeps {
   /** Hand the upstream request gate back as soon as the last arXiv request is done, so
    *  shrinking and publishing (which need no request) never keep other imports waiting. */
   releaseGate?: () => Promise<void>
+  /** The claim this run holds (see imports.ts). Every write to the job goes through it, so
+   *  a run whose lease lapsed and was reclaimed stops instead of overwriting the new owner. */
+  claimToken?: string
+  /** Renew the claim, at most once a minute however often it is called. Throws
+   *  ImportCancelled when the claim was lost. Called between phases and during long work. */
+  heartbeat?: () => Promise<void>
 }
 
 // ---- The paced client -------------------------------------------------------
@@ -474,13 +480,36 @@ export const contextNameFor = (title: string, ref: string): string => {
   return `${(space > 40 ? cut.slice(0, space) : cut).trimEnd()}…`
 }
 
-const liveContext = async (meta: MetaStore, job: ImportJobRecord): Promise<ContextRecord> => {
+/** Whether this run still owns the job: it exists, and no other claim has taken it since. */
+const stillOwned = (deps: ImportDeps, live: ImportJobRecord | null): live is ImportJobRecord =>
+  !!live && (deps.claimToken === undefined || live.claim_token === deps.claimToken)
+
+/** The job's Context, renewing the claim on the way. Throws ImportCancelled when the
+ *  Context was discarded or another worker took the job over: this run has nothing left
+ *  to do in either case. */
+const liveContext = async (deps: ImportDeps, job: ImportJobRecord): Promise<ContextRecord> => {
+  await deps.heartbeat?.()
   const [ctx, live] = await Promise.all([
-    meta.getContext(job.context_id),
-    meta.getImportJob(job.id),
+    deps.meta.getContext(job.context_id),
+    deps.meta.getImportJob(job.id),
   ])
-  if (!ctx || !live) throw new ImportCancelled()
+  if (!ctx || !stillOwned(deps, live)) throw new ImportCancelled()
   return ctx
+}
+
+/** Write to the job through this run's claim. A write that lands nowhere means the job is
+ *  gone or another worker owns it now, and this run stops either way. */
+const writeJob = async (
+  deps: ImportDeps,
+  job: ImportJobRecord,
+  fields: Parameters<MetaStore["updateImportJob"]>[1],
+): Promise<void> => {
+  const written = await deps.meta.updateImportJob(
+    job.id,
+    { ...fields, updated_at: iso(deps.now()) },
+    deps.claimToken,
+  )
+  if (!written) throw new ImportCancelled()
 }
 
 const publishDeps = (deps: ImportDeps): AfterPublishDeps => ({
@@ -516,10 +545,9 @@ const attachImplementation = async (
   fresh: Record<string, Uint8Array> | null,
 ): Promise<void> => {
   const { meta, blobs } = deps
-  const stamp = (fields: Partial<ImportJobRecord>) =>
-    meta.updateImportJob(job.id, { ...fields, updated_at: iso(deps.now()) })
+  const stamp = (fields: Parameters<MetaStore["updateImportJob"]>[1]) => writeJob(deps, job, fields)
   const live = await meta.getImportJob(job.id)
-  if (!live) throw new ImportCancelled()
+  if (!stillOwned(deps, live)) throw new ImportCancelled()
 
   const repoRef = ctx.code_url ? parseRepoRef(ctx.code_url) : null
   if (ctx.code_url && !repoRef) {
@@ -580,7 +608,9 @@ const attachImplementation = async (
 
   let fetched: Awaited<ReturnType<typeof fetchRepository>>
   try {
+    await deps.heartbeat?.()
     fetched = await fetchRepository(deps, repoRef, deps.repoCaps)
+    await deps.heartbeat?.()
   } catch (error) {
     if (error instanceof ImportCancelled) throw error
     await stamp({
@@ -700,7 +730,7 @@ export const importArxivPaper = async (
   const ref = parseArxivRef(job.ref)
   if (!ref) throw new ImportFailure("not_found", "the reference is not an arXiv id", true)
   const urls = arxivUrls(ref)
-  let ctx = await liveContext(meta, job)
+  let ctx = await liveContext(deps, job)
   // The Context's artifact IS the paper: the queue published a placeholder document into
   // it, and this run republishes it as the paper arXiv holds.
   const target = await meta.getArtifactById(ctx.manifest_artifact_id)
@@ -731,6 +761,7 @@ export const importArxivPaper = async (
   let fetchedBibtex: string | null = null
   if (!paper) {
     const normalized = await inStep("source", async () => {
+      await deps.heartbeat?.()
       const srcRes = await client.get(urls.source, SOURCE_TIMEOUT_MS)
       if (srcRes.status === 404)
         throw new ImportFailure("no_source", "arXiv has no source for this paper", true)
@@ -748,7 +779,9 @@ export const importArxivPaper = async (
     // rate limit is worth failing for, because holding arXiv's gate past a 429 is how a
     // deployment gets itself blocked. Everything else here is survivable, INCLUDING an
     // oversized body: an entry we could not read is not a reason to discard a paper we
-    // already have.
+    // already have. The download before it may have taken minutes, so the claim is
+    // renewed first, outside the try, where losing it is never mistaken for a bad entry.
+    await deps.heartbeat?.()
     try {
       const bibRes = await client.get(urls.bibtex, METADATA_TIMEOUT_MS)
       if (bibRes.status === 200)
@@ -783,7 +816,7 @@ export const importArxivPaper = async (
       }
       notes.push(...fitted.notes)
 
-      ctx = await liveContext(meta, job)
+      ctx = await liveContext(deps, job)
       const current = await meta.getArtifactById(target.id)
       if (!current) throw new ImportCancelled()
       const title = plainText(paperMeta.title, 200) || `arXiv:${ref.id}`
@@ -824,11 +857,10 @@ export const importArxivPaper = async (
         actorName: actor.agentName,
       })
       await meta.setArtifactTags(paper.id, normalizeTags(["arxiv", `arxiv:${ref.id}`]))
-      await meta.updateImportJob(job.id, {
+      await writeJob(deps, job, {
         paper_artifact_id: paper.id,
         manifest_version: published.version.n,
         resolved_version: paperMeta.version,
-        updated_at: iso(deps.now()),
       })
       return published.artifact
     })
@@ -837,11 +869,11 @@ export const importArxivPaper = async (
   }
 
   // 5. The implementation, when the Context names one. Never fails the paper.
-  ctx = await liveContext(meta, job)
+  ctx = await liveContext(deps, job)
   await attachImplementation(deps, job, ctx, paper, actor, paperFiles)
 
   // 6. The Context takes the paper's name.
-  ctx = await liveContext(meta, job)
+  ctx = await liveContext(deps, job)
   const name = contextNameFor(paperMeta.title, ref.id)
   if (name !== ctx.name) {
     await meta
@@ -849,13 +881,12 @@ export const importArxivPaper = async (
       .catch(() => meta.renameContext(ctx.id, `${truncate(name, 60)} (arXiv:${ref.id})`))
       .catch(() => undefined)
   }
-  await meta.updateImportJob(job.id, {
+  await writeJob(deps, job, {
     status: "ready",
     lease_until: null,
     error_code: null,
     error_detail: null,
     resolved_version: paperMeta.version,
-    updated_at: iso(deps.now()),
   })
 }
 

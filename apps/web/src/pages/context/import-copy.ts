@@ -10,7 +10,7 @@ export const IMPORT_ERROR_COPY: Record<string, string> = {
   withdrawn: "This paper was withdrawn from arXiv.",
   no_source: "arXiv has only a PDF for this paper, no LaTeX source, so Derive can't read it.",
   no_tex: "The source has no main .tex file Derive can read.",
-  too_large: "The source is larger than Derive imports, even after shrinking its figures.",
+  too_large: "The source is larger than Derive can import.",
   rate_limited: "arXiv asked Derive to slow down.",
   unavailable: "arXiv didn't answer.",
   internal: "Something went wrong inside Derive, not at arXiv.",
