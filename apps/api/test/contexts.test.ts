@@ -1716,6 +1716,28 @@ describe("contexts: import from arXiv", () => {
         () => new Response("", { status: 301, headers: { location: "https://evil.example/src" } }),
         "unavailable",
       ],
+      // A PDF that arrives gzipped is still only a PDF.
+      [
+        "2403.00006",
+        undefined,
+        () => gzip(gzipSync(new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31]))),
+        "no_source",
+      ],
+      // One file over what a single file may be refuses the paper, and names the file.
+      [
+        "2403.00007",
+        undefined,
+        () =>
+          gzip(
+            gzipSync(
+              tarSync({
+                "main.tex": "\\documentclass{article}\\begin{document}x\\end{document}",
+                "fig/huge.png": new Uint8Array(1536 * 1024),
+              }),
+            ),
+          ),
+        "too_large",
+      ],
     ]
     let current = cases[0]
     const stub = arxivStub({
@@ -1729,9 +1751,13 @@ describe("contexts: import from arXiv", () => {
       const [id, , , code] = kase
       const x = await (await importPaper(app, id)).json()
       c.advance(60_000)
-      expect(await runImportTick(tickDeps())).toBe(1)
+      const base = tickDeps()
+      expect(
+        await runImportTick({ ...base, caps: { ...base.caps, maxFileBytes: 1024 * 1024 } }),
+      ).toBe(1)
       const job = await meta.getImportJobForContext(x.id)
       expect(job?.error_code).toBe(code)
+      if (id === "2403.00007") expect(job?.error_detail).toContain("fig/huge.png")
       const detail = await (
         await app.request(`/v1/contexts/${x.id}`, { headers: as(owner.email) })
       ).json()
@@ -1863,6 +1889,191 @@ describe("contexts: import from arXiv", () => {
     )
     expect(await failedPage.text()).toContain("Import failed:")
   }, 30_000)
+
+  it("streams a source into storage as it arrives, holding the paper's text and little else", async () => {
+    // A figure larger than what the worker reads whole, in a source that arrives a kilobyte
+    // at a time: the figure goes through a writer as it arrives, byte for byte.
+    const figure = new Uint8Array(600 * 1024)
+    for (let at = 0; at < figure.length; at += 65_536)
+      crypto.getRandomValues(figure.subarray(at, Math.min(at + 65_536, figure.length)))
+    const archive = gzipSync(
+      tarSync({
+        "paper/main.tex":
+          "\\documentclass{article}\\begin{document}\\includegraphics{fig/big.png}\\end{document}",
+        "paper/refs.bib": "@misc{a, title={A}, author={B}, year={2020}}",
+        "paper/fig/big.png": figure,
+      }),
+    )
+    const stub = arxivStub({
+      source: () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              for (let at = 0; at < archive.length; at += 1024)
+                controller.enqueue(archive.slice(at, at + 1024))
+              controller.close()
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/gzip" } },
+        ),
+    })
+    const { app, meta, ctx, tickDeps } = setup("contexts-import-stream", stub.fetch)
+    await app.request("/v1/me", { headers: as(owner.email) })
+    const x = await (await importPaper(app, "2408.00001")).json()
+    const puts: number[] = []
+    const streamed: number[] = []
+    const blobs: BlobStore = {
+      put: (data) => {
+        puts.push(data.byteLength)
+        return ctx.blobs.put(data)
+      },
+      get: (key) => ctx.blobs.get(key),
+      writer: (size) => {
+        streamed.push(size)
+        const writer = ctx.blobs.writer?.(size)
+        if (!writer) throw new Error("the test store streams")
+        return writer
+      },
+    }
+    const base = tickDeps()
+    const caps = { ...base.caps, bufferFileBytes: 64 * 1024, inflightBytes: 256 * 1024 }
+    expect(await runImportTick({ ...base, blobs, caps })).toBe(1)
+
+    const detail = await (
+      await app.request(`/v1/contexts/${x.id}`, { headers: as(owner.email) })
+    ).json()
+    expect(detail.import.status).toBe("ready")
+    const paper = await meta.getByShortId(detail.documents[0].short_id)
+    const v = paper ? await meta.getVersion(paper.id, paper.current_version) : null
+    const manifest = JSON.parse(
+      new TextDecoder().decode((await ctx.blobs.get(v?.blob_key ?? "")) ?? undefined),
+    ) as { files: Record<string, { key: string; size: number }> }
+    expect(Object.keys(manifest.files).sort()).toEqual([
+      "/CITATION.bib",
+      "/fig/big.png",
+      "/main.tex",
+      "/refs.bib",
+    ])
+    // Only the figure streamed, and nothing larger than the read-whole size went in whole.
+    expect(streamed).toEqual([figure.byteLength])
+    expect(Math.max(...puts)).toBeLessThanOrEqual(64 * 1024)
+    const stored = await ctx.blobs.get(manifest.files["/fig/big.png"]?.key ?? "")
+    expect(Buffer.from(stored ?? new Uint8Array()).equals(Buffer.from(figure))).toBe(true)
+    expect(v?.size_bytes).toBe(Object.values(manifest.files).reduce((n, f) => n + f.size, 0))
+  })
+
+  it("stops reading a source while storage is behind", async () => {
+    // Forty 64 KB figures in front of a store that takes nothing until it is told to. The
+    // reader has to stop once the bytes waiting on storage reach the limit, not run on.
+    const figures: Record<string, Uint8Array> = {}
+    for (let i = 0; i < 40; i++) {
+      const png = new Uint8Array(64 * 1024)
+      crypto.getRandomValues(png)
+      figures[`paper/fig/${i}.png`] = png
+    }
+    const archive = gzipSync(
+      tarSync({
+        "paper/main.tex": "\\documentclass{article}\\begin{document}x\\end{document}",
+        ...figures,
+      }),
+    )
+    let pulled = 0
+    const stub = arxivStub({
+      source: () =>
+        new Response(
+          new ReadableStream<Uint8Array>(
+            {
+              pull(controller) {
+                if (pulled >= archive.length) {
+                  controller.close()
+                  return
+                }
+                const piece = archive.slice(pulled, pulled + 16 * 1024)
+                pulled += piece.length
+                controller.enqueue(piece)
+              },
+            },
+            { highWaterMark: 0 },
+          ),
+          { status: 200, headers: { "content-type": "application/gzip" } },
+        ),
+    })
+    const { app, meta, ctx, tickDeps } = setup("contexts-import-backpressure", stub.fetch)
+    await app.request("/v1/me", { headers: as(owner.email) })
+    const x = await (await importPaper(app, "2408.00002")).json()
+    let open: () => void = () => {}
+    const opened = new Promise<void>((resolve) => {
+      open = resolve
+    })
+    const blobs: BlobStore = {
+      put: async (data) => {
+        await opened
+        return ctx.blobs.put(data)
+      },
+      get: (key) => ctx.blobs.get(key),
+    }
+    const base = tickDeps()
+    const tick = runImportTick({
+      ...base,
+      blobs,
+      caps: {
+        ...base.caps,
+        compressedBytes: 8 * 1024 * 1024,
+        inflatedBytes: 8 * 1024 * 1024,
+        bufferFileBytes: 128 * 1024,
+        inflightBytes: 256 * 1024,
+      },
+    })
+    // Wait until the reader has started and then gone still.
+    let last = -1
+    for (let i = 0; i < 200 && (pulled === 0 || pulled !== last); i++) {
+      last = pulled
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+    expect(pulled).toBeGreaterThan(0)
+    expect(pulled).toBeLessThan(archive.length / 4)
+    open()
+    expect(await tick).toBe(1)
+    expect(pulled).toBe(archive.length)
+    expect((await meta.getImportJobForContext(x.id))?.status).toBe("ready")
+  })
+
+  it("imports a paper sent as one gzipped .tex, and a latin-1 source as UTF-8", async () => {
+    const enc = new TextEncoder()
+    let source = () =>
+      gzipSync(enc.encode("\\documentclass{article}\\begin{document}One file.\\end{document}"))
+    const stub = arxivStub({ source: () => gzip(source()) })
+    const { app, meta, ctx, clock: c, tickDeps } = setup("contexts-import-single", stub.fetch)
+    await app.request("/v1/me", { headers: as(owner.email) })
+    const textOf = async (contextId: string, path: string) => {
+      const detail = await (
+        await app.request(`/v1/contexts/${contextId}`, { headers: as(owner.email) })
+      ).json()
+      expect(detail.import.status).toBe("ready")
+      const paper = await meta.getByShortId(detail.documents[0].short_id)
+      const v = paper ? await meta.getVersion(paper.id, paper.current_version) : null
+      const manifest = JSON.parse(
+        new TextDecoder().decode((await ctx.blobs.get(v?.blob_key ?? "")) ?? undefined),
+      ) as { files: Record<string, { key: string }> }
+      const bytes = await ctx.blobs.get(manifest.files[path]?.key ?? "")
+      return new TextDecoder().decode(bytes ?? undefined)
+    }
+    const one = await (await importPaper(app, "2408.00003")).json()
+    expect(await runImportTick(tickDeps())).toBe(1)
+    expect(await textOf(one.id, "/main.tex")).toContain("One file.")
+
+    const latin = new Uint8Array([
+      ...enc.encode("\\documentclass{article}\\usepackage[latin1]{inputenc}\\begin{document}caf"),
+      0xe9,
+      ...enc.encode("\\end{document}"),
+    ])
+    source = () => gzipSync(tarSync({ "main.tex": latin, "refs.bib": new Uint8Array([0xe9]) }))
+    const two = await (await importPaper(app, "2408.00004")).json()
+    c.advance(60_000)
+    expect(await runImportTick(tickDeps())).toBe(1)
+    expect(await textOf(two.id, "/main.tex")).toContain("café")
+    expect(await textOf(two.id, "/refs.bib")).toBe("é")
+  })
 
   // A paper's implementation. The agent reads it; the person gets a link to the
   // repository on its own host and never a file listing.

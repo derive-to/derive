@@ -27,6 +27,23 @@ export interface BlobStore {
    *  broken-embed check) treats absence as "can't check here" and skips — it never
    *  falls back to a full get. */
   has?(key: string): Promise<boolean>
+  /** Store a file too large to hold in memory: `size` bytes, written in order, kept under
+   *  their sha256 hex key like `put`. OPTIONAL: facing a store without it, a caller reads
+   *  the file whole and puts it, which only a process with memory to spare can afford. */
+  writer?(size: number): BlobWriter
+}
+
+/** A file on its way into a BlobStore (see `BlobStore.writer`). */
+export interface BlobWriter {
+  /** The next bytes. Resolves once the store has taken them, so a caller that awaits each
+   *  write holds no more than the store keeps up with. The bytes must not change until it
+   *  resolves. */
+  write(bytes: Uint8Array): Promise<void>
+  /** Every byte is in: store them under their content key and resolve it. Rejects, and
+   *  stores nothing under a content key, when the bytes written are not `size`. */
+  close(): Promise<string>
+  /** Give up: nothing is stored under a content key, and what was written is cleaned up. */
+  abort(): Promise<void>
 }
 
 /**

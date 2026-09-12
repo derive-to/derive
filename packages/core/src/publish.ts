@@ -186,6 +186,14 @@ export const isCodePath = (path: string): boolean => path.startsWith(CODE_PREFIX
 export const MAX_BUNDLE_FILES_WITH_CODE = 6000
 export const MAX_BUNDLE_UNZIPPED_BYTES_WITH_CODE = 100 * 1024 * 1024 // 100 MB
 
+// A paper Derive imports itself is never a bundle in memory: its files stream into the blob
+// store as the archive is read, and it is published from their keys (PublishInput.stored).
+// So it may be larger than anything uploaded: a paper up to this, and up to the second with
+// its implementation. Only a publish carrying `stored` files may reach them; every other
+// bundle keeps the ceilings above.
+export const MAX_IMPORTED_PAPER_BYTES = 100 * 1024 * 1024 // 100 MB
+export const MAX_IMPORTED_BUNDLE_BYTES = 200 * 1024 * 1024 // 200 MB
+
 /**
  * Choose a bundle's entry page. An HTML site enters at its root `index.html`, else
  * its shallowest `.html`. A doc/skill bundle with no HTML (a Claude Code skill is a
@@ -297,10 +305,11 @@ async function storeContent(
     const clamp = (asked: number | undefined, floor: number, ceiling: number): number =>
       Math.min(Math.max(asked ?? floor, floor), ceiling)
     const maxFiles = clamp(limits?.maxFiles, MAX_BUNDLE_FILES, MAX_BUNDLE_FILES_WITH_CODE)
+    // A bundle published from stored files is an importer's: see MAX_IMPORTED_BUNDLE_BYTES.
     const maxBytes = clamp(
       limits?.maxBundleBytes,
       MAX_BUNDLE_UNZIPPED_BYTES,
-      MAX_BUNDLE_UNZIPPED_BYTES_WITH_CODE,
+      stored ? MAX_IMPORTED_BUNDLE_BYTES : MAX_BUNDLE_UNZIPPED_BYTES_WITH_CODE,
     )
     // Count and measure what will actually be STORED. The archive's own junk (`__MACOSX`,
     // `.DS_Store`, directory entries) is dropped by cleanPath a moment later, so counting

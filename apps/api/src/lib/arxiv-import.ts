@@ -19,7 +19,9 @@ import {
   type BlobStore,
   type BundleManifest,
   type ContextRecord,
+  cleanPath,
   type FigureShrinker,
+  type FigureStore,
   fitBundleBytes,
   fitRepoBytes,
   type ImportErrorCode,
@@ -27,23 +29,24 @@ import {
   type ImportStep,
   isCodePath,
   isLatexDocument,
-  isTar,
+  type LatexSourcePlan,
   MAX_BUNDLE_FILES_WITH_CODE,
   MAX_BUNDLE_UNZIPPED_BYTES,
   MAX_BUNDLE_UNZIPPED_BYTES_WITH_CODE,
+  MAX_IMPORTED_PAPER_BYTES,
   type MetaStore,
-  normalizeLatexSource,
   parseArxivRef,
   parseBibtex,
   parseRepoRef,
+  planLatexSource,
   publish,
+  readsLatexText,
   type SearchIndex,
   TarError,
-  untar,
 } from "@derive/core"
 import type { Backplane } from "../bus"
 import { type AfterPublishDeps, afterPublish } from "./after-publish"
-import { ArchiveError, inflateCapped, isGzip, readArchive, startsWith } from "./archive"
+import { ArchiveError, stageArchive } from "./archive"
 import { type ArxivPaperMeta, failedPaper, plainText } from "./arxiv-paper"
 import { manifestOf, materializeBundle } from "./bundle"
 import { readCappedBytes } from "./http"
@@ -58,7 +61,12 @@ export const ARXIV_REQUEST_INTERVAL_MS = 3_000
 /** The longest an upstream Retry-After holds every worker back. */
 export const ARXIV_MAX_PENALTY_MS = 10 * 60_000
 const METADATA_TIMEOUT_MS = 10_000
+/** How long arXiv has to start answering for a source. The body is not held to it: it
+ *  streams under the reader's own limits (a stall, and SOURCE_DEADLINE_MS), since a large
+ *  source is still arriving long after a minute. */
 const SOURCE_TIMEOUT_MS = 60_000
+const SOURCE_DEADLINE_MS = 5 * 60_000
+const MB = 1024 * 1024
 
 export interface ImportCaps {
   /** The working budget: the most bytes read off the wire for one source archive. */
@@ -69,20 +77,42 @@ export interface ImportCaps {
    *  raster figures (fitBundleBytes); one that still does not fit is refused. */
   bundleBytes: number
   files: number
+  /** A file up to this is read whole before it is stored; a larger one streams straight
+   *  into storage. Default 8 MB. */
+  bufferFileBytes?: number
+  /** How many bytes may be on their way to storage before reading pauses for them.
+   *  Default 16 MB. */
+  inflightBytes?: number
+  /** The most one file may be: what a request can read whole to serve it. Default 50 MB. */
+  maxFileBytes?: number
+  /** The paper's text files, which planning reads, held in memory. Default 8 MB. */
+  textBytes?: number
 }
 
-/** The Node tier has memory to spare and can shrink figures, so it may pull far more than
- *  it publishes; the edge worker inflates inside a 128 MB isolate with no image codec. */
+const streamLimits = (caps: ImportCaps) => ({
+  bufferFileBytes: caps.bufferFileBytes ?? 8 * MB,
+  inflightBytes: caps.inflightBytes ?? 16 * MB,
+  maxFileBytes: caps.maxFileBytes ?? MAX_BUNDLE_UNZIPPED_BYTES,
+  textBytes: caps.textBytes ?? 8 * MB,
+})
+
+/** Both tiers stream a source into storage as it inflates, so neither holds the paper. What
+ *  one holds is a file read whole, the text planning reads, and the bytes on their way to
+ *  storage: the Node tier can afford more of each, and shrinks figures; the edge worker runs
+ *  in a 128 MB isolate with no image codec. Both publish up to the same ceiling. */
 export const NODE_IMPORT_CAPS: ImportCaps = {
-  compressedBytes: 150 * 1024 * 1024,
-  inflatedBytes: 200 * 1024 * 1024,
-  bundleBytes: MAX_BUNDLE_UNZIPPED_BYTES,
+  compressedBytes: 150 * MB,
+  inflatedBytes: 200 * MB,
+  bundleBytes: MAX_IMPORTED_PAPER_BYTES,
   files: 2000,
+  bufferFileBytes: 32 * MB,
+  inflightBytes: 64 * MB,
+  textBytes: 32 * MB,
 }
 export const EDGE_IMPORT_CAPS: ImportCaps = {
-  compressedBytes: 8 * 1024 * 1024,
-  inflatedBytes: 30 * 1024 * 1024,
-  bundleBytes: 30 * 1024 * 1024,
+  compressedBytes: 120 * MB,
+  inflatedBytes: 150 * MB,
+  bundleBytes: MAX_IMPORTED_PAPER_BYTES,
   files: 2000,
 }
 
@@ -240,17 +270,31 @@ export class ArxivClient {
   /** GET one arXiv URL. Follows at most one redirect, and only to another arXiv host over
    *  https; refuses anything else. Returns the response for the caller to read under its
    *  own cap. Throws ImportFailure for the upstream's moods (429/503 with Retry-After, a
-   *  5xx, a timeout) so the tick can classify them. */
-  async get(url: string, timeoutMs: number): Promise<Response> {
+   *  5xx, a timeout) so the tick can classify them. The timeout covers the whole exchange
+   *  for a body read at once; for a `streamed` body only the wait for arXiv to start
+   *  answering, because the caller bounds that body itself as it reads it. */
+  async get(
+    url: string,
+    timeoutMs: number,
+    body: "whole" | "streamed" = "whole",
+  ): Promise<Response> {
     let target = url
     for (let hop = 0; hop < 2; hop++) {
       await this.pace()
       let res: Response
+      const answered = new AbortController()
+      const timer =
+        body === "streamed"
+          ? setTimeout(
+              () => answered.abort(new DOMException("no answer in time", "TimeoutError")),
+              timeoutMs,
+            )
+          : undefined
       try {
         res = await this.send(target, {
           redirect: "manual",
           headers: { "user-agent": this.userAgent, accept: "*/*" },
-          signal: AbortSignal.timeout(timeoutMs),
+          signal: body === "streamed" ? answered.signal : AbortSignal.timeout(timeoutMs),
         })
       } catch (error) {
         await this.stamp()
@@ -267,6 +311,8 @@ export class ArxivClient {
             : `${host} could not be reached (${causeOf(error)})`,
           false,
         )
+      } finally {
+        clearTimeout(timer)
       }
       await this.stamp()
       if (res.status >= 300 && res.status < 400) {
@@ -359,8 +405,12 @@ export const parseArxivAtom = (xml: string): ArxivPaperMeta | null => {
 
 /** Say what an archive failure means for a paper import. The wire and inflate budgets
  *  are arXiv's verdict on the paper's size, so they never retry; a body that went away
- *  mid-download is a mood, so it does. */
+ *  or stalled mid-download is a mood, so it does. */
 const asImportFailure = (error: unknown, caps: ImportCaps): never => {
+  if (error instanceof TarError)
+    throw error.code === "malformed"
+      ? new ImportFailure("no_tex", "the source archive is unreadable", true)
+      : new ImportFailure("too_large", error.message, true)
   if (!(error instanceof ArchiveError)) throw error
   if (error.kind === "compressed")
     throw new ImportFailure(
@@ -370,57 +420,134 @@ const asImportFailure = (error: unknown, caps: ImportCaps): never => {
     )
   if (error.kind === "inflated")
     throw new ImportFailure("too_large", `the source inflates past ${mb(caps.inflatedBytes)}`, true)
+  if (error.kind === "single")
+    throw new ImportFailure(
+      "too_large",
+      `the source is one file larger than ${mb(streamLimits(caps).textBytes)}`,
+      true,
+    )
   if (error.kind === "corrupt")
     throw new ImportFailure("no_tex", "the source archive could not be decompressed", true)
+  if (error.kind === "stalled")
+    throw new ImportFailure(
+      "unavailable",
+      `the source download stalled, or took longer than ${SOURCE_DEADLINE_MS / 60_000} minutes`,
+      false,
+    )
   throw new ImportFailure("unavailable", "the source download broke off", false)
 }
 
-/** Read the paper's source body under the import's budgets. */
-export const readArxivArchive = async (res: Response, caps: ImportCaps): Promise<Uint8Array> => {
-  try {
-    return await readArchive(res, caps)
-  } catch (error) {
-    return asImportFailure(error, caps)
-  }
+/** A file of the paper's source, already in the blob store. Its bytes stay in memory only
+ *  for the text files planning reads. */
+interface SourceFile {
+  key: string
+  size: number
+  bytes: Uint8Array | null
 }
 
-/** What arXiv sent, decided from the bytes: a tarball, one gzipped file, a PDF (no
- *  source), or something else. Returns the unpacked files by path. */
-export const unpackArxivSource = (
-  raw: Uint8Array,
+/**
+ * Read the paper's source into the blob store as it arrives, under the import's budgets,
+ * and return its files by the names the archive gave them: a tarball's files, or the paper
+ * itself when arXiv sent one gzipped file. What the worker holds meanwhile is the text
+ * planning reads and what is on its way to storage, never the source.
+ */
+export const stageArxivSource = async (
+  res: Response,
+  deps: Pick<ImportDeps, "blobs" | "heartbeat">,
   caps: ImportCaps,
-): Record<string, Uint8Array> => {
-  if (startsWith(raw, "%PDF") || startsWith(raw, "%!PS"))
-    throw new ImportFailure("no_source", "arXiv has only a PDF for this paper", true)
-  let bytes: Uint8Array
+): Promise<Record<string, SourceFile>> => {
+  const limits = streamLimits(caps)
+  let textBytes = 0
+  let staged: Awaited<ReturnType<typeof stageArchive>>
   try {
-    bytes = isGzip(raw) ? inflateCapped(raw, caps.inflatedBytes) : raw
+    staged = await stageArchive(
+      res,
+      {
+        compressedBytes: caps.compressedBytes,
+        inflatedBytes: caps.inflatedBytes,
+        files: caps.files,
+        bufferFileBytes: limits.bufferFileBytes,
+        inflightBytes: limits.inflightBytes,
+        deadlineMs: SOURCE_DEADLINE_MS,
+        singleFileBytes: limits.textBytes,
+      },
+      { blobs: deps.blobs, heartbeat: deps.heartbeat },
+      {
+        // What planning would drop anyway is never stored: junk names, resource forks.
+        header: (name, size) => {
+          const path = cleanPath(name)
+          if (!path || path.slice(path.lastIndexOf("/") + 1).startsWith("._")) return false
+          if (size > limits.maxFileBytes)
+            throw new ImportFailure(
+              "too_large",
+              `${path.slice(1)} is ${mb(size)}, over the ${mb(limits.maxFileBytes)} one file may be`,
+              true,
+            )
+          return true
+        },
+        head: (name, size) => {
+          if (!readsLatexText(name)) return "store"
+          textBytes += size
+          if (size > limits.bufferFileBytes || textBytes > limits.textBytes)
+            throw new ImportFailure(
+              "too_large",
+              `the source's text files are over ${mb(limits.textBytes)}`,
+              true,
+            )
+          return "keep"
+        },
+      },
+    )
   } catch (error) {
     return asImportFailure(error, caps)
   }
-  if (startsWith(bytes, "%PDF") || startsWith(bytes, "%!PS"))
+  if (staged.kind === "pdf")
     throw new ImportFailure("no_source", "arXiv has only a PDF for this paper", true)
-  if (isTar(bytes)) {
-    try {
-      return Object.fromEntries(
-        untar(bytes, { maxFiles: caps.files, maxBytes: caps.inflatedBytes }).map((e) => [
-          e.path,
-          e.data,
-        ]),
-      )
-    } catch (error) {
-      if (error instanceof TarError)
-        throw error.code === "malformed"
-          ? new ImportFailure("no_tex", "the source archive is unreadable", true)
-          : new ImportFailure("too_large", error.message, true)
-      throw error
-    }
+  if (staged.kind === "single") {
+    // One gzipped file: the paper itself when it declares a document.
+    const bytes = staged.bytes
+    if (
+      bytes.byteLength > 0 &&
+      isLatexDocument(new TextDecoder().decode(bytes.subarray(0, 65_536)))
+    )
+      return { "/main.tex": { key: await deps.blobs.put(bytes), size: bytes.byteLength, bytes } }
+    throw new ImportFailure("no_tex", "the source is neither an archive nor a LaTeX file", true)
   }
-  // One gzipped file: the paper itself when it declares a document.
-  if (bytes.byteLength > 0 && isLatexDocument(new TextDecoder().decode(bytes.subarray(0, 65_536))))
-    return { "/main.tex": bytes }
-  throw new ImportFailure("no_tex", "the source is neither an archive nor a LaTeX file", true)
+  return Object.fromEntries(
+    staged.files.map((f) => [f.path, { key: f.key, size: f.size, bytes: f.bytes }]),
+  )
 }
+
+/** Apply a plan's transcoding: latin-1 text is rewritten as UTF-8, stored, and takes the
+ *  original's place. An alias such as main.bbl takes the same rewrite. */
+const transcodeSource = async (
+  plan: LatexSourcePlan<SourceFile>,
+  blobs: BlobStore,
+): Promise<Record<string, SourceFile>> => {
+  const files = { ...plan.files }
+  const rewritten = new Map<SourceFile, SourceFile>()
+  const latin1 = new TextDecoder("latin1")
+  for (const path of plan.transcode) {
+    const file = files[path]
+    if (!file?.bytes) continue
+    let next = rewritten.get(file)
+    if (!next) {
+      const bytes = new TextEncoder().encode(latin1.decode(file.bytes))
+      next = { key: await blobs.put(bytes), size: bytes.byteLength, bytes }
+      rewritten.set(file, next)
+    }
+    files[path] = next
+  }
+  return files
+}
+
+/** The source's files as the figure policy sees them: sizes, each loaded from storage only
+ *  to be re-encoded, and stored again when it shrinks. */
+const sourceStore = (blobs: BlobStore): FigureStore<SourceFile> => ({
+  size: (file) => file.size,
+  load: async (file) => file.bytes ?? (await blobs.get(file.key)),
+  save: async (bytes) => ({ key: await blobs.put(bytes), size: bytes.byteLength, bytes: null }),
+})
 
 // ---- BibTeX ---------------------------------------------------------------------
 
@@ -784,16 +911,15 @@ export const importArxivPaper = async (
   if (!paper) {
     const normalized = await inStep("source", async () => {
       await deps.heartbeat?.()
-      const srcRes = await client.get(urls.source, SOURCE_TIMEOUT_MS)
+      const srcRes = await client.get(urls.source, SOURCE_TIMEOUT_MS, "streamed")
       if (srcRes.status === 404)
         throw new ImportFailure("no_source", "arXiv has no source for this paper", true)
       if (srcRes.status !== 200)
         throw new ImportFailure("unavailable", `arXiv answered ${srcRes.status}`, false)
-      const raw = await readArxivArchive(srcRes, deps.caps)
-      const unpacked = unpackArxivSource(raw, deps.caps)
-      const out = normalizeLatexSource(unpacked)
-      if (!out.ok) throw new ImportFailure(out.code, out.detail, true)
-      return out
+      const staged = await stageArxivSource(srcRes, deps, deps.caps)
+      const plan = planLatexSource(staged, { size: (f) => f.size, text: (f) => f.bytes })
+      if (!plan.ok) throw new ImportFailure(plan.code, plan.detail, true)
+      return { entry: plan.entry, notes: plan.notes, files: await transcodeSource(plan, blobs) }
     })
     notes.push(...normalized.notes)
 
@@ -824,9 +950,12 @@ export const importArxivPaper = async (
     // non-null to everything below.
     paper = await inStep("publish", async () => {
       // 4. Fit the bundle under what Derive publishes, shrinking raster figures if needed.
+      // The citation is published beside the source, so the source gets the rest of the room.
+      const cited = new TextEncoder().encode(citation.bibtex)
       const fitted = await fitBundleBytes(normalized.files, {
-        cap: deps.caps.bundleBytes,
+        cap: deps.caps.bundleBytes - cited.byteLength,
         shrink: deps.shrink ?? null,
+        store: sourceStore(blobs),
       })
       if (!fitted.fits) {
         const biggest = fitted.largest.map((f) => `${f.path.slice(1)} (${mb(f.bytes)})`).join(", ")
@@ -852,7 +981,13 @@ export const importArxivPaper = async (
           bytes: new Uint8Array(),
           filename: `${ref.id.replace(/\//g, "_")}.zip`,
           isBundle: true,
-          files: { ...fitted.files, [CITATION_PATH]: new TextEncoder().encode(citation.bibtex) },
+          // The source is published from the store it streamed into; only the citation,
+          // written here, is bytes.
+          files: { [CITATION_PATH]: cited },
+          stored: Object.fromEntries(
+            Object.entries(fitted.files).map(([path, f]) => [path, { key: f.key, size: f.size }]),
+          ),
+          maxBundleBytes: deps.caps.bundleBytes,
           entry: normalized.entry,
           title,
           author: truncate(
