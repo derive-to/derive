@@ -11,11 +11,11 @@
  * every change is written into the import's notes.
  *
  * This module is the policy: which files, in what order, to what size, when to stop. The
- * codec is injected (`FigureShrinker`), because the domain kernel has no image library
- * and the Workers tier cannot run one; without a shrinker the pass is only the size check.
- * So is where the figures are (`FigureStore`): the policy chooses from sizes alone, and
- * reads a figure only to hand it to the codec, so a caller that keeps its files in the
- * blob store never holds more of them than the codec is working on.
+ * codec is injected (`FigureShrinker`), because the domain kernel has no image library:
+ * sharp on Node, a headless browser on the Workers tier, and without one the pass is only
+ * the size check. So is where the figures are (`FigureStore`): the policy chooses from
+ * sizes alone, and reads a figure only to hand it to the codec, so a caller that keeps its
+ * files in the blob store never holds more of them than the codec is working on.
  * A shrunk figure keeps its path and its format: the renderer resolves a figure by its
  * exact path when the reference carries an extension, so a rename would lose the figure.
  */
@@ -66,11 +66,18 @@ export const FIGURE_PASSES: readonly FigurePass[] = [
 export interface FitBundleOptions {
   /** The most the published bundle may hold, summed over its files. */
   cap: number
-  /** The codec; null (the Workers tier) makes this a size check only. */
+  /** The codec; null makes this a size check only. */
   shrink: FigureShrinker | null
   passes?: readonly FigurePass[]
   /** How many figures are in the codec at once. */
   concurrency?: number
+  /** A figure larger than this is never loaded for the codec: what a caller with little
+   *  memory can afford to hold. */
+  maxInputBytes?: number
+  /** Called before each figure goes to the codec, so a long pass can say it is alive. */
+  onFigure?: () => Promise<void>
+  /** Checked before each figure; once it answers true, no more are tried. */
+  outOfTime?: () => boolean
 }
 
 export interface FitBundleResult<F = Uint8Array> {
@@ -83,6 +90,8 @@ export interface FitBundleResult<F = Uint8Array> {
   shrunk: number
   /** The pass that made it fit (0-based), null when none did or none was needed. */
   pass: number | null
+  /** Whether shrinking stopped because it ran out of time. */
+  stopped: boolean
   /** What happened, for the import notes. Empty when nothing was touched. */
   notes: string[]
   /** The largest files left, for a failure that names what stayed big. */
@@ -151,24 +160,35 @@ export async function fitBundleBytes<F>(
       after: before,
       shrunk: 0,
       pass: null,
+      stopped: false,
       notes: [],
       largest: [],
     }
   const passes = opts.passes ?? FIGURE_PASSES
+  const maxInput = opts.maxInputBytes ?? Number.POSITIVE_INFINITY
   const shrunkPaths = new Set<string>()
   let after = before
   let pass: number | null = null
+  let stopped = false
   if (opts.shrink) {
     const shrink = opts.shrink
-    for (let i = 0; i < passes.length && after > opts.cap; i++) {
+    for (let i = 0; i < passes.length && after > opts.cap && !stopped; i++) {
       const p = passes[i] as FigurePass
       const candidates = Object.keys(files)
-        .filter((path) => RASTER_FIGURE.test(path) && sizeAt(path) >= MIN_SHRINK_BYTES)
+        .filter((path) => {
+          const size = sizeAt(path)
+          return RASTER_FIGURE.test(path) && size >= MIN_SHRINK_BYTES && size <= maxInput
+        })
         .sort((a, b) => sizeAt(b) - sizeAt(a))
       await pooled(candidates, opts.concurrency ?? 4, async (path) => {
-        if (after <= opts.cap) return
+        if (after <= opts.cap || stopped) return
+        if (opts.outOfTime?.()) {
+          stopped = true
+          return
+        }
         const current = files[path]
         if (current === undefined) return
+        await opts.onFigure?.()
         const size = store.size(current)
         let result: Uint8Array | null
         try {
@@ -195,5 +215,15 @@ export async function fitBundleBytes<F>(
       `shrank ${shrunkPaths.size} ${shrunkPaths.size === 1 ? "figure" : "figures"} to at most ${side} px on the long side (${mb(before)} → ${mb(after)})`,
     )
   }
-  return { files, fits, before, after, shrunk: shrunkPaths.size, pass, notes, largest: largest() }
+  return {
+    files,
+    fits,
+    before,
+    after,
+    shrunk: shrunkPaths.size,
+    pass,
+    stopped,
+    notes,
+    largest: largest(),
+  }
 }

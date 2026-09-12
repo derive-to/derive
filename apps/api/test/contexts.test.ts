@@ -4,6 +4,7 @@ import { beforeAll, describe, expect, it } from "vitest"
 import { createInProcessBackplane, type DeriveEvent } from "../src/bus"
 import { runImportTick } from "../src/imports"
 import { ARXIV_REQUEST_INTERVAL_MS } from "../src/lib/arxiv-import"
+import { browserFigureShrinker, type ShrinkPage } from "../src/lib/image-shrink-cf"
 import { sharpShrinker } from "../src/lib/image-shrink-node"
 import { as, bearer, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
@@ -2606,5 +2607,80 @@ describe("contexts: import from arXiv", () => {
       expect((await importPaper(app, id)).status).toBe(201)
     const fourth = await importPaper(app, "2404.00005")
     expect(fourth.status).toBe(429)
+  })
+
+  it("shrinks a figure on the Workers tier in a browser page, sending it in slices", async () => {
+    // Browser Rendering cannot run here, so the page is a stand-in that runs the shrinker's
+    // page code against a stubbed canvas. What is pinned is the crossing (one figure at a
+    // time, in slices, and back) and the figures that are never sent at all.
+    const header = new Uint8Array(24)
+    header.set([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52,
+    ])
+    const view = new DataView(header.buffer)
+    view.setUint32(16, 2200)
+    view.setUint32(20, 1100)
+    const figure = new Uint8Array(900 * 1024)
+    figure.set(header)
+    const smaller = new Uint8Array(200 * 1024).fill(7)
+    let drawn: number[] = []
+    const page = globalThis as unknown as Record<string, unknown>
+    const saved = { bitmap: page.createImageBitmap, canvas: page.OffscreenCanvas }
+    page.createImageBitmap = async () => ({ width: 2200, height: 1100, close: () => {} })
+    page.OffscreenCanvas = class {
+      constructor(width: number, height: number) {
+        drawn = [width, height]
+      }
+      getContext() {
+        return { drawImage: () => {} }
+      }
+      async convertToBlob() {
+        return new Blob([smaller])
+      }
+    }
+    const evaluated: string[] = []
+    let launches = 0
+    const stand: ShrinkPage = {
+      evaluate: async (fn, arg) => {
+        evaluated.push(fn.name)
+        return fn(arg)
+      },
+      close: async () => {},
+    }
+    const shrinker = browserFigureShrinker({} as never, async () => {
+      launches++
+      return { newPage: async () => stand, close: async () => {} }
+    })
+    try {
+      const out = await shrinker.shrink({
+        path: "/fig/wide.png",
+        bytes: figure,
+        maxSide: 1600,
+        quality: 82,
+      })
+      expect(Buffer.from(out ?? new Uint8Array()).equals(Buffer.from(smaller))).toBe(true)
+      expect(drawn).toEqual([1600, 800])
+      // 900 KB went over in three slices.
+      expect(evaluated.filter((name) => name === "pageReceive")).toHaveLength(3)
+      // Never sent: a format it does not re-encode, and a figure over 80 megapixels.
+      view.setUint32(16, 20_000)
+      view.setUint32(20, 20_000)
+      const huge = new Uint8Array(1024)
+      huge.set(header)
+      const sent = evaluated.length
+      expect(
+        await shrinker.shrink({ path: "/fig/plot.gif", bytes: figure, maxSide: 1600, quality: 82 }),
+      ).toBeNull()
+      expect(
+        await shrinker.shrink({ path: "/fig/huge.png", bytes: huge, maxSide: 1600, quality: 82 }),
+      ).toBeNull()
+      expect(evaluated).toHaveLength(sent)
+      expect(launches).toBe(1)
+      expect(shrinker.unavailable).toBe(false)
+    } finally {
+      await shrinker.close()
+      page.createImageBitmap = saved.bitmap
+      page.OffscreenCanvas = saved.canvas
+    }
   })
 })

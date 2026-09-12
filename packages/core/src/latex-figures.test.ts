@@ -163,4 +163,38 @@ describe("fitBundleBytes", () => {
     expect(r.files["/a.png"]).toEqual({ key: "shrunk-3", size: 256 * KB })
     expect(r.files["/c.jpeg"]).toBe(input["/c.jpeg"])
   })
+
+  it("never loads a figure too large for the codec, reports each figure it tries, and stops when out of time", async () => {
+    const seen: string[] = []
+    const shrink: FigureShrinker = async (x) => {
+      seen.push(x.path)
+      return proportional(x)
+    }
+    let reported = 0
+    const r = await fitBundleBytes(
+      { "/huge.png": kb(3000), "/a.png": kb(900), "/b.png": kb(800) },
+      {
+        cap: 1000 * KB,
+        shrink,
+        concurrency: 1,
+        maxInputBytes: 2000 * KB,
+        onFigure: async () => {
+          reported++
+        },
+      },
+    )
+    // The 3 MB figure never reaches the codec, so the rest shrink in vain beside it.
+    expect(seen).not.toContain("/huge.png")
+    expect(seen.length).toBeGreaterThan(0)
+    expect(reported).toBe(seen.length)
+    expect(r).toMatchObject({ fits: false, stopped: false })
+    // Out of time before the first figure: nothing is tried, and the result says why.
+    seen.length = 0
+    const late = await fitBundleBytes(
+      { "/a.png": kb(900), "/b.png": kb(800) },
+      { cap: 1000 * KB, shrink, outOfTime: () => true },
+    )
+    expect(late).toMatchObject({ fits: false, shrunk: 0, stopped: true })
+    expect(seen).toEqual([])
+  })
 })

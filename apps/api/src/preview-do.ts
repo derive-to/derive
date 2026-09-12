@@ -12,6 +12,7 @@ import { tickStore } from "./edge-pg"
 import { runExportTick } from "./exports"
 import { runImportTick } from "./imports"
 import { EDGE_IMPORT_CAPS } from "./lib/arxiv-import"
+import { browserFigureShrinker } from "./lib/image-shrink-cf"
 import { EDGE_REPO_CAPS } from "./lib/repo-fetch"
 import { log } from "./log"
 import { cfBrowserRenderer } from "./preview-cf"
@@ -191,6 +192,9 @@ export class PreviewRenderer {
   private async importAlarm(): Promise<void> {
     if (!runsImports("imports", this.env)) return
     let close = async () => {}
+    // Figures are shrunk in a browser, opened only once a source needs it and closed with
+    // the pass.
+    const shrinker = this.env.BROWSER ? browserFigureShrinker(this.env.BROWSER) : null
     try {
       const opened = tickStore(this.env)
       close = opened.close
@@ -210,11 +214,12 @@ export class PreviewRenderer {
         notifyRender: async (a, n) => {
           await enqueueRender(opened.store, a.id, n).catch(() => undefined)
         },
-        // No `search` and no `shrink` here, unlike the Node tick. Both are real gaps on
-        // this tier: an imported paper never enters workspace search, and an oversized
-        // source is refused rather than fitted. Wiring search needs a pgvector store on
-        // the alarm's own connection rather than the request-scoped pool, which is the
-        // plumbing a past outage came from, so it is deliberately left to its own change.
+        // No `search` here, unlike the Node tick: an imported paper never enters workspace
+        // search on this tier. Wiring it needs a pgvector store on the alarm's own
+        // connection rather than the request-scoped pool, which is the plumbing a past
+        // outage came from, so it is deliberately left to its own change.
+        shrink: shrinker?.shrink ?? null,
+        shrinkUnavailable: () => shrinker?.unavailable ?? false,
         caps: EDGE_IMPORT_CAPS,
         repoCaps: EDGE_REPO_CAPS,
         addressGuard: edgeGuard,
@@ -226,6 +231,7 @@ export class PreviewRenderer {
       })
       await this.state.storage.setAlarm(Date.now() + TICK_MS)
     } finally {
+      await shrinker?.close()
       await close()
     }
   }

@@ -98,8 +98,8 @@ the limit, the raster figures (PNG, JPEG, WebP) are re-encoded in place, largest
 to at most 1600 px on the long side, then 1200, then 900, until the bundle fits; a
 figure keeps its path and format, so every reference still resolves, and the manifest's
 Import notes say what was shrunk and by how much. PDF and EPS figures are never touched;
-a source that still does not fit fails naming its largest files. Workers deployments do
-not shrink and refuse an oversized source as before. A paper arXiv holds only as a PDF,
+a source that still does not fit fails naming its largest files. Workers deployments shrink
+the same way in a headless browser, one figure at a time. A paper arXiv holds only as a PDF,
 one whose source has no document, one that was withdrawn or one arXiv does not know fails
 at once with a reason; arXiv being slow or away is retried three times. A failed import can be tried again from its console, or
 discarded, which removes the Context and its generated manifest (a paper already

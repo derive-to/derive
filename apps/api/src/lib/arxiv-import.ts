@@ -72,6 +72,9 @@ const METADATA_TIMEOUT_MS = 10_000
  *  source is still arriving long after a minute. */
 const SOURCE_TIMEOUT_MS = 60_000
 const SOURCE_DEADLINE_MS = 5 * 60_000
+/** The longest a source's figures may spend in the codec. Past it, what still does not fit
+ *  is refused: another attempt would run out of time the same way. */
+const SHRINK_BUDGET_MS = 10 * 60_000
 const MB = 1024 * 1024
 
 export interface ImportCaps {
@@ -93,6 +96,10 @@ export interface ImportCaps {
   maxFileBytes?: number
   /** The paper's text files, which planning reads, held in memory. Default 8 MB. */
   textBytes?: number
+  /** How many figures are in the codec at once. Default 4. */
+  shrinkConcurrency?: number
+  /** A figure larger than this is never loaded for the codec. Default: no limit. */
+  shrinkInputBytes?: number
 }
 
 const streamLimits = (caps: ImportCaps) => ({
@@ -104,8 +111,9 @@ const streamLimits = (caps: ImportCaps) => ({
 
 /** Both tiers stream a source into storage as it inflates, so neither holds the paper. What
  *  one holds is a file read whole, the text planning reads, and the bytes on their way to
- *  storage: the Node tier can afford more of each, and shrinks figures; the edge worker runs
- *  in a 128 MB isolate with no image codec. Both publish up to the same ceiling. */
+ *  storage. The Node tier can afford more of each and shrinks figures with sharp; the edge
+ *  worker runs in a 128 MB isolate and shrinks them in a browser, one figure at a time and
+ *  none it could not afford to hold. Both publish up to the same ceiling. */
 export const NODE_IMPORT_CAPS: ImportCaps = {
   compressedBytes: 150 * MB,
   inflatedBytes: 200 * MB,
@@ -120,6 +128,8 @@ export const EDGE_IMPORT_CAPS: ImportCaps = {
   inflatedBytes: 150 * MB,
   bundleBytes: MAX_IMPORTED_PAPER_BYTES,
   files: 2000,
+  shrinkConcurrency: 1,
+  shrinkInputBytes: 32 * MB,
 }
 
 const mb = (n: number): string => `${(n / 1048576).toFixed(1)} MB`
@@ -227,9 +237,12 @@ export interface ImportDeps {
   repoCaps?: RepoCaps | null
   /** Delivery-time address check for repository archives. */
   addressGuard?: RepoFetchDeps["addressGuard"]
-  /** The figure codec (sharp on Node); absent on the edge, where an oversized source is
-   *  refused instead of shrunk. */
+  /** The figure codec: sharp on Node, a headless browser on the Workers tier. Absent where
+   *  there is none, and an oversized source is then refused instead of shrunk. */
   shrink?: FigureShrinker | null
+  /** Whether the codec could not be used during this run: a source that then does not fit
+   *  is retried later rather than refused for its size. */
+  shrinkUnavailable?: () => boolean
   /** Hand the upstream request gate back as soon as the last arXiv request is done, so
    *  shrinking and publishing (which need no request) never keep other imports waiting. */
   releaseGate?: () => Promise<void>
@@ -980,16 +993,28 @@ export const importArxivPaper = async (
       // 4. Fit the bundle under what Derive publishes, shrinking raster figures if needed.
       // The citation is published beside the source, so the source gets the rest of the room.
       const cited = new TextEncoder().encode(citation.bibtex)
+      const shrinkingFrom = deps.now()
       const fitted = await fitBundleBytes(normalized.files, {
         cap: deps.caps.bundleBytes - cited.byteLength,
         shrink: deps.shrink ?? null,
         store: sourceStore(blobs),
+        concurrency: deps.caps.shrinkConcurrency,
+        maxInputBytes: deps.caps.shrinkInputBytes,
+        onFigure: deps.heartbeat,
+        outOfTime: () => deps.now() - shrinkingFrom > SHRINK_BUDGET_MS,
       })
       if (!fitted.fits) {
+        // The codec could not be used just now: that is a mood, not the paper's size.
+        if (deps.shrinkUnavailable?.())
+          throw new ImportFailure(
+            "unavailable",
+            "the figures could not be shrunk right now: the figure codec is unavailable",
+            false,
+          )
         const biggest = fitted.largest.map((f) => `${f.path.slice(1)} (${mb(f.bytes)})`).join(", ")
         throw new ImportFailure(
           "too_large",
-          `${mb(fitted.after)}${fitted.shrunk ? ` after shrinking ${fitted.shrunk} figures` : ""}; largest: ${biggest}`,
+          `${mb(fitted.after)}${fitted.shrunk ? ` after shrinking ${fitted.shrunk} figures` : ""}${fitted.stopped ? ", out of time to shrink more" : ""}; largest: ${biggest}`,
           true,
         )
       }
