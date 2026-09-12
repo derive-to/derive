@@ -1,4 +1,4 @@
-import { tarSync } from "@derive/core"
+import { type BlobStore, tarSync } from "@derive/core"
 import { gzipSync, zipSync } from "fflate"
 import { beforeAll, describe, expect, it } from "vitest"
 import { createInProcessBackplane, type DeriveEvent } from "../src/bus"
@@ -2082,9 +2082,9 @@ describe("contexts: import from arXiv", () => {
     const created = await (await importPaper(app, "2406.00005")).json()
     // arXiv's gate holds every worker for the interval after a request, so each tick
     // below waits it out the way a real deployment's next tick would.
-    const tick = async () => {
+    const tick = async (blobs: BlobStore = ctx.blobs) => {
       c.advance(ARXIV_REQUEST_INTERVAL_MS + 1)
-      return await runImportTick(tickDeps())
+      return await runImportTick({ ...tickDeps(), blobs })
     }
     expect(await tick()).toBe(1)
 
@@ -2096,12 +2096,15 @@ describe("contexts: import from arXiv", () => {
       const v = paper ? await meta.getVersion(paper.id, paper.current_version) : null
       const manifest = JSON.parse(
         new TextDecoder().decode((await ctx.blobs.get(v?.blob_key ?? "")) ?? undefined),
-      )
-      return { detail, version: v, paths: Object.keys(manifest.files).sort() }
+      ) as { files: Record<string, { key: string; size: number }> }
+      return { detail, version: v, manifest, paths: Object.keys(manifest.files).sort() }
     }
     const imported = await filesOf()
     expect(imported.paths.some((p: string) => p.startsWith("/code/"))).toBe(false)
     expect(imported.detail.import.code).toBeNull()
+    // The manifest records each file's size, which is what lets the paper travel by key.
+    const figure = imported.manifest.files["/fig/a.png"]
+    expect(figure?.size).toBe(PNG.byteLength)
 
     // Attach it afterwards: the paper is not fetched again, only its metadata is.
     const before = stub.calls.length
@@ -2120,8 +2123,19 @@ describe("contexts: import from arXiv", () => {
     // report itself as being fetched from arXiv again: only `code.status` is pending.
     expect(attached.import.status).toBe("ready")
     expect(attached.import.error).toBeNull()
-    expect(await tick()).toBe(1)
+    // Nor is the paper read back from storage: it is published again by key, so attaching
+    // the code never loads the figure it sits beside.
+    const reads: string[] = []
+    const counting: BlobStore = {
+      put: (data) => ctx.blobs.put(data),
+      get: (key) => {
+        reads.push(key)
+        return ctx.blobs.get(key)
+      },
+    }
+    expect(await tick(counting)).toBe(1)
     expect(stub.calls.slice(before).filter((u) => u.includes("/src/"))).toEqual([])
+    expect(reads).not.toContain(figure?.key)
 
     const withCode = await filesOf()
     expect(withCode.paths).toContain("/code/train.py")
@@ -2129,6 +2143,10 @@ describe("contexts: import from arXiv", () => {
     expect(withCode.detail.description).toContain("Ashish Vaswani, Noam Shazeer")
     expect(withCode.version?.message).toContain("Attached github.com/o/r")
     expect(withCode.version?.author).toBe("Ashish Vaswani, Noam Shazeer")
+    // The version measures what its manifest holds, the files carried by key included.
+    expect(withCode.version?.size_bytes).toBe(
+      Object.values(withCode.manifest.files).reduce((n, f) => n + f.size, 0),
+    )
 
     // Attaching the SAME repository again is not a change: the job runs, sees the link it
     // already fetched, and leaves the paper on the version it is on.

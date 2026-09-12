@@ -541,8 +541,6 @@ const attachImplementation = async (
   ctx: ContextRecord,
   paper: ArtifactRecord,
   actor: { agentId: string | null; agentName: string | null },
-  /** The paper's files, when this run has just published them. */
-  fresh: Record<string, Uint8Array> | null,
 ): Promise<void> => {
   const { meta, blobs } = deps
   const stamp = (fields: Parameters<MetaStore["updateImportJob"]>[1]) => writeJob(deps, job, fields)
@@ -582,17 +580,13 @@ const attachImplementation = async (
   // Whatever the paper already holds, minus any code from an earlier attachment: a
   // replaced link must not leave the previous repository's files behind, and a removed
   // one must leave none at all.
-  const paperFiles = Object.fromEntries(
-    Object.entries(fresh ?? (await materializeBundle(blobs, manifest))).filter(
-      ([path]) => !isCodePath(path),
-    ),
-  )
+  const paperContent = await ownFiles(blobs, manifest)
 
   // The link was removed. Publish the paper on its own again, so the code stops being
   // readable the moment the person says it should.
   if (!repoRef) {
     if (hadCode)
-      await republishPaper(deps, paper, manifest, paperFiles, actor, "Removed the implementation")
+      await republishPaper(deps, paper, manifest, paperContent, actor, "Removed the implementation")
     if (live.code_status || hadCode)
       await stamp({ code_status: null, code_error: null, code_ref: null })
     return
@@ -630,10 +624,9 @@ const attachImplementation = async (
     bytes: Math.min(MAX_BUNDLE_UNZIPPED_BYTES_WITH_CODE, deps.caps.bundleBytes * 2),
     files: Math.min(MAX_BUNDLE_FILES_WITH_CODE, deps.caps.files * 2),
   }
-  const paperBytes = Object.values(paperFiles).reduce((n, f) => n + f.byteLength, 0)
   const fitted = fitRepoBytes(fetched.files, {
-    cap: Math.max(0, withCode.bytes - paperBytes),
-    maxFiles: Math.max(0, withCode.files - Object.keys(paperFiles).length),
+    cap: Math.max(0, withCode.bytes - contentBytes(paperContent)),
+    maxFiles: Math.max(0, withCode.files - contentCount(paperContent)),
   })
   if (!fitted.fits) {
     await stamp({
@@ -657,7 +650,7 @@ const attachImplementation = async (
     deps,
     paper,
     manifest,
-    { ...paperFiles, ...fitted.files },
+    { files: { ...paperContent.files, ...fitted.files }, stored: paperContent.stored },
     actor,
     message,
     withCode,
@@ -670,13 +663,44 @@ const attachImplementation = async (
   })
 }
 
-/** Publish the paper's artifact again with exactly these files. Used by both sides of an
+/** What a paper's artifact is published with: files held in memory, and files already in
+ *  the blob store, carried by key. */
+interface BundleContent {
+  files: Record<string, Uint8Array>
+  stored: Record<string, { key: string; size: number }>
+}
+
+const contentBytes = (c: BundleContent): number =>
+  Object.values(c.files).reduce((n, f) => n + f.byteLength, 0) +
+  Object.values(c.stored).reduce((n, f) => n + f.size, 0)
+
+const contentCount = (c: BundleContent): number =>
+  Object.keys(c.files).length + Object.keys(c.stored).length
+
+/** A published paper's own files, never its /code/: by key when its manifest records every
+ *  file's size, so publishing it again reads nothing back; read from the store when the
+ *  manifest predates that (a paper imported before sizes were recorded, 50 MB at most). */
+const ownFiles = async (blobs: BlobStore, manifest: BundleManifest): Promise<BundleContent> => {
+  const own = Object.entries(manifest.files).filter(([path]) => !isCodePath(path))
+  const stored: BundleContent["stored"] = {}
+  for (const [path, file] of own) {
+    if (file.size === undefined)
+      return {
+        files: await materializeBundle(blobs, { ...manifest, files: Object.fromEntries(own) }),
+        stored: {},
+      }
+    stored[path] = { key: file.key, size: file.size }
+  }
+  return { files: {}, stored }
+}
+
+/** Publish the paper's artifact again with exactly this content. Used by both sides of an
  *  attachment: adding a repository, and taking one away. */
 const republishPaper = async (
   deps: ImportDeps,
   paper: ArtifactRecord,
   manifest: BundleManifest,
-  files: Record<string, Uint8Array>,
+  content: BundleContent,
   actor: { agentId: string | null; agentName: string | null },
   message: string,
   caps?: { files: number; bytes: number },
@@ -691,7 +715,8 @@ const republishPaper = async (
       bytes: new Uint8Array(),
       filename: "paper.zip",
       isBundle: true,
-      files,
+      files: content.files,
+      stored: content.stored,
       // The paper stays the document: without this the entry is re-picked over the merged
       // paths and a README or an HTML page inside the repository could take it.
       entry: manifest.entry,
@@ -754,9 +779,6 @@ export const importArxivPaper = async (
 
   // 2. The source. A reclaimed job that already published the paper skips this.
   let paper = job.paper_artifact_id ? await meta.getArtifactById(job.paper_artifact_id) : null
-  /** The paper's files when this run published them, so attaching code below does not
-   *  read back what it just wrote. */
-  let paperFiles: Record<string, Uint8Array> | null = null
   const notes: string[] = []
   let fetchedBibtex: string | null = null
   if (!paper) {
@@ -823,10 +845,6 @@ export const importArxivPaper = async (
       // What the import decided rides on the version, where a reader meets it as history
       // rather than as a second document to read.
       const message = truncate([`Imported from arXiv:${ref.canonical}`, ...notes].join(" · "), 500)
-      paperFiles = {
-        ...fitted.files,
-        [CITATION_PATH]: new TextEncoder().encode(citation.bibtex),
-      }
       const published = await publish(
         meta,
         blobs,
@@ -834,7 +852,7 @@ export const importArxivPaper = async (
           bytes: new Uint8Array(),
           filename: `${ref.id.replace(/\//g, "_")}.zip`,
           isBundle: true,
-          files: paperFiles,
+          files: { ...fitted.files, [CITATION_PATH]: new TextEncoder().encode(citation.bibtex) },
           entry: normalized.entry,
           title,
           author: truncate(
@@ -870,7 +888,7 @@ export const importArxivPaper = async (
 
   // 5. The implementation, when the Context names one. Never fails the paper.
   ctx = await liveContext(deps, job)
-  await attachImplementation(deps, job, ctx, paper, actor, paperFiles)
+  await attachImplementation(deps, job, ctx, paper, actor)
 
   // 6. The Context takes the paper's name.
   ctx = await liveContext(deps, job)

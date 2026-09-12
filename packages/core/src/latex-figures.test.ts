@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest"
-import { type FigureShrinker, fitBundleBytes, MIN_SHRINK_BYTES } from "./latex-figures"
+import {
+  type FigureShrinker,
+  type FigureStore,
+  fitBundleBytes,
+  MIN_SHRINK_BYTES,
+} from "./latex-figures"
 
 // Sizes in KB throughout: the policy ignores figures under 64 KB, so the fixtures sit well
 // above it and the arithmetic stays readable.
@@ -117,5 +122,45 @@ describe("fitBundleBytes", () => {
     // element by element.
     expect(Object.keys(edge.files)).toEqual(Object.keys(files))
     for (const [path, data] of Object.entries(files)) expect(edge.files[path]).toBe(data)
+  })
+
+  it("works over stored figures, reading only the ones it re-encodes", async () => {
+    // An import that streamed the source into the blob store holds references: the policy
+    // chooses from their sizes and loads a figure only to hand it to the codec.
+    type Stored = { key: string; size: number }
+    const blobs = new Map<string, Uint8Array>([
+      ["a", kb(900)],
+      ["b", kb(700)],
+      ["c", kb(300)],
+    ])
+    const loaded: string[] = []
+    const store: FigureStore<Stored> = {
+      size: (f) => f.size,
+      load: async (f) => {
+        loaded.push(f.key)
+        return blobs.get(f.key) ?? null
+      },
+      save: async (bytes) => {
+        const key = `shrunk-${blobs.size}`
+        blobs.set(key, bytes)
+        return { key, size: bytes.byteLength }
+      },
+    }
+    const input: Record<string, Stored> = {
+      "/a.png": { key: "a", size: 900 * KB },
+      "/b.jpg": { key: "b", size: 700 * KB },
+      "/c.jpeg": { key: "c", size: 300 * KB },
+    }
+    const r = await fitBundleBytes(input, {
+      cap: 1200 * KB,
+      shrink: proportional,
+      concurrency: 1,
+      store,
+    })
+    // 1900 → a: 256 (1256) → b: 256 (812) fits; c is never read.
+    expect(r).toMatchObject({ fits: true, shrunk: 2, after: 812 * KB })
+    expect(loaded).toEqual(["a", "b"])
+    expect(r.files["/a.png"]).toEqual({ key: "shrunk-3", size: 256 * KB })
+    expect(r.files["/c.jpeg"]).toBe(input["/c.jpeg"])
   })
 })

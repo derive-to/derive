@@ -292,7 +292,7 @@ export const fetchRepository = async (
         notes.push(`stopped reading ${ref.canonical} at the import's working budget`)
         return
       }
-      files.push({ path, bytes: entry.data, text })
+      files.push({ path, size: entry.data.byteLength, text, ref: entry.data })
       totalBytes += entry.data.byteLength
     }
     if (!gitmodules) return

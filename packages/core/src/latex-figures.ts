@@ -13,6 +13,9 @@
  * This module is the policy: which files, in what order, to what size, when to stop. The
  * codec is injected (`FigureShrinker`), because the domain kernel has no image library
  * and the Workers tier cannot run one; without a shrinker the pass is only the size check.
+ * So is where the figures are (`FigureStore`): the policy chooses from sizes alone, and
+ * reads a figure only to hand it to the codec, so a caller that keeps its files in the
+ * blob store never holds more of them than the codec is working on.
  * A shrunk figure keeps its path and its format: the renderer resolves a figure by its
  * exact path when the reference carries an extension, so a rename would lose the figure.
  */
@@ -30,6 +33,14 @@ export interface FigureShrinkInput {
  *  bytes could not be read, the format is not one the tool re-encodes, or the tool is
  *  unavailable. A result larger than the input is discarded by the caller. */
 export type FigureShrinker = (input: FigureShrinkInput) => Promise<Uint8Array | null>
+
+/** Where the bundle's files are, when the caller does not hold them: how big each is, how
+ *  to read one for the codec, and how to keep what the codec returns. */
+export interface FigureStore<F> {
+  size(file: F): number
+  load(file: F): Promise<Uint8Array | null>
+  save(bytes: Uint8Array): Promise<F>
+}
 
 /** The formats the page renders and a codec re-encodes in place. GIF may be animated,
  *  SVG is vector, TIFF and BMP never render, PDF and EPS cannot be opened: all untouched. */
@@ -62,8 +73,8 @@ export interface FitBundleOptions {
   concurrency?: number
 }
 
-export interface FitBundleResult {
-  files: Record<string, Uint8Array>
+export interface FitBundleResult<F = Uint8Array> {
+  files: Record<string, F>
   fits: boolean
   /** Total bytes before and after. */
   before: number
@@ -79,8 +90,12 @@ export interface FitBundleResult {
 }
 
 const mb = (n: number): string => `${(n / 1048576).toFixed(1)} MB`
-const total = (files: Record<string, Uint8Array>): number =>
-  Object.values(files).reduce((n, f) => n + f.byteLength, 0)
+
+const BYTES: FigureStore<Uint8Array> = {
+  size: (bytes) => bytes.byteLength,
+  load: async (bytes) => bytes,
+  save: async (bytes) => bytes,
+}
 
 /** Run `work` over `items` with at most `limit` in flight, in order of start. */
 const pooled = async <T>(
@@ -101,17 +116,31 @@ const pooled = async <T>(
 /**
  * Shrink the bundle's raster figures until it fits the cap, or say what still does not.
  * Files under the cap come back untouched; over it, each pass re-encodes the largest
- * figures first and stops the moment the total is under the cap.
+ * figures first and stops the moment the total is under the cap. Files held elsewhere
+ * need a `store`.
  */
-export const fitBundleBytes = async (
+export function fitBundleBytes(
   input: Record<string, Uint8Array>,
   opts: FitBundleOptions,
-): Promise<FitBundleResult> => {
+): Promise<FitBundleResult>
+export function fitBundleBytes<F>(
+  input: Record<string, F>,
+  opts: FitBundleOptions & { store: FigureStore<F> },
+): Promise<FitBundleResult<F>>
+export async function fitBundleBytes<F>(
+  input: Record<string, F>,
+  opts: FitBundleOptions & { store?: FigureStore<F> },
+): Promise<FitBundleResult<F>> {
+  const store = opts.store ?? (BYTES as unknown as FigureStore<F>)
   const files = { ...input }
-  const before = total(files)
+  const sizeAt = (path: string): number => {
+    const file = files[path]
+    return file === undefined ? 0 : store.size(file)
+  }
+  const before = Object.keys(files).reduce((n, path) => n + sizeAt(path), 0)
   const largest = () =>
-    Object.entries(files)
-      .map(([path, data]) => ({ path, bytes: data.byteLength }))
+    Object.keys(files)
+      .map((path) => ({ path, bytes: sizeAt(path) }))
       .sort((a, b) => b.bytes - a.bytes)
       .slice(0, 3)
   if (before <= opts.cap)
@@ -134,23 +163,25 @@ export const fitBundleBytes = async (
     for (let i = 0; i < passes.length && after > opts.cap; i++) {
       const p = passes[i] as FigurePass
       const candidates = Object.keys(files)
-        .filter(
-          (path) => RASTER_FIGURE.test(path) && (files[path]?.byteLength ?? 0) >= MIN_SHRINK_BYTES,
-        )
-        .sort((a, b) => (files[b]?.byteLength ?? 0) - (files[a]?.byteLength ?? 0))
+        .filter((path) => RASTER_FIGURE.test(path) && sizeAt(path) >= MIN_SHRINK_BYTES)
+        .sort((a, b) => sizeAt(b) - sizeAt(a))
       await pooled(candidates, opts.concurrency ?? 4, async (path) => {
         if (after <= opts.cap) return
         const current = files[path]
-        if (!current) return
+        if (current === undefined) return
+        const size = store.size(current)
         let result: Uint8Array | null
         try {
-          result = await shrink({ path, bytes: current, maxSide: p.maxSide, quality: p.quality })
+          const bytes = await store.load(current)
+          result = bytes
+            ? await shrink({ path, bytes, maxSide: p.maxSide, quality: p.quality })
+            : null
         } catch {
           result = null
         }
-        if (!result || result.byteLength >= current.byteLength) return
-        after -= current.byteLength - result.byteLength
-        files[path] = result
+        if (!result || result.byteLength >= size) return
+        after -= size - result.byteLength
+        files[path] = await store.save(result)
         shrunkPaths.add(path)
       })
       if (after <= opts.cap) pass = i

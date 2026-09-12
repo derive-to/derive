@@ -4989,7 +4989,10 @@ export interface CommentListOpts {
 export interface BundleManifest {
   entry: string
   spa: boolean
-  files: Record<string, { key: string; type: string }>
+  /** Each file's blob key and content type, and its size in bytes on bundles published
+   *  since manifests recorded it: what lets a bundle be published again by key without
+   *  reading its files back. */
+  files: Record<string, { key: string; type: string; size?: number }>
 }
 
 export const BUNDLE_CONTENT_TYPE = "derive/bundle"

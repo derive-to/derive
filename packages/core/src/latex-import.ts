@@ -9,8 +9,11 @@
  * way the PDF did, without renaming anything the authors wrote. Every decision it makes
  * is returned as a note for the import record.
  *
- * Everything here works on bytes: figures are binary and must reach the bundle untouched,
- * so only the `.tex` candidates are decoded, and only to be read.
+ * Every decision needs only the paths, the sizes, and the bytes of a few text files: the
+ * `.tex` candidates and arXiv's 00README, decoded only to be read. So the planner works
+ * over whatever the caller holds (`planLatexSource`): the files themselves, or references
+ * to files an import already streamed into the blob store. Figures are never read, and
+ * reach the bundle untouched.
  */
 
 import { isLatexDocument } from "./latex"
@@ -26,6 +29,24 @@ export interface NormalizedLatexSource {
   notes: string[]
 }
 
+/** The same decisions over files the caller does not hold in memory. */
+export interface LatexSourcePlan<F> {
+  ok: true
+  files: Record<string, F>
+  entry: string
+  notes: string[]
+  /** Text files to transcode from latin-1 to UTF-8 before publishing, by bundle path. The
+   *  planner decides; the caller holds the bytes. Empty unless the entry declares latin-1. */
+  transcode: string[]
+}
+
+/** How the planner sees a file: its size, and the bytes of a file it reads (see
+ *  `readsLatexText`), or null when the caller did not keep them. */
+export interface LatexSourceView<F> {
+  size(file: F): number
+  text(file: F): Uint8Array | null
+}
+
 export type LatexImportRefusalCode = "no_tex"
 
 export interface LatexImportRefusal {
@@ -36,19 +57,31 @@ export interface LatexImportRefusal {
 
 const TEX = /\.(tex|latex)$/i
 const TEXT_FOR_TRANSCODE = /\.(tex|latex|bib|bbl|sty|cls)$/i
+const README = /(^|\/)00README\.(json|XXX)$/
 /** Root files that would hijack the bundle's entry or its type (see pickBundleEntry). */
 const RESERVED_ROOT = new Set(["/index.html", "/SKILL.md", "/MANIFEST.md"])
 
 const utf8 = new TextDecoder()
 const latin1 = new TextDecoder("latin1")
+const EMPTY = new Uint8Array()
+
+/** Whether planning a source, or the transcoding a plan may ask for, needs this file's
+ *  bytes. An import streaming an archive keeps these in memory and everything else by
+ *  reference. */
+export const readsLatexText = (path: string): boolean =>
+  TEXT_FOR_TRANSCODE.test(path) || README.test(path)
 
 const basename = (path: string): string => path.slice(path.lastIndexOf("/") + 1)
 const stripExt = (name: string): string => name.replace(TEX, "")
 
 /** `00README.XXX` (`<file> toplevelfile`) or `00README.json` (`usage: "toplevel"`), the
  *  files arXiv's own build reads to find the paper. */
-const readmeToplevel = (files: Record<string, Uint8Array>): string | null => {
-  const json = files["/00README.json"]
+const readmeToplevel = <F>(files: Record<string, F>, view: LatexSourceView<F>): string | null => {
+  const read = (path: string): Uint8Array | null => {
+    const file = files[path]
+    return file === undefined ? null : view.text(file)
+  }
+  const json = read("/00README.json")
   if (json) {
     try {
       const parsed = JSON.parse(utf8.decode(json)) as {
@@ -60,7 +93,7 @@ const readmeToplevel = (files: Record<string, Uint8Array>): string | null => {
       // Not the documented shape; fall through to the text form and the sniff.
     }
   }
-  const xxx = files["/00README.XXX"]
+  const xxx = read("/00README.XXX")
   if (xxx) {
     for (const line of utf8.decode(xxx).split(/\r?\n/)) {
       const m = /^(\S+)\s+toplevelfile\s*$/.exec(line.trim())
@@ -73,14 +106,15 @@ const readmeToplevel = (files: Record<string, Uint8Array>): string | null => {
 const INPUT_MACRO = /\\(?:input|include|subfile|import)\s*\{([^}]+)\}/g
 
 /**
- * Normalise an unpacked source archive into bundle files plus the entry to render.
- * Refuses (`no_tex`) when nothing in it is a LaTeX document.
+ * Plan an unpacked source archive: which files the bundle holds, by bundle path, and the
+ * entry to render. Refuses (`no_tex`) when nothing in it is a LaTeX document.
  */
-export const normalizeLatexSource = (
-  raw: Record<string, Uint8Array>,
-): NormalizedLatexSource | LatexImportRefusal => {
+export const planLatexSource = <F>(
+  raw: Record<string, F>,
+  view: LatexSourceView<F>,
+): LatexSourcePlan<F> | LatexImportRefusal => {
   const notes: string[] = []
-  let files: Record<string, Uint8Array> = {}
+  let files: Record<string, F> = {}
   for (const [name, data] of Object.entries(raw)) {
     const path = cleanPath(name)
     if (!path) continue
@@ -98,7 +132,7 @@ export const normalizeLatexSource = (
     notes.push(`unwrapped the top-level directory ${root}/`)
   }
   for (const reserved of RESERVED_ROOT) {
-    if (files[reserved]) {
+    if (files[reserved] !== undefined) {
       delete files[reserved]
       notes.push(`dropped ${reserved.slice(1)}, which would have replaced the paper as the entry`)
     }
@@ -106,26 +140,32 @@ export const normalizeLatexSource = (
 
   const texPaths = Object.keys(files).filter((p) => TEX.test(p))
   if (texPaths.length === 0) return { ok: false, code: "no_tex", detail: "no .tex file" }
+  const sizeOf = (p: string): number => {
+    const file = files[p]
+    return file === undefined ? 0 : view.size(file)
+  }
   const texts = new Map<string, string>()
   const textOf = (p: string): string => {
     let t = texts.get(p)
     if (t === undefined) {
-      t = utf8.decode(files[p] ?? new Uint8Array())
+      const file = files[p]
+      t = utf8.decode((file === undefined ? null : view.text(file)) ?? EMPTY)
       texts.set(p, t)
     }
     return t
   }
 
   let entry: string | null = null
-  const declared = readmeToplevel(files)
+  const declared = readmeToplevel(files, view)
   if (declared) {
     const path = cleanPath(declared)
-    if (path && files[path] && TEX.test(path)) {
+    if (path && files[path] !== undefined && TEX.test(path)) {
       entry = path
       notes.push(`entry ${path.slice(1)} named by the archive's 00README`)
     }
   }
-  if (!entry && files["/main.tex"] && isLatexDocument(textOf("/main.tex"))) entry = "/main.tex"
+  if (!entry && files["/main.tex"] !== undefined && isLatexDocument(textOf("/main.tex")))
+    entry = "/main.tex"
   if (!entry) {
     const documents = texPaths.filter((p) => isLatexDocument(textOf(p)))
     // A document another file pulls in is a part, not the paper.
@@ -141,7 +181,7 @@ export const normalizeLatexSource = (
     const score = (p: string): [number, number, number] => [
       /^[ \t]*\\begin\{document\}/m.test(textOf(p)) ? 0 : 1,
       p.split("/").length,
-      -(files[p]?.byteLength ?? 0),
+      -sizeOf(p),
     ]
     pool.sort((a, b) => {
       const sa = score(a)
@@ -157,21 +197,38 @@ export const normalizeLatexSource = (
   // otherwise ships `<entry>.bbl`, so make it findable without touching the original.
   const entryBbl = `${entry.replace(TEX, "")}.bbl`
   const bbl = files[entryBbl]
-  if (!files["/main.bbl"] && entryBbl !== "/main.bbl" && bbl) {
+  if (files["/main.bbl"] === undefined && entryBbl !== "/main.bbl" && bbl !== undefined) {
     files["/main.bbl"] = bbl
     notes.push(`copied ${entryBbl.slice(1)} to main.bbl for the bibliography`)
   }
 
-  // Older sources declare latin-1; the renderer decodes UTF-8, so transcode the text
-  // files (figures and everything binary stay as shipped).
+  // Older sources declare latin-1; the renderer decodes UTF-8, so the text files are
+  // transcoded (figures and everything binary stay as shipped).
+  let transcode: string[] = []
   if (/\\usepackage\s*\[\s*latin[19]\s*\]\s*\{inputenc\}/.test(textOf(entry))) {
-    const enc = new TextEncoder()
-    for (const [p, d] of Object.entries(files)) {
-      if (!TEXT_FOR_TRANSCODE.test(p)) continue
-      files[p] = enc.encode(latin1.decode(d))
-    }
+    transcode = Object.keys(files).filter((p) => TEXT_FOR_TRANSCODE.test(p))
     notes.push("transcoded the text files from latin-1 to UTF-8")
   }
 
-  return { ok: true, files, entry, notes }
+  return { ok: true, files, entry, notes, transcode }
+}
+
+const BYTES: LatexSourceView<Uint8Array> = { size: (b) => b.byteLength, text: (b) => b }
+
+/**
+ * Normalise an unpacked source archive held in memory into bundle files plus the entry to
+ * render: the plan, with its transcoding applied. Refuses (`no_tex`) when nothing in it is
+ * a LaTeX document.
+ */
+export const normalizeLatexSource = (
+  raw: Record<string, Uint8Array>,
+): NormalizedLatexSource | LatexImportRefusal => {
+  const plan = planLatexSource(raw, BYTES)
+  if (!plan.ok) return plan
+  const enc = new TextEncoder()
+  for (const p of plan.transcode) {
+    const d = plan.files[p]
+    if (d) plan.files[p] = enc.encode(latin1.decode(d))
+  }
+  return { ok: true, files: plan.files, entry: plan.entry, notes: plan.notes }
 }

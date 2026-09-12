@@ -4,8 +4,9 @@ import { fitRepoBytes, type RepoFile } from "./repo-fit"
 const KB = 1024
 const file = (path: string, bytes: number, text: boolean): RepoFile => ({
   path,
-  bytes: new Uint8Array(bytes),
+  size: bytes,
   text,
+  ref: new Uint8Array(bytes),
 })
 
 describe("fitRepoBytes", () => {

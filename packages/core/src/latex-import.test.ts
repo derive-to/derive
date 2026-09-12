@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { normalizeLatexSource } from "./latex-import"
+import { normalizeLatexSource, planLatexSource, readsLatexText } from "./latex-import"
 
 const enc = new TextEncoder()
 const dec = new TextDecoder()
@@ -110,5 +110,45 @@ describe("normalizeLatexSource", () => {
     expect(dec.decode(r.files["/refs.bib"])).toBe("é")
     expect([...(r.files["/fig.png"] ?? [])]).toEqual([...png])
     expect(r.notes).toContain("transcoded the text files from latin-1 to UTF-8")
+  })
+})
+
+describe("planLatexSource", () => {
+  it("makes the same decisions over stored files, reading only the text it was given", () => {
+    // What an import streaming the archive holds: a reference and a size for every file,
+    // and bytes only for the text files the plan reads.
+    type Stored = { key: string; size: number; text: Uint8Array | null }
+    const source = bytes({
+      "paper-v2/00README.XXX": "paper.tex toplevelfile\n",
+      "paper-v2/paper.tex":
+        "\\documentclass{article}\\usepackage[latin1]{inputenc}\\begin{document}\\end{document}",
+      "paper-v2/main.tex": DOC,
+      "paper-v2/paper.bbl": "\\begin{thebibliography}{1}\\end{thebibliography}",
+      "paper-v2/refs.bib": "@misc{a}",
+      "paper-v2/fig/a.png": new Uint8Array(4096),
+    })
+    const stored: Record<string, Stored> = Object.fromEntries(
+      Object.entries(source).map(([path, data], i) => [
+        path,
+        { key: `k${i}`, size: data.byteLength, text: readsLatexText(path) ? data : null },
+      ]),
+    )
+    expect(stored["paper-v2/fig/a.png"]?.text).toBeNull()
+    const plan = planLatexSource(stored, { size: (f) => f.size, text: (f) => f.text })
+    const whole = normalizeLatexSource(source)
+    if (!plan.ok || !whole.ok) throw new Error("refused")
+    expect(plan.entry).toBe(whole.entry)
+    expect(plan.notes).toEqual(whole.notes)
+    expect(Object.keys(plan.files).sort()).toEqual(Object.keys(whole.files).sort())
+    // The alias is the same stored file, not a copy.
+    expect(plan.files["/main.bbl"]).toBe(plan.files["/paper.bbl"])
+    // Transcoding is the caller's, who holds the bytes: the plan names the files.
+    expect([...plan.transcode].sort()).toEqual([
+      "/main.bbl",
+      "/main.tex",
+      "/paper.bbl",
+      "/paper.tex",
+      "/refs.bib",
+    ])
   })
 })
