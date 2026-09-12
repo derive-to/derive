@@ -2005,30 +2005,32 @@ describe("imported papers over MCP — read-only, cited, never run", () => {
       bundleBytes: 4 * 1024 * 1024,
       files: 400,
     }
-    expect(
-      await runImportTick({
-        meta,
-        blobs: ctx.blobs,
-        bus: ctx.bus,
-        notify: ctx.notify,
-        background: ctx.background,
-        baseUrl: "http://derive.test",
-        fetch: stub,
-        now: () => t,
-        sleep: async (ms) => {
-          t += ms
-        },
-        caps,
-        repoCaps: {
-          compressedBytes: 1024 * 1024,
-          inflatedBytes: 4 * 1024 * 1024,
-          totalBytes: 4 * 1024 * 1024,
-          files: 400,
-          depth: 3,
-          repos: 5,
-        },
-      }),
-    ).toBe(1)
+    const tickDeps = {
+      meta,
+      blobs: ctx.blobs,
+      bus: ctx.bus,
+      notify: ctx.notify,
+      background: ctx.background,
+      baseUrl: "http://derive.test",
+      fetch: stub,
+      now: () => t,
+      sleep: async (ms: number) => {
+        t += ms
+      },
+      caps,
+      repoCaps: {
+        compressedBytes: 1024 * 1024,
+        inflatedBytes: 4 * 1024 * 1024,
+        totalBytes: 4 * 1024 * 1024,
+        files: 400,
+        depth: 3,
+        repos: 5,
+      },
+    }
+    // The paper in one pass, and its implementation in the next once arXiv's gate reopens.
+    expect(await runImportTick(tickDeps)).toBe(1)
+    t += 3_001
+    expect(await runImportTick(tickDeps)).toBe(1)
 
     const pkg = await call(app, ownerBot.token, "read", { short_id: queued.id })
     const paper = await call(app, ownerBot.token, "read", { short_id: pkg.documents[0].short_id })

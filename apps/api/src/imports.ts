@@ -26,6 +26,7 @@ import {
   ImportCancelled,
   type ImportDeps,
   ImportFailure,
+  ImportYield,
   importArxivPaper,
   writeFailedPaper,
 } from "./lib/arxiv-import"
@@ -228,6 +229,24 @@ export const runImportTick = async (deps: ImportTickDeps): Promise<number> => {
     log.info("import ready", { jobId: job.id, ref: job.ref, attempts: job.attempts })
   } catch (error) {
     if (!job || error instanceof ImportCancelled) return job ? 1 : 0
+    if (error instanceof ImportYield) {
+      // The paper is published and readable; its implementation follows in a pass of its
+      // own. Handing over is not a failure, so the attempt goes back with the job.
+      await deps.meta.updateImportJob(
+        job.id,
+        {
+          status: "pending",
+          lease_until: null,
+          claim_token: null,
+          attempts: Math.max(0, job.attempts - 1),
+          next_attempt_at: iso(now()),
+          updated_at: iso(now()),
+        },
+        claimToken,
+      )
+      log.info("import paper ready, implementation next", { jobId: job.id, ref: job.ref })
+      return 1
+    }
     const failure = classify(error)
     // A job whose row vanished while it ran was discarded; nothing to record.
     if (!(await deps.meta.getImportJob(job.id))) return 1

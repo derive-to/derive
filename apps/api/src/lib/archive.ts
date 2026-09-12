@@ -68,89 +68,6 @@ export const concatChunks = (chunks: Uint8Array[], total: number): Uint8Array =>
   return out
 }
 
-/** Inflate a gzip buffer, refusing past the cap before another chunk is kept. */
-export const inflateCapped = (bytes: Uint8Array, cap: number): Uint8Array => {
-  const chunks: Uint8Array[] = []
-  let total = 0
-  const gz = new Gunzip((chunk) => {
-    total += chunk.byteLength
-    if (total > cap) throw new ArchiveError("inflated")
-    chunks.push(chunk)
-  })
-  try {
-    gz.push(bytes, true)
-  } catch (error) {
-    if (error instanceof ArchiveError) throw error
-    throw new ArchiveError("corrupt")
-  }
-  return concatChunks(chunks, total)
-}
-
-/**
- * Read an archive body off the wire. A gzip body streams through the inflater as it
- * arrives, so the peak held in memory is the inflated archive, never compressed plus
- * inflated; anything else is buffered as is. Both budgets are enforced while reading.
- */
-export const readArchive = async (res: Response, caps: ArchiveCaps): Promise<Uint8Array> => {
-  if (!res.body) return new Uint8Array()
-  const reader = res.body.getReader()
-  const out: Uint8Array[] = []
-  let inflated = 0
-  const keep = (chunk: Uint8Array): void => {
-    inflated += chunk.byteLength
-    if (inflated > caps.inflatedBytes) throw new ArchiveError("inflated")
-    out.push(chunk)
-  }
-  let compressed = 0
-  let head: Uint8Array | null = null
-  let gz: Gunzip | null = null
-  let pending: Uint8Array | null = null
-  const push = (chunk: Uint8Array, final: boolean): void => {
-    if (gz) gz.push(chunk, final)
-    else keep(chunk)
-  }
-  try {
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      compressed += value.byteLength
-      if (compressed > caps.compressedBytes) {
-        await reader.cancel().catch(() => undefined)
-        throw new ArchiveError("compressed")
-      }
-      // The first two bytes say whether this is gzip; wait for them before deciding.
-      if (head === null) {
-        const first: Uint8Array = pending
-          ? concatChunks([pending, value], pending.byteLength + value.byteLength)
-          : value
-        if (first.byteLength < 2) {
-          pending = first
-          continue
-        }
-        head = first
-        if (isGzip(first)) gz = new Gunzip((chunk) => keep(chunk))
-        pending = first
-        continue
-      }
-      if (pending) push(pending, false)
-      pending = value
-    }
-    if (pending) push(pending, true)
-    else if (head === null && !gz) return new Uint8Array()
-  } catch (error) {
-    if (error instanceof ArchiveError) throw error
-    if (
-      error instanceof Error &&
-      /invalid|corrupt|unexpected|gzip|zlib|inflate/i.test(error.message)
-    )
-      throw new ArchiveError("corrupt")
-    throw new ArchiveError("broken")
-  } finally {
-    reader.releaseLock()
-  }
-  return concatChunks(out, inflated)
-}
-
 // ---- Streaming into the blob store ------------------------------------------------
 
 /** How much of a file a policy sees before it decides what to do with it. */
@@ -288,7 +205,15 @@ interface Entry {
   /** Position in the archive: a later entry with the same name wins. */
   order: number
 }
-type Reading = Entry & { mode: "whole" | "head"; parts: Uint8Array[]; got: number }
+type Reading = Entry & {
+  mode: "reading"
+  /** Read whole and put (up to bufferFileBytes), or streamed once decided. */
+  whole: boolean
+  parts: Uint8Array[]
+  got: number
+  /** What the policy said of the first HEAD_BYTES; null until it has seen them. */
+  decision: "store" | "keep" | null
+}
 type Streaming = Entry & { mode: "stream"; writer: BlobWriter; chain: Promise<void> }
 
 /** Takes a tar's files as they stream past and sees each one into the blob store. */
@@ -310,36 +235,42 @@ class Stager implements TarSink {
 
   entry(path: string, size: number): boolean {
     if (!this.policy.header(path, size)) return false
-    const mode = size <= this.caps.bufferFileBytes ? "whole" : "head"
-    this.current = { mode, path, size, order: this.order++, parts: [], got: 0 }
+    this.current = {
+      mode: "reading",
+      whole: size <= this.caps.bufferFileBytes,
+      path,
+      size,
+      order: this.order++,
+      parts: [],
+      got: 0,
+      decision: null,
+    }
     return true
   }
 
   data(piece: Uint8Array): void {
     const c = this.current
     if (c.mode === "stream") this.write(c, piece)
-    else if (c.mode !== "skip") {
+    else if (c.mode === "reading") {
       c.parts.push(piece)
       c.got += piece.byteLength
-      if (c.mode === "head" && c.got >= HEAD_BYTES) this.stream(c)
+      if (c.decision === null && c.got >= HEAD_BYTES) this.decide(c)
     }
   }
 
   end(): void {
-    if (this.current.mode === "head") this.stream(this.current)
+    const ending = this.current
+    if (ending.mode === "reading" && ending.decision === null) this.decide(ending)
     const c = this.current
     this.current = { mode: "skip" }
-    if (c.mode === "whole") {
+    if (c.mode === "reading") {
       // Copied: a view would keep alive the whole inflated chunk it came from.
       const bytes = firstBytes(c.parts, c.size)
-      const decision = this.policy.head(c.path, c.size, bytes.subarray(0, HEAD_BYTES))
-      if (decision === "skip") return
+      const keep = c.decision === "keep"
       this.puts++
       this.track(
         bytes.byteLength,
-        this.blobs
-          .put(bytes)
-          .then((key) => this.record(c, key, decision === "keep" ? bytes : null)),
+        this.blobs.put(bytes).then((key) => this.record(c, key, keep ? bytes : null)),
         () => {
           this.puts--
         },
@@ -381,10 +312,16 @@ class Stager implements TarSink {
     while (this.pending.size > 0) await Promise.race(this.pending)
   }
 
-  private stream(c: Reading): void {
+  /** Show the policy a file's first bytes and go on as it says: leave the file, keep reading
+   *  a small one whole, or start streaming a large one. */
+  private decide(c: Reading): void {
     const decision = this.policy.head(c.path, c.size, firstBytes(c.parts, HEAD_BYTES))
     if (decision === "skip") {
       this.current = { mode: "skip" }
+      return
+    }
+    if (c.whole) {
+      c.decision = decision
       return
     }
     if (decision === "keep")

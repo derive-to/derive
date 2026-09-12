@@ -14,12 +14,18 @@
 // A tarball carries `.gitmodules` but not the commits its submodules are pinned to. So a
 // submodule is fetched at the branch it declares, or at its default, and the notes say so
 // rather than implying the import reproduced a pinned tree.
+//
+// Every archive streams into the blob store as it downloads (stageArchive), so a tree larger
+// than the worker's memory arrives a file at a time. What could never be kept is decided
+// before it is stored: a file over what one file may be, or a binary larger than all the
+// room the paper leaves, is left out and named.
 
 import { unbound } from "@derive/broker"
 import {
+  type BlobStore,
   CODE_PREFIX,
   cleanPath,
-  isTar,
+  MAX_BUNDLE_UNZIPPED_BYTES,
   parseGitmodules,
   parseRepoRef,
   type RepoFile,
@@ -27,16 +33,21 @@ import {
   repoArchiveUrl,
   repoRefAt,
   TarError,
-  untar,
 } from "@derive/core"
 import type { AddressGuard } from "../webhooks"
-import { ArchiveError, inflateCapped, isGzip, readArchive } from "./archive"
+import { ArchiveError, type StagePolicy, stageArchive } from "./archive"
 import { isPublicHttpUrl } from "./net"
 
 /** One archive is a single large read; a repository host is not arXiv and asks for no
  *  pacing, but a second between repositories keeps a deep tree from looking like a flood. */
 const REPO_REQUEST_INTERVAL_MS = 1_000
+/** How long a host has to start answering. The archive itself streams under the reader's
+ *  limits (a stall, and REPO_DEADLINE_MS), since a large one is still arriving after this. */
 const REPO_TIMEOUT_MS = 90_000
+const REPO_DEADLINE_MS = 5 * 60_000
+const MB = 1024 * 1024
+/** A `.gitmodules` larger than this is not one a repository ships; it is not followed. */
+const GITMODULES_BYTES = 64 * 1024
 
 export interface RepoCaps {
   /** Per archive: the most read off the wire, and the most it may inflate to. */
@@ -48,22 +59,30 @@ export interface RepoCaps {
   /** How deep submodules are followed, and how many repositories in all. */
   depth: number
   repos: number
+  /** A file up to this is read whole before it is stored; a larger one streams. Default 8 MB. */
+  bufferFileBytes?: number
+  /** Bytes on their way to storage before reading pauses for them. Default 16 MB. */
+  inflightBytes?: number
+  /** The most one file may be: what a request can read whole to serve it. Default 50 MB. */
+  maxFileBytes?: number
 }
 
-/** The Node tier holds the tree in memory while it is fitted; the edge worker has a
- *  128 MB isolate, so it takes a much smaller repository or none. */
+/** Both tiers stream a tree into storage as it downloads. The Node tier reads more of each
+ *  file whole and follows deeper trees; the edge worker runs in a 128 MB isolate. */
 export const NODE_REPO_CAPS: RepoCaps = {
-  compressedBytes: 200 * 1024 * 1024,
-  inflatedBytes: 250 * 1024 * 1024,
-  totalBytes: 300 * 1024 * 1024,
+  compressedBytes: 200 * MB,
+  inflatedBytes: 250 * MB,
+  totalBytes: 300 * MB,
   files: 20_000,
   depth: 3,
   repos: 20,
+  bufferFileBytes: 32 * MB,
+  inflightBytes: 64 * MB,
 }
 export const EDGE_REPO_CAPS: RepoCaps = {
-  compressedBytes: 8 * 1024 * 1024,
-  inflatedBytes: 24 * 1024 * 1024,
-  totalBytes: 24 * 1024 * 1024,
+  compressedBytes: 150 * MB,
+  inflatedBytes: 300 * MB,
+  totalBytes: 300 * MB,
   files: 4_000,
   depth: 2,
   repos: 5,
@@ -86,11 +105,30 @@ export interface RepoFetchDeps {
   baseUrl: string
   /** Recheck DNS at request time on runtimes that can reach private networks. */
   addressGuard?: AddressGuard
+  /** Where the tree is stored as it arrives. */
+  blobs: BlobStore
+  /** Called while archives stream, so a long fetch keeps its claim on the job. */
+  heartbeat?: () => Promise<void>
+}
+
+/** A file already in the blob store. */
+export interface StoredFile {
+  key: string
+  size: number
+}
+
+/** What the paper leaves the implementation: bytes and files. */
+export interface RepoRoom {
+  bytes: number
+  files: number
 }
 
 export interface RepoFetchResult {
-  /** Every file, already at its manifest path under /code/. */
-  files: RepoFile[]
+  /** Every stored file, already at its manifest path under /code/. */
+  files: RepoFile<StoredFile>[]
+  /** Binaries larger than all the room, left out before they were stored: the fit names
+   *  them among what it leaves out. */
+  unfit: RepoFile<null>[]
   /** What was actually fetched, canonically — the resume marker. */
   fetched: string
   /** Repositories pulled in, the root first. */
@@ -100,6 +138,16 @@ export interface RepoFetchResult {
 }
 
 const mb = (n: number): string => `${(n / 1048576).toFixed(1)} MB`
+
+/** Name a few and count the rest: a version message is not a file listing. */
+const nameFew = (files: { path: string; bytes: number }[]): string => {
+  const shown = files
+    .slice(0, 6)
+    .map((f) => `${f.path.replace(/^\/code\//, "")} (${mb(f.bytes)})`)
+    .join(", ")
+  const more = files.length - Math.min(6, files.length)
+  return `${shown}${more > 0 ? `, and ${more} more` : ""}`
+}
 
 /** A Git LFS pointer stands in for a file the tarball does not carry. Storing it would
  *  give an agent a checksum where it expected a model. */
@@ -128,10 +176,8 @@ export const looksTextual = (data: Uint8Array): boolean => {
   return false
 }
 
-const isLfsPointer = (data: Uint8Array, text: boolean): boolean =>
-  text &&
-  data.byteLength < 1024 &&
-  new TextDecoder().decode(data.subarray(0, 64)).startsWith(LFS_MAGIC)
+const isLfsPointer = (head: Uint8Array, size: number, text: boolean): boolean =>
+  text && size < 1024 && new TextDecoder().decode(head.subarray(0, 64)).startsWith(LFS_MAGIC)
 
 /** Where a host may send one redirect: its own name, and GitHub's two. */
 const redirectAllowed = (from: string, to: string): boolean =>
@@ -139,7 +185,8 @@ const redirectAllowed = (from: string, to: string): boolean =>
   (["github.com", "www.github.com", "codeload.github.com"].includes(from) &&
     ["github.com", "codeload.github.com"].includes(to))
 
-/** GET one archive. At most one redirect, and only within the host that was asked. */
+/** GET one archive. At most one redirect, and only within the host that was asked. The
+ *  timeout covers the wait for the host to answer; the body is bounded as it is read. */
 const getArchive = async (deps: RepoFetchDeps, url: string): Promise<Response> => {
   // A plain function, never a method: see `unbound`. The same defect here would report a
   // reachable repository as unreachable.
@@ -149,6 +196,11 @@ const getArchive = async (deps: RepoFetchDeps, url: string): Promise<Response> =
     if (!isPublicHttpUrl(target) || (await deps.addressGuard?.precheck(target)))
       throw new RepoFetchError("the repository host is not a public address")
     let res: Response
+    const answered = new AbortController()
+    const timer = setTimeout(
+      () => answered.abort(new DOMException("no answer in time", "TimeoutError")),
+      REPO_TIMEOUT_MS,
+    )
     try {
       res = await send(target, {
         redirect: "manual",
@@ -156,7 +208,7 @@ const getArchive = async (deps: RepoFetchDeps, url: string): Promise<Response> =
           "user-agent": `Derive/1.0 (+${deps.baseUrl}; paper import)`,
           accept: "application/x-gzip, application/octet-stream, */*",
         },
-        signal: AbortSignal.timeout(REPO_TIMEOUT_MS),
+        signal: answered.signal,
       })
     } catch (error) {
       throw new RepoFetchError(
@@ -164,6 +216,8 @@ const getArchive = async (deps: RepoFetchDeps, url: string): Promise<Response> =
           ? "the repository host did not answer in time"
           : "the repository host could not be reached",
       )
+    } finally {
+      clearTimeout(timer)
     }
     if (res.status >= 300 && res.status < 400) {
       const location = res.headers.get("location")
@@ -204,53 +258,55 @@ const stripRoot = (paths: string[]): string => {
   return paths.every((p) => p === first || p.startsWith(`${first}/`)) ? `${first}/` : ""
 }
 
-const unpack = (raw: Uint8Array, caps: RepoCaps): { path: string; data: Uint8Array }[] => {
-  let bytes: Uint8Array
-  try {
-    bytes = isGzip(raw) ? inflateCapped(raw, caps.inflatedBytes) : raw
-  } catch (error) {
+/** Say what an archive failure means for a repository. */
+const asRepoFetchError = (error: unknown, caps: RepoCaps): never => {
+  if (error instanceof TarError)
     throw new RepoFetchError(
-      error instanceof ArchiveError && error.kind === "inflated"
-        ? `the repository inflates past ${mb(caps.inflatedBytes)}`
-        : "the repository archive could not be decompressed",
+      error.code === "malformed"
+        ? "the repository archive is unreadable"
+        : "the repository is larger than an import holds",
     )
-  }
-  if (!isTar(bytes)) throw new RepoFetchError("the download was not a repository archive")
-  let entries: { path: string; data: Uint8Array }[]
-  try {
-    entries = untar(bytes, { maxFiles: caps.files, maxBytes: caps.inflatedBytes })
-  } catch (error) {
-    if (error instanceof TarError)
-      throw new RepoFetchError(
-        error.code === "malformed"
-          ? "the repository archive is unreadable"
-          : "the repository is larger than an import holds",
-      )
-    throw error
-  }
-  const root = stripRoot(entries.map((e) => e.path))
-  return entries
-    .map((e) => ({ path: e.path.slice(root.length), data: e.data }))
-    .filter((e) => e.path && !e.path.startsWith(".git/"))
+  if (!(error instanceof ArchiveError)) throw error
+  throw new RepoFetchError(
+    error.kind === "compressed"
+      ? `the repository archive is larger than ${mb(caps.compressedBytes)}`
+      : error.kind === "inflated"
+        ? `the repository inflates past ${mb(caps.inflatedBytes)}`
+        : error.kind === "corrupt"
+          ? "the repository archive could not be decompressed"
+          : error.kind === "single"
+            ? "the download was not a repository archive"
+            : error.kind === "stalled"
+              ? `the repository download stalled, or took longer than ${REPO_DEADLINE_MS / 60_000} minutes`
+              : "the repository download broke off",
+  )
 }
 
 /**
- * Fetch a repository and everything it declares, into files under /code/.
+ * Fetch a repository and everything it declares, into files under /code/ in the blob store.
  *
  * Bounded on every axis a third party controls: bytes per archive, bytes over the tree,
  * files, submodule depth, and repositories in all. What a bound stops is written into the
- * notes, because a quietly half-fetched tree reads exactly like a complete one.
+ * notes, because a quietly half-fetched tree reads exactly like a complete one. `room` is
+ * what the paper leaves: text past it refuses the repository, and a binary past it is never
+ * stored.
  */
 export const fetchRepository = async (
   deps: RepoFetchDeps,
   root: RepoRef,
   caps: RepoCaps,
+  room: RepoRoom,
 ): Promise<RepoFetchResult> => {
-  const files: RepoFile[] = []
+  const files: RepoFile<StoredFile>[] = []
+  const unfit: RepoFile<null>[] = []
+  const oversize: { path: string; bytes: number }[] = []
   const notes: string[] = []
   const repos: string[] = []
   const seen = new Set<string>()
-  let totalBytes = 0
+  const maxFileBytes = caps.maxFileBytes ?? MAX_BUNDLE_UNZIPPED_BYTES
+  let treeBytes = 0
+  let treeFiles = 0
+  let textBytes = 0
   let lfs = 0
   let requests = 0
 
@@ -260,40 +316,104 @@ export const fetchRepository = async (
     if (requests > 0) await deps.sleep(REPO_REQUEST_INTERVAL_MS)
     requests++
     const res = await getArchive(deps, repoArchiveUrl(ref))
-    let raw: Uint8Array
-    try {
-      raw = await readArchive(res, caps)
-    } catch (error) {
-      if (!(error instanceof ArchiveError)) throw error
-      throw new RepoFetchError(
-        error.kind === "compressed"
-          ? `the repository archive is larger than ${mb(caps.compressedBytes)}`
-          : error.kind === "inflated"
-            ? `the repository inflates past ${mb(caps.inflatedBytes)}`
-            : error.kind === "corrupt"
-              ? "the repository archive could not be decompressed"
-              : "the repository download broke off",
-      )
+
+    // Decided per file as the archive streams: every name it holds (to find its top
+    // directory once it has all arrived), which files are text, and what was left out.
+    const names: string[] = []
+    const text = new Map<string, boolean>()
+    const left: { name: string; size: number; unfit: boolean }[] = []
+    let exhausted = false
+    const policy: StagePolicy = {
+      header: (name, size) => {
+        names.push(name)
+        if (exhausted || !cleanPath(name)) return false
+        if (size > maxFileBytes) {
+          left.push({ name, size, unfit: false })
+          return false
+        }
+        if (treeFiles >= caps.files || treeBytes + size > caps.totalBytes) {
+          exhausted = true
+          return false
+        }
+        return true
+      },
+      head: (name, size, head) => {
+        const isText = looksTextual(head)
+        if (isLfsPointer(head, size, isText)) {
+          lfs++
+          return "skip"
+        }
+        // Larger than all the room the paper leaves, less the code already in: it could
+        // never be kept, so it is not stored at all.
+        if (!isText && size > room.bytes - textBytes) {
+          left.push({ name, size, unfit: true })
+          return "skip"
+        }
+        if (isText) {
+          textBytes += size
+          if (textBytes > room.bytes)
+            throw new RepoFetchError(
+              `the repository's text files alone are over the ${mb(room.bytes)} an artifact with an implementation has room for`,
+            )
+        }
+        text.set(name, isText)
+        treeFiles++
+        treeBytes += size
+        const base = name.slice(name.lastIndexOf("/") + 1)
+        return base === ".gitmodules" && size <= GITMODULES_BYTES ? "keep" : "store"
+      },
     }
-    const entries = unpack(raw, caps)
+    let staged: Awaited<ReturnType<typeof stageArchive>>
+    try {
+      staged = await stageArchive(
+        res,
+        {
+          compressedBytes: caps.compressedBytes,
+          inflatedBytes: caps.inflatedBytes,
+          files: caps.files,
+          bufferFileBytes: caps.bufferFileBytes ?? 8 * MB,
+          inflightBytes: caps.inflightBytes ?? 16 * MB,
+          deadlineMs: REPO_DEADLINE_MS,
+          // A repository is a tar or nothing: one plain file is not one.
+          singleFileBytes: 0,
+        },
+        deps,
+        policy,
+      )
+    } catch (error) {
+      return asRepoFetchError(error, caps)
+    }
+    if (staged.kind !== "tar") throw new RepoFetchError("the download was not a repository archive")
     repos.push(ref.canonical)
 
+    const top = stripRoot(names)
+    const inTree = (name: string): string | null => {
+      const inner = name.slice(top.length)
+      if (!inner || inner.startsWith(".git/")) return null
+      return cleanPath(`${prefix}${inner}`)
+    }
     let gitmodules: string | null = null
-    for (const entry of entries) {
-      if (entry.path === ".gitmodules") gitmodules = new TextDecoder().decode(entry.data)
-      const path = cleanPath(`${prefix}${entry.path}`)
+    for (const file of staged.files) {
+      if (file.path === `${top}.gitmodules` && file.bytes)
+        gitmodules = new TextDecoder().decode(file.bytes)
+      const path = inTree(file.path)
       if (!path) continue
-      const text = looksTextual(entry.data)
-      if (isLfsPointer(entry.data, text)) {
-        lfs++
-        continue
-      }
-      if (files.length >= caps.files || totalBytes + entry.data.byteLength > caps.totalBytes) {
-        notes.push(`stopped reading ${ref.canonical} at the import's working budget`)
-        return
-      }
-      files.push({ path, size: entry.data.byteLength, text, ref: entry.data })
-      totalBytes += entry.data.byteLength
+      files.push({
+        path,
+        size: file.size,
+        text: text.get(file.path) ?? false,
+        ref: { key: file.key, size: file.size },
+      })
+    }
+    for (const out of left) {
+      const path = inTree(out.name)
+      if (!path) continue
+      if (out.unfit) unfit.push({ path, size: out.size, text: false, ref: null })
+      else oversize.push({ path, bytes: out.size })
+    }
+    if (exhausted) {
+      notes.push(`stopped reading ${ref.canonical} at the import's working budget`)
+      return
     }
     if (!gitmodules) return
 
@@ -337,6 +457,10 @@ export const fetchRepository = async (
 
   await walk(root, CODE_PREFIX.slice(1), 0)
 
+  if (oversize.length > 0)
+    notes.push(
+      `left out ${oversize.length} ${oversize.length === 1 ? "file" : "files"} over the ${mb(maxFileBytes)} one file may be: ${nameFew(oversize)}`,
+    )
   if (repos.length > 1)
     notes.push(
       `included ${repos.length - 1} ${repos.length === 2 ? "submodule" : "submodules"} at their declared branch, which a source archive cannot pin to a commit`,
@@ -345,5 +469,5 @@ export const fetchRepository = async (
     notes.push(
       `skipped ${lfs} Git LFS ${lfs === 1 ? "pointer" : "pointers"}, whose files live outside the repository`,
     )
-  return { files, fetched: root.canonical, repos, notes }
+  return { files, unfit, fetched: root.canonical, repos, notes }
 }

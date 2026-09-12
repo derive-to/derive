@@ -87,9 +87,13 @@ of demo media, so this keeps the part an agent came for. A repository that is go
 private, unreachable or too large to fit leaves the paper imported and says why on its
 console, so the link can be fixed without fetching the paper again.
 
-A published bundle may hold at most 50 MB (30 MB on the Workers tier) and 2000 files,
-or twice that when a paper carries an implementation.
-The worker pulls up to 150 MB from arXiv to get there: when the unpacked source is over
+An imported paper may hold 100 MB and 2000 files, and 200 MB and 4000 files with its
+implementation, which takes at most 100 MB of that; any other bundle keeps the upload
+limits (50 MB, or 100 MB with an implementation). The paper and its repository stream
+into storage as they download, so neither is ever held whole, and no single file may be
+over 50 MB: in a paper that fails the import naming the file, in a repository the file is
+left out and named. The worker pulls up to 150 MB from arXiv (120 MB on the Workers tier)
+to get there: when the unpacked source is over
 the limit, the raster figures (PNG, JPEG, WebP) are re-encoded in place, largest first,
 to at most 1600 px on the long side, then 1200, then 900, until the bundle fits; a
 figure keeps its path and format, so every reference still resolves, and the manifest's

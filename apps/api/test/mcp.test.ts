@@ -1880,6 +1880,31 @@ describe("remote MCP endpoint (/mcp)", () => {
     expect(none).toContain("no matches")
   })
 
+  it("find leaves out a bundle page too large to read in a request", async () => {
+    const { app, token } = appWithGrant(dir, "bigpage", "openid derive:read derive:publish")
+    // A data file far past a page's size (what an imported paper's implementation can
+    // carry), beside an ordinary page with the same word on it.
+    const enc = new TextEncoder()
+    const zip = zipSync({
+      "index.html": enc.encode("<p>needle on the page</p>"),
+      "data/big.txt": enc.encode(`${"filler line\n".repeat(200_000)}needle in the data\n`),
+    })
+    const form = new FormData()
+    form.append("file", new Blob([zip]), "site.zip")
+    form.append("title", "Site with data")
+    form.append("visibility", "link")
+    const res = await app.request("/v1/artifacts", {
+      method: "POST",
+      body: form,
+      headers: { authorization: `Bearer ${token}` },
+    })
+    expect(res.status).toBeLessThan(300)
+    const id = (await res.json()).short_id
+    const hit = toolText(await call(app, token, "find", { short_id: id, query: "needle" }))
+    expect(hit).toContain("needle on the page")
+    expect(hit).not.toContain("needle in the data")
+  })
+
   it("find (workspace mode, short_id omitted): greps across accessible artifacts, grouped by artifact, and NEVER leaks a private artifact's content to a viewer who isn't its member (regression)", async () => {
     const { app, token, meta, blobs } = appWithGrant(
       dir,

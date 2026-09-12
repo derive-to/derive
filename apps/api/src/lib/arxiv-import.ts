@@ -32,7 +32,7 @@ import {
   type LatexSourcePlan,
   MAX_BUNDLE_FILES_WITH_CODE,
   MAX_BUNDLE_UNZIPPED_BYTES,
-  MAX_BUNDLE_UNZIPPED_BYTES_WITH_CODE,
+  MAX_IMPORTED_BUNDLE_BYTES,
   MAX_IMPORTED_PAPER_BYTES,
   type MetaStore,
   parseArxivRef,
@@ -52,7 +52,13 @@ import { manifestOf, materializeBundle } from "./bundle"
 import { readCappedBytes } from "./http"
 import { CITATION_PATH } from "./latex-bundle"
 import { isPublicHttpUrl } from "./net"
-import { fetchRepository, type RepoCaps, type RepoFetchDeps, RepoFetchError } from "./repo-fetch"
+import {
+  fetchRepository,
+  type RepoCaps,
+  type RepoFetchDeps,
+  RepoFetchError,
+  type StoredFile,
+} from "./repo-fetch"
 import { normalizeTags } from "./tags"
 import { truncate } from "./text"
 
@@ -190,6 +196,16 @@ export class ImportCancelled extends Error {
   constructor() {
     super("import cancelled")
     this.name = "ImportCancelled"
+  }
+}
+
+/** The paper is published and its implementation is still to come. The tick hands the job
+ *  back to the queue, attempt and all, so the repository arrives in an invocation of its
+ *  own rather than in the time and requests the paper's download already used. */
+export class ImportYield extends Error {
+  constructor() {
+    super("the implementation follows in the next pass")
+    this.name = "ImportYield"
   }
 }
 
@@ -727,10 +743,25 @@ const attachImplementation = async (
     return
   }
 
+  // An artifact carrying an implementation gets twice this tier's room, up to the ceiling for
+  // an imported paper. The repository gets what is left once the paper has taken its share,
+  // and never more than a paper may hold itself.
+  const withCode = {
+    bytes: Math.min(MAX_IMPORTED_BUNDLE_BYTES, deps.caps.bundleBytes * 2),
+    files: Math.min(MAX_BUNDLE_FILES_WITH_CODE, deps.caps.files * 2),
+  }
+  const room = {
+    bytes: Math.max(
+      0,
+      Math.min(deps.caps.bundleBytes, withCode.bytes - contentBytes(paperContent)),
+    ),
+    files: Math.max(0, withCode.files - contentCount(paperContent)),
+  }
+
   let fetched: Awaited<ReturnType<typeof fetchRepository>>
   try {
     await deps.heartbeat?.()
-    fetched = await fetchRepository(deps, repoRef, deps.repoCaps)
+    fetched = await fetchRepository(deps, repoRef, deps.repoCaps, room)
     await deps.heartbeat?.()
   } catch (error) {
     if (error instanceof ImportCancelled) throw error
@@ -745,15 +776,10 @@ const attachImplementation = async (
     return
   }
 
-  // An artifact carrying an implementation gets twice this tier's room, up to the hard
-  // ceiling, and the repository gets what is left of it once the paper has taken its share.
-  const withCode = {
-    bytes: Math.min(MAX_BUNDLE_UNZIPPED_BYTES_WITH_CODE, deps.caps.bundleBytes * 2),
-    files: Math.min(MAX_BUNDLE_FILES_WITH_CODE, deps.caps.files * 2),
-  }
-  const fitted = fitRepoBytes(fetched.files, {
-    cap: Math.max(0, withCode.bytes - contentBytes(paperContent)),
-    maxFiles: Math.max(0, withCode.files - contentCount(paperContent)),
+  // What could never fit was not stored, but the fit still names it among what it left out.
+  const fitted = fitRepoBytes<StoredFile | null>([...fetched.files, ...fetched.unfit], {
+    cap: room.bytes,
+    maxFiles: room.files,
   })
   if (!fitted.fits) {
     await stamp({
@@ -764,10 +790,12 @@ const attachImplementation = async (
     return
   }
 
-  const stored = Object.keys(fitted.files).length
+  const code: Record<string, StoredFile> = {}
+  for (const [path, file] of Object.entries(fitted.files)) if (file) code[path] = file
+  const count = Object.keys(code).length
   const message = truncate(
     [
-      `Attached ${repoRef.canonical} (${stored} ${stored === 1 ? "file" : "files"}, ${mb(fitted.after)})`,
+      `Attached ${repoRef.canonical} (${count} ${count === 1 ? "file" : "files"}, ${mb(fitted.after)})`,
       ...fetched.notes,
       ...fitted.notes,
     ].join(" · "),
@@ -777,7 +805,7 @@ const attachImplementation = async (
     deps,
     paper,
     manifest,
-    { files: { ...paperContent.files, ...fitted.files }, stored: paperContent.stored },
+    { files: paperContent.files, stored: { ...paperContent.stored, ...code } },
     actor,
     message,
     withCode,
@@ -1017,6 +1045,10 @@ export const importArxivPaper = async (
       })
       return published.artifact
     })
+    // The paper is readable now. An implementation to attach waits for a pass of its own,
+    // with that pass's time and requests, rather than following the paper's download here.
+    ctx = await liveContext(deps, job)
+    if (ctx.code_url) throw new ImportYield()
   } else {
     await deps.releaseGate?.()
   }

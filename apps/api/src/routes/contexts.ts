@@ -1443,7 +1443,8 @@ export const contextRoutes = (ctx: AppContext) => {
       if (capped) return bail(capped)
       const blocked = await billingGate(c, org)
       if (blocked) return bail(blocked)
-      if (await overStorage(org, ARXIV_IMPORT_ESTIMATED_BYTES))
+      // An implementation may add as much again as the paper.
+      if (await overStorage(org, ARXIV_IMPORT_ESTIMATED_BYTES * (codeRef ? 2 : 1)))
         return bail(fail(c, 413, "this workspace is out of storage", { code: "storage" }))
 
       const existing = await meta.findContextByImport(org, "arxiv", ref.id)
@@ -1627,6 +1628,9 @@ export const contextRoutes = (ctx: AppContext) => {
         return bail(
           fail(c, 400, "not a public GitHub or GitLab repository", { code: "not_a_repo" }),
         )
+      // A repository may add as much as the paper holds: the gate an import pays for one.
+      if (codeRef && (await overStorage(x.org_id, ARXIV_IMPORT_ESTIMATED_BYTES)))
+        return bail(fail(c, 413, "this workspace is out of storage", { code: "storage" }))
 
       await meta.setContextCodeUrl(x.id, codeRef ? repoWebUrl(codeRef) : null)
       // The worker does both jobs: fetching a new repository, and republishing the paper

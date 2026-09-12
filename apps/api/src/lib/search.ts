@@ -271,8 +271,15 @@ export const searchArtifactVersionMany = async (
 
   // Bundle: search every text page (capped), grouped by page. Blob reads run in
   // parallel; non-text files (images, css/js are text but binaries aren't) skip.
+  // A page over this is not read: a request decodes each page whole, and an imported paper's
+  // implementation can carry data files far larger than any page a person writes.
+  const MAX_SCAN_PAGE_BYTES = 2 * 1024 * 1024
   const pages = Object.keys(manifest.files)
-    .filter((p) => isTextType(manifest.files[p]?.type ?? ""))
+    .filter(
+      (p) =>
+        isTextType(manifest.files[p]?.type ?? "") &&
+        (manifest.files[p]?.size ?? 0) <= MAX_SCAN_PAGE_BYTES,
+    )
     .sort((x, y) => x.split("/").length - y.split("/").length || x.localeCompare(y))
   const scanned = pages.slice(0, ARTIFACT_PAGE_SCAN_CAP)
   // Scan in bounded batches rather than one Promise.all over all of them: each page

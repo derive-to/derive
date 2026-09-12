@@ -171,4 +171,33 @@ describe("incremental merge grows a bundle without re-sending it", () => {
     )
     expect(html).toContain("b.png")
   })
+
+  it("refuses to merge into a bundle too large to edit, before reading any of it", async () => {
+    // A manifest that records its sizes (an imported paper's) and is past the largest upload:
+    // the merge could never be published, so nothing is read trying.
+    const reads: string[] = []
+    const store = {
+      put: async () => "",
+      get: async (key: string) => {
+        reads.push(key)
+        return null
+      },
+    }
+    const huge: BundleManifest = {
+      entry: "/main.tex",
+      spa: false,
+      files: {
+        "/main.tex": { key: "a".repeat(64), type: "text/x-latex", size: 1024 },
+        "/code/weights.bin": {
+          key: "b".repeat(64),
+          type: "application/octet-stream",
+          size: 150 * 1024 * 1024,
+        },
+      },
+    }
+    await expect(mergeBundleZip(store, huge, { "main.tex": "edited" })).rejects.toThrow(
+      /too large to edit/,
+    )
+    expect(reads).toEqual([])
+  })
 })

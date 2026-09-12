@@ -2103,7 +2103,7 @@ describe("contexts: import from arXiv", () => {
         "lab/walled": () => new Response("<html>not a bot?</html>", { status: 406 }),
       },
     )
-    const { app, meta, ctx, tickDeps } = setup("contexts-import-code", stub.fetch)
+    const { app, meta, ctx, clock: c, tickDeps } = setup("contexts-import-code", stub.fetch)
     await app.request("/v1/me", { headers: as(owner.email) })
 
     const res = await app.request(
@@ -2115,6 +2115,19 @@ describe("contexts: import from arXiv", () => {
     )
     expect(res.status).toBe(201)
     const created = await res.json()
+    // The paper publishes in one pass and is readable at once. Its implementation is left
+    // to the next pass, handed back to the queue without spending an attempt.
+    expect(await runImportTick(tickDeps())).toBe(1)
+    expect(stub.calls.some((u) => u.includes("/tar.gz/"))).toBe(false)
+    const between = await (
+      await app.request(`/v1/contexts/${created.id}`, { headers: as(owner.email) })
+    ).json()
+    expect(between.import).toMatchObject({ status: "ready", code: { status: "pending" } })
+    expect(await meta.getImportJobForContext(created.id)).toMatchObject({
+      status: "pending",
+      attempts: 0,
+    })
+    c.advance(ARXIV_REQUEST_INTERVAL_MS + 1)
     expect(await runImportTick(tickDeps())).toBe(1)
 
     // The repository was fetched from the host's plain archive, with no API call and no
@@ -2246,7 +2259,7 @@ describe("contexts: import from arXiv", () => {
         }),
       },
     )
-    const { app, meta, ctx, tickDeps } = setup("contexts-import-code-big", stub.fetch)
+    const { app, meta, ctx, clock: c, tickDeps } = setup("contexts-import-code-big", stub.fetch)
     await app.request("/v1/me", { headers: as(owner.email) })
     const created = await (
       await app.request(
@@ -2254,16 +2267,35 @@ describe("contexts: import from arXiv", () => {
         jsonAs(as(owner.email), { url: "2406.00002", code_url: "https://github.com/o/r" }),
       )
     ).json()
-    // An artifact with an implementation gets twice this deployment's bundle cap, so a
-    // 1 MB cap here leaves 2 MB for a paper plus 3 MB of demo media.
+    // An implementation gets what the paper leaves of twice this deployment's bundle cap,
+    // and never more than the cap itself: 1 MB for the code here, beside 3 MB of media.
     const base = tickDeps()
-    expect(
-      await runImportTick({
-        ...base,
-        caps: { ...base.caps, bundleBytes: 1024 * 1024 },
-        repoCaps: { ...base.repoCaps, compressedBytes: 8 * 1024 * 1024 },
-      }),
-    ).toBe(1)
+    const stored: number[] = []
+    const blobs: BlobStore = {
+      put: (data) => {
+        stored.push(data.byteLength)
+        return ctx.blobs.put(data)
+      },
+      get: (key) => ctx.blobs.get(key),
+      writer: (size) => {
+        stored.push(size)
+        const writer = ctx.blobs.writer?.(size)
+        if (!writer) throw new Error("the test store streams")
+        return writer
+      },
+    }
+    const deps = {
+      ...base,
+      blobs,
+      caps: { ...base.caps, bundleBytes: 1024 * 1024 },
+      repoCaps: { ...base.repoCaps, compressedBytes: 8 * 1024 * 1024 },
+    }
+    // The paper publishes in one pass, and its implementation attaches in the next.
+    expect(await runImportTick(deps)).toBe(1)
+    c.advance(ARXIV_REQUEST_INTERVAL_MS + 1)
+    expect(await runImportTick(deps)).toBe(1)
+    // The GIF could never fit beside the code, so it was never stored at all.
+    expect(stored).not.toContain(bigGif.byteLength)
 
     const detail = await (
       await app.request(`/v1/contexts/${created.id}`, { headers: as(owner.email) })
@@ -2391,7 +2423,7 @@ describe("contexts: import from arXiv", () => {
 
   it("a repository that cannot be fetched leaves the paper imported and says why", async () => {
     const stub = arxivStub() // every repository archive 404s
-    const { app, meta, tickDeps } = setup("contexts-import-code-fail", stub.fetch)
+    const { app, meta, clock: c, tickDeps } = setup("contexts-import-code-fail", stub.fetch)
     await app.request("/v1/me", { headers: as(owner.email) })
     const created = await (
       await app.request(
@@ -2399,6 +2431,9 @@ describe("contexts: import from arXiv", () => {
         jsonAs(as(owner.email), { url: "2406.00003", code_url: "https://github.com/o/gone" }),
       )
     ).json()
+    // The paper in one pass, the repository in the next.
+    expect(await runImportTick(tickDeps())).toBe(1)
+    c.advance(ARXIV_REQUEST_INTERVAL_MS + 1)
     expect(await runImportTick(tickDeps())).toBe(1)
 
     // The paper is what the import is for: it arrived, and stays arrived.
@@ -2436,7 +2471,7 @@ describe("contexts: import from arXiv", () => {
 
   it("never fetches a repository archive from a private address", async () => {
     const stub = arxivStub()
-    const { app, meta, tickDeps } = setup("contexts-import-code-private", stub.fetch)
+    const { app, meta, clock: c, tickDeps } = setup("contexts-import-code-private", stub.fetch)
     await app.request("/v1/me", { headers: as(owner.email) })
     const created = await (
       await app.request(
@@ -2449,6 +2484,8 @@ describe("contexts: import from arXiv", () => {
     ).json()
 
     expect(await runImportTick(tickDeps())).toBe(1)
+    c.advance(ARXIV_REQUEST_INTERVAL_MS + 1)
+    expect(await runImportTick(tickDeps())).toBe(1)
     expect(await meta.getImportJobForContext(created.id)).toMatchObject({
       status: "ready",
       code_status: "failed",
@@ -2459,7 +2496,7 @@ describe("contexts: import from arXiv", () => {
 
   it("rechecks repository DNS before fetching an archive", async () => {
     const stub = arxivStub()
-    const { app, meta, tickDeps } = setup("contexts-import-code-private-dns", stub.fetch)
+    const { app, meta, clock: c, tickDeps } = setup("contexts-import-code-private-dns", stub.fetch)
     await app.request("/v1/me", { headers: as(owner.email) })
     const hostname = "gitlab.internal.example"
     const created = await (
@@ -2472,16 +2509,17 @@ describe("contexts: import from arXiv", () => {
       )
     ).json()
 
-    expect(
-      await runImportTick({
-        ...tickDeps(),
-        addressGuard: {
-          async precheck(url) {
-            return new URL(url).hostname === hostname ? "blocked: private DNS answer" : null
-          },
+    const deps = {
+      ...tickDeps(),
+      addressGuard: {
+        async precheck(url: string) {
+          return new URL(url).hostname === hostname ? "blocked: private DNS answer" : null
         },
-      }),
-    ).toBe(1)
+      },
+    }
+    expect(await runImportTick(deps)).toBe(1)
+    c.advance(ARXIV_REQUEST_INTERVAL_MS + 1)
+    expect(await runImportTick(deps)).toBe(1)
     expect(await meta.getImportJobForContext(created.id)).toMatchObject({
       status: "ready",
       code_status: "failed",
