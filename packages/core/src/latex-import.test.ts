@@ -133,7 +133,9 @@ describe("planLatexSource", () => {
         { key: `k${i}`, size: data.byteLength, text: readsLatexText(path) ? data : null },
       ]),
     )
+    // Neither a figure nor a bibliography is held: planning reads neither.
     expect(stored["paper-v2/fig/a.png"]?.text).toBeNull()
+    expect(stored["paper-v2/refs.bib"]?.text).toBeNull()
     const plan = planLatexSource(stored, { size: (f) => f.size, text: (f) => f.text })
     const whole = normalizeLatexSource(source)
     if (!plan.ok || !whole.ok) throw new Error("refused")

@@ -188,11 +188,12 @@ export const MAX_BUNDLE_UNZIPPED_BYTES_WITH_CODE = 100 * 1024 * 1024 // 100 MB
 
 // A paper Derive imports itself is never a bundle in memory: its files stream into the blob
 // store as the archive is read, and it is published from their keys (PublishInput.stored).
-// So it may be larger than anything uploaded: a paper up to this, and up to the second with
-// its implementation. Only a publish carrying `stored` files may reach them; every other
-// bundle keeps the ceilings above.
-export const MAX_IMPORTED_PAPER_BYTES = 100 * 1024 * 1024 // 100 MB
-export const MAX_IMPORTED_BUNDLE_BYTES = 200 * 1024 * 1024 // 200 MB
+// So it may be far larger than anything uploaded: a paper up to the first, up to the second
+// with its implementation, in up to the third number of files. Only a publish carrying
+// `stored` files may reach them; every other bundle keeps the ceilings above.
+export const MAX_IMPORTED_PAPER_BYTES = 250 * 1024 * 1024 // 250 MB
+export const MAX_IMPORTED_BUNDLE_BYTES = 500 * 1024 * 1024 // 500 MB
+export const MAX_IMPORTED_BUNDLE_FILES = 13_000
 
 /**
  * Choose a bundle's entry page. An HTML site enters at its root `index.html`, else
@@ -304,8 +305,12 @@ async function storeContent(
     // the hard ceiling and never below the ordinary cap.
     const clamp = (asked: number | undefined, floor: number, ceiling: number): number =>
       Math.min(Math.max(asked ?? floor, floor), ceiling)
-    const maxFiles = clamp(limits?.maxFiles, MAX_BUNDLE_FILES, MAX_BUNDLE_FILES_WITH_CODE)
     // A bundle published from stored files is an importer's: see MAX_IMPORTED_BUNDLE_BYTES.
+    const maxFiles = clamp(
+      limits?.maxFiles,
+      MAX_BUNDLE_FILES,
+      stored ? MAX_IMPORTED_BUNDLE_FILES : MAX_BUNDLE_FILES_WITH_CODE,
+    )
     const maxBytes = clamp(
       limits?.maxBundleBytes,
       MAX_BUNDLE_UNZIPPED_BYTES,

@@ -36,7 +36,8 @@ export interface LatexSourcePlan<F> {
   entry: string
   notes: string[]
   /** Text files to transcode from latin-1 to UTF-8 before publishing, by bundle path. The
-   *  planner decides; the caller holds the bytes. Empty unless the entry declares latin-1. */
+   *  planner decides; the caller reads the bytes wherever it keeps them. Empty unless the
+   *  entry declares latin-1. */
   transcode: string[]
 }
 
@@ -65,11 +66,10 @@ const utf8 = new TextDecoder()
 const latin1 = new TextDecoder("latin1")
 const EMPTY = new Uint8Array()
 
-/** Whether planning a source, or the transcoding a plan may ask for, needs this file's
- *  bytes. An import streaming an archive keeps these in memory and everything else by
- *  reference. */
-export const readsLatexText = (path: string): boolean =>
-  TEXT_FOR_TRANSCODE.test(path) || README.test(path)
+/** Whether planning a source reads this file's bytes: the `.tex` candidates and arXiv's
+ *  00README. An import streaming an archive keeps these in memory and everything else by
+ *  reference, a bibliography included however large it is. */
+export const readsLatexText = (path: string): boolean => TEX.test(path) || README.test(path)
 
 const basename = (path: string): string => path.slice(path.lastIndexOf("/") + 1)
 const stripExt = (name: string): string => name.replace(TEX, "")

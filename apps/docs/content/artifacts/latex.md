@@ -79,21 +79,26 @@ source download leave them out, and requesting one returns nothing. The console 
 paper sees the implementation summarised beside the paper's pages, with a file count and
 the shallowest hundred paths, and reads any file in it by its exact path.
 
-An artifact carrying an implementation may be twice the usual size, and what survives
-that is decided asymmetrically: every text and code file is kept whatever the total, and
-binaries are dropped largest first until the rest fits, each named in the notes. A
-research repository is usually a fifth of a megabyte of source beside tens of megabytes
-of demo media, so this keeps the part an agent came for. A repository that is gone,
-private, unreachable or too large to fit leaves the paper imported and says why on its
-console, so the link can be fixed without fetching the paper again.
+Only the implementation's source is kept, because that is what an agent reads it for. A
+file whose first bytes are not text (weights, checkpoints, images, video, archives), a text
+file that is data or media by its name (CSV, TSV, JSON Lines, SVG, point clouds, meshes,
+logs) and any file over 10 MB are left out before they are stored; the notes count them and
+name the largest. A research repository is usually a fifth of a megabyte of source beside
+tens of megabytes of demo media and data, so this keeps the part an agent came for. The
+source may be up to 250 MB in up to 8,000 files, and the repository's archives may unpack
+to 600 MB, source and data together (the Node server allows more files and more
+unpacking). A repository past those is not attached, since part of a tree would read like
+all of it, and a submodule past them is skipped and named. A repository that is gone,
+private, unreachable or too large leaves the paper imported and says why on its console,
+so the link can be fixed without fetching the paper again.
 
-An imported paper may hold 100 MB and 2000 files, and 200 MB and 4000 files with its
-implementation, which takes at most 100 MB of that; any other bundle keeps the upload
-limits (50 MB, or 100 MB with an implementation). The paper and its repository stream
-into storage as they download, so neither is ever held whole, and no single file may be
-over 50 MB: in a paper that fails the import naming the file, in a repository the file is
-left out and named. The worker pulls up to 150 MB from arXiv (120 MB on the Workers tier)
-to get there: when the unpacked source is over
+An imported paper may hold 250 MB in up to 5,000 files, and its implementation up to
+250 MB more; any other bundle keeps the upload limits (50 MB, or 100 MB with an
+implementation). The paper and its repository stream into storage as they download, in
+separate passes, so neither is ever held whole. No file over 50 MB is kept, since that is
+the most a request can read whole to serve it: a paper imports without such a file, and its
+notes name it. The worker pulls up to 300 MB from arXiv, unpacking to at most 500 MB
+(400 MB on the Workers tier), to get there: when the unpacked source is over
 the limit, the raster figures (PNG, JPEG, WebP) are re-encoded in place, largest first,
 to at most 1600 px on the long side, then 1200, then 900, until the bundle fits; a
 figure keeps its path and format, so every reference still resolves, and the manifest's

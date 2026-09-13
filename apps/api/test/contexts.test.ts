@@ -1724,21 +1724,6 @@ describe("contexts: import from arXiv", () => {
         () => gzip(gzipSync(new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31]))),
         "no_source",
       ],
-      // One file over what a single file may be refuses the paper, and names the file.
-      [
-        "2403.00007",
-        undefined,
-        () =>
-          gzip(
-            gzipSync(
-              tarSync({
-                "main.tex": "\\documentclass{article}\\begin{document}x\\end{document}",
-                "fig/huge.png": new Uint8Array(1536 * 1024),
-              }),
-            ),
-          ),
-        "too_large",
-      ],
     ]
     let current = cases[0]
     const stub = arxivStub({
@@ -1752,13 +1737,9 @@ describe("contexts: import from arXiv", () => {
       const [id, , , code] = kase
       const x = await (await importPaper(app, id)).json()
       c.advance(60_000)
-      const base = tickDeps()
-      expect(
-        await runImportTick({ ...base, caps: { ...base.caps, maxFileBytes: 1024 * 1024 } }),
-      ).toBe(1)
+      expect(await runImportTick(tickDeps())).toBe(1)
       const job = await meta.getImportJobForContext(x.id)
       expect(job?.error_code).toBe(code)
-      if (id === "2403.00007") expect(job?.error_detail).toContain("fig/huge.png")
       const detail = await (
         await app.request(`/v1/contexts/${x.id}`, { headers: as(owner.email) })
       ).json()
@@ -1961,6 +1942,51 @@ describe("contexts: import from arXiv", () => {
     const stored = await ctx.blobs.get(manifest.files["/fig/big.png"]?.key ?? "")
     expect(Buffer.from(stored ?? new Uint8Array()).equals(Buffer.from(figure))).toBe(true)
     expect(v?.size_bytes).toBe(Object.values(manifest.files).reduce((n, f) => n + f.size, 0))
+  })
+
+  it("imports a paper without what it cannot afford, and says what that was", async () => {
+    // A figure over what a request can read whole to serve, and a generated table past the
+    // text an import reads to find the paper. Neither is a reason to lose the paper.
+    const stub = arxivStub({
+      source: () =>
+        gzip(
+          gzipSync(
+            tarSync({
+              "main.tex":
+                "\\documentclass{article}\\begin{document}\\input{tables/all}\\end{document}",
+              "tables/all.tex": `${"1 & 2 \\\\\n".repeat(40_000)}`,
+              "fig/huge.png": new Uint8Array(1536 * 1024),
+              "fig/small.png": new Uint8Array(64),
+            }),
+          ),
+        ),
+    })
+    const { app, meta, ctx, tickDeps } = setup("contexts-import-left-out", stub.fetch)
+    await app.request("/v1/me", { headers: as(owner.email) })
+    const x = await (await importPaper(app, "2408.00003")).json()
+    const base = tickDeps()
+    const caps = { ...base.caps, maxFileBytes: 1024 * 1024, textBytes: 256 * 1024 }
+    expect(await runImportTick({ ...base, caps })).toBe(1)
+
+    const detail = await (
+      await app.request(`/v1/contexts/${x.id}`, { headers: as(owner.email) })
+    ).json()
+    expect(detail.import.status).toBe("ready")
+    const paper = await meta.getByShortId(detail.documents[0].short_id)
+    const v = paper ? await meta.getVersion(paper.id, paper.current_version) : null
+    const manifest = JSON.parse(
+      new TextDecoder().decode((await ctx.blobs.get(v?.blob_key ?? "")) ?? undefined),
+    ) as { entry: string; files: Record<string, unknown> }
+    // The table is kept, unread; the figure is left out and named.
+    expect(Object.keys(manifest.files).sort()).toEqual([
+      "/CITATION.bib",
+      "/fig/small.png",
+      "/main.tex",
+      "/tables/all.tex",
+    ])
+    expect(manifest.entry).toBe("/main.tex")
+    expect(v?.message).toContain("left out 1 file over the 1.0 MB one file may be: fig/huge.png")
+    expect(v?.message).toContain("did not read 1 .tex file")
   })
 
   it("stops reading a source while storage is behind", async () => {
@@ -2242,8 +2268,8 @@ describe("contexts: import from arXiv", () => {
     ).toBe(404)
   })
 
-  it("keeps every source file and leaves the big media behind", async () => {
-    // A repository that is mostly demo media, which is what a paper's repository is.
+  it("keeps the source and leaves binaries, data and media behind", async () => {
+    // A repository that is mostly demo media and data, which is what a paper's repository is.
     // Real bytes, not printable ones: what makes a file media is its content.
     const bigGif = new Uint8Array(3 * 1024 * 1024)
     bigGif.set([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x00, 0x00])
@@ -2255,8 +2281,11 @@ describe("contexts: import from arXiv", () => {
       {
         "o/r": repoTar({
           "r-abc/train.py": "def train():\n    return 1\n",
+          "r-abc/configs/base.yaml": "lr: 0.1\n",
           "r-abc/assets/demo.gif": bigGif,
           "r-abc/assets/icon.png": smallPng,
+          // Text, but data: an agent reads the loader, not the points.
+          "r-abc/data/points.csv": "x,y\n1,2\n",
         }),
       },
     )
@@ -2268,8 +2297,6 @@ describe("contexts: import from arXiv", () => {
         jsonAs(as(owner.email), { url: "2406.00002", code_url: "https://github.com/o/r" }),
       )
     ).json()
-    // An implementation gets what the paper leaves of twice this deployment's bundle cap,
-    // and never more than the cap itself: 1 MB for the code here, beside 3 MB of media.
     const base = tickDeps()
     const stored: number[] = []
     const blobs: BlobStore = {
@@ -2288,14 +2315,13 @@ describe("contexts: import from arXiv", () => {
     const deps = {
       ...base,
       blobs,
-      caps: { ...base.caps, bundleBytes: 1024 * 1024 },
       repoCaps: { ...base.repoCaps, compressedBytes: 8 * 1024 * 1024 },
     }
     // The paper publishes in one pass, and its implementation attaches in the next.
     expect(await runImportTick(deps)).toBe(1)
     c.advance(ARXIV_REQUEST_INTERVAL_MS + 1)
     expect(await runImportTick(deps)).toBe(1)
-    // The GIF could never fit beside the code, so it was never stored at all.
+    // What is not source is decided before it is stored, so the GIF never was.
     expect(stored).not.toContain(bigGif.byteLength)
 
     const detail = await (
@@ -2307,11 +2333,10 @@ describe("contexts: import from arXiv", () => {
       new TextDecoder().decode((await ctx.blobs.get(v?.blob_key ?? "")) ?? undefined),
     )
     const code = Object.keys(manifest.files).filter((p: string) => p.startsWith("/code/"))
-    // Every line of source survives; the 3 MB GIF does not, and is named.
-    expect(code).toContain("/code/train.py")
-    expect(code).toContain("/code/assets/icon.png")
-    expect(code).not.toContain("/code/assets/demo.gif")
-    expect(v?.message).toContain("left out 1 large file")
+    // Every line of source survives, and nothing else does, however small; the largest of
+    // what was left out is named.
+    expect(code.sort()).toEqual(["/code/configs/base.yaml", "/code/train.py"])
+    expect(v?.message).toContain("left out 3 files that are not source")
     expect(v?.message).toContain("assets/demo.gif")
     expect((await meta.getImportJobForContext(created.id))?.code_status).toBe("ready")
   })
@@ -2448,6 +2473,29 @@ describe("contexts: import from arXiv", () => {
       code_status: "failed",
       code_error: "no such repository, or it is not public (the host answered 404)",
     })
+  })
+
+  it("refuses an implementation with more source than an import keeps, and keeps the paper", async () => {
+    const repo: Record<string, string> = {}
+    for (let i = 0; i < 6; i++) repo[`r-abc/pkg/mod${i}.py`] = `x = ${i}\n`
+    const stub = arxivStub({}, { "o/r": repoTar(repo) })
+    const { app, meta, clock: c, tickDeps } = setup("contexts-import-code-over", stub.fetch)
+    await app.request("/v1/me", { headers: as(owner.email) })
+    const created = await (
+      await app.request(
+        "/v1/contexts/import/arxiv",
+        jsonAs(as(owner.email), { url: "2406.00005", code_url: "https://github.com/o/r" }),
+      )
+    ).json()
+    const base = tickDeps()
+    const deps = { ...base, repoCaps: { ...base.repoCaps, files: 5 } }
+    expect(await runImportTick(deps)).toBe(1)
+    c.advance(ARXIV_REQUEST_INTERVAL_MS + 1)
+    expect(await runImportTick(deps)).toBe(1)
+    // Part of a tree would read like all of it, so none is attached, and the bound is named.
+    const job = await meta.getImportJobForContext(created.id)
+    expect(job).toMatchObject({ status: "ready", code_status: "failed", code_ref: null })
+    expect(job?.code_error).toContain("more than the 5 source files")
   })
 
   it("refuses a link that is not a public GitHub or GitLab repository", async () => {

@@ -16,16 +16,18 @@
 // rather than implying the import reproduced a pinned tree.
 //
 // Every archive streams into the blob store as it downloads (stageArchive), so a tree larger
-// than the worker's memory arrives a file at a time. What could never be kept is decided
-// before it is stored: a file over what one file may be, or a binary larger than all the
-// room the paper leaves, is left out and named.
+// than the worker's memory arrives a file at a time, and only its source is kept. An agent
+// reads an implementation for what the method does, never for its weights, datasets or demo
+// media, so a file is left out before it is stored when its first bytes are not text, when
+// its name says it is data, or when it is larger than source ever is. What was left out is
+// counted and the largest named, so a path the README mentions that resolves to nothing is
+// explained.
 
 import { unbound } from "@derive/broker"
 import {
   type BlobStore,
   CODE_PREFIX,
   cleanPath,
-  MAX_BUNDLE_UNZIPPED_BYTES,
   parseGitmodules,
   parseRepoRef,
   type RepoFile,
@@ -35,25 +37,38 @@ import {
   TarError,
 } from "@derive/core"
 import type { AddressGuard } from "../webhooks"
-import { ArchiveError, type StagePolicy, stageArchive } from "./archive"
+import { ArchiveError, downloadWindow, type StagePolicy, stageArchive } from "./archive"
 import { isPublicHttpUrl } from "./net"
 
 /** One archive is a single large read; a repository host is not arXiv and asks for no
  *  pacing, but a second between repositories keeps a deep tree from looking like a flood. */
 const REPO_REQUEST_INTERVAL_MS = 1_000
 /** How long a host has to start answering. The archive itself streams under the reader's
- *  limits (a stall, and REPO_DEADLINE_MS), since a large one is still arriving after this. */
+ *  limits (a stall, and the download's deadline), since a large one is still arriving after
+ *  this. */
 const REPO_TIMEOUT_MS = 90_000
-const REPO_DEADLINE_MS = 5 * 60_000
+/** The longest one archive may take to download, however much time the pass has left. */
+const REPO_DEADLINE_MS = 10 * 60_000
+/** Every entry an archive may hold, source or not. What is kept is capped separately. */
+const TAR_ENTRIES = 50_000
 const MB = 1024 * 1024
 /** A `.gitmodules` larger than this is not one a repository ships; it is not followed. */
 const GITMODULES_BYTES = 64 * 1024
+/** A text file larger than this is data or generated output, not source. */
+const SOURCE_FILE_BYTES = 10 * MB
+/** Text that is data or media rather than source, left out whatever its size. */
+const DATA_TEXT =
+  /\.(csv|tsv|jsonl|ndjson|geojson|svg|ply|obj|mtl|off|stl|pcd|pts|xyz|vtk|gltf|dae|pdb|fasta|fastq|arff|log)$/i
+/** How many of the files a tree left out its notes name. */
+const NAMED = 6
 
 export interface RepoCaps {
-  /** Per archive: the most read off the wire, and the most it may inflate to. */
+  /** Per archive: the most read off the wire. */
   compressedBytes: number
+  /** Across the whole tree: the most its archives may inflate to, source or not. Inflating
+   *  is where a fetch spends its CPU, so this is what keeps it inside a pass's CPU time. */
   inflatedBytes: number
-  /** Across the whole tree: the working budget, and the file count. */
+  /** Across the whole tree: the most source it may store, and in how many files. */
   totalBytes: number
   files: number
   /** How deep submodules are followed, and how many repositories in all. */
@@ -63,16 +78,17 @@ export interface RepoCaps {
   bufferFileBytes?: number
   /** Bytes on their way to storage before reading pauses for them. Default 16 MB. */
   inflightBytes?: number
-  /** The most one file may be: what a request can read whole to serve it. Default 50 MB. */
-  maxFileBytes?: number
+  /** The largest text file kept as source; past it, a file is data or generated. Default 10 MB. */
+  sourceFileBytes?: number
 }
 
-/** Both tiers stream a tree into storage as it downloads. The Node tier reads more of each
- *  file whole and follows deeper trees; the edge worker runs in a 128 MB isolate. */
+/** Both tiers stream a tree into storage as it downloads and keep only its source. The edge
+ *  worker has 30 seconds of CPU and 10,000 storage requests a pass, so it inflates at most
+ *  600 MB of archive and stores at most 8,000 files; the Node tier has neither limit. */
 export const NODE_REPO_CAPS: RepoCaps = {
-  compressedBytes: 200 * MB,
-  inflatedBytes: 250 * MB,
-  totalBytes: 300 * MB,
+  compressedBytes: 1024 * MB,
+  inflatedBytes: 2048 * MB,
+  totalBytes: 250 * MB,
   files: 20_000,
   depth: 3,
   repos: 20,
@@ -80,10 +96,10 @@ export const NODE_REPO_CAPS: RepoCaps = {
   inflightBytes: 64 * MB,
 }
 export const EDGE_REPO_CAPS: RepoCaps = {
-  compressedBytes: 150 * MB,
-  inflatedBytes: 300 * MB,
-  totalBytes: 300 * MB,
-  files: 4_000,
+  compressedBytes: 500 * MB,
+  inflatedBytes: 600 * MB,
+  totalBytes: 250 * MB,
+  files: 8_000,
   depth: 2,
   repos: 5,
 }
@@ -109,6 +125,9 @@ export interface RepoFetchDeps {
   blobs: BlobStore
   /** Called while archives stream, so a long fetch keeps its claim on the job. */
   heartbeat?: () => Promise<void>
+  /** When the fetch should be done, on `now`'s clock: the pass's, so a download ends inside
+   *  the pass it runs in. */
+  passDeadline?: number
 }
 
 /** A file already in the blob store. */
@@ -124,11 +143,8 @@ export interface RepoRoom {
 }
 
 export interface RepoFetchResult {
-  /** Every stored file, already at its manifest path under /code/. */
+  /** Every stored file, already at its manifest path under /code/: the tree's source. */
   files: RepoFile<StoredFile>[]
-  /** Binaries larger than all the room, left out before they were stored: the fit names
-   *  them among what it leaves out. */
-  unfit: RepoFile<null>[]
   /** What was actually fetched, canonically — the resume marker. */
   fetched: string
   /** Repositories pulled in, the root first. */
@@ -139,13 +155,36 @@ export interface RepoFetchResult {
 
 const mb = (n: number): string => `${(n / 1048576).toFixed(1)} MB`
 
-/** Name a few and count the rest: a version message is not a file listing. */
-const nameFew = (files: { path: string; bytes: number }[]): string => {
-  const shown = files
-    .slice(0, 6)
+/** What a tree left out: how many files, how many bytes, and the few largest by path. */
+interface LeftOut {
+  count: number
+  bytes: number
+  largest: { path: string; bytes: number }[]
+}
+
+const leftOut = (): LeftOut => ({ count: 0, bytes: 0, largest: [] })
+
+/** Keep a file among the largest few, if it is one of them. */
+const rank = (out: LeftOut, path: string, bytes: number): void => {
+  const smallest = out.largest[NAMED - 1]
+  if (smallest && smallest.bytes >= bytes) return
+  out.largest.push({ path, bytes })
+  out.largest.sort((a, b) => b.bytes - a.bytes)
+  out.largest.length = Math.min(out.largest.length, NAMED)
+}
+
+const leave = (out: LeftOut, path: string, bytes: number): void => {
+  out.count++
+  out.bytes += bytes
+  rank(out, path, bytes)
+}
+
+/** Name the largest few and count the rest: a version message is not a file listing. */
+const nameFew = (out: LeftOut): string => {
+  const shown = out.largest
     .map((f) => `${f.path.replace(/^\/code\//, "")} (${mb(f.bytes)})`)
     .join(", ")
-  const more = files.length - Math.min(6, files.length)
+  const more = out.count - out.largest.length
   return `${shown}${more > 0 ? `, and ${more} more` : ""}`
 }
 
@@ -250,13 +289,8 @@ const getArchive = async (deps: RepoFetchDeps, url: string): Promise<Response> =
   throw new RepoFetchError("the repository host redirected too many times")
 }
 
-/** Everything a host archive puts under one top directory (`repo-<sha>/`); dropping it
- *  makes the repository's own paths the ones an agent reads. */
-const stripRoot = (paths: string[]): string => {
-  const first = paths[0]?.split("/")[0]
-  if (!first) return ""
-  return paths.every((p) => p === first || p.startsWith(`${first}/`)) ? `${first}/` : ""
-}
+const unpacksPast = (caps: RepoCaps): string =>
+  `the implementation unpacks to more than the ${mb(caps.inflatedBytes)} an import reads, source and data together`
 
 /** Say what an archive failure means for a repository. */
 const asRepoFetchError = (error: unknown, caps: RepoCaps): never => {
@@ -264,32 +298,35 @@ const asRepoFetchError = (error: unknown, caps: RepoCaps): never => {
     throw new RepoFetchError(
       error.code === "malformed"
         ? "the repository archive is unreadable"
-        : "the repository is larger than an import holds",
+        : error.code === "too_many_files"
+          ? `the repository archive holds more than ${TAR_ENTRIES} files`
+          : unpacksPast(caps),
     )
   if (!(error instanceof ArchiveError)) throw error
   throw new RepoFetchError(
     error.kind === "compressed"
       ? `the repository archive is larger than ${mb(caps.compressedBytes)}`
       : error.kind === "inflated"
-        ? `the repository inflates past ${mb(caps.inflatedBytes)}`
+        ? unpacksPast(caps)
         : error.kind === "corrupt"
           ? "the repository archive could not be decompressed"
           : error.kind === "single"
             ? "the download was not a repository archive"
             : error.kind === "stalled"
-              ? `the repository download stalled, or took longer than ${REPO_DEADLINE_MS / 60_000} minutes`
+              ? "the repository download stalled or ran out of time"
               : "the repository download broke off",
   )
 }
 
 /**
- * Fetch a repository and everything it declares, into files under /code/ in the blob store.
+ * Fetch a repository and everything it declares, keeping its source under /code/ in the
+ * blob store.
  *
- * Bounded on every axis a third party controls: bytes per archive, bytes over the tree,
- * files, submodule depth, and repositories in all. What a bound stops is written into the
- * notes, because a quietly half-fetched tree reads exactly like a complete one. `room` is
- * what the paper leaves: text past it refuses the repository, and a binary past it is never
- * stored.
+ * Bounded on every axis a third party controls: bytes per archive, bytes unpacked over the
+ * tree, source kept, submodule depth, and repositories in all. What a bound stops is written
+ * into the notes, because a quietly half-fetched tree reads exactly like a complete one.
+ * Source past the `room` the paper leaves refuses the repository, or skips the submodule that
+ * brought it, rather than keeping an arbitrary part of it.
  */
 export const fetchRepository = async (
   deps: RepoFetchDeps,
@@ -298,15 +335,19 @@ export const fetchRepository = async (
   room: RepoRoom,
 ): Promise<RepoFetchResult> => {
   const files: RepoFile<StoredFile>[] = []
-  const unfit: RepoFile<null>[] = []
-  const oversize: { path: string; bytes: number }[] = []
   const notes: string[] = []
   const repos: string[] = []
   const seen = new Set<string>()
-  const maxFileBytes = caps.maxFileBytes ?? MAX_BUNDLE_UNZIPPED_BYTES
-  let treeBytes = 0
-  let treeFiles = 0
-  let textBytes = 0
+  const left = leftOut()
+  const sourceFileBytes = caps.sourceFileBytes ?? SOURCE_FILE_BYTES
+  // What the tree may keep: the room the paper leaves, within what this tier stores.
+  const most = {
+    bytes: Math.min(room.bytes, caps.totalBytes),
+    files: Math.min(room.files, caps.files),
+  }
+  const kept = { bytes: 0, files: 0 }
+  // Every byte of every archive, kept or not: inflating is what a fetch spends its CPU on.
+  let unpacked = 0
   let lfs = 0
   let requests = 0
 
@@ -317,48 +358,46 @@ export const fetchRepository = async (
     requests++
     const res = await getArchive(deps, repoArchiveUrl(ref))
 
-    // Decided per file as the archive streams: every name it holds (to find its top
-    // directory once it has all arrived), which files are text, and what was left out.
-    const names: string[] = []
-    const text = new Map<string, boolean>()
-    const left: { name: string; size: number; unfit: boolean }[] = []
-    let exhausted = false
+    // Decided per file as the archive streams. What this archive keeps and leaves out joins
+    // the tree's count once all of it has arrived, so a submodule that fails part way
+    // leaves nothing of itself behind but the time it took.
+    const top = { dir: null as string | null, shared: true }
+    const archive = { bytes: 0, files: 0, lfs: 0, left: leftOut() }
     const policy: StagePolicy = {
       header: (name, size) => {
-        names.push(name)
-        if (exhausted || !cleanPath(name)) return false
-        if (size > maxFileBytes) {
-          left.push({ name, size, unfit: false })
-          return false
-        }
-        if (treeFiles >= caps.files || treeBytes + size > caps.totalBytes) {
-          exhausted = true
+        // The one directory every entry sits under, if there is one, found as names go by.
+        const dir = name.split("/")[0] ?? ""
+        if (top.dir === null) top.dir = dir
+        else if (dir !== top.dir) top.shared = false
+        unpacked += size
+        if (unpacked > caps.inflatedBytes) throw new RepoFetchError(unpacksPast(caps))
+        if (!cleanPath(name)) return false
+        if (size > sourceFileBytes || DATA_TEXT.test(name)) {
+          leave(archive.left, name, size)
           return false
         }
         return true
       },
       head: (name, size, head) => {
-        const isText = looksTextual(head)
-        if (isLfsPointer(head, size, isText)) {
-          lfs++
+        const text = looksTextual(head)
+        if (isLfsPointer(head, size, text)) {
+          archive.lfs++
           return "skip"
         }
-        // Larger than all the room the paper leaves, less the code already in: it could
-        // never be kept, so it is not stored at all.
-        if (!isText && size > room.bytes - textBytes) {
-          left.push({ name, size, unfit: true })
+        if (!text) {
+          leave(archive.left, name, size)
           return "skip"
         }
-        if (isText) {
-          textBytes += size
-          if (textBytes > room.bytes)
-            throw new RepoFetchError(
-              `the repository's text files alone are over the ${mb(room.bytes)} an artifact with an implementation has room for`,
-            )
-        }
-        text.set(name, isText)
-        treeFiles++
-        treeBytes += size
+        archive.files++
+        archive.bytes += size
+        if (kept.files + archive.files > most.files)
+          throw new RepoFetchError(
+            `the implementation has more than the ${most.files} source files an import stores beside the paper`,
+          )
+        if (kept.bytes + archive.bytes > most.bytes)
+          throw new RepoFetchError(
+            `the implementation's source is over the ${mb(most.bytes)} an import stores beside the paper`,
+          )
         const base = name.slice(name.lastIndexOf("/") + 1)
         return base === ".gitmodules" && size <= GITMODULES_BYTES ? "keep" : "store"
       },
@@ -370,10 +409,10 @@ export const fetchRepository = async (
         {
           compressedBytes: caps.compressedBytes,
           inflatedBytes: caps.inflatedBytes,
-          files: caps.files,
+          files: TAR_ENTRIES,
           bufferFileBytes: caps.bufferFileBytes ?? 8 * MB,
           inflightBytes: caps.inflightBytes ?? 16 * MB,
-          deadlineMs: REPO_DEADLINE_MS,
+          deadlineMs: downloadWindow(deps.now(), deps.passDeadline, REPO_DEADLINE_MS),
           // A repository is a tar or nothing: one plain file is not one.
           singleFileBytes: 0,
         },
@@ -385,35 +424,31 @@ export const fetchRepository = async (
     }
     if (staged.kind !== "tar") throw new RepoFetchError("the download was not a repository archive")
     repos.push(ref.canonical)
+    kept.bytes += archive.bytes
+    kept.files += archive.files
+    lfs += archive.lfs
 
-    const top = stripRoot(names)
+    // Everything a host archive puts under one top directory (`repo-<sha>/`); dropping it
+    // makes the repository's own paths the ones an agent reads.
+    const strip = top.dir && top.shared ? `${top.dir}/` : ""
     const inTree = (name: string): string | null => {
-      const inner = name.slice(top.length)
+      const inner = name.slice(strip.length)
       if (!inner || inner.startsWith(".git/")) return null
       return cleanPath(`${prefix}${inner}`)
     }
     let gitmodules: string | null = null
     for (const file of staged.files) {
-      if (file.path === `${top}.gitmodules` && file.bytes)
+      if (file.path === `${strip}.gitmodules` && file.bytes)
         gitmodules = new TextDecoder().decode(file.bytes)
       const path = inTree(file.path)
       if (!path) continue
-      files.push({
-        path,
-        size: file.size,
-        text: text.get(file.path) ?? false,
-        ref: { key: file.key, size: file.size },
-      })
+      files.push({ path, size: file.size, text: true, ref: { key: file.key, size: file.size } })
     }
-    for (const out of left) {
-      const path = inTree(out.name)
-      if (!path) continue
-      if (out.unfit) unfit.push({ path, size: out.size, text: false, ref: null })
-      else oversize.push({ path, bytes: out.size })
-    }
-    if (exhausted) {
-      notes.push(`stopped reading ${ref.canonical} at the import's working budget`)
-      return
+    left.count += archive.left.count
+    left.bytes += archive.left.bytes
+    for (const out of archive.left.largest) {
+      const path = inTree(out.path)
+      if (path) rank(left, path, out.bytes)
     }
     if (!gitmodules) return
 
@@ -457,9 +492,9 @@ export const fetchRepository = async (
 
   await walk(root, CODE_PREFIX.slice(1), 0)
 
-  if (oversize.length > 0)
+  if (left.count > 0)
     notes.push(
-      `left out ${oversize.length} ${oversize.length === 1 ? "file" : "files"} over the ${mb(maxFileBytes)} one file may be: ${nameFew(oversize)}`,
+      `left out ${left.count} ${left.count === 1 ? "file that is" : "files that are"} not source (${mb(left.bytes)} of binaries, data, media and text over ${mb(sourceFileBytes)}): ${nameFew(left)}`,
     )
   if (repos.length > 1)
     notes.push(
@@ -469,5 +504,5 @@ export const fetchRepository = async (
     notes.push(
       `skipped ${lfs} Git LFS ${lfs === 1 ? "pointer" : "pointers"}, whose files live outside the repository`,
     )
-  return { files, unfit, fetched: root.canonical, repos, notes }
+  return { files, fetched: root.canonical, repos, notes }
 }

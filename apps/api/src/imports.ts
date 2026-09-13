@@ -37,12 +37,15 @@ export const IMPORT_LEASE_MS = 4 * 60_000
 /** How often a running import renews that claim: well inside the lease, so a run that is
  *  alive (a long download, a slow publish) never looks dead to the next tick. */
 const HEARTBEAT_MS = 60_000
+/** How long one pass may work. A Durable Object alarm is ended at 15 minutes, so downloads
+ *  and shrinking stop in time for the pass to publish well inside that. */
+const PASS_BUDGET_MS = 12 * 60_000
 /** Transient failures retry with exponential backoff from here, capped below. */
 const RETRY_BASE_MS = 60_000
 const RETRY_MAX_MS = 30 * 60_000
 
 export interface ImportTickDeps
-  extends Omit<ImportDeps, "now" | "sleep" | "claimToken" | "heartbeat"> {
+  extends Omit<ImportDeps, "now" | "sleep" | "claimToken" | "heartbeat" | "passDeadline"> {
   now?: () => number
   sleep?: (ms: number) => Promise<void>
   /** Names this worker in the lease row; defaults to a fresh id per tick. */
@@ -225,7 +228,19 @@ export const runImportTick = async (deps: ImportTickDeps): Promise<number> => {
           .updateImportLease("arxiv", scope, holder, { lease_until: until })
           .catch(() => undefined)
     }
-    await importArxivPaper({ ...deps, now, sleep, releaseGate, claimToken, heartbeat }, job, client)
+    await importArxivPaper(
+      {
+        ...deps,
+        now,
+        sleep,
+        releaseGate,
+        claimToken,
+        heartbeat,
+        passDeadline: startedAt + PASS_BUDGET_MS,
+      },
+      job,
+      client,
+    )
     log.info("import ready", { jobId: job.id, ref: job.ref, attempts: job.attempts })
   } catch (error) {
     if (!job || error instanceof ImportCancelled) return job ? 1 : 0

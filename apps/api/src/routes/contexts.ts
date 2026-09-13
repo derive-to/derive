@@ -8,7 +8,6 @@ import {
   effectiveRole,
   encodeCursor,
   type ImportJobRecord,
-  MAX_IMPORTED_PAPER_BYTES,
   maxRole,
   newId,
   normalizeSelector,
@@ -1390,7 +1389,10 @@ export const contextRoutes = (ctx: AppContext) => {
   // in. Idempotent per paper per workspace: the same paper pasted twice opens the one
   // Context, requeuing its import if that had failed.
   const MAX_ACTIVE_IMPORTS_PER_WORKSPACE = 3
-  const ARXIV_IMPORT_ESTIMATED_BYTES = MAX_IMPORTED_PAPER_BYTES
+  // What an import is expected to add, for the storage gate at the paste. Deliberately not
+  // the ceiling (MAX_IMPORTED_PAPER_BYTES): nearly every paper is a small fraction of it,
+  // and gating on the ceiling would turn away workspaces with room for all of them.
+  const ARXIV_IMPORT_ESTIMATED_BYTES = 100 * 1024 * 1024
 
   app.openapi(
     createRoute({

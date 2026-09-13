@@ -77,6 +77,11 @@ export const HEAD_BYTES = 8 * 1024
 const SLICE_BYTES = 8 * 1024
 /** A download that sends nothing for this long has stalled. */
 const STALL_MS = 30_000
+
+/** How long a download may run: at most `most`, and never past `deadline` (epoch ms on the
+ *  same clock as `now`) when there is one. */
+export const downloadWindow = (now: number, deadline: number | undefined, most: number): number =>
+  Math.max(0, Math.min(most, (deadline ?? Number.POSITIVE_INFINITY) - now))
 /** Whole files being put at once. A streamed file goes in archive order, one at a time. */
 const MAX_PUTS = 4
 const BLOCK = 512

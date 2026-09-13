@@ -30,9 +30,9 @@ import {
   isCodePath,
   isLatexDocument,
   type LatexSourcePlan,
-  MAX_BUNDLE_FILES_WITH_CODE,
   MAX_BUNDLE_UNZIPPED_BYTES,
   MAX_IMPORTED_BUNDLE_BYTES,
+  MAX_IMPORTED_BUNDLE_FILES,
   MAX_IMPORTED_PAPER_BYTES,
   type MetaStore,
   parseArxivRef,
@@ -46,19 +46,13 @@ import {
 } from "@derive/core"
 import type { Backplane } from "../bus"
 import { type AfterPublishDeps, afterPublish } from "./after-publish"
-import { ArchiveError, stageArchive } from "./archive"
+import { ArchiveError, downloadWindow, stageArchive } from "./archive"
 import { type ArxivPaperMeta, failedPaper, plainText } from "./arxiv-paper"
 import { manifestOf, materializeBundle } from "./bundle"
 import { readCappedBytes } from "./http"
 import { CITATION_PATH } from "./latex-bundle"
 import { isPublicHttpUrl } from "./net"
-import {
-  fetchRepository,
-  type RepoCaps,
-  type RepoFetchDeps,
-  RepoFetchError,
-  type StoredFile,
-} from "./repo-fetch"
+import { fetchRepository, type RepoCaps, type RepoFetchDeps, RepoFetchError } from "./repo-fetch"
 import { normalizeTags } from "./tags"
 import { truncate } from "./text"
 
@@ -68,13 +62,14 @@ export const ARXIV_REQUEST_INTERVAL_MS = 3_000
 export const ARXIV_MAX_PENALTY_MS = 10 * 60_000
 const METADATA_TIMEOUT_MS = 10_000
 /** How long arXiv has to start answering for a source. The body is not held to it: it
- *  streams under the reader's own limits (a stall, and SOURCE_DEADLINE_MS), since a large
- *  source is still arriving long after a minute. */
+ *  streams under the reader's own limits (a stall, and the download's deadline), since a
+ *  large source is still arriving long after a minute. */
 const SOURCE_TIMEOUT_MS = 60_000
-const SOURCE_DEADLINE_MS = 5 * 60_000
-/** The longest a source's figures may spend in the codec. Past it, what still does not fit
- *  is refused: another attempt would run out of time the same way. */
-const SHRINK_BUDGET_MS = 10 * 60_000
+/** The longest one download may take, however much time the pass has left. */
+const DOWNLOAD_DEADLINE_MS = 10 * 60_000
+/** Shrinking stops this long before the pass's deadline, to leave time to publish. What still
+ *  does not fit then is tried again, since a later pass may spend less of its time downloading. */
+const PUBLISH_MARGIN_MS = 60_000
 const MB = 1024 * 1024
 
 export interface ImportCaps {
@@ -92,9 +87,11 @@ export interface ImportCaps {
   /** How many bytes may be on their way to storage before reading pauses for them.
    *  Default 16 MB. */
   inflightBytes?: number
-  /** The most one file may be: what a request can read whole to serve it. Default 50 MB. */
+  /** The largest file a paper keeps: what a request can read whole to serve it. A larger one
+   *  is left out and named, and the rest of the paper imports. Default 50 MB. */
   maxFileBytes?: number
-  /** The paper's text files, which planning reads, held in memory. Default 8 MB. */
+  /** The paper's .tex files, held in memory for planning to read. A .tex past this is stored
+   *  unread. Default 8 MB. */
   textBytes?: number
   /** How many figures are in the codec at once. Default 4. */
   shrinkConcurrency?: number
@@ -113,26 +110,38 @@ const streamLimits = (caps: ImportCaps) => ({
  *  one holds is a file read whole, the text planning reads, and the bytes on their way to
  *  storage. The Node tier can afford more of each and shrinks figures with sharp; the edge
  *  worker runs in a 128 MB isolate and shrinks them in a browser, one figure at a time and
- *  none it could not afford to hold. Both publish up to the same ceiling. */
+ *  none it could not afford to hold. Both publish up to the same ceiling. What bounds the
+ *  edge worker's source is CPU rather than memory: inflating 400 MB takes around ten of the
+ *  thirty seconds a pass has, and 5,000 files stay well inside its 10,000 storage requests. */
 export const NODE_IMPORT_CAPS: ImportCaps = {
-  compressedBytes: 150 * MB,
-  inflatedBytes: 200 * MB,
+  compressedBytes: 300 * MB,
+  inflatedBytes: 500 * MB,
   bundleBytes: MAX_IMPORTED_PAPER_BYTES,
-  files: 2000,
+  files: 5000,
   bufferFileBytes: 32 * MB,
   inflightBytes: 64 * MB,
   textBytes: 32 * MB,
 }
 export const EDGE_IMPORT_CAPS: ImportCaps = {
-  compressedBytes: 120 * MB,
-  inflatedBytes: 150 * MB,
+  compressedBytes: 300 * MB,
+  inflatedBytes: 400 * MB,
   bundleBytes: MAX_IMPORTED_PAPER_BYTES,
-  files: 2000,
+  files: 5000,
   shrinkConcurrency: 1,
   shrinkInputBytes: 32 * MB,
 }
 
 const mb = (n: number): string => `${(n / 1048576).toFixed(1)} MB`
+
+/** Name the largest few and count the rest: a version message is not a file listing. */
+const largestFew = (files: { path: string; bytes: number }[]): string => {
+  const sorted = [...files].sort((a, b) => b.bytes - a.bytes)
+  const shown = sorted
+    .slice(0, 3)
+    .map((f) => `${f.path} (${mb(f.bytes)})`)
+    .join(", ")
+  return sorted.length > 3 ? `${shown}, and ${sorted.length - 3} more` : shown
+}
 
 /** The host a request was actually going to, for a message that says which one failed. */
 const hostOf = (url: string): string => {
@@ -252,6 +261,9 @@ export interface ImportDeps {
   /** Renew the claim, at most once a minute however often it is called. Throws
    *  ImportCancelled when the claim was lost. Called between phases and during long work. */
   heartbeat?: () => Promise<void>
+  /** When this pass should be done downloading and shrinking, on `now`'s clock. The tick
+   *  sets it, so a pass publishes what it has before the platform ends it. */
+  passDeadline?: number
 }
 
 // ---- The paced client -------------------------------------------------------
@@ -458,34 +470,42 @@ const asImportFailure = (error: unknown, caps: ImportCaps): never => {
   if (error.kind === "corrupt")
     throw new ImportFailure("no_tex", "the source archive could not be decompressed", true)
   if (error.kind === "stalled")
-    throw new ImportFailure(
-      "unavailable",
-      `the source download stalled, or took longer than ${SOURCE_DEADLINE_MS / 60_000} minutes`,
-      false,
-    )
+    throw new ImportFailure("unavailable", "the source download stalled or ran out of time", false)
   throw new ImportFailure("unavailable", "the source download broke off", false)
 }
 
 /** A file of the paper's source, already in the blob store. Its bytes stay in memory only
- *  for the text files planning reads. */
+ *  for the .tex files planning reads. */
 interface SourceFile {
   key: string
   size: number
   bytes: Uint8Array | null
 }
 
+/** A paper's source as it was staged: its files, the files too large to keep, and how many
+ *  .tex files were stored without being read. */
+interface StagedSource {
+  files: Record<string, SourceFile>
+  left: { path: string; bytes: number }[]
+  unread: number
+}
+
 /**
  * Read the paper's source into the blob store as it arrives, under the import's budgets,
  * and return its files by the names the archive gave them: a tarball's files, or the paper
  * itself when arXiv sent one gzipped file. What the worker holds meanwhile is the text
- * planning reads and what is on its way to storage, never the source.
+ * planning reads and what is on its way to storage, never the source. What it cannot afford
+ * does not sink the paper: a file too large to serve is left out, and a .tex past the text
+ * budget is stored unread.
  */
 export const stageArxivSource = async (
   res: Response,
-  deps: Pick<ImportDeps, "blobs" | "heartbeat">,
+  deps: Pick<ImportDeps, "blobs" | "heartbeat" | "now" | "passDeadline">,
   caps: ImportCaps,
-): Promise<Record<string, SourceFile>> => {
+): Promise<StagedSource> => {
   const limits = streamLimits(caps)
+  const left: StagedSource["left"] = []
+  let unread = 0
   let textBytes = 0
   let staged: Awaited<ReturnType<typeof stageArchive>>
   try {
@@ -497,7 +517,7 @@ export const stageArxivSource = async (
         files: caps.files,
         bufferFileBytes: limits.bufferFileBytes,
         inflightBytes: limits.inflightBytes,
-        deadlineMs: SOURCE_DEADLINE_MS,
+        deadlineMs: downloadWindow(deps.now(), deps.passDeadline, DOWNLOAD_DEADLINE_MS),
         singleFileBytes: limits.textBytes,
       },
       { blobs: deps.blobs, heartbeat: deps.heartbeat },
@@ -506,23 +526,23 @@ export const stageArxivSource = async (
         header: (name, size) => {
           const path = cleanPath(name)
           if (!path || path.slice(path.lastIndexOf("/") + 1).startsWith("._")) return false
-          if (size > limits.maxFileBytes)
-            throw new ImportFailure(
-              "too_large",
-              `${path.slice(1)} is ${mb(size)}, over the ${mb(limits.maxFileBytes)} one file may be`,
-              true,
-            )
+          // Larger than a request can read whole to serve it: the paper imports without it,
+          // and its notes name it.
+          if (size > limits.maxFileBytes) {
+            left.push({ path: path.slice(1), bytes: size })
+            return false
+          }
           return true
         },
         head: (name, size) => {
           if (!readsLatexText(name)) return "store"
+          // Past the budget a .tex is stored like any other file and planning goes without
+          // it: a generated table the paper inputs need not be read to find the paper.
+          if (size > limits.bufferFileBytes || textBytes + size > limits.textBytes) {
+            unread++
+            return "store"
+          }
           textBytes += size
-          if (size > limits.bufferFileBytes || textBytes > limits.textBytes)
-            throw new ImportFailure(
-              "too_large",
-              `the source's text files are over ${mb(limits.textBytes)}`,
-              true,
-            )
           return "keep"
         },
       },
@@ -538,31 +558,43 @@ export const stageArxivSource = async (
     if (
       bytes.byteLength > 0 &&
       isLatexDocument(new TextDecoder().decode(bytes.subarray(0, 65_536)))
-    )
-      return { "/main.tex": { key: await deps.blobs.put(bytes), size: bytes.byteLength, bytes } }
+    ) {
+      const main = { key: await deps.blobs.put(bytes), size: bytes.byteLength, bytes }
+      return { files: { "/main.tex": main }, left, unread }
+    }
     throw new ImportFailure("no_tex", "the source is neither an archive nor a LaTeX file", true)
   }
-  return Object.fromEntries(
+  const files = Object.fromEntries(
     staged.files.map((f) => [f.path, { key: f.key, size: f.size, bytes: f.bytes }]),
   )
+  return { files, left, unread }
 }
 
 /** Apply a plan's transcoding: latin-1 text is rewritten as UTF-8, stored, and takes the
- *  original's place. An alias such as main.bbl takes the same rewrite. */
+ *  original's place. An alias such as main.bbl takes the same rewrite. A file planning did
+ *  not hold is read back to be rewritten, unless it is over `maxBytes`: that one stays as it
+ *  is rather than be held twice over. */
 const transcodeSource = async (
   plan: LatexSourcePlan<SourceFile>,
   blobs: BlobStore,
+  maxBytes: number,
 ): Promise<Record<string, SourceFile>> => {
   const files = { ...plan.files }
   const rewritten = new Map<SourceFile, SourceFile>()
   const latin1 = new TextDecoder("latin1")
   for (const path of plan.transcode) {
     const file = files[path]
-    if (!file?.bytes) continue
+    if (!file) continue
     let next = rewritten.get(file)
     if (!next) {
-      const bytes = new TextEncoder().encode(latin1.decode(file.bytes))
-      next = { key: await blobs.put(bytes), size: bytes.byteLength, bytes }
+      const original = file.bytes ?? (file.size <= maxBytes ? await blobs.get(file.key) : null)
+      if (!original) continue
+      const bytes = new TextEncoder().encode(latin1.decode(original))
+      next = {
+        key: await blobs.put(bytes),
+        size: bytes.byteLength,
+        bytes: file.bytes ? bytes : null,
+      }
       rewritten.set(file, next)
     }
     files[path] = next
@@ -756,25 +788,23 @@ const attachImplementation = async (
     return
   }
 
-  // An artifact carrying an implementation gets twice this tier's room, up to the ceiling for
-  // an imported paper. The repository gets what is left once the paper has taken its share,
-  // and never more than a paper may hold itself.
+  // An artifact carrying an implementation gets this tier's room for a paper and for a
+  // repository's source together, up to the ceiling for an imported paper. The repository
+  // gets what is left once the paper has taken its share, and never more than this tier keeps.
+  const repoCaps = deps.repoCaps
   const withCode = {
-    bytes: Math.min(MAX_IMPORTED_BUNDLE_BYTES, deps.caps.bundleBytes * 2),
-    files: Math.min(MAX_BUNDLE_FILES_WITH_CODE, deps.caps.files * 2),
+    bytes: Math.min(MAX_IMPORTED_BUNDLE_BYTES, deps.caps.bundleBytes + repoCaps.totalBytes),
+    files: Math.min(MAX_IMPORTED_BUNDLE_FILES, deps.caps.files + repoCaps.files),
   }
   const room = {
-    bytes: Math.max(
-      0,
-      Math.min(deps.caps.bundleBytes, withCode.bytes - contentBytes(paperContent)),
-    ),
-    files: Math.max(0, withCode.files - contentCount(paperContent)),
+    bytes: Math.max(0, Math.min(repoCaps.totalBytes, withCode.bytes - contentBytes(paperContent))),
+    files: Math.max(0, Math.min(repoCaps.files, withCode.files - contentCount(paperContent))),
   }
 
   let fetched: Awaited<ReturnType<typeof fetchRepository>>
   try {
     await deps.heartbeat?.()
-    fetched = await fetchRepository(deps, repoRef, deps.repoCaps, room)
+    fetched = await fetchRepository(deps, repoRef, repoCaps, room)
     await deps.heartbeat?.()
   } catch (error) {
     if (error instanceof ImportCancelled) throw error
@@ -789,11 +819,9 @@ const attachImplementation = async (
     return
   }
 
-  // What could never fit was not stored, but the fit still names it among what it left out.
-  const fitted = fitRepoBytes<StoredFile | null>([...fetched.files, ...fetched.unfit], {
-    cap: room.bytes,
-    maxFiles: room.files,
-  })
+  // The fetch kept only source, and no more than the room holds; the fit has the last word
+  // on that, and its total is what the version says was attached.
+  const fitted = fitRepoBytes(fetched.files, { cap: room.bytes, maxFiles: room.files })
   if (!fitted.fits) {
     await stamp({
       code_status: "failed",
@@ -803,8 +831,7 @@ const attachImplementation = async (
     return
   }
 
-  const code: Record<string, StoredFile> = {}
-  for (const [path, file] of Object.entries(fitted.files)) if (file) code[path] = file
+  const code = fitted.files
   const count = Object.keys(code).length
   const message = truncate(
     [
@@ -958,9 +985,29 @@ export const importArxivPaper = async (
       if (srcRes.status !== 200)
         throw new ImportFailure("unavailable", `arXiv answered ${srcRes.status}`, false)
       const staged = await stageArxivSource(srcRes, deps, deps.caps)
-      const plan = planLatexSource(staged, { size: (f) => f.size, text: (f) => f.bytes })
-      if (!plan.ok) throw new ImportFailure(plan.code, plan.detail, true)
-      return { entry: plan.entry, notes: plan.notes, files: await transcodeSource(plan, blobs) }
+      const plan = planLatexSource(staged.files, { size: (f) => f.size, text: (f) => f.bytes })
+      const limits = streamLimits(deps.caps)
+      if (!plan.ok) {
+        // With .tex files it could not afford to read, the paper may well be one of them.
+        if (staged.unread > 0)
+          throw new ImportFailure(
+            "too_large",
+            `the source's .tex files are over the ${mb(limits.textBytes)} an import reads to find the paper`,
+            true,
+          )
+        throw new ImportFailure(plan.code, plan.detail, true)
+      }
+      const notes = [...plan.notes]
+      if (staged.unread > 0)
+        notes.push(
+          `did not read ${staged.unread} .tex ${staged.unread === 1 ? "file" : "files"} past ${mb(limits.textBytes)} of text when choosing the entry`,
+        )
+      if (staged.left.length > 0)
+        notes.push(
+          `left out ${staged.left.length} ${staged.left.length === 1 ? "file" : "files"} over the ${mb(limits.maxFileBytes)} one file may be: ${largestFew(staged.left)}`,
+        )
+      const files = await transcodeSource(plan, blobs, limits.textBytes)
+      return { entry: plan.entry, notes, files }
     })
     notes.push(...normalized.notes)
 
@@ -993,7 +1040,7 @@ export const importArxivPaper = async (
       // 4. Fit the bundle under what Derive publishes, shrinking raster figures if needed.
       // The citation is published beside the source, so the source gets the rest of the room.
       const cited = new TextEncoder().encode(citation.bibtex)
-      const shrinkingFrom = deps.now()
+      const shrinkUntil = (deps.passDeadline ?? Number.POSITIVE_INFINITY) - PUBLISH_MARGIN_MS
       const fitted = await fitBundleBytes(normalized.files, {
         cap: deps.caps.bundleBytes - cited.byteLength,
         shrink: deps.shrink ?? null,
@@ -1001,7 +1048,7 @@ export const importArxivPaper = async (
         concurrency: deps.caps.shrinkConcurrency,
         maxInputBytes: deps.caps.shrinkInputBytes,
         onFigure: deps.heartbeat,
-        outOfTime: () => deps.now() - shrinkingFrom > SHRINK_BUDGET_MS,
+        outOfTime: () => deps.now() > shrinkUntil,
       })
       if (!fitted.fits) {
         // The codec could not be used just now: that is a mood, not the paper's size.
@@ -1012,10 +1059,12 @@ export const importArxivPaper = async (
             false,
           )
         const biggest = fitted.largest.map((f) => `${f.path.slice(1)} (${mb(f.bytes)})`).join(", ")
+        // Running out of figures to shrink is the paper's size. Running out of time is this
+        // pass's, spent on a slow download perhaps, so another attempt may yet finish.
         throw new ImportFailure(
           "too_large",
           `${mb(fitted.after)}${fitted.shrunk ? ` after shrinking ${fitted.shrunk} figures` : ""}${fitted.stopped ? ", out of time to shrink more" : ""}; largest: ${biggest}`,
-          true,
+          !fitted.stopped,
         )
       }
       notes.push(...fitted.notes)
@@ -1041,6 +1090,8 @@ export const importArxivPaper = async (
             Object.entries(fitted.files).map(([path, f]) => [path, { key: f.key, size: f.size }]),
           ),
           maxBundleBytes: deps.caps.bundleBytes,
+          // The source's files and its citation.
+          maxFiles: deps.caps.files + 1,
           entry: normalized.entry,
           title,
           author: truncate(
