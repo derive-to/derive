@@ -104,10 +104,10 @@ function NotConducted({
     <div className="mt-2 flex flex-col gap-3" data-testid="console-analysis-none">
       <p className="text-sm text-muted-foreground">
         No analysis yet. An agent can read the paper and its code, then map each contribution and
-        each detail of the method to the code that carries it out, and say where the code differs.
-        It is kept here, and your agents read it before answering questions about the
-        implementation.
+        each idea of the method to the code that carries it out. It is kept here, and your agents
+        read it before answering questions about the implementation.
       </p>
+      <Caution />
       {data.can_publish && data.prompts.start ? (
         <>
           <p className="text-2xs text-muted-foreground">To start it, copy this into your agent.</p>
@@ -142,6 +142,21 @@ function Waiting() {
   )
 }
 
+/** The analysis is an agent's reading of the paper and the code, so say so wherever it is
+ *  offered or shown. */
+function Caution() {
+  return (
+    <p
+      className="flex items-start gap-2 text-2xs text-muted-foreground"
+      data-testid="console-analysis-caution"
+    >
+      <TriangleAlert aria-hidden className="mt-px size-3.5 shrink-0 text-warning" />
+      Agents can make mistakes when mapping a paper to its code. Check the analysis against the
+      paper and the code before you rely on it.
+    </p>
+  )
+}
+
 function Report({
   data,
   analysis,
@@ -166,6 +181,7 @@ function Report({
           description={`${data.stale_reasons.join(". ")}. Ask an agent to update it.`}
         />
       )}
+      <Caution />
       <Prose className="text-sm text-foreground" markdown={analysis.summary} />
       <div className="flex flex-wrap items-center gap-2">
         {ANALYSIS_STATUS_ORDER.map((status) => (

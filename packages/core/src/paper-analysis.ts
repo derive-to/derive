@@ -20,11 +20,10 @@ export const PAPER_ANALYSIS_FILE = "/derive.paper-analysis.json"
 export const PAPER_ANALYSIS_PAGE = "/index.md"
 export const PAPER_ANALYSIS_MAX_BYTES = 150 * 1024
 
-export type AnalysisStatus = "implemented" | "partial" | "differs" | "not_found"
+export type AnalysisStatus = "implemented" | "failed_to_map" | "not_found"
 export const ANALYSIS_STATUSES: readonly AnalysisStatus[] = [
   "implemented",
-  "partial",
-  "differs",
+  "failed_to_map",
   "not_found",
 ]
 
@@ -386,10 +385,10 @@ export const parsePaperAnalysis = (source: string): PaperAnalysisParse => {
         c.fail(`${dw}.code`, "must be empty when the status is not_found")
       if (status !== "not_found" && ANALYSIS_STATUSES.includes(status) && code.length === 0)
         c.fail(`${dw}.code`, "must name the code, unless the status is not_found")
-      if ((status === "partial" || status === "differs") && !notes)
+      if (status === "failed_to_map" && !notes)
         c.fail(
           `${dw}.notes`,
-          `must say what the code does differently when the status is ${status}`,
+          "must say why the code does not carry out the idea when the status is failed_to_map",
         )
       details.push({
         id: c.id(`${dw}.id`, od.id),
@@ -501,8 +500,7 @@ export interface AnalysisCounts {
   contributions: number
   details: number
   implemented: number
-  partial: number
-  differs: number
+  failed_to_map: number
   not_found: number
   unmapped: number
   open_questions: number
@@ -515,8 +513,7 @@ export const analysisCounts = (a: PaperAnalysis): AnalysisCounts => {
     contributions: a.contributions.length,
     details: details.length,
     implemented: count("implemented"),
-    partial: count("partial"),
-    differs: count("differs"),
+    failed_to_map: count("failed_to_map"),
     not_found: count("not_found"),
     unmapped: a.unmapped.length,
     open_questions: a.open_questions.length,
@@ -573,8 +570,7 @@ export const analysisPaperRefs = (a: PaperAnalysis): { where: string; ref: Analy
 
 export const ANALYSIS_STATUS_LABEL: Record<AnalysisStatus, string> = {
   implemented: "Implemented",
-  partial: "Partly implemented",
-  differs: "Differs from the paper",
+  failed_to_map: "Failed to map",
   not_found: "Not found in the code",
 }
 
@@ -618,6 +614,8 @@ export const renderPaperAnalysisMarkdown = (
   const counts = analysisCounts(a)
   const out: string[] = [
     `# Implementation analysis${opts.paperTitle ? `: ${opts.paperTitle}` : ""}`,
+    "",
+    "> Written by an agent. Agents can make mistakes when mapping a paper to its code, so check the analysis against the paper and the code before you rely on it.",
     "",
     a.summary,
     "",
@@ -680,17 +678,23 @@ const pins = (p: AnalysisPromptInput): string =>
  * analysis. It names what the agent must find and points at the skill for how to do it, so the
  * method can improve without anyone copying a new prompt.
  */
+/** How a detail's status is judged. Both prompts say it, so the pasted prompt alone steers an
+ *  agent away from grading the code against the paper's numbers. */
+const coreIdea =
+  "Judge each detail by its core idea and treat the rest as details: when the code approximates the paper, with other numbers, another default or extra steps around the idea, the detail is implemented. Use failed_to_map only when the related code lacks part of the core idea or puts a different idea in its place, and not_found when nothing carries it out; a numerical difference is never failed_to_map. This is a map of the paper in the code, not a review."
+
 export const paperAnalysisStartPrompt = (p: AnalysisPromptInput): string =>
   [
     `Map the paper "${p.contextName}" (arXiv:${p.arxivRef}) to its implementation on Derive, and publish the map as the paper's implementation analysis.`,
     "",
     `1. ${connectStep(p.baseUrl)}`,
-    `2. Read derive://skills/contexts, the section "Mapping a paper to its implementation". It has the method, the JSON schema and everything Derive checks.`,
+    `2. Read derive://skills/contexts, the section "Mapping a paper to its implementation". It has the method, how to choose a status, the JSON schema and everything Derive checks.`,
     `3. Call read({ short_id: "${p.contextId}" }) for the Context, then read the paper, ${p.paperShortId}: its outline, abstract, introduction and method, and its implementation under code/.`,
-    "4. For each contribution the paper claims, and each detail of its method, find the code that carries it out. Check every path, line range and symbol you cite, and note where the code does something other than what the paper says.",
-    `5. Publish it with publish({ files: { "derive.paper-analysis.json": "<the JSON>" } }), with ${pins(p)}. If Derive refuses it, fix every problem it lists and publish again.`,
+    "4. For each contribution the paper claims, and each idea its method is built from, find the code that carries it out. Check every path, line range and symbol you cite.",
+    `5. Give each detail a status. ${coreIdea}`,
+    `6. Publish it with publish({ files: { "derive.paper-analysis.json": "<the JSON>" } }), with ${pins(p)}. If Derive refuses it, fix every problem it lists and publish again.`,
     "",
-    "Reply with the link to the analysis and a short summary of where the code differs from the paper.",
+    "Reply with the link to the analysis and a short summary of where each contribution lives in the code.",
   ].join("\n")
 
 /**
@@ -713,7 +717,8 @@ export const paperAnalysisUpdatePrompt = (
     `2. Read derive://skills/contexts, the section "Mapping a paper to its implementation", and in it "Updating one".`,
     `3. Read the analysis, ${p.analysisShortId}, and call catch_up({ short_id: "${p.analysisShortId}" }) for comments people left on it. Read the paper, ${p.paperShortId}, and its code under code/ wherever you check or change something.`,
     "4. Correct what is wrong, add what is missing, and answer the comments and open questions you can. Keep every entry you do not change, under its id, and list anything you drop in removed with the reason.",
-    `5. Publish the whole JSON again: publish({ short_id: "${p.analysisShortId}", files: { "derive.paper-analysis.json": "<the JSON>" }, message: "<what changed and why>" }), with based_on ${p.version}, ${pins(p)}. If Derive refuses it, fix every problem it lists and publish again.`,
+    `5. Give every detail its status again. ${coreIdea}`,
+    `6. Publish the whole JSON again: publish({ short_id: "${p.analysisShortId}", files: { "derive.paper-analysis.json": "<the JSON>" }, message: "<what changed and why>" }), with based_on ${p.version}, ${pins(p)}. If Derive refuses it, fix every problem it lists and publish again.`,
     "",
     "Reply with what you changed and why.",
   ].join("\n")

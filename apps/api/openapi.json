@@ -3292,10 +3292,7 @@
                   "implemented": {
                     "type": "number"
                   },
-                  "partial": {
-                    "type": "number"
-                  },
-                  "differs": {
+                  "failed_to_map": {
                     "type": "number"
                   },
                   "not_found": {
@@ -3312,8 +3309,7 @@
                   "contributions",
                   "details",
                   "implemented",
-                  "partial",
-                  "differs",
+                  "failed_to_map",
                   "not_found",
                   "unmapped",
                   "open_questions"
@@ -3354,8 +3350,7 @@
                             "type": "string",
                             "enum": [
                               "implemented",
-                              "partial",
-                              "differs",
+                              "failed_to_map",
                               "not_found"
                             ]
                           },

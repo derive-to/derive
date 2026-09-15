@@ -117,12 +117,13 @@ see these files; you do.
 ## Mapping a paper to its implementation
 
 A paper that carries its implementation can also carry an **implementation analysis**: a map from
-each contribution the paper claims, and each detail of its method, to the files, symbols and lines
-that carry it out, with where the code does something else. When `read({ short_id: "ctx_..." })`
-shows `import.analysis`, read that short id (the `analysis` entry in `documents`) before you map
-the paper to its code yourself. Its `derive.paper-analysis.json` page is the data; `index.md` is
-the same analysis written out for people. `stale: true` means it was made against an arXiv
-version or a commit the Context no longer holds: trust it less, and update it.
+each contribution the paper claims, and each idea its method is built from, to the files, symbols
+and lines that carry it out. It is a map, not a review: it says where the paper lives in the code,
+not how faithfully the code follows it. When `read({ short_id: "ctx_..." })` shows
+`import.analysis`, read that short id (the `analysis` entry in `documents`) before you map the
+paper to its code yourself. Its `derive.paper-analysis.json` page is the data; `index.md` is the
+same analysis written out for people. `stale: true` means it was made against an arXiv version or
+a commit the Context no longer holds: trust it less, and update it.
 
 ### Writing one
 
@@ -131,13 +132,16 @@ A person usually starts this by pasting a prompt from the paper's Context page.
 1. `read` the Context, then the paper. The paper's outline lists its pages with their heading
    slugs, and `code` lists the implementation.
 2. Read the abstract, the introduction and the method. List what the paper contributes, and for
-   each contribution the details its method specifies: architecture, objectives and their
-   weights, algorithms, schedules and hyperparameters, data handling.
-3. Find each detail in the code with `read({ short_id, section: "code/<path>" })`, windowing long
-   files with `lines`. Navigate from `code.paths`, entry points and imports: `find` scans only the
-   shallowest 50 pages of a bundle, so it misses most of a repository. Check every line range and
-   symbol you cite.
-4. Publish the analysis as one file, in the Context's workspace and without a `short_id`:
+   each contribution the ideas its method is built from: the architecture, the objectives, the
+   algorithms, the training and inference procedures, the data handling. A detail is an idea, not
+   a number: weights, thresholds, schedules and other hyperparameters belong to the idea they tune.
+3. Find where each idea is carried out with `read({ short_id, section: "code/<path>" })`,
+   windowing long files with `lines`. Navigate from `code.paths`, entry points and imports: `find`
+   scans only the shallowest 50 pages of a bundle, so it misses most of a repository. Check every
+   line range and symbol you cite.
+4. Give each detail a status by its core idea, as "Choosing a status" says, with `notes` on where
+   and how the code carries it out.
+5. Publish the analysis as one file, in the Context's workspace and without a `short_id`:
    `publish({ title, files: { "derive.paper-analysis.json": "<the JSON>" } })`. Derive checks it,
    writes `index.md`, gives it the paper's access and links it to the Context.
 
@@ -148,7 +152,7 @@ A person usually starts this by pasting a prompt from the paper's Context page.
   "based_on": null,
   "paper": { "short_id": "<the paper's short id>", "arxiv_version": 2 },
   "implementation": { "repository": "github.com/owner/repo", "commit": "<import.code.commit, or null>" },
-  "summary": "Two or three sentences on how faithfully the code implements the paper.",
+  "summary": "Two or three sentences on where the paper's contributions live in the code.",
   "contributions": [
     {
       "id": "c1",
@@ -158,29 +162,49 @@ A person usually starts this by pasting a prompt from the paper's Context page.
       "details": [
         {
           "id": "c1.d1",
-          "title": "One detail of the method",
+          "title": "One idea of the method",
           "paper": [{ "section": "main.tex#method" }],
           "code": [{ "path": "src/model.py", "symbol": "class Encoder", "lines": "40-88" }],
           "status": "implemented",
-          "notes": "How the code carries it out."
+          "notes": "Where and how the code carries out the idea."
         }
       ]
     }
   ],
   "unmapped": [{ "id": "u1", "path": "src/kernels.py", "notes": "Code the paper does not describe." }],
-  "open_questions": [{ "id": "q1", "question": "What the paper and the code leave unclear." }],
+  "open_questions": [{ "id": "q1", "question": "Something you could not locate, or could not tell from the paper and the code." }],
   "removed": []
 }
 ```
+
+### Choosing a status
+
+Judge each detail by its core idea, and treat the rest as details. Code that approximates the
+paper counts as the paper's.
+
+- `implemented`: the code carries out the idea, even approximately. Numbers that differ from the
+  paper's (weights, thresholds, schedules, iteration counts, initial values), the paper's choice
+  being an option rather than the default, extra terms or steps around the idea, and a close
+  variant of it (a more general form, an equivalent formulation) all count as implemented.
+- `failed_to_map`: the code related to the idea does not carry out its core: part of the core is
+  missing, or a different idea (not a variant of the paper's) takes its place. Other numbers,
+  extra code and non-default options never make a detail `failed_to_map`.
+- `not_found`: nothing in the code carries out the idea.
+
+When you hesitate between `implemented` and another status, choose `implemented`. `notes` say
+where and how the code carries the idea out: leave out numbers that differ from the paper, and
+name a variant only when a reader needs it to recognise the idea in the code. Do not grade the
+code: `summary` says where the contributions live, and `open_questions` are for what you could not
+locate or could not tell from the paper and the code, not for doubts about its design.
 
 Derive refuses an analysis that does not hold, listing every problem:
 
 - `context`, `paper` and `implementation` describe what the Context holds now: its id, the
   paper's short id, `import.version`, the repository `import.code.url` names, and
   `import.code.commit` (null when it has none).
-- `status` is `implemented`, `partial`, `differs` or `not_found`. Every status but `not_found`
-  names code; `not_found` names none; `partial` and `differs` say in `notes` what the code does
-  differently.
+- `status` is `implemented`, `failed_to_map` or `not_found`. Every status but `not_found` names
+  code; `not_found` names none; `failed_to_map` says in `notes` why the code does not carry out
+  the idea.
 - A code `path` is the repository's own path (`src/model.py`; `code/src/model.py` is accepted too)
   and must exist. `lines` must fit the file, and `symbol` must appear in it, within `lines` when
   given.
@@ -194,7 +218,8 @@ Derive refuses an analysis that does not hold, listing every problem:
 ### Updating one
 
 1. Read the analysis, and `catch_up({ short_id })` on it for comments people left.
-2. Check what you change against the code, the way you would when writing it.
+2. Check what you change against the code, the way you would when writing it, and give every
+   detail its status again by "Choosing a status".
 3. Publish the whole JSON again with the analysis's `short_id`, `based_on` set to the version you
    read, and a `message` saying what changed and why.
 

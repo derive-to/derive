@@ -27,25 +27,19 @@ export const analysisPollInterval = (
 
 export const ANALYSIS_STATUS_ORDER: readonly AnalysisStatus[] = [
   "implemented",
-  "partial",
-  "differs",
+  "failed_to_map",
   "not_found",
 ]
 
 export const ANALYSIS_STATUS_LABEL: Record<AnalysisStatus, string> = {
   implemented: "Implemented",
-  partial: "Partly implemented",
-  differs: "Differs from the paper",
+  failed_to_map: "Failed to map",
   not_found: "Not found in the code",
 }
 
-export const ANALYSIS_STATUS_BADGE: Record<
-  AnalysisStatus,
-  "success" | "warning" | "destructive" | "outline"
-> = {
+export const ANALYSIS_STATUS_BADGE: Record<AnalysisStatus, "success" | "warning" | "outline"> = {
   implemented: "success",
-  partial: "warning",
-  differs: "destructive",
+  failed_to_map: "warning",
   not_found: "outline",
 }
 

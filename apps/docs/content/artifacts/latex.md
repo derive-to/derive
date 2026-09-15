@@ -114,11 +114,14 @@ published stays in the library). The same paper pasted twice opens the one Conte
 ### Mapping the paper to its implementation
 
 Once a paper's implementation has arrived, its Context page offers a **paper-to-implementation
-analysis**: a map from each contribution the paper claims, and each detail of its method, to the
-files, symbols and lines that carry it out, with where the code differs from the paper. Derive
-does not write it; your agent does. Copy the prompt the page shows into your agent, connected to
-Derive over MCP, and it reads the paper and the code and publishes the analysis, which the page
-then shows. Agents that later read the Context are pointed to it before they map the paper again.
+analysis**: a map from each contribution the paper claims, and each idea its method is built
+from, to the files, symbols and lines that carry it out. It is a map, not a review: a detail the
+code carries out approximately, with other numbers or extra steps around it, counts as
+implemented. Derive does not write it; your agent does. Copy the prompt the page shows into your
+agent, connected to Derive over MCP, and it reads the paper and the code and publishes the
+analysis, which the page then shows. Agents that later read the Context are pointed to it before
+they map the paper again. Agents can make mistakes in this mapping, and the page says so: check
+the analysis against the paper and the code before you rely on it.
 
 Before anything is stored, Derive checks the analysis against what it describes. It must name the
 arXiv version and the commit the Context holds, every code path must exist in the
