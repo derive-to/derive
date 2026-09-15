@@ -111,6 +111,29 @@ at once with a reason; arXiv being slow or away is retried three times. A failed
 discarded, which removes the Context and its generated manifest (a paper already
 published stays in the library). The same paper pasted twice opens the one Context.
 
+### Mapping the paper to its implementation
+
+Once a paper's implementation has arrived, its Context page offers a **paper-to-implementation
+analysis**: a map from each contribution the paper claims, and each detail of its method, to the
+files, symbols and lines that carry it out, with where the code differs from the paper. Derive
+does not write it; your agent does. Copy the prompt the page shows into your agent, connected to
+Derive over MCP, and it reads the paper and the code and publishes the analysis, which the page
+then shows. Agents that later read the Context are pointed to it before they map the paper again.
+
+Before anything is stored, Derive checks the analysis against what it describes. It must name the
+arXiv version and the commit the Context holds, every code path must exist in the
+implementation, every line range must fit and every symbol must appear in it, and every section
+it cites must be one of the paper's. It refers to code and never quotes it, so a person follows
+each reference to the repository on its own host, at the commit that was read.
+
+The analysis is its own artifact, with the paper's access, a version history and comments. Anyone
+with edit rights in the workspace who can open the paper can have their agent start or update
+it: once it exists, the page shows a second prompt for corrections and new findings, and each
+update is a new version naming the agent, the person and what changed. Everyone else comments on
+it, and the update prompt asks the agent to address those comments. When the implementation is
+replaced or a newer arXiv version is imported, the page marks the analysis out of date until an
+agent updates it.
+
 ## Start from a template
 
 Two paper starters ship with Derive: **ACM SIGGRAPH** (acmart in the sigconf format,

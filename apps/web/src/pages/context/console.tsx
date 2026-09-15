@@ -53,6 +53,7 @@ import { usePageVisible } from "@/lib/use-page-visible"
 import { useUserEvent } from "@/lib/use-user-events"
 import { cn } from "@/lib/utils"
 import { mdToHtml } from "../artifact/lib/markdown"
+import { AnalysisCard } from "./analysis-card"
 import { ConsolePending, ContextRowsSkeleton } from "./context-skeleton"
 import { importErrorCopy, importRetryCopy, RETRYABLE_IMPORT_CODES } from "./import-copy"
 import { ANSWER_PROSE, answerMdToHtml } from "./lib/answer-md"
@@ -760,6 +761,11 @@ function ImportedConsole({
           <div className="lg:col-span-2">
             <ImplementationCard id={id} code={imp.code ?? null} canManage={canManage} />
           </div>
+          {imp.code && (
+            <div className="lg:col-span-2">
+              <AnalysisCard id={id} codeStatus={imp.code.status} />
+            </div>
+          )}
         </section>
       )}
 

@@ -254,10 +254,14 @@ export function PromptBlock({
   text,
   testid,
   copyLabel = "Copy setup prompt",
+  onCopied,
 }: {
   text: string
   testid: string
   copyLabel?: string
+  /** Called once the text is on its way to the clipboard, for a caller that starts waiting
+   *  for the agent the prompt is meant for. */
+  onCopied?: () => void
 }) {
   const { copied, copy } = useCopy(2000)
   return (
@@ -275,7 +279,10 @@ export function PromptBlock({
         data-testid={`${testid}-copy`}
         aria-label={copyLabel}
         className="absolute right-2 top-2"
-        onClick={() => copy(text, { success: "Copied. Paste it into your agent." })}
+        onClick={() => {
+          void copy(text, { success: "Copied. Paste it into your agent." })
+          onCopied?.()
+        }}
       >
         {copied ? <Icon name="check" className="text-success" /> : <Copy className="size-4" />}
       </Button>

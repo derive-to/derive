@@ -2530,6 +2530,163 @@ describe("contexts: import from arXiv", () => {
     expect(job?.code_error).toContain("more than the 5 source files")
   })
 
+  it("shows a paper's implementation analysis, with the prompts that start and update it", async () => {
+    const COMMIT = "5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f80"
+    const NEXT = "6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091"
+    const train = "def train():\n    return 7\n"
+    const stub = arxivStub(
+      {},
+      {
+        "o/r": repoTar({ "r-abc/train.py": train }, COMMIT),
+        "o/r2": repoTar({ "r2-def/train.py": train }, NEXT),
+      },
+    )
+    const { app, clock: c, tickDeps } = setup("contexts-import-analysis", stub.fetch)
+    await app.request("/v1/me", { headers: as(owner.email) })
+    await app.request("/v1/me", { headers: as(member.email) })
+    const created = await (
+      await app.request(
+        "/v1/contexts/import/arxiv",
+        jsonAs(as(owner.email), { url: "2406.00009", code_url: "https://github.com/o/r" }),
+      )
+    ).json()
+    const analysisOf = async (who = owner) =>
+      (await app.request(`/v1/contexts/${created.id}/analysis`, { headers: as(who.email) })).json()
+    // An agent's tool call over MCP, the way the prompt tells an agent to publish.
+    const mcp = async (token: string, name: string, args: Record<string, unknown>) => {
+      const res = await app.request("/mcp", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name, arguments: args },
+        }),
+      })
+      const text = await res.text()
+      const body = (res.headers.get("content-type") ?? "").includes("application/json")
+        ? JSON.parse(text)
+        : JSON.parse(
+            (text.split("\n").find((l) => l.startsWith("data:")) ?? "data:null").slice(5).trim(),
+          )
+      return { text: body?.result?.content?.[0]?.text as string, isError: !!body?.result?.isError }
+    }
+
+    // Until the implementation has arrived there is nothing to map it to.
+    expect((await analysisOf()).state).toBe("unavailable")
+    expect(await runImportTick(tickDeps())).toBe(1)
+    c.advance(ARXIV_REQUEST_INTERVAL_MS + 1)
+    expect(await runImportTick(tickDeps())).toBe(1)
+
+    // Then a prompt that starts it, naming everything an agent has to find.
+    const none = await analysisOf()
+    expect(none).toMatchObject({
+      state: "none",
+      analysis: null,
+      can_publish: true,
+      implementation: { repository: "github.com/o/r", commit: COMMIT },
+    })
+    for (const needle of [
+      created.id,
+      none.paper_short_id,
+      `"commit": "${COMMIT}"`,
+      "http://derive.test/mcp",
+    ])
+      expect(none.prompts.start).toContain(needle)
+    expect(none.prompts.update).toBeNull()
+
+    // An agent does what the prompt says.
+    const agent = await (
+      await app.request("/v1/agents", jsonAs(as(owner.email), { name: "Mapper", role: "editor" }))
+    ).json()
+    const outline = JSON.parse(
+      (await mcp(agent.token, "read", { short_id: none.paper_short_id })).text,
+    )
+    const slug = outline.pages.find((p: { path: string }) => p.path === "paper.tex")?.headings[0]
+      ?.slug
+    const published = await mcp(agent.token, "publish", {
+      files: {
+        "derive.paper-analysis.json": JSON.stringify({
+          schema: "derive.paper-analysis/v1",
+          context: created.id,
+          based_on: null,
+          paper: { short_id: none.paper_short_id, arxiv_version: 2 },
+          implementation: { repository: "github.com/o/r", commit: COMMIT },
+          summary: "The training loop is the paper's.",
+          contributions: [
+            {
+              id: "c1",
+              title: "Training",
+              claim: "The model trains end to end.",
+              paper: [{ section: `paper.tex#${slug}` }],
+              details: [
+                {
+                  id: "c1.d1",
+                  title: "The loop",
+                  paper: [],
+                  code: [{ path: "train.py", symbol: "def train", lines: "1-2" }],
+                  status: "implemented",
+                },
+              ],
+            },
+          ],
+        }),
+      },
+    })
+    expect(published.isError).toBe(false)
+
+    // The page shows it, each code reference opening on the host at the commit it read.
+    const ready = await analysisOf()
+    expect(ready).toMatchObject({
+      state: "ready",
+      analysis: { version: 1, agent: "Mapper", counts: { implemented: 1 } },
+      prompts: { start: null },
+    })
+    expect(ready.analysis.contributions[0].details[0].code[0]).toEqual({
+      path: "train.py",
+      symbol: "def train",
+      lines: "1-2",
+      href: `https://github.com/o/r/blob/${COMMIT}/train.py#L1-L2`,
+      pinned: true,
+    })
+    // A cited section reads as the paper's outline names it, numbered the way LaTeX numbers it.
+    expect(ready.analysis.contributions[0].paper[0]).toEqual({
+      section: `paper.tex#${slug}`,
+      label: null,
+      heading: "1 Intro",
+    })
+    for (const needle of [`short_id: "${ready.analysis.short_id}"`, "based_on 1", "catch_up"])
+      expect(ready.prompts.update).toContain(needle)
+    const detail = await (
+      await app.request(`/v1/contexts/${created.id}`, { headers: as(owner.email) })
+    ).json()
+    expect(detail.documents).toContainEqual(
+      expect.objectContaining({ short_id: ready.analysis.short_id, role: "analysis" }),
+    )
+
+    // Once the implementation is replaced it describes code the Context no longer holds. Its
+    // links still open where it looked, and the update prompt names what the Context holds now.
+    await app.request(
+      `/v1/contexts/${created.id}/import/code`,
+      jsonAs(as(owner.email), { url: "https://github.com/o/r2" }),
+    )
+    c.advance(ARXIV_REQUEST_INTERVAL_MS + 1)
+    expect(await runImportTick(tickDeps())).toBe(1)
+    const stale = await analysisOf(member)
+    expect(stale.state).toBe("stale")
+    expect(stale.stale_reasons[0]).toContain("github.com/o/r2")
+    expect(stale.analysis.contributions[0].details[0].code[0].href).toBe(
+      `https://github.com/o/r/blob/${COMMIT}/train.py#L1-L2`,
+    )
+    expect(stale.prompts.update).toContain("It is out of date")
+    expect(stale.prompts.update).toContain(`"commit": "${NEXT}"`)
+  })
+
   it("refuses a link that is not a public GitHub or GitLab repository", async () => {
     const stub = arxivStub()
     const { app, tickDeps } = setup("contexts-import-code-bad", stub.fetch)

@@ -5,6 +5,8 @@ import {
   droppedIds,
   PAPER_ANALYSIS_SCHEMA,
   type PaperAnalysis,
+  paperAnalysisStartPrompt,
+  paperAnalysisUpdatePrompt,
   parsePaperAnalysis,
   renderPaperAnalysisMarkdown,
   serializePaperAnalysis,
@@ -194,5 +196,52 @@ describe("renderPaperAnalysisMarkdown", () => {
     expect(md).toContain("(not pinned to a commit)")
     expect(md).toContain("## Code the paper does not describe")
     expect(md).not.toContain("```")
+  })
+})
+
+describe("the prompts that start and update an analysis", () => {
+  const input = {
+    baseUrl: "https://derive.example",
+    contextId: "ctx_1",
+    contextName: "Splatting",
+    arxivRef: "2308.04079",
+    paperShortId: "p1",
+    arxivVersion: 2,
+    repository: "github.com/o/r",
+    commit: COMMIT,
+  }
+
+  it("names everything an agent must find, and the skill that says how", () => {
+    const start = paperAnalysisStartPrompt(input)
+    for (const needle of [
+      "claude mcp add --transport http derive https://derive.example/mcp",
+      "derive://skills/contexts",
+      'read({ short_id: "ctx_1" })',
+      '"short_id": "p1", "arxiv_version": 2',
+      `"repository": "github.com/o/r", "commit": "${COMMIT}"`,
+      '"derive.paper-analysis.json"',
+    ])
+      expect(start).toContain(needle)
+  })
+
+  it("asks an update to start from its version, answer comments and say what changed", () => {
+    const update = paperAnalysisUpdatePrompt({
+      ...input,
+      commit: null,
+      analysisShortId: "a1",
+      version: 3,
+      staleReasons: [
+        "it was made against commit 0123456, and the implementation is now at fffffff",
+      ],
+    })
+    for (const needle of [
+      "It is out of date: it was made against commit 0123456",
+      'catch_up({ short_id: "a1" })',
+      'publish({ short_id: "a1"',
+      "based_on 3",
+      '"commit": null',
+      "list anything you drop in removed",
+    ])
+      expect(update).toContain(needle)
   })
 })

@@ -655,3 +655,65 @@ export const renderPaperAnalysisMarkdown = (
   }
   return `${out.join("\n").replace(/\n{3,}/g, "\n\n")}\n`
 }
+
+/** What a prompt names so an agent needs nothing else to find: where Derive is, the Context
+ *  and its paper, and exactly what the analysis must say it was made against. */
+export interface AnalysisPromptInput {
+  baseUrl: string
+  contextId: string
+  contextName: string
+  arxivRef: string
+  paperShortId: string
+  arxivVersion: number | null
+  repository: string
+  commit: string | null
+}
+
+const connectStep = (baseUrl: string): string =>
+  `If Derive is not connected yet, add it over MCP. In Claude Code run: claude mcp add --transport http derive ${baseUrl}/mcp (in another client, add an HTTP MCP server named "derive" at ${baseUrl}/mcp).`
+
+const pins = (p: AnalysisPromptInput): string =>
+  `context "${p.contextId}", paper { "short_id": "${p.paperShortId}", "arxiv_version": ${p.arxivVersion ?? "null"} } and implementation { "repository": "${p.repository}", "commit": ${p.commit ? `"${p.commit}"` : "null"} }`
+
+/**
+ * What a person pastes into their own agent to have it write the paper's implementation
+ * analysis. It names what the agent must find and points at the skill for how to do it, so the
+ * method can improve without anyone copying a new prompt.
+ */
+export const paperAnalysisStartPrompt = (p: AnalysisPromptInput): string =>
+  [
+    `Map the paper "${p.contextName}" (arXiv:${p.arxivRef}) to its implementation on Derive, and publish the map as the paper's implementation analysis.`,
+    "",
+    `1. ${connectStep(p.baseUrl)}`,
+    `2. Read derive://skills/contexts, the section "Mapping a paper to its implementation". It has the method, the JSON schema and everything Derive checks.`,
+    `3. Call read({ short_id: "${p.contextId}" }) for the Context, then read the paper, ${p.paperShortId}: its outline, abstract, introduction and method, and its implementation under code/.`,
+    "4. For each contribution the paper claims, and each detail of its method, find the code that carries it out. Check every path, line range and symbol you cite, and note where the code does something other than what the paper says.",
+    `5. Publish it with publish({ files: { "derive.paper-analysis.json": "<the JSON>" } }), with ${pins(p)}. If Derive refuses it, fix every problem it lists and publish again.`,
+    "",
+    "Reply with the link to the analysis and a short summary of where the code differs from the paper.",
+  ].join("\n")
+
+/**
+ * What a person pastes into an agent to have it check and update an existing analysis: correct
+ * it, add what was found, and answer the comments people left on it, as a new version.
+ */
+export const paperAnalysisUpdatePrompt = (
+  p: AnalysisPromptInput & { analysisShortId: string; version: number; staleReasons?: string[] },
+): string =>
+  [
+    `Check and update the implementation analysis of the paper "${p.contextName}" (arXiv:${p.arxivRef}) on Derive.`,
+    ...(p.staleReasons?.length
+      ? [
+          "",
+          `It is out of date: ${p.staleReasons.join("; ")}. Check every reference against the paper and code the Context holds now.`,
+        ]
+      : []),
+    "",
+    `1. ${connectStep(p.baseUrl)}`,
+    `2. Read derive://skills/contexts, the section "Mapping a paper to its implementation", and in it "Updating one".`,
+    `3. Read the analysis, ${p.analysisShortId}, and call catch_up({ short_id: "${p.analysisShortId}" }) for comments people left on it. Read the paper, ${p.paperShortId}, and its code under code/ wherever you check or change something.`,
+    "4. Correct what is wrong, add what is missing, and answer the comments and open questions you can. Keep every entry you do not change, under its id, and list anything you drop in removed with the reason.",
+    `5. Publish the whole JSON again: publish({ short_id: "${p.analysisShortId}", files: { "derive.paper-analysis.json": "<the JSON>" }, message: "<what changed and why>" }), with based_on ${p.version}, ${pins(p)}. If Derive refuses it, fix every problem it lists and publish again.`,
+    "",
+    "Reply with what you changed and why.",
+  ].join("\n")
