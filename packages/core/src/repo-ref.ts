@@ -162,6 +162,58 @@ export const repoRefAt = (ref: RepoRef, at: string | null): RepoRef | null =>
 export const repoWebUrl = (ref: RepoRef): string =>
   `${ref.origin}/${ref.owner}/${ref.name}${ref.ref ? `/tree/${ref.ref}` : ""}`
 
+/** A line range the way a host highlights it: `#L10-L20` on GitHub, `#L10-20` on GitLab. */
+const lineAnchor = (host: RepoHost, lines?: string | null): string => {
+  const m = lines ? /^(\d+)(?:-(\d+))?$/.exec(lines) : null
+  if (!m) return ""
+  const [, from, to] = m
+  if (!to || to === from) return `#L${from}`
+  return host === "github" ? `#L${from}-L${to}` : `#L${from}-${to}`
+}
+
+const encodePath = (path: string): string => path.split("/").map(encodeURIComponent).join("/")
+
+/** Where a person reads one file of the repository at a commit, branch or tag, with a line
+ *  range highlighted when one is given. */
+export const repoBlobUrl = (
+  ref: RepoRef,
+  at: string,
+  path: string,
+  lines?: string | null,
+): string =>
+  `${ref.origin}/${ref.owner}/${ref.name}/${ref.host === "github" ? "blob" : "-/blob"}/${encodePath(at)}/${encodePath(path)}${lineAnchor(ref.host, lines)}`
+
+/** A submodule of a fetched tree: where it sits, and the repository and branch it came from. */
+export interface RepoSubmodule {
+  path: string
+  ref: RepoRef
+}
+
+/**
+ * Where a reference to one file of an imported implementation opens for a person. A path in the
+ * root repository opens at the commit that was fetched, and is `pinned`; without a recorded
+ * commit it opens at the ref the link named, or the default branch. A path inside a submodule
+ * opens in that repository at its declared branch and is never pinned: an archive carries no
+ * submodule commits.
+ */
+export const codeRefUrl = (
+  root: RepoRef,
+  commit: string | null,
+  submodules: RepoSubmodule[],
+  path: string,
+  lines?: string | null,
+): { href: string; pinned: boolean } => {
+  const sub = [...submodules]
+    .sort((a, b) => b.path.length - a.path.length)
+    .find((s) => path.startsWith(`${s.path}/`))
+  if (sub)
+    return {
+      href: repoBlobUrl(sub.ref, sub.ref.ref ?? "HEAD", path.slice(sub.path.length + 1), lines),
+      pinned: false,
+    }
+  return { href: repoBlobUrl(root, commit ?? root.ref ?? "HEAD", path, lines), pinned: !!commit }
+}
+
 export interface Submodule {
   /** Where the submodule sits in the parent tree, slash-free of leading `./`. */
   path: string

@@ -114,6 +114,95 @@ with `read({ short_id, section: "code/<path>" })`, listed in that sample or not.
 you answer what a method actually does rather than what the paper says it does. People never
 see these files; you do.
 
+## Mapping a paper to its implementation
+
+A paper that carries its implementation can also carry an **implementation analysis**: a map from
+each contribution the paper claims, and each detail of its method, to the files, symbols and lines
+that carry it out, with where the code does something else. When `read({ short_id: "ctx_..." })`
+shows `import.analysis`, read that short id (the `analysis` entry in `documents`) before you map
+the paper to its code yourself. Its `derive.paper-analysis.json` page is the data; `index.md` is
+the same analysis written out for people. `stale: true` means it was made against an arXiv
+version or a commit the Context no longer holds: trust it less, and update it.
+
+### Writing one
+
+A person usually starts this by pasting a prompt from the paper's Context page.
+
+1. `read` the Context, then the paper. The paper's outline lists its pages with their heading
+   slugs, and `code` lists the implementation.
+2. Read the abstract, the introduction and the method. List what the paper contributes, and for
+   each contribution the details its method specifies: architecture, objectives and their
+   weights, algorithms, schedules and hyperparameters, data handling.
+3. Find each detail in the code with `read({ short_id, section: "code/<path>" })`, windowing long
+   files with `lines`. Navigate from `code.paths`, entry points and imports: `find` scans only the
+   shallowest 50 pages of a bundle, so it misses most of a repository. Check every line range and
+   symbol you cite.
+4. Publish the analysis as one file, in the Context's workspace and without a `short_id`:
+   `publish({ title, files: { "derive.paper-analysis.json": "<the JSON>" } })`. Derive checks it,
+   writes `index.md`, gives it the paper's access and links it to the Context.
+
+```json
+{
+  "schema": "derive.paper-analysis/v1",
+  "context": "ctx_...",
+  "based_on": null,
+  "paper": { "short_id": "<the paper's short id>", "arxiv_version": 2 },
+  "implementation": { "repository": "github.com/owner/repo", "commit": "<import.code.commit, or null>" },
+  "summary": "Two or three sentences on how faithfully the code implements the paper.",
+  "contributions": [
+    {
+      "id": "c1",
+      "title": "What the paper contributes",
+      "claim": "What it claims, in a sentence or two.",
+      "paper": [{ "section": "main.tex#method", "label": "eq:loss" }],
+      "details": [
+        {
+          "id": "c1.d1",
+          "title": "One detail of the method",
+          "paper": [{ "section": "main.tex#method" }],
+          "code": [{ "path": "src/model.py", "symbol": "class Encoder", "lines": "40-88" }],
+          "status": "implemented",
+          "notes": "How the code carries it out."
+        }
+      ]
+    }
+  ],
+  "unmapped": [{ "id": "u1", "path": "src/kernels.py", "notes": "Code the paper does not describe." }],
+  "open_questions": [{ "id": "q1", "question": "What the paper and the code leave unclear." }],
+  "removed": []
+}
+```
+
+Derive refuses an analysis that does not hold, listing every problem:
+
+- `context`, `paper` and `implementation` describe what the Context holds now: its id, the
+  paper's short id, `import.version`, the repository `import.code.url` names, and
+  `import.code.commit` (null when it has none).
+- `status` is `implemented`, `partial`, `differs` or `not_found`. Every status but `not_found`
+  names code; `not_found` names none; `partial` and `differs` say in `notes` what the code does
+  differently.
+- A code `path` is the repository's own path (`src/model.py`; `code/src/model.py` is accepted too)
+  and must exist. `lines` must fit the file, and `symbol` must appear in it, within `lines` when
+  given.
+- A paper `section` is a page, or `page#slug` from the outline, and a `label` is a `\label` of the
+  paper.
+- `summary`, `claim`, `notes` and `question` are inline markdown. Refer to code by path, symbol
+  and lines, and never paste it: code blocks, HTML, headings, tables and code spans over 80
+  characters are refused.
+- Ids are short, lowercase and unique (`c1`, `c1.d2`, `u1`, `q1`).
+
+### Updating one
+
+1. Read the analysis, and `catch_up({ short_id })` on it for comments people left.
+2. Check what you change against the code, the way you would when writing it.
+3. Publish the whole JSON again with the analysis's `short_id`, `based_on` set to the version you
+   read, and a `message` saying what changed and why.
+
+Keep every entry you do not change, under its id. To drop one, list its id in `removed` with the
+reason; an entry that disappears without one is refused. `removed` belongs to one version: start
+the next update with it empty. Text `edits` and `merge` do not apply to an analysis, and it
+cannot be revised outside `publish`. Someone who can only comment leaves a comment on it instead.
+
 ## Creating a Context (owners)
 
 `automate` with `action: "create_context"` wires a new Context in one call: `name` +

@@ -4834,6 +4834,36 @@ export class PgMetaStore implements MetaStore {
   async setContextCodeUrl(id: string, codeUrl: string | null): Promise<void> {
     await this.db.update(context).set({ code_url: codeUrl }).where(eq(context.id, id))
   }
+  async setContextAnalysis(
+    id: string,
+    artifactId: string | null,
+    expected: string | null,
+  ): Promise<boolean> {
+    const rows = await this.db
+      .update(context)
+      .set({ analysis_artifact_id: artifactId })
+      .where(
+        and(
+          eq(context.id, id),
+          expected === null
+            ? isNull(context.analysis_artifact_id)
+            : eq(context.analysis_artifact_id, expected),
+        ),
+      )
+      .returning({ id: context.id })
+    return rows.length > 0
+  }
+  async listContextsForArtifact(artifactId: string): Promise<ContextRecord[]> {
+    return (await this.db
+      .select()
+      .from(context)
+      .where(
+        or(
+          eq(context.manifest_artifact_id, artifactId),
+          eq(context.analysis_artifact_id, artifactId),
+        ),
+      )) as ContextRecord[]
+  }
   async renameContext(id: string, name: string): Promise<void> {
     await this.db.update(context).set({ name }).where(eq(context.id, id))
   }
@@ -7789,6 +7819,12 @@ export class PgMetaStore implements MetaStore {
       await tx.delete(contextAsker).where(inArray(contextAsker.context_id, ctxIds))
       await tx.delete(importJob).where(inArray(importJob.context_id, ctxIds))
       await tx.delete(context).where(eq(context.manifest_artifact_id, id))
+      // An artifact that is some Context's implementation analysis leaves that Context
+      // without one, rather than pointing at nothing.
+      await tx
+        .update(context)
+        .set({ analysis_artifact_id: null })
+        .where(eq(context.analysis_artifact_id, id))
       await tx.delete(reviewRound).where(eq(reviewRound.artifact_id, id))
       // Artifact-SCOPED webhooks only; a workspace-wide one has a null artifact_id and
       // survives. Found by scripts/check-delete-cascade.mjs.

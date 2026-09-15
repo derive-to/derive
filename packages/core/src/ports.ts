@@ -1797,6 +1797,17 @@ export interface ContextStore {
   setContextConnections(id: string, connectionIds: string | null): Promise<void>
   /** Attach, replace or remove the repository implementing an imported paper. */
   setContextCodeUrl(id: string, codeUrl: string | null): Promise<void>
+  /** Link or unlink an imported paper's implementation analysis, only while the Context still
+   *  points at `expected`: of two agents publishing one at once, one links it and the other
+   *  learns it lost. Resolves whether the link was written. */
+  setContextAnalysis(
+    id: string,
+    artifactId: string | null,
+    expected: string | null,
+  ): Promise<boolean>
+  /** The Contexts an artifact belongs to: the ones it defines (their manifest, an imported
+   *  paper) and the ones it is the implementation analysis of. */
+  listContextsForArtifact(artifactId: string): Promise<ContextRecord[]>
   /** Rename a context. The (org, name) unique index still applies: the store surfaces
    *  the conflict as a throw for the caller to catch and pick another name. */
   renameContext(id: string, name: string): Promise<void>
@@ -4126,6 +4137,9 @@ export interface ContextRecord {
   /** The public repository implementing an imported paper, as the person gave it; null
    *  when no implementation is attached. The paper's own artifact holds the code. */
   code_url: string | null
+  /** The implementation analysis an agent published for an imported paper: its own artifact,
+   *  mapping the paper's contributions to its code. Null until one is published. */
+  analysis_artifact_id: string | null
 }
 export interface NewContext {
   id: string

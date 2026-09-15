@@ -12,6 +12,7 @@ import {
   looksLikeHtmlDocument,
   missingBlobAdvisory,
   newId,
+  PAPER_ANALYSIS_FILE,
   PublishError,
   parseTemplateLibraryUri,
   publishAdvisories,
@@ -51,6 +52,12 @@ import {
 import { MAX_UPLOAD_BYTES } from "../lib/http"
 import { bundleTextFiles } from "../lib/latex-bundle"
 import { badChoice, choiceDescription } from "../lib/open-choice"
+import {
+  analysisContextOf,
+  linkPaperAnalysis,
+  type PreparedAnalysis,
+  preparePaperAnalysis,
+} from "../lib/paper-analysis"
 import { agentPushFanout, openReviewRound } from "../lib/review-request"
 import { type ReviewSummary, summarizeTextEdits } from "../lib/review-summary"
 import { normalizeTags } from "../lib/tags"
@@ -541,6 +548,14 @@ export function registerPublishTool(tc: ToolContext): void {
       // `edits` publishes carry neither content nor files, so they never trip these; the
       // brand profile is exempt from the total-size cap but still may not smuggle an
       // oversized binary inline.
+      // A paper's implementation analysis is one JSON file with a cap of its own, validated in
+      // full before anything is written (lib/paper-analysis), so it is not held to the
+      // whole-document ceiling that steers other large payloads to a staged upload.
+      const analysisFile = cleanPath(PAPER_ANALYSIS_FILE)
+      const isAnalysisPayload =
+        !!files &&
+        Object.keys(files).length === 1 &&
+        Object.keys(files).every((p) => cleanPath(p) === analysisFile)
       const inlineStrings: string[] = []
       if (typeof contentIn === "string") inlineStrings.push(contentIn)
       if (files) inlineStrings.push(...Object.values(files))
@@ -551,7 +566,7 @@ export function registerPublishTool(tc: ToolContext): void {
             `An inline base64 data: URI is ~${Math.round(biggestDataUri / 1024)}KB — too big to carry through a tool call. Upload the binary with stage target:'asset' and reference the returned url/ref instead (a pasted image is already a file on disk).`,
           )
         const totalBytes = inlineStrings.reduce((n, s) => n + new TextEncoder().encode(s).length, 0)
-        if (!isProfileTarget && totalBytes > MAX_INLINE_CONTENT_BYTES)
+        if (!isProfileTarget && !isAnalysisPayload && totalBytes > MAX_INLINE_CONTENT_BYTES)
           return err(
             `This inline payload is ~${Math.round(totalBytes / 1024)}KB — past the ~${Math.round(
               MAX_INLINE_CONTENT_BYTES / 1024,
@@ -639,6 +654,13 @@ export function registerPublishTool(tc: ToolContext): void {
         targetOrg = t.org
         actRole = t.role
       }
+      // A paper's implementation analysis is revised whole and checked against its paper, so
+      // the text edits that patch other documents in place do not apply to it.
+      const analysisOf = existing ? await analysisContextOf(ctx.meta, existing) : null
+      if (analysisOf && (edits !== undefined || slide_ops !== undefined))
+        return err(
+          `"${short_id}" is the implementation analysis of ${analysisOf.id}: revise it by publishing the whole ${analysisFile} in \`files\`, with \`based_on\` and a \`message\`.`,
+        )
       if (workflow) {
         const workflowError = await prepareWorkflowArtifactRef({
           meta: ctx.meta,
@@ -904,6 +926,54 @@ export function registerPublishTool(tc: ToolContext): void {
       // Billing gates the live write, after the standing check above.
       const blocked = await ctx.billingBlocked(targetOrg, await billingForPublish())
       if (blocked) return err(blocked.message)
+      // A paper's implementation analysis: checked against its Context, paper and code before
+      // anything is written, with the page people read generated from it and the paper's access
+      // given to it (lib/paper-analysis).
+      let analysis: PreparedAnalysis | null = null
+      if (analysisOf || Object.keys(files ?? {}).some((p) => cleanPath(p) === analysisFile)) {
+        if (workflow)
+          return err(
+            "An implementation analysis is not a workflow output: publish it without `workflow`.",
+          )
+        const prepared = await preparePaperAnalysis(
+          {
+            meta: ctx.meta,
+            blobs: ctx.blobs,
+            baseUrl: ctx.deps.baseUrl,
+            canUserAskContext: ctx.canUserAskContext,
+            canReachPaper: async (paper) => {
+              const reachedPaper = await reach(paper.short_id, workspace)
+              return !!reachedPaper && !("error" in reachedPaper)
+            },
+          },
+          {
+            files: (files ?? {}) as Record<string, string>,
+            existing,
+            linked: analysisOf,
+            userId: actingFor?.id ?? null,
+            targetOrg,
+            message,
+            merge,
+            refused: existing
+              ? []
+              : [
+                  ...(workspace_access !== undefined ? ["workspace_access"] : []),
+                  ...(link_role !== undefined ? ["link_role"] : []),
+                  ...(listed !== undefined ? ["listed"] : []),
+                ],
+          },
+        )
+        if ("error" in prepared) return err(prepared.error)
+        analysis = prepared
+        files = prepared.files
+        merge = false
+        if (!existing) {
+          title = title?.trim() || prepared.title
+          workspace_access = prepared.access.workspaceAccess
+          link_role = prepared.access.linkRole
+          listed = prepared.access.listed
+        }
+      }
       if (merge) {
         if (!isBundle) return err("`merge` adds files to a bundle — pass `files`, not `content`.")
         if (!existing) return err("`merge` needs the `short_id` of an existing bundle to add to.")
@@ -1006,6 +1076,16 @@ export function registerPublishTool(tc: ToolContext): void {
           short_id,
         )
         if (workflowReceipt && replayed) return replayWorkflowPublication(workflowReceipt)
+        // Before anyone hears of a new analysis: it becomes the Context's only if no other agent
+        // linked one first, and otherwise it is deleted again.
+        if (analysis && !short_id) {
+          const lost = await linkPaperAnalysis(
+            { meta: ctx.meta, search: ctx.search },
+            analysis,
+            artifact,
+          )
+          if (lost) return err(lost)
+        }
         const workflowActivity = workflowReceipt
           ? {
               id: workflowReceipt.activity_id,
@@ -1230,6 +1310,17 @@ export function registerPublishTool(tc: ToolContext): void {
             : {}),
           version: version.n,
           url,
+          ...(analysis
+            ? {
+                implementation_analysis: {
+                  context: analysis.context.id,
+                  paper: analysis.paper.short_id,
+                  note: short_id
+                    ? "The paper's implementation analysis is updated, and its page was written again from the JSON."
+                    : "Linked as the paper's implementation analysis: people see it on the paper's Context, and agents reading the Context are pointed to it. Update it by publishing the whole JSON again, with based_on and a message.",
+                },
+              }
+            : {}),
           ...(storedSlots.length
             ? {
                 data: storedSlots.map((s) => ({ fact: s.slot, bytes: s.size_bytes })),

@@ -471,16 +471,22 @@ export async function indexArtifactVersion(
 // Every hard-delete path MUST go through this. Not for takedown (which soft-removes and keeps
 // the vector valid) or account deletion (which anonymizes and retains the record).
 export async function deleteArtifactAndUnindex(
-  meta: Pick<MetaStore, "deleteArtifact">,
+  meta: Pick<MetaStore, "deleteArtifact" | "listContextsForArtifact">,
   search: Pick<SearchIndex, "unindexArtifact"> | undefined,
   id: string,
   orgId: string,
 ): Promise<void> {
+  // A paper's Context goes with the paper, and so does the implementation analysis written
+  // about it: it describes a paper that is no longer there.
+  const analyses = (await meta.listContextsForArtifact(id))
+    .filter((x) => x.manifest_artifact_id === id && x.analysis_artifact_id)
+    .map((x) => x.analysis_artifact_id as string)
   await meta.deleteArtifact(id, orgId)
   if (search)
     await search
       .unindexArtifact(id)
       .catch((err) => log.error("dense unindex failed", { artifact: id, err: String(err) }))
+  for (const analysis of analyses) await deleteArtifactAndUnindex(meta, search, analysis, orgId)
 }
 
 // Backfill — index artifacts that predate the write-path (or were created outside it).

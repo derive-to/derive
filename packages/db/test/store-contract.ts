@@ -3743,6 +3743,27 @@ export function runStoreContract(
       expect((await store.getContext(ctx.id))?.code_url).toBeNull()
     })
 
+    it("an imported paper links one implementation analysis, and loses it with the analysis", async () => {
+      const { ctx } = await newImport("2403.00008")
+      expect(ctx.analysis_artifact_id).toBeNull()
+      const a = await store.createArtifact(newArtifact({ kind: "bundle" }))
+      const b = await store.createArtifact(newArtifact({ kind: "bundle" }))
+      // The link is conditional on what the Context points at now: of two racing, one wins.
+      expect(await store.setContextAnalysis(ctx.id, a.id, null)).toBe(true)
+      expect(await store.setContextAnalysis(ctx.id, b.id, null)).toBe(false)
+      expect(await store.setContextAnalysis(ctx.id, a.id, a.id)).toBe(true)
+      expect((await store.getContext(ctx.id))?.analysis_artifact_id).toBe(a.id)
+      // Found from either side: the paper the Context is, and the analysis it links.
+      expect((await store.listContextsForArtifact(a.id)).map((x) => x.id)).toEqual([ctx.id])
+      expect(
+        (await store.listContextsForArtifact(ctx.manifest_artifact_id)).map((x) => x.id),
+      ).toEqual([ctx.id])
+      expect(await store.listContextsForArtifact(b.id)).toEqual([])
+      // Deleting the analysis unlinks it; the Context and its paper stay.
+      await store.deleteArtifact(a.id, ORG)
+      expect(await store.getContext(ctx.id)).toMatchObject({ analysis_artifact_id: null })
+    })
+
     it("renameContext keeps the per-workspace unique name", async () => {
       const a = await newContext()
       const b = await newContext()

@@ -160,6 +160,9 @@ export const PERF_INDEXES: string[] = [
   // per-paper lookup that makes an import idempotent within a workspace.
   `CREATE INDEX IF NOT EXISTS import_job_due ON import_job (scope, status, next_attempt_at)`,
   `CREATE INDEX IF NOT EXISTS context_import ON context (org_id, import_source, import_ref)`,
+  // Which Context an artifact is the implementation analysis of: asked when a bundle is
+  // revised or an artifact deleted.
+  `CREATE INDEX IF NOT EXISTS context_analysis ON context (analysis_artifact_id)`,
   `CREATE INDEX IF NOT EXISTS notification_user_time ON notification (user_id, created_at)`,
   `CREATE INDEX IF NOT EXISTS agent_mention_inbox ON agent_mention (agent_id, state, created_at)`,
   `CREATE INDEX IF NOT EXISTS favorite_user ON artifact_favorite (user_id)`,

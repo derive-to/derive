@@ -364,6 +364,12 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
         db.delete(contextAsker).where(inArray(contextAsker.context_id, ctxIds)).run()
         db.delete(importJob).where(inArray(importJob.context_id, ctxIds)).run()
         db.delete(context).where(eq(context.manifest_artifact_id, id)).run()
+        // An artifact that is some Context's implementation analysis leaves that Context
+        // without one, rather than pointing at nothing.
+        db.update(context)
+          .set({ analysis_artifact_id: null })
+          .where(eq(context.analysis_artifact_id, id))
+          .run()
         db.delete(reviewRound).where(eq(reviewRound.artifact_id, id)).run()
         // Artifact-SCOPED webhooks only (artifact_id = this id). A workspace-wide webhook
         // has a null artifact_id and never matches, so it survives, which is right: it was

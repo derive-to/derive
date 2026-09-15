@@ -3894,6 +3894,37 @@ export function makeRepos(db: SqliteDb) {
   const setContextCodeUrl = async (id: string, codeUrl: string | null): Promise<void> => {
     await db.update(context).set({ code_url: codeUrl }).where(eq(context.id, id)).run()
   }
+  const setContextAnalysis = async (
+    id: string,
+    artifactId: string | null,
+    expected: string | null,
+  ): Promise<boolean> => {
+    const rows = await db
+      .update(context)
+      .set({ analysis_artifact_id: artifactId })
+      .where(
+        and(
+          eq(context.id, id),
+          expected === null
+            ? isNull(context.analysis_artifact_id)
+            : eq(context.analysis_artifact_id, expected),
+        ),
+      )
+      .returning({ id: context.id })
+      .all()
+    return rows.length > 0
+  }
+  const listContextsForArtifact = async (artifactId: string): Promise<ContextRecord[]> =>
+    await db
+      .select()
+      .from(context)
+      .where(
+        or(
+          eq(context.manifest_artifact_id, artifactId),
+          eq(context.analysis_artifact_id, artifactId),
+        ),
+      )
+      .all()
   const renameContext = async (id: string, name: string): Promise<void> => {
     await db.update(context).set({ name }).where(eq(context.id, id)).run()
   }
@@ -6414,6 +6445,13 @@ export function makeRepos(db: SqliteDb) {
     await db.delete(contextAsker).where(inArray(contextAsker.context_id, ctxIds)).run()
     await db.delete(importJob).where(inArray(importJob.context_id, ctxIds)).run()
     await db.delete(context).where(eq(context.manifest_artifact_id, id)).run()
+    // An artifact that is some Context's implementation analysis leaves that Context without
+    // one, rather than pointing at nothing.
+    await db
+      .update(context)
+      .set({ analysis_artifact_id: null })
+      .where(eq(context.analysis_artifact_id, id))
+      .run()
     await db.delete(reviewRound).where(eq(reviewRound.artifact_id, id)).run()
     // Artifact-SCOPED webhooks only; a workspace-wide one has a null artifact_id and
     // survives. Found by scripts/check-delete-cascade.mjs.
@@ -6768,6 +6806,8 @@ export function makeRepos(db: SqliteDb) {
     setContextManifest,
     setContextConnections,
     setContextCodeUrl,
+    setContextAnalysis,
+    listContextsForArtifact,
     renameContext,
     findContextByImport,
     enqueueImportJob,

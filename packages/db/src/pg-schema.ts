@@ -1302,6 +1302,8 @@ export const context = pgTable(
     import_ref: text("import_ref"),
     // The repository implementing an imported paper; see schema.ts for the contract.
     code_url: text("code_url"),
+    // The paper's implementation analysis; see schema.ts for the contract.
+    analysis_artifact_id: text("analysis_artifact_id"),
   },
   (t) => [uniqueIndex("context_org_name").on(t.org_id, t.name)],
 )

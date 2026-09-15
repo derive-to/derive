@@ -1,5 +1,49 @@
 import { describe, expect, it } from "vitest"
-import { parseGitmodules, parseRepoRef, type RepoRef, repoArchiveUrl, repoWebUrl } from "./repo-ref"
+import {
+  codeRefUrl,
+  parseGitmodules,
+  parseRepoRef,
+  type RepoRef,
+  repoArchiveUrl,
+  repoBlobUrl,
+  repoWebUrl,
+} from "./repo-ref"
+
+describe("repoBlobUrl and codeRefUrl", () => {
+  const gh = parseRepoRef("https://github.com/o/r") as RepoRef
+  const gl = parseRepoRef("https://gitlab.com/group/sub/proj") as RepoRef
+  const sha = "0123456789abcdef0123456789abcdef01234567"
+
+  it("links a file and its lines the way each host highlights them", () => {
+    expect(repoBlobUrl(gh, sha, "src/model.py", "40-88")).toBe(
+      `https://github.com/o/r/blob/${sha}/src/model.py#L40-L88`,
+    )
+    expect(repoBlobUrl(gl, sha, "src/model.py", "40-88")).toBe(
+      `https://gitlab.com/group/sub/proj/-/blob/${sha}/src/model.py#L40-88`,
+    )
+    expect(repoBlobUrl(gh, "HEAD", "a b/c#d.py", "7")).toBe(
+      "https://github.com/o/r/blob/HEAD/a%20b/c%23d.py#L7",
+    )
+  })
+
+  it("pins the root's files to the fetched commit, and never a submodule's", () => {
+    const sub = parseRepoRef("https://github.com/x/rasterizer/tree/dr_aa") as RepoRef
+    const subs = [{ path: "submodules/rasterizer", ref: sub }]
+    expect(codeRefUrl(gh, sha, subs, "train.py", "1-2")).toEqual({
+      href: `https://github.com/o/r/blob/${sha}/train.py#L1-L2`,
+      pinned: true,
+    })
+    expect(codeRefUrl(gh, sha, subs, "submodules/rasterizer/setup.py")).toEqual({
+      href: "https://github.com/x/rasterizer/blob/dr_aa/setup.py",
+      pinned: false,
+    })
+    // No recorded commit: the default branch, and said to be so.
+    expect(codeRefUrl(gh, null, subs, "train.py")).toEqual({
+      href: "https://github.com/o/r/blob/HEAD/train.py",
+      pinned: false,
+    })
+  })
+})
 
 describe("parseRepoRef", () => {
   const accepted: [string, string][] = [

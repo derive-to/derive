@@ -100,6 +100,7 @@ import {
   workspaceAccessOf,
 } from "../lib/http"
 import { bundleTextFiles, bundleTextResolver } from "../lib/latex-bundle"
+import { analysisContextOf } from "../lib/paper-analysis"
 import { agentName } from "../lib/principal-kind"
 import { PUBLISH_TARGET_CREATE, verifyPublishToken } from "../lib/publish-token"
 import { agentPushFanout, openReviewRound } from "../lib/review-request"
@@ -650,6 +651,14 @@ export const artifactRoutes = (ctx: AppContext) => {
       // with the suggested change, or unlock to publish.
       if (existing.locked)
         return fail(c, 409, "artifact is locked — unlock it to publish, or leave a comment")
+      // A paper's implementation analysis is checked against its paper and code on the way in,
+      // which only the MCP publish does: every other way to revise a bundle would skip that.
+      if (existing.kind === "bundle" && (await analysisContextOf(meta, existing)))
+        return fail(
+          c,
+          409,
+          "this is a paper's implementation analysis: agents revise it with the MCP publish tool, and people leave a comment",
+        )
     } else if (!tokenAuth && !(await workspaceCan(c, "publish"))) {
       return fail(c, 403, "forbidden")
     }
