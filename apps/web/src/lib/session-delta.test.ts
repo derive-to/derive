@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { applyDelta, EMPTY_DELTA, supersededBy } from "./session-delta"
+import { applyActivity, applyDelta, EMPTY_DELTA, supersededBy } from "./session-delta"
 
 // These rules used to live inline in two components, written two different ways, and one of
 // them was wrong in a way only a second question in a conversation would reveal. That is the
@@ -63,5 +63,33 @@ describe("when the streamed text is superseded", () => {
     expect(supersededBy(1, 1)).toBe(false) // turn 2 streaming, turn 1's answer still sitting there
     expect(supersededBy(2, 1)).toBe(true) // turn 2's answer landed
     expect(supersededBy(0, 0)).toBe(false)
+  })
+})
+
+describe("tool activity", () => {
+  it("adds a tool and updates the same activity when it completes", () => {
+    const running = applyActivity(
+      [],
+      JSON.stringify({ session_id: S, id: "1-find", name: "find", state: "running" }),
+      S,
+    )
+    const complete = applyActivity(
+      running,
+      JSON.stringify({ session_id: S, id: "1-find", name: "find", state: "complete" }),
+      S,
+    )
+    expect(complete).toEqual([{ id: "1-find", name: "find", state: "complete" }])
+  })
+
+  it("ignores another session and malformed activity", () => {
+    const state = [{ id: "1-find", name: "find", state: "running" as const }]
+    expect(
+      applyActivity(
+        state,
+        JSON.stringify({ session_id: "other", id: "2-read", name: "read", state: "running" }),
+        S,
+      ),
+    ).toBe(state)
+    expect(applyActivity(state, "not json", S)).toBe(state)
   })
 })

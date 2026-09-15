@@ -96,6 +96,17 @@ export interface GatewayConfig {
  * wants its interactive turns slower. Hosts that do not understand the field ignore it.
  */
 const NO_THINKING = { reasoning: { enabled: false } } as const
+const WANDB_NO_THINKING = { chat_template_kwargs: { enable_thinking: false } } as const
+export const WANDB_BASE_URL = "https://api.inference.wandb.ai/v1"
+export const WANDB_DEEPSEEK_MODEL = "deepseek-ai/DeepSeek-V4-Flash-0731"
+
+export const preferredChatGateway = (
+  legacy: GatewayConfig | null | undefined,
+  wandbApiKey: string | null | undefined,
+): GatewayConfig | null =>
+  wandbApiKey
+    ? { baseUrl: WANDB_BASE_URL, apiKey: wandbApiKey, model: WANDB_DEEPSEEK_MODEL }
+    : (legacy ?? null)
 
 /** Keep interactive replies from winning on time-to-first-token only to then dribble output.
  *  This is a PREFERENCE, not a gate: OpenRouter moves slower endpoints behind the preferred
@@ -151,6 +162,14 @@ const openRouterGateway = (baseUrl: string): boolean => {
   }
 }
 
+const wandbGateway = (baseUrl: string): boolean => {
+  try {
+    return new URL(baseUrl).hostname.toLowerCase() === "api.inference.wandb.ai"
+  } catch {
+    return false
+  }
+}
+
 const providerList = (raw: string | undefined): string[] => {
   const seen = new Set<string>()
   const out: string[] = []
@@ -191,7 +210,7 @@ export const callModelFromGateway = (
       : undefined
   const extraBody = {
     ...(provider ? { provider } : {}),
-    ...NO_THINKING,
+    ...(wandbGateway(gw.baseUrl) ? WANDB_NO_THINKING : NO_THINKING),
   }
   const serverTools = openRouterGateway(gw.baseUrl) ? OPENROUTER_SERVER_TOOLS : []
   return openAiCompatModel({

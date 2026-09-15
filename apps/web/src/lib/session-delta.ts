@@ -24,6 +24,36 @@ export interface DeltaState {
 
 export const EMPTY_DELTA: DeltaState = { text: "", seq: 0, attempt: 0 }
 
+export interface SessionActivity {
+  id: string
+  name: string
+  state: "running" | "complete"
+}
+
+export const applyActivity = (
+  state: SessionActivity[],
+  raw: string,
+  sessionId: string | null,
+): SessionActivity[] => {
+  let p: { session_id?: string; id?: string; name?: string; state?: string }
+  try {
+    p = JSON.parse(raw) as typeof p
+  } catch {
+    return state
+  }
+  if (
+    !sessionId ||
+    p.session_id !== sessionId ||
+    !p.id ||
+    !p.name ||
+    (p.state !== "running" && p.state !== "complete")
+  )
+    return state
+  const next: SessionActivity = { id: p.id, name: p.name, state: p.state }
+  const at = state.findIndex((item) => item.id === p.id)
+  return at === -1 ? [...state, next] : state.map((item, i) => (i === at ? next : item))
+}
+
 /**
  * Fold one `session.delta` event into the current state. Returns the SAME object when the event
  * is not ours or not usable, so a caller can skip a re-render on identity.

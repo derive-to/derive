@@ -228,7 +228,9 @@ export const makeDeltaStream = (opts: DeltaStreamOpts): DeltaStream => {
           // Hold back a marker-length tail: `<revi` now could be `<revision` next slice, and
           // showing it and retracting it would be worse than showing it a beat later.
           queue(seen.slice(0, Math.max(0, seen.length - MARKER_HOLDBACK)))
-          if (buffer.length >= maxChars || now() - oldestAt >= maxMs) flushBuffer()
+          // The first readable slice is the time-to-first-token experience. Publish it at once;
+          // after that, use the normal coalescing limits to keep the realtime path inexpensive.
+          if (seq === 0 || buffer.length >= maxChars || now() - oldestAt >= maxMs) flushBuffer()
         },
       })
     },

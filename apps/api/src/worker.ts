@@ -36,7 +36,7 @@ import {
   superAdminsFromEnv,
   workspaceIdsFromEnv,
 } from "./lib/env"
-import { catalogFromGateway, type GatewayConfig } from "./lib/model-catalog"
+import { catalogFromGateway, type GatewayConfig, preferredChatGateway } from "./lib/model-catalog"
 import { getInstanceSlot } from "./lib/model-library"
 import { nativeLimiter } from "./lib/rate-limit"
 import { liveD1, requestD1 } from "./lib/request-d1"
@@ -168,6 +168,8 @@ export interface Env {
   /** Eligible upstream backends for live performance routing. Takes precedence over the fixed
    *  DERIVE_MODEL_PROVIDERS order when present. */
   DERIVE_MODEL_AUTO_PROVIDERS?: string
+  /** Preferred attended-chat provider. DeepSeek V4 Flash is selected when this key exists. */
+  WANDB_API_KEY?: string
   /** Additional providers as JSON — see parseGatewaysJson. Each carries its own key, models and
    *  backend routing, so a fourth provider is a list entry rather than four more variables. */
   DERIVE_MODEL_GATEWAYS?: string
@@ -304,7 +306,8 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
         // seat keeps being billed until an unrelated membership change happens to heal it.
         purgeUserData: (userId) => purgeUserDataAndSyncSeats(meta, billing, userId),
       })
-      const models = catalogFromGateway(workerGateway(env))
+      const selectedGateway = preferredChatGateway(workerGateway(env), env.WANDB_API_KEY)
+      const models = catalogFromGateway(selectedGateway)
       app = createApp({
         meta,
         // The static operator/CI bearer (isToken). The Node entry wires this via
@@ -320,12 +323,12 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
         // Both from ONE construction: `callModel` is the catalog's default entry, so a lane that
         // picks a model and a lane that does not can never disagree about what "the model" is.
         callModel: models?.resolve(null)?.callModel,
-        automationOperatorPays: env.DERIVE_LOOP_RUNS === "1" && workerGateway(env) !== undefined,
+        automationOperatorPays: env.DERIVE_LOOP_RUNS === "1" && selectedGateway !== null,
         models: models ?? undefined,
         // The gateway that catalog was built from, so the operator's model library can reach an
         // id the environment never named — same endpoint, same key, no new secret. Without it
         // the library can still relabel and pin a lane, but not ADD. See lib/model-library.ts.
-        modelGateway: workerGateway(env),
+        modelGateway: selectedGateway ?? undefined,
         // Code Mode stays read-only in mcp-tools/code.ts. The dynamic Worker receives no parent
         // bindings or network access; its find/read calls return through Workers RPC to this host.
         codeSandbox: cloudflareSandbox(env.LOADER, () => {
@@ -648,7 +651,7 @@ async function withHostedDispatch(
   // there" — that is FALSE and was worth a release: derive.to sets all three, because holding
   // the key and spending it for every workspace IS the hosted posture. `operatorPays` below
   // depends on the same fact.
-  const gateway = workerGateway(env)
+  const gateway = preferredChatGateway(workerGateway(env), env.WANDB_API_KEY) ?? undefined
   /**
    * The operator's live pin for the automation lane, resolved at DISPATCH and read by the loop.
    *
