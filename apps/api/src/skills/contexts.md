@@ -186,12 +186,12 @@ paper counts as the paper's.
   paper's (weights, thresholds, schedules, iteration counts, initial values), the paper's choice
   being an option rather than the default, extra terms or steps around the idea, and a close
   variant of it (a more general form, an equivalent formulation) all count as implemented.
-- `failed_to_map`: the code related to the idea does not carry out its core: part of the core is
-  missing, or a different idea (not a variant of the paper's) takes its place. Other numbers,
-  extra code and non-default options never make a detail `failed_to_map`.
-- `not_found`: nothing in the code carries out the idea.
+- `could_not_map`: no code carries out the core idea. It is absent, only part of it is there, or
+  a different idea (not a variant of the paper's) takes its place. Name the nearest code when
+  there is some, and say in `notes` what you looked for. Other numbers, extra code and
+  non-default options never make a detail `could_not_map`.
 
-When you hesitate between `implemented` and another status, choose `implemented`. `notes` say
+When you hesitate between the two, choose `implemented`. `notes` say
 where and how the code carries the idea out: leave out numbers that differ from the paper, and
 name a variant only when a reader needs it to recognise the idea in the code. Do not grade the
 code: `summary` says where the contributions live, and `open_questions` are for what you could not
@@ -202,9 +202,8 @@ Derive refuses an analysis that does not hold, listing every problem:
 - `context`, `paper` and `implementation` describe what the Context holds now: its id, the
   paper's short id, `import.version`, the repository `import.code.url` names, and
   `import.code.commit` (null when it has none).
-- `status` is `implemented`, `failed_to_map` or `not_found`. Every status but `not_found` names
-  code; `not_found` names none; `failed_to_map` says in `notes` why the code does not carry out
-  the idea.
+- `status` is `implemented` or `could_not_map`. An `implemented` detail names its code; a
+  `could_not_map` detail says why in `notes`, and names code only when some is related.
 - A code `path` is the repository's own path (`src/model.py`; `code/src/model.py` is accepted too)
   and must exist. `lines` must fit the file, and `symbol` must appear in it, within `lines` when
   given.

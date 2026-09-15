@@ -8318,8 +8318,7 @@ export interface components {
                     contributions: number;
                     details: number;
                     implemented: number;
-                    failed_to_map: number;
-                    not_found: number;
+                    could_not_map: number;
                     unmapped: number;
                     open_questions: number;
                 };
@@ -8332,7 +8331,7 @@ export interface components {
                         id: string;
                         title: string;
                         /** @enum {string} */
-                        status: "implemented" | "failed_to_map" | "not_found";
+                        status: "implemented" | "could_not_map";
                         notes: string | null;
                         paper: components["schemas"]["AnalysisPaperRef"][];
                         code: components["schemas"]["AnalysisCodeRef"][];

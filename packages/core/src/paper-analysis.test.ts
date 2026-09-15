@@ -40,10 +40,17 @@ const valid = (over: Record<string, unknown> = {}) => ({
           title: "Learned loss weighting",
           paper: [],
           code: [{ path: "src/loss.py", lines: "12" }],
-          status: "failed_to_map",
+          status: "could_not_map",
           notes: "`total_loss` sums the terms with fixed weights; nothing learns them.",
         },
-        { id: "c1.d3", title: "Densification schedule", paper: [], code: [], status: "not_found" },
+        {
+          id: "c1.d3",
+          title: "Densification schedule",
+          paper: [],
+          code: [],
+          status: "could_not_map",
+          notes: "Nothing in the training loop changes the primitive count on a schedule.",
+        },
       ],
     },
   ],
@@ -88,8 +95,13 @@ describe("parsePaperAnalysis", () => {
             extra: true,
             details: [
               { id: "d1", title: "a", code: [], status: "implemented" },
-              { id: "d1", title: "b", code: [{ path: "a/../../etc" }], status: "failed_to_map" },
-              { id: "d3", title: "c", code: [{ path: "x.py", lines: "9-3" }], status: "not_found" },
+              { id: "d1", title: "b", code: [{ path: "a/../../etc" }], status: "could_not_map" },
+              {
+                id: "d3",
+                title: "c",
+                code: [{ path: "x.py", lines: "9-3" }],
+                status: "implemented",
+              },
               { id: "d4", title: "d", code: [{ path: "x.py" }], status: "maybe" },
             ],
           },
@@ -102,10 +114,9 @@ describe("parsePaperAnalysis", () => {
       "analysis.contributions[0].id must be an id",
       "analysis.contributions[0].details[0].code must name the code",
       "analysis.contributions[0].details[1].code[0].path must be a file's path",
-      "analysis.contributions[0].details[1].notes must say why the code does not carry out the idea",
+      "analysis.contributions[0].details[1].notes must say why the idea could not be mapped",
       "analysis.contributions[0].details[1].id repeats the id",
       "analysis.contributions[0].details[2].code[0].lines must be a line or a range",
-      "analysis.contributions[0].details[2].code must be empty when the status is not_found",
       "analysis.contributions[0].details[3].status must be one of",
     ])
       expect(errors).toContain(expected)
@@ -121,7 +132,7 @@ describe("parsePaperAnalysis", () => {
             claim: "c",
             paper: [],
             details: [
-              { id: "d1", title: "t", code: [{ path: "a.py" }], status: "failed_to_map", notes },
+              { id: "d1", title: "t", code: [{ path: "a.py" }], status: "could_not_map", notes },
             ],
           },
         ],
@@ -161,8 +172,7 @@ describe("updating an analysis", () => {
       contributions: 1,
       details: 3,
       implemented: 1,
-      failed_to_map: 1,
-      not_found: 1,
+      could_not_map: 2,
       unmapped: 1,
       open_questions: 1,
     })
@@ -190,7 +200,7 @@ describe("renderPaperAnalysisMarkdown", () => {
     })
     expect(md).toContain("# Implementation analysis: Splatting")
     expect(md).toContain("## 1. A differentiable rasterizer")
-    expect(md).toContain("**Failed to map**")
+    expect(md).toContain("**Could not map**")
     expect(md).toContain(
       `- Code: [\`src/render.py\` \`def sort_tiles\` lines 40-88](https://github.com/o/r/blob/${COMMIT}/src/render.py)`,
     )

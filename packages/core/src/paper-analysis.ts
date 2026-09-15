@@ -20,12 +20,8 @@ export const PAPER_ANALYSIS_FILE = "/derive.paper-analysis.json"
 export const PAPER_ANALYSIS_PAGE = "/index.md"
 export const PAPER_ANALYSIS_MAX_BYTES = 150 * 1024
 
-export type AnalysisStatus = "implemented" | "failed_to_map" | "not_found"
-export const ANALYSIS_STATUSES: readonly AnalysisStatus[] = [
-  "implemented",
-  "failed_to_map",
-  "not_found",
-]
+export type AnalysisStatus = "implemented" | "could_not_map"
+export const ANALYSIS_STATUSES: readonly AnalysisStatus[] = ["implemented", "could_not_map"]
 
 /** A place in the paper: a page, optionally `page#slug` for one heading's part (the grammar
  *  `read` takes), and optionally a `\label` inside it. */
@@ -381,14 +377,12 @@ export const parsePaperAnalysis = (source: string): PaperAnalysisParse => {
         .map((ref, k) => c.codeRef(`${dw}.code[${k}]`, ref))
         .filter((r): r is AnalysisCodeRef => r !== null)
       const notes = c.text(`${dw}.notes`, od.notes, MAX.prose, { optional: true, prose: true })
-      if (status === "not_found" && code.length > 0)
-        c.fail(`${dw}.code`, "must be empty when the status is not_found")
-      if (status !== "not_found" && ANALYSIS_STATUSES.includes(status) && code.length === 0)
-        c.fail(`${dw}.code`, "must name the code, unless the status is not_found")
-      if (status === "failed_to_map" && !notes)
+      if (status === "implemented" && code.length === 0)
+        c.fail(`${dw}.code`, "must name the code when the status is implemented")
+      if (status === "could_not_map" && !notes)
         c.fail(
           `${dw}.notes`,
-          "must say why the code does not carry out the idea when the status is failed_to_map",
+          "must say why the idea could not be mapped when the status is could_not_map",
         )
       details.push({
         id: c.id(`${dw}.id`, od.id),
@@ -500,8 +494,7 @@ export interface AnalysisCounts {
   contributions: number
   details: number
   implemented: number
-  failed_to_map: number
-  not_found: number
+  could_not_map: number
   unmapped: number
   open_questions: number
 }
@@ -513,8 +506,7 @@ export const analysisCounts = (a: PaperAnalysis): AnalysisCounts => {
     contributions: a.contributions.length,
     details: details.length,
     implemented: count("implemented"),
-    failed_to_map: count("failed_to_map"),
-    not_found: count("not_found"),
+    could_not_map: count("could_not_map"),
     unmapped: a.unmapped.length,
     open_questions: a.open_questions.length,
   }
@@ -570,8 +562,7 @@ export const analysisPaperRefs = (a: PaperAnalysis): { where: string; ref: Analy
 
 export const ANALYSIS_STATUS_LABEL: Record<AnalysisStatus, string> = {
   implemented: "Implemented",
-  failed_to_map: "Failed to map",
-  not_found: "Not found in the code",
+  could_not_map: "Could not map",
 }
 
 export interface AnalysisLinks {
@@ -681,7 +672,7 @@ const pins = (p: AnalysisPromptInput): string =>
 /** How a detail's status is judged. Both prompts say it, so the pasted prompt alone steers an
  *  agent away from grading the code against the paper's numbers. */
 const coreIdea =
-  "Judge each detail by its core idea and treat the rest as details: when the code approximates the paper, with other numbers, another default or extra steps around the idea, the detail is implemented. Use failed_to_map only when the related code lacks part of the core idea or puts a different idea in its place, and not_found when nothing carries it out; a numerical difference is never failed_to_map. This is a map of the paper in the code, not a review."
+  "Judge each detail by its core idea and treat the rest as details: when the code approximates the paper, with other numbers, another default or extra steps around the idea, the detail is implemented. Mark a detail could_not_map only when no code carries out its core idea, and never for a numerical difference. This is a map of the paper in the code, not a review."
 
 export const paperAnalysisStartPrompt = (p: AnalysisPromptInput): string =>
   [

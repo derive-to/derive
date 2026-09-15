@@ -3292,10 +3292,7 @@
                   "implemented": {
                     "type": "number"
                   },
-                  "failed_to_map": {
-                    "type": "number"
-                  },
-                  "not_found": {
+                  "could_not_map": {
                     "type": "number"
                   },
                   "unmapped": {
@@ -3309,8 +3306,7 @@
                   "contributions",
                   "details",
                   "implemented",
-                  "failed_to_map",
-                  "not_found",
+                  "could_not_map",
                   "unmapped",
                   "open_questions"
                 ]
@@ -3350,8 +3346,7 @@
                             "type": "string",
                             "enum": [
                               "implemented",
-                              "failed_to_map",
-                              "not_found"
+                              "could_not_map"
                             ]
                           },
                           "notes": {

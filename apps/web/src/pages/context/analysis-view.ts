@@ -25,22 +25,16 @@ export const analysisPollInterval = (
     ? ANALYSIS_POLL_MS
     : false
 
-export const ANALYSIS_STATUS_ORDER: readonly AnalysisStatus[] = [
-  "implemented",
-  "failed_to_map",
-  "not_found",
-]
+export const ANALYSIS_STATUS_ORDER: readonly AnalysisStatus[] = ["implemented", "could_not_map"]
 
 export const ANALYSIS_STATUS_LABEL: Record<AnalysisStatus, string> = {
   implemented: "Implemented",
-  failed_to_map: "Failed to map",
-  not_found: "Not found in the code",
+  could_not_map: "Could not map",
 }
 
-export const ANALYSIS_STATUS_BADGE: Record<AnalysisStatus, "success" | "warning" | "outline"> = {
+export const ANALYSIS_STATUS_BADGE: Record<AnalysisStatus, "success" | "warning"> = {
   implemented: "success",
-  failed_to_map: "warning",
-  not_found: "outline",
+  could_not_map: "warning",
 }
 
 /** A code reference the way a person scans it: the path, then the symbol and lines. */

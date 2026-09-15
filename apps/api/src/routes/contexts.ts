@@ -839,8 +839,7 @@ export const contextRoutes = (ctx: AppContext) => {
             contributions: z.number(),
             details: z.number(),
             implemented: z.number(),
-            failed_to_map: z.number(),
-            not_found: z.number(),
+            could_not_map: z.number(),
             unmapped: z.number(),
             open_questions: z.number(),
           }),
@@ -854,7 +853,7 @@ export const contextRoutes = (ctx: AppContext) => {
                 z.object({
                   id: z.string(),
                   title: z.string(),
-                  status: z.enum(["implemented", "failed_to_map", "not_found"]),
+                  status: z.enum(["implemented", "could_not_map"]),
                   notes: z.string().nullable(),
                   paper: z.array(AnalysisPaperRefInfo),
                   code: z.array(AnalysisCodeRefInfo),
