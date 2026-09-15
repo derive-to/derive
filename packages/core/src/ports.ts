@@ -510,6 +510,10 @@ export interface ImportJobRecord {
   /** The reference that was actually fetched (`github.com/owner/repo@branch`): both the
    *  resume marker and how a re-run knows the link changed. */
   code_ref: string | null
+  /** The commit that reference was fetched at, as the repository's archive recorded it.
+   *  Null when the host's archive did not say, or for an attachment made before commits
+   *  were recorded. */
+  code_commit: string | null
   created_at: string
   updated_at: string
 }
@@ -1834,6 +1838,7 @@ export interface ContextStore {
         | "code_status"
         | "code_error"
         | "code_ref"
+        | "code_commit"
         | "updated_at"
       >
     >,

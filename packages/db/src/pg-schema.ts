@@ -1331,6 +1331,7 @@ export const importJob = pgTable(
     code_status: text("code_status").$type<ImportCodeStatus>(),
     code_error: text("code_error"),
     code_ref: text("code_ref"),
+    code_commit: text("code_commit"),
     claim_token: text("claim_token"),
     created_at: text("created_at").notNull().$defaultFn(isoNow),
     updated_at: text("updated_at").notNull().$defaultFn(isoNow),

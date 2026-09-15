@@ -125,8 +125,10 @@ export interface StageDeps {
   heartbeat?: () => Promise<void>
 }
 
+/** What the body turned out to be. A tar also carries its pax global records, where a git
+ *  archive names the commit it was made from. */
 export type Staged =
-  | { kind: "tar"; files: StagedFile[] }
+  | { kind: "tar"; files: StagedFile[]; globals: ReadonlyMap<string, string> }
   | { kind: "pdf" }
   | { kind: "single"; bytes: Uint8Array }
 
@@ -487,7 +489,8 @@ export const stageArchive = async (
     })
     if (state.kind === "pdf") return { kind: "pdf" }
     const files = await stager.drain()
-    if (state.kind === "tar") return { kind: "tar", files }
+    if (state.kind === "tar")
+      return { kind: "tar", files, globals: state.tar?.globals ?? new Map<string, string>() }
     return { kind: "single", bytes: concatChunks(single, singleSize) }
   } catch (error) {
     await reader.cancel().catch(() => undefined)

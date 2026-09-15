@@ -2116,15 +2116,18 @@ describe("contexts: import from arXiv", () => {
   const SUB_FILES = {
     "diff-gaussian-rasterization-def456/setup.py": "from setuptools import setup\nsetup()\n",
   }
-  const repoTar = (files: Record<string, string | Uint8Array>) => () =>
-    gzip(gzipSync(tarSync(files)))
+  // A host's archive of a repository, naming the commit it was made from the way git does
+  // when `commit` is given.
+  const repoTar = (files: Record<string, string | Uint8Array>, commit?: string) => () =>
+    gzip(gzipSync(tarSync(files, commit ? { global: { comment: commit } } : {})))
 
   it("fetches the repository that implements a paper into the paper's own artifact", async () => {
+    const ROOT_COMMIT = "4c2a1f0e9d8b7a6c5d4e3f2a1b0c9d8e7f6a5b4c"
     const stub = arxivStub(
       {},
       {
-        "graphdeco-inria/gaussian-splatting": repoTar(REPO_FILES),
-        "graphdeco-inria/diff-gaussian-rasterization": repoTar(SUB_FILES),
+        "graphdeco-inria/gaussian-splatting": repoTar(REPO_FILES, ROOT_COMMIT),
+        "graphdeco-inria/diff-gaussian-rasterization": repoTar(SUB_FILES, "f".repeat(40)),
         // A lab's own GitLab behind an anti-bot wall: real, and common for the
         // institutional submodules a paper's repository declares.
         "lab/walled": () => new Response("<html>not a bot?</html>", { status: 406 }),
@@ -2175,7 +2178,11 @@ describe("contexts: import from arXiv", () => {
       code_status: "ready",
       code_error: null,
       code_ref: "github.com/graphdeco-inria/gaussian-splatting",
+      code_commit: ROOT_COMMIT,
     })
+    // The commit is the root's, as its archive named it. A submodule's is not kept: it was
+    // fetched at its declared branch, not at the commit the root pins it to.
+    expect(detail.import.code.commit).toBe(ROOT_COMMIT)
 
     // ONE artifact still: the paper, now carrying the code under /code/.
     expect(detail.documents).toHaveLength(1)
@@ -2342,9 +2349,13 @@ describe("contexts: import from arXiv", () => {
   })
 
   it("attaches an implementation to a paper already imported, then takes it away", async () => {
+    const R2_COMMIT = "9d3c1f7a2b6e8d0c4a5f9e1b7c3d2a8f6e0b4c1d"
     const stub = arxivStub(
       {},
-      { "o/r": repoTar({ "r-abc/train.py": "def train():\n    return 7\n" }) },
+      {
+        "o/r": repoTar({ "r-abc/train.py": "def train():\n    return 7\n" }),
+        "o/r2": repoTar({ "r2-def/train.py": "def train():\n    return 8\n" }, R2_COMMIT),
+      },
     )
     const { app, meta, ctx, clock: c, tickDeps } = setup("contexts-import-code-later", stub.fetch)
     await app.request("/v1/me", { headers: as(owner.email) })
@@ -2387,6 +2398,7 @@ describe("contexts: import from arXiv", () => {
       url: "https://github.com/o/r",
       status: "pending",
       error: null,
+      commit: null,
     })
     // The requeued job is working on the CODE. The paper is already here, so it does not
     // report itself as being fetched from arXiv again: only `code.status` is pending.
@@ -2408,7 +2420,12 @@ describe("contexts: import from arXiv", () => {
 
     const withCode = await filesOf()
     expect(withCode.paths).toContain("/code/train.py")
-    expect(withCode.detail.import.code).toMatchObject({ status: "ready", error: null })
+    // An archive that names no commit leaves none: nothing is guessed.
+    expect(withCode.detail.import.code).toMatchObject({
+      status: "ready",
+      error: null,
+      commit: null,
+    })
     expect(withCode.detail.description).toContain("Ashish Vaswani, Noam Shazeer")
     expect(withCode.version?.message).toContain("Attached github.com/o/r")
     expect(withCode.version?.author).toBe("Ashish Vaswani, Noam Shazeer")
@@ -2427,6 +2444,20 @@ describe("contexts: import from arXiv", () => {
     expect(await tick()).toBe(1)
     expect((await filesOf()).version?.n).toBe(version)
 
+    // Replacing it with another repository fetches that one, at the commit its archive names.
+    await app.request(
+      `/v1/contexts/${created.id}/import/code`,
+      jsonAs(as(owner.email), { url: "https://github.com/o/r2" }),
+    )
+    expect(await tick()).toBe(1)
+    const replaced = await filesOf()
+    expect(replaced.version?.message).toContain("Attached github.com/o/r2")
+    expect(replaced.detail.import.code).toMatchObject({
+      url: "https://github.com/o/r2",
+      status: "ready",
+      commit: R2_COMMIT,
+    })
+
     // Removing it republishes the paper without the code, so it stops being readable.
     const removed = await (
       await app.request(
@@ -2444,6 +2475,7 @@ describe("contexts: import from arXiv", () => {
     expect(await meta.getImportJobForContext(created.id)).toMatchObject({
       code_status: null,
       code_ref: null,
+      code_commit: null,
     })
   })
 

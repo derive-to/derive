@@ -313,4 +313,29 @@ describe("TarReader", () => {
     expect(largest).toBe(PIECE)
     expect(peak).toBeLessThanOrEqual(512)
   })
+
+  it("keeps the archive's global records, the commit a git archive names, as no entry", () => {
+    const commit = "0123456789abcdef0123456789abcdef01234567"
+    const tar = tarSync({ "repo-0123456/train.py": "x" }, { global: { comment: commit } })
+    // The record exactly as `git archive` writes it.
+    expect(new TextDecoder().decode(tar.subarray(512, 564))).toBe(`52 comment=${commit}\n`)
+    for (const size of [1, 7, 512, 4096]) {
+      const paths: string[] = []
+      const reader = new TarReader(CAPS, {
+        entry: (name) => {
+          paths.push(name)
+          return true
+        },
+        data: () => {},
+        end: () => {},
+      })
+      for (let at = 0; at < tar.byteLength; at += size) reader.push(tar.subarray(at, at + size))
+      reader.finish()
+      expect([size, paths, reader.globals.get("comment")]).toEqual([
+        size,
+        ["repo-0123456/train.py"],
+        commit,
+      ])
+    }
+  })
 })

@@ -2961,12 +2961,18 @@
                 "type": "string",
                 "nullable": true,
                 "description": "Why the repository could not be fetched."
+              },
+              "commit": {
+                "type": "string",
+                "nullable": true,
+                "description": "The commit the repository was fetched at, when its host recorded one. Null until it is ready, and for an attachment made before commits were recorded."
               }
             },
             "required": [
               "url",
               "status",
-              "error"
+              "error",
+              "commit"
             ],
             "description": "The public repository implementing this paper, when one is attached. Its files live inside the paper's artifact for agents to read; people open the repository on its own host."
           }

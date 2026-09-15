@@ -937,6 +937,7 @@ CREATE TABLE IF NOT EXISTS import_job (
   code_status TEXT,
   code_error TEXT,
   code_ref TEXT,
+  code_commit TEXT,
   claim_token TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),

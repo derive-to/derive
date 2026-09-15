@@ -3699,7 +3699,12 @@ export function runStoreContract(
     it("an imported paper carries the repository that implements it", async () => {
       const { ctx, job } = await newImport("2403.00007")
       expect(ctx.code_url).toBeNull()
-      expect(job).toMatchObject({ code_status: null, code_error: null, code_ref: null })
+      expect(job).toMatchObject({
+        code_status: null,
+        code_error: null,
+        code_ref: null,
+        code_commit: null,
+      })
 
       // Attached at import time or later: the same column either way.
       await store.setContextCodeUrl(ctx.id, "https://github.com/o/r")
@@ -3718,6 +3723,19 @@ export function runStoreContract(
         code_status: "failed",
         code_error: "the repository could not be reached",
         code_ref: "github.com/o/r",
+      })
+
+      // A fetch that lands records the commit the repository's archive named.
+      const commit = "0123456789abcdef0123456789abcdef01234567"
+      await store.updateImportJob(job.id, {
+        code_status: "ready",
+        code_error: null,
+        code_commit: commit,
+      })
+      expect(await store.getImportJob(job.id)).toMatchObject({
+        code_status: "ready",
+        code_ref: "github.com/o/r",
+        code_commit: commit,
       })
 
       // Removing the implementation clears the link.

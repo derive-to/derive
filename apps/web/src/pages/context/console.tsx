@@ -450,6 +450,15 @@ function ImplementationCard({
               <>Fetching this repository. The page updates itself.</>
             )}
           </p>
+          {code.status === "ready" && code.commit && (
+            <p
+              className="font-mono text-2xs text-muted-foreground"
+              title={code.commit}
+              data-testid="console-code-commit"
+            >
+              at {code.commit.slice(0, 7)}
+            </p>
+          )}
           <div className="flex flex-wrap items-center gap-2">
             <Button asChild size="sm" variant="outline" data-testid="console-code-open">
               <a href={code.url} target="_blank" rel="noreferrer">

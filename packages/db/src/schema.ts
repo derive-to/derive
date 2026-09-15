@@ -1558,6 +1558,10 @@ export const importJob = sqliteTable(
     code_status: text("code_status").$type<ImportCodeStatus>(),
     code_error: text("code_error"),
     code_ref: text("code_ref"),
+    // The commit that reference was fetched at, as the repository's archive recorded it, so
+    // a reference into the code can point at exactly what was read. Nullable (clean ADD
+    // COLUMN); null when the host did not say.
+    code_commit: text("code_commit"),
     // Which claim owns a fetching job, minted per claim. The worker's writes to the row are
     // conditional on it, so a worker whose lease lapsed, and whose job another worker then
     // reclaimed, cannot overwrite the new owner's progress. Nullable (clean ADD COLUMN).

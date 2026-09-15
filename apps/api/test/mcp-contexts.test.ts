@@ -1965,6 +1965,7 @@ describe("imported papers over MCP — read-only, cited, never run", () => {
     const tex =
       "\\documentclass{article}\n\\begin{document}\n\\section{Method}\nSee the code.\n\\end{document}\n"
     const atom = `<feed xmlns="http://www.w3.org/2005/Atom" xmlns:arxiv="http://arxiv.org/schemas/atom"><entry><id>http://arxiv.org/abs/${ID}v1</id><published>2024-05-01T00:00:00Z</published><title>Splatting</title><summary>An abstract.</summary><author><name>Ada Lovelace</name></author><arxiv:primary_category term="cs.CV"/></entry></feed>`
+    const COMMIT = "9fceb02d0ae598e95dc970b74767f19372d61af8"
     // A repository with more files than any outline should ever print.
     const repo: Record<string, string> = {
       "r-abc/train.py": "def train():\n    return 42\n",
@@ -1979,7 +1980,9 @@ describe("imported papers over MCP — read-only, cited, never run", () => {
         return new Response(gzipSync(tarSync({ "main.tex": tex })), { status: 200 })
       if (u.pathname.startsWith("/bibtex/")) return new Response("not bibtex", { status: 404 })
       if (u.pathname.startsWith("/o/r/tar.gz/"))
-        return new Response(gzipSync(tarSync(repo)), { status: 200 })
+        return new Response(gzipSync(tarSync(repo, { global: { comment: COMMIT } })), {
+          status: 200,
+        })
       return new Response("nope", { status: 404 })
     }) as unknown as typeof fetch
     const made = makeAuthedApp("mcx-import-code", [owner, dev], "editor", { deps: { fetch: stub } })
@@ -2033,6 +2036,12 @@ describe("imported papers over MCP — read-only, cited, never run", () => {
     expect(await runImportTick(tickDeps)).toBe(1)
 
     const pkg = await call(app, ownerBot.token, "read", { short_id: queued.id })
+    // The Context says what implements it, and the exact commit its files were read from.
+    expect(pkg.import.code).toEqual({
+      url: "https://github.com/o/r",
+      status: "ready",
+      commit: COMMIT,
+    })
     const paper = await call(app, ownerBot.token, "read", { short_id: pkg.documents[0].short_id })
     // The paper's own pages stay the pages: 142 repository files do not bury them.
     expect(paper.entry).toBe("main.tex")

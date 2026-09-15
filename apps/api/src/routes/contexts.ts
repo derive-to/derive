@@ -698,6 +698,12 @@ export const contextRoutes = (ctx: AppContext) => {
               "pending: on its way with the paper; ready: stored inside the paper's artifact, where an agent reads it; failed: see `error`. Independent of the paper's own status.",
             ),
           error: z.string().nullable().describe("Why the repository could not be fetched."),
+          commit: z
+            .string()
+            .nullable()
+            .describe(
+              "The commit the repository was fetched at, when its host recorded one. Null until it is ready, and for an attachment made before commits were recorded.",
+            ),
         })
         .nullable()
         .describe(
@@ -1001,6 +1007,9 @@ export const contextRoutes = (ctx: AppContext) => {
                 // No job row (or none yet) means the fetch has not run: it is on its way.
                 status: job?.code_status ?? ("pending" as const),
                 error: job?.code_status === "failed" ? job.code_error : null,
+                // Only what is there to read has a commit: while a replacement is on its way
+                // the previous one no longer describes the link.
+                commit: job?.code_status === "ready" ? job.code_commit : null,
               }
             : null,
         }

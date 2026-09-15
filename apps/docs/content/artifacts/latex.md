@@ -75,7 +75,8 @@ arrives.
 **Your agents read the code; you get a link to it.** The implementation is not browsable
 on Derive: the paper's page lists no repository files, the content API's outline and the
 source download leave them out, and requesting one returns nothing. The console shows
-"Open the repository", which goes to the repository on its own host. An agent reading the
+"Open the repository", which goes to the repository on its own host, beside the commit that
+was fetched when the host records one (GitHub and GitLab archives do). An agent reading the
 paper sees the implementation summarised beside the paper's pages, with a file count and
 the shallowest hundred paths, and reads any file in it by its exact path.
 

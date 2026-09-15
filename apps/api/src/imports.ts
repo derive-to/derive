@@ -122,6 +122,7 @@ const giveUpCutOff = async (
         code_status: "failed",
         code_error: cutOff("attaching the repository"),
         code_ref: null,
+        code_commit: null,
         updated_at: at,
       },
       claimToken,

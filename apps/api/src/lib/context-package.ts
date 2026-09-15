@@ -54,6 +54,9 @@ export interface PackagedImport {
   version: number | null
   status: "pending" | "fetching" | "ready" | "failed" | "dead"
   error: { code: string; detail: string | null } | null
+  /** The paper's implementation, when one is attached: the repository's page, whether its
+   *  files are there to read, and the commit they were fetched at when the host said. */
+  code: { url: string; status: "pending" | "ready" | "failed"; commit: string | null } | null
 }
 
 export interface ContextPackage {
@@ -111,6 +114,13 @@ export const importStateOf = async (
       job?.error_code && job.status !== "ready"
         ? { code: job.error_code, detail: job.error_detail }
         : null,
+    code: x.code_url
+      ? {
+          url: x.code_url,
+          status: job?.code_status ?? "pending",
+          commit: job?.code_status === "ready" ? job.code_commit : null,
+        }
+      : null,
   }
 }
 

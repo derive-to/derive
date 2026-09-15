@@ -8182,6 +8182,8 @@ export interface components {
                 status: "pending" | "ready" | "failed";
                 /** @description Why the repository could not be fetched. */
                 error: string | null;
+                /** @description The commit the repository was fetched at, when its host recorded one. Null until it is ready, and for an attachment made before commits were recorded. */
+                commit: string | null;
             } | null;
         } | null;
         ContextInfo: {
