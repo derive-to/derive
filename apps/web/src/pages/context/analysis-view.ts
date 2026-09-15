@@ -57,6 +57,13 @@ export const codeRefLabel = (ref: {
 }): string =>
   [ref.path, ref.symbol, ref.lines ? `lines ${ref.lines}` : null].filter(Boolean).join(" · ")
 
+/** The heading a paper reference names (`main.tex#method` names `method`), which opens the paper
+ *  at that heading; null for a reference to a whole page. */
+export const sectionSlugOf = (section: string): string | null => {
+  const hash = section.lastIndexOf("#")
+  return hash > 0 && hash < section.length - 1 ? section.slice(hash + 1) : null
+}
+
 /** A paper reference the way a person scans it: the heading it names when known, else the page
  *  and section, then the label. */
 export const paperRefLabel = (ref: {

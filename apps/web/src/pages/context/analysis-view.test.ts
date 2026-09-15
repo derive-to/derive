@@ -5,6 +5,7 @@ import {
   analysisPollInterval,
   codeRefLabel,
   paperRefLabel,
+  sectionSlugOf,
 } from "./analysis-view"
 
 describe("waiting for an analysis a copied prompt asked for", () => {
@@ -37,5 +38,12 @@ describe("reference labels", () => {
       "Method · eq:loss",
     )
     expect(paperRefLabel({ section: "main.tex", heading: null, label: null })).toBe("main.tex")
+  })
+
+  it("opens the paper at the heading a reference names, and at the top for a whole page", () => {
+    expect(sectionSlugOf("main.tex#method")).toBe("method")
+    expect(sectionSlugOf("sections/2-model.tex#loss-terms")).toBe("loss-terms")
+    expect(sectionSlugOf("main.tex")).toBeNull()
+    expect(sectionSlugOf("main.tex#")).toBeNull()
   })
 })

@@ -21,6 +21,7 @@ import {
   analysisPollInterval,
   codeRefLabel,
   paperRefLabel,
+  sectionSlugOf,
 } from "./analysis-view"
 
 type Analysis = NonNullable<ContextAnalysis["analysis"]>
@@ -282,22 +283,26 @@ function PaperRefs({ refs, paperShortId }: { refs: PaperRef[]; paperShortId: str
   return (
     <p className="mt-1 text-2xs text-muted-foreground">
       Paper:{" "}
-      {refs.map((r, i) => (
-        <span key={`${r.section}:${r.label ?? ""}`}>
-          {i > 0 && ", "}
-          {paperShortId ? (
-            <Link
-              to="/artifacts/$ref"
-              params={{ ref: paperShortId }}
-              className="underline-offset-4 hover:underline"
-            >
-              {paperRefLabel(r)}
-            </Link>
-          ) : (
-            paperRefLabel(r)
-          )}
-        </span>
-      ))}
+      {refs.map((r, i) => {
+        const slug = sectionSlugOf(r.section)
+        return (
+          <span key={`${r.section}:${r.label ?? ""}`}>
+            {i > 0 && ", "}
+            {paperShortId ? (
+              <Link
+                to="/artifacts/$ref"
+                params={{ ref: paperShortId }}
+                search={slug ? { section: slug } : {}}
+                className="underline-offset-4 hover:underline"
+              >
+                {paperRefLabel(r)}
+              </Link>
+            ) : (
+              paperRefLabel(r)
+            )}
+          </span>
+        )
+      })}
     </p>
   )
 }

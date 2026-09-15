@@ -10,7 +10,11 @@ export type ArtifactSearch = {
   use?: boolean
   scene?: string
   t?: number
+  section?: string
 }
+
+/** A heading's slug, as a document's outline names it. */
+const SECTION_SLUG = /^[\p{L}\p{N}][\p{L}\p{N}_.-]{0,99}$/u
 
 // One artifact page, two addresses: /artifacts/$ref is the permalink, /templates/$ref the
 // public template page over the same document. Both routes share this search contract
@@ -25,8 +29,10 @@ export type ArtifactSearch = {
 // "Make a copy" sends a signed-out clicker through login with it, and the page fires the
 // copy once the visitor is authenticated. Gated by a same-tab click marker (a pasted
 // ?use=1 link must not write — see pages/artifact/lib/use-intent.ts) and stripped after
-// firing either way.
+// firing either way. `section` opens the document at one heading, by the slug its outline
+// gives it: how a paper's implementation analysis links the part of the paper it cites.
 export const artifactRouteSearch = (s: Record<string, unknown>): ArtifactSearch => ({
+  ...(typeof s.section === "string" && SECTION_SLUG.test(s.section) ? { section: s.section } : {}),
   ...(typeof s.comment === "string" && s.comment ? { comment: s.comment } : {}),
   ...(typeof s.collection === "string" && s.collection ? { collection: s.collection } : {}),
   // `?use=1` reaches the validator as the number 1 (the router JSON-parses values).
