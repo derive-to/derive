@@ -1,0 +1,8 @@
+<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8" /><title>Delayed opacity reveal</title></head>
+  <body>
+    <iframe id="generated" style="opacity: 0" title="Transparent then revealed visualization" srcdoc="<!doctype html><h1>Opaque visualization is ready</h1>"></iframe>
+    <script>setTimeout(() => { document.getElementById("generated").style.opacity = "1" }, 16000)</script>
+  </body>
+</html>

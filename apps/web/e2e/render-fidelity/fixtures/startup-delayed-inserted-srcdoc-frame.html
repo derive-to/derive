@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8" /><title>Delayed inserted srcdoc</title></head>
+  <body>
+    <script>
+      setTimeout(() => {
+        const frame = document.createElement("iframe")
+        frame.title = "Late inserted visualization"
+        frame.style.cssText = "width: 800px; height: 600px; border: 0"
+        frame.srcdoc = "<!doctype html><h1>Late inserted visualization is ready</h1>"
+        document.body.append(frame)
+      }, 16000)
+    </script>
+  </body>
+</html>

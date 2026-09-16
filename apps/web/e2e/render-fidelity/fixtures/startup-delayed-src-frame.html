@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Delayed src frame</title>
+    <style>
+      html, body, iframe { width: 100%; height: 100%; margin: 0; border: 0 }
+    </style>
+  </head>
+  <body>
+    <iframe id="generated" title="Delayed URL visualization"></iframe>
+    <script>
+      setTimeout(() => {
+        document.getElementById("generated").src =
+          "data:text/html,%3C!doctype%20html%3E%3Ch1%3EDelayed%20URL%20visualization%20is%20ready%3C%2Fh1%3E"
+      }, 16000)
+    </script>
+  </body>
+</html>

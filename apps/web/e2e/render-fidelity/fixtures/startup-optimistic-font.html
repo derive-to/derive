@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Missing optional font</title>
+    <style>
+      @font-face { font-family: OptionalFace; src: url("https://unreachable.invalid/font.woff2"); }
+      body { font-family: OptionalFace, sans-serif; }
+    </style>
+  </head>
+  <body><main><h1>Fallback typography stays readable</h1><button id="control" type="button">Continue</button></main></body>
+</html>

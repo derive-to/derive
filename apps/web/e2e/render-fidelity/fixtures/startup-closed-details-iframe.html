@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8" /><title>Closed details iframe</title></head>
+  <body>
+    <details>
+      <summary>Optional report</summary>
+      <iframe title="Collapsed visualization" srcdoc="<!doctype html><h1>Collapsed report</h1>"></iframe>
+    </details>
+    <script>throw new Error("bootstrap failed beside collapsed frame")</script>
+  </body>
+</html>

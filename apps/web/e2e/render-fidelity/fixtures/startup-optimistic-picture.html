@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8" /><title>Broken responsive picture</title></head>
+  <body>
+    <main>
+      <h1>Responsive image failure keeps its siblings</h1>
+      <picture>
+        <source media="(min-width: 1px)" srcset="https://unreachable.invalid/chart.webp" />
+        <img src="https://unreachable.invalid/chart.png" alt="Optional chart unavailable" />
+      </picture>
+      <button id="control" type="button">Continue</button>
+    </main>
+  </body>
+</html>
