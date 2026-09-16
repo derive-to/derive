@@ -229,8 +229,8 @@ test.describe("render fidelity — pinning what the sandbox CSP permits", () => 
     const html = readFileSync(join(FIXTURES, "startup-cleared-loaded-iframe.html"), "utf8")
     const shortId = await publishArtifact(page, "index.html", html, "text/html")
     await page.goto(`/artifacts/${shortId}`)
-    await expect(page.getByTestId("render-degraded")).toBeVisible()
     await expect(page.getByText("Artifact script stopped")).toHaveCount(0)
+    await openRuntimeDiagnostics(page, "script-error")
   })
 
   test("direct about:blank DOM mutation fails closed under the opaque sandbox", async ({
@@ -504,18 +504,18 @@ test.describe("render fidelity — pinning what the sandbox CSP permits", () => 
 
     await page.goto(`/artifacts/${shortId}`)
     await expect(page.getByText("Loading preview…")).toHaveCount(0)
-    await expect(page.getByTestId("render-degraded")).toBeVisible()
     const artifact = page.frameLocator('iframe[title="index"]')
     await expect(artifact.locator("#rows tr")).toHaveCount(30)
     await artifact.locator("#control").click()
     await expect(artifact.locator("#count")).toHaveText("1")
+    await openRuntimeDiagnostics(page, "resource-error")
 
     const publicContext = await browser.newContext({ viewport: { width: 390, height: 844 } })
     const publicPage = await publicContext.newPage()
     try {
       await publicPage.goto(`/artifacts/${shortId}`)
       await expect(publicPage.getByText("Loading preview…")).toHaveCount(0)
-      await expect(publicPage.getByTestId("render-degraded")).toBeVisible()
+      await expect(publicPage.getByTestId("render-degraded")).toHaveCount(0)
       const publicArtifact = publicPage.frameLocator('iframe[title="index"]')
       await expect(publicArtifact.locator("#rows tr")).toHaveCount(30)
     } finally {
@@ -765,8 +765,8 @@ test.describe("render fidelity — pinning what the sandbox CSP permits", () => 
     const shortId = await publishArtifact(page, "index.html", html, "text/html")
     await page.goto(`/artifacts/${shortId}`)
     await expect(page.getByText("Artifact script stopped")).toHaveCount(0)
-    await expect(page.getByTestId("render-degraded")).toBeVisible()
     await expect(page.locator('iframe[title="index"]')).toBeVisible()
+    await openRuntimeDiagnostics(page, "resource-error")
   })
 
   test("attribute-only visibility after timeout self-recovers to Ready", async ({
@@ -969,8 +969,8 @@ test.describe("render fidelity — pinning what the sandbox CSP permits", () => 
     ).toBeVisible()
     await artifact.locator("#control").click()
     await expect(artifact.locator("#control")).toHaveAttribute("data-clicked", "true")
-    await expect(page.getByTestId("render-degraded")).toBeVisible()
     await expect(page.getByText("Artifact script stopped")).toHaveCount(0)
+    await openRuntimeDiagnostics(page, "script-error")
   })
 
   test("case 84: repeated wrapper reloads never strand a loaded document", async ({
