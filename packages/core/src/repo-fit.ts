@@ -17,6 +17,8 @@
  * leaving a reader to wonder why a path in the README resolves to nothing.
  */
 
+import { mb, nameLargest } from "./sizes"
+
 export interface RepoFile<T = Uint8Array> {
   /** The manifest path, already prefixed and cleaned by the caller (`/code/train.py`). */
   path: string
@@ -45,11 +47,6 @@ export interface FitRepoResult<T = Uint8Array> {
   dropped: { path: string; bytes: number }[]
   notes: string[]
 }
-
-const mb = (n: number): string => `${(n / 1048576).toFixed(1)} MB`
-
-/** Name a few of them and count the rest: a version message is not a file listing. */
-const NAMED = 6
 
 /**
  * Keep all the code, drop the big media. Files come back by manifest path, ready to merge
@@ -93,15 +90,9 @@ export const fitRepoBytes = <T>(input: RepoFile<T>[], opts: FitRepoOptions): Fit
   }
   for (const f of binaries) if (!kept.has(f.path)) dropped.push({ path: f.path, bytes: f.size })
 
-  if (dropped.length > 0) {
-    const shown = dropped
-      .slice(0, NAMED)
-      .map((f) => `${f.path.replace(/^\/code\//, "")} (${mb(f.bytes)})`)
-      .join(", ")
-    const more = dropped.length - Math.min(NAMED, dropped.length)
+  if (dropped.length > 0)
     notes.push(
-      `left out ${dropped.length} large ${dropped.length === 1 ? "file" : "files"} to fit: ${shown}${more > 0 ? `, and ${more} more` : ""}`,
+      `left out ${dropped.length} large ${dropped.length === 1 ? "file" : "files"} to fit: ${nameLargest(dropped, { strip: /^\/code\// })}`,
     )
-  }
   return { files: Object.fromEntries(kept), fits: true, before, after, dropped, notes }
 }

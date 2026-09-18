@@ -28,16 +28,28 @@ import {
   type BlobStore,
   CODE_PREFIX,
   cleanPath,
+  leaveOut,
+  leftOut,
+  mb,
+  mergeLeftOut,
+  nameLeftOut,
   parseGitmodules,
   parseRepoRef,
   type RepoFile,
   type RepoRef,
+  rankLeftOut,
   repoArchiveUrl,
   repoRefAt,
   TarError,
 } from "@derive/core"
 import type { AddressGuard } from "../webhooks"
-import { ArchiveError, downloadWindow, type StagePolicy, stageArchive } from "./archive"
+import {
+  ArchiveError,
+  type ArchiveErrorKind,
+  downloadWindow,
+  type StagePolicy,
+  stageArchive,
+} from "./archive"
 import { isPublicHttpUrl } from "./net"
 
 /** One archive is a single large read; a repository host is not arXiv and asks for no
@@ -59,9 +71,6 @@ const SOURCE_FILE_BYTES = 10 * MB
 /** Text that is data or media rather than source, left out whatever its size. */
 const DATA_TEXT =
   /\.(csv|tsv|jsonl|ndjson|geojson|svg|ply|obj|mtl|off|stl|pcd|pts|xyz|vtk|gltf|dae|pdb|fasta|fastq|arff|log)$/i
-/** How many of the files a tree left out its notes name. */
-const NAMED = 6
-
 export interface RepoCaps {
   /** Per archive: the most read off the wire. */
   compressedBytes: number
@@ -151,41 +160,6 @@ export interface RepoFetchResult {
   repos: string[]
   /** What a reader should know: submodules skipped, branches guessed, files left behind. */
   notes: string[]
-}
-
-const mb = (n: number): string => `${(n / 1048576).toFixed(1)} MB`
-
-/** What a tree left out: how many files, how many bytes, and the few largest by path. */
-interface LeftOut {
-  count: number
-  bytes: number
-  largest: { path: string; bytes: number }[]
-}
-
-const leftOut = (): LeftOut => ({ count: 0, bytes: 0, largest: [] })
-
-/** Keep a file among the largest few, if it is one of them. */
-const rank = (out: LeftOut, path: string, bytes: number): void => {
-  const smallest = out.largest[NAMED - 1]
-  if (smallest && smallest.bytes >= bytes) return
-  out.largest.push({ path, bytes })
-  out.largest.sort((a, b) => b.bytes - a.bytes)
-  out.largest.length = Math.min(out.largest.length, NAMED)
-}
-
-const leave = (out: LeftOut, path: string, bytes: number): void => {
-  out.count++
-  out.bytes += bytes
-  rank(out, path, bytes)
-}
-
-/** Name the largest few and count the rest: a version message is not a file listing. */
-const nameFew = (out: LeftOut): string => {
-  const shown = out.largest
-    .map((f) => `${f.path.replace(/^\/code\//, "")} (${mb(f.bytes)})`)
-    .join(", ")
-  const more = out.count - out.largest.length
-  return `${shown}${more > 0 ? `, and ${more} more` : ""}`
 }
 
 /** A Git LFS pointer stands in for a file the tarball does not carry. Storing it would
@@ -292,6 +266,16 @@ const getArchive = async (deps: RepoFetchDeps, url: string): Promise<Response> =
 const unpacksPast = (caps: RepoCaps): string =>
   `the implementation unpacks to more than the ${mb(caps.inflatedBytes)} an import reads, source and data together`
 
+/** What each way an archive can fail means for a repository that was being fetched. */
+const ARCHIVE_FAILURE: Record<ArchiveErrorKind, (caps: RepoCaps) => string> = {
+  compressed: (caps) => `the repository archive is larger than ${mb(caps.compressedBytes)}`,
+  inflated: unpacksPast,
+  corrupt: () => "the repository archive could not be decompressed",
+  single: () => "the download was not a repository archive",
+  stalled: () => "the repository download stalled or ran out of time",
+  broken: () => "the repository download broke off",
+}
+
 /** Say what an archive failure means for a repository. */
 const asRepoFetchError = (error: unknown, caps: RepoCaps): never => {
   if (error instanceof TarError)
@@ -303,19 +287,7 @@ const asRepoFetchError = (error: unknown, caps: RepoCaps): never => {
           : unpacksPast(caps),
     )
   if (!(error instanceof ArchiveError)) throw error
-  throw new RepoFetchError(
-    error.kind === "compressed"
-      ? `the repository archive is larger than ${mb(caps.compressedBytes)}`
-      : error.kind === "inflated"
-        ? unpacksPast(caps)
-        : error.kind === "corrupt"
-          ? "the repository archive could not be decompressed"
-          : error.kind === "single"
-            ? "the download was not a repository archive"
-            : error.kind === "stalled"
-              ? "the repository download stalled or ran out of time"
-              : "the repository download broke off",
-  )
+  throw new RepoFetchError(ARCHIVE_FAILURE[error.kind](caps))
 }
 
 /**
@@ -373,7 +345,7 @@ export const fetchRepository = async (
         if (unpacked > caps.inflatedBytes) throw new RepoFetchError(unpacksPast(caps))
         if (!cleanPath(name)) return false
         if (size > sourceFileBytes || DATA_TEXT.test(name)) {
-          leave(archive.left, name, size)
+          leaveOut(archive.left, name, size)
           return false
         }
         return true
@@ -385,7 +357,7 @@ export const fetchRepository = async (
           return "skip"
         }
         if (!text) {
-          leave(archive.left, name, size)
+          leaveOut(archive.left, name, size)
           return "skip"
         }
         archive.files++
@@ -444,12 +416,7 @@ export const fetchRepository = async (
       if (!path) continue
       files.push({ path, size: file.size, text: true, ref: { key: file.key, size: file.size } })
     }
-    left.count += archive.left.count
-    left.bytes += archive.left.bytes
-    for (const out of archive.left.largest) {
-      const path = inTree(out.path)
-      if (path) rank(left, path, out.bytes)
-    }
+    mergeLeftOut(left, archive.left, inTree)
     if (!gitmodules) return
 
     // Submodules. A tarball has no pinned commits, so each is fetched at the branch it
@@ -494,7 +461,7 @@ export const fetchRepository = async (
 
   if (left.count > 0)
     notes.push(
-      `left out ${left.count} ${left.count === 1 ? "file that is" : "files that are"} not source (${mb(left.bytes)} of binaries, data, media and text over ${mb(sourceFileBytes)}): ${nameFew(left)}`,
+      `left out ${left.count} ${left.count === 1 ? "file that is" : "files that are"} not source (${mb(left.bytes)} of binaries, data, media and text over ${mb(sourceFileBytes)}): ${nameLeftOut(left, /^\/code\//)}`,
     )
   if (repos.length > 1)
     notes.push(

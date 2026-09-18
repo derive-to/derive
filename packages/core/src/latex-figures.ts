@@ -20,6 +20,8 @@
  * exact path when the reference carries an extension, so a rename would lose the figure.
  */
 
+import { mb } from "./sizes"
+
 export interface FigureShrinkInput {
   path: string
   bytes: Uint8Array
@@ -97,8 +99,6 @@ export interface FitBundleResult<F = Uint8Array> {
   /** The largest files left, for a failure that names what stayed big. */
   largest: { path: string; bytes: number }[]
 }
-
-const mb = (n: number): string => `${(n / 1048576).toFixed(1)} MB`
 
 const BYTES: FigureStore<Uint8Array> = {
   size: (bytes) => bytes.byteLength,

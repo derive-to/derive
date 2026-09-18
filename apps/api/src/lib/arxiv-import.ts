@@ -35,6 +35,8 @@ import {
   MAX_IMPORTED_BUNDLE_FILES,
   MAX_IMPORTED_PAPER_BYTES,
   type MetaStore,
+  mb,
+  nameLargest,
   parseArxivRef,
   parseBibtex,
   parseRepoRef,
@@ -129,18 +131,6 @@ export const EDGE_IMPORT_CAPS: ImportCaps = {
   files: 5000,
   shrinkConcurrency: 1,
   shrinkInputBytes: 32 * MB,
-}
-
-const mb = (n: number): string => `${(n / 1048576).toFixed(1)} MB`
-
-/** Name the largest few and count the rest: a version message is not a file listing. */
-const largestFew = (files: { path: string; bytes: number }[]): string => {
-  const sorted = [...files].sort((a, b) => b.bytes - a.bytes)
-  const shown = sorted
-    .slice(0, 3)
-    .map((f) => `${f.path} (${mb(f.bytes)})`)
-    .join(", ")
-  return sorted.length > 3 ? `${shown}, and ${sorted.length - 3} more` : shown
 }
 
 /** The host a request was actually going to, for a message that says which one failed. */
@@ -1004,7 +994,7 @@ export const importArxivPaper = async (
         )
       if (staged.left.length > 0)
         notes.push(
-          `left out ${staged.left.length} ${staged.left.length === 1 ? "file" : "files"} over the ${mb(limits.maxFileBytes)} one file may be: ${largestFew(staged.left)}`,
+          `left out ${staged.left.length} ${staged.left.length === 1 ? "file" : "files"} over the ${mb(limits.maxFileBytes)} one file may be: ${nameLargest(staged.left, { keep: 3 })}`,
         )
       const files = await transcodeSource(plan, blobs, limits.textBytes)
       return { entry: plan.entry, notes, files }
