@@ -875,6 +875,7 @@ CREATE TABLE IF NOT EXISTS context (
   import_source TEXT,
   import_ref TEXT,
   code_url TEXT,
+  analysis_artifact_id TEXT,
   UNIQUE (org_id, name),
   FOREIGN KEY (manifest_artifact_id) REFERENCES artifact(id)
 );
@@ -937,6 +938,7 @@ CREATE TABLE IF NOT EXISTS import_job (
   code_status TEXT,
   code_error TEXT,
   code_ref TEXT,
+  code_commit TEXT,
   claim_token TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
@@ -1076,6 +1078,8 @@ CREATE INDEX IF NOT EXISTS export_job_artifact ON export_job (artifact_id, creat
 CREATE INDEX IF NOT EXISTS import_job_due ON import_job (scope, status, next_attempt_at);
 
 CREATE INDEX IF NOT EXISTS context_import ON context (org_id, import_source, import_ref);
+
+CREATE INDEX IF NOT EXISTS context_analysis ON context (analysis_artifact_id);
 
 CREATE INDEX IF NOT EXISTS notification_user_time ON notification (user_id, created_at);
 

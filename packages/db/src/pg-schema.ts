@@ -1302,6 +1302,8 @@ export const context = pgTable(
     import_ref: text("import_ref"),
     // The repository implementing an imported paper; see schema.ts for the contract.
     code_url: text("code_url"),
+    // The paper's implementation analysis; see schema.ts for the contract.
+    analysis_artifact_id: text("analysis_artifact_id"),
   },
   (t) => [uniqueIndex("context_org_name").on(t.org_id, t.name)],
 )
@@ -1331,6 +1333,7 @@ export const importJob = pgTable(
     code_status: text("code_status").$type<ImportCodeStatus>(),
     code_error: text("code_error"),
     code_ref: text("code_ref"),
+    code_commit: text("code_commit"),
     claim_token: text("claim_token"),
     created_at: text("created_at").notNull().$defaultFn(isoNow),
     updated_at: text("updated_at").notNull().$defaultFn(isoNow),

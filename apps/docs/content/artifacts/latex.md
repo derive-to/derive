@@ -75,7 +75,8 @@ arrives.
 **Your agents read the code; you get a link to it.** The implementation is not browsable
 on Derive: the paper's page lists no repository files, the content API's outline and the
 source download leave them out, and requesting one returns nothing. The console shows
-"Open the repository", which goes to the repository on its own host. An agent reading the
+"Open the repository", which goes to the repository on its own host, beside the commit that
+was fetched when the host records one (GitHub and GitLab archives do). An agent reading the
 paper sees the implementation summarised beside the paper's pages, with a file count and
 the shallowest hundred paths, and reads any file in it by its exact path.
 
@@ -109,6 +110,32 @@ one whose source has no document, one that was withdrawn or one arXiv does not k
 at once with a reason; arXiv being slow or away is retried three times. A failed import can be tried again from its console, or
 discarded, which removes the Context and its generated manifest (a paper already
 published stays in the library). The same paper pasted twice opens the one Context.
+
+### Mapping the paper to its implementation
+
+Once a paper's implementation has arrived, its Context page offers a **paper-to-implementation
+analysis**: a map from each contribution the paper claims, and each idea its method is built
+from, to the files, symbols and lines that carry it out. It is a map, not a review: a detail the
+code carries out approximately, with other numbers or extra steps around it, counts as
+implemented. Derive does not write it; your agent does. Copy the prompt the page shows into your
+agent, connected to Derive over MCP, and it reads the paper and the code and publishes the
+analysis, which the page then shows. Agents that later read the Context are pointed to it before
+they map the paper again. Agents can make mistakes in this mapping, and the page says so: check
+the analysis against the paper and the code before you rely on it.
+
+Before anything is stored, Derive checks the analysis against what it describes. It must name the
+arXiv version and the commit the Context holds, every code path must exist in the
+implementation, every line range must fit and every symbol must appear in it, and every section
+it cites must be one of the paper's. It refers to code and never quotes it, so a person follows
+each reference to the repository on its own host, at the commit that was read.
+
+The analysis is its own artifact, with the paper's access, a version history and comments. Anyone
+with edit rights in the workspace who can open the paper can have their agent start or update
+it: once it exists, the page shows a second prompt for corrections and new findings, and each
+update is a new version naming the agent, the person and what changed. Everyone else comments on
+it, and the update prompt asks the agent to address those comments. When the implementation is
+replaced or a newer arXiv version is imported, the page marks the analysis out of date until an
+agent updates it.
 
 ## Start from a template
 

@@ -626,7 +626,7 @@ export function registerReadTool(tc: ToolContext): void {
         return json({
           ...pkg,
           how: pkg.import
-            ? "An imported paper. This Context IS the paper: `manifest` is a summary of it (authors, abstract, BibTeX) and `documents` names the one artifact it lives in — read that short_id for the full LaTeX source, section by section, and for its `citation`. People see the rendered paper, never the source. It takes no runs; do not call use."
+            ? "An imported paper. This Context IS the paper: `manifest` is a summary of it (authors, abstract, BibTeX) and `documents` names the one artifact it lives in — read that short_id for the full LaTeX source, section by section, and for its `citation`. When `import.analysis` is set, an agent already mapped the paper's contributions to its implementation: read that short_id (the `analysis` document) before mapping them yourself, and keep it current as derive://skills/contexts describes. People see the rendered paper, never the source. It takes no runs; do not call use."
             : "The Context package, opened progressively: its instructions are loaded; skills and sources are pointers — read one by its short_id when a task needs it. To use the Context for work, call use({context, instruction}).",
         })
       }
@@ -1524,6 +1524,18 @@ export function registerReadTool(tc: ToolContext): void {
                 },
               }
             : {}
+        // The implementation analysis of this paper, when an agent published one: pointed to
+        // from the outline, so the next agent reads the map before walking the code again.
+        const analysisOfPaper =
+          codePages.length > 0
+            ? await ctx.meta
+                .listContextsForArtifact(a.id)
+                .then(async (rows) => {
+                  const id = rows.find((x) => x.manifest_artifact_id === a.id)?.analysis_artifact_id
+                  return id ? await ctx.meta.getArtifactById(id) : null
+                })
+                .catch(() => null)
+            : null
         return json({
           short_id,
           title: a.title,
@@ -1534,6 +1546,14 @@ export function registerReadTool(tc: ToolContext): void {
           ...bibliography,
           ...(citation ? { citation } : {}),
           ...code,
+          ...(analysisOfPaper
+            ? {
+                implementation_analysis: {
+                  short_id: analysisOfPaper.short_id,
+                  version: analysisOfPaper.current_version,
+                },
+              }
+            : {}),
           pages: pages.map((p) => {
             const type = manifest.files[p]?.type ?? manifest.files[`/${p}`]?.type
             const d = detail.get(p)
@@ -1554,7 +1574,7 @@ export function registerReadTool(tc: ToolContext): void {
           }),
           next:
             codePages.length > 0
-              ? `This paper carries its implementation under \`${CODE_PREFIX.slice(1)}\`: call read again with a \`section\` (any path in the repository, listed or not) to read one file.${citation ? ` Cite the paper itself with \\cite{${citation.key}} after adding \`citation.bibtex\` to your .bib.` : ""}`
+              ? `${analysisOfPaper ? `An agent already mapped this paper's contributions to its code: read ${analysisOfPaper.short_id} before mapping them yourself. ` : ""}This paper carries its implementation under \`${CODE_PREFIX.slice(1)}\`: call read again with a \`section\` (any path in the repository, listed or not) to read one file.${citation ? ` Cite the paper itself with \\cite{${citation.key}} after adding \`citation.bibtex\` to your .bib.` : ""}`
               : citation
                 ? `Cite this paper itself with \\cite{${citation.key}} after adding \`citation.bibtex\` to your .bib. Call read again with a \`section\` (a page path above) for content.`
                 : paper

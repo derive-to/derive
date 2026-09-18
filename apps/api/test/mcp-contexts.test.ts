@@ -1965,6 +1965,7 @@ describe("imported papers over MCP — read-only, cited, never run", () => {
     const tex =
       "\\documentclass{article}\n\\begin{document}\n\\section{Method}\nSee the code.\n\\end{document}\n"
     const atom = `<feed xmlns="http://www.w3.org/2005/Atom" xmlns:arxiv="http://arxiv.org/schemas/atom"><entry><id>http://arxiv.org/abs/${ID}v1</id><published>2024-05-01T00:00:00Z</published><title>Splatting</title><summary>An abstract.</summary><author><name>Ada Lovelace</name></author><arxiv:primary_category term="cs.CV"/></entry></feed>`
+    const COMMIT = "9fceb02d0ae598e95dc970b74767f19372d61af8"
     // A repository with more files than any outline should ever print.
     const repo: Record<string, string> = {
       "r-abc/train.py": "def train():\n    return 42\n",
@@ -1979,7 +1980,9 @@ describe("imported papers over MCP — read-only, cited, never run", () => {
         return new Response(gzipSync(tarSync({ "main.tex": tex })), { status: 200 })
       if (u.pathname.startsWith("/bibtex/")) return new Response("not bibtex", { status: 404 })
       if (u.pathname.startsWith("/o/r/tar.gz/"))
-        return new Response(gzipSync(tarSync(repo)), { status: 200 })
+        return new Response(gzipSync(tarSync(repo, { global: { comment: COMMIT } })), {
+          status: 200,
+        })
       return new Response("nope", { status: 404 })
     }) as unknown as typeof fetch
     const made = makeAuthedApp("mcx-import-code", [owner, dev], "editor", { deps: { fetch: stub } })
@@ -2033,6 +2036,12 @@ describe("imported papers over MCP — read-only, cited, never run", () => {
     expect(await runImportTick(tickDeps)).toBe(1)
 
     const pkg = await call(app, ownerBot.token, "read", { short_id: queued.id })
+    // The Context says what implements it, and the exact commit its files were read from.
+    expect(pkg.import.code).toEqual({
+      url: "https://github.com/o/r",
+      status: "ready",
+      commit: COMMIT,
+    })
     const paper = await call(app, ownerBot.token, "read", { short_id: pkg.documents[0].short_id })
     // The paper's own pages stay the pages: 142 repository files do not bury them.
     expect(paper.entry).toBe("main.tex")
@@ -2064,5 +2073,331 @@ describe("imported papers over MCP — read-only, cited, never run", () => {
     expect(missing.isError).toBe(true)
     expect(missing.text).toContain("142 files under `code/`")
     expect(missing.text.length).toBeLessThan(500)
+  })
+})
+
+// An agent maps an imported paper to its implementation and publishes that map, which the
+// Context links. What pins this down is what an agent does over MCP, against the real store.
+describe("an imported paper's implementation analysis, over MCP", () => {
+  const ID = "2406.10001"
+  const COMMIT = "4f1c0a9e8d7b6c5a4f3e2d1c0b9a8f7e6d5c4b3a"
+  const NEXT = "a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9"
+  const tex = [
+    "\\documentclass{article}",
+    "\\begin{document}",
+    "\\section{Method}\\label{sec:method}",
+    "Splats are sorted by tile before they are blended.",
+    "\\begin{equation}\\label{eq:loss} L = (1-\\lambda) L_1 + \\lambda L_{ssim} \\end{equation}",
+    "\\end{document}",
+    "",
+  ].join("\n")
+  const atom = `<feed xmlns="http://www.w3.org/2005/Atom" xmlns:arxiv="http://arxiv.org/schemas/atom"><entry><id>http://arxiv.org/abs/${ID}v1</id><published>2024-06-01T00:00:00Z</published><title>Splatting</title><summary>An abstract.</summary><author><name>Ada Lovelace</name></author><arxiv:primary_category term="cs.CV"/></entry></feed>`
+  const render = "import torch\n\ndef sort_tiles(splats):\n    return sorted(splats)\n"
+  const ANALYSIS = "derive.paper-analysis.json"
+
+  /** An imported paper whose implementation has arrived, and two connections of its workspace
+   *  owner: one that may publish and one that may only comment. */
+  const imported = async (name: string) => {
+    const tar = (files: Record<string, string>, commit: string) =>
+      new Response(gzipSync(tarSync(files, { global: { comment: commit } })), { status: 200 })
+    const stub = (async (input: string | URL | Request) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url
+      const u = new URL(url)
+      if (u.hostname === "export.arxiv.org") return new Response(atom)
+      if (u.pathname.startsWith("/src/"))
+        return new Response(gzipSync(tarSync({ "main.tex": tex })), { status: 200 })
+      if (u.pathname.startsWith("/bibtex/")) return new Response("not bibtex", { status: 404 })
+      if (u.pathname.startsWith("/o/r/tar.gz/"))
+        return tar(
+          { "r-abc/render.py": render, "r-abc/train.py": "def train():\n    pass\n" },
+          COMMIT,
+        )
+      if (u.pathname.startsWith("/o/r2/tar.gz/")) return tar({ "r2-def/render.py": render }, NEXT)
+      return new Response("nope", { status: 404 })
+    }) as unknown as typeof fetch
+    const made = makeAuthedApp(name, [owner, dev], "editor", { deps: { fetch: stub } })
+    const { app, meta, ctx } = made
+    await app.request("/v1/me", { headers: as(owner.email) })
+    await app.request("/v1/me", { headers: as(dev.email) })
+    const writer = await (
+      await app.request("/v1/agents", jsonAs(as(owner.email), { name: "Mapper", role: "editor" }))
+    ).json()
+    const commenter = await (
+      await app.request(
+        "/v1/agents",
+        jsonAs(as(owner.email), { name: "Reader", role: "commenter" }),
+      )
+    ).json()
+    const queued = await (
+      await app.request(
+        "/v1/contexts/import/arxiv",
+        jsonAs(as(dev.email), {
+          url: `https://arxiv.org/abs/${ID}`,
+          code_url: "https://github.com/o/r",
+        }),
+      )
+    ).json()
+    let t = Date.parse("2030-06-01T00:00:00.000Z")
+    const tick = () => {
+      t += 3_001
+      return runImportTick({
+        meta,
+        blobs: ctx.blobs,
+        bus: ctx.bus,
+        notify: ctx.notify,
+        background: ctx.background,
+        baseUrl: "http://derive.test",
+        fetch: stub,
+        now: () => t,
+        sleep: async (ms: number) => {
+          t += ms
+        },
+        caps: {
+          compressedBytes: 1 << 20,
+          inflatedBytes: 4 << 20,
+          bundleBytes: 4 << 20,
+          files: 400,
+        },
+        repoCaps: {
+          compressedBytes: 1 << 20,
+          inflatedBytes: 4 << 20,
+          totalBytes: 4 << 20,
+          files: 400,
+          depth: 3,
+          repos: 5,
+        },
+      })
+    }
+    // The paper in one pass, its implementation in the next.
+    expect(await tick()).toBe(1)
+    expect(await tick()).toBe(1)
+    const token = writer.token as string
+    const pkg = await call(app, token, "read", { short_id: queued.id })
+    const paperShortId = pkg.documents[0].short_id as string
+    const outline = await call(app, token, "read", { short_id: paperShortId })
+    const slug = outline.pages.find((p: { path: string }) => p.path === "main.tex")?.headings[0]
+      ?.slug as string
+    const analysis = (over: Record<string, unknown> = {}) => ({
+      schema: "derive.paper-analysis/v1",
+      context: queued.id,
+      based_on: null,
+      paper: { short_id: paperShortId, arxiv_version: 1 },
+      implementation: { repository: "github.com/o/r", commit: COMMIT },
+      summary: "The code sorts splats by tile as the method describes.",
+      contributions: [
+        {
+          id: "c1",
+          title: "Tile-sorted blending",
+          claim: "Splats are sorted by tile before they are blended.",
+          paper: [{ section: `main.tex#${slug}`, label: "eq:loss" }],
+          details: [
+            {
+              id: "c1.d1",
+              title: "Sorting by tile",
+              paper: [{ section: `main.tex#${slug}` }],
+              code: [{ path: "render.py", symbol: "def sort_tiles", lines: "3-4" }],
+              status: "implemented",
+            },
+          ],
+        },
+      ],
+      open_questions: [{ id: "q1", question: "Is lambda tuned per scene?" }],
+      ...over,
+    })
+    return {
+      app,
+      meta,
+      contextId: queued.id as string,
+      paperShortId,
+      writer: token,
+      writerId: writer.id as string,
+      commenter: commenter.token as string,
+      tick,
+      analysis,
+      publish: (body: unknown, extra: Record<string, unknown> = {}) =>
+        callRaw(app, token, "publish", { files: { [ANALYSIS]: JSON.stringify(body) }, ...extra }),
+    }
+  }
+
+  it("an agent publishes it, and the Context and its paper point the next agent to it", async () => {
+    const x = await imported("mcx-analysis-link")
+    expect(
+      (await call(x.app, x.writer, "read", { short_id: x.contextId })).import.analysis,
+    ).toBeNull()
+
+    const out = await x.publish(x.analysis())
+    expect(out.isError).toBe(false)
+    const published = JSON.parse(out.text)
+    expect(published.implementation_analysis).toMatchObject({
+      context: x.contextId,
+      paper: x.paperShortId,
+    })
+    // It takes its access from the paper: no world link, not listed anywhere.
+    expect(published).toMatchObject({ link_role: "none", listed: "none" })
+    expect(published.title).toBe("Splatting: implementation analysis")
+
+    const pkg = await call(x.app, x.writer, "read", { short_id: x.contextId })
+    expect(pkg.documents).toContainEqual({
+      short_id: published.short_id,
+      title: published.title,
+      kind: "bundle",
+      role: "analysis",
+    })
+    expect(pkg.import.analysis).toMatchObject({
+      short_id: published.short_id,
+      version: 1,
+      stale: false,
+      counts: { contributions: 1, details: 1, implemented: 1 },
+    })
+    // The paper's own outline says so too, for an agent that reads the paper first.
+    expect(
+      (await call(x.app, x.writer, "read", { short_id: x.paperShortId })).implementation_analysis,
+    ).toEqual({ short_id: published.short_id, version: 1 })
+
+    // The agent's work, on behalf of the person it acts for.
+    const art = await x.meta.getByShortId(published.short_id)
+    expect(art ? await x.meta.getVersion(art.id, 1) : null).toMatchObject({
+      agent_id: x.writerId,
+      author_id: owner.id,
+    })
+    // The page people read is written from the data, its code linked at the commit fetched.
+    const page = await callRaw(x.app, x.writer, "read", {
+      short_id: published.short_id,
+      section: "index.md",
+    })
+    expect(page.text).toContain(`https://github.com/o/r/blob/${COMMIT}/render.py#L3-L4`)
+  })
+
+  it("refuses an analysis that does not hold, naming every problem, and writes nothing", async () => {
+    const x = await imported("mcx-analysis-refuse")
+    const refused = await x.publish(
+      x.analysis({
+        implementation: { repository: "https://github.com/o/r", commit: NEXT },
+        contributions: [
+          {
+            id: "c1",
+            title: "Tile-sorted blending",
+            claim: "Splats are sorted by tile.",
+            paper: [{ section: "main.tex#nowhere" }],
+            details: [
+              { id: "c1.d1", title: "a", code: [{ path: "missing.py" }], status: "implemented" },
+              {
+                id: "c1.d2",
+                title: "b",
+                code: [{ path: "render.py", symbol: "def sort_tiles", lines: "1-2" }],
+                status: "implemented",
+              },
+            ],
+          },
+        ],
+      }),
+    )
+    expect(refused.isError).toBe(true)
+    for (const problem of [
+      `implementation.commit must be "${COMMIT}"`,
+      '"missing.py" is not a file of the implementation',
+      '"def sort_tiles" does not appear in render.py at lines 1-2',
+      '"main.tex#nowhere" names no section of main.tex',
+    ])
+      expect(refused.text).toContain(problem)
+    // A shape problem is named by its place in the JSON.
+    const invalid = await x.publish(x.analysis({ contributions: [] }))
+    expect(invalid.text).toContain("analysis.contributions must name at least one contribution")
+    expect(
+      (await call(x.app, x.writer, "read", { short_id: x.contextId })).import.analysis,
+    ).toBeNull()
+  })
+
+  it("keeps one analysis per Context, corrected in the open and only through MCP", async () => {
+    const x = await imported("mcx-analysis-update")
+    const first = JSON.parse((await x.publish(x.analysis())).text)
+
+    // A second analysis is an update to the first.
+    const second = await x.publish(x.analysis())
+    expect(second.text).toContain(`already has an implementation analysis, ${first.short_id}`)
+
+    // An update starts from the version read, says why, and drops nothing without a reason.
+    const careless = await x.publish(x.analysis({ based_on: 7, open_questions: [] }), {
+      short_id: first.short_id,
+    })
+    expect(careless.text).toContain("analysis.based_on must be 1")
+    expect(careless.text).toContain("an update needs a `message`")
+    expect(careless.text).toContain('"q1" is gone without a reason')
+
+    // Text edits and a page of the agent's own do not apply to an analysis.
+    const edited = await callRaw(x.app, x.writer, "publish", {
+      short_id: first.short_id,
+      edits: [{ old_str: "tile", new_str: "tiles" }],
+    })
+    expect(edited.text).toContain(`revise it by publishing the whole ${ANALYSIS}`)
+    const handPage = await callRaw(x.app, x.writer, "publish", {
+      short_id: first.short_id,
+      files: { [ANALYSIS]: JSON.stringify(x.analysis({ based_on: 1 })), "index.md": "# Mine" },
+      message: "Rewrote the page.",
+    })
+    expect(handPage.text).toContain("Leave out `index.md`")
+
+    // A correction with its reason is the next version.
+    const corrected = await x.publish(
+      x.analysis({
+        based_on: 1,
+        open_questions: [],
+        removed: [{ id: "q1", reason: "The paper fixes lambda at 0.2 for every scene." }],
+      }),
+      { short_id: first.short_id, message: "Answered q1 from the paper." },
+    )
+    expect(JSON.parse(corrected.text)).toMatchObject({ short_id: first.short_id, version: 2 })
+
+    // Outside MCP nothing checks it, so nothing else may revise it; a connection that may only
+    // comment is steered to a comment.
+    expect((await publishAs(x.app, "# By hand", {}, as(owner.email), first.short_id)).status).toBe(
+      409,
+    )
+    const commented = await callRaw(x.app, x.commenter, "publish", {
+      short_id: first.short_id,
+      files: { [ANALYSIS]: JSON.stringify(x.analysis({ based_on: 2 })) },
+      message: "A suggestion.",
+    })
+    expect(commented.text).toContain("Leave your suggested change as a comment")
+  })
+
+  it("goes stale when the implementation moves on, and never outlives what it describes", async () => {
+    const x = await imported("mcx-analysis-stale")
+    const first = JSON.parse((await x.publish(x.analysis())).text)
+
+    // The implementation is replaced: the analysis now describes code the Context no longer holds.
+    await x.app.request(
+      `/v1/contexts/${x.contextId}/import/code`,
+      jsonAs(as(dev.email), { url: "https://github.com/o/r2" }),
+    )
+    expect(await x.tick()).toBe(1)
+    const moved = await call(x.app, x.writer, "read", { short_id: x.contextId })
+    expect(moved.import.code).toMatchObject({ url: "https://github.com/o/r2", commit: NEXT })
+    expect(moved.import.analysis).toMatchObject({ short_id: first.short_id, stale: true })
+
+    // Deleting the analysis leaves the Context without one, ready for a new one.
+    const removed = await x.app.request(`/v1/artifacts/${first.short_id}`, {
+      method: "DELETE",
+      headers: as(owner.email),
+    })
+    expect(removed.ok).toBe(true)
+    expect(
+      (await call(x.app, x.writer, "read", { short_id: x.contextId })).import.analysis,
+    ).toBeNull()
+    const again = JSON.parse(
+      (
+        await x.publish(
+          x.analysis({ implementation: { repository: "github.com/o/r2", commit: NEXT } }),
+        )
+      ).text,
+    )
+
+    // Deleting the paper's Context takes its analysis with it.
+    const gone = await x.app.request(`/v1/contexts/${x.contextId}`, {
+      method: "DELETE",
+      headers: as(dev.email),
+    })
+    expect(gone.ok).toBe(true)
+    expect(await x.meta.getByShortId(again.short_id)).toBeNull()
   })
 })

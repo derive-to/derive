@@ -53,6 +53,7 @@ import { usePageVisible } from "@/lib/use-page-visible"
 import { useUserEvent } from "@/lib/use-user-events"
 import { cn } from "@/lib/utils"
 import { mdToHtml } from "../artifact/lib/markdown"
+import { AnalysisCard } from "./analysis-card"
 import { ConsolePending, ContextRowsSkeleton } from "./context-skeleton"
 import { importErrorCopy, importRetryCopy, RETRYABLE_IMPORT_CODES } from "./import-copy"
 import { ANSWER_PROSE, answerMdToHtml } from "./lib/answer-md"
@@ -450,6 +451,15 @@ function ImplementationCard({
               <>Fetching this repository. The page updates itself.</>
             )}
           </p>
+          {code.status === "ready" && code.commit && (
+            <p
+              className="font-mono text-2xs text-muted-foreground"
+              title={code.commit}
+              data-testid="console-code-commit"
+            >
+              at {code.commit.slice(0, 7)}
+            </p>
+          )}
           <div className="flex flex-wrap items-center gap-2">
             <Button asChild size="sm" variant="outline" data-testid="console-code-open">
               <a href={code.url} target="_blank" rel="noreferrer">
@@ -751,6 +761,11 @@ function ImportedConsole({
           <div className="lg:col-span-2">
             <ImplementationCard id={id} code={imp.code ?? null} canManage={canManage} />
           </div>
+          {imp.code && (
+            <div className="lg:col-span-2">
+              <AnalysisCard id={id} codeStatus={imp.code.status} />
+            </div>
+          )}
         </section>
       )}
 

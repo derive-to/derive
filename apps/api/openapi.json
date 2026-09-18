@@ -2961,12 +2961,18 @@
                 "type": "string",
                 "nullable": true,
                 "description": "Why the repository could not be fetched."
+              },
+              "commit": {
+                "type": "string",
+                "nullable": true,
+                "description": "The commit the repository was fetched at, when its host recorded one. Null until it is ready, and for an attachment made before commits were recorded."
               }
             },
             "required": [
               "url",
               "status",
-              "error"
+              "error",
+              "commit"
             ],
             "description": "The public repository implementing this paper, when one is attached. Its files live inside the paper's artifact for agents to read; people open the repository on its own host."
           }
@@ -3173,7 +3179,7 @@
           "role": {
             "type": "string",
             "nullable": true,
-            "description": "What the document is to the Context (`paper`)."
+            "description": "What the document is to the Context: `paper`, or `analysis` for the paper's implementation analysis."
           }
         },
         "required": [
@@ -3181,6 +3187,368 @@
           "title",
           "kind",
           "role"
+        ]
+      },
+      "ContextAnalysisInfo": {
+        "type": "object",
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": [
+              "unavailable",
+              "none",
+              "ready",
+              "stale",
+              "restricted"
+            ],
+            "description": "unavailable: no implementation is ready to analyse; none: no analysis yet; ready: it describes what the Context holds; stale: it was made against an arXiv version or commit the Context no longer holds; restricted: one exists that the caller cannot open."
+          },
+          "stale_reasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "paper_short_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "implementation": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "repository": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              },
+              "commit": {
+                "type": "string",
+                "nullable": true
+              }
+            },
+            "required": [
+              "repository",
+              "url",
+              "commit"
+            ]
+          },
+          "analysis": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "short_id": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string",
+                "nullable": true
+              },
+              "version": {
+                "type": "number"
+              },
+              "updated_at": {
+                "type": "string"
+              },
+              "agent": {
+                "type": "string",
+                "nullable": true,
+                "description": "The agent that published this version."
+              },
+              "summary": {
+                "type": "string"
+              },
+              "made_against": {
+                "type": "object",
+                "properties": {
+                  "arxiv_version": {
+                    "type": "number",
+                    "nullable": true
+                  },
+                  "repository": {
+                    "type": "string"
+                  },
+                  "commit": {
+                    "type": "string",
+                    "nullable": true
+                  }
+                },
+                "required": [
+                  "arxiv_version",
+                  "repository",
+                  "commit"
+                ]
+              },
+              "counts": {
+                "type": "object",
+                "properties": {
+                  "contributions": {
+                    "type": "number"
+                  },
+                  "details": {
+                    "type": "number"
+                  },
+                  "implemented": {
+                    "type": "number"
+                  },
+                  "could_not_map": {
+                    "type": "number"
+                  },
+                  "unmapped": {
+                    "type": "number"
+                  },
+                  "open_questions": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "contributions",
+                  "details",
+                  "implemented",
+                  "could_not_map",
+                  "unmapped",
+                  "open_questions"
+                ]
+              },
+              "contributions": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "claim": {
+                      "type": "string"
+                    },
+                    "paper": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/AnalysisPaperRef"
+                      }
+                    },
+                    "details": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "implemented",
+                              "could_not_map"
+                            ]
+                          },
+                          "notes": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "paper": {
+                            "type": "array",
+                            "items": {
+                              "$ref": "#/components/schemas/AnalysisPaperRef"
+                            }
+                          },
+                          "code": {
+                            "type": "array",
+                            "items": {
+                              "$ref": "#/components/schemas/AnalysisCodeRef"
+                            }
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "title",
+                          "status",
+                          "notes",
+                          "paper",
+                          "code"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "title",
+                    "claim",
+                    "paper",
+                    "details"
+                  ]
+                }
+              },
+              "unmapped": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "notes": {
+                      "type": "string"
+                    },
+                    "path": {
+                      "type": "string"
+                    },
+                    "symbol": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "lines": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "href": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "pinned": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "notes",
+                    "path",
+                    "symbol",
+                    "lines",
+                    "href",
+                    "pinned"
+                  ]
+                }
+              },
+              "open_questions": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "question": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "question"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "short_id",
+              "title",
+              "version",
+              "updated_at",
+              "agent",
+              "summary",
+              "made_against",
+              "counts",
+              "contributions",
+              "unmapped",
+              "open_questions"
+            ]
+          },
+          "prompts": {
+            "type": "object",
+            "properties": {
+              "start": {
+                "type": "string",
+                "nullable": true,
+                "description": "What a person pastes into their agent to write the analysis, while none exists."
+              },
+              "update": {
+                "type": "string",
+                "nullable": true,
+                "description": "What a person pastes into their agent to check and update it, once it exists."
+              }
+            },
+            "required": [
+              "start",
+              "update"
+            ]
+          },
+          "can_publish": {
+            "type": "boolean",
+            "description": "Whether the caller's own agents may start or update it: publishing needs an editor seat or higher."
+          }
+        },
+        "required": [
+          "state",
+          "stale_reasons",
+          "paper_short_id",
+          "implementation",
+          "analysis",
+          "prompts",
+          "can_publish"
+        ]
+      },
+      "AnalysisPaperRef": {
+        "type": "object",
+        "properties": {
+          "section": {
+            "type": "string",
+            "description": "A page of the paper, or `page#slug` for one heading's part of it."
+          },
+          "label": {
+            "type": "string",
+            "nullable": true
+          },
+          "heading": {
+            "type": "string",
+            "nullable": true,
+            "description": "The heading the section names, when it names one."
+          }
+        },
+        "required": [
+          "section",
+          "label",
+          "heading"
+        ]
+      },
+      "AnalysisCodeRef": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "The file's path in the repository."
+          },
+          "symbol": {
+            "type": "string",
+            "nullable": true
+          },
+          "lines": {
+            "type": "string",
+            "nullable": true,
+            "description": "A line, or a range such as `40-88`."
+          },
+          "href": {
+            "type": "string",
+            "nullable": true,
+            "description": "The file on the repository's own host, with the lines highlighted."
+          },
+          "pinned": {
+            "type": "boolean",
+            "description": "Whether `href` opens the exact commit the analysis read. A file inside a submodule, or an attachment with no recorded commit, opens a branch instead."
+          }
+        },
+        "required": [
+          "path",
+          "symbol",
+          "lines",
+          "href",
+          "pinned"
         ]
       },
       "Session": {
@@ -10102,6 +10470,37 @@
         "responses": {
           "204": {
             "description": "The context was deleted."
+          }
+        }
+      }
+    },
+    "/v1/contexts/{id}/analysis": {
+      "get": {
+        "tags": [
+          "Contexts"
+        ],
+        "summary": "An imported paper's implementation analysis, and the prompts that start or update it.",
+        "description": "The map an agent published from the paper's contributions to the code that carries them out, with each code reference resolved to the repository's own host at the commit it read. Derive never writes it: `prompts` are what a person pastes into their own agent. Readable by whoever may ask the Context.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Where the analysis stands, and the analysis when there is one.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContextAnalysisInfo"
+                }
+              }
+            }
           }
         }
       }

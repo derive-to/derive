@@ -8,8 +8,9 @@
  * one, a long name or pax record. It verifies every header checksum and enforces the
  * caller's file and byte caps from the headers, before an entry's data arrives, stopping at
  * the first entry that would cross either. It understands what arXiv writes: ustar headers
- * with the prefix field, GNU long names, pax extended headers (`path`, `size`), base-256
- * sizes. Links, directories, devices and unknown types skip their data. Names that are not
+ * with the prefix field, GNU long names, pax extended headers (`path`, `size`), pax global
+ * headers (kept in `globals`: a git archive names its commit in `comment`), base-256 sizes.
+ * Links, directories, devices and unknown types skip their data. Names that are not
  * valid UTF-8 skip their entry. A later entry with the same name wins, as `tar x` would
  * leave it. `untar` is the same reader over one buffer, returning views of it.
  */
@@ -165,7 +166,7 @@ export interface TarSink {
   end(): void
 }
 
-type Body = "deliver" | "skip" | "longname" | "pax"
+type Body = "deliver" | "skip" | "longname" | "pax" | "global"
 
 /**
  * Read a tar fed in pieces of any size: `push` each as it arrives, then `finish`. Either
@@ -186,6 +187,7 @@ export class TarReader {
   private metaFill = 0
   private longName: string | null = null
   private pax: Map<string, string> | null = null
+  private readonly globalRecords = new Map<string, string>()
   private readonly sizes = new Map<string, number>()
   private total = 0
 
@@ -198,6 +200,12 @@ export class TarReader {
    *  while it reads one. Everything else went straight to the sink. */
   get buffered(): number {
     return this.headFill + this.metaFill
+  }
+
+  /** The records of the archive's pax global headers, which describe the whole archive
+   *  rather than one entry. `git archive` writes the commit it archived as `comment`. */
+  get globals(): ReadonlyMap<string, string> {
+    return this.globalRecords
   }
 
   push(chunk: Uint8Array): void {
@@ -254,13 +262,14 @@ export class TarReader {
     this.remaining = size
     this.padding = Math.ceil(size / BLOCK) * BLOCK - size
     this.isFile = type === 0 || type === 0x30 || type === 0x37
-    if (type === 0x4c || type === 0x78) {
-      // GNU 'L' names the next entry; pax 'x' carries records for it.
+    if (type === 0x4c || type === 0x78 || type === 0x67) {
+      // GNU 'L' names the next entry; pax 'x' carries records for it, and pax 'g' records
+      // for the whole archive.
       if (size > MAX_META_BYTES)
         throw new TarError("malformed", "tar long name or pax record is too large")
       this.meta = new Uint8Array(size)
       this.metaFill = 0
-      this.begin(type === 0x4c ? "longname" : "pax")
+      this.begin(type === 0x4c ? "longname" : type === 0x78 ? "pax" : "global")
       return
     }
     const longName = this.longName
@@ -304,6 +313,8 @@ export class TarReader {
         } catch {
           this.longName = null
         }
+      } else if (this.body === "global") {
+        for (const [key, value] of paxRecords(data)) this.globalRecords.set(key, value)
       } else this.pax = paxRecords(data)
       this.meta = null
       this.metaFill = 0
@@ -339,36 +350,61 @@ export const untar = (bytes: Uint8Array, caps: TarCaps): TarEntry[] => {
   return [...files.entries()].map(([path, data]) => ({ path, data }))
 }
 
-/** A tiny tar writer for tests and fixtures: plain ustar, regular files only. */
-export const tarSync = (entries: Record<string, Uint8Array | string>): Uint8Array => {
+const enc = new TextEncoder()
+
+/** A plain ustar header block, the name split at a slash when it needs the prefix field. */
+const ustarHeader = (path: string, size: number, type: number): Uint8Array => {
+  const h = new Uint8Array(BLOCK)
+  const nameBytes = enc.encode(path)
+  if (nameBytes.byteLength > 100) {
+    // Split at a slash so the name fits ustar's 100 + 155 fields.
+    const text = utf8.decode(nameBytes)
+    const cut = text.lastIndexOf("/", 155)
+    if (cut <= 0) throw new Error("tarSync: name too long")
+    h.set(enc.encode(text.slice(0, cut)), 345)
+    h.set(enc.encode(text.slice(cut + 1)), 0)
+  } else h.set(nameBytes, 0)
+  h.set(enc.encode("0000644\0"), 100)
+  h.set(enc.encode("0000000\0"), 108)
+  h.set(enc.encode("0000000\0"), 116)
+  h.set(enc.encode(`${size.toString(8).padStart(11, "0")}\0`), 124)
+  h.set(enc.encode("00000000000\0"), 136)
+  h[156] = type
+  h.set(enc.encode("ustar\0"), 257)
+  h.set(enc.encode("00"), 263)
+  let sum = 0
+  for (let i = 0; i < BLOCK; i++) sum += i >= 148 && i < 156 ? 0x20 : (h[i] ?? 0)
+  h.set(enc.encode(`${sum.toString(8).padStart(6, "0")}\0 `), 148)
+  return h
+}
+
+/** One pax record, `<len> <key>=<value>\n`, its length counting its own digits. */
+const paxRecord = (key: string, value: string): Uint8Array => {
+  const body = enc.encode(` ${key}=${value}\n`)
+  let digits = String(body.byteLength).length
+  while (String(body.byteLength + digits).length !== digits) digits++
+  return concatBytes([enc.encode(String(body.byteLength + digits)), body])
+}
+
+/** A tiny tar writer for tests and fixtures: plain ustar, regular files only, and optionally
+ *  a pax global header first, the way `git archive` records the commit it archived. */
+export const tarSync = (
+  entries: Record<string, Uint8Array | string>,
+  opts: { global?: Record<string, string> } = {},
+): Uint8Array => {
   const blocks: Uint8Array[] = []
-  const enc = new TextEncoder()
-  for (const [path, raw] of Object.entries(entries)) {
-    const data = typeof raw === "string" ? enc.encode(raw) : raw
-    const h = new Uint8Array(BLOCK)
-    const nameBytes = enc.encode(path)
-    if (nameBytes.byteLength > 100) {
-      // Split at a slash so the name fits ustar's 100 + 155 fields.
-      const text = utf8.decode(nameBytes)
-      const cut = text.lastIndexOf("/", 155)
-      if (cut <= 0) throw new Error("tarSync: name too long")
-      h.set(enc.encode(text.slice(0, cut)), 345)
-      h.set(enc.encode(text.slice(cut + 1)), 0)
-    } else h.set(nameBytes, 0)
-    h.set(enc.encode("0000644\0"), 100)
-    h.set(enc.encode("0000000\0"), 108)
-    h.set(enc.encode("0000000\0"), 116)
-    h.set(enc.encode(`${data.byteLength.toString(8).padStart(11, "0")}\0`), 124)
-    h.set(enc.encode("00000000000\0"), 136)
-    h[156] = 0x30
-    h.set(enc.encode("ustar\0"), 257)
-    h.set(enc.encode("00"), 263)
-    let sum = 0
-    for (let i = 0; i < BLOCK; i++) sum += i >= 148 && i < 156 ? 0x20 : (h[i] ?? 0)
-    h.set(enc.encode(`${sum.toString(8).padStart(6, "0")}\0 `), 148)
-    blocks.push(h, data)
+  const add = (header: Uint8Array, data: Uint8Array): void => {
+    blocks.push(header, data)
     const pad = (BLOCK - (data.byteLength % BLOCK)) % BLOCK
     if (pad) blocks.push(new Uint8Array(pad))
+  }
+  if (opts.global) {
+    const records = concatBytes(Object.entries(opts.global).map(([k, v]) => paxRecord(k, v)))
+    add(ustarHeader("pax_global_header", records.byteLength, 0x67), records)
+  }
+  for (const [path, raw] of Object.entries(entries)) {
+    const data = typeof raw === "string" ? enc.encode(raw) : raw
+    add(ustarHeader(path, data.byteLength, 0x30), data)
   }
   blocks.push(new Uint8Array(BLOCK * 2))
   return concatBytes(blocks)

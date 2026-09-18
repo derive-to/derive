@@ -706,6 +706,14 @@ export const contextQuery = (id: string) =>
     queryFn: () => api.getContext(id),
   })
 
+// An imported paper's implementation analysis and its prompts. Polled only while a copied
+// prompt is waiting on an agent (see pages/context/analysis-view).
+export const contextAnalysisQuery = (id: string) =>
+  queryOptions({
+    queryKey: ["context-analysis", id] as const,
+    queryFn: () => api.getContextAnalysis(id),
+  })
+
 // The caller's sessions on a context (the owner sees everyone's). Invalidated
 // when a new session opens.
 // Infinite: a context that has been run for months has more sessions than one page,

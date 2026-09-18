@@ -68,6 +68,27 @@ const makeMeta = (): MetaStore => {
       if (art) art.current_version = rec.n
       return rec
     },
+    // The conditional append: a publish prepared from a version that is no longer current
+    // writes nothing, so a concurrent revision cannot be buried.
+    addVersionIfCurrent: async (
+      artifactId: string,
+      expectedCurrent: number,
+      v: NewVersion,
+    ): Promise<FakeVersion | null> => {
+      const list = versions.get(artifactId) ?? []
+      if (list.length !== expectedCurrent) return null
+      const rec: FakeVersion = {
+        ...v,
+        n: expectedCurrent + 1,
+        artifact_id: artifactId,
+        created_at: "t",
+      }
+      list.push(rec)
+      versions.set(artifactId, list)
+      const art = byId.get(artifactId)
+      if (art) art.current_version = rec.n
+      return rec
+    },
     setVersionPreview: async () => {},
   }
   return meta as unknown as MetaStore
@@ -957,6 +978,25 @@ describe("publish: republish an existing artifact", () => {
     const { artifact } = await publish(meta, blobs, file("v1"))
     const { version } = await publish(meta, blobs, file("v2"), artifact.short_id)
     expect(version.n).toBe(2)
+  })
+
+  it("refuses a revision of a version that is no longer current", async () => {
+    const meta = makeMeta()
+    const blobs = makeBlobs()
+    const { artifact } = await publish(meta, blobs, file("v1"))
+    // Two agents both read version 1 and prepare from it. The first lands; the second is
+    // refused, rather than appending over work it never saw.
+    const first = await publish(
+      meta,
+      blobs,
+      { ...file("theirs"), expectedCurrentVersion: 1 },
+      artifact.short_id,
+    )
+    expect(first.version.n).toBe(2)
+    await expect(
+      publish(meta, blobs, { ...file("mine"), expectedCurrentVersion: 1 }, artifact.short_id),
+    ).rejects.toMatchObject({ statusCode: 409 })
+    expect((await meta.getByShortId(artifact.short_id))?.current_version).toBe(2)
   })
 
   it("404s for an unknown short id and 409s on a kind change", async () => {

@@ -1,7 +1,12 @@
 import { refRouter } from "@derive/broker"
 import {
+  type AnalysisCodeRef,
+  type AnalysisPaperRef,
   type ArtifactRecord,
+  analysisCounts,
+  analysisPaperRefs,
   arxivAbsUrl,
+  type BundleManifest,
   type ContextAskerRecord,
   type ContextRecord,
   decodeCursor,
@@ -11,6 +16,10 @@ import {
   maxRole,
   newId,
   normalizeSelector,
+  outlineOf,
+  type PaperAnalysis,
+  paperAnalysisStartPrompt,
+  paperAnalysisUpdatePrompt,
   parseArxivRef,
   parseRepoRef,
   parseSubject,
@@ -59,6 +68,7 @@ import {
   stalePins,
 } from "../lib/manifest-pins"
 import { meterModel, timingMeta } from "../lib/model-timing"
+import { analysisLinkerFor, paperAnalysisState } from "../lib/paper-analysis"
 import { canPayForAgent, NO_PAYER_MESSAGE } from "../lib/payer"
 import { RUN_LEASE_MS } from "../lib/run-lifecycle"
 import { deleteArtifactAndUnindex } from "../lib/search"
@@ -698,6 +708,12 @@ export const contextRoutes = (ctx: AppContext) => {
               "pending: on its way with the paper; ready: stored inside the paper's artifact, where an agent reads it; failed: see `error`. Independent of the paper's own status.",
             ),
           error: z.string().nullable().describe("Why the repository could not be fetched."),
+          commit: z
+            .string()
+            .nullable()
+            .describe(
+              "The commit the repository was fetched at, when its host recorded one. Null until it is ready, and for an attachment made before commits were recorded.",
+            ),
         })
         .nullable()
         .describe(
@@ -758,9 +774,128 @@ export const contextRoutes = (ctx: AppContext) => {
       short_id: z.string(),
       title: z.string().nullable(),
       kind: z.enum(["doc", "bundle"]).nullable(),
-      role: z.string().nullable().describe("What the document is to the Context (`paper`)."),
+      role: z
+        .string()
+        .nullable()
+        .describe(
+          "What the document is to the Context: `paper`, or `analysis` for the paper's implementation analysis.",
+        ),
     })
     .openapi("ManifestDocumentInfo")
+
+  const AnalysisCodeRefInfo = z
+    .object({
+      path: z.string().describe("The file's path in the repository."),
+      symbol: z.string().nullable(),
+      lines: z.string().nullable().describe("A line, or a range such as `40-88`."),
+      href: z
+        .string()
+        .nullable()
+        .describe("The file on the repository's own host, with the lines highlighted."),
+      pinned: z
+        .boolean()
+        .describe(
+          "Whether `href` opens the exact commit the analysis read. A file inside a submodule, or an attachment with no recorded commit, opens a branch instead.",
+        ),
+    })
+    .openapi("AnalysisCodeRef")
+
+  const AnalysisPaperRefInfo = z
+    .object({
+      section: z
+        .string()
+        .describe("A page of the paper, or `page#slug` for one heading's part of it."),
+      label: z.string().nullable(),
+      heading: z.string().nullable().describe("The heading the section names, when it names one."),
+    })
+    .openapi("AnalysisPaperRef")
+
+  const ContextAnalysisInfo = z
+    .object({
+      state: z
+        .enum(["unavailable", "none", "ready", "stale", "restricted"])
+        .describe(
+          "unavailable: no implementation is ready to analyse; none: no analysis yet; ready: it describes what the Context holds; stale: it was made against an arXiv version or commit the Context no longer holds; restricted: one exists that the caller cannot open.",
+        ),
+      stale_reasons: z.array(z.string()),
+      paper_short_id: z.string().nullable(),
+      implementation: z
+        .object({ repository: z.string(), url: z.string(), commit: z.string().nullable() })
+        .nullable(),
+      analysis: z
+        .object({
+          short_id: z.string(),
+          title: z.string().nullable(),
+          version: z.number(),
+          updated_at: z.string(),
+          agent: z.string().nullable().describe("The agent that published this version."),
+          summary: z.string(),
+          made_against: z.object({
+            arxiv_version: z.number().nullable(),
+            repository: z.string(),
+            commit: z.string().nullable(),
+          }),
+          counts: z.object({
+            contributions: z.number(),
+            details: z.number(),
+            implemented: z.number(),
+            could_not_map: z.number(),
+            unmapped: z.number(),
+            open_questions: z.number(),
+          }),
+          contributions: z.array(
+            z.object({
+              id: z.string(),
+              title: z.string(),
+              claim: z.string(),
+              paper: z.array(AnalysisPaperRefInfo),
+              details: z.array(
+                z.object({
+                  id: z.string(),
+                  title: z.string(),
+                  status: z.enum(["implemented", "could_not_map"]),
+                  notes: z.string().nullable(),
+                  paper: z.array(AnalysisPaperRefInfo),
+                  code: z.array(AnalysisCodeRefInfo),
+                }),
+              ),
+            }),
+          ),
+          unmapped: z.array(
+            z.object({
+              id: z.string(),
+              notes: z.string(),
+              path: z.string(),
+              symbol: z.string().nullable(),
+              lines: z.string().nullable(),
+              href: z.string().nullable(),
+              pinned: z.boolean(),
+            }),
+          ),
+          open_questions: z.array(z.object({ id: z.string(), question: z.string() })),
+        })
+        .nullable(),
+      prompts: z.object({
+        start: z
+          .string()
+          .nullable()
+          .describe(
+            "What a person pastes into their agent to write the analysis, while none exists.",
+          ),
+        update: z
+          .string()
+          .nullable()
+          .describe(
+            "What a person pastes into their agent to check and update it, once it exists.",
+          ),
+      }),
+      can_publish: z
+        .boolean()
+        .describe(
+          "Whether the caller's own agents may start or update it: publishing needs an editor seat or higher.",
+        ),
+    })
+    .openapi("ContextAnalysisInfo")
 
   // A skill the manifest pins, with pin health: the pinned version next to the skill
   // artifact's actual current one. `parseManifestSkillPins` already does this for the
@@ -1001,6 +1136,9 @@ export const contextRoutes = (ctx: AppContext) => {
                 // No job row (or none yet) means the fetch has not run: it is on its way.
                 status: job?.code_status ?? ("pending" as const),
                 error: job?.code_status === "failed" ? job.code_error : null,
+                // Only what is there to read has a commit: while a replacement is on its way
+                // the previous one no longer describes the link.
+                commit: job?.code_status === "ready" ? job.code_commit : null,
               }
             : null,
         }
@@ -1027,8 +1165,58 @@ export const contextRoutes = (ctx: AppContext) => {
   /** An imported Context is one artifact: the paper. It names itself as its document, so
    *  a reader has one short id to open and an agent has one to read. */
   const paperDocuments = (paper: ArtifactRecord) => [
-    { short_id: paper.short_id, title: paper.title, kind: paper.kind, role: "paper" as const },
+    { short_id: paper.short_id, title: paper.title, kind: paper.kind, role: "paper" as string },
   ]
+
+  /** An imported Context's documents: the paper, and the implementation analysis an agent
+   *  published of it, when there is one. */
+  const importedDocuments = async (x: ContextRecord, paper: ArtifactRecord) => {
+    const analysis = x.analysis_artifact_id
+      ? await meta.getArtifactById(x.analysis_artifact_id).catch(() => null)
+      : null
+    return [
+      ...paperDocuments(paper),
+      ...(analysis
+        ? [
+            {
+              short_id: analysis.short_id,
+              title: analysis.title,
+              kind: analysis.kind,
+              role: "analysis" as string,
+            },
+          ]
+        : []),
+    ]
+  }
+
+  /** The heading each cited section of the paper names, read from the paper's own pages. */
+  const paperHeadings = async (
+    manifest: BundleManifest,
+    a: PaperAnalysis,
+  ): Promise<Map<string, string>> => {
+    const out = new Map<string, string>()
+    const sections = new Set(
+      analysisPaperRefs(a)
+        .map((r) => r.ref.section)
+        .filter((s) => s.lastIndexOf("#") > 0),
+    )
+    const pageOf = (s: string) => s.slice(0, s.lastIndexOf("#"))
+    const pages = [...new Set([...sections].map(pageOf))].slice(0, 25)
+    await Promise.all(
+      pages.map(async (page) => {
+        const file = manifest.files[`/${page}`] ?? manifest.files[page]
+        const bytes = file ? await ctx.blobs.get(file.key).catch(() => null) : null
+        if (!file || !bytes) return
+        const outline = outlineOf(new TextDecoder().decode(bytes), file.type)
+        for (const s of sections) {
+          if (pageOf(s) !== page) continue
+          const heading = outline.find((h) => h.slug === s.slice(page.length + 1))
+          if (heading) out.set(s, heading.text)
+        }
+      }),
+    )
+    return out
+  }
 
   /** The paper's own BibTeX entry (its bundle's CITATION.bib), for Copy BibTeX. */
   const paperBibtex = async (paper: ArtifactRecord): Promise<string | null> => {
@@ -1801,8 +1989,146 @@ export const contextRoutes = (ctx: AppContext) => {
         repos: md ? parseManifestRepos(md) : [],
         max_run_ms: x.max_run_ms,
         max_concurrency: x.max_concurrency,
-        documents: imported ? paperDocuments(manifest) : [],
+        documents: imported ? await importedDocuments(x, manifest) : [],
         bibtex: imported ? await paperBibtex(manifest) : null,
+      })
+    },
+  )
+
+  app.openapi(
+    createRoute({
+      method: "get",
+      path: "/v1/contexts/{id}/analysis",
+      tags: ["Contexts"],
+      summary:
+        "An imported paper's implementation analysis, and the prompts that start or update it.",
+      description:
+        "The map an agent published from the paper's contributions to the code that carries them out, with each code reference resolved to the repository's own host at the commit it read. Derive never writes it: `prompts` are what a person pastes into their own agent. Readable by whoever may ask the Context.",
+      request: { params: z.object({ id: z.string() }) },
+      responses: {
+        200: {
+          description: "Where the analysis stands, and the analysis when there is one.",
+          content: { "application/json": { schema: ContextAnalysisInfo } },
+        },
+      },
+    }),
+    async (c) => {
+      const x = await meta.getContext(c.req.param("id"))
+      if (!x || x.import_source !== "arxiv" || !(await canAskContext(c, x)))
+        return bail(fail(c, 404, "not found"))
+      const [job, paper] = await Promise.all([
+        meta.getImportJobForContext(x.id),
+        meta.getArtifactById(x.manifest_artifact_id),
+      ])
+      const state = await paperAnalysisState(meta, ctx.blobs, x, job)
+      const root = x.code_url ? parseRepoRef(x.code_url) : null
+      const codeReady = !!root && job?.code_status === "ready"
+      const commit = codeReady ? (job?.code_commit ?? null) : null
+      const readable = state.artifact ? await authorize(c, "read", state.artifact) : true
+      // Whether this person's own agents may write it: publish standing on the analysis to
+      // update it; on the workspace, and read on the paper, to create it.
+      const canPublish = state.artifact
+        ? await authorize(c, "publish", state.artifact)
+        : !!paper && (await authorize(c, "read", paper)) && (await workspaceCan(c, "publish"))
+
+      let analysis: z.infer<typeof ContextAnalysisInfo>["analysis"] = null
+      if (state.analysis && state.artifact && state.version && readable && paper) {
+        const a = state.analysis
+        const v = await meta.getVersion(paper.id, paper.current_version)
+        const manifest = v ? await manifestOf(ctx.blobs, v) : null
+        // Linked where the analysis looked: its own repository at its own commit, which is not
+        // the Context's any more once the analysis is stale.
+        const links = manifest
+          ? await analysisLinkerFor(
+              { blobs: ctx.blobs, baseUrl: deps.baseUrl },
+              paper,
+              manifest,
+              { ...x, code_url: a.implementation.repository },
+              a.implementation.commit,
+            )
+          : null
+        const headings = manifest ? await paperHeadings(manifest, a) : new Map<string, string>()
+        const code = (ref: AnalysisCodeRef) => {
+          const target = links?.code(ref) ?? null
+          return {
+            path: ref.path,
+            symbol: ref.symbol ?? null,
+            lines: ref.lines ?? null,
+            href: target?.href ?? null,
+            pinned: target?.pinned ?? false,
+          }
+        }
+        const cites = (ref: AnalysisPaperRef) => ({
+          section: ref.section,
+          label: ref.label ?? null,
+          heading: headings.get(ref.section) ?? null,
+        })
+        analysis = {
+          short_id: state.artifact.short_id,
+          title: state.artifact.title,
+          version: state.artifact.current_version,
+          updated_at: state.version.created_at,
+          agent: state.version.agent_name ?? null,
+          summary: a.summary,
+          made_against: {
+            arxiv_version: a.paper.arxiv_version,
+            repository: a.implementation.repository,
+            commit: a.implementation.commit,
+          },
+          counts: state.counts ?? analysisCounts(a),
+          contributions: a.contributions.map((contribution) => ({
+            id: contribution.id,
+            title: contribution.title,
+            claim: contribution.claim,
+            paper: contribution.paper.map(cites),
+            details: contribution.details.map((d) => ({
+              id: d.id,
+              title: d.title,
+              status: d.status,
+              notes: d.notes ?? null,
+              paper: d.paper.map(cites),
+              code: d.code.map(code),
+            })),
+          })),
+          unmapped: a.unmapped.map((u) => ({ id: u.id, notes: u.notes, ...code(u) })),
+          open_questions: a.open_questions,
+        }
+      }
+
+      const promptInput =
+        paper && root && codeReady
+          ? {
+              baseUrl: deps.baseUrl,
+              contextId: x.id,
+              contextName: x.name,
+              arxivRef: x.import_ref ?? "",
+              paperShortId: paper.short_id,
+              arxivVersion: job?.resolved_version ?? null,
+              repository: root.canonical,
+              commit,
+            }
+          : null
+      return c.json({
+        state: state.artifact && !readable ? ("restricted" as const) : state.state,
+        stale_reasons: readable ? state.staleReasons : [],
+        paper_short_id: paper?.short_id ?? null,
+        implementation:
+          root && x.code_url ? { repository: root.canonical, url: x.code_url, commit } : null,
+        analysis,
+        prompts: {
+          start:
+            promptInput && state.state === "none" ? paperAnalysisStartPrompt(promptInput) : null,
+          update:
+            promptInput && state.artifact && readable
+              ? paperAnalysisUpdatePrompt({
+                  ...promptInput,
+                  analysisShortId: state.artifact.short_id,
+                  version: state.artifact.current_version,
+                  staleReasons: state.staleReasons,
+                })
+              : null,
+        },
+        can_publish: canPublish,
       })
     },
   )

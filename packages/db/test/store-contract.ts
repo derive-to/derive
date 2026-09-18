@@ -237,6 +237,22 @@ export function runStoreContract(
       }
     })
 
+    it("appends conditionally, so two writers revising one version cannot both land", async () => {
+      const a = await store.createArtifact(newArtifact())
+      await store.addVersion(a.id, newVersion({ message: "first" }))
+      // Both read version 1 and prepared from it. Only one append may land: the other's
+      // content would otherwise supersede it without anyone being told.
+      const won = await store.addVersionIfCurrent(a.id, 1, newVersion({ message: "mine" }))
+      const lost = await store.addVersionIfCurrent(a.id, 1, newVersion({ message: "theirs" }))
+      expect(won?.n).toBe(2)
+      expect(lost).toBeNull()
+      expect((await store.getByShortId(a.short_id))?.current_version).toBe(2)
+      expect((await store.getVersion(a.id, 2))?.message).toBe("mine")
+      // The loser writes nothing, and a version that never existed is refused the same way.
+      expect(await store.addVersionIfCurrent(a.id, 99, newVersion())).toBeNull()
+      expect(await store.listVersions(a.id)).toHaveLength(2)
+    })
+
     it("replaces only the exact current version and clears its derived data", async () => {
       const a = await store.createArtifact(newArtifact())
       const v1 = await store.addVersion(a.id, newVersion({ blob_key: "working-1" }))
@@ -3699,7 +3715,12 @@ export function runStoreContract(
     it("an imported paper carries the repository that implements it", async () => {
       const { ctx, job } = await newImport("2403.00007")
       expect(ctx.code_url).toBeNull()
-      expect(job).toMatchObject({ code_status: null, code_error: null, code_ref: null })
+      expect(job).toMatchObject({
+        code_status: null,
+        code_error: null,
+        code_ref: null,
+        code_commit: null,
+      })
 
       // Attached at import time or later: the same column either way.
       await store.setContextCodeUrl(ctx.id, "https://github.com/o/r")
@@ -3720,9 +3741,43 @@ export function runStoreContract(
         code_ref: "github.com/o/r",
       })
 
+      // A fetch that lands records the commit the repository's archive named.
+      const commit = "0123456789abcdef0123456789abcdef01234567"
+      await store.updateImportJob(job.id, {
+        code_status: "ready",
+        code_error: null,
+        code_commit: commit,
+      })
+      expect(await store.getImportJob(job.id)).toMatchObject({
+        code_status: "ready",
+        code_ref: "github.com/o/r",
+        code_commit: commit,
+      })
+
       // Removing the implementation clears the link.
       await store.setContextCodeUrl(ctx.id, null)
       expect((await store.getContext(ctx.id))?.code_url).toBeNull()
+    })
+
+    it("an imported paper links one implementation analysis, and loses it with the analysis", async () => {
+      const { ctx } = await newImport("2403.00008")
+      expect(ctx.analysis_artifact_id).toBeNull()
+      const a = await store.createArtifact(newArtifact({ kind: "bundle" }))
+      const b = await store.createArtifact(newArtifact({ kind: "bundle" }))
+      // The link is conditional on what the Context points at now: of two racing, one wins.
+      expect(await store.setContextAnalysis(ctx.id, a.id, null)).toBe(true)
+      expect(await store.setContextAnalysis(ctx.id, b.id, null)).toBe(false)
+      expect(await store.setContextAnalysis(ctx.id, a.id, a.id)).toBe(true)
+      expect((await store.getContext(ctx.id))?.analysis_artifact_id).toBe(a.id)
+      // Found from either side: the paper the Context is, and the analysis it links.
+      expect((await store.listContextsForArtifact(a.id)).map((x) => x.id)).toEqual([ctx.id])
+      expect(
+        (await store.listContextsForArtifact(ctx.manifest_artifact_id)).map((x) => x.id),
+      ).toEqual([ctx.id])
+      expect(await store.listContextsForArtifact(b.id)).toEqual([])
+      // Deleting the analysis unlinks it; the Context and its paper stay.
+      await store.deleteArtifact(a.id, ORG)
+      expect(await store.getContext(ctx.id)).toMatchObject({ analysis_artifact_id: null })
     })
 
     it("renameContext keeps the per-workspace unique name", async () => {

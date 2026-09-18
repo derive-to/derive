@@ -10,6 +10,7 @@
 // failure this avoids — and the reason `checkpoint` states the same rule for itself
 // ("an index a cold session follows, not a container").
 import {
+  type AnalysisCounts,
   type ArtifactRecord,
   arxivAbsUrl,
   type BlobStore,
@@ -21,6 +22,7 @@ import { parseConnectionIds } from "./broker"
 import { manifestOf } from "./bundle"
 import { paperCitation } from "./latex-bundle"
 import { parseManifestSkillPins, stalePins } from "./manifest-pins"
+import { paperAnalysisState } from "./paper-analysis"
 
 /** How much manifest text loads inline. A manifest is meant to be the small layer; one
  *  that runs past this is over budget by its own design, so the read clips and says so
@@ -54,6 +56,13 @@ export interface PackagedImport {
   version: number | null
   status: "pending" | "fetching" | "ready" | "failed" | "dead"
   error: { code: string; detail: string | null } | null
+  /** The paper's implementation, when one is attached: the repository's page, whether its
+   *  files are there to read, and the commit they were fetched at when the host said. */
+  code: { url: string; status: "pending" | "ready" | "failed"; commit: string | null } | null
+  /** The implementation analysis an agent published for the paper, when there is one: read it
+   *  by short id before mapping the paper to its code yourself. A read of the Context adds
+   *  `stale` (made against an arXiv version or commit the Context no longer holds) and counts. */
+  analysis: { short_id: string; version: number; stale?: boolean; counts?: AnalysisCounts } | null
 }
 
 export interface ContextPackage {
@@ -98,7 +107,12 @@ export const importStateOf = async (
   x: ContextRecord,
 ): Promise<PackagedImport | null> => {
   if (x.import_source !== "arxiv" || !x.import_ref) return null
-  const job = await meta.getImportJobForContext(x.id).catch(() => null)
+  const [job, analysis] = await Promise.all([
+    meta.getImportJobForContext(x.id).catch(() => null),
+    x.analysis_artifact_id
+      ? meta.getArtifactById(x.analysis_artifact_id).catch(() => null)
+      : Promise.resolve(null),
+  ])
   return {
     source: "arxiv",
     ref: x.import_ref,
@@ -111,6 +125,14 @@ export const importStateOf = async (
       job?.error_code && job.status !== "ready"
         ? { code: job.error_code, detail: job.error_detail }
         : null,
+    code: x.code_url
+      ? {
+          url: x.code_url,
+          status: job?.code_status ?? "pending",
+          commit: job?.code_status === "ready" ? job.code_commit : null,
+        }
+      : null,
+    analysis: analysis ? { short_id: analysis.short_id, version: analysis.current_version } : null,
   }
 }
 
@@ -160,6 +182,26 @@ export const assembleContextPackage = async (
         role: "paper",
       },
     ]
+    // The implementation analysis, when an agent published one: the second document, read
+    // before mapping the paper to its code again, with whether it still describes the Context.
+    if (base.import.analysis && blobs) {
+      const job = await meta.getImportJobForContext(x.id).catch(() => null)
+      const state = await paperAnalysisState(meta, blobs, x, job).catch(() => null)
+      if (state?.artifact && state.counts) {
+        base.documents.push({
+          short_id: state.artifact.short_id,
+          title: state.artifact.title,
+          kind: state.artifact.kind,
+          role: "analysis",
+        })
+        base.import.analysis = {
+          short_id: state.artifact.short_id,
+          version: state.artifact.current_version,
+          stale: state.state === "stale",
+          counts: state.counts,
+        }
+      }
+    }
     base.manifest = {
       short_id: manifestArtifact.short_id,
       title: manifestArtifact.title,

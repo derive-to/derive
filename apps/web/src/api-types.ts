@@ -5494,6 +5494,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/contexts/{id}/analysis": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * An imported paper's implementation analysis, and the prompts that start or update it.
+         * @description The map an agent published from the paper's contributions to the code that carries them out, with each code reference resolved to the repository's own host at the commit it read. Derive never writes it: `prompts` are what a person pastes into their own agent. Readable by whoever may ask the Context.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Where the analysis stands, and the analysis when there is one. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ContextAnalysisInfo"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/contexts/{id}/access": {
         parameters: {
             query?: never;
@@ -8182,6 +8223,8 @@ export interface components {
                 status: "pending" | "ready" | "failed";
                 /** @description Why the repository could not be fetched. */
                 error: string | null;
+                /** @description The commit the repository was fetched at, when its host recorded one. Null until it is ready, and for an attachment made before commits were recorded. */
+                commit: string | null;
             } | null;
         } | null;
         ContextInfo: {
@@ -8242,8 +8285,98 @@ export interface components {
             title: string | null;
             /** @enum {string|null} */
             kind: "doc" | "bundle" | null;
-            /** @description What the document is to the Context (`paper`). */
+            /** @description What the document is to the Context: `paper`, or `analysis` for the paper's implementation analysis. */
             role: string | null;
+        };
+        ContextAnalysisInfo: {
+            /**
+             * @description unavailable: no implementation is ready to analyse; none: no analysis yet; ready: it describes what the Context holds; stale: it was made against an arXiv version or commit the Context no longer holds; restricted: one exists that the caller cannot open.
+             * @enum {string}
+             */
+            state: "unavailable" | "none" | "ready" | "stale" | "restricted";
+            stale_reasons: string[];
+            paper_short_id: string | null;
+            implementation: {
+                repository: string;
+                url: string;
+                commit: string | null;
+            } | null;
+            analysis: {
+                short_id: string;
+                title: string | null;
+                version: number;
+                updated_at: string;
+                /** @description The agent that published this version. */
+                agent: string | null;
+                summary: string;
+                made_against: {
+                    arxiv_version: number | null;
+                    repository: string;
+                    commit: string | null;
+                };
+                counts: {
+                    contributions: number;
+                    details: number;
+                    implemented: number;
+                    could_not_map: number;
+                    unmapped: number;
+                    open_questions: number;
+                };
+                contributions: {
+                    id: string;
+                    title: string;
+                    claim: string;
+                    paper: components["schemas"]["AnalysisPaperRef"][];
+                    details: {
+                        id: string;
+                        title: string;
+                        /** @enum {string} */
+                        status: "implemented" | "could_not_map";
+                        notes: string | null;
+                        paper: components["schemas"]["AnalysisPaperRef"][];
+                        code: components["schemas"]["AnalysisCodeRef"][];
+                    }[];
+                }[];
+                unmapped: {
+                    id: string;
+                    notes: string;
+                    path: string;
+                    symbol: string | null;
+                    lines: string | null;
+                    href: string | null;
+                    pinned: boolean;
+                }[];
+                open_questions: {
+                    id: string;
+                    question: string;
+                }[];
+            } | null;
+            prompts: {
+                /** @description What a person pastes into their agent to write the analysis, while none exists. */
+                start: string | null;
+                /** @description What a person pastes into their agent to check and update it, once it exists. */
+                update: string | null;
+            };
+            /** @description Whether the caller's own agents may start or update it: publishing needs an editor seat or higher. */
+            can_publish: boolean;
+        };
+        AnalysisPaperRef: {
+            /** @description A page of the paper, or `page#slug` for one heading's part of it. */
+            section: string;
+            label: string | null;
+            /** @description The heading the section names, when it names one. */
+            heading: string | null;
+        };
+        AnalysisCodeRef: {
+            /** @description The file's path in the repository. */
+            path: string;
+            symbol: string | null;
+            /** @description A line, or a range such as `40-88`. */
+            lines: string | null;
+            /** @description The file on the repository's own host, with the lines highlighted. */
+            href: string | null;
+            /** @description Whether `href` opens the exact commit the analysis read. A file inside a submodule, or an attachment with no recorded commit, opens a branch instead. */
+            pinned: boolean;
         };
         Session: {
             id: string;

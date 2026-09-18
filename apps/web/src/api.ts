@@ -526,6 +526,9 @@ export type ContextInfo = components["schemas"]["ContextInfo"]
  *  agent, its raw manifest source instead. Generated from the OpenAPI spec. */
 export type ContextDetail =
   paths["/v1/contexts/{id}"]["get"]["responses"][200]["content"]["application/json"]
+/** GET /v1/contexts/:id/analysis: an imported paper's implementation analysis, where it
+ *  stands, and the prompts that start or update it. Generated from the OpenAPI spec. */
+export type ContextAnalysis = components["schemas"]["ContextAnalysisInfo"]
 export type ManifestSkillInfo = components["schemas"]["ManifestSkillInfo"]
 /** One artifact a context produced, grouped across every run that bound it. Generated
  *  from the OpenAPI spec. */
@@ -1444,6 +1447,10 @@ export const api = {
   // Contexts + sessions (the ask loop; see routes/contexts.ts server-side).
   listContexts: (): Promise<{ contexts: ContextInfo[] }> => f("/v1/contexts", opts()).then(j),
   getContext: (id: string): Promise<ContextDetail> => f(`/v1/contexts/${id}`, opts()).then(j),
+  // An imported paper's implementation analysis, written by an agent, with the prompts a person
+  // copies into theirs to start or update it.
+  getContextAnalysis: (id: string): Promise<ContextAnalysis> =>
+    f(`/v1/contexts/${id}/analysis`, opts()).then(j),
   // agent_id omitted → the server auto-mints a MANAGED agent for this context and
   // returns its bearer as agent_token, exactly once on this response.
   createContext: (input: {

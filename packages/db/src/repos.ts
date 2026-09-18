@@ -1105,6 +1105,39 @@ export function makeRepos(db: SqliteDb) {
     return (await getVersion(artifactId, n)) as VersionRecord
   }
 
+  /** addVersion's conditional twin: the bump is one statement guarded on the version the
+   *  caller read, so of two writers revising version N only one moves it to N+1 and the
+   *  other writes nothing. D1 has no transactions, so the winner's version row lands just
+   *  after the bump, the same shape as this driver's other multi-statement writes. */
+  const addVersionIfCurrent = async (
+    artifactId: string,
+    expectedCurrent: number,
+    v: NewVersion,
+  ): Promise<VersionRecord | null> => {
+    const n = expectedCurrent + 1
+    const won = await db
+      .update(artifact)
+      .set({
+        current_version: n,
+        current_content_type: v.content_type,
+        updated_at: new Date().toISOString(),
+        author_name: v.author,
+        author_login: v.author_login ?? null,
+        author_avatar: v.author_avatar ?? null,
+        author_gh_id: v.author_gh_id ?? null,
+        author_id: v.author_id ?? null,
+      })
+      .where(and(eq(artifact.id, artifactId), eq(artifact.current_version, expectedCurrent)))
+      .returning({ id: artifact.id })
+      .all()
+    if (won.length === 0) return null
+    await db
+      .insert(version)
+      .values({ ...v, artifact_id: artifactId, n })
+      .run()
+    return (await getVersion(artifactId, n)) as VersionRecord
+  }
+
   const replaceCurrentVersion = async (
     artifactId: string,
     expected: { n: number; blobKey: string },
@@ -3894,6 +3927,37 @@ export function makeRepos(db: SqliteDb) {
   const setContextCodeUrl = async (id: string, codeUrl: string | null): Promise<void> => {
     await db.update(context).set({ code_url: codeUrl }).where(eq(context.id, id)).run()
   }
+  const setContextAnalysis = async (
+    id: string,
+    artifactId: string | null,
+    expected: string | null,
+  ): Promise<boolean> => {
+    const rows = await db
+      .update(context)
+      .set({ analysis_artifact_id: artifactId })
+      .where(
+        and(
+          eq(context.id, id),
+          expected === null
+            ? isNull(context.analysis_artifact_id)
+            : eq(context.analysis_artifact_id, expected),
+        ),
+      )
+      .returning({ id: context.id })
+      .all()
+    return rows.length > 0
+  }
+  const listContextsForArtifact = async (artifactId: string): Promise<ContextRecord[]> =>
+    await db
+      .select()
+      .from(context)
+      .where(
+        or(
+          eq(context.manifest_artifact_id, artifactId),
+          eq(context.analysis_artifact_id, artifactId),
+        ),
+      )
+      .all()
   const renameContext = async (id: string, name: string): Promise<void> => {
     await db.update(context).set({ name }).where(eq(context.id, id)).run()
   }
@@ -6414,6 +6478,13 @@ export function makeRepos(db: SqliteDb) {
     await db.delete(contextAsker).where(inArray(contextAsker.context_id, ctxIds)).run()
     await db.delete(importJob).where(inArray(importJob.context_id, ctxIds)).run()
     await db.delete(context).where(eq(context.manifest_artifact_id, id)).run()
+    // An artifact that is some Context's implementation analysis leaves that Context without
+    // one, rather than pointing at nothing.
+    await db
+      .update(context)
+      .set({ analysis_artifact_id: null })
+      .where(eq(context.analysis_artifact_id, id))
+      .run()
     await db.delete(reviewRound).where(eq(reviewRound.artifact_id, id)).run()
     // Artifact-SCOPED webhooks only; a workspace-wide one has a null artifact_id and
     // survives. Found by scripts/check-delete-cascade.mjs.
@@ -6559,6 +6630,7 @@ export function makeRepos(db: SqliteDb) {
     listDynamicRevisions,
     deleteDynamicSlot,
     addVersion,
+    addVersionIfCurrent,
     replaceCurrentVersion,
     listVersions,
     getVersion,
@@ -6768,6 +6840,8 @@ export function makeRepos(db: SqliteDb) {
     setContextManifest,
     setContextConnections,
     setContextCodeUrl,
+    setContextAnalysis,
+    listContextsForArtifact,
     renameContext,
     findContextByImport,
     enqueueImportJob,

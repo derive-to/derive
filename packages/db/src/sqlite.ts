@@ -259,6 +259,42 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
       return (await repos.getVersion(artifactId, n)) as VersionRecord
     },
 
+    // The conditional append, as one synchronous transaction: the version read, the guard
+    // and both writes, all-or-nothing, so two writers revising version N cannot both land.
+    addVersionIfCurrent: async (
+      artifactId: string,
+      expectedCurrent: number,
+      v: NewVersion,
+    ): Promise<VersionRecord | null> => {
+      const n = db.transaction((tx) => {
+        const row = tx
+          .select({ cv: artifact.current_version })
+          .from(artifact)
+          .where(eq(artifact.id, artifactId))
+          .get()
+        if (row?.cv !== expectedCurrent) return null
+        const next = expectedCurrent + 1
+        tx.insert(version)
+          .values({ ...v, artifact_id: artifactId, n: next })
+          .run()
+        tx.update(artifact)
+          .set({
+            current_version: next,
+            current_content_type: v.content_type,
+            updated_at: new Date().toISOString(),
+            author_name: v.author,
+            author_login: v.author_login ?? null,
+            author_avatar: v.author_avatar ?? null,
+            author_gh_id: v.author_gh_id ?? null,
+            author_id: v.author_id ?? null,
+          })
+          .where(eq(artifact.id, artifactId))
+          .run()
+        return next
+      })
+      return n === null ? null : ((await repos.getVersion(artifactId, n)) as VersionRecord)
+    },
+
     // A head-guarded delete as one synchronous transaction: the head read, the slot row
     // (the statement that decides) and its revisions, all-or-nothing, the way the shared
     // repo cannot pair them on D1.
@@ -364,6 +400,12 @@ export function createSqliteStore(path: string): MetaStore & { close(): void } {
         db.delete(contextAsker).where(inArray(contextAsker.context_id, ctxIds)).run()
         db.delete(importJob).where(inArray(importJob.context_id, ctxIds)).run()
         db.delete(context).where(eq(context.manifest_artifact_id, id)).run()
+        // An artifact that is some Context's implementation analysis leaves that Context
+        // without one, rather than pointing at nothing.
+        db.update(context)
+          .set({ analysis_artifact_id: null })
+          .where(eq(context.analysis_artifact_id, id))
+          .run()
         db.delete(reviewRound).where(eq(reviewRound.artifact_id, id)).run()
         // Artifact-SCOPED webhooks only (artifact_id = this id). A workspace-wide webhook
         // has a null artifact_id and never matches, so it survives, which is right: it was

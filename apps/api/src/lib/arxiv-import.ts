@@ -731,6 +731,7 @@ const attachImplementation = async (
       code_status: "failed",
       code_error: "that is not a public GitHub or GitLab repository",
       code_ref: null,
+      code_commit: null,
     })
     return
   }
@@ -751,6 +752,7 @@ const attachImplementation = async (
         code_status: "failed",
         code_error: "the paper could not be read back",
         code_ref: null,
+        code_commit: null,
       })
     return
   }
@@ -766,7 +768,7 @@ const attachImplementation = async (
     if (hadCode)
       await republishPaper(deps, paper, manifest, paperContent, actor, "Removed the implementation")
     if (live.code_status || hadCode)
-      await stamp({ code_status: null, code_error: null, code_ref: null })
+      await stamp({ code_status: null, code_error: null, code_ref: null, code_commit: null })
     return
   }
   if (!deps.repoCaps) {
@@ -774,6 +776,7 @@ const attachImplementation = async (
       code_status: "failed",
       code_error: "this deployment does not fetch repositories",
       code_ref: null,
+      code_commit: null,
     })
     return
   }
@@ -805,6 +808,7 @@ const attachImplementation = async (
         200,
       ),
       code_ref: null,
+      code_commit: null,
     })
     return
   }
@@ -817,6 +821,7 @@ const attachImplementation = async (
       code_status: "failed",
       code_error: truncate(fitted.notes[0] ?? "the repository is too large to attach", 200),
       code_ref: null,
+      code_commit: null,
     })
     return
   }
@@ -844,6 +849,7 @@ const attachImplementation = async (
     code_status: "ready",
     code_error: null,
     code_ref: repoRef.canonical,
+    code_commit: fetched.commit,
     manifest_version: published.version.n,
   })
 }

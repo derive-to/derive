@@ -379,6 +379,7 @@ describe("write path — dense arm best-effort + backfill", () => {
       deleteArtifact: async (id: string, org: string) => {
         deleted.push([id, org])
       },
+      listContextsForArtifact: async () => [],
     }
     const search = {
       unindexArtifact: async (id: string) => {

@@ -1135,8 +1135,12 @@ export function Artifact({ template = false }: { template?: boolean }) {
   // rawArtifactUrl is SHARED with the prefetch (lib/queries) so the two can never build
   // different URLs again — when they did, hover prefetching warmed a response the frame
   // never requested.
+  // A link to one section of a document (`?section=<slug>`, as a paper's implementation analysis
+  // links its citations) opens the frame at that heading's anchor.
   const rawSrc =
-    seeded || (rawTokenStale && !pinnedForShown) ? null : rawArtifactUrl(shortId, shown, rawToken)
+    seeded || (rawTokenStale && !pinnedForShown)
+      ? null
+      : `${rawArtifactUrl(shortId, shown, rawToken)}${search.section ? `#${encodeURIComponent(search.section)}` : ""}`
   // Direct publishing is a workbench capability.
   const canPublish = !isGuest && (art.my_role === "editor" || art.my_role === "owner")
   const runtimeDiagnostic = canPublish ? runtimeDiagnosticFor(runtimeError, shortId, shown) : null

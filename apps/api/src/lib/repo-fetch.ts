@@ -156,6 +156,9 @@ export interface RepoFetchResult {
   files: RepoFile<StoredFile>[]
   /** What was actually fetched, canonically — the resume marker. */
   fetched: string
+  /** The commit the root repository was fetched at, as its archive recorded it; null when
+   *  the host's archive did not say. */
+  commit: string | null
   /** Repositories pulled in, the root first. */
   repos: string[]
   /** What a reader should know: submodules skipped, branches guessed, files left behind. */
@@ -263,6 +266,13 @@ const getArchive = async (deps: RepoFetchDeps, url: string): Promise<Response> =
   throw new RepoFetchError("the repository host redirected too many times")
 }
 
+/** The commit a git-generated archive names in its pax global header, when it names one.
+ *  GitHub's and GitLab's archives both do, which is what lets a reference pin a line. */
+const archiveCommit = (globals: ReadonlyMap<string, string>): string | null => {
+  const comment = globals.get("comment")?.trim().toLowerCase() ?? ""
+  return /^[0-9a-f]{40}([0-9a-f]{24})?$/.test(comment) ? comment : null
+}
+
 const unpacksPast = (caps: RepoCaps): string =>
   `the implementation unpacks to more than the ${mb(caps.inflatedBytes)} an import reads, source and data together`
 
@@ -322,6 +332,7 @@ export const fetchRepository = async (
   let unpacked = 0
   let lfs = 0
   let requests = 0
+  let commit: string | null = null
 
   const walk = async (ref: RepoRef, prefix: string, depth: number): Promise<void> => {
     if (seen.has(ref.canonical)) return
@@ -396,6 +407,9 @@ export const fetchRepository = async (
     }
     if (staged.kind !== "tar") throw new RepoFetchError("the download was not a repository archive")
     repos.push(ref.canonical)
+    // Only the root's commit is kept: a submodule is fetched at its declared branch, which
+    // is not the commit the root pins it to, so its own commit would pin nothing.
+    if (depth === 0) commit = archiveCommit(staged.globals)
     kept.bytes += archive.bytes
     kept.files += archive.files
     lfs += archive.lfs
@@ -471,5 +485,5 @@ export const fetchRepository = async (
     notes.push(
       `skipped ${lfs} Git LFS ${lfs === 1 ? "pointer" : "pointers"}, whose files live outside the repository`,
     )
-  return { files, fetched: root.canonical, repos, notes }
+  return { files, fetched: root.canonical, commit, repos, notes }
 }

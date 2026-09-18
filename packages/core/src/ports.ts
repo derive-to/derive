@@ -510,6 +510,10 @@ export interface ImportJobRecord {
   /** The reference that was actually fetched (`github.com/owner/repo@branch`): both the
    *  resume marker and how a re-run knows the link changed. */
   code_ref: string | null
+  /** The commit that reference was fetched at, as the repository's archive recorded it.
+   *  Null when the host's archive did not say, or for an attachment made before commits
+   *  were recorded. */
+  code_commit: string | null
   created_at: string
   updated_at: string
 }
@@ -761,6 +765,20 @@ export interface ArtifactStore {
   replaceCurrentVersion(
     artifactId: string,
     expected: { n: number; blobKey: string },
+    v: NewVersion,
+  ): Promise<VersionRecord | null>
+  /**
+   * Appends the next version, but only while the artifact is still at `expectedCurrent`.
+   *
+   * addVersion reads the current version and appends after it, so two writers that each
+   * prepared from version N append N+1 and N+2, and the second silently supersedes the
+   * first. Where a publish means "revise the version I read" (an implementation analysis,
+   * whose whole contract is that nothing disappears unannounced), this is the write to
+   * use: the artifact's own version number is the lock, and the loser gets null.
+   */
+  addVersionIfCurrent(
+    artifactId: string,
+    expectedCurrent: number,
     v: NewVersion,
   ): Promise<VersionRecord | null>
   listVersions(artifactId: string): Promise<VersionRecord[]>
@@ -1793,6 +1811,17 @@ export interface ContextStore {
   setContextConnections(id: string, connectionIds: string | null): Promise<void>
   /** Attach, replace or remove the repository implementing an imported paper. */
   setContextCodeUrl(id: string, codeUrl: string | null): Promise<void>
+  /** Link or unlink an imported paper's implementation analysis, only while the Context still
+   *  points at `expected`: of two agents publishing one at once, one links it and the other
+   *  learns it lost. Resolves whether the link was written. */
+  setContextAnalysis(
+    id: string,
+    artifactId: string | null,
+    expected: string | null,
+  ): Promise<boolean>
+  /** The Contexts an artifact belongs to: the ones it defines (their manifest, an imported
+   *  paper) and the ones it is the implementation analysis of. */
+  listContextsForArtifact(artifactId: string): Promise<ContextRecord[]>
   /** Rename a context. The (org, name) unique index still applies: the store surfaces
    *  the conflict as a throw for the caller to catch and pick another name. */
   renameContext(id: string, name: string): Promise<void>
@@ -1834,6 +1863,7 @@ export interface ContextStore {
         | "code_status"
         | "code_error"
         | "code_ref"
+        | "code_commit"
         | "updated_at"
       >
     >,
@@ -4121,6 +4151,9 @@ export interface ContextRecord {
   /** The public repository implementing an imported paper, as the person gave it; null
    *  when no implementation is attached. The paper's own artifact holds the code. */
   code_url: string | null
+  /** The implementation analysis an agent published for an imported paper: its own artifact,
+   *  mapping the paper's contributions to its code. Null until one is published. */
+  analysis_artifact_id: string | null
 }
 export interface NewContext {
   id: string
