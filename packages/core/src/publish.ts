@@ -117,6 +117,12 @@ export interface PublishInput {
    *  without a zip round trip. `bytes` is then ignored and the version's size is the sum
    *  of the files. Bundles only. */
   files?: Record<string, Uint8Array>
+  /** Files already in the blob store, by path, published by key: an importer that streamed
+   *  them there as they arrived never has to hold them in memory again. Counted, measured
+   *  and merged with `files` as if they were bytes, and never put. For server-side
+   *  importers only, never built from a request: a key a caller could name would publish
+   *  bytes that caller never uploaded. Bundles only. */
+  stored?: Record<string, { key: string; size: number }>
   /** The bundle's entry page when the publisher knows it (`/paper.tex`); the usual
    *  index/main/shallowest choice otherwise. Bundles only. */
   entry?: string | null
@@ -179,6 +185,15 @@ export const isCodePath = (path: string): boolean => path.startsWith(CODE_PREFIX
 // ceiling a publisher may raise to, never the default — see PublishInput.maxBundleBytes.
 export const MAX_BUNDLE_FILES_WITH_CODE = 6000
 export const MAX_BUNDLE_UNZIPPED_BYTES_WITH_CODE = 100 * 1024 * 1024 // 100 MB
+
+// A paper Derive imports itself is never a bundle in memory: its files stream into the blob
+// store as the archive is read, and it is published from their keys (PublishInput.stored).
+// So it may be far larger than anything uploaded: a paper up to the first, up to the second
+// with its implementation, in up to the third number of files. Only a publish carrying
+// `stored` files may reach them; every other bundle keeps the ceilings above.
+export const MAX_IMPORTED_PAPER_BYTES = 250 * 1024 * 1024 // 250 MB
+export const MAX_IMPORTED_BUNDLE_BYTES = 500 * 1024 * 1024 // 500 MB
+export const MAX_IMPORTED_BUNDLE_FILES = 13_000
 
 /**
  * Choose a bundle's entry page. An HTML site enters at its root `index.html`, else
@@ -262,6 +277,7 @@ async function storeContent(
   unpacked?: Record<string, Uint8Array>,
   preferredEntry?: string | null,
   limits?: { maxFiles?: number; maxBundleBytes?: number },
+  stored?: Record<string, { key: string; size: number }>,
 ): Promise<StoredContent> {
   let blobWriteMs = 0
   const put = async (data: Uint8Array): Promise<string> => {
@@ -274,7 +290,7 @@ async function storeContent(
   }
   if (isBundle) {
     let unzipped: Record<string, Uint8Array>
-    if (unpacked) unzipped = unpacked
+    if (unpacked || stored) unzipped = unpacked ?? {}
     else {
       try {
         unzipped = unzipSync(bytes)
@@ -283,21 +299,34 @@ async function storeContent(
       }
     }
     const paths = Object.keys(unzipped)
-    if (paths.length === 0) throw new PublishError(400, "empty bundle")
+    const storedPaths = Object.keys(stored ?? {})
+    if (paths.length + storedPaths.length === 0) throw new PublishError(400, "empty bundle")
     // A publisher may raise the caps for a bundle that carries an implementation, up to
     // the hard ceiling and never below the ordinary cap.
     const clamp = (asked: number | undefined, floor: number, ceiling: number): number =>
       Math.min(Math.max(asked ?? floor, floor), ceiling)
-    const maxFiles = clamp(limits?.maxFiles, MAX_BUNDLE_FILES, MAX_BUNDLE_FILES_WITH_CODE)
+    // A bundle published from stored files is an importer's: see MAX_IMPORTED_BUNDLE_BYTES.
+    const maxFiles = clamp(
+      limits?.maxFiles,
+      MAX_BUNDLE_FILES,
+      stored ? MAX_IMPORTED_BUNDLE_FILES : MAX_BUNDLE_FILES_WITH_CODE,
+    )
     const maxBytes = clamp(
       limits?.maxBundleBytes,
       MAX_BUNDLE_UNZIPPED_BYTES,
-      MAX_BUNDLE_UNZIPPED_BYTES_WITH_CODE,
+      stored ? MAX_IMPORTED_BUNDLE_BYTES : MAX_BUNDLE_UNZIPPED_BYTES_WITH_CODE,
     )
     // Count and measure what will actually be STORED. The archive's own junk (`__MACOSX`,
     // `.DS_Store`, directory entries) is dropped by cleanPath a moment later, so counting
-    // it here would spend a paper's budget on entries no one ever reads.
-    const kept: [string, Uint8Array][] = []
+    // it here would spend a paper's budget on entries no one ever reads. A file that is
+    // already in the store counts exactly as its bytes would.
+    const kept: [string, Uint8Array | { key: string; size: number }][] = []
+    for (const raw of storedPaths) {
+      const path = cleanPath(raw)
+      const file = stored?.[raw]
+      if (!path || !file) continue
+      kept.push([path, file])
+    }
     for (const raw of paths) {
       const path = cleanPath(raw)
       if (!path) continue
@@ -305,18 +334,25 @@ async function storeContent(
       if (data === undefined) continue
       kept.push([path, data])
     }
+    const sizeOf = (file: Uint8Array | { size: number }): number =>
+      file instanceof Uint8Array ? file.byteLength : file.size
     if (kept.length > maxFiles) throw new PublishError(400, `bundle exceeds ${maxFiles} files`)
     // Reject zip bombs: bound the total inflated size, not just the upload size.
     let unzippedBytes = 0
-    for (const [, data] of kept) {
-      unzippedBytes += data.byteLength
+    for (const [, file] of kept) {
+      unzippedBytes += sizeOf(file)
       if (unzippedBytes > maxBytes)
         throw new PublishError(413, "bundle is too large once decompressed")
     }
 
+    // Each file's size rides the manifest, so the bundle can be published again by key.
     const files: BundleManifest["files"] = {}
-    for (const [path, data] of kept) {
-      files[path] = { key: await put(data), type: mimeFor(path) }
+    for (const [path, file] of kept) {
+      files[path] = {
+        key: file instanceof Uint8Array ? await put(file) : file.key,
+        type: mimeFor(path),
+        size: sizeOf(file),
+      }
     }
     // Entry point: an HTML site enters at index/shallowest .html; a skill/doc
     // bundle with no HTML enters at SKILL.md / README.md / shallowest markdown.
@@ -558,11 +594,13 @@ export async function publish(
       input.isBundle
         ? { maxFiles: input.maxFiles, maxBundleBytes: input.maxBundleBytes }
         : undefined,
+      input.isBundle ? input.stored : undefined,
     )
   const timings = { blobWriteMs, storeContentMs: performance.now() - storeStartedAt }
   const sizeBytes =
-    input.isBundle && input.files
-      ? Object.values(input.files).reduce((n, f) => n + f.byteLength, 0)
+    input.isBundle && (input.files || input.stored)
+      ? Object.values(input.files ?? {}).reduce((n, f) => n + f.byteLength, 0) +
+        Object.values(input.stored ?? {}).reduce((n, f) => n + f.size, 0)
       : input.bytes.length
 
   const author = input.author ?? "anonymous"

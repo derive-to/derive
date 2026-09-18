@@ -1389,7 +1389,10 @@ export const contextRoutes = (ctx: AppContext) => {
   // in. Idempotent per paper per workspace: the same paper pasted twice opens the one
   // Context, requeuing its import if that had failed.
   const MAX_ACTIVE_IMPORTS_PER_WORKSPACE = 3
-  const ARXIV_IMPORT_ESTIMATED_BYTES = 50 * 1024 * 1024
+  // What an import is expected to add, for the storage gate at the paste. Deliberately not
+  // the ceiling (MAX_IMPORTED_PAPER_BYTES): nearly every paper is a small fraction of it,
+  // and gating on the ceiling would turn away workspaces with room for all of them.
+  const ARXIV_IMPORT_ESTIMATED_BYTES = 100 * 1024 * 1024
 
   app.openapi(
     createRoute({
@@ -1442,7 +1445,8 @@ export const contextRoutes = (ctx: AppContext) => {
       if (capped) return bail(capped)
       const blocked = await billingGate(c, org)
       if (blocked) return bail(blocked)
-      if (await overStorage(org, ARXIV_IMPORT_ESTIMATED_BYTES))
+      // An implementation may add as much again as the paper.
+      if (await overStorage(org, ARXIV_IMPORT_ESTIMATED_BYTES * (codeRef ? 2 : 1)))
         return bail(fail(c, 413, "this workspace is out of storage", { code: "storage" }))
 
       const existing = await meta.findContextByImport(org, "arxiv", ref.id)
@@ -1457,6 +1461,8 @@ export const contextRoutes = (ctx: AppContext) => {
             // even try" to whoever pasted it.
             attempts: 0,
             next_attempt_at: new Date().toISOString(),
+            // No claim survives a requeue: a worker still holding one stops at its next write.
+            claim_token: null,
             updated_at: new Date().toISOString(),
           })
         const manifest = await meta.getArtifactById(existing.manifest_artifact_id)
@@ -1566,6 +1572,7 @@ export const contextRoutes = (ctx: AppContext) => {
           status: "pending",
           next_attempt_at: now,
           lease_until: null,
+          claim_token: null,
           updated_at: now,
         })
         // A retry after giving up starts the count over; the paper it may already have
@@ -1623,6 +1630,9 @@ export const contextRoutes = (ctx: AppContext) => {
         return bail(
           fail(c, 400, "not a public GitHub or GitLab repository", { code: "not_a_repo" }),
         )
+      // A repository may add as much as the paper holds: the gate an import pays for one.
+      if (codeRef && (await overStorage(x.org_id, ARXIV_IMPORT_ESTIMATED_BYTES)))
+        return bail(fail(c, 413, "this workspace is out of storage", { code: "storage" }))
 
       await meta.setContextCodeUrl(x.id, codeRef ? repoWebUrl(codeRef) : null)
       // The worker does both jobs: fetching a new repository, and republishing the paper
@@ -1634,6 +1644,7 @@ export const contextRoutes = (ctx: AppContext) => {
         next_attempt_at: now,
         lease_until: null,
         attempts: 0,
+        claim_token: null,
         code_status: codeRef ? "pending" : null,
         code_error: null,
         updated_at: now,

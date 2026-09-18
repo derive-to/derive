@@ -1,9 +1,10 @@
-import { tarSync } from "@derive/core"
+import { type BlobStore, tarSync } from "@derive/core"
 import { gzipSync, zipSync } from "fflate"
 import { beforeAll, describe, expect, it } from "vitest"
 import { createInProcessBackplane, type DeriveEvent } from "../src/bus"
 import { runImportTick } from "../src/imports"
 import { ARXIV_REQUEST_INTERVAL_MS } from "../src/lib/arxiv-import"
+import { browserFigureShrinker, type ShrinkPage } from "../src/lib/image-shrink-cf"
 import { sharpShrinker } from "../src/lib/image-shrink-node"
 import { as, bearer, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
@@ -1472,6 +1473,112 @@ describe("contexts: import from arXiv", () => {
     expect(paper?.current_version).toBe(2)
   })
 
+  it("gives up on a paper whose worker keeps being cut off, without running it again", async () => {
+    // A worker the platform stops (memory, CPU, wall clock) records nothing: its lease just
+    // lapses. Three of those in a row end the import instead of reclaiming it forever.
+    const stub = arxivStub()
+    const { app, meta, clock: c, tickDeps } = setup("contexts-import-cutoff", stub.fetch)
+    await app.request("/v1/me", { headers: as(owner.email) })
+    const x = await (await importPaper(app, "2407.00001")).json()
+    const job = await meta.getImportJobForContext(x.id)
+    if (!job) throw new Error("job missing")
+    await meta.updateImportJob(job.id, {
+      status: "fetching",
+      attempts: 3,
+      lease_until: "2000-01-01T00:00:00.000Z",
+    })
+    expect(await runImportTick(tickDeps())).toBe(1)
+    // Recorded from what the store knows, without another request to arXiv.
+    expect(stub.calls).toHaveLength(0)
+    const context = await (
+      await app.request(`/v1/contexts/${x.id}`, { headers: as(owner.email) })
+    ).json()
+    expect(context.import).toMatchObject({ status: "dead", error: { code: "internal" } })
+    expect(context.import.error.detail).toContain("cut off")
+    // The page says the import gave up, rather than reading "fetching" forever.
+    const page = await app.request(
+      `/v1/artifacts/${context.manifest_short_id}/content?format=text`,
+      { headers: as(owner.email) },
+    )
+    expect(await page.text()).toContain("Derive tried three times")
+    // And it is never due again.
+    c.advance(60 * 60_000)
+    expect(await runImportTick(tickDeps("w2"))).toBe(0)
+  })
+
+  it("stops a worker whose job was taken over, before it can write over the new owner", async () => {
+    let takeOver: (() => Promise<void>) | null = null
+    const stub = arxivStub({
+      source: async () => {
+        await takeOver?.()
+        return gzip(SOURCE())
+      },
+    })
+    const { app, meta, clock: c, tickDeps } = setup("contexts-import-takeover", stub.fetch)
+    await app.request("/v1/me", { headers: as(owner.email) })
+    const x = await (await importPaper(app, "2407.00002")).json()
+    const job = await meta.getImportJobForContext(x.id)
+    if (!job) throw new Error("job missing")
+    // The download outlasts the first worker's lease, and another worker claims the job.
+    let tookOver: unknown = null
+    takeOver = async () => {
+      c.advance(5 * 60_000)
+      tookOver = await meta.claimDueImportJob(
+        new Date(c.now()).toISOString(),
+        new Date(c.now() + 4 * 60_000).toISOString(),
+        "http://derive.test",
+        "w2:took-over",
+      )
+    }
+    expect(await runImportTick(tickDeps("w1"))).toBe(1)
+    expect(tookOver).toMatchObject({ id: job.id, attempts: 2 })
+    // The first worker stopped at its next write, so nothing it did afterwards landed: no
+    // paper, no failure, and the job still belongs to the worker that took it.
+    expect(await meta.getImportJob(job.id)).toMatchObject({
+      status: "fetching",
+      claim_token: "w2:took-over",
+      paper_artifact_id: null,
+      error_code: null,
+    })
+    const context = await meta.getContext(x.id)
+    const placeholder = await meta.getArtifactById(context?.manifest_artifact_id ?? "")
+    expect(placeholder?.current_version).toBe(1)
+  })
+
+  it("keeps its claim through a run that outlasts the lease", async () => {
+    let onSource: (() => void) | null = null
+    let onBibtex: (() => Promise<void>) | null = null
+    const stub = arxivStub({
+      source: async () => {
+        onSource?.()
+        return gzip(SOURCE())
+      },
+      bibtex: async () => {
+        await onBibtex?.()
+        return new Response(BIBTEX)
+      },
+    })
+    const { app, meta, clock: c, tickDeps } = setup("contexts-import-heartbeat", stub.fetch)
+    await app.request("/v1/me", { headers: as(owner.email) })
+    const x = await (await importPaper(app, "2407.00003")).json()
+    // Three minutes on the download and three more on the BibTeX: past the four-minute
+    // lease. A worker that never renewed its claim would look dead halfway through.
+    let stolen: unknown = "not attempted"
+    onSource = () => c.advance(3 * 60_000)
+    onBibtex = async () => {
+      c.advance(3 * 60_000)
+      stolen = await meta.claimDueImportJob(
+        new Date(c.now()).toISOString(),
+        new Date(c.now() + 4 * 60_000).toISOString(),
+        "http://derive.test",
+        "w2:too-early",
+      )
+    }
+    expect(await runImportTick(tickDeps("w1"))).toBe(1)
+    expect(stolen).toBeNull()
+    expect((await meta.getImportJobForContext(x.id))?.status).toBe("ready")
+  })
+
   it("names the phase and the reason a failure gave", async () => {
     // Every failure records WHERE it happened and WHAT was said. Without this the only
     // thing an operator ever sees is "arXiv didn't answer", which is not always true.
@@ -1609,6 +1716,13 @@ describe("contexts: import from arXiv", () => {
         undefined,
         () => new Response("", { status: 301, headers: { location: "https://evil.example/src" } }),
         "unavailable",
+      ],
+      // A PDF that arrives gzipped is still only a PDF.
+      [
+        "2403.00006",
+        undefined,
+        () => gzip(gzipSync(new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31]))),
+        "no_source",
       ],
     ]
     let current = cases[0]
@@ -1758,6 +1872,236 @@ describe("contexts: import from arXiv", () => {
     expect(await failedPage.text()).toContain("Import failed:")
   }, 30_000)
 
+  it("streams a source into storage as it arrives, holding the paper's text and little else", async () => {
+    // A figure larger than what the worker reads whole, in a source that arrives a kilobyte
+    // at a time: the figure goes through a writer as it arrives, byte for byte.
+    const figure = new Uint8Array(600 * 1024)
+    for (let at = 0; at < figure.length; at += 65_536)
+      crypto.getRandomValues(figure.subarray(at, Math.min(at + 65_536, figure.length)))
+    const archive = gzipSync(
+      tarSync({
+        "paper/main.tex":
+          "\\documentclass{article}\\begin{document}\\includegraphics{fig/big.png}\\end{document}",
+        "paper/refs.bib": "@misc{a, title={A}, author={B}, year={2020}}",
+        "paper/fig/big.png": figure,
+      }),
+    )
+    const stub = arxivStub({
+      source: () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              for (let at = 0; at < archive.length; at += 1024)
+                controller.enqueue(archive.slice(at, at + 1024))
+              controller.close()
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/gzip" } },
+        ),
+    })
+    const { app, meta, ctx, tickDeps } = setup("contexts-import-stream", stub.fetch)
+    await app.request("/v1/me", { headers: as(owner.email) })
+    const x = await (await importPaper(app, "2408.00001")).json()
+    const puts: number[] = []
+    const streamed: number[] = []
+    const blobs: BlobStore = {
+      put: (data) => {
+        puts.push(data.byteLength)
+        return ctx.blobs.put(data)
+      },
+      get: (key) => ctx.blobs.get(key),
+      writer: (size) => {
+        streamed.push(size)
+        const writer = ctx.blobs.writer?.(size)
+        if (!writer) throw new Error("the test store streams")
+        return writer
+      },
+    }
+    const base = tickDeps()
+    const caps = { ...base.caps, bufferFileBytes: 64 * 1024, inflightBytes: 256 * 1024 }
+    expect(await runImportTick({ ...base, blobs, caps })).toBe(1)
+
+    const detail = await (
+      await app.request(`/v1/contexts/${x.id}`, { headers: as(owner.email) })
+    ).json()
+    expect(detail.import.status).toBe("ready")
+    const paper = await meta.getByShortId(detail.documents[0].short_id)
+    const v = paper ? await meta.getVersion(paper.id, paper.current_version) : null
+    const manifest = JSON.parse(
+      new TextDecoder().decode((await ctx.blobs.get(v?.blob_key ?? "")) ?? undefined),
+    ) as { files: Record<string, { key: string; size: number }> }
+    expect(Object.keys(manifest.files).sort()).toEqual([
+      "/CITATION.bib",
+      "/fig/big.png",
+      "/main.tex",
+      "/refs.bib",
+    ])
+    // Only the figure streamed, and nothing larger than the read-whole size went in whole.
+    expect(streamed).toEqual([figure.byteLength])
+    expect(Math.max(...puts)).toBeLessThanOrEqual(64 * 1024)
+    const stored = await ctx.blobs.get(manifest.files["/fig/big.png"]?.key ?? "")
+    expect(Buffer.from(stored ?? new Uint8Array()).equals(Buffer.from(figure))).toBe(true)
+    expect(v?.size_bytes).toBe(Object.values(manifest.files).reduce((n, f) => n + f.size, 0))
+  })
+
+  it("imports a paper without what it cannot afford, and says what that was", async () => {
+    // A figure over what a request can read whole to serve, and a generated table past the
+    // text an import reads to find the paper. Neither is a reason to lose the paper.
+    const stub = arxivStub({
+      source: () =>
+        gzip(
+          gzipSync(
+            tarSync({
+              "main.tex":
+                "\\documentclass{article}\\begin{document}\\input{tables/all}\\end{document}",
+              "tables/all.tex": `${"1 & 2 \\\\\n".repeat(40_000)}`,
+              "fig/huge.png": new Uint8Array(1536 * 1024),
+              "fig/small.png": new Uint8Array(64),
+            }),
+          ),
+        ),
+    })
+    const { app, meta, ctx, tickDeps } = setup("contexts-import-left-out", stub.fetch)
+    await app.request("/v1/me", { headers: as(owner.email) })
+    const x = await (await importPaper(app, "2408.00003")).json()
+    const base = tickDeps()
+    const caps = { ...base.caps, maxFileBytes: 1024 * 1024, textBytes: 256 * 1024 }
+    expect(await runImportTick({ ...base, caps })).toBe(1)
+
+    const detail = await (
+      await app.request(`/v1/contexts/${x.id}`, { headers: as(owner.email) })
+    ).json()
+    expect(detail.import.status).toBe("ready")
+    const paper = await meta.getByShortId(detail.documents[0].short_id)
+    const v = paper ? await meta.getVersion(paper.id, paper.current_version) : null
+    const manifest = JSON.parse(
+      new TextDecoder().decode((await ctx.blobs.get(v?.blob_key ?? "")) ?? undefined),
+    ) as { entry: string; files: Record<string, unknown> }
+    // The table is kept, unread; the figure is left out and named.
+    expect(Object.keys(manifest.files).sort()).toEqual([
+      "/CITATION.bib",
+      "/fig/small.png",
+      "/main.tex",
+      "/tables/all.tex",
+    ])
+    expect(manifest.entry).toBe("/main.tex")
+    expect(v?.message).toContain("left out 1 file over the 1.0 MB one file may be: fig/huge.png")
+    expect(v?.message).toContain("did not read 1 .tex file")
+  })
+
+  it("stops reading a source while storage is behind", async () => {
+    // Forty 64 KB figures in front of a store that takes nothing until it is told to. The
+    // reader has to stop once the bytes waiting on storage reach the limit, not run on.
+    const figures: Record<string, Uint8Array> = {}
+    for (let i = 0; i < 40; i++) {
+      const png = new Uint8Array(64 * 1024)
+      crypto.getRandomValues(png)
+      figures[`paper/fig/${i}.png`] = png
+    }
+    const archive = gzipSync(
+      tarSync({
+        "paper/main.tex": "\\documentclass{article}\\begin{document}x\\end{document}",
+        ...figures,
+      }),
+    )
+    let pulled = 0
+    const stub = arxivStub({
+      source: () =>
+        new Response(
+          new ReadableStream<Uint8Array>(
+            {
+              pull(controller) {
+                if (pulled >= archive.length) {
+                  controller.close()
+                  return
+                }
+                const piece = archive.slice(pulled, pulled + 16 * 1024)
+                pulled += piece.length
+                controller.enqueue(piece)
+              },
+            },
+            { highWaterMark: 0 },
+          ),
+          { status: 200, headers: { "content-type": "application/gzip" } },
+        ),
+    })
+    const { app, meta, ctx, tickDeps } = setup("contexts-import-backpressure", stub.fetch)
+    await app.request("/v1/me", { headers: as(owner.email) })
+    const x = await (await importPaper(app, "2408.00002")).json()
+    let open: () => void = () => {}
+    const opened = new Promise<void>((resolve) => {
+      open = resolve
+    })
+    const blobs: BlobStore = {
+      put: async (data) => {
+        await opened
+        return ctx.blobs.put(data)
+      },
+      get: (key) => ctx.blobs.get(key),
+    }
+    const base = tickDeps()
+    const tick = runImportTick({
+      ...base,
+      blobs,
+      caps: {
+        ...base.caps,
+        compressedBytes: 8 * 1024 * 1024,
+        inflatedBytes: 8 * 1024 * 1024,
+        bufferFileBytes: 128 * 1024,
+        inflightBytes: 256 * 1024,
+      },
+    })
+    // Wait until the reader has started and then gone still.
+    let last = -1
+    for (let i = 0; i < 200 && (pulled === 0 || pulled !== last); i++) {
+      last = pulled
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    }
+    expect(pulled).toBeGreaterThan(0)
+    expect(pulled).toBeLessThan(archive.length / 4)
+    open()
+    expect(await tick).toBe(1)
+    expect(pulled).toBe(archive.length)
+    expect((await meta.getImportJobForContext(x.id))?.status).toBe("ready")
+  })
+
+  it("imports a paper sent as one gzipped .tex, and a latin-1 source as UTF-8", async () => {
+    const enc = new TextEncoder()
+    let source = () =>
+      gzipSync(enc.encode("\\documentclass{article}\\begin{document}One file.\\end{document}"))
+    const stub = arxivStub({ source: () => gzip(source()) })
+    const { app, meta, ctx, clock: c, tickDeps } = setup("contexts-import-single", stub.fetch)
+    await app.request("/v1/me", { headers: as(owner.email) })
+    const textOf = async (contextId: string, path: string) => {
+      const detail = await (
+        await app.request(`/v1/contexts/${contextId}`, { headers: as(owner.email) })
+      ).json()
+      expect(detail.import.status).toBe("ready")
+      const paper = await meta.getByShortId(detail.documents[0].short_id)
+      const v = paper ? await meta.getVersion(paper.id, paper.current_version) : null
+      const manifest = JSON.parse(
+        new TextDecoder().decode((await ctx.blobs.get(v?.blob_key ?? "")) ?? undefined),
+      ) as { files: Record<string, { key: string }> }
+      const bytes = await ctx.blobs.get(manifest.files[path]?.key ?? "")
+      return new TextDecoder().decode(bytes ?? undefined)
+    }
+    const one = await (await importPaper(app, "2408.00003")).json()
+    expect(await runImportTick(tickDeps())).toBe(1)
+    expect(await textOf(one.id, "/main.tex")).toContain("One file.")
+
+    const latin = new Uint8Array([
+      ...enc.encode("\\documentclass{article}\\usepackage[latin1]{inputenc}\\begin{document}caf"),
+      0xe9,
+      ...enc.encode("\\end{document}"),
+    ])
+    source = () => gzipSync(tarSync({ "main.tex": latin, "refs.bib": new Uint8Array([0xe9]) }))
+    const two = await (await importPaper(app, "2408.00004")).json()
+    c.advance(60_000)
+    expect(await runImportTick(tickDeps())).toBe(1)
+    expect(await textOf(two.id, "/main.tex")).toContain("café")
+    expect(await textOf(two.id, "/refs.bib")).toBe("é")
+  })
+
   // A paper's implementation. The agent reads it; the person gets a link to the
   // repository on its own host and never a file listing.
   const REPO_FILES = {
@@ -1786,7 +2130,7 @@ describe("contexts: import from arXiv", () => {
         "lab/walled": () => new Response("<html>not a bot?</html>", { status: 406 }),
       },
     )
-    const { app, meta, ctx, tickDeps } = setup("contexts-import-code", stub.fetch)
+    const { app, meta, ctx, clock: c, tickDeps } = setup("contexts-import-code", stub.fetch)
     await app.request("/v1/me", { headers: as(owner.email) })
 
     const res = await app.request(
@@ -1798,6 +2142,19 @@ describe("contexts: import from arXiv", () => {
     )
     expect(res.status).toBe(201)
     const created = await res.json()
+    // The paper publishes in one pass and is readable at once. Its implementation is left
+    // to the next pass, handed back to the queue without spending an attempt.
+    expect(await runImportTick(tickDeps())).toBe(1)
+    expect(stub.calls.some((u) => u.includes("/tar.gz/"))).toBe(false)
+    const between = await (
+      await app.request(`/v1/contexts/${created.id}`, { headers: as(owner.email) })
+    ).json()
+    expect(between.import).toMatchObject({ status: "ready", code: { status: "pending" } })
+    expect(await meta.getImportJobForContext(created.id)).toMatchObject({
+      status: "pending",
+      attempts: 0,
+    })
+    c.advance(ARXIV_REQUEST_INTERVAL_MS + 1)
     expect(await runImportTick(tickDeps())).toBe(1)
 
     // The repository was fetched from the host's plain archive, with no API call and no
@@ -1911,8 +2268,8 @@ describe("contexts: import from arXiv", () => {
     ).toBe(404)
   })
 
-  it("keeps every source file and leaves the big media behind", async () => {
-    // A repository that is mostly demo media, which is what a paper's repository is.
+  it("keeps the source and leaves binaries, data and media behind", async () => {
+    // A repository that is mostly demo media and data, which is what a paper's repository is.
     // Real bytes, not printable ones: what makes a file media is its content.
     const bigGif = new Uint8Array(3 * 1024 * 1024)
     bigGif.set([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x00, 0x00])
@@ -1924,12 +2281,15 @@ describe("contexts: import from arXiv", () => {
       {
         "o/r": repoTar({
           "r-abc/train.py": "def train():\n    return 1\n",
+          "r-abc/configs/base.yaml": "lr: 0.1\n",
           "r-abc/assets/demo.gif": bigGif,
           "r-abc/assets/icon.png": smallPng,
+          // Text, but data: an agent reads the loader, not the points.
+          "r-abc/data/points.csv": "x,y\n1,2\n",
         }),
       },
     )
-    const { app, meta, ctx, tickDeps } = setup("contexts-import-code-big", stub.fetch)
+    const { app, meta, ctx, clock: c, tickDeps } = setup("contexts-import-code-big", stub.fetch)
     await app.request("/v1/me", { headers: as(owner.email) })
     const created = await (
       await app.request(
@@ -1937,16 +2297,32 @@ describe("contexts: import from arXiv", () => {
         jsonAs(as(owner.email), { url: "2406.00002", code_url: "https://github.com/o/r" }),
       )
     ).json()
-    // An artifact with an implementation gets twice this deployment's bundle cap, so a
-    // 1 MB cap here leaves 2 MB for a paper plus 3 MB of demo media.
     const base = tickDeps()
-    expect(
-      await runImportTick({
-        ...base,
-        caps: { ...base.caps, bundleBytes: 1024 * 1024 },
-        repoCaps: { ...base.repoCaps, compressedBytes: 8 * 1024 * 1024 },
-      }),
-    ).toBe(1)
+    const stored: number[] = []
+    const blobs: BlobStore = {
+      put: (data) => {
+        stored.push(data.byteLength)
+        return ctx.blobs.put(data)
+      },
+      get: (key) => ctx.blobs.get(key),
+      writer: (size) => {
+        stored.push(size)
+        const writer = ctx.blobs.writer?.(size)
+        if (!writer) throw new Error("the test store streams")
+        return writer
+      },
+    }
+    const deps = {
+      ...base,
+      blobs,
+      repoCaps: { ...base.repoCaps, compressedBytes: 8 * 1024 * 1024 },
+    }
+    // The paper publishes in one pass, and its implementation attaches in the next.
+    expect(await runImportTick(deps)).toBe(1)
+    c.advance(ARXIV_REQUEST_INTERVAL_MS + 1)
+    expect(await runImportTick(deps)).toBe(1)
+    // What is not source is decided before it is stored, so the GIF never was.
+    expect(stored).not.toContain(bigGif.byteLength)
 
     const detail = await (
       await app.request(`/v1/contexts/${created.id}`, { headers: as(owner.email) })
@@ -1957,11 +2333,10 @@ describe("contexts: import from arXiv", () => {
       new TextDecoder().decode((await ctx.blobs.get(v?.blob_key ?? "")) ?? undefined),
     )
     const code = Object.keys(manifest.files).filter((p: string) => p.startsWith("/code/"))
-    // Every line of source survives; the 3 MB GIF does not, and is named.
-    expect(code).toContain("/code/train.py")
-    expect(code).toContain("/code/assets/icon.png")
-    expect(code).not.toContain("/code/assets/demo.gif")
-    expect(v?.message).toContain("left out 1 large file")
+    // Every line of source survives, and nothing else does, however small; the largest of
+    // what was left out is named.
+    expect(code.sort()).toEqual(["/code/configs/base.yaml", "/code/train.py"])
+    expect(v?.message).toContain("left out 3 files that are not source")
     expect(v?.message).toContain("assets/demo.gif")
     expect((await meta.getImportJobForContext(created.id))?.code_status).toBe("ready")
   })
@@ -1976,9 +2351,9 @@ describe("contexts: import from arXiv", () => {
     const created = await (await importPaper(app, "2406.00005")).json()
     // arXiv's gate holds every worker for the interval after a request, so each tick
     // below waits it out the way a real deployment's next tick would.
-    const tick = async () => {
+    const tick = async (blobs: BlobStore = ctx.blobs) => {
       c.advance(ARXIV_REQUEST_INTERVAL_MS + 1)
-      return await runImportTick(tickDeps())
+      return await runImportTick({ ...tickDeps(), blobs })
     }
     expect(await tick()).toBe(1)
 
@@ -1990,12 +2365,15 @@ describe("contexts: import from arXiv", () => {
       const v = paper ? await meta.getVersion(paper.id, paper.current_version) : null
       const manifest = JSON.parse(
         new TextDecoder().decode((await ctx.blobs.get(v?.blob_key ?? "")) ?? undefined),
-      )
-      return { detail, version: v, paths: Object.keys(manifest.files).sort() }
+      ) as { files: Record<string, { key: string; size: number }> }
+      return { detail, version: v, manifest, paths: Object.keys(manifest.files).sort() }
     }
     const imported = await filesOf()
     expect(imported.paths.some((p: string) => p.startsWith("/code/"))).toBe(false)
     expect(imported.detail.import.code).toBeNull()
+    // The manifest records each file's size, which is what lets the paper travel by key.
+    const figure = imported.manifest.files["/fig/a.png"]
+    expect(figure?.size).toBe(PNG.byteLength)
 
     // Attach it afterwards: the paper is not fetched again, only its metadata is.
     const before = stub.calls.length
@@ -2014,8 +2392,19 @@ describe("contexts: import from arXiv", () => {
     // report itself as being fetched from arXiv again: only `code.status` is pending.
     expect(attached.import.status).toBe("ready")
     expect(attached.import.error).toBeNull()
-    expect(await tick()).toBe(1)
+    // Nor is the paper read back from storage: it is published again by key, so attaching
+    // the code never loads the figure it sits beside.
+    const reads: string[] = []
+    const counting: BlobStore = {
+      put: (data) => ctx.blobs.put(data),
+      get: (key) => {
+        reads.push(key)
+        return ctx.blobs.get(key)
+      },
+    }
+    expect(await tick(counting)).toBe(1)
     expect(stub.calls.slice(before).filter((u) => u.includes("/src/"))).toEqual([])
+    expect(reads).not.toContain(figure?.key)
 
     const withCode = await filesOf()
     expect(withCode.paths).toContain("/code/train.py")
@@ -2023,6 +2412,10 @@ describe("contexts: import from arXiv", () => {
     expect(withCode.detail.description).toContain("Ashish Vaswani, Noam Shazeer")
     expect(withCode.version?.message).toContain("Attached github.com/o/r")
     expect(withCode.version?.author).toBe("Ashish Vaswani, Noam Shazeer")
+    // The version measures what its manifest holds, the files carried by key included.
+    expect(withCode.version?.size_bytes).toBe(
+      Object.values(withCode.manifest.files).reduce((n, f) => n + f.size, 0),
+    )
 
     // Attaching the SAME repository again is not a change: the job runs, sees the link it
     // already fetched, and leaves the paper on the version it is on.
@@ -2056,7 +2449,7 @@ describe("contexts: import from arXiv", () => {
 
   it("a repository that cannot be fetched leaves the paper imported and says why", async () => {
     const stub = arxivStub() // every repository archive 404s
-    const { app, meta, tickDeps } = setup("contexts-import-code-fail", stub.fetch)
+    const { app, meta, clock: c, tickDeps } = setup("contexts-import-code-fail", stub.fetch)
     await app.request("/v1/me", { headers: as(owner.email) })
     const created = await (
       await app.request(
@@ -2064,6 +2457,9 @@ describe("contexts: import from arXiv", () => {
         jsonAs(as(owner.email), { url: "2406.00003", code_url: "https://github.com/o/gone" }),
       )
     ).json()
+    // The paper in one pass, the repository in the next.
+    expect(await runImportTick(tickDeps())).toBe(1)
+    c.advance(ARXIV_REQUEST_INTERVAL_MS + 1)
     expect(await runImportTick(tickDeps())).toBe(1)
 
     // The paper is what the import is for: it arrived, and stays arrived.
@@ -2077,6 +2473,29 @@ describe("contexts: import from arXiv", () => {
       code_status: "failed",
       code_error: "no such repository, or it is not public (the host answered 404)",
     })
+  })
+
+  it("refuses an implementation with more source than an import keeps, and keeps the paper", async () => {
+    const repo: Record<string, string> = {}
+    for (let i = 0; i < 6; i++) repo[`r-abc/pkg/mod${i}.py`] = `x = ${i}\n`
+    const stub = arxivStub({}, { "o/r": repoTar(repo) })
+    const { app, meta, clock: c, tickDeps } = setup("contexts-import-code-over", stub.fetch)
+    await app.request("/v1/me", { headers: as(owner.email) })
+    const created = await (
+      await app.request(
+        "/v1/contexts/import/arxiv",
+        jsonAs(as(owner.email), { url: "2406.00005", code_url: "https://github.com/o/r" }),
+      )
+    ).json()
+    const base = tickDeps()
+    const deps = { ...base, repoCaps: { ...base.repoCaps, files: 5 } }
+    expect(await runImportTick(deps)).toBe(1)
+    c.advance(ARXIV_REQUEST_INTERVAL_MS + 1)
+    expect(await runImportTick(deps)).toBe(1)
+    // Part of a tree would read like all of it, so none is attached, and the bound is named.
+    const job = await meta.getImportJobForContext(created.id)
+    expect(job).toMatchObject({ status: "ready", code_status: "failed", code_ref: null })
+    expect(job?.code_error).toContain("more than the 5 source files")
   })
 
   it("refuses a link that is not a public GitHub or GitLab repository", async () => {
@@ -2101,7 +2520,7 @@ describe("contexts: import from arXiv", () => {
 
   it("never fetches a repository archive from a private address", async () => {
     const stub = arxivStub()
-    const { app, meta, tickDeps } = setup("contexts-import-code-private", stub.fetch)
+    const { app, meta, clock: c, tickDeps } = setup("contexts-import-code-private", stub.fetch)
     await app.request("/v1/me", { headers: as(owner.email) })
     const created = await (
       await app.request(
@@ -2114,6 +2533,8 @@ describe("contexts: import from arXiv", () => {
     ).json()
 
     expect(await runImportTick(tickDeps())).toBe(1)
+    c.advance(ARXIV_REQUEST_INTERVAL_MS + 1)
+    expect(await runImportTick(tickDeps())).toBe(1)
     expect(await meta.getImportJobForContext(created.id)).toMatchObject({
       status: "ready",
       code_status: "failed",
@@ -2124,7 +2545,7 @@ describe("contexts: import from arXiv", () => {
 
   it("rechecks repository DNS before fetching an archive", async () => {
     const stub = arxivStub()
-    const { app, meta, tickDeps } = setup("contexts-import-code-private-dns", stub.fetch)
+    const { app, meta, clock: c, tickDeps } = setup("contexts-import-code-private-dns", stub.fetch)
     await app.request("/v1/me", { headers: as(owner.email) })
     const hostname = "gitlab.internal.example"
     const created = await (
@@ -2137,16 +2558,17 @@ describe("contexts: import from arXiv", () => {
       )
     ).json()
 
-    expect(
-      await runImportTick({
-        ...tickDeps(),
-        addressGuard: {
-          async precheck(url) {
-            return new URL(url).hostname === hostname ? "blocked: private DNS answer" : null
-          },
+    const deps = {
+      ...tickDeps(),
+      addressGuard: {
+        async precheck(url: string) {
+          return new URL(url).hostname === hostname ? "blocked: private DNS answer" : null
         },
-      }),
-    ).toBe(1)
+      },
+    }
+    expect(await runImportTick(deps)).toBe(1)
+    c.advance(ARXIV_REQUEST_INTERVAL_MS + 1)
+    expect(await runImportTick(deps)).toBe(1)
     expect(await meta.getImportJobForContext(created.id)).toMatchObject({
       status: "ready",
       code_status: "failed",
@@ -2233,5 +2655,80 @@ describe("contexts: import from arXiv", () => {
       expect((await importPaper(app, id)).status).toBe(201)
     const fourth = await importPaper(app, "2404.00005")
     expect(fourth.status).toBe(429)
+  })
+
+  it("shrinks a figure on the Workers tier in a browser page, sending it in slices", async () => {
+    // Browser Rendering cannot run here, so the page is a stand-in that runs the shrinker's
+    // page code against a stubbed canvas. What is pinned is the crossing (one figure at a
+    // time, in slices, and back) and the figures that are never sent at all.
+    const header = new Uint8Array(24)
+    header.set([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52,
+    ])
+    const view = new DataView(header.buffer)
+    view.setUint32(16, 2200)
+    view.setUint32(20, 1100)
+    const figure = new Uint8Array(900 * 1024)
+    figure.set(header)
+    const smaller = new Uint8Array(200 * 1024).fill(7)
+    let drawn: number[] = []
+    const page = globalThis as unknown as Record<string, unknown>
+    const saved = { bitmap: page.createImageBitmap, canvas: page.OffscreenCanvas }
+    page.createImageBitmap = async () => ({ width: 2200, height: 1100, close: () => {} })
+    page.OffscreenCanvas = class {
+      constructor(width: number, height: number) {
+        drawn = [width, height]
+      }
+      getContext() {
+        return { drawImage: () => {} }
+      }
+      async convertToBlob() {
+        return new Blob([smaller])
+      }
+    }
+    const evaluated: string[] = []
+    let launches = 0
+    const stand: ShrinkPage = {
+      evaluate: async (fn, arg) => {
+        evaluated.push(fn.name)
+        return fn(arg)
+      },
+      close: async () => {},
+    }
+    const shrinker = browserFigureShrinker({} as never, async () => {
+      launches++
+      return { newPage: async () => stand, close: async () => {} }
+    })
+    try {
+      const out = await shrinker.shrink({
+        path: "/fig/wide.png",
+        bytes: figure,
+        maxSide: 1600,
+        quality: 82,
+      })
+      expect(Buffer.from(out ?? new Uint8Array()).equals(Buffer.from(smaller))).toBe(true)
+      expect(drawn).toEqual([1600, 800])
+      // 900 KB went over in three slices.
+      expect(evaluated.filter((name) => name === "pageReceive")).toHaveLength(3)
+      // Never sent: a format it does not re-encode, and a figure over 80 megapixels.
+      view.setUint32(16, 20_000)
+      view.setUint32(20, 20_000)
+      const huge = new Uint8Array(1024)
+      huge.set(header)
+      const sent = evaluated.length
+      expect(
+        await shrinker.shrink({ path: "/fig/plot.gif", bytes: figure, maxSide: 1600, quality: 82 }),
+      ).toBeNull()
+      expect(
+        await shrinker.shrink({ path: "/fig/huge.png", bytes: huge, maxSide: 1600, quality: 82 }),
+      ).toBeNull()
+      expect(evaluated).toHaveLength(sent)
+      expect(launches).toBe(1)
+      expect(shrinker.unavailable).toBe(false)
+    } finally {
+      await shrinker.close()
+      page.createImageBitmap = saved.bitmap
+      page.OffscreenCanvas = saved.canvas
+    }
   })
 })

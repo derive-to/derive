@@ -3530,23 +3530,30 @@ export function runStoreContract(
       const t0 = "2999-01-01T00:00:00.000Z"
       const lease = "2999-01-01T00:04:00.000Z"
       // Another deployment's worker never sees this job.
-      expect(await store.claimDueImportJob(t0, lease, "https://other.test")).toBeNull()
-      const claimed = await store.claimDueImportJob(t0, lease, "https://derive.test")
+      expect(await store.claimDueImportJob(t0, lease, "https://other.test", "w0:a")).toBeNull()
+      const claimed = await store.claimDueImportJob(t0, lease, "https://derive.test", "w1:a")
       expect(claimed).toMatchObject({
         id: job.id,
         status: "fetching",
         attempts: 1,
         lease_until: lease,
+        claim_token: "w1:a",
       })
       // Held: a second worker on the same scope gets nothing until the lease lapses.
-      expect(await store.claimDueImportJob(t0, lease, "https://derive.test")).toBeNull()
+      expect(await store.claimDueImportJob(t0, lease, "https://derive.test", "w2:a")).toBeNull()
       await store.updateImportJob(job.id, { paper_artifact_id: "a_paper", resolved_version: 2 })
       const reclaimed = await store.claimDueImportJob(
         "2999-01-01T00:05:00.000Z",
         "2999-01-01T00:09:00.000Z",
         "https://derive.test",
+        "w2:b",
       )
-      expect(reclaimed).toMatchObject({ id: job.id, attempts: 2, paper_artifact_id: "a_paper" })
+      expect(reclaimed).toMatchObject({
+        id: job.id,
+        attempts: 2,
+        paper_artifact_id: "a_paper",
+        claim_token: "w2:b",
+      })
 
       // A failed job is due only after its backoff.
       await store.updateImportJob(job.id, {
@@ -3558,10 +3565,20 @@ export function runStoreContract(
       })
       expect(await store.countActiveImportJobs(ORG)).toBeGreaterThanOrEqual(1)
       expect(
-        await store.claimDueImportJob("2999-01-01T00:30:00.000Z", lease, "https://derive.test"),
+        await store.claimDueImportJob(
+          "2999-01-01T00:30:00.000Z",
+          lease,
+          "https://derive.test",
+          "w3:a",
+        ),
       ).toBeNull()
       expect(
-        await store.claimDueImportJob("2999-01-01T01:00:00.000Z", lease, "https://derive.test"),
+        await store.claimDueImportJob(
+          "2999-01-01T01:00:00.000Z",
+          lease,
+          "https://derive.test",
+          "w3:b",
+        ),
       ).toMatchObject({ id: job.id, attempts: 3 })
       await store.updateImportJob(job.id, {
         status: "ready",
@@ -3573,7 +3590,57 @@ export function runStoreContract(
         manifest_version: 2,
       })
       expect(
-        await store.claimDueImportJob("2999-01-02T00:00:00.000Z", lease, "https://derive.test"),
+        await store.claimDueImportJob(
+          "2999-01-02T00:00:00.000Z",
+          lease,
+          "https://derive.test",
+          "w4:a",
+        ),
+      ).toBeNull()
+    })
+
+    it("import jobs: a claim's writes are its own, and a job that keeps being cut off stops being due", async () => {
+      const scope = `https://cutoff-${uuid()}.test`
+      const { job } = await newImport(`2402.${uuid().slice(0, 5).replace(/\D/g, "2")}`, scope)
+      const t0 = "2999-01-01T00:00:00.000Z"
+      const lease = "2999-01-01T00:04:00.000Z"
+      expect(await store.claimDueImportJob(t0, lease, scope, "w1:first")).toMatchObject({
+        attempts: 1,
+      })
+      // The owning claim's write lands; any other token lands nowhere, and says so.
+      const renewed = "2999-01-01T00:08:00.000Z"
+      expect(await store.updateImportJob(job.id, { lease_until: renewed }, "w1:first")).toBe(true)
+      expect(await store.updateImportJob(job.id, { status: "ready" }, "w9:stale")).toBe(false)
+      expect(await store.getImportJob(job.id)).toMatchObject({
+        status: "fetching",
+        lease_until: renewed,
+        claim_token: "w1:first",
+      })
+      // A write without a token (a requeue from a route) always lands, and clearing the
+      // token takes the claim away from the worker that held it.
+      expect(await store.updateImportJob(job.id, { claim_token: null })).toBe(true)
+      expect(await store.updateImportJob(job.id, { status: "ready" }, "w1:first")).toBe(false)
+      expect(await store.updateImportJob(uuid(), { status: "ready" })).toBe(false)
+
+      // Cut off on every attempt: each claim lapses without writing anything. The lapse of
+      // the last attempt is claimable once more, for the worker to record it dead, and then
+      // the job is never due again.
+      await store.updateImportJob(job.id, { status: "fetching", attempts: 3, lease_until: t0 })
+      expect(
+        await store.claimDueImportJob(
+          "2999-01-01T00:10:00.000Z",
+          "2999-01-01T00:14:00.000Z",
+          scope,
+          "w2:over",
+        ),
+      ).toMatchObject({ id: job.id, attempts: 4, claim_token: "w2:over" })
+      expect(
+        await store.claimDueImportJob(
+          "2999-01-01T00:20:00.000Z",
+          "2999-01-01T00:24:00.000Z",
+          scope,
+          "w3:never",
+        ),
       ).toBeNull()
     })
 

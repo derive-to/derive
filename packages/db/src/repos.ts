@@ -159,6 +159,7 @@ import {
   type DynamicSlotWrite,
   type DynamicWriteOptions,
   GLOBAL_FOLLOW_ORG,
+  IMPORT_MAX_ATTEMPTS,
   isValidWorkflowRunDefinitionPin,
   isValidWorkflowStepContextPin,
   LINKS_FACT,
@@ -3935,9 +3936,13 @@ export function makeRepos(db: SqliteDb) {
   // Due = never claimed, a retry whose backoff has elapsed, or a claim whose lease
   // lapsed (the worker died mid-fetch). One row, oldest first; the UPDATE re-checks
   // the same predicate so two workers racing on the id take it at most once.
+  // Past its attempts a job is never due, whatever its status says: a failure on the last
+  // attempt goes dead by itself, and this stops the claim that never came back, so a paper
+  // that gets its worker killed is not reclaimed, and killed, forever.
   const importJobDue = (now: string, scope: string) =>
     and(
       eq(importJob.scope, scope),
+      lte(importJob.attempts, IMPORT_MAX_ATTEMPTS),
       or(
         eq(importJob.status, "pending"),
         and(eq(importJob.status, "failed"), lte(importJob.next_attempt_at, now)),
@@ -3948,6 +3953,7 @@ export function makeRepos(db: SqliteDb) {
     now: string,
     leaseUntil: string,
     scope: string,
+    claimToken: string,
   ): Promise<ImportJobRecord | null> => {
     const due = await db
       .select({ id: importJob.id })
@@ -3963,6 +3969,7 @@ export function makeRepos(db: SqliteDb) {
         status: "fetching",
         attempts: sql`${importJob.attempts} + 1`,
         lease_until: leaseUntil,
+        claim_token: claimToken,
         updated_at: now,
       })
       .where(and(eq(importJob.id, due.id), importJobDue(now, scope)))
@@ -3972,8 +3979,18 @@ export function makeRepos(db: SqliteDb) {
   const updateImportJob = async (
     id: string,
     fields: Parameters<MetaStore["updateImportJob"]>[1],
-  ): Promise<void> => {
-    await db.update(importJob).set(fields).where(eq(importJob.id, id)).run()
+    claimToken?: string,
+  ): Promise<boolean> => {
+    const rows = await db
+      .update(importJob)
+      .set(fields)
+      .where(
+        claimToken === undefined
+          ? eq(importJob.id, id)
+          : and(eq(importJob.id, id), eq(importJob.claim_token, claimToken)),
+      )
+      .returning({ id: importJob.id })
+    return rows.length > 0
   }
   const countActiveImportJobs = async (orgId: string): Promise<number> =>
     (

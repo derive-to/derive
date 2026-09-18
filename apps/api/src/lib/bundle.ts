@@ -2,6 +2,7 @@ import {
   type BlobStore,
   type BundleManifest,
   isBundleContentType,
+  MAX_BUNDLE_UNZIPPED_BYTES_WITH_CODE,
   PublishError,
   type VersionRecord,
 } from "@derive/core"
@@ -102,6 +103,13 @@ export const mergeBundleZip = async (
   manifest: BundleManifest,
   newFiles: Record<string, string>,
 ): Promise<Uint8Array> => {
+  // The merged bundle is published as an upload, so one already past the largest upload
+  // could never be published this way. Refuse before reading it: in a request, reading a
+  // bundle that size whole is what runs out of memory. Only a manifest that records sizes
+  // can be judged unread, and an imported paper's does.
+  const recorded = Object.values(manifest.files).reduce((n, f) => n + (f.size ?? 0), 0)
+  if (recorded > MAX_BUNDLE_UNZIPPED_BYTES_WITH_CODE)
+    throw new PublishError(413, "this bundle is too large to edit in place")
   const entries: Record<string, Uint8Array> = {}
   for (const [path, entry] of Object.entries(manifest.files)) {
     const bytes = await blobs.get(entry.key)

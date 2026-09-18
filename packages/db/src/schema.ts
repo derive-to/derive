@@ -1558,6 +1558,10 @@ export const importJob = sqliteTable(
     code_status: text("code_status").$type<ImportCodeStatus>(),
     code_error: text("code_error"),
     code_ref: text("code_ref"),
+    // Which claim owns a fetching job, minted per claim. The worker's writes to the row are
+    // conditional on it, so a worker whose lease lapsed, and whose job another worker then
+    // reclaimed, cannot overwrite the new owner's progress. Nullable (clean ADD COLUMN).
+    claim_token: text("claim_token"),
     created_at: text("created_at").notNull().default(now),
     updated_at: text("updated_at").notNull().default(now),
   },

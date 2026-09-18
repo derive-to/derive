@@ -27,7 +27,12 @@ import {
   imageBackedPptx,
   normalizeExportOptions,
 } from "../src/lib/export-system"
-import { exportOnlyAlarmDecision, previewRendererWorkMode } from "../src/preview-do"
+import {
+  exportOnlyAlarmDecision,
+  previewRendererWorkMode,
+  roleOfPoke,
+  runsImports,
+} from "../src/preview-do"
 import {
   assertNavigationOk,
   assertRenderedDocumentOk,
@@ -90,6 +95,17 @@ describe("export contracts", () => {
     expect(exportOnlyAlarmDecision(1, false)).toEqual({ delayMs: 1_500, idleProbeArmed: false })
     expect(exportOnlyAlarmDecision(0, false)).toEqual({ delayMs: 60_000, idleProbeArmed: true })
     expect(exportOnlyAlarmDecision(0, true)).toEqual({ delayMs: null, idleProbeArmed: false })
+  })
+
+  it("gives paper imports a renderer instance of their own, never on an exports-only deployment", () => {
+    // The Worker pokes the importer at its own path; every other poke renders or exports.
+    expect(roleOfPoke("https://previews/imports")).toBe("imports")
+    expect(roleOfPoke("https://previews/poke")).toBe("previews")
+    expect(runsImports("imports", {})).toBe(true)
+    // The render instance never fetches papers, and neither does an exports-only
+    // deployment, whose database is not its own.
+    expect(runsImports("previews", {})).toBe(false)
+    expect(runsImports("imports", { DERIVE_EXPORTS_ONLY: "true" })).toBe(false)
   })
   it("normalizes bounded view state before hashing an immutable request", async () => {
     const options = normalizeExportOptions({ region: "  #chart  ", note: ` ${"x".repeat(3_000)} ` })

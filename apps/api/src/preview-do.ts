@@ -12,6 +12,7 @@ import { tickStore } from "./edge-pg"
 import { runExportTick } from "./exports"
 import { runImportTick } from "./imports"
 import { EDGE_IMPORT_CAPS } from "./lib/arxiv-import"
+import { browserFigureShrinker } from "./lib/image-shrink-cf"
 import { EDGE_REPO_CAPS } from "./lib/repo-fetch"
 import { log } from "./log"
 import { cfBrowserRenderer } from "./preview-cf"
@@ -32,6 +33,9 @@ const POKE_DELAY_MS = 250
 // drain tick. It stops after one empty probe instead of polling forever.
 const EXPORT_RETRY_PROBE_MS = 60_000
 const EXPORT_IDLE_PROBE = "export-idle-probe"
+// Which queue this instance drains, remembered from the poke that first woke it: the
+// alarm has no request to read it from.
+const ROLE_KEY = "role"
 
 /** The env the render DO needs: datastore bindings (Postgres when HYPERDRIVE is
  *  bound, else D1), the R2 blob bucket, the Browser Rendering binding, and the
@@ -65,6 +69,23 @@ export const exportOnlyAlarmDecision = (
   return { delayMs: null, idleProbeArmed: false }
 }
 
+/** The two queues this class drains, one per fixed instance name. */
+export type RendererRole = "previews" | "imports"
+
+/** The path the Worker pokes the importer at. Any other path is a render or export poke. */
+export const IMPORTS_POKE_PATH = "/imports"
+
+/** Which queue a poke is for, from the path it was sent to. */
+export const roleOfPoke = (url: string): RendererRole =>
+  new URL(url).pathname === IMPORTS_POKE_PATH ? "imports" : "previews"
+
+/** Whether an instance fetches papers: only the importer, and never on an exports-only
+ *  renderer, whose database is not its own. */
+export const runsImports = (
+  role: RendererRole,
+  env: Pick<PreviewRendererEnv, "DERIVE_EXPORTS_ONLY">,
+): boolean => role === "imports" && previewRendererWorkMode(env) === "full"
+
 /**
  * Preview render worker for the Workers tier (a single Durable Object, addressed
  * by a fixed name so every isolate pokes the same instance). It is the edge
@@ -79,6 +100,13 @@ export const exportOnlyAlarmDecision = (
  *
  * Single-consumer invariant: one fixed name "previews" → one DO instance → one
  * browser at a time → no parallel browser billing.
+ *
+ * Paper imports run in the same class under a second fixed name, "imports". An import can
+ * spend minutes downloading and publishing a large paper, so it gets an instance, an alarm
+ * and an isolate of its own: sharing a pass with renders and exports let one slow paper
+ * stall them, and a paper that ran out of memory took them down with it. Keeping it one
+ * class keeps it a deploy with no new binding and no migration. The importer never renders,
+ * so the invariant above still holds.
  */
 export class PreviewRenderer {
   constructor(
@@ -89,7 +117,15 @@ export class PreviewRenderer {
   // The Worker pokes this (and the cron backstop hits it) to wake the drainer.
   // Arm the alarm only when none is pending — an alarm already set will fire
   // within a tick.
-  async fetch(_req: Request): Promise<Response> {
+  async fetch(req: Request): Promise<Response> {
+    if (roleOfPoke(req.url) === "imports") {
+      if (!runsImports("imports", this.env)) return new Response("ok")
+      if ((await this.state.storage.get<RendererRole>(ROLE_KEY)) !== "imports")
+        await this.state.storage.put(ROLE_KEY, "imports")
+      if ((await this.state.storage.getAlarm()) === null)
+        await this.state.storage.setAlarm(Date.now() + POKE_DELAY_MS)
+      return new Response("ok")
+    }
     if (previewRendererWorkMode(this.env) === "exports-only") {
       // A fresh export should not wait behind the delayed retry probe.
       await this.state.storage.delete(EXPORT_IDLE_PROBE)
@@ -105,6 +141,8 @@ export class PreviewRenderer {
   // near-term retries fire without waiting for the next poke/cron. Errors must
   // not strand the alarm — on failure, reschedule so the loop self-heals.
   async alarm(): Promise<void> {
+    if ((await this.state.storage.get<RendererRole>(ROLE_KEY)) === "imports")
+      return this.importAlarm()
     let close = async () => {}
     try {
       const opened = tickStore(this.env)
@@ -132,53 +170,68 @@ export class PreviewRenderer {
         claimed = await runRenderTick(deps)
       }
       const exportsClaimed = await runExportTick(deps)
-      // Paper imports ride the same alarm on the full-work deployment: one job per tick
-      // behind arXiv's request gate, with the smaller edge caps (a 128 MB isolate inflates
-      // the archive). Never on an exports-only renderer, whose database is not its own.
-      let importsClaimed = 0
-      if (previewRendererWorkMode(this.env) === "full")
-        importsClaimed = await runImportTick({
-          meta: opened.store,
-          blobs,
-          bus: this.env.ROOMS ? createDoBackplane(this.env.ROOMS) : createInProcessBackplane(),
-          baseUrl,
-          fetch,
-          notify: async (a, event, data) => {
-            await enqueueForEvent(opened.store, baseUrl, a, event, data).catch(() => 0)
-          },
-          background: async (work) => {
-            await work.catch(() => undefined)
-          },
-          notifyRender: async (a, n) => {
-            await enqueueRender(opened.store, a.id, n).catch(() => undefined)
-          },
-          // No `search` and no `shrink` here, unlike the Node tick. Both are real gaps on
-          // this tier: an imported paper never enters workspace search, and an oversized
-          // source is refused rather than fitted. Wiring search needs a pgvector store on
-          // the alarm's own connection rather than the request-scoped pool, which is the
-          // plumbing a past outage came from, so it is deliberately not bundled into a
-          // diagnostic change.
-          caps: EDGE_IMPORT_CAPS,
-          repoCaps: EDGE_REPO_CAPS,
-          addressGuard: edgeGuard,
-        }).catch((error) => {
-          log.error("import tick failed", {
-            error: error instanceof Error ? error.message : String(error),
-          })
-          return 0
-        })
       if (previewRendererWorkMode(this.env) === "exports-only") {
         const idleProbe = (await this.state.storage.get<boolean>(EXPORT_IDLE_PROBE)) === true
         const next = exportOnlyAlarmDecision(exportsClaimed, idleProbe)
         if (next.idleProbeArmed) await this.state.storage.put(EXPORT_IDLE_PROBE, true)
         else await this.state.storage.delete(EXPORT_IDLE_PROBE)
         if (next.delayMs !== null) await this.state.storage.setAlarm(Date.now() + next.delayMs)
-      } else if (claimed + exportsClaimed + importsClaimed > 0) {
+      } else if (claimed + exportsClaimed > 0) {
         await this.state.storage.setAlarm(Date.now() + TICK_MS)
       }
     } catch {
       await this.state.storage.setAlarm(Date.now() + TICK_MS)
     } finally {
+      await close()
+    }
+  }
+
+  // One import per pass, then straight back while there was one, so a queue of papers
+  // drains without waiting for the cron. The tick holds arXiv's request gate, so coming
+  // back early only finds the gate closed until the interval has passed.
+  private async importAlarm(): Promise<void> {
+    if (!runsImports("imports", this.env)) return
+    let close = async () => {}
+    // Figures are shrunk in a browser, opened only once a source needs it and closed with
+    // the pass.
+    const shrinker = this.env.BROWSER ? browserFigureShrinker(this.env.BROWSER) : null
+    try {
+      const opened = tickStore(this.env)
+      close = opened.close
+      const baseUrl = this.env.BASE_URL ?? "https://derive.to"
+      const claimed = await runImportTick({
+        meta: opened.store,
+        blobs: new R2BlobStore(this.env.BUCKET),
+        bus: this.env.ROOMS ? createDoBackplane(this.env.ROOMS) : createInProcessBackplane(),
+        baseUrl,
+        fetch,
+        notify: async (a, event, data) => {
+          await enqueueForEvent(opened.store, baseUrl, a, event, data).catch(() => 0)
+        },
+        background: async (work) => {
+          await work.catch(() => undefined)
+        },
+        notifyRender: async (a, n) => {
+          await enqueueRender(opened.store, a.id, n).catch(() => undefined)
+        },
+        // No `search` here, unlike the Node tick: an imported paper never enters workspace
+        // search on this tier. Wiring it needs a pgvector store on the alarm's own
+        // connection rather than the request-scoped pool, which is the plumbing a past
+        // outage came from, so it is deliberately left to its own change.
+        shrink: shrinker?.shrink ?? null,
+        shrinkUnavailable: () => shrinker?.unavailable ?? false,
+        caps: EDGE_IMPORT_CAPS,
+        repoCaps: EDGE_REPO_CAPS,
+        addressGuard: edgeGuard,
+      })
+      if (claimed > 0) await this.state.storage.setAlarm(Date.now() + TICK_MS)
+    } catch (error) {
+      log.error("import tick failed", {
+        error: error instanceof Error ? error.message : String(error),
+      })
+      await this.state.storage.setAlarm(Date.now() + TICK_MS)
+    } finally {
+      await shrinker?.close()
       await close()
     }
   }

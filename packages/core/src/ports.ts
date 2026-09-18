@@ -27,6 +27,23 @@ export interface BlobStore {
    *  broken-embed check) treats absence as "can't check here" and skips — it never
    *  falls back to a full get. */
   has?(key: string): Promise<boolean>
+  /** Store a file too large to hold in memory: `size` bytes, written in order, kept under
+   *  their sha256 hex key like `put`. OPTIONAL: facing a store without it, a caller reads
+   *  the file whole and puts it, which only a process with memory to spare can afford. */
+  writer?(size: number): BlobWriter
+}
+
+/** A file on its way into a BlobStore (see `BlobStore.writer`). */
+export interface BlobWriter {
+  /** The next bytes. Resolves once the store has taken them, so a caller that awaits each
+   *  write holds no more than the store keeps up with. The bytes must not change until it
+   *  resolves. */
+  write(bytes: Uint8Array): Promise<void>
+  /** Every byte is in: store them under their content key and resolve it. Rejects, and
+   *  stores nothing under a content key, when the bytes written are not `size`. */
+  close(): Promise<string>
+  /** Give up: nothing is stored under a content key, and what was written is cleaned up. */
+  abort(): Promise<void>
 }
 
 /**
@@ -433,6 +450,11 @@ export type ImportKind = "arxiv"
  *  next_attempt_at) until dead. Cancelling is deleting the Context, which deletes the
  *  job; a worker that re-reads a missing job stops. */
 export type ImportJobStatus = "pending" | "fetching" | "ready" | "failed" | "dead"
+/** How many times a job is claimed before it gives up. A failure on the last attempt goes
+ *  `dead` by itself. A claim that never came back (the platform stopped the worker for
+ *  memory, CPU or time) leaves no failure behind, so the job is claimed once more only to
+ *  be recorded as dead, and is never due again. */
+export const IMPORT_MAX_ATTEMPTS = 3
 /** Why an import stopped. The first five are the upstream's verdict on the paper and
  *  never retry; the last two are the upstream's mood and do. */
 export type ImportErrorCode =
@@ -470,6 +492,10 @@ export interface ImportJobRecord {
   next_attempt_at: string
   /** While fetching: when the claim lapses and another worker may take the job. */
   lease_until: string | null
+  /** While fetching: which claim owns the job. Minted per claim; a worker writes to the job
+   *  only while this is still its own, so a run whose lease lapsed and was reclaimed cannot
+   *  overwrite the worker that took over. */
+  claim_token: string | null
   error_code: string | null
   error_detail: string | null
   /** Progress markers a reclaimed job resumes from instead of fetching again. */
@@ -1779,9 +1805,17 @@ export interface ContextStore {
   /** The jobs for these contexts, for a list that shows each row's fetch state. */
   getImportJobsForContexts(contextIds: string[]): Promise<ImportJobRecord[]>
   /** Claim ONE due job for this deployment: pending, failed with its retry due, or
-   *  fetching with a lapsed lease. Sets fetching, bumps attempts, stamps the lease.
-   *  Null when nothing is due. */
-  claimDueImportJob(now: string, leaseUntil: string, scope: string): Promise<ImportJobRecord | null>
+   *  fetching with a lapsed lease, and never one past IMPORT_MAX_ATTEMPTS. Sets fetching,
+   *  bumps attempts, stamps the lease and the claim's token. Null when nothing is due. */
+  claimDueImportJob(
+    now: string,
+    leaseUntil: string,
+    scope: string,
+    claimToken: string,
+  ): Promise<ImportJobRecord | null>
+  /** Update a job. With `claimToken` the write lands only while that claim still owns the
+   *  job. Resolves whether a row was written: false means the job is gone or, with a token,
+   *  that another claim has taken it over. */
   updateImportJob(
     id: string,
     fields: Partial<
@@ -1791,6 +1825,7 @@ export interface ContextStore {
         | "attempts"
         | "next_attempt_at"
         | "lease_until"
+        | "claim_token"
         | "error_code"
         | "error_detail"
         | "paper_artifact_id"
@@ -1802,7 +1837,8 @@ export interface ContextStore {
         | "updated_at"
       >
     >,
-  ): Promise<void>
+    claimToken?: string,
+  ): Promise<boolean>
   /** Jobs still in flight for a workspace (pending, fetching or awaiting a retry). */
   countActiveImportJobs(orgId: string): Promise<number>
   // ---- Upstream request gate ------------------------------------------------
@@ -4970,7 +5006,10 @@ export interface CommentListOpts {
 export interface BundleManifest {
   entry: string
   spa: boolean
-  files: Record<string, { key: string; type: string }>
+  /** Each file's blob key and content type, and its size in bytes on bundles published
+   *  since manifests recorded it: what lets a bundle be published again by key without
+   *  reading its files back. */
+  files: Record<string, { key: string; type: string; size?: number }>
 }
 
 export const BUNDLE_CONTENT_TYPE = "derive/bundle"
