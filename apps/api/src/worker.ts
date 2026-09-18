@@ -10,7 +10,7 @@ import type {
   ScheduledController,
   WorkerLoader,
 } from "@cloudflare/workers-types"
-import { KATEX_VERSION } from "@derive/core"
+import { KATEX_VERSION, MERMAID_VERSION } from "@derive/core"
 import { createD1Store } from "@derive/db/d1"
 import { PgMetaStore } from "@derive/db/pg"
 import { PgVectorStore } from "@derive/db/pgvector"
@@ -463,12 +463,13 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
           }
           return shellCache
         },
-        // The typesetter's files, copied into static assets by prep-edge-assets.mjs under
-        // the version core pins; a miss returns null and the page falls back to TeX source.
-        vendorAsset: async (file: string) => {
+        // Browser renderers are copied into static assets at the versions core pins.
+        // A miss returns null and the page falls back to source.
+        vendorAsset: async (file, library) => {
           try {
+            const version = library === "katex" ? KATEX_VERSION : MERMAID_VERSION
             const res = await env.ASSETS.fetch(
-              new URL(`/vendor/katex/${KATEX_VERSION}/${file}`, baseUrl).toString(),
+              new URL(`/vendor/${library}/${version}/${file}`, baseUrl).toString(),
             )
             return res.ok ? new Uint8Array(await res.arrayBuffer()) : null
           } catch {

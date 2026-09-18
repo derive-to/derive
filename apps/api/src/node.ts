@@ -300,20 +300,21 @@ const blobs: BlobStore = cfg.objectStoreUrl
 // meta) and to mountWeb (the client-router fallback). Only when serving the web.
 const shellHtml = cfg.serveWeb ? readFileSync(cfg.webShell, "utf8") : undefined
 
-// KaTeX ships with the API (apps/api depends on the exact version core pins) and is read
+// Browser renderers ship with the API at the exact versions core pins and are read
 // from the package's dist on demand; the route validates the file name against the
 // allowlist, this guards the path anyway.
-const katexDist = (() => {
+const vendorRequire = createRequire(import.meta.url)
+const vendorDist = {
+  katex: join(dirname(vendorRequire.resolve("katex/package.json")), "dist"),
+  mermaid: join(dirname(vendorRequire.resolve("mermaid/package.json")), "dist"),
+}
+const vendorAsset = async (
+  file: string,
+  library: "katex" | "mermaid",
+): Promise<Uint8Array | null> => {
+  if (file.includes("..") || file.startsWith("/")) return null
   try {
-    return join(dirname(createRequire(import.meta.url).resolve("katex/package.json")), "dist")
-  } catch {
-    return null
-  }
-})()
-const vendorAsset = async (file: string): Promise<Uint8Array | null> => {
-  if (!katexDist || file.includes("..") || file.startsWith("/")) return null
-  try {
-    return new Uint8Array(readFileSync(join(katexDist, file)))
+    return new Uint8Array(readFileSync(join(vendorDist[library], file)))
   } catch {
     return null
   }

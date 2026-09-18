@@ -8,6 +8,7 @@ import {
   renderDynamicSeed,
   renderDynamicValue,
 } from "./dynamic-data"
+import { MERMAID_HEAD } from "./mermaid"
 
 const { FilterXSS, whiteList } = xssPkg as unknown as typeof import("xss")
 
@@ -17,7 +18,7 @@ const sanitizer = new FilterXSS({
     img: ["src", "alt", "title", "width", "height"],
     a: ["href", "name", "target", "rel", "title"],
     code: ["class"],
-    pre: ["class"],
+    pre: ["class", "data-derive-readonly"],
     input: ["type", "checked", "disabled"],
     th: ["align"],
     td: ["align"],
@@ -169,10 +170,15 @@ export async function renderMarkdown(
 ): Promise<string> {
   // A per-call instance: the dynamic map is request state, and the shared `marked`
   // singleton must not carry one request's slots into the next.
+  let hasMermaid = false
   const md = new Marked({
     gfm: true,
     renderer: {
       code({ text, lang }) {
+        if (lang?.trim().split(/\s+/)[0]?.toLowerCase() === "mermaid") {
+          hasMermaid = true
+          return `<pre class="derive-mermaid" data-derive-readonly><code>${escapeHtml(text)}</code></pre>`
+        }
         const fence = parseDynamicFence(lang)
         if (!fence) return false
         const slot = opts.dynamic?.get(fence.name)
@@ -182,7 +188,8 @@ export async function renderMarkdown(
       },
     },
   })
-  return renderDocShell(sanitizeHtml(await md.parse(source)), title)
+  const body = sanitizeHtml(await md.parse(source))
+  return renderDocShell(body, title, hasMermaid ? MERMAID_HEAD : "")
 }
 
 export const escapeHtml = (s: string): string =>

@@ -19,6 +19,12 @@ on:
       - "apps/api/src/lib/serve-content.ts"
       - "apps/api/src/routes/raw.ts"
       - "apps/api/src/routes/blob.ts"
+      - "packages/core/src/md.ts"
+      - "packages/core/src/mermaid.ts"
+      - "apps/api/src/node.ts"
+      - "apps/api/src/worker.ts"
+      - "apps/api/scripts/prep-edge-assets.mjs"
+      - "apps/api/package.json"
       - "apps/web/e2e/render-fidelity/**"
       - "apps/web/playwright.config.ts"
 
