@@ -237,6 +237,22 @@ export function runStoreContract(
       }
     })
 
+    it("appends conditionally, so two writers revising one version cannot both land", async () => {
+      const a = await store.createArtifact(newArtifact())
+      await store.addVersion(a.id, newVersion({ message: "first" }))
+      // Both read version 1 and prepared from it. Only one append may land: the other's
+      // content would otherwise supersede it without anyone being told.
+      const won = await store.addVersionIfCurrent(a.id, 1, newVersion({ message: "mine" }))
+      const lost = await store.addVersionIfCurrent(a.id, 1, newVersion({ message: "theirs" }))
+      expect(won?.n).toBe(2)
+      expect(lost).toBeNull()
+      expect((await store.getByShortId(a.short_id))?.current_version).toBe(2)
+      expect((await store.getVersion(a.id, 2))?.message).toBe("mine")
+      // The loser writes nothing, and a version that never existed is refused the same way.
+      expect(await store.addVersionIfCurrent(a.id, 99, newVersion())).toBeNull()
+      expect(await store.listVersions(a.id)).toHaveLength(2)
+    })
+
     it("replaces only the exact current version and clears its derived data", async () => {
       const a = await store.createArtifact(newArtifact())
       const v1 = await store.addVersion(a.id, newVersion({ blob_key: "working-1" }))

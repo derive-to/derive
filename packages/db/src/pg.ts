@@ -1168,6 +1168,43 @@ export class PgMetaStore implements MetaStore {
     })
   }
 
+  /** addVersion's conditional twin: the locked read decides, so of two writers revising the
+   *  version they read, one appends and the other gets null. */
+  async addVersionIfCurrent(
+    artifactId: string,
+    expectedCurrent: number,
+    v: NewVersion,
+  ): Promise<VersionRecord | null> {
+    return this.db.transaction(async (tx) => {
+      const cur = await tx
+        .select({ cv: artifact.current_version })
+        .from(artifact)
+        .where(eq(artifact.id, artifactId))
+        .for("update")
+      if (cur[0]?.cv !== expectedCurrent) return null
+      const n = expectedCurrent + 1
+      await tx.insert(version).values({ ...v, artifact_id: artifactId, n })
+      await tx
+        .update(artifact)
+        .set({
+          current_version: n,
+          current_content_type: v.content_type,
+          updated_at: new Date().toISOString(),
+          author_name: v.author,
+          author_login: v.author_login ?? null,
+          author_avatar: v.author_avatar ?? null,
+          author_gh_id: v.author_gh_id ?? null,
+          author_id: v.author_id ?? null,
+        })
+        .where(eq(artifact.id, artifactId))
+      const rows = await tx
+        .select()
+        .from(version)
+        .where(and(eq(version.artifact_id, artifactId), eq(version.n, n)))
+      return one(rows)
+    })
+  }
+
   async replaceCurrentVersion(
     artifactId: string,
     expected: { n: number; blobKey: string },

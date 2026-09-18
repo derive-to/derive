@@ -95,6 +95,13 @@ export interface PublishInput {
    * short burst of attended web edits. The store rejects a stale blob key.
    */
   replaceCurrent?: { n: number; blobKey: string }
+  /**
+   * Append only while the artifact is still at this version.
+   *
+   * For a publish that means "revise the version I read", a concurrent publish must be
+   * refused rather than land on top of it. Ignored when `replaceCurrent` is set.
+   */
+  expectedCurrentVersion?: number
   /** Pre-minted short_id for a NEW artifact (create only, ignored on republish) —
    *  lets a caller embed the artifact's own id in its first version's content
    *  (the lineage resume block). 409 if already taken. */
@@ -658,11 +665,21 @@ export async function publish(
         timings,
       )
     }
+    // A revision of the version the caller read appends conditionally: a publish that
+    // slipped in while this one was prepared is refused instead of landing on top of it.
+    const expectedCurrent = replaceCurrent ? undefined : input.expectedCurrentVersion
     const version = replaceCurrent
       ? await meta.replaceCurrentVersion(artifact.id, replaceCurrent, nextVersion)
-      : await meta.addVersion(artifact.id, nextVersion)
+      : expectedCurrent !== undefined
+        ? await meta.addVersionIfCurrent(artifact.id, expectedCurrent, nextVersion)
+        : await meta.addVersion(artifact.id, nextVersion)
     if (!version)
-      throw new PublishError(409, "artifact changed while editing — reload and try again")
+      throw new PublishError(
+        409,
+        expectedCurrent !== undefined
+          ? `this artifact moved past version ${expectedCurrent} while you were preparing: read it again and publish from the version you read`
+          : "artifact changed while editing — reload and try again",
+      )
     // Rename on republish only when a title is explicitly supplied (the in-browser
     // editor sends it; a CLI republish without --title leaves the name untouched).
     const newTitle = input.title?.trim()

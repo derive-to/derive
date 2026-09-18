@@ -1105,6 +1105,39 @@ export function makeRepos(db: SqliteDb) {
     return (await getVersion(artifactId, n)) as VersionRecord
   }
 
+  /** addVersion's conditional twin: the bump is one statement guarded on the version the
+   *  caller read, so of two writers revising version N only one moves it to N+1 and the
+   *  other writes nothing. D1 has no transactions, so the winner's version row lands just
+   *  after the bump, the same shape as this driver's other multi-statement writes. */
+  const addVersionIfCurrent = async (
+    artifactId: string,
+    expectedCurrent: number,
+    v: NewVersion,
+  ): Promise<VersionRecord | null> => {
+    const n = expectedCurrent + 1
+    const won = await db
+      .update(artifact)
+      .set({
+        current_version: n,
+        current_content_type: v.content_type,
+        updated_at: new Date().toISOString(),
+        author_name: v.author,
+        author_login: v.author_login ?? null,
+        author_avatar: v.author_avatar ?? null,
+        author_gh_id: v.author_gh_id ?? null,
+        author_id: v.author_id ?? null,
+      })
+      .where(and(eq(artifact.id, artifactId), eq(artifact.current_version, expectedCurrent)))
+      .returning({ id: artifact.id })
+      .all()
+    if (won.length === 0) return null
+    await db
+      .insert(version)
+      .values({ ...v, artifact_id: artifactId, n })
+      .run()
+    return (await getVersion(artifactId, n)) as VersionRecord
+  }
+
   const replaceCurrentVersion = async (
     artifactId: string,
     expected: { n: number; blobKey: string },
@@ -6597,6 +6630,7 @@ export function makeRepos(db: SqliteDb) {
     listDynamicRevisions,
     deleteDynamicSlot,
     addVersion,
+    addVersionIfCurrent,
     replaceCurrentVersion,
     listVersions,
     getVersion,

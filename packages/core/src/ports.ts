@@ -767,6 +767,20 @@ export interface ArtifactStore {
     expected: { n: number; blobKey: string },
     v: NewVersion,
   ): Promise<VersionRecord | null>
+  /**
+   * Appends the next version, but only while the artifact is still at `expectedCurrent`.
+   *
+   * addVersion reads the current version and appends after it, so two writers that each
+   * prepared from version N append N+1 and N+2, and the second silently supersedes the
+   * first. Where a publish means "revise the version I read" (an implementation analysis,
+   * whose whole contract is that nothing disappears unannounced), this is the write to
+   * use: the artifact's own version number is the lock, and the loser gets null.
+   */
+  addVersionIfCurrent(
+    artifactId: string,
+    expectedCurrent: number,
+    v: NewVersion,
+  ): Promise<VersionRecord | null>
   listVersions(artifactId: string): Promise<VersionRecord[]>
   getVersion(artifactId: string, n: number): Promise<VersionRecord | null>
   /** What an unfurl/embed card needs for one artifact: its version and comment COUNTS,

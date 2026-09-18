@@ -250,6 +250,9 @@ export interface PreparedAnalysis {
   paper: ArtifactRecord
   /** What the Context's analysis link holds now: a new analysis links only while it still does. */
   expected: string | null
+  /** The version an update was read from, null when creating one. The publish appends only
+   *  while the analysis is still at it, so a concurrent update is refused, not buried. */
+  basedOn: number | null
   access: {
     workspaceAccess: ArtifactRecord["workspace_access"]
     linkRole: "none"
@@ -385,6 +388,7 @@ export const preparePaperAnalysis = async (
     context: x,
     paper,
     expected: x.analysis_artifact_id,
+    basedOn: input.existing ? a.based_on : null,
     access: { workspaceAccess: paper.workspace_access, linkRole: "none", listed: "none" },
   }
 }

@@ -1059,6 +1059,9 @@ export function registerPublishTool(tc: ToolContext): void {
             listed: resolvedListed,
             derivedFrom: derivedFromId,
             ...(existing ? { existingArtifact: existing } : {}),
+            // An analysis update revises the version the agent read. If another agent
+            // published while this one was preparing, refuse rather than bury its work.
+            ...(analysis?.basedOn != null ? { expectedCurrentVersion: analysis.basedOn } : {}),
             ...(workflow && workflowKey && workflowRequestHash
               ? {
                   workflow: {
