@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8" /><title>Shadow srcdoc</title></head>
+  <body>
+    <div id="host"></div>
+    <script>
+      const root = document.getElementById("host").attachShadow({ mode: "open" })
+      const frame = document.createElement("iframe")
+      frame.title = "Shadow generated visualization"
+      frame.style.cssText = "width: 640px; height: 360px; border: 0"
+      frame.srcdoc = "<!doctype html><h1>Shadow visualization is ready</h1>"
+      root.append(frame)
+    </script>
+  </body>
+</html>
