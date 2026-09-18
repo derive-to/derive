@@ -44,6 +44,16 @@ mkdirSync(join(vendor, "fonts"), { recursive: true })
 for (const f of ["katex.min.js", "katex.min.css"]) copyFileSync(join(katexDist, f), join(vendor, f))
 for (const f of readdirSync(join(katexDist, "fonts")).filter((f) => f.endsWith(".woff2")))
   copyFileSync(join(katexDist, "fonts", f), join(vendor, "fonts", f))
+// Mermaid's minified ESM entry loads diagram-specific chunks on demand. Copy just
+// that build (no duplicate bundles, source maps, or declarations).
+const mermaidPkg = require("mermaid/package.json")
+const mermaidDist = join(dirname(require.resolve("mermaid/package.json")), "dist")
+const mermaidVendor = join(dist, "vendor", "mermaid", mermaidPkg.version)
+const mermaidChunks = "chunks/mermaid.esm.min"
+mkdirSync(join(mermaidVendor, mermaidChunks), { recursive: true })
+copyFileSync(join(mermaidDist, "mermaid.esm.min.mjs"), join(mermaidVendor, "mermaid.esm.min.mjs"))
+for (const f of readdirSync(join(mermaidDist, mermaidChunks)).filter((f) => f.endsWith(".mjs")))
+  copyFileSync(join(mermaidDist, mermaidChunks, f), join(mermaidVendor, mermaidChunks, f))
 // `_headers` for everything the static layer serves (the SPA shell + /assets/*).
 // The worker sets these on its own routes (/v1, /api, /raw, /a, …), but the SPA
 // shell and assets are served directly by Static Assets and bypass that middleware

@@ -46,6 +46,85 @@ async function openRuntimeDiagnostics(page: Page, code: string) {
 }
 
 test.describe("render fidelity — pinning what the sandbox CSP permits", () => {
+  test("Markdown Mermaid renders locally, survives a bad diagram, and stays safe in preview", async ({
+    owner: page,
+  }) => {
+    const source = [
+      "# Diagrams",
+      "```mermaid",
+      "flowchart LR",
+      "A[Draft] --> B[Published]",
+      "```",
+      "```mermaid",
+      "this is not a diagram",
+      "```",
+      "```mermaid",
+      "sequenceDiagram",
+      "Alice->>Bob: Hello",
+      "```",
+      "```mermaid",
+      '%%{init: {"securityLevel": "loose", "dompurifyConfig": {"ADD_TAGS": ["script"]}}}%%',
+      "flowchart LR",
+      'A["<img src=x onerror=alert(1)>"] --> B[Safe]',
+      'click B "javascript:alert(1)"',
+      "```",
+      "```js",
+      "const example = 1",
+      "```",
+    ].join("\n")
+    const shortId = await publishArtifact(page, "diagrams.md", source)
+    const dialogs: string[] = []
+    page.on("dialog", async (dialog) => {
+      dialogs.push(dialog.message())
+      await dialog.dismiss()
+    })
+    await page.goto(`/artifacts/${shortId}`)
+    const artifact = page.frameLocator('iframe[title="diagrams"]')
+    await expect(artifact.locator("figure.derive-mermaid > svg")).toHaveCount(3)
+    await expect(artifact.locator("figure.derive-mermaid").first()).toContainText("Published")
+    await expect(artifact.locator("figure.derive-mermaid").nth(2)).toContainText("Hello")
+    await expect(artifact.locator("figure.derive-mermaid").nth(1)).toContainText(
+      "Could not render Mermaid diagram. Source shown below.",
+    )
+    await expect(artifact.locator("figure.derive-mermaid pre")).toHaveText("this is not a diagram")
+    await expect(artifact.locator("code.language-js")).toHaveText("const example = 1\n")
+    await expect(
+      artifact.locator("figure.derive-mermaid script, figure.derive-mermaid [onerror]"),
+    ).toHaveCount(0)
+    await expect(artifact.locator('figure.derive-mermaid a[href^="javascript:"]')).toHaveCount(0)
+    expect(dialogs).toEqual([])
+
+    // Preview uses srcdoc under the same opaque-origin sandbox as the source editor.
+    const response = await page.request.post("/v1/preview", { data: { source } })
+    expect(response.ok()).toBeTruthy()
+    const { html } = (await response.json()) as { html: string }
+    await page.evaluate((srcdoc) => {
+      const frame = document.createElement("iframe")
+      frame.title = "Mermaid preview check"
+      frame.setAttribute("sandbox", "allow-scripts")
+      frame.srcdoc = srcdoc
+      document.body.append(frame)
+    }, html)
+    const preview = page.frameLocator('iframe[title="Mermaid preview check"]')
+    await expect(preview.locator("figure.derive-mermaid > svg")).toHaveCount(3)
+    await expect(preview.locator("figure.derive-mermaid").first()).toContainText("Draft")
+    expect(dialogs).toEqual([])
+  })
+
+  test("Markdown Mermaid keeps source readable when its renderer cannot load", async ({
+    owner: page,
+  }) => {
+    await page.route("**/raw/vendor/mermaid/**", (route) => route.abort())
+    const shortId = await publishArtifact(
+      page,
+      "offline-diagram.md",
+      "```mermaid\ngraph LR\nA-->B\n```",
+    )
+    await page.goto(`/artifacts/${shortId}`)
+    const artifact = page.frameLocator('iframe[title="offline-diagram"]')
+    await expect(artifact.locator("pre.derive-mermaid")).toHaveText("graph LR\nA-->B")
+  })
+
   test("an iframe-based visualization with an authored CSP reaches Ready", async ({
     owner: page,
   }) => {

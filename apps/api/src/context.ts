@@ -304,14 +304,14 @@ export interface AppDeps {
    */
   shellFetch?: () => Promise<string | null>
   /**
-   * Bytes of a vendored browser library file (`katex.min.js`, `fonts/KaTeX_Main-Regular.woff2`),
-   * served by `/raw/vendor/katex/<version>/<file>` to rendered LaTeX pages. The artifact
+   * Bytes of a vendored browser library file (KaTeX math or Mermaid diagrams),
+   * served by `/raw/vendor/<library>/<version>/<file>` to rendered documents. The artifact
    * iframe is a null origin behind the sandbox CSP, so the typesetter has to come from a
    * `/raw/*` route with CORS rather than the SPA bundle or a CDN. Node reads the package from
    * node_modules; the edge reads the copy prep-edge-assets.mjs places in static assets.
-   * Unset ⇒ 404, and the page shows the TeX source in place of typeset math.
+   * Unset ⇒ 404, and the page keeps the source in place of rendered math/diagrams.
    */
-  vendorAsset?: (file: string) => Promise<Uint8Array | null>
+  vendorAsset?: (file: string, library: "katex" | "mermaid") => Promise<Uint8Array | null>
   /**
    * The outbound fetch used for the few upstream reads the API makes on a caller's behalf
    * (today: the CVPR author kit's style files when a paper is created from that template).

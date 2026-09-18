@@ -27,6 +27,22 @@ To keep comments attached across revisions:
 These are guidelines, not validation. Derive does not reject content that ignores them,
 but stable text makes later discussion easier to follow.
 
+### Mermaid diagrams in Markdown
+
+Use a fenced `mermaid` block to render a diagram in the document and its live preview:
+
+````markdown
+```mermaid
+flowchart LR
+  Draft --> Review --> Published
+```
+````
+
+Derive serves Mermaid locally and loads it only for documents with diagram blocks.
+Diagrams follow the viewer's light or dark color scheme when the page loads. Invalid
+diagrams keep their source visible; ordinary code blocks are unchanged. Edit diagrams
+in the source editor. Mermaid click callbacks and links are disabled.
+
 ## 2. The anchor-client protocol
 
 Derive serves a small client at **`/raw/derive-client.js`** and references it from

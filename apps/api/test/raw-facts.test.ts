@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { createRequire } from "node:module"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { KATEX_VERSION, newId, publish } from "@derive/core"
+import { KATEX_VERSION, MERMAID_VERSION, newId, publish } from "@derive/core"
 import { SqliteMetaStore } from "@derive/db/sqlite"
 import { FsBlobStore } from "@derive/storage/fs"
 import { afterAll, describe, expect, it } from "vitest"
@@ -14,18 +14,20 @@ import { createApp } from "../src/app"
 const dir = mkdtempSync(join(tmpdir(), "derive-rawslot-"))
 const meta = new SqliteMetaStore(join(dir, "r.db"))
 const blobs = new FsBlobStore(join(dir, "blobs"))
-// A stand-in for the KaTeX loader: two files exist, everything else is a miss.
+// Stand-ins for the browser libraries; all other files are loader misses.
 const vendorFiles: Record<string, string> = {
   "katex.min.js": "window.katex={}",
   "fonts/KaTeX_Main-Regular.woff2": "wOF2",
+  "mermaid/mermaid.esm.min.mjs": "export default {}",
+  "mermaid/chunks/mermaid.esm.min/flowDiagram-ABC.mjs": "export const diagram = {}",
 }
 const app = createApp({
   meta,
   blobs,
   baseUrl: "http://derive.test",
   token: "tok",
-  vendorAsset: async (file) => {
-    const body = vendorFiles[file]
+  vendorAsset: async (file, library) => {
+    const body = vendorFiles[library === "mermaid" ? `mermaid/${file}` : file]
     return body === undefined ? null : new TextEncoder().encode(body)
   },
 })
@@ -616,6 +618,40 @@ describe("the KaTeX vendor route", () => {
   it("pins the version pages request to the package the API installs", () => {
     const pkg = createRequire(import.meta.url)("katex/package.json") as { version: string }
     expect(KATEX_VERSION).toBe(pkg.version)
+  })
+})
+
+describe("the Mermaid vendor route", () => {
+  const base = `/raw/vendor/mermaid/${MERMAID_VERSION}`
+
+  it("serves the entry and lazy chunks as immutable JavaScript with null-origin CORS", async () => {
+    for (const file of ["mermaid.esm.min.mjs", "chunks/mermaid.esm.min/flowDiagram-ABC.mjs"]) {
+      const res = await app.request(`${base}/${file}`)
+      expect(res.status).toBe(200)
+      expect(res.headers.get("content-type")).toBe("text/javascript; charset=utf-8")
+      expect(res.headers.get("access-control-allow-origin")).toBe("*")
+      expect(res.headers.get("x-content-type-options")).toBe("nosniff")
+      expect(res.headers.get("cache-control")).toBe("public, max-age=31536000, immutable")
+      expect(await res.text()).toBe(vendorFiles[`mermaid/${file}`])
+    }
+  })
+
+  it("rejects unpinned versions, non-runtime files, and missing chunks", async () => {
+    for (const path of [
+      "/raw/vendor/mermaid/0.0.1/mermaid.esm.min.mjs",
+      `${base}/mermaid.js`,
+      `${base}/mermaid.esm.min.mjs.map`,
+      `${base}/chunks/mermaid.esm/flowDiagram-ABC.mjs`,
+      `${base}/chunks/mermaid.esm.min/missing.mjs`,
+      `${base}/chunks/mermaid.esm.min/%2e%2e%2fpackage.json`,
+    ]) {
+      expect((await app.request(path)).status).toBe(404)
+    }
+  })
+
+  it("pins the version pages request to the package the API installs", () => {
+    const pkg = createRequire(import.meta.url)("mermaid/package.json") as { version: string }
+    expect(MERMAID_VERSION).toBe(pkg.version)
   })
 })
 

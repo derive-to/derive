@@ -39,7 +39,7 @@ if (exceptions.some((exception) => exception.id === "GHSA-vwc7-r8mq-g2x9")) {
   }
   assert.deepEqual(
     consumers,
-    [{ parent: "onnxruntime-node@1.24.3", kind: "dependencies", version: "0.6.0" }],
+    [{ parent: "onnxruntime-node@1.24.3", kind: "dependencies", version: "0.6.1" }],
     "Re-audit the adm-zip exception: its locked consumer or version changed",
   )
 }
