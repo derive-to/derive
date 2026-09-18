@@ -96,6 +96,10 @@ const billingBlockCopy = (baseUrl: string) => {
       code: "billing_required",
       message: `White-label shared pages is a Team-plan feature, so the Made-with-Derive mark stays on until this workspace upgrades. An owner can upgrade at ${billingUrl}.`,
     },
+    custom_domain: {
+      code: "billing_required",
+      message: `A workspace subdomain is a Team-plan feature, so shared pages stay on the default address until this workspace upgrades. An owner can upgrade at ${billingUrl}.`,
+    },
     storage: {
       code: "storage_exceeded",
       message: `This workspace is out of storage, so this save was refused. Upgrade for more at ${billingUrl}.`,

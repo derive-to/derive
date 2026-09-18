@@ -65,6 +65,9 @@ export const billingRoutes = (ctx: AppContext) => {
       // May this workspace hide the Made-with-Derive mark? The settings page swaps the
       // white-label switch for an upgrade link when this is false.
       white_label: state.whiteLabelEntitled,
+      // May it claim a workspace subdomain? The Domains page swaps the claim form for
+      // an upgrade link when this is false.
+      custom_domain: state.customDomainEntitled,
       blocked: state.blockedReason ? blockCopy[state.blockedReason] : null,
     })
   })

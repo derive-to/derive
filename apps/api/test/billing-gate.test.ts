@@ -264,3 +264,25 @@ describe("MCP brandprint scaffold billing gate", () => {
     expect(settings.brandprint?.profileId).toBeFalsy()
   })
 })
+
+describe("billing gate: workspace subdomain", () => {
+  const claim = (app: ReturnType<typeof makeAuthedApp>["app"], label: string) =>
+    app.request("/v1/workspace/subdomain", jsonAs(as("u1@x.test"), { label }, "PUT"))
+
+  it("enforced-free claim 402s, subscribed claims, beta grace claims", async () => {
+    const made = makeAuthedApp("bg_subdomain_enforced", THREE, "editor", {
+      deps: { billing: new FakeBilling(), billingEnforceAt: PAST, subdomainBase: "derived.app" },
+    })
+    const refused = await claim(made.app, "gated-free")
+    expect(refused.status).toBe(402)
+    expect((await refused.json()).code).toBe("billing_required")
+    expect(await made.meta.getDomain("gated-free.derived.app")).toBeNull()
+    await seedSub(made.meta, "active")
+    expect((await claim(made.app, "gated-free")).status).toBe(201)
+
+    const beta = makeAuthedApp("bg_subdomain_beta", THREE, "editor", {
+      deps: { billing: new FakeBilling(), subdomainBase: "derived.app" },
+    })
+    expect((await claim(beta.app, "gated-beta")).status).toBe(201)
+  })
+})

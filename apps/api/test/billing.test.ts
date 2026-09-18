@@ -43,16 +43,19 @@ describe("billing routes", () => {
     expect(body.subscribed).toBe(false)
     expect(body.beta).toBe(true)
     expect(body.white_label).toBe(true)
+    expect(body.custom_domain).toBe(true)
   })
 
-  it("GET /v1/billing: white_label is the entitlement, not the toggle", async () => {
+  it("GET /v1/billing: white_label + custom_domain are entitlements, not toggles", async () => {
     const { app, fake } = boot("br_white_label", PAST)
     const free = await (await app.request("/v1/billing", { headers: as("u1@x.test") })).json()
     expect(free.white_label).toBe(false)
+    expect(free.custom_domain).toBe(false)
     fake.subscriptions.set("sub_1", SNAP)
     await hook(app, { type: "customer.subscription.updated", snapshot: SNAP })
     const paid = await (await app.request("/v1/billing", { headers: as("u1@x.test") })).json()
     expect(paid.white_label).toBe(true)
+    expect(paid.custom_domain).toBe(true)
   })
 
   it("checkout: owner gets a URL, quantity = live seats", async () => {
