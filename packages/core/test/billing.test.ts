@@ -20,7 +20,7 @@ const sub = (over: Partial<SubscriptionRecord> = {}): SubscriptionRecord => ({
 })
 
 describe("resolveBillingState", () => {
-  it("beta (no enforceAt): everything allowed, fallback cap, white-label entitled", () => {
+  it("beta (no enforceAt): everything allowed, fallback cap, Team features entitled", () => {
     const s = resolveBillingState({
       subscription: null,
       seatCount: 10,
@@ -34,6 +34,7 @@ describe("resolveBillingState", () => {
       canPublish: true,
       storageCapBytes: 123,
       whiteLabelEntitled: true,
+      customDomainEntitled: true,
       betaGrace: true,
     })
   })
@@ -58,6 +59,7 @@ describe("resolveBillingState", () => {
       expect(s.canPublish).toBe(true)
       expect(s.storageCapBytes).toBe(STORAGE_CAPS.team)
       expect(s.whiteLabelEntitled).toBe(true)
+      expect(s.customDomainEntitled).toBe(true)
     }
   })
 
@@ -78,9 +80,10 @@ describe("resolveBillingState", () => {
     expect(lapsed.canPublish).toBe(false)
     expect(lapsed.blockedReason).toBe("lapsed")
     expect(lapsed.whiteLabelEntitled).toBe(false)
+    expect(lapsed.customDomainEntitled).toBe(false)
   })
 
-  it("enforced, no sub, within free seats: allowed at the free cap, no white-label", () => {
+  it("enforced, no sub, within free seats: allowed at the free cap, no Team features", () => {
     const s = resolveBillingState({
       subscription: null,
       seatCount: FREE_SEAT_LIMIT,
@@ -91,6 +94,7 @@ describe("resolveBillingState", () => {
     expect(s.canPublish).toBe(true)
     expect(s.storageCapBytes).toBe(STORAGE_CAPS.free)
     expect(s.whiteLabelEntitled).toBe(false)
+    expect(s.customDomainEntitled).toBe(false)
   })
 
   it("enforced, no sub, 4th seat: blocked with needs_team", () => {

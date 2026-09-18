@@ -15,6 +15,19 @@ for the recommended install and verification flow.
 ## [Unreleased]
 
 ### Added
+- **A workspace subdomain: your name on every shared link, no DNS.** Settings → Domains
+  now lets a workspace owner claim one label under the instance's subdomain base
+  (`acme.derive.page` on derive.to), and every shared artifact is served there too, at
+  `<label>.<base>/<ref>`; the Share dialog lists it under "Also at". It is live the moment
+  it is claimed (the wildcard cert and route already cover it), the page previews how a
+  link will read as the label is typed, and the bare host bounces to the app instead of
+  answering "not found". One label per workspace; changing it releases the old name.
+  Labels share one namespace with per-artifact vanity subdomains, so neither can take
+  the other's, and a longer reserved list (`login`, `billing`, `support`, `mcp`, …) keeps
+  app and infra words out of reach. A Team feature: `PUT /v1/workspace/subdomain` answers
+  402 `billing_required` for an unentitled workspace, `GET /v1/billing` reports it as
+  `custom_domain`, and the page shows an "Upgrade to Team" link in place of the form.
+  Needs `DERIVE_SUBDOMAIN_BASE`; the Cloudflare custom-domain path is unchanged.
 - **Import a paper from arXiv as a read-only Context.** The new-context page's "Import a
   paper from arXiv" door takes an abstract page, a PDF link, a DOI, an `arXiv:` reference
   or a bare id (a strict grammar on an exact host allowlist; anything else is "not an

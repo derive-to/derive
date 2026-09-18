@@ -3,38 +3,17 @@ import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
 import { bail, fail, readJson } from "../lib/http"
-
-// Labels an artifact may never claim — they belong to the app or common infra.
-const RESERVED = new Set([
-  "www",
-  "app",
-  "api",
-  "raw",
-  "admin",
-  "mail",
-  "smtp",
-  "ns",
-  "ns1",
-  "ns2",
-  "cdn",
-  "static",
-  "assets",
-  "dashboard",
-  "status",
-  "docs",
-  "help",
-])
-// A single DNS label: 1-63 chars, a-z0-9 and hyphens, not hyphen-edged.
-const LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/
+import { isClaimableLabel, normalizeLabel } from "../lib/subdomain-labels"
 
 /** The artifact's ref (`<slug>-<short_id>`), the path segment in its URLs. */
 const refOf = (a: ArtifactRecord): string => (a.slug ? `${a.slug}-${a.short_id}` : a.short_id)
 
 /**
  * Per-artifact vanity subdomains (`<label>.<base>`, needs DERIVE_SUBDOMAIN_BASE): claim,
- * list, release; gated on `share`. Workspace custom domains are managed separately
- * (workspace-domains.ts) but surfaced here read-only as "also at <domain>/<ref>", so
- * the share dialog shows every URL an artifact is reachable at. Serving is in app.ts.
+ * list, release; gated on `share`. Workspace domains (the workspace's own subdomain and
+ * its Cloudflare custom domains) are managed separately (workspace-domains.ts) but
+ * surfaced here read-only as "also at <domain>/<ref>", so the share dialog shows every
+ * URL an artifact is reachable at. Serving is in app.ts.
  * The ArtifactDomain response schema is the single source for the web client's type.
  */
 export const domainRoutes = (ctx: AppContext) => {
@@ -107,7 +86,9 @@ export const domainRoutes = (ctx: AppContext) => {
                         .describe("This artifact's URL on that domain, including its ref."),
                     }),
                   )
-                  .describe("Workspace custom domains this artifact is served at (read-only)."),
+                  .describe(
+                    "Workspace domains (its subdomain, its custom domains) this artifact is served at (read-only).",
+                  ),
               }),
             },
           },
@@ -158,9 +139,8 @@ export const domainRoutes = (ctx: AppContext) => {
       if (!(await authorize(c, "share", artifact))) return bail(fail(c, 403, "forbidden"))
       const body = await readJson(c, z.object({ label: z.string() }))
       if (body instanceof Response) return bail(body)
-      const label = body.label.trim().toLowerCase()
-      if (!LABEL.test(label) || RESERVED.has(label))
-        return bail(fail(c, 400, "invalid or reserved subdomain label"))
+      const label = normalizeLabel(body.label)
+      if (!isClaimableLabel(label)) return bail(fail(c, 400, "invalid or reserved subdomain label"))
       const host = `${label}.${base}`
       const existing = await meta.getDomain(host)
       if (existing) {

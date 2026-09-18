@@ -220,7 +220,7 @@ const CONFIG_VARS: ConfigVar[] = [
   {
     name: "DERIVE_SUBDOMAIN_BASE",
     group: "hosting",
-    doc: "Vanity subdomains (domain mode): a base domain whose wildcard (*.<base>) points at this\nserver. An artifact assigned `q3-review.<base>` is served at that host's root. Unset =\nsubdomain serving off.",
+    doc: "Vanity subdomains (domain mode): a base domain whose wildcard (*.<base>) points at this\nserver. An artifact assigned `q3-review.<base>` is served at that host's root, and a\nworkspace that claims `acme.<base>` serves every shared artifact at `acme.<base>/<ref>`.\nUnset = subdomain serving off.",
     example: "derived.app",
   },
   {
