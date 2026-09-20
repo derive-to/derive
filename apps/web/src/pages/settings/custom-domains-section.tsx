@@ -1,11 +1,11 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
-import { Copy } from "lucide-react"
 import { useState } from "react"
 import { api, type WorkspaceDomain, type WorkspaceSubdomain } from "@/api"
 import { Icon } from "@/components/icons"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { EmptyState } from "@/components/shared/empty-state"
+import { fieldError } from "@/components/shared/field-error"
 import { ListRow } from "@/components/shared/list-row"
 import { LoadError } from "@/components/shared/load-error"
 import { SettingsEmpty } from "@/components/shared/settings-empty"
@@ -13,16 +13,21 @@ import { SettingsGroup } from "@/components/shared/settings-group"
 import { StatusBadge, type StatusTone } from "@/components/shared/status-badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupInput,
+  InputGroupText,
+} from "@/components/ui/input-group"
 import { useCopy } from "@/lib/clipboard"
 import { billingQuery, customDomainsQuery } from "@/lib/queries"
+import { labelError, normalizeLabel } from "@/lib/subdomain-label"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { AddForm } from "./add-form"
 import { SettingsListSkeleton } from "./settings-list-skeleton"
 import { SettingsSection } from "./settings-section"
 
-// The stand-in for an artifact's ref in every "here is how your link will read"
-// preview. Real refs are `<title-slug>-<short id>`; the preview keeps the shape
-// without pretending to be a real page.
+// A ref-shaped placeholder (`<title-slug>-<short id>`) for the link previews.
 const SAMPLE_REF = "q3-update-k7m2x9pq"
 
 export function CustomDomainsSection() {
@@ -51,8 +56,7 @@ export function CustomDomainsSection() {
       </SettingsSection>
     )
 
-  // Neither path is offered here (a self-host with no base and no Cloudflare): the
-  // section IS the empty state, so it keeps the page-level treatment.
+  // Neither kind is offered on this server: the section itself is the empty state.
   if (!state.subdomain_base && !state.enabled)
     return (
       <SettingsSection title="Domains" description={description}>
@@ -88,16 +92,6 @@ export function CustomDomainsSection() {
 
 // ---- Workspace subdomain: <label>.<base> ---------------------------------------
 
-// What the server will accept, mirrored so the preview and the button agree with the
-// 400 the API would send: a DNS label, lower-case, no hyphen at either edge.
-const LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/
-const normalizeLabel = (raw: string) =>
-  raw
-    .toLowerCase()
-    .replace(/[^a-z0-9-]/g, "-")
-    .replace(/-{2,}/g, "-")
-    .slice(0, 63)
-
 function SubdomainGroup({
   base,
   current,
@@ -107,8 +101,8 @@ function SubdomainGroup({
   current: WorkspaceSubdomain | null
   onChanged: () => void
 }) {
-  // A Team feature: the server 402s an unentitled claim, so a Free workspace sees the
-  // upgrade link where the form would be. Until billing answers, the form waits.
+  // Team feature: the server 402s an unentitled claim, so a Free workspace gets the
+  // upgrade link in place of the form. The form stays disabled until billing answers.
   const { data: billing } = useQuery(billingQuery())
   const locked = billing ? !billing.custom_domain : false
   const [editing, setEditing] = useState(false)
@@ -116,7 +110,7 @@ function SubdomainGroup({
   return (
     <SettingsGroup
       title="Workspace subdomain"
-      description={`One name, on ${base}. It works the moment you claim it: no DNS, no certificate to wait for. Shared pages keep their derive.to link too.`}
+      description={`One name, on ${base}. It works the moment you claim it: no DNS, no certificate to wait for. Existing links keep working.`}
     >
       {current && !editing ? (
         <ClaimedRow
@@ -168,8 +162,10 @@ function ClaimForm({
   onDone: () => void
   onCancel?: () => void
 }) {
-  const [label, setLabel] = useState(initial)
-  const valid = LABEL.test(label)
+  const [value, setValue] = useState(initial)
+  const label = normalizeLabel(value)
+  const err = label ? labelError(label) : null
+  const errField = fieldError("subdomain-error", err)
   const claim = useApiMutation({
     mutationFn: (l: string) => api.claimWorkspaceSubdomain(l),
     success: "Subdomain claimed. Your shared pages are live there now.",
@@ -177,39 +173,22 @@ function ClaimForm({
   })
   return (
     <AddForm
-      onSubmit={() => valid && claim.mutate(label)}
+      onSubmit={() => !err && label && claim.mutate(label)}
       submitLabel={initial ? "Change" : "Claim"}
       submitTestId="subdomain-claim"
       pending={claim.isPending}
-      disabled={!ready || !valid || label === initial}
+      disabled={!ready || !label || !!err || label === initial}
       after={
         <>
-          {/* The format, live: the link a reader would get, updated as the label is
-              typed. Mono, quiet, one line; the sample ref keeps the shape honest. */}
+          {/* How a link will read, updated as the label is typed. */}
           <p
             data-testid="subdomain-preview"
             className="truncate font-mono text-2xs text-muted-foreground"
           >
-            {label ? (
-              <>
-                Your links will read{" "}
-                <span className="text-foreground">
-                  https://{label}.{base}/
-                </span>
-                <span>{SAMPLE_REF}</span>
-              </>
-            ) : (
-              <>
-                Your links will read https://<span className="text-foreground">name</span>.{base}/
-                {SAMPLE_REF}
-              </>
-            )}
+            Your links will read https://
+            <span className="text-foreground">{label || "name"}</span>.{base}/{SAMPLE_REF}
           </p>
-          {label && !valid && (
-            <p className="text-2xs text-destructive">
-              Letters, numbers and hyphens only, and it can't start or end with a hyphen.
-            </p>
-          )}
+          {errField.node}
           {onCancel && (
             <Button
               variant="ghost"
@@ -224,22 +203,23 @@ function ClaimForm({
         </>
       }
     >
-      <div className="flex min-w-60 flex-1 items-center rounded-md border bg-background pr-3 focus-within:ring-1 focus-within:ring-ring">
-        <Input
+      <InputGroup className="min-w-60 flex-1">
+        <InputGroupInput
           data-testid="subdomain-label"
           aria-label="Subdomain name"
-          value={label}
-          onChange={(e) => setLabel(normalizeLabel(e.target.value))}
+          {...errField.aria}
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
           placeholder="acme"
           autoCapitalize="none"
           autoCorrect="off"
           spellCheck={false}
-          className="border-0 bg-transparent font-mono shadow-none focus-visible:ring-0"
+          className="font-mono"
         />
-        <span className="shrink-0 select-none font-mono text-sm text-muted-foreground">
-          .{base}
-        </span>
-      </div>
+        <InputGroupAddon align="inline-end">
+          <InputGroupText className="font-mono">.{base}</InputGroupText>
+        </InputGroupAddon>
+      </InputGroup>
     </AddForm>
   )
 }
@@ -268,11 +248,7 @@ function ClaimedRow({
       data-testid="subdomain-row"
       mono
       title={current.host}
-      meta={
-        <span className="font-mono">
-          Every shared artifact is also at {current.url}/{"<artifact-id>"}
-        </span>
-      }
+      meta={`Claimed ${new Date(current.created_at).toLocaleDateString()}`}
       actions={
         <>
           <StatusBadge data-testid="subdomain-status" tone="ok">
@@ -282,13 +258,12 @@ function ClaimedRow({
             variant="ghost"
             size="sm"
             data-testid="subdomain-copy"
-            aria-label="Copy the subdomain"
             onClick={() => void copy(current.url, { success: "Copied" })}
           >
-            {copied ? <Icon name="check" className="text-success" /> : <Copy className="size-4" />}
+            {copied ? <Icon name="check" className="text-success" /> : <Icon name="copy" />}
             Copy
           </Button>
-          {/* A lapsed plan keeps what it has but can't pick a new name. */}
+          {/* A lapsed plan keeps its label but can't pick a new one. */}
           {!locked && (
             <Button variant="ghost" size="sm" data-testid="subdomain-change" onClick={onChange}>
               Change
@@ -306,10 +281,9 @@ function ClaimedRow({
       }
       below={
         <>
-          {/* The format, as it stands: one real-shaped example of the link readers get. */}
           <div className="rounded-lg bg-secondary px-3 py-2">
             <p className="mb-1 font-mono text-2xs text-muted-foreground">
-              A shared artifact's link reads:
+              Every shared artifact is also served here. A link reads:
             </p>
             <p className="truncate font-mono text-2xs text-foreground">{sample}</p>
           </div>

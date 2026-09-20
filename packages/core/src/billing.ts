@@ -27,9 +27,8 @@ export interface BillingState {
   /** undefined = unlimited (self-host with no DERIVE_MAX_BYTES). */
   storageCapBytes?: number
   whiteLabelEntitled: boolean
-  /** May this workspace put its own name on its links (a `<label>.<base>` workspace
-   *  subdomain, and later a bring-your-own domain)? A Team feature, so it follows the
-   *  same rule as white-label: any active subscription, or the beta grace. */
+  /** May claim a workspace subdomain (and, later, a custom domain). Same rule as
+   *  white-label: any active subscription, or the beta grace. */
   customDomainEntitled: boolean
   /** The published beta promise is in effect: enforcement has not started and no
    *  subscription is active. The billing route's `beta` flag and the seat gate

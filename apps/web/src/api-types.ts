@@ -8699,11 +8699,6 @@ export interface components {
             label: string;
             /** @description The host with scheme; artifacts live at `<url>/<ref>`. */
             url: string;
-            /**
-             * @description Always active for a subdomain: it serves the moment it is claimed.
-             * @enum {string}
-             */
-            status: "active" | "pending" | "error";
             created_at: string;
         };
         WorkspaceDomain: {

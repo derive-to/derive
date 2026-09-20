@@ -1,9 +1,9 @@
-import type { ArtifactRecord, DomainRecord } from "@derive/core"
+import { type ArtifactRecord, type DomainRecord, labelError, normalizeLabel } from "@derive/core"
 import { createRoute, OpenAPIHono, z } from "@hono/zod-openapi"
 import type { BlankEnv } from "hono/types"
 import type { AppContext } from "../context"
+import { hostUrl } from "../lib/domains"
 import { bail, fail, readJson } from "../lib/http"
-import { isClaimableLabel, normalizeLabel } from "../lib/subdomain-labels"
 
 /** The artifact's ref (`<slug>-<short_id>`), the path segment in its URLs. */
 const refOf = (a: ArtifactRecord): string => (a.slug ? `${a.slug}-${a.short_id}` : a.short_id)
@@ -19,18 +19,11 @@ const refOf = (a: ArtifactRecord): string => (a.slug ? `${a.slug}-${a.short_id}`
 export const domainRoutes = (ctx: AppContext) => {
   const { meta, requireArtifact, authorize } = ctx
   const base = ctx.deps.subdomainBase?.toLowerCase()
-  const scheme = (() => {
-    try {
-      return new URL(ctx.deps.baseUrl).protocol
-    } catch {
-      return "https:"
-    }
-  })()
   const app = new OpenAPIHono<BlankEnv>()
 
   const toJson = (d: DomainRecord) => ({
     host: d.host,
-    url: `${scheme}//${d.host}`,
+    url: hostUrl(ctx.deps.baseUrl, d.host),
     kind: d.kind,
     status: d.status,
     created_at: d.created_at,
@@ -103,12 +96,16 @@ export const domainRoutes = (ctx: AppContext) => {
         meta.getWorkspaceDomains(artifact.org_id),
       ])
       const ref = refOf(artifact)
+      // A workspace subdomain claimed under a base that has since changed is not
+      // served by the host dispatch, so it is not a URL either.
+      const served = (d: DomainRecord) =>
+        d.status === "active" && (d.kind !== "subdomain" || (!!base && d.host.endsWith(`.${base}`)))
       return c.json({
         base: base ?? null,
         domains: subs.map(toJson),
         workspace_domains: wsDomains
-          .filter((d) => d.status === "active")
-          .map((d) => ({ host: d.host, url: `${scheme}//${d.host}/${ref}` })),
+          .filter(served)
+          .map((d) => ({ host: d.host, url: `${hostUrl(ctx.deps.baseUrl, d.host)}/${ref}` })),
       })
     },
   )
@@ -140,7 +137,7 @@ export const domainRoutes = (ctx: AppContext) => {
       const body = await readJson(c, z.object({ label: z.string() }))
       if (body instanceof Response) return bail(body)
       const label = normalizeLabel(body.label)
-      if (!isClaimableLabel(label)) return bail(fail(c, 400, "invalid or reserved subdomain label"))
+      if (labelError(label)) return bail(fail(c, 400, "invalid or reserved subdomain label"))
       const host = `${label}.${base}`
       const existing = await meta.getDomain(host)
       if (existing) {

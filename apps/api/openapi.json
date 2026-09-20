@@ -4349,15 +4349,6 @@
             "type": "string",
             "description": "The host with scheme; artifacts live at `<url>/<ref>`."
           },
-          "status": {
-            "type": "string",
-            "enum": [
-              "active",
-              "pending",
-              "error"
-            ],
-            "description": "Always active for a subdomain: it serves the moment it is claimed."
-          },
           "created_at": {
             "type": "string"
           }
@@ -4366,7 +4357,6 @@
           "host",
           "label",
           "url",
-          "status",
           "created_at"
         ]
       },
