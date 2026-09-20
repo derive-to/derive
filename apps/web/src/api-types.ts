@@ -6943,7 +6943,7 @@ export interface paths {
                             base: string | null;
                             /** @description The artifact's own vanity subdomains, managed here. */
                             domains: components["schemas"]["ArtifactDomain"][];
-                            /** @description Workspace custom domains this artifact is served at (read-only). */
+                            /** @description Workspace domains (its subdomain, its custom domains) this artifact is served at (read-only). */
                             workspace_domains: {
                                 host: string;
                                 /** @description This artifact's URL on that domain, including its ref. */
@@ -7041,7 +7041,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List the workspace's custom domains and whether they're supported here. */
+        /** List the workspace's subdomain and custom domains, and what this server supports. */
         get: {
             parameters: {
                 query?: never;
@@ -7051,13 +7051,17 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description Whether custom domains are enabled, the CNAME target, and the domains. */
+                /** @description The subdomain base + claimed label, whether custom domains are enabled, the CNAME target, and the custom domains. */
                 200: {
                     headers: {
                         [name: string]: unknown;
                     };
                     content: {
                         "application/json": {
+                            /** @description The base a workspace subdomain hangs off (e.g. derive.page); null when subdomains are off here. */
+                            subdomain_base: string | null;
+                            /** @description The workspace's claimed subdomain, or null. */
+                            subdomain: components["schemas"]["WorkspaceSubdomain"] | unknown;
                             /** @description True when this server supports custom domains. */
                             enabled: boolean;
                             /** @description The CNAME target to point domains at; null when they're disabled. */
@@ -7107,6 +7111,73 @@ export interface paths {
             };
         };
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workspace/subdomain": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Claim or change the workspace's subdomain. */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The subdomain (already this workspace's). */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["WorkspaceSubdomain"];
+                    };
+                };
+                /** @description The newly claimed subdomain; any previous label is released. */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["WorkspaceSubdomain"];
+                    };
+                };
+            };
+        };
+        post?: never;
+        /** Release the workspace's subdomain. */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The subdomain was released. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            ok: boolean;
+                        };
+                    };
+                };
+            };
+        };
         options?: never;
         head?: never;
         patch?: never;
@@ -8619,6 +8690,15 @@ export interface components {
              * @enum {string}
              */
             status: "active" | "pending" | "error";
+            created_at: string;
+        };
+        WorkspaceSubdomain: {
+            /** @description The full host, `<label>.<base>`. */
+            host: string;
+            /** @description The label the workspace chose. */
+            label: string;
+            /** @description The host with scheme; artifacts live at `<url>/<ref>`. */
+            url: string;
             created_at: string;
         };
         WorkspaceDomain: {

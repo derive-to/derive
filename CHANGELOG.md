@@ -15,6 +15,20 @@ for the recommended install and verification flow.
 ## [Unreleased]
 
 ### Added
+- **Workspace subdomains.** A workspace can claim one label under the instance's
+  subdomain base (e.g. `acme.derive.page`), and every shared artifact is then also
+  served at `<label>.<base>/<ref>`; the Share dialog lists it under "Also at". Claimed in
+  Settings → Domains, or `PUT` / `DELETE /v1/workspace/subdomain`; `GET
+  /v1/workspace/domains` now reports the base and the claim next to the custom-domain
+  list. One label per workspace: a new label releases the old host with no forwarding.
+  Workspace and per-artifact labels share one namespace, and the reserved list (now in
+  `@derive/core`, mirrored in the web client) grows to cover app routes and infra names
+  such as `login`, `billing`, `mcp`, `support`; existing claims are unaffected. A Team
+  feature: the claim answers 402 `billing_required` for an unentitled workspace and `GET
+  /v1/billing` reports the entitlement as `custom_domain`; a lapsed plan keeps serving
+  on its label. The bare host of a workspace subdomain 302s to the app; a custom
+  domain's bare host stays a 404, and the custom-domain routes no longer see subdomain
+  rows. Requires `DERIVE_SUBDOMAIN_BASE`.
 - **Import a paper from arXiv as a read-only Context.** The new-context page's "Import a
   paper from arXiv" door takes an abstract page, a PDF link, a DOI, an `arXiv:` reference
   or a bare id (a strict grammar on an exact host allowlist; anything else is "not an

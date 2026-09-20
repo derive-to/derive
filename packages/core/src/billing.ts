@@ -27,6 +27,9 @@ export interface BillingState {
   /** undefined = unlimited (self-host with no DERIVE_MAX_BYTES). */
   storageCapBytes?: number
   whiteLabelEntitled: boolean
+  /** May claim a workspace subdomain (and, later, a custom domain). Same rule as
+   *  white-label: any active subscription, or the beta grace. */
+  customDomainEntitled: boolean
   /** The published beta promise is in effect: enforcement has not started and no
    *  subscription is active. The billing route's `beta` flag and the seat gate
    *  read this instead of re-deriving it from other fields. */
@@ -58,6 +61,7 @@ export const resolveBillingState = (args: {
       canPublish: true,
       storageCapBytes: STORAGE_CAPS[sub.tier],
       whiteLabelEntitled: true,
+      customDomainEntitled: true,
       betaGrace: false,
     }
   }
@@ -69,6 +73,7 @@ export const resolveBillingState = (args: {
       canPublish: true,
       storageCapBytes: fallbackMaxBytes,
       whiteLabelEntitled: true,
+      customDomainEntitled: true,
       betaGrace: true,
     }
   }
@@ -77,6 +82,7 @@ export const resolveBillingState = (args: {
     subscriptionActive: false,
     storageCapBytes: STORAGE_CAPS.free,
     whiteLabelEntitled: false,
+    customDomainEntitled: false,
     betaGrace: false,
   }
   if (sub && (LAPSED_SUBSCRIPTION_STATUSES as readonly string[]).includes(sub.status))

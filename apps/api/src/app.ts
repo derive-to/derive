@@ -310,7 +310,14 @@ export function createApp(deps: AppDeps): Hono {
       // scoped to the domain's org so a tenant can't serve another tenant's artifact.
       const segs = c.req.path.replace(/^\/+/, "").split("/")
       const ref = segs[0] ?? ""
-      if (!ref) return c.text("not found", 404)
+      // The bare host has no page of its own. Our subdomain sends a typed-in address
+      // to the app (no-store: the app origin is config); a customer's own domain
+      // stays a 404 rather than bouncing their visitors to us.
+      if (!ref) {
+        if (!isSub) return c.text("not found", 404)
+        c.header("Cache-Control", "no-store")
+        return c.redirect(deps.baseUrl, 302)
+      }
       const a = await ctx.meta.getByShortId(parseRef(ref).shortId)
       if (!a || a.org_id !== record.org_id) return c.text("not found", 404)
       const n = parseRef(ref).version ?? a.current_version
