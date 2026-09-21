@@ -14,6 +14,15 @@ for the recommended install and verification flow.
 
 ## [Unreleased]
 
+### Changed
+- **"Copy link" hands out the workspace's own domain.** When a workspace has claimed a
+  subdomain (or attached a custom domain) and the artifact has a plain view link with no
+  password, the Share dialog's Copy link now copies `https://<label>.<base>/<ref>` (a
+  custom domain wins over the subdomain), and the toast names the host. Commenter and
+  editor links, locked artifacts, and artifacts with no link keep the app URL, since the
+  branded host serves bytes only: no comments, no editing, no unlock. Moment links stay on
+  the app for the same reason. The "Also at" list is unchanged.
+
 ### Added
 - **Workspace subdomains.** A workspace can claim one label under the instance's
   subdomain base (e.g. `acme.derive.page`), and every shared artifact is then also
