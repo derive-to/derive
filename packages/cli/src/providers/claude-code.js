@@ -163,8 +163,7 @@ export const claudeCode = {
       "stream-json",
       "--verbose",
       "--dangerously-skip-permissions",
-      "--model",
-      model,
+      ...(model ? ["--model", model] : []),
     ]
     const args = resumeSessionId
       ? ["-p", prompt, "--resume", resumeSessionId, ...systemArgs]

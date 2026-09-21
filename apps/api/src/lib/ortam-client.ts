@@ -1,0 +1,160 @@
+import { z } from "zod"
+
+const Sandbox = z.object({
+  id: z.string(),
+  state: z.string(),
+  current_operation_id: z.string().nullable(),
+  auto_stop_after_seconds: z.number(),
+  agent_connections: z.object({ user_id: z.string() }).nullable().optional(),
+})
+const Operation = z.object({
+  id: z.string(),
+  sandbox_id: z.string(),
+  kind: z.string(),
+  state: z.enum(["queued", "running", "succeeded", "failed"]),
+})
+const Process = z.object({
+  id: z.string(),
+  status: z.enum([
+    "starting",
+    "running",
+    "exited",
+    "failed",
+    "timed_out",
+    "stopped",
+    "interrupted",
+  ]),
+})
+
+/** Operator-configured API only. Redirects and response bodies never enter errors/logs. */
+export class OrtamClient {
+  constructor(
+    readonly base: string,
+    private key: string,
+    private fetcher: typeof fetch = fetch,
+  ) {
+    const url = new URL(base)
+    if (
+      url.username ||
+      url.password ||
+      url.search ||
+      url.hash ||
+      url.pathname !== "/v1" ||
+      !(
+        url.protocol === "https:" ||
+        (url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname))
+      )
+    )
+      throw new Error("Ortam requires an HTTPS /v1 API URL (or local HTTP)")
+  }
+  private async json(path: string, init: RequestInit) {
+    let response: Response
+    try {
+      response = await this.fetcher(this.base + path, {
+        ...init,
+        redirect: "error",
+        signal: AbortSignal.timeout(15000),
+      })
+    } catch {
+      throw new Error("Ortam request outcome is unknown")
+    }
+    if (!response.ok) throw new Error(`Ortam returned HTTP ${response.status}`)
+    try {
+      return await response.json()
+    } catch {
+      throw new Error("Ortam returned invalid JSON")
+    }
+  }
+  async authenticate() {
+    const response = z
+      .object({ token: z.string() })
+      .parse(await this.json("/auth/token", { headers: { "X-API-Key": this.key } }))
+    const encoded = response.token.split(".")[1]
+    if (!encoded) throw new Error("Ortam returned an invalid token")
+    const claims = z
+      .object({ organization_id: z.string(), sub: z.string() })
+      .parse(JSON.parse(atob(encoded.replace(/-/g, "+").replace(/_/g, "/"))))
+    return { organization_id: claims.organization_id, user_id: claims.sub, token: response.token }
+  }
+  async request(
+    path: string,
+    identity: { organization_id: string; user_id: string },
+    method = "GET",
+    body?: unknown,
+    key?: string,
+  ) {
+    const auth = await this.authenticate()
+    if (auth.organization_id !== identity.organization_id || auth.user_id !== identity.user_id)
+      throw new Error("Ortam credential ownership changed")
+    return this.json(path, {
+      method,
+      headers: {
+        Authorization: `Bearer ${auth.token}`,
+        "Content-Type": "application/json",
+        ...(key ? { "Idempotency-Key": key } : {}),
+      },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    })
+  }
+  async sandbox(id: string, identity: { organization_id: string; user_id: string }) {
+    const sandbox = Sandbox.parse(
+      await this.request(`/sandboxes/${encodeURIComponent(id)}`, identity),
+    )
+    if (sandbox.id !== id) throw new Error("Ortam sandbox mismatch")
+    return sandbox
+  }
+  async operation(
+    id: string,
+    sandboxId: string,
+    kind: "resume" | "stop",
+    identity: { organization_id: string; user_id: string },
+  ) {
+    const op = Operation.parse(
+      await this.request(`/operations/${encodeURIComponent(id)}`, identity),
+    )
+    if (op.id !== id || op.sandbox_id !== sandboxId || op.kind !== kind)
+      throw new Error("Ortam operation mismatch")
+    return op
+  }
+  async lifecycle(
+    id: string,
+    action: "resume" | "stop",
+    key: string,
+    identity: { organization_id: string; user_id: string },
+  ) {
+    const op = Operation.parse(
+      await this.request(
+        `/sandboxes/${encodeURIComponent(id)}/${action}`,
+        identity,
+        "POST",
+        undefined,
+        key,
+      ),
+    )
+    if (op.sandbox_id !== id || op.kind !== action) throw new Error("Ortam operation mismatch")
+    return op
+  }
+  async launch(
+    id: string,
+    body: { argv: string[]; cwd: string; env: Record<string, string>; timeout_seconds: number },
+    identity: { organization_id: string; user_id: string },
+  ) {
+    return Process.parse(
+      await this.request(`/sandboxes/${encodeURIComponent(id)}/processes`, identity, "POST", body),
+    )
+  }
+  async process(
+    sandboxId: string,
+    id: string,
+    identity: { organization_id: string; user_id: string },
+  ) {
+    const process = Process.parse(
+      await this.request(
+        `/sandboxes/${encodeURIComponent(sandboxId)}/processes/${encodeURIComponent(id)}?tail_bytes=1`,
+        identity,
+      ),
+    )
+    if (process.id !== id) throw new Error("Ortam process mismatch")
+    return process
+  }
+}

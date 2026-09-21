@@ -40,6 +40,7 @@ import { catalogFromGateway, type GatewayConfig } from "./lib/model-catalog"
 import { getInstanceSlot } from "./lib/model-library"
 import { nativeLimiter } from "./lib/rate-limit"
 import { liveD1, requestD1 } from "./lib/request-d1"
+import { runtimeDispatchPass } from "./lib/runtime-dispatch"
 import { isApiPath } from "./lib/serve-web"
 import { parseSignupMode, signupPolicy } from "./lib/signup-policy"
 import { isServerRenderedPath, isSpaPath, isStaticRootPath } from "./lib/spa-paths"
@@ -95,6 +96,8 @@ const PREVIEW_NAME = "previews"
  * @derive/storage/fs / webhooks-node here — those pull Node built-ins.
  */
 export interface Env {
+  DERIVE_ORTAM_RUNNER_PATH?: string
+  DERIVE_ORTAM_API_URL?: string
   DB: D1Database
   /** Isolated, short-lived Workers for the read-only derive_code MCP tool. */
   LOADER: WorkerLoader
@@ -319,6 +322,12 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
       })
       const models = catalogFromGateway(workerGateway(env))
       app = createApp({
+        runtime: env.DERIVE_ORTAM_RUNNER_PATH
+          ? {
+              runnerPath: env.DERIVE_ORTAM_RUNNER_PATH,
+              apiUrl: env.DERIVE_ORTAM_API_URL ?? "https://api.ortam.dev/v1",
+            }
+          : undefined,
         meta,
         // The static operator/CI bearer (isToken). The Node entry wires this via
         // loadConfig(process.env); the edge builds deps by hand from the CF binding and
@@ -578,6 +587,7 @@ export default {
     // one scale-to-zero container per due run. Unbound (the default) = a no-op, so runs stay
     // queued for a polling runner and an un-opted deployment behaves exactly as before.
     ctx.waitUntil(hostedRunTick(env, ctx))
+    ctx.waitUntil(runtimeTick(env))
   },
 
   // The dispatch queue's consumer: one message = "this run was just created, start it now".
@@ -766,3 +776,24 @@ const hostedRunTick = (env: Env, ctx?: ExecutionContext): Promise<void> =>
     // which looks like a hang rather than the truncation it is.
     ctx,
   )
+
+async function runtimeTick(env: Env): Promise<void> {
+  if (!env.DERIVE_ORTAM_RUNNER_PATH || !env.DERIVE_AUTH_SECRET) return
+  const config = {
+    runnerPath: env.DERIVE_ORTAM_RUNNER_PATH,
+    apiUrl: env.DERIVE_ORTAM_API_URL ?? "https://api.ortam.dev/v1",
+  }
+  const secret = env.DERIVE_AUTH_SECRET
+  const scoped = async () =>
+    runtimeDispatchPass({
+      meta: env.HYPERDRIVE ? PgMetaStore.fromPool(livePgPool) : createD1Store(liveD1),
+      blobs: new R2BlobStore(env.BUCKET),
+      server: env.BASE_URL ?? "",
+      secret,
+      config,
+      hostedOrgIds: workspaceIdsFromEnv(env.DERIVE_HOSTED_RUNS_ALLOWLIST),
+    })
+  await (env.HYPERDRIVE
+    ? requestPg.run(hyperdriveConn(env.HYPERDRIVE), scoped)
+    : requestD1.run(env.DB, scoped))
+}
