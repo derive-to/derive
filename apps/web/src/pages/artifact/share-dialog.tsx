@@ -39,6 +39,7 @@ import { Switch } from "@/components/ui/switch"
 import { useAuth } from "@/ctx"
 import { copyText, useCopy } from "@/lib/clipboard"
 import { artifactQuery, workspaceQuery } from "@/lib/queries"
+import { pickShareUrl } from "@/lib/share-url"
 import { STORAGE_KEYS } from "@/lib/storage-keys"
 import { useApiMutation } from "@/lib/use-api-mutation"
 import { ShareCollectionDialog } from "@/pages/library/share-collection-dialog"
@@ -157,11 +158,24 @@ export function ShareButton({
   // The canonical share URL — the server-built artifact URL when the detail is
   // cached (it is, on the artifact page), else reconstructed from the short id.
   const { data: art } = useQuery({ ...artifactQuery(shortId), enabled: false })
-  const shareUrl =
+  const canonicalUrl =
     art?.url ??
     `${typeof window === "undefined" ? "" : window.location.origin}/artifacts/${shortId}`
+  // "Copy link" hands out the workspace's own domain when that host can serve the
+  // link (a plain view link, no lock); see pickShareUrl. Decided on the LIVE draft,
+  // like the reach note, so widening access in the dialog switches the link too.
+  const branded = pickShareUrl({
+    canonical: canonicalUrl,
+    domains: workspaceDomains,
+    base: domainBase,
+    linkRole: lRole,
+    locked: hasLock || lockDraft,
+  })
+  const shareUrl = branded.url
+  // A moment link is a viewer feature (scene + time are read by the app), so it
+  // always points at the app.
   const momentUrl = videoMoment
-    ? `${shareUrl}${shareUrl.includes("?") ? "&" : "?"}scene=${encodeURIComponent(videoMoment.scene)}&t=${Math.round(videoMoment.timeMs)}`
+    ? `${canonicalUrl}${canonicalUrl.includes("?") ? "&" : "?"}scene=${encodeURIComponent(videoMoment.scene)}&t=${Math.round(videoMoment.timeMs)}`
     : null
 
   // Embed snippet: an iframe of the embeddable view. Same-origin by default; the
@@ -300,7 +314,11 @@ export function ShareButton({
       collectionShared: grants.length > 0,
       locked: hasLock,
     })
-    const success = reach ? `Link copied — ${reach.toLowerCase()}` : "Link copied"
+    const success = reach
+      ? `Link copied — ${reach.toLowerCase()}`
+      : branded.host
+        ? `Link copied — ${branded.host}`
+        : "Link copied"
     if (await copyLinkToClipboard(shareUrl, { success })) {
       // The getting-started checklist's "share a link" step completes here — the
       // one gesture that means "I sent this to someone" (see chrome/getting-started).
