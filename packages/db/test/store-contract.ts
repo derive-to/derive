@@ -5200,6 +5200,98 @@ export function runStoreContract(
       return { runtime, binding, input, enqueue, context, agentId }
     }
 
+    it("saves runtime schedules with revision checks and admits one current occurrence at a time", async () => {
+      const f = await fixture()
+      await store.setMembership({ id: uuid(), org_id: ORG, user_id: "owner", role: "owner" })
+      const definition = {
+        id: uuid(),
+        runtimeId: f.runtime.id,
+        orgId: ORG,
+        ownerId: "owner",
+        instruction: f.input.instruction,
+        provider: "codex" as const,
+        cron: "0 9 * * *",
+        timezone: "America/New_York",
+        enabled: true,
+        revision: null,
+        at,
+      }
+      expect(await store.saveRuntimeSchedule({ ...definition, revision: 0 })).toBeNull()
+      const saves = await Promise.all(
+        [0, 1].map(() => store.saveRuntimeSchedule({ ...definition, id: uuid() })),
+      )
+      expect(saves.filter(Boolean)).toHaveLength(1)
+      const schedule = await store.getRuntimeSchedule(f.runtime.id, ORG)
+      if (!schedule) throw new Error("Schedule not saved")
+      expect(schedule).toMatchObject({ revision: 0, created_by: "owner", runtime_id: f.runtime.id })
+      expect(await store.getRuntimeSchedule(f.runtime.id, "foreign")).toBeNull()
+      expect(
+        await store.saveRuntimeSchedule({ ...definition, orgId: "foreign", revision: 0 }),
+      ).toBeNull()
+      const scheduled = (scheduledFor: string, revision = 0) =>
+        f.enqueue({
+          automation_id: schedule.id,
+          initiated_by: "owner",
+          reason: "schedule",
+          scheduled_for: scheduledFor,
+          input_snapshot: JSON.stringify({ ...f.input, schedule_revision: revision }),
+        })
+      await expect(scheduled("2026-09-21T11:00:00.000Z")).rejects.toThrow()
+      await expect(scheduled(at, 99)).rejects.toThrow()
+      await expect(
+        store.createRun({
+          id: uuid(),
+          org_id: ORG,
+          agent_id: f.agentId,
+          automation_id: schedule.id,
+          reason: "manual:owner",
+        }),
+      ).rejects.toThrow()
+      const admitted = await Promise.allSettled([scheduled(at), scheduled(deadlineAt)])
+      expect(admitted.filter((r) => r.status === "fulfilled")).toHaveLength(1)
+      const run = await store.latestRunForAutomation(schedule.id, "schedule")
+      if (!run) throw new Error("No run admitted")
+      const edits = await Promise.all(
+        [0, 1].map(() => store.saveRuntimeSchedule({ ...definition, revision: 0, enabled: false })),
+      )
+      expect(edits.filter(Boolean)).toHaveLength(1)
+      await store.cancelQueuedRuntimeRun(run.id, "foreign", deadlineAt)
+      expect((await store.getRun(run.id))?.status).toBe("queued")
+      await store.cancelQueuedRuntimeRun(run.id, ORG, deadlineAt)
+      expect((await store.getRun(run.id))?.status).toBe("failed")
+      await expect(scheduled(deadlineAt, 1)).rejects.toThrow()
+      expect(
+        await store.saveRuntimeSchedule({ ...definition, revision: 1, at: deadlineAt }),
+      ).toMatchObject({ revision: 2 })
+      await expect(scheduled(at, 2)).rejects.toThrow()
+      const next = await scheduled("2026-09-21T13:00:00.000Z", 2)
+      let attempt = await store.reserveRunAttempt({
+        id: uuid(),
+        runId: next.id,
+        orgId: ORG,
+        at: "2026-09-21T13:00:00.000Z",
+        deadlineAt: "2026-09-21T13:15:00.000Z",
+      })
+      for (const phase of ["ready", "launching"] as const) {
+        if (!attempt) throw new Error("Cannot reserve or advance scheduled work")
+        attempt = await store.transitionRunAttempt(
+          attempt.id,
+          ORG,
+          attempt.revision,
+          { phase },
+          "2026-09-21T13:00:00.000Z",
+        )
+      }
+      if (!attempt) throw new Error("No scheduled attempt")
+      // A revision supplied by a controller before the edit cannot claim afterward.
+      expect(
+        await store.saveRuntimeSchedule({ ...definition, revision: 2, enabled: false }),
+      ).toMatchObject({ revision: 3 })
+      expect(await store.claimRunAttempt(attempt.id, ORG, "2026-09-21T13:00:01.000Z", 2)).toBeNull()
+      await store.cancelQueuedRuntimeRun(next.id, ORG, deadlineAt)
+      expect((await store.getRun(next.id))?.status).toBe("queued") // Attempt owner must clean up.
+    })
+
     it("pins the Context and keeps Ortam work out of ordinary executor claims", async () => {
       const f = await fixture()
       const r = await f.enqueue()
@@ -5674,16 +5766,29 @@ export function runStoreContract(
 
     it("keeps cleanup discoverable when an automation is deleted, without admitting its queued jobs", async () => {
       const f = await fixture()
-      const automation = await store.createAutomation({
+      await store.setMembership({ id: uuid(), org_id: ORG, user_id: "owner", role: "owner" })
+      const automation = await store.saveRuntimeSchedule({
         id: uuid(),
-        org_id: ORG,
-        agent_id: f.agentId,
-        context_id: f.context.id,
-        instruction: "Check games",
-        trigger: JSON.stringify({ kind: "manual" }),
+        runtimeId: f.runtime.id,
+        orgId: ORG,
+        ownerId: "owner",
+        instruction: f.input.instruction,
+        provider: "codex",
+        cron: "0 9 * * *",
+        timezone: "UTC",
+        enabled: true,
+        revision: null,
+        at,
       })
-      const r = await f.enqueue({ automation_id: automation.id })
-      const queued = await f.enqueue({ automation_id: automation.id })
+      if (!automation) throw new Error("No runtime schedule")
+      const task = {
+        automation_id: automation.id,
+        initiated_by: "owner",
+        scheduled_for: at,
+        input_snapshot: JSON.stringify({ ...f.input, schedule_revision: 0 }),
+      }
+      const r = await f.enqueue(task)
+      const queued = await f.enqueue(task)
       const active = await store.reserveRunAttempt({
         id: uuid(),
         runId: r.id,

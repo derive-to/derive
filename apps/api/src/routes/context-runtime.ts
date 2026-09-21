@@ -3,6 +3,7 @@ import { newId, type RuntimeRunInput } from "@derive/core"
 import { Hono } from "hono"
 import { z } from "zod"
 import type { AppContext } from "../context"
+import { parseTrigger } from "../lib/automation"
 import {
   brokerFor,
   callTool,
@@ -16,6 +17,7 @@ import { readEnvironmentBindings } from "../lib/context-environment"
 import { decryptSecret } from "../lib/crypto"
 import { fail, readJson } from "../lib/http"
 import { OrtamClient } from "../lib/ortam-client"
+import { nextRuntimeOccurrence, runtimeInput, runtimeScheduleAllows } from "../lib/runtime-schedule"
 import { verifyRuntimeToken } from "../lib/runtime-token"
 
 export const contextRuntimeRoutes = (ctx: AppContext) => {
@@ -25,12 +27,22 @@ export const contextRuntimeRoutes = (ctx: AppContext) => {
     const context = await manageableContext(ctx, c)
     if (context instanceof Response) return context
     const runtime = await meta.getContextRuntimeForContext(context.id, context.org_id)
+    const schedule = runtime ? await meta.getRuntimeSchedule(runtime.id, context.org_id) : null
+    const trigger = schedule ? parseTrigger(schedule.trigger) : null
+    let nextRunAt: string | null = null
+    if (schedule?.enabled && trigger?.cron && !runtime?.disabled_at) {
+      try {
+        nextRunAt = nextRuntimeOccurrence(trigger.cron, trigger.tz ?? "UTC")
+      } catch {}
+    }
     const viewer = await ctx.managementPrincipal(c)
     const runs = runtime
       ? (await meta.listRuns(context.org_id, 100)).filter((r) => r.runtime_id === runtime.id)
       : []
     return c.json({
       enabled: !!deps.runtime,
+      schedule,
+      next_run_at: nextRunAt,
       runtime,
       runs: await Promise.all(
         runs.map(async (run) => {
@@ -124,23 +136,9 @@ export const contextRuntimeRoutes = (ctx: AppContext) => {
     if (!settings.hostedAgentsEnabled || !settings.agentWrites)
       return fail(c, 403, "Enable hosted agents and agent writes for this workspace")
     const runtime = await meta.getContextRuntimeForContext(context.id, context.org_id)
-    const manifest = (await meta.currentVersions([context.manifest_artifact_id]))[
-      context.manifest_artifact_id
-    ]
-    if (!runtime || runtime.disabled_at || !manifest)
-      return fail(c, 409, "Context runtime or manifest is unavailable")
-    const input: RuntimeRunInput = {
-      version: 1,
-      ...body,
-      context_id: context.id,
-      manifest: {
-        artifact_id: context.manifest_artifact_id,
-        version: manifest.n,
-        blob_key: manifest.blob_key,
-      },
-      connection_ids: JSON.parse(context.connection_ids ?? "[]"),
-      environment_bindings: readEnvironmentBindings(context.environment_bindings),
-    }
+    if (!runtime || runtime.disabled_at) return fail(c, 409, "Context runtime is unavailable")
+    const input = await runtimeInput(meta, context, body)
+    if (!input) return fail(c, 409, "Context manifest is unavailable")
     const run = await meta.createRun({
       id: newId("run"),
       org_id: context.org_id,
@@ -185,6 +183,8 @@ export const contextRuntimeRoutes = (ctx: AppContext) => {
     const settings = await meta.getOrgSettings(run.org_id)
     const agent = await meta.getAgent(run.agent_id)
     if (
+      (run.automation_id && !settings.automateBeta) ||
+      !(await runtimeScheduleAllows(meta, run)) ||
       !runtime ||
       runtime.disabled_at ||
       context?.org_id !== run.org_id ||
@@ -226,7 +226,12 @@ export const contextRuntimeRoutes = (ctx: AppContext) => {
     const broker = await brokerFor(meta, run.org_id, null, deps.encryptionKey, deps.allowEchoStub)
     const router = refRouter(broker, mcpAuthFor(meta, run.org_id, deps.encryptionKey))
     const tools = await toolsForRun(meta, broker, run.org_id, selected, router, deps.encryptionKey)
-    const claimed = await meta.claimRunAttempt(attempt.id, run.org_id, new Date().toISOString())
+    const claimed = await meta.claimRunAttempt(
+      attempt.id,
+      run.org_id,
+      new Date().toISOString(),
+      input.schedule_revision,
+    )
     if (!claimed) return c.json({ claimed: false })
     return c.json({
       claimed: true,

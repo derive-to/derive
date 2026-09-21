@@ -326,6 +326,10 @@ export const automation = pgTable("automation", {
   refs: text("refs"),
   connection_ids: text("connection_ids"),
   context_id: text("context_id"),
+  runtime_id: text("runtime_id"),
+  created_by: text("created_by"),
+  revision: integer("revision").notNull().default(0),
+  updated_at: text("updated_at"),
   enabled: integer("enabled").$type<0 | 1>().notNull().default(1),
   created_at: text("created_at").notNull().$defaultFn(isoNow),
 })

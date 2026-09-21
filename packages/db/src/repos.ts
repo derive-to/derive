@@ -4613,7 +4613,9 @@ export function makeRepos(db: SqliteDb) {
       (await db
         .update(automation)
         .set(set)
-        .where(and(eq(automation.id, id), eq(automation.org_id, orgId)))
+        .where(
+          and(eq(automation.id, id), eq(automation.org_id, orgId), isNull(automation.runtime_id)),
+        )
         .returning()
         .get()) ?? null
     )
@@ -4637,14 +4639,16 @@ export function makeRepos(db: SqliteDb) {
       .where(and(eq(automation.id, id), eq(automation.org_id, orgId)))
       .run()
   }
-  const createRun = async (r: NewRun): Promise<RunRecord> =>
-    r.runtime_id != null || r.input_snapshot != null
-      ? await createRuntimeRun(r)
-      : ((await db
-          .insert(run)
-          .values({ ...r, status: r.status ?? "queued" })
-          .returning()
-          .get()) as RunRecord)
+  const createRun = async (r: NewRun): Promise<RunRecord> => {
+    if (r.runtime_id != null || r.input_snapshot != null) return await createRuntimeRun(r)
+    if (r.automation_id && (await getAutomation(r.automation_id))?.runtime_id)
+      throw new Error("A runtime schedule requires the runtime admission path")
+    return (await db
+      .insert(run)
+      .values({ ...r, status: r.status ?? "queued" })
+      .returning()
+      .get()) as RunRecord
+  }
   const getRun = async (id: string): Promise<RunRecord | null> =>
     ((await db.select().from(run).where(eq(run.id, id)).get()) as RunRecord | undefined) ?? null
   const claimDueRuns = async (agentId: string, now: string, limit = 20): Promise<RunRecord[]> => {

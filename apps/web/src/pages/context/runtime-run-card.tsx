@@ -9,6 +9,8 @@ import { Textarea } from "@/components/ui/textarea"
 import { automationConnectionsQuery, contextRuntimeQuery } from "@/lib/queries"
 import { useApiMutation } from "@/lib/use-api-mutation"
 
+import { RuntimeScheduleCard } from "./runtime-schedule-card"
+
 export function RuntimeRunCard({ contextId }: { contextId: string }) {
   const query = contextRuntimeQuery(contextId)
   const state = useQuery(query)
@@ -138,6 +140,12 @@ export function RuntimeRunCard({ contextId }: { contextId: string }) {
               >
                 Disable cloud runs
               </Button>
+              <RuntimeScheduleCard
+                key={state.data.schedule?.revision ?? "new"}
+                contextId={contextId}
+                schedule={state.data.schedule ?? null}
+                nextRunAt={state.data.next_run_at ?? null}
+              />
             </>
           )}
           {state.data.runs.map((item) => {

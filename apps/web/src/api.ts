@@ -1,4 +1,5 @@
 import type {
+  AutomationRecord,
   ContextRuntimeRecord,
   DynamicKind,
   DynamicPatch,
@@ -1467,6 +1468,8 @@ export const api = {
   ): Promise<{
     enabled: boolean
     runtime: ContextRuntimeRecord | null
+    schedule: AutomationRecord | null
+    next_run_at: string | null
     runs: (RunRecord & { attempt: RunAttemptRecord | null })[]
   }> => f(`/v1/contexts/${id}/runtime`, opts()).then(j),
   bindContextRuntime: (id: string, connection_id: string, sandbox_id: string): Promise<unknown> =>
@@ -1477,6 +1480,18 @@ export const api = {
     provider: "codex" | "claude-code",
   ): Promise<unknown> =>
     f(`/v1/contexts/${id}/runtime/runs`, opts({ instruction, provider })).then(j),
+  saveContextRuntimeSchedule: (
+    id: string,
+    body: {
+      instruction: string
+      provider: "codex" | "claude-code"
+      cron: string
+      timezone: string
+      enabled: boolean
+      revision: number | null
+    },
+  ): Promise<unknown> =>
+    f(`/v1/contexts/${id}/runtime/schedule`, { ...opts(body), method: "PUT" }).then(j),
   disableContextRuntime: (id: string): Promise<unknown> =>
     f(`/v1/contexts/${id}/runtime/disable`, opts({})).then(j),
   getContextEnvironment: (id: string): Promise<ContextEnvironment> =>

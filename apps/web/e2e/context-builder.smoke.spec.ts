@@ -150,10 +150,13 @@ test("Cloud runs queue the chosen task and show report and shutdown separately",
   const context = await created.json()
   let queued = false
   let submitted: unknown
+  let schedule: Record<string, unknown> | null = null
   await owner.route(`**/v1/contexts/${context.id}/runtime`, async (route) =>
     route.fulfill({
       json: {
         enabled: true,
+        schedule,
+        next_run_at: schedule?.enabled ? "2026-09-22T13:00:00.000Z" : null,
         runtime: { id: "runtime-demo", disabled_at: null },
         runs: queued
           ? [
@@ -178,6 +181,17 @@ test("Cloud runs queue the chosen task and show report and shutdown separately",
     queued = true
     await route.fulfill({ status: 201, json: { run: { id: "run-demo" } } })
   })
+  await owner.route(`**/v1/contexts/${context.id}/runtime/schedule`, async (route) => {
+    const body = route.request().postDataJSON()
+    expect(body.revision).toBe(schedule?.revision ?? null)
+    schedule = {
+      ...body,
+      enabled: body.enabled ? 1 : 0,
+      revision: (body.revision ?? -1) + 1,
+      trigger: JSON.stringify({ kind: "schedule", cron: body.cron, tz: body.timezone }),
+    }
+    await route.fulfill({ json: { schedule } })
+  })
   await owner.goto(`/contexts/${context.id}`)
   await expect(owner.getByTestId("context-runtime-run")).toBeDisabled()
   await owner
@@ -194,7 +208,20 @@ test("Cloud runs queue the chosen task and show report and shutdown separately",
   await owner.getByText("Read received report").click()
   await expect(owner.getByText("Checks complete.")).toBeVisible()
   await owner
+    .getByTestId("context-runtime-schedule-instruction")
+    .fill("Run the anti-cheat script and report anything suspicious")
+  await owner.getByTestId("context-runtime-schedule-cron").fill("0 9 * * *")
+  await owner.getByTestId("context-runtime-schedule-timezone").fill("America/New_York")
+  await owner.getByTestId("context-runtime-schedule-save").click()
+  await expect(owner.getByText(/Next run:.*America\/New_York/)).toBeVisible()
+  expect(schedule).toMatchObject({ cron: "0 9 * * *", timezone: "America/New_York", enabled: 1 })
+  await owner
     .locator("section")
     .filter({ has: owner.getByTestId("context-runtime-run") })
     .screenshot({ path: testInfo.outputPath("cloud-runs.png") })
+  await owner
+    .getByTestId("context-runtime-schedule")
+    .screenshot({ path: testInfo.outputPath("schedule.png") })
+  await owner.getByTestId("context-runtime-schedule-pause").click()
+  await expect(owner.getByText("Schedule paused", { exact: true })).toBeVisible()
 })

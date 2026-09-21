@@ -33,6 +33,7 @@ import { conciergeRoutes } from "./routes/concierge"
 import { connectionRoutes } from "./routes/connections"
 import { contextEnvironmentRoutes } from "./routes/context-environment"
 import { contextRuntimeRoutes } from "./routes/context-runtime"
+import { contextRuntimeScheduleRoutes } from "./routes/context-runtime-schedule"
 import { contextRoutes } from "./routes/contexts"
 import { domainRoutes } from "./routes/domains"
 import { dynamicDataRoutes } from "./routes/dynamic-data"
@@ -505,6 +506,7 @@ export function createApp(deps: AppDeps): Hono {
     contextRoutes,
     contextEnvironmentRoutes,
     contextRuntimeRoutes,
+    contextRuntimeScheduleRoutes,
     templateLibraryRoutes,
     realtimeRoutes,
     analyticsRoutes,

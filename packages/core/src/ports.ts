@@ -3476,6 +3476,11 @@ export interface AutomationTrigger {
  *  WHEN (trigger). The definition only — every firing is a `run`. A "living artifact" is
  *  just an automation whose instruction is "keep this current" with a ref to the doc. */
 export interface AutomationRecord {
+  /** Runtime-bound schedules use the Context cloud controller, never a polling executor. */
+  runtime_id: string | null
+  created_by: string | null
+  revision: number
+  updated_at: string | null
   id: string
   org_id: string
   /** The agent that runs it — the runs act as this principal. */
@@ -5084,7 +5089,28 @@ export const isBundleContentType = (contentType: string | null | undefined): boo
 
 /** Control-plane operations only. Runner APIs must not expose these mutations. */
 export interface RuntimeStore {
-  claimRunAttempt(id: string, orgId: string, at: string): Promise<RunAttemptRecord | null>
+  getRuntimeSchedule(runtimeId: string, orgId: string): Promise<AutomationRecord | null>
+  listRuntimeSchedules(): Promise<AutomationRecord[]>
+  saveRuntimeSchedule(input: {
+    id: string
+    runtimeId: string
+    orgId: string
+    ownerId: string
+    instruction: string
+    provider: import("./execution").ExecutionProvider
+    cron: string
+    timezone: string
+    enabled: boolean
+    revision: number | null
+    at: string
+  }): Promise<AutomationRecord | null>
+  cancelQueuedRuntimeRun(id: string, orgId: string, at: string): Promise<void>
+  claimRunAttempt(
+    id: string,
+    orgId: string,
+    at: string,
+    scheduleRevision?: number,
+  ): Promise<RunAttemptRecord | null>
   getContextRuntimeForContext(
     contextId: string,
     orgId: string,

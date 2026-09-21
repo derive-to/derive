@@ -11,6 +11,8 @@ import { encryptSecret } from "../src/lib/crypto"
 import { dispatchPass, type Substrate } from "../src/lib/dispatch"
 import { signWorkToken } from "../src/lib/run-token"
 import { runtimeDispatchPass } from "../src/lib/runtime-dispatch"
+import { materializeRuntimeSchedules, nextRuntimeOccurrence } from "../src/lib/runtime-schedule"
+import { materializeAllDueRuns } from "../src/lib/schedule"
 import { as, bearer, jsonAs, makeAuthedApp, publishAs, type TestUser } from "./helpers"
 
 // P3.5 — a context's connections are its hands in EVERY lane. Before this, connection ids
@@ -774,6 +776,144 @@ describe("Ortam runtime lifecycle", () => {
     summary: "# Daily report\n\nChecked the games; no suspicious activity.",
     outputs: [],
   }
+
+  const dailyTask = {
+    instruction: "Run the anti-cheat script and explain suspicious games",
+    provider: "codex",
+    cron: "0 * * * *",
+    timezone: "America/New_York",
+    enabled: true,
+    revision: null,
+  }
+  const saveSchedule = (contextId: string, body: object, email = owner.email) =>
+    app.request(`/v1/contexts/${contextId}/runtime/schedule`, {
+      ...jsonAs(as(email), body),
+      method: "PUT",
+    })
+  async function scheduled() {
+    const f = await setup()
+    await meta.cancelQueuedRuntimeRun(f.run.id, "default", now.toISOString())
+    await meta.setOrgSettings("default", {
+      ...(await meta.getOrgSettings("default")),
+      automateBeta: true,
+    })
+    const saved = await saveSchedule(f.context.id, dailyTask)
+    expect(saved.status).toBe(200)
+    const { schedule } = await saved.json()
+    now = new Date(nextRuntimeOccurrence(dailyTask.cron, dailyTask.timezone, now))
+    return { ...f, schedule }
+  }
+
+  it("validates schedule permissions, timezone, and concurrent edits", async () => {
+    const f = await scheduled()
+    expect(
+      (await saveSchedule(f.context.id, { ...dailyTask, revision: 0 }, member.email)).status,
+    ).toBe(403)
+    expect(
+      (await saveSchedule(f.context.id, { ...dailyTask, revision: 0, cron: "* * * * * *" })).status,
+    ).toBe(400)
+    expect(
+      (await saveSchedule(f.context.id, { ...dailyTask, revision: 0, timezone: "Nowhere/Invalid" }))
+        .status,
+    ).toBe(400)
+    const responses = await Promise.all(
+      [0, 1].map(() => saveSchedule(f.context.id, { ...dailyTask, revision: 0, enabled: false })),
+    )
+    expect(responses.map((r) => r.status).sort()).toEqual([200, 409])
+    expect((await meta.getAutomation(f.schedule.id))?.revision).toBe(1)
+    expect(
+      nextRuntimeOccurrence("0 9 * * *", "America/New_York", new Date("2026-03-07T15:00:00Z")),
+    ).toBe("2026-03-08T13:00:00.000Z")
+    await meta.setMembership({
+      id: "runtime-owner-seat",
+      org_id: "default",
+      user_id: owner.id,
+      role: "owner",
+    })
+    expect(
+      (
+        await app.request(`/v1/automations/${f.schedule.id}`, {
+          ...jsonAs(as(owner.email), { enabled: false }),
+          method: "PATCH",
+        })
+      ).status,
+    ).toBe(404)
+    await meta.setMembership({
+      id: "runtime-owner-seat",
+      org_id: "default",
+      user_id: owner.id,
+      role: "editor",
+    })
+  })
+
+  it("coalesces missed times and concurrent ticks, and cancels old queued work on edit", async () => {
+    const f = await scheduled()
+    await materializeAllDueRuns(meta, now, true)
+    expect(await meta.latestRunForAutomation(f.schedule.id, "schedule")).toBeNull()
+    now = new Date(now.getTime() + 3 * 3600_000)
+    await Promise.all([0, 1, 2].map(() => materializeRuntimeSchedules(meta, now)))
+    const first = await meta.latestRunForAutomation(f.schedule.id, "schedule")
+    expect(first).toMatchObject({
+      runtime_id: f.schedule.runtime_id,
+      initiated_by: owner.id,
+      scheduled_for: now.toISOString(),
+    })
+    expect(JSON.parse(first?.input_snapshot ?? "null")).toMatchObject({
+      instruction: dailyTask.instruction,
+      schedule_revision: 0,
+    })
+    now = new Date(now.getTime() + 3600_000)
+    await materializeRuntimeSchedules(meta, now)
+    expect((await meta.latestRunForAutomation(f.schedule.id, "schedule"))?.id).toBe(first?.id)
+    expect(
+      (
+        await saveSchedule(f.context.id, {
+          ...dailyTask,
+          instruction: "Updated task",
+          revision: 0,
+          enabled: false,
+        })
+      ).status,
+    ).toBe(200)
+    await pass()
+    expect(f.sandbox.starts).toBe(0)
+    expect(first && (await meta.getRun(first.id))?.status).toBe("failed")
+    expect((await meta.getAutomation(f.schedule.id))?.instruction).toBe("Updated task")
+  })
+
+  it("rejects a launched but unclaimed task after pause and still shuts down", async () => {
+    const f = await scheduled()
+    for (let i = 0; i < 3; i++) await pass()
+    expect(f.sandbox.starts).toBe(1)
+    expect(
+      (await saveSchedule(f.context.id, { ...dailyTask, revision: 0, enabled: false })).status,
+    ).toBe(200)
+    expect((await attemptRequest(f.sandbox, "claim")).status).toBe(403)
+    for (let i = 0; i < 5; i++) await pass()
+    expect(f.sandbox.state).toBe("stopped")
+    expect((await meta.latestRunForAutomation(f.schedule.id, "schedule"))?.status).toBe("failed")
+  })
+
+  it("allows a claimed scheduled job to report and save after the schedule is paused", async () => {
+    const f = await scheduled()
+    await pass()
+    await pass()
+    await pass()
+    expect(f.sandbox.starts).toBe(1)
+    expect((await attemptRequest(f.sandbox, "claim")).status).toBe(200)
+    expect(
+      (await saveSchedule(f.context.id, { ...dailyTask, revision: 0, enabled: false })).status,
+    ).toBe(200)
+    expect((await attemptRequest(f.sandbox, "result", result)).status).toBe(200)
+    for (let i = 0; i < 5; i++) await pass()
+    const run = await meta.latestRunForAutomation(f.schedule.id, "schedule")
+    expect(run?.status).toBe("succeeded")
+    expect(f.sandbox.state).toBe("stopped")
+    expect(run && (await meta.getLatestRunAttempt(run.id, "default"))?.save_status).toBe("saved")
+    now = new Date(now.getTime() + 24 * 3600_000)
+    await pass()
+    expect(f.sandbox.starts).toBe(1)
+  })
 
   it("runs once, receives a private report, confirms shutdown, and reuses the same sandbox", async () => {
     const f = await launched()
