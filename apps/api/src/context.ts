@@ -132,6 +132,9 @@ export interface SessionUser {
 }
 
 export interface AppDeps {
+  runtime?: { apiUrl: string; runnerPath: string }
+  runtimeFetch?: typeof fetch
+
   meta: MetaStore
   blobs: BlobStore
   /**
@@ -748,6 +751,7 @@ export function buildContext(deps: AppDeps) {
             r &&
             r.agent_id === claim.agentId &&
             r.org_id === claim.orgId &&
+            !r.runtime_id &&
             (r.status === "queued" || r.status === "running")
           )
         } else if (workKind === "session") {

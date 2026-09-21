@@ -58,6 +58,7 @@ import { ConsolePending, ContextRowsSkeleton } from "./context-skeleton"
 import { importErrorCopy, importRetryCopy, RETRYABLE_IMPORT_CODES } from "./import-copy"
 import { ANSWER_PROSE, answerMdToHtml } from "./lib/answer-md"
 import { runnerStatus } from "./runner-status"
+import { RuntimeAccessCard } from "./runtime-access-card"
 
 // The Context console combines package configuration, execution status, and run history.
 // The transcript polls fast only while the runner owes a reply (sessionQuery's
@@ -355,10 +356,14 @@ function Console({ id }: { id: string }) {
             {skillsCount > 0 && (
               <SkillsCard skills={context.skills ?? []} onSeeManifest={() => setTab("manifest")} />
             )}
-            {sourcesCount > 0 && <SourcesCard count={sourcesCount} />}
+            {isOwner ? (
+              <RuntimeAccessCard context={context} />
+            ) : sourcesCount > 0 ? (
+              <SourcesCard count={sourcesCount} />
+            ) : null}
             {isOwner && (
               <div className="rounded-xl border bg-card p-3.5">
-                <SectionTitle className="mb-2.5">Access</SectionTitle>
+                <SectionTitle className="mb-2.5">Who can ask</SectionTitle>
                 <ContextAccess id={id} name={context.name} policy={context.ask_policy} />
               </div>
             )}
@@ -771,7 +776,7 @@ function ImportedConsole({
 
       {isOwner && (
         <div className="rounded-xl border bg-card p-3.5">
-          <SectionTitle className="mb-2.5">Access</SectionTitle>
+          <SectionTitle className="mb-2.5">Who can ask</SectionTitle>
           <ContextAccess id={id} name={context.name} policy={context.ask_policy} />
         </div>
       )}

@@ -200,6 +200,18 @@ describe("connections (Sources — per-user connected accounts)", () => {
     expect(list).not.toContain("secret_enc")
   })
 
+  it("accepts short environment values without exposing them through the default label", async () => {
+    const res = await app.request(
+      "/v1/connections",
+      jsonAs(as(owner.email), { toolkit: "environment", kind: "secret", secret: "q7" }),
+    )
+    expect(res.status).toBe(201)
+    const body = await res.json()
+    expect(body.scopes_label).toBe("Stored secret")
+    expect(body).not.toHaveProperty("secret")
+    expect(body).not.toHaveProperty("secret_enc")
+  })
+
   it("a secret connection refuses http bases and missing fields", async () => {
     const noFields = await app.request(
       "/v1/connections",

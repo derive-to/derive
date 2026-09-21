@@ -46,3 +46,21 @@ subject to the authenticated role.
 
 Continue with the [MCP guide](/agents/mcp/) for the complete tool surface or the
 [CLI guide](/agents/cli/) for terminal and CI workflows.
+
+## Configure a Context's runtime access
+
+Open a Context's **Agent access → Manage access** to select existing connections or
+connect GitHub. GitHub keeps its existing tool permissions; selecting a connection does
+not grant the runner a clone/push token.
+
+Add named environment variables here for CLI-run tasks. Values are encrypted in Derive's
+secret connection store and are never included in the Context manifest or returned by the
+settings page. You can also bind an existing secret under a variable name. Each active
+session or scheduled run retrieves only its Context's selected values before starting the
+coding agent. Missing, revoked or unreadable secrets fail the run before the agent starts.
+In-app chat tools do not receive environment variables.
+
+The agent can read these values and use their permissions. Removing a binding or revoking
+a connection prevents subsequent retrieval; it cannot erase a value from an already-running
+process. Runner identity, model-login and system environment names are reserved. Ortam
+provisioning and repository-specific clone/PR permissions are separate integration work.

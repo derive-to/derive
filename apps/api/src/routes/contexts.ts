@@ -55,6 +55,7 @@ import { chatArrival } from "../lib/chat-gate"
 import { buildChatTools, type ChatPrincipal, RAIL_CHAT_TOOLS } from "../lib/chat-tools"
 import { runChatTurn } from "../lib/chat-turn"
 import { previewOf } from "../lib/comments"
+import { manageableContext } from "../lib/context-access"
 import { BuilderCardSchema, metaForWire } from "../lib/context-builder-card"
 import { buildContextBuilderTools, latestBuilderCard } from "../lib/context-builder-tools"
 import { IMPORTED_NO_RUNS } from "../lib/context-package"
@@ -1750,7 +1751,7 @@ export const contextRoutes = (ctx: AppContext) => {
       },
     }),
     async (c) => {
-      const x = await manageableContext(c)
+      const x = await manageableContext(ctx, c)
       if (x instanceof Response) return bail(x)
       const job = await meta.getImportJobForContext(x.id)
       if (!x.import_source || !job) return bail(fail(c, 404, "not an imported context"))
@@ -1807,7 +1808,7 @@ export const contextRoutes = (ctx: AppContext) => {
       },
     }),
     async (c) => {
-      const x = await manageableContext(c)
+      const x = await manageableContext(ctx, c)
       if (x instanceof Response) return bail(x)
       const job = await meta.getImportJobForContext(x.id)
       if (!x.import_source || !job) return bail(fail(c, 404, "not an imported context"))
@@ -2166,23 +2167,6 @@ export const contextRoutes = (ctx: AppContext) => {
   )
 
   // ---- ask-access management (workspace-scoped only) ------------------------
-  // The context that this caller may MANAGE (set who can ask), or a Response to
-  // return. Management is the creator or a workspace manager — the same gate as
-  // delete, and NOT reachable by a runner's own agent token (managementPrincipal
-  // refuses those). Scoped to the caller's active workspace so a manager of B
-  // can't reach into A; cross-workspace callers get the same 404 as a missing id.
-  const manageableContext = async (c: Context): Promise<ContextRecord | Response> => {
-    const owner = await managementPrincipal(c)
-    if (!owner) return fail(c, 401, "unauthenticated")
-    // The generic hono Context (this helper is route-shared) types params as
-    // possibly-undefined; an empty id just resolves to no context → 404.
-    const x = await meta.getContext(c.req.param("id") ?? "")
-    if (!x || x.org_id !== (await activeWorkspace(c))) return fail(c, 404, "not found")
-    if (x.created_by !== owner && !(await workspaceCan(c, "manage")))
-      return fail(c, 403, "forbidden")
-    return x
-  }
-
   const askerJson = (a: ContextAskerRecord, u: UserDir | undefined) => ({
     user_id: a.user_id,
     username: u?.username ?? null,
@@ -2208,7 +2192,7 @@ export const contextRoutes = (ctx: AppContext) => {
       },
     }),
     async (c) => {
-      const x = await manageableContext(c)
+      const x = await manageableContext(ctx, c)
       if (x instanceof Response) return bail(x)
       const b = await readJson(c, z.object({ ask_policy: z.enum(["workspace", "invited"]) }))
       if (b instanceof Response) return bail(b)
@@ -2243,7 +2227,7 @@ export const contextRoutes = (ctx: AppContext) => {
       },
     }),
     async (c) => {
-      const x = await manageableContext(c)
+      const x = await manageableContext(ctx, c)
       if (x instanceof Response) return bail(x)
       const b = await readJson(c, z.object({ connection_ids: z.array(z.string().max(64)).max(20) }))
       if (b instanceof Response) return bail(b)
@@ -2294,7 +2278,7 @@ export const contextRoutes = (ctx: AppContext) => {
       },
     }),
     async (c) => {
-      const x = await manageableContext(c)
+      const x = await manageableContext(ctx, c)
       if (x instanceof Response) return bail(x)
       const roster = await meta.listContextAskers(x.id)
       const users = new Map(
@@ -2327,7 +2311,7 @@ export const contextRoutes = (ctx: AppContext) => {
       },
     }),
     async (c) => {
-      const x = await manageableContext(c)
+      const x = await manageableContext(ctx, c)
       if (x instanceof Response) return bail(x)
       const owner = (await managementPrincipal(c)) as string
       const b = await readJson(c, z.object({ email: z.string().trim().email() }))
@@ -2359,7 +2343,7 @@ export const contextRoutes = (ctx: AppContext) => {
       responses: { 204: { description: "Removed." } },
     }),
     async (c) => {
-      const x = await manageableContext(c)
+      const x = await manageableContext(ctx, c)
       if (x instanceof Response) return bail(x)
       await meta.removeContextAsker(x.id, c.req.param("userId"))
       return c.body(null, 204)

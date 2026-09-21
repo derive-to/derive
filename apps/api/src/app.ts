@@ -31,6 +31,8 @@ import { collectionRoutes } from "./routes/collections"
 import { commentRoutes } from "./routes/comments"
 import { conciergeRoutes } from "./routes/concierge"
 import { connectionRoutes } from "./routes/connections"
+import { contextEnvironmentRoutes } from "./routes/context-environment"
+import { contextRuntimeRoutes } from "./routes/context-runtime"
 import { contextRoutes } from "./routes/contexts"
 import { domainRoutes } from "./routes/domains"
 import { dynamicDataRoutes } from "./routes/dynamic-data"
@@ -431,6 +433,8 @@ export function createApp(deps: AppDeps): Hono {
   // OPTIONS preflights pass through to CORS. All three allowed actions are
   // ephemeral and identity-safe (the server, not the client, names the viewer).
   const ANON_WRITE_ALLOW = [
+    /^\/v1\/runtime-attempts\/[^/]+\/(?:claim|result|tool)$/, // signed attempt capability checked by each route; no general agent principal
+
     /^\/v1\/artifacts\/[^/]+\/presence$/, // ephemeral "I'm viewing" heartbeat
     /^\/v1\/artifacts\/[^/]+\/cursor$/, // ephemeral live cursor (viral viewing)
     /^\/v1\/artifacts\/[^/]+\/view$/, // de-duped, anonymous-safe view counter
@@ -499,6 +503,8 @@ export function createApp(deps: AppDeps): Hono {
     reworkRoutes,
     commentRoutes,
     contextRoutes,
+    contextEnvironmentRoutes,
+    contextRuntimeRoutes,
     templateLibraryRoutes,
     realtimeRoutes,
     analyticsRoutes,

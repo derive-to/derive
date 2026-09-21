@@ -32,6 +32,7 @@ import { sharpShrinker } from "./lib/image-shrink-node"
 import { catalogFromGateway, type GatewayConfig } from "./lib/model-catalog"
 import { getInstanceSlot, modelSource, readLibrary } from "./lib/model-library"
 import { NODE_REPO_CAPS } from "./lib/repo-fetch"
+import { runtimeDispatchPass } from "./lib/runtime-dispatch"
 import { mountWeb } from "./lib/serve-web"
 import { signupPolicy } from "./lib/signup-policy"
 import { originProxy } from "./lib/site"
@@ -527,7 +528,14 @@ const hostedDispatch = cfg.hostedRuns
 
 const gateway = modelGateway()
 
+const runtimeConfig = process.env.DERIVE_ORTAM_RUNNER_PATH
+  ? {
+      runnerPath: process.env.DERIVE_ORTAM_RUNNER_PATH,
+      apiUrl: process.env.DERIVE_ORTAM_API_URL ?? "https://api.ortam.dev/v1",
+    }
+  : undefined
 const app = createApp({
+  runtime: runtimeConfig,
   meta,
   // Self-host: whatever the image was built from. Docker builds can pass it; a source run
   // reports "dev". Same contract as the edge — /healthz answers "what is running".
@@ -662,6 +670,31 @@ const draftSweepTimer = cfg.backgroundWorkers
   : undefined
 draftSweepTimer?.unref?.()
 
+// Opt-in Ortam execution: reconcile durable attempts without holding a process open per VM.
+let runtimeTimer: ReturnType<typeof setInterval> | undefined
+if (runtimeConfig && cfg.backgroundWorkers) {
+  // Backpressure for this timer, not an ownership lock: database reservations still
+  // fence concurrent processes and restarts.
+  let ticking = false
+  const tick = () => {
+    if (ticking) return
+    ticking = true
+    void runtimeDispatchPass({
+      meta,
+      blobs,
+      config: runtimeConfig,
+      secret: authSecret,
+      server: cfg.baseUrl,
+    })
+      .catch(() => log.warn("runtime dispatch pass failed"))
+      .finally(() => {
+        ticking = false
+      })
+  }
+  tick()
+  runtimeTimer = setInterval(tick, 10_000)
+  runtimeTimer.unref()
+}
 // EXPERIMENTAL hosted runs (DERIVE_HOSTED_RUNS=true, default off): this API process becomes
 // the executor host. A minutely tick materializes due schedules, reclaims runs whose executor
 // died, and starts each due run as a `derive runner run` child process on this box — so an
@@ -751,6 +784,7 @@ const shutdown = makeShutdown({
   clearTimers: () => {
     if (pruneTimer) clearInterval(pruneTimer)
     if (draftSweepTimer) clearInterval(draftSweepTimer)
+    if (runtimeTimer) clearInterval(runtimeTimer)
   },
   closeStores,
   log,

@@ -97,7 +97,7 @@ export const connectionRoutes = (ctx: AppContext) => {
         // dedicated verified installation flow under /v1/github.
         kind: z.enum(["oauth", "secret", "slack"]).default("oauth"),
         // kind "secret" only:
-        secret: z.string().min(8).max(4096).optional(),
+        secret: z.string().min(1).max(4096).optional(),
         // nullish, not optional: GET /v1/connections renders an absent host as `base_url: null`,
         // and round-tripping that object straight back into this route is the obvious client
         // pattern — it should not 400 on the shape we just handed out.
@@ -187,9 +187,9 @@ export const connectionRoutes = (ctx: AppContext) => {
         // There is no vendor account behind this, but a run still identifies its tools by
         // ref, so mint a synthetic one. Nothing parses it — routing is on `kind`.
         broker_ref: newId("sref"),
-        // Display hint, never the credential. The default is the last 4 characters, which
-        // is how someone recognizes which key they pasted.
-        scopes_label: b.scopes_label ?? `…${b.secret.slice(-4)}`,
+        // Only long credentials get a suffix hint; short environment values must stay hidden.
+        scopes_label:
+          b.scopes_label ?? (b.secret.length > 8 ? `…${b.secret.slice(-4)}` : "Stored secret"),
         // Nothing to authorize, so it is usable immediately.
         status: "active",
       })

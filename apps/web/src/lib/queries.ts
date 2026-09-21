@@ -753,3 +753,19 @@ export const reportsQuery = () =>
     queryKey: ["reports"] as const,
     queryFn: () => api.listReports().then((r) => r.reports),
   })
+
+export const contextEnvironmentQuery = (id: string) =>
+  queryOptions({
+    queryKey: ["contexts", id, "environment"] as const,
+    queryFn: () => api.getContextEnvironment(id),
+    staleTime: 0,
+    meta: { persist: false },
+  })
+export const contextRuntimeQuery = (id: string) =>
+  queryOptions({
+    queryKey: ["contexts", id, "runtime"] as const,
+    queryFn: () => api.getContextRuntime(id),
+    staleTime: 0,
+    refetchInterval: 5000,
+    meta: { persist: false },
+  })

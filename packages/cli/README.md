@@ -124,7 +124,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install the pinned adapter
-        run: npm install --global "@derive-to/cli@0.6.0"
+        run: npm install --global "@derive-to/cli@0.7.0"
       # Your repository or runner provider installs and authenticates Codex.
       - name: Run the assigned graph
         env:

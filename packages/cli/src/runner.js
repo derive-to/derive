@@ -24,6 +24,7 @@ import { tmpdir } from "node:os"
 import { dirname, join, resolve, sep } from "node:path"
 import { claudeCode } from "./providers/claude-code.js"
 import { DEFAULT_PROVIDER, PROVIDERS, selectProvider } from "./providers/index.js"
+import { runRuntimeAttempt } from "./runtime-attempt.js"
 import {
   conventionsBlock,
   materializeNotes,
@@ -67,7 +68,11 @@ function applyEnvFile(path, env) {
  *  service units never embed the secret in their command line. `partial` lets
  *  doctor run its checks on a half-configured machine — missing token/context
  *  becomes a doctor finding instead of an error before the first check. */
-export function loadRunnerConfig(env = process.env, flags = {}, { partial = false } = {}) {
+export function loadRunnerConfig(
+  env = process.env,
+  flags = {},
+  { partial = false, oneShot = false } = {},
+) {
   // --env-file loads a context's own secrets (e.g. eda/.env with the MCP
   // credentials) before anything reads env. Applied to `env`, not the global:
   // in the CLI they're the same object, so spawned claude inherits the values,
@@ -83,6 +88,11 @@ export function loadRunnerConfig(env = process.env, flags = {}, { partial = fals
       ? readFileSync(flags["token-file"], "utf8").replace(/\s+/g, "")
       : env.DERIVE_TOKEN) ??
     ""
+  const modelAuth = flags["model-auth"] ?? env.RUNNER_MODEL_AUTH ?? "derive"
+  if (!["derive", "ortam"].includes(modelAuth))
+    throw new Error("--model-auth must be derive or ortam")
+  if (modelAuth === "ortam" && (!oneShot || !/^(dkrun_|dksess_|dkattempt_)/.test(token)))
+    throw new Error("Ortam model auth requires runner run with a single-task capability token")
   const contextId = flags.context ?? env.DERIVE_CONTEXT ?? ""
   if ((!token || !contextId) && !partial)
     throw new Error(
@@ -103,11 +113,14 @@ export function loadRunnerConfig(env = process.env, flags = {}, { partial = fals
     contextId,
     cwd: flags.cwd ?? env.RUNNER_CWD ?? process.cwd(),
     providerName,
+    modelAuth,
     agentBin: provider.binFrom(flags, env),
     // The provider's default (claude-code → sonnet): an asker is sitting in the
     // console waiting, and data Q&A is tool-call-bound, so latency buys more than
-    // the top model's depth. --model / RUNNER_MODEL override it.
-    model: flags.model ?? env.RUNNER_MODEL ?? provider.defaultModel,
+    // the top model's depth. Ortam mode leaves its managed default in charge.
+    // --model / RUNNER_MODEL override either default.
+    model:
+      flags.model ?? env.RUNNER_MODEL ?? (modelAuth === "ortam" ? null : provider.defaultModel),
     timeoutMs: positiveMs(flags.timeout ?? env.RUNNER_TIMEOUT_MS, 600_000, 10_000),
     pollMs: positiveMs(flags.poll ?? env.RUNNER_POLL_MS, 5_000, 500),
     mock: flags.mock === "true" || env.RUNNER_MOCK === "1",
@@ -267,6 +280,13 @@ export class DeriveClient {
   }
 
   // ---- runs (the automation lane) --------------------------------------------
+
+  /** Fetch only this active work item's selected environment variables. */
+  async runtimeEnvironment(scope) {
+    const query = new URLSearchParams(scope)
+    const result = await this.call(`/v1/agent/environment?${query}`)
+    return result.environment
+  }
 
   /** Claim the ONE session this bearer's capability token names (the hosted ask lane). Returns
    *  {session, context} or {session: null} when the race was lost / it settled meanwhile. */
@@ -964,9 +984,11 @@ export async function serveSession(client, session, manifest, cfg, repoMeta = []
   // fail-closed resolve (nothing connected) fails THIS session like any other run failure;
   // thrown, it would leave the claim dangling and retry-loop.
   let modelEnv = null
+  let taskEnv = {}
   let cleanupCred = noopCleanup
   if (!cfg.mock) {
     try {
+      taskEnv = await client.runtimeEnvironment({ session: session.id })
       const resolved = await resolveModelEnv(cfg, client, { session: session.id })
       modelEnv = resolved.env
       cleanupCred = resolved.cleanup
@@ -987,7 +1009,7 @@ export async function serveSession(client, session, manifest, cfg, repoMeta = []
           timeoutMs: cfg.timeoutMs,
           systemPrompt: manifest,
           prompt: buildPrompt(session.messages),
-          env: modelEnv ? { ...stripModelTokens(process.env), ...modelEnv } : undefined,
+          env: modelEnv ? { ...stripModelTokens(process.env), ...taskEnv, ...modelEnv } : undefined,
         })
   } finally {
     // Remove any per-run credential files (a Codex login's auth.json) now the spawn is done.
@@ -1077,7 +1099,8 @@ export async function serveSession(client, session, manifest, cfg, repoMeta = []
 // what makes a stray global token OR login on the host un-billable and un-exfiltratable: there
 // is no ambient fallback, and no leftover env can override or redirect the injected plan.
 // (Defense in depth on top of the deploy invariant that the runner image carries no host
-// `~/.codex` / `~/.claude` login and no baked model token.)
+// `~/.codex` / `~/.claude` login and no baked model token.) Ortam mode explicitly
+// restores these values from its single-owner sandbox, which also owns login files.
 const MODEL_TOKEN_ENV = [
   "CLAUDE_CODE_OAUTH_TOKEN",
   "ANTHROPIC_API_KEY",
@@ -1119,9 +1142,26 @@ const isJsonObject = (s) => {
  *  for an automation — and the server walks initiator, then owner (per-agent opt-in), then
  *  the workspace pool. There is NO shared/ambient fallback: if nothing resolves the run FAILS
  *  CLOSED, and a lookup error fails closed too. `reason` distinguishes an UNREADABLE stored
- *  token (reconnect) from nothing connected (connect). */
+ *  token (reconnect) from nothing connected (connect). Explicit Ortam mode instead uses
+ *  the single-task sandbox's delivered login; Ortam owns its refresh and cleanup. */
 export async function resolveModelEnv(cfg, client, scope = {}) {
   if (cfg.mock) return { env: null, cleanup: noopCleanup }
+  if (cfg.modelAuth === "ortam") {
+    // Only an explicitly dispatched task may use the sandbox owner's model login.
+    // Ortam owns delivery, files and refresh; never fetch or write back a Derive plan.
+    const lane = cfg.token?.startsWith("dksess_") ? "session" : "run"
+    if (!/^(dkrun_|dksess_)/.test(cfg.token ?? "") || !scope[lane])
+      throw new Error("Ortam model auth requires a scoped single-task capability token")
+    return {
+      env: Object.fromEntries(
+        MODEL_TOKEN_ENV.filter((key) => process.env[key] !== undefined).map((key) => [
+          key,
+          process.env[key],
+        ]),
+      ),
+      cleanup: noopCleanup,
+    }
+  }
   const provider = selectProvider(cfg.providerName)
   let res
   try {
@@ -1317,7 +1357,10 @@ export function configForRun(cfg, run, env = process.env) {
     ...cfg,
     providerName,
     agentBin,
-    model: execution?.model ?? providerModel ?? provider.defaultModel,
+    model:
+      execution?.model ??
+      providerModel ??
+      (cfg.modelAuth === "ortam" ? null : provider.defaultModel),
   }
 }
 
@@ -1379,9 +1422,11 @@ export async function serveRun(client, run, manifest, cfg) {
   // Whose plan pays for this run: its initiator (registrant fallback), a per-spawn overlay like a
   // session's. A fail-closed resolve finishes the run failed, never thrown (a throw dangles it).
   let modelEnv = null
+  let taskEnv = {}
   let cleanupCred = noopCleanup
   if (!cfg.mock) {
     try {
+      taskEnv = await client.runtimeEnvironment({ run: run.id })
       const resolved = await resolveModelEnv(cfg, client, { run: run.id })
       modelEnv = resolved.env
       cleanupCred = resolved.cleanup
@@ -1416,7 +1461,9 @@ export async function serveRun(client, run, manifest, cfg) {
   // run resolved can authenticate it. A stray global key on the host is neither billable nor
   // exfiltratable, and cannot redirect the injected token at a proxy.
   const env =
-    modelEnv || hasTools ? { ...stripModelTokens(process.env), ...modelEnv, ...shimEnv } : undefined
+    modelEnv || hasTools
+      ? { ...stripModelTokens(process.env), ...taskEnv, ...modelEnv, ...shimEnv }
+      : undefined
 
   let result
   try {
@@ -1564,6 +1611,7 @@ export async function serveSessionOnce(cfg) {
  *  claim race, gets an empty batch, and exits clean — execute it, and return the counts. No
  *  context, no poll loop: the substrate boots, this runs once, the process exits. */
 export async function runOnce(cfg) {
+  if (cfg.token?.startsWith("dkattempt_")) return runRuntimeAttempt(cfg)
   // The token says which lane this is: dksess_ names a session (an ask), dkrun_ a run (an
   // automation). One entry point, because the substrate boots the same image for both.
   if (typeof cfg.token === "string" && cfg.token.startsWith("dksess_")) return serveSessionOnce(cfg)
@@ -1596,8 +1644,10 @@ async function bootHost(cfg, modeLabel) {
   // the gap in the log; don't block startup on it. The overlay is discarded regardless: each
   // session resolves its own initiator's credential.
   try {
-    const preflight = await resolveModelEnv(cfg, client)
-    await preflight.cleanup()
+    if (cfg.modelAuth !== "ortam") {
+      const preflight = await resolveModelEnv(cfg, client)
+      await preflight.cleanup()
+    }
   } catch (e) {
     console.error(
       `[runner] no default model plan at boot (${e.message}); sessions resolve per-initiator`,
@@ -1713,6 +1763,8 @@ export async function drainPass(cfg, host) {
 }
 
 export async function serve(cfg) {
+  if (cfg.modelAuth === "ortam")
+    throw new Error("Ortam model auth is only available through runner run")
   const host = await bootHost(cfg, `poll ${cfg.pollMs}ms`)
   for (;;) {
     try {
@@ -1730,6 +1782,8 @@ export async function serve(cfg) {
  *  scheduler's retry is the retry); per-session failures are already recorded
  *  server-side, so they end the run quietly with a nonzero `failed` count. */
 export async function once(cfg) {
+  if (cfg.modelAuth === "ortam")
+    throw new Error("Ortam model auth is only available through runner run")
   const host = await bootHost(cfg, "single drain")
   const counts = await drainPass(cfg, host)
   console.log(

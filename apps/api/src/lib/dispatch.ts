@@ -415,6 +415,7 @@ export const dispatchRunNow = async (deps: DispatchDeps, runId: string): Promise
     if (r?.status !== "queued") return false
     // The queue nudge receives only a run id, so its immutable workspace scope must be checked
     // after loading the row. This is the direct path a minute sweep cannot compensate for.
+    if (r.runtime_id) return false
     if (!hostedOrgAllowed(deps, r.org_id)) return false
     // The master switch applies to the fast path too, or "Run now" would bypass the one
     // control an operator reaches for to stop everything. Fail CLOSED on a settings error —

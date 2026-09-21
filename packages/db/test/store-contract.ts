@@ -3157,6 +3157,20 @@ export function runStoreContract(
       })
     }
 
+    it("stores and replaces environment references without changing connections or instructions", async () => {
+      const context = await newContext()
+      expect(context.environment_bindings).toBeNull()
+      await store.setContextConnections(context.id, '["github"]')
+      await store.setContextEnvironment(context.id, '{"DATABASE_URL":"conn_db"}')
+      expect(await store.getContext(context.id)).toMatchObject({
+        environment_bindings: '{"DATABASE_URL":"conn_db"}',
+        connection_ids: '["github"]',
+        manifest_artifact_id: context.manifest_artifact_id,
+      })
+      await store.setContextEnvironment(context.id, null)
+      expect((await store.getContext(context.id))?.environment_bindings).toBeNull()
+    })
+
     // The ATTENDED (chat) claim. A contextless session has no agent to check ownership through,
     // so this is its only mutual exclusion — and a primitive that works on one driver and not
     // another is worse than none, which is why it lives in the contract rather than a
@@ -5114,6 +5128,647 @@ export function runStoreContract(
       const updated = await store.getSubscription(org)
       expect(updated?.status).toBe("canceled")
       expect(updated?.quantity).toBe(5)
+    })
+  })
+
+  describe(`${label}: persistent runtime ownership`, () => {
+    const at = "2026-09-21T12:00:00.000Z"
+    const deadlineAt = "2026-09-21T12:15:00.000Z"
+    const result = {
+      version: 1 as const,
+      outcome: "completed" as const,
+      summary: "Checked yesterday's games",
+      outputs: [{ kind: "artifact" as const, short_id: "report", version: 1 }],
+    }
+
+    async function fixture() {
+      const manifest = await store.createArtifact(newArtifact())
+      const v = await store.addVersion(manifest.id, newVersion())
+      const agentId = uuid()
+      const context = await store.createContext({
+        id: uuid(),
+        org_id: ORG,
+        name: `Daily check ${uuid()}`,
+        agent_id: agentId,
+        manifest_artifact_id: manifest.id,
+        created_by: "owner",
+      })
+      const connection = await store.createConnection({
+        id: uuid(),
+        org_id: ORG,
+        user_id: "owner",
+        kind: "secret",
+        broker: "none",
+        toolkit: "ortam",
+        broker_ref: uuid(),
+        secret_enc: "test ciphertext, not a credential",
+        status: "active",
+      })
+      const binding = {
+        id: uuid(),
+        org_id: ORG,
+        context_id: context.id,
+        agent_id: agentId,
+        api_url: "https://api.ortam.test/v1/",
+        ortam_org_id: "ortam-org",
+        ortam_user_id: "ortam-owner",
+        sandbox_id: uuid(),
+        connection_id: connection.id,
+      }
+      const runtime = await store.createContextRuntime(binding, at)
+      if (!runtime) throw new Error("Runtime fixture was not created")
+      const input = {
+        version: 1,
+        instruction: "Check yesterday's games",
+        context_id: context.id,
+        manifest: { artifact_id: manifest.id, version: v.n, blob_key: v.blob_key },
+        provider: "codex",
+        model: null,
+        connection_ids: [],
+        environment_bindings: {},
+      }
+      const enqueue = (over: Partial<NewRun> = {}) =>
+        store.createRun({
+          id: uuid(),
+          org_id: ORG,
+          agent_id: agentId,
+          reason: "manual:owner",
+          runtime_id: runtime.id,
+          input_snapshot: JSON.stringify(input),
+          ...over,
+        })
+      return { runtime, binding, input, enqueue, context, agentId }
+    }
+
+    it("pins the Context and keeps Ortam work out of ordinary executor claims", async () => {
+      const f = await fixture()
+      const r = await f.enqueue()
+      expect(r.input_snapshot).toBe(JSON.stringify(f.input))
+      expect(await store.claimRunById(r.id, f.agentId, at)).toBeNull()
+      expect(await store.claimDueRuns(f.agentId, at)).toEqual([])
+      expect((await store.listDueQueuedRuns(at, 1000)).some((row) => row.id === r.id)).toBe(false)
+      expect(
+        await store.finishRun(r.id, f.agentId, { status: "succeeded", finishedAt: at }),
+      ).toBeNull()
+      expect(await store.requeueRun(r.id, f.agentId, { scheduledFor: at })).toBeNull()
+      await expect(
+        f.enqueue({ input_snapshot: JSON.stringify({ ...f.input, version: 2 }) }),
+      ).rejects.toThrow()
+      for (const environment_bindings of [
+        { PATH: "connection" },
+        { DERIVE_TOKEN: "connection" },
+        Object.fromEntries(Array.from({ length: 21 }, (_, i) => [`APP_VAR_${i}`, "connection"])),
+      ]) {
+        await expect(
+          f.enqueue({ input_snapshot: JSON.stringify({ ...f.input, environment_bindings }) }),
+        ).rejects.toThrow("Invalid runtime run input snapshot")
+      }
+      await expect(
+        f.enqueue({
+          input_snapshot: JSON.stringify({
+            ...f.input,
+            manifest: { ...f.input.manifest, version: 99 },
+          }),
+        }),
+      ).rejects.toThrow()
+      await expect(f.enqueue({ org_id: "foreign" })).rejects.toThrow()
+      await expect(f.enqueue({ agent_id: "foreign" })).rejects.toThrow()
+      expect(await store.getContextRuntime(f.runtime.id, "foreign")).toBeNull()
+      expect(
+        await store.createContextRuntime({ ...f.binding, id: uuid(), org_id: "foreign" }, at),
+      ).toBeNull()
+      expect(await store.createContextRuntime({ ...f.binding, id: uuid() }, at)).toBeNull()
+    })
+
+    it("rechecks the Ortam credential before enqueue and reservation, while preserving cleanup", async () => {
+      const f = await fixture()
+      const r = await f.enqueue()
+      await store.setConnectionStatus(f.binding.connection_id, ORG, "revoked")
+      await expect(f.enqueue()).rejects.toThrow()
+      const reserve = () =>
+        store.reserveRunAttempt({ id: uuid(), runId: r.id, orgId: ORG, at, deadlineAt })
+      expect(await reserve()).toBeNull()
+      await store.updateConnectionCredential(f.binding.connection_id, ORG, {
+        status: "active",
+        secret_enc: null,
+      })
+      await expect(f.enqueue()).rejects.toThrow()
+      expect(await reserve()).toBeNull()
+      await store.updateConnectionCredential(f.binding.connection_id, ORG, {
+        secret_enc: "replacement ciphertext, not a credential",
+      })
+      const attempt = await reserve()
+      if (!attempt) throw new Error("Restored connection did not allow reservation")
+      await store.setConnectionStatus(f.binding.connection_id, ORG, "revoked")
+      expect(
+        await store.transitionRunAttempt(
+          attempt.id,
+          ORG,
+          attempt.revision,
+          { phase: "stopping", stop_operation_id: "stop-revoked" },
+          at,
+        ),
+      ).not.toBeNull()
+      expect((await store.listUnreleasedRunAttempts(1000)).some((a) => a.id === attempt.id)).toBe(
+        true,
+      )
+    })
+
+    it("records startup receipts and fences execution at the deadline without blocking cleanup", async () => {
+      const f = await fixture()
+      const r = await f.enqueue()
+      const reserved = await store.reserveRunAttempt({
+        id: uuid(),
+        runId: r.id,
+        orgId: ORG,
+        at,
+        deadlineAt,
+      })
+      if (!reserved) throw new Error("No attempt")
+      expect(
+        await store.transitionRunAttempt(
+          reserved.id,
+          ORG,
+          reserved.revision,
+          { phase: "ready", process_id: "premature" },
+          at,
+        ),
+      ).toBeNull()
+      expect(
+        await store.transitionRunAttempt(
+          reserved.id,
+          ORG,
+          reserved.revision,
+          { phase: "ready", stop_operation_id: "premature" },
+          at,
+        ),
+      ).toBeNull()
+      const starting = await store.transitionRunAttempt(
+        reserved.id,
+        ORG,
+        reserved.revision,
+        { phase: "starting", startup_operation_id: "pending-start" },
+        at,
+      )
+      if (!starting) throw new Error("Startup receipt was not saved")
+      expect(starting.phase).toBe("starting")
+      expect(
+        await store.transitionRunAttempt(
+          starting.id,
+          ORG,
+          starting.revision,
+          { phase: "ready", startup_operation_id: "different-start" },
+          at,
+        ),
+      ).toBeNull()
+      expect(
+        await store.transitionRunAttempt(
+          starting.id,
+          ORG,
+          starting.revision,
+          { phase: "ready" },
+          deadlineAt,
+        ),
+      ).toBeNull()
+      const stopping = await store.transitionRunAttempt(
+        starting.id,
+        ORG,
+        starting.revision,
+        { phase: "stopping", stop_operation_id: "stop-expired" },
+        deadlineAt,
+      )
+      if (!stopping) throw new Error("Expired owner could not stop")
+      expect(stopping.startup_operation_id).toBe("pending-start")
+      expect(
+        await store.releaseRunAttempt(
+          stopping.id,
+          ORG,
+          stopping.revision,
+          { status: "saved", snapshotId: "expired-files" },
+          deadlineAt,
+        ),
+      ).toMatchObject({ phase: "released" })
+    })
+
+    it("claims once and repairs report publication before settling a released run", async () => {
+      const f = await fixture()
+      const run = await f.enqueue({ initiated_by: "owner" })
+      const reserved = await store.reserveRunAttempt({
+        id: uuid(),
+        runId: run.id,
+        orgId: ORG,
+        at,
+        deadlineAt,
+      })
+      if (!reserved) throw new Error("No attempt")
+      expect(await store.claimRunAttempt(reserved.id, ORG, at)).toBeNull()
+      await store.markRuntimeRunStarted(run.id, ORG, at)
+      expect((await store.getRun(run.id))?.status).toBe("running")
+      let current = reserved
+      for (const phase of ["ready", "launching"] as const) {
+        const next = await store.transitionRunAttempt(
+          current.id,
+          ORG,
+          current.revision,
+          { phase },
+          at,
+        )
+        if (!next) throw new Error("Cannot advance")
+        current = next
+      }
+      const claims = await Promise.all([
+        store.claimRunAttempt(current.id, ORG, at),
+        store.claimRunAttempt(current.id, ORG, at),
+      ])
+      expect(claims.filter(Boolean)).toHaveLength(1)
+      expect(await store.claimRunAttempt(current.id, "foreign", at)).toBeNull()
+      const receipt = await store.acceptRunAttemptResult(current.id, ORG, result, at)
+      if (!receipt) throw new Error("No result")
+      await store.settleRuntimeRun(run.id, ORG, receipt.id, "succeeded", "{}", at)
+      expect((await store.getRun(run.id))?.status).toBe("running")
+      const stopping = await store.transitionRunAttempt(
+        receipt.id,
+        ORG,
+        receipt.revision,
+        { phase: "stopping" },
+        at,
+      )
+      if (!stopping) throw new Error("Cannot stop")
+      // Ortam auto-stop can prove saved/stopped without returning a named snapshot ID.
+      expect(
+        await store.releaseRunAttempt(
+          stopping.id,
+          ORG,
+          stopping.revision,
+          { status: "saved", snapshotId: null },
+          at,
+        ),
+      ).toMatchObject({ phase: "released", saved_snapshot_id: null })
+      const report = uuid().replaceAll("-", "").slice(0, 8)
+      await Promise.all([
+        store.publishRuntimeReport(receipt.id, ORG, report, "report-blob", 20, at),
+        store.publishRuntimeReport(receipt.id, ORG, report, "report-blob", 20, at),
+      ])
+      await store.publishRuntimeReport(receipt.id, ORG, report, "report-blob", 20, at)
+      const artifact = await store.getByShortId(report)
+      expect(artifact).toMatchObject({
+        current_version: 1,
+        author_id: "owner",
+        workspace_access: "none",
+        link_role: "none",
+      })
+      if (!artifact) throw new Error("No report")
+      expect(await store.getVersion(artifact.id, 1)).toMatchObject({ blob_key: "report-blob" })
+      expect(await store.getArtifactMember(artifact.id, "owner")).toMatchObject({ role: "owner" })
+      await expect(
+        store.publishRuntimeReport(receipt.id, ORG, report, "different-blob", 20, at),
+      ).rejects.toThrow()
+      await store.settleRuntimeRun(
+        run.id,
+        ORG,
+        receipt.id,
+        "succeeded",
+        JSON.stringify({ report }),
+        at,
+      )
+      expect((await store.getRun(run.id))?.status).toBe("succeeded")
+    })
+
+    it("reserves one filesystem owner under concurrent dispatch and never steals on expiry", async () => {
+      const f = await fixture()
+      const jobs = await Promise.all([f.enqueue(), f.enqueue()])
+      const reservations = await Promise.all(
+        Array.from({ length: 8 }, (_, i) =>
+          store.reserveRunAttempt({
+            id: uuid(),
+            runId: jobs[i % 2]?.id ?? "missing",
+            orgId: ORG,
+            at,
+            deadlineAt,
+          }),
+        ),
+      )
+      const owners = reservations.filter((row) => row !== null)
+      expect(owners).toHaveLength(1)
+      const owner = owners[0]
+      if (!owner) throw new Error("No attempt won")
+      const next = jobs.find((r) => r.id !== owner.run_id)
+      if (!next) throw new Error("No waiting run")
+      expect(
+        await store.reserveRunAttempt({
+          id: uuid(),
+          runId: next.id,
+          orgId: ORG,
+          at: "2026-09-22T12:00:00.000Z",
+          deadlineAt: "2026-09-22T12:15:00.000Z",
+        }),
+      ).toBeNull()
+      expect(await store.getRunAttempt(owner.id, "foreign")).toBeNull()
+      expect(
+        await store.releaseRunAttempt(
+          owner.id,
+          ORG,
+          owner.revision,
+          { status: "saved", snapshotId: "saved" },
+          at,
+        ),
+      ).toBeNull()
+      const stopping = await store.transitionRunAttempt(
+        owner.id,
+        ORG,
+        owner.revision,
+        { phase: "stopping", stop_operation_id: "stop-first" },
+        at,
+      )
+      if (!stopping) throw new Error("Stop transition failed")
+      expect(
+        await store.releaseRunAttempt(
+          owner.id,
+          ORG,
+          stopping.revision,
+          { status: "saved", snapshotId: "snapshot-first" },
+          at,
+        ),
+      ).toMatchObject({ phase: "released" })
+      expect(
+        await store.reserveRunAttempt({ id: uuid(), runId: next.id, orgId: ORG, at, deadlineAt }),
+      ).toMatchObject({ attempt: 1 })
+    })
+
+    it("preserves an immutable result while cleanup continues, even after disable or deletion", async () => {
+      const f = await fixture()
+      const r = await f.enqueue()
+      let attempt = await store.reserveRunAttempt({
+        id: uuid(),
+        runId: r.id,
+        orgId: ORG,
+        at,
+        deadlineAt,
+      })
+      if (!attempt) throw new Error("Attempt was not reserved")
+      expect(await store.acceptRunAttemptResult(attempt.id, ORG, result, at)).toBeNull()
+      for (const change of [
+        { phase: "ready" as const, startup_operation_id: "resume-op" },
+        { phase: "launching" as const },
+        { phase: "running" as const, process_id: "process-1" },
+      ]) {
+        const next = await store.transitionRunAttempt(attempt.id, ORG, attempt.revision, change, at)
+        if (!next) throw new Error("Transition failed")
+        attempt = next
+      }
+      expect(
+        await store.transitionRunAttempt(attempt.id, ORG, 0, { phase: "stopping" }, at),
+      ).toBeNull()
+      expect(
+        await store.transitionRunAttempt(attempt.id, ORG, attempt.revision, { phase: "ready" }, at),
+      ).toBeNull()
+      const accepted = await store.acceptRunAttemptResult(attempt.id, ORG, result, at)
+      if (!accepted) throw new Error("Result was not accepted")
+      expect(accepted.released_at).toBeNull()
+      expect(
+        await store.acceptRunAttemptResult(
+          attempt.id,
+          ORG,
+          { ...result, summary: "different" },
+          at,
+        ),
+      ).toBeNull()
+      expect(await store.acceptRunAttemptResult(attempt.id, ORG, result, at)).toEqual(accepted)
+      expect(await store.acceptRunAttemptResult(attempt.id, "foreign", result, at)).toBeNull()
+      await store.disableContextRuntime(f.runtime.id, ORG, at)
+      await store.deleteContext(f.context.id, ORG)
+      expect((await store.listUnreleasedRunAttempts(1000)).some((a) => a.id === attempt?.id)).toBe(
+        true,
+      )
+      const stopping = await store.transitionRunAttempt(
+        attempt.id,
+        ORG,
+        accepted.revision,
+        { phase: "stopping", stop_operation_id: "stop-op" },
+        at,
+      )
+      if (!stopping) throw new Error("Stop failed")
+      const released = await store.releaseRunAttempt(
+        attempt.id,
+        ORG,
+        stopping.revision,
+        { status: "failed", snapshotId: null },
+        at,
+      )
+      expect(released).toMatchObject({
+        phase: "released",
+        save_status: "failed",
+        result_json: accepted.result_json,
+      })
+      expect(await store.acceptRunAttemptResult(attempt.id, ORG, result, at)).toEqual(released)
+      expect((await store.listUnreleasedRunAttempts(1000)).some((a) => a.id === attempt?.id)).toBe(
+        false,
+      )
+    })
+
+    it("only retries a released attempt and rejects stale controllers and results", async () => {
+      const f = await fixture()
+      const r = await f.enqueue()
+      const first = await store.reserveRunAttempt({
+        id: uuid(),
+        runId: r.id,
+        orgId: ORG,
+        at,
+        deadlineAt,
+      })
+      if (!first) throw new Error("No attempt")
+      const competing = await Promise.all([
+        store.transitionRunAttempt(first.id, ORG, first.revision, { phase: "ready" }, at),
+        store.transitionRunAttempt(first.id, ORG, first.revision, { phase: "stopping" }, at),
+      ])
+      expect(competing.filter(Boolean)).toHaveLength(1)
+      const current = await store.getRunAttempt(first.id, ORG)
+      if (!current) throw new Error("Missing attempt")
+      const stopping = await store.transitionRunAttempt(
+        first.id,
+        ORG,
+        current.revision,
+        { phase: "stopping", stop_operation_id: "stop-retry" },
+        at,
+      )
+      if (!stopping) throw new Error("Stop failed")
+      await store.releaseRunAttempt(
+        first.id,
+        ORG,
+        stopping.revision,
+        { status: "saved", snapshotId: "saved" },
+        at,
+      )
+      const retry = await store.reserveRunAttempt({
+        id: uuid(),
+        runId: r.id,
+        orgId: ORG,
+        at,
+        deadlineAt,
+      })
+      expect(retry).toMatchObject({ attempt: 2 })
+      expect(await store.acceptRunAttemptResult(first.id, ORG, result, at)).toBeNull()
+      expect(
+        await store.transitionRunAttempt(
+          first.id,
+          ORG,
+          stopping.revision,
+          { phase: "running", process_id: "old" },
+          at,
+        ),
+      ).toBeNull()
+      await store.disableContextRuntime(f.runtime.id, "foreign", at)
+      expect((await store.getContextRuntime(f.runtime.id, ORG))?.disabled_at).toBeNull()
+    })
+
+    it("does not repeat a launch with an unknown outcome after cleanup releases the sandbox", async () => {
+      const f = await fixture()
+      const r = await f.enqueue()
+      const reserved = await store.reserveRunAttempt({
+        id: uuid(),
+        runId: r.id,
+        orgId: ORG,
+        at,
+        deadlineAt,
+      })
+      if (!reserved) throw new Error("No attempt")
+      let current = reserved
+      for (const phase of ["ready", "launching", "stopping"] as const) {
+        const next = await store.transitionRunAttempt(
+          current.id,
+          ORG,
+          current.revision,
+          { phase, ...(phase === "stopping" ? { stop_operation_id: "stop-unknown-launch" } : {}) },
+          at,
+        )
+        if (!next) throw new Error("Cannot advance attempt")
+        current = next
+      }
+      const released = await store.releaseRunAttempt(
+        current.id,
+        ORG,
+        current.revision,
+        { status: "saved", snapshotId: "unknown-launch-files" },
+        at,
+      )
+      expect(released).toMatchObject({
+        launch_started_at: at,
+        process_id: null,
+        result_json: null,
+        phase: "released",
+      })
+      expect(
+        await store.reserveRunAttempt({ id: uuid(), runId: r.id, orgId: ORG, at, deadlineAt }),
+      ).toBeNull()
+      const nextRun = await f.enqueue()
+      expect(
+        await store.reserveRunAttempt({
+          id: uuid(),
+          runId: nextRun.id,
+          orgId: ORG,
+          at,
+          deadlineAt,
+        }),
+      ).not.toBeNull()
+    })
+
+    it("keeps cleanup discoverable when an automation is deleted, without admitting its queued jobs", async () => {
+      const f = await fixture()
+      const automation = await store.createAutomation({
+        id: uuid(),
+        org_id: ORG,
+        agent_id: f.agentId,
+        context_id: f.context.id,
+        instruction: "Check games",
+        trigger: JSON.stringify({ kind: "manual" }),
+      })
+      const r = await f.enqueue({ automation_id: automation.id })
+      const queued = await f.enqueue({ automation_id: automation.id })
+      const active = await store.reserveRunAttempt({
+        id: uuid(),
+        runId: r.id,
+        orgId: ORG,
+        at,
+        deadlineAt,
+      })
+      if (!active) throw new Error("No active attempt")
+      await store.deleteAutomation(automation.id, ORG)
+      expect(await store.getRun(r.id)).not.toBeNull()
+      expect(await store.getRun(queued.id)).not.toBeNull()
+      expect(
+        await store.reserveRunAttempt({ id: uuid(), runId: queued.id, orgId: ORG, at, deadlineAt }),
+      ).toBeNull()
+      expect((await store.listUnreleasedRunAttempts(1000)).some((a) => a.id === active.id)).toBe(
+        true,
+      )
+      expect(
+        await store.transitionRunAttempt(
+          active.id,
+          ORG,
+          active.revision,
+          { phase: "stopping", stop_operation_id: "cleanup-deleted" },
+          at,
+        ),
+      ).not.toBeNull()
+      await expect(f.enqueue({ automation_id: automation.id })).rejects.toThrow()
+      await store.disableContextRuntime(f.runtime.id, ORG, at)
+      expect(await store.getRun(queued.id)).toMatchObject({ status: "failed", finished_at: at })
+      expect((await store.getRun(r.id))?.status).not.toBe("failed")
+      await expect(f.enqueue()).rejects.toThrow()
+    })
+
+    it("does not restart an accepted investigation after saving and releasing its filesystem", async () => {
+      const f = await fixture()
+      const r = await f.enqueue()
+      const reserved = await store.reserveRunAttempt({
+        id: uuid(),
+        runId: r.id,
+        orgId: ORG,
+        at,
+        deadlineAt,
+      })
+      if (!reserved) throw new Error("No attempt")
+      let current = reserved
+      for (const change of [
+        { phase: "ready" as const },
+        { phase: "launching" as const },
+        { phase: "running" as const, process_id: "daily-check" },
+      ]) {
+        const next = await store.transitionRunAttempt(current.id, ORG, current.revision, change, at)
+        if (!next) throw new Error("Cannot advance attempt")
+        current = next
+      }
+      expect(await store.acceptRunAttemptResult(current.id, ORG, result, deadlineAt)).toBeNull()
+      const accepted = await store.acceptRunAttemptResult(current.id, ORG, result, at)
+      if (!accepted) throw new Error("Result was not accepted")
+      const stopping = await store.transitionRunAttempt(
+        current.id,
+        ORG,
+        accepted.revision,
+        { phase: "stopping", stop_operation_id: "save-and-stop" },
+        at,
+      )
+      if (!stopping) throw new Error("Cannot stop")
+      await store.releaseRunAttempt(
+        current.id,
+        ORG,
+        stopping.revision,
+        { status: "saved", snapshotId: "daily-files" },
+        at,
+      )
+      expect(
+        await store.reserveRunAttempt({ id: uuid(), runId: r.id, orgId: ORG, at, deadlineAt }),
+      ).toBeNull()
+      const tomorrow = await f.enqueue()
+      expect(
+        await store.reserveRunAttempt({
+          id: uuid(),
+          runId: tomorrow.id,
+          orgId: ORG,
+          at,
+          deadlineAt,
+        }),
+      ).not.toBeNull()
     })
   })
 

@@ -3866,6 +3866,22 @@
           "is_default"
         ]
       },
+      "ContextEnvironment": {
+        "type": "object",
+        "properties": {
+          "bindings": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            }
+          }
+        },
+        "required": [
+          "bindings"
+        ]
+      },
       "TemplateArtifact": {
         "allOf": [
           {
@@ -11338,6 +11354,73 @@
                   "required": [
                     "sessions"
                   ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/contexts/{id}/environment": {
+      "get": {
+        "tags": [
+          "Contexts"
+        ],
+        "summary": "Read environment variable bindings (manager only; never returns secret values).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Names and secret connection IDs.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContextEnvironment"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Contexts"
+        ],
+        "summary": "Replace the secret connections delivered as environment variables to this Context's runner.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContextEnvironment"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Saved bindings; values remain write-only.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContextEnvironment"
                 }
               }
             }

@@ -1,0 +1,266 @@
+# Check the Derive–Ortam lifecycle
+
+This is the first integration check for running Derive agents on Ortam. It uses
+Ortam's public API to create a Small sandbox, run a fixed `printf` command, save
+its exit status and output, stop the sandbox, and delete the disposable test
+resource. A pass requires successful command output, a successful stop operation,
+and a successful delete operation. Accepting a shutdown request is not enough.
+
+This check does not dispatch a Derive agent, pass Context secrets to Ortam,
+install a coding agent, clone a repository, or run a schedule. It is an operator
+check, separate from the existing hosted-run dispatcher. Its local receipt is
+recovery evidence for this check, not the production job store.
+
+## Run against Ortam
+
+Use Node 24 and an Ortam Developer API key for the intended test organization.
+Supply the key through `ORTAM_API_KEY` in the shell environment; do not put it in
+command arguments or commit it. `ORTAM_API_URL` defaults to
+`https://api.ortam.dev/v1`. An HTTPS test deployment or a loopback HTTP API can be
+selected instead. There is no automatic fallback between environments.
+
+From the repository root:
+
+```sh
+pnpm test:ortam --state tmp/ortam-smoke/receipt.json
+```
+
+This starts paid compute. The machine has a five-minute automatic stop limit once
+ready; the command has a 30-second runtime limit. The check normally stops and
+deletes it much sooner. No Context, database, GitHub, or model credentials are
+sent to the machine. The API key is used only to authenticate control requests.
+
+The receipt is private to the local user and contains resource IDs, request
+identity, lifecycle progress, and the fixed command's result. It contains no
+API key or access token. Keep it until `cleanup_confirmed` is true. A completed
+receipt is not reused for new work: use a new path for another check.
+
+## Recover an interrupted check
+
+Run the same command with the same receipt to continue. To abandon the command
+and finish cleanup:
+
+```sh
+pnpm test:ortam --state tmp/ortam-smoke/receipt.json --cleanup-only
+```
+
+The receipt pins the API URL and organization. Different credentials are fine
+only if they still belong to that organization. Machine creation, stop, and
+delete requests reuse their original idempotency keys when a response is lost.
+A failed check still owns cleanup. A failed deletion leaves its operation ID in
+the receipt; inspect that operation in Ortam and keep the receipt until resolved.
+Each invocation allows up to 15 minutes for the check and another 15 for cleanup.
+If Ortam stays unreachable, the command exits with cleanup explicitly unconfirmed;
+it cannot guarantee deletion during an outage. Ortam's automatic stop is the
+independent compute backstop, and does not delete saved storage.
+
+`Ctrl-C` and termination requests enter cleanup. A hard kill or machine crash
+leaves a `.lock` file beside the receipt. Read its PID and confirm the original
+process is no longer running before removing **only the lock file**, then rerun
+with the same receipt. Do not remove the receipt or invent a replacement ID.
+The check will not steal a lock just because time has passed.
+
+Ortam process starts currently have no idempotency key. Before sending that
+request, the check records that the launch was consumed. If it crashes at that
+point or loses the response, it does not send another start request. It reports
+an unknown command outcome and cleans up. This can miss a check; it prevents a
+retry from doing the same work twice. A production executor needs its own claim
+or an Ortam process request identity before retrying arbitrary agent work.
+
+## What is tested locally
+
+`pnpm test` includes an HTTP peer that exercises the public request shapes and
+injects lost responses, failed operations, and an actual caller-process crash.
+It checks recovery, cleanup, credential omission from receipts, organization
+binding, and single command submission. The peer is simulated: these tests do
+not prove VM provisioning, file persistence, or cloud resource release. Only a
+successful receipt from a real Ortam deployment qualifies that boundary.
+
+## Live results — 21 September 2026
+
+The basic lifecycle passed against `api.ortam.dev`: create a Small sandbox,
+run the command, confirm stop, and confirm deletion. A fresh cycle took about
+31 seconds. The initial live attempt exposed a missing
+`X-Ortam-Confirm-Delete` header; the check and its HTTP peer now enforce it.
+Recovery deleted that first sandbox, and a second fresh cycle passed.
+
+A separate operator experiment verified saved files:
+
+1. Write a unique file, stop, and retain a snapshot.
+2. Resume and confirm the file contents are unchanged.
+3. Change the file, stop, and restore the retained snapshot.
+4. Confirm the original contents have returned.
+5. Stop and delete the sandbox, then delete the retained snapshot.
+
+Every step passed. Cleanup was confirmed for both the sandbox and snapshot.
+The private local receipt is
+`tmp/ortam-smoke/persistence-2026-09-21.json`. This experiment is not part of
+`pnpm test:ortam`; that maintained command still exercises the basic lifecycle.
+
+The live image included Claude Code 2.1.273 and Codex CLI 0.154.0. Neither ran
+an authenticated model task. `GET /agents` returned `403 session_required`
+with the test API key. Ortam requires the owning user's browser session to
+manage model connections and attach them to a sandbox. After attachment,
+API keys owned by that same user can execute commands on that sandbox.
+The pilot can therefore attach a connection in Ortam once, then use that
+owner's API key for subsequent runs. Other users' keys cannot execute work
+in a sandbox carrying that connection, even with lifecycle authority.
+
+A subsequent live test ran the modified Derive runner with Codex through that
+attached connection. It claimed a task from a local HTTP fixture, fetched one
+selected test variable, launched real Codex, checked a file Codex wrote, and
+verified report submission and successful completion. No Derive model-credential
+lookup occurred. The sandbox was stopped and deleted, with cleanup confirmed in
+`tmp/ortam-smoke/model-2026-09-21.json`.
+
+The model connection and execution were real; the Derive API was a test fixture
+inside the sandbox. This does not qualify the production dispatcher, hosted API
+authorization, credential refresh over time, credential exclusion from snapshots,
+or scheduled execution. Claude Code has local adapter coverage but has not been
+run live in this test.
+
+## Use Ortam's model connection
+
+The local CLI now accepts `--model-auth ortam` on `derive runner run` (or
+`RUNNER_MODEL_AUTH=ortam`). It requires a run-, session-, or runtime-attempt-scoped capability token.
+Queue-draining and polling runners reject this mode. The default remains
+`--model-auth derive`, with the existing per-task credential checks.
+
+After an owning user's connection is attached to a sandbox, a dispatcher can
+supply a fresh single-task token through the process environment and launch:
+
+```sh
+derive runner run --provider codex --model-auth ortam --cwd /home/ortam/work
+```
+
+The dispatcher supplies `DERIVE_TOKEN` and `DERIVE_SERVER`; no token belongs in
+the command arguments. Ortam's administration key stays outside the sandbox.
+This path requires CLI 0.7.0 or a build containing this change.
+
+### Release order
+
+Deploy the matching API before upgrading runners to CLI 0.7.0: runners now fetch
+the task's selected variables from `/v1/agent/environment`, and fail closed if
+that request cannot be authorized or served. Existing CLI 0.6.0 runners can keep
+using the new API, but cannot deliver the new environment bindings.
+
+Keep `DERIVE_ORTAM_RUNNER_PATH` unset during the initial deployment. Install the
+pinned CLI in a pilot sandbox and qualify that deployment's controller before
+setting the path and enabling the pilot workspace. Turning off workspace hosted
+agents or disabling its runtime prevents new work while preserving cleanup.
+Do not remove the worker's configuration while attempts still need shutdown.
+
+In this mode the runner uses Ortam's supplied environment and login files and
+never fetches or writes back Derive model credentials. Legacy run/session tokens
+retain their existing repository-materialization behavior. The new attempt token
+uses `/home/ortam/work` directly: it does not reset repositories or replace saved
+files. The agent chooses which scripts to run and which repositories to fetch.
+
+## Manual cloud runs (local implementation)
+
+The Context page now has a Cloud runs panel when the deployment opts in. An owner
+connects an existing stopped sandbox, chooses Codex or Claude Code, writes an
+instruction, and clicks **Run now**. The panel distinguishes receipt of the report
+from confirmation that the sandbox stopped. The received report remains readable
+while shutdown is pending; once settled, it also links to an owner-only Markdown
+artifact. Disabling cloud runs stops new admission and sends active work into
+cleanup.
+
+Initial setup is explicit:
+
+1. Install this branch's CLI package at a fixed path inside the sandbox, with its
+   package dependencies. Keep that installation separate from `/home/ortam/work`.
+   Use a pinned build; the worker does not install arbitrary latest packages.
+2. Attach the owning user's model connection in Ortam. Set sandbox auto-stop to
+   20 minutes or less, then stop it so this setup is saved.
+3. Add that user's Ortam API key as a secret connection in Derive. Select it and
+   the sandbox ID in the Context's Cloud runs panel. Binding checks the actual
+   Ortam organization, account owner, sandbox state, and auto-stop setting.
+4. Set `DERIVE_ORTAM_RUNNER_PATH` on the API deployment to the installed CLI's
+   absolute `bin/derive.js` path. `DERIVE_ORTAM_API_URL` defaults to
+   `https://api.ortam.dev/v1`. Enable hosted agents and agent writes for the
+   workspace. Workers also require the workspace in
+   `DERIVE_HOSTED_RUNS_ALLOWLIST`; Node uses its background-worker switch.
+
+Node reconciles every ten seconds; Workers uses the existing cron invocation.
+Each pass does bounded work rather than waiting for a VM or model to finish.
+The queue, ownership, launch intent, guest claim, accepted result, and confirmed
+release live in the database. An expired owner is not replaced while its compute
+release remains unconfirmed. A failed stop retains ownership for repair.
+
+The controller reserves one owner per sandbox, resumes it with an idempotency
+key, and records launch intent before submitting the process. Only that
+controller may submit the non-idempotent process request. After a lost response,
+it waits for an authenticated result or the deadline; it never repeats the
+launch. The guest claims its attempt once. A lost claim response can miss work,
+but cannot start a second model session. There is no automatic model retry.
+
+The guest receives a separate `dkattempt_` capability. It cannot manage Contexts,
+publish arbitrary artifacts, claim other jobs, or control Ortam. It can claim its
+own pinned inputs, invoke the intersection of its original selected tools and
+current grants, and submit one immutable result. Secret values are fetched at
+claim time; removed or replaced bindings prevent execution, and new grants do
+not widen an already-queued run. The runner uses Ortam's login and preserves its
+working directory. Only identical result submissions can replay after a lost
+response. Reports are capped at 16,000 characters in this first version.
+
+Derive owns shutdown. Report acceptance does not release compute. A successful
+stop operation, or observation of Ortam's authoritative `stopped` state after
+its own auto-stop, proves the normal stop-and-save path completed. This path
+uses Ortam's current saved filesystem; it does not create a retained named
+Snapshot after each job. Ortam does not expose a named snapshot ID for normal
+stop, so `saved_snapshot_id` can be null while `save_status` is `saved`.
+
+This path is opt-in and has not been deployed to hosted Derive. Local coverage
+composes the actual Derive
+routes, database and worker with a simulated Ortam HTTP peer, exercises the CLI
+through a real child process with a test provider executable, and checks the
+manual-run UI in a browser. The live controller qualification below uses the
+actual API and worker, separately from the earlier fixture-based model test.
+
+Next: add scheduled admission to the same execution path. Automatic sandbox
+provisioning, GitHub clone/push credential
+delivery, review of learned script changes, and runtime replacement/re-enablement
+are not part of this first manual-run path.
+
+## Live controller qualification — 21 September 2026
+
+Two successive Codex runs passed through this branch's actual Node API, SQLite
+store, background worker and CLI. The API ran on a disposable Small Ortam
+machine; the agent ran on a separate Small sandbox with the owning user's
+Ortam-managed Codex connection. Setup and job admission used the signed-in
+Derive HTTP routes. The test did not seed runs directly in the database or use
+an API fixture. The Ortam administration key stayed on the API machine.
+
+1. The first job received one selected test variable and wrote
+   `persistence-proof.json` with a counter of 1.
+2. Derive accepted its report, confirmed the sandbox stopped and saved, published
+   a private Markdown report artifact, and settled the job as succeeded.
+3. The second job resumed the same sandbox, read the first job's file, changed
+   the counter to 2, and completed the same report and shutdown sequence.
+4. Both report content endpoints rejected anonymous access. Both attempts had
+   `save_status: saved` and a confirmed release time. Neither needed a named
+   snapshot ID.
+5. A final resume independently checked the file's counter was 2. The task
+   variable was absent from a fresh process environment, and a scan of
+   `/home/ortam/work` found neither the test secret nor an attempt-token marker.
+6. The test disabled the runtime and confirmed deletion of both machines.
+
+The private local receipt is `tmp/ortam-e2e/cloud/receipt.json`. These reports
+belonged to the disposable API instance and were removed with it. The receipt
+retains their text and lifecycle evidence. This operator qualification is not
+part of `pnpm test:ortam`, which remains the maintained basic lifecycle check.
+
+An earlier attempt using a laptop-hosted API produced no accepted report while
+its HTTPS tunnel was losing connectivity. Derive marked the job failed with an
+unknown result, confirmed stop/save, and released ownership. The test then
+confirmed sandbox deletion. Runner diagnostics were not retained before that
+deletion, so the tunnel failure is correlated evidence rather than a proved
+root cause. The successful two-machine test removed that tunnel dependency.
+
+This qualifies manual Codex execution through the Node/SQLite controller. It
+does not qualify the deployed Workers/D1 controller, Claude Code, long-term
+model-credential refresh, provider outages, schedules, or GitHub credential
+delivery. The working-file scan is not a whole-disk or snapshot credential audit:
+an agent can still write a delivered secret to other persistent files. Production
+rollout and the anti-cheat pilot remain separate work.

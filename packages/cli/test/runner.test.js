@@ -5,15 +5,17 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs"
 import http from "node:http"
 import { tmpdir } from "node:os"
 import { basename, join } from "node:path"
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 import {
   checkWritable,
+  configForRun,
   doctor,
   gitSafeEnv,
   loadRunnerConfig,
@@ -23,7 +25,10 @@ import {
   parseManifest,
   repoSlug,
   resolveArtifactHtml,
+  resolveModelEnv,
   runClaude,
+  runOnce,
+  serveRun,
   serveSession,
   syncRepos,
 } from "../src/runner.js"
@@ -344,6 +349,7 @@ describe("artifact file channel", () => {
       fail: async (id) => calls.failed.push(id),
       // The non-mock serve path resolves the run's plan first; the fake `claude` ignores the
       // token, so any credential lets the artifact channel run end to end.
+      runtimeEnvironment: async () => ({}),
       modelCredential: async () => ({ credential: { kind: "oauth", value: "t" }, reason: "none" }),
     }
     const session = () => ({
@@ -808,5 +814,257 @@ describe("skills", () => {
       expect(writeSkill(root, "safe", next)).toBe(skillDigest(next))
       expect(readFileSync(join(root, "safe", "SKILL.md"), "utf8")).toBe("new")
     })
+  })
+})
+
+describe("task environment delivery", () => {
+  it.each([
+    "session",
+    "run",
+  ])("isolates %s variables and fails before launch when access is missing", async (kind) => {
+    const cwd = mkdtempSync(join(tmpdir(), "runner-environment-"))
+    try {
+      const bin = join(cwd, "agent.cjs")
+      writeFileSync(
+        bin,
+        `#!/usr/bin/env node
+const fs = require("node:fs");
+fs.writeFileSync("received", process.env.CONTEXT_ENV_TEST_VALUE ?? "missing");
+console.log(JSON.stringify({type:"result",result:'<answer>{"body_md":"done"}</answer><revision>{"content":"# Done","filename":"result.md"}</revision>'}));
+`,
+      )
+      chmodSync(bin, 0o755)
+      const scopes = []
+      const failures = []
+      const completed = []
+      const inherited = process.env.CONTEXT_ENV_TEST_VALUE
+      const client = {
+        runtimeEnvironment: async (scope) => {
+          scopes.push(scope)
+          return scope[kind] === "first" ? { CONTEXT_ENV_TEST_VALUE: "runtime-fixture" } : {}
+        },
+        modelCredential: async () => ({
+          credential: { kind: "oauth", value: "model-fixture" },
+          reason: "none",
+        }),
+        answer: async (id) => completed.push(id),
+        fail: async (id) => failures.push(id),
+        createRevision: async () => ({ short_id: "fixture" }),
+        finishRun: async (id, result) =>
+          (result.status === "failed" ? failures : completed).push(id),
+      }
+      const cfg = {
+        cwd,
+        mock: false,
+        agentBin: bin,
+        providerName: "claude-code",
+        model: "sonnet",
+        timeoutMs: 5000,
+      }
+      const serve = (id) =>
+        kind === "session"
+          ? serveSession(
+              client,
+              { id, messages: [{ author_kind: "asker", body_md: "check" }] },
+              "manifest",
+              cfg,
+            )
+          : serveRun(client, { id, instruction: "check", targets: [] }, "manifest", cfg)
+      await serve("first")
+      expect(readFileSync(join(cwd, "received"), "utf8")).toBe("runtime-fixture")
+      expect(process.env.CONTEXT_ENV_TEST_VALUE).toBe(inherited)
+      await serve("second")
+      expect(readFileSync(join(cwd, "received"), "utf8")).toBe(inherited ?? "missing")
+      expect(scopes).toEqual([{ [kind]: "first" }, { [kind]: "second" }])
+      expect(completed).toEqual(["first", "second"])
+      expect(failures).toEqual([])
+      client.runtimeEnvironment = async () => {
+        throw new Error("Environment unavailable")
+      }
+      writeFileSync(join(cwd, "received"), "not launched")
+      await serve("third")
+      expect(readFileSync(join(cwd, "received"), "utf8")).toBe("not launched")
+      expect(failures).toEqual(["third"])
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+})
+
+describe("Ortam-managed model login", () => {
+  it("requires an explicit single-task launch and keeps the managed model default", () => {
+    const env = { DERIVE_TOKEN: "dkrun_fixture", RUNNER_MODEL_AUTH: "ortam" }
+    expect(() => loadRunnerConfig(env, {}, { partial: true })).toThrow(/single-task/)
+    expect(() =>
+      loadRunnerConfig(
+        { ...env, DERIVE_TOKEN: "dk_agt_fixture" },
+        {},
+        { partial: true, oneShot: true },
+      ),
+    ).toThrow(/single-task/)
+    expect(() => loadRunnerConfig({}, { "model-auth": "typo" }, { partial: true })).toThrow(
+      /model-auth/,
+    )
+    const cfg = loadRunnerConfig(env, {}, { partial: true, oneShot: true })
+    expect(cfg.model).toBeNull()
+    expect(
+      configForRun(
+        { ...cfg, providerName: "codex" },
+        { execution: { provider: "claude-code" } },
+        {},
+      ).model,
+    ).toBeNull()
+    expect(configForRun(cfg, { execution: { model: "explicit-model" } }).model).toBe(
+      "explicit-model",
+    )
+  })
+
+  it.each([
+    "session",
+    "run",
+  ])("uses Ortam's login for one %s without fetching or writing a Derive plan", async (kind) => {
+    const cwd = mkdtempSync(join(tmpdir(), "runner-ortam-"))
+    vi.stubEnv("ANTHROPIC_AUTH_TOKEN", "ortam-test-placeholder")
+    vi.stubEnv("ANTHROPIC_BASE_URL", "http://127.0.0.1:47070/anthropic")
+    try {
+      const bin = join(cwd, "agent.cjs")
+      writeFileSync(
+        bin,
+        `#!/usr/bin/env node
+const fs = require("node:fs");
+fs.writeFileSync("received.json", JSON.stringify({token:process.env.ANTHROPIC_AUTH_TOKEN,base:process.env.ANTHROPIC_BASE_URL,task:process.env.CONTEXT_ENV_TEST_VALUE,args:process.argv.slice(2)}));
+console.log(JSON.stringify({type:"result",result:'<answer>{"body_md":"done"}</answer><revision>{"content":"# Done","filename":"result.md"}</revision>'}));
+`,
+      )
+      chmodSync(bin, 0o755)
+      const client = {
+        runtimeEnvironment: vi.fn(async () => ({ CONTEXT_ENV_TEST_VALUE: "selected-access" })),
+        modelCredential: vi.fn(async () => {
+          throw new Error("must not fetch a Derive plan")
+        }),
+        updateModelCredential: vi.fn(),
+        answer: vi.fn(),
+        fail: vi.fn(),
+        createRevision: vi.fn(async () => ({ short_id: "fixture" })),
+        finishRun: vi.fn(async () => {}),
+      }
+      const cfg = loadRunnerConfig(
+        { DERIVE_TOKEN: kind === "session" ? "dksess_fixture" : "dkrun_fixture" },
+        { "model-auth": "ortam", "agent-bin": bin, cwd },
+        { partial: true, oneShot: true },
+      )
+      await expect(resolveModelEnv(cfg, client, {})).rejects.toThrow(/scoped/)
+      if (kind === "session")
+        await serveSession(
+          client,
+          { id: "fixture", messages: [{ body_md: "check" }] },
+          "manifest",
+          cfg,
+        )
+      else
+        await serveRun(
+          client,
+          { id: "fixture", instruction: "check", targets: [] },
+          "manifest",
+          cfg,
+        )
+      const received = JSON.parse(readFileSync(join(cwd, "received.json"), "utf8"))
+      expect(received).toMatchObject({
+        token: "ortam-test-placeholder",
+        base: "http://127.0.0.1:47070/anthropic",
+        task: "selected-access",
+      })
+      expect(received.args).not.toContain("--model")
+      expect(client.runtimeEnvironment).toHaveBeenCalledWith({ [kind]: "fixture" })
+      expect(client.modelCredential).not.toHaveBeenCalled()
+      expect(client.updateModelCredential).not.toHaveBeenCalled()
+      expect(client.fail).not.toHaveBeenCalled()
+      if (kind === "session") expect(client.answer).toHaveBeenCalledOnce()
+      else
+        expect(client.finishRun).toHaveBeenCalledWith(
+          "fixture",
+          expect.objectContaining({ status: "succeeded" }),
+        )
+    } finally {
+      vi.unstubAllEnvs()
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+})
+
+describe("persistent runtime runner", () => {
+  it("runs the provider once, preserves working files, and replays only the receipt after a lost response", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "derive-attempt-"))
+    const bin = join(cwd, "agent.cjs")
+    writeFileSync(join(cwd, "previous-work"), "keep me")
+    writeFileSync(
+      bin,
+      `#!/usr/bin/env node
+const fs = require("node:fs");
+fs.appendFileSync("launches", "one\\n");
+fs.writeFileSync("environment.json", JSON.stringify({ value: process.env.SELECTED_VALUE, token: process.env.DERIVE_TOKEN, previous: fs.readFileSync("previous-work", "utf8") }));
+console.log(JSON.stringify({ type: "result", result: "# Report\\nEverything checked." }));
+`,
+    )
+    chmodSync(bin, 0o755)
+    const original = {
+      fetch: globalThis.fetch,
+      id: process.env.DERIVE_ATTEMPT_ID,
+      bin: process.env.AGENT_BIN,
+    }
+    const receipts = []
+    let claims = 0
+    globalThis.fetch = async (url, init) => {
+      if (String(url).endsWith("/claim")) {
+        claims++
+        return Response.json(
+          claims === 1
+            ? {
+                claimed: true,
+                input: { provider: "claude-code", model: null, instruction: "Inspect the files" },
+                manifest: "Use the existing script",
+                environment: { SELECTED_VALUE: "task value" },
+                deadline_at: new Date(Date.now() + 60000).toISOString(),
+                tools: [],
+              }
+            : { claimed: false },
+        )
+      }
+      expect(String(url)).toMatch(/\/result$/)
+      receipts.push(JSON.parse(init.body))
+      if (receipts.length === 1) throw new Error("Response lost after commit")
+      return Response.json({ accepted: true })
+    }
+    process.env.DERIVE_ATTEMPT_ID = "rta_test"
+    process.env.AGENT_BIN = bin
+    try {
+      const cfg = {
+        token: "dkattempt_fixture",
+        modelAuth: "ortam",
+        server: "https://derive.test",
+        cwd,
+        timeoutMs: 5000,
+      }
+      expect(await runOnce(cfg)).toEqual({ served: 1, failed: 0 })
+      expect(receipts).toHaveLength(2)
+      expect(receipts[0]).toEqual(receipts[1])
+      expect(receipts[0].summary).toContain("Everything checked")
+      expect(JSON.parse(readFileSync(join(cwd, "environment.json"), "utf8"))).toEqual({
+        value: "task value",
+        previous: "keep me",
+      })
+      expect(await runOnce(cfg)).toEqual({ served: 0, failed: 0 })
+      expect(readFileSync(join(cwd, "launches"), "utf8")).toBe("one\n")
+    } finally {
+      globalThis.fetch = original.fetch
+      for (const [name, value] of [
+        ["DERIVE_ATTEMPT_ID", original.id],
+        ["AGENT_BIN", original.bin],
+      ]) {
+        if (value === undefined) delete process.env[name]
+        else process.env[name] = value
+      }
+      rmSync(cwd, { recursive: true, force: true })
+    }
   })
 })
