@@ -42,7 +42,7 @@ export function RuntimeAccessCard({ context }: { context: ContextDetail }) {
           </DialogContent>
         </Dialog>
       </div>
-      <RuntimeRunCard contextId={context.id} />
+      <RuntimeRunCard key={context.id} contextId={context.id} />
     </>
   )
 }
