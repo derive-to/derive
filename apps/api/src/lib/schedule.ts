@@ -12,7 +12,11 @@ import { findPayer } from "./payer"
 /** The most recent cron occurrence at or before `now`, or null on a malformed expression (a bad
  *  cron must never 500 a claim — it just never fires). croner's previousRuns is relative to the
  *  passed date, so this is the fire time of the window `now` currently sits in. */
-const previousOccurrence = (cron: string, tz: string | undefined, now: Date): Date | null => {
+export const previousOccurrence = (
+  cron: string,
+  tz: string | undefined,
+  now: Date,
+): Date | null => {
   try {
     // +1s so a fire landing exactly on `now` counts as this window, not the previous one.
     const ref = new Date(now.getTime() + 1000)
@@ -61,6 +65,7 @@ const materializeFor = async (
     return on
   }
   for (const a of autos) {
+    if (a.runtime_id) continue // Its controller owns admission and Ortam model authentication.
     const trigger = parseTrigger(a.trigger)
     if (trigger.kind !== "schedule" || !trigger.cron) continue
     // Before the cron maths and the payer walk: a gated workspace costs this pass one settings

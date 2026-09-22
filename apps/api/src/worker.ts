@@ -10,7 +10,7 @@ import type {
   ScheduledController,
   WorkerLoader,
 } from "@cloudflare/workers-types"
-import { KATEX_VERSION } from "@derive/core"
+import { KATEX_VERSION, MERMAID_VERSION } from "@derive/core"
 import { createD1Store } from "@derive/db/d1"
 import { PgMetaStore } from "@derive/db/pg"
 import { PgVectorStore } from "@derive/db/pgvector"
@@ -40,6 +40,8 @@ import { catalogFromGateway, type GatewayConfig } from "./lib/model-catalog"
 import { getInstanceSlot } from "./lib/model-library"
 import { nativeLimiter } from "./lib/rate-limit"
 import { liveD1, requestD1 } from "./lib/request-d1"
+import { runtimeFailureReason } from "./lib/runtime-diagnostics"
+import { runtimeDispatchPass } from "./lib/runtime-dispatch"
 import { isApiPath } from "./lib/serve-web"
 import { parseSignupMode, signupPolicy } from "./lib/signup-policy"
 import { isServerRenderedPath, isSpaPath, isStaticRootPath } from "./lib/spa-paths"
@@ -95,6 +97,8 @@ const PREVIEW_NAME = "previews"
  * @derive/storage/fs / webhooks-node here — those pull Node built-ins.
  */
 export interface Env {
+  DERIVE_ORTAM_RUNNER_PATH?: string
+  DERIVE_ORTAM_API_URL?: string
   DB: D1Database
   /** Isolated, short-lived Workers for the read-only derive_code MCP tool. */
   LOADER: WorkerLoader
@@ -320,6 +324,13 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
       })
       const models = catalogFromGateway(workerGateway(env))
       app = createApp({
+        runtime: env.DERIVE_ORTAM_RUNNER_PATH
+          ? {
+              runnerPath: env.DERIVE_ORTAM_RUNNER_PATH,
+              apiUrl: env.DERIVE_ORTAM_API_URL ?? "https://api.ortam.dev/v1",
+              pilotWorkspaceIds: workspaceIdsFromEnv(env.DERIVE_HOSTED_RUNS_ALLOWLIST),
+            }
+          : undefined,
         meta,
         // The static operator/CI bearer (isToken). The Node entry wires this via
         // loadConfig(process.env); the edge builds deps by hand from the CF binding and
@@ -465,12 +476,13 @@ const handle = (req: Request, env: Env, ctx: ExecutionContext): Response | Promi
           }
           return shellCache
         },
-        // The typesetter's files, copied into static assets by prep-edge-assets.mjs under
-        // the version core pins; a miss returns null and the page falls back to TeX source.
-        vendorAsset: async (file: string) => {
+        // Browser renderers are copied into static assets at the versions core pins.
+        // A miss returns null and the page falls back to source.
+        vendorAsset: async (file, library) => {
           try {
+            const version = library === "katex" ? KATEX_VERSION : MERMAID_VERSION
             const res = await env.ASSETS.fetch(
-              new URL(`/vendor/katex/${KATEX_VERSION}/${file}`, baseUrl).toString(),
+              new URL(`/vendor/${library}/${version}/${file}`, baseUrl).toString(),
             )
             return res.ok ? new Uint8Array(await res.arrayBuffer()) : null
           } catch {
@@ -579,6 +591,7 @@ export default {
     // one scale-to-zero container per due run. Unbound (the default) = a no-op, so runs stay
     // queued for a polling runner and an un-opted deployment behaves exactly as before.
     ctx.waitUntil(hostedRunTick(env, ctx))
+    ctx.waitUntil(runtimeTick(env))
   },
 
   // The dispatch queue's consumer: one message = "this run was just created, start it now".
@@ -767,3 +780,37 @@ const hostedRunTick = (env: Env, ctx?: ExecutionContext): Promise<void> =>
     // which looks like a hang rather than the truncation it is.
     ctx,
   )
+
+async function runtimeTick(env: Env): Promise<void> {
+  if (!env.DERIVE_ORTAM_RUNNER_PATH || !env.DERIVE_AUTH_SECRET) {
+    log.info("runtime tick skipped", {
+      reason: !env.DERIVE_ORTAM_RUNNER_PATH ? "runner_unconfigured" : "auth_unconfigured",
+    })
+    return
+  }
+  log.info("runtime tick started", { store: env.HYPERDRIVE ? "postgres" : "d1" })
+  const config = {
+    runnerPath: env.DERIVE_ORTAM_RUNNER_PATH,
+    apiUrl: env.DERIVE_ORTAM_API_URL ?? "https://api.ortam.dev/v1",
+    pilotWorkspaceIds: workspaceIdsFromEnv(env.DERIVE_HOSTED_RUNS_ALLOWLIST),
+  }
+  const secret = env.DERIVE_AUTH_SECRET
+  const scoped = async () =>
+    runtimeDispatchPass({
+      meta: env.HYPERDRIVE ? PgMetaStore.fromPool(livePgPool) : createD1Store(liveD1),
+      blobs: new R2BlobStore(env.BUCKET),
+      server: env.BASE_URL ?? "",
+      secret,
+      config,
+    })
+  try {
+    await (env.HYPERDRIVE
+      ? requestPg.run(hyperdriveConn(env.HYPERDRIVE), scoped)
+      : requestD1.run(env.DB, scoped))
+  } catch (error) {
+    log.warn("runtime tick failed", { reason: runtimeFailureReason(error) })
+    // Mark the scheduled invocation failed without exposing the driver's SQL/parameters
+    // in Cloudflare's automatic exception capture.
+    throw new Error("Runtime tick failed; inspect runtime dispatch diagnostics")
+  }
+}

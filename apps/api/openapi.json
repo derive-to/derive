@@ -3866,6 +3866,22 @@
           "is_default"
         ]
       },
+      "ContextEnvironment": {
+        "type": "object",
+        "properties": {
+          "bindings": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            }
+          }
+        },
+        "required": [
+          "bindings"
+        ]
+      },
       "TemplateArtifact": {
         "allOf": [
           {
@@ -4331,6 +4347,32 @@
           "url",
           "kind",
           "status",
+          "created_at"
+        ]
+      },
+      "WorkspaceSubdomain": {
+        "type": "object",
+        "properties": {
+          "host": {
+            "type": "string",
+            "description": "The full host, `<label>.<base>`."
+          },
+          "label": {
+            "type": "string",
+            "description": "The label the workspace chose."
+          },
+          "url": {
+            "type": "string",
+            "description": "The host with scheme; artifacts live at `<url>/<ref>`."
+          },
+          "created_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "host",
+          "label",
+          "url",
           "created_at"
         ]
       },
@@ -11319,6 +11361,73 @@
         }
       }
     },
+    "/v1/contexts/{id}/environment": {
+      "get": {
+        "tags": [
+          "Contexts"
+        ],
+        "summary": "Read environment variable bindings (manager only; never returns secret values).",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Names and secret connection IDs.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContextEnvironment"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Contexts"
+        ],
+        "summary": "Replace the secret connections delivered as environment variables to this Context's runner.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContextEnvironment"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Saved bindings; values remain write-only.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContextEnvironment"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/templates": {
       "get": {
         "tags": [
@@ -12071,7 +12180,7 @@
                           "url"
                         ]
                       },
-                      "description": "Workspace custom domains this artifact is served at (read-only)."
+                      "description": "Workspace domains (its subdomain, its custom domains) this artifact is served at (read-only)."
                     }
                   },
                   "required": [
@@ -12175,15 +12284,31 @@
         "tags": [
           "Domains"
         ],
-        "summary": "List the workspace's custom domains and whether they're supported here.",
+        "summary": "List the workspace's subdomain and custom domains, and what this server supports.",
         "responses": {
           "200": {
-            "description": "Whether custom domains are enabled, the CNAME target, and the domains.",
+            "description": "The subdomain base + claimed label, whether custom domains are enabled, the CNAME target, and the custom domains.",
             "content": {
               "application/json": {
                 "schema": {
                   "type": "object",
                   "properties": {
+                    "subdomain_base": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "The base a workspace subdomain hangs off (e.g. derive.page); null when subdomains are off here."
+                    },
+                    "subdomain": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/components/schemas/WorkspaceSubdomain"
+                        },
+                        {
+                          "nullable": true
+                        }
+                      ],
+                      "description": "The workspace's claimed subdomain, or null."
+                    },
                     "enabled": {
                       "type": "boolean",
                       "description": "True when this server supports custom domains."
@@ -12202,6 +12327,8 @@
                     }
                   },
                   "required": [
+                    "subdomain_base",
+                    "subdomain",
                     "enabled",
                     "cname_target",
                     "domains"
@@ -12265,6 +12392,62 @@
                         "cname_target"
                       ]
                     }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/workspace/subdomain": {
+      "put": {
+        "tags": [
+          "Domains"
+        ],
+        "summary": "Claim or change the workspace's subdomain.",
+        "responses": {
+          "200": {
+            "description": "The subdomain (already this workspace's).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceSubdomain"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "The newly claimed subdomain; any previous label is released.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceSubdomain"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Domains"
+        ],
+        "summary": "Release the workspace's subdomain.",
+        "responses": {
+          "200": {
+            "description": "The subdomain was released.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "ok"
                   ]
                 }
               }

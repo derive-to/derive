@@ -1,4 +1,6 @@
 import type {
+  AutomationRecord,
+  ContextRuntimeRecord,
   DynamicKind,
   DynamicPatch,
   DynamicValue,
@@ -6,6 +8,8 @@ import type {
   LinkRole,
   Listed,
   Role,
+  RunAttemptRecord,
+  RunRecord,
   SharedStateActivity,
   SharedStateMutation,
   SharedStateResult,
@@ -268,6 +272,8 @@ export type ArtifactDomain = components["schemas"]["ArtifactDomain"]
 /** A workspace custom domain (managed in settings; Cloudflare for SaaS). */
 /** A workspace custom domain (Cloudflare for SaaS). Generated from the OpenAPI spec. */
 export type WorkspaceDomain = components["schemas"]["WorkspaceDomain"]
+/** The workspace's one `<label>.<base>` subdomain. Generated from the OpenAPI spec. */
+export type WorkspaceSubdomain = components["schemas"]["WorkspaceSubdomain"]
 /** The workspace: its name, the caller's role, and the member directory. */
 export type Workspace = components["schemas"]["Workspace"]
 /** A pending workspace invitation (Admin view; the token is never exposed). */
@@ -399,6 +405,8 @@ export type BillingInfo = {
   subscribed: boolean
   /** May hide the Made-with-Derive mark (subscribed, or beta grace). */
   white_label: boolean
+  /** May claim a workspace subdomain (subscribed, or beta grace). */
+  custom_domain: boolean
   blocked: { code: "billing_required" | "billing_lapsed"; message: string } | null
 }
 /** Slack connection status for a workspace. Generated from the OpenAPI spec. */
@@ -518,6 +526,7 @@ export interface Run {
     writes: unknown[]
   }
 }
+export type ContextEnvironment = components["schemas"]["ContextEnvironment"]
 /** An askable agent setup: a registered agent wired to a manifest artifact.
  *  Generated from the OpenAPI spec. */
 export type ContextInfo = components["schemas"]["ContextInfo"]
@@ -1221,10 +1230,18 @@ export const api = {
 
   // Workspace custom domains (Cloudflare for SaaS), managed in settings.
   listWorkspaceDomains: (): Promise<{
+    subdomain_base: string | null
+    subdomain: WorkspaceSubdomain | null
     enabled: boolean
     cname_target: string | null
     domains: WorkspaceDomain[]
   }> => f("/v1/workspace/domains", opts()).then(j),
+  claimWorkspaceSubdomain: (label: string): Promise<WorkspaceSubdomain> =>
+    f("/v1/workspace/subdomain", { ...opts({ label }), method: "PUT" }).then(j),
+  releaseWorkspaceSubdomain: (): Promise<void> =>
+    f("/v1/workspace/subdomain", { method: "DELETE", credentials: "include" }).then(
+      () => undefined,
+    ),
   addWorkspaceDomain: (host: string): Promise<WorkspaceDomain & { cname_target: string }> =>
     f("/v1/workspace/domains", opts({ host })).then(j),
   refreshWorkspaceDomain: (host: string): Promise<WorkspaceDomain> =>
@@ -1446,6 +1463,54 @@ export const api = {
 
   // Contexts + sessions (the ask loop; see routes/contexts.ts server-side).
   listContexts: (): Promise<{ contexts: ContextInfo[] }> => f("/v1/contexts", opts()).then(j),
+  getContextRuntime: (
+    id: string,
+  ): Promise<{
+    enabled: boolean
+    runtime: ContextRuntimeRecord | null
+    schedule: AutomationRecord | null
+    next_run_at: string | null
+    runs: (RunRecord & { attempt: RunAttemptRecord | null })[]
+  }> => f(`/v1/contexts/${id}/runtime`, opts()).then(j),
+  bindContextRuntime: (id: string, connection_id: string, sandbox_id: string): Promise<unknown> =>
+    f(`/v1/contexts/${id}/runtime`, opts({ connection_id, sandbox_id })).then(j),
+  runContextRuntime: (
+    id: string,
+    instruction: string,
+    provider: "codex" | "claude-code",
+  ): Promise<unknown> =>
+    f(`/v1/contexts/${id}/runtime/runs`, opts({ instruction, provider })).then(j),
+  saveContextRuntimeSchedule: (
+    id: string,
+    body: {
+      instruction: string
+      provider: "codex" | "claude-code"
+      cron: string
+      timezone: string
+      enabled: boolean
+      revision: number | null
+    },
+  ): Promise<{ schedule: AutomationRecord; next_run_at: string | null }> =>
+    f(`/v1/contexts/${id}/runtime/schedule`, { ...opts(body), method: "PUT" }).then(j),
+  disableContextRuntime: (id: string): Promise<unknown> =>
+    f(`/v1/contexts/${id}/runtime/disable`, opts({})).then(j),
+  getContextEnvironment: (id: string): Promise<ContextEnvironment> =>
+    f(`/v1/contexts/${id}/environment`, opts()).then(j),
+  setContextEnvironment: (
+    id: string,
+    bindings: Record<string, string>,
+  ): Promise<ContextEnvironment> =>
+    f(`/v1/contexts/${id}/environment`, { ...opts({ bindings }), method: "PUT" }).then(j),
+  setContextConnections: (
+    id: string,
+    connection_ids: string[],
+  ): Promise<{ connection_ids: string[] }> =>
+    f(`/v1/contexts/${id}/connections`, opts({ connection_ids })).then(j),
+  createSecretConnection: (input: {
+    toolkit: string
+    secret: string
+    scopes_label: string
+  }): Promise<Connection> => f("/v1/connections", opts({ ...input, kind: "secret" })).then(j),
   getContext: (id: string): Promise<ContextDetail> => f(`/v1/contexts/${id}`, opts()).then(j),
   // An imported paper's implementation analysis, written by an agent, with the prompts a person
   // copies into theirs to start or update it.

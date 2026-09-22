@@ -1,3 +1,11 @@
+import type {
+  ContextRuntimeRecord,
+  NewContextRuntime,
+  RunAttemptRecord,
+  RunAttemptResult,
+  RunAttemptTransition,
+  RuntimeSaveStatus,
+} from "./runtime"
 /**
  * Core owns the ports; packages/db and packages/storage provide the adapters.
  * Everything here must run on Node AND Cloudflare Workers — no Node APIs.
@@ -1809,6 +1817,8 @@ export interface ContextStore {
   /** Replace the context's bound connections (a JSON array of ids, or null for none).
    *  Whole-list semantics: the caller has already checked every id is attachable. */
   setContextConnections(id: string, connectionIds: string | null): Promise<void>
+  /** Replace named environment bindings; values are connection IDs, never secrets. */
+  setContextEnvironment(id: string, bindings: string | null): Promise<void>
   /** Attach, replace or remove the repository implementing an imported paper. */
   setContextCodeUrl(id: string, codeUrl: string | null): Promise<void>
   /** Link or unlink an imported paper's implementation analysis, only while the Context still
@@ -3219,7 +3229,8 @@ export interface SharedStateStore {
 }
 
 export interface MetaStore
-  extends ArtifactStore,
+  extends RuntimeStore,
+    ArtifactStore,
     CommentStore,
     ArtifactQueryStore,
     WebhookStore,
@@ -3465,6 +3476,11 @@ export interface AutomationTrigger {
  *  WHEN (trigger). The definition only — every firing is a `run`. A "living artifact" is
  *  just an automation whose instruction is "keep this current" with a ref to the doc. */
 export interface AutomationRecord {
+  /** Runtime-bound schedules use the Context cloud controller, never a polling executor. */
+  runtime_id: string | null
+  created_by: string | null
+  revision: number
+  updated_at: string | null
   id: string
   org_id: string
   /** The agent that runs it — the runs act as this principal. */
@@ -3531,6 +3547,10 @@ export interface RunRecord {
   started_at: string | null
   finished_at: string | null
   cost_micro_usd: number | null
+  /** Null uses the existing executor lane; otherwise only the runtime coordinator may claim. */
+  runtime_id: string | null
+  /** Immutable RuntimeRunInput JSON; never includes credential values. */
+  input_snapshot: string | null
   /** Serialized meta (model, tokens, outcome, refs, anything), or null. */
   meta: string | null
   created_at: string
@@ -3550,6 +3570,8 @@ export interface NewRun {
   started_at?: string | null
   finished_at?: string | null
   cost_micro_usd?: number | null
+  runtime_id?: string | null
+  input_snapshot?: string | null
   meta?: string | null
 }
 
@@ -3842,8 +3864,9 @@ export interface ConnectionRecord {
   scope: ConnectionScope
   /** oauth (default) = broker-connected account; secret = pasted credential. */
   kind: ConnectionKind
-  /** kind "secret" only: the credential, AES-GCM encrypted. Never presented by any route —
-   *  it is spent server-side by the tool proxy and read nowhere else. */
+  /** kind "secret" only: the credential, AES-GCM encrypted. Management routes expose
+   *  metadata only. The tool proxy uses it server-side; a Context runner can retrieve
+   *  the plaintext only when the connection is selected for its active work's environment. */
   secret_enc: string | null
   /** kind "secret" only: the HTTPS base every tool call resolves under, and is confined to. */
   base_url: string | null
@@ -3854,7 +3877,7 @@ export interface ConnectionRecord {
   /** Broker-side connected-account id. */
   broker_ref: string
   /** Human label of the granted scopes, or null. Display only — for kind "secret" it doubles
-   *  as the credential hint (the pasted key's last 4), which is all a read ever gets. */
+   *  as a credential hint. Short secrets receive a generic label rather than a suffix. */
   scopes_label: string | null
   status: ConnectionStatus
   created_at: string
@@ -4143,6 +4166,8 @@ export interface ContextRecord {
   /** Connections this context may use, as a JSON array of ids (same shape as
    *  automation.connection_ids). Null = no tools. */
   connection_ids: string | null
+  /** JSON map of environment variable names to connection IDs; values stay in the secret store. */
+  environment_bindings: string | null
   /** Where an imported Context came from (`arxiv`) and the bare reference it was
    *  imported from; null for a Context somebody defined. Imported Contexts are
    *  read-only documents: no runner, no sessions. */
@@ -5061,3 +5086,93 @@ export const isBundleContentType = (contentType: string | null | undefined): boo
   contentType === BUNDLE_CONTENT_TYPE ||
   contentType === SKILL_CONTENT_TYPE ||
   contentType === LATEX_BUNDLE_CONTENT_TYPE
+
+/** Control-plane operations only. Runner APIs must not expose these mutations. */
+export interface RuntimeStore {
+  getRuntimeSchedule(runtimeId: string, orgId: string): Promise<AutomationRecord | null>
+  listRuntimeSchedules(orgIds?: readonly string[]): Promise<AutomationRecord[]>
+  saveRuntimeSchedule(input: {
+    id: string
+    runtimeId: string
+    orgId: string
+    ownerId: string
+    instruction: string
+    provider: import("./execution").ExecutionProvider
+    cron: string
+    timezone: string
+    enabled: boolean
+    revision: number | null
+    at: string
+  }): Promise<AutomationRecord | null>
+  cancelQueuedRuntimeRun(id: string, orgId: string, at: string): Promise<void>
+  claimRunAttempt(
+    id: string,
+    orgId: string,
+    at: string,
+    scheduleRevision?: number,
+  ): Promise<RunAttemptRecord | null>
+  getContextRuntimeForContext(
+    contextId: string,
+    orgId: string,
+  ): Promise<ContextRuntimeRecord | null>
+  listPendingRuntimeRuns(limit?: number): Promise<RunRecord[]>
+  getLatestRunAttempt(runId: string, orgId: string): Promise<RunAttemptRecord | null>
+  markRuntimeRunStarted(runId: string, orgId: string, at: string): Promise<void>
+  settleRuntimeRun(
+    runId: string,
+    orgId: string,
+    attemptId: string,
+    status: "succeeded" | "failed",
+    meta: string,
+    at: string,
+  ): Promise<void>
+  /** Idempotent private report projection; caller stores the accepted result's bytes first. */
+  publishRuntimeReport(
+    attemptId: string,
+    orgId: string,
+    shortId: string,
+    blobKey: string,
+    sizeBytes: number,
+    at: string,
+  ): Promise<void>
+  createContextRuntime(input: NewContextRuntime, at: string): Promise<ContextRuntimeRecord | null>
+  getContextRuntime(id: string, orgId: string): Promise<ContextRuntimeRecord | null>
+  disableContextRuntime(id: string, orgId: string, at: string): Promise<void>
+  /** Single atomic reservation. Competing jobs return null, including after a deadline expires.
+   * A released attempt can retry only if it never reached process submission. */
+  reserveRunAttempt(input: {
+    id: string
+    runId: string
+    orgId: string
+    at: string
+    deadlineAt: string
+  }): Promise<RunAttemptRecord | null>
+  getRunAttempt(id: string, orgId: string): Promise<RunAttemptRecord | null>
+  /** Cleanup scans include disabled runtimes and completed/deleted source definitions. */
+  listUnreleasedRunAttempts(limit?: number): Promise<RunAttemptRecord[]>
+  transitionRunAttempt(
+    id: string,
+    orgId: string,
+    revision: number,
+    change: RunAttemptTransition,
+    at: string,
+  ): Promise<RunAttemptRecord | null>
+  /** Immutable receipt: same content replays, conflicting content fails. Does not release compute. */
+  acceptRunAttemptResult(
+    id: string,
+    orgId: string,
+    result: RunAttemptResult,
+    at: string,
+  ): Promise<RunAttemptRecord | null>
+  /** Only after Ortam confirms compute release; failed saves retain the report and previous files. */
+  releaseRunAttempt(
+    id: string,
+    orgId: string,
+    revision: number,
+    save: {
+      status: Exclude<RuntimeSaveStatus, "pending">
+      snapshotId: string | null
+    },
+    at: string,
+  ): Promise<RunAttemptRecord | null>
+}

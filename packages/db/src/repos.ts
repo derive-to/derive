@@ -210,6 +210,7 @@ import {
   dynamicStatePrefix,
 } from "./dynamic-storage"
 import type { Exhaustive, Shapes } from "./parity"
+import { runtimeRepos } from "./runtime-repos"
 import {
   activitySeen,
   agent,
@@ -234,6 +235,7 @@ import {
   connection,
   context,
   contextAsker,
+  contextRuntime,
   contextSession,
   domain,
   dynamicRevision,
@@ -255,6 +257,7 @@ import {
   report,
   reviewRound,
   run,
+  runAttempt,
   sessionMessage,
   sharedState,
   sharedStateActivity,
@@ -460,6 +463,8 @@ export const schema = {
   agentMention,
   automation,
   run,
+  contextRuntime,
+  runAttempt,
   workflowRun,
   workflowStepAttempt,
   workflowArtifactActivity,
@@ -526,6 +531,8 @@ const _schemaShapes: Shapes<typeof schema> = {
   agentMention: true,
   automation: true,
   run: true,
+  contextRuntime: true,
+  runAttempt: true,
   workflowRun: true,
   workflowStepAttempt: true,
   workflowArtifactActivity: true,
@@ -670,6 +677,9 @@ const addRunCost = (micros: number | null | undefined) =>
   micros == null ? {} : { cost_micro_usd: sql`coalesce(${run.cost_micro_usd}, 0) + ${micros}` }
 
 export function makeRepos(db: SqliteDb) {
+  const { createRuntimeRun, ...runtimes } = runtimeRepos(
+    async (statement) => await db.all(statement),
+  )
   // ---- Artifacts + versions ----------------------------------------------
   const getByShortId = async (shortId: string): Promise<ArtifactRecord | null> =>
     (await db.select().from(artifact).where(eq(artifact.short_id, shortId)).get()) ?? null
@@ -3924,6 +3934,9 @@ export function makeRepos(db: SqliteDb) {
   const setContextConnections = async (id: string, connectionIds: string | null): Promise<void> => {
     await db.update(context).set({ connection_ids: connectionIds }).where(eq(context.id, id)).run()
   }
+  const setContextEnvironment = async (id: string, bindings: string | null): Promise<void> => {
+    await db.update(context).set({ environment_bindings: bindings }).where(eq(context.id, id)).run()
+  }
   const setContextCodeUrl = async (id: string, codeUrl: string | null): Promise<void> => {
     await db.update(context).set({ code_url: codeUrl }).where(eq(context.id, id)).run()
   }
@@ -4600,7 +4613,9 @@ export function makeRepos(db: SqliteDb) {
       (await db
         .update(automation)
         .set(set)
-        .where(and(eq(automation.id, id), eq(automation.org_id, orgId)))
+        .where(
+          and(eq(automation.id, id), eq(automation.org_id, orgId), isNull(automation.runtime_id)),
+        )
         .returning()
         .get()) ?? null
     )
@@ -4610,19 +4625,30 @@ export function makeRepos(db: SqliteDb) {
     // caller can't reach across tenants. Running/finished runs stay as history.
     await db
       .delete(run)
-      .where(and(eq(run.automation_id, id), eq(run.status, "queued")))
+      .where(
+        and(
+          eq(run.automation_id, id),
+          eq(run.org_id, orgId),
+          eq(run.status, "queued"),
+          isNull(run.runtime_id),
+        ),
+      )
       .run()
     await db
       .delete(automation)
       .where(and(eq(automation.id, id), eq(automation.org_id, orgId)))
       .run()
   }
-  const createRun = async (r: NewRun): Promise<RunRecord> =>
-    (await db
+  const createRun = async (r: NewRun): Promise<RunRecord> => {
+    if (r.runtime_id != null || r.input_snapshot != null) return await createRuntimeRun(r)
+    if (r.automation_id && (await getAutomation(r.automation_id))?.runtime_id)
+      throw new Error("A runtime schedule requires the runtime admission path")
+    return (await db
       .insert(run)
       .values({ ...r, status: r.status ?? "queued" })
       .returning()
       .get()) as RunRecord
+  }
   const getRun = async (id: string): Promise<RunRecord | null> =>
     ((await db.select().from(run).where(eq(run.id, id)).get()) as RunRecord | undefined) ?? null
   const claimDueRuns = async (agentId: string, now: string, limit = 20): Promise<RunRecord[]> => {
@@ -4637,6 +4663,7 @@ export function makeRepos(db: SqliteDb) {
         and(
           eq(run.agent_id, agentId),
           eq(run.status, "queued"),
+          isNull(run.runtime_id),
           or(isNull(run.scheduled_for), lte(run.scheduled_for, now)),
         ),
       )
@@ -4678,6 +4705,7 @@ export function makeRepos(db: SqliteDb) {
           eq(run.id, id),
           eq(run.agent_id, agentId),
           eq(run.status, "running"),
+          isNull(run.runtime_id),
           expectedStartedAt === undefined
             ? undefined
             : expectedStartedAt === null
@@ -4720,7 +4748,14 @@ export function makeRepos(db: SqliteDb) {
     (await db
       .update(run)
       .set({ status: "running", started_at: now })
-      .where(and(eq(run.id, id), eq(run.agent_id, agentId), eq(run.status, "queued")))
+      .where(
+        and(
+          eq(run.id, id),
+          eq(run.agent_id, agentId),
+          eq(run.status, "queued"),
+          isNull(run.runtime_id),
+        ),
+      )
       .returning()
       .get()) ?? null
   const requeueRun = async (
@@ -4749,6 +4784,7 @@ export function makeRepos(db: SqliteDb) {
           eq(run.id, id),
           eq(run.agent_id, agentId),
           eq(run.status, "running"),
+          isNull(run.runtime_id),
           expectedStartedAt === undefined
             ? undefined
             : expectedStartedAt === null
@@ -4773,6 +4809,7 @@ export function makeRepos(db: SqliteDb) {
         and(
           orgIds ? inArray(run.org_id, [...orgIds]) : undefined,
           eq(run.status, "running"),
+          isNull(run.runtime_id),
           lte(run.started_at, cutoffIso),
         ),
       )
@@ -4810,6 +4847,7 @@ export function makeRepos(db: SqliteDb) {
           and(
             eq(run.id, r.id),
             eq(run.status, "running"),
+            isNull(run.runtime_id),
             r.started_at === null ? isNull(run.started_at) : eq(run.started_at, r.started_at),
           ),
         )
@@ -4849,6 +4887,7 @@ export function makeRepos(db: SqliteDb) {
             and(
               orgIds ? inArray(run.org_id, [...orgIds]) : undefined,
               eq(run.status, "queued"),
+              isNull(run.runtime_id),
               or(isNull(run.scheduled_for), lte(run.scheduled_for, now)),
             ),
           )
@@ -4866,6 +4905,7 @@ export function makeRepos(db: SqliteDb) {
         and(
           eq(run.automation_id, automationId),
           eq(run.status, "queued"),
+          isNull(run.runtime_id),
           lte(run.scheduled_for, cutoffIso),
         ),
       )
@@ -4884,7 +4924,7 @@ export function makeRepos(db: SqliteDb) {
     const row = await db
       .select()
       .from(run)
-      .where(and(eq(run.id, runId), eq(run.status, "queued")))
+      .where(and(eq(run.id, runId), eq(run.status, "queued"), isNull(run.runtime_id)))
       .get()
     if (!row?.meta) return null
     let parsed: Record<string, unknown>
@@ -4900,7 +4940,14 @@ export function makeRepos(db: SqliteDb) {
       (await db
         .update(run)
         .set({ meta: nextMeta })
-        .where(and(eq(run.id, runId), eq(run.status, "queued"), eq(run.meta, row.meta)))
+        .where(
+          and(
+            eq(run.id, runId),
+            eq(run.status, "queued"),
+            isNull(run.runtime_id),
+            eq(run.meta, row.meta),
+          ),
+        )
         .returning()
         .get()) ?? null
     )
@@ -6607,6 +6654,7 @@ export function makeRepos(db: SqliteDb) {
   }
 
   return {
+    ...runtimes,
     createArtifact,
     setAccess,
     setLocked,
@@ -6839,6 +6887,7 @@ export function makeRepos(db: SqliteDb) {
     setContextAskPolicy,
     setContextManifest,
     setContextConnections,
+    setContextEnvironment,
     setContextCodeUrl,
     setContextAnalysis,
     listContextsForArtifact,

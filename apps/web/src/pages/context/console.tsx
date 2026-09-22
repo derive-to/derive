@@ -39,6 +39,7 @@ import {
   artifactQuery,
   contextOutputsQuery,
   contextQuery,
+  contextRuntimeQuery,
   contextSessionsQuery,
   contextsQuery,
   sessionQuery,
@@ -58,6 +59,8 @@ import { ConsolePending, ContextRowsSkeleton } from "./context-skeleton"
 import { importErrorCopy, importRetryCopy, RETRYABLE_IMPORT_CODES } from "./import-copy"
 import { ANSWER_PROSE, answerMdToHtml } from "./lib/answer-md"
 import { runnerStatus } from "./runner-status"
+import { RuntimeAccessCard } from "./runtime-access-card"
+import { RuntimeRunCard } from "./runtime-run-card"
 
 // The Context console combines package configuration, execution status, and run history.
 // The transcript polls fast only while the runner owes a reply (sessionQuery's
@@ -176,6 +179,12 @@ function Console({ id }: { id: string }) {
   const mine = (sessions ?? []).filter((s) => s.asker_id === me?.id)
   const active = picked === "new" ? null : (picked ?? mine[0]?.id ?? null)
   const isOwner = !!context && context.created_by === me?.id
+  const runtimeState = useQuery({
+    ...contextRuntimeQuery(id),
+    enabled: isOwner && !context?.import,
+  })
+  const canUseCloudPilot = isOwner && runtimeState.data?.enabled === true
+  const visibleTab = tab === "cloud" && !canUseCloudPilot ? "chat" : tab
   // Managed connections are absent from Settings, so their runner token is rotated here.
   // The API enforces admin access and returns the replacement token once.
   const [rotatedToken, setRotatedToken] = useState<string | null>(null)
@@ -223,7 +232,7 @@ function Console({ id }: { id: string }) {
           <h1 className="font-serif text-2xl font-medium tracking-tight text-foreground">
             {context.name}
           </h1>
-          <RunnerLiveness seenAt={context.runner_seen_at} />
+          {visibleTab !== "cloud" && <RunnerLiveness seenAt={context.runner_seen_at} />}
         </div>
         <Eyebrow>
           Context
@@ -245,20 +254,28 @@ function Console({ id }: { id: string }) {
         )}
       </div>
 
-      <ContextStatusWorkspace
-        context={context}
-        sessions={sessions ?? []}
-        outputs={outputs ?? []}
-        outputsPending={outputsPending}
-        outputsFailed={outputsFailed}
-        onSeeAllOutputs={() => setTab("output")}
-      />
+      {/* The chat runner's heartbeat does not describe an Ortam sandbox. */}
+      {visibleTab !== "cloud" && (
+        <ContextStatusWorkspace
+          context={context}
+          sessions={sessions ?? []}
+          outputs={outputs ?? []}
+          outputsPending={outputsPending}
+          outputsFailed={outputsFailed}
+          onSeeAllOutputs={() => setTab("output")}
+        />
+      )}
 
-      <Tabs value={tab} onValueChange={setTab}>
-        <TabsList variant="line">
+      <Tabs value={visibleTab} onValueChange={setTab}>
+        <TabsList variant="line" className="max-w-full justify-start overflow-x-auto">
           <TabsTrigger value="chat" data-testid="console-tab-chat">
             Chat
           </TabsTrigger>
+          {canUseCloudPilot && (
+            <TabsTrigger value="cloud" data-testid="console-tab-cloud">
+              Cloud runs
+            </TabsTrigger>
+          )}
           <TabsTrigger value="manifest" data-testid="console-tab-manifest">
             Definition
           </TabsTrigger>
@@ -355,15 +372,25 @@ function Console({ id }: { id: string }) {
             {skillsCount > 0 && (
               <SkillsCard skills={context.skills ?? []} onSeeManifest={() => setTab("manifest")} />
             )}
-            {sourcesCount > 0 && <SourcesCard count={sourcesCount} />}
+            {isOwner ? (
+              <RuntimeAccessCard context={context} />
+            ) : sourcesCount > 0 ? (
+              <SourcesCard count={sourcesCount} />
+            ) : null}
             {isOwner && (
               <div className="rounded-xl border bg-card p-3.5">
-                <SectionTitle className="mb-2.5">Access</SectionTitle>
+                <SectionTitle className="mb-2.5">Who can ask</SectionTitle>
                 <ContextAccess id={id} name={context.name} policy={context.ask_policy} />
               </div>
             )}
           </div>
         </TabsContent>
+
+        {canUseCloudPilot && (
+          <TabsContent value="cloud" forceMount className="pt-6 data-[state=inactive]:hidden">
+            <RuntimeRunCard contextId={id} state={runtimeState} />
+          </TabsContent>
+        )}
 
         <TabsContent value="manifest" className="pt-4">
           <ManifestTab context={context} />
@@ -771,7 +798,7 @@ function ImportedConsole({
 
       {isOwner && (
         <div className="rounded-xl border bg-card p-3.5">
-          <SectionTitle className="mb-2.5">Access</SectionTitle>
+          <SectionTitle className="mb-2.5">Who can ask</SectionTitle>
           <ContextAccess id={id} name={context.name} policy={context.ask_policy} />
         </div>
       )}

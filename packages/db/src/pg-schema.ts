@@ -326,6 +326,10 @@ export const automation = pgTable("automation", {
   refs: text("refs"),
   connection_ids: text("connection_ids"),
   context_id: text("context_id"),
+  runtime_id: text("runtime_id"),
+  created_by: text("created_by"),
+  revision: integer("revision").notNull().default(0),
+  updated_at: text("updated_at"),
   enabled: integer("enabled").$type<0 | 1>().notNull().default(1),
   created_at: text("created_at").notNull().$defaultFn(isoNow),
 })
@@ -344,9 +348,62 @@ export const run = pgTable("run", {
   started_at: text("started_at"),
   finished_at: text("finished_at"),
   cost_micro_usd: integer("cost_micro_usd"),
+  runtime_id: text("runtime_id"),
+  input_snapshot: text("input_snapshot"),
   meta: text("meta"),
   created_at: text("created_at").notNull().$defaultFn(isoNow),
 })
+
+// Persistent environments and execution ownership outlive deleted Contexts and automations.
+export const contextRuntime = pgTable(
+  "context_runtime",
+  {
+    id: text("id").primaryKey(),
+    org_id: text("org_id").notNull(),
+    context_id: text("context_id").notNull(),
+    agent_id: text("agent_id").notNull(),
+    api_url: text("api_url").notNull(),
+    ortam_org_id: text("ortam_org_id").notNull(),
+    ortam_user_id: text("ortam_user_id").notNull(),
+    sandbox_id: text("sandbox_id").notNull(),
+    connection_id: text("connection_id").notNull(),
+    disabled_at: text("disabled_at"),
+    created_at: text("created_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("context_runtime_context").on(t.context_id),
+    uniqueIndex("context_runtime_sandbox").on(t.api_url, t.ortam_org_id, t.sandbox_id),
+  ],
+)
+
+export const runAttempt = pgTable(
+  "run_attempt",
+  {
+    id: text("id").primaryKey(),
+    org_id: text("org_id").notNull(),
+    run_id: text("run_id").notNull(),
+    runtime_id: text("runtime_id").notNull(),
+    attempt: integer("attempt").notNull(),
+    revision: integer("revision").notNull().default(0),
+    phase: text("phase").$type<import("@derive/core").RunAttemptPhase>().notNull(),
+    startup_operation_id: text("startup_operation_id"),
+    launch_started_at: text("launch_started_at"),
+    runner_claimed_at: text("runner_claimed_at"),
+    process_id: text("process_id"),
+    stop_operation_id: text("stop_operation_id"),
+    deadline_at: text("deadline_at").notNull(),
+    result_json: text("result_json"),
+    save_status: text("save_status")
+      .$type<import("@derive/core").RuntimeSaveStatus>()
+      .notNull()
+      .default("pending"),
+    saved_snapshot_id: text("saved_snapshot_id"),
+    released_at: text("released_at"),
+    created_at: text("created_at").notNull(),
+    updated_at: text("updated_at").notNull(),
+  },
+  (t) => [uniqueIndex("run_attempt_number").on(t.run_id, t.attempt)],
+)
 
 // One start of a version-pinned Workflow diagram.
 export const workflowRun = pgTable(
@@ -1296,6 +1353,7 @@ export const context = pgTable(
     max_run_ms: integer("max_run_ms"),
     max_concurrency: integer("max_concurrency").notNull().default(1),
     connection_ids: text("connection_ids"),
+    environment_bindings: text("environment_bindings"),
     config: text("config"),
     // Import provenance (`arxiv` + the bare paper id); see schema.ts for the contract.
     import_source: text("import_source"),
@@ -1502,6 +1560,8 @@ const TABLES = [
   agentMention,
   automation,
   run,
+  contextRuntime,
+  runAttempt,
   workflowRun,
   workflowStepAttempt,
   workflowArtifactActivity,

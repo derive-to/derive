@@ -1,5 +1,6 @@
-import type { ExecutionContext } from "@cloudflare/workers-types"
-import { describe, expect, it } from "vitest"
+import type { ExecutionContext, ScheduledController } from "@cloudflare/workers-types"
+import { describe, expect, it, vi } from "vitest"
+import { log } from "../src/log"
 import type { Env } from "../src/worker"
 import worker from "../src/worker"
 
@@ -23,5 +24,49 @@ describe("worker (edge): fail-closed auth secret", () => {
     expect(() => worker.fetch(req, { DERIVE_AUTH_SECRET: "short" } as Env, ctx)).toThrow(
       /DERIVE_AUTH_SECRET/,
     )
+  })
+})
+
+describe("worker scheduled runtime diagnostics", () => {
+  it("keeps a failed controller in waitUntil and redacts the platform exception", async () => {
+    const pending: Promise<unknown>[] = []
+    const privateError = "private database connection and task parameters"
+    const info = vi.spyOn(log, "info").mockImplementation(() => {})
+    const warn = vi.spyOn(log, "warn").mockImplementation(() => {})
+    try {
+      worker.scheduled(
+        { cron: "* * * * *", scheduledTime: Date.now() } as ScheduledController,
+        {
+          DERIVE_AUTH_SECRET: "scheduled-worker-test-secret",
+          DERIVE_ORTAM_RUNNER_PATH: "/opt/derive/bin/derive.js",
+          DERIVE_HOSTED_RUNS_ALLOWLIST: "pilot-workspace",
+          WEBHOOK_OUTBOX: {
+            idFromName: () => "outbox",
+            get: () => ({ fetch: async () => new Response("ok") }),
+          },
+          DB: {
+            prepare: () => {
+              throw Object.assign(new Error(privateError), { code: "ECONNRESET" })
+            },
+          },
+        } as unknown as Env,
+        {
+          waitUntil: (work: Promise<unknown>) => pending.push(work),
+        } as unknown as ExecutionContext,
+      )
+      const results = await Promise.allSettled(pending)
+      const rejected = results.filter((r) => r.status === "rejected")
+      expect(rejected).toHaveLength(1)
+      expect(String(rejected[0]?.reason)).toBe(
+        "Error: Runtime tick failed; inspect runtime dispatch diagnostics",
+      )
+      expect(warn).toHaveBeenCalledWith("runtime tick failed", { reason: "connection" })
+      expect(JSON.stringify([info.mock.calls, warn.mock.calls, rejected])).not.toContain(
+        privateError,
+      )
+    } finally {
+      info.mockRestore()
+      warn.mockRestore()
+    }
   })
 })

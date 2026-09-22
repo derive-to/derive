@@ -3,7 +3,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { type ArtifactRecord, newId } from "@derive/core"
 import { SqliteMetaStore } from "@derive/db/sqlite"
-import { afterAll, describe, expect, it, vi } from "vitest"
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest"
 import { runSlackReviewAction } from "../src/lib/slack-review"
 
 // Sending back from Slack must land in exactly the state `derive send-back` or the sidebar
@@ -12,6 +12,7 @@ import { runSlackReviewAction } from "../src/lib/slack-review"
 // inventing a Slack-specific rule: `comment` standing, because answering is collaboration.
 const dir = mkdtempSync(join(tmpdir(), "derive-slack-review-"))
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
+afterEach(() => vi.unstubAllGlobals())
 
 const bus = { publish: () => {}, subscribe: () => () => {} } as never
 

@@ -285,6 +285,10 @@ CREATE TABLE IF NOT EXISTS automation (
   refs TEXT,
   connection_ids TEXT,
   context_id TEXT,
+  runtime_id TEXT,
+  created_by TEXT,
+  revision INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT,
   enabled INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
@@ -301,8 +305,49 @@ CREATE TABLE IF NOT EXISTS run (
   started_at TEXT,
   finished_at TEXT,
   cost_micro_usd INTEGER,
+  runtime_id TEXT,
+  input_snapshot TEXT,
   meta TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
+CREATE TABLE IF NOT EXISTS context_runtime (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  context_id TEXT NOT NULL,
+  agent_id TEXT NOT NULL,
+  api_url TEXT NOT NULL,
+  ortam_org_id TEXT NOT NULL,
+  ortam_user_id TEXT NOT NULL,
+  sandbox_id TEXT NOT NULL,
+  connection_id TEXT NOT NULL,
+  disabled_at TEXT,
+  created_at TEXT NOT NULL,
+  UNIQUE (context_id),
+  UNIQUE (api_url, ortam_org_id, sandbox_id)
+);
+
+CREATE TABLE IF NOT EXISTS run_attempt (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  run_id TEXT NOT NULL,
+  runtime_id TEXT NOT NULL,
+  attempt INTEGER NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 0,
+  phase TEXT NOT NULL,
+  startup_operation_id TEXT,
+  launch_started_at TEXT,
+  runner_claimed_at TEXT,
+  process_id TEXT,
+  stop_operation_id TEXT,
+  deadline_at TEXT NOT NULL,
+  result_json TEXT,
+  save_status TEXT NOT NULL DEFAULT 'pending',
+  saved_snapshot_id TEXT,
+  released_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE (run_id, attempt)
 );
 
 CREATE TABLE IF NOT EXISTS workflow_run (
@@ -871,6 +916,7 @@ CREATE TABLE IF NOT EXISTS context (
   max_run_ms INTEGER,
   max_concurrency INTEGER NOT NULL DEFAULT 1,
   connection_ids TEXT,
+  environment_bindings TEXT,
   config TEXT,
   import_source TEXT,
   import_ref TEXT,
@@ -1060,6 +1106,16 @@ CREATE INDEX IF NOT EXISTS context_session_asker ON context_session (asker_id, c
 CREATE INDEX IF NOT EXISTS session_message_session ON session_message (session_id, created_at);
 
 CREATE INDEX IF NOT EXISTS asset_org ON asset (org_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS run_runtime_schedule_pending ON run (runtime_id) WHERE runtime_id IS NOT NULL AND reason = 'schedule' AND status IN ('queued', 'running');
+
+CREATE UNIQUE INDEX IF NOT EXISTS automation_runtime ON automation (runtime_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS run_attempt_runtime_owner ON run_attempt (runtime_id) WHERE released_at IS NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS run_attempt_run_owner ON run_attempt (run_id) WHERE released_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS run_attempt_cleanup ON run_attempt (released_at, updated_at);
 
 CREATE INDEX IF NOT EXISTS artifact_org_created ON artifact (org_id, created_at, id);
 

@@ -876,6 +876,7 @@ if (cmd === "runner") {
                        [--cwd dir] [--claude-bin path] [--model m] [--poll ms] [--timeout ms] [--mock]
   derive runner once   [same flags]        drain the queue once and exit — for schedulers (cron, Actions)
   derive runner run    [token] [--server url] [--cwd dir] [--model m] [--timeout ms] [--mock]
+                       [--model-auth derive|ortam]   use Derive credentials (default) or Ortam login
                                            execute ONE dispatched automation run (per-run capability
                                            token; the hosted substrate entrypoint) and exit
   derive runner doctor [same flags]        preflight: server, token+context, manifest, cwd, claude, gh, python3
@@ -891,7 +892,7 @@ if (cmd === "runner") {
     if (positional[0]) flags.token = positional[0]
     let rcfg
     try {
-      rcfg = loadRunnerConfig(process.env, flags, { partial: true })
+      rcfg = loadRunnerConfig(process.env, flags, { partial: true, oneShot: true })
     } catch (e) {
       console.error(`error: ${e.message}`)
       process.exit(1)

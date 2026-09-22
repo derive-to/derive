@@ -384,6 +384,10 @@ export const automation = sqliteTable("automation", {
   // system prompt, making an automation literally a scheduled use(context, instruction).
   // Unset = the bare run contract (an artifact-freshness job needs no methodology).
   context_id: text("context_id"),
+  runtime_id: text("runtime_id"),
+  created_by: text("created_by"),
+  revision: integer("revision").notNull().default(0),
+  updated_at: text("updated_at"),
   enabled: integer("enabled").$type<0 | 1>().notNull().default(1),
   created_at: text("created_at").notNull().default(now),
 })
@@ -391,8 +395,8 @@ export const automation = sqliteTable("automation", {
 // A run: one execution of an automation (or an ad-hoc one-off). The queue and
 // the ledger in ONE table (pg-boss's model): a `queued` row is pending work, a terminal
 // row is history. A worker claims the oldest due queued run under a row lock, runs it, and
-// finishes it. Cost is snapshotted at finish (micro-USD int); everything else lives in the
-// open `meta` blob, so a new field never means a new column.
+// finishes it. Runtime ownership and accepted inputs are separate from runner-writable
+// metadata; ordinary polling executors cannot claim a runtime-assigned run.
 export const run = sqliteTable("run", {
   id: text("id").primaryKey(),
   org_id: text("org_id").notNull(),
@@ -406,9 +410,62 @@ export const run = sqliteTable("run", {
   started_at: text("started_at"),
   finished_at: text("finished_at"),
   cost_micro_usd: integer("cost_micro_usd"),
+  runtime_id: text("runtime_id"),
+  input_snapshot: text("input_snapshot"),
   meta: text("meta"),
   created_at: text("created_at").notNull().default(now),
 })
+
+// Persistent environments and execution ownership outlive deleted Contexts and automations.
+export const contextRuntime = sqliteTable(
+  "context_runtime",
+  {
+    id: text("id").primaryKey(),
+    org_id: text("org_id").notNull(),
+    context_id: text("context_id").notNull(),
+    agent_id: text("agent_id").notNull(),
+    api_url: text("api_url").notNull(),
+    ortam_org_id: text("ortam_org_id").notNull(),
+    ortam_user_id: text("ortam_user_id").notNull(),
+    sandbox_id: text("sandbox_id").notNull(),
+    connection_id: text("connection_id").notNull(),
+    disabled_at: text("disabled_at"),
+    created_at: text("created_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("context_runtime_context").on(t.context_id),
+    uniqueIndex("context_runtime_sandbox").on(t.api_url, t.ortam_org_id, t.sandbox_id),
+  ],
+)
+
+export const runAttempt = sqliteTable(
+  "run_attempt",
+  {
+    id: text("id").primaryKey(),
+    org_id: text("org_id").notNull(),
+    run_id: text("run_id").notNull(),
+    runtime_id: text("runtime_id").notNull(),
+    attempt: integer("attempt").notNull(),
+    revision: integer("revision").notNull().default(0),
+    phase: text("phase").$type<import("@derive/core").RunAttemptPhase>().notNull(),
+    startup_operation_id: text("startup_operation_id"),
+    launch_started_at: text("launch_started_at"),
+    runner_claimed_at: text("runner_claimed_at"),
+    process_id: text("process_id"),
+    stop_operation_id: text("stop_operation_id"),
+    deadline_at: text("deadline_at").notNull(),
+    result_json: text("result_json"),
+    save_status: text("save_status")
+      .$type<import("@derive/core").RuntimeSaveStatus>()
+      .notNull()
+      .default("pending"),
+    saved_snapshot_id: text("saved_snapshot_id"),
+    released_at: text("released_at"),
+    created_at: text("created_at").notNull(),
+    updated_at: text("updated_at").notNull(),
+  },
+  (t) => [uniqueIndex("run_attempt_number").on(t.run_id, t.attempt)],
+)
 
 // One start of a version-pinned Workflow diagram.
 export const workflowRun = sqliteTable(
@@ -1504,6 +1561,7 @@ export const context = sqliteTable(
     // a scheduled use(context, instruction) and the two must not disagree about what a
     // context can reach. Null/absent = no tools.
     connection_ids: text("connection_ids"),
+    environment_bindings: text("environment_bindings"),
     // Opaque JSON sidecar, parsed only at the route layer (like session_message.meta)
     // — never by the store. Nullable (clean ADD COLUMN; unset until the owner sets one).
     config: text("config"),
@@ -1766,6 +1824,8 @@ const TABLES = [
   agentMention,
   automation,
   run,
+  contextRuntime,
+  runAttempt,
   workflowRun,
   workflowStepAttempt,
   workflowArtifactActivity,

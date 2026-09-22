@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { renderMarkdown } from "./md"
+import { MERMAID_ASSET_BASE } from "./mermaid"
 
 // The body content (between <main>…</main>) is the user-controlled markdown after
 // sanitization — assert against this so the page's own (trusted) script tag and
@@ -64,6 +65,30 @@ describe("renderMarkdown — document shell", () => {
     const html = await renderMarkdown("body", "</title><script>alert(1)</script>")
     expect(html).toContain("&lt;/title&gt;&lt;script&gt;alert(1)&lt;/script&gt;")
     expect(html).not.toContain("</title><script>alert(1)")
+  })
+})
+
+describe("renderMarkdown — Mermaid diagrams", () => {
+  it("preserves escaped source and loads the local renderer once for multiple fences", async () => {
+    const source = 'graph LR\nA["<script>alert(1)</script> & text"] --> B'
+    const html = await renderMarkdown(
+      `# Flow\n\n\`\`\`mermaid\n${source}\n\`\`\`\n\n\`\`\`MERMAID\nsequenceDiagram\nA->>B: Hello\n\`\`\``,
+      null,
+    )
+    const body = bodyOf(html)
+    expect(body.match(/class="derive-mermaid"/g)).toHaveLength(2)
+    expect(body).toContain("data-derive-readonly")
+    expect(body).toContain("&lt;script&gt;alert(1)&lt;/script&gt; &amp; text")
+    expect(body).not.toContain("<script>")
+    expect(html.split(`${MERMAID_ASSET_BASE}/mermaid.esm.min.mjs`)).toHaveLength(2)
+    expect(html).not.toContain("cdn.jsdelivr.net")
+  })
+
+  it("does not load Mermaid for ordinary code, inline code, or a later unrelated render", async () => {
+    await renderMarkdown("```mermaid\ngraph LR\nA-->B\n```", null)
+    const html = await renderMarkdown("`mermaid`\n\n```js\nconst mermaid = 1\n```", null)
+    expect(bodyOf(html)).toContain('<code class="language-js">const mermaid = 1')
+    expect(html).not.toContain(MERMAID_ASSET_BASE)
   })
 })
 

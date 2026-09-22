@@ -247,6 +247,7 @@ import {
   connection,
   context,
   contextAsker,
+  contextRuntime,
   contextSession,
   domain,
   dynamicRevision,
@@ -269,6 +270,7 @@ import {
   report,
   reviewRound,
   run,
+  runAttempt,
   sessionMessage,
   sharedState,
   sharedStateActivity,
@@ -303,6 +305,7 @@ import {
   parseOAuthScopes,
   parseOrgSettings,
 } from "./repos"
+import { runtimeRepos } from "./runtime-repos"
 import { checkedWorkflowPublishReceipt, workflowPublishStatements } from "./workflow-publish"
 
 const one = <T>(rows: T[]): T => {
@@ -339,6 +342,8 @@ export const schema = {
   agentMention,
   automation,
   run,
+  contextRuntime,
+  runAttempt,
   workflowRun,
   workflowStepAttempt,
   workflowArtifactActivity,
@@ -405,6 +410,8 @@ const _schemaShapes: Shapes<typeof schema> = {
   agentMention: true,
   automation: true,
   run: true,
+  contextRuntime: true,
+  runAttempt: true,
   workflowRun: true,
   workflowStepAttempt: true,
   workflowArtifactActivity: true,
@@ -698,6 +705,30 @@ const mapOverviewRows = (rows: OverviewRow[]): CollectionsOverviewRead => {
 type PgWriter = Pick<NodePgDatabase<typeof schema>, "insert" | "update" | "delete">
 
 export class PgMetaStore implements MetaStore {
+  private readonly runtimes = runtimeRepos(
+    async (statement) => (await this.db.execute(statement)).rows,
+  )
+  getRuntimeSchedule = this.runtimes.getRuntimeSchedule
+  listRuntimeSchedules = this.runtimes.listRuntimeSchedules
+  saveRuntimeSchedule = this.runtimes.saveRuntimeSchedule
+  cancelQueuedRuntimeRun = this.runtimes.cancelQueuedRuntimeRun
+  getContextRuntimeForContext = this.runtimes.getContextRuntimeForContext
+  claimRunAttempt = this.runtimes.claimRunAttempt
+  listPendingRuntimeRuns = this.runtimes.listPendingRuntimeRuns
+  getLatestRunAttempt = this.runtimes.getLatestRunAttempt
+  markRuntimeRunStarted = this.runtimes.markRuntimeRunStarted
+  settleRuntimeRun = this.runtimes.settleRuntimeRun
+  publishRuntimeReport = this.runtimes.publishRuntimeReport
+  createContextRuntime = this.runtimes.createContextRuntime
+  getContextRuntime = this.runtimes.getContextRuntime
+  disableContextRuntime = this.runtimes.disableContextRuntime
+  reserveRunAttempt = this.runtimes.reserveRunAttempt
+  getRunAttempt = this.runtimes.getRunAttempt
+  listUnreleasedRunAttempts = this.runtimes.listUnreleasedRunAttempts
+  transitionRunAttempt = this.runtimes.transitionRunAttempt
+  acceptRunAttemptResult = this.runtimes.acceptRunAttemptResult
+  releaseRunAttempt = this.runtimes.releaseRunAttempt
+
   /** Postgres binds an id array as ONE parameter and caps a statement at 65535, so the
    *  shared visibility gate does not need to split a candidate list the way D1 does. Well
    *  under the cap, and comfortably above the deepest candidate cap the search uses (200). */
@@ -4868,6 +4899,9 @@ export class PgMetaStore implements MetaStore {
   async setContextConnections(id: string, connectionIds: string | null): Promise<void> {
     await this.db.update(context).set({ connection_ids: connectionIds }).where(eq(context.id, id))
   }
+  async setContextEnvironment(id: string, bindings: string | null): Promise<void> {
+    await this.db.update(context).set({ environment_bindings: bindings }).where(eq(context.id, id))
+  }
   async setContextCodeUrl(id: string, codeUrl: string | null): Promise<void> {
     await this.db.update(context).set({ code_url: codeUrl }).where(eq(context.id, id))
   }
@@ -5834,17 +5868,32 @@ export class PgMetaStore implements MetaStore {
     const rows = await this.db
       .update(automation)
       .set(set)
-      .where(and(eq(automation.id, id), eq(automation.org_id, orgId)))
+      .where(
+        and(eq(automation.id, id), eq(automation.org_id, orgId), isNull(automation.runtime_id)),
+      )
       .returning()
     return rows[0] ?? null
   }
   async deleteAutomation(id: string, orgId: string): Promise<void> {
     // Cancel pending work first, then remove the definition — both org-scoped so a stray
     // caller can't reach across tenants. Running/finished runs stay as history.
-    await this.db.delete(run).where(and(eq(run.automation_id, id), eq(run.status, "queued")))
+    await this.db
+      .delete(run)
+      .where(
+        and(
+          eq(run.automation_id, id),
+          eq(run.org_id, orgId),
+          eq(run.status, "queued"),
+          isNull(run.runtime_id),
+        ),
+      )
     await this.db.delete(automation).where(and(eq(automation.id, id), eq(automation.org_id, orgId)))
   }
   async createRun(r: NewRun): Promise<RunRecord> {
+    if (r.runtime_id != null || r.input_snapshot != null)
+      return await this.runtimes.createRuntimeRun(r)
+    if (r.automation_id && (await this.getAutomation(r.automation_id))?.runtime_id)
+      throw new Error("A runtime schedule requires the runtime admission path")
     const rows = await this.db
       .insert(run)
       .values({ ...r, status: r.status ?? "queued" })
@@ -5867,6 +5916,7 @@ export class PgMetaStore implements MetaStore {
         and(
           eq(run.agent_id, agentId),
           eq(run.status, "queued"),
+          isNull(run.runtime_id),
           or(isNull(run.scheduled_for), lte(run.scheduled_for, now)),
         ),
       )
@@ -5885,7 +5935,14 @@ export class PgMetaStore implements MetaStore {
     const rows = await this.db
       .update(run)
       .set({ status: "running", started_at: now })
-      .where(and(eq(run.id, id), eq(run.agent_id, agentId), eq(run.status, "queued")))
+      .where(
+        and(
+          eq(run.id, id),
+          eq(run.agent_id, agentId),
+          eq(run.status, "queued"),
+          isNull(run.runtime_id),
+        ),
+      )
       .returning()
     return rows[0] ?? null
   }
@@ -5914,6 +5971,7 @@ export class PgMetaStore implements MetaStore {
           eq(run.id, id),
           eq(run.agent_id, agentId),
           eq(run.status, "running"),
+          isNull(run.runtime_id),
           expectedStartedAt === undefined
             ? undefined
             : expectedStartedAt === null
@@ -5939,6 +5997,7 @@ export class PgMetaStore implements MetaStore {
         and(
           orgIds ? inArray(run.org_id, [...orgIds]) : undefined,
           eq(run.status, "running"),
+          isNull(run.runtime_id),
           lte(run.started_at, cutoffIso),
         ),
       )
@@ -5969,6 +6028,7 @@ export class PgMetaStore implements MetaStore {
           and(
             eq(run.id, r.id),
             eq(run.status, "running"),
+            isNull(run.runtime_id),
             r.started_at === null ? isNull(run.started_at) : eq(run.started_at, r.started_at),
           ),
         )
@@ -6006,6 +6066,7 @@ export class PgMetaStore implements MetaStore {
         and(
           orgIds ? inArray(run.org_id, [...orgIds]) : undefined,
           eq(run.status, "queued"),
+          isNull(run.runtime_id),
           or(isNull(run.scheduled_for), lte(run.scheduled_for, now)),
         ),
       )
@@ -6042,6 +6103,7 @@ export class PgMetaStore implements MetaStore {
           eq(run.id, id),
           eq(run.agent_id, agentId),
           eq(run.status, "running"),
+          isNull(run.runtime_id),
           expectedStartedAt === undefined
             ? undefined
             : expectedStartedAt === null
@@ -6081,6 +6143,7 @@ export class PgMetaStore implements MetaStore {
         and(
           eq(run.automation_id, automationId),
           eq(run.status, "queued"),
+          isNull(run.runtime_id),
           lte(run.scheduled_for, cutoffIso),
         ),
       )
@@ -6100,7 +6163,7 @@ export class PgMetaStore implements MetaStore {
     const rows = await this.db
       .select()
       .from(run)
-      .where(and(eq(run.id, runId), eq(run.status, "queued")))
+      .where(and(eq(run.id, runId), eq(run.status, "queued"), isNull(run.runtime_id)))
     const row = rows[0]
     if (!row?.meta) return null
     let parsed: Record<string, unknown>
@@ -6115,7 +6178,14 @@ export class PgMetaStore implements MetaStore {
     const updated = await this.db
       .update(run)
       .set({ meta: nextMeta })
-      .where(and(eq(run.id, runId), eq(run.status, "queued"), eq(run.meta, row.meta)))
+      .where(
+        and(
+          eq(run.id, runId),
+          eq(run.status, "queued"),
+          isNull(run.runtime_id),
+          eq(run.meta, row.meta),
+        ),
+      )
       .returning()
     return updated[0] ?? null
   }

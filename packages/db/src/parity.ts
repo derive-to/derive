@@ -30,6 +30,7 @@ import type {
   ConnectionRecord,
   ContextAskerRecord,
   ContextRecord,
+  ContextRuntimeRecord,
   DeliveryRecord,
   DomainRecord,
   DynamicRevisionRecord,
@@ -47,6 +48,7 @@ import type {
   RenderJobRecord,
   ReportRecord,
   ReviewRoundRecord,
+  RunAttemptRecord,
   RunRecord,
   SessionMessageRecord,
   SessionRecord,
@@ -97,6 +99,8 @@ export interface TypedTables {
   agent: AgentRecord
   agentMention: AgentMentionRecord
   automation: AutomationRecord
+  contextRuntime: ContextRuntimeRecord
+  runAttempt: RunAttemptRecord
   run: RunRecord
   workflowRun: WorkflowRunRecord
   workflowStepAttempt: WorkflowStepAttemptRecord

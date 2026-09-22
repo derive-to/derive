@@ -96,6 +96,10 @@ const billingBlockCopy = (baseUrl: string) => {
       code: "billing_required",
       message: `White-label shared pages is a Team-plan feature, so the Made-with-Derive mark stays on until this workspace upgrades. An owner can upgrade at ${billingUrl}.`,
     },
+    custom_domain: {
+      code: "billing_required",
+      message: `A workspace subdomain is a Team-plan feature, so shared pages stay on the default address until this workspace upgrades. An owner can upgrade at ${billingUrl}.`,
+    },
     storage: {
       code: "storage_exceeded",
       message: `This workspace is out of storage, so this save was refused. Upgrade for more at ${billingUrl}.`,
@@ -128,6 +132,15 @@ export interface SessionUser {
 }
 
 export interface AppDeps {
+  runtime?: {
+    apiUrl: string
+    /** Absolute path to a pinned CLI installation in the saved sandbox. */
+    runnerPath: string
+    /** Temporary operator pilot. Empty denies admission; cleanup stays independent. */
+    pilotWorkspaceIds: ReadonlySet<string>
+  }
+  runtimeFetch?: typeof fetch
+
   meta: MetaStore
   blobs: BlobStore
   /**
@@ -304,14 +317,14 @@ export interface AppDeps {
    */
   shellFetch?: () => Promise<string | null>
   /**
-   * Bytes of a vendored browser library file (`katex.min.js`, `fonts/KaTeX_Main-Regular.woff2`),
-   * served by `/raw/vendor/katex/<version>/<file>` to rendered LaTeX pages. The artifact
+   * Bytes of a vendored browser library file (KaTeX math or Mermaid diagrams),
+   * served by `/raw/vendor/<library>/<version>/<file>` to rendered documents. The artifact
    * iframe is a null origin behind the sandbox CSP, so the typesetter has to come from a
    * `/raw/*` route with CORS rather than the SPA bundle or a CDN. Node reads the package from
    * node_modules; the edge reads the copy prep-edge-assets.mjs places in static assets.
-   * Unset ⇒ 404, and the page shows the TeX source in place of typeset math.
+   * Unset ⇒ 404, and the page keeps the source in place of rendered math/diagrams.
    */
-  vendorAsset?: (file: string) => Promise<Uint8Array | null>
+  vendorAsset?: (file: string, library: "katex" | "mermaid") => Promise<Uint8Array | null>
   /**
    * The outbound fetch used for the few upstream reads the API makes on a caller's behalf
    * (today: the CVPR author kit's style files when a paper is created from that template).
@@ -744,6 +757,7 @@ export function buildContext(deps: AppDeps) {
             r &&
             r.agent_id === claim.agentId &&
             r.org_id === claim.orgId &&
+            !r.runtime_id &&
             (r.status === "queued" || r.status === "running")
           )
         } else if (workKind === "session") {

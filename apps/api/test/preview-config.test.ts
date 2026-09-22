@@ -2,6 +2,8 @@ import { execFileSync } from "node:child_process"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { describe, expect, it } from "vitest"
+// @ts-expect-error — plain .mjs deploy helper, tested through its Cloudflare HTTP boundary.
+import { auditWorkerCrons } from "../scripts/audit-worker-crons.mjs"
 
 // The generator is a build script, so exercise it the way CI does — run it and read
 // the config it prints. These assertions are the difference between a preview that
@@ -55,5 +57,63 @@ describe("preview-config", () => {
     expect(out).not.toContain("[triggers]")
     expect(out).not.toContain("queues.consumers")
     expect(out).not.toContain("queues.producers")
+  })
+})
+
+describe("deployed Worker cron isolation", () => {
+  const fixture = (overrides: Record<string, unknown> = {}) => {
+    const data: Record<string, unknown> = {
+      "": [{ id: "derive" }, { id: "old-staging" }, { id: "preview" }, { id: "unrelated" }],
+      "/derive/settings": { bindings: [{ type: "hyperdrive", id: "production-db" }] },
+      "/old-staging/schedules": { schedules: [{ cron: "* * * * *" }] },
+      "/old-staging/settings": { bindings: [{ type: "hyperdrive", id: "production-db" }] },
+      "/preview/schedules": { schedules: [] },
+      "/unrelated/schedules": { schedules: [{ cron: "* * * * *" }] },
+      "/unrelated/settings": { bindings: [{ type: "hyperdrive", id: "different-db" }] },
+      ...overrides,
+    }
+    return {
+      accountId: "account",
+      token: "fixture-token",
+      fetchImpl: async (url: string, init: RequestInit) => {
+        expect(init.method ?? "GET").toBe("GET")
+        expect(init.redirect).toBe("error")
+        const prefix = "https://api.cloudflare.com/client/v4/accounts/account/workers/scripts"
+        expect(url.startsWith(prefix)).toBe(true)
+        const path = url.slice(prefix.length)
+        expect(data).toHaveProperty(path)
+        return Response.json({ success: true, result: data[path] })
+      },
+    }
+  }
+
+  it("rejects an old Worker whose cron can consume production work", async () => {
+    await expect(auditWorkerCrons(fixture())).rejects.toThrow(
+      "Other Workers have cron triggers on the production database: old-staging",
+    )
+  })
+
+  it("allows a paused preview and a scheduled Worker using a separate database", async () => {
+    await expect(
+      auditWorkerCrons(fixture({ "/old-staging/schedules": { schedules: [] } })),
+    ).resolves.toEqual({ inspected: 4 })
+  })
+
+  it("fails closed when the inventory is incomplete or unreadable", async () => {
+    await expect(auditWorkerCrons(fixture({ "": [] }))).rejects.toThrow("missing the production")
+    await expect(
+      auditWorkerCrons({
+        ...fixture(),
+        fetchImpl: async () => new Response("private", { status: 403 }),
+      }),
+    ).rejects.toThrow("Cloudflare configuration read failed: HTTP 403")
+    await expect(
+      auditWorkerCrons({
+        ...fixture(),
+        fetchImpl: async () => {
+          throw new Error("private")
+        },
+      }),
+    ).rejects.toThrow("Could not read Cloudflare Worker configuration")
   })
 })

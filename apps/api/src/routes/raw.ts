@@ -8,6 +8,8 @@ import {
   isDynamicName,
   KATEX_FILE_PATTERN,
   KATEX_VERSION,
+  MERMAID_FILE_PATTERN,
+  MERMAID_VERSION,
   SHARED_STATE_CLIENT_JS,
 } from "@derive/core"
 import type { Context } from "hono"
@@ -34,7 +36,7 @@ import { safeJson } from "../mcp-util"
 // short enough to bound exposure if the URL leaks (browser history, a proxy log, ...).
 
 const vendorMime = (file: string): string => {
-  if (file.endsWith(".js")) return "text/javascript; charset=utf-8"
+  if (file.endsWith(".js") || file.endsWith(".mjs")) return "text/javascript; charset=utf-8"
   if (file.endsWith(".css")) return "text/css; charset=utf-8"
   if (file.endsWith(".woff2")) return "font/woff2"
   if (file.endsWith(".woff")) return "font/woff"
@@ -94,7 +96,24 @@ export const rawRoutes = (ctx: AppContext) => {
     const version = c.req.param("version")
     const file = c.req.path.slice(`/raw/vendor/katex/${version}/`.length)
     if (version !== KATEX_VERSION || !KATEX_FILE_PATTERN.test(file)) return c.text("not found", 404)
-    const bytes = deps.vendorAsset ? await deps.vendorAsset(file) : null
+    const bytes = deps.vendorAsset ? await deps.vendorAsset(file, "katex") : null
+    if (!bytes) return c.text("not found", 404)
+    return c.body(toBody(bytes), 200, {
+      "Access-Control-Allow-Origin": "*",
+      "X-Content-Type-Options": "nosniff",
+      "Content-Type": vendorMime(file),
+      "Cache-Control": IMMUTABLE_CACHE,
+    })
+  })
+
+  // Mermaid's entry module and lazy diagram chunks use the same null-origin CORS
+  // contract as KaTeX. Only the minified runtime files are public, never source maps.
+  app.get("/raw/vendor/mermaid/:version/*", async (c) => {
+    const version = c.req.param("version")
+    const file = c.req.path.slice(`/raw/vendor/mermaid/${version}/`.length)
+    if (version !== MERMAID_VERSION || !MERMAID_FILE_PATTERN.test(file))
+      return c.text("not found", 404)
+    const bytes = deps.vendorAsset ? await deps.vendorAsset(file, "mermaid") : null
     if (!bytes) return c.text("not found", 404)
     return c.body(toBody(bytes), 200, {
       "Access-Control-Allow-Origin": "*",
