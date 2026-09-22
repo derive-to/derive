@@ -59,6 +59,7 @@ import { importErrorCopy, importRetryCopy, RETRYABLE_IMPORT_CODES } from "./impo
 import { ANSWER_PROSE, answerMdToHtml } from "./lib/answer-md"
 import { runnerStatus } from "./runner-status"
 import { RuntimeAccessCard } from "./runtime-access-card"
+import { RuntimeRunCard } from "./runtime-run-card"
 
 // The Context console combines package configuration, execution status, and run history.
 // The transcript polls fast only while the runner owes a reply (sessionQuery's
@@ -224,7 +225,7 @@ function Console({ id }: { id: string }) {
           <h1 className="font-serif text-2xl font-medium tracking-tight text-foreground">
             {context.name}
           </h1>
-          <RunnerLiveness seenAt={context.runner_seen_at} />
+          {tab !== "cloud" && <RunnerLiveness seenAt={context.runner_seen_at} />}
         </div>
         <Eyebrow>
           Context
@@ -246,20 +247,28 @@ function Console({ id }: { id: string }) {
         )}
       </div>
 
-      <ContextStatusWorkspace
-        context={context}
-        sessions={sessions ?? []}
-        outputs={outputs ?? []}
-        outputsPending={outputsPending}
-        outputsFailed={outputsFailed}
-        onSeeAllOutputs={() => setTab("output")}
-      />
+      {/* The chat runner's heartbeat does not describe an Ortam sandbox. */}
+      {tab !== "cloud" && (
+        <ContextStatusWorkspace
+          context={context}
+          sessions={sessions ?? []}
+          outputs={outputs ?? []}
+          outputsPending={outputsPending}
+          outputsFailed={outputsFailed}
+          onSeeAllOutputs={() => setTab("output")}
+        />
+      )}
 
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList variant="line">
+        <TabsList variant="line" className="max-w-full justify-start overflow-x-auto">
           <TabsTrigger value="chat" data-testid="console-tab-chat">
             Chat
           </TabsTrigger>
+          {isOwner && (
+            <TabsTrigger value="cloud" data-testid="console-tab-cloud">
+              Cloud runs
+            </TabsTrigger>
+          )}
           <TabsTrigger value="manifest" data-testid="console-tab-manifest">
             Definition
           </TabsTrigger>
@@ -369,6 +378,12 @@ function Console({ id }: { id: string }) {
             )}
           </div>
         </TabsContent>
+
+        {isOwner && (
+          <TabsContent value="cloud" forceMount className="pt-6 data-[state=inactive]:hidden">
+            <RuntimeRunCard contextId={id} />
+          </TabsContent>
+        )}
 
         <TabsContent value="manifest" className="pt-4">
           <ManifestTab context={context} />

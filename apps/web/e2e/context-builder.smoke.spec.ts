@@ -148,7 +148,10 @@ test("Cloud runs queue the chosen task and show report and shutdown separately",
     data: { name: "Daily checks", manifest_short_id: manifest },
   })
   const context = await created.json()
+  // Keep transient toast feedback out of the layout captures. Error feedback is asserted below.
+  const screenshotStyle = "[data-sonner-toaster] { visibility: hidden; }"
   let binding: { connection_id: string; sandbox_id: string } | null = null
+  let disabledAt: string | null = null
   let queued = false
   let submitted: unknown
   const scheduleState: { current: Record<string, unknown> | null } = { current: null }
@@ -165,7 +168,9 @@ test("Cloud runs queue the chosen task and show report and shutdown separately",
         enabled: true,
         schedule: scheduleState.current,
         next_run_at: scheduleState.current?.enabled ? "2026-09-22T13:00:00.000Z" : null,
-        runtime: binding ? { id: "runtime-demo", disabled_at: null } : null,
+        runtime: binding
+          ? { id: "runtime-demo", sandbox_id: binding.sandbox_id, disabled_at: disabledAt }
+          : null,
         runs: queued
           ? [
               {
@@ -188,6 +193,10 @@ test("Cloud runs queue the chosen task and show report and shutdown separately",
     submitted = route.request().postDataJSON()
     queued = true
     await route.fulfill({ status: 201, json: { run: { id: "run-demo" } } })
+  })
+  await owner.route(`**/v1/contexts/${context.id}/runtime/disable`, async (route) => {
+    disabledAt = new Date().toISOString()
+    await route.fulfill({ json: { ok: true } })
   })
   await owner.route(`**/v1/contexts/${context.id}/runtime/schedule`, async (route) => {
     const body = route.request().postDataJSON()
@@ -226,7 +235,9 @@ test("Cloud runs queue the chosen task and show report and shutdown separately",
     }
     await route.continue()
   })
+  await owner.setViewportSize({ width: 1440, height: 1100 })
   await owner.goto(`/contexts/${context.id}`)
+  await owner.getByTestId("console-tab-cloud").click()
   await expect(owner.getByTestId("context-runtime-connections-retry")).toBeVisible()
   await expect(owner.getByTestId("context-runtime-connection")).toBeDisabled()
   rejectConnectionReads = false
@@ -235,6 +246,10 @@ test("Cloud runs queue the chosen task and show report and shutdown separately",
   await expect(owner.getByTestId("context-runtime-connections-retry")).toBeHidden()
   await expect(owner.getByTestId("context-runtime-key-save")).toBeDisabled()
   await owner.getByTestId("context-runtime-key").fill("controller-key-fixture")
+  await owner.getByTestId("console-tab-chat").click()
+  await expect(owner.getByTestId("context-runtime-key")).toBeHidden()
+  await owner.getByTestId("console-tab-cloud").click()
+  await expect(owner.getByTestId("context-runtime-key")).toHaveValue("controller-key-fixture")
   await owner.getByTestId("context-runtime-key-save").click()
   await expect(owner.getByText("Secret storage unavailable", { exact: true })).toBeVisible()
   await expect(owner.getByTestId("context-runtime-key")).toHaveValue("controller-key-fixture")
@@ -259,9 +274,8 @@ test("Cloud runs queue the chosen task and show report and shutdown separately",
   await expect(owner.getByTestId("context-runtime-bind")).toBeEnabled()
   await owner.getByTestId("context-runtime-key").fill("")
   await owner
-    .locator("section")
-    .filter({ has: owner.getByTestId("context-runtime-bind") })
-    .screenshot({ path: testInfo.outputPath("cloud-run-setup.png") })
+    .getByTestId("context-runtime-panel")
+    .screenshot({ path: testInfo.outputPath("cloud-run-setup.png"), style: screenshotStyle })
   await owner.getByTestId("context-runtime-bind").click()
   await expect(owner.getByTestId("context-runtime-run")).toBeDisabled()
   expect(binding).toEqual({ connection_id: secrets[0].id, sandbox_id: sandbox })
@@ -291,13 +305,17 @@ test("Cloud runs queue the chosen task and show report and shutdown separately",
     enabled: 1,
   })
   await owner
-    .locator("section")
-    .filter({ has: owner.getByTestId("context-runtime-run") })
-    .screenshot({ path: testInfo.outputPath("cloud-runs.png") })
+    .getByTestId("context-runtime-panel")
+    .screenshot({ path: testInfo.outputPath("cloud-runs.png"), style: screenshotStyle })
   await owner
     .getByTestId("context-runtime-schedule")
-    .screenshot({ path: testInfo.outputPath("schedule.png") })
+    .screenshot({ path: testInfo.outputPath("schedule.png"), style: screenshotStyle })
   await owner.getByTestId("context-runtime-schedule-instruction").fill("My unsaved investigation")
+  await owner.getByTestId("console-tab-chat").click()
+  await owner.getByTestId("console-tab-cloud").click()
+  await expect(owner.getByTestId("context-runtime-schedule-instruction")).toHaveValue(
+    "My unsaved investigation",
+  )
   scheduleState.current = {
     ...scheduleState.current,
     revision: 1,
@@ -344,4 +362,36 @@ test("Cloud runs queue the chosen task and show report and shutdown separately",
     revision: 5,
     enabled: 1,
   })
+  await owner.evaluate(() => document.documentElement.classList.add("dark"))
+  await owner
+    .getByTestId("context-runtime-panel")
+    .screenshot({ path: testInfo.outputPath("cloud-runs-dark.png"), style: screenshotStyle })
+  await owner.evaluate(() => document.documentElement.classList.remove("dark"))
+  await owner.setViewportSize({ width: 390, height: 844 })
+  await expect(owner.getByTestId("context-runtime-run")).toBeVisible()
+  expect(
+    await owner.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+  ).toBe(true)
+  await owner.getByTestId("context-runtime-instruction").scrollIntoViewIfNeeded()
+  await owner.screenshot({
+    path: testInfo.outputPath("cloud-runs-mobile.png"),
+    style: screenshotStyle,
+  })
+  await owner.getByTestId("context-runtime-schedule-details").scrollIntoViewIfNeeded()
+  await owner.screenshot({
+    path: testInfo.outputPath("cloud-runs-mobile-schedule.png"),
+    style: screenshotStyle,
+  })
+  await owner.setViewportSize({ width: 1440, height: 1100 })
+  await owner.getByTestId("context-runtime-disable").click()
+  await expect(owner.getByRole("dialog")).toBeVisible()
+  await owner.getByTestId("confirm-dialog-cancel").click()
+  expect(disabledAt).toBeNull()
+  await owner.getByTestId("context-runtime-disable").click()
+  await owner.getByTestId("confirm-dialog-confirm").click()
+  await expect(
+    owner.getByText("Cloud runs are disabled. Previous reports remain available below."),
+  ).toBeVisible()
+  await expect(owner.getByTestId("context-runtime-run")).toBeHidden()
+  await expect(owner.getByText("Checks complete.")).toBeVisible()
 })

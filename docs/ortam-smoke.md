@@ -160,7 +160,7 @@ files. The agent chooses which scripts to run and which repositories to fetch.
 
 ## Manual cloud runs
 
-The Context page now has a Cloud runs panel when the deployment opts in. An owner
+The Context page has a Cloud runs tab for its owner. Setup is available when the deployment opts in. An owner
 connects an existing stopped sandbox, chooses Codex or Claude Code, writes an
 instruction, and clicks **Run now**. The panel distinguishes receipt of the report
 from confirmation that the sandbox stopped. The received report remains readable
@@ -181,7 +181,7 @@ Initial setup is explicit:
    Enable hosted agents, agent writes, and the automations beta for the workspace.
    Workers also require the workspace in `DERIVE_HOSTED_RUNS_ALLOWLIST`;
    Node uses its background-worker switch.
-4. In the Context's Cloud runs panel, enter that user's Ortam API key and click
+4. In the Context's **Cloud runs** tab, enter that user's Ortam API key and click
    **Save Ortam key**, or choose an existing secret connection. The new key is
    stored encrypted for the controller and is not bound as an agent environment
    variable or source. Enter the sandbox ID and connect it. Binding checks the actual
