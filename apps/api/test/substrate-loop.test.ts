@@ -143,7 +143,7 @@ const stubApi = (opts: {
         return send(status, status < 400 ? { short_id: "art_new" } : { error: "forbidden" })
       })
     })
-    server.listen(0, () =>
+    server.listen(0, "127.0.0.1", () =>
       resolve(`http://127.0.0.1:${(server.address() as { port: number }).port}`),
     )
   })
@@ -531,7 +531,7 @@ const stubAskApi = (opts: {
         return send(201, { short_id: "art_new" })
       })
     })
-    server.listen(0, () =>
+    server.listen(0, "127.0.0.1", () =>
       resolve(`http://127.0.0.1:${(server.address() as { port: number }).port}`),
     )
   })
