@@ -26,6 +26,7 @@ async function scheduleOwnerAllowed(meta: MetaStore, a: AutomationRecord) {
   const context = await meta.getContext(a.context_id)
   return !!(
     member &&
+    (await meta.isInstanceOperator(a.created_by)) &&
     context?.org_id === a.org_id &&
     (context.created_by === a.created_by || roleAllows(member.role, "manage"))
   )
@@ -50,9 +51,9 @@ export async function runtimeScheduleAllows(meta: MetaStore, run: RunRecord): Pr
 export async function materializeRuntimeSchedules(
   meta: MetaStore,
   now: Date,
-  orgIds?: ReadonlySet<string>,
+  orgIds: ReadonlySet<string>,
 ) {
-  for (const a of await meta.listRuntimeSchedules(orgIds ? [...orgIds] : undefined)) {
+  for (const a of await meta.listRuntimeSchedules([...orgIds])) {
     if (!a.runtime_id || !a.created_by) continue
     try {
       const settings = await meta.getOrgSettings(a.org_id)

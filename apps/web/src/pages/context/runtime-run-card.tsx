@@ -1,12 +1,11 @@
 import type { RunAttemptPhase } from "@derive/core"
-import { useQuery } from "@tanstack/react-query"
+import type { UseQueryResult } from "@tanstack/react-query"
 import { useState } from "react"
 import { api } from "@/api"
 import { ConfirmDialog } from "@/components/shared/confirm-dialog"
 import { EmptyState } from "@/components/shared/empty-state"
 import { LoadError } from "@/components/shared/load-error"
 import { SectionHeading, SectionTitle } from "@/components/shared/section-title"
-import { Spinner } from "@/components/shared/spinner"
 import { StatusBadge } from "@/components/shared/status-badge"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
@@ -24,9 +23,14 @@ const attemptLabel: Record<RunAttemptPhase, string> = {
   released: "Sandbox stopped",
 }
 
-export function RuntimeRunCard({ contextId }: { contextId: string }) {
+export function RuntimeRunCard({
+  contextId,
+  state,
+}: {
+  contextId: string
+  state: UseQueryResult<Awaited<ReturnType<typeof api.getContextRuntime>>>
+}) {
   const query = contextRuntimeQuery(contextId)
-  const state = useQuery(query)
   const [instruction, setInstruction] = useState("")
   const [provider, setProvider] = useState<"codex" | "claude-code">("codex")
   const [confirmDisable, setConfirmDisable] = useState(false)
@@ -41,25 +45,17 @@ export function RuntimeRunCard({ contextId }: { contextId: string }) {
     invalidate: [query.queryKey],
     success: "New runs disabled; active runs will stop",
   })
-  if (state.isError)
-    return (
-      <LoadError
-        title="Couldn’t load cloud runs"
-        testId="context-runtime-runs-retry"
-        onRetry={() => void state.refetch()}
-      />
-    )
-  if (!state.data) return <Spinner aria-label="Loading cloud runs" />
-  if (!state.data.enabled && !state.data.runtime)
-    return (
-      <EmptyState
-        title="Cloud runs aren’t configured"
-        description="An administrator needs to connect this Derive deployment to Ortam before you can run tasks here."
-      />
-    )
+  if (!state.data?.enabled) return null
   const runtime = state.data.runtime
   return (
     <section data-testid="context-runtime-panel" className="flex max-w-4xl flex-col gap-8">
+      {state.isError && (
+        <LoadError
+          title="Couldn’t refresh cloud runs"
+          testId="context-runtime-runs-retry"
+          onRetry={() => void state.refetch()}
+        />
+      )}
       <div className="flex flex-col gap-2">
         <SectionHeading
           as="h2"

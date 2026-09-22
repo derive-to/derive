@@ -177,7 +177,12 @@ Ordinary Derive users should never enter an Ortam key or sandbox ID. Automatic
 provisioning and model-account delegation are still to be built; they will replace
 this setup while reusing the execution and persistence machinery. Self-hosted
 administrators configure infrastructure once for their deployment. Background
-shutdown reconciliation is independent of interactive pilot access.
+shutdown reconciliation is independent of interactive pilot access. Background
+admission and guest claims recheck the workspace allowlist and the initiating
+user’s operator status. Existing non-operator jobs cannot bypass the restriction
+through saved schedules. Denied queued jobs are marked failed and cannot revive
+when access is restored. Removing pilot access does not prevent saving an
+accepted result or confirming shutdown.
 
 Initial operator setup is explicit:
 

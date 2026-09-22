@@ -129,7 +129,6 @@ export const contextRuntimeRoutes = (ctx: AppContext) => {
     if (context instanceof Response) return context
     if (!(await runtimePilotAllowed(ctx, c, context.org_id)))
       return fail(c, 403, "Cloud run pilot is unavailable")
-    if (!deps.runtime) return fail(c, 503, "Ortam execution is not configured")
     const body = await readJson(
       c,
       z.object({
@@ -201,7 +200,9 @@ export const contextRuntimeRoutes = (ctx: AppContext) => {
       agent?.org_id !== run.org_id ||
       !settings.hostedAgentsEnabled ||
       !settings.agentWrites ||
+      !deps.runtime?.pilotWorkspaceIds.has(run.org_id) ||
       !run.initiated_by ||
+      !(await meta.isInstanceOperator(run.initiated_by)) ||
       !(await meta.getMembership(run.org_id, run.initiated_by))
     )
       return fail(c, 403, "Runtime access has been revoked")

@@ -28,16 +28,9 @@ export const contextRuntimeScheduleRoutes = (ctx: AppContext) => {
     const settings = await ctx.meta.getOrgSettings(context.org_id)
     if (
       body.enabled &&
-      (!ctx.deps.runtime ||
-        !settings.hostedAgentsEnabled ||
-        !settings.agentWrites ||
-        !settings.automateBeta)
+      (!settings.hostedAgentsEnabled || !settings.agentWrites || !settings.automateBeta)
     )
-      return fail(
-        c,
-        403,
-        "Enable cloud execution, hosted agents, agent writes and automations for this workspace",
-      )
+      return fail(c, 403, "Enable hosted agents, agent writes and automations for this workspace")
     const runtime = await ctx.meta.getContextRuntimeForContext(context.id, context.org_id)
     const owner = await ctx.managementPrincipal(c)
     if (!runtime || runtime.disabled_at || !owner)

@@ -908,6 +908,108 @@ describe("Ortam runtime lifecycle", () => {
     expect(await state.json()).toMatchObject({ enabled: true, runtime: { id: original?.id } })
   })
 
+  it("uses the same rollout boundary for background admission and still confirms shutdown", async () => {
+    const f = await scheduled()
+    config.pilotWorkspaceIds.clear()
+    try {
+      await pass()
+      expect(await meta.latestRunForAutomation(f.schedule.id, "schedule")).toBeNull()
+      expect(f.sandbox.starts).toBe(0)
+      config.pilotWorkspaceIds.add("default")
+      for (let i = 0; i < 4; i++) await pass()
+      const run = await meta.latestRunForAutomation(f.schedule.id, "schedule")
+      if (!run) throw new Error("Scheduled run missing")
+      expect((await attemptRequest(f.sandbox, "claim")).status).toBe(200)
+      expect((await attemptRequest(f.sandbox, "result", result)).status).toBe(200)
+      config.pilotWorkspaceIds.clear()
+      for (let i = 0; i < 5; i++) await pass()
+      expect((await meta.getRun(run.id))?.status).toBe("succeeded")
+      expect(await meta.getLatestRunAttempt(run.id, "default")).toMatchObject({
+        phase: "released",
+        save_status: "saved",
+      })
+      expect(f.sandbox.state).toBe("stopped")
+    } finally {
+      config.pilotWorkspaceIds.add("default")
+      await saveSchedule(f.context.id, { ...dailyTask, enabled: false, revision: 0 })
+    }
+  })
+
+  it("does not execute existing manual or scheduled work owned by a non-operator", async () => {
+    const f = await setup()
+    await meta.cancelQueuedRuntimeRun(f.run.id, "default", now.toISOString())
+    await meta.setMembership({
+      id: "runtime-member-seat",
+      org_id: "default",
+      user_id: member.id,
+      role: "owner",
+    })
+    try {
+      // Seed records admitted before operator-only access was enforced.
+      const schedule = await meta.saveRuntimeSchedule({
+        ...dailyTask,
+        provider: "codex",
+        id: `legacy_schedule_${counter}`,
+        runtimeId: f.run.runtime_id,
+        orgId: "default",
+        ownerId: member.id,
+        at: now.toISOString(),
+      })
+      if (!schedule) throw new Error("Legacy schedule missing")
+      const legacy = await meta.createRun({
+        id: `legacy_run_${counter}`,
+        org_id: "default",
+        agent_id: f.run.agent_id,
+        runtime_id: f.run.runtime_id,
+        initiated_by: member.id,
+        reason: "manual:runtime",
+        input_snapshot: f.run.input_snapshot,
+      })
+      now = new Date(nextRuntimeOccurrence(dailyTask.cron, dailyTask.timezone, now))
+      await pass()
+      expect(await meta.latestRunForAutomation(schedule.id, "schedule")).toBeNull()
+      expect(await meta.getLatestRunAttempt(legacy.id, "default")).toBeNull()
+      expect((await meta.getRun(legacy.id))?.status).toBe("failed")
+      expect(f.sandbox.starts).toBe(0)
+      await meta.deleteAutomation(schedule.id, "default")
+    } finally {
+      await meta.setMembership({
+        id: "runtime-member-seat",
+        org_id: "default",
+        user_id: member.id,
+        role: "editor",
+      })
+    }
+  })
+
+  it("cancels queued work when pilot access is removed without reviving it on restoration", async () => {
+    const f = await setup()
+    config.pilotWorkspaceIds.clear()
+    try {
+      await pass()
+      expect((await meta.getRun(f.run.id))?.status).toBe("failed")
+      expect(await meta.getLatestRunAttempt(f.run.id, "default")).toBeNull()
+    } finally {
+      config.pilotWorkspaceIds.add("default")
+    }
+    await pass()
+    expect(f.sandbox.starts).toBe(0)
+  })
+
+  it("refuses a guest claim after pilot access is removed and cleans up its machine", async () => {
+    const f = await launched()
+    config.pilotWorkspaceIds.clear()
+    try {
+      expect((await attemptRequest(f.sandbox, "claim")).status).toBe(403)
+      expect((await meta.getLatestRunAttempt(f.run.id, "default"))?.runner_claimed_at).toBeNull()
+      for (let i = 0; i < 5; i++) await pass()
+      expect(f.sandbox.state).toBe("stopped")
+      expect((await meta.getRun(f.run.id))?.status).toBe("failed")
+    } finally {
+      config.pilotWorkspaceIds.add("default")
+    }
+  })
+
   it("validates schedule permissions, timezone, and concurrent edits", async () => {
     const f = await scheduled()
     expect(
@@ -955,7 +1057,9 @@ describe("Ortam runtime lifecycle", () => {
     await materializeAllDueRuns(meta, now, true)
     expect(await meta.latestRunForAutomation(f.schedule.id, "schedule")).toBeNull()
     now = new Date(now.getTime() + 3 * 3600_000)
-    await Promise.all([0, 1, 2].map(() => materializeRuntimeSchedules(meta, now)))
+    await Promise.all(
+      [0, 1, 2].map(() => materializeRuntimeSchedules(meta, now, config.pilotWorkspaceIds)),
+    )
     const first = await meta.latestRunForAutomation(f.schedule.id, "schedule")
     expect(first).toMatchObject({
       runtime_id: f.schedule.runtime_id,
@@ -967,7 +1071,7 @@ describe("Ortam runtime lifecycle", () => {
       schedule_revision: 0,
     })
     now = new Date(now.getTime() + 3600_000)
-    await materializeRuntimeSchedules(meta, now)
+    await materializeRuntimeSchedules(meta, now, config.pilotWorkspaceIds)
     expect((await meta.latestRunForAutomation(f.schedule.id, "schedule"))?.id).toBe(first?.id)
     expect(
       (

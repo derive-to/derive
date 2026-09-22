@@ -6,12 +6,8 @@
 //
 //     TypeError: Illegal invocation: function called with incorrect `this` reference.
 //
-// So every request throws in a deployed Worker while every Node test passes, and the
-// symptom is an honest-looking "the upstream did not answer" about an upstream that is
-// answering fine. This has now shipped twice: once in the MCP broker, once in the arXiv
-// paper import, where it cost a production deploy and a day of looking at the wrong
-// system. The fix each time was `unbound` (packages/broker/src/http.ts): bind once, then
-// call a plain function.
+// Wrap injected fetch once with `unbound` (packages/broker/src/http.ts). Its arrow
+// function calls the original as a plain function, regardless of how it is stored.
 //
 // Cloudflare BINDINGS are the deliberate exception — `env.ASSETS.fetch`, a Durable Object
 // `stub.fetch`, a service `site.fetch` are real methods on real objects and must stay

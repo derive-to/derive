@@ -783,6 +783,7 @@ async function runtimeTick(env: Env): Promise<void> {
   const config = {
     runnerPath: env.DERIVE_ORTAM_RUNNER_PATH,
     apiUrl: env.DERIVE_ORTAM_API_URL ?? "https://api.ortam.dev/v1",
+    pilotWorkspaceIds: workspaceIdsFromEnv(env.DERIVE_HOSTED_RUNS_ALLOWLIST),
   }
   const secret = env.DERIVE_AUTH_SECRET
   const scoped = async () =>
@@ -792,7 +793,6 @@ async function runtimeTick(env: Env): Promise<void> {
       server: env.BASE_URL ?? "",
       secret,
       config,
-      hostedOrgIds: workspaceIdsFromEnv(env.DERIVE_HOSTED_RUNS_ALLOWLIST),
     })
   await (env.HYPERDRIVE
     ? requestPg.run(hyperdriveConn(env.HYPERDRIVE), scoped)

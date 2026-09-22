@@ -157,6 +157,9 @@ test("Cloud runs queue the chosen task and show report and shutdown separately",
   let binding: { connection_id: string; sandbox_id: string } | null = null
   let disabledAt: string | null = null
   let queued = false
+  let pilotAllowed = true
+  let unavailableReads = 4
+  let rejectRuntimeRefresh = false
   let submitted: unknown
   const scheduleState: { current: Record<string, unknown> | null } = { current: null }
   let releasePause: (() => void) | undefined
@@ -167,9 +170,18 @@ test("Cloud runs queue the chosen task and show report and shutdown separately",
       await route.fulfill({ status: 201, json: { runtime: { id: "runtime-demo" } } })
       return
     }
+    if (unavailableReads > 0) {
+      unavailableReads--
+      await route.fulfill({ status: 503, json: { error: "Temporarily unavailable" } })
+      return
+    }
+    if (rejectRuntimeRefresh) {
+      await route.fulfill({ status: 403, json: { error: "Access check unavailable" } })
+      return
+    }
     await route.fulfill({
       json: {
-        enabled: true,
+        enabled: pilotAllowed,
         schedule: scheduleState.current,
         next_run_at: scheduleState.current?.enabled ? "2026-09-22T13:00:00.000Z" : null,
         runtime: binding
@@ -315,6 +327,14 @@ test("Cloud runs queue the chosen task and show report and shutdown separately",
     .getByTestId("context-runtime-schedule")
     .screenshot({ path: testInfo.outputPath("schedule.png"), style: screenshotStyle })
   await owner.getByTestId("context-runtime-schedule-instruction").fill("My unsaved investigation")
+  rejectRuntimeRefresh = true
+  await expect(owner.getByTestId("context-runtime-runs-retry")).toBeVisible()
+  await expect(owner.getByTestId("context-runtime-schedule-instruction")).toHaveValue(
+    "My unsaved investigation",
+  )
+  rejectRuntimeRefresh = false
+  await owner.getByTestId("context-runtime-runs-retry").click()
+  await expect(owner.getByTestId("context-runtime-runs-retry")).toBeHidden()
   await owner.getByTestId("console-tab-chat").click()
   await owner.getByTestId("console-tab-cloud").click()
   await expect(owner.getByTestId("context-runtime-schedule-instruction")).toHaveValue(
@@ -398,4 +418,8 @@ test("Cloud runs queue the chosen task and show report and shutdown separately",
   ).toBeVisible()
   await expect(owner.getByTestId("context-runtime-run")).toBeHidden()
   await expect(owner.getByText("Checks complete.")).toBeVisible()
+  pilotAllowed = false
+  await expect(owner.getByTestId("console-tab-cloud")).toHaveCount(0)
+  await expect(owner.getByTestId("console-tab-chat")).toHaveAttribute("data-state", "active")
+  await expect(owner.getByTestId("context-runtime-panel")).toHaveCount(0)
 })
